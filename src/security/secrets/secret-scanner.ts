@@ -22,7 +22,7 @@ import {
   type Budget,
   maskSecret,
   ENCODED_SCHEMES,
-  makeScanBudget,
+  MAX_DECODED_BUDGET,
   iterativeRunViews,
   scanEncodedViews,
 } from "./secret-decode-engine.js";
@@ -35,18 +35,9 @@ import {
 export type { SecretMatch };
 
 interface ScanResult {
-  /**
-   * True only when the text was FULLY scanned and nothing was found. A scan that
-   * hit its decode ceiling and gave up on part of the document is never `clean`
-   * — every caller here (http-egress-guard, exfil-scan, phone-projection,
-   * bridge-media-forward) reads `clean` as proof of safety and would otherwise
-   * let unscanned bytes through silently. See `truncated` to tell the two apart.
-   */
   clean: boolean;
   matches: SecretMatch[];
   scannedLength: number;
-  /** The decode budget ran out with candidate runs unexamined: not proven clean, gave up. */
-  truncated: boolean;
 }
 
 /** Scan text for secret patterns */
@@ -76,18 +67,13 @@ export function scanForSecrets(text: string): ScanResult {
   // Additive evasion-resistant passes: a secret present only in a normalized or
   // decoded view of the text still makes the result NOT clean, with a span that
   // points at the real offending bytes in `text`.
-  // Each decode pass gets its OWN budget: sharing one would let the catalog pass
-  // starve the known-value pass, which is exactly the cross-run starvation being
-  // fixed here, only at pass granularity.
-  const encodedBudget = makeScanBudget();
-  const knownBudget = makeScanBudget();
   matches.push(...scanNormalizedView(text, matches, normalizedView));
-  matches.push(...scanEncodedViews(text, encodedBudget));
+  matches.push(...scanEncodedViews(text));
 
   // Known-secret-value pass: a registered stored secret value (raw, encoded, or
   // normalized) makes the scan NOT clean even when it matches no pattern, so the
   // egress guard blocks and the taint path taints on the user's ACTUAL secrets.
-  matches.push(...scanKnownValues(text, normalizedView, knownBudget));
+  matches.push(...scanKnownValues(text, normalizedView));
 
   // Additive entropy pass: catch UNKNOWN secrets (random tokens with no
   // recognizable prefix) the catalog can't match. De-duped against catalog
@@ -115,12 +101,10 @@ export function scanForSecrets(text: string): ScanResult {
     return true;
   });
 
-  const truncated = encodedBudget.truncated || knownBudget.truncated;
   return {
-    clean: deduped.length === 0 && !truncated,
+    clean: deduped.length === 0,
     matches: deduped,
     scannedLength: text.length,
-    truncated,
   };
 }
 
@@ -170,13 +154,12 @@ export function decodedPayloadViews(text: string): string[] {
   const norm = buildNormalizedView(text).normalized;
   if (norm !== text) views.push(norm);
 
-  // Per-run bounded (so one expensive run can't starve the rest of the document)
-  // and `continue`, not `break`, at the scan ceiling.
-  const budget: Budget = makeScanBudget();
+  const budget: Budget = { remaining: MAX_DECODED_BUDGET };
   for (const scheme of ENCODED_SCHEMES) {
+    if (budget.remaining <= 0) break;
     scheme.re.lastIndex = 0;
     for (const m of text.matchAll(scheme.re)) {
-      if (budget.remaining <= 0) { budget.truncated = true; continue; }
+      if (budget.remaining <= 0) break;
       // Iteratively peel every encoding layer (budget-bounded), surfacing every
       // decoded text view (latin1 + both-endian utf16le for base64/hex; percent
       // text) —

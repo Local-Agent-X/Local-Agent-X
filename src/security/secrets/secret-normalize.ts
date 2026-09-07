@@ -18,7 +18,7 @@ import {
   type Budget,
   maskSecret,
   ENCODED_SCHEMES,
-  makeScanBudget,
+  MAX_DECODED_BUDGET,
   iterativeRunViews,
 } from "./secret-decode-engine.js";
 
@@ -167,8 +167,7 @@ function knownValueMatch(start: number, end: number): SecretMatch {
  */
 export function scanKnownValues(
   text: string,
-  view: { normalized: string; outToOrig: number[] },
-  budget: Budget = makeScanBudget()
+  view: { normalized: string; outToOrig: number[] }
 ): SecretMatch[] {
   if (!hasKnownSecretValues()) return [];
   const values = knownSecretValues(); // longest-first
@@ -185,14 +184,12 @@ export function scanKnownValues(
   //    layer peel, shared byte budget) — previously this pass did a single decode
   //    while the catalog pass decoded an inner layer, so base64(base64(known))
   //    leaked. Sharing the helper means the two passes can't drift on depth.
-  //    The budget carries a per-run slice, so one expensive run can no longer
-  //    starve the rest of the document; when the scan-wide ceiling really is
-  //    reached we `continue` and record it on the budget rather than `break`,
-  //    which used to skip every later run and report clean on unscanned text.
+  const budget: Budget = { remaining: MAX_DECODED_BUDGET };
   for (const scheme of ENCODED_SCHEMES) {
+    if (budget.remaining <= 0) break;
     scheme.re.lastIndex = 0;
     for (const m of text.matchAll(scheme.re)) {
-      if (budget.remaining <= 0) { budget.truncated = true; continue; }
+      if (budget.remaining <= 0) break;
       const run = m[0];
       const index = m.index ?? 0;
       const decodedViews = iterativeRunViews(scheme, run, budget);

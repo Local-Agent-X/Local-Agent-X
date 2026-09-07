@@ -40,6 +40,7 @@ import type { Op } from "../ops/types.js";
 import type { Adapter } from "./adapter-contract.js";
 import { clearAdapterRetryState, handleAdapterRetry } from "./worker-adapter-retry.js";
 import { reconcileLatestTurnCommit, TurnCommitFenceError } from "./checkpoint.js";
+import { evaluateCheckpointStop } from "./checkpoint-stop.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("canonical-loop.worker");
@@ -146,21 +147,26 @@ async function drive(op: Op, adapter: Adapter, workerId: string): Promise<void> 
     for (;;) {
       activeTurnIdx = turnIdx;
       if (count >= maxTurns) {
-        const continuing = op.lane !== "interactive";
+        // maxIterations is a checkpoint CADENCE for every lane, including
+        // interactive. Whether the op ends here is decided by real stop
+        // conditions (no new evidence / nudge ceiling / spend ceiling), not by
+        // an arbitrary turn count — see checkpoint-stop.ts.
+        const stop = evaluateCheckpointStop(op);
         emit(op.id, "iteration_checkpoint", {
           maxTurns,
           completedTurns: turnIdx,
-          continuing,
+          continuing: !stop.stop,
+          ...(stop.reason ? { stopReason: stop.reason, stopDetail: stop.detail } : {}),
         });
-        if (!continuing) {
+        if (stop.stop) {
           releaseReason = "iteration_checkpoint";
           recordTerminalOutcome(op, "partial");
           transitionOp(op, "succeeded", "iteration_checkpoint", { learnedOutcome: "partial" });
           break;
         }
-        // Autonomous lanes treat maxIterations as a checkpoint cadence. Keep
-        // the same worker, lease, wall-clock timer, cancellation tracker, and
-        // adapter registrations; only reset the cadence counter.
+        // Continuing: keep the same worker, lease, wall-clock timer,
+        // cancellation tracker and adapter registrations; only reset the
+        // cadence counter.
         count = 0;
       }
       count++;

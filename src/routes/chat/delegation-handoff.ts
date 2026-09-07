@@ -18,9 +18,17 @@ import { toolSchemaFormatForDispatch } from "../../providers/shared/tool-shape.j
 import { renderPromptSection, type RenderedPromptSection } from "../../context/system-prompt-builder.js";
 import { createHash } from "node:crypto";
 import { readOp, tryWithOpLock } from "../../ops/op-store.js";
+import { resolveCredential } from "../../auth/resolve.js";
 
 async function submitDelegationOp(message: string, sessionId: string, ingressKey?: string): Promise<{ opId: string }> {
   const lane = "build" as const;
+  // This op registers no per-op adapter: it rides the lane default, which
+  // server/canonical-loop-bootstrap.ts sets to the Anthropic adapter for every
+  // lane. The credential source stamped here must be THAT credential's — not
+  // the chat's `prepared.authSource`, which may belong to a different provider
+  // — because cost-recording.ts books the op's ledger row under it and
+  // checkpoint-stop.ts judges the spend ceiling by it.
+  const laneDefaultCredential = await resolveCredential("anthropic");
   const contextPack = await buildContextPack({
     description: message,
     successCriteria: [
@@ -33,6 +41,7 @@ async function submitDelegationOp(message: string, sessionId: string, ingressKey
       "If a step is ambiguous, document the assumption in your final summary",
     ],
     lane,
+    authSource: laneDefaultCredential?.source,
     budget: { maxIterations: 30, maxWallTimeMs: 15 * 60 * 1000 },
   });
   const opId = ingressKey

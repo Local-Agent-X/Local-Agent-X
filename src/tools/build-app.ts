@@ -18,9 +18,11 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { getSetting } from "../settings.js";
-import { workspacePath } from "../config.js";
+import { getRuntimeConfig, workspacePath } from "../config.js";
 import type { ToolDefinition } from "../types.js";
 import { PROVIDERS } from "../providers/registry.js";
+import type { ProviderId } from "../providers/provider-ids.js";
+import { resolveCredential } from "../auth/resolve.js";
 import {
   renderPerBuildContext,
   renderPersonaPrompt,
@@ -243,12 +245,21 @@ export const buildAppTool: ToolDefinition = {
         : tier === "compiled-native"
           ? [`the real toolchain was actually run (not a browser reimplementation); index.html shows the program's real output`]
           : [];
+    // The credential the build's adapter will run on (build-app-runtime.ts →
+    // createAppBuildAdapter resolves `provider`'s credential the same way).
+    // cost-recording.ts books the op's ledger row under routing.authSource and
+    // checkpoint-stop.ts judges the spend ceiling by it; absent, a build on a
+    // subscription (oauth) box was counted as real API spend.
+    const credential = await resolveCredential(provider as ProviderId, {
+      configOpenAIKey: provider === "openai" ? getRuntimeConfig().openaiApiKey : undefined,
+    });
     const contextPack = await buildContextPack({
       description: `Build ${tierLabel(tier)} "${appName}" (${strategy})`,
       successCriteria: [`APP_READY: <url> emitted`, `index.html written to ${appDir}`, ...tierCriteria],
       constraints: [],
       lane: "build",
       preferredProvider: provider,
+      authSource: credential?.source,
       budget: BUILD_APP_BUDGET,
     });
 

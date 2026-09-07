@@ -122,6 +122,12 @@ export async function runAgentViaCanonical(
     lane,
     preferredProvider: options.provider,
     targetPin: options.targetPin,
+    // The credential this op actually runs on. cost-recording.ts books the
+    // op's ledger row under routing.authSource and checkpoint-stop.ts judges
+    // the spend ceiling by it; isBillableSource(undefined) is TRUE by design,
+    // so leaving it off counted every cron / dream / voice / skill-review /
+    // autopilot op on a subscription (oauth) box as real API spend.
+    authSource: preparedRuntime.credential.source,
     budget: {
       maxIterations: options.maxIterations || 30,
       maxWallTimeMs: wallClockMs,

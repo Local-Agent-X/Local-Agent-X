@@ -189,6 +189,11 @@ async function configureVerificationRuntime(op: Op, runtimeSessionId: string): P
 		surface: buildAgentRuntimeSurface(surfaceOptions, runtimeSessionId),
 	});
 	op.model = runtime.identity.model;
+	// buildVerificationOp built the pack before the credential was known. Stamp
+	// the resolved source: cost-recording.ts books the ledger row under it and
+	// checkpoint-stop.ts judges the spend ceiling by it (undefined bills as
+	// real spend). src/ops/context-pack-auth-source.test.ts pins this stamp.
+	op.contextPack.routing.authSource = authSource;
 	const factory = await createProviderAdapterFactory(op.runtimeDescriptor, {
 		apiKey,
 		authSource,

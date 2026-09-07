@@ -37,7 +37,12 @@ vi.mock("../../ops/op-store.js", () => ({
   readOp: vi.fn((id: string) => storedOps.get(id) ?? null),
   tryWithOpLock: vi.fn((_id: string, fn: () => unknown) => ({ acquired: true, value: fn() })),
 }));
-vi.mock("../../ops/context-pack-builder.js", () => ({ buildContextPack: vi.fn(async () => ({})) }));
+const { buildContextPack, resolveCredential } = vi.hoisted(() => ({
+  buildContextPack: vi.fn(async () => ({})),
+  resolveCredential: vi.fn(async () => ({ provider: "anthropic", credential: "oauth:test", source: "oauth" })),
+}));
+vi.mock("../../ops/context-pack-builder.js", () => ({ buildContextPack }));
+vi.mock("../../auth/resolve.js", () => ({ resolveCredential }));
 vi.mock("../../ops/heartbeat.js", () => ({ getRetryPolicy: vi.fn(() => ({})) }));
 vi.mock("../../ops/session-bridge.js", () => ({ trackOpForSession: vi.fn() }));
 vi.mock("../../routing/index.js", () => ({ linkDecisionToOpId: vi.fn() }));
@@ -157,5 +162,20 @@ describe("delegation-handoff orphaned-ActiveChat net", () => {
     expect(canonicalLoopEntry).toHaveBeenCalledTimes(1);
     expect(canonicalLoopEntry.mock.calls[0][0].id).toMatch(/^op_freeform_inbound_/);
     expect((canonicalLoopEntry.mock.calls[0][0] as Op).sessionId).toBe(args.sessionId);
+  });
+
+  // The delegated freeform op registers no per-op adapter — it rides the lane
+  // default (the Anthropic adapter, server/canonical-loop-bootstrap.ts). Its
+  // pack must carry THAT credential's source: cost-recording.ts books the
+  // ledger row under routing.authSource and checkpoint-stop.ts judges the
+  // spend ceiling by it; undefined bills as real spend. The chat's own
+  // provider here is xai, so `prepared.authSource` would be the wrong answer.
+  it("stamps the lane-default (anthropic) credential source onto the delegated op's pack", async () => {
+    const { ctx } = makeCtx();
+
+    await runDelegationHandoff(makeArgs(ctx) as never);
+
+    expect(resolveCredential).toHaveBeenCalledWith("anthropic");
+    expect(buildContextPack).toHaveBeenCalledWith(expect.objectContaining({ lane: "build", authSource: "oauth" }));
   });
 });

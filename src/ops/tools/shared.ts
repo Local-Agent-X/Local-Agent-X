@@ -109,6 +109,11 @@ export async function configureDelegatedRuntime(
     surface: buildAgentRuntimeSurface(surfaceOptions, sessionId),
   });
   op.model = runtime.identity.model;
+  // buildOpFromArgs built the pack before the credential was known. Stamp the
+  // resolved source now: cost-recording.ts books the ledger row under it and
+  // checkpoint-stop.ts judges the spend ceiling by it (undefined bills as real
+  // spend). src/ops/context-pack-auth-source.test.ts pins this stamp.
+  op.contextPack.routing.authSource = authSource;
   const factory = await createProviderAdapterFactory(op.runtimeDescriptor, {
     apiKey,
     authSource,

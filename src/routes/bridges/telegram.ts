@@ -1,6 +1,7 @@
 import type { RouteHandler } from "../../server-context.js";
 import { jsonResponse, safeParseBody, safeErrorMessage } from "../../server-utils.js";
 import { getMessagingChannelDefinition } from "../../session/channel-registry.js";
+import { sanitizeChatIds } from "../../telegram-bridge/allowed-chats.js";
 
 export const handleTelegramRoutes: RouteHandler = async (method, url, req, res, ctx, _role) => {
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
@@ -22,6 +23,25 @@ export const handleTelegramRoutes: RouteHandler = async (method, url, req, res, 
       const { chatId, message: msg } = body as { chatId?: string; message?: string };
       if (!chatId || !msg) { json(400, { error: "chatId and message are required" }); return true; }
       json(await ctx.telegramBridge.sendMessage(chatId, msg) ? 200 : 500, { ok: true });
+    } catch (e) { json(500, { error: safeErrorMessage(e) }); }
+    return true;
+  }
+
+  if (method === "POST" && url.pathname === "/api/telegram/claim") {
+    json(200, ctx.telegramBridge.openOwnerClaimWindow()); return true;
+  }
+  if (method === "POST" && url.pathname === "/api/telegram/owner") {
+    try {
+      const body = await safeParseBody(req); if (body === null) { json(400, { error: "Invalid JSON" }); return true; }
+      const requested = (body.chatIds || []) as string[];
+      if (!Array.isArray(requested)) { json(400, { error: "chatIds must be an array" }); return true; }
+      // Validate BEFORE mutating: setAllowedChatIds persists, so rejecting
+      // after the call would clear a working owner on a typo.
+      if (requested.length > 0 && sanitizeChatIds(requested.map(String)).size === 0) {
+        json(400, { error: "No valid chat IDs. A Telegram chat ID is a whole number — get yours from @userinfobot." });
+        return true;
+      }
+      json(200, { ok: true, chatIds: ctx.telegramBridge.setAllowedChatIds(requested) });
     } catch (e) { json(500, { error: safeErrorMessage(e) }); }
     return true;
   }

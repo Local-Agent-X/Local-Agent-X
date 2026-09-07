@@ -12,7 +12,7 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 65 top-level dirs · 65 live · 0 with no live importer · 1542 non-test source files · 0 god files (>400 LOC).
+**Totals:** 65 top-level dirs · 65 live · 0 with no live importer · 1543 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -25,7 +25,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/canonical-loop/` | 56 | 226 | XL |  |
 | `src/memory/` | 46 | 128 | XL |  |
 | `src/workspace/` | 41 | 2 | M |  |
-| `src/session/` | 35 | 7 | L |  |
+| `src/session/` | 36 | 7 | L |  |
 | `src/classifiers/` | 33 | 17 | L |  |
 | `src/util/` | 33 | 2 | S |  |
 | `src/threat/` | 32 | 12 | L |  |
@@ -61,12 +61,12 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/screen-stream/` | 9 | 8 | L |  |
 | `src/ari-kernel/` | 8 | 11 | L |  |
 | `src/sync/` | 8 | 19 | L |  |
+| `src/telegram-bridge/` | 8 | 6 | M |  |
 | `src/auto-build/` | 7 | 52 | XL |  |
 | `src/autopilot/` | 7 | 13 | L |  |
 | `src/bridge-voice/` | 7 | 5 | M |  |
 | `src/plugin-system/` | 7 | 10 | L |  |
 | `src/routes/` | 7 | 86 | XL |  |
-| `src/telegram-bridge/` | 7 | 5 | M |  |
 | `src/app-renderer/` | 6 | 7 | M |  |
 | `src/mcp-client/` | 6 | 9 | L |  |
 | `src/credentials/` | 5 | 1 | S |  |

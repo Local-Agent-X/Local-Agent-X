@@ -1,5 +1,12 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { buildMessagingSessionId, messagingChannelConfigPath } from "../session/channel-registry.js";
+import { buildMessagingSessionId } from "../session/channel-registry.js";
+
+import {
+  CLAIM_WINDOW_MS,
+  claimWindowRemainingMs,
+  loadAllowedChats,
+  sanitizeChatIds,
+  saveAllowedChats,
+} from "./allowed-chats.js";
 
 import { apiCall, sendMessage, sendVoice, sendPhoto, sendVideo } from "./api.js";
 import { describeNonTextMessage, dispatchReply, transcribeInboundVoice } from "./inbound.js";
@@ -38,13 +45,13 @@ export class TelegramBridge {
   private pendingUpdates = new Map<number, { done: boolean; delivered: boolean }>();
   private pendingUpdateOrder: number[] = [];
   private allowedChatIds: Set<string> = new Set();
-  private ownerVerified = false;  // true once we've confirmed config loaded or owner locked
+  private claimWindowExpiresAt = 0;
 
   constructor(config: TelegramBridgeConfig) {
     this.dataDir = config.dataDir;
     this.getToken = config.getToken;
     this.onMessage = config.onMessage;
-    this.loadAllowedChats();
+    this.allowedChatIds = loadAllowedChats(this.dataDir);
   }
 
   /** Connect: validate token via getMe, start long polling */
@@ -68,7 +75,7 @@ export class TelegramBridge {
       this.botUser = me.result;
 
       // Re-load allowed chats in case config was updated while disconnected
-      this.loadAllowedChats();
+      this.allowedChatIds = loadAllowedChats(this.dataDir);
 
       this.state = "connected";
       logger.info(`[telegram] Connected as @${this.botUser!.username} (${this.botUser!.first_name})`);
@@ -127,6 +134,7 @@ export class TelegramBridge {
     botName: string | null;
     error: string | null;
     allowedChatIds: string[];
+    claimWindowMsRemaining: number;
   } {
     return {
       state: this.state,
@@ -134,13 +142,30 @@ export class TelegramBridge {
       botName: this.botUser?.first_name || null,
       error: this.lastError,
       allowedChatIds: [...this.allowedChatIds],
+      claimWindowMsRemaining: claimWindowRemainingMs(this.claimWindowExpiresAt, Date.now()),
     };
   }
 
-  /** Set which chat IDs can message the agent (empty = allow all) */
-  setAllowedChatIds(ids: string[]): void {
-    this.allowedChatIds = new Set(ids.map(String));
-    this.saveAllowedChats();
+  /** Set which chat IDs can message the agent. Empty list clears the owner,
+   *  which leaves the bot default-denied until someone claims it again. */
+  setAllowedChatIds(ids: string[]): string[] {
+    this.allowedChatIds = sanitizeChatIds(ids.map(String));
+    saveAllowedChats(this.dataDir, this.allowedChatIds);
+    if (this.allowedChatIds.size > 0) this.claimWindowExpiresAt = 0;
+    return [...this.allowedChatIds];
+  }
+
+  /** Open the owner-claim window: the next chat to message the bot becomes
+   *  its owner. Only meaningful while the bot is unowned — an owned bot
+   *  must be cleared first, so a claim window can never silently transfer
+   *  ownership away from the current owner. */
+  openOwnerClaimWindow(): { ok: boolean; msRemaining: number; error?: string } {
+    if (this.allowedChatIds.size > 0) {
+      return { ok: false, msRemaining: 0, error: "Bot already has an owner. Clear the owner first to re-claim." };
+    }
+    this.claimWindowExpiresAt = Date.now() + CLAIM_WINDOW_MS;
+    logger.info(`[telegram] Owner-claim window open for ${CLAIM_WINDOW_MS / 1000}s`);
+    return { ok: true, msRemaining: CLAIM_WINDOW_MS };
   }
 
   // ── Private ──
@@ -232,11 +257,18 @@ export class TelegramBridge {
     const from = msg.from;
     const senderName = [from?.first_name, from?.last_name].filter(Boolean).join(" ") || chatId;
 
-    // Security: require explicit owner configuration — no auto-lock to first message
-    if (this.allowedChatIds.size === 0 && !this.ownerVerified) {
-      logger.warn(`[telegram] Rejected message from ${chatId} (${senderName}) — no owner configured yet`);
-      await this.sendMessage(chatId, `This bot has no owner configured yet. Please set your chat ID in the web UI settings before using Telegram.`);
-      return;
+    // Unowned bot: claimable only inside an operator-opened window. Outside
+    // it we default-deny, so a bot whose handle leaked can't be taken over by
+    // whoever messages it first.
+    if (this.allowedChatIds.size === 0) {
+      if (claimWindowRemainingMs(this.claimWindowExpiresAt, Date.now()) === 0) {
+        logger.warn(`[telegram] Rejected message from ${chatId} (${senderName}) — bot is unowned and no claim window is open`);
+        await this.sendMessage(chatId, `This bot has no owner yet. Open Settings → Communication → Telegram, click "Claim ownership", then message the bot again within 2 minutes.`);
+        return;
+      }
+      this.setAllowedChatIds([chatId]);
+      logger.info(`[telegram] Owner claimed by chat ${chatId} (${senderName})`);
+      await this.sendMessage(chatId, `Locked to your account. Only you can use this bot now.`);
     }
 
     if (!this.allowedChatIds.has(chatId)) {
@@ -337,34 +369,5 @@ export class TelegramBridge {
     try { await reply.acknowledgeDelivery?.(delivered); }
     catch (error) { logger.error(`[telegram] Delivery acknowledgement failed for ${chatId}:`, (error as Error).message); }
     return delivered;
-  }
-
-  private loadAllowedChats(): void {
-    try {
-      const cfgPath = messagingChannelConfigPath(this.dataDir, "telegram");
-      if (existsSync(cfgPath)) {
-        const cfg = JSON.parse(readFileSync(cfgPath, "utf-8"));
-        if (Array.isArray(cfg.allowedChatIds) && cfg.allowedChatIds.length > 0) {
-          this.allowedChatIds = new Set(cfg.allowedChatIds.map(String));
-          this.ownerVerified = true;
-          logger.info(`[telegram] Loaded ${this.allowedChatIds.size} allowed chat(s) from config`);
-        }
-      }
-    } catch (e) {
-      logger.error("[telegram] Failed to load telegram-config.json:", (e as Error).message);
-      // Don't set ownerVerified — allow auto-lock to work on next message
-      // so the real owner can reclaim the bot after a config corruption
-    }
-  }
-
-  private saveAllowedChats(): void {
-    try {
-      writeFileSync(
-        messagingChannelConfigPath(this.dataDir, "telegram"),
-        JSON.stringify({ allowedChatIds: [...this.allowedChatIds] }, null, 2),
-      );
-    } catch (e) {
-      logger.error("[telegram] Failed to save config:", (e as Error).message);
-    }
   }
 }

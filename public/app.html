@@ -958,13 +958,29 @@
               <button class="action-btn" id="tg-disconnect-btn" onclick="tgDisconnect()" style="display:none">Disconnect</button>
             </div>
           </div>
+          <div id="tg-owner-box" style="display:none;margin:16px 0;padding:16px;border:1px solid var(--border);border-radius:8px">
+            <div style="font-family:var(--mono);font-size:.75rem;font-weight:600;margin-bottom:4px">Owner</div>
+            <div id="tg-owner-state" style="font-size:.72rem;color:var(--muted);margin-bottom:10px"></div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+              <button class="action-btn primary" id="tg-claim-btn" onclick="tgClaimOwner()">Claim ownership</button>
+              <button class="action-btn" id="tg-clear-owner-btn" onclick="tgClearOwner()" style="display:none;color:var(--danger)">Clear owner</button>
+            </div>
+            <div style="margin-top:10px">
+              <label style="font-size:.72rem;color:var(--muted);display:block;margin-bottom:4px">Or set the chat ID manually (from @userinfobot)</label>
+              <div style="display:flex;gap:8px">
+                <input class="field-input" id="tg-owner-input" type="text" inputmode="numeric" placeholder="e.g. 123456789" style="flex:1" autocomplete="off"/>
+                <button class="action-btn" onclick="tgSaveOwner()">Save</button>
+              </div>
+            </div>
+            <div id="tg-owner-error" style="display:none;color:var(--danger);font-size:.75rem;margin-top:8px"></div>
+          </div>
           <div class="section-title" style="margin-top:4px">Telegram Setup</div>
           <div style="font-size:.78rem;color:var(--muted);line-height:1.9">
             <div>1. Message <strong style="color:var(--text)">@BotFather</strong> on Telegram</div>
             <div>2. Send <strong style="color:var(--text)">/newbot</strong> and follow the prompts</div>
             <div>3. Copy the bot token and paste it above</div>
             <div>4. Click <strong style="color:var(--text)">Connect</strong></div>
-            <div>5. <strong style="color:var(--warn)">Immediately message your bot</strong> — the first person to message it becomes the owner. Nobody else will be able to use it after that.</div>
+            <div>5. Click <strong style="color:var(--warn)">Claim ownership</strong>, then message your bot within 2 minutes — that chat becomes the owner. Nobody else will be able to use it after that.</div>
             <div style="margin-top:6px;color:var(--accent)">Works on multiple devices simultaneously — no conflicts.</div>
           </div>
         </div>

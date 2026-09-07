@@ -131,7 +131,6 @@ describe("TelegramBridge.pollLoop — outage resilience (BR-4)", () => {
     const b = makeBridge();
     b.onMessage = onMessage;
     b.allowedChatIds = new Set(["42"]);
-    b.ownerVerified = true;
     const loop = b.pollLoop("TESTTOKEN");
     await vi.advanceTimersByTimeAsync(1_000);
     await loop;
@@ -154,7 +153,6 @@ describe("TelegramBridge inbound identity", () => {
     }) as any;
     bridge.state = "connected";
     bridge.allowedChatIds = new Set(["42"]);
-    bridge.ownerVerified = true;
     await bridge.handleUpdate({
       update_id: 991,
       message: { chat: { id: 42 }, from: { first_name: "Peter" }, text: "hello" },
@@ -176,7 +174,6 @@ describe("TelegramBridge inbound identity", () => {
     }) as any;
     bridge.state = "connected";
     bridge.allowedChatIds = new Set(["42"]);
-    bridge.ownerVerified = true;
     await bridge.handleUpdate({
       update_id: delivered ? 992 : 993,
       message: { chat: { id: 42 }, from: { first_name: "Peter" }, text: "hello" },
@@ -194,7 +191,6 @@ describe("TelegramBridge inbound identity", () => {
     }) as any;
     bridge.state = "connected";
     bridge.allowedChatIds = new Set(["42"]);
-    bridge.ownerVerified = true;
     const update = { update_id: 994, message: { chat: { id: 42 }, from: { first_name: "Peter" }, text: "hello" } };
     await bridge.handleUpdate(update, "TESTTOKEN");
     await bridge.handleUpdate(update, "TESTTOKEN");
@@ -213,7 +209,6 @@ describe("TelegramBridge inbound identity", () => {
     }) as any;
     bridge.state = "connected";
     bridge.allowedChatIds = new Set(["42"]);
-    bridge.ownerVerified = true;
     bridge.processingLock.add("42");
     const update = { update_id: 995, message: { chat: { id: 42 }, from: { first_name: "Peter" }, text: "make it blue" } };
     await expect(bridge.handleUpdate(update, "TESTTOKEN")).resolves.toBe(false);
@@ -238,7 +233,6 @@ describe("TelegramBridge inbound identity", () => {
       }) as any;
       bridge.state = "connected";
       bridge.allowedChatIds = new Set(["42"]);
-      bridge.ownerVerified = true;
       bridge.processingLock.add("42");
 
       await bridge.handleUpdate({
@@ -263,7 +257,6 @@ describe("TelegramBridge inbound identity", () => {
     }) as any;
     bridge.state = "connected";
     bridge.allowedChatIds = new Set(["42"]);
-    bridge.ownerVerified = true;
     bridge.processingLock.add("42");
 
     await bridge.handleUpdate({
@@ -283,7 +276,6 @@ describe("TelegramBridge inbound identity", () => {
     }) as any;
     bridge.state = "connected";
     bridge.allowedChatIds = new Set(["42"]);
-    bridge.ownerVerified = true;
     bridge.processingLock.add("42");
 
     await bridge.handleUpdate({

@@ -52,6 +52,14 @@ export function recordCostEvent(event: CanonicalEvent): void {
 			usage.usageOutputTokens,
 			undefined,
 			authSource,
+			// aggregateOpUsage already sums these across every op_turn; passing
+			// them is what makes the ledger's cost the op's real cost. sawAnyCache
+			// distinguishes "this transport reports no cache fields" from "zero
+			// cached tokens" — absent must not bill as zero on a path that simply
+			// never recorded them.
+			usage.sawAnyCache
+				? { readTokens: usage.cacheReadTokens, writeTokens: usage.cacheCreateTokens }
+				: undefined,
 		);
 	} catch (e) {
 		if (!warnedOnce) {

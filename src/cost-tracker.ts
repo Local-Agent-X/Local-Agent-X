@@ -46,6 +46,30 @@ export function getResolvedModel(): string | undefined {
 
 interface ModelPricing { input: number; output: number }
 
+// ── Cache pricing ──
+// Anthropic prices cached tokens as multipliers on the model's INPUT rate:
+// a cache read is ~0.1x, and a cache write is 1.25x at the default 5-minute
+// TTL (2x at 1h). Expressed as multipliers rather than two more columns on
+// every PRICING row because the ratio is a property of the API contract, not
+// of the model — a new model added to the table gets correct cache pricing
+// for free, and there is no second table to drift.
+//
+// This is why they must be billed at all: aggregateOpUsage already sums
+// cacheReadTokens / cacheCreateTokens per op, and trackUsage silently dropped
+// both. A real 160-turn chat op read 13.85M cached tokens and was recorded at
+// ~$19 instead of ~$27 — a 29% under-report, and structurally blind to the
+// one metric that reveals a broken cache breakpoint.
+const CACHE_READ_MULTIPLIER = 0.1;
+const CACHE_WRITE_MULTIPLIER = 1.25;
+
+/** Cached-token cost in USD for a model's resolved input rate. */
+function cacheCostUsd(pricing: ModelPricing, readTokens: number, writeTokens: number): number {
+  return (
+    readTokens * pricing.input * CACHE_READ_MULTIPLIER +
+    writeTokens * pricing.input * CACHE_WRITE_MULTIPLIER
+  ) / 1_000_000;
+}
+
 const PRICING: Record<string, ModelPricing> = {
   // Anthropic (dated + short aliases)
   "claude-sonnet-4-6": { input: 3, output: 15 },
@@ -158,6 +182,11 @@ export interface UsageRecord {
   costUsd: number;
   timestamp: number;
   agentId?: string;
+  /** Cached-prefix tokens, priced at CACHE_READ/WRITE_MULTIPLIER x input.
+   *  Optional because records written before cache billing existed have
+   *  neither — absent is not zero, and readers must not treat it as such. */
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
   /** How the credential was sourced. `oauth`/`sentinel` = $0 real cost; the
    *  USD spend cap bills only records where `isBillableSource` is true. */
   authSource?: CredentialSource;
@@ -204,12 +233,19 @@ export function trackUsage(
   outputTokens: number,
   agentId?: string,
   authSource?: CredentialSource,
+  cache?: { readTokens?: number; writeTokens?: number },
 ): UsageRecord {
   const { pricing, source } = resolvePricing(model);
-  const costUsd = (inputTokens * pricing.input + outputTokens * pricing.output) / 1_000_000;
+  const cacheReadTokens = cache?.readTokens ?? 0;
+  const cacheWriteTokens = cache?.writeTokens ?? 0;
+  const costUsd =
+    (inputTokens * pricing.input + outputTokens * pricing.output) / 1_000_000 +
+    cacheCostUsd(pricing, cacheReadTokens, cacheWriteTokens);
 
   const record: UsageRecord = {
     sessionId, model, provider, inputTokens, outputTokens,
+    ...(cacheReadTokens > 0 ? { cacheReadTokens } : {}),
+    ...(cacheWriteTokens > 0 ? { cacheWriteTokens } : {}),
     costUsd: Math.round(costUsd * 1_000_000) / 1_000_000, // 6 decimal places
     timestamp: Date.now(),
     agentId,

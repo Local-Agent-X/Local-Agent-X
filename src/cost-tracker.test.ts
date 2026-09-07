@@ -107,3 +107,44 @@ describe("getBillableCostForModelSince — per-model cap input", () => {
     expect(getBillableCostForModelSince("grok-4.3", Date.now() - 60_000)).toBeCloseTo(1.25, 2);
   });
 });
+
+describe("trackUsage — cached tokens are billed, not dropped", () => {
+  it("prices a cache read at 0.1x input and a cache write at 1.25x", () => {
+    // claude-opus-5: $5/1M input. 1M read = $0.50, 1M write = $6.25.
+    const rec = trackUsage("s", "claude-opus-5", "anthropic", 0, 0, undefined, "env", {
+      readTokens: 1_000_000,
+      writeTokens: 1_000_000,
+    });
+    expect(rec.costUsd).toBeCloseTo(6.75, 4);
+    expect(rec.cacheReadTokens).toBe(1_000_000);
+    expect(rec.cacheWriteTokens).toBe(1_000_000);
+  });
+
+  it("adds cache cost on top of input+output rather than replacing it", () => {
+    const plain = trackUsage("s", "claude-opus-5", "anthropic", 1_000_000, 0, undefined, "env");
+    const cached = trackUsage("s", "claude-opus-5", "anthropic", 1_000_000, 0, undefined, "env", {
+      readTokens: 1_000_000,
+    });
+    expect(plain.costUsd).toBeCloseTo(5, 4);
+    expect(cached.costUsd).toBeCloseTo(5.5, 4);
+  });
+
+  it("omits the fields entirely when no cache tokens were reported", () => {
+    // Absent must not read back as zero: a transport that reports no cache
+    // fields is not the same as one that cached nothing.
+    const rec = trackUsage("s", "claude-opus-5", "anthropic", 100, 10, undefined, "env");
+    expect(rec.cacheReadTokens).toBeUndefined();
+    expect(rec.cacheWriteTokens).toBeUndefined();
+  });
+
+  it("reproduces the under-reported real op: 29% low before cache billing", () => {
+    // op_chat_turn_4808572060514f75 — 160 turns on claude-opus-5.
+    const rec = trackUsage("s", "claude-opus-5", "anthropic", 3_521_884, 62_062, undefined, "env", {
+      readTokens: 13_854_780,
+      writeTokens: 145_630,
+    });
+    const withoutCache = (3_521_884 * 5 + 62_062 * 25) / 1_000_000;
+    expect(withoutCache).toBeCloseTo(19.16, 2);   // what the ledger used to record
+    expect(rec.costUsd).toBeCloseTo(27.00, 2);    // what the op actually cost
+  });
+});

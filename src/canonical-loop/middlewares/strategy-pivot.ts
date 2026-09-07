@@ -59,7 +59,15 @@ export function _resetPersistedPivotRestores(): void {
 // 11 (strong) where the pre-ceiling guard nudged it and let it finish. Those
 // pivots are still offered, but only a pivot the deferred cycle detector armed
 // (agent-guards loop-detection.ts, `pendingPivotFromCycle`) advances the
-// count: the livelock is a multi-step CIRCLE, and a poll is not.
+// count: the livelock is a multi-step CIRCLE, and a poll is not. That flag
+// lives for exactly one call: checkToolLoops sets it and the middleware's
+// afterModelCall consumes it (middlewares/loop-detection.ts consumePivot)
+// before returning — no other phase ever reads it true.
+//
+// One pivot per turn, whichever detector armed it: every offer stamps
+// `lastPivotTurn`, and afterToolExecution will not offer a second pivot on a
+// turn that already carries one — a non-cycle pivot offered at beforeTurn
+// still stops the post-dispatch re-arm from piling on in the same turn.
 //
 // State lives in the per-op middleware registry (state.ts), cleared on the
 // op's terminal hook; a process restart starts the count over, which errs

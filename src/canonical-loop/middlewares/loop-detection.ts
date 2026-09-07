@@ -108,7 +108,11 @@ export const loopDetectionMiddleware: CanonicalMiddleware = {
     // pivot in checkToolLoops; offer it now, before this turn's tools run —
     // the post-dispatch path below would drop it on a write turn, because a
     // fresh mutation target clears the pending pivot as "progress". This is
-    // the one site whose pivots advance the ceiling (pendingPivotFromCycle).
+    // the one site whose pivots advance the ceiling: `pendingPivotFromCycle`
+    // is set by the cycle detector inside the checkToolLoops call above and
+    // consumed by consumePivot right here, in the same afterModelCall. The
+    // resets in agent-guards noteToolResults run after this and never observe
+    // it true; beforeTurn and afterToolExecution only ever consume `false`.
     if (!nudgeOnly && state.pendingStrategyPivot) {
       const pattern = state.pendingStrategyPivot;
       return offerPivot(ctx, pattern, consumePivot(state));

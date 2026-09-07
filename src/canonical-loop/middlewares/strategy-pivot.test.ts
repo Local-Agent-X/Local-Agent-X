@@ -7,7 +7,7 @@ const forceCompactNext = vi.hoisted(() => vi.fn());
 vi.mock("../store.js", () => ({ readOpMessages: () => rows }));
 vi.mock("../turn-loop/compact-history.js", () => ({ forceCompactNext }));
 
-import { _resetPersistedPivotRestores, autonomousStrategyPivot, restorePersistedPivot } from "./strategy-pivot.js";
+import { _resetPersistedPivotRestores, autonomousStrategyPivot, createPivotCeilingState, restorePersistedPivot, workerStrategyPivot } from "./strategy-pivot.js";
 import { makeCanonicalLoopContext } from "./ctx.test-helper.js";
 
 function ctx(toolNames: string[] = []): CanonicalLoopContext {
@@ -72,5 +72,23 @@ describe("autonomous strategy pivots", () => {
     expect(rows).toHaveLength(1);
     expect(forceCompactNext).toHaveBeenCalledWith("pivot-op");
     expect(forceCompactNext).toHaveBeenCalledTimes(1);
+  });
+});
+
+// Every offer stamps lastPivotTurn — the ceiling guard's "one pivot per turn"
+// is keyed on it for cycle AND non-cycle pivots alike.
+describe("workerStrategyPivot — every offer stamps lastPivotTurn", () => {
+  beforeEach(() => { rows.length = 0; _resetPersistedPivotRestores(); });
+
+  it.each([
+    { fromCycle: false, offered: 0 },
+    { fromCycle: true, offered: 1 },
+  ])("fromCycle=$fromCycle: lastPivotTurn becomes the turn; offered advances to $offered", ({ fromCycle, offered }) => {
+    const ceiling = createPivotCeilingState();
+    expect(ceiling.lastPivotTurn).toBe(-1);
+    const verdict = workerStrategyPivot(ctx(), ceiling, "exact-repeat", { fromCycle });
+    expect(verdict.kind).toBe("nudge");
+    expect(ceiling.lastPivotTurn).toBe(9);
+    expect(ceiling.offered).toBe(offered);
   });
 });

@@ -26,11 +26,6 @@ export function buildApprovalContext(toolName: string, args: Record<string, unkn
       }
       if (a === "navigate") return `Open website: ${args.url || ""}`;
       if (a === "evaluate") return `Run script in browser: ${String(args.script || "").slice(0, 80)}`;
-      if (a === "emulate") {
-        const device = args.device ? String(args.device) : "";
-        const size = args.viewport_width && args.viewport_height ? `${args.viewport_width}x${args.viewport_height}` : "";
-        return `Re-open this page in an emulated browser${device || size ? ` (${[device, size].filter(Boolean).join(" ")})` : ""} — a fresh context, so the current login is dropped`;
-      }
       return `Browser: ${a}`;
     }
     case "http_request":

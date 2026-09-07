@@ -6,7 +6,6 @@ import { ElectronInAppBackend } from "./in-app-backend.js";
 import { sessionIdFromViewId, setAgentViewClosedHandler } from "./bridge-perception.js";
 import { resolveBrowserSessionId } from "./session-owner-registry.js";
 import { closeSharedBrowser, forceKillSharedBrowser } from "./runtime.js";
-import { clearSessionEmulation } from "./emulation.js";
 import { desktopBridgeAvailable } from "../desktop-bridge.js";
 import { getRuntimeConfig } from "../config.js";
 import { createLogger } from "../logger.js";
@@ -280,9 +279,6 @@ export function getCdpBrowserManager(sessionId: string = "default"): BrowserMana
 export async function closeBrowser(sessionId: string = "default"): Promise<void> {
 	const key = resolveBrowserSessionId(sessionId || "default");
 	routeReported.delete(key);
-	// Device emulation dies with the session: a reused session id must never
-	// inherit the previous session's phone viewport / spoofed user agent.
-	clearSessionEmulation(key);
 	// A session can (rarely) have entries of both kinds — e.g. the mode flipped
 	// mid-session. Close whichever exist.
 	const inApp = inAppBackends.get(key);

@@ -24,7 +24,6 @@ import { createLogger } from "../logger.js";
 import { getLaxDir } from "../lax-data-dir.js";
 import type { BrowserMode } from "../types.js";
 import { installContinuityCacheRestore, persistContinuityCacheState } from "./continuity-cache.js";
-import { getSessionEmulation } from "./emulation.js";
 import { getBrowserNativeDownloadDir, resetBrowserNativeDownloadDir } from "./download-paths.js";
 
 const log = createLogger("browser.runtime");
@@ -44,11 +43,6 @@ let proxyServer: string | null = null;
 let launching: Promise<Browser> | null = null;
 let contextCreationTail: Promise<void> = Promise.resolve();
 const contextDownloadSessions = new WeakMap<BrowserContext, CDPSession>();
-// Contexts minted with a device-emulation profile. They are ALWAYS ephemeral
-// and session-private (see acquireSessionContext), so release closes them
-// whatever the session's nominal mode says — an emulated context must never be
-// left open on the advanced-shared early return.
-const emulatedContexts = new WeakSet<BrowserContext>();
 
 export function createQuarantinedChromiumContext(
   browserInstance: Browser,
@@ -208,20 +202,6 @@ export async function acquireSessionContext(
   userDataDir?: string,
 ): Promise<BrowserContext> {
   const b = await getSharedBrowser(engine, userDataDir);
-  // Device emulation (browser tool `emulate`) FORCES an ephemeral, quarantined,
-  // session-private context regardless of the session's mode. viewport /
-  // userAgent / isMobile / hasTouch / deviceScaleFactor are context-CREATION
-  // options in Playwright, so emulation cannot be applied to a live context —
-  // and applying it to the shared or continuity context would silently re-size
-  // and re-UA every OTHER session drawing from that same jar. Chromium only:
-  // isMobile is unsupported on firefox/webkit, and the tool layer refuses
-  // there rather than minting a context that would throw here.
-  const emulation = engine === "chromium" ? getSessionEmulation(ownerId) : undefined;
-  if (emulation) {
-    const context = await createQuarantinedChromiumContext(b, { ...CONTEXT_OPTS(engine), ...emulation });
-    emulatedContexts.add(context);
-    return context;
-  }
   // "in-app" reaching the CDP runtime means a session that WANTED the embedded
   // WebContentsView backend fell back to CDP (headless/CI/no desktop bridge —
   // see instance.resolveBrowserBackendKind). The safest CDP interpretation is
@@ -273,13 +253,6 @@ export async function releaseSessionContext(
   context: BrowserContext,
   mode: BrowserMode,
 ): Promise<void> {
-  // Emulated contexts are per-session and ephemeral by construction — close
-  // them before the mode-based branches, which would otherwise hand an
-  // advanced-shared session's emulated context back to the shared-jar branch.
-  if (emulatedContexts.has(context)) {
-    await context.close();
-    return;
-  }
   if (mode === "advanced-shared") return;
   if (mode === "continuity") {
     const operation = continuityTransition.then(async () => {

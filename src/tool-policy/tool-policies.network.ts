@@ -18,12 +18,6 @@ export const TOOL_POLICIES_NETWORK: Record<string, ToolPolicyEntry> = {
     kernel: "http", risk: "network-read",
     rules: [
       { id: "flag-browser-evaluate", action: "evaluate", decision: "allow", reason: "Browser JS evaluation — autonomous by default (guarded by CSP, sensitive-page gating at the browser-tool layer, and the read-into-context blocklist — not a per-call modal). Rule kept so the supervised-mode layer can re-arm a confirm.", priority: 100 },
-      // No per-action rule for `emulate` or `layout_report`: both fall to
-      // allow-browser below (which matches every action), which is the intended
-      // decision. emulate only re-opens the CURRENT url in an isolated context
-      // and layout_report is a fixed read-only measurement — neither warrants a
-      // per-call modal, and both are already gated where it matters (in-app
-      // refusal, sensitive-page approval, human-verification block).
       { id: "allow-browser", decision: "allow", reason: "Browser allowed (paced + no-progress guarded)", priority: 40, constraints: { maxCallsPerSession: 100 } },
     ],
   },

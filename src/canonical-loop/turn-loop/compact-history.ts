@@ -17,7 +17,7 @@ import { turnCompactionKeepLast } from "../../context-manager/compaction-policy.
 import { resolveAnthropicTransport } from "../../context-manager/resolve-transport.js";
 import type { TokenAnchor } from "../../context-manager/token-estimation.js";
 import { summarizeOldMessages } from "../../context-manager/compaction.js";
-import { reusableSummary, storeSummary } from "./compact-summary-cache.js";
+import { clearSummaryCache, reusableSummary, storeSummary } from "./compact-summary-cache.js";
 import {
   breakerGate,
   consumeForcedCompaction,
@@ -198,7 +198,14 @@ export async function compactHistory(
   // splitIdx just stay verbatim — so index 0 is byte-identical until the head
   // has grown past TURN_SUMMARY_REFRESH_MIN_GROWTH. Callers without an opId
   // (direct/test) are stateless as before.
-  const reuse = opId ? reusableSummary(opId, messages, splitIdx) : null;
+  // NEVER reuse on a forced pass. `forced` means the provider already rejected
+  // this conversation as over-window (adapter-throw-recovery.ts), and the retry
+  // deliberately appends nothing — so a pinned boundary would rebuild the exact
+  // view that just overflowed, the aggressive keep tier would be discarded, and
+  // the retry cap would exhaust on identical payloads. Drop the entry too, so the
+  // next turn re-pins from the smaller head instead of restoring the old one.
+  if (forced && opId) clearSummaryCache(opId);
+  const reuse = opId && !forced ? reusableSummary(opId, messages, splitIdx) : null;
   const summarizedCount = reuse ? reuse.covered : splitIdx;
   const head = messages.slice(0, summarizedCount);
   const recent = messages.slice(summarizedCount);

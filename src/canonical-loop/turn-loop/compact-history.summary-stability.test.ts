@@ -22,7 +22,7 @@ vi.mock("../../context-manager/resolve-transport.js", () => ({ resolveAnthropicT
 const loggerMock = vi.hoisted(() => ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }));
 vi.mock("../../logger.js", () => ({ createLogger: () => loggerMock }));
 
-import { compactHistory } from "./compact-history.js";
+import { compactHistory, forceCompactNext } from "./compact-history.js";
 import { clearSummaryCache } from "./compact-summary-cache.js";
 import { canonicalToTransport } from "../adapters/canonical-to-transport.js";
 import { markConversationCache } from "../../anthropic-client/cache-breakpoints.js";
@@ -151,6 +151,29 @@ describe("compactHistory — summary stability across consecutive compacted turn
   it("never reuses a summary across ops (per-op key, hash-verified head)", async () => {
     await compactHistory(historyAt(0), MODEL, null, "op-A");
     await compactHistory(historyAt(0), MODEL, null, "op-B");
+    expect(mockSummarize).toHaveBeenCalledTimes(2);
+  });
+
+  // Overflow recovery: the provider rejected the conversation as over-window and
+  // adapter-throw-recovery retries WITHOUT appending anything. A pinned boundary
+  // would rebuild the identical view that just overflowed and the retry cap would
+  // exhaust on identical payloads, so a forced pass must never reuse.
+  it("ignores the pin on a forced pass, so an overflow retry actually shrinks", async () => {
+    const history = historyAt(0);
+    const normal = await compactHistory(history, MODEL, null, OP);
+    expect(normal.compacted).toBe(true);
+
+    // Same history, nothing appended — exactly what the overflow retry re-sends.
+    forceCompactNext(OP);
+    const retry = await compactHistory(history, MODEL, null, OP);
+    expect(retry.compacted).toBe(true);
+    expect(retry.messages.length).toBeLessThan(normal.messages.length);
+    expect(JSON.stringify(retry.messages)).not.toBe(JSON.stringify(normal.messages));
+
+    // The forced pass re-summarized rather than reusing the pin — that is what
+    // makes the retry a different payload. (The turn AFTER a forced pass goes
+    // back to the normal keep tier; the tier is a function of context pressure,
+    // not of the pin, so its row count legitimately returns to the wider view.)
     expect(mockSummarize).toHaveBeenCalledTimes(2);
   });
 

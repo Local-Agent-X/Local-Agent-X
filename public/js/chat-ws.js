@@ -133,15 +133,16 @@ setInterval(function() {
   // another page and come back" — bg_op_progress events landed server-side
   // but the bubble wasn't repainting until route re-entry. reconnect_op
   // replays the missed events on the same wire chat-turn replays use.
-  // Skips terminal states (completed/failed/cancelled).
+  // Skips terminal states — isTerminalStatus (chat-agent-feeds-render.js) is
+  // the one status set; an inline list here missed `partial` and replayed a
+  // checkpoint-stopped card via reconnect_op every 15s forever.
   if (typeof agentFeedsData === 'object' && agentFeedsData) {
     var workerIds = Object.keys(agentFeedsData);
     for (var i = 0; i < workerIds.length; i++) {
       var wid = workerIds[i];
       var w = agentFeedsData[wid];
       if (!w || !w.sessionId) continue;
-      var ws = (w.status || '').toLowerCase();
-      if (ws === 'completed' || ws === 'failed' || ws === 'cancelled') continue;
+      if (isTerminalStatus(w.status)) continue;
       var wLast = w.lastActivityMs || 0;
       if (wLast === 0 || now - wLast < STUCK_WORKER_REPLAY_THRESHOLD_MS) continue;
       console.warn('[ws] Stuck worker detected for opId=' + wid + ' (no events for ' + Math.round((now - wLast) / 1000) + 's) — replaying via reconnect_op');
@@ -194,8 +195,7 @@ function connectChatWs() {
       for (var wi = 0; wi < wIds.length; wi++) {
         var w = agentFeedsData[wIds[wi]];
         if (!w || !w.sessionId) continue;
-        var wStatus = (w.status || '').toLowerCase();
-        if (wStatus === 'completed' || wStatus === 'failed' || wStatus === 'cancelled') continue;
+        if (isTerminalStatus(w.status)) continue;
         try {
           chatWs.send(JSON.stringify({
             type: 'reconnect_op',

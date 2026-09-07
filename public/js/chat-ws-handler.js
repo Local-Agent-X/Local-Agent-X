@@ -202,6 +202,10 @@ function handleInjectConsumed(msg) {
 //      went out while this client wasn't subscribed (page reload, server
 //      restart, leave-and-back). Any chip keyed to this session whose opId
 //      isn't in liveOpIds is server-confirmed terminal — flip it to done.
+//      "Already terminal" is isTerminalStatus (chat-agent-feeds-render.js),
+//      the ONE status set: a `partial` card (checkpoint stop, released on
+//      terminal so never live) used to miss an inline done/failed/cancelled
+//      list here and was re-labelled "done" on every reconnect.
 //   2. Chat messages missing — selectChat lazy-hydrates on click, but a user
 //      sitting on the chat at WS-(re)connect time never triggers selectChat
 //      and stays on the stale localStorage copy. Force a hydrate when
@@ -224,7 +228,7 @@ function reconcileSessionSnapshot(msg) {
         const data = agentFeedsData[opId];
         if (!data || data.sessionId !== sessionId) continue;
         if (liveSet.has(opId)) continue;
-        if (data.status === 'done' || data.status === 'failed' || data.status === 'cancelled') continue;
+        if (isTerminalStatus(data.status)) continue;
         if (typeof updateAgentFeed === 'function') updateAgentFeed(opId, { status: 'done' });
       }
     }

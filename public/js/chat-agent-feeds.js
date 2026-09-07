@@ -323,8 +323,7 @@ setInterval(function() {
     var id = ids[i];
     var d = agentFeedsData[id];
     if (!d) continue;
-    var s = (d.status || '').toLowerCase();
-    if (s === 'completed' || s === 'failed' || s === 'cancelled') continue;
+    if (isTerminalStatus(d.status)) continue; // the one status set (chat-agent-feeds-render.js)
     var card = document.getElementById('agent-card-' + id);
     if (!card) continue;
     var output = d.output || '';

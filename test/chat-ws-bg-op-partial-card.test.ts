@@ -149,3 +149,111 @@ describe("the CSS carries a partial rule distinct from failed and cancelled", ()
     expect(css).toMatch(/\.agent-feed-card\.partial \.agent-status-dot\{background:var\(--warn\)/);
   });
 });
+
+// ── Reconnect must not re-label a partial card ─────────────────────────────
+//
+// A checkpoint-stopped op is released from its session on terminal, so it is
+// never in `session_snapshot.liveOpIds` — and that snapshot is sent on EVERY
+// subscribe (chat-ws/message-router.ts). reconcileSessionSnapshot used to skip
+// only an inline done/failed/cancelled list, so every reconnect flipped a
+// `partial` card to "done" (and the stuck-worker watchdog + onopen replay in
+// chat-ws.js kept firing reconnect_op for it forever). All four sites now read
+// the ONE terminal set, isTerminalStatus (chat-agent-feeds-render.js).
+const handlerSource = readFileSync(join(process.cwd(), "public/js/chat-ws-handler.js"), "utf8");
+const wsSource = readFileSync(join(process.cwd(), "public/js/chat-ws.js"), "utf8");
+
+type Feed = Record<string, Record<string, unknown>>;
+
+function loadHandler(agentFeedsData: Feed) {
+  const updateAgentFeed = vi.fn();
+  const factory = new Function("agentFeedsData", "updateAgentFeed", `
+    var window = {};
+    ${escSource}
+    ${renderSource}
+    ${handlerSource}
+    return { reconcileSessionSnapshot };
+  `);
+  const api = factory(agentFeedsData, updateAgentFeed) as { reconcileSessionSnapshot: (msg: unknown) => void };
+  return { ...api, updateAgentFeed };
+}
+
+function loadWs(agentFeedsData: Feed) {
+  const sockets: Array<{ sent: string[]; onopen: (() => void) | null }> = [];
+  class FakeWebSocket {
+    static OPEN = 1;
+    readyState = 1;
+    sent: string[] = [];
+    onopen: (() => void) | null = null;
+    onmessage: unknown = null;
+    onclose: unknown = null;
+    onerror: unknown = null;
+    constructor() { sockets.push(this); }
+    send(s: string) { this.sent.push(s); }
+    close() { /* never */ }
+  }
+  const intervals: Array<{ fn: () => void; ms: number }> = [];
+  const factory = new Function(
+    "WebSocket", "agentFeedsData", "setInterval", "setTimeout", "location", "window",
+    "ChatStreamStore", "AUTH_TOKEN", "API", "activeChat", "handleChatWsMessage", "rediscoverPendingApprovals",
+    `
+    ${escSource}
+    ${renderSource}
+    ${wsSource}
+    return { connectChatWs };
+    `,
+  );
+  const api = factory(
+    FakeWebSocket, agentFeedsData,
+    (fn: () => void, ms: number) => { intervals.push({ fn, ms }); return 0; },
+    () => 0,
+    { host: "localhost" }, {},
+    { inflightOps: () => [], bumpActivity: () => {}, endTurn: () => {} },
+    "tok", "", null, () => {}, () => Promise.resolve(),
+  ) as { connectChatWs: () => void };
+  const watchdog = intervals.find((i) => i.ms === 15_000)!;
+  return { ...api, sockets, watchdog };
+}
+
+const frames = (sent: string[]) => sent.map((s) => JSON.parse(s) as { type: string; opId?: string });
+
+describe("session_snapshot reconcile — a partial card that is not live stays partial", () => {
+  it("leaves partial (and every other terminal status) alone; a stale working card is still flipped to done", () => {
+    const feeds: Feed = {
+      opPartial: { sessionId: "chat-1", status: "partial" },
+      opWorking: { sessionId: "chat-1", status: "working" },
+      opDone: { sessionId: "chat-1", status: "done" },
+      opOtherSession: { sessionId: "chat-2", status: "working" },
+    };
+    const h = loadHandler(feeds);
+    h.reconcileSessionSnapshot({ sessionId: "chat-1", liveOpIds: [] });
+    expect(h.updateAgentFeed).toHaveBeenCalledTimes(1);
+    expect(h.updateAgentFeed).toHaveBeenCalledWith("opWorking", { status: "done" });
+  });
+});
+
+describe("chat-ws.js — a partial card is never replayed via reconnect_op", () => {
+  const stale = Date.now() - 10 * 60_000;
+  const feeds = (): Feed => ({
+    opPartial: { sessionId: "chat-1", status: "partial", lastActivityMs: stale },
+    opWorking: { sessionId: "chat-1", status: "working", lastActivityMs: stale },
+  });
+
+  it("the stuck-worker watchdog skips the partial card and replays only the working one", () => {
+    const w = loadWs(feeds());
+    w.connectChatWs();
+    const ws = w.sockets[0];
+    ws.sent.length = 0;
+    w.watchdog.fn();
+    const replayed = frames(ws.sent).filter((f) => f.type === "reconnect_op").map((f) => f.opId);
+    expect(replayed).toEqual(["opWorking"]);
+  });
+
+  it("the onopen non-terminal replay skips the partial card too", () => {
+    const w = loadWs(feeds());
+    w.connectChatWs();
+    const ws = w.sockets[0];
+    ws.onopen!();
+    const replayed = frames(ws.sent).filter((f) => f.type === "reconnect_op").map((f) => f.opId);
+    expect(replayed).toEqual(["opWorking"]);
+  });
+});

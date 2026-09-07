@@ -35,9 +35,15 @@ export class WsSocketAdapter implements SocketAdapter {
   private closed = false;
   private heartbeat: ReturnType<typeof setInterval> | null = null;
   private awaitingPong = false;
+  /** When the socket reached OPEN, so a close can report how long it survived.
+   *  0 means it never opened (dial refused) — a different failure than a drop. */
+  private openedAt = 0;
 
   constructor(private readonly ws: WebSocket) {
-    ws.on("open", () => this.startHeartbeat());
+    ws.on("open", () => {
+      this.openedAt = Date.now();
+      this.startHeartbeat();
+    });
     ws.on("pong", () => {
       this.awaitingPong = false;
     });
@@ -111,7 +117,15 @@ export class WsSocketAdapter implements SocketAdapter {
   onClose(handler: (code: number, reason: string) => void): void {
     this.ws.on("close", (code: number, reason: Buffer) => {
       this.closed = true;
-      handler(code, reason.toString());
+      const text = reason.toString();
+      // The code is the ONLY thing that distinguishes a broker-initiated hangup
+      // (1001 going-away / DO eviction, 1011 internal, 1012 restart) from a path
+      // death (1006, no close frame) — and BrokerClient discards it on the
+      // non-auth branch. Log it here, at the one place that still has it.
+      logger.info(
+        `[broker-transport] socket closed after ${Math.round((Date.now() - this.openedAt) / 1000)}s: code=${code}${text ? ` reason=${text}` : ""}${this.openedAt === 0 ? " (never opened)" : ""}`,
+      );
+      handler(code, text);
     });
     // A transport error (DNS, refused, TLS) without a clean close still has to wake
     // BrokerClient so the UI never hangs. `ws` always fires "close" AFTER "error", so

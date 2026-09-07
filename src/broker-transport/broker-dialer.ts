@@ -35,6 +35,11 @@ const TERMINAL_AUTH_CODES = new Set<BrokerErrorCode>([
  *  wait forever (that would be a silent hang). */
 export const ICE_GRACE_MS = 2000;
 
+/** An IceServer's urls field is a single string or a list; normalize to a list. */
+function urlsOf(server: IceServer): string[] {
+  return typeof server.urls === "string" ? [server.urls] : server.urls;
+}
+
 /** An inbound remote ICE candidate, normalized from the broker's ice signal — the shape
  *  both the voice peer and the screen session consume. */
 export interface RemoteIceCandidate {
@@ -90,7 +95,7 @@ export abstract class BrokerDialer {
       // Phone left (or the broker re-fired our lifecycle on its reconnect): rebuild the
       // payload, KEEP the socket. A dropped OWN socket is onClosed → full teardown. The
       // broker evicts any stale slot so re-dials never role_taken.
-      onPeerLeft: () => this.prepareRebuild(),
+      onPeerLeft: () => this.onPeerLeft(),
       onClosed: () => this.teardown(),
       onError: (code, message) => {
         logger.warn(`[broker-transport] ${this.logLabel}broker error (${code}): ${message}`);
@@ -122,6 +127,7 @@ export abstract class BrokerDialer {
 
   private onPeerPresent(): void {
     this.peerPresent = true;
+    logger.info(`[broker-transport] ${this.logLabel}peer present — waiting for ice-servers`);
     this.maybeStart();
     // Arm a fallback so a TURN-less broker (no ice-servers frame) still starts.
     if (!this.started && this.graceTimer === null) {
@@ -135,6 +141,19 @@ export abstract class BrokerDialer {
 
   private onIceServers(servers: IceServer[]): void {
     this.iceServers = servers;
+    // Relay-capable means at least one turn:/turns: URL — the only kind that works
+    // when both peers are behind CGNAT (phone on cellular). STUN-only ICE reaches a
+    // symmetric NAT and stops. Log the shape, never the short-lived credential.
+    const relay = servers.filter(s => urlsOf(s).some(u => /^turns?:/i.test(u))).length;
+    const late = this.started ? " AFTER the peer already started (host/STUN-only)" : "";
+    logger.info(
+      `[broker-transport] ${this.logLabel}ice-servers: ${servers.length} server(s), ${relay} relay-capable${late}`,
+    );
+    if (relay === 0) {
+      logger.warn(
+        `[broker-transport] ${this.logLabel}no TURN relay in ice-servers — direct P2P only; this fails on cellular/CGNAT`,
+      );
+    }
     this.maybeStart();
   }
 
@@ -183,12 +202,20 @@ export abstract class BrokerDialer {
 
   /** Phone left the rendezvous (genuinely left, or reconnected → the broker re-fired our
    *  lifecycle): drop the stale payload + reset so the following peer-present rebuilds on
-   *  the re-minted ICE. KEEP the socket (a dropped socket is the separate teardown path). */
-  private prepareRebuild(): void {
-    if (this.stopped || !this.started) return;
+   *  the re-minted ICE. KEEP the socket (a dropped socket is the separate teardown path).
+   *
+   *  Runs even when nothing started yet. A phone that switches Wi-Fi↔cellular leaves
+   *  DURING the ICE grace window; leaving that timer armed force-starts a session with
+   *  no peer, which latches `started` — and because both start paths are gated on
+   *  `!started`, every subsequent rejoin is then silently ignored until LAX restarts. */
+  private onPeerLeft(): void {
+    if (this.stopped) return;
+    this.clearGrace();
+    this.peerPresent = false;
+    this.iceServers = []; // the broker's re-mint refills this before we rebuild
+    if (!this.started) return;
     this.onRebuild();
     this.started = false;
-    this.iceServers = []; // the broker's re-mint refills this before we rebuild
   }
 
   protected teardown(): void {

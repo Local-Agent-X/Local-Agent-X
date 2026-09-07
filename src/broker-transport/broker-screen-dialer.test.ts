@@ -113,6 +113,31 @@ describe("BrokerScreenDialer — start trigger", () => {
     expect(session.frames.filter((f) => f.type === "rtc_start")).toHaveLength(1);
   });
 
+  // A phone that switches Wi-Fi↔cellular leaves DURING the 2s ICE grace window. The
+  // grace timer used to survive peer-left and force-start a session with nobody there,
+  // latching `started` — after which every rejoin was silently ignored (maybeStart and
+  // the grace-arm are both gated on !started) and only a LAX restart recovered.
+  it("a peer leaving during the ICE grace window does not force-start a phantom session", () => {
+    const { socket, session } = makeDialer();
+    socket.deliver({ type: "joined", role: "desktop", peerPresent: true });
+    socket.deliver({ type: "peer-left" });
+    vi.advanceTimersByTime(2000);
+    expect(session.types).not.toContain("rtc_start");
+  });
+
+  it("still starts when the phone comes back after leaving during the grace window", () => {
+    const { socket, session } = makeDialer();
+    socket.deliver({ type: "joined", role: "desktop", peerPresent: true });
+    socket.deliver({ type: "peer-left" });
+    vi.advanceTimersByTime(2000);
+    expect(session.types).toEqual([]); // nothing started while the peer was away
+
+    socket.deliver({ type: "peer-joined" });
+    socket.deliver({ type: "ice-servers", iceServers: TURN, ttlSeconds: 300 });
+
+    expect(session.frames.filter((f) => f.type === "rtc_start")).toHaveLength(1);
+  });
+
   it("starts STUN/host-only after the grace window when a TURN-less broker sends no ice-servers", () => {
     const { socket, session, getOpts } = makeDialer();
     socket.deliver({ type: "joined", role: "desktop", peerPresent: true });

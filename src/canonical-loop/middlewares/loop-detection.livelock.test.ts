@@ -33,12 +33,19 @@ interface Replay {
   turns: number;
 }
 
+/** loopGuardTier: opus → strong (repeat limit 3, cycle needs 3 laps); a 32B
+ *  local model → medium (2 and 2). The pivot cadence differs per tier, so
+ *  every bound below is measured on both. */
+const TIER_MODELS = { strong: "claude-opus-4-8", medium: "qwen3:32b" } as const;
+type Tier = keyof typeof TIER_MODELS;
+
 async function replay(
   shapes: readonly string[],
   lane: "build" | "background",
   result: (turn: number) => string,
   args: (turn: number, call: number) => Record<string, unknown> = (i, j) =>
     ({ path: `/w/_scratch-${i}-${j}.html`, url: `https://x/${i}` }),
+  opts: { tier?: Tier; status?: (turn: number) => "ok" | "error" } = {},
 ): Promise<Replay> {
   const opId = `op-livelock-${++seq}`;
   let pivots = 0;
@@ -47,10 +54,10 @@ async function replay(
     const toolCalls = names.map((tool, j) => ({ toolCallId: `t${i}-${j}`, tool, args: args(i, j) }));
     const ctx = makeCanonicalLoopContext({
       op: { id: opId, lane },
-      model: "claude-opus-4-8",
+      model: TIER_MODELS[opts.tier ?? "strong"],
       turnIdx: i,
       toolCalls,
-      toolResults: toolCalls.map((tc) => ({ toolName: tc.tool, toolCallId: tc.toolCallId, content: result(i), status: "ok" as const })),
+      toolResults: toolCalls.map((tc) => ({ toolName: tc.tool, toolCallId: tc.toolCallId, content: result(i), status: opts.status?.(i) ?? ("ok" as const) })),
       toolNames: new Set<string>(),
       onEvent: () => {},
     });
@@ -87,6 +94,51 @@ describe("worker-lane strategy pivot ceiling — the recorded livelock ends at a
   it("write-only work with distinct files and a constant 'ok' never aborts — no cycle in a constant shape", async () => {
     const shapes = Array.from({ length: 200 }, () => "write");
     const run = await replay(shapes, "build", () => "ok", (i) => ({ path: `/w/file-${i}.ts`, content: `v${i}` }));
+    expect(run.abortedAt).toBeNull();
+    expect(run.pivots).toBe(0);
+  });
+
+  // The ceiling counts CYCLE-armed pivots only. Exact-repeat arms a pivot
+  // every turn on medium tiers (every other turn on strong) whenever the same
+  // call keeps returning the same bytes — which is precisely what a correct
+  // poll or a rate-limited retry looks like — and an identical or error-status
+  // result never counts as novel. Counting those pivots aborted a worker doing
+  // the RIGHT thing at turn 6 (medium) / 11 (strong); the pre-ceiling guard
+  // nudged the same traces and let them finish.
+  const LANES = ["build", "background"] as const;
+  const MATRIX = LANES.flatMap((lane) => (["strong", "medium"] as Tier[]).map((tier) => ({ lane, tier })));
+  const pollArgs = () => ({ method: "GET", url: "https://api.example.test/jobs/123" });
+
+  it.each(MATRIX)("$lane / $tier: polling GET /jobs/123 through eleven `pending` results reaches `done` — pivoted, never aborted", async ({ lane, tier }) => {
+    const shapes = Array.from({ length: 12 }, () => "http_request");
+    const run = await replay(shapes, lane, (i) => (i < 11 ? '{"status":"pending"}' : '{"status":"done"}'), pollArgs, { tier });
+    expect(run.abortedAt).toBeNull();
+    expect(run.turns).toBe(12);
+    // Still nudged toward a different tactic — the pivots are offered, not counted.
+    expect(run.pivots).toBeGreaterThan(0);
+  });
+
+  it.each(MATRIX)("$lane / $tier: twenty identical 429s in a row are retries, not a livelock — never aborted", async ({ lane, tier }) => {
+    const shapes = Array.from({ length: 20 }, () => "http_request");
+    const run = await replay(shapes, lane, () => "HTTP 429 rate_limited — retry later", pollArgs, { tier, status: () => "error" });
+    expect(run.abortedAt).toBeNull();
+    expect(run.turns).toBe(20);
+  });
+
+  it.each(MATRIX)("$lane / $tier: the recorded livelock still ends at a bounded turn", async ({ lane, tier }) => {
+    const run = await replay(LONG_RUN, lane, () => "Both fixes are live on prod.", undefined, { tier });
+    expect(run.abortedAt).not.toBeNull();
+    expect(run.pivots).toBeGreaterThanOrEqual(4);
+    expect(run.abortMessage).toMatch(/strategy-pivot ceiling/i);
+    // Deterministic replay, so the bound is exact. Strong: cycle detection
+    // needs three laps of the six-step shape — the turn 7963d10e measured
+    // (index 365, turn 366). Medium detects on two laps and ends at index 67.
+    expect(run.abortedAt).toBe(tier === "strong" ? 365 : 67);
+  });
+
+  it.each(MATRIX)("$lane / $tier: write-only work over distinct files never aborts", async ({ lane, tier }) => {
+    const shapes = Array.from({ length: 200 }, () => "write");
+    const run = await replay(shapes, lane, () => "ok", (i) => ({ path: `/w/file-${i}.ts`, content: `v${i}` }), { tier });
     expect(run.abortedAt).toBeNull();
     expect(run.pivots).toBe(0);
   });

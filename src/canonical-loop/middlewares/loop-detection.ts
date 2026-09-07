@@ -11,9 +11,10 @@
  * nudges. Worker lanes (build / background / ide) never abort from the guard:
  * every abort path is deferred and the worker is offered an autonomous
  * strategy pivot instead — bounded by the pivot ceiling in strategy-pivot.ts,
- * which ends the op once all four strategies have been offered with no novel
- * result since the first. Before that ceiling the only brake on a stuck
- * worker was the wall clock.
+ * which ends the op once all four strategies have been offered against a
+ * detected CYCLE with no novel result since the first. Exact-repeat and
+ * no-progress pivots (a poll, a 429 retry) are offered but never counted.
+ * Before that ceiling the only brake on a stuck worker was the wall clock.
  */
 import { type CanonicalMiddleware, type CanonicalMiddlewareResult, type CanonicalLoopContext } from "./types.js";
 import { getMiddlewareState } from "./state.js";
@@ -32,6 +33,7 @@ import {
   workerStrategyPivot,
   type AutonomousPivotPattern,
   type PivotCeilingState,
+  type PivotOrigin,
 } from "./strategy-pivot.js";
 
 function toLoopCalls(toolCalls: { tool: string; args: unknown }[]): { name: string; arguments: string }[] {
@@ -41,11 +43,15 @@ function toLoopCalls(toolCalls: { tool: string; args: unknown }[]): { name: stri
   }));
 }
 
-function consumePivot(state: LoopState): void {
+/** Take the pending pivot off the guard state; returns who armed it. */
+function consumePivot(state: LoopState): PivotOrigin {
+  const origin: PivotOrigin = { fromCycle: state.pendingPivotFromCycle };
   state.pendingStrategyPivot = null;
+  state.pendingPivotFromCycle = false;
   state.identicalResultRepeats = 0;
   state.iterationsSinceProgress = 0;
   for (const name of state.toolNameCounts.keys()) state.toolNameCounts.set(name, 0);
+  return origin;
 }
 
 function ceilingFor(ctx: CanonicalLoopContext): PivotCeilingState {
@@ -53,9 +59,11 @@ function ceilingFor(ctx: CanonicalLoopContext): PivotCeilingState {
 }
 
 /** The worker's next strategy, or the ceiling abort — one pivot per turn. */
-function offerPivot(ctx: CanonicalLoopContext, pattern: AutonomousPivotPattern): CanonicalMiddlewareResult {
-  return workerStrategyPivot(ctx, ceilingFor(ctx), pattern);
+function offerPivot(ctx: CanonicalLoopContext, pattern: AutonomousPivotPattern, origin: PivotOrigin): CanonicalMiddlewareResult {
+  return workerStrategyPivot(ctx, ceilingFor(ctx), pattern, origin);
 }
+/** mutation-repeat is detected pre-dispatch by the middleware itself, never by the cycle detector. */
+const NOT_CYCLE: PivotOrigin = { fromCycle: false };
 
 export const loopDetectionMiddleware: CanonicalMiddleware = {
   name: "loop-detection",
@@ -69,8 +77,7 @@ export const loopDetectionMiddleware: CanonicalMiddleware = {
     }
     const pattern = state.pendingStrategyPivot;
     if (!pattern) return { kind: "continue" };
-    consumePivot(state);
-    return offerPivot(ctx, pattern);
+    return offerPivot(ctx, pattern, consumePivot(state));
   },
 
   async afterModelCall(ctx) {
@@ -80,7 +87,7 @@ export const loopDetectionMiddleware: CanonicalMiddleware = {
     const state = getMiddlewareState<LoopState>(ctx.op.id, "loop-detection", createLoopState);
     const loopCalls = toLoopCalls(ctx.toolCalls);
     if (ctx.op.lane !== "interactive" && hasSeenSuccessfulCommittingCall(loopCalls, state)) {
-      const pivot = offerPivot(ctx, "mutation-repeat");
+      const pivot = offerPivot(ctx, "mutation-repeat", NOT_CYCLE);
       ctx.toolCalls.length = 0;
       return pivot.kind === "nudge" ? { ...pivot, skipToolDispatch: true } : pivot;
     }
@@ -100,11 +107,11 @@ export const loopDetectionMiddleware: CanonicalMiddleware = {
     // A deferred cycle (the multi-turn circle exact-repeat cannot see) arms a
     // pivot in checkToolLoops; offer it now, before this turn's tools run —
     // the post-dispatch path below would drop it on a write turn, because a
-    // fresh mutation target clears the pending pivot as "progress".
+    // fresh mutation target clears the pending pivot as "progress". This is
+    // the one site whose pivots advance the ceiling (pendingPivotFromCycle).
     if (!nudgeOnly && state.pendingStrategyPivot) {
       const pattern = state.pendingStrategyPivot;
-      consumePivot(state);
-      return offerPivot(ctx, pattern);
+      return offerPivot(ctx, pattern, consumePivot(state));
     }
     return { kind: "continue" };
   },
@@ -125,8 +132,7 @@ export const loopDetectionMiddleware: CanonicalMiddleware = {
     notePivotEvidence(ceiling, observation.novel);
     if (observation.pendingPivot && ceiling.lastPivotTurn !== ctx.turnIdx) {
       const pattern = observation.pendingPivot;
-      consumePivot(state);
-      return workerStrategyPivot(ctx, ceiling, pattern);
+      return workerStrategyPivot(ctx, ceiling, pattern, consumePivot(state));
     }
     return { kind: "continue" };
   },

@@ -50,6 +50,17 @@ export function _resetPersistedPivotRestores(): void {
 // work is not dry — checkpoint-stop.ts), but it is exactly what a stuck agent
 // varies while learning nothing. Only information resets this counter.
 //
+// CYCLE-armed pivots only. The guard also arms pivots for exact-repeat and
+// no-progress, and those fire on the shape of CORRECT work: a worker polling
+// `GET /jobs/123` and reading `{"status":"pending"}` eleven times before the
+// job finishes, or retrying through a run of identical 429s, repeats the same
+// call and never sees a novel result — the exact-repeat pivot arms every turn
+// on medium tiers. Counting those pivots aborted the poll at turn 6 (medium) /
+// 11 (strong) where the pre-ceiling guard nudged it and let it finish. Those
+// pivots are still offered, but only a pivot the deferred cycle detector armed
+// (agent-guards loop-detection.ts, `pendingPivotFromCycle`) advances the
+// count: the livelock is a multi-step CIRCLE, and a poll is not.
+//
 // State lives in the per-op middleware registry (state.ts), cleared on the
 // op's terminal hook; a process restart starts the count over, which errs
 // toward giving the worker another full cycle rather than aborting early.
@@ -57,7 +68,7 @@ export function _resetPersistedPivotRestores(): void {
 export const PIVOT_CEILING_KEY = "strategy-pivot-ceiling";
 
 export interface PivotCeilingState {
-  /** Strategy pivots offered since the last novel tool result. */
+  /** CYCLE-armed strategy pivots offered since the last novel tool result. */
   offered: number;
   /** Turn of the most recent pivot — one pivot per turn, whichever phase arms it. */
   lastPivotTurn: number;
@@ -77,23 +88,34 @@ function pivotCeilingNote(pattern: AutonomousPivotPattern): string {
   return `\n\n(Strategy-pivot ceiling: ${pattern} persisted through all ${STRATEGIES.length} strategies (${STRATEGIES.join(", ")}) with no new information since the first pivot — the same cycle keeps repeating. Ending the operation; its work so far is saved.)`;
 }
 
+/** Which detector armed the pivot being offered — see the header. */
+export interface PivotOrigin {
+  /** Armed by the deferred cycle detector: counts toward (and can trip) the ceiling. */
+  fromCycle: boolean;
+}
+
 /**
  * Offer the worker its next strategy — or, past the ceiling, end the op the
  * way the interactive nudge ceiling ends a turn: a visible note on the
  * stream and an `abort` verdict the turn loop turns into a terminal error.
+ * Only a cycle-armed pivot reads or advances the ceiling; every other pivot
+ * is offered exactly as it was before the ceiling existed.
  */
 export function workerStrategyPivot(
   ctx: CanonicalLoopContext,
   ceiling: PivotCeilingState,
   pattern: AutonomousPivotPattern,
+  origin: PivotOrigin,
 ): CanonicalMiddlewareResult {
-  if (ceiling.offered >= STRATEGIES.length) {
-    const note = pivotCeilingNote(pattern);
-    logRetry({ kind: "loop-abort", tool: "pivot-ceiling", detail: { pattern, offered: ceiling.offered, ceiling: STRATEGIES.length } });
-    ctx.onEvent?.({ type: "stream", delta: note });
-    return { kind: "abort", reason: "loop-detection", message: note };
+  if (origin.fromCycle) {
+    if (ceiling.offered >= STRATEGIES.length) {
+      const note = pivotCeilingNote(pattern);
+      logRetry({ kind: "loop-abort", tool: "pivot-ceiling", detail: { pattern, offered: ceiling.offered, ceiling: STRATEGIES.length } });
+      ctx.onEvent?.({ type: "stream", delta: note });
+      return { kind: "abort", reason: "loop-detection", message: note };
+    }
+    ceiling.offered++;
   }
-  ceiling.offered++;
   ceiling.lastPivotTurn = ctx.turnIdx;
   return autonomousStrategyPivot(ctx, pattern);
 }

@@ -71,14 +71,14 @@ export interface LoopState {
   // Lifetime count of loop-break nudges emitted for this op. In the interactive
   // lane the abort paths downgrade to nudges (never kill a turn the user wants),
   // and each path resets its own window so it can't spam per-turn — but nothing
-  // bounded the TOTAL: a model that ignored every nudge got re-nudged forever,
-  // backstopped only by the wall-clock (up to 2h). Once this exceeds
-  // NUDGE_CEILING we escalate to a hard abort even in the interactive lane —
-  // six "you're looping, pivot" warnings is enough rope; past that it's a
-  // runaway and ending the turn beats spinning. (The user keeps the chat and
-  // can just send another message.)
+  // bounded the TOTAL: a model that ignored every nudge was re-nudged forever,
+  // backstopped only by the wall-clock (up to 2h). Past NUDGE_CEILING we escalate
+  // to a hard abort even interactively — six warnings is enough rope; past that
+  // it's a runaway and ending the turn beats spinning (the chat survives).
   nudgeCount: number;
   pendingStrategyPivot: StrategyPivotPattern | null;
+  // Armed by the deferred CYCLE detector: the only pivots the worker ceiling counts.
+  pendingPivotFromCycle: boolean;
   // Rolling per-turn SHAPE history for cycle detection (loop-progress.ts) —
   // the multi-turn CIRCLE that burned 110 turns of a real op unseen.
   cycleWindow: CycleTurn[];
@@ -106,6 +106,7 @@ export function createLoopState(): LoopState {
     searchKeyCounts: new Map(),
     nudgeCount: 0,
     pendingStrategyPivot: null,
+    pendingPivotFromCycle: false,
     cycleWindow: [],
     seenMutationTargets: new Set(),
   };
@@ -128,9 +129,8 @@ export const NO_PROGRESS_LIMIT_WEAK = 15;
 // model being told to pivot and ignoring it. The wall-clock ceiling (up to 2h)
 // is the only other backstop, so without this a stubborn loop ran far too long.
 export const NUDGE_CEILING = 6;
-// SPIRALABLE_TOOLS and the exploration-waste detectors moved to
-// loop-discovery.ts under the LOC ceiling. Re-exported so existing importers
-// (agent-guards/index.ts, the read-only fence test) keep their path.
+// SPIRALABLE_TOOLS + the exploration-waste detectors live in loop-discovery.ts
+// (LOC ceiling); re-exported so agent-guards/index.ts and tests keep their path.
 export { SPIRALABLE_TOOLS } from "./loop-discovery.js";
 
 /**
@@ -168,10 +168,9 @@ export function checkToolLoops(
   // Exact-repeat detection. Aborts only when the repeated call ALSO keeps
   // producing the same result (confirmed via noteToolResults after each
   // dispatch) — so a user-requested batch of identical commands or a poll
-  // whose result changes each turn isn't mistaken for a stuck spin. Detecting
-  // non-progress needs ≥2 observed results, so the abort lands one turn later
-  // than a result-blind check would; the no-progress + discovery guards below
-  // remain the backstop for everything this misses.
+  // whose result changes each turn isn't mistaken for a stuck spin. Needs ≥2
+  // observed results, so the abort lands one turn later than a result-blind
+  // check would; the no-progress + discovery guards below are the backstop.
   const key = toolCalls.map(tc => `${tc.name}:${tc.arguments}`).join("|");
   if (key === state.lastToolKey) {
     state.sameToolCount++;
@@ -202,8 +201,9 @@ export function checkToolLoops(
   if (cycle) {
     state.cycleWindow.length = 0; // must re-accumulate before firing again
     logRetry({ kind: "loop-abort", tool: "cycle", detail: { ...cycle, modelTier: opts?.modelTier, nudgeOnly: opts?.nudgeOnly ?? false } });
-    // Worker lanes: a cycle is non-progress — arm the (capped) strategy pivot.
-    if (opts?.deferWorkerPivot) state.pendingStrategyPivot ??= "no-progress";
+    // Worker lanes: arm the strategy pivot. ONLY cycle-armed pivots advance the
+    // worker-lane ceiling — exact-repeat / no-progress is the shape of a poll.
+    if (opts?.deferWorkerPivot) { state.pendingStrategyPivot ??= "no-progress"; state.pendingPivotFromCycle = true; }
     else if (opts?.nudgeOnly) return emitNudge(cycleNudge(cycle));
     else return { abort: true, nudge: cycleAbortNote(cycle) };
   }
@@ -334,7 +334,7 @@ export function noteToolResults(
   // Target-keyed, not args-keyed: rewriting one file with new bytes is
   // iteration on a single artifact, not a fresh advance.
   state.lastTurnHadNovelMutation = novelTarget;
-  if (novel || successfulMutation) state.pendingStrategyPivot = null;
+  if (novel || successfulMutation) { state.pendingStrategyPivot = null; state.pendingPivotFromCycle = false; }
   // Record this turn's procedure shape for cycle detection, flagged by RESULT
   // novelty only — deliberately not novelTarget.
   //
@@ -367,11 +367,11 @@ export function noteToolResults(
     const noProgressLimit = weak ? NO_PROGRESS_LIMIT_WEAK : NO_PROGRESS_LIMIT;
     const searchLimit = searchLimitFor(weak);
     const discoveryLimit = discoveryLimitFor(weak);
+    state.pendingPivotFromCycle = false; // re-armed below by the post-dispatch detectors, never the cycle
     state.pendingStrategyPivot = chooseStrategyPivot({
       exactRepeat: state.identicalResultRepeats >= repeatLimit - 1,
       mutationRepeat: repeatedMutation,
-      // A detected cycle IS non-progress; the worker lane arms the same
-      // strategy pivot rather than a pattern of its own.
+      // A detected cycle IS non-progress; the worker lane reuses that pattern.
       noProgress: state.iterationsSinceProgress >= noProgressLimit
         || detectCycle(state.cycleWindow, { modelTier: opts?.modelTier }) !== null,
       redundantSearch: toolCalls.some(tc => {

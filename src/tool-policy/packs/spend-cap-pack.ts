@@ -19,7 +19,7 @@
  * cannot — see the note at the oauth short-circuit below.
  */
 import { getRuntimeConfig } from "../../config.js";
-import { getTodayBillableCost, getSessionBillableCost, getResolvedAuthSource, getResolvedModel, getBillableCostForModelSince } from "../../cost-tracker.js";
+import { getTodayBillableCost, getSessionBillableCost, getResolvedAuthSource, getResolvedModel, getBillableCostForModelSince, isBillableSource } from "../../cost-tracker.js";
 import { USER_HINTS } from "../../types.js";
 import type { PolicyCall, PolicyEvalCtx, PackDecision, RulePack, RulePackRule } from "../evaluator.js";
 
@@ -77,7 +77,10 @@ export function makeSpendCapPack(): RulePack {
       // below are per-record (isBillableSource), so subscription spend is
       // never billed regardless; the exposure is only in WHICH op this early
       // return exempts when two credentials are in flight at once.
-      if (getResolvedAuthSource() === "oauth") return { allowed: true };
+      // isBillableSource, not `=== "oauth"`: a local model (sentinel) is free
+      // too, and the ledger and checkpoint-stop already judge it by that one
+      // function — a hand-rolled comparison here silently disagreed with them.
+      if (!isBillableSource(getResolvedAuthSource())) return { allowed: true };
 
       // Bill only real-money (per-call API key) usage; subscription/local spend
       // is shadow cost and excluded by getXBillableCost.

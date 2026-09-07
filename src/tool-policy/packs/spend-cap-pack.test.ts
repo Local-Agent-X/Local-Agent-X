@@ -32,7 +32,7 @@ function setBudgets(daily: number, session: number, modelDailyBudgetsUsd: Record
 }
 
 // $6 of opus output tokens (25/M output) — used to exceed a $5 cap.
-function spend6Usd(authSource: "env" | "oauth"): void {
+function spend6Usd(authSource: "env" | "oauth" | "sentinel"): void {
   trackUsage(SESSION, "claude-opus-4-8", "anthropic", 0, 240_000, undefined, authSource);
 }
 
@@ -111,6 +111,19 @@ describe("spend-cap pack — auth-aware", () => {
     noteResolvedAuthSource("oauth"); // last resolved credential was a subscription
     spend6Usd("oauth");
     expect((await evalCap()).allowed).toBe(true);
+  });
+
+  // REGRESSION: the short-circuit was a hand-rolled `=== "oauth"`, which
+  // disagreed with isBillableSource (the ledger's own authority) on sentinel —
+  // a local model is free too, but earlier API-key spend in the process got
+  // it denied. One authority, both places (checkpoint-stop.ts is the sibling).
+  it("never blocks a local-model (sentinel) user for API-key spend booked earlier", async () => {
+    setBudgets(5, 5);
+    spend6Usd("env"); // real money, already over both caps
+    noteResolvedAuthSource("sentinel"); // ...but the model now resolving is local
+    expect((await evalCap()).allowed).toBe(true);
+    noteResolvedAuthSource("env"); // back on the API key → the cap binds
+    expect((await evalCap()).allowed).toBe(false);
   });
 
   it("excludes subscription spend from the bill even while in API-key mode", async () => {

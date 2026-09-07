@@ -349,6 +349,21 @@ describe("evaluateCheckpointStop — spend ceiling", () => {
     expect(evaluateCheckpointStop(subscriptionOp)).toMatchObject({ stop: false, reason: null });
   });
 
+  // REGRESSION: the carve-out was a hand-rolled `=== "oauth"`, which disagreed
+  // with cost-tracker's isBillableSource on `sentinel` — a local model's
+  // marginal cost is zero too, yet a sentinel op was stopped for API-key
+  // spend booked earlier in the same session. One authority decides.
+  it("never stops a local-model (sentinel) op for API-key spend booked earlier in the session", () => {
+    setBudgets(0, 5);
+    spend6Usd("env"); // real, billable, over the cap
+    const localOp = mkOp("op-sentinel", "sentinel");
+    const apiKeyOp = mkOp("op-env-sibling", "env");
+    learn(localOp.id, 1);
+    learn(apiKeyOp.id, 1);
+    expect(evaluateCheckpointStop(localOp)).toMatchObject({ stop: false, reason: null });
+    expect(evaluateCheckpointStop(apiKeyOp)).toMatchObject({ stop: true, reason: "spend-ceiling" });
+  });
+
   it("never stops a subscription op on spend even when its own records carry the shadow cost", () => {
     setBudgets(5, 5);
     spend6Usd("oauth"); // booked as shadow — costUsd stays $0 by construction

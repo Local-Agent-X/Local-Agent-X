@@ -56,7 +56,7 @@
 import { getMiddlewareState } from "./middlewares/state.js";
 import { createLoopState, type LoopState } from "../agent-guards/loop-detection.js";
 import { getRuntimeConfig } from "../config.js";
-import { getSessionBillableCost, getTodayBillableCost } from "../cost-tracker.js";
+import { getSessionBillableCost, getTodayBillableCost, isBillableSource } from "../cost-tracker.js";
 import type { Op } from "../ops/types.js";
 
 export type CheckpointStopReason = "dry-checkpoints" | "spend-ceiling";
@@ -131,7 +131,12 @@ function evaluateSpendCeiling(op: Op): CheckpointStopDecision {
   // one value for the whole process — with two sessions in flight it would
   // exempt an API-key op because a subscription op resolved last, or stop a
   // subscription op for spend it never incurred.
-  if (op.contextPack?.routing?.authSource === "oauth") return CONTINUE;
+  //
+  // isBillableSource is the ONE authority on what counts as money. A hand-
+  // rolled `=== "oauth"` here disagreed with it: a local-model (sentinel) op,
+  // whose marginal cost is also zero, was stopped for API-key spend booked
+  // earlier in the same session.
+  if (!isBillableSource(op.contextPack?.routing?.authSource)) return CONTINUE;
 
   if (dailyBudgetUsd > 0) {
     const spent = getTodayBillableCost().costUsd;

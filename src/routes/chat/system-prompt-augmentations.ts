@@ -3,6 +3,7 @@ import type { PreparedAgentRequest } from "../../agent-request/index.js";
 import type { ThreatEngine } from "../../threat/threat-engine.js";
 import { createLogger } from "../../logger.js";
 import { appendSystemPromptSection } from "../../context/system-prompt-builder.js";
+import { userAuthoredRequest } from "../../slash-commands.js";
 
 const logger = createLogger("routes.chat.system-prompt");
 
@@ -75,13 +76,25 @@ export async function augmentSystemPrompt(
   // action verb, the model has likely conditioned itself into a "this is a
   // talking-only chat" pattern. Inject an explicit corrective note so it
   // breaks out and dispatches.
-  if (currentUserMessage && prepared.messages && ACTION_VERB_RE.test(currentUserMessage)) {
+  //
+  // Which text each augmentation sees: the canary and parallel-context
+  // sections above never read the message. This is the ONLY reader, and it is
+  // a classifier ("did the user ask for an action?"), so it must judge what
+  // the user AUTHORED. On a slash-command turn `currentUserMessage` is the
+  // EXPANDED message — marker + the whole SKILL.md body — and every bundled
+  // template carries action verbs of its own ("delete", "write", "run"), so a
+  // bare `/senior-engineer` after a planning streak was told a tool call is
+  // REQUIRED when the correct move is to ack and ask for input. The
+  // methodology still reaches the model through the messages; the classifier
+  // only needs the ask. Non-expansions pass through byte-identical.
+  const authoredRequest = currentUserMessage ? userAuthoredRequest(currentUserMessage) : currentUserMessage;
+  if (authoredRequest && prepared.messages && ACTION_VERB_RE.test(authoredRequest)) {
     const proseStreak = countTrailingProseOnlyAssistantTurns(prepared.messages);
     if (proseStreak >= 3) {
       const toolCallRequired =
         `\n\n[TOOL-CALL REQUIRED THIS TURN]\n` +
         `Your last ${proseStreak} assistant turns produced text only (no tool_use blocks). ` +
-        `The current user message contains action language ("${currentUserMessage.match(ACTION_VERB_RE)![0]}") ` +
+        `The current user message contains action language ("${authoredRequest.match(ACTION_VERB_RE)![0]}") ` +
         `— this turn MUST emit a tool_use block, not prose narration.\n\n` +
         `If a required tool is blocked (e.g. plan mode is active), call exit_plan_mode FIRST, ` +
         `then the action tool. Do NOT respond with "<response>" tags, "Tool call: X" prose, ` +

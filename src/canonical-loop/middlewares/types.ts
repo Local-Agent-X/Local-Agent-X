@@ -68,9 +68,33 @@ export interface CanonicalToolResultView {
 export interface CanonicalLoopContext {
   op: Op;
   turnIdx: number;
-  /** The user message that kicked off this op. For chat_turn = first user
-   *  op_message; falls back to op.task. */
+  /** The FIRST user row in op_messages, falling back to op.task.
+   *
+   *  ⚠️ NOT reliably "the message that opened this op". `seed-messages.ts`
+   *  seeds the whole prior conversation as user rows and appends the current
+   *  message LAST, so on any op after the session's opening line this holds an
+   *  OLDER message. Verified on op_chat_turn_690ce6c3cd1b4394: op.task = "Hi",
+   *  first user row = "Yo".
+   *
+   *  Ten middlewares read this (app-design-guard, broad-sweep-nudge,
+   *  browser-handoff, cleanup-verify, codebase-advice, instruction-ledger,
+   *  office-theme-guard, premature-completion, refute-completion, verify-gate).
+   *  Repointing it under all ten at once is an unapproved blast radius, so the
+   *  field keeps its existing (wrong-for-most-purposes) meaning and
+   *  `currentUserMessage` was added beside it. New readers want that one. */
   userMessage: string;
+  /** The message that actually OPENED this op — `op.task`.
+   *
+   *  Source justification: both interactive op-creation sites set `task` to the
+   *  verbatim current user message and never mutate it —
+   *  `chat-runner/create-op.ts:70` (`task: ctx.message`) and
+   *  `agent-runner/run.ts:83` (`task: args.userMessage`, the voice_turn path).
+   *  The LAST user op_message row was rejected as the source because that row
+   *  is not necessarily the user's: `turn-loop/nudges.ts:45` appends middleware
+   *  nudges with `role: "user"` and `turn-loop/inject-drain.ts:57` appends
+   *  mid-turn injects the same way, so "last user row" drifts to harness text
+   *  mid-op. `op.task` is fixed at op creation and cannot drift. */
+  currentUserMessage: string;
   /** Provider key — "anthropic" | "codex" | "openai" | "xai" | "gemini" |
    *  "local" | "ollama-cloud" | "custom". Read from
    *  contextPack.preferredProvider with a safe fallback. */

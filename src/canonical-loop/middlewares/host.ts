@@ -122,6 +122,14 @@ export function buildCanonicalLoopContext(args: BuildContextArgs): CanonicalLoop
     }
   }
 
+  // ── Two DIFFERENT user-message fields. Read the one whose question you ask.
+  //
+  // `userMessage` = FIRST user row, op.task as fallback. Historically named
+  // "the message that kicked off this op", which it is NOT once the session has
+  // history: chat-runner/seed-messages.ts seeds the entire prior conversation
+  // as user rows and appends the current message LAST, so this lands on the
+  // session's OLDEST user line. Left exactly as-is because ten middlewares read
+  // it and repointing all ten silently is not an approved change.
   let userMessage = "";
   for (const r of readOpMessages(op.id)) {
     if (r.role !== "user") continue;
@@ -130,6 +138,14 @@ export function buildCanonicalLoopContext(args: BuildContextArgs): CanonicalLoop
   }
   if (!userMessage) userMessage = op.task ?? "";
 
+  // `currentUserMessage` = the message that actually opened THIS op. One op is
+  // created per user message and both interactive creation sites stamp the
+  // verbatim message into op.task (chat-runner/create-op.ts:70,
+  // agent-runner/run.ts:83), so op.task is exact and, unlike the last user row,
+  // cannot drift onto a harness nudge or a mid-turn inject — both of which are
+  // appended with role:"user" (turn-loop/nudges.ts, turn-loop/inject-drain.ts).
+  const currentUserMessage = op.task ?? "";
+
   const tools = args.tools ?? [];
   const toolNames = new Set(tools.map(t => t.name));
 
@@ -137,6 +153,7 @@ export function buildCanonicalLoopContext(args: BuildContextArgs): CanonicalLoop
     op,
     turnIdx: args.turnIdx,
     userMessage,
+    currentUserMessage,
     provider,
     model,
     tools,

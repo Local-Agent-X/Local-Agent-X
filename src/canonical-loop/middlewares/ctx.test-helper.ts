@@ -98,6 +98,7 @@ export function makeCanonicalLoopContext(
     op,
     turnIdx: 0,
     userMessage: "",
+    currentUserMessage: "",
     provider: "",
     model: "",
     tools: [],

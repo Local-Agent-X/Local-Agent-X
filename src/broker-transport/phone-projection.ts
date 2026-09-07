@@ -28,7 +28,7 @@ export type PhoneProjectionItem =
   | { kind: "conversation"; role: "user" | "assistant"; text: string }
   | { kind: "output"; text: string; replace: boolean }
   | { kind: "operation"; opId: string; status: string; task?: string; progress?: string }
-  | { kind: "notification"; opId: string; status: "completed" | "failed" | "cancelled"; summary: string }
+  | { kind: "notification"; opId: string; status: "completed" | "partial" | "failed" | "cancelled"; summary: string }
   | { kind: "status"; state: "started" | "done" | "stopped" | "error"; detail?: string };
 
 export type PhoneProjectionFrame =

@@ -216,7 +216,7 @@ function updateAgentFeed(agentId, update) {
     }
     var statusEl = card.querySelector('.agent-feed-status');
     if (statusEl) {
-      statusEl.innerHTML = '<span class="agent-status-dot"></span> ' + esc(existing.status || 'working');
+      statusEl.innerHTML = '<span class="agent-status-dot"></span> ' + esc(agentStatusLabel(existing.status || 'working'));
     }
     // Build_app and other URL-producing ops set resultUrl on completion.
     // Render as a clickable "Open" link below the worker activity. The

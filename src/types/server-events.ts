@@ -157,7 +157,10 @@ export type ServerEvent =
   // the browser can apply the ambient-dock update while skipping the OS toast
   // and the fallback FAILED card (chat-ws-handler-bg-ops.js) WITHOUT
   // re-deriving the prefix list client-side.
-  | { type: "bg_op_completed"; opId: string; status: "completed" | "failed" | "cancelled"; summary: string; filesChanged: string[]; metadata?: Record<string, unknown>; resultUrl?: string; headless?: boolean }
+  // `partial`: the op stopped at an iteration checkpoint with its work saved
+  // but unfinished (checkpoint-stop.ts; stamped by session-bridge-observer).
+  // Neither completed nor failed — the card labels it "stopped (unfinished)".
+  | { type: "bg_op_completed"; opId: string; status: "completed" | "partial" | "failed" | "cancelled"; summary: string; filesChanged: string[]; metadata?: Record<string, unknown>; resultUrl?: string; headless?: boolean }
   | { type: "bg_op_nudge"; opIds: string[]; text: string }
   // Antivirus interference detected. Bash tool detected ≥3 powershell
   // processes killed mid-stream within 60s — the AV-behavior-shield
@@ -172,7 +175,7 @@ export type ServerEvent =
   // — multiple workers each get their own bubble, identified + styled
   // separately from the main agent's stream.
   | { type: "worker_stream"; opId: string; task?: string; delta: string }
-  | { type: "worker_done"; opId: string; status: "completed" | "failed" | "cancelled"; summary?: string }
+  | { type: "worker_done"; opId: string; status: "completed" | "partial" | "failed" | "cancelled"; summary?: string }
   // Canonical chat lifecycle: emitted at the START of a chat turn so the UI
   // can track the opId for reconnect. After connection drops, the client
   // sends `{type:"reconnect_op", opId}` over WS and the server replays

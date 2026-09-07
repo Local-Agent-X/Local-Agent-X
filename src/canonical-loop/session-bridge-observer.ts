@@ -284,13 +284,13 @@ function recordCanonicalEventWithSink(
             // reads this stamp to skip the OS toast + fallback FAILED card.
             // A failed verification pass borrows the stamp (card, no toast).
             ...(isHeadlessSession(sessionId) || quietVerifyFailure ? { headless: true } : {}),
-          } as ServerEvent);
+          });
           if (emitBrowser) emitBrowser(sessionId, {
             type: "worker_done",
             opId: event.opId,
             status,
             summary,
-          } as ServerEvent);
+          });
 
           if (core && !quietVerifyFailure) pushPendingNotification(sessionId, {
             opId: event.opId,

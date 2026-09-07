@@ -181,10 +181,28 @@ function handleBgOpNudge(msg) {
   } catch(e) { console.warn('[bg_op_nudge] failed', e); return false; }
 }
 
+// Card status token for a bg_op_completed status. The token is the card's CSS
+// class AND its terminal check (chat-agent-feeds-render.js TERMINAL_AGENT_
+// STATUSES), so it must stay a bare word; the human label is derived from it
+// at render time by agentStatusLabel ("stopped (unfinished)" for partial).
+// `partial` = the op stopped at an iteration checkpoint with its work saved
+// but unfinished (checkpoint-stop.ts). It is neither done nor failed, and it
+// was never cancelled — before this it fell through to the 'cancelled' label,
+// so the card told the user someone had cancelled a worker nobody touched.
+function bgOpCardStatus(status) {
+  if (status === 'completed' || status === 'failed' || status === 'partial') return status;
+  return 'cancelled';
+}
+
+// OS-toast title for a bg_op_completed status: a checkpoint stop is not
+// "finished", and the toast is the one line a user away from the screen reads.
+function bgOpToastTitle(status) {
+  return status === 'partial' ? 'Worker stopped (unfinished)' : 'Worker finished';
+}
+
 function handleBgOpCompleted(msg) {
   try {
-    const statusLabel = msg.event.status === 'completed' ? 'completed'
-      : msg.event.status === 'failed' ? 'failed' : 'cancelled';
+    const statusLabel = bgOpCardStatus(msg.event.status);
     const filesLine = (msg.event.filesChanged && msg.event.filesChanged.length > 0)
       ? '\n\nfiles: ' + msg.event.filesChanged.slice(0, 5).join(', ')
       : '';
@@ -236,7 +254,7 @@ function handleBgOpCompleted(msg) {
       if (msg.event.resultUrl) feedUpdate.resultUrl = msg.event.resultUrl;
       updateAgentFeed(msg.event.opId, feedUpdate);
     }
-    if (!headless && window.desktop) window.desktop.showNotification('Worker finished', (msg.event.summary || '').slice(0, 100));
+    if (!headless && window.desktop) window.desktop.showNotification(bgOpToastTitle(msg.event.status), (msg.event.summary || '').slice(0, 100));
     // Keep completed cards visible for 30 min so user has plenty of
     // time to notice them. Previously auto-pruned at 2 min, which
     // meant if user wasn't watching the sidebar in that window they

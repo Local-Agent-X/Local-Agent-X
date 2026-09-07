@@ -78,11 +78,22 @@ function tokenBarFillPct(n) {
 // bg_op_completed's completed/failed/cancelled). Terminal cards fold to a
 // compact one-line row (the "calm" feature); working/waiting/paused/queued
 // cards stay full. Case/space tolerant so a 'queued #3' never reads terminal.
+// `partial` (stopped at a checkpoint, work saved but unfinished) IS terminal:
+// the op is over and its controls (pause/redirect/cancel) can no longer act.
 const TERMINAL_AGENT_STATUSES = {
-  completed: 1, done: 1, succeeded: 1, failed: 1, cancelled: 1, error: 1
+  completed: 1, done: 1, succeeded: 1, failed: 1, cancelled: 1, error: 1, partial: 1
 };
 function isTerminalStatus(status) {
   return !!TERMINAL_AGENT_STATUSES[String(status == null ? '' : status).trim().toLowerCase()];
+}
+
+// Pure: the human-readable label for a card status. The status token itself
+// is the card's CSS class and terminal key, so it stays a bare word; only
+// `partial` needs words the token doesn't carry — "stopped (unfinished)" says
+// what happened where "partial" alone reads as a fraction of something. Both
+// the initial render and updateAgentFeed's status rewrite go through here.
+function agentStatusLabel(status) {
+  return status === 'partial' ? 'stopped (unfinished)' : status;
 }
 
 // Single owner of the control row. Both the initial render and
@@ -312,7 +323,7 @@ function renderAgentCard(agent, childrenHtml) {
     '<div class="agent-feed-header">' +
       '<span class="agent-feed-icon">' + icon + '</span>' +
       '<span class="agent-feed-name">' + esc(agent.name || agent.id) + '</span>' +
-      '<span class="agent-feed-status"><span class="agent-status-dot"></span> ' + esc(status) + '</span>' +
+      '<span class="agent-feed-status"><span class="agent-status-dot"></span> ' + esc(agentStatusLabel(status)) + '</span>' +
       '<button class="agent-feed-dismiss" title="Dismiss card (does not cancel)" data-agent-action="dismiss" data-agent-id="' + safeId + '">×</button>' +
     '</div>' +
     '<div class="worker-latest" style="padding:.25rem .55rem;font-family:var(--mono,monospace);font-size:.68rem;color:var(--muted,#888);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border-bottom:1px solid var(--border,#333);min-height:1.2em">' + esc(latestLine) + '</div>' +

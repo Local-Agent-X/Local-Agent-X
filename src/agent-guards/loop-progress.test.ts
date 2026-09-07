@@ -5,32 +5,15 @@ import {
   type CycleTurn,
 } from "./loop-progress.js";
 import { checkToolLoops, noteToolResults, createLoopState } from "./loop-detection.js";
+import { LIVELOCK_SHAPES } from "./livelock-shapes.test-helper.js";
 
 /**
  * Regression suite for the three progress signals, anchored where possible on
- * a RECORDED run rather than synthetic shapes.
- *
- * The fixture below is the real turn-by-turn tool shape of
- * op_chat_turn_4808572060514f75 (turns 39-119 of a 160-turn chat op that
- * livelocked): the agent rebuilt a scratch harness, screenshotted it, re-
- * fetched two unchanged prod URLs, and started over — twelve times, learning
- * nothing. Every detector in the guard missed it. Synthetic loops are easy to
- * catch; this is the shape a real model actually produces, jitter included.
+ * a RECORDED run rather than synthetic shapes — LIVELOCK_SHAPES (see the
+ * helper) is the real turn-by-turn tool shape of a 160-turn chat op that
+ * livelocked. Synthetic loops are easy to catch; this is the shape a real
+ * model actually produces, jitter included.
  */
-const LIVELOCK_SHAPES = [
-  "http_request,http_request", "write", "write", "browser", "browser", "browser", "browser",
-  "http_request,http_request", "http_request,http_request", "write", "write", "browser", "browser",
-  "http_request,http_request", "write", "write", "browser", "browser", "browser", "bash",
-  "delete_file", "http_request", "http_request", "write", "write", "browser", "browser",
-  "http_request,http_request", "write", "write", "browser", "browser", "http_request,http_request",
-  "browser", "browser", "browser", "browser", "browser", "http_request,http_request", "write",
-  "write", "browser", "browser", "browser", "http_request,http_request", "write", "write",
-  "browser", "browser", "http_request,http_request", "write", "write", "browser", "browser",
-  "http_request,http_request", "write", "write", "browser", "browser", "http_request,http_request",
-  "write", "write", "browser", "browser", "http_request,http_request", "write", "write",
-  "browser", "browser", "browser", "http_request,http_request", "write", "write", "browser",
-  "browser", "browser", "http_request,http_request",
-];
 
 describe("noveltySignature — volatile spans are not information", () => {
   it("two screenshots of the same page collapse to one signature", () => {
@@ -195,7 +178,7 @@ describe("turnShapeKey", () => {
 
 describe("checkToolLoops — the recorded livelock is now caught", () => {
   /** Replay one turn: pre-dispatch check, then post-dispatch bookkeeping. */
-  function replay(shapes: string[], result: (i: number) => string) {
+  function replay(shapes: readonly string[], result: (i: number) => string) {
     const state = createLoopState();
     for (let i = 0; i < shapes.length; i++) {
       const calls = shapes[i].split(",").map((name, j) => ({

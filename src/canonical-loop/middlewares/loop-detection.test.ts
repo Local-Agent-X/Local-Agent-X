@@ -19,6 +19,9 @@ function ctxFor(
   lane: string,
   results: { content: string; status?: "ok" }[],
   call: { toolCallId?: string; tool: string; args: unknown } = lsCall,
+  // Real turns have distinct indices; the worker-lane pivot ceiling offers at
+  // most one pivot per turn, so a fixture replaying N turns must number them.
+  turnIdx = 1,
 ): CanonicalLoopContext {
   // The ids and tool names below are filled in to satisfy the real ToolCall /
   // CanonicalToolResultView shapes, which the old blanket
@@ -35,7 +38,7 @@ function ctxFor(
       content: r.content,
       status: r.status,
     })),
-    turnIdx: 1,
+    turnIdx,
     toolNames: new Set<string>(),
     onEvent: () => {},
   });
@@ -45,7 +48,7 @@ function ctxFor(
 async function spin(op: string, lane: string, turns: number, result: (i: number) => string) {
   const kinds: string[] = [];
   for (let i = 0; i < turns; i++) {
-    const ctx = ctxFor(op, lane, [{ content: result(i) }]);
+    const ctx = ctxFor(op, lane, [{ content: result(i) }], lsCall, i + 1);
     kinds.push((await loopDetectionMiddleware.afterModelCall!(ctx)).kind);
     await loopDetectionMiddleware.afterToolExecution!(ctx);
   }
@@ -63,7 +66,7 @@ describe("loop-detection middleware — lane policy", () => {
     const op = opId();
     let completed: { kind: string; [key: string]: unknown } = { kind: "continue" };
     for (let i = 0; i < 3; i++) {
-      const ctx = ctxFor(op, "build", [{ content: "identical", status: "ok" }]);
+      const ctx = ctxFor(op, "build", [{ content: "identical", status: "ok" }], lsCall, i + 1);
       expect((await loopDetectionMiddleware.afterModelCall!(ctx)).kind).toBe("continue");
       completed = await loopDetectionMiddleware.afterToolExecution!(ctx);
     }
@@ -93,7 +96,7 @@ describe("loop-detection middleware — lane policy", () => {
     const repeated = ctxFor(op, "build", [{ content: "created-id-2", status: "ok" }], {
       ...firstCall,
       toolCallId: "calendar-2",
-    });
+    }, 2);
     const verdict = await loopDetectionMiddleware.afterModelCall!(repeated);
     expect(verdict.kind).toBe("nudge");
     expect((verdict as { skipToolDispatch?: boolean }).skipToolDispatch).toBe(true);

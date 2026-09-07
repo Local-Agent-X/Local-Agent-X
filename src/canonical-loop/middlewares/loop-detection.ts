@@ -4,8 +4,18 @@
  *
  * Fires in afterModelCall so it sees this turn's tool calls before dispatch.
  * State is per-op so the lastToolKey / sameToolCount carry across turns.
+ *
+ * Lane policy. Interactive runs nudge-only: a runaway spin must be broken,
+ * but a legitimate repeated call the user wants must never have its turn
+ * hard-killed; the guard's own NUDGE_CEILING ends a turn that ignores six
+ * nudges. Worker lanes (build / background / ide) never abort from the guard:
+ * every abort path is deferred and the worker is offered an autonomous
+ * strategy pivot instead — bounded by the pivot ceiling in strategy-pivot.ts,
+ * which ends the op once all four strategies have been offered with no novel
+ * result since the first. Before that ceiling the only brake on a stuck
+ * worker was the wall clock.
  */
-import { type CanonicalMiddleware } from "./types.js";
+import { type CanonicalMiddleware, type CanonicalMiddlewareResult, type CanonicalLoopContext } from "./types.js";
 import { getMiddlewareState } from "./state.js";
 import {
   checkToolLoops,
@@ -14,7 +24,15 @@ import {
   createLoopState,
   type LoopState,
 } from "../../agent-guards/index.js";
-import { autonomousStrategyPivot, restorePersistedPivot } from "./strategy-pivot.js";
+import {
+  createPivotCeilingState,
+  notePivotEvidence,
+  PIVOT_CEILING_KEY,
+  restorePersistedPivot,
+  workerStrategyPivot,
+  type AutonomousPivotPattern,
+  type PivotCeilingState,
+} from "./strategy-pivot.js";
 
 function toLoopCalls(toolCalls: { tool: string; args: unknown }[]): { name: string; arguments: string }[] {
   return toolCalls.map(tc => ({
@@ -30,6 +48,15 @@ function consumePivot(state: LoopState): void {
   for (const name of state.toolNameCounts.keys()) state.toolNameCounts.set(name, 0);
 }
 
+function ceilingFor(ctx: CanonicalLoopContext): PivotCeilingState {
+  return getMiddlewareState<PivotCeilingState>(ctx.op.id, PIVOT_CEILING_KEY, createPivotCeilingState);
+}
+
+/** The worker's next strategy, or the ceiling abort — one pivot per turn. */
+function offerPivot(ctx: CanonicalLoopContext, pattern: AutonomousPivotPattern): CanonicalMiddlewareResult {
+  return workerStrategyPivot(ctx, ceilingFor(ctx), pattern);
+}
+
 export const loopDetectionMiddleware: CanonicalMiddleware = {
   name: "loop-detection",
 
@@ -43,7 +70,7 @@ export const loopDetectionMiddleware: CanonicalMiddleware = {
     const pattern = state.pendingStrategyPivot;
     if (!pattern) return { kind: "continue" };
     consumePivot(state);
-    return autonomousStrategyPivot(ctx, pattern);
+    return offerPivot(ctx, pattern);
   },
 
   async afterModelCall(ctx) {
@@ -53,14 +80,10 @@ export const loopDetectionMiddleware: CanonicalMiddleware = {
     const state = getMiddlewareState<LoopState>(ctx.op.id, "loop-detection", createLoopState);
     const loopCalls = toLoopCalls(ctx.toolCalls);
     if (ctx.op.lane !== "interactive" && hasSeenSuccessfulCommittingCall(loopCalls, state)) {
-      const pivot = autonomousStrategyPivot(ctx, "mutation-repeat");
+      const pivot = offerPivot(ctx, "mutation-repeat");
       ctx.toolCalls.length = 0;
       return pivot.kind === "nudge" ? { ...pivot, skipToolDispatch: true } : pivot;
     }
-    // Interactive chat runs nudge-only: a runaway spin (the grok `ls` loop)
-    // must be broken, but a legitimate repeated call that the user actually
-    // needs must never have its turn hard-killed. Worker/build/ide lanes arm
-    // a strategy change instead of terminating the unattended operation.
     const nudgeOnly = ctx.op.lane === "interactive";
     const r = checkToolLoops(loopCalls, state, {
       modelTier,
@@ -73,6 +96,15 @@ export const loopDetectionMiddleware: CanonicalMiddleware = {
     }
     if (r.nudge) {
       return { kind: "nudge", message: r.nudge, reason: "loop-detection" };
+    }
+    // A deferred cycle (the multi-turn circle exact-repeat cannot see) arms a
+    // pivot in checkToolLoops; offer it now, before this turn's tools run —
+    // the post-dispatch path below would drop it on a write turn, because a
+    // fresh mutation target clears the pending pivot as "progress".
+    if (!nudgeOnly && state.pendingStrategyPivot) {
+      const pattern = state.pendingStrategyPivot;
+      consumePivot(state);
+      return offerPivot(ctx, pattern);
     }
     return { kind: "continue" };
   },
@@ -88,10 +120,13 @@ export const loopDetectionMiddleware: CanonicalMiddleware = {
       modelTier: loopGuardTier(ctx.model),
       armWorkerPivot: ctx.op.lane !== "interactive",
     });
-    if (ctx.op.lane !== "interactive" && observation.pendingPivot) {
+    if (ctx.op.lane === "interactive") return { kind: "continue" };
+    const ceiling = ceilingFor(ctx);
+    notePivotEvidence(ceiling, observation.novel);
+    if (observation.pendingPivot && ceiling.lastPivotTurn !== ctx.turnIdx) {
       const pattern = observation.pendingPivot;
       consumePivot(state);
-      return autonomousStrategyPivot(ctx, pattern);
+      return workerStrategyPivot(ctx, ceiling, pattern);
     }
     return { kind: "continue" };
   },

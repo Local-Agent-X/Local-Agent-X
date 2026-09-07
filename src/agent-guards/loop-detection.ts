@@ -152,12 +152,10 @@ export function checkToolLoops(
   const isWeakOrMedium = opts?.modelTier === "weak" || opts?.modelTier === "medium";
   const repeatLimit = isWeakOrMedium ? 2 : 3;
 
-  // Every nudge below routes through here so the per-op lifetime ceiling can
-  // bound a runaway. In the interactive lane (nudgeOnly), once the model has
-  // been nudged past NUDGE_CEILING times and is STILL looping, stop nudging and
-  // hard-abort the turn — the only other backstop is the 2h wall-clock. In the
-  // worker lane the count still increments but never escalates here (workers
-  // already hard-abort via the exact-repeat / no-progress paths).
+  // Every interactive nudge routes through here so the per-op lifetime ceiling
+  // bounds a runaway: past NUDGE_CEILING, stop nudging and hard-abort the turn.
+  // Worker lanes never reach it (deferWorkerPivot skips every nudge path); their
+  // brake is the strategy-pivot ceiling in middlewares/strategy-pivot.ts.
   const emitNudge = (nudge: string): { abort: boolean; nudge: string | null } => {
     state.nudgeCount++;
     if (opts?.nudgeOnly && state.nudgeCount > NUDGE_CEILING) {
@@ -201,11 +199,13 @@ export function checkToolLoops(
   // compares this turn to the one before it and so cannot see a CIRCLE. See
   // loop-progress.ts for why it is gated on a novelty-free span.
   const cycle = detectCycle(state.cycleWindow, { modelTier: opts?.modelTier });
-  if (cycle && !opts?.deferWorkerPivot) {
+  if (cycle) {
     state.cycleWindow.length = 0; // must re-accumulate before firing again
     logRetry({ kind: "loop-abort", tool: "cycle", detail: { ...cycle, modelTier: opts?.modelTier, nudgeOnly: opts?.nudgeOnly ?? false } });
-    if (opts?.nudgeOnly) return emitNudge(cycleNudge(cycle));
-    return { abort: true, nudge: cycleAbortNote(cycle) };
+    // Worker lanes: a cycle is non-progress — arm the (capped) strategy pivot.
+    if (opts?.deferWorkerPivot) state.pendingStrategyPivot ??= "no-progress";
+    else if (opts?.nudgeOnly) return emitNudge(cycleNudge(cycle));
+    else return { abort: true, nudge: cycleAbortNote(cycle) };
   }
 
   // Discovery-style loop detection: same READ-ONLY discovery tool (SPIRALABLE_

@@ -25,8 +25,10 @@
     "check:release-attribution": "node scripts/check-release-attribution.mjs",
     "check:release-environment": "node scripts/check-release-environment.mjs",
     "docs:map": "node scripts/gen-codebase-map.mjs",
+    "docs:generated": "node scripts/regen-generated-docs.mjs",
+    "check:generated-docs": "node scripts/regen-generated-docs.mjs --check",
     "build": "npm run check:source-hygiene && npm run check:no-require && npm run check:docs-consistency && npm run check:codebase-map && npm run check:pricing-coverage && npm run check:integrations && npm run build:ari && tsc && node scripts/copy-bundled-protocols.mjs && node scripts/write-built-ref.mjs dist",
-    "postinstall": "npm run build:ari && node scripts/prebuild-dist.mjs && node scripts/install-push-guard.mjs",
+    "postinstall": "npm run build:ari && node scripts/prebuild-dist.mjs && node scripts/install-git-hooks.mjs",
     "test": "tsx src/test-suite.ts",
     "test:unit": "vitest run",
     "test:desktop": "vitest run --config desktop/vitest.config.ts",
@@ -53,7 +55,7 @@
     "eval:instruction-compliance": "node eval/instruction-compliance/run.mjs",
     "qualify:local-model": "tsx scripts/qualify-local-model.ts",
     "memory:check": "node scripts/check-memory-freshness.mjs",
-    "hooks:push-guard": "node scripts/install-push-guard.mjs",
+    "hooks:install": "node scripts/install-git-hooks.mjs",
     "setup-ai": "node scripts/setup-ai.js"
   },
   "dependencies": {

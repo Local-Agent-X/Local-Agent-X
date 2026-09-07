@@ -4,7 +4,8 @@
 //
 // Both install shapes are handled: a git checkout (local `git fetch` + behind
 // count, works for private repos via the user's credential helper) and a
-// rolling/tarball install (OTAManager: last-installed commit vs remote main).
+// rolling/tarball install (OTAManager: last-installed commit vs the newest
+// CI-proven commit published on the rolling pointer).
 // Apply routes through update-pipeline's validated swap (deps/build/bind/smoke
 // gates) — nothing overwrites the live install until the candidate passes.
 
@@ -144,14 +145,15 @@ export async function checkForUpdate(force = false): Promise<UpdateCheckResult> 
     let localCommit = "";
     try { localCommit = execSync(gitSafeCmd("git rev-parse --short HEAD"), { cwd: repoRoot, encoding: "utf-8" }).trim(); }
     catch {
-      // Not a git checkout (rolling/tarball) — compare last-installed commit to
-      // remote main HEAD. First check before any in-app update has no recorded
+      // Not a git checkout (rolling/tarball) — compare the last-installed
+      // commit to the newest CI-proven commit (the published rolling pointer,
+      // NOT main HEAD). First check before any in-app update has no recorded
       // commit, so optimistically report an update is available.
       try {
         const { OTAManager } = await import("./ota-update.js");
         const ota = new OTAManager();
         const installed = await ota.readInstalledCommit();
-        const { commit, subject } = await ota.checkMainCommit();
+        const { commit, subject } = await ota.resolveRollingTarget();
         return await withNativeRuntimeCheck({
           localVersion,
           localCommit: installed ? installed.slice(0, 7) : "",

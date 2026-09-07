@@ -1,25 +1,27 @@
 name: Rolling Source Asset (verified OTA payload)
 
-# Publishes the per-commit, checksum-verified update asset the in-app updater
-# PREFERS over GitHub's on-demand archive/<sha>.tar.gz. The asset contains the
-# tracked source plus CI-compiled desktop/dist so installed clients receive
-# Electron changes in the same update as the source that depends on them.
+# Publishes the per-commit update payload the in-app rolling updater installs,
+# and advances the pointer that tells clients which commit to install.
 #
-# Why this exists (closes TODO(rolling-checksum)): the rolling OTA channel
-# resolves `main` → an immutable commit sha, then tries
-#     releases/download/rolling/lax-source-<sha>.tar.gz  (+ .sha256 sidecar)
-# and verifies the bytes with assertSha256 before extracting
-# (src/ota-update.ts downloadMainTarball). GitHub's on-demand git-archive bytes
-# are NOT byte-stable, so they can't be pre-hashed — only an uploaded, immutable
-# release asset can. This job builds that asset + its SHA256 sidecar for every
-# commit on main, so the hash the app checks is the hash of the bytes it
-# downloads. With no asset published the app silently falls back to the
-# commit-pinned (but un-checksummed) archive — strictly today's behavior.
+# WHY THE BUILD RUNS HERE: the updater compiles and gates every candidate
+# (npm ci + npm run build + bind + smoke) before it may overwrite an install.
+# When this workflow published every push unconditionally, the FIRST place a
+# commit that fails `npm run build` was discovered was on user machines — all
+# of them at once, each showing a red "update rejected" banner until a fix
+# landed upstream. Building here moves that discovery to CI: a commit that
+# cannot build is never published, so clients simply stay on the last proven
+# commit and never see it.
 #
-# Runs on EVERY push to main (no path filter): the app can resolve to ANY main
-# HEAD, so every HEAD needs an asset or that commit silently loses byte-level
-# verification. The asset format contract lives in scripts/build-rolling-source.mjs
-# and is locked by test/rolling-source-contract.test.ts (publish ⟷ verify).
+# PUBLISH ORDER IS THE INVARIANT (src/ota-rolling-pointer.ts depends on it):
+#   1. build the commit — a failure here stops the job, publishing nothing
+#   2. upload lax-source-<sha>.tar.gz + .sha256
+#   3. only then advance rolling-source-latest.json to that sha
+# So a published pointer always names a commit that is both downloadable and
+# proven. The pointer also never moves to a non-descendant, so an out-of-order
+# run (a slow job finishing after a newer one) cannot walk clients backwards.
+#
+# The asset format contract lives in scripts/build-rolling-source.mjs and is
+# locked by test/rolling-source-contract.test.ts (publish ⟷ verify).
 #
 # This job only ADDS source assets to the `rolling` release; installer-rolling.yml
 # OWNS the release metadata + the .exe/.dmg installers and is untouched here.
@@ -44,18 +46,28 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          # Full history: the pointer advance proves the new commit descends
+          # from the currently-published one, which needs both in the graph.
+          fetch-depth: 0
 
       - name: Set up Node 22
         uses: actions/setup-node@v4
         with:
           node-version: '22'
 
+      - name: Install dependencies
+        run: npm ci
+
+      # THE GATE. Exactly the command validateExtractedUpdate runs against the
+      # extracted candidate on the user's machine, so a green run here means the
+      # same gate cannot reject this commit there. Keep these identical.
+      - name: Build (the same gate the updater runs on every client)
+        run: npm run build
+
       # Desktop's tsconfig intentionally type-checks its colocated tests. Those
       # tests import Vitest from the root development tree, so both dependency
       # scopes must exist for this to match local/updater compilation.
-      - name: Install root build dependencies
-        run: npm ci --ignore-scripts
-
       - name: Compile desktop payload
         working-directory: desktop
         run: |
@@ -84,21 +96,55 @@ jobs:
           gh release upload rolling "$asset" "${asset}.sha256" --clobber
           echo "Published lax-source-${sha}.tar.gz (+ .sha256) to the rolling release."
 
+      # Runs only after the asset above is uploaded, so the pointer can never
+      # name a commit a client is unable to download.
+      - name: Advance the verified pointer to this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          sha="${{ github.sha }}"
+          mkdir -p pointer-current
+          current=""
+          if gh release download rolling --pattern rolling-source-latest.json \
+               --dir pointer-current --clobber 2>/dev/null; then
+            current=$(node -e "try{process.stdout.write(String(require('./pointer-current/rolling-source-latest.json').commit||''))}catch(e){}")
+          fi
+          if [ -n "$current" ] && [ "$current" != "$sha" ] \
+             && ! git merge-base --is-ancestor "$current" "$sha"; then
+            echo "::warning title=Pointer not advanced::${sha} does not descend from published ${current}; leaving the pointer where it is."
+            exit 0
+          fi
+          gh release upload rolling "rolling-dist/rolling-source-latest.json" --clobber
+          echo "Rolling pointer now names ${sha}."
+
       - name: Prune old source assets (keep newest 10)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           KEEP=10
-          # Only HEAD's asset is ever needed by a client; keep a small ring for
-          # in-flight updaters on a just-superseded HEAD, prune the rest so the
-          # release can't grow without bound (mirrors the repo's other caps).
+          # Only the pointer's asset is ever needed by a client; keep a small
+          # ring for in-flight updaters on a just-superseded commit, prune the
+          # rest so the release can't grow without bound (mirrors the repo's
+          # other caps). The pointed-at asset is never pruned, whatever its age
+          # — deleting it would strand every client that reads the pointer.
+          pointed=""
+          mkdir -p pointer-live
+          if gh release download rolling --pattern rolling-source-latest.json \
+               --dir pointer-live --clobber 2>/dev/null; then
+            pointed=$(node -e "try{process.stdout.write(String(require('./pointer-live/rolling-source-latest.json').commit||''))}catch(e){}")
+          fi
           mapfile -t ALL < <(gh release view rolling --json assets \
             --jq '.assets
-                  | map(select(.name | test("^lax-source-[0-9a-f]{40}\\.tar\\.gz$")))
+                  | map(select(.name | test("^lax-source-[0-9a-f]{40}\.tar\.gz$")))
                   | sort_by(.createdAt) | reverse | .[].name')
           pruned=0
           for name in "${ALL[@]:$KEEP}"; do
+            if [ -n "$pointed" ] && [ "$name" = "lax-source-${pointed}.tar.gz" ]; then
+              echo "Keeping $name — it is the published pointer target."
+              continue
+            fi
             echo "Pruning $name (+ .sha256)"
             gh release delete-asset rolling "$name" -y || true
             gh release delete-asset rolling "${name}.sha256" -y || true

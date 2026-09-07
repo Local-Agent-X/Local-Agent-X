@@ -35,10 +35,32 @@ import { gzipSync } from "node:zlib";
 
 import { buildSourceArchive } from "./build-source-archive.mjs";
 
+// Name + schema are the client contract; src/ota-rolling-pointer.ts parses this.
+export const ROLLING_POINTER_ASSET = "rolling-source-latest.json";
+
 /**
- * Generate the verified source asset + sidecar for a resolved commit.
- * Returns the on-disk paths and the hash so callers can log/upload them.
+ * Write the pointer naming the newest CI-PROVEN commit.
+ *
+ * Published only after that commit's source asset is uploaded, so the pointer
+ * can never name a commit a client cannot download. The workflow additionally
+ * refuses to move it to a non-descendant, so it never walks backwards.
  */
+export function buildRollingPointer(sha, subject, outDir) {
+  if (!/^[0-9a-f]{40}$/.test(sha)) {
+    throw new Error(`build-rolling-source: expected a full 40-char commit sha, got: ${JSON.stringify(sha)}`);
+  }
+  mkdirSync(outDir, { recursive: true });
+  const pointerPath = join(outDir, ROLLING_POINTER_ASSET);
+  const pointer = {
+    schemaVersion: 1,
+    commit: sha,
+    subject: String(subject || "").split(/[\r\n]/)[0],
+    publishedAt: new Date().toISOString(),
+  };
+  writeFileSync(pointerPath, JSON.stringify(pointer, null, 2) + "\n");
+  return { pointerPath, pointer };
+}
+
 export function buildRollingSource(sha, outDir, opts = {}) {
   if (!/^[0-9a-f]{40}$/.test(sha)) {
     throw new Error(`build-rolling-source: expected a full 40-char commit sha, got: ${JSON.stringify(sha)}`);
@@ -68,7 +90,11 @@ export function buildRollingSource(sha, outDir, opts = {}) {
       const stagedDesktop = join(stageDir, prefix, "desktop", "dist");
       mkdirSync(join(stageDir, prefix, "desktop"), { recursive: true });
       cpSync(desktopDistDir, stagedDesktop, { recursive: true });
-      execFileSync("tar", ["-rf", tarPath, "-C", stageDir, `${prefix}/desktop/dist`]);
+      // Run from stageDir with relative names: GNU tar reads the colon in an
+      // absolute Windows path (`-rf C:\…`) as a remote rsh host and dies with
+      // "Cannot connect to C:", which made this publisher — and the contract
+      // test that imports it — unrunnable anywhere but CI.
+      execFileSync("tar", ["-rf", "payload.tar", `${prefix}/desktop/dist`], { cwd: stageDir });
       writeFileSync(assetPath, gzipSync(readFileSync(tarPath)));
     } finally {
       rmSync(stageDir, { recursive: true, force: true });
@@ -95,4 +121,7 @@ if (invokedDirectly) {
   console.log(`[rolling-source] ${r.assetName} — ${(r.bytes / 1048576).toFixed(1)} MB, sha256=${r.hash}`);
   console.log(`[rolling-source] asset:   ${r.assetPath}`);
   console.log(`[rolling-source] sidecar: ${r.sidecarPath}`);
+  const subject = execFileSync("git", ["log", "-1", "--format=%s", sha]).toString().trim();
+  const p = buildRollingPointer(sha, subject, outDir);
+  console.log(`[rolling-source] pointer: ${p.pointerPath} → ${p.pointer.commit.slice(0, 7)}`);
 }

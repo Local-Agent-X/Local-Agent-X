@@ -44,11 +44,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Agent-capabilities doc is in sync with the tool registry
-        run: |
-          npx tsx scripts/gen-agent-capabilities.ts
-          git diff --exit-code docs/agent-capabilities.md \
-            || { echo "::error::docs/agent-capabilities.md is stale — run 'npx tsx scripts/gen-agent-capabilities.ts' and commit the result."; exit 1; }
+      # Every doc generated from source, checked in one place. A stale one is
+      # not cosmetic: `npm run build` byte-compares docs/codebase-map.md, and
+      # the rolling updater runs that build on the candidate it installs.
+      - name: Generated docs are in sync with the source
+        run: npm run check:generated-docs
 
       - name: Type-check (clean tree, no working-dir bleed)
         run: npx tsc --noEmit

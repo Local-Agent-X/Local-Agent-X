@@ -31,6 +31,7 @@ demand via tool search and aren't all listed here.)
 - `multi_edit`
 - `bulk_replace`
 - `delete_file` — Delete a file.
+- `restore_file`
 - `bash` — Run a shell command. _e.g._ "run `npm test` in the project"
 - `glob` — Find files by name pattern.
 - `grep` — Search file contents.
@@ -143,4 +144,4 @@ demand via tool search and aren't all listed here.)
 - `presentation`
 
 ---
-_63 capabilities · 47 with a description · 16 awaiting a blurb (add to scripts/gen-agent-capabilities.ts)._
+_64 capabilities · 47 with a description · 17 awaiting a blurb (add to scripts/gen-agent-capabilities.ts)._

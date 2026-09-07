@@ -12,7 +12,7 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 65 top-level dirs · 65 live · 0 with no live importer · 1543 non-test source files · 0 god files (>400 LOC).
+**Totals:** 65 top-level dirs · 65 live · 0 with no live importer · 1546 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -20,9 +20,9 @@ over 400 LOC (the source-hygiene ceiling).
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 122 | 25 | XL |  |
 | `src/security/` | 85 | 34 | XL |  |
-| `src/tools/` | 66 | 170 | XL |  |
+| `src/tools/` | 66 | 172 | XL |  |
 | `src/providers/` | 61 | 20 | XL |  |
-| `src/canonical-loop/` | 56 | 226 | XL |  |
+| `src/canonical-loop/` | 56 | 227 | XL |  |
 | `src/memory/` | 46 | 128 | XL |  |
 | `src/workspace/` | 41 | 2 | M |  |
 | `src/session/` | 36 | 7 | L |  |
@@ -31,8 +31,8 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/threat/` | 32 | 12 | L |  |
 | `src/auth/` | 31 | 10 | L |  |
 | `src/tool-policy/` | 30 | 20 | L |  |
+| `src/browser/` | 29 | 76 | XL |  |
 | `src/agency/` | 28 | 19 | L |  |
-| `src/browser/` | 28 | 76 | XL |  |
 | `src/data-lineage/` | 28 | 8 | L |  |
 | `src/agent-store/` | 26 | 7 | M |  |
 | `src/local-runtimes/` | 26 | 18 | L |  |
@@ -144,6 +144,7 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/mutation-lock.ts` | S |
 | `src/ollama-cloud.ts` | S |
 | `src/ota-extract.ts` | S |
+| `src/ota-rolling-pointer.ts` | S |
 | `src/ota-update-state.ts` | S |
 | `src/ota-update.ts` | M |
 | `src/pid-probe.ts` | S |

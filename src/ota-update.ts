@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { extractTarball } from "./ota-extract.js";
 import { getLaxDir } from "./lax-data-dir.js";
+import { fetchRollingPointer } from "./ota-rolling-pointer.js";
 import { createLogger } from "./logger.js";
 import { UpdateRollbackTransaction } from "./update-rollback.js";
 import {
@@ -75,7 +76,7 @@ export class OTAManager {
   //
   // A git checkout knows its commit via `git rev-parse`; a tarball install
   // doesn't, so we record the commit we last applied here and compare it to
-  // remote main HEAD to decide "is there an update".
+  // the newest CI-proven commit to decide "is there an update".
 
   async readInstalledCommit(): Promise<string | null> {
     return readInstalledCommit(this.installedCommitPath);
@@ -86,73 +87,50 @@ export class OTAManager {
     await writeInstalledCommit(this.installedCommitPath, commit);
   }
 
-  // Remote main HEAD via the unauthenticated commits API — the same public
-  // reachability the installer's tarball download already depends on.
-  async checkMainCommit(): Promise<{ commit: string; subject: string }> {
-    const url = `https://api.github.com/repos/${this.repoOwner}/${this.repoName}/commits/main`;
-    const r = await fetch(url, { headers: { Accept: "application/vnd.github+json" } });
-    if (!r.ok) throw new Error(`GitHub API error: ${r.status}`);
-    const data = (await r.json()) as { sha: string; commit?: { message?: string } };
-    return { commit: data.sha, subject: (data.commit?.message || "").split("\n")[0] };
+  // Resolve the newest commit CI has PROVEN builds, not whatever is on main.
+  //
+  // Publishing order in rolling-source.yml is the invariant this relies on: a
+  // commit is built, its verified asset uploaded, and only then does the
+  // pointer advance. So a pointer always names a commit that has an asset and
+  // that passed the same `npm run build` the local gate runs.
+  async resolveRollingTarget(): Promise<{ commit: string; subject: string }> {
+    const pointer = await fetchRollingPointer(this.repoOwner, this.repoName);
+    return { commit: pointer.commit, subject: pointer.subject };
   }
 
-  // Download the `main` source tarball for a SPECIFIC, already-resolved commit.
+  // Fetch the published, checksum-verified source asset for a resolved commit.
   //
-  // We deliberately fetch the IMMUTABLE per-commit archive
-  // (`archive/<sha>.tar.gz`) rather than the mutable branch ref
-  // (`archive/refs/heads/main.tar.gz`): the branch ref can change bytes between
-  // the commit-resolution call and the download, so the bytes we execute would
-  // not be bound to any commit we recorded. Pinning the URL to the resolved sha
-  // is the integrity binding for the rolling channel — the executed bytes ARE
-  // the named commit. A non-empty commit is required; without it there is no
-  // binding and we refuse to download (mirrors downloadUpdate's
-  // reject-on-missing-checksum posture).
-  //
-  // Bytes-level verification (closes the former TODO(rolling-checksum)): the
-  // verified-asset path below fetches a published immutable asset + .sha256 and
-  // rejects on mismatch — catching a poisoned CDN response for a valid sha URL,
-  // not just the mutable-ref swap. Asset built per commit by rolling-source.yml.
-  async downloadMainTarball(commit: string): Promise<string> {
+  // There is deliberately NO fallback to GitHub's on-demand
+  // `archive/<sha>.tar.gz`. Those bytes are not byte-stable, so they cannot be
+  // pre-hashed, and reaching for them on a missing asset would route the
+  // install straight back to unproven code — the exact failure the pointer
+  // exists to prevent. A missing asset means CI has not published this commit;
+  // that is a refusal, not a reason to improvise.
+  async downloadRollingSource(commit: string): Promise<string> {
     if (!commit) {
       throw new Error(
-        "Update rejected: no resolved commit. The rolling update must pin an immutable commit archive before downloading."
+        "Update rejected: no resolved commit. The rolling update must pin an immutable commit before downloading."
       );
     }
     await this.init();
 
-    // Bytes-level integrity: if the `rolling` release publishes a stored source
-    // asset + SHA256 for THIS commit, fetch the stored asset and verify the
-    // bytes before extract — GitHub's on-demand `archive/<sha>.tar.gz` is not
-    // byte-stable, so it can't be checksum-verified, but an uploaded release
-    // asset is an immutable blob that can. A published checksum that MISMATCHES
-    // is a hard failure (no silent fallback). If no checksum is published yet
-    // (today / older commits), fall back to the commit-pinned archive — strictly
-    // today's behavior, never worse. See installer-rolling.yml TODO(rolling-checksum).
     const assetBase = `https://github.com/${this.repoOwner}/${this.repoName}/releases/download/rolling/lax-source-${commit}.tar.gz`;
-    try {
-      const sumRes = await fetch(`${assetBase}.sha256`, { redirect: "follow" });
-      if (sumRes.ok) {
-        const assetRes = await fetch(assetBase, { redirect: "follow" });
-        if (!assetRes.ok) throw new Error(`verified source asset fetch failed: ${assetRes.status}`);
-        const buf = Buffer.from(await assetRes.arrayBuffer());
-        assertSha256(buf, await sumRes.text()); // throws on mismatch/malformed
-        const verifiedPath = join(this.updatesDir, `main-${commit}-verified.tar.gz`);
-        await writeFile(verifiedPath, buf);
-        return verifiedPath;
-      }
-    } catch (e) {
-      // A checksum mismatch must NOT be swallowed — re-throw it.
-      if (/checksum mismatch|checksum is malformed/.test((e as Error).message)) throw e;
-      // Transient asset/network error → fall through to the commit-pinned archive.
+    const sumRes = await fetch(`${assetBase}.sha256`, { redirect: "follow" });
+    if (!sumRes.ok) {
+      throw new Error(
+        `Update rejected: no published checksum for ${commit.slice(0, 7)} (HTTP ${sumRes.status}). ` +
+        "Only CI-published, verified builds are installable."
+      );
     }
-
-    const url = `https://github.com/${this.repoOwner}/${this.repoName}/archive/${commit}.tar.gz`;
-    const r = await fetch(url, { redirect: "follow" });
-    if (!r.ok) throw new Error(`Download failed: ${r.status}`);
-    const buffer = Buffer.from(await r.arrayBuffer());
-    const tarPath = join(this.updatesDir, `main-${commit}-${Date.now()}.tar.gz`);
-    await writeFile(tarPath, buffer);
-    return tarPath;
+    const assetRes = await fetch(assetBase, { redirect: "follow" });
+    if (!assetRes.ok) {
+      throw new Error(`Update rejected: verified source asset fetch failed (HTTP ${assetRes.status}).`);
+    }
+    const buf = Buffer.from(await assetRes.arrayBuffer());
+    assertSha256(buf, await sumRes.text());
+    const verifiedPath = join(this.updatesDir, `main-${commit}-verified.tar.gz`);
+    await writeFile(verifiedPath, buf);
+    return verifiedPath;
   }
 
   async init(): Promise<void> {
@@ -177,11 +155,10 @@ export class OTAManager {
     validate?: (extractDir: string) => Promise<{ ok: boolean; detail: string; depsChanged: boolean }>
   ): Promise<{ depsChanged: boolean }> {
     // Integrity gate: never extract bytes over the live install dir unless they
-    // are bound to a resolved commit. The rolling path resolves main → sha,
-    // downloads the immutable archive/<sha>.tar.gz, and passes that sha here;
-    // an empty/missing commit means the bytes have no integrity binding, so we
-    // REFUSE rather than `tar xzf` + copy them (mirrors the deleted
-    // downloadUpdate's reject-on-missing-checksum posture). This is the single
+    // are bound to a resolved commit. The rolling path resolves the CI pointer
+    // → sha, downloads that sha's checksum-verified asset, and passes the sha
+    // here; an empty/missing commit means the bytes have no integrity binding,
+    // so we REFUSE rather than `tar xzf` + copy them. This is the single
     // chokepoint guarding the extract — see ota-update.test.ts.
     if (!expectedCommit) {
       throw new Error(

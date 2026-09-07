@@ -275,12 +275,12 @@ export async function applyRollingUpdate(installDir: string, authToken: string):
     const ota = new OTAManager();
     await ota.recoverPendingUpdate(installDir);
     const installed = (await ota.readInstalledCommit()) || "";
-    const { commit } = await ota.checkMainCommit();
+    const { commit } = await ota.resolveRollingTarget();
     if (installed && installed === commit) {
       recordUpdateSuccess(getLaxDir());
       return { ok: true, fromCommit: installed.slice(0, 7), toCommit: commit.slice(0, 7), detail: "Already up to date." };
     }
-    const tarPath = await ota.downloadMainTarball(commit);
+    const tarPath = await ota.downloadRollingSource(commit);
     let desktopDepsChanged = false;
     const { depsChanged } = await ota.applyUpdate(
       tarPath, installDir, installed || "rolling", commit,

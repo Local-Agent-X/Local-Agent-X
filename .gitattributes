@@ -12,3 +12,6 @@
 # without this autocrlf hands Windows a CRLF checkout and `npm run build`
 # fails "stale" on a map that is perfectly current.
 docs/codebase-map.md text eol=lf
+# Same reason, plus it keeps `git status` from reporting a permanent
+# line-ending modification on a doc whose content is actually current.
+docs/agent-capabilities.md text eol=lf

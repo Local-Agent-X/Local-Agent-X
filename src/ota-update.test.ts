@@ -313,8 +313,74 @@ describe("OTAManager — rolling-channel integrity gate (R4-06)", () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  it("downloadMainTarball REFUSES to fetch without a resolved commit", async () => {
+  it("downloadRollingSource REFUSES to fetch without a resolved commit", async () => {
     // Empty commit ⇒ no immutable URL to pin ⇒ must reject before any fetch.
-    await expect(ota.downloadMainTarball("")).rejects.toThrow(/no resolved commit/i);
+    await expect(ota.downloadRollingSource("")).rejects.toThrow(/no resolved commit/i);
+  });
+});
+
+describe("OTAManager — only CI-published, verified bytes are installable", () => {
+  // The updater used to fall back to GitHub's on-demand archive/<sha>.tar.gz
+  // when no checksum was published. Those bytes are unproven AND unhashable,
+  // so the fallback quietly reinstated exactly what the CI gate exists to
+  // prevent. These pin that no such path survives.
+  const SHA = "7ba4c12da91ca7633dc5fda236450a4b4b7af13b";
+  let calls: string[];
+  let realFetch: typeof globalThis.fetch;
+
+  beforeEach(() => {
+    calls = [];
+    realFetch = globalThis.fetch;
+  });
+  afterEach(() => { globalThis.fetch = realFetch; });
+
+  const stub = (handler: (url: string) => { ok: boolean; status: number; body?: Buffer | string }) => {
+    globalThis.fetch = (async (input: unknown) => {
+      const url = String(input);
+      calls.push(url);
+      const r = handler(url);
+      return {
+        ok: r.ok,
+        status: r.status,
+        text: async () => String(r.body ?? ""),
+        arrayBuffer: async () => {
+          const b = Buffer.isBuffer(r.body) ? r.body : Buffer.from(String(r.body ?? ""));
+          return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength);
+        },
+      };
+    }) as unknown as typeof globalThis.fetch;
+  };
+
+  it("refuses the commit when no checksum is published — no archive fallback", async () => {
+    stub(() => ({ ok: false, status: 404 }));
+    await expect(ota.downloadRollingSource(SHA)).rejects.toThrow(/no published checksum/i);
+    // The unverified archive URL must never be requested.
+    expect(calls.some((u) => u.includes("/archive/"))).toBe(false);
+  });
+
+  it("refuses when the checksum exists but the asset does not", async () => {
+    stub((url) => url.endsWith(".sha256")
+      ? { ok: true, status: 200, body: `${"0".repeat(64)}  x.tar.gz` }
+      : { ok: false, status: 404 });
+    await expect(ota.downloadRollingSource(SHA)).rejects.toThrow(/verified source asset fetch failed/i);
+    expect(calls.some((u) => u.includes("/archive/"))).toBe(false);
+  });
+
+  it("refuses bytes that do not match the published checksum", async () => {
+    stub((url) => url.endsWith(".sha256")
+      ? { ok: true, status: 200, body: `${"a".repeat(64)}  x.tar.gz` }
+      : { ok: true, status: 200, body: Buffer.from("tampered payload") });
+    await expect(ota.downloadRollingSource(SHA)).rejects.toThrow(/checksum mismatch/i);
+  });
+
+  it("writes the payload only when the published checksum matches the bytes", async () => {
+    const payload = Buffer.from("verified payload bytes");
+    const digest = createHash("sha256").update(payload).digest("hex");
+    stub((url) => url.endsWith(".sha256")
+      ? { ok: true, status: 200, body: `${digest}  lax-source-${SHA}.tar.gz` }
+      : { ok: true, status: 200, body: payload });
+    const path = await ota.downloadRollingSource(SHA);
+    expect(readFileSync(path)).toEqual(payload);
+    expect(calls[0]).toContain(`lax-source-${SHA}.tar.gz.sha256`);
   });
 });

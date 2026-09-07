@@ -245,17 +245,31 @@ describe("chat event pump — wall-clock deadline UX", () => {
     });
   });
 
-  it("flushes a held abort acknowledgement, in order, when anything other than a deadline follows", async () => {
+  it("flushes a held abort acknowledgement, in order, when the next event is not one of its causes", async () => {
     const opId = track(`op_test_abort_flush_${Date.now()}`);
+    const pump = createEventPump(opId);
+    emit(opId, "error", { code: "aborted", message: "adapter aborted mid-stream", retryable: false });
+    emit(opId, "error", { code: "adapter_error", message: "upstream 500", retryable: false });
+    const pulled = await pump.pull();
+    pump.dispose();
+    expect(pulled.events).toEqual([
+      { type: "error", message: "aborted: adapter aborted mid-stream" },
+      { type: "error", message: "adapter_error: upstream 500" },
+    ]);
+  });
+
+  // The complement, and the reason the case above had to stop using
+  // `worker_exception` as its example: an uncaught worker crash IS the cause of
+  // the adapter's abort, so it replaces the acknowledgement instead of queueing
+  // behind it. The user is shown why, not "aborted" and then why.
+  it("drops the held acknowledgement when the cause itself follows", async () => {
+    const opId = track(`op_test_abort_cause_${Date.now()}`);
     const pump = createEventPump(opId);
     emit(opId, "error", { code: "aborted", message: "adapter aborted mid-stream", retryable: false });
     emit(opId, "error", { code: "worker_exception", message: "boom", retryable: false });
     const pulled = await pump.pull();
     pump.dispose();
-    expect(pulled.events).toEqual([
-      { type: "error", message: "aborted: adapter aborted mid-stream" },
-      { type: "error", message: "worker_exception: boom" },
-    ]);
+    expect(pulled.events).toEqual([{ type: "error", message: "worker_exception: boom" }]);
   });
 
   it("flushes a held abort acknowledgement at terminal so a cancelled op still reports it", async () => {

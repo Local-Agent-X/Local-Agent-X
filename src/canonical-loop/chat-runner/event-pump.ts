@@ -79,7 +79,21 @@ export function createEventPump(opId: string): EventPump {
   // cancel, lease loss) explains itself on the very next event. The deadline
   // path replaces it with the human notice; every other event flushes it
   // unchanged and in order, so nothing else's behaviour moves.
+  //
+  // A hold must never outlive the pump. When `aborted` is the LAST event the
+  // op ever emits (the worker bails on lease loss / a commit fence and never
+  // transitions), nothing follows to flush it: pull() hung and dispose()
+  // silently dropped the only error the user would ever have seen. So
+  // dispose() flushes the hold into the queue, unchanged, and wakes any
+  // pending pull() — which then returns instead of waiting forever.
   let heldAbort: ServerEvent | null = null;
+  let disposed = false;
+
+  const flushHeldAbort = (): void => {
+    if (!heldAbort) return;
+    eventQueue.push(heldAbort);
+    heldAbort = null;
+  };
 
   const wake = () => {
     if (waiter) {
@@ -138,8 +152,7 @@ export function createEventPump(opId: string): EventPump {
       ? ((event.body ?? {}) as Record<string, unknown>).code
       : undefined;
     if (heldAbort && eventCode !== "deadline_exceeded") {
-      eventQueue.push(heldAbort);
-      heldAbort = null;
+      flushHeldAbort();
       wake();
     }
     if (event.type === "state_changed") {
@@ -261,12 +274,18 @@ export function createEventPump(opId: string): EventPump {
   return {
     push(ev) { eventQueue.push(ev); wake(); },
     async pull() {
-      while (eventQueue.length === 0 && terminal === null) {
+      while (eventQueue.length === 0 && terminal === null && !disposed) {
         await new Promise<void>(r => { waiter = r; });
       }
       const events = eventQueue.splice(0, eventQueue.length);
       return { events, terminal };
     },
-    dispose() { offStream(); offEvents(); },
+    dispose() {
+      offStream();
+      offEvents();
+      disposed = true;
+      flushHeldAbort();
+      wake();
+    },
   };
 }

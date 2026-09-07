@@ -310,7 +310,15 @@ export interface OpEvent {
 
 export interface OpResult {
   opId: string;
-  status: "completed" | "failed" | "cancelled" | "needs-input" | "paused";
+  /**
+   * `partial` is a `succeeded` op that ended at an iteration checkpoint
+   * (canonical-loop/checkpoint-stop.ts: dry checkpoints or the spend ceiling)
+   * rather than by finishing its task. Its work is saved, but it is NOT done —
+   * a parent that read it as `completed` acted on a half-built result. Derived
+   * from the worker's own `iteration_checkpoint` event, never a second flag;
+   * `finalSummary` then opens with the PARTIAL line the parent must relay.
+   */
+  status: "completed" | "partial" | "failed" | "cancelled" | "needs-input" | "paused";
   finalSummary: string;       // one-liner the supervisor can show the user
   filesChanged: string[];
   artifactPaths?: string[];   // disk paths to op artifacts

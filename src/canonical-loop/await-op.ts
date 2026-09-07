@@ -11,6 +11,7 @@
 import type { OpResult } from "../ops/types.js";
 import { readOp } from "../ops/op-store.js";
 import { subscribeOpEvents } from "./control-api.js";
+import { describeCheckpointStop, readCheckpointStop } from "./checkpoint-stop.js";
 import type { CanonicalEvent, StateChangedBody } from "./types.js";
 
 function terminalToResultStatus(to: string): OpResult["status"] {
@@ -23,20 +24,39 @@ function terminalToResultStatus(to: string): OpResult["status"] {
   }
 }
 
+/**
+ * The OpResult for a canonical op that reached terminal state `to`.
+ *
+ * `succeeded` is not always `completed`: an op the worker ended at an
+ * iteration checkpoint (dry checkpoints / spend ceiling) is `succeeded /
+ * iteration_checkpoint` on the state machine, and used to reach its parent
+ * as a plain "completed" with the child's last text — the parent built on a
+ * half-finished result with no idea it was one. The checkpoint's own event
+ * (checkpoint-stop.ts readCheckpointStop) is the single source of truth; here
+ * it becomes `partial`, and finalSummary opens with the PARTIAL line.
+ */
+function resultForTerminal(opId: string, to: string, lastFailureReason?: string): OpResult {
+  const stop = to === "succeeded" ? readCheckpointStop(opId) : null;
+  const status: OpResult["status"] = stop ? "partial" : terminalToResultStatus(to);
+  return {
+    opId,
+    status,
+    finalSummary: stop
+      ? describeCheckpointStop(opId, stop)
+      : (lastFailureReason || `op ${opId} ${status}`),
+    filesChanged: [],
+    error: lastFailureReason
+      ? { message: lastFailureReason, recoverable: false }
+      : undefined,
+  };
+}
+
 function synthesizeFromDisk(opId: string): OpResult | null {
   const op = readOp(opId);
   if (!op) return null;
   const state = op.canonical?.state;
   if (state === "succeeded" || state === "failed" || state === "cancelled") {
-    return {
-      opId,
-      status: terminalToResultStatus(state),
-      finalSummary: op.lastFailureReason || `op ${opId} ${terminalToResultStatus(state)}`,
-      filesChanged: [],
-      error: op.lastFailureReason
-        ? { message: op.lastFailureReason, recoverable: false }
-        : undefined,
-    };
+    return resultForTerminal(opId, state, op.lastFailureReason);
   }
   // Legacy op rows persisted before canonical-loop migration may carry
   // op.status without canonical.state. Treat their terminal status as the
@@ -140,12 +160,7 @@ export function awaitCanonicalOp(opId: string, timeoutMs = 30 * 60 * 1000): Prom
       if (to !== "succeeded" && to !== "failed" && to !== "cancelled") return;
       const persisted = synthesizeFromDisk(opId);
       if (persisted) { finish(persisted); return; }
-      finish({
-        opId,
-        status: terminalToResultStatus(to),
-        finalSummary: `op ${opId} ${terminalToResultStatus(to)}`,
-        filesChanged: [],
-      });
+      finish(resultForTerminal(opId, to));
     });
 
     // Race: terminal state may have been written between the disk read and

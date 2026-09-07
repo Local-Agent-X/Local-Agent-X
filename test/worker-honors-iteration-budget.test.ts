@@ -44,6 +44,9 @@ import {
 } from "../src/canonical-loop/index.js";
 import { readOp, newOpId } from "../src/ops/op-store.js";
 import type { Op } from "../src/ops/types.js";
+import { awaitCanonicalOp } from "../src/canonical-loop/index.js";
+import { opWaitTool } from "../src/ops/tools/op-wait.js";
+import { opStatusTool } from "../src/ops/tools/op-status.js";
 
 import { FakeAdapter, scriptTurn } from "./canonical-loop/fake-adapter.js";
 
@@ -154,6 +157,58 @@ describe("worker honors budget.maxIterations (CL-7 regression)", () => {
     const checkpoints = readCanonicalEvents(op.id).filter(e => e.type === "iteration_checkpoint");
     expect(checkpoints.length).toBeGreaterThanOrEqual(2);
     for (const c of checkpoints) expect(c.body).toMatchObject({ maxTurns: 3, continuing: true });
+
+    // A genuinely finished op is still `completed` to a parent — continuing
+    // checkpoints along the way do not make it partial.
+    expect((await awaitCanonicalOp(op.id, 1_000))?.status).toBe("completed");
+    const waited = await opWaitTool.execute({ op_id: op.id, timeout_ms: 1_000 });
+    expect(waited.isError).toBe(false);
+    expect(waited.content).not.toMatch(/^PARTIAL/);
+  });
+
+  // A checkpoint stop is `succeeded / iteration_checkpoint` on the state
+  // machine; await-op mapped succeeded → "completed" and op_wait returned the
+  // child's last text with isError:false, so a parent built on a half-done
+  // result with no idea it was one. The stop must reach the parent as PARTIAL.
+  it("reports a worker-lane child that stopped at a dry checkpoint as PARTIAL to its parent", async () => {
+    const op = mkOp(3, "build");
+    const script = Array.from({ length: 20 }, (_, i) =>
+      scriptTurn({ toolCalls: [{ toolCallId: `partial-tc-${i}`, tool: "search", args: {} }] }),
+    );
+    const fake = new FakeAdapter({ script });
+    registerAdapterForOp(op.id, () => fake);
+    setToolDispatcher({
+      async dispatch(call) {
+        return { toolCallId: call.toolCallId, status: "ok", result: { ok: true }, durationMs: 0 };
+      },
+    });
+
+    canonicalLoopEntry(op);
+    await awaitTerminal(op.id);
+    await awaitIdle(5_000).catch(() => undefined);
+    expect(readOp(op.id)?.canonical?.state).toBe("succeeded");
+    const stop = readCanonicalEvents(op.id).filter(e => e.type === "iteration_checkpoint").at(-1)!;
+    expect(stop.body).toMatchObject({ continuing: false, stopReason: "dry-checkpoints" });
+    const completedTurns = (stop.body as { completedTurns: number }).completedTurns;
+
+    // The parent-facing result: `partial`, never `completed`.
+    const result = await awaitCanonicalOp(op.id, 1_000);
+    expect(result?.status).toBe("partial");
+
+    // op_wait: not an error (the work is saved), but the content MUST open
+    // with the explicit PARTIAL line — before any of the child's own text.
+    const waited = await opWaitTool.execute({ op_id: op.id, timeout_ms: 1_000 });
+    expect(waited.isError).toBe(false);
+    expect(waited.content).toMatch(
+      new RegExp(`^PARTIAL — child op ${op.id} stopped at a checkpoint after ${completedTurns} turns \\(reason: dry-checkpoints`),
+    );
+    expect(waited.content).toContain(`op ${op.id} partial in`);
+
+    // op_status says the same thing, from the same record.
+    const status = await opStatusTool.execute({ op_id: op.id });
+    expect(status.isError).toBeFalsy();
+    expect(status.content).toContain(`op ${op.id} [partial]`);
+    expect(status.content).toContain(`PARTIAL — child op ${op.id} stopped at a checkpoint after ${completedTurns} turns (reason: dry-checkpoints`);
   });
 
   it("stops an interactive op at the checkpoint where two in a row learned nothing", async () => {

@@ -15,7 +15,17 @@ vi.mock("./control-api.js", () => ({
   subscribeOpEvents: (...args: unknown[]) => subscribeOpEventsMock(...args),
 }));
 
-import { awaitOpRunning } from "./await-op.js";
+// checkpoint-stop.js is the ONE reader of the worker's stop record; the real
+// reader is exercised against a real worker in
+// test/worker-honors-iteration-budget.test.ts. Here it is a switch.
+const readCheckpointStopMock = vi.fn();
+vi.mock("./checkpoint-stop.js", () => ({
+  readCheckpointStop: (...args: unknown[]) => readCheckpointStopMock(...args),
+  describeCheckpointStop: (opId: string, facts: { completedTurns: number | null; reason: string | null }) =>
+    `PARTIAL — child op ${opId} stopped at a checkpoint after ${facts.completedTurns} turns (reason: ${facts.reason})`,
+}));
+
+import { awaitOpRunning, awaitCanonicalOp } from "./await-op.js";
 
 type Listener = (event: { type: string; body?: { to?: string } }) => void;
 
@@ -25,6 +35,8 @@ let lastUnsub: ReturnType<typeof vi.fn> | null = null;
 beforeEach(() => {
   readOpMock.mockReset();
   subscribeOpEventsMock.mockReset();
+  readCheckpointStopMock.mockReset();
+  readCheckpointStopMock.mockReturnValue(null);
   lastListener = null;
   lastUnsub = null;
 
@@ -102,5 +114,48 @@ describe("awaitOpRunning", () => {
 
     const result = await promise;
     expect(result).toEqual({ running: true });
+  });
+});
+
+// A checkpoint-stopped op is `succeeded / iteration_checkpoint` on the state
+// machine — and used to reach its parent as a plain "completed". The stop is
+// read from the worker's own checkpoint event; it becomes `partial` here.
+describe("awaitCanonicalOp — a checkpoint stop is partial, not completed", () => {
+  const STOP = { completedTurns: 9, reason: "dry-checkpoints", detail: "two checkpoints in a row learned nothing new" };
+
+  it("maps a succeeded op that stopped at a checkpoint to `partial`, with the PARTIAL line as its summary", async () => {
+    readOpMock.mockReturnValue({ canonical: { state: "succeeded" } });
+    readCheckpointStopMock.mockReturnValue(STOP);
+    const result = await awaitCanonicalOp("op-partial", 200);
+    expect(result?.status).toBe("partial");
+    expect(result?.finalSummary).toMatch(/^PARTIAL — child op op-partial stopped at a checkpoint after 9 turns \(reason: dry-checkpoints\)/);
+    expect(result?.error).toBeUndefined();
+    expect(readCheckpointStopMock).toHaveBeenCalledWith("op-partial");
+  });
+
+  it("keeps a genuinely finished op `completed`", async () => {
+    readOpMock.mockReturnValue({ canonical: { state: "succeeded" } });
+    const result = await awaitCanonicalOp("op-done", 200);
+    expect(result).toMatchObject({ status: "completed", finalSummary: "op op-done completed" });
+  });
+
+  it("never consults the checkpoint record for a failed or cancelled op", async () => {
+    readCheckpointStopMock.mockReturnValue(STOP);
+    readOpMock.mockReturnValue({ canonical: { state: "failed" }, lastFailureReason: "boom" });
+    expect(await awaitCanonicalOp("op-failed", 200)).toMatchObject({ status: "failed", finalSummary: "boom" });
+    readOpMock.mockReturnValue({ canonical: { state: "cancelled" } });
+    expect(await awaitCanonicalOp("op-cancelled", 200)).toMatchObject({ status: "cancelled" });
+    expect(readCheckpointStopMock).not.toHaveBeenCalled();
+  });
+
+  it("maps partial on the live path too, when the terminal event arrives before the row is persisted", async () => {
+    // Disk never shows terminal (the persisted-row race); the bus does.
+    readOpMock.mockReturnValue({ canonical: { state: "running" } });
+    readCheckpointStopMock.mockReturnValue(STOP);
+    const promise = awaitCanonicalOp("op-live", 200);
+    lastListener!({ type: "state_changed", body: { to: "succeeded" } });
+    const result = await promise;
+    expect(result?.status).toBe("partial");
+    expect(result?.finalSummary).toMatch(/^PARTIAL — child op op-live/);
   });
 });

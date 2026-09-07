@@ -36,7 +36,8 @@ const { configSchema } = await import("../config-schema.js");
 const { getMiddlewareState, _resetMiddlewareStates } = await import("./middlewares/state.js");
 const { createLoopState, noteToolResults } = await import("../agent-guards/loop-detection.js");
 const { RESULT_SIG_MEMORY } = await import("../agent-guards/loop-progress.js");
-const { evaluateCheckpointStop } = await import("./checkpoint-stop.js");
+const { evaluateCheckpointStop, checkpointStopFromEvents, describeCheckpointStop } = await import("./checkpoint-stop.js");
+type CanonicalEvent = import("./types.js").CanonicalEvent;
 type LoopState = import("../agent-guards/loop-detection.js").LoopState;
 type Op = import("../ops/types.js").Op;
 type CredentialSource = import("../ops/types.js").Op["contextPack"]["routing"]["authSource"];
@@ -371,6 +372,41 @@ describe("evaluateCheckpointStop — spend ceiling", () => {
     const op = mkOp("op-oauth-own", "oauth");
     learn(op.id, 1);
     expect(evaluateCheckpointStop(op)).toMatchObject({ stop: false, reason: null });
+  });
+});
+
+describe("checkpointStopFromEvents — the one record of a stop", () => {
+  const ev = (seq: number, type: CanonicalEvent["type"], body: Record<string, unknown> | null): CanonicalEvent =>
+    ({ opId: "op-x", seq, type, ts: new Date().toISOString(), body });
+  const continuing = (seq: number) => ev(seq, "iteration_checkpoint", { maxTurns: 3, completedTurns: seq, continuing: true });
+
+  it("is null for an op that never reached a checkpoint, or whose latest one continued", () => {
+    expect(checkpointStopFromEvents([])).toBeNull();
+    expect(checkpointStopFromEvents([ev(1, "state_changed", { from: "running", to: "succeeded", reason: "done" })])).toBeNull();
+    expect(checkpointStopFromEvents([continuing(3), continuing(6)])).toBeNull();
+  });
+
+  it("returns the LAST checkpoint's stop facts when it did not continue", () => {
+    const events = [
+      continuing(3),
+      ev(4, "iteration_checkpoint", { maxTurns: 3, completedTurns: 9, continuing: false, stopReason: "dry-checkpoints", stopDetail: "two in a row" }),
+      ev(5, "state_changed", { from: "running", to: "succeeded", reason: "iteration_checkpoint" }),
+    ];
+    expect(checkpointStopFromEvents(events)).toEqual({ completedTurns: 9, reason: "dry-checkpoints", detail: "two in a row" });
+  });
+
+  it("tolerates a pre-upgrade stop event that carried no reason", () => {
+    expect(checkpointStopFromEvents([ev(1, "iteration_checkpoint", { maxTurns: 3, continuing: false })]))
+      .toEqual({ completedTurns: null, reason: null, detail: null });
+    expect(checkpointStopFromEvents([ev(1, "iteration_checkpoint", { continuing: false, stopReason: "made-up" })])?.reason).toBeNull();
+  });
+
+  it("describes the stop with the literal PARTIAL opener, the turn count, the reason and the way forward", () => {
+    const line = describeCheckpointStop("op_abc", { completedTurns: 9, reason: "spend-ceiling", detail: "session budget reached" });
+    expect(line).toMatch(/^PARTIAL — child op op_abc stopped at a checkpoint after 9 turns \(reason: spend-ceiling: session budget reached\)/);
+    expect(line).toContain("op_submit_async");
+    expect(describeCheckpointStop("op_abc", { completedTurns: null, reason: null, detail: null }))
+      .toMatch(/^PARTIAL — child op op_abc stopped at a checkpoint \(reason: iteration-checkpoint\)/);
   });
 });
 

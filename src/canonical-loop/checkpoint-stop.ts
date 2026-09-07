@@ -57,9 +57,67 @@ import { getMiddlewareState } from "./middlewares/state.js";
 import { createLoopState, type LoopState } from "../agent-guards/loop-detection.js";
 import { getRuntimeConfig } from "../config.js";
 import { getSessionBillableCost, getTodayBillableCost, isBillableSource } from "../cost-tracker.js";
+import { readCanonicalEvents } from "./store.js";
 import type { Op } from "../ops/types.js";
+import type { CanonicalEvent } from "./types.js";
 
 export type CheckpointStopReason = "dry-checkpoints" | "spend-ceiling";
+
+// ── Reading a stop back ────────────────────────────────────────────────────
+//
+// The worker records a stop in exactly one place: its `iteration_checkpoint`
+// event with `continuing: false` (worker.ts), emitted just before the op is
+// ended `succeeded / iteration_checkpoint`. That event is the source of truth
+// for "did this op finish, or did it stop mid-work?" — there is deliberately
+// no second flag on the op row. Everything that reports the op to a parent
+// (await-op.ts → OpResult, op_wait, op_status) reads it through here, so a
+// checkpoint stop can never again reach a parent as a plain `completed`.
+
+export interface CheckpointStopFacts {
+  /** Turns the op had completed when it stopped, when the event carried it. */
+  completedTurns: number | null;
+  reason: CheckpointStopReason | null;
+  detail: string | null;
+}
+
+const STOP_REASONS: ReadonlySet<string> = new Set<CheckpointStopReason>(["dry-checkpoints", "spend-ceiling"]);
+
+/** The stop recorded in an op's event log, or null when its latest checkpoint
+ *  (if any) continued. A stop is always the LAST checkpoint the op reached. */
+export function checkpointStopFromEvents(events: readonly CanonicalEvent[]): CheckpointStopFacts | null {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const event = events[i];
+    if (event.type !== "iteration_checkpoint") continue;
+    const b = event.body ?? {};
+    if (b.continuing !== false) return null;
+    const reason = typeof b.stopReason === "string" && STOP_REASONS.has(b.stopReason)
+      ? (b.stopReason as CheckpointStopReason)
+      : null;
+    return {
+      completedTurns: typeof b.completedTurns === "number" ? b.completedTurns : null,
+      reason,
+      detail: typeof b.stopDetail === "string" ? b.stopDetail : null,
+    };
+  }
+  return null;
+}
+
+export function readCheckpointStop(opId: string): CheckpointStopFacts | null {
+  return checkpointStopFromEvents(readCanonicalEvents(opId));
+}
+
+/**
+ * The line a parent sees for a checkpoint-stopped child. Opens with the
+ * literal PARTIAL marker so it cannot be mistaken for a finished result, then
+ * says what to do: a `succeeded` op is terminal and cannot be resumed
+ * (opResume is for `paused` only), so continuing means a follow-up op that
+ * names the finished part. op_wait and op_status both show exactly this.
+ */
+export function describeCheckpointStop(opId: string, facts: CheckpointStopFacts): string {
+  const turns = facts.completedTurns !== null ? ` after ${facts.completedTurns} turns` : "";
+  const reason = `${facts.reason ?? "iteration-checkpoint"}${facts.detail ? `: ${facts.detail}` : ""}`;
+  return `PARTIAL — child op ${opId} stopped at a checkpoint${turns} (reason: ${reason}); its work is saved but the task is NOT finished. To continue it, submit a follow-up op (op_submit_async) whose task states what this op already did (not_what_to_redo), or report the partial result to the user.`;
+}
 
 export interface CheckpointStopDecision {
   /** True when the op must terminate at this checkpoint. */

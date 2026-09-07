@@ -5,7 +5,7 @@
  */
 
 import type { ToolDefinition } from "../../types.js";
-import { schedulerSnapshot, readOpTurns, readCanonicalEvents } from "../../canonical-loop/index.js";
+import { schedulerSnapshot, readOpTurns, readCanonicalEvents, awaitCanonicalOp } from "../../canonical-loop/index.js";
 import { readCheckpoint } from "../checkpoint.js";
 import { readEvents } from "../event-log.js";
 import { listOps, readOp } from "../op-store.js";
@@ -92,6 +92,15 @@ export const opStatusTool: ToolDefinition = {
     // them. Surface the turn narrative — the same "turn N · read, edit"
     // activity the sidebar shows — so the agent can answer "what's it doing?"
     const turns = readOpTurns(opId);
+    const canonicalState = op.canonical?.state;
+    const isTerminal =
+      op.status === "completed" || op.status === "failed" || op.status === "cancelled" ||
+      canonicalState === "succeeded" || canonicalState === "failed" || canonicalState === "cancelled";
+    // A finished op's OpResult — the same projection op_wait returns, so a
+    // checkpoint-stopped op reads PARTIAL here exactly as it does there (one
+    // reader of the checkpoint event, one line: canonical-loop checkpoint-
+    // stop.ts). Disk-only for a terminal op: resolves at once, no subscription.
+    const terminalResult = isTerminal ? await awaitCanonicalOp(opId, 0) : null;
     const iterationCheckpoints = readCanonicalEvents(opId)
       .filter((event) => event.type === "iteration_checkpoint");
     const latestIterationCheckpoint = iterationCheckpoints.at(-1);
@@ -99,8 +108,11 @@ export const opStatusTool: ToolDefinition = {
       ? (() => {
           const body = (latestIterationCheckpoint.body ?? {}) as Record<string, unknown>;
           const maxTurns = typeof body.maxTurns === "number" ? body.maxTurns : null;
-          return body.continuing === true
-            ? `iteration checkpoints: ${iterationCheckpoints.length} saved${maxTurns ? ` (every ${maxTurns} turns)` : ""}; worker continued automatically\n`
+          if (body.continuing === true) {
+            return `iteration checkpoints: ${iterationCheckpoints.length} saved${maxTurns ? ` (every ${maxTurns} turns)` : ""}; worker continued automatically\n`;
+          }
+          return terminalResult?.status === "partial"
+            ? `${terminalResult.finalSummary}\n`
             : `iteration checkpoint: work saved${maxTurns ? ` after ${maxTurns} turns` : ""}; ready to continue\n`;
         })()
       : "";
@@ -123,15 +135,14 @@ export const opStatusTool: ToolDefinition = {
     // turn/event narrative above says WHAT it did each turn (tool names); the
     // final assistant text is the RESULT the parent asked the op for — without
     // it, op_status on a finished op never returns the answer.
-    const canonicalState = op.canonical?.state;
-    const isTerminal =
-      op.status === "completed" || op.status === "failed" || op.status === "cancelled" ||
-      canonicalState === "succeeded" || canonicalState === "failed" || canonicalState === "cancelled";
     const finalText = isTerminal ? extractFinalAssistantText(opId, 1500) : "";
+    // The legacy status column says "completed" for a checkpoint stop; the
+    // result's status is the honest one.
+    const shownStatus = terminalResult?.status === "partial" ? "partial" : op.status;
 
     return {
       content:
-        `op ${op.id} [${op.status}]  type=${op.type}  attempts=${op.attemptCount}\n` +
+        `op ${op.id} [${shownStatus}]  type=${op.type}  attempts=${op.attemptCount}\n` +
         `task: ${op.task}\n` +
         (checkpoint ? `checkpoint: ${checkpoint.lastSafeBoundary.label} @ ${checkpoint.lastSafeBoundary.timestamp}\n` : "") +
         iterationCheckpointLine +

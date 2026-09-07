@@ -2,6 +2,7 @@ import { existsSync, readFileSync, mkdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { getLaxDir } from "./lax-data-dir.js";
 import { atomicWriteFileSync } from "./server-utils.js";
+import { recordUserNotice, SPEND_BUDGET_NOTICE_ID, SPEND_BUDGET_NOTICE_TEXT } from "./user-notice.js";
 
 export interface Migration {
   version: number;
@@ -106,6 +107,12 @@ registerBuiltinMigration({
     }
     if (!changed) return;
     atomicWriteFileSync(cfgPath, JSON.stringify(cfg, null, 2));
+    // Tell the user ONCE that we changed their caps. We can't emit here —
+    // migrations are awaited before the socket binds — so record a pending
+    // notice; server/index.ts drains it post-bind. Only on `changed`, so an
+    // install that never stored 0s is never told about a migration that did
+    // nothing to it.
+    recordUserNotice(SPEND_BUDGET_NOTICE_ID, SPEND_BUDGET_NOTICE_TEXT);
   },
 });
 

@@ -98,6 +98,46 @@ function dispatchChatWsEvent(msg, checked) {
     return true;
 }
 
+// Neutral, dismissible, one-shot notice banner. Lives here rather than beside
+// showHealthBanner in app.js only because app.js is at the 400-LOC gate; it is
+// otherwise the same kind of thing, minus the red. Dismissal is remembered in
+// localStorage per noticeId so a second tab open at delivery time (or a reload
+// right after) doesn't re-show what the user already waved off — the server's
+// durable ledger is what guarantees it's never SENT twice.
+function showUserNoticeBanner(noticeId, text) {
+  try {
+    var key = 'lax_notice_dismissed_' + String(noticeId || 'anon');
+    try { if (localStorage.getItem(key) === '1') return; } catch (e) { /* private mode */ }
+    var domId = 'user-notice-banner';
+    if (document.getElementById(domId)) return;
+    var banner = document.createElement('div');
+    banner.id = domId;
+    banner.setAttribute('role', 'status');
+    banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9998;background:var(--surface-2,#131325);'
+      + 'border-bottom:1px solid var(--border,#1a1a2e);color:var(--text,#c8d0e0);padding:12px 20px;'
+      + 'font-family:var(--font);font-size:.82rem;line-height:1.5';
+    var row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:flex-start;gap:14px;max-width:1100px;margin:0 auto';
+    var body = document.createElement('div');
+    body.style.cssText = 'flex:1';
+    body.textContent = String(text);  // textContent, not innerHTML — never parse server text as markup
+    var close = document.createElement('button');
+    close.type = 'button';
+    close.textContent = 'Got it';
+    close.style.cssText = 'background:none;border:1px solid var(--border,#1a1a2e);color:var(--muted,#666680);'
+      + 'padding:4px 12px;border-radius:4px;cursor:pointer;font-size:.75rem;flex-shrink:0';
+    close.onclick = function () {
+      try { localStorage.setItem(key, '1'); } catch (e) { /* private mode */ }
+      var el = document.getElementById(domId);
+      if (el && el.parentNode) el.parentNode.removeChild(el);
+    };
+    row.appendChild(body);
+    row.appendChild(close);
+    banner.appendChild(row);
+    document.body.appendChild(banner);
+  } catch (e) { console.warn('[user_notice] banner failed', e); }
+}
+
 function dispatchChatWsNonEvent(msg) {
   // Runtime canary verdicts (e.g. the memory-write self-test): show a
   // dismissible failure banner; auto-clear it when the subsystem recovers.
@@ -108,6 +148,11 @@ function dispatchChatWsNonEvent(msg) {
       window.hideHealthBanner();
     }
   }
+
+  // One-shot informational notice ("we changed a default under you"). The
+  // server delivers it exactly once ever, so this banner is INFORMATION, not a
+  // failure: neutral chrome, never the red health/AV styling.
+  if (msg.type === 'user_notice' && msg.text) showUserNoticeBanner(msg.noticeId, msg.text);
 
   if (msg.type === 'settings_changed' && msg.settings) handleSettingsChanged(msg);
   if (msg.type === 'learning_changed' && typeof window.refreshLearnedWorkflows === 'function') {

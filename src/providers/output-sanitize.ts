@@ -14,14 +14,16 @@
 // "<execute_tool>\nNone\n</execute_tool>" block — all saved raw to the
 // transcript and read aloud raw by TTS.
 //
-// Pure functions, no I/O, no imports. Pass order matters — later passes see
-// what earlier passes produced. In particular the repeat collapse (5) runs
-// AFTER junk removal (1-4) so two copies that differed only in junk still
-// collapse, and the whitespace tidy (6) runs last, only over changed text:
+// Pure functions, no I/O; the one import is the canonical tool-call
+// recognizer. Pass order matters — later passes see what earlier passes
+// produced. In particular the repeat collapse (5) runs AFTER junk removal
+// (1-4) so two copies that differed only in junk still collapse, and the
+// whitespace tidy (6) runs last, only over changed text:
 //   1. leaked chat-template special tokens: <|...|>, fullwidth <｜...｜>,
 //      and marker sequences whose routing word travels with its markers
 //   2. reasoning tags, incl. unterminated at end-of-text
-//   3. hallucinated tool-call markup, whole block incl. payload
+//   3. hallucinated tool-call markup — ranges from the canonical recognizer
+//      (tool-call-text-syntaxes.ts), whole block incl. payload
 //   4. orphan closing tags of HTML block elements
 //   5. adjacent verbatim whole-text self-repetition
 //   6. whitespace tidy — clean text returns byte-identical, so this only
@@ -30,57 +32,23 @@
 // PRESERVATION INVARIANT: bytes inside fenced code blocks (```...```) and
 // inline backtick spans are never edited — a user legitimately discussing
 // `<think>` tags must see them. Passes 1-4 match against a "shadow" copy of
-// the text with code-span bytes masked out, so nothing inside a code span
-// can TRIGGER a rule. A block whose open/close markers sit in prose may
-// still be dropped wholesale WITH code it encloses (an unterminated <think>
-// owns everything after it) — that is removal of enclosed content, not
-// editing code.
+// the text with code-span bytes masked out (maskCodeSpans — the recognizer's
+// own mask, shared so every consumer draws the same code-span boundaries:
+// identical length, code bytes replaced with NUL, newlines kept), so nothing
+// inside a code span can TRIGGER a rule. Every bounded inner-content class
+// below excludes \x00 so a rule's TRIGGER can never stretch across a code
+// span; the unbounded [\s\S] between a paired block's markers deliberately
+// can. A block whose open/close markers sit in prose may still be dropped
+// wholesale WITH code it encloses (an unterminated <think> owns everything
+// after it) — that is removal of enclosed content, not editing code.
+
+import { findTextToolCallRanges, maskCodeSpans, segmentCodeSpans } from "../canonical-loop/public/tool-call-text.js";
 
 export type ModelOutputProfile = "delivery" | "persist";
 
-// ── Code-span segmentation (the preservation mechanism) ─────────────────────
-
-interface Segment { code: boolean; text: string }
-
-// Fenced block: 3+ backticks, optional info string, lazily to the first
-// same-length run — or end-of-text, so an unterminated fence (cut-off
-// generation) keeps its whole tail as code, the conservative choice.
-// Inline: 1-2 backticks to the matching run; a lone unmatched backtick
-// stays prose and sanitizes normally.
-const CODE_SPAN_RE = /(`{3,})[^`\n]*\n?[\s\S]*?(?:\1|$)|(`{1,2})(?!`)[\s\S]*?\2(?!`)/g;
-
-function segmentCodeSpans(text: string): Segment[] {
-  if (!text.includes("`")) return [{ code: false, text }];
-  const segs: Segment[] = [];
-  let last = 0;
-  CODE_SPAN_RE.lastIndex = 0;
-  for (let m = CODE_SPAN_RE.exec(text); m !== null; m = CODE_SPAN_RE.exec(text)) {
-    if (m.index > last) segs.push({ code: false, text: text.slice(last, m.index) });
-    segs.push({ code: true, text: m[0] });
-    last = m.index + m[0].length;
-  }
-  if (last < text.length) segs.push({ code: false, text: text.slice(last) });
-  return segs;
-}
-
-// Shadow copy for rule matching: identical length, code-span bytes replaced
-// with NUL (newlines kept so line-bounded patterns stay aligned). Rules match
-// on the shadow; matched ranges are deleted from the REAL text by index.
-// Every bounded inner-content class below excludes \x00 so a rule's TRIGGER
-// can never stretch across a code span; the unbounded [\s\S] between a paired
-// block's markers deliberately can — see the header invariant.
-function shadowOf(text: string): string {
-  if (!text.includes("`")) return text;
-  let shadow = "";
-  for (const seg of segmentCodeSpans(text)) {
-    shadow += seg.code ? seg.text.replace(/[^\n]/g, "\u0000") : seg.text;
-  }
-  return shadow;
-}
-
 // Delete every shadow-match of `re` from the real text.
 function removeMasked(text: string, re: RegExp): string {
-  const shadow = shadowOf(text);
+  const shadow = maskCodeSpans(text);
   let out = "";
   let last = 0;
   re.lastIndex = 0;
@@ -107,7 +75,11 @@ const BAR = "[|｜]";
 const JSON_TAIL = String.raw`[^\S\n]*(?:\{[\s\S]{0,4000}?\}(?=[^\S\n]*(?:\n|<|\[|$))|\{[\s\S]*$)`;
 
 // Channel header addressed to a tool ("to="): the whole message is plumbing —
-// markers, routing word AND payload go.
+// markers, routing word AND payload go. Kept here rather than left to pass
+// 3's recognizer on purpose: CHANNEL_PAIR_RE below runs first and would strip
+// the markers, stranding the payload where the recognizer no longer sees a
+// channel shape; and the recognizer wants ASCII bars plus a brace payload,
+// while templates leak fullwidth bars and payload-less headers too.
 const CHANNEL_TOOL_RE = new RegExp(
   `<${BAR}channel${BAR}>[^<>\\n\\x00]{0,160}\\bto=[^<>\\n\\x00]{0,160}<${BAR}message${BAR}>(?:${JSON_TAIL})?`,
   "gi",
@@ -155,31 +127,26 @@ const REASONING_RULES = [
 
 // ── Pass 3: hallucinated tool-call markup ───────────────────────────────────
 // Tool-call syntax emitted as plain text instead of a structured call — the
-// call never ran, and neither the markup nor its payload is speech. The whole
-// block goes, payload included ("<execute_tool>\nNone\n</execute_tool>" from
-// the voice incident). Paired first; an unterminated opener owns the tail
-// (cut off mid-hallucination); a lone closer loses only the tag, same
-// reasoning as pass 2.
-const TOOL_TAG = "(execute_tool|tool_calls?|function_calls?|tool_result|invoke|function)";
-const TOOL_RULES: RegExp[] = [
-  // Paired block, payload and all. Attrs allowed on the opener, so
-  // <function=save_note> and <function name="x"> both pair with </function>.
-  new RegExp(`<\\s*${TOOL_TAG}\\b[^<>\\n\\x00]*>[\\s\\S]*?<\\s*/\\s*\\1\\s*>`, "gi"),
-  // Unterminated at end-of-text. Bare <function>/<invoke> qualify only when
-  // paired (rule above): with no attrs and no closer they're likelier
-  // someone talking about tags than a leaked call.
-  new RegExp(
-    `<\\s*(?:(?:execute_tool|tool_calls?|function_calls?|tool_result)\\b[^<>\\n\\x00]*` +
-      `|(?:invoke|function)[\\s=][^<>\\n\\x00]*)>[\\s\\S]*$`,
-    "gi",
-  ),
-  // Lone closer: tag only — text before it may be the real reply.
-  new RegExp(`<\\s*/\\s*${TOOL_TAG}\\s*>`, "gi"),
-  // Bracket forms.
-  /\[TOOL_CALL\][\s\S]*?\[\/TOOL_CALL\]/gi,
-  /\[TOOL_CALL\][\s\S]*$/gi,
-  new RegExp(`\\[tool:[^\\]\\n\\x00]{1,80}\\](?:${JSON_TAIL})?`, "gi"),
-];
+// call never ran, and neither the markup nor its payload is speech. This
+// pass owns NO tag vocabulary of its own: the canonical recognizer
+// (canonical-loop/adapters/tool-call-text-syntaxes.ts, vocabulary in
+// tool-call-text-tags.ts) reports every leaked-syntax range — paired blocks
+// payload and all ("<execute_tool>\nNone\n</execute_tool>" from the voice
+// incident), namespaced tags (<atem:function_calls>, the 2026-09-08
+// incident this pass missed while it kept its own regexes), an unterminated
+// opener owning the tail, a lone closer losing only the tag, bracket forms,
+// orphan <parameter> pairs. Every range goes regardless of `promoted`: at
+// delivery/persist time nothing ran, so all of it is plumbing. The
+// recognizer masks code spans itself (its default for ranges), so this pass
+// keeps the same preservation invariant as removeMasked.
+function removeToolCallRanges(text: string): string {
+  const ranges = findTextToolCallRanges(text);
+  if (ranges.length === 0) return text;
+  let out = "";
+  let last = 0;
+  for (const r of ranges) { out += text.slice(last, r.start); last = r.end; }
+  return out + text.slice(last);
+}
 
 // ── Pass 4: orphan closing tags of HTML block elements ──────────────────────
 // The voice incident's stray "</blockquote>". Conservative, left-to-right
@@ -191,7 +158,7 @@ const ORPHAN_CLOSER_TAGS = ["blockquote", "div", "p"];
 function removeOrphanClosers(text: string): string {
   let out = text;
   for (const tag of ORPHAN_CLOSER_TAGS) {
-    const shadow = shadowOf(out);
+    const shadow = maskCodeSpans(out);
     const re = new RegExp(`<\\s*(/?)\\s*${tag}\\b[^<>\\n\\x00]*>`, "gi");
     const drops: Array<[number, number]> = [];
     let depth = 0;
@@ -275,7 +242,7 @@ export function sanitizeModelOutput(text: string, profile: ModelOutputProfile): 
   let out = text;
   for (const re of SPECIAL_TOKEN_RULES) out = removeMasked(out, re); // pass 1
   for (const re of REASONING_RULES) out = removeMasked(out, re); // pass 2
-  for (const re of TOOL_RULES) out = removeMasked(out, re); // pass 3
+  out = removeToolCallRanges(out); // pass 3
   out = removeOrphanClosers(out); // pass 4
   out = collapseWholeTextRepeat(out); // pass 5
   if (out === text) return text;

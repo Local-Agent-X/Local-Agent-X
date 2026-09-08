@@ -15,6 +15,19 @@ import { describe, it, expect } from "vitest";
 
 import { sanitizeModelOutput, stripLeakedSpecialTokensStreaming } from "./output-sanitize.js";
 
+// Verbatim 2026-09-08 leak (muse-glimmer:30b): a garbled namespace on every
+// tag. Pass 3 missed it while it owned its own prefix-less regexes; it now
+// consumes the canonical recognizer, whose vocabulary carries the prefix.
+const NAMESPACED_INCIDENT = [
+	"<atem:function_calls>",
+	'<atem:invoke name="grep">',
+	'<atem:parameter name="pattern">footer</atem:parameter>',
+	'<atem:parameter name="path">workspace/apps/bellavida-medical-massage-clone</atem:parameter>',
+	'<atem:parameter name="output_mode">content</atem:parameter>',
+	"</atem:invoke>",
+	"</atem:function_calls>",
+].join("\n");
+
 // Both fixtures must clear the 80-char repeat-collapse floor (asserted below).
 const INCIDENT_HALF =
 	"Alright — I checked the store schedule: tomorrow opens at nine, so I set your reminder for eight forty-five, as you asked.";
@@ -136,6 +149,26 @@ describe("sanitizeModelOutput", () => {
 			expected: "Hold on.",
 		},
 		{
+			name: "namespaced incident block removed whole, surrounding prose byte-clean",
+			input: `Searching.\n${NAMESPACED_INCIDENT}\nDone.`,
+			expected: "Searching.\n\nDone.",
+		},
+		{
+			name: "namespaced lone closer loses only the tag",
+			input: "All done.</atem:function_calls> Anything else?",
+			expected: "All done. Anything else?",
+		},
+		{
+			name: "unterminated namespaced opener swallows to end-of-text",
+			input: 'Let me look.\n<atem:invoke name="grep">\n<atem:parameter name="pattern">foo',
+			expected: "Let me look.",
+		},
+		{
+			name: "real tool block after a backticked mention goes; the mention and the prose between stay",
+			input: `Use \`<invoke name="read">\` like so:\n${NAMESPACED_INCIDENT}\nthen stop.`,
+			expected: 'Use `<invoke name="read">` like so:\n\nthen stop.',
+		},
+		{
 			name: "whole-text verbatim repeat collapses to one copy",
 			input: `${PARA}\n\n${PARA}`,
 			expected: PARA,
@@ -224,6 +257,10 @@ describe("sanitizeModelOutput", () => {
 			// <function>/<invoke> must not swallow the tail of real prose.
 			name: "bare unpaired <function> and <invoke> in prose keep their tail",
 			input: "The <function> keyword takes arguments, and <invoke> is not a call either.",
+		},
+		{
+			name: "namespaced incident block inside a fenced code block",
+			input: `Here is the raw leak:\n\`\`\`xml\n${NAMESPACED_INCIDENT}\n\`\`\`\nfor the record.`,
 		},
 		{ name: "empty string", input: "" },
 	];

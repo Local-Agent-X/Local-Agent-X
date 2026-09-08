@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { homedir } from "node:os";
 import type { LAXConfig } from "../types.js";
 import { setRuntimeConfig } from "../config.js";
-import { resolveAgentPath } from "../workspace/paths.js";
+import { resolveAgentPath, projectRoot, setSessionWorkRoot, clearSessionWorkRoot, sessionWorkRootOf } from "../workspace/paths.js";
 import { searchBase } from "./glob-tool.js";
 import { searchRoot } from "./grep-tool.js";
 
@@ -38,9 +38,37 @@ describe("glob/grep search-root resolution", () => {
     expect(searchBase("apps/demo").startsWith(process.cwd())).toBe(false);
   });
 
-  it("an absent path falls back to cwd (unchanged behavior)", () => {
-    expect(searchBase(undefined)).toBe(process.cwd());
-    expect(searchRoot({})).toBe(process.cwd());
-    expect(searchBase("")).toBe(process.cwd());
+  // An absent path used to fall back to process.cwd() — in the dev server the
+  // git checkout, not the project — so a bare glob("**/*foo*") searched the
+  // wrong tree and returned nothing while read/bash looked in the project
+  // root. Both now resolve "." through resolveAgentPath: ONE rule.
+  it("an absent path resolves to the project root, the same root as a bare relative read", () => {
+    const root = resolve(WS, "..");
+    expect(searchBase(undefined)).toBe(root);
+    expect(searchBase("")).toBe(root);
+    expect(searchRoot({})).toBe(root);
+    expect(searchRoot({ path: "" })).toBe(root);
+    expect(searchBase(undefined)).toBe(resolveAgentPath("."));
+    expect(searchBase(undefined)).toBe(projectRoot());
+  });
+
+  it("an absent path never falls back to process.cwd()", () => {
+    expect(searchBase(undefined)).not.toBe(process.cwd());
+    expect(searchRoot({})).not.toBe(process.cwd());
+  });
+
+  it("with a session work root registered, an absent path resolves to that root (both tools)", () => {
+    const sid = "glob-grep-path-session";
+    const work = resolve("/lax-test-home/projects/chunk-worker");
+    setSessionWorkRoot(sid, work);
+    try {
+      expect(searchBase(undefined, sid)).toBe(sessionWorkRootOf(sid));
+      expect(searchRoot({ _sessionId: sid })).toBe(sessionWorkRootOf(sid));
+      // and a relative path anchors there too — same resolver
+      expect(searchBase("src", sid)).toBe(resolve(sessionWorkRootOf(sid)!, "src"));
+    } finally {
+      clearSessionWorkRoot(sid);
+    }
+    expect(searchBase(undefined, sid)).toBe(resolve(WS, ".."));
   });
 });

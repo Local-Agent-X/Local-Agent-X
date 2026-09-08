@@ -12,21 +12,21 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import { join, extname } from "node:path";
 import type { ToolResult } from "../types.js";
 import { ok, err } from "./result-helpers.js";
-import { resolveAgentPath, sessionIdOf, sessionWorkRootOf } from "../workspace/paths.js";
+import { resolveAgentPath, sessionIdOf } from "../workspace/paths.js";
 
 export type OutputMode = "content" | "files_with_matches" | "count";
 
 // Resolve the search root through the canonical agent-path resolver — the SAME
 // one read/glob and the security gate use — so a "~/..." or workspace-relative
 // root expands once, identically to how it's gated, instead of being joined
-// onto a raw cwd and failing until the model retries. Absent path → the
-// session's work root when one is registered (a chunk worker's bare grep must
-// search its project, not the server cwd), else cwd.
+// onto a raw cwd and failing until the model retries. Absent path → "." through
+// that same resolver (ONE rule, shared with glob's searchBase): the session's
+// work root when one is registered (a chunk worker's bare grep must search its
+// project), else the project root that read/write/bash anchor to — never the
+// server's process.cwd(), which in the dev server is the git checkout.
 export function searchRoot(args: Record<string, unknown>): string {
-  const sessionId = sessionIdOf(args);
-  return args.path != null && String(args.path) !== ""
-    ? resolveAgentPath(String(args.path), sessionId)
-    : sessionWorkRootOf(sessionId) ?? process.cwd();
+  const p = args.path != null && String(args.path) !== "" ? String(args.path) : ".";
+  return resolveAgentPath(p, sessionIdOf(args));
 }
 
 // content mode includes this much surrounding context per hit unless the

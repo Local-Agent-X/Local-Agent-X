@@ -47,7 +47,6 @@ import { canonicalToChatParam } from "./openai-compat/canonical-to-chat-param.js
 import { resolveLocalCap } from "./openai-compat/local-cap.js";
 import { streamOnce, applyToolCallTextFallback } from "./openai-compat/stream-once.js";
 import { assessOpenAiCompatPreflight } from "./openai-compat/request-preflight.js";
-import { proseLooksLikeToolCall, annotatePersistentNarration } from "./tool-call-text-extractor.js";
 import { resolveStepReasoningEffort } from "../step-effort.js";
 import { classifyModelStop } from "./model-stop.js";
 
@@ -109,9 +108,9 @@ export class OpenAICompatAdapter implements Adapter {
     // pin releases so the agent can narrate / chain.
     const forced = input.turnIdx === 0 ? this.opts.forcedToolChoice : undefined;
     const forcedInList = forced && input.tools.some(t => t.name === forced.name);
-    // Layer 1: when no specific tool is pinned, agents still force *some*
-    // tool call on turn 0 so weak models can't open with a prose-narrated
-    // tool call. Turn-0 only; releases afterward. No-op without tools.
+    // When no specific tool is pinned, agents still force *some* tool call
+    // on turn 0 so weak models can't open with a prose description of one.
+    // Turn-0 only; releases afterward. No-op without tools.
     const requireTool =
       input.turnIdx === 0 &&
       !forcedInList &&
@@ -176,58 +175,6 @@ export class OpenAICompatAdapter implements Adapter {
     // must not be able to dispatch anything.
     const toolNameSet = new Set(req.tools.map(t => t.name));
     if (!result.stoppedByGuard) applyToolCallTextFallback(result, report, model, toolNameSet);
-
-    // Layer 2: prose-narration recovery. If extraction couldn't salvage a
-    // call but the text READS like a narrated tool call (e.g. Grok's "run
-    // tool bash with command is …" with no value marker the extractor could
-    // anchor on), inject a wire-format-error nudge and retry the turn ONCE
-    // with tool_choice forced. Mirrors the Anthropic adapter's
-    // `<wire-format-error: … emitted as text — retry…>` recovery. Mutually
-    // exclusive with the empty-response retry below (that fires on zero
-    // text; this fires on prose). No-op for healthy providers.
-    const narratedToolCall =
-      !this.aborted &&
-      !result.interruptedByInject &&
-      !result.stoppedByGuard &&
-      !result.firstError &&
-      result.pendingToolCalls.length === 0 &&
-      req.tools.length > 0 &&
-      proseLooksLikeToolCall(result.assembledText, toolNameSet);
-    if (narratedToolCall) {
-      logger.info(`${model} narrated a tool call as prose — nudging for a real tool_call and retrying once`);
-      const nudgeReq: ProviderRequest = {
-        ...req,
-        messages: [
-          ...req.messages,
-          { role: "assistant", content: result.assembledText },
-          {
-            role: "user",
-            content:
-              "<wire-format-error: your previous reply described a tool call in prose but did not emit one — it was NOT executed and produced no result. Reissue it now as a real structured tool call (function call), not as text.>",
-          },
-        ],
-        toolChoice: "required",
-      };
-      this.inflight = this.runStreamOnce(nudgeReq, report);
-      result = await this.inflight;
-      // The RETRY stream can guard-stop too — a degenerate retry can be a
-      // verbatim loop of VALID tool-call JSON (tool_choice:"required" pushes
-      // weak local models exactly there), and mining it dispatched N
-      // identical calls. Same invariant as the first call site: a
-      // guard-stopped stream is never mined and never annotated — the
-      // stopped notice already explains the cut.
-      if (!result.stoppedByGuard) {
-        applyToolCallTextFallback(result, report, model, toolNameSet);
-        // Retry didn't yield a structured call and the text still reads like
-        // narration → make the no-op visible instead of letting the
-        // false-confident prose stand as a clean reply.
-        const annotated = annotatePersistentNarration(result.assembledText, result.pendingToolCalls.length, toolNameSet);
-        if (annotated !== null) {
-          result.assembledText = annotated;
-          logger.info(`${model} re-narrated a tool call after the wire-format nudge — annotated the reply so the no-op is visible`);
-        }
-      }
-    }
 
     // Empty-response retry. Some models (qwen2:7b is the canonical offender)
     // accept the `tools` field, run for several seconds, then return ZERO text

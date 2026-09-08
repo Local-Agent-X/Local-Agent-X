@@ -49,7 +49,7 @@ export function canonicalToChatParam(
         ? (obj.toolCalls as Array<{ id: string; name: string; arguments: string }>)
         : undefined;
       // Layer-3 history-rebuild sanitization — see parse.ts. Strips
-      // tool-call-shaped JSON / XML / tree-style notation from prior
+      // tool-call-shaped JSON / XML syntax from prior
       // assistant text so the model doesn't mimic its own bad output.
       const rawText = extractText(c);
       const { cleaned: text, leaks } = sanitizeAssistantTextForRebuild(rawText, validToolNames);

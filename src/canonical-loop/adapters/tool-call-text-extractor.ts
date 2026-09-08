@@ -9,10 +9,10 @@
  * accumulator saw it as text; the canonical loop emitted a finalized
  * assistant message with that text in chat; no browser action fired.
  * Small local models widened the zoo: XML-ish wrapper tags
- * (`<execute_tool>`, `<tool_call>`, …), bracket markers, channel-marker
- * leaks, and plain-English narration.
+ * (`<execute_tool>`, `<tool_call>`, …), bracket markers, and channel-marker
+ * leaks.
  *
- * Three layers, strongest signal first (heuristic, not a general parser):
+ * Two layers, strongest signal first (heuristic, not a general parser):
  *
  *   1. **Explicit call syntax** (tool-call-text-syntaxes.ts): wrapper
  *      tags / bracket markers / channel-marker leaks. The model MARKED
@@ -25,8 +25,11 @@
  *      `{"action": "X", "ref": N, ...}`. A bare object is a weaker
  *      signal, so names must match the offered set EXACTLY — no fuzz.
  *
- *   3. **Prose narration** ("run tool bash with command is …"), strictly
- *      last and only when the layers above found nothing.
+ * There is deliberately NO prose layer: text that merely DESCRIBES a tool
+ * call ("I'll run bash with ls") is never guessed into one. The model MUST
+ * have written recognizable call syntax; the loop's completion gate
+ * (turn-loop/tool-intent-gate.ts) owns the one nudge for that case, and
+ * plain prose stands as the reply.
  *
  * Only fires when `tool_calls` is empty AND the text matches a clear
  * pattern; healthy providers never hit this path, and ambiguous text is
@@ -44,7 +47,6 @@
 
 import { findJsonObjects } from "./tool-call-text-repair.js";
 import {
-  escapeRegex,
   isBrowserShorthand,
   resolveCandidateName,
   scanTextToolCallSyntaxes,
@@ -114,13 +116,7 @@ export function extractToolCallsFromText(
     if (synthesized) found.push({ start: obj.start, end: obj.end, call: synthesized });
   }
 
-  // Layer 3 — prose reconstruction, strictly last: only when no marked
-  // syntax or JSON tool call was salvageable anywhere in the turn.
-  if (found.length === 0) {
-    const prose = extractProseCalls(text, validToolNames);
-    if (prose.calls.length > 0) return { toolCalls: prose.calls, remainingText: prose.remainingText };
-    return { toolCalls: [], remainingText: text };
-  }
+  if (found.length === 0) return { toolCalls: [], remainingText: text };
 
   // Emit calls in source order; excise promoted ranges back-to-front so
   // indices stay valid.
@@ -154,10 +150,6 @@ function classify(obj: Record<string, unknown>, validToolNames: Set<string>): Ex
     }
   }
 
-  // Pattern 3 (prose narration) is NOT classified here — it has no JSON to
-  // parse. It's handled by extractProseCalls, called from the top-level
-  // extractor only after JSON classification finds nothing.
-
   // Pattern 2: browser shorthand { action: "X", ref: N, ... }. The shape
   // rules live in isBrowserShorthand — shared with the syntax layer so
   // wrapped shorthand promotes identically. Only fires when "browser" is
@@ -169,160 +161,3 @@ function classify(obj: Record<string, unknown>, validToolNames: Set<string>): Ex
   return null;
 }
 
-/** Action verbs that open a narrated tool call ("run tool bash …"). */
-const PROSE_VERB = String.raw`(?:run|use|call|invoke|execute)`;
-
-/**
- * Tools whose prose narration can be reconstructed into a real call. Each
- * entry lists the tool's args IN THE ORDER the model narrates them; the LAST
- * arg captures verbatim to the segment end (handles unbounded values: shell
- * heredocs, file content). A tool earns an entry only once we've observed the
- * model narrate it AND its args are ordered scalars where the tail can be
- * greedily captured — `edit`/`agent_spawn`/etc. are deliberately absent
- * (object args or ambiguous unbounded boundaries) and ride the adapter's
- * nudge+retry instead.
- */
-const PROSE_RECONSTRUCTABLE: ReadonlyArray<{ name: string; args: ReadonlyArray<string> }> = [
-  { name: "bash", args: ["command"] },
-  { name: "shell", args: ["command"] },
-  { name: "ari_shell", args: ["command"] },
-  { name: "write", args: ["path", "content"] },
-  { name: "read", args: ["path"] },
-];
-
-/** Parse "arg1 is <v1> arg2 is <v2> … argN is <rest>" from one invocation's
- *  text. Non-final args capture non-greedily up to the next arg's marker; the
- *  final arg captures to end. An explicit value marker (is | : | =) is
- *  required after each arg name — that's what separates a real invocation
- *  ("path is f.txt") from a casual mention ("the write path"). Returns null
- *  if any arg is missing or empty. */
-function parseNarratedArgs(
-  segment: string,
-  argNames: ReadonlyArray<string>,
-): Record<string, string> | null {
-  let pattern = "";
-  for (let i = 0; i < argNames.length; i++) {
-    const isFinal = i === argNames.length - 1;
-    pattern +=
-      String.raw`\b${escapeRegex(argNames[i])}\b\s*(?:is|:|=)\s*` +
-      (isFinal ? String.raw`([\s\S]+)` : String.raw`([\s\S]*?)\s*`);
-  }
-  const m = new RegExp(pattern, "i").exec(segment);
-  if (!m) return null;
-  const out: Record<string, string> = {};
-  for (let i = 0; i < argNames.length; i++) {
-    const v = (m[i + 1] || "").trim();
-    if (!v) return null;
-    out[argNames[i]] = v;
-  }
-  return out;
-}
-
-/**
- * Prose-narration fallback (Pattern 3).
- *
- * Live failure 2026-06-04 (xAI Grok): weaker OpenAI-compat
- * models DESCRIBE tool calls in English instead of emitting structured
- * tool_calls — or even the JSON the extractor above catches — e.g.
- * `run tool write with path is f.txt content is …`, often several in one
- * turn. With no JSON to parse, the calls never dispatch and the trailing
- * "Committed" prose trips the false-completion guard.
- *
- * Splits the text into one segment per invocation header (verb + a
- * reconstructable, allowed tool name) and reconstructs each via
- * parseNarratedArgs. Conservative: a segment with no value marker yields no
- * call, so casual mentions ("run the bash command to verify") are ignored.
- * Reconstructed calls flow through normal approval + sandbox downstream, so
- * they get the same safety as structured calls.
- */
-function extractProseCalls(
-  text: string,
-  validToolNames: Set<string>,
-): { calls: ExtractedToolCall[]; remainingText: string } {
-  const specs = PROSE_RECONSTRUCTABLE.filter((s) => validToolNames.has(s.name));
-  if (specs.length === 0) return { calls: [], remainingText: text };
-
-  const nameAlt = specs.map((s) => escapeRegex(s.name)).join("|");
-  const headerRe = new RegExp(String.raw`\b${PROSE_VERB}\b[^\n]*?\b(${nameAlt})\b`, "gi");
-
-  const heads: Array<{ name: string; start: number; bodyStart: number }> = [];
-  let hm: RegExpExecArray | null;
-  while ((hm = headerRe.exec(text)) !== null) {
-    heads.push({ name: hm[1].toLowerCase(), start: hm.index, bodyStart: headerRe.lastIndex });
-    if (headerRe.lastIndex === hm.index) headerRe.lastIndex++;
-  }
-  if (heads.length === 0) return { calls: [], remainingText: text };
-
-  const calls: ExtractedToolCall[] = [];
-  const consumed: Array<[number, number]> = [];
-  for (let i = 0; i < heads.length; i++) {
-    const head = heads[i];
-    const segEnd = i + 1 < heads.length ? heads[i + 1].start : text.length;
-    const spec = specs.find((s) => s.name === head.name);
-    if (!spec) continue;
-    const args = parseNarratedArgs(text.slice(head.bodyStart, segEnd), spec.args);
-    if (!args) continue;
-    calls.push({ id: nextId(), name: head.name, arguments: JSON.stringify(args) });
-    consumed.push([head.start, segEnd]);
-  }
-  if (calls.length === 0) return { calls: [], remainingText: text };
-
-  consumed.sort((a, b) => b[0] - a[0]);
-  let working = text;
-  for (const [start, end] of consumed) working = working.slice(0, start) + working.slice(end);
-  return { calls, remainingText: working.trim() };
-}
-
-/**
- * Cheap predicate: does this assistant text READ like the model narrated a
- * tool call instead of emitting one? Used by the openai-compat adapter to
- * decide whether to inject a wire-format-error nudge and retry the turn
- * once (mirrors the Anthropic adapter's `<wire-format-error: … emitted as
- * text — retry…>` recovery). Distinct from extractToolCallsFromText: this
- * only DETECTS the smell; extraction may still fail to reconstruct args,
- * which is exactly when the nudge+retry earns its keep.
- *
- * Tighter than "mentions a tool name" — requires an action verb near a
- * valid tool name, or near the literal word "tool". A normal completion
- * ("all agents are hired") returns false.
- */
-export function proseLooksLikeToolCall(
-  text: string,
-  validToolNames: Set<string>,
-): boolean {
-  if (!text || typeof text !== "string") return false;
-  for (const name of validToolNames) {
-    const re = new RegExp(
-      String.raw`\b(?:run|use|call|invoke|execute)\b[^\n]{0,30}\b` +
-        escapeRegex(name) +
-        String.raw`\b`,
-      "i",
-    );
-    if (re.test(text)) return true;
-  }
-  return /\b(?:run|use|call|invoke|execute)\b[^\n]{0,20}\btool\b/i.test(text);
-}
-
-/**
- * Last-resort guard for the openai-compat adapter: after the one-shot
- * wire-format retry, a stubborn model (Grok narrating an `edit` is the live
- * case) may STILL describe the call in prose instead of emitting it. Left
- * alone, that false-confident text ("I'll edit the file…") becomes the
- * assistant reply with nothing executed — a silent no-op the user reads as
- * success. Return an annotated copy of the text that makes the failure
- * visible to both the user and the model's next turn. Returns null when
- * there's nothing to flag (a real call was salvaged, or the text isn't
- * narration) so the caller leaves a healthy turn untouched.
- */
-export function annotatePersistentNarration(
-  assembledText: string,
-  pendingToolCallCount: number,
-  validToolNames: Set<string>,
-): string | null {
-  if (pendingToolCallCount > 0) return null;
-  if (!proseLooksLikeToolCall(assembledText, validToolNames)) return null;
-  return (
-    assembledText.trimEnd() +
-    "\n\n[wire-format-error: the text above described a tool call but did not emit one — nothing was executed. Reissue it as a real tool call.]"
-  );
-}

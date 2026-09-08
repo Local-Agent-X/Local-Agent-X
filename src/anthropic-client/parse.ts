@@ -124,11 +124,17 @@ export function cleanUrls(text: string): string {
 // ── Layer 3: History-rebuild sanitization ─────────────────────────────────
 //
 // When loading prior assistant messages for the next turn, any tool-call
-// JSON / XML / tree-style notation that leaked into content is REPLACED
-// with a corrective annotation. This breaks the feedback loop where claude
-// sees its own bad output in history and learns "this is how I respond
-// here," degrading subsequent turns. Layered on top of stream-time + persist-
-// time stripping — defense in depth.
+// JSON envelope / Anthropic-native object / tag-marker syntax that leaked
+// into content is REPLACED with a corrective annotation. This breaks the
+// feedback loop where claude sees its own bad output in history and learns
+// "this is how I respond here," degrading subsequent turns. Layered on top
+// of stream-time + persist-time stripping — defense in depth.
+//
+// Only recognized call SYNTAX is a leak. Prose that describes a call
+// ("I'll run bash now"), placeholder lines (`[Calling]`), and tree-style
+// renderings (`Bash(ls)`) are NOT guessed at — they stand as the model's
+// text. Guessing a tool call from prose is the loop's job to refuse, not
+// the rebuild's to repair.
 //
 
 export type LeakShape =
@@ -136,13 +142,11 @@ export type LeakShape =
   | "openai-envelope-raw"      // {"tool_calls":[...]}
   | "anthropic-native"         // {"name":"X","input":{...}}
   | "anthropic-native-array"   // [{"name":"X","input":{...}}]
-  | "xml-tool-call"            // any tag/marker syntax the shared recognizer knows (tool-call-text-tags.ts)
-  | "tree-style-call"          // Bash(...) / Edit(...) / etc on its own line
-  | "placeholder-narration";   // [Calling] / [Tool] / [Going] etc
+  | "xml-tool-call";           // any tag/marker syntax the shared recognizer knows (tool-call-text-tags.ts)
 
 export interface LeakInfo {
   shape: LeakShape;
-  /** Tool name when recoverable from the leak; null for placeholders. */
+  /** Tool name when recoverable from the leak; null when the syntax carried none. */
   toolName: string | null;
   /** First 80 chars of the leak, for log diagnostics. */
   preview: string;
@@ -220,31 +224,6 @@ export function sanitizeAssistantTextForRebuild(
       cleaned = cleaned.replace(/\[\s*\]/g, "");
     }
   }
-
-  // 5. Tree-style notation: lines that ARE just `ToolName(...)` with no
-  //    surrounding prose. Conservative — only fires when the toolName
-  //    matches a valid tool. Catches Claude Code's rendering style leaking
-  //    in: `Bash(ls -la ...)` / `└ Bash(...)` etc.
-  if (validToolNames && validToolNames.size > 0) {
-    const treeRe = /^[\s└|│├─]*([A-Z][a-zA-Z_]+)\s*\(([\s\S]*?)\)\s*$/gm;
-    cleaned = cleaned.replace(treeRe, (m, name: string) => {
-      const camelToSnake = name.replace(/([A-Z])/g, (_x, c, i) => i === 0 ? c.toLowerCase() : "_" + c.toLowerCase());
-      if (validToolNames.has(name) || validToolNames.has(camelToSnake) || validToolNames.has(name.toLowerCase())) {
-        leaks.push({ shape: "tree-style-call", toolName: name, preview: previewOf(m) });
-        return correctiveMarker(name);
-      }
-      return m;
-    });
-  }
-
-  // 6. Placeholder narration: lines that ARE just `[Calling]` / `[Tool]` /
-  //    `[Going]` etc — generated when the model loses its thread and
-  //    narrates intent without dispatching. Very conservative: only the
-  //    exact words below, only when alone on a line.
-  cleaned = cleaned.replace(/^[\s>]*\[(Calling|Tool|Going|Run|Bash|Edit|Read|Write|Doing|Executing|Now)[^\]]{0,30}\]\s*$/gm, (m) => {
-    leaks.push({ shape: "placeholder-narration", toolName: null, preview: previewOf(m) });
-    return correctiveMarker(null);
-  });
 
   // Collapse 3+ consecutive newlines that excisions may have produced.
   cleaned = cleaned.replace(/\n{3,}/g, "\n\n").trim();

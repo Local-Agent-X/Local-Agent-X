@@ -147,7 +147,7 @@ describe("runTurn on a guard-stopped stream", () => {
       (r) => reports.push(r),
     );
 
-    // One transport call — no empty-response retry, no narration nudge.
+    // One transport call — no empty-response retry.
     expect(streamMock).toHaveBeenCalledTimes(1);
     expect(result.terminalReason).toBe("done");
     expect(vi.mocked(markNoToolSupport)).not.toHaveBeenCalled();
@@ -164,21 +164,17 @@ describe("runTurn on a guard-stopped stream", () => {
     }
   });
 
-  it("REGRESSION: nudge retry degenerates into a loop of VALID tool-call JSON — nothing is mined, nothing dispatches", async () => {
-    // Turn 1: healthy prose NARRATION (no JSON, guard never trips on it) —
-    // triggers the wire-format nudge retry with tool_choice:"required".
-    const narration = "I will run the bash tool with the command ls to inspect the workspace first.";
-    // Turn 2 (the retry): verbatim loop of a VALID bash tool call as JSON.
+  it("REGRESSION: a stream that degenerates into a loop of VALID tool-call JSON is never mined — nothing dispatches", async () => {
+    // Verbatim loop of a VALID bash tool call as JSON. The guard trips on the
+    // repetition (local endpoint); the text is provably MINEABLE — the
+    // invariant is that a guard-stopped stream is never handed to the
+    // extractor, so a degenerate loop can't dispatch N identical calls.
     const jsonUnit = '{"name":"bash","arguments":{"command":"ls"}}\n';
-    async function* narrationStream() {
-      yield { type: "text" as const, delta: narration };
-      yield { type: "done" as const, stopReason: "stop" };
-    }
     async function* degenerateJsonStream() {
       for (let i = 0; i < 60; i++) yield { type: "text" as const, delta: jsonUnit };
       yield { type: "done" as const, stopReason: "stop" };
     }
-    streamMock.mockImplementationOnce(narrationStream).mockImplementationOnce(degenerateJsonStream);
+    streamMock.mockImplementationOnce(degenerateJsonStream);
     const reports: AdapterReport[] = [];
 
     const adapter = createOpenAICompatAdapter({
@@ -188,7 +184,7 @@ describe("runTurn on a guard-stopped stream", () => {
     });
     const result = await adapter.runTurn(
       {
-        opId: "op-nudge-guard",
+        opId: "op-json-loop-guard",
         turnIdx: 1,
         messages: [{ messageId: "m1", role: "user", content: { text: "list the files" } }],
         tools: [{ name: "bash", description: "run a shell command", inputSchema: { type: "object" } }],
@@ -196,15 +192,14 @@ describe("runTurn on a guard-stopped stream", () => {
       (r) => reports.push(r),
     );
 
-    // The nudge retry DID fire (two transport calls) and the retry stream
-    // guard-stopped.
-    expect(streamMock).toHaveBeenCalledTimes(2);
+    // One transport call, guard-stopped, clean terminal.
+    expect(streamMock).toHaveBeenCalledTimes(1);
     expect(markerReports(reports)).toHaveLength(1);
     expect(result.terminalReason).toBe("done");
 
-    // The invariant under test: the degenerate retry text is provably
-    // MINEABLE (positive control on the real extractor) — yet nothing was
-    // mined, reported, or attached to the finalized message.
+    // The invariant under test: the degenerate text is provably MINEABLE
+    // (positive control on the real extractor) — yet nothing was mined,
+    // reported, or attached to the finalized message.
     const finalized = reports.find((r) => r.kind === "message_finalized");
     expect(finalized).toBeDefined();
     if (finalized?.kind === "message_finalized") {
@@ -213,9 +208,6 @@ describe("runTurn on a guard-stopped stream", () => {
         extractToolCallsFromText(content.text, new Set(["bash"])).toolCalls.length,
       ).toBeGreaterThan(0); // positive control: the gate, not extraction failure, kept this at zero
       expect(content.toolCalls).toBeUndefined();
-      // Guard-stopped retries are not "persistent narration" either — the
-      // stopped notice explains the cut; no annotation is appended.
-      expect(content.text).not.toContain("[wire-format-error:");
     }
     expect(reports.filter((r) => r.kind === "tool_call_requested")).toHaveLength(0);
   });

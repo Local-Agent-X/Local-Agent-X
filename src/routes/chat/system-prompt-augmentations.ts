@@ -8,6 +8,17 @@ import { userAuthoredRequest } from "../../slash-commands.js";
 const logger = createLogger("routes.chat.system-prompt");
 
 /**
+ * Stable ids for the chat riders appended below. Riders are added AFTER the
+ * capability allocator has already shed prompt parts, so they always reach the
+ * model — `context/rule-registry.ts` references these ids to say so.
+ */
+export const CHAT_RIDER_IDS = {
+  securityCanary: "security-canary",
+  parallelContext: "parallel-context",
+  toolCallRequired: "tool-call-required",
+} as const;
+
+/**
  * Action verbs that imply "the user just asked you to dispatch a tool, not
  * narrate." Used by Layer 4 (prose-degeneracy detection). Conservative on
  * purpose — false positives turn a polite "could you tell me about X" into
@@ -39,7 +50,7 @@ export async function augmentSystemPrompt(
   currentUserMessage?: string,
 ): Promise<void> {
   appendSystemPromptSection(prepared, {
-    id: "security-canary",
+    id: CHAT_RIDER_IDS.securityCanary,
     label: "Security Canary",
     type: "dynamic",
     policy: "required",
@@ -60,7 +71,7 @@ export async function augmentSystemPrompt(
         `Active:\n${taskLines}\n\n` +
         `Respond to the user's CURRENT message normally. If they're asking something unrelated to the worker(s), answer it. If they're asking about a worker's status, you can refer to what you've seen in its progress stream. If they're giving feedback for a worker, that's already auto-routed via the redirect classifier — you don't need to handle it here. Speak naturally about the parallel context — like JARVIS would when Tony talks to him while a build is in progress.`;
       appendSystemPromptSection(prepared, {
-        id: "parallel-context",
+        id: CHAT_RIDER_IDS.parallelContext,
         label: "Parallel Context",
         type: "dynamic",
         policy: "required",
@@ -100,7 +111,7 @@ export async function augmentSystemPrompt(
         `then the action tool. Do NOT respond with "<response>" tags, "Tool call: X" prose, ` +
         `or any other narration of what you would do — emit the actual tool_use.`;
       appendSystemPromptSection(prepared, {
-        id: "tool-call-required",
+        id: CHAT_RIDER_IDS.toolCallRequired,
         label: "Tool Call Required",
         type: "dynamic",
         policy: "required",

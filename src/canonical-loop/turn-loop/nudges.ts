@@ -22,6 +22,9 @@ import type { NudgeMetadata } from "../middlewares/types.js";
  * meets one vocabulary for the failure whichever path caught it. Used by the
  * unresolved-tool-intent completion gate (tool-intent-gate.ts).
  */
+export const WIRE_FORMAT_NUDGE_ID = "wire-format";
+
+/** @see WIRE_FORMAT_NUDGE_ID — the id `context/rule-registry.ts` references. */
 export const WIRE_FORMAT_NUDGE =
   "<wire-format-error: your previous reply contained a tool call written as text. " +
   "It was NOT executed and produced no result. Reissue it now as a real structured " +

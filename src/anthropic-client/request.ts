@@ -70,6 +70,19 @@ export function convertUserContent(content: unknown): string | AnthropicContent[
   return out.length > 0 ? out : [{ type: "text", text: EMPTY_USER_PLACEHOLDER }];
 }
 
+// Anthropic accepts /^[a-zA-Z0-9_-]+$/ for a tool_use id. Other providers are
+// looser: the Codex adapter encodes its call and item ids as `call_x|fc_y`
+// (codex-message-convert.ts encodeToolCallId), and that id is persisted in the
+// session. Switching an existing conversation to an Anthropic model replays it,
+// and the request is rejected outright — every later turn too, since the bad id
+// stays in the history. Map the id into Anthropic's alphabet instead. Pure and
+// stable: the same historical row yields the same id on every replay, which the
+// prompt-cache prefix depends on. Collisions with a real id are handled by the
+// duplicate suffixing below, which runs on this value.
+function toAnthropicToolUseId(id: string): string {
+  return /^[a-zA-Z0-9_-]+$/.test(id) ? id : id.replace(/[^a-zA-Z0-9_-]/g, "_");
+}
+
 export function convertMessages(messages: ChatCompletionMessageParam[]): AnthropicMessage[] {
   const result: AnthropicMessage[] = [];
   const seenToolUseIds = new Set<string>();
@@ -102,7 +115,7 @@ export function convertMessages(messages: ChatCompletionMessageParam[]): Anthrop
           // process-global would rename the same historical row differently on
           // each turn, diverging the prompt-cache prefix at an early index and
           // silently killing the message-tier cache for the rest of the op.
-          let toolId = tc.id;
+          let toolId = toAnthropicToolUseId(tc.id);
           if (seenToolUseIds.has(toolId)) {
             const n = (dupToolUseCounts.get(tc.id) ?? 0) + 1;
             dupToolUseCounts.set(tc.id, n);
@@ -119,7 +132,7 @@ export function convertMessages(messages: ChatCompletionMessageParam[]): Anthrop
     } else if (msg.role === "tool") {
       const m = msg as { tool_call_id: string; content: string };
       const queue = pendingResultIds.get(m.tool_call_id);
-      const toolUseId = queue && queue.length > 0 ? (queue.shift() as string) : m.tool_call_id;
+      const toolUseId = queue && queue.length > 0 ? (queue.shift() as string) : toAnthropicToolUseId(m.tool_call_id);
       result.push({
         role: "user",
         content: [{ type: "tool_result", tool_use_id: toolUseId, content: m.content }],

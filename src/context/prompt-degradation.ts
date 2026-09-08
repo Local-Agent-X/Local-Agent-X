@@ -1,34 +1,29 @@
 import type { LocalModelCapabilityProfile } from "../local-runtimes/index.js";
 import type { PromptDegradationTelemetry } from "../prompt-telemetry.js";
 import { LOCAL_UNKNOWN_CONTEXT } from "../context-manager/model-windows.js";
-import type { RenderedPromptSection } from "./system-prompt-builder.js";
+// The share (and its 65,536-window derivation) lives with the other window-
+// allocation constants in context-manager so the tool-result cap reserves the
+// same number this degrader enforces.
+import { PROMPT_WINDOW_SHARE } from "../context-manager/request-fit.js";
+import type { PromptPriority, RenderedPromptSection } from "./system-prompt-builder.js";
 
-// The prompt budget is a SHARE of the measured window, applied to every local
-// target. It used to sit behind an absolute gate (window > 32,768 and tier !==
-// "weak" => full prompt, no budget at all), which silently exempted every
-// 33k-128k local model: on 2026-09-08 a 65,536-token model was handed a 36,978
-// token system prompt (56% of its window), the 23-tool medium manifest took
-// another ~13,600 (fixed overhead 77%), and the third tool step overflowed.
-// A relative budget only means something if it is applied relatively.
-//
-// Why 0.35, sized on the 65,536 window that exposed the bug:
-//   budget            = floor(65,536 * 0.35)            = 22,937
-//   tool manifest     ~ 13,617 (medium tier, 23 tools, measured 2026-09-08)
-//   response reserve  =  1,024 (openai-compat preflight)
-//   left for messages = 65,536 - 22,937 - 13,617 - 1,024 = 27,958  (42.7%)
-// The floor we want is ~40% of the window for the conversation; the share that
-// hits exactly 40% on this model is (65,536 - 26,214 - 13,617 - 1,024) / 65,536
-// = 0.377, so 0.35 clears it with margin and gets roomier as windows grow
-// (131,072: 51% left). Below ~48k the tool manifest, not this share, is the
-// dominant fixed cost (32k medium: 23% left) - that is the tier picker's lever
-// (maxToolsForTier), not a second knob here.
-//
-// This is a sizing policy only: required prompt sections can exceed it, and
-// when they do the reason says so instead of the budget being quietly ignored.
-const PROMPT_WINDOW_SHARE = 0.35;
+// Class shed order: every section of one class goes before the first section
+// of the next. Safety and identity are never shed — identity is "who am I"
+// plus, for a heading-less custom prompt, the whole prompt. The 2026-09-08
+// overflow (65k window) shed the user's facts and the workspace map and still
+// sat over budget with ~22k tokens of behaviour tuning intact; the tuning
+// class exists so that is what goes first, largest part first.
+const SHED_ORDER: readonly PromptPriority[] = ["tuning", "navigation", "facts"];
 
-// Kill order: index 0 is dropped FIRST. Ids absent from this list rank after
-// every entry here, so they are dropped last.
+/** A section's budget class; the legacy `policy` maps required ⇒ safety, degradable ⇒ facts. */
+export function promptPriorityOf(section: Pick<RenderedPromptSection, "policy" | "priority">): PromptPriority {
+  return section.priority ?? (section.policy === "required" ? "safety" : "facts");
+}
+
+// Kill order WITHIN a class: index 0 is dropped FIRST. Ids absent from this
+// list rank after every entry here, in file order (the class decides more
+// than this list now — app-manifest and smart-context are in different
+// classes, so their relative rank here no longer meets).
 const DEGRADATION_PRIORITY = [
   "app-manifest",
   "smart-context",
@@ -90,12 +85,31 @@ function fullPromptResult(
 }
 
 /**
+ * Shed candidates in the order they are dropped: class by class (SHED_ORDER),
+ * and within a class by DEGRADATION_PRIORITY rank then file order — except
+ * tuning, which goes largest-first so the one 12k-token "How to work" part is
+ * the first thing a constrained window gives up, not six small ones.
+ */
+function shedCandidates(sections: readonly RenderedPromptSection[]): RenderedPromptSection[] {
+  const rank = new Map<string, number>(DEGRADATION_PRIORITY.map((id, index) => [id, index]));
+  const rankOf = (section: RenderedPromptSection) => rank.get(section.id) ?? Number.MAX_SAFE_INTEGER;
+  return SHED_ORDER.flatMap((priorityClass) => {
+    const members = sections.filter((section) => promptPriorityOf(section) === priorityClass);
+    // Array.prototype.sort is stable, so ties keep file order.
+    return priorityClass === "tuning"
+      ? members.sort((left, right) => right.measurement.estimatedTokens - left.measurement.estimatedTokens)
+      : members.sort((left, right) => rankOf(left) - rankOf(right));
+  });
+}
+
+/**
  * Deterministically remove whole optional sections when a local context window
  * cannot afford the assembled prompt. Every local target is budgeted at
  * PROMPT_WINDOW_SHARE of its measured window (LOCAL_UNKNOWN_CONTEXT when the
  * window is unknown); tier does not exempt a model from the budget. Cloud
- * targets (null profile) are never touched. Required sections are never
- * candidates and the surviving order is byte-for-byte unchanged.
+ * targets (null profile) are never touched. Safety and identity sections are
+ * never candidates and the surviving order is byte-for-byte unchanged; when
+ * they alone exceed the budget the reason says `required-sections-exceed-budget`.
  */
 export function applyCapabilityAwarePromptDegradation(
   sections: readonly RenderedPromptSection[],
@@ -121,16 +135,7 @@ export function applyCapabilityAwarePromptDegradation(
     return result;
   }
 
-  const priority = new Map<string, number>(
-    DEGRADATION_PRIORITY.map((id, index) => [id, index]),
-  );
-  const candidates = sections
-    .filter((section) => section.policy === "degradable")
-    .sort((left, right) => {
-      const leftRank = priority.get(left.id) ?? Number.MAX_SAFE_INTEGER;
-      const rightRank = priority.get(right.id) ?? Number.MAX_SAFE_INTEGER;
-      return leftRank - rightRank || left.id.localeCompare(right.id);
-    });
+  const candidates = shedCandidates(sections);
 
   let remainingTokens = fullTokens;
   const omitted = new Set<string>();

@@ -14,6 +14,7 @@ import { readFileSync, existsSync, watch } from "node:fs";
 import { join, resolve, normalize, isAbsolute, relative } from "node:path";
 
 import { createLogger } from "./logger.js";
+import type { PromptPriority, PromptSection } from "./context/system-prompt-builder.js";
 const logger = createLogger("config-loader");
 
 const CONFIG_DIR = resolve(join(import.meta.dirname || ".", "..", "config"));
@@ -50,6 +51,98 @@ export function loadSystemPrompt(): string {
     _systemPrompt = "";
   }
   return _systemPrompt;
+}
+
+/** One `## ` part of the base prompt. `heading` is "" for text before the first heading. */
+export interface SystemPromptPart {
+  heading: string;
+  text: string;
+}
+
+/**
+ * Split a prompt at its `## ` headings, in file order. INVARIANT: the parts'
+ * `text` joined with "" reproduce the input byte-for-byte — each part keeps
+ * its own heading line, line endings and trailing blank lines, and nothing
+ * is trimmed. The system-prompt builder relies on that to emit the file as
+ * one section per heading (so the local-window budget can shed behaviour
+ * tuning before the user's facts) without moving a single byte of the
+ * cache-prefix that a single-section base prompt produced.
+ */
+export function splitSystemPromptSections(prompt: string): SystemPromptPart[] {
+  if (!prompt) return [];
+  const bounds = [0, ...Array.from(prompt.matchAll(/^## /gm), (match) => match.index), prompt.length];
+  const parts: SystemPromptPart[] = [];
+  for (let i = 0; i < bounds.length - 1; i++) {
+    if (bounds[i] === bounds[i + 1]) continue; // no preamble before the first heading
+    const text = prompt.slice(bounds[i], bounds[i + 1]);
+    const heading = text.startsWith("## ") ? text.slice(3).split(/\r?\n/, 1)[0].trim() : "";
+    parts.push({ heading, text });
+  }
+  return parts;
+}
+
+/** config/system-prompt.md as heading parts; joined, identical to loadSystemPrompt(). */
+export function loadSystemPromptSections(): SystemPromptPart[] {
+  return splitSystemPromptSections(loadSystemPrompt());
+}
+
+// Budget class per base-prompt part, keyed by the heading's slug (text up to
+// the first " (", " — " or " - ", lower-cased, non-alphanumerics collapsed to
+// "-"). The allocator (context/prompt-degradation.ts) sheds tuning first,
+// then navigation, then facts; safety and identity are never shed. A heading
+// missing here is tuning — the safe default for prose an agent added to its
+// own prompt — and is logged once so the omission is visible, not silent.
+const BASE_PROMPT_PART_CLASS: Readonly<Record<string, PromptPriority>> = {
+  "preamble": "identity", // "You are a personal AI companion …" before the first heading
+  "core-rules": "safety",
+  "workspace-security": "safety",
+  "identity": "identity",
+  "personality": "identity",
+  "how-to-control-your-own-app": "navigation",
+  "apps-pages": "navigation",
+  "memory": "navigation", // "Memory — relational …" is the recall behaviour, not the facts
+  "background-operations": "navigation",
+  "how-to-work": "tuning",
+  "coding-discipline": "tuning",
+  "delegation": "tuning",
+  "browser": "tuning",
+  "self-modification": "tuning",
+  "self-repair-and-self-extension": "tuning",
+};
+const unclassifiedHeadingsLogged = new Set<string>();
+
+/** Slug + budget class for one base-prompt heading ("" = the preamble). */
+export function classifySystemPromptPart(heading: string): { slug: string; priority: PromptPriority } {
+  const slug = heading.split(/ \(| — | - /, 1)[0]
+    .toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "preamble";
+  const known = BASE_PROMPT_PART_CLASS[slug];
+  if (known) return { slug, priority: known };
+  if (!unclassifiedHeadingsLogged.has(slug)) {
+    unclassifiedHeadingsLogged.add(slug);
+    logger.warn(`[config-loader] system-prompt.md heading "${heading}" has no budget class — treating as tuning (shed first on small local windows)`);
+  }
+  return { slug, priority: "tuning" };
+}
+
+/**
+ * The base prompt as builder sections, one per `## ` part, ids
+ * `core-identity/<slug>` in file order (a repeated heading gets `-2`, `-3` …
+ * rather than throwing the builder's duplicate-id error over an agent edit).
+ * Safety and identity parts are `required`; the rest are `degradable`.
+ */
+export function basePromptSections(prompt: string): PromptSection[] {
+  const ids = new Set<string>();
+  return splitSystemPromptSections(prompt).map((part) => {
+    const { slug, priority } = classifySystemPromptPart(part.heading);
+    let id = `core-identity/${slug}`;
+    for (let n = 2; ids.has(id); n++) id = `core-identity/${slug}-${n}`;
+    ids.add(id);
+    return {
+      id, label: part.heading || "System Prompt", type: "static", priority,
+      policy: priority === "safety" || priority === "identity" ? "required" : "degradable",
+      build: () => part.text,
+    };
+  });
 }
 
 /** Load the protected files list from config/protected-files.json. */

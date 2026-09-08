@@ -75,8 +75,11 @@ export function fileAccessGroundingBlock(mode: FileAccessMode): string {
  * would make the cached prefix silently stop matching in exactly the workload
  * the split was measured for. Excluding them makes the win smaller and real.
  *
- * That leaves core-identity + runtime-context as the prefix: process-lifetime
- * stable, invalidated only when config/system-prompt.md changes.
+ * That leaves the core-identity/* parts + runtime-context as the prefix:
+ * process-lifetime stable, invalidated only when config/system-prompt.md
+ * changes. (The base prompt is one section per `## ` heading — config-loader's
+ * basePromptSections — joined with "", so the walk sums the same bytes the
+ * single `core-identity` section once contributed.)
  *
  * Not fixable by skipping: `recall-reflex` (~1.5 KB, genuinely byte-stable) sits
  * AFTER `tool-guidance` in the builder's section order, so accumulating it would

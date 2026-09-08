@@ -9,6 +9,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createSystemPromptBuilder, SystemPromptBuilder } from "./system-prompt-builder.js";
+import { applyCapabilityAwarePromptDegradation } from "./prompt-degradation.js";
+import { loadSystemPrompt } from "../config-loader.js";
 
 const MOCK_INPUTS = {
   basePrompt: "You are a personal AI companion.",
@@ -28,7 +30,7 @@ describe("Context Builder", () => {
     const result = await createSystemPromptBuilder(MOCK_INPUTS).buildWithTelemetry();
 
     expect(result.prompt).toContain("personal AI companion");
-    expect(result.sections.map((section) => section.id)).toContain("core-identity");
+    expect(result.sections.map((section) => section.id)).toContain("core-identity/preamble");
     expect(result.sections.map((section) => section.id)).toContain("memory-orchestrator");
     expect(result.sections.reduce((sum, section) => sum + section.characters, 0)).toBe(result.prompt.length);
     expect(result.sections.reduce((sum, section) => sum + section.utf8Bytes, 0)).toBe(Buffer.byteLength(result.prompt, "utf8"));
@@ -42,7 +44,7 @@ describe("Context Builder", () => {
 
     expect(result.renderedSections.map((section) => section.text).join("")).toBe(result.prompt);
     expect(builder.getSectionPolicy().map(({ id, policy }) => ({ id, policy }))).toEqual([
-      { id: "core-identity", policy: "required" },
+      { id: "core-identity/preamble", policy: "required" },
       { id: "runtime-context", policy: "required" },
       { id: "app-manifest", policy: "degradable" },
       { id: "agents-md", policy: "required" },
@@ -66,6 +68,67 @@ describe("Context Builder", () => {
     for (const section of result.renderedSections) {
       expect(section.measurement.id).toBe(section.id);
       expect(section.measurement.characters).toBe(section.text.length);
+    }
+  });
+
+  // BYTE-IDENTITY INVARIANT (prompt-cache prefix). The real base prompt used
+  // to enter as ONE `core-identity` section; it now enters as one section per
+  // `## ` heading. In full mode (cloud target, or a local window everything
+  // fits in) the assembled string must be byte-identical to what the single
+  // section produced: basePrompt, then every other section, same "" joiner.
+  it("golden: the real base prompt split per heading assembles byte-identically to the single-section output", async () => {
+    const basePrompt = loadSystemPrompt();
+    expect(basePrompt.length).toBeGreaterThan(10_000); // the shipped file, not a fixture
+    const result = await createSystemPromptBuilder({ ...MOCK_INPUTS, basePrompt }).buildWithTelemetry();
+
+    const coreParts = result.renderedSections.filter((section) => section.id.startsWith("core-identity/"));
+    const rest = result.renderedSections.filter((section) => !section.id.startsWith("core-identity/"));
+    // Yesterday's output: the whole file as one section, followed by the rest.
+    const legacyPrompt = basePrompt + rest.map((section) => section.text).join("");
+    expect(result.prompt).toBe(legacyPrompt);
+    expect(coreParts.map((section) => section.text).join("")).toBe(basePrompt);
+    // The parts are a contiguous head, in file order, so the prefix walk in
+    // build-system-prompt.ts sums the same bytes the one section did.
+    expect(result.renderedSections.slice(0, coreParts.length)).toEqual(coreParts);
+    expect(coreParts.length).toBeGreaterThanOrEqual(3);
+
+    const cloud = applyCapabilityAwarePromptDegradation(result.renderedSections, null);
+    expect(cloud.prompt).toBe(legacyPrompt);
+    const roomy = applyCapabilityAwarePromptDegradation(result.renderedSections, {
+      runtimeId: "ollama@127.0.0.1:11434", baseURL: "http://127.0.0.1:11434/v1", model: "big-local",
+      tier: "strong", maxTools: 24, contextWindow: 131_072,
+      tools: { advertised: null, verified: null, rejectsTools: false },
+    });
+    expect(roomy.telemetry.mode).toBe("full");
+    expect(roomy.prompt).toBe(legacyPrompt);
+  });
+
+  it("stamps every builder section with a budget class and derives policy from it for base parts", async () => {
+    const basePrompt = "You are X.\n## Core rules\nr\n## How to work\nw\n## Memory — relational\nm\n## Personality\np";
+    const builder = createSystemPromptBuilder({ ...MOCK_INPUTS, basePrompt });
+    const plan = Object.fromEntries(builder.getSectionPolicy().map(({ id, policy, priority }) => [id, `${priority}/${policy}`]));
+    expect(plan).toEqual({
+      "core-identity/preamble": "identity/required",
+      "core-identity/core-rules": "safety/required",
+      "core-identity/how-to-work": "tuning/degradable",
+      "core-identity/memory": "navigation/degradable",
+      "core-identity/personality": "identity/required",
+      "runtime-context": "safety/required",
+      "app-manifest": "navigation/degradable",
+      "agents-md": "safety/required",
+      "provider-hint": "safety/required",
+      "tool-guidance": "safety/required",
+      "recall-reflex": "safety/required",
+      "integrations": "navigation/degradable",
+      "context-block": "facts/degradable",
+      "relevant-memories": "facts/degradable",
+      "memory-orchestrator": "facts/degradable",
+      "canary": "safety/required",
+    });
+    // The class survives rendering, where the allocator reads it.
+    const rendered = await builder.buildWithTelemetry();
+    for (const section of rendered.renderedSections) {
+      expect(section.priority, section.id).toBe(plan[section.id].split("/")[0]);
     }
   });
 
@@ -121,7 +184,7 @@ describe("Context Builder", () => {
     const builder = createSystemPromptBuilder(MOCK_INPUTS);
     const order = builder.getSectionOrder();
 
-    expect(order[0]).toBe("core-identity");
+    expect(order[0]).toBe("core-identity/preamble");
     expect(order[1]).toBe("runtime-context");
     expect(order).toContain("provider-hint");
     expect(order).toContain("context-block");

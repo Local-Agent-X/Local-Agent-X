@@ -46,7 +46,8 @@ export async function registerAdapterForChat(
         // instead, and the volatile tail is still covered by the conversation
         // breakpoint below — nothing that was cached stops being cached.
         //
-        // The head is core-identity + runtime-context ONLY: ~76.9 KB /
+        // The head is the core-identity/* parts (config/system-prompt.md, one
+        // section per `## ` heading, same bytes) + runtime-context ONLY: ~76.9 KB /
         // ~21,976 est tokens, 77.6% of the system prompt (measured
         // 2026-09-07 by scripts/measure-prompt-prefix.mjs, snapshot
         // catalog-sha256=276510d75470). Do NOT quote the larger ~26.5k figure

@@ -8,7 +8,12 @@
 
 import { createRequire } from "node:module";
 import { measurePromptSection, type PromptSectionTelemetry } from "../prompt-telemetry.js";
+import { basePromptSections } from "../config-loader.js";
 const require = createRequire(import.meta.url);
+
+/** Budget class (prompt-degradation.ts sheds tuning → navigation → facts; safety and
+ *  identity never). `policy` is the two-state view; unset ⇒ required→safety, else facts. */
+export type PromptPriority = "safety" | "identity" | "navigation" | "facts" | "tuning";
 
 /** Fence sentinels for recalled-memory sections. */
 const RECALLED_OPEN = "<untrusted-recalled-data";
@@ -53,6 +58,7 @@ export interface PromptSection {
   label: string;
   type: "static" | "dynamic";
   policy: "required" | "degradable";
+  priority?: PromptPriority;
   build: () => string | Promise<string>;
   shouldInclude?: () => boolean;
 }
@@ -62,6 +68,7 @@ export interface RenderedPromptSection {
   label: string;
   type: PromptSection["type"];
   policy: PromptSection["policy"];
+  priority?: PromptPriority;
   text: string;
   measurement: PromptSectionTelemetry;
 }
@@ -78,7 +85,7 @@ export interface SectionAwareSystemPrompt {
 }
 
 export function renderPromptSection(
-  section: Pick<PromptSection, "id" | "label" | "type" | "policy"> & { text: string },
+  section: Pick<PromptSection, "id" | "label" | "type" | "policy" | "priority"> & { text: string },
 ): RenderedPromptSection {
   return { ...section, measurement: measurePromptSection(section.id, section.type, section.text) };
 }
@@ -94,7 +101,7 @@ export function requiredPromptPlan(
 
 export function appendSystemPromptSection(
   target: SectionAwareSystemPrompt,
-  section: Pick<PromptSection, "id" | "label" | "type" | "policy"> & { text: string },
+  section: Pick<PromptSection, "id" | "label" | "type" | "policy" | "priority"> & { text: string },
 ): void {
   if (!section.text) return;
   if (target.renderedPromptSections.some((candidate) => candidate.id === section.id)) {
@@ -138,6 +145,7 @@ export class SystemPromptBuilder {
         label: section.label,
         type: section.type,
         policy: section.policy,
+        ...(section.priority ? { priority: section.priority } : {}),
         text: content,
         measurement,
       });
@@ -160,8 +168,8 @@ export class SystemPromptBuilder {
     return this.sections.map(s => s.id);
   }
 
-  getSectionPolicy(): Array<Pick<PromptSection, "id" | "label" | "type" | "policy">> {
-    return this.sections.map(({ id, label, type, policy }) => ({ id, label, type, policy }));
+  getSectionPolicy(): Array<Pick<PromptSection, "id" | "label" | "type" | "policy" | "priority">> {
+    return this.sections.map(({ id, label, type, policy, priority }) => ({ id, label, type, policy, priority }));
   }
 }
 
@@ -193,10 +201,9 @@ export function createSystemPromptBuilder(opts: {
 
   // ── Static sections (cacheable across turns) ──
 
-  builder.addSection({
-    id: "core-identity", label: "System Prompt", type: "static", policy: "required",
-    build: () => opts.basePrompt,
-  });
+  // One section PER `## ` heading of the base prompt (config-loader.ts) so a small
+  // local window can shed tuning before facts; same "" joiner ⇒ same bytes/prefix.
+  for (const part of basePromptSections(opts.basePrompt)) builder.addSection(part);
 
   // Runtime context — tells the model WHICH OS / shell it's actually on so
   // it stops reaching for PowerShell verbs on macOS (Remove-Item, Get-ChildItem)
@@ -205,7 +212,7 @@ export function createSystemPromptBuilder(opts: {
   // from prior tool output, which on a fresh install means it guesses wrong.
   // Static (process-lifetime stable) so it caches with the base prompt.
   builder.addSection({
-    id: "runtime-context", label: "Runtime", type: "static", policy: "required",
+    id: "runtime-context", label: "Runtime", type: "static", policy: "required", priority: "safety",
     build: () => {
       const plat = process.platform;
       const friendly = plat === "darwin" ? "macOS" : plat === "win32" ? "Windows" : plat === "linux" ? "Linux" : plat;
@@ -225,7 +232,7 @@ Reminder: file CRUD has native tools — \`read\`, \`write\`, \`edit\`, \`delete
 
   // App manifest — the agent's map of its own body (auto-generated catalog)
   builder.addSection({
-    id: "app-manifest", label: "App Map", type: "static", policy: "degradable",
+    id: "app-manifest", label: "App Map", type: "static", policy: "degradable", priority: "navigation",
     build: async () => {
       try {
         const { getManifestSummary } = await import("../manifest-generator/index.js");
@@ -240,7 +247,7 @@ Reminder: file CRUD has native tools — \`read\`, \`write\`, \`edit\`, \`delete
   // invariants). Injected verbatim so the agent reads the canonical rules
   // rather than a drifty paraphrase.
   builder.addSection({
-    id: "agents-md", label: "Rules", type: "static", policy: "required",
+    id: "agents-md", label: "Rules", type: "static", policy: "required", priority: "safety",
     build: async () => {
       try {
         const { readFileSync, existsSync } = await import("node:fs");
@@ -260,13 +267,13 @@ Reminder: file CRUD has native tools — \`read\`, \`write\`, \`edit\`, \`delete
   });
 
   builder.addSection({
-    id: "provider-hint", label: "Provider", type: "static", policy: "required",
+    id: "provider-hint", label: "Provider", type: "static", policy: "required", priority: "safety",
     build: () => opts.providerHint,
   });
 
   if (opts.toolPromptSection) {
     builder.addSection({
-      id: "tool-guidance", label: "Tool Guidance", type: "static", policy: "required",
+      id: "tool-guidance", label: "Tool Guidance", type: "static", policy: "required", priority: "safety",
       build: () => opts.toolPromptSection!,
       shouldInclude: () => opts.toolPromptSection!.length > 0,
     });
@@ -280,7 +287,7 @@ Reminder: file CRUD has native tools — \`read\`, \`write\`, \`edit\`, \`delete
   // what's actually been built or discussed instead of guessing from URLs and
   // logos. Sits in the static section so it's cacheable.
   builder.addSection({
-    id: "recall-reflex", label: "Recall Reflex", type: "static", policy: "required",
+    id: "recall-reflex", label: "Recall Reflex", type: "static", policy: "required", priority: "safety",
     build: () => `## Memory-Recall Reflex
 A task-opening turn auto-injects cross-session recall — the RELEVANT MEMORIES block, where entries tagged \`PAST SESSION\` come from earlier conversations. Read that block before reaching for a tool. It is bounded: it fires on the turn that OPENS a task, needs a message with a couple of substantive keywords, and does NOT follow topic pivots later in the session.
 Call \`search_past_sessions\` when it doesn't cover the reference — a project, website, person, or topic you don't recognize from THIS conversation:
@@ -298,7 +305,7 @@ Call \`search_past_sessions\` when it doesn't cover the reference — a project,
   // a known name comes up." Cached for 60s in the catalog module.
   if (opts.memoryDir) {
     builder.addSection({
-      id: "project-catalog", label: "Project Catalog", type: "static", policy: "degradable",
+      id: "project-catalog", label: "Project Catalog", type: "static", policy: "degradable", priority: "navigation",
       build: async () => {
         try {
           const { getProjectCatalogSection } = await import("../memory/project-catalog.js");
@@ -311,7 +318,7 @@ Call \`search_past_sessions\` when it doesn't cover the reference — a project,
 
   if (opts.integrationsContext) {
     builder.addSection({
-      id: "integrations", label: "Connected APIs", type: "static", policy: "degradable",
+      id: "integrations", label: "Connected APIs", type: "static", policy: "degradable", priority: "navigation",
       build: () => opts.integrationsContext!,
       shouldInclude: () => opts.integrationsContext!.length > 0,
     });
@@ -321,7 +328,7 @@ Call \`search_past_sessions\` when it doesn't cover the reference — a project,
 
   if (opts.contextBlock) {
     builder.addSection({
-      id: "context-block", label: "Memory Context", type: "dynamic", policy: "degradable",
+      id: "context-block", label: "Memory Context", type: "dynamic", policy: "degradable", priority: "facts",
       build: () => asRecalledData("context-block", opts.contextBlock!),
       shouldInclude: () => opts.contextBlock!.length > 0,
     });
@@ -329,7 +336,7 @@ Call \`search_past_sessions\` when it doesn't cover the reference — a project,
 
   if (opts.relevantMemories) {
     builder.addSection({
-      id: "relevant-memories", label: "Relevant Memories", type: "dynamic", policy: "degradable",
+      id: "relevant-memories", label: "Relevant Memories", type: "dynamic", policy: "degradable", priority: "facts",
       build: () => asRecalledData("relevant-memories", opts.relevantMemories!),
       shouldInclude: () => opts.relevantMemories!.length > 0,
     });
@@ -337,7 +344,7 @@ Call \`search_past_sessions\` when it doesn't cover the reference — a project,
 
   if (opts.smartContext) {
     builder.addSection({
-      id: "smart-context", label: "Related Sessions", type: "dynamic", policy: "degradable",
+      id: "smart-context", label: "Related Sessions", type: "dynamic", policy: "degradable", priority: "facts",
       build: () => asRecalledData("smart-context", opts.smartContext!),
       shouldInclude: () => opts.smartContext!.length > 0,
     });
@@ -345,7 +352,7 @@ Call \`search_past_sessions\` when it doesn't cover the reference — a project,
 
   if (opts.memoryContext) {
     builder.addSection({
-      id: "memory-orchestrator", label: "Memory Orchestrator", type: "dynamic", policy: "degradable",
+      id: "memory-orchestrator", label: "Memory Orchestrator", type: "dynamic", policy: "degradable", priority: "facts",
       build: () => asRecalledData("memory-orchestrator", opts.memoryContext!),
       shouldInclude: () => opts.memoryContext!.length > 0,
     });
@@ -353,7 +360,7 @@ Call \`search_past_sessions\` when it doesn't cover the reference — a project,
 
   if (opts.notificationHint) {
     builder.addSection({
-      id: "notifications", label: "Notifications", type: "dynamic", policy: "required",
+      id: "notifications", label: "Notifications", type: "dynamic", policy: "required", priority: "safety",
       build: () => opts.notificationHint!,
       shouldInclude: () => opts.notificationHint!.length > 0,
     });
@@ -366,7 +373,7 @@ Call \`search_past_sessions\` when it doesn't cover the reference — a project,
   // sender identity on top for the messenger bridges.
   if (opts.channelContext) {
     builder.addSection({
-      id: "channel-context", label: "Channel Context", type: "dynamic", policy: "required",
+      id: "channel-context", label: "Channel Context", type: "dynamic", policy: "required", priority: "safety",
       build: () => opts.channelContext!,
       shouldInclude: () => opts.channelContext!.length > 0,
     });
@@ -374,7 +381,7 @@ Call \`search_past_sessions\` when it doesn't cover the reference — a project,
 
   if (opts.bridgeContext) {
     builder.addSection({
-      id: "bridge-context", label: "Bridge Context", type: "dynamic", policy: "required",
+      id: "bridge-context", label: "Bridge Context", type: "dynamic", policy: "required", priority: "safety",
       build: () => opts.bridgeContext!,
       shouldInclude: () => opts.bridgeContext!.length > 0,
     });
@@ -382,7 +389,7 @@ Call \`search_past_sessions\` when it doesn't cover the reference — a project,
 
   if (opts.canaryBlock) {
     builder.addSection({
-      id: "canary", label: "Security Canary", type: "dynamic", policy: "required",
+      id: "canary", label: "Security Canary", type: "dynamic", policy: "required", priority: "safety",
       build: () => opts.canaryBlock!,
       shouldInclude: () => opts.canaryBlock!.length > 0,
     });

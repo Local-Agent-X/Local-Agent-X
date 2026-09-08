@@ -10,6 +10,7 @@ import type { BuildSystemPromptInput } from "./build-system-prompt.js";
 import { harnessNotice, renderPromptSection } from "../../context/system-prompt-builder.js";
 import { loadFileAccessMode } from "../../security/layer/index.js";
 import { modelFamilyRiderFor } from "./provider-riders.js";
+import { loadSystemPrompt } from "../../config-loader.js";
 
 describe("fileAccessGroundingBlock", () => {
   it("unrestricted tells the model it can read ANY file", () => {
@@ -373,5 +374,14 @@ describe("stableSystemPrefixLength", () => {
     expect(turn2.prompt.slice(0, len2!)).toBe(turn1.prompt.slice(0, len1!));
     // And the prompts genuinely diverge after it, so the test is not vacuous.
     expect(turn2.prompt).not.toBe(turn1.prompt);
+
+    // The cached head is the WHOLE base file + runtime-context — splitting the
+    // file into core-identity/* parts must not have shortened it by a byte.
+    // (register-adapter.ts's ~76.9 KB figure is this number.)
+    const basePrompt = loadSystemPrompt();
+    const runtime = turn1.renderedSections.find((section) => section.id === "runtime-context")!;
+    expect(turn1.prompt.startsWith(basePrompt)).toBe(true);
+    expect(len1).toBe(basePrompt.length + runtime.text.length);
+    expect(turn1.renderedSections[0].id).toMatch(/^core-identity\//);
   });
 });

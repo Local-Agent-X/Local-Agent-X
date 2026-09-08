@@ -15,12 +15,17 @@ import { spillFullResult } from "../tools/result-spill.js";
 import type { Phase, ToolCallContext } from "./context.js";
 import { CONTINUE } from "./context.js";
 import { buildDenyReason } from "../tool-policy/packs/threat-engine-pack.js";
+import { resolveContextWindow } from "../context-manager/model-windows.js";
+import { toolManifestTokens } from "../context-manager/request-fit.js";
+import { DEFAULT_MAX_RESULT_CHARS, toolResultCapChars } from "../context-manager/tool-result-cap.js";
+import { readOp } from "../ops/op-store.js";
+import { resolveOpModel } from "../canonical-loop/op-model.js";
 
 interface ToolResultWithImage extends ToolResult {
   _image?: { path: string; question: string; mime: string; b64: string };
 }
 
-const DEFAULT_MAX_RESULT_SIZE = 50_000;
+const DEFAULT_MAX_RESULT_SIZE = DEFAULT_MAX_RESULT_CHARS;
 
 // Large tool results get saved to disk with a preview returned to context —
 // keeps huge file reads or web fetches from blowing up the model window. The
@@ -131,7 +136,43 @@ function evaluateThreat(ctx: ToolCallContext): void {
 // truncated-with-disk-preview.
 export function applyBudget(ctx: ToolCallContext): void {
   const result = ctx.result!;
-  ctx.result = { ...result, content: budgetResult(result.content) };
+  ctx.result = { ...result, content: budgetResult(result.content, resultCapChars(ctx)) };
+}
+
+// The cap is a function of the TARGET WINDOW (context-manager/tool-result-cap.ts),
+// not a flat 50k: on a 65,536-token local model two flat-capped results
+// overflowed the window inside one step (2026-09-08), where compaction cannot
+// help. The model is reached the same way every canonical-loop seam reaches
+// it — the op the call belongs to (ctx.operationId -> op-store) through
+// resolveOpModel. Dispatches with no op (MCP bridge, ari-kernel, tests) and
+// ops whose model cannot be resolved keep the default cap.
+//
+// Provenance rule, shared with the openai-compat preflight and build-input's
+// baseline: a "floor" window is a placeholder for a local model that has not
+// loaded yet, not a measurement, so it is NOT sized against — squeezing every
+// result to the 4k floor on a phantom 8,192 would cripple the very turn that
+// loads the model and reveals the real window. Default cap until the next
+// sweep learns it. The manifest allowance is MEASURED from the tools this
+// call was dispatched with (ctx.toolMap is the offered set, augmentations
+// included) so a 60-tool local session reserves what it actually spends; a
+// bare dispatch with no map falls back to the documented allowance.
+function resultCapChars(ctx: ToolCallContext): number {
+  if (!ctx.operationId) return DEFAULT_MAX_RESULT_SIZE;
+  try {
+    const op = readOp(ctx.operationId);
+    const model = op ? resolveOpModel(op) : undefined;
+    if (!model) return DEFAULT_MAX_RESULT_SIZE;
+    const window = resolveContextWindow(model);
+    if (window.provenance === "floor") return DEFAULT_MAX_RESULT_SIZE;
+    const tools = [...ctx.toolMap.values()].map(t => ({
+      name: t.name, description: t.description, parameters: t.parameters,
+    }));
+    return tools.length > 0
+      ? toolResultCapChars(window.tokens, toolManifestTokens(tools))
+      : toolResultCapChars(window.tokens);
+  } catch {
+    return DEFAULT_MAX_RESULT_SIZE; // sizing is best-effort; never break the call
+  }
 }
 
 function firePostHook(ctx: ToolCallContext): void {

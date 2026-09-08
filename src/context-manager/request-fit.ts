@@ -39,6 +39,34 @@ import { estimateTokens, totalTokens } from "./token-estimation.js";
  */
 export const OUTPUT_RESERVE_TOKENS = 1_024;
 
+/**
+ * Share of a LOCAL model's window the system prompt may occupy. The prompt
+ * degrader (context/prompt-degradation.ts) enforces it; the per-result cap
+ * (tool-result-cap.ts) reserves the same share when sizing tool results, so
+ * both sides of the window agree on one allocation.
+ *
+ * It used to sit behind an absolute gate (window > 32,768 and tier !==
+ * "weak" => full prompt, no budget at all), which silently exempted every
+ * 33k-128k local model: on 2026-09-08 a 65,536-token model was handed a
+ * 36,978-token system prompt (56% of its window), the 23-tool medium manifest
+ * took another ~13,600 (fixed overhead 77%), and the third tool step
+ * overflowed. A relative budget only means something if it is applied
+ * relatively.
+ *
+ * Why 0.35, sized on the 65,536 window that exposed the bug:
+ *   budget            = floor(65,536 * 0.35)            = 22,937
+ *   tool manifest     ~ 13,617 (medium tier, 23 tools, measured 2026-09-08)
+ *   response reserve  =  1,024 (OUTPUT_RESERVE_TOKENS)
+ *   left for messages = 65,536 - 22,937 - 13,617 - 1,024 = 27,958  (42.7%)
+ * The floor we want is ~40% of the window for the conversation; the share
+ * that hits exactly 40% on this model is (65,536 - 26,214 - 13,617 - 1,024)
+ * / 65,536 = 0.377, so 0.35 clears it with margin and gets roomier as
+ * windows grow (131,072: 51% left). Below ~48k the tool manifest, not this
+ * share, is the dominant fixed cost (32k medium: 23% left) - that is the
+ * tier picker's lever (maxToolsForTier), not a second knob here.
+ */
+export const PROMPT_WINDOW_SHARE = 0.35;
+
 /** Per-tool serialization overhead beyond the JSON itself (wrapping keys,
  *  runtime chat-template framing). */
 const PER_TOOL_OVERHEAD_TOKENS = 8;

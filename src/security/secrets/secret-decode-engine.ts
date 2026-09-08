@@ -237,16 +237,50 @@ export interface Budget {
   remaining: number;
 }
 
+// Per-view, per-scheme cap on how many inner encoded runs may be enqueued.
+// CHOSEN BY MEASUREMENT, not taste, on this repo's corpus (3751 files, 45.5MB)
+// and on adversarial padded documents:
+//   - Inner-run counts per (view, scheme): p50=0, p90=1, p99=1, p99.9=226,
+//     max=4513. 256 covers p99.9, so ordinary content is enumerated in full.
+//   - Evasion: a padded object hides the real blob iff it sits past the cap.
+//     Filler runs tolerated before a wrapped key is missed — cap 4: 0, cap 8: 4,
+//     cap 64: 16, cap 256: 16. Past ~64 the shared byte budget, not the cap, is
+//     the binding limit, so raising it further buys nothing.
+//   - Cost: whole-corpus scan 12.7s at cap 1 (the old first-run-only behavior)
+//     vs 12.6s at cap 256, same 472 not-clean files; the pathological
+//     thousands-of-16-char-tokens document is unchanged (40ms raw / 0.47s
+//     base64-wrapped). Flat because the byte budget already bounds decode work.
+// The cap is a WORK and QUEUE-MEMORY bound (256 runs per scheme per view), not
+// the security bound — MAX_DECODED_BUDGET is that.
+const MAX_INNER_RUNS_PER_VIEW = 256;
+
 /**
  * Iteratively peel an outer encoded run into EVERY decoded text view across any
- * number of layers, sharing one byte budget. A worklist/queue loop: at
- * each layer, take a view string, re-detect any inner encoded run inside it, and
- * enqueue that run's decode views for the next layer. Every view we produce
- * (latin1, both-endian utf16le, percent text, at every layer) is yielded for the
- * caller to scan. The SINGLE source of "what bytes can be recovered from this
- * run" — scanEncodedViews, scanKnownValues, and decodedPayloadViews all consume
- * it so the catalog pass, the known-value pass, and the taint-overlap check can
- * never drift on encoding handling. Bounded by `budget`.
+ * number of layers, sharing one byte budget. A worklist loop: take a view
+ * string, re-detect the inner encoded runs inside it, and enqueue those runs'
+ * decode views for a later round. Every view we produce (latin1, both-endian
+ * utf16le, percent text, at every layer) is yielded for the caller to scan. The
+ * SINGLE source of "what bytes can be recovered from this run" —
+ * scanEncodedViews, scanKnownValues, and decodedPayloadViews all consume it so
+ * the catalog pass, the known-value pass, and the taint-overlap check can never
+ * drift on encoding handling. Bounded by `budget`.
+ *
+ * ALL inner runs are enumerated per scheme per view, not just the first: a run
+ * regex matches the FIRST candidate in the view, so sixteen characters of filler
+ * ("aaaaaaaaaaaaaaaa" is a valid BASE64_RUN_RE match) used to consume the
+ * scheme's only slot and the real blob was never enqueued — one padded object
+ * defeated the scanner, the taint overlap check and the canary tripwire at once.
+ *
+ * PRIORITY, not just a queue. Enumerating siblings draws on the SAME shared
+ * MAX_DECODED_BUDGET, so naive enumeration lets filler runs spend the budget
+ * before the deeper layers of the real blob are reached — measured: an 8 x 8KB
+ * filler object around a 3-layer-wrapped key went FOUND -> MISSED. Each item
+ * therefore carries a penalty = its parent's penalty + its index within its
+ * (view, scheme) enumeration, and buckets are drained in ascending penalty
+ * order. Penalty 0 is exactly the chain the first-run-only code walked, and a
+ * child's penalty is never below its parent's, so the whole old traversal is
+ * materialized BEFORE any newly-enumerated sibling is charged a single byte:
+ * enumeration can only ADD detections, never starve one that already worked.
  */
 export function iterativeRunViews(
   outerScheme: EncodedScheme,
@@ -254,40 +288,42 @@ export function iterativeRunViews(
   budget: Budget
 ): string[] {
   const collected: string[] = [];
-  // Queue of (runString, scheme) to decode. Seed with the outer run.
-  const queue: Array<{ run: string; scheme: EncodedScheme }> = [
-    { run: outerRun, scheme: outerScheme },
-  ];
-  // No fixed depth cap: peel until the queue drains or the shared byte budget is
-  // spent. budget.remaining > 0 is the SOLE bound — DoS-safe, and a deeper wrap
-  // can no longer evade the scan by exceeding a layer count.
-  while (queue.length > 0 && budget.remaining > 0) {
-    const nextLayer: Array<{ run: string; scheme: EncodedScheme }> = [];
-    for (const item of queue) {
-      if (budget.remaining <= 0) break;
-      const views = runDecodeViews(item.scheme, item.run);
-      if (views.length === 0) continue;
+  type Item = { run: string; scheme: EncodedScheme };
+  // buckets[p] = items deferred by penalty p. Seeded with the outer run at 0.
+  const buckets: Array<Item[] | undefined> = [[{ run: outerRun, scheme: outerScheme }]];
+  // No fixed depth cap: peel until every bucket drains or the shared byte budget
+  // is spent. budget.remaining > 0 is the SOLE termination bound — DoS-safe, and
+  // a deeper wrap can no longer evade the scan by exceeding a layer count. The
+  // penalty cursor only moves forward (a child's penalty >= its parent's).
+  for (let penalty = 0; penalty < buckets.length && budget.remaining > 0; penalty++) {
+    const bucket = buckets[penalty];
+    if (!bucket) continue;
+    // The bucket grows while it is walked (penalty-0 children land in it); the
+    // length check re-reads it each step so those are processed in FIFO order.
+    for (let i = 0; i < bucket.length && budget.remaining > 0; i++) {
+      const views = runDecodeViews(bucket[i].scheme, bucket[i].run);
       for (const v of views) {
         if (budget.remaining <= 0) break;
         // Charge the budget for EVERY materialized view across ALL layers (not
-        // just the primary view of each decode) so multi-view × multi-layer
+        // just the primary view of each decode) so multi-view x multi-layer
         // amplification is fully counted — this is what bounds a nested
         // decompression-bomb input: each ~N-byte view we produce (and will scan)
         // draws down the shared MAX_DECODED_BUDGET, so total bytes produced AND
         // scanned across the whole peel can't exceed it.
         budget.remaining -= v.length;
         collected.push(v);
-        // Look for an inner encoded run in this view to peel on the next layer.
+        // Enqueue the inner encoded runs of this view for a later round.
         // Fresh regex per scheme so no shared lastIndex state leaks.
         for (const inner of ENCODED_SCHEMES) {
           const fresh = new RegExp(inner.re.source, inner.re.flags);
-          const im = fresh.exec(v);
-          if (im) nextLayer.push({ run: im[0], scheme: inner });
+          let im: RegExpExecArray | null;
+          for (let n = 0; n < MAX_INNER_RUNS_PER_VIEW && (im = fresh.exec(v)) !== null; n++) {
+            const p = penalty + n;
+            (buckets[p] ??= []).push({ run: im[0], scheme: inner });
+          }
         }
       }
     }
-    queue.length = 0;
-    queue.push(...nextLayer);
   }
   return collected;
 }

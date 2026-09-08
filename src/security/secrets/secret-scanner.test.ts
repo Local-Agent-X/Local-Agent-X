@@ -6,6 +6,14 @@ import {
   registerRedactedSecretValue,
   unregisterRedactedSecretValue,
 } from "./known-secrets.js";
+import {
+  recordSensitiveRead,
+  findTaintInPayload,
+  checkEgressTaintWithPayload,
+  clearSessionTaint,
+} from "../../data-lineage/taint.js";
+import { checkCanariesInPayloadList } from "../../threat/canaries.js";
+import { iterativeRunViews, ENCODED_SCHEMES } from "./secret-decode-engine.js";
 
 // Assemble a real-shaped Anthropic key at runtime from fragments so CI's own
 // secret scanner doesn't flag this test's diff. Never write the literal.
@@ -565,4 +573,129 @@ describe("scanForSecrets — known-secret-value detection", () => {
     unregisterRedactedSecretValue(registered.pop()!);
     expect(scanForSecrets(`x=${KNOWN}`).clean).toBe(true);
   });
+});
+
+// ── S1: padded inner runs (ADR 0004 step 1) ──────────────────────────────────
+// iterativeRunViews used to take the FIRST inner run per scheme per view
+// (`fresh.exec(v)`). BASE64_RUN_RE matches 16+ base64 chars, so sixteen
+// characters of filler consumed the scheme's only slot and the real blob was
+// never enqueued — one padded object defeated the scanner, the taint-overlap
+// check and the canary tripwire at once, all three silently (`clean=true`).
+// Every inner run is now enumerated, capped per view and drained in penalty
+// order so the enumeration can never starve a detection that already worked.
+describe("scanForSecrets — S1 padded inner runs (all three subsystems)", () => {
+  const b64 = (s: string) => Buffer.from(s, "utf8").toString("base64");
+  const hexOf = (s: string) => Buffer.from(s, "utf8").toString("hex");
+  const P16 = "a".repeat(16);
+  const P15 = "a".repeat(15);
+
+  // Each shape is a BUILDER over the carried secret, so the identical document
+  // shape can be re-instantiated with a canary token for the canary assertion.
+  const shapes: Array<[string, (secret: string) => string]> = [
+    ["pad(16) before the blob", (k) => `p=${b64(JSON.stringify({ pad: P16, t: b64(k) }))}`],
+    ["pad(16) after the blob", (k) => `p=${b64(JSON.stringify({ t: b64(k), pad: P16 }))}`],
+    ["pad(15) before the blob", (k) => `p=${b64(JSON.stringify({ pad: P15, t: b64(k) }))}`],
+    ["two pads before the blob", (k) => `p=${b64(JSON.stringify({ p1: P16, p2: "b".repeat(20), t: b64(k) }))}`],
+    ["hex-shaped pad, base64 blob", (k) => `p=${b64(JSON.stringify({ pad: "ab".repeat(20), t: b64(k) }))}`],
+    ["percent-shaped pad, base64 blob", (k) => `p=${b64(JSON.stringify({ pad: "%41%42%43%44%45%46%47%48%49", t: b64(k) }))}`],
+    ["pad + blob nested two layers", (k) => `p=${b64(JSON.stringify({ pad: P16, t: b64(b64(k)) }))}`],
+    ["pad + blob nested three layers", (k) => `p=${b64(JSON.stringify({ pad: P16, t: b64(b64(b64(k))) }))}`],
+    ["pad + hex inner blob", (k) => `p=${b64(JSON.stringify({ pad: P16, t: hexOf(k) }))}`],
+    ["pad in a hex outer blob", (k) => `p=${hexOf(JSON.stringify({ pad: P16, t: b64(k) }))}`],
+  ];
+
+  for (const [name, build] of shapes) {
+    it(`scanner catches: ${name}`, () => {
+      expect(scanForSecrets(build(ANT_KEY)).clean).toBe(false);
+    });
+  }
+
+  // All three subsystems share the same peel (decodedPayloadViews), so the
+  // scanner alone is not proof the hole is closed. Assert the taint-overlap
+  // check and the canary matcher on the SAME padded document.
+  it("all three subsystems catch the padded payload (scanner + taint + canary)", () => {
+    const build = shapes[0][1];
+    const payload = build(ANT_KEY);
+
+    expect(scanForSecrets(payload).clean).toBe(false);
+
+    const sessionId = `s1-padded-${Date.now()}`;
+    recordSensitiveRead(sessionId, "sensitive_file", "/tmp/.env", ANT_KEY);
+    try {
+      expect(findTaintInPayload(sessionId, payload).length).toBeGreaterThan(0);
+      // Fully-fingerprinted taint clears an unrelated payload, so `blocked` here
+      // is real overlap evidence, not the presence floor.
+      const egress = checkEgressTaintWithPayload(sessionId, payload);
+      expect(egress.blocked).toBe(true);
+      expect(egress.evidence.length).toBeGreaterThan(0);
+    } finally {
+      clearSessionTaint(sessionId);
+    }
+
+    const canary = "CANARY-deadbeef1234-ALPHA";
+    expect(checkCanariesInPayloadList([canary], build(canary))).not.toBeNull();
+  });
+
+  it("taint + canary catch every padding variant too", () => {
+    const canary = "CANARY-c0ffee5678-BRAVO";
+    for (const [name, build] of shapes) {
+      const sessionId = `s1-var-${name}`;
+      recordSensitiveRead(sessionId, "sensitive_file", "/tmp/.env", ANT_KEY);
+      try {
+        expect(findTaintInPayload(sessionId, build(ANT_KEY)).length, `taint: ${name}`).toBeGreaterThan(0);
+      } finally {
+        clearSessionTaint(sessionId);
+      }
+      expect(checkCanariesInPayloadList([canary], build(canary)), `canary: ${name}`).not.toBeNull();
+    }
+  });
+
+  it("previously-caught shapes stay caught (no regression)", () => {
+    expect(scanForSecrets(`key ${ANT_KEY}`).clean).toBe(false);
+    expect(scanForSecrets(`p=${b64(ANT_KEY)}`).clean).toBe(false);
+    expect(scanForSecrets(`p=${b64(JSON.stringify({ t: b64(ANT_KEY) }))}`).clean).toBe(false);
+  });
+
+  it("negative: a padded object with no secret in it stays clean", () => {
+    const doc = b64(JSON.stringify({ pad: P16, t: b64("the quick brown fox jumps over it") }));
+    expect(scanForSecrets(`p=${doc}`).clean).toBe(true);
+  });
+
+  // The penalty ordering is what keeps enumeration from making the shared-budget
+  // starvation WORSE: newly-enumerated siblings are strictly lower priority than
+  // the chain the first-run-only code walked. Without it, this exact document
+  // measured FOUND -> MISSED (8 x 8KB fillers around a 3-layer-wrapped key).
+  it("enumerating siblings does not starve a deeper real blob (penalty order)", () => {
+    let wrapped = ANT_KEY;
+    for (let i = 0; i < 3; i++) wrapped = b64(wrapped);
+    const fillers = Array.from({ length: 8 }, (_, i) => `"f${i}":"${"QUFB".repeat(2048)}"`).join(",");
+    const text = "p=" + b64(`{"t":"${wrapped}",${fillers}}`);
+    expect(scanForSecrets(text).clean).toBe(false);
+  });
+
+  // The cap must BIND independently of the byte budget: hand iterativeRunViews a
+  // deliberately generous budget and a document whose decoded view holds
+  // thousands of inner runs. Capped at 256 this peel yields ~770 views for ~108KB
+  // of decode; uncapped it yields 12002 views for ~198KB — so deleting the cap
+  // flips this assertion even though the scanner's own MAX_DECODED_BUDGET would
+  // have hidden the difference.
+  it("the per-view cap bounds the peel even under a generous budget", () => {
+    const inner = Array.from({ length: 4000 }, (_, i) =>
+      Buffer.from(("t" + i).padEnd(12, "x"), "utf8").toString("base64").replace(/=+$/, "")).join(" ");
+    const outer = Buffer.from(inner, "utf8").toString("base64");
+    const budget = { remaining: 64 * 1024 * 1024 };
+    const views = iterativeRunViews(ENCODED_SCHEMES[0], outer, budget);
+    expect(views.length).toBeLessThan(4000);
+  });
+
+  // The cap's reason for existing: thousands of enqueueable inner runs must
+  // terminate promptly, not hang.
+  it("terminates promptly on thousands of inner runs (cap)", () => {
+    const inner = Array.from({ length: 12000 }, (_, i) =>
+      Buffer.from(("t" + i).padEnd(12, "x"), "utf8").toString("base64").replace(/=+$/, "")).join(" ");
+    const text = "p=" + Buffer.from(inner, "utf8").toString("base64");
+    const started = Date.now();
+    expect(typeof scanForSecrets(text).clean).toBe("boolean");
+    expect(Date.now() - started).toBeLessThan(30_000);
+  }, 60_000);
 });

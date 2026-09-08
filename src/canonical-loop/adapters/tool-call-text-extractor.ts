@@ -48,6 +48,7 @@
 import { findJsonObjects } from "./tool-call-text-repair.js";
 import {
   isBrowserShorthand,
+  maskCodeSpans,
   resolveCandidateName,
   scanTextToolCallSyntaxes,
   withinCaps,
@@ -86,7 +87,13 @@ export function extractToolCallsFromText(
   if (!text || typeof text !== "string") return { toolCalls: [], remainingText: text ?? "" };
 
   // Strip common code-fence wrapping. Models often wrap tool-call payloads
-  // in ```json ... ``` even when emitting as content.
+  // in ```json ... ``` even when emitting as content. Fences are stripped
+  // BEFORE scanning, so the masked scan below only masks INLINE backtick
+  // spans — a backticked `<invoke name="x">` is an example, not a call. That
+  // is the one masking policy every consumer of the recognizer shares
+  // (delivery/persist hygiene, history rebuild, the completion gate); the
+  // extractor used to be the lone unmasked scanner, and a backticked mention
+  // ahead of a real block ate the prose between them.
   let working = text.replace(/```(?:json|tool_use|function)?\s*\n?/gi, "").replace(/\n?```/g, "");
 
   // Layer 1 — explicit call syntax. Candidates carry the name as the model
@@ -96,7 +103,7 @@ export function extractToolCallsFromText(
   // their bytes are off-limits to the naked-JSON layer below so a block
   // rejected here (truncated, over-cap, unresolvable) can't sneak back in
   // through its inner JSON.
-  const syntaxHits = scanTextToolCallSyntaxes(working);
+  const syntaxHits = scanTextToolCallSyntaxes(working, { maskCodeSpans: true });
   const found: Array<{ start: number; end: number; call: ExtractedToolCall }> = [];
   for (const hit of syntaxHits) {
     if (!hit.candidate || !withinCaps(hit.candidate)) continue;
@@ -110,7 +117,9 @@ export function extractToolCallsFromText(
   }
 
   // Layer 2 — naked JSON objects (full envelope / browser shorthand).
-  for (const obj of findJsonObjects(working)) {
+  // Same masking policy for the naked-JSON layer: a backticked envelope is
+  // an example. Positions line up because the mask is length-preserving.
+  for (const obj of findJsonObjects(maskCodeSpans(working))) {
     if (syntaxHits.some((h) => obj.start < h.end && h.start < obj.end)) continue;
     const synthesized = classify(obj.parsed, validToolNames);
     if (synthesized) found.push({ start: obj.start, end: obj.end, call: synthesized });

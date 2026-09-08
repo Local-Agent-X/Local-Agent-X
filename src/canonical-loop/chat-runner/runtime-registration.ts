@@ -1,5 +1,4 @@
 import { estimateTokens } from "../../context-manager/token-estimation.js";
-import { isAnthropicModel } from "../../context-manager/effective-window.js";
 import { makeChatToolDispatcher } from "../chat-tool-dispatcher.js";
 import {
   registerOpBaselineTokens,
@@ -56,12 +55,17 @@ export async function registerChatRuntime(
       signal,
     }));
     registerToolsForOp(opId, toolDescriptors);
-    if (isAnthropicModel(ctx.prepared.model)) {
-      registerOpBaselineTokens(
-        opId,
-        estimateTokens(ctx.prepared.systemPrompt) + estimateTokens(JSON.stringify(toolDescriptors)),
-      );
-    }
+    // Registered for EVERY model, not only Anthropic. The system prompt and
+    // tool manifest are sent outside `messages` on every adapter, so every
+    // adapter's history sizing under-counts by exactly this much without it.
+    // Incident 2026-09-08: a local 65k-window model was gated on the raw
+    // window, history grew until the ~13k-token tool manifest no longer fit,
+    // and the adapter stripped tools mid-turn. The kill switch
+    // (LAX_CONTEXT_BASELINE=0) lives at the consumer (turn-loop/build-input.ts).
+    registerOpBaselineTokens(
+      opId,
+      estimateTokens(ctx.prepared.systemPrompt) + estimateTokens(JSON.stringify(toolDescriptors)),
+    );
     return { dispose };
   } catch (error) {
     dispose();

@@ -20,43 +20,45 @@ function ps(payload: Record<string, unknown>, opts: { adapterName?: string; view
 	};
 }
 
+const MODEL = "claude-sonnet-4-6"; // the model the observations below are measured on
+
 // prefix = input + cacheRead + cacheCreate = 2 + 70000 + 47000 = 117002
 const cleanPayload = { usageInputTokens: 2, usageOutputTokens: 5, cacheReadTokens: 70_000, cacheCreateTokens: 47_000 };
 
 describe("session baseline — observe at commit, read O(1)", () => {
 	it("returns null before any observation", () => {
-		expect(getSessionBaselineTokens("sess_none")).toBeNull();
+		expect(getSessionBaselineTokens("sess_none", MODEL)).toBeNull();
 	});
 
 	it("isolates baseline = real prefix − estimated prompt conversation", () => {
 		// prompt conversation ≈ 1000 tokens → baseline ≈ 117002 − 1004
 		recordSessionBaselineObservation("sess_a", "chat_turn", ps(cleanPayload, { viewCompacted: false }), [], [userMsg(1004)]);
-		expect(getSessionBaselineTokens("sess_a")).toBe(117_002 - 1004);
+		expect(getSessionBaselineTokens("sess_a", MODEL)).toBe(117_002 - 1004);
 	});
 
 	it("does NOT record a tool-bearing turn (cumulative usage is unreliable)", () => {
 		recordSessionBaselineObservation("sess_tool", "chat_turn", ps(cleanPayload, { viewCompacted: false }), ["mcp__lax__glob"], [userMsg(1004)]);
-		expect(getSessionBaselineTokens("sess_tool")).toBeNull();
+		expect(getSessionBaselineTokens("sess_tool", MODEL)).toBeNull();
 	});
 
 	it("does NOT record a compacted-view turn", () => {
 		recordSessionBaselineObservation("sess_comp", "chat_turn", ps(cleanPayload, { viewCompacted: true }), [], [userMsg(1004)]);
-		expect(getSessionBaselineTokens("sess_comp")).toBeNull();
+		expect(getSessionBaselineTokens("sess_comp", MODEL)).toBeNull();
 	});
 
 	it("does NOT record a non-anthropic turn", () => {
 		recordSessionBaselineObservation("sess_oai", "chat_turn", ps(cleanPayload, { adapterName: "openai-compat", viewCompacted: false }), [], [userMsg(1004)]);
-		expect(getSessionBaselineTokens("sess_oai")).toBeNull();
+		expect(getSessionBaselineTokens("sess_oai", MODEL)).toBeNull();
 	});
 
 	it("does NOT record an implausible prefix above the window", () => {
 		recordSessionBaselineObservation("sess_over", "chat_turn", ps({ ...cleanPayload, cacheReadTokens: 300_000 }, { viewCompacted: false }), [], [userMsg(1004)]);
-		expect(getSessionBaselineTokens("sess_over")).toBeNull();
+		expect(getSessionBaselineTokens("sess_over", MODEL)).toBeNull();
 	});
 
 	it("does NOT record when cache fields are missing (absent ≠ 0)", () => {
 		recordSessionBaselineObservation("sess_nc", "chat_turn", ps({ usageInputTokens: 5000, usageOutputTokens: 100 }, { viewCompacted: false }), [], [userMsg(1004)]);
-		expect(getSessionBaselineTokens("sess_nc")).toBeNull();
+		expect(getSessionBaselineTokens("sess_nc", MODEL)).toBeNull();
 	});
 
 	// The baseline is conversation-INDEPENDENT, so the tightest (smallest-conv)
@@ -64,26 +66,26 @@ describe("session baseline — observe at commit, read O(1)", () => {
 	// overwrite a small-conversation one.
 	it("keeps the observation from the smallest-conversation turn", () => {
 		recordSessionBaselineObservation("sess_min", "chat_turn", ps(cleanPayload, { viewCompacted: false }), [], [userMsg(1004)]);   // conv 1004
-		const small = getSessionBaselineTokens("sess_min");
+		const small = getSessionBaselineTokens("sess_min", MODEL);
 		recordSessionBaselineObservation("sess_min", "chat_turn", ps(cleanPayload, { viewCompacted: false }), [], [userMsg(50_004)]); // conv 50004 — bigger, ignored
-		expect(getSessionBaselineTokens("sess_min")).toBe(small);
+		expect(getSessionBaselineTokens("sess_min", MODEL)).toBe(small);
 		expect(small).toBe(117_002 - 1004);
 	});
 
 	it("adopts a smaller-conversation observation that arrives later", () => {
 		recordSessionBaselineObservation("sess_adopt", "chat_turn", ps(cleanPayload, { viewCompacted: false }), [], [userMsg(50_004)]); // big first
 		recordSessionBaselineObservation("sess_adopt", "chat_turn", ps(cleanPayload, { viewCompacted: false }), [], [userMsg(1004)]);   // smaller later
-		expect(getSessionBaselineTokens("sess_adopt")).toBe(117_002 - 1004);
+		expect(getSessionBaselineTokens("sess_adopt", MODEL)).toBe(117_002 - 1004);
 	});
 
 	it("ignores an empty sessionId", () => {
 		recordSessionBaselineObservation("", "chat_turn", ps(cleanPayload, { viewCompacted: false }), [], [userMsg(1004)]);
-		expect(getSessionBaselineTokens("")).toBeNull();
+		expect(getSessionBaselineTokens("", MODEL)).toBeNull();
 	});
 
 	it("keeps sessions isolated", () => {
 		recordSessionBaselineObservation("sess_x", "chat_turn", ps(cleanPayload, { viewCompacted: false }), [], [userMsg(1004)]);
-		expect(getSessionBaselineTokens("sess_y")).toBeNull();
+		expect(getSessionBaselineTokens("sess_y", MODEL)).toBeNull();
 	});
 
 	// Cross-op-type contamination guard: a delegated/submitted op inherits the
@@ -92,10 +94,41 @@ describe("session baseline — observe at commit, read O(1)", () => {
 	// under-count → the death this exists to prevent. Only "chat_turn" observes.
 	it("ignores a non-chat op sharing the session (no cross-op-type clobber)", () => {
 		recordSessionBaselineObservation("sess_shared", "chat_turn", ps(cleanPayload, { viewCompacted: false }), [], [userMsg(1004)]);
-		const chatBaseline = getSessionBaselineTokens("sess_shared");
+		const chatBaseline = getSessionBaselineTokens("sess_shared", MODEL);
 		// A delegated op: same session, smaller conversation, smaller (narrower-tooled) prefix.
 		recordSessionBaselineObservation("sess_shared", "research", ps({ ...cleanPayload, cacheReadTokens: 10_000, cacheCreateTokens: 0 }, { viewCompacted: false }), [], [userMsg(4)]);
-		expect(getSessionBaselineTokens("sess_shared")).toBe(chatBaseline); // unchanged, not clobbered to ~10k
+		expect(getSessionBaselineTokens("sess_shared", MODEL)).toBe(chatBaseline); // unchanged, not clobbered to ~10k
 		expect(chatBaseline).toBe(117_002 - 1004);
+	});
+
+	// The observation includes the MEASURING adapter's own request wrapping
+	// (~119k real vs ~56k estimate on the Anthropic CLI path), so it is a valid
+	// floor only for requests that travel the same adapter. A session that ran
+	// clean claude turns and then switched to a local 65k model must NOT be
+	// served the Anthropic number — that sized the local model at 180%+ and
+	// pinned compaction at keepLast 2 for the rest of the session. The refusal
+	// is decided from the adapter carried ON the observation, not by a provider
+	// check at the call site.
+	describe("adapter-scoped reads", () => {
+		it("refuses a local model after an anthropic observation → null, so the op estimate applies", () => {
+			recordSessionBaselineObservation("sess_switch", "chat_turn", ps(cleanPayload, { viewCompacted: false }), [], [userMsg(1004)]);
+			expect(getSessionBaselineTokens("sess_switch", "muse-glimmer:30b")).toBeNull();
+		});
+
+		it("serves the observed value to the same anthropic model", () => {
+			recordSessionBaselineObservation("sess_same", "chat_turn", ps(cleanPayload, { viewCompacted: false }), [], [userMsg(1004)]);
+			expect(getSessionBaselineTokens("sess_same", MODEL)).toBe(117_002 - 1004);
+		});
+
+		it("serves it to a sibling anthropic model too — the wrapping is the adapter's, not the model's", () => {
+			recordSessionBaselineObservation("sess_sib", "chat_turn", ps(cleanPayload, { viewCompacted: false }), [], [userMsg(1004)]);
+			expect(getSessionBaselineTokens("sess_sib", "claude-opus-4-1")).toBe(117_002 - 1004);
+		});
+
+		it("switching back to anthropic after local turns still finds the observation", () => {
+			recordSessionBaselineObservation("sess_back", "chat_turn", ps(cleanPayload, { viewCompacted: false }), [], [userMsg(1004)]);
+			expect(getSessionBaselineTokens("sess_back", "muse-glimmer:30b")).toBeNull();
+			expect(getSessionBaselineTokens("sess_back", MODEL)).toBe(117_002 - 1004);
+		});
 	});
 });

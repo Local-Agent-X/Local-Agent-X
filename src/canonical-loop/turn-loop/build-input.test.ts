@@ -1,8 +1,36 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+// Spy on compactHistory WITHOUT replacing it: the situational-awareness and
+// step-effort cases below need the real compaction pass, the baseline cases
+// need to see what buildTurnInput handed it.
+vi.mock("./compact-history.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./compact-history.js")>();
+  return { ...actual, compactHistory: vi.fn(actual.compactHistory) };
+});
+// Same shape for the window resolution: real by default, pinned per test to
+// a "floor" (unloaded local model) or "probed" (measured) window. Both the
+// provenance read in build-input and the number read by effectiveContextWindow
+// go through this module, so the real compaction pass sizes against the pin.
+vi.mock("../../context-manager/model-windows.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../context-manager/model-windows.js")>();
+  return {
+    ...actual,
+    resolveContextWindow: vi.fn(actual.resolveContextWindow),
+    lookupContextWindow: vi.fn(actual.lookupContextWindow),
+  };
+});
+// Compaction must never reach a real summarizer from here: if a baseline case
+// regresses into compacting, fail on the spy, not on a hung LLM call.
+vi.mock("../../context-manager/compaction.js", () => ({ summarizeOldMessages: vi.fn(async () => "SUMMARY") }));
+
 import { buildTurnInput, collapseAdjacentUserMessages } from "./build-input.js";
+import { compactHistory } from "./compact-history.js";
+import { lookupContextWindow, resolveContextWindow } from "../../context-manager/model-windows.js";
+import { summarizeOldMessages } from "../../context-manager/compaction.js";
+import { registerOpBaselineTokens, unregisterOpBaselineTokens } from "../runtime.js";
 import { canonicalToTransport } from "../adapters/canonical-to-transport.js";
 import { markConversationCache } from "../../anthropic-client/cache-breakpoints.js";
 import { toGeminiContents } from "../adapters/gemini-native-transport.js";
@@ -388,5 +416,147 @@ describe("buildTurnInput — per-step effort hint", () => {
     });
     expect(input.pendingRedirect?.text).toBe("stop — do X instead"); // redirect still flows to the adapter
     expect(input.stepEffortHint).toBeUndefined();
+  });
+});
+
+// Fixed overhead (system prompt + tool manifest) is reserved for EVERY model.
+// Incident 2026-09-08: a local 65k-window model sized history against the raw
+// window, history grew until the ~13k-token manifest no longer fit, and the
+// adapter stripped tools mid-turn. Behavior under test: whatever the op
+// registered at submit reaches compactHistory as its baselineTokens argument
+// regardless of provider. (compactHistory's own handling of that number is
+// covered by compact-history.golden.test.ts.)
+describe("buildTurnInput — baseline reservation reaches compaction for every model", () => {
+  let dir: string;
+  let prevEnv: string | undefined;
+  let prevKill: string | undefined;
+  let opId: string;
+  let seq = 0;
+  const mockCompact = vi.mocked(compactHistory);
+
+  function makeOp(model: string, type = "chat_turn"): Op {
+    return { id: opId, type, model, task: "help", lane: "interactive" } as unknown as Op;
+  }
+
+  function baselinePassedToCompaction(): number {
+    expect(mockCompact).toHaveBeenCalledTimes(1);
+    const [, , , calledOpId, baseline] = mockCompact.mock.calls[0];
+    expect(calledOpId).toBe(opId);
+    return baseline ?? 0;
+  }
+
+  beforeEach(() => {
+    prevEnv = process.env.LAX_DATA_DIR;
+    prevKill = process.env.LAX_CONTEXT_BASELINE;
+    delete process.env.LAX_CONTEXT_BASELINE;
+    dir = mkdtempSync(join(tmpdir(), "lax-buildinput-bl-"));
+    process.env.LAX_DATA_DIR = dir;
+    opId = `op_bi_bl_test_${seq++}`;
+    appendOpMessage({
+      messageId: "u-0", opId, turnIdx: 0, seqInTurn: 0,
+      role: "user", content: { text: "help" }, createdAt: "2026-09-08T10:00:00.000Z",
+    });
+    mockCompact.mockClear();
+  });
+
+  afterEach(() => {
+    unregisterOpBaselineTokens(opId);
+    try { rmSync(opDir(opId), { recursive: true, force: true }); } catch { /* ignore */ }
+    if (prevEnv === undefined) delete process.env.LAX_DATA_DIR;
+    else process.env.LAX_DATA_DIR = prevEnv;
+    if (prevKill === undefined) delete process.env.LAX_CONTEXT_BASELINE;
+    else process.env.LAX_CONTEXT_BASELINE = prevKill;
+    try { rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
+  });
+
+  it("a local openai-compat model's registered baseline reaches compactHistory (the incident case)", async () => {
+    registerOpBaselineTokens(opId, 13_000);
+    await buildTurnInput(makeOp("muse-glimmer:30b"), 1, null);
+    expect(baselinePassedToCompaction()).toBe(13_000);
+  });
+
+  it("an Anthropic model's registered baseline still reaches compactHistory", async () => {
+    registerOpBaselineTokens(opId, 147_000);
+    await buildTurnInput(makeOp("claude-sonnet-4-6"), 1, null);
+    expect(baselinePassedToCompaction()).toBe(147_000);
+  });
+
+  it("LAX_CONTEXT_BASELINE=0 disables the reservation for a local model too", async () => {
+    process.env.LAX_CONTEXT_BASELINE = "0";
+    registerOpBaselineTokens(opId, 13_000);
+    await buildTurnInput(makeOp("muse-glimmer:30b"), 1, null);
+    expect(baselinePassedToCompaction()).toBe(0);
+  });
+
+  it("a non-chat op does not inherit the chat tool surface's baseline", async () => {
+    // Both baseline sources describe the interactive-chat surface; a delegated
+    // op with a narrower surface must size against its own (unregistered → 0).
+    registerOpBaselineTokens(opId, 13_000);
+    await buildTurnInput(makeOp("muse-glimmer:30b", "delegated"), 1, null);
+    expect(baselinePassedToCompaction()).toBe(0);
+  });
+
+  // A placeholder window gets NO reservation. An unloaded local model resolves
+  // to the 8,192 "floor" guess; a ~13k baseline against it reads as 160%+ and
+  // every step compacts to the aggressive minimum until the next op re-probes
+  // the runtime — the user's live question can be summarized away mid
+  // tool-loop. Same integer as a genuinely-measured 8k window, which is why
+  // the pin is on provenance, never on the number.
+  describe("placeholder (floor) window", () => {
+    const mockWindow = vi.mocked(resolveContextWindow);
+    const mockLookup = vi.mocked(lookupContextWindow);
+
+    function pinWindow(tokens: number, provenance: "floor" | "probed"): void {
+      mockWindow.mockReturnValue({ tokens, provenance });
+      mockLookup.mockReturnValue(tokens);
+    }
+
+    afterEach(async () => {
+      // Back to the real resolution — a bare mockReset would leave both
+      // returning undefined for whatever runs after this block.
+      const actual = await vi.importActual<typeof import("../../context-manager/model-windows.js")>("../../context-manager/model-windows.js");
+      mockWindow.mockReset().mockImplementation(actual.resolveContextWindow);
+      mockLookup.mockReset().mockImplementation(actual.lookupContextWindow);
+      vi.mocked(summarizeOldMessages).mockClear();
+    });
+
+    it("floor provenance → compactHistory receives 0, whatever the op registered", async () => {
+      pinWindow(8_192, "floor");
+      registerOpBaselineTokens(opId, 13_000);
+      await buildTurnInput(makeOp("muse-glimmer:30b"), 1, null);
+      expect(baselinePassedToCompaction()).toBe(0);
+    });
+
+    it("probed provenance → compactHistory receives the registered estimate", async () => {
+      pinWindow(65_536, "probed");
+      registerOpBaselineTokens(opId, 13_000);
+      await buildTurnInput(makeOp("muse-glimmer:30b"), 1, null);
+      expect(baselinePassedToCompaction()).toBe(13_000);
+    });
+
+    it("guard: a floor window with ≤4 rows is a compaction no-op", async () => {
+      pinWindow(8_192, "floor");
+      registerOpBaselineTokens(opId, 13_000);
+      // Three more tiny rows on top of the seeded user row: 4 rows total.
+      appendOpMessage({
+        messageId: "a-0", opId, turnIdx: 0, seqInTurn: 1,
+        role: "assistant", content: { text: "sure" }, createdAt: "2026-09-08T10:00:01.000Z",
+      });
+      appendOpMessage({
+        messageId: "u-1", opId, turnIdx: 1, seqInTurn: 0,
+        role: "user", content: { text: "and then?" }, createdAt: "2026-09-08T10:00:02.000Z",
+      });
+      appendOpMessage({
+        messageId: "a-1", opId, turnIdx: 1, seqInTurn: 1,
+        role: "assistant", content: { text: "this" }, createdAt: "2026-09-08T10:00:03.000Z",
+      });
+      const input = await buildTurnInput(makeOp("muse-glimmer:30b"), 2, null);
+      const result = await mockCompact.mock.results[0].value;
+      expect(result.compacted).toBe(false);
+      expect(input.viewCompacted).toBeUndefined();
+      expect(summarizeOldMessages).not.toHaveBeenCalled();
+      // Every real row survived — nothing was summarized away.
+      expect(input.messages.map(m => m.messageId).slice(0, 4)).toEqual(["u-0", "a-0", "u-1", "a-1"]);
+    });
   });
 });

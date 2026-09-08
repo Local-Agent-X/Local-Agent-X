@@ -40,7 +40,7 @@
 import type { ProviderStateEnvelope } from "./types.js";
 import type { CanonicalMessage } from "./contract-types.js";
 import { ANTHROPIC_ADAPTER_NAME } from "./adapters/anthropic/types.js";
-import { effectiveContextWindow } from "../context-manager/effective-window.js";
+import { effectiveContextWindow, isAnthropicModel } from "../context-manager/effective-window.js";
 import { resolveAnthropicTransport } from "../context-manager/resolve-transport.js";
 import { totalTokens } from "../context-manager/token-estimation.js";
 import { toChatParams } from "./turn-loop/compact-history.js";
@@ -50,6 +50,12 @@ interface Observation {
   baseline: number;
   /** Estimated conversation of the observed turn; smaller = more accurate baseline. */
   convTokens: number;
+  /** The adapter the prefix was measured on. The number includes THAT
+   *  transport's own wrapping, so it is only a valid floor for requests that
+   *  will travel the same adapter. */
+  adapterName: string;
+  /** The model the prefix was measured on (diagnostics; the match is by adapter). */
+  model: string;
 }
 
 const MAX_SESSIONS = 500;
@@ -91,10 +97,31 @@ export function recordSessionBaselineObservation(
   }
 }
 
-/** The observed stable baseline for a session, or null if none recorded yet. */
-export function getSessionBaselineTokens(sessionId: string | undefined | null): number | null {
+/**
+ * The observed stable baseline for a session, or null if none recorded yet —
+ * or if the observation was measured on a DIFFERENT adapter than the one
+ * `model` will run on. The value is not a property of the session alone: it
+ * includes the measuring adapter's own request wrapping (~119k real vs ~56k
+ * string estimate on the Anthropic CLI path). Serving it to a session that has
+ * since switched to a local 65k model would size that model's history at
+ * 180%+ and pin compaction at its most aggressive tier for the rest of the
+ * session, so a mismatch refuses and the caller falls back to its own
+ * estimate. The mismatch is decided HERE, from the adapter carried on the
+ * observation, not by a provider check at the call site.
+ */
+export function getSessionBaselineTokens(sessionId: string | undefined | null, model: string): number | null {
   if (!sessionId) return null;
-  return sessions.get(sessionId)?.baseline ?? null;
+  const obs = sessions.get(sessionId);
+  if (!obs) return null;
+  return adapterFamilyForModel(model) === obs.adapterName ? obs.baseline : null;
+}
+
+/** The adapter family a chat request for `model` travels — the same split
+ *  register-adapter.ts makes. Observations exist only for Anthropic today
+ *  (see observe), so any non-Anthropic model resolves to a family that can
+ *  never match. */
+function adapterFamilyForModel(model: string): string | null {
+  return isAnthropicModel(model) ? ANTHROPIC_ADAPTER_NAME : null;
 }
 
 /** Test seam. */
@@ -123,5 +150,5 @@ function observe(
   if (typeof model !== "string" || model.length === 0) return null;
   if (prefix > effectiveContextWindow(model, resolveAnthropicTransport())) return null; // implausible → refuse
   const convTokens = totalTokens(toChatParams(promptMessages));
-  return { baseline: Math.max(0, prefix - convTokens), convTokens };
+  return { baseline: Math.max(0, prefix - convTokens), convTokens, adapterName: ps.adapterName, model };
 }

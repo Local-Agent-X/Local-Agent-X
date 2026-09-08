@@ -69,7 +69,7 @@ export async function emitContextStatus(
     let baselineTokens = 0;
     if (process.env.LAX_CONTEXT_BASELINE !== "0" && isAnthropicModel(prepared.model)) {
       const { getSessionBaselineTokens } = await import("../../../canonical-loop/index.js");
-      baselineTokens = getSessionBaselineTokens(sessionId)
+      baselineTokens = getSessionBaselineTokens(sessionId, prepared.model)
         ?? (estimateTokens(prepared.systemPrompt) + estimateTokens(JSON.stringify(prepared.tools)));
     }
     const status = getContextStatus(prepared.cleanHistory, prepared.model, undefined, resolveAnthropicTransport(), baselineTokens);

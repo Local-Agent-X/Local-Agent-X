@@ -15,7 +15,7 @@ import { classifyStepEffort } from "../step-effort.js";
 import { buildSituationalAwareness } from "./situational-awareness.js";
 import { compactHistory } from "./compact-history.js";
 import { getSessionBaselineTokens } from "../session-baseline.js";
-import { isAnthropicModel } from "../../context-manager/effective-window.js";
+import { resolveContextWindow } from "../../context-manager/model-windows.js";
 import { isRuntimeFailoverBoundary } from "../../ops/target-identity.js";
 
 export async function buildTurnInput(
@@ -43,21 +43,45 @@ export async function buildTurnInput(
   const model = resolveOpModel(op);
   let viewCompacted = false;
   if (model) {
-    // Baseline floor: the system prompt + tool manifest (+ memory + the CLI
-    // subprocess's own system/MCP wrapping) the adapter sends OUTSIDE `messages`
-    // — invisible to the pure token estimate. Feeding it in makes the chat path
-    // size against the REAL request, so compaction fires before baseline +
-    // conversation overruns the window instead of dying on "prompt too long".
-    // The value is the session's REAL observed baseline (O(1) cache, seeded from
-    // clean tool-less turns at commit); string estimate as first-message
-    // fallback. Passed unconditionally: getContextStatus adds it ONLY on the
-    // pure-estimate branch, so a mapped anchor (which already includes the
-    // baseline) ignores it — and an UNMAPPABLE anchor still gets the floor.
+    // Baseline floor: the system prompt + tool manifest (+ memory + any
+    // subprocess system/MCP wrapping) the adapter sends OUTSIDE `messages` —
+    // invisible to the pure token estimate. INVARIANT: this fixed overhead is
+    // reserved for EVERY model; history is the only negotiable part of the
+    // request. Sizing a local model against its raw window let history grow
+    // until the tool manifest itself no longer fit and the adapter stripped
+    // tools mid-turn (2026-09-08, 65k window, ~13k manifest) — the same
+    // "prompt too long" death the Anthropic path had, one window size down.
+    // The value is the session's REAL observed baseline when one exists (O(1)
+    // cache, seeded from clean tool-less Anthropic turns at commit; null for
+    // every other provider), else the op's string estimate registered at
+    // submit — which is what every non-Anthropic model runs on. Passed
+    // unconditionally: getContextStatus adds it ONLY on the pure-estimate
+    // branch, so a mapped anchor (which already includes the baseline) ignores
+    // it — and an UNMAPPABLE anchor still gets the floor.
+    // The session value is served only when it was measured on the adapter
+    // this model runs on (session-baseline.ts decides that from the
+    // observation itself); a session that switched providers falls through to
+    // the op estimate instead of sizing a local model by the Anthropic path's
+    // ~119k wrapping.
     // Kill-switch: LAX_CONTEXT_BASELINE=0.
-    // Scoped to chat_turn ops: the session baseline cache holds only the
-    // interactive-chat tool surface, and the observed death is on that path.
-    const baselineTokens = (process.env.LAX_CONTEXT_BASELINE !== "0" && op.type === "chat_turn" && isAnthropicModel(model))
-      ? (getSessionBaselineTokens(op.canonical?.sessionId) ?? getOpBaselineTokens(op.id))
+    // Scoped to chat_turn ops: both baseline sources describe the interactive-
+    // chat tool surface only — the session cache records chat_turn commits
+    // and the op estimate is registered by the chat runner — so a delegated op
+    // with a narrower surface must not inherit either.
+    // INVARIANT: a placeholder window gets NO fixed-overhead reservation. A
+    // local model that hasn't loaded yet resolves to the 8,192 "floor" guess
+    // (model-windows.ts); a ~13k baseline against it reads as 160%+ and every
+    // step compacts to the aggressive minimum — summarizing the user's live
+    // question away mid tool-loop — until the next op re-probes the runtime.
+    // A baseline is meaningful only against a MEASURED window (the same
+    // rationale as the openai-compat preflight's floor bypass: refusing on a
+    // guess cannot self-correct).
+    const baselineTokens = (
+      process.env.LAX_CONTEXT_BASELINE !== "0"
+      && op.type === "chat_turn"
+      && resolveContextWindow(model).provenance !== "floor"
+    )
+      ? (getSessionBaselineTokens(op.canonical?.sessionId, model) ?? getOpBaselineTokens(op.id))
       : 0;
     // sessionBacked gates only the summary's recall-HINT line: recall confines
     // reads to the caller's session, so a session-less op would get a refusal.

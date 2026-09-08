@@ -9,6 +9,14 @@
  *      doesn't get mis-fired. Claude 4.x drifts to native shape when it
  *      ignores the prompt-injected envelope instruction.
  */
+import {
+  WRAPPER_TAGS,
+  closerRegex,
+  findTextToolCallRanges,
+  openerRegex,
+  scanTextToolCallSyntaxes,
+} from "../canonical-loop/public/tool-call-text.js";
+
 export function parseToolCalls(
   text: string,
   validToolNames?: ReadonlySet<string>,
@@ -128,8 +136,7 @@ export type LeakShape =
   | "openai-envelope-raw"      // {"tool_calls":[...]}
   | "anthropic-native"         // {"name":"X","input":{...}}
   | "anthropic-native-array"   // [{"name":"X","input":{...}}]
-  | "anthropic-xml-tool-use"   // <tool_use>...</tool_use>
-  | "anthropic-xml-fcalls"     // <function_calls>...</function_calls>
+  | "xml-tool-call"            // any tag/marker syntax the shared recognizer knows (tool-call-text-tags.ts)
   | "tree-style-call"          // Bash(...) / Edit(...) / etc on its own line
   | "placeholder-narration";   // [Calling] / [Tool] / [Going] etc
 
@@ -173,14 +180,15 @@ export function sanitizeAssistantTextForRebuild(
     return correctiveMarker(extractFirstName(m));
   });
 
-  // 3. Anthropic XML (<tool_use> / <function_calls>)
-  cleaned = cleaned.replace(/<tool_use>[\s\S]*?<\/tool_use>/g, (m) => {
-    leaks.push({ shape: "anthropic-xml-tool-use", toolName: extractXmlToolName(m), preview: previewOf(m) });
-    return correctiveMarker(extractXmlToolName(m));
-  });
-  cleaned = cleaned.replace(/<function_calls>[\s\S]*?<\/function_calls>/g, (m) => {
-    leaks.push({ shape: "anthropic-xml-fcalls", toolName: extractXmlToolName(m), preview: previewOf(m) });
-    return correctiveMarker(extractXmlToolName(m));
+  // 3. Tag/marker syntax (<tool_use>, <function_calls><invoke>, namespaced
+  //    variants, stray closers, …) — the shared recognizer owns the
+  //    vocabulary; the tool name comes from its candidate when it found one.
+  //    Code spans are masked: an assistant reply DISCUSSING `<function_calls>`
+  //    in backticks is not a leak and must survive the rebuild intact.
+  cleaned = replaceRanges(cleaned, scanTextToolCallSyntaxes(cleaned, { maskCodeSpans: true }), (h) => {
+    const toolName = h.candidate?.name ?? null;
+    leaks.push({ shape: "xml-tool-call", toolName, preview: previewOf(cleaned.slice(h.start, h.end)) });
+    return correctiveMarker(toolName);
   });
 
   // 4. Anthropic native + array-wrapped — uses brace-balanced scan. Array
@@ -260,43 +268,62 @@ function extractFirstName(jsonBody: string): string | null {
   return m ? m[1] : null;
 }
 
-function extractXmlToolName(xml: string): string | null {
-  const m = /<(?:tool_name|n)>\s*([^<\s]+)\s*<\/(?:tool_name|n)>/.exec(xml);
-  if (m) return m[1];
-  const m2 = /name="([^"]+)"/.exec(xml);
-  return m2 ? m2[1] : null;
+/** Rebuild `text` with each non-overlapping, source-ordered range swapped for `fill(range)`. */
+function replaceRanges<R extends { start: number; end: number }>(
+  text: string,
+  ranges: readonly R[],
+  fill: (r: R) => string,
+): string {
+  if (ranges.length === 0) return text;
+  let out = "";
+  let cursor = 0;
+  for (const r of ranges) {
+    out += text.slice(cursor, r.start) + fill(r);
+    cursor = r.end;
+  }
+  return out + text.slice(cursor);
 }
 
+/** Wrapper openers/closers from the shared vocabulary (namespace-tolerant:
+ *  `<atem:function_calls>` latches like `<function_calls>`). Built once; no
+ *  "g" flag so `.test()` carries no lastIndex state between deltas. */
+const WRAPPER_OPENER_RE = openerRegex(WRAPPER_TAGS, "i");
+const WRAPPER_CLOSER_RE = closerRegex(WRAPPER_TAGS, "i");
+
 /**
- * Filter streaming deltas — suppress JSON tool call blocks AND Claude's
- * native XML tool-use blocks in real-time.
+ * Filter streaming deltas — suppress JSON tool call blocks AND leaked
+ * tag-wrapped tool-call blocks in real-time.
  *
  * Live failure: Claude's internal XML tool-call format
- * (<tool_use>...<parameter name="name">...</parameter>...</tool_use>)
- * sometimes leaks into the streamed text reply instead of being parsed
- * as a structured tool_use content block. The user sees the raw XML in
- * chat. Both shapes need streaming-time suppression so the leak doesn't
- * paint the chat with markup before we can clean it up.
+ * (<tool_use>...<parameter name="name">...</parameter>...</tool_use>,
+ * sometimes namespaced, e.g. <atem:function_calls>) leaks into the
+ * streamed text reply instead of being parsed as a structured tool_use
+ * content block. The user sees the raw XML in chat. Both shapes need
+ * streaming-time suppression so the leak doesn't paint the chat with
+ * markup before we can clean it up. The tag names come from
+ * tool-call-text-tags.ts (WRAPPER_TAGS) — nothing here names a tag.
+ *
+ * Stateless per delta by design: a tag split across two deltas passes
+ * through, and a tag quoted in prose (e.g. inside backticks) still latches.
+ * stripToolCallBlocks is the post-hoc backstop for both.
  */
 export function filterStreamDelta(delta: string, alreadySuppressing: boolean): { text?: string; suppress?: boolean } {
   if (alreadySuppressing) {
-    // Block ended — JSON close OR XML close tag for tool_use / function_calls.
+    // Block ended — JSON close OR any wrapper closer.
     // Must explicitly return suppress:false so the consumer resets state;
     // empty text is falsy and won't reset on its own.
     if (
       delta.includes("```") ||
       delta.includes("}\n") ||
-      delta.includes("</tool_use>") ||
-      delta.includes("</function_calls>")
+      WRAPPER_CLOSER_RE.test(delta)
     ) return { text: "", suppress: false };
     return { suppress: true };
   }
-  // Tool-call block starting — JSON form OR XML form
+  // Tool-call block starting — JSON form OR any wrapper opener
   if (
     delta.includes("```json") ||
     delta.includes('{"tool_calls"') ||
-    delta.includes("<tool_use>") ||
-    delta.includes("<function_calls>")
+    WRAPPER_OPENER_RE.test(delta)
   ) return { suppress: true };
   // A bare ``` fence is deliberately NOT suppressed. Doing so swallowed
   // legitimate fenced code blocks: once suppression latches, EVERY following
@@ -324,27 +351,16 @@ export function stripToolCallBlocks(text: string, validToolNames?: ReadonlySet<s
   cleaned = cleaned.replace(/```(?:json)?\s*\n?\{[\s\S]*?"tool_calls"[\s\S]*?\}\s*\n?```/g, "");
   // Raw JSON tool_calls
   cleaned = cleaned.replace(/\{"tool_calls"\s*:\s*\[[\s\S]*?\]\s*\}/g, "");
-  // Claude's native XML form: <tool_use>...</tool_use> with <parameter> children
-  cleaned = cleaned.replace(/<tool_use>[\s\S]*?<\/tool_use>/g, "");
-  // Anthropic SDK alternate form: <function_calls>...</function_calls>
-  cleaned = cleaned.replace(/<function_calls>[\s\S]*?<\/function_calls>/g, "");
-  // Standalone <parameter name="...">...</parameter> blocks (in case the
-  // outer <tool_use> tag was already stripped or never streamed)
-  cleaned = cleaned.replace(/<parameter\s+name="[^"]*">[\s\S]*?<\/parameter>/g, "");
+  // Tag/marker syntax — <tool_use>, <function_calls><invoke>, namespaced
+  // variants, orphan <parameter> pairs and lone closers — via the shared
+  // recognizer so a dangling closer never survives. The recognizer masks
+  // code spans by default for ranges, so a backticked mention is kept.
+  cleaned = replaceRanges(cleaned, findTextToolCallRanges(cleaned), () => "");
   // Bare Anthropic native shape — uses brace-balanced scanning so nested
   // input objects don't break the strip.
   if (validToolNames && validToolNames.size > 0) {
-    const matches = findAnthropicShapeCalls(cleaned, validToolNames);
-    if (matches.length > 0) {
-      let out = "";
-      let cursor = 0;
-      for (const m of matches) {
-        out += cleaned.slice(cursor, m.startIdx);
-        cursor = m.endIdx;
-      }
-      out += cleaned.slice(cursor);
-      cleaned = out;
-    }
+    const native = findAnthropicShapeCalls(cleaned, validToolNames).map((m) => ({ start: m.startIdx, end: m.endIdx }));
+    cleaned = replaceRanges(cleaned, native, () => "");
   }
   return cleaned.trim();
 }

@@ -113,9 +113,26 @@ export function appendEmptyTurnTerminal(
   const text = signaledDone
     ? "I don't have anything to add here."
     : "I wasn't able to produce a response — I appear to be blocked. Please try rephrasing or asking again.";
+  appendHonestTerminal(opId, turnIdx, allMessages, text, "empty-turn");
+}
+
+/**
+ * THE append for a harness-authored terminal assistant message: publish it as
+ * a live delta and push it onto the commit list. Shared by the empty-turn
+ * terminator above and the completion gates' `honestTerminal` (decide-outcome
+ * appends the latter after the chain settles). `idPrefix` names the source in
+ * the message id.
+ */
+export function appendHonestTerminal(
+  opId: string,
+  turnIdx: number,
+  allMessages: CommitTurnMessage[],
+  text: string,
+  idPrefix: string,
+): void {
   publishStreamChunk(opId, { delta: text });
   allMessages.push({
-    messageId: `empty-turn-${opId}-${turnIdx}-${randomUUID().slice(0, 6)}`,
+    messageId: `${idPrefix}-${opId}-${turnIdx}-${randomUUID().slice(0, 6)}`,
     role: "assistant",
     content: { text },
   });

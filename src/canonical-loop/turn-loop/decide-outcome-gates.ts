@@ -32,6 +32,7 @@ import { runBuildVerifyGate } from "./build-verify.js";
 import { runSpecProbeGate } from "./spec-probes.js";
 import { runSpecAuditGate } from "./spec-audit.js";
 import { runDesignVerifyGate } from "./design-verify.js";
+import { runToolIntentGate } from "./tool-intent-gate.js";
 import { earnedDoneNudge } from "../middlewares/open-steps.js";
 import { opEditedSourceUnverified, opEditedSourcePaths } from "../middlewares/verify-gate.js";
 import { userAuthoredRequest } from "../../slash-commands.js";
@@ -55,6 +56,15 @@ export interface CompletionGateOutput {
    * gates leave it undefined.
    */
   buildVerifyConfirmation?: string;
+  /**
+   * A gate-authored, user-facing terminal message for a turn the gate LETS
+   * end (reopen:false) but must not end silently — decide-outcome appends it
+   * as the turn's assistant message via the same helper the empty-turn
+   * terminator uses, AFTER the chain settles and only if the turn actually
+   * stays "done" (a later gate's reopen discards it). Produced today only by
+   * unresolved-tool-intent's second fire.
+   */
+  honestTerminal?: string;
 }
 
 /** A named completion gate. `evaluate` runs only while terminalReason is still
@@ -203,6 +213,29 @@ const designVerifyGate: CompletionGate = {
 };
 
 /**
+ * Unresolved-tool-intent gate. A "done" whose final text still holds
+ * recognized tool-call SYNTAX is not a done at all — the call never ran (the
+ * 2026-09-08 muse-glimmer incident). Purely syntactic, on ranges alone: the
+ * extractor excises every promoted range, so whatever remains is unresolved
+ * even in a turn that also dispatched real calls. First fire per op re-opens
+ * with the canonical wire-format nudge; every later fire lets the turn end
+ * WITH an honest terminal the runner appends only if the turn truly stays
+ * "done". Contract lives in tool-intent-gate.ts.
+ */
+export const unresolvedToolIntentGate: CompletionGate = {
+  name: "unresolved-tool-intent",
+  evaluate(ctx) {
+    const gate = runToolIntentGate(ctx);
+    if (gate.shouldRetry) {
+      appendNudgeAsUserMessage(ctx.op.id, ctx.turnIdx + 1, gate.nudge);
+      return { reopen: true };
+    }
+    if (gate.honestTerminal !== undefined) return { reopen: false, honestTerminal: gate.honestTerminal };
+    return CONTINUE;
+  },
+};
+
+/**
  * Earned-"done" gate (unattended lanes only). Before accepting a worker /
  * background / build op's "done" while its own task list still has open steps,
  * force ONE more turn pointed at "finish or justify stopping". This is the
@@ -298,6 +331,10 @@ export const COMPLETION_GATES: readonly CompletionGate[] = [
   specProbeGate,
   specAuditGate,
   designVerifyGate,
+  // A "done" whose final text still holds tool-call syntax is not a done at
+  // all — the call never ran. Sits BEFORE earned-done so the retry goes to
+  // reissuing the call, not to an open-steps push. Contract in tool-intent-gate.ts.
+  unresolvedToolIntentGate,
   earnedDoneGate,
   lateInjectGate,
   frameworkServeGate,

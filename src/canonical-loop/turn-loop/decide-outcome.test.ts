@@ -21,7 +21,12 @@ vi.mock("../middlewares/open-steps.js", () => ({
   earnedDoneNudge: vi.fn(() => null),
   openStepsTerminationWarning: vi.fn(() => null),
 }));
-vi.mock("./nudges.js", () => ({ appendNudgeAsUserMessage: vi.fn() }));
+// Partial: the unresolved-tool-intent gate reads the real WIRE_FORMAT_NUDGE
+// constant from here; only the append is stubbed.
+vi.mock("./nudges.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./nudges.js")>()),
+  appendNudgeAsUserMessage: vi.fn(),
+}));
 vi.mock("../store.js", () => ({ readOpTurns: vi.fn(() => []) }));
 vi.mock("../op-model.js", () => ({ resolveOpModel: vi.fn(() => "grok-4.3") }));
 vi.mock("../../tool-tracker.js", async (importOriginal) => ({
@@ -969,6 +974,9 @@ describe("completion-gate table — single ordering source", () => {
       "spec-probe",
       "spec-audit",
       "design-verify",
+      // A "done" whose final text still holds tool-call syntax — the call never
+      // ran; sits before earned-done so the retry reissues the call.
+      "unresolved-tool-intent",
       "earned-done",
       "late-inject",
       // Registers a framework app_build's dev server on the real terminal —
@@ -1285,6 +1293,49 @@ describe("decideTurnOutcome â€” completion gates vs a question (and the con
     } finally {
       gate.mockReturnValue(null);
     }
+  });
+});
+
+describe("decideTurnOutcome — a done turn whose final text is a tool call written as text", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    _resetMiddlewareStates();
+  });
+
+  // The 2026-09-08 muse-glimmer:30b incident: end_turn with a namespaced
+  // function_calls block as the final text, nothing dispatched.
+  const LEAKED =
+    "Searching.\n" +
+    '<atem:function_calls><atem:invoke name="grep"><atem:parameter name="pattern">x</atem:parameter></atem:invoke></atem:function_calls>';
+  const leakedTurn = () => input({
+    modelSignaledDone: true,
+    toolCalls: [],
+    toolMessages: [],
+    toolSummary: [],
+    assistantText: LEAKED,
+    finalized: [{ messageId: "am1", role: "assistant", content: { text: LEAKED } }],
+  });
+
+  it("re-opens ONCE with the wire-format nudge, then ends with the honest terminal appended", async () => {
+    const { WIRE_FORMAT_NUDGE } = await import("./nudges.js");
+    const first = await decideTurnOutcome(leakedTurn());
+    expect(first.terminalReason).toBeNull();
+    expect(appendNudgeAsUserMessage).toHaveBeenCalledWith(op.id, 1, WIRE_FORMAT_NUDGE);
+    expect(first.allMessages.some((m) => (m.content as { text?: string })?.text?.includes("Nothing was executed"))).toBe(false);
+
+    vi.mocked(appendNudgeAsUserMessage).mockClear();
+    const second = await decideTurnOutcome({ ...leakedTurn(), turnIdx: 1 });
+    expect(second.terminalReason).toBe("done");
+    expect(appendNudgeAsUserMessage).not.toHaveBeenCalled();
+    const honest = second.allMessages.filter(
+      (m) => m.role === "assistant" && (m.content as { text?: string })?.text?.includes("Nothing was executed"),
+    );
+    expect(honest).toHaveLength(1);
+    const msg = honest[0]!;
+    expect((msg.content as { text: string }).text).toContain("`grep`");
+    expect(msg.messageId).toMatch(/^gate-terminal-/);
+    // The honest terminal is COMMITTED after the model's own message, not in place of it.
+    expect(second.allMessages.indexOf(msg)).toBeGreaterThan(0);
   });
 });
 

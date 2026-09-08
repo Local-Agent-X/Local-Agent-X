@@ -89,6 +89,20 @@ describe("completion gate order", () => {
     expect(COMPLETION_GATE_ORDER.indexOf("late-inject"))
       .toBeLessThan(COMPLETION_GATE_ORDER.indexOf("framework-serve"));
   });
+
+  it("runs unresolved-tool-intent BEFORE earned-done — a leaked call is reissued, not pushed toward open steps", () => {
+    expect(COMPLETION_GATE_ORDER).toEqual([
+      "render-verify",
+      "build-verify",
+      "spec-probe",
+      "spec-audit",
+      "design-verify",
+      "unresolved-tool-intent",
+      "earned-done",
+      "late-inject",
+      "framework-serve",
+    ]);
+  });
 });
 
 describe("framework-serve gate", () => {

@@ -15,6 +15,18 @@ import type { FiredMiddlewareResult } from "../middlewares/host.js";
 import type { DriveTurnResult } from "./types.js";
 import type { NudgeMetadata } from "../middlewares/types.js";
 
+/**
+ * The one canonical wire-format nudge for a tool call that arrived as TEXT.
+ * Keeps the `<wire-format-error: …>` frame the history-rebuild sanitizer
+ * (anthropic-client/parse.ts) already stamps into rebuilt history, so the model
+ * meets one vocabulary for the failure whichever path caught it. Used by the
+ * unresolved-tool-intent completion gate (tool-intent-gate.ts).
+ */
+export const WIRE_FORMAT_NUDGE =
+  "<wire-format-error: your previous reply contained a tool call written as text. " +
+  "It was NOT executed and produced no result. Reissue it now as a real structured " +
+  "tool call, not as text.>";
+
 /** Append a synthetic user-role op_message carrying a middleware nudge.
  *  Sits in op_messages at (turnIdx, seqInTurn=N) where N is one past any
  *  existing row in that turn. The next driveTurn(turnIdx) — or this turn,

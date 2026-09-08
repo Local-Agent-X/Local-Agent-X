@@ -11,10 +11,10 @@
  * Pure structural lift out of the orchestrator: control flow, ordering, and
  * termination semantics are unchanged. Lives behind the ../turn-loop.ts barrel.
  *
- * SIZE — AT the hard 400-LOC gate (scripts/check-source-hygiene.mjs, MAX_LOC
- * 400, GRANDFATHERED empty) in the file owning EVERY termination decision. The
- * next addition FAILS THE BUILD — split it (as decide-outcome-gates.ts and
- * empty-turn-termination.ts already were); never grandfather.
+ * SIZE — near the hard 400-LOC gate (scripts/check-source-hygiene.mjs, MAX_LOC
+ * 400, GRANDFATHERED empty) in the file owning EVERY termination decision.
+ * Split before it fails (as decide-outcome-gates.ts, decide-outcome-run-gates.ts
+ * and empty-turn-termination.ts already were); never grandfather.
  */
 import type { CanonicalMessage, ToolCall } from "../contract-types.js";
 import type { CommitTurnMessage } from "../checkpoint.js";
@@ -32,8 +32,8 @@ import { isSilentToolCall } from "./silent-tool-check.js";
 import { appendQuestionAsAnswer, collectAskedQuestions } from "./ask-user-terminal.js";
 import { isRetractableHallucination, stripRetractedAssistant } from "./retract-false-claim.js";
 import { applyTerminalEpilogue } from "./terminal-epilogue.js";
-import { COMPLETION_GATES } from "./decide-outcome-gates.js";
-import { appendEmptyTurnTerminal, evaluateEmptyInteractiveTurn } from "./empty-turn-termination.js";
+import { runCompletionGates } from "./decide-outcome-run-gates.js";
+import { appendEmptyTurnTerminal, appendHonestTerminal, evaluateEmptyInteractiveTurn } from "./empty-turn-termination.js";
 import { appendMissingToolResults } from "./orphan-tool-results.js";
 import { CODEBASE_ADVICE_GROUNDING_REASON, CODEBASE_ADVICE_GROUNDING_STATUS } from "../../agent-guards/index.js";
 import { createLogger } from "../../logger.js";
@@ -313,40 +313,16 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
     }
   }
 
-  // Completion-gate chain. Once the turn is provisionally "done", walk the
-  // single ordered gate table (COMPLETION_GATES in decide-outcome-gates.ts) —
-  // render-verify → build-verify → spec-probe → design-verify → earned-done →
-  // late-inject. Each gate runs ONLY while still "done" and may veto the
-  // terminal by re-opening it (terminalReason → null), which drives one more
-  // turn. This loop replaces a run of hand-inlined `if (terminalReason ===
-  // "done") { … }` blocks with the same short-circuit and re-open semantics:
-  // the chain stops the moment a gate re-opens, exactly as the per-block guard
-  // did. See the per-gate docs in decide-outcome-gates.ts for each gate's own
-  // entry condition, nudge, and cap. Build-verify is the only gate that also
-  // holds a green confirmation (surfaced by the epilogue when the op truly
-  // ends this turn).
-  //
-  // A turn that ends on a QUESTION is the one terminal the chain must not touch.
-  // Every gate answers "did the model finish the work?", and re-opening drives
-  // one more turn to finish it — but the missing input is the user's answer,
-  // which does not exist yet, so the extra turn can only produce the guess this
-  // whole mechanism exists to prevent. Their nudges would land on turn+1 (the
-  // turn that carries the user's reply) as stale instructions, and build-verify
-  // would spawn a real build to check work the agent explicitly paused. Skipping
-  // is also what keeps the pre-commit inject gate above sufficient: the gates are
-  // the only awaits between it and the return, so with none of them running no
-  // late inject can slip in unseen (that is exactly the window lateInjectGate
-  // covers). The one thing given up is frameworkServeGate's side effect — an
-  // app_build op that ends on a question registers no dev server — which is
-  // correct: it is paused mid-build, not finished.
+  // Completion-gate chain (decide-outcome-run-gates.ts): once the turn is
+  // provisionally "done", walk the single ordered gate table; each gate runs
+  // ONLY while still "done" and may re-open the turn. A turn that ends on a
+  // QUESTION skips the chain entirely — the missing input is the user's answer,
+  // so one more turn could only guess. Ordering, short-circuit and the
+  // question exemption are documented in the runner.
   const endsOnQuestion = askedQuestions.length > 0 && terminalReason === "done";
-  let buildVerifyConfirmation = "";
-  for (const gate of endsOnQuestion ? [] : COMPLETION_GATES) {
-    if (terminalReason !== "done") break;
-    const out = await gate.evaluate({ op, turnIdx, toolCalls, assistantText });
-    if (out.buildVerifyConfirmation !== undefined) buildVerifyConfirmation = out.buildVerifyConfirmation;
-    if (out.reopen) terminalReason = null;
-  }
+  const gates = await runCompletionGates({ op, turnIdx, toolCalls, assistantText }, terminalReason, endsOnQuestion);
+  terminalReason = gates.terminalReason;
+  const { buildVerifyConfirmation, honestTerminal } = gates;
 
   // P-1 measurement sink (behavior-neutral — nothing above or below reads this).
   // Emit only when the mutation shortcut was the sole reason this turn could
@@ -385,6 +361,11 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
   // epilogue, matching appendQuestionAsAnswer's placement.
   if (emptyInteractiveTerminal && terminalReason === "done") {
     appendEmptyTurnTerminal(op.id, turnIdx, allMessages, emptyInteractiveTerminal.signaledDone);
+  }
+  // A gate's honest terminal (unresolved-tool-intent's second fire) — same
+  // deferral and same re-check: a later gate's reopen discards it.
+  if (honestTerminal && terminalReason === "done") {
+    appendHonestTerminal(op.id, turnIdx, allMessages, honestTerminal, "gate-terminal");
   }
 
   // Terminal epilogue (terminal-epilogue.ts): loud-partial warning,

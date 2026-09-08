@@ -107,7 +107,7 @@ async function ariKernelGate(ctx: ToolCallContext): Promise<PhaseOutcome> {
             metadata: {
               layer: "tainted-shell",
               userHint: USER_HINTS.policy,
-              recovery: "If the sensitive read that tainted this session was intended and safe, ask the user to declassify (one click on this card, or Settings → Security), then retry.",
+              recovery: "If the sensitive read that quarantined this session was intended and safe, ask the user to click \"Declassify & retry\" on this blocked card in the chat, then retry. That button is the only declassify control — do not send them to Settings.",
             },
           },
           allowed: false,

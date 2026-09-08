@@ -31,7 +31,7 @@ function appendDeclassifyAction(card, sessionId) {
         input.value = 'I cleared the session quarantine (declassified). Retry the step that was blocked.';
         window.sendMessage();
       }
-    }).catch(() => { btn.textContent = '✗ Failed — use Settings → Security'; btn.disabled = false; });
+    }).catch(() => { btn.textContent = '✗ Failed — restart the session'; btn.disabled = false; });
   });
   el.appendChild(btn);
   card.appendChild(el);

@@ -201,7 +201,7 @@ export function probeDataLineage(ctx: ToolCallContext): EgressBlocker | null {
   return {
     layer: "data-lineage", label: "data lineage",
     reason: egress.reason ?? "The session is tainted by an earlier sensitive read; outbound data is blocked.",
-    recovery: "Sensitive data was tainted earlier this session and may not egress. Either don't include the tainted data or end the session.",
+    recovery: "Sensitive data was read earlier this session, so outbound content is blocked. If that read was intended, tell the user to click \"Declassify & retry\" on this blocked card in the chat — that is the only place the control exists, it is not in Settings. Otherwise, leave the tainted data out of the payload.",
     userHint: USER_HINTS.outboundContent,
   };
 }

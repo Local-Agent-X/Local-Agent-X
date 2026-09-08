@@ -331,7 +331,7 @@ function _renderAssistantToolArtifacts(bodyEl, data) {
           card.querySelector('.tool-detail').textContent = detailText || fallback;
           // Session-taint blocks are the one user-clearable block class:
           // offer the one-click declassify-and-retry action instead of
-          // sending the user to Settings → Security. Keyed on the block's
+          // sending the user hunting through Settings, where no such control exists. Keyed on the block's
           // authoritative layer (single-gate `layer` or aggregate `layers`).
           if (endEvt.status === 'blocked') {
             const md = endEvt.metadata || {};

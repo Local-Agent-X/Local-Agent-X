@@ -27,7 +27,6 @@ export interface PromptDegradationTelemetry {
     | "not-local-target"
     | "unknown-context-within-conservative-budget"
     | "unknown-context-conservative-budget"
-    | "capability-not-constrained"
     | "within-prompt-budget"
     | "measured-context-budget"
     | "required-sections-exceed-budget";
@@ -36,6 +35,7 @@ export interface PromptDegradationTelemetry {
     model: string;
     contextWindow: number | null;
   } | null;
+  /** Present for every local target; absent only for cloud (not-local-target). */
   promptBudgetTokens?: number;
   assumedContextWindowTokens?: number;
   includedSectionIds: string[];

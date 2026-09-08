@@ -111,7 +111,7 @@ describe("canonical agent final prompt seam", () => {
     });
   });
 
-  it("keeps a measured capable local prompt byte-for-byte unchanged", async () => {
+  it("keeps a measured local prompt that fits its window share byte-for-byte unchanged", async () => {
     contextWindow = 65_536;
     const dispatch = options();
     const original = dispatch.systemPrompt;
@@ -120,8 +120,9 @@ describe("canonical agent final prompt seam", () => {
     expect(dispatch.systemPrompt).toBe(original);
     expect(dispatch.promptTelemetry?.degradation).toMatchObject({
       mode: "full",
-      reason: "capability-not-constrained",
+      reason: "within-prompt-budget",
       contextEvidence: "measured",
+      promptBudgetTokens: Math.floor(65_536 * 0.35),
     });
   });
 

@@ -70,7 +70,7 @@ function constrainedFixture(): RenderedPromptSection[] {
 }
 
 describe("capability-aware prompt degradation", () => {
-  it("keeps cloud and capable local prompts byte-for-byte unchanged", () => {
+  it("keeps cloud prompts and local prompts within their window share byte-for-byte unchanged", () => {
     const sections = constrainedFixture();
     const original = sections.map((item) => item.text).join("");
 
@@ -82,7 +82,101 @@ describe("capability-aware prompt degradation", () => {
     expect(cloud.sections).toEqual(sections);
     expect(capable.sections).toEqual(sections);
     expect(cloud.telemetry).toMatchObject({ mode: "full", reason: "not-local-target" });
-    expect(capable.telemetry).toMatchObject({ mode: "full", reason: "capability-not-constrained" });
+    expect(cloud.telemetry.promptBudgetTokens).toBeUndefined();
+    expect(capable.telemetry).toMatchObject({
+      mode: "full",
+      reason: "within-prompt-budget",
+      promptBudgetTokens: Math.floor(65_536 * 0.35),
+    });
+  });
+
+  // Regression for 2026-09-08: a 65,536-token local model (medium tier) was
+  // handed a ~37k-token system prompt because the budget only applied under an
+  // absolute 32k gate. The budget is a share of the window for EVERY local
+  // target, whatever its size or tier.
+  function wideFixture(): RenderedPromptSection[] {
+    // Sizes are chars; estimateTokens is ceil(chars / 3.5). Total ~37k tokens.
+    return [
+      section("core-identity", "required", "i".repeat(28_000), "static"),          // ~8,000
+      section("app-manifest", "degradable", "m".repeat(35_000), "static"),         // ~10,000
+      section("runtime-context", "required", "r".repeat(7_000), "static"),         // ~2,000
+      section("project-catalog", "degradable", "p".repeat(21_000)),                // ~6,000
+      section("context-block", "degradable", "c".repeat(14_000)),                  // ~4,000
+      section("relevant-memories", "degradable", "v".repeat(10_500)),              // ~3,000
+      section("memory-orchestrator", "degradable", "o".repeat(3_500)),             // ~1,000
+      section("file-access", "required", "f".repeat(7_000)),                       // ~2,000
+      section("learned-protocol", "degradable", "l".repeat(175)),                  // ~50
+      section("security-canary", "required", "s".repeat(1_750)),                   // ~500
+      section("system-history", "required", "h".repeat(1_750)),                    // ~500
+    ];
+  }
+  const tokensOf = (items: readonly RenderedPromptSection[]) =>
+    items.reduce((sum, item) => sum + item.measurement.estimatedTokens, 0);
+
+  it("degrades a 65k medium model whose prompt exceeds its window share, preserving required order", () => {
+    const sections = wideFixture();
+    const budget = Math.floor(65_536 * 0.35);
+    expect(tokensOf(sections)).toBeGreaterThan(budget);
+
+    const result = applyCapabilityAwarePromptDegradation(sections, profile(65_536, "medium"));
+
+    expect(result.telemetry).toMatchObject({
+      mode: "constrained-local",
+      reason: "measured-context-budget",
+      contextEvidence: "measured",
+      promptBudgetTokens: budget,
+    });
+    expect(tokensOf(result.sections)).toBeLessThanOrEqual(budget);
+    expect(result.telemetry.degradedSections.length).toBeGreaterThan(0);
+    const expectedOrder = sections
+      .filter((item) => !result.telemetry.degradedSections.some(({ id }) => id === item.id))
+      .map((item) => item.id);
+    expect(result.sections.map((item) => item.id)).toEqual(expectedOrder);
+    for (const required of sections.filter((item) => item.policy === "required")) {
+      expect(result.sections).toContain(required);
+    }
+    expect(result.prompt).toBe(result.sections.map((item) => item.text).join(""));
+  });
+
+  it("keeps the same 37k prompt whole on a 131k window because it fits the share", () => {
+    const sections = wideFixture();
+    const result = applyCapabilityAwarePromptDegradation(sections, profile(131_072, "medium"));
+    expect(result.telemetry).toMatchObject({
+      mode: "full",
+      reason: "within-prompt-budget",
+      promptBudgetTokens: Math.floor(131_072 * 0.35),
+      degradedSections: [],
+    });
+    expect(result.sections).toEqual(sections);
+  });
+
+  it("budgets a 32k weak model exactly as before the gate was removed", () => {
+    const sections = constrainedFixture();
+    const result = applyCapabilityAwarePromptDegradation(sections, profile(32_768, "weak"));
+    expect(result.telemetry).toMatchObject({
+      mode: "full",
+      reason: "within-prompt-budget",
+      promptBudgetTokens: Math.floor(32_768 * 0.35),
+    });
+    const over = [...sections, section("smart-context-2", "degradable", "x".repeat(60_000))];
+    const shed = applyCapabilityAwarePromptDegradation(over, profile(32_768, "weak"));
+    expect(shed.telemetry.mode).toBe("constrained-local");
+    expect(tokensOf(shed.sections)).toBeLessThanOrEqual(Math.floor(32_768 * 0.35));
+  });
+
+  it("reports required-sections-exceed-budget when required alone overflow a 65k share", () => {
+    const sections = [
+      section("core-identity", "required", "i".repeat(90_000), "static"), // ~25.7k > 22,937
+      section("app-manifest", "degradable", "m".repeat(3_500), "static"),
+      section("system-history", "required", "history"),
+    ];
+    const result = applyCapabilityAwarePromptDegradation(sections, profile(65_536, "medium"));
+    expect(result.telemetry).toMatchObject({
+      mode: "constrained-local",
+      reason: "required-sections-exceed-budget",
+      degradedSections: [{ id: "app-manifest" }],
+      includedSectionIds: ["core-identity", "system-history"],
+    });
   });
 
   it("omits only declared degradable sections and preserves every required byte and order", () => {
@@ -116,7 +210,7 @@ describe("capability-aware prompt degradation", () => {
       assumedContextWindowTokens: 8_192,
       promptBudgetTokens: Math.floor(8_192 * 0.35),
     });
-    expect(result.telemetry.reason).not.toBe("capability-not-constrained");
+    expect(result.telemetry.reason).toBe("unknown-context-conservative-budget");
     expect(result.telemetry.degradedSections.length).toBeGreaterThan(0);
     expect(JSON.stringify(result.telemetry)).not.toContain("manifest:");
     expect(JSON.stringify(result.telemetry)).not.toContain("folded-history");

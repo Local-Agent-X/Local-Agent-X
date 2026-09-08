@@ -1,8 +1,8 @@
 import type { ToolDefinition } from "../types.js";
 import type { LocalModelCapabilityProfile } from "../local-runtimes/index.js";
-import type { PromptTelemetry } from "../prompt-telemetry.js";
+import type { PromptDegradationTelemetry, PromptTelemetry } from "../prompt-telemetry.js";
 import { remeasurePromptTelemetry } from "../prompt-telemetry.js";
-import type { SectionAwareSystemPrompt } from "../context/system-prompt-builder.js";
+import type { RenderedPromptSection, SectionAwareSystemPrompt } from "../context/system-prompt-builder.js";
 import { applyCapabilityAwarePromptDegradation } from "../context/prompt-degradation.js";
 import type { OpenAICompatTarget } from "./adapters/openai-compat.js";
 import { createLogger } from "../logger.js";
@@ -52,7 +52,8 @@ export function applyCapabilityAwarePromptProfile(
   profile: LocalModelCapabilityProfile | null,
 ): void {
   dispatch.localModelCapabilityProfile = profile;
-  const rendered = applyCapabilityAwarePromptDegradation(dispatch.renderedPromptSections, profile);
+  const offered = dispatch.renderedPromptSections;
+  const rendered = applyCapabilityAwarePromptDegradation(offered, profile);
   dispatch.systemPrompt = rendered.prompt;
   dispatch.renderedPromptSections = rendered.sections;
   if (dispatch.promptTelemetry) {
@@ -64,9 +65,33 @@ export function applyCapabilityAwarePromptProfile(
       degradation: rendered.telemetry,
     });
   }
-  logger.info(
-    `[prompt-profile] mode=${rendered.telemetry.mode} reason=${rendered.telemetry.reason} ` +
-    `included=${rendered.telemetry.includedSectionIds.join(",")} ` +
-    `degraded=${rendered.telemetry.degradedSections.map((section) => section.id).join(",")}`,
+  logger.info(formatPromptProfileLine(offered, rendered.telemetry));
+}
+
+/**
+ * One line, sizes included. The 2026-09-08 overflow (65k window, 37k prompt)
+ * was logged as `mode=full` with fourteen section NAMES and no numbers, which
+ * is why it took a log dive against the adapter's refusal to see that the
+ * system prompt alone was 56% of the window. Sizes are token counts only -
+ * no section text reaches the log.
+ */
+export function formatPromptProfileLine(
+  offered: readonly RenderedPromptSection[],
+  telemetry: PromptDegradationTelemetry,
+): string {
+  const fullTokens = offered.reduce((sum, section) => sum + section.measurement.estimatedTokens, 0);
+  const window = telemetry.localTarget
+    ? telemetry.localTarget.contextWindow ?? telemetry.assumedContextWindowTokens ?? "unknown"
+    : "n/a";
+  const top = [...offered]
+    .sort((left, right) => right.measurement.estimatedTokens - left.measurement.estimatedTokens)
+    .slice(0, 3)
+    .map((section) => `${section.id}:${section.measurement.estimatedTokens}`)
+    .join(",");
+  return (
+    `[prompt-profile] mode=${telemetry.mode} reason=${telemetry.reason} ` +
+    `window=${window} budget=${telemetry.promptBudgetTokens ?? "n/a"} full=${fullTokens} ` +
+    `top=${top} included=${telemetry.includedSectionIds.join(",")} ` +
+    `degraded=${telemetry.degradedSections.map((section) => section.id).join(",")}`
   );
 }

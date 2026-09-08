@@ -238,6 +238,11 @@ export async function selectTools(input: ToolSelectionInput): Promise<ToolSelect
           union.add(t.name);
         }
         tools = input.allAgentTools.filter(t => union.has(t.name));
+        // The union is rebuilt from the RAW catalog, which throws away the
+        // tier compaction applied above. Re-apply it — capped at the union's
+        // own size so the re-rank's picks survive, since the cap here is the
+        // endpoint's concern and description length is the model's.
+        if (tier !== "strong") tools = shrinkToolsForTier(tools, tier, input.allAgentTools, tools.length);
         logger.info(`[step] tool-rag.select ${Date.now() - ragT0}ms picked=${semantic.length}`);
       } else {
         logger.info(`[tool-rag] not ready yet — shipping filtered set without RAG re-rank`);

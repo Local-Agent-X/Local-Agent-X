@@ -31,12 +31,32 @@ export interface JsonObjectHit {
 }
 
 /**
+ * Memo for scanBalancedObject over ONE string: `{` offset → exclusive end
+ * (or -1). One scan from `p` visits every nested `{` outside string
+ * literals in the same parse state a standalone scan from that offset
+ * would start in, so their verdicts are recorded for free. Without it a
+ * text full of openers that never balance (`[a]{` × 8000) rescans the
+ * same unbalanced tail once per opener — quadratic, 30s on 32KB.
+ */
+export type BalancedScanMemo = Map<number, number>;
+
+/**
  * Scan one balanced-brace JSON object starting at `start` (must sit on a
  * "{"), respecting string literals. Returns the exclusive end index, or
- * -1 if the braces never balance before the end of input.
+ * -1 if the braces never balance before the end of input. Pass one `memo`
+ * per string to make repeat scans O(1): a failed scan records -1 for
+ * every opener still on its stack, so a page of `{` that never closes is
+ * walked ONCE, not once per opener. The scan itself is deliberately not
+ * length-capped — a cap would stop before those verdicts were known and
+ * hand the same tail to the next opener, quadratic again above the cap.
+ * Over-cap payloads are rejected by the callers, which compare the
+ * returned length against MAX_ARGS_CHARS.
  */
-export function scanBalancedObject(s: string, start: number): number {
-  let depth = 0, inString = false, escape = false;
+export function scanBalancedObject(s: string, start: number, memo?: BalancedScanMemo): number {
+  const known = memo?.get(start);
+  if (known !== undefined) return known;
+  const open: number[] = [];
+  let inString = false, escape = false;
   for (let j = start; j < s.length; j++) {
     const ch = s[j];
     if (escape) { escape = false; continue; }
@@ -46,9 +66,16 @@ export function scanBalancedObject(s: string, start: number): number {
       continue;
     }
     if (ch === '"') inString = true;
-    else if (ch === "{") depth++;
-    else if (ch === "}") { depth--; if (depth === 0) return j + 1; }
+    else if (ch === "{") open.push(j);
+    else if (ch === "}") {
+      const at = open.pop();
+      if (at !== undefined) memo?.set(at, j + 1);
+      if (open.length === 0) return j + 1;
+    }
   }
+  // Every opener still open was met outside a string literal — the same
+  // state a standalone scan from it starts in — so its verdict is final.
+  for (const at of open) memo?.set(at, -1);
   return -1;
 }
 
@@ -59,10 +86,11 @@ export function scanBalancedObject(s: string, start: number): number {
  */
 export function findJsonObjects(s: string): JsonObjectHit[] {
   const hits: JsonObjectHit[] = [];
+  const memo: BalancedScanMemo = new Map();
   let i = 0;
   while (i < s.length) {
     if (s[i] !== "{") { i++; continue; }
-    const end = scanBalancedObject(s, i);
+    const end = scanBalancedObject(s, i, memo);
     if (end === -1) { i++; continue; }
     try {
       const parsed = JSON.parse(s.slice(i, end));

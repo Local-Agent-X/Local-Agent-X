@@ -42,10 +42,11 @@
  * and clear `assembledText` (so the payload doesn't double-render).
  */
 
-import { findJsonObjects, resolveToolName } from "./tool-call-text-repair.js";
+import { findJsonObjects } from "./tool-call-text-repair.js";
 import {
   escapeRegex,
   isBrowserShorthand,
+  resolveCandidateName,
   scanTextToolCallSyntaxes,
   withinCaps,
 } from "./tool-call-text-syntaxes.js";
@@ -88,15 +89,16 @@ export function extractToolCallsFromText(
 
   // Layer 1 — explicit call syntax. Candidates carry the name as the model
   // wrote it; promote only those whose name resolves against the offered
-  // set and whose payload is within caps. Unpromoted hits stay in the text,
-  // but their bytes are off-limits to the naked-JSON layer below so a block
+  // set (exact-only for weak markers — resolveCandidateName decides) and
+  // whose payload is within caps. Unpromoted hits stay in the text, but
+  // their bytes are off-limits to the naked-JSON layer below so a block
   // rejected here (truncated, over-cap, unresolvable) can't sneak back in
   // through its inner JSON.
   const syntaxHits = scanTextToolCallSyntaxes(working);
   const found: Array<{ start: number; end: number; call: ExtractedToolCall }> = [];
   for (const hit of syntaxHits) {
     if (!hit.candidate || !withinCaps(hit.candidate)) continue;
-    const resolved = resolveToolName(hit.candidate.name, validToolNames);
+    const resolved = resolveCandidateName(hit.candidate, validToolNames);
     if (!resolved) continue;
     found.push({
       start: hit.start,

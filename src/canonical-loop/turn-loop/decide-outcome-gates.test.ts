@@ -43,6 +43,7 @@ describe("render-verify gate — appDescription is the user's ask, not the slash
       op: op({ id: "op-slash", type: "app_build", task: EXPANDED, appUrl: "http://127.0.0.1:7007/apps/todo/index.html" }),
       turnIdx: 1,
       toolCalls: APP_WRITE,
+      assistantText: "",
     });
     expect(out.reopen).toBe(false);
     expect(mockRenderVerify).toHaveBeenCalledTimes(1);
@@ -57,12 +58,25 @@ describe("render-verify gate — appDescription is the user's ask, not the slash
       op: op({ id: "op-plain", type: "app_build", task: "a todo app with dark mode", appUrl: "http://x/apps/todo/index.html" }),
       turnIdx: 1,
       toolCalls: APP_WRITE,
+      assistantText: "",
     });
     expect(mockRenderVerify.mock.calls[0][1]?.appDescription).toBe("a todo app with dark mode");
   });
 
   it("does not run at all when the turn touched no app files (trigger unchanged)", async () => {
-    const out = await renderVerify.evaluate({ op: op({ task: EXPANDED }), turnIdx: 1, toolCalls: [] });
+    const out = await renderVerify.evaluate({ op: op({ task: EXPANDED }), turnIdx: 1, toolCalls: [], assistantText: "" });
+    expect(out.reopen).toBe(false);
+    expect(mockRenderVerify).not.toHaveBeenCalled();
+  });
+});
+
+describe("completion gate context", () => {
+  it("carries the turn's final assistant text — a gate may judge what the model SAID; existing gates ignore it", async () => {
+    // Pinned via the type: a context WITH assistantText is what CompletionGate
+    // accepts. The existing gates' trigger paths are untouched by the field.
+    const out = await renderVerify.evaluate({
+      op: op({ task: "t" }), turnIdx: 1, toolCalls: [], assistantText: "All done, the app is live.",
+    });
     expect(out.reopen).toBe(false);
     expect(mockRenderVerify).not.toHaveBeenCalled();
   });
@@ -79,12 +93,12 @@ describe("completion gate order", () => {
 
 describe("framework-serve gate", () => {
   it("is inert on non-app_build ops (the hot path — every chat turn)", async () => {
-    const out = await frameworkServe.evaluate({ op: op({ type: "chat", appUrl: undefined }), turnIdx: 1, toolCalls: [] });
+    const out = await frameworkServe.evaluate({ op: op({ type: "chat", appUrl: undefined }), turnIdx: 1, toolCalls: [], assistantText: "" });
     expect(out.reopen).toBe(false);
   });
 
   it("is inert on an app_build op with no appUrl", async () => {
-    const out = await frameworkServe.evaluate({ op: op({ type: "app_build", appUrl: undefined }), turnIdx: 1, toolCalls: [] });
+    const out = await frameworkServe.evaluate({ op: op({ type: "app_build", appUrl: undefined }), turnIdx: 1, toolCalls: [], assistantText: "" });
     expect(out.reopen).toBe(false);
   });
 
@@ -96,6 +110,7 @@ describe("framework-serve gate", () => {
       op: op({ type: "app_build", appUrl: "http://127.0.0.1:7007/apps/no-such-app-xyz/index.html" }),
       turnIdx: 1,
       toolCalls: [],
+      assistantText: "",
     });
     expect(out.reopen).toBe(false);
   });

@@ -343,7 +343,7 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
   let buildVerifyConfirmation = "";
   for (const gate of endsOnQuestion ? [] : COMPLETION_GATES) {
     if (terminalReason !== "done") break;
-    const out = await gate.evaluate({ op, turnIdx, toolCalls });
+    const out = await gate.evaluate({ op, turnIdx, toolCalls, assistantText });
     if (out.buildVerifyConfirmation !== undefined) buildVerifyConfirmation = out.buildVerifyConfirmation;
     if (out.reopen) terminalReason = null;
   }

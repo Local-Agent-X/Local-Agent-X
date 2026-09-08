@@ -41,6 +41,9 @@ export interface CompletionGateContext {
   op: Op;
   turnIdx: number;
   toolCalls: ToolCall[];
+  /** The turn's final user-facing assistant text — for gates that judge what
+   *  the model SAID, not just what it did. Existing gates ignore it. */
+  assistantText: string;
 }
 
 export interface CompletionGateOutput {

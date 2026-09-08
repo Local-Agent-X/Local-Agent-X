@@ -73,6 +73,7 @@ export function createFactsTools(memory: MemoryIndex) {
   return [
     {
       name: "remember",
+      compactDescription: "Save a durable fact to long-term memory (preferences, environment, conventions, decisions). One sentence per fact; several facts → ONE call with facts[]. Set provenance: user_statement, tool_observation or inference.",
       description:
         "Save a durable fact to long-term memory. Use whenever you learn something the next session should know — " +
         "user preferences, environment quirks, project conventions, names, decisions, recurring workflows. " +
@@ -338,6 +339,7 @@ export function createFactsTools(memory: MemoryIndex) {
 
     {
       name: "forget",
+      compactDescription: "Mark ONE retained fact as no longer true: finds the fact containing `query` (substring) and soft-deletes it. Refuses if 0 or several match — use a more specific substring. Bulk scrubs use memory_forget.",
       description:
         "Mark a fact as no longer true. Finds the fact whose content contains `query` (substring match) " +
         "and invalidates it (soft delete; preserves history for audit). " +

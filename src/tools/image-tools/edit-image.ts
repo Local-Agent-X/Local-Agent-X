@@ -153,6 +153,7 @@ async function editViaXai(
 
 export const editImageTool: ToolDefinition = {
   name: "edit_image",
+  compactDescription: "Edit an EXISTING image (recolor, change, add or remove part) keeping the rest — ALWAYS use this, not generate_image, when the user gives you a photo. A `mask` routes to OpenAI (transparent = regenerate, opaque = keep).",
   description:
     "Edit an EXISTING image instead of generating a new one — recolor, change, add, or remove part of a " +
     "photo while keeping the rest. ALWAYS use this (not generate_image) when the user gives you a photo to " +

@@ -64,6 +64,11 @@ export const BROWSER_TOOL_DESCRIPTION =
   "(a password, a 2FA code, a CAPTCHA) — and only after you've actually tried the above. " +
   "While the browser is open and responding, keep driving; don't stop with a summary.";
 
+/** Tier-compact text (see ToolDefinition.compactDescription). */
+export const BROWSER_TOOL_COMPACT_DESCRIPTION =
+  "Control a real Chrome window (screenshot = the page only; desktop needs screen_capture). " +
+  "Workflow: navigate → snapshot → click/fill by ref; re-snapshot after navigating or a failed action. Clear overlays via click_text.";
+
 export const BROWSER_TOOL_PARAMETERS = {
   type: "object",
   properties: {

@@ -39,6 +39,7 @@ const FETCH_HEADERS = {
 
 export const webFetchTool: ToolDefinition = {
   name: "web_fetch",
+  compactDescription: "Fetch a URL and return its text content (web pages, APIs). Pass `find` to get only the matching lines of a large page instead of the whole body.",
   effect: { class: "read-only" },
   description: "Fetch a URL and return its text content. Useful for reading web pages and APIs.",
   parameters: {

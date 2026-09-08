@@ -44,6 +44,7 @@ import { acquireGlobalSelfEditLock, releaseGlobalSelfEditLock, formatGlobalLockB
 
 export const selfEditTool: ToolDefinition = {
   name: "self_edit",
+  compactDescription: "Modify Local Agent X's own source (src/*.ts) to fix a bug or add a missing capability; requires developer_mode. NOT for installs (bash), settings (`setting`) or workspace files (edit). One self_edit at a time.",
   description:
     "Self-repair AND self-extension: modify the Local Agent X source code (.ts files in src/, " +
     "route handlers, tool implementations, server logic) to fix a bug OR add a capability that " +

@@ -178,17 +178,75 @@ export const ESSENTIAL_TOOLS_ORDER: readonly string[] = [
   "generate_image", "edit_image", "generate_video",
 ];
 
+/** Longest parameter `description` a medium/weak schema keeps verbatim. */
+export const COMPACT_PARAM_DESCRIPTION_MAX = 120;
+
+/** Shape shrinkToolsForTier compacts. Structural so tests and the request
+ *  pipeline's mapped tool objects both fit; ToolDefinition satisfies it. */
+export interface TierShrinkable {
+  name: string;
+  description: string;
+  compactDescription?: string;
+  parameters?: Record<string, unknown>;
+}
+
+/**
+ * Shorten one parameter description: first sentence when that fits the cap,
+ * else a hard cut. Types, enums, required and every other key are untouched,
+ * so the schema still validates exactly as before — only prose is cut.
+ */
+function compactParamDescription(desc: string): string {
+  if (desc.length <= COMPACT_PARAM_DESCRIPTION_MAX) return desc;
+  const firstSentence = desc.match(/^[^.!?]{10,}[.!?]/)?.[0];
+  if (firstSentence && firstSentence.length <= COMPACT_PARAM_DESCRIPTION_MAX) return firstSentence;
+  return desc.slice(0, COMPACT_PARAM_DESCRIPTION_MAX - 1).trimEnd() + "…";
+}
+
+/**
+ * Copy of a JSON-schema subtree with over-long `description` strings shortened.
+ * Recurses through `properties`, `items` and the anyOf/oneOf/allOf branches;
+ * never mutates the input (the catalog object is shared across tiers).
+ */
+export function compactSchemaDescriptions(schema: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...schema };
+  if (typeof out.description === "string") out.description = compactParamDescription(out.description);
+  const props = out.properties;
+  if (props && typeof props === "object") {
+    const next: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(props as Record<string, unknown>)) {
+      next[k] = v && typeof v === "object" ? compactSchemaDescriptions(v as Record<string, unknown>) : v;
+    }
+    out.properties = next;
+  }
+  if (out.items && typeof out.items === "object" && !Array.isArray(out.items)) {
+    out.items = compactSchemaDescriptions(out.items as Record<string, unknown>);
+  }
+  for (const key of ["anyOf", "oneOf", "allOf"] as const) {
+    const branches = out[key];
+    if (Array.isArray(branches)) {
+      out[key] = branches.map((b) => (b && typeof b === "object" ? compactSchemaDescriptions(b as Record<string, unknown>) : b));
+    }
+  }
+  return out;
+}
+
 /**
  * Shrink a tool list to the tier's cap, preserving essential tools first.
  * If the user's message matched specific tools via keyword/RAG, those
  * are included ahead of lower-priority essentials (so "send an email"
  * keeps email_send even if it's not in the essentials list).
  *
- * For weak tier, also truncates descriptions to the first ~150 chars —
- * weak models skim long descriptions and get distracted by nuance.
- * Shorter is more decisive.
+ * Medium and weak tiers also get COMPACT schemas: the tool's authored
+ * `compactDescription` replaces the Claude-length `description`, and parameter
+ * descriptions over COMPACT_PARAM_DESCRIPTION_MAX chars are shortened. Without
+ * this, the 23-tool medium manifest was ~13.6k tokens — a fifth of a 65k local
+ * window — almost all of it prose written for a frontier model. Fallbacks when
+ * no compact text exists: medium keeps the full description (an unwritten
+ * compact text must never degrade a tool), weak keeps the historical
+ * first-sentence/140-char truncation — weak models skim long descriptions and
+ * get distracted by nuance. Strong is returned untouched, same object.
  */
-export function shrinkToolsForTier<T extends { name: string; description: string }>(
+export function shrinkToolsForTier<T extends TierShrinkable>(
   tools: T[],
   tier: ModelTier,
   allTools?: T[],
@@ -196,14 +254,20 @@ export function shrinkToolsForTier<T extends { name: string; description: string
 ): T[] {
   // capOverride lets an ENDPOINT limit (Gemini's compat cap) be expressed
   // without hijacking the tier's MODEL-capacity limit. tier still drives
-  // description truncation, which is a model-comprehension concern.
+  // description compaction, which is a model-comprehension concern.
   const cap = capOverride ?? maxToolsForTier(tier);
-  const maybeTruncate = (t: T): T => {
-    if (tier !== "weak" || t.description.length <= 150) return t;
+  const truncateWeak = (desc: string): string => {
+    if (desc.length <= 150) return desc;
     // Keep only the first sentence, falling back to hard cut at 150
-    const firstSentence = t.description.match(/^[^.!?]{10,}[.!?]/)?.[0];
-    const desc = firstSentence && firstSentence.length <= 180 ? firstSentence : t.description.slice(0, 140) + "…";
-    return { ...t, description: desc };
+    const firstSentence = desc.match(/^[^.!?]{10,}[.!?]/)?.[0];
+    return firstSentence && firstSentence.length <= 180 ? firstSentence : desc.slice(0, 140) + "…";
+  };
+  const maybeTruncate = (t: T): T => {
+    if (tier === "strong") return t;
+    const description = t.compactDescription
+      ?? (tier === "weak" ? truncateWeak(t.description) : t.description);
+    const parameters = t.parameters ? compactSchemaDescriptions(t.parameters) : t.parameters;
+    return { ...t, description, parameters };
   };
 
   if (tools.length <= cap && !allTools) return tools.map(maybeTruncate);

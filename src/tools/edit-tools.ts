@@ -120,6 +120,7 @@ function commitEdit(filePath: string, updated: string, verb: string, allowSyntax
 
 export const editTool: ToolDefinition = {
   name: "edit",
+  compactDescription: "Replace one string in a file. Matching tolerates CRLF/indentation but the content must match exactly. PREFER over bash sed/awk. replace_all:true for every occurrence; edit_lines by line number; multi_edit for several.",
   effect: { class: "non-idempotent" },
   description:
     "Edit a file by replacing a string. Matching is forgiving — it tolerates CRLF/LF and indentation differences, so you don't need byte-perfect whitespace, but the content must be right. PREFER THIS over `bash sed/awk/heredoc` for targeted edits (no length limit; bash is capped at 2000 chars). Pass replace_all:true to change every occurrence. If you know the line numbers from a recent read, edit_lines is even more reliable; to make several changes at once, use multi_edit; for the SAME replacement across many files, use bulk_replace.",
@@ -152,6 +153,7 @@ export const editTool: ToolDefinition = {
 
 export const editLinesTool: ToolDefinition = {
   name: "edit_lines",
+  compactDescription: "Edit a file by LINE NUMBER (1-based, inclusive) using the numbers `read` returned. Replace: start_line + end_line. Insert: start_line + insert ('before'|'after') with no end_line. Most reliable right after a read.",
   effect: { class: "non-idempotent" },
   description:
     "Edit a file by LINE NUMBER instead of by matching text — pairs with the line numbers `read` returns, so you never have to reproduce exact whitespace. Replace a range by passing start_line + end_line; insert by passing start_line + insert (before|after) and no end_line. Both bounds are 1-based and inclusive. Most reliable edit when you've just read the file.",
@@ -206,6 +208,7 @@ export const editLinesTool: ToolDefinition = {
 
 export const multiEditTool: ToolDefinition = {
   name: "multi_edit",
+  compactDescription: "Apply several {old_string, new_string} edits to ONE file in order, ATOMICALLY — if any edit fails to match, nothing is written. Same forgiving matching as `edit`; optional replace_all per edit.",
   effect: { class: "non-idempotent" },
   description:
     "Apply several string edits to ONE file in a single call, in order, ATOMICALLY — if any edit fails to match, none are written and the file is left untouched. Each edit is {old_string, new_string} with the same forgiving matching as `edit` (and optional replace_all). Use to make multiple changes to one file without re-reading between each.",

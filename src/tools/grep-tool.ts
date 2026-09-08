@@ -1,5 +1,5 @@
 /**
- * Grep Tool â€” content search via ripgrep (rg) with Node.js fallback.
+ * Grep Tool — content search via ripgrep (rg) with Node.js fallback.
  * The primary tool for navigating and searching code.
  *
  * The Node fallback engine and the shared result-shaping helpers live in
@@ -28,10 +28,10 @@ export { searchRoot, parsePattern, fallbackSearch } from "./grep-context.js";
 
 const DEFAULT_HEAD_LIMIT = 250;
 
-// â”€â”€ ripgrep path â”€â”€
+// ── ripgrep path ──
 
 // The @vscode/ripgrep binary in node_modules, resolved once. Reaches OTA users
-// â€” a source-update's npm sync installs the dep â€” plus dev and source installs,
+// — a source-update's npm sync installs the dep — plus dev and source installs,
 // none of which have the packaged .app's bundled copy. Null when the per-OS
 // package isn't installed; the caller then falls through to `rg` on PATH.
 let cachedNodeModulesRg: string | null | undefined;
@@ -45,7 +45,7 @@ function nodeModulesRg(): string | null {
   } catch {
     // import.meta.resolve is runtime-dependent (tsx/loaders intercept it and
     // can refuse extensionless binary subpaths plain node accepts). CJS
-    // resolution has no such hook â€” fall through so dev-runtime servers still
+    // resolution has no such hook — fall through so dev-runtime servers still
     // find the binary instead of silently degrading to bare `rg`.
     try {
       p = createRequire(import.meta.url).resolve(spec);
@@ -59,9 +59,9 @@ function nodeModulesRg(): string | null {
 
 // Resolve the ripgrep binary, by how reliably each source is present:
 //   1. the signed copy in the packaged .app (LAX_BUNDLED_BIN_DIR, set by the
-//      Electron main) â€” a Finder-launched app's minimal launchd PATH can't find
+//      Electron main) — a Finder-launched app's minimal launchd PATH can't find
 //      a bare `rg`, which is why grep used to fall to the slow Node search;
-//   2. @vscode/ripgrep in node_modules â€” reaches OTA users, dev, source installs;
+//   2. @vscode/ripgrep in node_modules — reaches OTA users, dev, source installs;
 //   3. `rg` on PATH; then runRg falls back to the Node search if even that is gone.
 export function ripgrepBin(): string {
   const bundled = process.env.LAX_BUNDLED_BIN_DIR;
@@ -91,12 +91,12 @@ function buildRgArgs(args: Record<string, unknown>): string[] {
     rg.push("-n");
     const ctx = contextLines(args, mode);
     // ctx 0 (explicit) omits -C entirely: plain `file:line:text`, no `--`
-    // separators â€” identical to the pre-default behavior.
+    // separators — identical to the pre-default behavior.
     if (ctx > 0) rg.push("-C", String(ctx));
   }
 
-  // `--` ends option parsing so a pattern (or path) that begins with a dash â€”
-  // e.g. a CSS custom-property search like `--(color|brand)` â€” is never
+  // `--` ends option parsing so a pattern (or path) that begins with a dash —
+  // e.g. a CSS custom-property search like `--(color|brand)` — is never
   // mistaken for a flag.
   rg.push("--", String(args.pattern), searchRoot(args));
   return rg;
@@ -126,7 +126,7 @@ export type ExecFileLike = (
 const defaultExec: ExecFileLike = (file, args, options, callback) =>
   execFile(file, [...args], options, callback);
 
-/** One rg invocation through the injectable seam; never rejects â€” callers
+/** One rg invocation through the injectable seam; never rejects — callers
  *  discriminate on the returned error. */
 function execRgOnce(
   exec: ExecFileLike,
@@ -144,12 +144,12 @@ function execRgOnce(
  * Exact matched-line count for context-mode results. The rendered stream mixes
  * match lines (`path:N:text`) with context lines (`path-N-text`) whose TEXT
  * can itself embed `:12:`-shaped locators (timestamps, stack traces, source
- * refs), so no per-line parse of the rendered output is robust â€” ask rg itself
+ * refs), so no per-line parse of the rendered output is robust — ask rg itself
  * with a second `-c` pass over the identical pattern/filters/root. Its `path:N`
  * lines parse on the LAST colon, immune to Windows drive letters. Returns null
- * (metadata omitted) on any anomaly â€” an honest gap beats an inflated count.
+ * (metadata omitted) on any anomaly — an honest gap beats an inflated count.
  *
- * ACCEPTED TRADE-OFF â€” do NOT "optimize" this second spawn away: it costs
+ * ACCEPTED TRADE-OFF — do NOT "optimize" this second spawn away: it costs
  * milliseconds against the multi-second inference round trips the turn-cost
  * campaign attacks, and the count the model plans against must be correct.
  */
@@ -173,7 +173,7 @@ async function rgMatchCount(
   return total;
 }
 
-/** Exported for tests â€” the tool routes searches through this. */
+/** Exported for tests — the tool routes searches through this. */
 export async function runRg(
   args: Record<string, unknown>,
   limit: number,
@@ -183,16 +183,16 @@ export async function runRg(
   const { error, stdout, stderr } = await execRgOnce(exec, buildRgArgs(args), signal);
   if (signal?.aborted) return err("Aborted", baseMeta(args));
   // Error discrimination (rg's documented exit codes): 1 = no matches
-  // (not a failure); ENOENT = rg not installed (reject â†’ Node fallback);
+  // (not a failure); ENOENT = rg not installed (reject → Node fallback);
   // maxBuffer overflow = usable-but-truncated output; anything else
-  // (exit 2 = bad regex / unreadable path, other errnos) is a real error â€”
+  // (exit 2 = bad regex / unreadable path, other errnos) is a real error —
   // never round it down to "No matches found."
   const code = error?.code;
   const truncated = code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER";
   const out = (stdout || "").trim();
   const snippet = (stderr || "").trim().split("\n")[0]?.slice(0, 300) ?? "";
   if (error && code === "ENOENT") throw error;
-  // rg exits 2 whenever ANY error occurred during the search â€” even when
+  // rg exits 2 whenever ANY error occurred during the search — even when
   // it found and printed real matches (e.g. one unreadable subdirectory in
   // an otherwise-searchable tree). Partial results are results: return
   // them with a warning. Only exit 2 with EMPTY stdout is a hard failure.
@@ -200,14 +200,14 @@ export async function runRg(
   if (error && code !== 1 && !truncated && !partial) {
     return err(
       `grep failed: ripgrep exited with ${String(code ?? error.message)}` +
-      (snippet ? ` â€” ${snippet}` : ""),
+      (snippet ? ` — ${snippet}` : ""),
       baseMeta(args),
     );
   }
-  // rg exits with code 1 when no matches â€” that's not an error. Kept
+  // rg exits with code 1 when no matches — that's not an error. Kept
   // LEGACY-shaped (no metadata) deliberately: with metadata the renderer
   // prepends a status header, and two guards match the RENDERED content
-  // with start-anchored regexes â€” isEmptyGrepResult (agent-guards/
+  // with start-anchored regexes — isEmptyGrepResult (agent-guards/
   // cleanup-verify.ts) and EMPTY_RESULT_RE (errors/classifier.ts, feeds
   // the dead-end detector). Verbatim keeps the sentinel parseable, and a
   // headerless result already parses as status "ok", which is correct.
@@ -215,9 +215,9 @@ export async function runRg(
   const allLines = out.split("\n");
   const body = truncate(allLines, limit);
   const warning = truncated
-    ? "\nWARNING: output exceeded the buffer cap â€” this list is TRUNCATED; narrow the path or use a more specific pattern."
+    ? "\nWARNING: output exceeded the buffer cap — this list is TRUNCATED; narrow the path or use a more specific pattern."
     : partial
-      ? `\nWARNING: some paths could not be searched${snippet ? ` (${snippet})` : ""} â€” results may be incomplete.`
+      ? `\nWARNING: some paths could not be searched${snippet ? ` (${snippet})` : ""} — results may be incomplete.`
       : "";
   const mode = modeOf(args);
   // ctx 0 renders match lines only, so the rendered line count IS the exact
@@ -230,15 +230,16 @@ export async function runRg(
   return ok(body + warning, meta);
 }
 
-// â”€â”€ Tool definition â”€â”€
+// ── Tool definition ──
 
 export const grepTool: ToolDefinition = {
   name: "grep",
+  compactDescription: "Regex search of file contents (ripgrep when available). Supports type/glob filters and three output modes; content mode includes 4 context lines per hit by default (`context`; 0 = match lines only).",
   description:
     "Search file contents using regex. Uses ripgrep when available, falls back to Node.js recursive search. " +
     "Supports file type and glob filtering, and three output modes. In content mode each hit includes " +
     "4 surrounding lines of context by default (override with `context`; 0 = match lines only), so one " +
-    "call usually answers where AND what â€” follow-up reads of hit files are rarely needed.",
+    "call usually answers where AND what — follow-up reads of hit files are rarely needed.",
   readOnly: true,
   concurrencySafe: true,
   parameters: {
@@ -275,5 +276,5 @@ export const grepToolEnhancements = {
 };
 
 export function prompt(): string {
-  return "ALWAYS use grep for content search. NEVER use bash grep/rg. Supports regex, file type filtering, multiple output modes. content-mode hits include surrounding context lines â€” answer from them instead of reading each hit file.";
+  return "ALWAYS use grep for content search. NEVER use bash grep/rg. Supports regex, file type filtering, multiple output modes. content-mode hits include surrounding context lines — answer from them instead of reading each hit file.";
 }

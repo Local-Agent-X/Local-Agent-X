@@ -19,6 +19,7 @@ import {
 export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
   const tool: ToolDefinition = {
     name: "http_request",
+    compactDescription: "Make an HTTP request to any API (any method, headers, body). Inject stored secrets in header values with {{SECRET_NAME}}, e.g. \"Authorization\": \"Bearer {{GITHUB_TOKEN}}\"; call request_secret first if it isn't stored.",
     effect: (args) => {
       const method = String(args.method || "GET").toUpperCase();
       if (["GET", "HEAD", "OPTIONS"].includes(method)) return { class: "read-only" };

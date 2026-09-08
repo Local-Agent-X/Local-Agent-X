@@ -15,6 +15,7 @@ export function createSaveTools(memory: MemoryIndex) {
   return [
     {
       name: "memory_save",
+      compactDescription: "Append a line to today's daily conversation log — transient session context only. For durable facts (preferences, environment, project knowledge) call `remember` instead.",
       description:
         "Append a line to today's daily conversation log. Use for transient session context that should be recoverable but isn't a durable fact. " +
         "For durable facts (preferences, environment, project knowledge), call `remember` instead — it stores in the indexed fact DB " +
@@ -82,6 +83,7 @@ export function createSaveTools(memory: MemoryIndex) {
 
     {
       name: "memory_set_user_field",
+      compactDescription: "Set ONE scalar USER.md field (Name, Location, Job/Role, Pronouns, Communication style, Interests). Use whenever the user states a personal scalar fact ('my name is X'); prefer over memory_update_profile.",
       description:
         "Surgically set ONE scalar field in USER.md (Name, Location, Job/Role, Communication style, Interests, Pronouns). " +
         "Use this WHENEVER the user states a personal scalar fact — 'my name is X', 'I'm a Y', 'call me Z', 'I prefer pronouns A/B'. " +
@@ -139,6 +141,7 @@ export function createSaveTools(memory: MemoryIndex) {
 
     {
       name: "memory_update_profile",
+      compactDescription: "Edit a narrative profile file: 'user' (USER.md), 'heart' (HEART.md) or 'identity' (IDENTITY.md). NOT for scalar fields (memory_set_user_field) or single facts (remember). Prefer action='replace_section'.",
       description:
         "Edit a narrative profile file — multi-paragraph user background, agent personality, or agent identity. " +
         "Files: 'user' (USER.md — preferences, workflow, communication style — bounded ~2000 chars), " +

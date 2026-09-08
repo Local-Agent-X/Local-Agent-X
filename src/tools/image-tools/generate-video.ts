@@ -151,6 +151,7 @@ async function generateViaXaiVideo(
 
 export const generateVideoTool: ToolDefinition = {
   name: "generate_video",
+  compactDescription: "Generate a short MP4 video from a text prompt. Defaults to xAI Grok Imagine when connected, else local CogVideoX; pass `provider` to force one. On WhatsApp/Telegram it is auto-delivered — never call send_video too.",
   description:
     "Generate a short video from a text prompt. Defaults to xAI Grok Imagine whenever xAI is connected " +
     "(text-to-video, ~60-240s, up to 15s duration, optional reference images; toggle in Settings → Media). " +

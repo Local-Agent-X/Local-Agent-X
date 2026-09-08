@@ -29,6 +29,14 @@ export interface ToolEffect {
 export interface ToolDefinition {
   name: string;
   description: string;
+  /**
+   * Tier-compact description for medium/weak models: one or two sentences (what it
+   * does, the one rule that matters, an example call when arguments are non-obvious),
+   * at most 220 chars. Must keep every safety rule the full text carries. Absent =
+   * the tier falls back to `description` (medium) or first-sentence truncation (weak),
+   * so a missing compact text never degrades a tool. Applied by shrinkToolsForTier.
+   */
+  compactDescription?: string;
   parameters: Record<string, unknown>;
   execute: (args: Record<string, unknown>, signal?: AbortSignal) => Promise<ToolResult>;
   /** Side-effect semantics used by automatic tool retry. Unset is non-idempotent. */

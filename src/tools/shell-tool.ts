@@ -10,6 +10,7 @@ import { projectRoot } from "../workspace/paths.js";
 
 export const bashTool: ToolDefinition = {
   name: "bash",
+  compactDescription: "Run a shell command (bash; Git Bash on Windows, else PowerShell — write POSIX sh). ESCAPE HATCH ONLY: prefer read/write/edit/glob/grep/http_request/browser over cat/echo/sed/ls/find/curl. Never dump env/credential files.",
   description:
     "Run a shell command (bash; on Windows uses Git Bash when installed, else PowerShell). " +
     "BASH IS THE ESCAPE HATCH, NOT THE DEFAULT. Spawning a shell is slower and less reliable than a purpose-built tool. Use these native tools instead whenever possible:\n" +

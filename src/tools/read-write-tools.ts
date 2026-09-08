@@ -34,6 +34,7 @@ export function isScreenExemptAgentCode(filePath: string): boolean {
 
 export const readTool: ToolDefinition = {
   name: "read",
+  compactDescription: "Read a file from the filesystem; returns the full contents with line numbers. Files under 1000 lines come back whole — do NOT chunk with offset/limit unless the file is 1000+ lines.",
   description:
     "Read a file from the filesystem. Returns the full file contents with line numbers. Files under 1000 lines are returned in full — do NOT chunk with offset/limit unless the file is very large (1000+ lines).",
   readOnly: true,
@@ -153,6 +154,7 @@ export const readTool: ToolDefinition = {
 
 export const writeTool: ToolDefinition = {
   name: "write",
+  compactDescription: "Write full file contents; creates the file and parent directories. PREFER THIS over a bash heredoc for any file creation or full rewrite — bash commands are capped at 2000 chars.",
   effect: { class: "idempotent-mutation" },
   description: "Write file contents. PREFER THIS over `bash` heredoc (cat <<EOF > file) for any file creation or full rewrite — write has no length limit, bash commands are capped at 2000 chars and will be rejected. Creates the file and parent directories if they don't exist.",
   parameters: {

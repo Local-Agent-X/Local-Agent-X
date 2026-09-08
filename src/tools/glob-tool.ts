@@ -9,13 +9,17 @@ import type { ToolDefinition, ToolResult } from "../types.js";
 import { ok, err } from "./result-helpers.js";
 import { resolveAgentPath, sessionIdOf } from "../workspace/paths.js";
 
-// Resolve the search base through the canonical agent-path resolver â€” the SAME
-// one read/grep and the security gate use â€” so a "~/..." or workspace-relative
+// Resolve the search base through the canonical agent-path resolver — the SAME
+// one read/grep and the security gate use — so a "~/..." or workspace-relative
 // base expands once, identically to how it's gated, instead of being joined
-// onto a raw cwd and failing until the model retries. Absent path â†’ the
-// session's work root when one is registered (a chunk worker's bare
-// glob("**/*.ts") must search its project, not the server cwd), else cwd.
-// Exported for direct testing (guards against a regression back to a cwd join).
+// onto a raw cwd and failing until the model retries. Absent path → "." through
+// that same resolver, which is ONE rule for every tool: the session's work
+// root when one is registered (a chunk worker's bare glob("**/*.ts") must
+// search its project), else the project root — the workspace's parent that
+// read/write/bash anchor to. It used to fall back to process.cwd(), which in
+// the dev server is the git checkout: a model's first bare glob searched the
+// wrong tree and returned nothing (session chat-mtrxppqw-m7fah, 2026-09-08).
+// Exported for direct testing (guards against a regression back to cwd).
 export function searchBase(rawPath: unknown, sessionId?: string): string {
   const p = rawPath != null && String(rawPath) !== "" ? String(rawPath) : ".";
   return resolveAgentPath(p, sessionId);
@@ -29,7 +33,7 @@ function humanSize(bytes: number): string {
 
 interface FileEntry { path: string; mtime: number; size: number }
 
-// â”€â”€ Walk bounds â”€â”€
+// ── Walk bounds ──
 //
 // glob is readOnly + concurrencySafe, so the executor runs N of them in one
 // Promise.all batch; every bound below is PER CALL and multiplies by that N.
@@ -37,13 +41,15 @@ interface FileEntry { path: string; mtime: number; size: number }
 // readdir fan-out were unbounded (a symlink cycle, or a link into a huge tree,
 // walked until ELOOP with the error swallowed) and every match was collected
 // and stat()ed before the 200-entry limit applied last. The Aug 30 OOM
-// snapshot â€” 3.9GB heap, 126-206 pending FSReqCallbacks â€” was that fan-out.
+// snapshot — 3.9GB heap, 126-206 pending FSReqCallbacks — was that fan-out.
 //
-// Symlinks ARE still followed. The packaged app bridges <cwd>/workspace to the
-// configured workspace with a dir symlink / junction (workspace/lifecycle.ts
-// ensureWorkspaceLink), and the default search root is that cwd â€” so a walk
-// that skipped links would return "No files matched." for every user file.
-// The depth and scan caps below are what bound a cycle, not link-skipping.
+// Symlinks ARE still followed. The default search root is the project root
+// (the configured workspace's parent, via resolveAgentPath — see searchBase),
+// and the packaged app also bridges <cwd>/workspace to that workspace with a
+// dir symlink / junction (workspace/lifecycle.ts ensureWorkspaceLink); user
+// files routinely sit behind such links, so a walk that skipped them would
+// return "No files matched." for every one of them. The depth and scan caps
+// below are what bound a cycle, not link-skipping.
 
 // Directories never worth walking. `**` matches any prefix, so
 // `**/node_modules/**` already covers desktop/node_modules and every other
@@ -68,8 +74,8 @@ export const WALK_IGNORE = [
 // generated tree or a symlink cycle. The model can re-root with `path`.
 export const MAX_DEPTH = 12;
 
-// Concurrent readdir()s per walk. fast-glob defaults to os.cpus().length â€”
-// 16-32 on a dev box â€” per CALL, which is how a batch of globs piled up
+// Concurrent readdir()s per walk. fast-glob defaults to os.cpus().length —
+// 16-32 on a dev box — per CALL, which is how a batch of globs piled up
 // hundreds of pending fs callbacks.
 export const WALK_CONCURRENCY = 8;
 
@@ -82,7 +88,7 @@ export const MAX_SCAN = 5000;
 
 interface Walk { paths: string[]; truncated: boolean }
 
-/** fast-glob's pluggable filesystem â€” a test seam for counting readdir()s. */
+/** fast-glob's pluggable filesystem — a test seam for counting readdir()s. */
 export type WalkFs = NonNullable<fg.Options["fs"]>;
 
 // Stream matches and destroy the walk at MAX_SCAN. fast-glob wires the
@@ -102,8 +108,8 @@ export function walkBounded(pattern: string, cwd: string, fs?: WalkFs): Promise<
       absolute: true,
       suppressErrors: true,
       followSymbolicLinks: true,
-      // fast-glob's `deep` is exclusive â€” a directory AT that level is not
-      // opened â€” so +1 makes MAX_DEPTH mean "levels entered".
+      // fast-glob's `deep` is exclusive — a directory AT that level is not
+      // opened — so +1 makes MAX_DEPTH mean "levels entered".
       deep: MAX_DEPTH + 1,
       concurrency: WALK_CONCURRENCY,
       ignore: WALK_IGNORE,
@@ -140,10 +146,11 @@ async function globFiles(pattern: string, cwd: string, limit: number): Promise<{
 
 export const globTool: ToolDefinition = {
   name: "glob",
+  compactDescription: `Fast file pattern matching (e.g. src/**/*.tsx), newest first, from the project root by default. Walks at most ${MAX_DEPTH} levels and stops after ${MAX_SCAN} matches (a bare **/* truncates) — pass a path to narrow the search.`,
   description:
     "Fast file pattern matching. Returns files matching a glob pattern, sorted by modification time (newest first). " +
     "Supports patterns like **/*.ts, src/**/*.tsx, *.json. " +
-    `Walks at most ${MAX_DEPTH} directory levels below the search root and stops after ${MAX_SCAN} matches â€” pass path to search deeper or narrower.`,
+    `Walks at most ${MAX_DEPTH} directory levels below the search root and stops after ${MAX_SCAN} matches — pass path to search deeper or narrower.`,
   readOnly: true,
   concurrencySafe: true,
   parameters: {
@@ -174,7 +181,7 @@ export const globTool: ToolDefinition = {
 
       const lines = entries.map((e) => `${e.path}  (${humanSize(e.size)})`);
       const warning = truncated
-        ? `\nWARNING: the walk stopped after ${MAX_SCAN} matches â€” this list is the newest of THOSE, not of the whole tree; narrow the path or use a more specific pattern.`
+        ? `\nWARNING: the walk stopped after ${MAX_SCAN} matches — this list is the newest of THOSE, not of the whole tree; narrow the path or use a more specific pattern.`
         : "";
       return ok(lines.join("\n") + warning, {
         pattern,
@@ -208,7 +215,7 @@ export function prompt(): string {
     "Use the glob tool for fast file pattern matching instead of bash find/ls.",
     "Supports patterns like **/*.ts, src/**/*.tsx, *.json.",
     "Results are sorted by modification time (newest first), limited to 200.",
-    `The walk enters at most ${MAX_DEPTH} directory levels below the search root and stops after ${MAX_SCAN} matches (the result says so) â€” pass path to re-root deeper, or narrow the pattern.`,
+    `The walk enters at most ${MAX_DEPTH} directory levels below the search root and stops after ${MAX_SCAN} matches (the result says so) — pass path to re-root deeper, or narrow the pattern.`,
     "Provide an optional path to search in a specific directory.",
   ].join("\n");
 }

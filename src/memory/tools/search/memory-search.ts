@@ -4,6 +4,7 @@ import type { MemoryIndex } from "../../../memory/index.js";
 export function memorySearchTool(memory: MemoryIndex) {
   return {
     name: "memory_search",
+    compactDescription: "Keyword/semantic search across long-term memory (facts, knowledge files, entity pages); same-session + profile only, past sessions excluded. Use when the exact entity/file is unknown; else memory_recall or memory_get.",
     description:
       "Free-text/keyword search across long-term memory — retained facts, knowledge files, and entity pages. Defaults to same-session + profile-level content only; past sessions are NOT included by default. " +
       "Use this when you DON'T know the exact entity name or file path and need a semantic/keyword lookup. " +

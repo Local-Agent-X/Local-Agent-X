@@ -29,6 +29,7 @@ import { VALID_ENGINES, err } from "./shared.js";
 import {
   BROWSER_TOOL_NAME,
   BROWSER_TOOL_DESCRIPTION,
+  BROWSER_TOOL_COMPACT_DESCRIPTION,
   BROWSER_TOOL_PARAMETERS,
 } from "./description.js";
 import { READ_ONLY_ACTIONS } from "./action-tables.js";
@@ -118,6 +119,7 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
       ? { class: "read-only" }
       : { class: "non-idempotent" },
     description: BROWSER_TOOL_DESCRIPTION,
+    compactDescription: BROWSER_TOOL_COMPACT_DESCRIPTION,
     parameters: BROWSER_TOOL_PARAMETERS,
     async execute(args) {
       const action = String(args.action || "");

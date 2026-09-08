@@ -87,6 +87,7 @@ export function dedupeResults(results: SearchResult[]): SearchResult[] {
 
 export const webSearchTool: ToolDefinition = {
   name: "web_search",
+  compactDescription: "Search the internet. Pass one `query`, or several in `queries` to fan out in parallel (results merged and deduplicated). Returns titles, URLs and snippets.",
   effect: { class: "read-only" },
   description: "Search the internet. Pass a single `query`, or several in `queries` to fan out and search them in parallel — results are merged and deduplicated. Returns titles, URLs, and snippets.",
   parameters: {

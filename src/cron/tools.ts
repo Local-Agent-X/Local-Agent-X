@@ -27,6 +27,7 @@ export function createCronTools(cron: CronService): ToolDefinition[] {
     },
     {
       name: "mission_schedule_create",
+      compactDescription: "Schedule a recurring mission: `schedule` is an interval ('5m', '1h') or cron ('*/5 * * * *'); `prompt` runs each time; same name updates the job. Each run is a full billed session — pick the longest interval that works.",
       description: "Schedule a recurring mission. Schedule can be an interval ('5m', '1h', '30s') or cron expression ('*/5 * * * *'). Prompt is what the agent will execute each run. If a job with the same name exists, it will be updated rather than duplicated. Each run is a fresh full-context session billed at the job's model — pick the longest interval that still meets the need, and reserve tight intervals (under ~15m) for genuinely time-sensitive missions.",
       parameters: {
         type: "object",

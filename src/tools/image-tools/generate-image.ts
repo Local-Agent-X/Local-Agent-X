@@ -106,6 +106,7 @@ async function generateViaOpenai(prompt: string, apiKey: string): Promise<ToolRe
 
 export const generateImageTool: ToolDefinition = {
   name: "generate_image",
+  compactDescription: "Generate a NEW image from a text prompt — it cannot see or edit an existing image; to modify a photo the user gave you, use edit_image. Defaults to xAI Grok Imagine when connected; pass `provider` to force a backend.",
   description:
     "Generate a NEW image from a text prompt — creates from scratch, does NOT see any existing image. " +
     "To MODIFY an image the user gave you (recolor, change/add/remove part of a photo), use edit_image instead — " +

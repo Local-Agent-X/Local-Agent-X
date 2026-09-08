@@ -17,12 +17,14 @@ vi.mock("../../../local-runtimes/residency.js", () => ({
 }));
 
 const runtimeForModel: { value: unknown } = { value: null };
+const reprobeLocalModelWindow = vi.fn(async (..._args: unknown[]): Promise<number | null> => null);
 
 vi.mock("../../../local-runtimes/index.js", () => ({
   getLocalModelCapabilityProfile: () => null,
   getRuntimeForModel: () => runtimeForModel.value,
   getLocalRuntimes: () => [],
   refreshLocalRuntimes: async () => {},
+  reprobeLocalModelWindow: (...args: unknown[]) => reprobeLocalModelWindow(...args),
 }));
 
 vi.mock("../../../ollama-cloud.js", () => ({

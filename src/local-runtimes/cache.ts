@@ -168,6 +168,66 @@ export function getLocalModelCapabilityProfile(
   };
 }
 
+/**
+ * Re-probe ONE model's window when discovery recorded it as unknown.
+ *
+ * listModels reports contextWindow: null and probeModel fills it in — but on
+ * Ollama the real served window only exists in /api/ps once the model is
+ * LOADED, and a model is usually not loaded when the sweep runs. The null was
+ * then frozen for the life of the cache entry: nothing re-probes a model whose
+ * window is unknown, so callers fell back to the 8,192 floor for the whole
+ * session while the model was actually serving 65,536 (observed 2026-09-08,
+ * qwen3.6:27b — the UI read "246% context 20K / 8K"). It corrected only if an
+ * unrelated sweep happened to land while the model was loaded, which is a race,
+ * not a mechanism.
+ *
+ * Cheap and self-limiting: only fires while the window is unknown, coalesces
+ * concurrent callers per model, and never overwrites a window we already know.
+ */
+const reprobeInflight = new Map<string, Promise<number | null>>();
+
+export async function reprobeLocalModelWindow(
+  chatBaseUrl: string,
+  model: string,
+): Promise<number | null> {
+  const known = getLocalModel(chatBaseUrl, model);
+  if (!known) return null;
+  if (known.contextWindow !== null) return known.contextWindow;
+
+  const key = `${chatBaseUrl}|${model}`;
+  const existing = reprobeInflight.get(key);
+  if (existing) return existing;
+
+  const runtime = cache?.find((r) => r.chatBaseUrl === chatBaseUrl) ?? null;
+  if (!runtime) return null;
+
+  const run = (async (): Promise<number | null> => {
+    const { LOCAL_RUNTIME_PROBES } = await import("./probes.js");
+    const probe = LOCAL_RUNTIME_PROBES.find((p) => p.kind === runtime.kind);
+    if (!probe) return null;
+    let probed: Partial<LocalModel>;
+    try {
+      probed = await probe.probeModel(runtime.endpoint, model);
+    } catch {
+      return null;
+    }
+    const window = probed.contextWindow ?? null;
+    if (window === null) return null;
+    // Merge into the live entry rather than replacing the cache: a concurrent
+    // full refresh must win, and every other field stays as discovery left it.
+    const entry = cache?.find((r) => r.chatBaseUrl === chatBaseUrl)?.models.find((m) => m.id === model);
+    if (entry && entry.contextWindow === null) {
+      entry.contextWindow = window;
+      if (probed.tools !== undefined && entry.tools === null) entry.tools = probed.tools;
+      notifyLocalRuntimesChanged();
+    }
+    return window;
+  })().finally(() => { reprobeInflight.delete(key); });
+
+  reprobeInflight.set(key, run);
+  return run;
+}
+
 /** Test seam + settings-change hook: drop the cache. */
 export function invalidateLocalRuntimes(): void {
   cache = null;

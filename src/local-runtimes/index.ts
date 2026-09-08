@@ -51,6 +51,7 @@ export {
   invalidateLocalRuntimes,
   localRuntimesStale,
   refreshLocalRuntimes,
+  reprobeLocalModelWindow,
   restoreProjectedLocalRuntime,
   type LocalModelCapabilityProfile,
 } from "./cache.js";

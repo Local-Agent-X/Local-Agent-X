@@ -56,6 +56,7 @@ export async function resolveOpenAICompatTarget(
       getRuntimeForModel,
       getLocalRuntimes,
       refreshLocalRuntimes,
+      reprobeLocalModelWindow,
     } =
       await import("../../../local-runtimes/index.js");
     let rt = getRuntimeForModel(model);
@@ -76,6 +77,13 @@ export async function resolveOpenAICompatTarget(
         const { holdChatModelResidency } = await import("../../../local-runtimes/residency.js");
         holdChatModelResidency(rt.endpoint.baseUrl, model);
       }
+      // Discovery records a window of null when the model was not loaded at
+      // sweep time, and nothing ever revisited it — so every turn sized itself
+      // against the 8,192 floor while the model served 65,536, until an
+      // unrelated sweep happened to land while it was loaded. Ask once, here,
+      // where we already know the model is the one about to be used. No-ops as
+      // soon as the window is known.
+      await reprobeLocalModelWindow(rt.chatBaseUrl, model);
       return {
         baseURL: rt.chatBaseUrl,
         apiKey: prepared.apiKey || "ollama",

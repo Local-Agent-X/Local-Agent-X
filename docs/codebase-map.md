@@ -12,17 +12,17 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 65 top-level dirs · 65 live · 0 with no live importer · 1570 non-test source files · 0 god files (>400 LOC).
+**Totals:** 65 top-level dirs · 65 live · 0 with no live importer · 1572 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | God files |
 |---|--:|--:|:--:|--:|
-| `src/ops/` | 124 | 26 | XL |  |
+| `src/ops/` | 125 | 26 | XL |  |
 | `src/security/` | 85 | 34 | XL |  |
 | `src/tools/` | 68 | 175 | XL |  |
+| `src/canonical-loop/` | 61 | 239 | XL |  |
 | `src/providers/` | 61 | 20 | XL |  |
-| `src/canonical-loop/` | 59 | 239 | XL |  |
 | `src/memory/` | 46 | 128 | XL |  |
 | `src/workspace/` | 41 | 2 | M |  |
 | `src/session/` | 36 | 7 | L |  |
@@ -38,9 +38,9 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/local-runtimes/` | 26 | 18 | L |  |
 | `src/app-runtime/` | 23 | 12 | L |  |
 | `src/agent-request/` | 22 | 14 | L |  |
+| `src/context/` | 22 | 4 | M |  |
 | `src/chat-ws/` | 21 | 18 | L |  |
-| `src/context/` | 21 | 3 | M |  |
-| `src/context-manager/` | 20 | 10 | M |  |
+| `src/context-manager/` | 21 | 11 | L |  |
 | `src/orchestrator/` | 20 | 24 | L |  |
 | `src/agent-guards/` | 19 | 17 | L |  |
 | `src/agents/` | 17 | 13 | L |  |
@@ -60,13 +60,13 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/integrations/` | 9 | 15 | M |  |
 | `src/screen-stream/` | 9 | 8 | L |  |
 | `src/ari-kernel/` | 8 | 11 | L |  |
+| `src/routes/` | 8 | 86 | XL |  |
 | `src/sync/` | 8 | 19 | L |  |
 | `src/telegram-bridge/` | 8 | 6 | M |  |
 | `src/auto-build/` | 7 | 52 | XL |  |
 | `src/autopilot/` | 7 | 13 | L |  |
 | `src/bridge-voice/` | 7 | 5 | M |  |
 | `src/plugin-system/` | 7 | 10 | L |  |
-| `src/routes/` | 7 | 86 | XL |  |
 | `src/app-renderer/` | 6 | 7 | M |  |
 | `src/mcp-client/` | 6 | 9 | L |  |
 | `src/credentials/` | 5 | 1 | S |  |
@@ -113,7 +113,7 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/committing-tool-check.ts` | M |
 | `src/computer-control.ts` | S |
 | `src/config-hot-reload.ts` | S |
-| `src/config-loader.ts` | S |
+| `src/config-loader.ts` | M |
 | `src/config-profiles.ts` | S |
 | `src/config-schema.ts` | S |
 | `src/config.ts` | M |
@@ -140,7 +140,7 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/logger.ts` | S |
 | `src/mcp-bridge.ts` | S |
 | `src/model-fallback.ts` | S |
-| `src/model-tiers.ts` | S |
+| `src/model-tiers.ts` | M |
 | `src/mutation-lock.ts` | S |
 | `src/ollama-cloud.ts` | S |
 | `src/ota-extract.ts` | S |

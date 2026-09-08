@@ -91,6 +91,16 @@ const PRICING: Record<string, ModelPricing> = {
   "claude-haiku-3-5-20241022": { input: 0.80, output: 4 },
   // OpenAI / Codex (GPT-5.x — developers.openai.com/api/docs/pricing)
   // GPT-5.6 short-context tier; long-context (>~272k) bills ~2x, not modeled
+  // gpt-6-astra: $10 in / $50 out, cached in $1 — exactly the 0.1x
+  // CACHE_READ_MULTIPLIER above, so cached tokens price right with no extra
+  // column. LIMIT: up to a 272K prompt those are the rates; ABOVE it OpenAI
+  // charges 2x input and 1.5x output for the WHOLE request. This table is flat
+  // {input, output} per model, so the tier is not modelled and a >272K prompt
+  // under-reports — which now matters, because the session/daily spend caps read
+  // these numbers, so the cap under-counts on those requests. Do not "fix" this
+  // by inflating the base rate — that over-charges the common case; it needs a
+  // tiered shape, tracked separately.
+  "gpt-6-astra": { input: 10, output: 50 },
   "gpt-5.6": { input: 5, output: 30 }, // bare alias routes to Sol
   "gpt-5.6-sol": { input: 5, output: 30 },
   "gpt-5.6-terra": { input: 2.50, output: 15 },

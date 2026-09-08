@@ -2,6 +2,7 @@ import { getLocalModel, getRuntimeForModel } from "../local-runtimes/index.js";
 
 const MODEL_CONTEXTS: Record<string, number> = {
   // GPT-5.6 family (Sol/Terra/Luna) — 1.05M native, 128k max output
+  "gpt-6-astra": 1_050_000,  // 128k max output, cutoff 2026-04-30
   "gpt-5.6": 1_000_000,      // bare alias routes to Sol
   "gpt-5.6-sol": 1_000_000,
   "gpt-5.6-terra": 1_000_000,

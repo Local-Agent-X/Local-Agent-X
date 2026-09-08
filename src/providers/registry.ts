@@ -100,7 +100,7 @@ export interface BaseURLContext {
   customBaseURL?: string;
 }
 
-const REASONING_OPENAI_FAMILY = /^o[134]|gpt-5/i;
+const REASONING_OPENAI_FAMILY = /^o[134]|gpt-[56]/i;
 // xAI models that accept the `reasoning_effort` request param: grok-4 family
 // (grok-4.5, grok-4.3, grok-4.20-*reasoning, grok-4.20-multi-agent) + grok-3-mini. The
 // explicit `-non-reasoning` variant (grok-4.20-0309-non-reasoning) is excluded —
@@ -146,7 +146,7 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     transport: "http",
     id: "openai",
     label: "OpenAI API",
-    models: ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-4o", "gpt-4o-mini", "o3-pro"],
+    models: ["gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-4o", "gpt-4o-mini", "o3-pro"],
     defaultModel: "o3-pro",
     // Non-reasoning: the default o3-pro hides reasoning server-side, so a
     // long think streams nothing and the idle watchdog can't tell it from a
@@ -161,7 +161,7 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     transport: "http",
     id: "codex",
     label: "OpenAI Codex",
-    models: ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini"],
+    models: ["gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini"],
     defaultModel: "gpt-5.5",
     backgroundModel: "gpt-5.4-mini",
     // Codex uses ChatGPT OAuth via getApiKey(); chat-runner routes it

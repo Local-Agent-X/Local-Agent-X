@@ -250,8 +250,21 @@ export interface Budget {
 //     vs 12.6s at cap 256, same 472 not-clean files; the pathological
 //     thousands-of-16-char-tokens document is unchanged (40ms raw / 0.47s
 //     base64-wrapped). Flat because the byte budget already bounds decode work.
-// The cap is a WORK and QUEUE-MEMORY bound (256 runs per scheme per view), not
-// the security bound — MAX_DECODED_BUDGET is that.
+// The cap bounds work and queue memory (256 runs per scheme per view), but it
+// is ALSO the binding security bound today, and calling it anything else
+// misleads the next reader. Cheapest documents that blind the scanner, the
+// taint overlap and the canaries together, all measured:
+//   - before this peel enumerated siblings, one 16-char pad:  ~600 B
+//   - now, 256 filler runs ahead of the blob:                 5,902 B
+//   - the shared MAX_DECODED_BUDGET starvation:             ~128 KB
+// So the cap is 14.5x cheaper to walk past than the byte budget. The filler
+// does not even have to decode: `n` counts regex matches, not successful
+// decodes, so it costs the attacker no budget at all. Raising the cap trades
+// queue memory for a higher evasion floor; lowering it starts losing real
+// detections (cap 8 tolerates only 4 filler runs). 256 is chosen from
+// p99.9=226 inner runs per (view, scheme) over the repo corpus, so ordinary
+// content is still enumerated exhaustively. The boundary is pinned by
+// "the inner-run cap boundary (255 found / 256 missed)" in secret-scanner.test.ts.
 const MAX_INNER_RUNS_PER_VIEW = 256;
 
 /**

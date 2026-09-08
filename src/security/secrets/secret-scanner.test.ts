@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { randomBytes } from "node:crypto";
+import { randomBytes, createHash } from "node:crypto";
 import { scanForSecrets, redactSecrets } from "./secret-scanner.js";
 import { buildNormalizedView } from "./secret-normalize.js";
 import {
@@ -698,4 +698,199 @@ describe("scanForSecrets — S1 padded inner runs (all three subsystems)", () =>
     expect(typeof scanForSecrets(text).clean).toBe("boolean");
     expect(Date.now() - started).toBeLessThan(30_000);
   }, 60_000);
+});
+
+// ── S2: the penalty-order invariant, pinned directly ─────────────────────────
+//
+// The entire safety argument for enumerating every inner run (rather than only
+// the first, as the pre-enumeration code did) is ONE invariant:
+//
+//   penalty 0 is exactly the chain the old first-run-only code walked, and a
+//   child's penalty is never below its parent's, so the whole old traversal is
+//   materialized — same views, same order, same budget draw — BEFORE any
+//   newly-enumerated sibling is charged a single byte. Enumeration can then
+//   only ADD detections, never starve one that already worked.
+//
+// Behavioral tests do not bind that. Mutating the penalty arithmetic (+n+1,
+// +max(n-1,0), +min(n,1)) leaves the whole suite green while breaking it. So
+// assert it DIRECTLY: run a frozen reference implementation of the old walk and
+// require its output to be an exact hash-for-hash PREFIX of the current one.
+describe("S2 — iterativeRunViews penalty order (invariant, not behavior)", () => {
+  const b64 = (s: string) => Buffer.from(s, "utf8").toString("base64");
+  const sha = (s: string) => createHash("sha256").update(s, "latin1").digest("hex");
+  type Scheme = (typeof ENCODED_SCHEMES)[number];
+
+  // FROZEN reference: the first-run-only walk exactly as it stood before the
+  // penalty-ordered peel (secret-decode-engine.ts @ 3dfd476f^). A BFS queue,
+  // one `exec` per scheme per view (never matchAll), the same shared byte
+  // budget charged per materialized view. Do not "improve" this — it is the
+  // baseline the current engine must not regress against, so it must keep
+  // walking the OLD chain even after the engine changes.
+  function refRunDecodeViews(scheme: Scheme, run: string): string[] {
+    // Mirrors bufferTextViews: latin1 + both-endian utf16le for the two
+    // byte-bearing schemes; percent has a single textual decoding. The BYTES
+    // come from the engine's own exported decode, so this cannot drift on
+    // decode rules — only the (frozen) list of text interpretations is local.
+    const decoded = scheme.decode(run);
+    if (decoded === null) return [];
+    if (scheme.label === "percent") return [decoded];
+    const buf = Buffer.from(decoded, "latin1");
+    const views = [buf.toString("latin1"), buf.toString("utf16le")];
+    if (buf.length >= 2 && buf.length % 2 === 0) {
+      const swapped = Buffer.from(buf);
+      swapped.swap16();
+      views.push(swapped.toString("utf16le"));
+    }
+    return views;
+  }
+
+  function referenceFirstRunWalk(
+    outerScheme: Scheme,
+    outerRun: string,
+    budget: { remaining: number }
+  ): string[] {
+    const collected: string[] = [];
+    let queue: Array<{ run: string; scheme: Scheme }> = [{ run: outerRun, scheme: outerScheme }];
+    while (queue.length > 0 && budget.remaining > 0) {
+      const nextLayer: Array<{ run: string; scheme: Scheme }> = [];
+      for (const item of queue) {
+        if (budget.remaining <= 0) break;
+        const views = refRunDecodeViews(item.scheme, item.run);
+        if (views.length === 0) continue;
+        for (const v of views) {
+          if (budget.remaining <= 0) break;
+          budget.remaining -= v.length;
+          collected.push(v);
+          for (const inner of ENCODED_SCHEMES) {
+            const fresh = new RegExp(inner.re.source, inner.re.flags);
+            const im = fresh.exec(v);
+            if (im) nextLayer.push({ run: im[0], scheme: inner });
+          }
+        }
+      }
+      queue = nextLayer;
+    }
+    return collected;
+  }
+
+  // ── document spread ────────────────────────────────────────────────────────
+  const wrap = (n: number) => {
+    let w = ANT_KEY;
+    for (let i = 0; i < n; i++) w = b64(w);
+    return w;
+  };
+  const fillerOf = (kb: number) => "QUFB".repeat((kb * 1024) / 4);
+
+  const docs: Array<[string, string]> = [];
+  for (const fillerKB of [8, 48, 96]) {
+    for (const pads of [1, 4]) {
+      for (const depth of [1, 2, 3]) {
+        for (const blobFirst of [true, false]) {
+          const t = `"t":"${wrap(depth)}"`;
+          const f = Array.from({ length: pads }, (_, i) => `"f${i}":"${fillerOf(fillerKB)}"`);
+          const body = blobFirst ? [t, ...f] : [...f, t];
+          docs.push([
+            `filler=${fillerKB}KB/n=${pads}/depth=${depth}/${blobFirst ? "blob-first" : "blob-last"}`,
+            b64(`{${body.join(",")}}`),
+          ]);
+        }
+      }
+    }
+  }
+  // many-pad: 64 short pads crowding the real blob out of the front of the view.
+  docs.push([
+    "many-pad(64) then blob",
+    b64(
+      `{${Array.from({ length: 64 }, (_, i) => `"p${i}":"${"a".repeat(16)}"`).join(",")},"t":"${wrap(2)}"}`
+    ),
+  ]);
+  // decode bomb: a sibling that itself peels several layers deep and expands.
+  docs.push([
+    "decode bomb sibling",
+    b64(`{"bomb":"${b64(b64(b64(fillerOf(32))))}","t":"${wrap(3)}"}`),
+  ]);
+  // shallow prose noise around a single-layer blob.
+  docs.push(["shallow noise", b64(`the quick brown fox ${wrap(1)} jumps over the lazy dog`)]);
+
+  const BUDGETS = [4 * 1024, 64 * 1024, 256 * 1024, 1024 * 1024];
+
+  it("the old first-run-only walk is an exact prefix of the penalty-ordered peel", () => {
+    let pairs = 0;
+    for (const [name, run] of docs) {
+      for (const B of BUDGETS) {
+        pairs++;
+        const ref = referenceFirstRunWalk(ENCODED_SCHEMES[0], run, { remaining: B });
+        const now = iterativeRunViews(ENCODED_SCHEMES[0], run, { remaining: B });
+        expect(
+          now.length,
+          `${name} @ ${B}B: peel shorter than the old walk`
+        ).toBeGreaterThanOrEqual(ref.length);
+        for (let i = 0; i < ref.length; i++) {
+          expect(sha(now[i]), `${name} @ ${B}B: view #${i} diverges from the old walk`).toBe(
+            sha(ref[i])
+          );
+        }
+      }
+    }
+    expect(pairs).toBe(docs.length * BUDGETS.length);
+  }, 300_000);
+
+  // The prefix property alone still permits collapsing sibling penalties
+  // (`penalty + min(n, 1)`): the n=0 chain stays intact, so the old traversal is
+  // preserved, but every later sibling is promoted into the SAME bucket as the
+  // real blob's own deeper layers and drains the shared budget ahead of them.
+  // Measured against the parent commit that is not a regression — which is why
+  // no behavioral test caught it — but it is strictly worse than the shipped
+  // ordering, so pin it: a blob at sibling index 1 must survive the fillers
+  // that follow it.
+  it("a sibling-index-1 blob is not starved by the fillers that follow it", () => {
+    const filler = "QUFB".repeat(3 * 1024); // 12KB each
+    const fillers = Array.from({ length: 8 }, (_, i) => `"f${i}":"${filler}"`).join(",");
+    const text = "p=" + b64(`{"head":"${"a".repeat(16)}","t":"${wrap(3)}",${fillers}}`);
+    expect(scanForSecrets(text).clean).toBe(false);
+  }, 60_000);
+});
+
+// ── S2: MAX_INNER_RUNS_PER_VIEW is a SECURITY boundary — pin it exactly ──────
+// The cap decides how many filler runs an attacker must prepend before the real
+// blob falls off the enumeration. `views.length < 4000` cannot tell 255 from
+// 257. This can: with 255 fillers the blob is inner run index 255 — the last
+// index the cap admits — and is FOUND; with 256 it is index 256 and MISSED.
+// Both directions are asserted, at one and at three wrap layers, so moving the
+// cap by one in either direction, or flipping `n < CAP` to `n <= CAP`, is red.
+describe("S2 — the inner-run cap boundary (255 found / 256 missed)", () => {
+  const b64 = (s: string) => Buffer.from(s, "utf8").toString("base64");
+  const wrap = (n: number) => {
+    let w = ANT_KEY;
+    for (let i = 0; i < n; i++) w = b64(w);
+    return w;
+  };
+  // Each filler is one BASE64_RUN_RE match (16+ chars of the class). JSON
+  // punctuation terminates each run, so run index == position in the object.
+  const pad = (i: number) => `"f${i}":"${"a".repeat(16) + String(i).padStart(4, "0")}"`;
+  const doc = (fillers: number, depth: number) =>
+    "p=" +
+    b64(
+      `{${Array.from({ length: fillers }, (_, i) => pad(i)).join(",")}${
+        fillers ? "," : ""
+      }"t":"${wrap(depth)}"}`
+    );
+
+  for (const depth of [1, 3]) {
+    it(
+      `255 fillers before the blob: still FOUND (depth ${depth})`,
+      () => {
+        expect(scanForSecrets(doc(255, depth)).clean).toBe(false);
+      },
+      60_000
+    );
+
+    it(
+      `256 fillers before the blob: MISSED — the cap binds here (depth ${depth})`,
+      () => {
+        expect(scanForSecrets(doc(256, depth)).clean).toBe(true);
+      },
+      60_000
+    );
+  }
 });

@@ -1,4 +1,4 @@
-import { readFileSync, existsSync, mkdirSync, statSync } from "node:fs";
+import { readFileSync, existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { containsNulByte } from "../binary-sniff.js";
 import { dirname } from "node:path";
 import { resolveAgentPath, sessionIdOf } from "../workspace/paths.js";
@@ -52,6 +52,22 @@ export const readTool: ToolDefinition = {
   async execute(args) {
     const filePath = resolveAgentPath(String(args.path), sessionIdOf(args));
     if (!existsSync(filePath)) return fileNotFoundError(filePath);
+    // A directory read used to fall through to the generic catch below and come
+    // back as "EISDIR: illegal operation on a directory" — a libc string that
+    // tells a model nothing about what to do next. Observed 2026-09-08: a local
+    // model read an app directory, got EISDIR, and spent thirteen near-identical
+    // `find` calls before giving up. Name the mistake and hand over the listing
+    // it was actually after, so the recovery costs no extra call.
+    if (statSync(filePath).isDirectory()) {
+      let entries: string[] = [];
+      try { entries = readdirSync(filePath).slice(0, 100); } catch { /* listing is a courtesy */ }
+      return err(
+        `${filePath} is a directory, not a file. read opens one file.` +
+        (entries.length > 0 ? ` It contains: ${entries.join(", ")}` : " It is empty.") +
+        ` Read one of these by name, or call glob to search inside it.`,
+        { path: filePath, isDirectory: true, entries },
+      );
+    }
 
     // Open the VALIDATED canonical inode (realpath + O_NOFOLLOW on the leaf) so
     // the bytes read are the inode the pre-dispatch gate approved — a symlink

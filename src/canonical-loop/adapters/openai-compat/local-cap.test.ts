@@ -93,20 +93,24 @@ describe("resolveLocalCap (seam wrapper)", () => {
     });
   });
 
-  it("a tools-stripped turn (fits_without_tools) sizes against the request WITHOUT the manifest", () => {
-    // With the manifest counted the budget would be gone; without it there is
-    // room — the wrapper must use the stripped size.
-    const strippedFit = fit({
-      verdict: "fits_without_tools",
-      requestTokens: 7_500,
-      toolTokens: 5_000,
-    });
+  it("sizes against the FULL requestTokens — the manifest ships, so it eats the budget", () => {
+    // The preflight never strips tools, so the estimate must not subtract
+    // toolTokens: 8_192 − 7_500 − reserve is under the useful minimum → omit.
+    const fullFit = fit({ requestTokens: 7_500, toolTokens: 5_000 });
     const d = resolveLocalCap({
       baseURL: "http://127.0.0.1:11434/v1",
       explicitMaxTokens: undefined,
       window: { tokens: 8_192, provenance: "probed" },
-      fit: strippedFit,
+      fit: fullFit,
     });
-    expect(d).toEqual({ maxTokens: 8_192 - 2_500 - OUTPUT_RESERVE_TOKENS, omitDefault: false });
+    expect(d).toEqual({ maxTokens: undefined, omitDefault: true });
+    // And with a smaller request the budget is window − requestTokens − reserve.
+    const roomy = resolveLocalCap({
+      baseURL: "http://127.0.0.1:11434/v1",
+      explicitMaxTokens: undefined,
+      window: { tokens: 8_192, provenance: "probed" },
+      fit: fit({ requestTokens: 4_000, toolTokens: 2_000 }),
+    });
+    expect(roomy).toEqual({ maxTokens: 8_192 - 4_000 - OUTPUT_RESERVE_TOKENS, omitDefault: false });
   });
 });

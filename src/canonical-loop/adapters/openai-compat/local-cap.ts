@@ -72,9 +72,9 @@ export function clampLocalMaxTokens(args: {
 
 /**
  * Seam-level wrapper for openai-compat's runTurn: derives endpoint locality
- * from the baseURL and the shipped prompt size from the preflight fit —
- * when the preflight stripped tools for this turn (fits_without_tools), the
- * tool manifest is NOT in the outbound request and must not eat the budget.
+ * from the baseURL and the shipped prompt size from the preflight fit. The
+ * request ships exactly as sized — tools are never stripped by the preflight
+ * — so the full requestTokens estimate is the budget the prompt consumes.
  */
 export function resolveLocalCap(args: {
   baseURL: string | undefined;
@@ -87,9 +87,6 @@ export function resolveLocalCap(args: {
     explicitMaxTokens: args.explicitMaxTokens,
     windowTokens: args.window.tokens,
     windowProvenance: args.window.provenance,
-    promptTokensEstimate:
-      args.fit.verdict === "fits_without_tools"
-        ? args.fit.requestTokens - args.fit.toolTokens
-        : args.fit.requestTokens,
+    promptTokensEstimate: args.fit.requestTokens,
   });
 }

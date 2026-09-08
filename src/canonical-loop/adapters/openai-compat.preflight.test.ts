@@ -2,8 +2,9 @@
 // "hi" to an LM Studio gemma loaded at n_ctx 8,192 was sent as a 36,611-token
 // request (system prompt + ~100 tool schemas) → raw engine 400
 // (exceed_context_size_error). The adapter must never send a request whose
-// fixed overhead can't fit — degrade tools when that alone makes it fit,
-// refuse with a clear error when even that can't.
+// fixed overhead can't fit — and it must never "degrade" by stripping tools:
+// a tool loop never sends a step without the tools it started with. Too big
+// against a MEASURED window → refuse with every component's size.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("./openai-compat/stream-once.js", () => ({
@@ -89,21 +90,30 @@ beforeEach(() => {
 });
 
 describe("openai-compat request-fit preflight", () => {
-  it('regression: "hi" into an 8k-window model with an oversized tool manifest must not 400 — tools are dropped, request still goes out', async () => {
+  it('regression: "hi" into an 8k-window model with an oversized tool manifest is REFUSED with numbers — tools are never stripped, nothing is sent', async () => {
     probed(8_192);
     const reports: AdapterReport[] = [];
     const adapter = makeAdapter();
+    const input = hiInput([bigTool(36_000)]);
 
-    const result = await adapter.runTurn(hiInput([bigTool(36_000)]), r => reports.push(r));
+    const result = await adapter.runTurn(input, r => reports.push(r));
 
-    expect(mockStream).toHaveBeenCalledTimes(1);
-    const sent = mockStream.mock.calls[0][0];
-    expect(sent.tools).toHaveLength(0);
-    expect(sent.toolChoice).toBeUndefined();
-    expect(result.terminalReason).toBe("done");
-    expect(reports.filter(r => r.kind === "error")).toHaveLength(0);
+    expect(mockStream).not.toHaveBeenCalled();
+    expect(result.terminalReason).toBe("error");
+    const err = reports.find(r => r.kind === "error");
+    expect(err).toBeDefined();
+    if (err?.kind === "error") {
+      expect(err.code).toBe("context_window_exceeded");
+      expect(err.retryable).toBe(false);
+      expect(err.message).toContain("8,192");
+      expect(err.message).toMatch(/system prompt ~[\d,]+/);
+      expect(err.message).toMatch(/tools ~[\d,]+/);
+      expect(err.message).toMatch(/messages ~[\d,]+/);
+    }
+    // The caller's tool list is untouched — the preflight sizes, never reshapes.
+    expect(input.tools).toHaveLength(1);
     // Window problem ≠ capability problem: the permanent no-tool latch must
-    // NOT fire off a fit-degrade, even on a loopback endpoint.
+    // NOT fire off a preflight refusal, even on a loopback endpoint.
     expect(vi.mocked(markNoToolSupport)).not.toHaveBeenCalled();
   });
 
@@ -134,13 +144,17 @@ describe("openai-compat request-fit preflight", () => {
   it("passes tools through untouched when the request fits", async () => {
     probed(128_000);
     const adapter = makeAdapter();
-    const tool = { name: "read_file", description: "read a file", inputSchema: { type: "object" } };
+    const tools = [
+      { name: "read_file", description: "read a file", inputSchema: { type: "object" } },
+      { name: "bash", description: "run a command", inputSchema: { type: "object" } },
+    ];
 
-    const result = await adapter.runTurn(hiInput([tool]), () => {});
+    const result = await adapter.runTurn(hiInput(tools), () => {});
 
     expect(mockStream).toHaveBeenCalledTimes(1);
     const sent = mockStream.mock.calls[0][0];
-    expect(sent.tools.map(t => t.name)).toEqual(["read_file"]);
+    expect(sent.tools).toHaveLength(tools.length);
+    expect(sent.tools.map(t => t.name)).toEqual(["read_file", "bash"]);
     expect(result.terminalReason).toBe("done");
   });
 

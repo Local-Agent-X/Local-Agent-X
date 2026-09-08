@@ -46,8 +46,7 @@ import { byteLengthUtf8 } from "./openai-compat/helpers.js";
 import { canonicalToChatParam } from "./openai-compat/canonical-to-chat-param.js";
 import { resolveLocalCap } from "./openai-compat/local-cap.js";
 import { streamOnce, applyToolCallTextFallback } from "./openai-compat/stream-once.js";
-import { assessRequestFit, describeUnfittableRequest } from "../../context-manager/request-fit.js";
-import { resolveContextWindow } from "../../context-manager/model-windows.js";
+import { assessOpenAiCompatPreflight } from "./openai-compat/request-preflight.js";
 import { proseLooksLikeToolCall, annotatePersistentNarration } from "./tool-call-text-extractor.js";
 import { resolveStepReasoningEffort } from "../step-effort.js";
 import { classifyModelStop } from "./model-stop.js";
@@ -142,57 +141,29 @@ export class OpenAICompatAdapter implements Adapter {
           : {}),
     };
 
-    // Request-fit preflight. The engine 400s (llama.cpp/LM Studio
-    // exceed_context_size_error) on a request bigger than the model's LOADED
-    // context, and history compaction can't save a request whose FIXED
-    // overhead (system prompt + tool manifest) doesn't fit on its own —
-    // observed 2026-07-15: a 36,611-token "hi" into an 8,192-ctx LM Studio
-    // gemma. Local runtimes report their true loaded window via the
-    // src/local-runtimes/ probes, so size the composed request against it.
-    const window = resolveContextWindow(model);
-    const fit = assessRequestFit({
-      windowTokens: window.tokens,
-      systemPrompt: req.systemPrompt,
-      tools: req.tools,
-      messages: req.messages,
-    });
-    // Only ACT on a window we actually measured. A "floor" window is the
-    // placeholder for a local model that hasn't loaded yet (no /api/ps entry,
-    // no Modelfile num_ctx) — it is not this model's window, it's a stand-in.
-    // Refusing on it deadlocks: the refused send is the very request that
-    // would load the model, populate /api/ps, and replace the guess with the
-    // truth on the next 60s sweep. Regressed 2026-07-15 when this preflight
-    // landed six hours after the floor and silently voided the floor's
-    // "self-corrects once the model loads" premise — a 262,144-ctx qwen3.6
-    // was refused all night against a phantom 8,192. Send it: an engine 400
-    // is recoverable and self-correcting, a refusal loop is neither.
-    if (window.provenance === "floor" && fit.verdict !== "fits") {
-      logger.info(
-        `${model}: window unknown (model not loaded yet) — the ${window.tokens}-token floor is a placeholder, not a measurement, so preflight is not refusing this send. The runtime will load the model and the next sweep learns its real window. Compaction still sizes history against the floor.`,
-      );
-    } else if (fit.verdict === "too_big") {
-      const message = describeUnfittableRequest(model, fit);
-      logger.warn(`preflight refused send: ${message}`);
-      report({ kind: "error", code: "context_window_exceeded", message, retryable: false });
+    // Request-fit preflight (see request-preflight.ts). Invariant: a tool
+    // loop never sends a step without the tools it started with — if the
+    // request doesn't fit the MEASURED window it is too_big and refused with
+    // numbers; a floor window is a placeholder and never refuses.
+    const preflight = assessOpenAiCompatPreflight({ model, req });
+    if (preflight.kind === "refuse") {
+      report({ kind: "error", code: "context_window_exceeded", message: preflight.message, retryable: false });
       return {
         providerState: this.buildProviderState(input, { preflight: "context_window_exceeded" }),
         terminalReason: "error",
       };
-    } else if (fit.verdict === "fits_without_tools") {
-      // Window problem, not a capability problem — this turn only, and never
-      // markNoToolSupport (the model may do tools fine at a larger n_ctx).
-      logger.info(
-        `${model}: tool manifest (~${fit.toolTokens} tokens) can't fit the ${fit.windowTokens}-token window — sending this turn without tools`,
-      );
-      req.tools = [] as unknown as ProviderRequest["tools"];
-      delete req.toolChoice;
     }
 
     // Window-aware output cap. vLLM-class engines validate prompt+max_tokens
     // against max_model_len, so on a MEASURED window the local default (and
     // any explicit cap) clamps down to the real completion budget — or is
     // omitted entirely when none is left. See local-cap.ts for the policy.
-    const cap = resolveLocalCap({ baseURL, explicitMaxTokens: this.opts.maxTokens, window, fit });
+    const cap = resolveLocalCap({
+      baseURL,
+      explicitMaxTokens: this.opts.maxTokens,
+      window: preflight.window,
+      fit: preflight.fit,
+    });
     req.maxTokens = cap.maxTokens;
     if (cap.omitDefault) req.omitDefaultMaxTokens = true;
 

@@ -27,6 +27,7 @@ import { createCronTools } from "./cron/tools.js";
 import { createBrowserTools } from "./tools/browser-tools/index.js";
 import { createHttpRequestTool } from "./tools/http-request.js";
 import { imageTools } from "./tools/image-tools/index.js";
+import { createSecretTools } from "./tools/secret-tools.js";
 import type { ToolDefinition } from "./types.js";
 
 /** Authored bound on a compact description (ToolDefinition.compactDescription). */
@@ -50,6 +51,7 @@ function realCatalog(): ToolDefinition[] {
     ...createBrowserTools(),
     createHttpRequestTool(),
     ...imageTools,
+    ...createSecretTools(stub),
   ];
 }
 

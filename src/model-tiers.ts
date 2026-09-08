@@ -176,6 +176,17 @@ export const ESSENTIAL_TOOLS_ORDER: readonly string[] = [
   // so "edit this photo" reaches the model instead of falling back to a
   // from-scratch generate_image that never sees the source pixels.
   "generate_image", "edit_image", "generate_video",
+  // The credential path, for the same reason the media tools are here and not
+  // behind the intent filter: when it is missing the model does not degrade
+  // gracefully, it degrades DANGEROUSLY. Live 2026-09-08, a medium local model
+  // asked to deploy with a vault-stored token: clipboard_write_from_secret was
+  // filtered out, so it tried to read ~/.vercel/auth.json (tainting the session
+  // and blocking its own egress), then finished by asking the user to "paste
+  // the token value here" in plain chat. These three are the only route from a
+  // stored credential to a working command that never puts the value in the
+  // model's context, and list_secrets is what lets it know the credential is
+  // there at all.
+  "list_secrets", "clipboard_write_from_secret", "request_secret",
 ];
 
 /** Longest parameter `description` a medium/weak schema keeps verbatim. */

@@ -83,6 +83,8 @@ const clipboardWrite: ToolDefinition = {
 const clipboardWriteFromSecret: ToolDefinition = {
   name: "clipboard_write_from_secret",
   effect: { class: "idempotent-mutation" },
+  compactDescription:
+    "Copy a vault secret to the clipboard without ever seeing its value. Use whenever a stored credential is needed — never read a credential file, never ask the user to paste one. Example: {\"name\":\"VERCEL_TOKEN\"}.",
   description:
     "Copy a vault-stored secret value to the system clipboard WITHOUT the model ever seeing it. " +
     "Use this when the user wants a secret on their clipboard (to paste into a 3rd-party UI) but the " +

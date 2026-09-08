@@ -20,6 +20,8 @@ export function createSecretTools(
 ): ToolDefinition[] {
   const requestSecretTool: ToolDefinition = {
     name: "request_secret",
+    compactDescription:
+      "Ask the user for an API key or token through a secure prompt; it is stored encrypted and never enters the chat. Use this instead of asking them to type a credential to you.",
     description:
       "Request an API key or token from the user via a secure input prompt. The secret is stored encrypted and never appears in chat. Use this when you need credentials for an API call. If the secret already exists, it will confirm availability without re-prompting.",
     parameters: {
@@ -156,6 +158,8 @@ export function createSecretTools(
 
   const listSecretsTool: ToolDefinition = {
     name: "list_secrets",
+    compactDescription:
+      "List the NAMES of stored secrets (never the values), so you can tell whether a credential already exists before requesting one. Use it before assuming you need to ask.",
     description:
       "List the names and services of all stored secrets (API keys, tokens). " +
       "Does NOT reveal secret values — only names so you know what's available. " +

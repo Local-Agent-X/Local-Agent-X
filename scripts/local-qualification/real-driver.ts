@@ -1,11 +1,18 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { killProcessTree } from "../../src/process-tree-kill.js";
 import { qualificationChildEnv } from "./child-env.js";
-import { chatEvidence, MARKER, qualificationPrompt, READ_NONCE, readSse, type QualificationChatKind } from "./chat-evidence.js";
+import { chatEvidence, MARKER, qualificationPrompt, READ_NONCE, readSse, readSseUntil, type QualificationChatKind } from "./chat-evidence.js";
+import {
+  FILE_NAVIGATION_SCENARIO_IDS,
+  fileNavigationEvidence,
+  fileNavigationPrompt,
+  trackFileNavigation,
+  writeFileNavigationFixture,
+} from "./file-navigation.js";
 import {
   delayWithSignal,
   freePort,
@@ -19,11 +26,14 @@ import {
   type QualificationProxy,
   type QualificationProxyCounters,
 } from "./qualification-proxy.js";
+import { compactionEvidence, persistedMessageCount, readPersistedSummary, readSessionRows } from "./session-evidence.js";
 
 import type {
   CertificationResult,
   ChatResult,
   CompactionResult,
+  FileNavigationResult,
+  FileNavigationScenarioId,
   QualificationDriver,
   RuntimeStatus,
 } from "./types.js";
@@ -100,6 +110,7 @@ export class RealQualificationDriver implements QualificationDriver {
         mkdirSync(this.dataDir, { recursive: true });
         mkdirSync(this.workspace, { recursive: true });
         writeFileSync(join(this.workspace, "qualification-note.txt"), `${READ_NONCE}\n`, "utf8");
+        writeFileNavigationFixture(this.workspace);
         await waitForBarrier(this.options, "proxy-bind", lifecycleSignal);
         this.assertOpen(generation, lifecycleSignal);
         const proxy = await startQualificationProxy(
@@ -183,29 +194,45 @@ export class RealQualificationDriver implements QualificationDriver {
 
   protected observeChatEvents(_kind: QualificationChatKind, _events: Array<Record<string, unknown>>): void {}
 
+  // One scenario per fresh session so an earlier answer (the located app dir)
+  // never leaks into the next scenario. The stream is cancelled at the action
+  // cap; bounded() in run.ts owns the wall clock.
+  async navigate(
+    scenario: FileNavigationScenarioId,
+    signal: AbortSignal,
+    onProgress?: (progress: { actions: number; failedActions: number }) => void,
+  ): Promise<FileNavigationResult> {
+    const response = await fetch(`${this.laxUrl}/api/chat`, {
+      method: "POST",
+      headers: this.headers(),
+      body: JSON.stringify({
+        // Short suffix on purpose: the product caps a session id at 64 chars
+        // and "qualification-<uuid>" already spends 50.
+        sessionId: `${this.sessionId}-nav${FILE_NAVIGATION_SCENARIO_IDS.indexOf(scenario)}`,
+        message: fileNavigationPrompt(scenario),
+        attachments: [],
+      }),
+      signal: requestSignal(signal, REQUEST_TIMEOUT_MS),
+    });
+    if (!response.ok || !response.body) throw new Error(`navigation chat failed: HTTP ${response.status}`);
+    const tracker = trackFileNavigation(onProgress);
+    const { events, stopped } = await readSseUntil(response, (event) => tracker.onEvent(event));
+    return fileNavigationEvidence(events, stopped);
+  }
+
   async compact(signal: AbortSignal): Promise<CompactionResult> {
     throwIfAborted(signal);
     const before = this.counters.background;
-    const persistedMessageCount = this.readSessionRows().filter((row) => row.kind === "msg").length;
+    const persistedMessages = persistedMessageCount(readSessionRows(this.dataDir, this.sessionId));
     const response = await this.json<{ ok: boolean }>("POST", "/api/compact", { sessionId: this.sessionId }, signal);
-    const rows = this.readSessionRows();
-    const summary = this.readPersistedSummary(rows);
-    const leadingConversationRow = rows.find((row) => row.kind !== "meta");
-    return {
-      ok: response.ok,
-      backgroundRequests: this.counters.background - before,
-      persistedMessageCount,
-      persistedSummary: summary !== null,
-      summaryIsLeading: leadingConversationRow?.kind === "summary"
-        && typeof leadingConversationRow.content === "string"
-        && leadingConversationRow.content.startsWith("[COMPACTED CONTEXT"),
-      summaryContainsMarker: summary?.includes(MARKER) ?? false,
-    };
+    return compactionEvidence(
+      readSessionRows(this.dataDir, this.sessionId), response.ok, this.counters.background - before, persistedMessages,
+    );
   }
 
   async persistedSummary(signal: AbortSignal): Promise<{ persisted: boolean; containsMarker: boolean }> {
     throwIfAborted(signal);
-    const summary = this.readPersistedSummary();
+    const summary = readPersistedSummary(readSessionRows(this.dataDir, this.sessionId));
     return { persisted: summary !== null, containsMarker: summary?.includes(MARKER) ?? false };
   }
 
@@ -375,19 +402,5 @@ export class RealQualificationDriver implements QualificationDriver {
     });
     if (!response.ok) throw new Error(`${method} ${path} failed: HTTP ${response.status}`);
     return await response.json() as T;
-  }
-
-  private readSessionRows(): Array<{ kind?: string; content?: string }> {
-    const path = join(this.dataDir, "sessions", `${this.sessionId}.jsonl`);
-    try {
-      return readFileSync(path, "utf8").split("\n").filter(Boolean)
-        .map((line) => JSON.parse(line) as { kind?: string; content?: string });
-    } catch {
-      return [];
-    }
-  }
-
-  private readPersistedSummary(rows = this.readSessionRows()): string | null {
-    return [...rows].reverse().find((row) => row.kind === "summary")?.content ?? null;
   }
 }

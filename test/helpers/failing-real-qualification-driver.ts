@@ -1,6 +1,6 @@
 import { RealQualificationDriver } from "../../scripts/local-qualification/real-driver.js";
 import type { QualificationChatKind } from "../../scripts/local-qualification/chat-evidence.js";
-import type { QualificationStageName } from "../../scripts/local-qualification/types.js";
+import type { FileNavigationScenarioId, QualificationStageName } from "../../scripts/local-qualification/types.js";
 
 export class FailingRealQualificationDriver extends RealQualificationDriver {
   private certified = false;
@@ -38,6 +38,16 @@ export class FailingRealQualificationDriver extends RealQualificationDriver {
     if (kind === "baseline") this.fail("chat_sse");
     if (kind === "workspace-read") this.fail("workspace_read");
     if (kind === "continuity") this.fail("continuity");
+    return result;
+  }
+
+  override async navigate(
+    scenario: FileNavigationScenarioId,
+    signal: AbortSignal,
+    onProgress?: (progress: { actions: number; failedActions: number }) => void,
+  ) {
+    const result = await super.navigate(scenario, signal, onProgress);
+    this.fail("file_navigation");
     return result;
   }
 

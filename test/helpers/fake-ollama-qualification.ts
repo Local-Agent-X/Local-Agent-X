@@ -74,11 +74,18 @@ function contentText(message: WireMessage): string {
   return typeof message.content === "string" ? message.content : "";
 }
 
+const NAVIGATION_TARGET = "bellavida-medical-massage-clone";
+const NAVIGATION_FOOTER = /LAX_QUALIFICATION_FOOTER_[0-9A-F]+/;
+const NAVIGATION_CSS_DEFINITION = /[^\s"'`]*bellavida-medical-massage-clone[\\/]css[\\/]site\.css/;
+
 export class FakeOllamaQualificationService {
   readonly model = "qualification-fake:1b";
   readonly digest = "sha256:qualification-fake";
   readonly counts = { version: 0, tags: 0, ps: 0, show: 0, generate: 0, completion: 0, forbidden: 0 };
   readonly received: string[] = [];
+  /** "answer" grounds every navigation reply in a tool result; "wander" never stops calling tools. */
+  navigation: "answer" | "wander" = "answer";
+  private wanderCalls = 0;
   private server: Server | null = null;
   private baseUrl = "";
   async start(): Promise<string> {
@@ -162,12 +169,22 @@ export class FakeOllamaQualificationService {
 
     const latestUser = [...messages].reverse().find((entry) => entry.role === "user");
     const userText = latestUser ? contentText(latestUser) : "";
-    if (userText.includes("qualification-note.txt")) {
+    // Same whole-transcript route as the navigation branch below: the product
+    // appends a continuation user turn after a tool result, so the LATEST user
+    // message is that nudge and the original request is one turn further back.
+    if (allText.includes("qualification-note.txt")) {
       const hasReadNonceResult = messages.some((entry) => (
         entry.role === "tool" && contentText(entry).includes(READ_NONCE)
       ));
       if (hasReadNonceResult) return stream(res, READ_NONCE);
       return stream(res, "", { id: "read-call-1", name: "read", args: { path: "workspace/qualification-note.txt" } });
+    }
+    // Routed on the WHOLE transcript, not just the latest user message: the
+    // product's constrained-local prompt budget can drop the original user
+    // message from the continuation request, and a latest-message-only route
+    // then fell through to the generic reply.
+    if (allText.includes("bellavidamassage clone") || allText.includes("defines the CSS class")) {
+      return this.navigationReply(allText, messages, res);
     }
     if (userText.includes("earlier compacted context")) {
       const priorText = messages.slice(0, -1).map(contentText).join("\n");
@@ -176,5 +193,40 @@ export class FakeOllamaQualificationService {
     if (userText.includes("Reply with exactly READY")) return stream(res, "READY");
     if (userText.includes("Reply with exactly ACK")) return stream(res, "ACK");
     stream(res, "OK");
+  }
+
+  private navigationReply(transcript: string, messages: WireMessage[], res: ServerResponse): void {
+    const toolText = messages.filter((entry) => entry.role === "tool").map(contentText).join("\n");
+    if (this.navigation === "wander") {
+      this.wanderCalls += 1;
+      return stream(res, "", {
+        id: `wander-${this.wanderCalls}`,
+        name: "glob",
+        args: { pattern: `workspace/apps/*/wander-${this.wanderCalls}.html` },
+      });
+    }
+    if (transcript.includes("footer of the bellavidamassage clone")) {
+      if (!toolText) {
+        return stream(res, "", {
+          id: "nav-read-1", name: "read", args: { path: `workspace/apps/${NAVIGATION_TARGET}/index.html` },
+        });
+      }
+      const footer = NAVIGATION_FOOTER.exec(toolText);
+      return stream(res, footer ? footer[0] : "NO_FOOTER_FOUND");
+    }
+    if (transcript.includes("defines the CSS class")) {
+      if (!toolText) {
+        return stream(res, "", {
+          id: "nav-grep-1", name: "grep",
+          args: { pattern: "\\.qualification-accent-9b17\\s*\\{", path: "workspace/apps", output_mode: "files_with_matches" },
+        });
+      }
+      const definition = NAVIGATION_CSS_DEFINITION.exec(toolText);
+      return stream(res, definition ? definition[0].replaceAll("\\", "/") : "NO_DEFINITION_FOUND");
+    }
+    if (!toolText) {
+      return stream(res, "", { id: "nav-glob-1", name: "glob", args: { pattern: "workspace/apps/*/index.html" } });
+    }
+    return stream(res, toolText.includes(NAVIGATION_TARGET) ? `workspace/apps/${NAVIGATION_TARGET}` : "NO_APP_FOUND");
   }
 }

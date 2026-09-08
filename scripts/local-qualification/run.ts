@@ -1,8 +1,16 @@
-import type {
-  QualificationDriver,
-  QualificationScorecard,
-  QualificationStage,
-  QualificationStageName,
+import {
+  FILE_NAVIGATION_MAX_ACTIONS,
+  FILE_NAVIGATION_SCENARIO_IDS,
+  FILE_NAVIGATION_SCENARIO_TIMEOUT_MS,
+  scoreFileNavigation,
+} from "./file-navigation.js";
+import {
+  QUALIFICATION_STAGES,
+  type QualificationDriver,
+  type QualificationScenarioEvidence,
+  type QualificationScorecard,
+  type QualificationStage,
+  type QualificationStageName,
 } from "./types.js";
 
 const CERTIFICATION_SCENARIO_IDS = [
@@ -17,7 +25,11 @@ export interface QualificationRunOptions {
   signal?: AbortSignal;
   stageTimeoutMs?: number;
   cleanupTimeoutMs?: number;
+  /** Per-scenario wall clock for file_navigation; never exceeds stageTimeoutMs. */
+  scenarioTimeoutMs?: number;
 }
+
+export { CERTIFICATION_SCENARIO_IDS, FILE_NAVIGATION_SCENARIO_IDS };
 
 export function readQualificationConfig(env: NodeJS.ProcessEnv): { endpoint: string; model: string } {
   const endpoint = env.LAX_REAL_LOCAL_ENDPOINT?.trim() ?? "";
@@ -85,15 +97,20 @@ export async function runQualification(
   const stageTimeoutMs = options.stageTimeoutMs ?? 6 * 60_000;
   const cleanupTimeoutMs = options.cleanupTimeoutMs ?? 15_000;
 
-  const stage = async <T>(name: QualificationStageName, run: (signal: AbortSignal) => Promise<T>): Promise<T> => {
+  const stage = async <T>(
+    name: QualificationStageName,
+    run: (signal: AbortSignal) => Promise<T>,
+    budget: { timeoutMs?: number; scenarios?: QualificationScenarioEvidence[] } = {},
+  ): Promise<T> => {
     const started = Date.now();
+    const evidence = () => budget.scenarios ? { scenarios: budget.scenarios } : {};
     try {
       const value = await bounded(async (signal) => {
         const result = await run(signal);
         requireCondition(driver.forbiddenRequests() === 0, "forbidden local-runtime traffic occurred");
         return result;
-      }, stageTimeoutMs, options.signal);
-      stages.push({ name, ok: true, durationMs: Date.now() - started });
+      }, budget.timeoutMs ?? stageTimeoutMs, options.signal);
+      stages.push({ name, ok: true, durationMs: Date.now() - started, ...evidence() });
       return value;
     } catch (error) {
       stages.push({
@@ -103,9 +120,41 @@ export async function runQualification(
         failure: error instanceof QualificationTimeoutError
           ? "timeout"
           : error instanceof QualificationAbortError ? "aborted" : "failed",
+        ...evidence(),
       });
       throw error;
     }
+  };
+
+  const navigateScenarios = async (signal: AbortSignal, evidence: QualificationScenarioEvidence[]): Promise<void> => {
+    const scenarioTimeoutMs = Math.min(options.scenarioTimeoutMs ?? FILE_NAVIGATION_SCENARIO_TIMEOUT_MS, stageTimeoutMs);
+    for (const id of FILE_NAVIGATION_SCENARIO_IDS) {
+      const started = Date.now();
+      let progress = { actions: 0, failedActions: 0 };
+      try {
+        const result = await bounded(
+          (scenarioSignal) => driver.navigate(id, scenarioSignal, (next) => { progress = next; }),
+          scenarioTimeoutMs,
+          signal,
+        );
+        const ok = result.done && result.errorEvents === 0 && !result.capped
+          && result.actions <= FILE_NAVIGATION_MAX_ACTIONS && scoreFileNavigation(id, result.finalText);
+        evidence.push({
+          id, ok, actions: result.actions, failedActions: result.failedActions,
+          durationMs: Date.now() - started, ...(ok ? {} : { failure: "failed" as const }),
+        });
+      } catch (error) {
+        if (error instanceof QualificationAbortError) throw error;
+        evidence.push({
+          id, ok: false, actions: progress.actions, failedActions: progress.failedActions,
+          durationMs: Date.now() - started,
+          failure: error instanceof QualificationTimeoutError ? "timeout" : "failed",
+        });
+      }
+    }
+    const failed = evidence.filter((scenario) => !scenario.ok);
+    if (failed.length > 0 && failed.every((scenario) => scenario.failure === "timeout")) throw new QualificationTimeoutError();
+    requireCondition(failed.length === 0, "file navigation scenarios did not all pass");
   };
 
   try {
@@ -158,6 +207,16 @@ export async function runQualification(
       }
     });
 
+    const navigation: QualificationScenarioEvidence[] = [];
+    await stage("file_navigation", (signal) => navigateScenarios(signal, navigation), {
+      timeoutMs: Math.max(
+        stageTimeoutMs,
+        FILE_NAVIGATION_SCENARIO_IDS.length
+          * Math.min(options.scenarioTimeoutMs ?? FILE_NAVIGATION_SCENARIO_TIMEOUT_MS, stageTimeoutMs) + 5_000,
+      ),
+      scenarios: navigation,
+    });
+
     await stage("compaction", async (signal) => {
       const result = await driver.compact(signal);
       requireCondition(result.ok, "manual compaction failed");
@@ -195,7 +254,7 @@ export async function runQualification(
 
   return {
     version: 1,
-    ok: stages.length === 9 && stages.every((item) => item.ok) && cleanupOk,
+    ok: stages.length === QUALIFICATION_STAGES.length && stages.every((item) => item.ok) && cleanupOk,
     runtime: "ollama",
     model: { tag: driver.model, digest },
     stages,

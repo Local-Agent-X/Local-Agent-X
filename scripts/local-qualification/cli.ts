@@ -25,11 +25,21 @@ export interface QualificationCliDeps {
 export function sanitizedScorecard(scorecard: QualificationScorecard): QualificationScorecard {
   return {
     ...scorecard,
-    stages: scorecard.stages.map(({ name, ok, durationMs, failure }) => ({
+    stages: scorecard.stages.map(({ name, ok, durationMs, failure, scenarios }) => ({
       name,
       ok,
       durationMs,
       ...(failure ? { failure } : {}),
+      ...(scenarios ? {
+        scenarios: scenarios.map(({ id, ok: scenarioOk, actions, failedActions, durationMs: scenarioMs, failure: scenarioFailure }) => ({
+          id,
+          ok: scenarioOk,
+          actions,
+          failedActions,
+          durationMs: scenarioMs,
+          ...(scenarioFailure ? { failure: scenarioFailure } : {}),
+        })),
+      } : {}),
     })),
   };
 }

@@ -180,24 +180,67 @@ function isQualificationNotePath(value: unknown): boolean {
   return typeof value === "string" && /[\\/]qualification-note\.txt$/.test(value);
 }
 
-export async function readSse(response: Response): Promise<Array<Record<string, unknown>>> {
-  const text = await response.text();
+function parseSseFrame(frame: string): Array<Record<string, unknown>> {
   const events: Array<Record<string, unknown>> = [];
-  for (const frame of text.split(/\r?\n\r?\n/)) {
-    for (const line of frame.split(/\r?\n/)) {
-      if (!line.startsWith("data:")) continue;
-      const payload = line.slice(5).replace(/^ /, "");
-      try {
-        const parsed: unknown = JSON.parse(payload);
-        if (!isPlainRecord(parsed) || typeof parsed.type !== "string" || !KNOWN_EVENT_TYPES.has(parsed.type)) {
-          events.push({ type: "error", message: INVALID_SSE_MESSAGE });
-        } else {
-          events.push(parsed);
-        }
-      } catch {
+  for (const line of frame.split(/\r?\n/)) {
+    if (!line.startsWith("data:")) continue;
+    const payload = line.slice(5).replace(/^ /, "");
+    try {
+      const parsed: unknown = JSON.parse(payload);
+      if (!isPlainRecord(parsed) || typeof parsed.type !== "string" || !KNOWN_EVENT_TYPES.has(parsed.type)) {
         events.push({ type: "error", message: INVALID_SSE_MESSAGE });
+      } else {
+        events.push(parsed);
       }
+    } catch {
+      events.push({ type: "error", message: INVALID_SSE_MESSAGE });
     }
   }
   return events;
+}
+
+const FRAME_BOUNDARY = /\r?\n\r?\n/;
+
+/**
+ * Reads SSE frames as they arrive. `stop` is consulted after every event; once
+ * it returns true the body is cancelled so a wandering turn ends at the
+ * caller's cap instead of the wall clock.
+ */
+export async function readSseUntil(
+  response: Response,
+  stop: (event: Record<string, unknown>) => boolean,
+): Promise<{ events: Array<Record<string, unknown>>; stopped: boolean }> {
+  const events: Array<Record<string, unknown>> = [];
+  if (!response.body) return { events, stopped: false };
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let stopped = false;
+  const consume = (frame: string): void => {
+    for (const event of parseSseFrame(frame)) {
+      if (stopped) return;
+      events.push(event);
+      if (stop(event)) stopped = true;
+    }
+  };
+  try {
+    while (!stopped) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      for (let match = FRAME_BOUNDARY.exec(buffer); match && !stopped; match = FRAME_BOUNDARY.exec(buffer)) {
+        consume(buffer.slice(0, match.index));
+        buffer = buffer.slice(match.index + match[0].length);
+      }
+    }
+    if (!stopped) consume(buffer + decoder.decode());
+  } finally {
+    if (stopped) await reader.cancel().catch(() => {});
+    else reader.releaseLock();
+  }
+  return { events, stopped };
+}
+
+export async function readSse(response: Response): Promise<Array<Record<string, unknown>>> {
+  return (await readSseUntil(response, () => false)).events;
 }

@@ -6,10 +6,17 @@ import { runQualificationCli, sanitizedScorecard } from "../scripts/local-qualif
 import { qualificationChildEnv } from "../scripts/local-qualification/child-env.js";
 import { RealQualificationDriver } from "../scripts/local-qualification/real-driver.js";
 import { readQualificationConfig, runQualification } from "../scripts/local-qualification/run.js";
+import {
+  CSS_DEFINITION_PATH,
+  FILE_NAVIGATION_TARGET_APP,
+  FOOTER_MARKER,
+} from "../scripts/local-qualification/file-navigation.js";
 import type {
   CertificationResult,
   ChatResult,
   CompactionResult,
+  FileNavigationResult,
+  FileNavigationScenarioId,
   QualificationDriver,
   QualificationStageName,
   RuntimeStatus,
@@ -18,8 +25,14 @@ import { FakeOllamaQualificationService } from "./helpers/fake-ollama-qualificat
 
 const STAGES: QualificationStageName[] = [
   "isolated_boot", "passive_pre_certification", "operator_certification", "status_reads",
-  "chat_sse", "workspace_read", "compaction", "restart_restore", "continuity",
+  "chat_sse", "workspace_read", "file_navigation", "compaction", "restart_restore", "continuity",
 ];
+
+const NAVIGATION_ANSWERS: Record<FileNavigationScenarioId, string> = {
+  find_app_by_fuzzy_name: `workspace/apps/${FILE_NAVIGATION_TARGET_APP}`,
+  read_file_section: `The footer says: ${FOOTER_MARKER}`,
+  grep_for_symbol: `workspace/${CSS_DEFINITION_PATH}`,
+};
 
 const SCENARIOS = [
   "baseline_marker", "strict_json_schema", "required_tool_call",
@@ -104,6 +117,13 @@ class FakeDriver implements QualificationDriver {
       forbiddenControlEvents: 0,
       readNonceSeen: kind === "workspace-read",
       continuityMarkerSeen: kind === "continuity",
+    };
+  }
+
+  async navigate(scenario: FileNavigationScenarioId, signal: AbortSignal): Promise<FileNavigationResult> {
+    await this.gate("file_navigation", signal);
+    return {
+      done: true, errorEvents: 0, finalText: NAVIGATION_ANSWERS[scenario], actions: 2, failedActions: 0, capped: false,
     };
   }
 

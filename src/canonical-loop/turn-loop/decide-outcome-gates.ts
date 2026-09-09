@@ -20,233 +20,48 @@
  * side effects (append a next-turn nudge, register app touches, stash the build
  * confirmation) are the same ones the inlined blocks performed, in the same
  * order.
+ *
+ * SIZE — this file reached the hard 400-LOC gate (scripts/check-source-hygiene.mjs,
+ * MAX_LOC 400, GRANDFATHERED empty) and was split, per the practice
+ * decide-outcome.ts documents: "Split before it fails; never grandfather."
+ * The shared surface every gate implements moved to
+ * decide-outcome-gate-contract.ts (re-exported below, so no import path
+ * changed) and the five VERIFY gates — the ones that answer "does the WORK
+ * hold up?" by running an external check on what the turn produced — moved to
+ * decide-outcome-verify-gates.ts. What stayed is this file's own
+ * responsibility: the ORDER, plus the gates that answer "is this turn OVER?"
+ * from state already in hand (unresolved-tool-intent reads the final text,
+ * earned-done the open-steps list, late-inject the inject queue) and the one
+ * that finishes the terminal (framework-serve). Behavior is unchanged: the
+ * gate objects, their bodies, and COMPLETION_GATES' order are identical.
  */
-import type { Op } from "../../ops/types.js";
-import type { ToolCall } from "../contract-types.js";
 import { createLogger } from "../../logger.js";
 import { hasInjects, opConsumesInjects } from "../../agent-loop/inject-queue.js";
 import { getSessionForOp } from "../../ops/session-bridge.js";
 import { appendNudgeAsUserMessage } from "./nudges.js";
-import type { GuardFire } from "./guard-fire.js";
-import type { GuardOutcome } from "../types.js";
-import { appIdsTouchedByTurn, registerOpAppTouch, runRenderVerifyGate, turnTouchedAppFiles } from "./render-verify.js";
-import { runBuildVerifyGate } from "./build-verify.js";
-import { runSpecProbeGate } from "./spec-probes.js";
-import { runSpecAuditGate } from "./spec-audit.js";
-import { runDesignVerifyGate } from "./design-verify.js";
+import { CONTINUE, gateSource, type CompletionGate } from "./decide-outcome-gate-contract.js";
+import {
+  buildVerifyGate,
+  designVerifyGate,
+  renderVerifyGate,
+  specAuditGate,
+  specProbeGate,
+} from "./decide-outcome-verify-gates.js";
 import { runToolIntentGate } from "./tool-intent-gate.js";
 import { earnedDoneNudge } from "../middlewares/open-steps.js";
-import { opEditedSourceUnverified, opEditedSourcePaths } from "../middlewares/verify-gate.js";
-import { userAuthoredRequest } from "../../slash-commands.js";
 
-/** Everything a completion gate reads about the turn under decision. */
-export interface CompletionGateContext {
-  op: Op;
-  turnIdx: number;
-  toolCalls: ToolCall[];
-  /** The turn's final user-facing assistant text — for gates that judge what
-   *  the model SAID, not just what it did. Existing gates ignore it. */
-  assistantText: string;
-}
-
-/** A gate's terminal message paired with the fire appending it earns. */
-export interface GateHonestTerminal {
-  text: string;
-  fire: GuardFire;
-}
-
-export interface CompletionGateOutput {
-  /** True → veto the terminal: the runner sets terminalReason=null and stops. */
-  reopen: boolean;
-  /**
-   * Build-verify's held green confirmation, surfaced only when the op truly
-   * ends this turn (build-verify is the sole gate that produces it). Other
-   * gates leave it undefined.
-   */
-  buildVerifyConfirmation?: string;
-  /**
-   * A gate-authored, user-facing terminal message for a turn the gate LETS
-   * end (reopen:false) but must not end silently — decide-outcome appends it
-   * as the turn's assistant message via the same helper the empty-turn
-   * terminator uses, AFTER the chain settles and only if the turn actually
-   * stays "done" (a later gate's reopen discards it). Produced today only by
-   * unresolved-tool-intent's second fire.
-   *
-   * The `fire` rides WITH the text: a gate must not predict its own effect, so
-   * it names the fire its terminal would earn and only the code that actually
-   * appends the text contributes it. One value, so the two cannot drift.
-   */
-  honestTerminal?: GateHonestTerminal;
-}
-
-/** A named completion gate. `evaluate` runs only while terminalReason is still
- *  "done" — the runner short-circuits the chain on the first reopen. */
-export interface CompletionGate {
-  name: string;
-  evaluate: (ctx: CompletionGateContext) => CompletionGateOutput | Promise<CompletionGateOutput>;
-}
-
-const CONTINUE: CompletionGateOutput = { reopen: false };
-
-/** A gate's fire is named for the gate itself. Unlike a middleware — whose
- *  verdict carries its own `reason` field — a completion gate has no separate
- *  reason string, so the gate name is both halves. A gate fire is as
- *  interesting as a middleware fire and is counted the same way.
- *
- *  `outcome` is NOT derivable from the gate — the same gate fires in two
- *  shapes (unresolved-tool-intent nudges on its first fire and authors an
- *  honest terminal on every later one), so each call site states which.
- *
- *  A nudge fire is banked HERE because appendNudgeAsUserMessage records it on
- *  the path that writes the row: it is already in op_messages, and neither a
- *  later reopen nor a cancel can un-write it. A fire describing THIS turn's
- *  TERMINAL has neither property — see `honestTerminal` above.
- *
- *  KNOWN UNCOUNTED (guard-fire.ts carries the full ledger): late-inject
- *  re-opening the turn and framework-serve registering a dev server both act
- *  without speaking, a semantics expansion deliberately not made. The other two
- *  are not that case: build-verify's verifiedClean SPEAKS (terminal-epilogue.ts
- *  pushes `build-verify-ok-*`) and belongs on the earned-fire seam at THAT
- *  append, whose `!endedPartial` condition is decided after this chain;
- *  render-verify's capReached has already dropped the drained runtime errors
- *  irreversibly, so deferring its fire would under-count it. */
-const gateSource = (name: string, outcome: GuardOutcome): GuardFire => ({ name, reason: name, outcome });
+/** The gate contract lives in its own leaf module (no gate, no table) so the
+ *  definition modules and this one cannot form an import cycle. Re-exported
+ *  here because this file is the address every consumer already imports from —
+ *  decide-outcome-run-gates.ts, tool-intent-gate.ts and the tests. */
+export type {
+  CompletionGate,
+  CompletionGateContext,
+  CompletionGateOutput,
+  GateHonestTerminal,
+} from "./decide-outcome-gate-contract.js";
 
 const logger = createLogger("canonical-loop.framework-serve");
-
-/**
- * Render-verify gate (Tier 1.A). When the model says "done" on a turn that
- * wrote/edited files under workspace/apps/<id>/, give the preview iframe a
- * moment to report any uncaught errors / unhandled rejections / console.errors
- * that landed after the reload. If errors arrive within the window, suppress the
- * terminal, prepend a formatted error block as a synthetic user message on the
- * next turn, and let the same model fix what it just broke. Capped at
- * MAX_RETRIES so an unfixable bug can't infinite-loop.
- */
-const renderVerifyGate: CompletionGate = {
-  name: "render-verify",
-  async evaluate({ op, turnIdx, toolCalls }) {
-    if (!turnTouchedAppFiles(toolCalls)) return CONTINUE;
-    // Let the phone-side ingress route this app's runtime errors to this op —
-    // a phone-served page knows its appId, not a chat session id.
-    for (const appId of appIdsTouchedByTurn(toolCalls)) registerOpAppTouch(op.id, appId);
-    // appUrl lets the gate headlessly probe a build that no preview opened
-    // (e.g. phone-triggered). appDescription is what the screenshot judge is
-    // told the app IS (`The app is described as: "…"` in vision-verify.ts) —
-    // the user's ask, not the methodology. On the chat path op.task is stamped
-    // AFTER slash expansion, so for `/app-build a todo app` it is the marker
-    // plus the whole SKILL.md body; userAuthoredRequest recovers
-    // `/app-build a todo app` and passes a non-expansion through unchanged.
-    // The judge never needs the template: the mandated design spec reaches it
-    // separately via getDesignSpec(opId) inside the bootstrap probe.
-    const gate = await runRenderVerifyGate(op.id, { appUrl: op.appUrl, appDescription: userAuthoredRequest(op.task ?? "") });
-    if (gate.shouldRetry) {
-      appendNudgeAsUserMessage(op.id, turnIdx + 1, gate.nudge, gateSource("render-verify", "nudge"));
-      return { reopen: true };
-    }
-    // gate.capReached → leave terminalReason="done" but the errors are
-    // already drained; the user sees the broken preview + the model's
-    // "done", same as today. Future: emit a one-line warning event.
-    return CONTINUE;
-  },
-};
-
-/**
- * Build-verify gate (iteration 5). When the model says "done" on an op that
- * edited source but never reached a clean self-verify, the orchestrator runs
- * the project's OWN build/type-check itself and injects the REAL errors as the
- * next turn's user message — the model dodges the gentle "go verify" nudge, so
- * the environment verifies and hands back ground truth instead. The build
- * verdict is recorded into the verify-gate ledger, so a clean run lets "done"
- * stand AND records `clean`, while a red run loops (capped) and the label
- * stays `partial`. Mirrors render-verify: orchestrator gate, never a tool call.
- */
-const buildVerifyGate: CompletionGate = {
-  name: "build-verify",
-  async evaluate({ op, turnIdx }) {
-    if (!opEditedSourceUnverified(op.id)) return CONTINUE;
-    const gate = await runBuildVerifyGate(op);
-    if (gate.shouldRetry) {
-      appendNudgeAsUserMessage(op.id, turnIdx + 1, gate.nudge, gateSource("build-verify", "nudge"));
-      return { reopen: true };
-    }
-    if (gate.verifiedClean) {
-      // The orchestrator ran the project's build itself and it PASSED, but the
-      // model couldn't self-verify (blocked from running a build on source paths)
-      // and may have wrapped up sounding unsure. Hold the green confirmation and
-      // surface it below once we know the op truly ends this turn.
-      return { reopen: false, buildVerifyConfirmation: gate.confirmation };
-    }
-    return CONTINUE;
-  },
-};
-
-/**
- * Spec-probe gate (iteration 6, the flagship). Build-green ≠ behaviorally
- * correct: the model can ship code that compiles yet does the wrong thing, and
- * its own self-tests miss it because it wrote them looking at the same buggy
- * implementation. So — only once the build gate above is satisfied
- * (terminalReason still "done") and the op edited source — the harness has the
- * SAME active model author an acceptance check while blind to the code (spec +
- * file names only), then EXECUTES it. A real spec-assertion failure injects one
- * capped retry nudge; a probe that can't validly run is discarded, never nudged,
- * so a correct implementation is never false-flagged. Nudge-only: unlike
- * build-verify it records no verdict, because the probe's authorship is fallible
- * and must never demote the outcome label.
- */
-const specProbeGate: CompletionGate = {
-  name: "spec-probe",
-  async evaluate({ op, turnIdx }) {
-    if (opEditedSourcePaths(op.id).length === 0) return CONTINUE;
-    const gate = await runSpecProbeGate(op);
-    if (gate.shouldRetry) {
-      appendNudgeAsUserMessage(op.id, turnIdx + 1, gate.nudge, gateSource("spec-probe", "nudge"));
-      return { reopen: true };
-    }
-    return CONTINUE;
-  },
-};
-
-/**
- * Spec-audit gate (the completeness gate). The executable gates above prove the
- * code compiles and behaves; none of them re-reads the REQUEST, so explicitly
- * requested work can be missing from a green build (a live user-facing string a
- * cleanup was told to remove). One fresh-context call: the same active model
- * re-reads the original request against the op's actual diff, conversation
- * hidden. Runs only when the op edited source. Nudge-only, fires at most once
- * per op, never demotes the label. Contract lives in spec-audit.ts.
- */
-const specAuditGate: CompletionGate = {
-  name: "spec-audit",
-  async evaluate({ op, turnIdx }) {
-    if (opEditedSourcePaths(op.id).length === 0) return CONTINUE;
-    const gate = await runSpecAuditGate(op);
-    if (gate.shouldRetry) {
-      appendNudgeAsUserMessage(op.id, turnIdx + 1, gate.nudge, gateSource("spec-audit", "nudge"));
-      return { reopen: true };
-    }
-    return CONTINUE;
-  },
-};
-
-/**
- * Design-verify gate (the fifth gate). Runs last of the app-quality gates —
- * only once the app is proven non-broken / compiling / behaving — turning a low
- * visual-design score from the render probe's screenshot judge into ONE capped
- * rebuild nudge. Nudge-only (records no verdict; never demotes the label).
- * Contract lives in design-verify.ts.
- */
-const designVerifyGate: CompletionGate = {
-  name: "design-verify",
-  evaluate({ op, turnIdx }) {
-    const gate = runDesignVerifyGate(op);
-    if (gate.shouldRetry) {
-      appendNudgeAsUserMessage(op.id, turnIdx + 1, gate.nudge, gateSource("design-verify", "nudge"));
-      return { reopen: true };
-    }
-    return CONTINUE;
-  },
-};
 
 /**
  * Unresolved-tool-intent gate. A "done" whose final text still holds

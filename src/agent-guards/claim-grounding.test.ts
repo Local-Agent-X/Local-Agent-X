@@ -38,7 +38,17 @@ describe("claim grounding rules", () => {
   it("keeps the other claim classes explicit in the same table", () => {
     expect(evaluateClaimGrounding("source-done", []).missingEvidence).toEqual(["build-clean"]);
     expect(evaluateClaimGrounding("runtime-causality", []).consequence).toBe("retract");
-    expect(evaluateClaimGrounding("ui-done", ["browser-render"]).grounded).toBe(true);
+  });
+
+  // Regression pin for a DELETED rule. "ui-done" (requiredAny ["browser-render"],
+  // consequence "partial-label") used to be asserted grounded here, which read as
+  // live policy — it never was: nothing in production evaluated the kind, and no
+  // ledger predicate realized its partial-label. Pin the absence so it can't come
+  // back as a table entry with no dispatch behind it. Re-adding it requires the
+  // ledger predicate too (turn-loop/claim-grounding-dispatch.test.ts enforces the
+  // pair), which is a product decision, not a table edit.
+  it("no longer declares a ui-done rule that nothing dispatches", () => {
+    expect(CLAIM_GROUNDING_RULES.map(r => String(r.claimKind))).not.toContain("ui-done");
   });
 
   it("fails closed for a missing claim kind", () => {
@@ -61,6 +71,5 @@ describe("claim grounding rules", () => {
     expect(evaluateClaimGrounding("runtime-causality", ["lsp-clean"]).grounded).toBe(false);
     expect(evaluateClaimGrounding("repo-advice", ["lsp-clean"]).grounded).toBe(false);
     expect(evaluateClaimGrounding("cleanup-done", ["lsp-clean"]).grounded).toBe(false);
-    expect(evaluateClaimGrounding("ui-done", ["lsp-clean"]).grounded).toBe(false);
   });
 });

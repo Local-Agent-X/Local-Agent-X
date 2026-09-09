@@ -32,7 +32,6 @@ export {
   CLEANUP_VERIFY_REASON,
   CLEANUP_VERIFY_FALSE_DONE_REASON,
   SOURCE_VERIFY_REASON,
-  RENDER_VERIFY_REASON,
   claimGroundingRule,
   evaluateClaimGrounding,
   type ClaimGroundingRule,

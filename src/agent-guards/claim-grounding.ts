@@ -2,8 +2,7 @@ export type ClaimKind =
   | "repo-advice"
   | "cleanup-done"
   | "source-done"
-  | "runtime-causality"
-  | "ui-done";
+  | "runtime-causality";
 
 export type EvidenceKind =
   | "code-read"
@@ -67,8 +66,6 @@ export const CLEANUP_VERIFY_REASON = "cleanup-verify";
 export const CLEANUP_VERIFY_FALSE_DONE_REASON = "cleanup-verify-false-done";
 /** source-done → nudge / partial-label (never retract). */
 export const SOURCE_VERIFY_REASON = "verify-gate";
-/** ui-done → nudge / partial-label (never retract). */
-export const RENDER_VERIFY_REASON = "render-verify";
 export const CODEBASE_ADVICE_GROUNDING_STATUS =
   "Checking the current repo before I recommend a harness change...";
 
@@ -112,14 +109,25 @@ export const CLAIM_GROUNDING_RULES: ClaimGroundingRule[] = [
       "Inspect logs/state/code with an available read-only tool before asserting the claim. If verification is " +
       "unavailable, retract the claim and explicitly say what is unknown or only a hypothesis.",
   },
-  {
-    claimKind: "ui-done",
-    requiredAny: ["browser-render"],
-    consequence: "partial-label",
-    reason: RENDER_VERIFY_REASON,
-    missingEvidenceMessage:
-      "A UI done-claim needs browser, screenshot, or render verification evidence.",
-  },
+  // DELETED: a "ui-done" rule (requiredAny ["browser-render"], consequence
+  // "partial-label", reason "render-verify"). It was declared but dead on all
+  // three legs — evaluateClaimGrounding was never called with "ui-done" outside
+  // its own unit test, nothing in production read the reason constant, and
+  // terminal-epilogue.ts had no render predicate, so the declared partial-label
+  // could never fire. Removed rather than wired: adding an `opRenderUnverified`
+  // predicate would DEMOTE a render-verify failure to a `partial` terminal
+  // label, which is new user-visible behavior, not a table correction.
+  //
+  // Render verification is live today as a completion GATE
+  // (COMPLETION_GATES "render-verify" in turn-loop/decide-outcome-gates.ts — a
+  // different namespace that happens to share the string): it retries and
+  // nudges, and never touches the outcome label. Whether an unrecovered
+  // render-verify failure SHOULD demote the label to partial is an open product
+  // decision, deliberately not taken here. Wiring it means re-adding the rule
+  // AND a ledger predicate in terminal-epilogue.ts — the pair is enforced by
+  // turn-loop/claim-grounding-dispatch.test.ts, so a rule can't come back alone.
+  //
+  // "browser-render" is left in EvidenceKind but is now referenced by no rule.
 ];
 
 export function claimGroundingRule(claimKind: ClaimKind): ClaimGroundingRule {

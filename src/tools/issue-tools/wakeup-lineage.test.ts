@@ -177,3 +177,47 @@ describe("issue_update blocked→manager wake lineage", () => {
     expect(driverCalls[0].parentSessionId).toBeUndefined();
   });
 });
+
+/**
+ * issue_update's blocked-to-manager triage brief: task provenance.
+ *
+ * The brief is composed in issue-update.ts start to finish. Nothing an agent or
+ * a human wrote is interpolated into it — only `issue.title`, as a quoted
+ * subject line — so it is harness prose by construction and is stamped as such.
+ *
+ * Stated honestly, because the distinction matters: this stamp is INERT today.
+ * Measured against the real phrase gate, the brief yields `cues: []` and so
+ * already got the empty ledger without it. What the stamp buys is that a later
+ * edit to this prose cannot silently start feeding the constraint extractor —
+ * and, since A3, that the three provenance-gated behavioral nudges
+ * (broad-sweep-nudge, cleanup-verify, codebase-advice) correctly read the brief
+ * as machine text. It is a contract fix, not a live-brick fix.
+ *
+ * Deliberately NOT extended to agent_wakeup in this same file: that envelope
+ * measures inert too, but its task interpolates the CALLER'S `message`
+ * argument, which on a chat-driven wakeup carries the user's own relayed
+ * intent. Stamping it would delete real constraints to fix no hazard.
+ *
+ * Asserted on the driver request: the value invokeDefinition forwards
+ * (agents/invoke.ts) and the canonical driver hands to runAgentViaCanonical as
+ * `harnessAuthoredTask` (server/handler-events.ts). The flag's mapping onto
+ * `op.taskProvenance` is pinned separately and directly, through the real
+ * runner, in canonical-loop/agent-runner/run.task-provenance.test.ts.
+ */
+describe("issue_update wake task provenance", () => {
+  it("stamps the manager's triage brief harness-authored", async () => {
+    const issue = makeIssue(workerTpl.id);
+    const caller = attachCaller(workerTpl.id);
+
+    const result = await issueUpdateTool.execute({
+      id: issue.id,
+      status: "blocked",
+      _sessionId: caller.sessionId,
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(driverCalls).toHaveLength(1);
+    expect(driverCalls[0].task).toContain("just went BLOCKED");
+    expect(driverCalls[0].harnessAuthoredTask).toBe(true);
+  });
+});

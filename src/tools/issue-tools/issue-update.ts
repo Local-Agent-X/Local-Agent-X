@@ -76,6 +76,19 @@ export const issueUpdateTool: ToolDefinition = {
                 // AGENTS panel / AgentRunStore lineage. Undefined for a
                 // chat-session caller (manager renders as a root).
                 parentAgentId: callerRunIdFromSession(args._sessionId),
+                // The triage brief above is composed here start to finish;
+                // only `issue.title` interpolates, as a quoted subject line. No
+                // agent or human prose rides in it, so it is machine text by
+                // construction (see Op.taskProvenance).
+                //
+                // INERT TODAY, kept as a contract: measured against the real
+                // phrase gate this brief yields no cues, so the ledger was
+                // already empty without the stamp. What it buys is that an edit
+                // to this prose can't silently start feeding the constraint
+                // extractor, and that the provenance-gated behavioral nudges
+                // (broad-sweep, cleanup-verify, codebase-advice) read it as
+                // machine text.
+                harnessAuthoredTask: true,
               });
               updates.push(`manager ${manager.name} woken`);
             } catch (e) {

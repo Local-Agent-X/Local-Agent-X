@@ -118,6 +118,15 @@ export async function runAutopilotRound(
       wallClockMs: opts.wallClockMs,
       opType: "autopilot_round",
       lane: "background",
+      // "Begin round N." is a harness kick, not user speech — the mission the
+      // user actually wrote lives in the system prompt, which the instruction
+      // ledger never reads (see Op.taskProvenance).
+      //
+      // INERT TODAY, kept as a contract: the kick extracts no cues, so the
+      // ledger was already empty without the stamp. It keeps a future edit to
+      // the kick from silently arming the extractor, and marks the op machine-
+      // authored for the provenance-gated behavioral nudges.
+      harnessAuthoredTask: true,
       // Live sidebar progress: forward each tool call as a bg_op_progress
       // line tagged with this autopilot's opId. Without this the sidebar
       // card sits silent for whole rounds (5-10 min) — looks like the

@@ -76,6 +76,14 @@ export function registerSelfEditSurgeonForServer(deps: SelfEditSurgeonRunnerDeps
         maxIterations: 30,
         opType: "self_edit",
         lane: "background",
+        // The surgeon's message is buildSelfEditPrompt's envelope around the
+        // self_edit tool's task argument — machine prose either way. Its own
+        // rules ("Do NOT commit or push", "do NOT run 'npm install'") plus the
+        // AGENTS.md rules it quotes were being mined as user constraints and
+        // applied back as a workspace-write ban on this very run, which hard-
+        // denied the write/edit/bash the surgeon exists to use (see
+        // Op.taskProvenance).
+        harnessAuthoredTask: true,
       });
       return extractAgentOutput(result.messages);
     });

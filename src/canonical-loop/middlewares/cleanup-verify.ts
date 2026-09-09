@@ -115,6 +115,23 @@ export function createCleanupVerifyMiddleware(
     name: "cleanup-verify",
 
     afterToolExecution(ctx) {
+      // A harness-composed task is not a user request. Checked BEFORE the
+      // phrasing regex so a dream brief that reads as a removal sweep never
+      // starts accumulating evidence, and the wrap-up hook below has no
+      // half-built state to judge.
+      //
+      // Gate on the provenance STAMP ALONE — deliberately NOT isHarnessAuthoredTask,
+      // which also treats op.type === "app_build" as harness-authored. That extra
+      // branch is right for the instruction ledger but wrong here, for two reasons:
+      //   - it buys nothing. build-app.ts sets task to `Build app "<name>"`, and
+      //     0 of 77 persisted app_build ops match this middleware's predicate.
+      //   - it opens a self-muzzle. op.type is MODEL-supplied and unvalidated
+      //     (ops/tools/shared.ts:172 `String(args.type || "freeform")`), and the
+      //     op_submit schema invites the model to pick a type while instructing it
+      //     to relay the user's words verbatim — so trusting op.type would let a
+      //     model silently switch this guard off on a real user request.
+      // taskProvenance is stamped by the harness only, never by model output.
+      if (ctx.op.taskProvenance === "harness") return { kind: "continue" };
       if (!looksLikeCleanupSweep(ctx.currentUserMessage)) return { kind: "continue" };
       const state = getMiddlewareState<CleanupVerifyState>(
         ctx.op.id, "cleanup-verify", createCleanupVerifyState,
@@ -124,6 +141,10 @@ export function createCleanupVerifyMiddleware(
     },
 
     async afterModelCall(ctx) {
+      // Same provenance-only gate as afterToolExecution (see the reasoning
+      // there), and it must be here too: this hook both nudges AND sets the
+      // unverified verdict, so a harness op must reach neither.
+      if (ctx.op.taskProvenance === "harness") return { kind: "continue" };
       // Only at wrap-up: model ended the turn with text and no tool calls.
       if (ctx.toolCalls.length > 0) return { kind: "continue" };
       if (ctx.assistantContent.trim().length === 0) return { kind: "continue" };

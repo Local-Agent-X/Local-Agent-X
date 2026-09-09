@@ -4,9 +4,14 @@ import {
   createCleanupVerifyMiddleware,
   opCleanupUnverified,
 } from "./cleanup-verify.js";
-import { _resetMiddlewareStates } from "./state.js";
+import { _resetMiddlewareStates, getMiddlewareState } from "./state.js";
 import { setOpLedger, clearOpLedger } from "../instruction-ledger/index.js";
-import { CLEANUP_VERIFY_MAX_NUDGES } from "../../agent-guards/index.js";
+import {
+  CLEANUP_VERIFY_MAX_NUDGES,
+  looksLikeCleanupSweep,
+  createCleanupVerifyState,
+  type CleanupVerifyState,
+} from "../../agent-guards/index.js";
 import type { CanonicalLoopContext, CanonicalMiddleware } from "./types.js";
 import { makeCanonicalLoopContext } from "./ctx.test-helper.js";
 
@@ -338,5 +343,106 @@ describe("cleanup-verify — classifies the CURRENT request, not the session's o
       ctxFor(op, { currentUserMessage: CLEANUP_TASK, toolCalls: [], assistantContent: "Done — all tailnet references removed." }),
     );
     expect(r.kind).toBe("nudge");
+  });
+});
+
+// Same 90%-misfire class as broad-sweep-nudge: CLEANUP_TASK-shaped prose is
+// exactly what a dream brief or a build-chunk preamble composes, so the
+// phrasing regex cannot separate it from a human's removal request — only op
+// provenance can. BOTH hooks are gated: afterToolExecution must not accumulate
+// evidence, and afterModelCall must neither nudge nor set the unverified
+// verdict the terminal-outcome label reads.
+describe("cleanup-verify — harness-authored task text is not a user request", () => {
+  const DONE_CLAIM = "Done — all tailnet references removed.";
+  const HARNESS_OP = { type: "memory_consolidation", lane: "background", taskProvenance: "harness" };
+
+  function opCtx(
+    op: string, opFields: Record<string, unknown>, over: Partial<CanonicalLoopContext> = {},
+  ): CanonicalLoopContext {
+    return makeCanonicalLoopContext({
+      op: { id: op, ...opFields },
+      turnIdx: 1,
+      currentUserMessage: CLEANUP_TASK,
+      assistantContent: "",
+      toolCalls: [],
+      toolResults: [],
+      ...over,
+    });
+  }
+
+  const dirtySearch = {
+    toolCalls: [{ toolCallId: "g1", tool: "grep", args: { pattern: "tailnet" } }],
+    toolResults: [{ toolCallId: "g1", toolName: "grep", content: "src/a.ts: tailnet", status: "ok" }],
+  } as Partial<CanonicalLoopContext>;
+
+  it("the cleanup text used below really does trip the regex — the gate, not the text, is what stops it", () => {
+    expect(looksLikeCleanupSweep(CLEANUP_TASK)).toBe(true);
+  });
+
+  it("baseline: a user-authored op with this text still nudges and records unverified", async () => {
+    _resetMiddlewareStates();
+    const op = opId();
+    const userOp = { type: "chat_turn", lane: "interactive" };
+    cleanupVerifyMiddleware.afterToolExecution!(opCtx(op, userOp, dirtySearch));
+    const r = await cleanupVerifyMiddleware.afterModelCall!(
+      opCtx(op, userOp, { assistantContent: DONE_CLAIM }),
+    );
+    expect(r).toMatchObject({ kind: "nudge" });
+    expect(opCleanupUnverified(op)).toBe(true);
+  });
+
+  // afterToolExecution ALWAYS returns continue, so the return value alone
+  // proves nothing — read the accumulated evidence instead. A gated harness op
+  // must leave the state pristine: no search recorded, nothing outstanding.
+  it("afterToolExecution records NO evidence on a provenance-stamped harness op (the memory_consolidation cluster)", () => {
+    _resetMiddlewareStates();
+    const op = opId();
+    expect(cleanupVerifyMiddleware.afterToolExecution!(opCtx(op, HARNESS_OP, dirtySearch)))
+      .toEqual({ kind: "continue" });
+    const state = getMiddlewareState<CleanupVerifyState>(op, "cleanup-verify", createCleanupVerifyState);
+    expect(state.searchedAny).toBe(false);
+    expect(state.outstanding).toEqual([]);
+  });
+
+  it("afterToolExecution DOES record that same evidence on a user-authored op", () => {
+    _resetMiddlewareStates();
+    const op = opId();
+    cleanupVerifyMiddleware.afterToolExecution!(
+      opCtx(op, { type: "chat_turn", lane: "interactive" }, dirtySearch),
+    );
+    const state = getMiddlewareState<CleanupVerifyState>(op, "cleanup-verify", createCleanupVerifyState);
+    expect(state.searchedAny).toBe(true);
+    expect(state.outstanding).toEqual(["tailnet"]);
+  });
+
+  it("afterModelCall neither nudges nor records unverified on a harness op", async () => {
+    _resetMiddlewareStates();
+    const op = opId();
+    cleanupVerifyMiddleware.afterToolExecution!(opCtx(op, HARNESS_OP, dirtySearch));
+    const r = await cleanupVerifyMiddleware.afterModelCall!(
+      opCtx(op, HARNESS_OP, { assistantContent: DONE_CLAIM }),
+    );
+    expect(r).toEqual({ kind: "continue" });
+    expect(opCleanupUnverified(op)).toBe(false);
+  });
+
+  // op.type is MODEL-supplied and unvalidated (ops/tools/shared.ts:172); gating
+  // on it would let a model switch BOTH hooks off by labelling its op. Only the
+  // harness-written provenance stamp gates. Asserted through accumulated STATE
+  // and the nudge, never through afterToolExecution's return value — that hook
+  // always returns continue, so a bare toEqual({kind:"continue"}) proves nothing.
+  it("STILL guards an unstamped op that merely CLAIMS type app_build — op.type is not a muzzle", async () => {
+    _resetMiddlewareStates();
+    const op = opId();
+    const claimedBuild = { type: "app_build" };
+    cleanupVerifyMiddleware.afterToolExecution!(opCtx(op, claimedBuild, dirtySearch));
+    const state = getMiddlewareState<CleanupVerifyState>(op, "cleanup-verify", createCleanupVerifyState);
+    expect(state.searchedAny).toBe(true);
+    expect(state.outstanding).toEqual(["tailnet"]);
+    const r = await cleanupVerifyMiddleware.afterModelCall!(
+      opCtx(op, claimedBuild, { assistantContent: DONE_CLAIM }),
+    );
+    expect(r).toMatchObject({ kind: "nudge" });
+    expect(opCleanupUnverified(op)).toBe(true);
   });
 });

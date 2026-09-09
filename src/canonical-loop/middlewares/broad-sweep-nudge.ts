@@ -39,6 +39,23 @@ export const broadSweepNudgeMiddleware: CanonicalMiddleware = {
   name: "broad-sweep-nudge",
 
   afterModelCall(ctx) {
+    // A harness-composed task is not a user request. Dream briefs, eval
+    // prompts and skill reviews routinely READ as a codebase-wide sweep, so the
+    // phrasing regex below cannot tell them apart — only op provenance can.
+    // Checked first so no regex ever runs on machine prose.
+    //
+    // Gate on the provenance STAMP ALONE — deliberately NOT isHarnessAuthoredTask,
+    // which also treats op.type === "app_build" as harness-authored. That extra
+    // branch is right for the instruction ledger but wrong here, for two reasons:
+    //   - it buys nothing. build-app.ts sets task to `Build app "<name>"`, and
+    //     0 of 77 persisted app_build ops match this middleware's predicate.
+    //   - it opens a self-muzzle. op.type is MODEL-supplied and unvalidated
+    //     (ops/tools/shared.ts:172 `String(args.type || "freeform")`), and the
+    //     op_submit schema invites the model to pick a type while instructing it
+    //     to relay the user's words verbatim — so trusting op.type would let a
+    //     model silently switch this guard off on a real user request.
+    // taskProvenance is stamped by the harness only, never by model output.
+    if (ctx.op.taskProvenance === "harness") return { kind: "continue" };
     // The nudge pushes enumerate-and-FIX — never against an explicit user
     // prohibition on changing the workspace. Fail-open: no ledger entry, no
     // suppression.

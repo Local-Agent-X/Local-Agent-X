@@ -117,3 +117,46 @@ describe("broad-sweep-nudge — classifies the CURRENT request, not the session'
     expect(r).toMatchObject({ kind: "nudge", reason: "broad-sweep-enumerate" });
   });
 });
+
+// The measured misfire: of 127 live fires across 2,478 persisted ops, only 13
+// were on text a human wrote — the rest were dream briefs, eval prompts, skill
+// reviews and build chunks. Those tasks genuinely MATCH the sweep regex, so the
+// phrasing alone can never separate them; op provenance is the only signal.
+describe("broad-sweep-nudge — harness-authored task text is not a user request", () => {
+  const harnessCtx = (over: Record<string, unknown>) =>
+    makeCanonicalLoopContext({
+      op: { id: opId(), ...over },
+      currentUserMessage: SWEEPS[0],
+      assistantContent: "Cleaned that up.",
+      toolCalls: [],
+      toolsCalledThisOp: new Set<string>(),
+    });
+
+  it("the sweep text used below really does trip the regex — the gate, not the text, is what stops it", () => {
+    expect(looksLikeBroadSweep(SWEEPS[0])).toBe(true);
+  });
+
+  it("stays quiet on a provenance-stamped harness op (the memory_consolidation cluster)", () => {
+    const r = broadSweepNudgeMiddleware.afterModelCall!(
+      harnessCtx({ type: "memory_consolidation", lane: "background", taskProvenance: "harness" }),
+    );
+    expect(r).toEqual({ kind: "continue" });
+  });
+
+  it("still nudges the SAME text on a user-authored op", () => {
+    const r = broadSweepNudgeMiddleware.afterModelCall!(
+      harnessCtx({ type: "chat_turn", lane: "interactive" }),
+    );
+    expect(r).toMatchObject({ kind: "nudge", reason: "broad-sweep-enumerate" });
+  });
+
+  // op.type is MODEL-supplied and unvalidated (ops/tools/shared.ts:172), and the
+  // op_submit schema both invites the model to pick a type and tells it to relay
+  // the user's words verbatim. Gating on it would hand the model a switch to
+  // silently disable this guard on a real request, so type must NOT gate — only
+  // the harness-written provenance stamp does.
+  it("STILL nudges an unstamped op that merely CLAIMS type app_build — op.type is not a muzzle", () => {
+    const r = broadSweepNudgeMiddleware.afterModelCall!(harnessCtx({ type: "app_build" }));
+    expect(r).toMatchObject({ kind: "nudge", reason: "broad-sweep-enumerate" });
+  });
+});

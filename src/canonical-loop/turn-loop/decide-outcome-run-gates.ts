@@ -20,12 +20,14 @@
  * back an honest terminal message (appended by decide-outcome only if the turn
  * actually stays "done").
  *
- * A gate's honest terminal carries the GUARD FIRE that appending it earns, and
- * a gate never mints that fire itself. It cannot: from inside `evaluate` it can
- * see neither a later gate's reopen nor the cancel window that follows the whole
- * chain, and a fire recorded against either is a durable claim about a message
- * that does not exist. The effect site contributes it and turn-loop banks the
- * result once the turn is DURABLE — guard-fire.ts bankEarnedFires.
+ * A gate's honest terminal — and a gate's SILENT REOPEN — carries the GUARD
+ * FIRE its effect earns, and a gate never mints that fire itself. It cannot:
+ * from inside `evaluate` it can see neither a later gate's reopen nor the cancel
+ * window that follows the whole chain, and a fire recorded against either is a
+ * durable claim about a turn that does not exist. The effect site contributes it
+ * and turn-loop banks the result once the turn is DURABLE — guard-fire.ts
+ * bankEarnedFires. For the reopen the effect site is this runner: it is what
+ * acts on the veto, so it is what earns the fire.
  *
  * A turn that ends on a QUESTION is the one terminal the chain must not touch.
  * Every gate answers "did the model finish the work?", and re-opening drives
@@ -42,6 +44,7 @@
  * which is correct: it is paused mid-build, not finished.
  */
 import { COMPLETION_GATES, type CompletionGateContext, type GateHonestTerminal } from "./decide-outcome-gates.js";
+import type { GuardFire } from "./guard-fire.js";
 
 export interface RunCompletionGatesResult {
   terminalReason: "done" | "error" | null;
@@ -56,6 +59,11 @@ export async function runCompletionGates(
   ctx: CompletionGateContext,
   terminalReason: "done" | "error" | null,
   endsOnQuestion: boolean,
+  /** decide-outcome's earned-fire list, appended to in place — the same
+   *  out-parameter shape applyTerminalEpilogue already uses for it. A silent
+   *  reopen's fire goes HERE rather than into the return value so it cannot be
+   *  read without also being banked. */
+  earnedFires: GuardFire[],
 ): Promise<RunCompletionGatesResult> {
   let buildVerifyConfirmation = "";
   let honestTerminal: GateHonestTerminal | null = null;
@@ -64,7 +72,12 @@ export async function runCompletionGates(
     const out = await gate.evaluate(ctx);
     if (out.buildVerifyConfirmation !== undefined) buildVerifyConfirmation = out.buildVerifyConfirmation;
     if (out.honestTerminal !== undefined) honestTerminal = out.honestTerminal;
-    if (out.reopen) terminalReason = null;
+    if (out.reopen) {
+      terminalReason = null;
+      // Inside `if (out.reopen)` so the fire cannot outlive its effect: a gate
+      // that named one without vetoing banks nothing.
+      if (out.reopenFire) earnedFires.push(out.reopenFire);
+    }
   }
   return { terminalReason, buildVerifyConfirmation, honestTerminal };
 }

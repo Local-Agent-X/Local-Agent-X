@@ -552,11 +552,12 @@ describe("middleware_fired — the sites a mutation sweep found unpinned", () =>
 // reading `middleware_fired` saw four dead guards steering live ops.
 //
 // They are NOT one case with four names, and the tests are structured to say
-// so: three are counted AT THE BRANCH because their effect is already spent
-// when `evaluate` returns (a re-open the chain runner acts on immediately, a
-// registered dev server, dropped runtime errors), while the fourth is counted
-// in the EPILOGUE because its effect is still contingent there — which is why
-// the suppression case below is a test and not a comment.
+// so: two are counted AT THE BRANCH because their effect is already spent when
+// `evaluate` returns (a registered dev server, dropped runtime errors), while
+// the other two are still CONTINGENT there and ride the earned-fire seam — the
+// build confirmation, whose append the epilogue decides (which is why the
+// suppression case below is a test and not a comment), and the silent re-open,
+// which is only an in-memory `terminalReason = null` until the turn commits.
 describe("middleware_fired — the gate branches that act without speaking", () => {
   const gate = (name: string): CompletionGate => COMPLETION_GATES.find(g => g.name === name)!;
   const bodies = (id: string): MiddlewareFiredBody[] => firesOnDisk(id).map(e => e.body as MiddlewareFiredBody);
@@ -567,7 +568,7 @@ describe("middleware_fired — the gate branches that act without speaking", () 
 
   beforeEach(() => { _resetInjectQueues(); });
 
-  it("reopen: late-inject's SILENT re-open is counted, under the turn whose terminal it vetoed", async () => {
+  it("reopen: late-inject NAMES its silent re-open and mints nothing at the branch", async () => {
     // Real queue, real session bridge — the gate reads both directly.
     trackOpForSession(opId, `sess-${opId}`);
     pushInject(`sess-${opId}`, "actually, make it dark mode");
@@ -575,6 +576,24 @@ describe("middleware_fired — the gate branches that act without speaking", () 
     const out = await gate("late-inject").evaluate({ op: op(), turnIdx: 4, toolCalls: [], assistantText: "" });
 
     expect(out.reopen).toBe(true);
+    expect(out.reopenFire).toEqual({ name: "late-inject", reason: "late-inject", outcome: "reopen" });
+    // NOTHING on disk yet. The veto is an in-memory `terminalReason = null` on
+    // its way to a commitTurn driveTurn's cancel bail can skip, so a row
+    // written here would assert a turn that never committed — the honest-
+    // terminal rule, reached by the same argument.
+    expect(firesOnDisk(opId)).toHaveLength(0);
+  });
+
+  it("reopen: the fire the gate named is the row the seam banks, under the vetoed turn", async () => {
+    trackOpForSession(opId, `sess-${opId}`);
+    pushInject(`sess-${opId}`, "actually, make it dark mode");
+    const out = await gate("late-inject").evaluate({ op: op(), turnIdx: 4, toolCalls: [], assistantText: "" });
+
+    // The chain runner contributes `out.reopenFire`, turn-loop.ts banks the
+    // list after commitTurn. Driving the WHOLE chain here would trip the
+    // spec-audit / design-verify stubs above, which re-open earlier; the live
+    // ordering is proven end-to-end in test/inject-reopen-fires.contract.test.ts.
+    bankEarnedFires(opId, 4, [out.reopenFire as GuardFire]);
     // turnIdx 4, not 5: the effect landed on THIS turn's terminal. The +1
     // convention is a nudge's, because a nudge is read on the next turn — and
     // nothing was appended here for the model to read.

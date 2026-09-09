@@ -45,17 +45,36 @@
  *                    suppresses the message banks nothing). turn-loop.ts banks
  *                    both after commitTurn (bankEarnedFires below). Slice by
  *                    `name` for one gate — see the terminal caveat below.
- *   reopen           a completion gate that VETOED the terminal and drove
- *                    another turn WITHOUT saying anything: late-inject, on a
- *                    user follow-up that landed while the async verify gates
- *                    were awaiting. Its eight re-opening siblings all speak,
- *                    so they file as `nudge` — the message is the effect that
- *                    lands, and the reopen is only how it gets read. Minted at
- *                    the branch (decide-outcome-gates.ts): the branch IS the
- *                    effect, the runner stops the chain on it, and nothing
- *                    downstream restores terminalReason. Files under the turn
- *                    whose terminal was vetoed, not turnIdx + 1 — the +1
- *                    convention belongs to a message read on the next turn.
+ *   reopen           the turn's terminal was VETOED and another turn driven
+ *                    WITHOUT saying anything: a user follow-up that landed
+ *                    mid-turn, which drainInjectsIntoTurn pulls in next.
+ *                    late-inject's SEVEN re-opening gate siblings all speak, so
+ *                    they file as `nudge` — the message is the effect that
+ *                    lands, and the reopen is only how it gets read. (Seven:
+ *                    COMPLETION_GATES holds nine, framework-serve never
+ *                    re-opens, and late-inject is the subject.)
+ *                    TWO PRODUCERS, one per arrival window, and a census of
+ *                    "a follow-up vetoed a terminal" must SUM them:
+ *                      continuation-guard / injects-pending — decide-outcome.ts
+ *                        (CONTINUATION_INJECT_FIRE below). The inject was
+ *                        ALREADY queued when decideTurnOutcome ran, so the
+ *                        guard re-opens before the chain and lateInjectGate
+ *                        never evaluates.
+ *                      late-inject / late-inject — decide-outcome-gates.ts. It
+ *                        landed DURING the async verify gates, each of which
+ *                        awaits.
+ *                    Mutually exclusive, and deliberately NOT one name: a
+ *                    `late-inject` row for a run where that gate never
+ *                    evaluated would be a false provenance claim.
+ *                    BOTH ride the earned-fire seam (bankEarnedFires below).
+ *                    The veto's entire effect is an in-memory
+ *                    `terminalReason = null` on its way to a commitTurn a Stop
+ *                    can cancel — unlike `repair`'s leased port or `gave-up`'s
+ *                    dropped evidence, no part of it survives that bail, so a
+ *                    row banked at the branch can assert a turn that never
+ *                    committed. Files under the turn whose terminal was vetoed,
+ *                    not turnIdx + 1 — the +1 convention belongs to a message
+ *                    read on the next turn.
  *   repair           a guard that fixed the ENVIRONMENT instead of steering the
  *                    model: framework-serve registering the dev server a
  *                    promoted "done" caused the verify adapter to skip. Outside
@@ -86,7 +105,16 @@
  *     (`dev-server registration failed`), so read a low `repair` count against
  *     that log line, never as a dead gate.
  *   - a directive discarded by a user cancel: driveTurn bails before the
- *     post-commit apply, so the verdict never reached the op.
+ *     post-commit apply, so the verdict never reached the op. The two `reopen`
+ *     producers above obey the same rule by riding the same seam.
+ *   - the continuation guard's OTHER TWO re-opening branches. All three of
+ *     `middlewareNudged || failureNudged || injectsPending` veto the terminal
+ *     identically, but the first two SPOKE: appendNudgeAsUserMessage already
+ *     wrote their row (`nudge`), at the gate for a middleware directive and at
+ *     decide-outcome's own tool-failure summary. A `reopen` beside those would
+ *     count one user-visible act twice, so ONLY the silent third branch is
+ *     counted here — the same rule that keeps a re-opening GATE's nudge from
+ *     also filing a `reopen`.
  *   - THE OTHER FOUR HARNESS-AUTHORED TERMINALS. The harness writes its own
  *     closing assistant message in six places and counts TWO. Uncounted:
  *       `empty-turn-*`        empty-turn-termination.ts, a fully-empty
@@ -173,11 +201,18 @@ export function recordGuardFire(opId: string, turnIdx: number, fire: GuardFire):
  *  rides the same list, contributed at its own append inside the
  *  `!endedPartial` branch that decides whether the user ever sees it.
  *
+ *  The silent `reopen` joins them, from BOTH its producers: a veto is nothing
+ *  but an in-memory `terminalReason = null`, so a Stop in this same window
+ *  erases it entirely and a row banked at the branch would assert a turn that
+ *  never committed. It is contributed unconditionally rather than re-checked
+ *  against a settled terminal: once a veto lands nothing restores the terminal,
+ *  so the only question left is whether the turn commits at all.
+ *
  *  NOT every gate fire belongs here. A fire whose effect is already SPENT when
- *  the gate returns is minted at the branch instead — the silent reopen, the
- *  registered dev server, the dropped render errors — because for those the
- *  deferral protects nothing and would drop the fire on any turn that ends
- *  non-terminally. The ledger above says which, and why, per outcome.
+ *  the gate returns is minted at the branch instead — the registered dev
+ *  server, the dropped render errors — because for those the deferral protects
+ *  nothing and would drop the fire on any turn that ends non-terminally. The
+ *  ledger above says which, and why, per outcome.
  *
  *  NO IDEMPOTENCY KEY: two decideTurnOutcome calls for one turnIdx would bank
  *  two identical bodies. Not reachable through worker.ts today, but note that
@@ -186,6 +221,24 @@ export function recordGuardFire(opId: string, turnIdx: number, fire: GuardFire):
 export function bankEarnedFires(opId: string, turnIdx: number, fires: readonly GuardFire[]): void {
   for (const fire of fires) recordGuardFire(opId, turnIdx, fire);
 }
+
+/** decide-outcome.ts's continuation guard vetoing a terminal because a user
+ *  follow-up was already queued — the `reopen` producer that is NOT a gate.
+ *
+ *  A DISTINCT NAME from late-inject's, on purpose. The two are the same user
+ *  act separated only by arrival time, and the ledger above says to sum them
+ *  for a census — but the guard runs BEFORE the gate chain, so when it fires
+ *  lateInjectGate is never evaluated, and filing this under a gate's name would
+ *  claim a gate ran that did not. `reason` carries which of the guard's three
+ *  branches fired, because the other two are counted as their own nudges.
+ *
+ *  A value, not a factory: nothing about the veto varies per op, and both the
+ *  fire and its two readers treat GuardFire as read-only. */
+export const CONTINUATION_INJECT_FIRE: GuardFire = {
+  name: "continuation-guard",
+  reason: "injects-pending",
+  outcome: "reopen",
+};
 
 /** A sticky directive already carries its firer's name (turn-loop.ts stamps it)
  *  and its own kind, which IS the outcome — a nudge directive can only produce

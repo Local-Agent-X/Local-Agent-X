@@ -66,6 +66,21 @@ export interface CompletionGateOutput {
    * appends the text contributes it. One value, so the two cannot drift.
    */
   honestTerminal?: GateHonestTerminal;
+  /**
+   * The fire a SILENT reopen earns — set only by a gate that vetoes the
+   * terminal without appending anything for the model to read (late-inject).
+   * A gate that re-opens by NUDGING leaves this undefined: its row is already
+   * written by appendNudgeAsUserMessage, and a `reopen` beside it would count
+   * one landed message twice.
+   *
+   * Named, not minted, for the same reason `honestTerminal` is: the veto's
+   * whole effect is an in-memory `terminalReason = null` on its way to a
+   * commitTurn that driveTurn's cancel bail can still skip, and a fire recorded
+   * inside `evaluate` is a durable claim about a turn that may never exist. The
+   * runner banks it into `DecideOutcomeResult.earnedFires` — and only under
+   * `reopen`, so the fire cannot outlive the effect it names.
+   */
+  reopenFire?: GuardFire;
 }
 
 /** A named completion gate. `evaluate` runs only while terminalReason is still
@@ -93,11 +108,12 @@ export const CONTINUE: CompletionGateOutput = { reopen: false };
  *
  *  WHERE A GATE FIRE IS MINTED (guard-fire.ts carries the full ledger) follows
  *  one rule: at the branch when the effect is already spent there, on the
- *  earned-fire seam when it is still contingent. Spent → late-inject's silent
- *  reopen (`reopen`), framework-serve's registered dev server (`repair`),
- *  render-verify's dropped runtime errors (`gave-up`), and every nudge, whose
- *  row appendNudgeAsUserMessage has already written. Contingent → this gate's
- *  honest terminal, which a later gate's reopen discards, and build-verify's
- *  verifiedClean confirmation, whose append terminal-epilogue.ts decides after
- *  this chain on `!endedPartial`. */
+ *  earned-fire seam when it is still contingent. Spent → framework-serve's
+ *  registered dev server (`repair`), render-verify's dropped runtime errors
+ *  (`gave-up`), and every nudge, whose row appendNudgeAsUserMessage has already
+ *  written. Contingent → this gate's honest terminal, which a later gate's
+ *  reopen discards; build-verify's verifiedClean confirmation, whose append
+ *  terminal-epilogue.ts decides after this chain on `!endedPartial`; and
+ *  late-inject's silent reopen (`reopenFire` below), which is nothing but an
+ *  in-memory flag until the turn commits. */
 export const gateSource = (name: string, outcome: GuardOutcome): GuardFire => ({ name, reason: name, outcome });

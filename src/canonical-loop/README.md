@@ -112,7 +112,7 @@ no answer. The eight shapes:
 | `suspend` | `suspension.ts suspendedTurn` (beforeTurn) and `apply-directive.ts` (later phases + the idle-watchdog). |
 | `rewrite` | `middlewares/office-theme-guard.ts` — a guard that edits the tool call instead of speaking. |
 | `honest-terminal` | A completion gate that LETS the turn end but authors its closing words. Not a nudge; not an abort — the turn stays `done`. TWO producers, both on the earned-fire seam: `decide-outcome-gates.ts` unresolved-tool-intent's second and later fires (the gate NAMES it, `decide-outcome.ts` mints it at the append) and `terminal-epilogue.ts` build-verify's `build-verify-ok-*` confirmation (contributed inside the same `!endedPartial` branch that decides the append). `turn-loop.ts` banks both after `commitTurn`: see below. |
-| `reopen` | `decide-outcome-gates.ts` late-inject — a gate that VETOED the terminal and drove another turn WITHOUT saying anything. Its eight re-opening siblings all speak, so they file as `nudge`: there the message is the landed effect and the reopen is only how it gets read. |
+| `reopen` | A user follow-up that vetoed the terminal and drove another turn WITHOUT saying anything. TWO producers, split only by arrival window, and a census must SUM them: `continuation-guard`/`injects-pending` (`decide-outcome.ts` via `continuation-guard.ts`) for an inject already queued when `decideTurnOutcome` ran, and `late-inject`/`late-inject` (`decide-outcome-gates.ts`) for one that landed DURING the async verify gates. Mutually exclusive — a veto in the guard stops the chain from being entered — and deliberately not one name: a `late-inject` row for a run where that gate never evaluated would be false provenance. late-inject's SEVEN re-opening gate siblings all speak, so they file as `nudge`: there the message is the landed effect and the reopen is only how it gets read. Both ride the earned-fire seam. |
 | `repair` | `decide-outcome-gates.ts` framework-serve — a guard that fixed the ENVIRONMENT instead of steering the model (the dev server a promoted "done" made the verify adapter skip). Outside the conversation, so unlike `rewrite` the turn is untouched. Counted only on `handled && ok`. |
 | `gave-up` | `decide-outcome-verify-gates.ts` render-verify's `capReached` — a guard that held a real adverse verdict, had no retries left, and let the turn stand, dropping the runtime errors it had already drained. Not an abort: the turn stays `done`. |
 
@@ -126,11 +126,10 @@ the path that writes the row, `abort` on `if (bubbled)`, `rewrite` on
 is MINTED follows from that, and the two cases pull in opposite directions.
 
 An effect already SPENT when `evaluate` returns is minted at the branch:
-late-inject's reopen (the runner stops the chain on it and nothing restores
-`terminalReason`), framework-serve's registered dev server, render-verify's
-dropped runtime errors, and every nudge, whose row `appendNudgeAsUserMessage`
-has already written. Deferring one of these protects nothing and would drop it
-on any turn that ends non-terminally.
+framework-serve's registered dev server, render-verify's dropped runtime
+errors, and every nudge, whose row `appendNudgeAsUserMessage` has already
+written. Deferring one of these protects nothing and would drop it on any turn
+that ends non-terminally.
 
 An effect still CONTINGENT rides the seam, because a gate can see it from
 nowhere inside `evaluate`: a later gate's reopen discards the terminal it
@@ -147,6 +146,17 @@ confirmation joins that list from `terminal-epilogue.ts`, inside the
 keeps a partial-ending op from banking a fire for a message it suppressed. The
 seam has no idempotency key: two `decideTurnOutcome` calls for one `turnIdx`
 would bank two identical bodies.
+
+The silent `reopen` rides it too, from BOTH producers. A veto is nothing but an
+in-memory `terminalReason = null` on its way to that same `commitTurn`, so a
+Stop landing in the verify-gate window — the window both mechanisms exist for —
+erases it entirely, and a row banked at the branch would assert a gate that
+"drove another turn" when neither the vetoed turn nor the next one ever ran.
+Unlike `repair`'s leased port or `gave-up`'s discarded evidence, nothing about
+a veto survives the bail. `CompletionGateOutput.reopenFire` carries the gate's
+half and the chain runner contributes it under `if (out.reopen)`, so the fire
+cannot outlive the effect it names; `continuation-guard.ts` contributes the
+other half at its own branch.
 
 Read a slice with three caveats.
 

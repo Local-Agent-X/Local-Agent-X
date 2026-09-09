@@ -20,8 +20,6 @@ import type { CanonicalMessage, ToolCall } from "../contract-types.js";
 import type { CommitTurnMessage } from "../checkpoint.js";
 import type { ToolCallSummary } from "../types.js";
 import { publishStreamChunk } from "../event-emitter.js";
-import { hasInjects, opConsumesInjects } from "../../agent-loop/inject-queue.js";
-import { getSessionForOp } from "../../ops/session-bridge.js";
 import type { Op } from "../../ops/types.js";
 
 import type { MiddlewareDirective } from "./types.js";
@@ -33,6 +31,7 @@ import { appendQuestionAsAnswer, collectAskedQuestions } from "./ask-user-termin
 import { isRetractableHallucination, stripRetractedAssistant } from "./retract-false-claim.js";
 import { applyTerminalEpilogue } from "./terminal-epilogue.js";
 import { runCompletionGates } from "./decide-outcome-run-gates.js";
+import { continuationVetoedTerminal } from "./continuation-guard.js";
 import type { GuardFire } from "./guard-fire.js";
 import { appendEmptyTurnTerminal, appendHonestTerminal, evaluateEmptyInteractiveTurn } from "./empty-turn-termination.js";
 import { appendMissingToolResults } from "./orphan-tool-results.js";
@@ -291,33 +290,20 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
     }
   }
 
-  // Unified continuation guard. Whenever the worker is going to keep
-  // looping past this turn (middleware nudge appended at turn+1, our
-  // own failure-detection nudge above, or a mid-turn user inject sitting
-  // in the chat queue), we MUST NOT call transitionOp(succeeded) inside
-  // commitTurn — the next turn will also resolve as done and the second
-  // succeeded → succeeded transition is illegal and surfaces as a
-  // worker_exception in chat. Bug screenshot 2026-05-23: a game-loop
-  // fix landed but the user saw a confusing red error.
-  //
-  // The worker's resume-gate logic mirrors these three conditions; this
-  // is the corresponding pre-commit gate so commitTurn doesn't end the
-  // op while the worker is still planning to spin another turn.
-  if (terminalReason === "done") {
-    const middlewareNudged = middlewareDirective?.kind === "nudge";
-    // Only inject-consuming ops (chat_turn + agent_spawn) drain injects into
-    // their next turn (see turn-loop.ts drainInjectsIntoTurn and
-    // inject-queue.ts opConsumesInjects). A freeform / delegated op sharing a
-    // session with pending chat injects must NOT extend itself waiting for
-    // them — the injects belong to the consuming worker. Without this gate,
-    // "non-consuming ops do NOT drain the queue" was accidentally upgraded to
-    // "non-consuming ops hang forever whenever an inject is queued on the same
-    // session."
-    const sessionId = getSessionForOp(op.id);
-    const injectsPending = opConsumesInjects(op.type) && sessionId ? hasInjects(sessionId) : false;
-    if (middlewareNudged || failureNudged || injectsPending) {
-      terminalReason = null;
-    }
+  // Fires earned by an effect that actually landed on this turn. Returned, not
+  // emitted: everything appended below is in-memory until commitTurn, and
+  // driveTurn's cancel bail sits between here and it. turn-loop.ts banks these
+  // once the turn is durable (guard-fire.ts bankEarnedFires). Declared ahead of
+  // the continuation guard because that guard's silent branch earns one too.
+  const earnedFires: GuardFire[] = [];
+
+  // Unified continuation guard (continuation-guard.ts): the worker is going to
+  // keep looping past this turn, so commitTurn must not end the op — the second
+  // succeeded → succeeded transition is illegal. It also earns the `reopen`
+  // fire for the one of its three branches that acts without speaking.
+  if (terminalReason === "done"
+    && continuationVetoedTerminal(op, middlewareDirective, failureNudged, earnedFires)) {
+    terminalReason = null;
   }
 
   // Completion-gate chain (decide-outcome-run-gates.ts): once the turn is
@@ -327,14 +313,9 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
   // so one more turn could only guess. Ordering, short-circuit and the
   // question exemption are documented in the runner.
   const endsOnQuestion = askedQuestions.length > 0 && terminalReason === "done";
-  const gates = await runCompletionGates({ op, turnIdx, toolCalls, assistantText }, terminalReason, endsOnQuestion);
+  const gates = await runCompletionGates({ op, turnIdx, toolCalls, assistantText }, terminalReason, endsOnQuestion, earnedFires);
   terminalReason = gates.terminalReason;
   const { buildVerifyConfirmation, honestTerminal } = gates;
-  // Fires earned by an effect that actually landed on this turn. Returned, not
-  // emitted: everything appended below is in-memory until commitTurn, and
-  // driveTurn's cancel bail sits between here and it. turn-loop.ts banks these
-  // once the turn is durable (guard-fire.ts bankEarnedFires).
-  const earnedFires: GuardFire[] = [];
 
   // P-1 measurement sink (behavior-neutral — nothing above or below reads this).
   // Emit only when the mutation shortcut was the sole reason this turn could

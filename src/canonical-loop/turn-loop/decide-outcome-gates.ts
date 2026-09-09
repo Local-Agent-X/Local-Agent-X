@@ -148,15 +148,18 @@ const lateInjectGate: CompletionGate = {
     if (!opConsumesInjects(op.type)) return CONTINUE;
     const sessionId = getSessionForOp(op.id);
     if (sessionId && hasInjects(sessionId)) {
-      // MINTED HERE, not carried on the earned-fire seam. That seam exists for
-      // an effect still contingent when the gate returns — a terminal a later
-      // gate can discard, an appended message a Stop can erase before
-      // commitTurn. Neither applies: this branch IS the effect, the runner
-      // stops the chain on it, and nothing downstream restores terminalReason.
-      // It is also what every re-opening SIBLING does — their nudges are
-      // recorded by appendNudgeAsUserMessage at the gate, before the commit —
-      // so deferring the one silent re-open would put its rows in a different
-      // phase from the eight comparable ones.
+      // NAMED HERE, banked on the earned-fire seam — NOT minted at the branch.
+      // Nothing downstream restores terminalReason, true; but the cancel bail
+      // at turn-loop.ts does not RESTORE the terminal, it DISCARDS THE WHOLE
+      // TURN, and this branch's entire effect is an in-memory
+      // `terminalReason = null` on its way to that commit. A row minted here
+      // survives a Stop the turn it describes does not — asserting a veto that
+      // drove another turn when neither the vetoed turn nor the next one ever
+      // existed. Its re-opening SIBLINGS are minted at the gate only because
+      // appendNudgeAsUserMessage has already WRITTEN their message; there is no
+      // comparable already-durable artifact here.
+      // Reachable exactly in this gate's own window: the user types a follow-up
+      // and hits Stop while the async verify gates run.
       //
       // `reopen`, not `nudge`: nothing was appended for the model to read. It
       // is driven one more turn and told nothing, because the thing it must
@@ -164,8 +167,7 @@ const lateInjectGate: CompletionGate = {
       //
       // turnIdx, not +1: the effect lands on THIS turn's terminal (vetoed).
       // The +1 convention belongs to a nudge, which is read on the next turn.
-      recordGuardFire(op.id, turnIdx, gateSource("late-inject", "reopen"));
-      return { reopen: true };
+      return { reopen: true, reopenFire: gateSource("late-inject", "reopen") };
     }
     return CONTINUE;
   },

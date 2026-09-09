@@ -272,8 +272,9 @@ describe("the idempotency guard covers every new field", () => {
   });
 
   it("keeps field boundaries: moving characters from cc into to is NOT the same message", async () => {
-    // fingerprintOf concatenates its parts with no separator, so an unencoded
-    // field list collides: to="a",cc="b" hashes identically to to="ab",cc="".
+    // Every field is collapsed into one fingerprintOf part, so its "\u0001"
+    // join separator never falls between them: an unencoded field list would
+    // collide, to="a",cc="b" hashing identically to to="ab",cc="".
     await send({ to: "a@x.com", cc: "b@x.com" });
     const r = await send({ to: "a@x.comb@x.com", cc: "" });
     expect(r.metadata?.skipped, "a field-boundary collision swallowed a different message").toBeUndefined();

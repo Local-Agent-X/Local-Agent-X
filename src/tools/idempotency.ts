@@ -71,7 +71,7 @@ export function markDone(toolName: string, fingerprint: string, result: string):
  *  collapse to "" so callers don't have to filter; whitespace at the
  *  edges is trimmed. */
 export function fingerprintOf(...parts: string[]): string {
-  const normalized = parts.map(p => (p ?? "").trim()).join("");
+  const normalized = parts.map(p => (p ?? "").trim()).join("\u0001");
   return createHash("sha256").update(normalized).digest("hex").slice(0, 32);
 }
 

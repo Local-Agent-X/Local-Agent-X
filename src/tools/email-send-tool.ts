@@ -1,4 +1,4 @@
-﻿import { createTransport } from "nodemailer";
+import { createTransport } from "nodemailer";
 import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
 import type { ToolDefinition, ToolResult } from "../types.js";
@@ -161,10 +161,11 @@ export const emailSend: ToolDefinition = {
     // two different inputs that compose the identical email must collide. Hash
     // the raw input and the recipient gets the same message twice.
     //
-    // Encoded as JSON so the field boundaries survive concatenation
-    // (fingerprintOf joins its parts with NO separator, so an unencoded list
-    // makes to="a",cc="b" collide with to="ab",cc=""); per-field trim preserves
-    // fingerprintOf's "edge whitespace doesn't count" behaviour.
+    // Encoded as JSON so the field boundaries survive concatenation. Every
+    // field is collapsed into ONE fingerprintOf part here, so its "\u0001"
+    // join separator never falls between them — without the encoding
+    // to="a",cc="b" would collide with to="ab",cc="". Per-field trim
+    // preserves fingerprintOf's "edge whitespace doesn't count" behaviour.
     const fp = fingerprintOf(
       JSON.stringify(
         [to, cc, bcc, subject, text, html, inReplyTo ?? "", references.join(" "), attachmentsRaw].map(s => s.trim()),

@@ -134,9 +134,7 @@ function renderMessage(msg, ctx) {
       approvals: msg._approvals || [],
       stopNote: msg._stopNote || null,
     });
-    // Read-aloud button — only on bubbles that carry speakable text (not
-    // tool-only / approval-only rows). Live-note receipts are excluded too.
-    if ((msg.content || hasBlocks) && !msg._localNote) appendReadAloudBtn(node);
+    appendReadAloudBtn(node, msg);
     return node;
   }
   return null;
@@ -144,12 +142,16 @@ function renderMessage(msg, ctx) {
 
 // Add a 🔊 read-aloud button to a finalized assistant bubble's footer, wired to
 // speakBubble (chat-voice-tts.js), which speaks the bubble's rendered text via
-// the browser voice the user picked in Settings. Idempotent — skips if the
-// button (or a footer/body) is already absent/present. Fails soft so a TTS-less
-// environment never breaks message rendering.
-function appendReadAloudBtn(node) {
+// the browser voice the user picked in Settings. Owns the speakable test so
+// both paint paths (renderMessage, finalizeLiveMessageInPlace) agree on which
+// bubbles get one: a tool-only / approval-only row and a client-side receipt
+// have nothing to read. Idempotent — skips if the button (or a footer/body)
+// is already absent/present. Fails soft so a TTS-less environment never breaks
+// message rendering.
+function appendReadAloudBtn(node, msg) {
   try {
-    if (!node || !('speechSynthesis' in window)) return;
+    if (!node || !msg || msg._localNote || !('speechSynthesis' in window)) return;
+    if (!msg.content && !(Array.isArray(msg._blocks) && msg._blocks.length > 0)) return;
     const footer = node.querySelector('.msg-footer');
     const body = node.querySelector('.msg-body');
     if (!footer || !body || footer.querySelector('.read-aloud-btn')) return;

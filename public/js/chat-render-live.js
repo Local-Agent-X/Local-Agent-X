@@ -244,7 +244,6 @@ function finalizeLiveMessageInPlace(sessionId, finalizedMsg) {
   fresh.querySelectorAll('.reasoning-block').forEach(rb => { rb.open = false; });
   preserveOpenState(oldNode, fresh);
   const activityScroll = captureActivityScroll(oldNode);
-  if (oldNode.classList.contains('pin-bottom')) fresh.classList.add('pin-bottom');
   // Drop the streaming affordance — this is the terminal paint. That includes
   // the data-live stamp _buildLiveAssistantInto applied: a finalized bubble
   // must never be adoptable by the last-assistant fallbacks above, or the
@@ -261,6 +260,14 @@ function finalizeLiveMessageInPlace(sessionId, finalizedMsg) {
   }
   oldNode.replaceWith(fresh);
   restoreActivityScroll(fresh, activityScroll);
+  // This is the last paint the turn gets: the full render that normally hangs
+  // the footer controls off a finished answer doesn't run again until the
+  // thread is re-entered, so a completed turn sat there with a timestamp and
+  // nothing else. _applyPinBottom also owns the pin — recomputing it here
+  // (same synchronous task as the swap, so nothing paints in between) beats
+  // copying the class off the live node and letting the two rules drift.
+  appendReadAloudBtn(fresh, finalizedMsg);
+  _applyPinBottom(el);
   _liveMessageNodes.delete(sessionId);
   return true;
 }

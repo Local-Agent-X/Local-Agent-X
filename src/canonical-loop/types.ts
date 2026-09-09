@@ -337,7 +337,22 @@ export type GuardOutcome =
   /** The guard edited the model's tool call instead of speaking. */
   | "rewrite"
   /** A completion gate let the turn END but authored its closing words. */
-  | "honest-terminal";
+  | "honest-terminal"
+  /** A completion gate VETOED the terminal and drove another turn WITHOUT
+   *  saying anything — the model reads no new message and is told nothing.
+   *  A gate that re-opens by nudging files under `nudge` instead: there the
+   *  landed effect is the message, and the re-open is how it gets read. */
+  | "reopen"
+  /** The guard fixed the ENVIRONMENT rather than steering the model — an act
+   *  outside the conversation entirely, so unlike `rewrite` the model's turn
+   *  is untouched. Counted only where the repair LANDED; an attempt that
+   *  failed leaves the guarantee unmet and is not a repair. */
+  | "repair"
+  /** The guard held a real adverse verdict, ran out of budget for it, and let
+   *  the turn stand anyway — dropping evidence it had already collected. The
+   *  turn ends as the model wrote it, so this is not an `abort`; it is the
+   *  guard declining to act on what it found. */
+  | "gave-up";
 
 export interface MiddlewareFiredBody extends Record<string, unknown> {
   name: string;

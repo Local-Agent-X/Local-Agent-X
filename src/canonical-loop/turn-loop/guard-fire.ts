@@ -31,51 +31,79 @@
  *   rewrite          a guard that edits the model's tool call instead of
  *                    speaking (office-theme-guard strips an uninvited `theme`).
  *   honest-terminal  a completion gate that LETS the turn end but authors its
- *                    closing words (unresolved-tool-intent's second and later
- *                    fires). Not a nudge — nothing is appended for the model to
- *                    read — and not an abort: the turn stays `done`. The gate
- *                    NAMES this fire; decide-outcome.ts mints it at the
- *                    `appendHonestTerminal` call site and turn-loop.ts banks it
- *                    after commitTurn (bankEarnedFires below).
+ *                    closing words. Not a nudge — nothing is appended for the
+ *                    model to read — and not an abort: the turn stays `done`.
+ *                    TWO producers, both on the earned-fire seam because both
+ *                    appends stay contingent after the gate returns:
+ *                    unresolved-tool-intent's second and later fires (the gate
+ *                    NAMES the fire, decide-outcome.ts mints it at the
+ *                    `appendHonestTerminal` call site, a later gate's reopen
+ *                    discards both together) and build-verify's verifiedClean
+ *                    confirmation (terminal-epilogue.ts pushes
+ *                    `build-verify-ok-*` and contributes the fire inside the
+ *                    same `!endedPartial` branch, so a partial-ending op that
+ *                    suppresses the message banks nothing). turn-loop.ts banks
+ *                    both after commitTurn (bankEarnedFires below). Slice by
+ *                    `name` for one gate — see the terminal caveat below.
+ *   reopen           a completion gate that VETOED the terminal and drove
+ *                    another turn WITHOUT saying anything: late-inject, on a
+ *                    user follow-up that landed while the async verify gates
+ *                    were awaiting. Its eight re-opening siblings all speak,
+ *                    so they file as `nudge` — the message is the effect that
+ *                    lands, and the reopen is only how it gets read. Minted at
+ *                    the branch (decide-outcome-gates.ts): the branch IS the
+ *                    effect, the runner stops the chain on it, and nothing
+ *                    downstream restores terminalReason. Files under the turn
+ *                    whose terminal was vetoed, not turnIdx + 1 — the +1
+ *                    convention belongs to a message read on the next turn.
+ *   repair           a guard that fixed the ENVIRONMENT instead of steering the
+ *                    model: framework-serve registering the dev server a
+ *                    promoted "done" caused the verify adapter to skip. Outside
+ *                    the conversation entirely, so unlike `rewrite` the turn is
+ *                    untouched. Minted at the branch — a leased port and a
+ *                    registered server are already real, and neither a later
+ *                    gate nor a Stop takes them back — and ONLY on
+ *                    `handled && ok`; see the failed-registration entry below.
+ *   gave-up          a guard that held a real adverse verdict, had no budget
+ *                    left for it, and let the turn stand: render-verify's
+ *                    capReached, which returns with the drained runtime errors
+ *                    dropped over the model's "done". Not an abort — the turn
+ *                    stays `done` and the op succeeds. Minted at the branch
+ *                    because the drop already happened: render-verify.ts drains
+ *                    the errors into a nudge string it discards and does not
+ *                    even increment the retry counter there, so deferring the
+ *                    fire to a settled terminal would lose it on every turn a
+ *                    later gate re-opened — UNDER-counting a real effect.
  *
  * NOT COUNTED — read a 0 with these in mind:
  *   - a `continue` verdict: a guard that looked and let the turn pass.
- *   - a completion gate that ACTS WITHOUT NUDGING: late-inject re-opening the
- *     turn, framework-serve registering a dev server. Counting those is a
- *     semantics expansion ("acted" vs "spoke") deliberately not made here.
- *   - build-verify's verifiedClean. NOT an "acts without nudging" case: it
- *     SPEAKS, pushing a user-facing assistant message (terminal-epilogue.ts
- *     `build-verify-ok-*`) in the same shape as the honest terminal. Counting
- *     it is no semantics expansion at all — it is the semantics already
- *     counted. It is uncounted only because nothing has wired it, and its
- *     append is guarded by `terminalReason !== null && !endedPartial &&
- *     buildVerifyConfirmation` — decided inside the epilogue, LATER than the
- *     gate chain — so it must contribute its fire at that append, not before.
- *   - render-verify's capReached, which is NOT the same hazard despite the
- *     resemblance. Its irreversible half already happened: the drained runtime
- *     errors are dropped and the retry counter is not even incremented on that
- *     branch (render-verify.ts), and a later reopen does not undo either. A
- *     fire for it would have to be minted where the drop happens; deferring it
- *     to a settled terminal would UNDER-count a real effect.
+ *   - a FAILED framework-serve registration (`handled && !ok`). `handled` alone
+ *     means only that the gate recognised a framework app; with `ok:false` the
+ *     op ends with no server registered, which is the state the gate exists to
+ *     prevent, so a `repair` row would assert a repair that did not happen —
+ *     the same rule that keeps a collapsed abort bubble and a `stableMessageId`
+ *     nudge uncounted. It is the one path that logs a warning
+ *     (`dev-server registration failed`), so read a low `repair` count against
+ *     that log line, never as a dead gate.
  *   - a directive discarded by a user cancel: driveTurn bails before the
  *     post-commit apply, so the verdict never reached the op.
- *   - THE OTHER FIVE HARNESS-AUTHORED TERMINALS. The harness writes its own
- *     closing assistant message in six places and counts ONE. Uncounted:
+ *   - THE OTHER FOUR HARNESS-AUTHORED TERMINALS. The harness writes its own
+ *     closing assistant message in six places and counts TWO. Uncounted:
  *       `empty-turn-*`        empty-turn-termination.ts, a fully-empty
  *                             interactive turn
  *       `ask-user-*`          ask-user-terminal.ts, a trailing question made
  *                             the visible answer
  *       `open-steps-warn-*`   terminal-epilogue.ts, the loud-partial warning
- *       `build-verify-ok-*`   terminal-epilogue.ts, the green confirmation
  *       `ground-truth-sizes-* terminal-epilogue.ts, real file sizes over a
  *                             fabricated line count
  *     Only `empty-turn-*` shares the `appendHonestTerminal` writer with the
- *     gate's — that helper has exactly two call sites. The other four publish
- *     and push on their own, so a writer-based search finds neither them nor
- *     any future sibling. `outcome === "honest-terminal"` is therefore a census
- *     of ONE gate, not of harness-authored terminals — slice it as the former
- *     or five live code paths read as dead, the exact misreading this event
- *     exists to prevent.
+ *     gate terminal's — that helper has exactly two call sites. The other three
+ *     publish and push on their own, so a writer-based search finds neither
+ *     them nor any future sibling; `build-verify-ok-*` is counted only because
+ *     it was wired by hand. `outcome === "honest-terminal"` is therefore a
+ *     census of TWO gates, not of harness-authored terminals — slice it as the
+ *     former or four live code paths read as dead, the exact misreading this
+ *     event exists to prevent.
  *
  * COUNTED BUT CONFLATED — one distinction the vocabulary does not draw:
  *   - a nudge that ALSO suppressed tool dispatch. loop-detection's
@@ -142,7 +170,14 @@ export function recordGuardFire(opId: string, turnIdx: number, fire: GuardFire):
  *  (`CompletionGateOutput.honestTerminal`), the code that performs the effect
  *  contributes it to `DecideOutcomeResult.earnedFires`, and this banks the
  *  list once the turn is durable. The epilogue's verified-clean confirmation
- *  joins the same list at its own append when it is wired.
+ *  rides the same list, contributed at its own append inside the
+ *  `!endedPartial` branch that decides whether the user ever sees it.
+ *
+ *  NOT every gate fire belongs here. A fire whose effect is already SPENT when
+ *  the gate returns is minted at the branch instead — the silent reopen, the
+ *  registered dev server, the dropped render errors — because for those the
+ *  deferral protects nothing and would drop the fire on any turn that ends
+ *  non-terminally. The ledger above says which, and why, per outcome.
  *
  *  NO IDEMPOTENCY KEY: two decideTurnOutcome calls for one turnIdx would bank
  *  two identical bodies. Not reachable through worker.ts today, but note that

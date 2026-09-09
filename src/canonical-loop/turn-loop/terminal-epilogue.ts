@@ -19,6 +19,8 @@ import { opGaveUpUnrecovered } from "../middlewares/browser-handoff.js";
 import { opCleanupUnverified } from "../middlewares/cleanup-verify.js";
 import { opEditedSourceUnverified, opDeletedTestDodge } from "../middlewares/verify-gate.js";
 import { groundTruthSizesNote } from "./build-verify.js";
+import { gateSource } from "./decide-outcome-gate-contract.js";
+import type { GuardFire } from "./guard-fire.js";
 import { recordTerminalOutcome, type OpOutcome } from "./record-outcome.js";
 
 export interface TerminalEpilogueInput {
@@ -33,10 +35,18 @@ export interface TerminalEpilogueInput {
 }
 
 /** Append the epilogue notes to the live bubble + `allMessages` (mutated in
- *  place) and record the op outcome. No-op on non-terminal turns. */
+ *  place) and record the op outcome. No-op on non-terminal turns.
+ *
+ *  `earnedFires` is the same mutated-in-place contract as `allMessages`, and
+ *  for the same reason: what this function appends is a fire's evidence, so the
+ *  fire has to be contributed exactly where the append is decided. It is
+ *  REQUIRED rather than optional — an optional collector is one a future caller
+ *  can forget, and a forgotten one is silently uncounted, which is the whole
+ *  failure the fire ledger exists to end. */
 export function applyTerminalEpilogue(
   in_: TerminalEpilogueInput,
   allMessages: CommitTurnMessage[],
+  earnedFires: GuardFire[],
 ): OpOutcome | null {
   const { op, turnIdx, terminalReason, assistantText, buildVerifyConfirmation, toolCalls, observedTools } = in_;
 
@@ -76,6 +86,21 @@ export function applyTerminalEpilogue(
       role: "assistant",
       content: { text: buildVerifyConfirmation },
     });
+    // The fire for build-verify's held confirmation, contributed INSIDE the
+    // `if` that decides the append and nowhere earlier. The gate settled
+    // `verifiedClean` turns ago; whether the user ever sees the green line is
+    // settled HERE, by `!endedPartial` — an op that ends partial suppresses the
+    // message, so a fire banked at the gate would count a terminal nobody was
+    // shown. Sharing the condition is what makes that impossible.
+    //
+    // `honest-terminal` and NOT a new shape: this is a completion gate letting
+    // the turn end while authoring its closing words — the definition already
+    // in the vocabulary, in the same `allMessages` push, in the same
+    // user-facing shape as the gate terminal beside it. A second value for the
+    // second producer of one act would make the discriminator a call-site list.
+    // The cost is that `honest-terminal` is now a census of TWO producers, not
+    // one; slice by `name` for a single gate (guard-fire.ts states this).
+    earnedFires.push(gateSource("build-verify", "honest-terminal"));
   }
 
   // Ground-truth file sizes: the claim-verify guards catch a lie about what a

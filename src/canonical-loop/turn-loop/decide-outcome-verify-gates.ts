@@ -25,6 +25,7 @@
  */
 import { appendNudgeAsUserMessage } from "./nudges.js";
 import { CONTINUE, gateSource, type CompletionGate } from "./decide-outcome-gate-contract.js";
+import { recordGuardFire } from "./guard-fire.js";
 import { appIdsTouchedByTurn, registerOpAppTouch, runRenderVerifyGate, turnTouchedAppFiles } from "./render-verify.js";
 import { runBuildVerifyGate } from "./build-verify.js";
 import { runSpecProbeGate } from "./spec-probes.js";
@@ -63,9 +64,27 @@ export const renderVerifyGate: CompletionGate = {
       appendNudgeAsUserMessage(op.id, turnIdx + 1, gate.nudge, gateSource("render-verify", "nudge"));
       return { reopen: true };
     }
-    // gate.capReached → leave terminalReason="done" but the errors are
-    // already drained; the user sees the broken preview + the model's
-    // "done", same as today. Future: emit a one-line warning event.
+    if (gate.capReached) {
+      // capReached → leave terminalReason="done" but the errors are already
+      // drained; the user sees the broken preview + the model's "done".
+      //
+      // MINTED HERE, and this is the exact OPPOSITE of build-verify's
+      // confirmation despite the family resemblance. That one is contingent
+      // (its append is decided later, inside the epilogue) so it rides the
+      // earned-fire seam; this one is already SPENT. render-verify.ts drained
+      // the runtime errors into a nudge string it then throws away and does not
+      // even increment the retry counter on this branch, so the evidence is
+      // gone before `evaluate` returns and no later re-open puts it back.
+      // Deferring the fire to a settled terminal would drop it on every turn
+      // that got re-opened for some other reason — under-counting a real,
+      // irreversible effect, which is the failure this whole event exists to
+      // end.
+      //
+      // `gave-up`, not `nudge` (nothing was appended) and not `abort` (the turn
+      // stays "done" and the op succeeds): the guard had errors in hand, had no
+      // retries left, and let the model's "done" stand over a broken preview.
+      recordGuardFire(op.id, turnIdx, gateSource("render-verify", "gave-up"));
+    }
     return CONTINUE;
   },
 };

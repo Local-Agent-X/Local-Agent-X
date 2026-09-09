@@ -103,7 +103,7 @@ guard whose verdict TOOK EFFECT, and `outcome` — a closed `GuardOutcome`
 vocabulary, required on every `GuardFire` so an unstated shape is a compile
 error — says WHAT it did. Without it every row reads alike and the first
 question a retirement review asks ("did this guard nudge or end the op?") has
-no answer. The five shapes:
+no answer. The eight shapes:
 
 | `outcome` | Where it is counted |
 | --- | --- |
@@ -111,7 +111,10 @@ no answer. The five shapes:
 | `abort` | `nudges.ts middlewareAbortResult` (beforeTurn) and `apply-directive.ts` (afterModelCall / afterToolExecution). Counted only when the abort's error bubble is really emitted, so a repeat collapses with `emitErrorOnce`. |
 | `suspend` | `suspension.ts suspendedTurn` (beforeTurn) and `apply-directive.ts` (later phases + the idle-watchdog). |
 | `rewrite` | `middlewares/office-theme-guard.ts` — a guard that edits the tool call instead of speaking. |
-| `honest-terminal` | `decide-outcome-gates.ts` — a completion gate that LETS the turn end but authors its closing words (unresolved-tool-intent's second and later fires). Not a nudge; not an abort — the turn stays `done`. The gate NAMES it; `decide-outcome.ts` mints it at the append, and `turn-loop.ts` banks it after `commitTurn`: see below. |
+| `honest-terminal` | A completion gate that LETS the turn end but authors its closing words. Not a nudge; not an abort — the turn stays `done`. TWO producers, both on the earned-fire seam: `decide-outcome-gates.ts` unresolved-tool-intent's second and later fires (the gate NAMES it, `decide-outcome.ts` mints it at the append) and `terminal-epilogue.ts` build-verify's `build-verify-ok-*` confirmation (contributed inside the same `!endedPartial` branch that decides the append). `turn-loop.ts` banks both after `commitTurn`: see below. |
+| `reopen` | `decide-outcome-gates.ts` late-inject — a gate that VETOED the terminal and drove another turn WITHOUT saying anything. Its eight re-opening siblings all speak, so they file as `nudge`: there the message is the landed effect and the reopen is only how it gets read. |
+| `repair` | `decide-outcome-gates.ts` framework-serve — a guard that fixed the ENVIRONMENT instead of steering the model (the dev server a promoted "done" made the verify adapter skip). Outside the conversation, so unlike `rewrite` the turn is untouched. Counted only on `handled && ok`. |
+| `gave-up` | `decide-outcome-verify-gates.ts` render-verify's `capReached` — a guard that held a real adverse verdict, had no retries left, and let the turn stand, dropping the runtime errors it had already drained. Not an abort: the turn stays `done`. |
 
 `directiveFire` and `firedResultFire` derive `outcome` from the verdict's own
 `kind`, so the sites that route through them cannot state it wrong; the
@@ -119,8 +122,18 @@ handful of hand-built `GuardFire` literals state it themselves.
 
 **Every fire is gated on its own EFFECT, not on a guard's intent** — `nudge` on
 the path that writes the row, `abort` on `if (bubbled)`, `rewrite` on
-`if (stripped)`, `suspend` post-commit. A completion gate can see its own effect
-from nowhere inside `evaluate`: a later gate's reopen discards the terminal it
+`if (stripped)`, `repair` on `if (ok)`, `suspend` post-commit. Where a gate fire
+is MINTED follows from that, and the two cases pull in opposite directions.
+
+An effect already SPENT when `evaluate` returns is minted at the branch:
+late-inject's reopen (the runner stops the chain on it and nothing restores
+`terminalReason`), framework-serve's registered dev server, render-verify's
+dropped runtime errors, and every nudge, whose row `appendNudgeAsUserMessage`
+has already written. Deferring one of these protects nothing and would drop it
+on any turn that ends non-terminally.
+
+An effect still CONTINGENT rides the seam, because a gate can see it from
+nowhere inside `evaluate`: a later gate's reopen discards the terminal it
 authored, and even a settled terminal is only an entry in an in-memory
 `allMessages` until `commitTurn`, with `driveTurn`'s cancel bail in between. So
 a gate NAMES the fire beside the payload it belongs to
@@ -128,20 +141,24 @@ a gate NAMES the fire beside the payload it belongs to
 which is what stops the append and the count from drifting), the code that
 performs the effect contributes it to `DecideOutcomeResult.earnedFires`, and
 `turn-loop.ts` banks the list via `bankEarnedFires` **after `commitTurn`** —
-beside `applyCommittedDirective`, under the same ordering contract. The seam has
-no idempotency key: two `decideTurnOutcome` calls for one `turnIdx` would bank
-two identical bodies.
+beside `applyCommittedDirective`, under the same ordering contract. Build-verify's
+confirmation joins that list from `terminal-epilogue.ts`, inside the
+`!endedPartial` branch that decides its append: sharing the condition is what
+keeps a partial-ending op from banking a fire for a message it suppressed. The
+seam has no idempotency key: two `decideTurnOutcome` calls for one `turnIdx`
+would bank two identical bodies.
 
 Read a slice with three caveats.
 
-(1) `outcome === "honest-terminal"` is a census of ONE gate, not of
+(1) `outcome === "honest-terminal"` is a census of TWO gates, not of
 harness-authored terminals. The harness writes its own closing assistant message
-in six places and counts one; uncounted are `empty-turn-*`
+in six places and counts two; uncounted are `empty-turn-*`
 (empty-turn-termination.ts), `ask-user-*` (ask-user-terminal.ts) and
-`open-steps-warn-*` / `build-verify-ok-*` / `ground-truth-sizes-*`
-(terminal-epilogue.ts). Only `empty-turn-*` shares the `appendHonestTerminal`
-writer with the gate's — that helper has exactly two call sites — so a
-writer-based search will not find the other four.
+`open-steps-warn-*` / `ground-truth-sizes-*` (terminal-epilogue.ts). Only
+`empty-turn-*` shares the `appendHonestTerminal` writer with the gate
+terminal's — that helper has exactly two call sites — so a writer-based search
+will not find the other three, and `build-verify-ok-*` is counted only because
+it was wired by hand.
 
 (2) A nudge that also suppressed tool dispatch (loop-detection's
 mutation-repeat, which empties `ctx.toolCalls` and sets `skipToolDispatch`)
@@ -151,23 +168,12 @@ files as a plain `nudge` — a modifier on the verdict, not a shape of its own.
 added `outcome` carry no `outcome` at all and read `undefined`, so a
 `group by outcome` drops them.
 
-Two gate branches look like the next candidates for the seam and are NOT
-interchangeable. `verifiedClean` speaks a user-facing message
-(`build-verify-ok-*`), so counting it is not a semantics expansion — but its
-append is guarded by `!endedPartial`, decided inside the epilogue and later than
-the gate chain, so it must contribute its fire at that append. `capReached`
-drops the drained runtime errors before it returns and no reopen undoes that, so
-deferring its fire would under-count a real effect.
-
 It is NOT a census of every guard invocation. Uncounted, deliberately: a
-`continue` verdict; the completion-gate branches that act without nudging
-(late-inject re-opening the turn, framework-serve); and a directive discarded
-by a user cancel before it is applied. Read a `0` with that list in hand.
-
-`capReached` and `verifiedClean` are uncounted too, but for their OWN reasons,
-not this one — see the paragraph above. `verifiedClean` SPEAKS, so counting it
-is the semantics already counted rather than an expansion; `capReached` has the
-opposite hazard, since it drops the drained errors and no reopen undoes that.
+`continue` verdict; a FAILED framework-serve registration (`handled && !ok` —
+the op ends with no server, so a `repair` row would assert a repair that did not
+happen; that path logs `dev-server registration failed`, so read a low `repair`
+count against the warn line, never as a dead gate); and a directive discarded by
+a user cancel before it is applied. Read a `0` with that list in hand.
 
 Every nudge caller must name its guard AND state what the fire did — the
 required `GuardFire` argument is what keeps one from reaching op_messages

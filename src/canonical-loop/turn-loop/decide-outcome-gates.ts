@@ -19,7 +19,8 @@
  * A gate is pure w.r.t. the decision it returns (reopen or not); its documented
  * side effects (append a next-turn nudge, register app touches, stash the build
  * confirmation) are the same ones the inlined blocks performed, in the same
- * order.
+ * order — plus recording the fire an effect earns, which a gate does only where
+ * that effect is already irreversible (guard-fire.ts carries the rule).
  *
  * SIZE — this file reached the hard 400-LOC gate (scripts/check-source-hygiene.mjs,
  * MAX_LOC 400, GRANDFATHERED empty) and was split, per the practice
@@ -40,6 +41,7 @@ import { hasInjects, opConsumesInjects } from "../../agent-loop/inject-queue.js"
 import { getSessionForOp } from "../../ops/session-bridge.js";
 import { appendNudgeAsUserMessage } from "./nudges.js";
 import { CONTINUE, gateSource, type CompletionGate } from "./decide-outcome-gate-contract.js";
+import { recordGuardFire } from "./guard-fire.js";
 import {
   buildVerifyGate,
   designVerifyGate,
@@ -142,10 +144,29 @@ const earnedDoneGate: CompletionGate = {
  */
 const lateInjectGate: CompletionGate = {
   name: "late-inject",
-  evaluate({ op }) {
+  evaluate({ op, turnIdx }) {
     if (!opConsumesInjects(op.type)) return CONTINUE;
     const sessionId = getSessionForOp(op.id);
-    if (sessionId && hasInjects(sessionId)) return { reopen: true };
+    if (sessionId && hasInjects(sessionId)) {
+      // MINTED HERE, not carried on the earned-fire seam. That seam exists for
+      // an effect still contingent when the gate returns — a terminal a later
+      // gate can discard, an appended message a Stop can erase before
+      // commitTurn. Neither applies: this branch IS the effect, the runner
+      // stops the chain on it, and nothing downstream restores terminalReason.
+      // It is also what every re-opening SIBLING does — their nudges are
+      // recorded by appendNudgeAsUserMessage at the gate, before the commit —
+      // so deferring the one silent re-open would put its rows in a different
+      // phase from the eight comparable ones.
+      //
+      // `reopen`, not `nudge`: nothing was appended for the model to read. It
+      // is driven one more turn and told nothing, because the thing it must
+      // read is the user's inject, which drainInjectsIntoTurn pulls in next.
+      //
+      // turnIdx, not +1: the effect lands on THIS turn's terminal (vetoed).
+      // The +1 convention belongs to a nudge, which is read on the next turn.
+      recordGuardFire(op.id, turnIdx, gateSource("late-inject", "reopen"));
+      return { reopen: true };
+    }
     return CONTINUE;
   },
 };
@@ -166,7 +187,7 @@ const lateInjectGate: CompletionGate = {
  */
 const frameworkServeGate: CompletionGate = {
   name: "framework-serve",
-  async evaluate({ op }) {
+  async evaluate({ op, turnIdx }) {
     if (op.type !== "app_build" || !op.appUrl) return CONTINUE; // APP_BUILD_OP_TYPE
     const appName = op.appUrl.match(/\/apps\/([^/]+)\//)?.[1];
     if (!appName) return CONTINUE;
@@ -177,6 +198,23 @@ const frameworkServeGate: CompletionGate = {
         { appDir: workspacePath("apps", appName), appName, laxPort: process.env.LAX_PORT ?? "7007", registerServer: true },
         {},
       );
+      // Counted on `handled && ok`, i.e. where the REPAIR LANDED — the same
+      // rule every other fire follows (`abort` on the bubble that was really
+      // emitted, `rewrite` on the arg that was really stripped). `handled`
+      // alone is only "the gate recognised a framework app": with `ok:false`
+      // this op ends with no server registered, which is the state the gate
+      // exists to prevent, so a `repair` row there would assert a repair that
+      // did not happen. A failed attempt is not lost — it is the one path that
+      // logs a warning (below), and the ledger names it as uncounted so a low
+      // count is read against the warn line rather than as a dead gate.
+      //
+      // Minted at the branch like late-inject's, and for a stronger reason:
+      // this is a side effect on the WORLD (a leased port, a registered dev
+      // server, possibly a static build) that has already happened and that
+      // neither a later gate nor a Stop can take back.
+      if (finalized.handled && finalized.ok) {
+        recordGuardFire(op.id, turnIdx, gateSource("framework-serve", "repair"));
+      }
       if (finalized.handled && !finalized.ok) {
         logger.warn(`op=${op.id} dev-server registration failed for "${appName}": ${finalized.message}`);
       }

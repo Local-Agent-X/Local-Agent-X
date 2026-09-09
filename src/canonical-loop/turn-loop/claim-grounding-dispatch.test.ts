@@ -122,7 +122,7 @@ function terminalLabel(): string | null {
     buildVerifyConfirmation: "",
     toolCalls: [],
     observedTools: [],
-  }, []);
+  }, [], []);
 }
 
 describe("claim-grounding partial-label ↔ ledger-predicate contract", () => {

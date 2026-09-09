@@ -43,11 +43,21 @@ vi.mock("./design-verify.js", () => ({
 vi.mock("../middlewares/open-steps.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../middlewares/open-steps.js")>()),
   earnedDoneNudge: vi.fn(() => "Finish the open steps or justify stopping."),
+  // The epilogue's `endedPartial` switch — the one thing that decides whether
+  // build-verify's green line is ever shown, and so whether its fire is earned.
+  openStepsTerminationWarning: vi.fn((): string | null => null),
 }));
 // Partial — spec-audit's entry condition is the only export these tests steer.
 vi.mock("../middlewares/verify-gate.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../middlewares/verify-gate.js")>()),
   opEditedSourcePaths: vi.fn(() => ["src/x.ts"]),
+}));
+// framework-serve's only real side effect. Mocked because a genuine
+// {handled:true, ok:true} needs a framework app on disk AND a live dev-server
+// registry; which VERDICT earns a fire is what these tests own. The gate still
+// runs its real op-type / appUrl / appName parsing around it.
+vi.mock("../adapters/app-build-finalize.js", () => ({
+  finalizeFrameworkBuild: vi.fn(async () => ({ handled: false })),
 }));
 
 import { appendNudgeAsUserMessage, middlewareAbortResult, recoverCommittedStrategyPivot } from "./nudges.js";
@@ -55,13 +65,19 @@ import { recoverAdapterThrow } from "./adapter-throw-recovery.js";
 import { applyCommittedDirective } from "./apply-directive.js";
 import { idleSuspension, suspendedTurn } from "./suspension.js";
 import { COMPLETION_GATES, unresolvedToolIntentGate, type CompletionGate, type CompletionGateOutput } from "./decide-outcome-gates.js";
-import { bankEarnedFires } from "./guard-fire.js";
+import { bankEarnedFires, type GuardFire } from "./guard-fire.js";
 import { runRenderVerifyGate } from "./render-verify.js";
 import { officeThemeGuardMiddleware } from "../middlewares/office-theme-guard.js";
 import { makeCanonicalLoopContext } from "../middlewares/ctx.test-helper.js";
 import { emitErrorOnce } from "../event-emitter.js";
 import { insertOpTurn, readCanonicalEvents } from "../store.js";
+import { applyTerminalEpilogue } from "./terminal-epilogue.js";
+import { openStepsTerminationWarning } from "../middlewares/open-steps.js";
+import { finalizeFrameworkBuild } from "../adapters/app-build-finalize.js";
+import { _resetInjectQueues, pushInject } from "../../agent-loop/inject-queue.js";
+import { trackOpForSession } from "../../ops/session-bridge.js";
 import type { CanonicalEvent, GuardOutcome, MiddlewareFiredBody, OpTurnRow } from "../types.js";
+import type { CommitTurnMessage } from "../checkpoint.js";
 import type { FiredMiddlewareResult } from "../middlewares/host.js";
 import type { MiddlewareDirective } from "./types.js";
 import type { Op } from "../../ops/types.js";
@@ -96,6 +112,9 @@ const OUTCOME_CENSUS: Record<GuardOutcome, true> = {
   suspend: true,
   rewrite: true,
   "honest-terminal": true,
+  reopen: true,
+  repair: true,
+  "gave-up": true,
 };
 const OUTCOMES = Object.keys(OUTCOME_CENSUS);
 
@@ -478,7 +497,8 @@ describe("middleware_fired — `outcome` says WHAT the guard did", () => {
   });
 
   it("every shape the counter mints is in the closed vocabulary", () => {
-    expect(OUTCOMES.sort()).toEqual(["abort", "honest-terminal", "nudge", "rewrite", "suspend"]);
+    expect(OUTCOMES.sort())
+      .toEqual(["abort", "gave-up", "honest-terminal", "nudge", "reopen", "repair", "rewrite", "suspend"]);
   });
 });
 
@@ -524,5 +544,129 @@ describe("middleware_fired — the sites a mutation sweep found unpinned", () =>
     expect(body(opId)).toEqual({
       name: "adapter-throw-recovery", reason: "adapter-retry", outcome: "nudge", turnIdx: 5,
     });
+  });
+});
+
+// The four completion-gate branches that CHANGE BEHAVIOR while saying nothing
+// to the model — before this, every one minted nothing, so a retirement review
+// reading `middleware_fired` saw four dead guards steering live ops.
+//
+// They are NOT one case with four names, and the tests are structured to say
+// so: three are counted AT THE BRANCH because their effect is already spent
+// when `evaluate` returns (a re-open the chain runner acts on immediately, a
+// registered dev server, dropped runtime errors), while the fourth is counted
+// in the EPILOGUE because its effect is still contingent there — which is why
+// the suppression case below is a test and not a comment.
+describe("middleware_fired — the gate branches that act without speaking", () => {
+  const gate = (name: string): CompletionGate => COMPLETION_GATES.find(g => g.name === name)!;
+  const bodies = (id: string): MiddlewareFiredBody[] => firesOnDisk(id).map(e => e.body as MiddlewareFiredBody);
+  /** A turn that wrote an app file — render-verify's trigger. */
+  const APP_WRITE: ToolCall[] = [{ toolCallId: "t1", tool: "write", args: { path: "workspace/apps/todo/index.html" } }];
+  const appOp = (): Op =>
+    ({ id: opId, type: "app_build", task: "t", appUrl: "http://127.0.0.1:7007/apps/todo/index.html" }) as unknown as Op;
+
+  beforeEach(() => { _resetInjectQueues(); });
+
+  it("reopen: late-inject's SILENT re-open is counted, under the turn whose terminal it vetoed", async () => {
+    // Real queue, real session bridge — the gate reads both directly.
+    trackOpForSession(opId, `sess-${opId}`);
+    pushInject(`sess-${opId}`, "actually, make it dark mode");
+
+    const out = await gate("late-inject").evaluate({ op: op(), turnIdx: 4, toolCalls: [], assistantText: "" });
+
+    expect(out.reopen).toBe(true);
+    // turnIdx 4, not 5: the effect landed on THIS turn's terminal. The +1
+    // convention is a nudge's, because a nudge is read on the next turn — and
+    // nothing was appended here for the model to read.
+    expect(bodies(opId)).toEqual([{ name: "late-inject", reason: "late-inject", outcome: "reopen", turnIdx: 4 }]);
+  });
+
+  it("late-inject with an empty queue is a `continue` verdict, and stays uncounted", async () => {
+    trackOpForSession(opId, `sess-${opId}`);
+    const out = await gate("late-inject").evaluate({ op: op(), turnIdx: 4, toolCalls: [], assistantText: "" });
+    expect(out.reopen).toBe(false);
+    expect(firesOnDisk(opId)).toHaveLength(0);
+  });
+
+  it("repair: framework-serve counts the dev server it actually registered", async () => {
+    vi.mocked(finalizeFrameworkBuild).mockResolvedValueOnce({
+      handled: true, ok: true, url: "http://127.0.0.1:7007/apps/todo/", framework: "vite", mode: "dev-server",
+    });
+    const out = await gate("framework-serve").evaluate({ op: appOp(), turnIdx: 2, toolCalls: [], assistantText: "" });
+    expect(out.reopen).toBe(false);
+    expect(bodies(opId)).toEqual([{ name: "framework-serve", reason: "framework-serve", outcome: "repair", turnIdx: 2 }]);
+  });
+
+  it("a FAILED registration is not a repair: the op ends with no server, which is what the gate exists to prevent", async () => {
+    vi.mocked(finalizeFrameworkBuild).mockResolvedValueOnce({
+      handled: true, ok: false, code: "dev_server_failed", message: "port busy",
+    });
+    const out = await gate("framework-serve").evaluate({ op: appOp(), turnIdx: 2, toolCalls: [], assistantText: "" });
+    // `handled` alone only means the gate recognised a framework app. Counting
+    // it would file a `repair` for a repair that did not happen; the attempt
+    // survives as the warn line this branch logs.
+    expect(out.reopen).toBe(false);
+    expect(firesOnDisk(opId)).toHaveLength(0);
+  });
+
+  it("a static app never reaches the branch at all (handled:false — the hot path)", async () => {
+    const out = await gate("framework-serve").evaluate({ op: appOp(), turnIdx: 2, toolCalls: [], assistantText: "" });
+    expect(out.reopen).toBe(false);
+    expect(firesOnDisk(opId)).toHaveLength(0);
+  });
+
+  it("gave-up: render-verify's cap is counted where the errors were DROPPED, not at a settled terminal", async () => {
+    vi.mocked(runRenderVerifyGate).mockResolvedValueOnce({
+      nudge: "TypeError: render is not a function", retryCount: 2, shouldRetry: false, capReached: true,
+    });
+    const out = await gate("render-verify").evaluate({ op: op(), turnIdx: 3, toolCalls: APP_WRITE, assistantText: "" });
+    // The turn still ends "done" — the guard gave up on it, it did not abort it.
+    expect(out.reopen).toBe(false);
+    expect(bodies(opId)).toEqual([{ name: "render-verify", reason: "render-verify", outcome: "gave-up", turnIdx: 3 }]);
+  });
+
+  it("render-verify that observed nothing banks nothing", async () => {
+    const out = await gate("render-verify").evaluate({ op: op(), turnIdx: 3, toolCalls: APP_WRITE, assistantText: "" });
+    expect(out.reopen).toBe(false);
+    expect(firesOnDisk(opId)).toHaveLength(0);
+  });
+
+  // Build-verify's confirmation: the one of the four that SPEAKS, and the one
+  // whose fire cannot be minted at the gate. `verifiedClean` is settled turns
+  // earlier; whether the user ever sees the green line is settled here.
+  const CONFIRMATION = "✓ Verified: the harness ran `npm run build` and it passed with no errors.";
+  const runEpilogue = (fires: GuardFire[]): CommitTurnMessage[] => {
+    const allMessages: CommitTurnMessage[] = [];
+    applyTerminalEpilogue({
+      op: op(), turnIdx: 6, terminalReason: "done", assistantText: "All set.",
+      buildVerifyConfirmation: CONFIRMATION, toolCalls: [], observedTools: [],
+    }, allMessages, fires);
+    return allMessages;
+  };
+  /** `build-verify-ok-<opId>-<turn>-<uuid>` → `build-verify-ok`. */
+  const kinds = (messages: CommitTurnMessage[]): string[] =>
+    messages.map(m => (m.messageId ?? "").split("-").slice(0, 3).join("-"));
+
+  it("honest-terminal: build-verify's green confirmation is counted at its APPEND, under its own gate name", () => {
+    const fires: GuardFire[] = [];
+    expect(kinds(runEpilogue(fires))).toEqual(["build-verify-ok"]);
+    // Exactly what decide-outcome returns and turn-loop banks post-commit.
+    bankEarnedFires(opId, 6, fires);
+    // Same shape as the gate terminal beside it — one act, one label. `name` is
+    // what separates the two producers of `honest-terminal`.
+    expect(bodies(opId)).toEqual([{ name: "build-verify", reason: "build-verify", outcome: "honest-terminal", turnIdx: 6 }]);
+  });
+
+  it("SUPPRESSED: a partial-ending op shows no green line, so it banks NO fire", () => {
+    // The loud-partial warning wins: `!endedPartial` is false, the confirmation
+    // is never appended, and the user is never shown it. A fire banked at the
+    // gate — where `verifiedClean` was decided — would count this terminal
+    // anyway. That miscount is the whole reason this one branch is deferred.
+    vi.mocked(openStepsTerminationWarning).mockReturnValueOnce("Heads up: 2 steps are still open.");
+    const fires: GuardFire[] = [];
+    expect(kinds(runEpilogue(fires))).toEqual(["open-steps-warn"]);
+    expect(fires).toEqual([]);
+    bankEarnedFires(opId, 6, fires);
+    expect(firesOnDisk(opId)).toHaveLength(0);
   });
 });

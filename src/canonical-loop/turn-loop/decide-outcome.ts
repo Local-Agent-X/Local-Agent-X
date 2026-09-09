@@ -93,10 +93,10 @@ export interface DecideOutcomeResult {
   allMessages: CommitTurnMessage[];
   terminalOutcome: import("../../tool-tracker.js").OpOutcome | null;
   /** Guard fires earned by effects this function actually applied — the gate
-   *  honest terminal today, the epilogue's verified-clean confirmation when it
-   *  is wired. Every one describes a message sitting in `allMessages`, which
-   *  exists nowhere until commitTurn, so driveTurn banks them AFTER the commit
-   *  rather than this function emitting them (guard-fire.ts bankEarnedFires). */
+   *  honest terminal and the epilogue's verified-clean confirmation, each
+   *  contributed at its own append. Every one describes a message in
+   *  `allMessages`, which exists nowhere until commitTurn, so driveTurn banks
+   *  them AFTER the commit rather than here (guard-fire.ts bankEarnedFires). */
   earnedFires: GuardFire[];
 }
 
@@ -389,6 +389,7 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
   const terminalOutcome = applyTerminalEpilogue(
     { op, turnIdx, terminalReason, assistantText, buildVerifyConfirmation, toolCalls, observedTools },
     allMessages,
+    earnedFires,
   );
 
   return { terminalReason, allMessages, terminalOutcome, earnedFires };

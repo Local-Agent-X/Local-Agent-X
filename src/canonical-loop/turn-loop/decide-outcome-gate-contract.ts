@@ -46,6 +46,11 @@ export interface CompletionGateOutput {
    * Build-verify's held green confirmation, surfaced only when the op truly
    * ends this turn (build-verify is the sole gate that produces it). Other
    * gates leave it undefined.
+   *
+   * SOLE PRODUCER IS LOAD-BEARING: terminal-epilogue.ts names the fire this
+   * confirmation earns `build-verify` at the append, since a plain string
+   * cannot carry its firer the way `honestTerminal` does. A second gate
+   * setting this field would file its terminal under build-verify's name.
    */
   buildVerifyConfirmation?: string;
   /**
@@ -86,12 +91,13 @@ export const CONTINUE: CompletionGateOutput = { reopen: false };
  *  later reopen nor a cancel can un-write it. A fire describing THIS turn's
  *  TERMINAL has neither property — see `honestTerminal` above.
  *
- *  KNOWN UNCOUNTED (guard-fire.ts carries the full ledger): late-inject
- *  re-opening the turn and framework-serve registering a dev server both act
- *  without speaking, a semantics expansion deliberately not made. The other two
- *  are not that case: build-verify's verifiedClean SPEAKS (terminal-epilogue.ts
- *  pushes `build-verify-ok-*`) and belongs on the earned-fire seam at THAT
- *  append, whose `!endedPartial` condition is decided after this chain;
- *  render-verify's capReached has already dropped the drained runtime errors
- *  irreversibly, so deferring its fire would under-count it. */
+ *  WHERE A GATE FIRE IS MINTED (guard-fire.ts carries the full ledger) follows
+ *  one rule: at the branch when the effect is already spent there, on the
+ *  earned-fire seam when it is still contingent. Spent → late-inject's silent
+ *  reopen (`reopen`), framework-serve's registered dev server (`repair`),
+ *  render-verify's dropped runtime errors (`gave-up`), and every nudge, whose
+ *  row appendNudgeAsUserMessage has already written. Contingent → this gate's
+ *  honest terminal, which a later gate's reopen discards, and build-verify's
+ *  verifiedClean confirmation, whose append terminal-epilogue.ts decides after
+ *  this chain on `!endedPartial`. */
 export const gateSource = (name: string, outcome: GuardOutcome): GuardFire => ({ name, reason: name, outcome });

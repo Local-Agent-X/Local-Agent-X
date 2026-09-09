@@ -195,6 +195,45 @@ export function isWorkerOp(ctx: CanonicalLoopContext): boolean {
   return ctx.op.lane !== "interactive";
 }
 
+/**
+ * Op types whose task text is a harness-authored synthetic context and never a
+ * user instruction. `app_build`'s turn-0 message is the per-build context the
+ * harness composes ("you must NOT edit core LAX", "leave the locked baseline
+ * alone", "do NOT recreate the skeleton"). Matches build-app.ts's
+ * APP_BUILD_OP_TYPE — kept as a literal to avoid a middlewares -> build-app
+ * import cycle; the instruction-ledger skip test pins the value.
+ */
+const SYNTHETIC_CONTEXT_OP_TYPES: ReadonlySet<string> = new Set(["app_build"]);
+
+/**
+ * True when this op's task text was composed by the HARNESS, false when a human
+ * typed it. Ask this before reading `op.task` / `ctx.currentUserMessage` as the
+ * user's own words — constraint extraction, intent inference, "the user asked
+ * for X" claims.
+ *
+ * TWO signals, both load-bearing:
+ *   - `op.taskProvenance === "harness"` is the canonical stamp
+ *     (`src/ops/types.ts:247`; absent = user-authored). Being per-op it catches
+ *     what op type cannot: an auto-build chunk worker runs as `agent_spawn`,
+ *     the same op type a user-delegated worker runs as.
+ *   - `SYNTHETIC_CONTEXT_OP_TYPES` covers `app_build`, whose whole class is
+ *     synthetic and which PREDATES the provenance field — those ops carry no
+ *     stamp, so dropping the set would silently start reading build context as
+ *     user prose.
+ *
+ * NOT `isWorkerOp`. That predicate above answers a DIFFERENT question — which
+ * lane the op runs in, interactive vs autonomous worker — and the two are
+ * independent, so they must never be conflated: a user-delegated `agent_spawn`
+ * is a worker op whose task text is HUMAN-authored (`isWorkerOp` true,
+ * `isHarnessAuthoredTask` false). Substituting one for the other either muzzles
+ * a user's real instructions or reads harness prose as if the user had said it
+ * — the 2026-07-22 Merchhelm preflight brick, where a chunk preamble's "Never
+ * touch paths outside it" extracted as a blanket workspace-write ban.
+ */
+export function isHarnessAuthoredTask(ctx: CanonicalLoopContext): boolean {
+  return SYNTHETIC_CONTEXT_OP_TYPES.has(ctx.op.type) || ctx.op.taskProvenance === "harness";
+}
+
 export type CanonicalMiddlewareResult =
   | { kind: "continue" }
   | { kind: "nudge"; message: string; reason: string; metadata?: NudgeMetadata; skipToolDispatch?: boolean }

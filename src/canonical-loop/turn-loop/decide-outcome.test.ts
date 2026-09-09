@@ -42,6 +42,10 @@ vi.mock("../../data-lineage/taint.js", () => ({
 }));
 vi.mock("../middlewares/browser-handoff.js", () => ({
   opGaveUpUnrecovered: vi.fn(() => false),
+  // retract-false-claim.ts imports the reason from its emitter; a partial mock
+  // that drops it would put `undefined` in RETRACTABLE_REASONS and silently
+  // stop the give-up punt from being retracted.
+  BROWSER_HANDOFF_REASON: "browser-handoff",
 }));
 vi.mock("../middlewares/cleanup-verify.js", () => ({
   opCleanupUnverified: vi.fn(() => false),
@@ -1733,7 +1737,8 @@ describe("decideTurnOutcome — skipped dispatch commits no orphan tool call", (
 
   it("runs AFTER retraction: a retracted (hallucinated) assistant row leaves no call to answer", async () => {
     const r = await decideTurnOutcome(skipped({
-      kind: "nudge", reason: "worker-hallucination", firedBy: "worker-hallucination", message: "No worker was spawned.",
+      kind: "nudge", reason: "attribution-confabulation", firedBy: "attribution-claim",
+      message: "Your summary credits a tool you did not use.",
     }));
     expect(r.allMessages).toEqual([]);
   });

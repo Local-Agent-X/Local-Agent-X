@@ -14,26 +14,37 @@
 // sees, in both the live view and on reload.
 //
 // The set covers two shapes the next turn SUPERSEDES, so the premature text
-// shouldn't stand: (1) confirmed-false work claims — worker-hallucination
-// (provably false from the tool-call ledger — no spawn-class call fired),
-// creation-hallucination (LLM-verified before it nudges); and (2) premature
-// "I can't" denials the model is being nudged to recover from —
-// tool-search-recovery (claimed a missing tool), browser-handoff (gave up on a
-// surmountable obstruction). approval-hallucination is excluded: "requires
-// approval" is a misplaced permission ask, not superseded work, so it stands.
+// shouldn't stand: (1) premature "I can't" denials the model is being nudged to
+// recover from — tool-search-recovery (claimed a missing tool), browser-handoff
+// (gave up on a surmountable obstruction); and (2) confirmed-false claims about
+// what was done — attribution-confabulation (credited an unused tool),
+// unsupported-operational-claim, cleanup-verify-false-done. approval-
+// hallucination is excluded: "requires approval" is a misplaced permission ask,
+// not superseded work, so it stands.
+//
+// EVERY entry is the EMITTING module's own exported constant — never a raw
+// string. A literal here is a copy nothing keeps in sync: "worker-hallucination"
+// and "creation-hallucination" sat in this set as literals long after their
+// middleware (hallucination-check) was deleted in 7d524491 on 2026-07-10, while
+// the guard that inherited the job — action-claim — emitted a reason no
+// consequence list mentioned at all, silently losing its consequence in the same
+// fold. The vocabulary is single-sourced at the emitter now, and
+// nudge-reason-coverage.test.ts fails the build if any middleware nudge reason
+// is neither in this set nor explicitly declared non-retractable.
 
 import type { CommitTurnMessage } from "../checkpoint.js";
 import { OPERATIONAL_CLAIM_REASON, CLEANUP_VERIFY_FALSE_DONE_REASON } from "../../agent-guards/index.js";
+import { TOOL_SEARCH_RECOVERY_REASON } from "../middlewares/tool-search-nudge.js";
+import { BROWSER_HANDOFF_REASON } from "../middlewares/browser-handoff.js";
+import { ATTRIBUTION_CONFABULATION_REASON } from "../middlewares/attribution-claim.js";
 
-const RETRACTABLE_REASONS: ReadonlySet<string> = new Set([
-  "worker-hallucination",
-  "creation-hallucination",
+export const RETRACTABLE_REASONS: ReadonlySet<string> = new Set([
   // The model claimed it lacks a tool/capability ("I have no tool for mouse
   // control") and the tool-search-nudge guard is forcing it to tool_search
   // first. Retract the premature denial so the user sees only the post-search
   // answer — whether that's the completed action or a genuine "still can't"
   // (the user shouldn't watch it say "I can't" and then immediately do it).
-  "tool-search-recovery",
+  TOOL_SEARCH_RECOVERY_REASON,
   // A give-up / hand-off punt the browser-handoff gate is nudging the model to
   // recover from ("I'm blocked by the overlay — you dismiss it / give me a
   // token"). Same shape as tool-search-recovery: a premature "I can't" the
@@ -41,13 +52,13 @@ const RETRACTABLE_REASONS: ReadonlySet<string> = new Set([
   // If the model re-punts, that terminal turn carries a `continue` (the gate
   // nudges once), so it is NOT retracted — the single honest punt stands, and
   // decide-outcome records it `partial`.
-  "browser-handoff",
+  BROWSER_HANDOFF_REASON,
   // The final summary credited the result with a tool/model/service it never
   // used (attribution-claim gate, model-graded). Retract the confabulated text
   // so only the nudged, accurate re-narration stands. Unlike the others this
   // fires on a turn that DID call a tool — stripRetractedAssistant drops only
   // the assistant text, so the real tool result (e.g. the created deck) is kept.
-  "attribution-confabulation",
+  ATTRIBUTION_CONFABULATION_REASON,
   // A definitive runtime/security/policy explanation made without any fresh
   // diagnostic evidence. The retry either inspects the system or replaces it
   // with an explicitly uncertain answer. (runtime-causality rule, consequence

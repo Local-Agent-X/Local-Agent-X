@@ -37,6 +37,11 @@ import type { CapabilityClass } from "../../tool-registry.js";
 
 interface FiredFlag { fired: boolean }
 
+/** This guard's nudge reason — RETRACT-grade: turn-loop/retract-false-claim.ts
+ *  imports it into RETRACTABLE_REASONS, so the premature "I can't" is dropped
+ *  and only the post-search answer stands. */
+export const TOOL_SEARCH_RECOVERY_REASON = "tool-search-recovery";
+
 // Declining a CAPABILITY (no tool / can't do the action) — matched against the
 // tail of the reply (its conclusion), case-insensitively.
 const CAPABILITY_DENIAL: RegExp[] = [
@@ -194,7 +199,7 @@ export function createToolSearchNudgeMiddleware(
         "and keyboard\", \"move the cursor and click\") and use whatever it returns. " +
         "Only say you can't AFTER a search comes back with nothing relevant.";
 
-      return { kind: "nudge", message, reason: "tool-search-recovery" };
+      return { kind: "nudge", message, reason: TOOL_SEARCH_RECOVERY_REASON };
     },
   };
 }

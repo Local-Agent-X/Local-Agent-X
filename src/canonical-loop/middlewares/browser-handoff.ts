@@ -43,6 +43,11 @@ import { createLogger } from "../../logger.js";
 
 const log = createLogger("canonical-loop.browser-handoff");
 
+/** This guard's nudge reason — RETRACT-grade: turn-loop/retract-false-claim.ts
+ *  imports it into RETRACTABLE_REASONS, so the premature punt is dropped and the
+ *  user sees only the post-nudge result. */
+export const BROWSER_HANDOFF_REASON = "browser-handoff";
+
 interface FiredFlag {
   fired: boolean;
 }
@@ -185,6 +190,6 @@ export const browserHandoffMiddleware: CanonicalMiddleware = {
       "Keep driving toward the answer. Only stop to ask me if you genuinely need something I alone " +
       "can provide (a password, a 2FA code, a CAPTCHA) — and say it once, concretely.";
 
-    return { kind: "nudge", message, reason: "browser-handoff" };
+    return { kind: "nudge", message, reason: BROWSER_HANDOFF_REASON };
   },
 };

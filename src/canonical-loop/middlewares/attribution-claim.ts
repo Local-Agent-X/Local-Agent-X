@@ -29,6 +29,11 @@ import { verifyAttributionConfabulationWithLLM } from "../../classifiers/claim-v
 
 interface FiredFlag { fired: boolean }
 
+/** This guard's nudge reason — RETRACT-grade: turn-loop/retract-false-claim.ts
+ *  imports it into RETRACTABLE_REASONS, so the confabulated summary is dropped
+ *  and only the re-narration stands. */
+export const ATTRIBUTION_CONFABULATION_REASON = "attribution-confabulation";
+
 // Phrasing that CREDITS a result with a named tool/model/capability. Tight on
 // purpose so the verifier stays off the hot path (NOT bare "uses" — that fires
 // on "uses real sourced images"): each pattern pairs a credit verb with a
@@ -73,6 +78,6 @@ export const attributionClaimMiddleware: CanonicalMiddleware = {
       `What you actually used: ${used}. The work itself is already done — do not rebuild anything. ` +
       `Re-send your summary describing ONLY what you actually did and the real sources you pulled; ` +
       `drop any tool, model, or style you didn't use (a static document does not "use" a video generator).`;
-    return { kind: "nudge", message, reason: "attribution-confabulation" };
+    return { kind: "nudge", message, reason: ATTRIBUTION_CONFABULATION_REASON };
   },
 };

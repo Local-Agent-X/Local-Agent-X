@@ -3,9 +3,14 @@ import { isRetractableHallucination, stripRetractedAssistant } from "./retract-f
 import type { CommitTurnMessage } from "../checkpoint.js";
 
 describe("isRetractableHallucination", () => {
-  it("retracts confirmed-false work claims", () => {
-    expect(isRetractableHallucination("worker-hallucination")).toBe(true);
-    expect(isRetractableHallucination("creation-hallucination")).toBe(true);
+  it("retracts a confirmed-false claim about the work that was done", () => {
+    // Was "worker-hallucination" / "creation-hallucination" until 2026-09-08.
+    // Their middleware (hallucination-check) was deleted in 7d524491 on
+    // 2026-07-10 and nothing has emitted those reasons since, so they left the
+    // set with these assertions; nudge-reason-coverage.test.ts now fails the
+    // build if a classified reason has no emitter.
+    expect(isRetractableHallucination("attribution-confabulation")).toBe(true);
+    expect(isRetractableHallucination("unsupported-operational-claim")).toBe(true);
   });
 
   it("retracts a premature 'I can't' the nudge supersedes (capability denial, give-up punt)", () => {

@@ -14,6 +14,13 @@ import { verifyClaimHallucinationWithLLM } from "../../classifiers/claim-verify.
 
 interface FiredFlag { fired: boolean }
 
+/** This guard's nudge reason — the wire word the turn loop reads to pick a
+ *  consequence (turn-loop/retract-false-claim.ts). Deliberately NUDGE-ONLY: the
+ *  model is told to redo the claim, but its text STANDS. Exported so the
+ *  consequence classification imports the emitter's own constant instead of
+ *  re-typing the string; classified in turn-loop/nudge-reason-coverage.test.ts. */
+export const ACTION_CLAIM_REASON = "action-claim";
+
 export const actionClaimMiddleware: CanonicalMiddleware = {
   name: "action-claim",
   // Worker-only: on interactive/voice turns the model verbalizes this
@@ -43,6 +50,6 @@ export const actionClaimMiddleware: CanonicalMiddleware = {
     );
     if (confirmed === false) return { kind: "continue" };
     flag.fired = true;
-    return { kind: "nudge", message: nudge, reason: "action-claim" };
+    return { kind: "nudge", message: nudge, reason: ACTION_CLAIM_REASON };
   },
 };

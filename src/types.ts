@@ -161,6 +161,14 @@ export interface ToolResult {
   _image?: { mime: string; b64: string; path: string; question: string };
 
   /**
+   * Several images from ONE call — video frames, a multi-page render. Fed to
+   * the model as a single user-role message carrying every frame in order, so
+   * it can reason across them; `_image` stays the single-image shape and a
+   * tool sets one or the other, never both.
+   */
+  _images?: Array<{ mime: string; b64: string; path: string; question: string }>;
+
+  /**
    * A large media file the tool produced or wants delivered. Unlike `_image`
    * this carries a PATH, not bytes — too big to base64 onto every result and
    * the model can't ingest them as image_url. The WhatsApp/Telegram bridge

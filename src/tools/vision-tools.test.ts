@@ -8,7 +8,8 @@ import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { getLaxDir } from "../lax-data-dir.js";
-import { viewImageTool, resolveMediaPath } from "./vision-tools.js";
+import { viewImageTool } from "./vision-tools.js";
+import { resolveMediaPath } from "./shared/media-path.js";
 
 // 1×1 transparent PNG — real image bytes.
 const PNG_1x1 = Buffer.from(

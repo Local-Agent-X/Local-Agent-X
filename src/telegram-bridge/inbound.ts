@@ -31,7 +31,7 @@ export async function describeNonTextMessage(msg: any, token: string): Promise<s
     // (transcription, OCR) that read the file directly.
     const url = `http://127.0.0.1:${getRuntimeConfig().port}/uploads/${basename(localPath)}`;
     const caption = typeof msg.caption === "string" ? ` Caption: "${msg.caption}".` : "";
-    return `[User sent a ${kind} message via Telegram. Reference URL: ${url} — pass THIS to media tools (generate_video / generate_image / view_image); a local path won't work for those. Local copy: ${localPath} (for transcription / OCR that read the file directly). Metadata: ${extra}.${caption} If handling this requires a capability you don't have yet (transcription, OCR, video analysis), use self_edit to add it — then re-read this file.]`;
+    return `[User sent a ${kind} message via Telegram. Reference URL: ${url} — pass THIS to media tools (generate_video / generate_image / view_image); a local path won't work for those. Local copy: ${localPath} (for transcription / OCR that read the file directly). Metadata: ${extra}.${caption} To hear what was said in a voice note, audio or video, call transcribe_media on the local copy; to SEE a video, call read_video_frames on it; to read text out of an image, call ocr.]`;
   } catch (e) {
     logger.error(`[telegram] Failed to download ${kind}:`, (e as Error).message);
     return `[User sent a ${kind} message via Telegram but download failed: ${(e as Error).message}. Tell the user you couldn't process it.]`;

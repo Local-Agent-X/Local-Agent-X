@@ -36,7 +36,12 @@ let cachedProvider: WhisperTranscriber | null = null;
 let cachedProviderName: SttProviderName | null = null;
 let cachedLocalPaths: WhisperModelPaths | null = null;
 
-async function getOrCreateProvider(): Promise<WhisperTranscriber | null> {
+/**
+ * The process-wide transcriber, built on first use and reused. Exported so the
+ * file-transcription tool shares this instance: the local model is a 50-280 MB
+ * ONNX load, and a second copy would double resident memory for no gain.
+ */
+export async function getSharedTranscriber(): Promise<WhisperTranscriber | null> {
   const name: SttProviderName = resolveSttProviderName() || "local-whisper";
 
   if (cachedProvider && cachedProviderName === name) return cachedProvider;
@@ -92,7 +97,7 @@ export async function transcribeOggBuffer(buf: Buffer): Promise<string | null> {
     return null;
   }
 
-  const provider = await getOrCreateProvider();
+  const provider = await getSharedTranscriber();
   if (!provider) return null;
 
   try {

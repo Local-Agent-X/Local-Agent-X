@@ -30,6 +30,8 @@ const TOOL_KEYWORD_MAP: Array<{ keywords: RegExp; exclude?: RegExp; toolPrefixes
     toolPrefixes: ["screen_capture"],
   },
   { keywords: /camera|webcam/i, toolPrefixes: ["camera_"] },
+  { keywords: /transcrib|what.*(said|says)|voice\s*note|recording|podcast|audio|mp3|wav|m4a/i, toolPrefixes: ["transcribe_media"] },
+  { keywords: /video|watch|mp4|clip|footage/i, toolPrefixes: ["read_video_frames", "transcribe_media"] },
   // App tools surface on "app/dashboard/tracker" mentions. Sidebar tools are a
   // SEPARATE rule that requires an explicit sidebar/pin/unpin keyword — the
   // old combined rule was the root cause of Codex reflexively pinning apps

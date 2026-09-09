@@ -103,6 +103,8 @@ const EGRESS_TOOLS: ReadonlySet<string> = new Set([
   "send_image",                // ships a local image file off-box over a messaging bridge
   "send_file",                 // stages a local document for device pickup (phone over broker)
   "view_image",                // base64-ships local image bytes off-box to the vision API
+  "read_video_frames",         // base64-ships sampled video frames off-box to the vision API
+  "transcribe_media",          // ships a local recording's audio off-box when LAX_VOICE_STT_PROVIDER names a cloud provider
   "screen_capture",            // captured screen image bytes get forwarded off-box by the bridge
   "camera_capture",            // captured camera image bytes get forwarded off-box by the bridge
   // `computer` types model-authored text into ANOTHER app (action:"type") — a

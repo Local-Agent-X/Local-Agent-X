@@ -18,7 +18,7 @@ import type { ToolDefinition } from "../types.js";
 import { createLogger } from "../logger.js";
 import { openValidatedRead, readValidatedFile } from "../security/layer/index.js";
 import { getLaxDir } from "../lax-data-dir.js";
-import { resolveMediaPath } from "./vision-tools.js";
+import { resolveMediaPath } from "./shared/media-path.js";
 
 const logger = createLogger("tools.file-delivery");
 

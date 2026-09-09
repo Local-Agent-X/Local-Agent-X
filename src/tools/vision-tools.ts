@@ -1,5 +1,4 @@
 import { existsSync } from "node:fs";
-import { join, basename } from "node:path";
 import type { ToolDefinition } from "../types.js";
 import { createLogger } from "../logger.js";
 // Resolve caller paths the SAME way SecurityLayer's file-access gate does
@@ -8,22 +7,8 @@ import { resolveAgentPath } from "../workspace/paths.js";
 import { openValidatedRead, readValidatedFile } from "../security/layer/index.js";
 import { ALLOWED_MIME } from "./shared/image-acquire.js";
 import { detectMime } from "./shared/image-binary-meta.js";
-import { getLaxDir } from "../lax-data-dir.js";
 
 const logger = createLogger("tools.vision");
-
-// send_image/send_video get a model-supplied path that often names a file in
-// ~/.lax/uploads (a screenshot, or an incoming bridge photo/video) rather than
-// the workspace-anchored tree resolveAgentPath assumes — so a bare "screen-123
-// .jpg" resolved to the wrong folder and the send failed. Try the standard
-// resolution first; if the file isn't there, fall back to uploads by basename.
-// openValidatedRead still re-validates whichever path we return.
-export function resolveMediaPath(p: string): string {
-  const resolved = resolveAgentPath(p);
-  if (existsSync(resolved)) return resolved;
-  const inUploads = join(getLaxDir(), "uploads", basename(p));
-  return existsSync(inUploads) ? inUploads : resolved;
-}
 
 export const viewImageTool: ToolDefinition = {
   name: "view_image",
@@ -78,120 +63,6 @@ export const viewImageTool: ToolDefinition = {
   },
 };
 
-const VIDEO_EXTS = new Set(["mp4", "mov", "webm", "mkv", "avi", "m4v"]);
-const VIDEO_MIME: Record<string, string> = {
-  mp4: "video/mp4", m4v: "video/mp4", mov: "video/quicktime",
-  webm: "video/webm", mkv: "video/x-matroska", avi: "video/x-msvideo",
-};
-
-export const sendVideoTool: ToolDefinition = {
-  name: "send_video",
-  effect: { class: "non-idempotent" },
-  description:
-    "Send a video file from this computer to the user over the current messaging channel (WhatsApp/Telegram). " +
-    "Use when the user asks you to send or share a video file with them. Only delivers on a messaging bridge — " +
-    "on web chat the user is already at the computer with the file. Supports mp4, mov, webm, mkv, avi. " +
-    "WhatsApp caps at 16MB, Telegram at 50MB.",
-  parameters: {
-    type: "object",
-    properties: {
-      path: { type: "string", description: "Path to the video file (absolute or relative)" },
-    },
-    required: ["path"],
-  },
-  async execute(args) {
-    const { existsSync, fstatSync, closeSync } = await import("node:fs");
-
-    const filePath = resolveMediaPath(String(args.path || ""));
-    if (!existsSync(filePath)) return { content: `File not found: ${filePath}`, isError: true };
-
-    const ext = filePath.split(".").pop()?.toLowerCase() || "";
-    if (!VIDEO_EXTS.has(ext)) return { content: `Not a video file: .${ext}. Supported: ${[...VIDEO_EXTS].join(", ")}.`, isError: true };
-
-    // Bind to the VALIDATED canonical inode (realpath + O_NOFOLLOW leaf) so the
-    // size check and the path forwarded to the bridge reference the inode the
-    // gate approved — a symlink swapped in after the gate (R4-19) is rejected
-    // here, not silently forwarded off-box. fstat the open fd (not the name) so
-    // the size is read from the exact inode; emit the canonical path so the
-    // bridge opens the same realpath we validated.
-    let canonicalPath: string;
-    let sizeMb: number;
-    try {
-      const opened = openValidatedRead(filePath);
-      try {
-        sizeMb = fstatSync(opened.fd).size / 1048576;
-      } finally {
-        closeSync(opened.fd);
-      }
-      canonicalPath = opened.canonicalPath;
-    } catch (e) {
-      return { content: `Failed to send ${filePath}: ${(e as Error).message}`, isError: true };
-    }
-    if (sizeMb > 50) return { content: `Video is ${sizeMb.toFixed(1)}MB — over the 50MB messaging limit, can't send.`, isError: true };
-
-    logger.info(`[send_video] ${canonicalPath} (${sizeMb.toFixed(1)}MB)`);
-    return {
-      content: `Sending video to the user: ${canonicalPath} (${sizeMb.toFixed(1)}MB).`,
-      _media: { kind: "video", path: canonicalPath, mime: VIDEO_MIME[ext] || "video/mp4" },
-    };
-  },
-};
-
-const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp"]);
-const IMAGE_MIME: Record<string, string> = {
-  png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg",
-  gif: "image/gif", webp: "image/webp", bmp: "image/bmp",
-};
-
-export const sendImageTool: ToolDefinition = {
-  name: "send_image",
-  effect: { class: "non-idempotent" },
-  description:
-    "Send an image FILE from this computer to the user over the current messaging channel (WhatsApp/Telegram) — " +
-    "e.g. a screenshot you captured, or an image you generated/saved to a file. Use when the user asks you to send " +
-    "or share an image with them. Only delivers on a messaging bridge — on web chat the user is already at the " +
-    "computer with the file. Supports png, jpg, gif, webp, bmp. Capped at 10MB.",
-  parameters: {
-    type: "object",
-    properties: {
-      path: { type: "string", description: "Path to the image file (absolute or relative)" },
-    },
-    required: ["path"],
-  },
-  async execute(args) {
-    const { existsSync, fstatSync, closeSync } = await import("node:fs");
-
-    const filePath = resolveMediaPath(String(args.path || ""));
-    if (!existsSync(filePath)) return { content: `File not found: ${filePath}`, isError: true };
-
-    const ext = filePath.split(".").pop()?.toLowerCase() || "";
-    if (!IMAGE_EXTS.has(ext)) return { content: `Not an image file: .${ext}. Supported: ${[...IMAGE_EXTS].join(", ")}.`, isError: true };
-
-    // Same validated-inode binding as send_video: fstat the open fd (not the
-    // name) and forward the canonical realpath, so the size check + the path the
-    // bridge re-gates and reads reference the inode the gate approved.
-    let canonicalPath: string;
-    let sizeMb: number;
-    try {
-      const opened = openValidatedRead(filePath);
-      try {
-        sizeMb = fstatSync(opened.fd).size / 1048576;
-      } finally {
-        closeSync(opened.fd);
-      }
-      canonicalPath = opened.canonicalPath;
-    } catch (e) {
-      return { content: `Failed to send ${filePath}: ${(e as Error).message}`, isError: true };
-    }
-    if (sizeMb > 10) return { content: `Image is ${sizeMb.toFixed(1)}MB — over the 10MB messaging limit, can't send.`, isError: true };
-
-    logger.info(`[send_image] ${canonicalPath} (${sizeMb.toFixed(1)}MB)`);
-    return {
-      content: `Sending image to the user: ${canonicalPath} (${sizeMb.toFixed(1)}MB).`,
-      _media: { kind: "image", path: canonicalPath, mime: IMAGE_MIME[ext] || "image/png" },
-    };
-  },
-};
 
 export const screenCaptureTool: ToolDefinition = {
   name: "screen_capture",

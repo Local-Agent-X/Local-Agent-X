@@ -9,7 +9,9 @@ import { restoreFileTool } from "./restore-file-tool.js";
 import { bashTool } from "./shell-tools.js";
 import { processTools } from "./process-tools.js";
 import { webFetchTool } from "./web-tools.js";
-import { viewImageTool, sendVideoTool, sendImageTool, screenCaptureTool, listMonitorsTool, cameraCaptureTool, ocrTool } from "./vision-tools.js";
+import { viewImageTool, screenCaptureTool, listMonitorsTool, cameraCaptureTool, ocrTool } from "./vision-tools.js";
+import { sendVideoTool, sendImageTool } from "./media-send-tools.js";
+import { transcribeMediaTool, readVideoFramesTool } from "./media-read-tools.js";
 import { sendFileTool } from "./file-delivery-tools.js";
 import { computerTool } from "./input-tools.js";
 import { buildAppTool } from "./build-app.js";
@@ -58,6 +60,7 @@ export const allTools: ToolDefinition[] = applyPrompts([
   selfEditTool, recallTool, askUserTool, runBuildPlanTool, startAppBuildTool, finalizeAppBuildTool,
   buildPlanStatusTool, buildPlanResumeTool,
   viewImageTool, sendVideoTool, sendImageTool, sendFileTool, screenCaptureTool, listMonitorsTool, cameraCaptureTool, ocrTool, computerTool,
+  transcribeMediaTool, readVideoFramesTool,
   buildAppTool, appRebuildTool,
   youtubeAnalyzeTool, createPageTool, extractSiteAssetsTool, connectorCreateTool,
   ...processTools,

@@ -12,19 +12,19 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 65 top-level dirs · 65 live · 0 with no live importer · 1574 non-test source files · 0 god files (>400 LOC).
+**Totals:** 65 top-level dirs · 65 live · 0 with no live importer · 1580 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | God files |
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 126 | 26 | XL |  |
-| `src/security/` | 85 | 34 | XL |  |
-| `src/tools/` | 68 | 175 | XL |  |
+| `src/security/` | 87 | 34 | XL |  |
+| `src/tools/` | 68 | 181 | XL |  |
 | `src/canonical-loop/` | 61 | 241 | XL |  |
 | `src/providers/` | 61 | 20 | XL |  |
 | `src/memory/` | 46 | 128 | XL |  |
-| `src/workspace/` | 41 | 2 | M |  |
+| `src/workspace/` | 42 | 2 | M |  |
 | `src/session/` | 36 | 7 | L |  |
 | `src/auth/` | 33 | 10 | L |  |
 | `src/classifiers/` | 33 | 17 | L |  |
@@ -47,10 +47,10 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/protocols/` | 16 | 41 | XL |  |
 | `src/sandbox/` | 16 | 9 | L |  |
 | `src/anthropic-client/` | 14 | 21 | L |  |
+| `src/voice/` | 13 | 74 | XL |  |
 | `src/cognition/` | 12 | 30 | XL |  |
 | `src/server/` *(entrypoint)* | 12 | 50 | XL |  |
 | `src/tool-execution/` | 12 | 41 | XL |  |
-| `src/voice/` | 12 | 74 | XL |  |
 | `src/whatsapp-bridge/` | 12 | 8 | L |  |
 | `src/autonomy/` | 11 | 4 | M |  |
 | `src/self-edit/` | 11 | 20 | L |  |
@@ -60,12 +60,12 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/integrations/` | 9 | 15 | M |  |
 | `src/screen-stream/` | 9 | 8 | L |  |
 | `src/ari-kernel/` | 8 | 11 | L |  |
+| `src/bridge-voice/` | 8 | 5 | M |  |
 | `src/routes/` | 8 | 86 | XL |  |
 | `src/sync/` | 8 | 19 | L |  |
 | `src/telegram-bridge/` | 8 | 6 | M |  |
 | `src/auto-build/` | 7 | 52 | XL |  |
 | `src/autopilot/` | 7 | 13 | L |  |
-| `src/bridge-voice/` | 7 | 5 | M |  |
 | `src/plugin-system/` | 7 | 10 | L |  |
 | `src/app-renderer/` | 6 | 7 | M |  |
 | `src/mcp-client/` | 6 | 9 | L |  |
@@ -128,6 +128,7 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/embedding-singleton.ts` | S |
 | `src/event-bus.ts` | S |
 | `src/ffmpeg-bin.ts` | S |
+| `src/ffmpeg-run.ts` | S |
 | `src/git-safety.ts` | S |
 | `src/index.ts` | M |
 | `src/injection-patterns.ts` | S |

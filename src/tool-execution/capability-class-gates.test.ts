@@ -182,6 +182,7 @@ describe("name-drift guard — every capability-set member resolves to a real to
     // so dropping one (or adding an unenrolled emitter) fails CI.
     const MEDIA_EMITTERS = [
       "view_image", "screen_capture", "camera_capture", // emit images[]
+      "read_video_frames",                               // emits images[] (one per sampled frame)
       "generate_image",                                  // emits images[]
       "generate_video", "send_video",                    // emit media.{kind:"video",path}
       "send_image",                                      // emits media.{kind:"image",path}

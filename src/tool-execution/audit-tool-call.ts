@@ -23,6 +23,7 @@ import { resolveOpModel } from "../canonical-loop/op-model.js";
 
 interface ToolResultWithImage extends ToolResult {
   _image?: { path: string; question: string; mime: string; b64: string };
+  _images?: Array<{ path: string; question: string; mime: string; b64: string }>;
 }
 
 const DEFAULT_MAX_RESULT_SIZE = DEFAULT_MAX_RESULT_CHARS;
@@ -200,10 +201,16 @@ function harvestChip(ctx: ToolCallContext): void {
   }
 }
 
-function shapeMsg(ctx: ToolCallContext): void {
+/** Exported for the envelope contract test: the single/multi image split is
+ *  the seam that decides what the model actually SEES from a tool call. */
+export function shapeMsg(ctx: ToolCallContext): void {
   const { tc } = ctx;
   const result = ctx.result!;
   const imageData = (result as ToolResultWithImage)._image;
+  // A multi-image emitter (video frames) keeps its rendered text: the
+  // timestamps saying WHICH second each frame came from live there, and the
+  // single-image shortcut below would throw them away.
+  const imageSet = imageData ? undefined : (result as ToolResultWithImage)._images;
   const content = imageData
     ? `Image loaded: ${imageData.path}\nQuestion: ${imageData.question}`
     : renderToolResultForModel(result);
@@ -220,6 +227,16 @@ function shapeMsg(ctx: ToolCallContext): void {
     ctx.msgs.push({ role: "user", content: [
       { type: "text", text: `[Image from ${imageData.path}] ${imageData.question}` },
       { type: "image_url", image_url: { url: `data:${imageData.mime};base64,${imageData.b64}`, detail: "auto" } },
+    ]} as ChatCompletionMessageParam);
+  } else if (imageSet && imageSet.length > 0) {
+    // ONE message carrying every frame in order — split across messages the
+    // model loses that they are a sequence from a single video.
+    ctx.msgs.push({ role: "user", content: [
+      { type: "text", text: `[${imageSet.length} images from ${tc.name}, in order] ${imageSet[0].question}` },
+      ...imageSet.map(img => ({
+        type: "image_url" as const,
+        image_url: { url: `data:${img.mime};base64,${img.b64}`, detail: "auto" as const },
+      })),
     ]} as ChatCompletionMessageParam);
   }
 }

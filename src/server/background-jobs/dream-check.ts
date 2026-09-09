@@ -77,6 +77,9 @@ export function registerDreamRunnerForServer(deps: DreamCheckDeps): void {
           sessionId: dreamSession.id, maxIterations: 10, temperature: 0.3,
           callContext: "delegated",
           opType: "memory_consolidation", lane: "background",
+          // The dream brief is harness-composed, not user-typed — the
+          // instruction-ledger middleware must not mine constraints from it.
+          harnessAuthoredTask: true,
         });
         dreamSession.messages.push(...result.messages.filter(m => m.role !== "system"));
       } else {
@@ -96,6 +99,7 @@ export function registerDreamRunnerForServer(deps: DreamCheckDeps): void {
             sessionId: `${dreamSession.id}-b${i}`, maxIterations: 15, temperature: 0.3,
             callContext: "delegated",
             opType: "memory_consolidation", lane: "background",
+            harnessAuthoredTask: true,
           });
           dreamSession.messages.push(...result.messages.filter(m => m.role !== "system"));
         }

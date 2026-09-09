@@ -287,7 +287,13 @@ export type CanonicalEventType =
   | "cancel_requested"
   | "lease_acquired"
   | "lease_lost"
-  | "error";
+  | "error"
+  // Post-v1 additions. A name added here MUST also be added to store.ts
+  // `EVENT_TYPES` and process-relay-contract.ts `CANONICAL_EVENT_TYPES`:
+  // `Set<CanonicalEventType>` accepts a subset, so an omission there compiles
+  // clean and then silently drops the row on read. `event-vocabulary.test.ts`
+  // fails when the three lists disagree.
+  | "middleware_fired";
 
 export interface CanonicalEvent {
   opId: string;
@@ -303,4 +309,12 @@ export interface StateChangedBody extends Record<string, unknown> {
   from: CanonicalState | null;
   to: CanonicalState;
   reason: string;
+}
+
+// ── Middleware-fired event body shape ─────────────────────────────────────
+
+export interface MiddlewareFiredBody extends Record<string, unknown> {
+  name: string;
+  reason: string;
+  turnIdx: number;
 }

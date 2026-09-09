@@ -78,6 +78,27 @@ seq=7  lease_lost      { workerId, reason: "released" }
 Stream chunks are NOT in this list — they ride `op_stream:{opId}` only and
 are never persisted to `op_events` (PRD §12).
 
+### Event vocabulary — one union, three enforcers
+
+`CanonicalEventType` (`types.ts`) is the vocabulary, but two hand-kept lists
+have to agree with it or events go missing:
+
+| Declaration | Enforces | Failure when a name is missing |
+|---|---|---|
+| `types.ts` `CanonicalEventType` | the union itself | — |
+| `store.ts` `EVENT_TYPES` | `isCanonicalEvent` → the durable reader/writer | SILENT. `Set<CanonicalEventType>` accepts a subset, so it compiles; at runtime the reader stops at the frame and truncates the log there, so the row and everything after it are lost and the next seq collides. |
+| `process-relay-contract.ts` `CANONICAL_EVENT_TYPES` | `validateRelayPayload` | LOUD, out-of-process only: throws `invalid canonical relay payload`. |
+
+`event-vocabulary.test.ts` is the guard: an exhaustive
+`Record<CanonicalEventType, true>` census fails `npm run build` when the
+union grows, and the runtime cases prove both validators accept every member.
+Add a new event type to all three lists in one commit.
+
+The union has outgrown the locked v1 table in PRD §12, which still does not
+list `iteration_checkpoint`, `approval_requested` or `approval_resolved`.
+The newest member is `middleware_fired` (`{ name, reason, turnIdx }` —
+`MiddlewareFiredBody` in `types.ts`).
+
 ## Issue 04 — Reconnect / event replay
 
 `op_events` is durable; `op_stream:{opId}` is ephemeral. Clients survive

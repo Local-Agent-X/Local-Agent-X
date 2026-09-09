@@ -99,6 +99,7 @@ const CANONICAL_EVENT_TYPES = new Set<string>([
   "tool_started", "tool_finished", "message_appended", "redirect_received",
   "redirect_applied", "pause_requested", "resume_requested", "approval_requested",
   "approval_resolved", "cancel_requested", "lease_acquired", "lease_lost", "error",
+  "middleware_fired",
 ]);
 
 export function createRelayGeneration(

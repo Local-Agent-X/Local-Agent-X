@@ -436,6 +436,7 @@ PK `(op_id, seq)`. Append-only.
 | `lease_acquired` | `{ worker_id }` | Best-effort durable. |
 | `lease_lost` | `{ worker_id, reason }` | Best-effort durable. |
 | `error` | `{ code, message, retryable }` | Best-effort durable. |
+| `middleware_fired` | `{ name, reason, turn_idx }` | Best-effort durable. Post-v1 addition. |
 
 ### Persistence rules
 

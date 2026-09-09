@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { repeatFailureMiddleware } from "./repeat-failure.js";
+import { repeatFailureMiddleware, REPEAT_FAILURE_REASON } from "./repeat-failure.js";
 import type { CanonicalLoopContext } from "./types.js";
 import { makeCanonicalLoopContext } from "./ctx.test-helper.js";
 
@@ -40,6 +40,34 @@ describe("repeat-failure breaker", () => {
     for (let i = 0; i < 4; i++) await run(op, [fail()]);
     const r5 = await run(op, [fail()]);
     expect(r5.kind).toBe("suspend");
+  });
+
+  // The suspend reason is not decoration: worker.ts compares it to
+  // REPEAT_FAILURE_REASON to label the op's suspension `blocked` rather than the
+  // default `stalled` — the difference the session bridge surfaces to the user.
+  // Until 2026-09-08 the worker held a hand-copied "repeat-failure" literal, so a
+  // rename on either side silently downgraded the label with nothing red. Both
+  // sides read this constant now; these pin the halves that must not drift, and
+  // full-turn.test.ts drives the whole path (real worker) to `blocked`.
+  it("every directive carries the reason worker.ts maps to a blocked suspension", async () => {
+    // Byte-identical value pin: persisted op records and the session bridge read
+    // this string, so a rename is a migration, not a refactor.
+    expect(REPEAT_FAILURE_REASON).toBe("repeat-failure");
+
+    const nudgeOp = opId();
+    await run(nudgeOp, [fail()]);
+    await run(nudgeOp, [fail()]);
+    expect(await run(nudgeOp, [fail()])).toMatchObject({ kind: "nudge", reason: REPEAT_FAILURE_REASON });
+
+    const suspendOp = opId();
+    for (let i = 0; i < 4; i++) await run(suspendOp, [fail()]);
+    const suspend = await run(suspendOp, [fail()]);
+    expect(suspend).toMatchObject({ kind: "suspend", reason: REPEAT_FAILURE_REASON });
+
+    const abortOp = opId();
+    for (let i = 0; i < 4; i++) await run(abortOp, [fail()]);
+    const abort = await repeatFailureMiddleware.afterToolExecution!(ctxFor(abortOp, [fail()], "interactive"));
+    expect(abort).toMatchObject({ kind: "abort", reason: REPEAT_FAILURE_REASON });
   });
 
   it("a success resets the streak", async () => {

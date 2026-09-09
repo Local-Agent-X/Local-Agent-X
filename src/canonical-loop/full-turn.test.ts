@@ -268,6 +268,10 @@ describe("canonical-loop full turn — entry → scheduler → worker → turn-l
     canonicalLoopEntry(op);
 
     const paused = await waitForState(op.id, "paused");
+    // `blocked`, not the default `stalled`: the real worker mapped the breaker's
+    // suspend directive through REPEAT_FAILURE_REASON. Both sides import that
+    // constant from repeat-failure.ts (the worker held a hand-copied literal
+    // until 2026-09-08), so this is the end-to-end pin on that seam.
     expect(paused.canonical?.suspension?.reason).toBe("blocked");
     expect(paused.canonical?.currentTurnIdx).toBe(4);
 

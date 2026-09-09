@@ -18,6 +18,17 @@ import { isWorkerOp, type CanonicalMiddleware } from "./types.js";
 import { getMiddlewareState } from "./state.js";
 import { isDispatchFailure } from "../types.js";
 
+/**
+ * The reason ALL THREE of this breaker's directives carry — the nudge at 3 and
+ * the suspend/abort at 5. It is consequence-bearing beyond the nudge ledger:
+ * worker.ts reads it off `middlewareDirective.reason` to decide whether the
+ * op's suspension is `blocked` (this breaker: the tool is genuinely wedged) or
+ * the default `stalled`. That comparison used to be a hand-copied literal on
+ * the worker side; renaming either half silently degraded `blocked` → `stalled`
+ * with nothing red. This module owns the value; worker.ts imports it.
+ */
+export const REPEAT_FAILURE_REASON = "repeat-failure";
+
 const NUDGE_AT = 3;
 const ABORT_AT = 5;
 
@@ -75,13 +86,13 @@ export const repeatFailureMiddleware: CanonicalMiddleware = {
         state.family = "";
         state.count = 0;
         return isWorkerOp(ctx)
-          ? { kind: "suspend", reason: "repeat-failure", message }
-          : { kind: "abort", reason: "repeat-failure", message };
+          ? { kind: "suspend", reason: REPEAT_FAILURE_REASON, message }
+          : { kind: "abort", reason: REPEAT_FAILURE_REASON, message };
       }
       if (state.count === NUDGE_AT) {
         return {
           kind: "nudge",
-          reason: "repeat-failure",
+          reason: REPEAT_FAILURE_REASON,
           message:
             `${state.family} has hit the same unresolved failure ${NUDGE_AT} times:\n` +
             `${tr.content.slice(0, 300)}\n\n` +

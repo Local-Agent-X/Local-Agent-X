@@ -18,9 +18,15 @@
 // recover from — tool-search-recovery (claimed a missing tool), browser-handoff
 // (gave up on a surmountable obstruction); and (2) confirmed-false claims about
 // what was done — attribution-confabulation (credited an unused tool),
-// unsupported-operational-claim, cleanup-verify-false-done. approval-
-// hallucination is excluded: "requires approval" is a misplaced permission ask,
-// not superseded work, so it stands.
+// unsupported-operational-claim, cleanup-verify-false-done.
+//
+// This comment used to also record approval-hallucination as a deliberate
+// EXCLUSION ("requires approval" being a misplaced permission ask, not
+// superseded work). That reason went dead with its emitter — hallucination-
+// check, retired in 7d524491 on 2026-07-10 — so the note described a reason
+// nothing could emit, and the exclusion it claimed was indistinguishable from
+// the silent default that cost action-claim its consequence in the same fold.
+// It is recorded here as history instead of asserted as a live decision.
 //
 // EVERY entry is the EMITTING module's own exported constant — never a raw
 // string. A literal here is a copy nothing keeps in sync: "worker-hallucination"

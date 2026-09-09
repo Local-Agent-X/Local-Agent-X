@@ -24,12 +24,13 @@ describe("isRetractableHallucination", () => {
     expect(isRetractableHallucination("cleanup-verify")).toBe(false);
   });
 
-  it("does not retract a misplaced permission ask", () => {
-    // "requires approval" is wrong but not a false claim of completed work —
-    // its text should stand and the model is nudged to just call the tool.
-    expect(isRetractableHallucination("approval-hallucination")).toBe(false);
-  });
-
+  // Was also asserting "approval-hallucination" is not retracted, until
+  // 2026-09-08. Nothing has emitted that reason since its middleware
+  // (hallucination-check) was retired in 7d524491 on 2026-07-10, so the case
+  // asserted the DEFAULT-false answer for a dead string — the same shape as the
+  // two literals removed from RETRACTABLE_REASONS above, and indistinguishable
+  // from a real classification. nudge-reason-coverage.test.ts owns the live
+  // ledger; a reason with no emitter cannot be classified in it at all.
   it("does not retract ordinary continuation nudges", () => {
     expect(isRetractableHallucination("uncommitted-turn")).toBe(false);
     expect(isRetractableHallucination("planning-only")).toBe(false);

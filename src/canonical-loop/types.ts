@@ -202,6 +202,10 @@ export interface OpTurnRow {
    *  instruction. Materialization into op_messages is idempotent. */
   nextTurnPivot?: {
     message: string;
+    /** The middleware that authored the pivot. loop-detection, mid-turn-stale
+     *  and strategy-pivot all produce pivot nudges, so recovery cannot infer it
+     *  from the mechanism; absent only on rows committed before this field. */
+    firedBy?: string;
     metadata: {
       strategyPivot: {
         pattern: string;

@@ -125,6 +125,7 @@ function isNextTurnPivot(value: unknown): boolean {
   if (value === undefined) return true;
   if (!record(value) || typeof value.message !== "string" || !record(value.metadata)
     || !record(value.metadata.strategyPivot)) return false;
+  if (value.firedBy !== undefined && typeof value.firedBy !== "string") return false;
   const pivot = value.metadata.strategyPivot;
   return typeof pivot.pattern === "string" && typeof pivot.strategyId === "string"
     && integer(pivot.epoch);

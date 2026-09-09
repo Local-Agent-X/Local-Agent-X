@@ -21,6 +21,9 @@ vi.mock("../store.js", () => ({
   readOpMessages: vi.fn(() => []),
 }));
 vi.mock("../op-model.js", () => ({ resolveOpModel: vi.fn(() => "test-model") }));
+// office-theme-guard records its arg rewrite as a guard fire (guard-fire.ts);
+// this file asserts the REGEX gates, not telemetry, and its store is a stub.
+vi.mock("../event-emitter.js", () => ({ emit: vi.fn() }));
 
 import { buildCanonicalLoopContext } from "./host.js";
 import { readOpMessages } from "../store.js";

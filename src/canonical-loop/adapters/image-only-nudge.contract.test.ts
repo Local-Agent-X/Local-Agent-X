@@ -45,6 +45,8 @@ const PNG_B64 =
 const PNG_DATA_URL = `data:image/png;base64,${PNG_B64}`;
 const IMAGE_BLOCK = { type: "image", source: { type: "base64", media_type: "image/png", data: PNG_B64 } };
 const NUDGE = "You claimed an action you did not take. Answer the user directly.";
+// Every nudge names its firing guard; this text is the action-claim middleware's.
+const NUDGE_SRC = { name: "action-claim", reason: "action-claim" };
 const DIGEST_OPEN = "[SITUATIONAL CONTEXT";
 const UNREADABLE_NOTE = "[Attachment shot.png could not be read (ENOENT)]";
 
@@ -186,7 +188,7 @@ describe("A. image-only user row + middleware nudge → Anthropic Messages wire"
 	it("after the nudge the image row is no longer last: no empty block, image intact, nudge is the last user message", async () => {
 		seedImageOnlyUser(SHOT_PATH);
 		seedAssistantReply();
-		expect(appendNudgeAsUserMessage(opId, 1, NUDGE)).toBe(true);
+		expect(appendNudgeAsUserMessage(opId, 1, NUDGE, NUDGE_SRC)).toBe(true);
 
 		const { transport, params } = await pipeline(1);
 		// Premise: the image row's text is EMPTY — exactly the
@@ -232,7 +234,7 @@ describe("B. the same two histories → Codex Responses input", () => {
 	it("after the nudge: the image row keeps its input_image with no empty input_text; the nudge is the last user item", async () => {
 		seedImageOnlyUser(SHOT_PATH);
 		seedAssistantReply();
-		appendNudgeAsUserMessage(opId, 1, NUDGE);
+		appendNudgeAsUserMessage(opId, 1, NUDGE, NUDGE_SRC);
 		const items = codexItems((await pipeline(1)).params);
 		assertCodexWellFormed(items);
 		// No user-only RUN reaches codex: the digest shares the nudge's row
@@ -268,7 +270,7 @@ describe("E. the same two histories → Gemini native contents (C22)", () => {
 	it("after the nudge the image row keeps its inlineData with no empty text part; the nudge is the last user turn", async () => {
 		seedImageOnlyUser(SHOT_PATH);
 		seedAssistantReply();
-		appendNudgeAsUserMessage(opId, 1, NUDGE);
+		appendNudgeAsUserMessage(opId, 1, NUDGE, NUDGE_SRC);
 		const contents = toGeminiContents((await pipeline(1)).transport);
 		expect(contents.map(c => c.role)).toEqual(["user", "model", "user"]);
 		// Pre-fix: dataUrlToInline("/uploads/shot.png") → null, so this row was
@@ -287,7 +289,7 @@ describe("E. the same two histories → Gemini native contents (C22)", () => {
 	it("unreadable upload: the byte-identical C21 note, no inlineData, no leaked path", async () => {
 		seedImageOnlyUser(MISSING_PATH);
 		seedAssistantReply();
-		appendNudgeAsUserMessage(opId, 1, NUDGE);
+		appendNudgeAsUserMessage(opId, 1, NUDGE, NUDGE_SRC);
 		const contents = toGeminiContents((await pipeline(1)).transport);
 		expect(contents.map(c => c.role)).toEqual(["user", "model", "user"]);
 		expect(contents[0].parts).toEqual([{ text: UNREADABLE_NOTE }]);
@@ -319,7 +321,7 @@ describe("C. unreadable upload (C21) → a non-empty note, never an image block,
 	it("after the nudge the note is the row's ONLY block — the row is neither empty nor an '[empty message]' stand-in", async () => {
 		seedImageOnlyUser(MISSING_PATH);
 		seedAssistantReply();
-		appendNudgeAsUserMessage(opId, 1, NUDGE);
+		appendNudgeAsUserMessage(opId, 1, NUDGE, NUDGE_SRC);
 		const { params } = await pipeline(1);
 
 		const wire = convertMessages(params);

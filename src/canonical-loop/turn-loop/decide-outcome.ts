@@ -279,7 +279,7 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
   let failureNudged = false;
   if (!middlewareAborted && !middlewareSuspended) {
     if (shouldNudgeForFailures(failureSummary)) {
-      appendNudgeAsUserMessage(op.id, turnIdx + 1, formatFailureNudgeForModel(failureSummary, op.id));
+      appendNudgeAsUserMessage(op.id, turnIdx + 1, formatFailureNudgeForModel(failureSummary, op.id), { name: "tool-failure-summary", reason: "tool-failure-summary" });
       failureNudged = true;
     }
   }

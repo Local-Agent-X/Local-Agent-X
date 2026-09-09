@@ -9,6 +9,7 @@
  * the established middleware pattern (see auto-build-app).
  */
 import type { CanonicalMiddleware } from "./types.js";
+import { recordGuardFire } from "../turn-loop/guard-fire.js";
 
 // The collapsed family tools (action param). Stripping `theme` is safe for
 // every action: only the writing actions consume it, the rest ignore it.
@@ -25,6 +26,7 @@ export const officeThemeGuardMiddleware: CanonicalMiddleware = {
 
   afterModelCall(ctx) {
     if (LOOK_REQUEST_RE.test(ctx.currentUserMessage)) return { kind: "continue" };
+    let stripped = false;
     for (const tc of ctx.toolCalls) {
       if (!OFFICE_TOOLS.has(tc.tool)) continue;
       if (typeof tc.args === "string") {
@@ -33,12 +35,18 @@ export const officeThemeGuardMiddleware: CanonicalMiddleware = {
           if (parsed && typeof parsed === "object" && "theme" in parsed) {
             delete parsed.theme;
             tc.args = JSON.stringify(parsed);
+            stripped = true;
           }
         } catch { /* unparseable args fail in dispatch with a real error */ }
       } else if (tc.args && typeof tc.args === "object" && "theme" in tc.args) {
         delete (tc.args as Record<string, unknown>).theme;
+        stripped = true;
       }
     }
+    // This guard acts by REWRITING the call, not by speaking, so the verdict is
+    // `continue` and no nudge records it. Count the rewrite itself or the guard
+    // reads 0 forever while actively overriding the model (guard-fire.ts).
+    if (stripped) recordGuardFire(ctx.op.id, ctx.turnIdx, { name: "office-theme-guard", reason: "office-theme-strip" });
     return { kind: "continue" };
   },
 };

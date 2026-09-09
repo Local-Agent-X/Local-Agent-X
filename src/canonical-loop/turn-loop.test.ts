@@ -142,11 +142,14 @@ describe("driveTurn — completed-result pivot durability", () => {
     deps.runMiddlewarePhase
       .mockResolvedValueOnce({ kind: "continue" })
       .mockResolvedValueOnce({ kind: "continue" })
-      .mockResolvedValueOnce({ kind: "nudge", reason: "strategy-pivot", message: "pivot now", metadata } as never);
+      .mockResolvedValueOnce({ kind: "nudge", reason: "strategy-pivot", firedBy: "mid-turn-stale", message: "pivot now", metadata } as never);
     await driveTurn(freshOp(), okAdapter(), 7, { isCancelled: () => false }, deps);
     expect(deps.commitTurn).toHaveBeenCalledTimes(1);
     expect(deps.commitTurn).toHaveBeenCalledWith(expect.objectContaining({
-      nextTurnPivot: { message: "pivot now", metadata },
+      // firedBy rides along so restart recovery can name the fire: the pivot
+      // MECHANISM is shared by loop-detection, mid-turn-stale and
+      // strategy-pivot, and the committed row is all recovery has.
+      nextTurnPivot: { message: "pivot now", firedBy: "mid-turn-stale", metadata },
     }));
     expect(deps.recoverCommittedStrategyPivot).toHaveBeenLastCalledWith(expect.any(String), 7);
     expect(deps.commitTurn.mock.invocationCallOrder[0])

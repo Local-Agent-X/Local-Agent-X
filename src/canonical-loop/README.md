@@ -97,7 +97,25 @@ Add a new event type to all three lists in one commit.
 The union has outgrown the locked v1 table in PRD §12, which still does not
 list `iteration_checkpoint`, `approval_requested` or `approval_resolved`.
 The newest member is `middleware_fired` (`{ name, reason, turnIdx }` —
-`MiddlewareFiredBody` in `types.ts`).
+`MiddlewareFiredBody` in `types.ts`), minted only by
+`turn-loop/guard-fire.ts`, which carries the authoritative ledger. It counts a
+guard whose verdict TOOK EFFECT, in four shapes:
+
+| Shape | Where it is counted |
+| --- | --- |
+| nudge | `nudges.ts appendNudgeAsUserMessage` — middleware and completion-gate nudges alike. A nudge suppressed by `stableMessageId` is a replay, not a fire. |
+| abort | `nudges.ts middlewareAbortResult` (beforeTurn) and `apply-directive.ts` (afterModelCall / afterToolExecution). Counted only when the abort's error bubble is really emitted, so a repeat collapses with `emitErrorOnce`. |
+| suspend | `suspension.ts suspendedTurn` (beforeTurn) and `apply-directive.ts` (later phases + the idle-watchdog). |
+| rewrite | `middlewares/office-theme-guard.ts` — a guard that edits the tool call instead of speaking. |
+
+It is NOT a census of every guard invocation. Uncounted, deliberately: a
+`continue` verdict; the completion-gate branches that act without nudging
+(late-inject re-opening the turn, framework-serve, render-verify's
+`capReached`, build-verify's `verifiedClean`); and a directive discarded by a
+user cancel before it is applied. Read a `0` with that list in hand.
+
+Every nudge caller must name its guard — the required `GuardFire` argument is
+what keeps one from reaching op_messages uncounted.
 
 ## Issue 04 — Reconnect / event replay
 

@@ -18,6 +18,8 @@ import { resolveTurnLoopDeps, type TurnLoopDeps } from "./turn-loop/turn-deps.js
 import { recoverAdapterThrow, clearAdapterThrowStreak } from "./turn-loop/adapter-throw-recovery.js";
 import { recoverReportedAdapterError } from "./turn-loop/reported-adapter-recovery.js";
 import { idleSuspension, middlewareSuspension, suspendedTurn } from "./turn-loop/suspension.js";
+import { applyCommittedDirective } from "./turn-loop/apply-directive.js";
+import { firedResultFire } from "./turn-loop/guard-fire.js";
 
 // Map a per-phase middleware verdict (afterModelCall / afterToolExecution) to
 // the sticky MiddlewareDirective. Both phases translate abort/nudge/suspend the
@@ -112,10 +114,10 @@ export async function driveTurn(
   if (beforeRes.kind === "abort") {
     return middlewareAbortResult(op, turnIdx, beforeRes);
   }
-  const beforeSuspension = suspendedTurn(beforeRes);
+  const beforeSuspension = suspendedTurn(op.id, turnIdx, beforeRes);
   if (beforeSuspension) return beforeSuspension;
   if (beforeRes.kind === "nudge") {
-    appendNudgeAsUserMessage(op.id, turnIdx, beforeRes.message, beforeRes.metadata);
+    appendNudgeAsUserMessage(op.id, turnIdx, beforeRes.message, firedResultFire(beforeRes), beforeRes.metadata);
     // Fall through — next read of op_messages (buildTurnInput, below) picks
     // the nudge up and ships it to the adapter on this turn.
   }
@@ -356,7 +358,7 @@ export async function driveTurn(
     // A middleware abort's note is the op's failure reason (commitTurn stamps it at the failed transition).
     failureReason: middlewareAborted ? (middlewareDirective!.message?.trim() || `Turn aborted by ${middlewareDirective!.firedBy}.`) : undefined,
     nextTurnPivot: middlewareDirective?.kind === "nudge" && middlewareDirective.metadata?.strategyPivot
-      ? { message: middlewareDirective.message, metadata: { strategyPivot: middlewareDirective.metadata.strategyPivot } }
+      ? { message: middlewareDirective.message, firedBy: middlewareDirective.firedBy, metadata: { strategyPivot: middlewareDirective.metadata.strategyPivot } }
       : undefined,
   });
   if (learningSessionId) requestSkillReviewForOp(op, learningSessionId, turnIdx); // post-commit ONLY — see record-outcome.ts
@@ -366,20 +368,11 @@ export async function driveTurn(
   // edit without asking the agent to fix what it just broke.
   void snapshotTouchedApps(toolCalls, turnIdx);
 
-  // Materialize nudges only after commit; pivot writes are replay-safe.
-  if (middlewareDirective?.kind === "nudge") {
-    if (middlewareDirective.metadata?.strategyPivot) {
-      recoverCommittedStrategyPivot(op.id, turnIdx);
-    } else {
-      appendNudgeAsUserMessage(op.id, turnIdx + 1, middlewareDirective.message, middlewareDirective.metadata);
-    }
-  }
-  if (middlewareAborted) {
-    emitErrorOnce(op.id, {
-      code: "middleware-abort",
-      message: middlewareDirective!.message ?? `Turn aborted by ${middlewareDirective!.firedBy}.`,
-      retryable: false,
-    });
+  // Nudge materialization, the abort bubble and the abort/suspend fire records
+  // all wait for the durable turn — see apply-directive.ts for that ordering
+  // contract. A cancel bails above, so a discarded directive is never applied.
+  if (middlewareDirective) {
+    applyCommittedDirective(op, turnIdx, middlewareDirective, { appendNudgeAsUserMessage, recoverCommittedStrategyPivot, emitErrorOnce });
   }
 
   return {

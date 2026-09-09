@@ -5,7 +5,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 // so the test exercises the pure termination DECISION in isolation. The
 // done-decision helpers we actually want to test — isSilentToolCall,
 // collectToolFailures, isMutationTool — are left real.
-vi.mock("../event-emitter.js", () => ({ publishStreamChunk: vi.fn() }));
+// `emit` is reached by the guard-fire counter (decide-outcome-gates.ts).
+vi.mock("../event-emitter.js", () => ({ publishStreamChunk: vi.fn(), emit: vi.fn() }));
 vi.mock("../../agent-loop/inject-queue.js", () => ({
   hasInjects: vi.fn(() => false),
   opConsumesInjects: vi.fn(() => false),
@@ -825,7 +826,7 @@ describe("decideTurnOutcome — op-outcome telemetry", () => {
       toolCalls: [], toolMessages: [], toolSummary: [], modelSignaledDone: true,
     }));
     expect(runBuildVerifyGate).toHaveBeenCalled();
-    expect(appendNudgeAsUserMessage).toHaveBeenCalledWith(op.id, 1, "STOP — build red: TS2339");
+    expect(appendNudgeAsUserMessage).toHaveBeenCalledWith(op.id, 1, "STOP — build red: TS2339", { name: "build-verify", reason: "build-verify" });
     expect(r.terminalReason).toBeNull();
   });
 
@@ -857,7 +858,7 @@ describe("decideTurnOutcome — op-outcome telemetry", () => {
       toolCalls: [], toolMessages: [], toolSummary: [], modelSignaledDone: true,
     }));
     expect(runSpecProbeGate).toHaveBeenCalled();
-    expect(appendNudgeAsUserMessage).toHaveBeenCalledWith(op.id, 1, "STOP — acceptance check failed");
+    expect(appendNudgeAsUserMessage).toHaveBeenCalledWith(op.id, 1, "STOP — acceptance check failed", { name: "spec-probe", reason: "spec-probe" });
     expect(r.terminalReason).toBeNull();
   });
 
@@ -1324,7 +1325,7 @@ describe("decideTurnOutcome — a done turn whose final text is a tool call writ
     const { WIRE_FORMAT_NUDGE } = await import("./nudges.js");
     const first = await decideTurnOutcome(leakedTurn());
     expect(first.terminalReason).toBeNull();
-    expect(appendNudgeAsUserMessage).toHaveBeenCalledWith(op.id, 1, WIRE_FORMAT_NUDGE);
+    expect(appendNudgeAsUserMessage).toHaveBeenCalledWith(op.id, 1, WIRE_FORMAT_NUDGE, { name: "unresolved-tool-intent", reason: "unresolved-tool-intent" });
     expect(first.allMessages.some((m) => (m.content as { text?: string })?.text?.includes("Nothing was executed"))).toBe(false);
 
     vi.mocked(appendNudgeAsUserMessage).mockClear();

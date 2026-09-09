@@ -5,6 +5,11 @@
 //     adapter call (or this one, for beforeTurn) sees the nudge inline.
 //   - middlewareAbortResult: build the DriveTurnResult shape returned when
 //     beforeTurn aborts before any adapter/tool work happens.
+//
+// Both record a guard fire. This file counts NUDGES (all of them, middleware
+// and completion-gate) and the BEFORETURN abort; the later-phase aborts and
+// every suspend are counted by apply-directive.ts and suspension.ts. What the
+// counter does and does not cover, in one place: guard-fire.ts.
 
 import { randomUUID } from "node:crypto";
 import type { Op } from "../../ops/types.js";
@@ -14,6 +19,7 @@ import { emit, emitErrorOnce } from "../event-emitter.js";
 import type { FiredMiddlewareResult } from "../middlewares/host.js";
 import type { DriveTurnResult } from "./types.js";
 import type { NudgeMetadata } from "../middlewares/types.js";
+import { firedResultFire, recordGuardFire, type GuardFire } from "./guard-fire.js";
 
 /**
  * The one canonical wire-format nudge for a tool call that arrived as TEXT.
@@ -39,6 +45,7 @@ export function appendNudgeAsUserMessage(
   opId: string,
   turnIdx: number,
   message: string,
+  source: GuardFire,
   metadata?: NudgeMetadata,
   stableMessageId?: string,
 ): boolean {
@@ -63,6 +70,12 @@ export function appendNudgeAsUserMessage(
   };
   appendOpMessage(row);
   emit(opId, "message_appended", { turnIdx, role: row.role, messageId: row.messageId });
+  // Count the fire on the ONE path that actually writes the nudge: every early
+  // return above is a dedup no-op, and a replayed nudge is not a new fire.
+  // Before this event the only record a guard had fired was its own prose in
+  // op_messages, so rewording a nudge erased its history. Which guards this
+  // does and does not count: guard-fire.ts.
+  recordGuardFire(opId, turnIdx, source);
   return true;
 }
 
@@ -72,10 +85,17 @@ export function recoverCommittedStrategyPivot(opId: string, sourceTurnIdx: numbe
   if (sourceTurnIdx < 0) return false;
   const pivot = readOpTurn(opId, sourceTurnIdx)?.nextTurnPivot;
   if (!pivot) return false;
+  // The pivot MECHANISM is shared: loop-detection, mid-turn-stale and
+  // strategy-pivot all fire nudges carrying metadata.strategyPivot. Naming this
+  // fire "strategy-pivot" would file three guards under one name and leave the
+  // other two reading 0, so turn-loop.ts persists the originating middleware on
+  // the turn row and this replays it. `unknown` covers only rows committed
+  // before that field existed — there is genuinely no name to recover there.
   return appendNudgeAsUserMessage(
     opId,
     sourceTurnIdx + 1,
     pivot.message,
+    { name: pivot.firedBy ?? "unknown", reason: "strategy-pivot" },
     pivot.metadata,
     `strategy-pivot-${opId}-${sourceTurnIdx}`,
   );
@@ -87,14 +107,22 @@ export function middlewareAbortResult(
   fired: FiredMiddlewareResult,
 ): DriveTurnResult {
   if (fired.kind !== "abort") throw new Error("middlewareAbortResult requires abort verdict");
-  emitErrorOnce(op.id, {
+  // An abort is a fire too — the loudest one, since it ends the turn. The error
+  // event says the turn stopped; the fire says WHICH guard stopped it. Counted
+  // only when the bubble is really emitted: emitErrorOnce collapses a repeat of
+  // the same abort, and an unconditional emit beside it would also flush
+  // chat-runner/event-pump.ts's held `aborted` acknowledgement, showing the user
+  // "aborted" AND the cause instead of the cause alone.
+  //
+  // This is the beforeTurn abort only. Every later-phase abort (loop-detection,
+  // repeat-output, repeat-failure, thrash-guard) bubbles as a sticky directive
+  // and is counted in apply-directive.ts.
+  const bubbled = emitErrorOnce(op.id, {
     code: "middleware-abort",
     message: fired.message ?? `Turn aborted by ${fired.firedBy ?? "middleware"}.`,
     retryable: false,
   });
-  // Reserved for future per-turn telemetry; the abort emit above already
-  // surfaces the turn's stop reason.
-  void turnIdx;
+  if (bubbled) recordGuardFire(op.id, turnIdx, firedResultFire(fired));
   return {
     terminalReason: "error",
     toolCount: 0,

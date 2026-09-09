@@ -3,6 +3,7 @@
  * Replaces bash find/ls with structured glob results sorted by mtime.
  */
 import { stat } from "node:fs/promises";
+import { resolve } from "node:path";
 import type { Readable } from "node:stream";
 import fg from "fast-glob";
 import type { ToolDefinition, ToolResult } from "../types.js";
@@ -136,7 +137,14 @@ async function globFiles(pattern: string, cwd: string, limit: number): Promise<{
   for (const p of paths) {
     try {
       const s = await stat(p);
-      entries.push({ path: p, mtime: s.mtimeMs, size: s.size });
+      // fast-glob always yields POSIX separators, so on Windows the walk
+      // returned "C:/Users/..." while `cwd` in this same result — and every
+      // path `read`, `grep` and the security gate emit — is the canonical
+      // "C:\Users\...". One result carried two spellings and glob was the
+      // only tool speaking the second. resolve() is what resolveAgentPath
+      // itself applies to an absolute path, so this re-enters the canonical
+      // form and is a no-op off Windows.
+      entries.push({ path: resolve(p), mtime: s.mtimeMs, size: s.size });
     } catch { /* skip inaccessible files */ }
   }
 

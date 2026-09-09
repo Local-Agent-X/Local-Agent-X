@@ -4,8 +4,8 @@
 // canary / egress-guard / post-exec) each used to return only their OWN
 // first-deny, so an outbound call denied by more than one layer surfaced one
 // blocker per turn: the model was told "add the host to the allowlist", fixed
-// that, retried, and only THEN hit the taint blocker ("declassify / end
-// session") — one blocker per round trip.
+// that, retried, and only THEN hit the taint blocker ("Declassify & retry")
+// — one blocker per round trip.
 //
 // The nastiest instance is the kernel↔aggregate seam: TD-11 derives a
 // web-tainted http_request POST → action="post" → the kernel's
@@ -16,7 +16,7 @@
 // These tests drive the REAL arikernel workspace-assistant preset and assert the
 // canonical case — a web-tainted http_request POST to a NON-allowlisted host
 // carrying a secret — now produces ONE aggregated response that lists BOTH the
-// taint blocker (declassify / end session) AND the host-allowlist blocker, each
+// taint blocker (the Declassify & retry card) AND the host-allowlist blocker, each
 // tagged with its authoritative layer. They FAIL on the pre-SC-10 first-deny
 // code, where the kernel gate returns a raw kernel-only message (no ToolResult,
 // no egress-guard / data-lineage text).
@@ -27,7 +27,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import { enforcePolicyPhase } from "./enforce-policy.js";
-import { egressAggregateGate } from "./egress-gates.js";
+import { egressAggregateGate, DATA_LINEAGE_RECOVERY } from "./egress-gates.js";
 import { startAriKernel, stopAriKernel } from "../ari-kernel/lifecycle.js";
 import { recordSensitiveRead, clearSessionTaint } from "../data-lineage/index.js";
 import type { ToolCallContext } from "./context.js";
@@ -103,8 +103,11 @@ describe("SC-10 · kernel↔aggregate seam — a tainted POST surfaces the taint
     expect(content).toContain("[arikernel]");
     expect(content).toContain("[data-lineage]");
     expect(content).toContain("[egress-guard]");
-    // Taint blocker → declassify / end session.
-    expect(content).toMatch(/end the session/i);
+    // Taint blocker → the Declassify & retry button on this card. Asserting the
+    // control by name is the point: "end the session" was the old guidance and
+    // is not a recovery, so a message offering it again must fail here.
+    expect(content).toMatch(/Declassify & retry/);
+    expect(content).not.toMatch(/end the session/i);
     // Host-allowlist blocker → trusted-destinations / egress-allowlist.json.
     expect(content).toMatch(/trusted-destinations list/i);
     expect(content).toMatch(/egress-allowlist\.json/i);
@@ -143,7 +146,10 @@ describe("SC-10 · egressAggregateGate — the data-lineage + canary + egress-gu
     const layers = ctx.result?.metadata?.layers as string[];
     expect(layers).toEqual(expect.arrayContaining(["data-lineage", "egress-guard"]));
     const content = String(ctx.result?.content);
-    expect(content).toMatch(/end the session/i);
+    // Assert the taint blocker by its canonical text, not a re-typed phrase:
+    // this pinned "end the session" and kept failing after the recovery was
+    // corrected to name the Declassify & retry button.
+    expect(content).toContain(DATA_LINEAGE_RECOVERY);
     expect(content).toMatch(/trusted-destinations list/i);
   });
 

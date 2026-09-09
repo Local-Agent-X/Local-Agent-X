@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPromptTelemetry, measurePromptSection } from "../../prompt-telemetry.js";
+import type { LocalRuntimeInfo } from "../../local-runtimes/types.js";
 
 const { appendOpMessage, buildContextPack, writeOp } = vi.hoisted(() => ({
   appendOpMessage: vi.fn(),
@@ -10,14 +11,27 @@ const { appendOpMessage, buildContextPack, writeOp } = vi.hoisted(() => ({
 vi.mock("../../config.js", () => ({
   getRuntimeConfig: () => ({ ollamaUrl: "http://127.0.0.1:11434" }),
 }));
-vi.mock("../../local-runtimes/index.js", () => ({
-  getLocalRuntimes: () => [{
-    id: "ollama@test",
-    chatBaseUrl: "http://127.0.0.1:11434/v1",
-    models: [{ id: "local-small", contextWindow: 8_192, tools: true }],
-  }],
-  getRuntimeForModel: () => ({ id: "ollama@test", chatBaseUrl: "http://127.0.0.1:11434/v1" }),
-  getLocalModel: () => ({ id: "local-small", contextWindow: 8_192, tools: true }),
+// Spread the real barrel rather than enumerating its exports: this mock listed
+// them, resolve-target.ts later destructured one more (reprobeLocalModelWindow),
+// and the test died on a missing export rather than on anything it asserts. The
+// overrides below are the only members this seam exercises; anything else stays
+// real, so a new export cannot break the test again. The typed form also holds
+// the fixtures to the REAL LocalRuntimeInfo/LocalModel shapes — the old untyped
+// factory let them drift into objects the seam could never receive.
+const TEST_RUNTIME: LocalRuntimeInfo = {
+  kind: "ollama",
+  id: "ollama@test",
+  label: "Ollama",
+  endpoint: { baseUrl: "http://127.0.0.1:11434", origin: "auto" },
+  chatBaseUrl: "http://127.0.0.1:11434/v1",
+  models: [{ id: "local-small", contextWindow: 8_192, tools: true }],
+  refreshedAt: 0,
+};
+vi.mock(import("../../local-runtimes/index.js"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  getLocalRuntimes: () => [TEST_RUNTIME],
+  getRuntimeForModel: () => TEST_RUNTIME,
+  getLocalModel: () => TEST_RUNTIME.models[0],
   getLocalModelCapabilityProfile: (baseURL: string, model: string) => ({
     runtimeId: "ollama@test", baseURL, model, tier: "medium", maxTools: 24,
     contextWindow: 8_192,

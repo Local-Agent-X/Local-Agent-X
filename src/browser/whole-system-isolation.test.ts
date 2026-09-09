@@ -249,7 +249,16 @@ describe.skipIf(!browserAvailable()).sequential("whole-system browser identity i
     expect(["registered", "blocked:Error", "blocked:SecurityError"]).toContain(bobWrite.serviceWorker);
     expect(aliceWrite.serviceWorkerControlled).toBe(false);
     expect(bobWrite.serviceWorkerControlled).toBe(false);
-    expect(serviceWorkerRequests).toBe(0);
+    // The isolation property is that a service worker never CONTROLS the page
+    // (asserted above) — a controlling worker is what could intercept another
+    // session's fetches. Registration itself is tolerated two lines up, and a
+    // registration necessarily fetches /sw.js, so a flat 0 here contradicted
+    // that: it could only ever pass on a browser that refuses registration
+    // outright. Count the fetches the tolerated outcomes actually imply, which
+    // still fails on a stray extra request.
+    const registered = [aliceWrite.serviceWorker, bobWrite.serviceWorker]
+      .filter(outcome => outcome === "registered").length;
+    expect(serviceWorkerRequests).toBe(registered);
     expect(await readIdentity(alicePage)).toEqual({
       cookie: "auth=alice-auth", local: "alice-auth", session: "alice-auth",
       indexedDb: "alice-auth", cache: "alice-auth",

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { RULES, allRules, channelIsDelivered, deliveredChannels, type RuleId } from "./rule-registry.js";
-import { WIRE_FORMAT_NUDGE_ID } from "../canonical-loop/turn-loop/nudges.js";
+import { WIRE_FORMAT_NUDGE_ID } from "../canonical-loop/public/nudge-ids.js";
 import { CHAT_RIDER_IDS } from "../routes/chat/system-prompt-augmentations.js";
 
 describe("rule registry shape", () => {

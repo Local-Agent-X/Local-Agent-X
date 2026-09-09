@@ -19,7 +19,7 @@ import { resolveContextWindow } from "../context-manager/model-windows.js";
 import { toolManifestTokens } from "../context-manager/request-fit.js";
 import { DEFAULT_MAX_RESULT_CHARS, toolResultCapChars } from "../context-manager/tool-result-cap.js";
 import { readOp } from "../ops/op-store.js";
-import { resolveOpModel } from "../canonical-loop/op-model.js";
+import { resolveOpModel } from "../canonical-loop/public/op-facts.js";
 
 interface ToolResultWithImage extends ToolResult {
   _image?: { path: string; question: string; mime: string; b64: string };

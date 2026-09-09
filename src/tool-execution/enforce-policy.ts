@@ -142,7 +142,7 @@ async function ariKernelGate(ctx: ToolCallContext): Promise<PhaseOutcome> {
           label: "ARI kernel",
           reason: ariResult.reason,
           recovery:
-            "The kernel policy denies this outbound action (typically an untrusted-input taint on an http/browser write). Declassify the taint or end the session — do not just retry the same call.",
+            "The kernel policy denies this outbound action (typically an untrusted-input taint on an http/browser write). To clear the taint, ask the user to click \"Declassify & retry\" on this blocked card in the chat — that button is the only declassify control. Do not just retry the same call.",
           userHint: hint,
         };
         return egressAggregateGate(ctx, [kernelBlocker, ...probeUpstreamEgressBlockers(ctx)]);

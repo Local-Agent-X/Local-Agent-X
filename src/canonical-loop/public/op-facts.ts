@@ -22,3 +22,5 @@ export type {
 export type { TerminalState } from "../terminal-states.js";
 
 export { isEmbeddingModel } from "../model-capabilities.js";
+
+export { resolveOpModel } from "../op-model.js";

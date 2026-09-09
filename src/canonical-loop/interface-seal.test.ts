@@ -103,4 +103,28 @@ describe("canonical-loop interface seal", () => {
 		for (const s of bad) expect(isDeepCanonicalLoopPath(s), s).toBe(true);
 		for (const s of good) expect(isDeepCanonicalLoopPath(s), s).toBe(false);
 	});
+
+	// public/test-surface.ts exists so an OUT-OF-MODULE TEST can reach the
+	// per-test reset helpers without a deep import. That is only tolerable while
+	// it stays test-only: a shipping caller clearing another op's ledger mid-run
+	// would be a live bug, and the barrel would have become the very hole the
+	// seal exists to close. So the test surface carries its own rule.
+	it("no production file imports the test-only surface", () => {
+		const violations: string[] = [];
+		for (const file of walkTsFiles(SRC_DIR)) {
+			if (/\.test\.ts$|\.test-helper\.ts$/.test(file)) continue;
+			const text = readFileSync(file, "utf8");
+			if (!text.includes("public/test-surface")) continue;
+			for (const match of text.matchAll(SPECIFIER_RE)) {
+				if (match[1].includes("canonical-loop/public/test-surface")) {
+					const line = text.slice(0, match.index).split("\n").length;
+					violations.push(`${relative(SRC_DIR, file)}:${line} → "${match[1]}"`);
+				}
+			}
+		}
+		expect(
+			violations,
+			`canonical-loop/public/test-surface.js is test-only; production code must not import it:\n  ${violations.join("\n  ")}`,
+		).toEqual([]);
+	});
 });

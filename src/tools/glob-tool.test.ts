@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync, utimesSync, realpathSync, type readdir as fsReaddir } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { globTool, walkBounded, MAX_DEPTH, MAX_SCAN, WALK_CONCURRENCY, type WalkFs } from "./glob-tool.js";
 import { renderToolResultForModel } from "./result-helpers.js";
 
@@ -23,6 +23,12 @@ function file(rel: string, content = "", mtimeSec?: number): string {
 	return abs;
 }
 
+// glob emits paths in the platform's canonical spelling — the same one
+// resolveAgentPath, grep and the security gate produce. An expectation built by
+// gluing "/" onto a Windows temp dir describes no output the tool can produce,
+// so build them the way the tool does.
+const at = (dir: string, rel: string) => join(dir, ...rel.split("/"));
+
 const run = (pattern: string, path: string) => globTool.execute({ pattern, path });
 
 beforeAll(() => {
@@ -39,7 +45,7 @@ describe("glob tool — ordinary output is unchanged", () => {
 		file("pinned/src/b.ts", "x".repeat(2048), 1_700_000_100);
 
 		const res = await run("**/*.ts", dir);
-		expect(res.content).toBe(`${dir}/src/b.ts  (2.0K)\n${dir}/src/a.ts  (5B)`);
+		expect(res.content).toBe(`${at(dir, "src/b.ts")}  (2.0K)\n${at(dir, "src/a.ts")}  (5B)`);
 		expect(res.isError).toBeUndefined();
 		expect(res.metadata).toEqual({ pattern: "**/*.ts", cwd: dir, count: 2, duration_ms: expect.any(Number) });
 
@@ -124,7 +130,9 @@ describe("glob tool — the walk is bounded", () => {
 		file(`deep/${level(MAX_DEPTH + 1)}/over.ts`, "o", 1_700_000_100); // dir at level 13 → not opened
 
 		const res = await run("**/*.ts", dir);
-		expect(res.content).toBe(`${dir}/l1/shallow.ts  (1B)\n${dir}/${level(MAX_DEPTH)}/edge.ts  (1B)`);
+		expect(res.content).toBe(
+			`${at(dir, "l1/shallow.ts")}  (1B)\n${at(dir, `${level(MAX_DEPTH)}/edge.ts`)}  (1B)`,
+		);
 	});
 
 	it("skips coverage/, .claude/worktrees/ and nested node_modules alongside the existing ignore list", async () => {
@@ -141,11 +149,11 @@ describe("glob tool — the walk is bounded", () => {
 			"vendor/g.ts",
 		]) file(`ignored/${rel}`);
 
-		expect((await run("**/*.ts", dir)).content).toBe(`${dir}/src/a.ts  (0B)`);
+		expect((await run("**/*.ts", dir)).content).toBe(`${at(dir, "src/a.ts")}  (0B)`);
 		// dot:false alone keeps a bare ** out of .claude; an explicit .claude/**
 		// pattern walks in, and the worktrees entry is what keeps 150+ checkouts
 		// out of the result.
-		expect((await run(".claude/**/*.ts", dir)).content).toBe(`${dir}/.claude/skills/s.ts  (0B)`);
+		expect((await run(".claude/**/*.ts", dir)).content).toBe(`${at(dir, ".claude/skills/s.ts")}  (0B)`);
 	});
 
 	it(`cuts the walk off at ${MAX_SCAN} matches, keeps at most 200 entries and says so`, async () => {
@@ -166,6 +174,7 @@ describe("glob tool — the walk is bounded", () => {
 	it(`stops issuing readdir()s once ${MAX_SCAN} matches are in hand (destroy reaches the walker)`, async () => {
 		// A virtual tree via fast-glob's fs seam: 400 dirs x 100 files. A walk that
 		// only stopped LISTENING would still readdir all 401 directories.
+		const VROOT = "/virtual";
 		const DIRS = 400;
 		const FILES = 100;
 		let readdirs = 0;
@@ -175,9 +184,16 @@ describe("glob tool — the walk is bounded", () => {
 			isDirectory: () => isDir,
 			isSymbolicLink: () => false,
 		});
+		// fast-glob anchors a rootless absolute path to the current drive, so on
+		// Windows the walker asks for "C:/virtual" and a `path === VROOT` string
+		// compare misses the root — the stub then served it 100 FILES instead of
+		// 400 dirs and the walk finished under the cap without ever truncating.
+		// resolve() both sides and the comparison means the same thing on either
+		// platform.
+		const isRoot = (path: string) => resolve(path) === resolve(VROOT);
 		const readdir = (path: string, _opts: unknown, cb: (err: null, entries: unknown[]) => void) => {
 			readdirs++;
-			const entries = path === "/virtual"
+			const entries = isRoot(path)
 				? Array.from({ length: DIRS }, (_, i) => dirent(`d${i}`, true))
 				: Array.from({ length: FILES }, (_, i) => dirent(`f${i}.txt`, false));
 			setImmediate(() => cb(null, entries));
@@ -186,7 +202,7 @@ describe("glob tool — the walk is bounded", () => {
 		// called with the (path, {withFileTypes}, cb) form scandir uses.
 		const fs: WalkFs = { readdir: readdir as unknown as typeof fsReaddir };
 
-		const { paths, truncated } = await walkBounded("**/*.txt", "/virtual", fs);
+		const { paths, truncated } = await walkBounded("**/*.txt", VROOT, fs);
 		expect(truncated).toBe(true);
 		expect(paths).toHaveLength(MAX_SCAN);
 		const needed = Math.ceil(MAX_SCAN / FILES) + 1; // root + enough dirs to fill the cap

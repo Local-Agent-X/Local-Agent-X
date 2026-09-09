@@ -82,7 +82,11 @@ describe("provenance sidecar IO", () => {
 		expect(b[0].sources[0].file).toBe("/etc/hosts");
 	});
 
-	it("reads the same records through a symlinked spelling (realpath keying)", () => {
+	// A FILE symlink needs elevation or Developer Mode on Windows (a junction
+	// covers directories only), so this one skips there — the same idiom the
+	// glob-tool symlink tests use. The realpath keying it guards is still
+	// verified on macOS and Linux.
+	it.skipIf(process.platform === "win32")("reads the same records through a symlinked spelling (realpath keying)", () => {
 		const real = join(dir, "real.md");
 		const link = join(dir, "link.md");
 		writeFileSync(real, "content");

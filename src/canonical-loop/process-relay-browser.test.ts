@@ -97,9 +97,13 @@ describe("process relay browser delivery", () => {
     expect(reconcilePendingProcessRelay(fixture.opId)).toBe(5);
     off();
     expect(chunks).toEqual([{ delta: "one" }, { delta: "two" }, { delta: "three" }]);
-    expect(progress).toEqual([{
-      type: "bg_op_progress", opId: fixture.opId, line: "one",
-    }]);
+    // op_stream reaches the parent bus and STOPS there. A 250ms sampler used to
+    // turn the first chunk of each tick into a bg_op_progress row for the AGENTS
+    // sidebar; that channel carries model tokens, so it could only ever emit a
+    // sentence fragment — 588 rows for ~12 real actions — and it was removed in
+    // d423007e. The sidebar's content is the canonical events. This assertion is
+    // now what keeps the sampler from coming back.
+    expect(progress).toEqual([]);
     expect(socket.send).toHaveBeenCalledOnce();
     const delivery = JSON.parse(socket.send.mock.calls[0][0]) as { events: Array<{ type: string }> };
     expect(delivery.events.map(event => event.type)).toEqual(["bg_op_queued"]);

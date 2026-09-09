@@ -30,6 +30,11 @@ import { setSessionWorkRoot, clearSessionWorkRoot, resolveAgentPath } from "../w
 import { pushCompletionToParent } from "../agency/handler-completion.js";
 import type { FieldAgent } from "../agency/handler-types.js";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync, existsSync } from "node:fs";
+
+// Directory links are made as junctions: a plain symlink needs elevation or
+// Developer Mode on Windows, so these realpath-canonicalization tests — which
+// guard a security property — silently stopped running there. Node ignores the
+// type argument off Windows, so the POSIX behavior is unchanged.
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -83,7 +88,7 @@ describe("task-artifact registry", () => {
 		const realDir = join(root, "real");
 		const linkDir = join(root, "link");
 		mkdirSync(realDir);
-		symlinkSync(realDir, linkDir);
+		symlinkSync(realDir, linkDir, "junction");
 		const realFile = join(realDir, "deck.pptx");
 		writeFileSync(realFile, "pptx");
 
@@ -126,7 +131,7 @@ describe("task-artifact registry", () => {
 		const realDir = join(root, "real");
 		const linkDir = join(root, "link");
 		mkdirSync(realDir);
-		symlinkSync(realDir, linkDir);
+		symlinkSync(realDir, linkDir, "junction");
 		const realFile = join(realDir, "report.md");
 		writeFileSync(realFile, "bytes");
 		const bystander = join(root, "keep.md");
@@ -333,7 +338,7 @@ describe("runSandboxedPhase — task-artifact recording hook (create-class, did-
 		const root = tmpRoot();
 		const realDir = join(root, "out");
 		mkdirSync(realDir);
-		symlinkSync(realDir, join(root, "out-link"));
+		symlinkSync(realDir, join(root, "out-link"), "junction");
 		const target = join(realDir, "brief.pdf");
 		await runSandboxedPhase(ctxFor(creatingTool("pdf", target), { action: "create", file_path: target, content: "x" }, s));
 		expect(isTaskArtifact(s, target)).toBe(true);

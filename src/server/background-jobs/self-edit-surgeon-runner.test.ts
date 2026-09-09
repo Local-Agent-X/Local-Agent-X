@@ -30,13 +30,18 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { buildSelfEditPrompt } from "../../self-edit/prompt.js";
-import { phraseGate, extractConstraints } from "../../canonical-loop/instruction-ledger/extract.js";
-import { createInstructionLedgerMiddleware } from "../../canonical-loop/middlewares/instruction-ledger.js";
-import { getOpLedger } from "../../canonical-loop/instruction-ledger/index.js";
-// Test-only reset helpers — deliberately off the public index surfaces.
-import { _resetOpLedgers } from "../../canonical-loop/instruction-ledger/ledger.js";
-import { _resetMiddlewareStates } from "../../canonical-loop/middlewares/state.js";
-import { makeCanonicalLoopContext } from "../../canonical-loop/middlewares/ctx.test-helper.js";
+import {
+  phraseGate,
+  extractConstraints,
+  createInstructionLedgerMiddleware,
+  getOpLedger,
+} from "../../canonical-loop/public/instruction-ledger.js";
+// Test-only reset helpers — deliberately off the production surfaces.
+import {
+  _resetOpLedgers,
+  _resetMiddlewareStates,
+  makeCanonicalLoopContext,
+} from "../../canonical-loop/public/test-surface.js";
 
 type SurgeonRunner = (worktreePath: string, prompt: string, signal?: AbortSignal) => Promise<string>;
 

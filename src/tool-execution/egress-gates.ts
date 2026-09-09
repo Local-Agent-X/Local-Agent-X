@@ -187,6 +187,15 @@ export function probeEgressGuard(ctx: ToolCallContext): EgressBlocker | null {
 // Data-lineage taint floor. Completeness-guarded Option B+
 // (checkEgressTaintWithPayload): a tainted session still blocks egress UNLESS
 // every active taint entry is fully fingerprinted AND this outbound payload
+/**
+ * Recovery guidance for a data-lineage block. Exported so tests assert against
+ * THIS string rather than re-typing it: the previous wording sent the user to a
+ * Settings page that does not exist, and the test that should have caught the
+ * fix instead pinned the superseded sentence and failed on the correction.
+ */
+export const DATA_LINEAGE_RECOVERY =
+  "Sensitive data was read earlier this session, so outbound content is blocked. If that read was intended, tell the user to click \"Declassify & retry\" on this blocked card in the chat — that is the only place the control exists, it is not in Settings. Otherwise, leave the tainted data out of the payload.";
+
 // overlaps none of them. Pure: reads the session taint map, mutates nothing.
 export function probeDataLineage(ctx: ToolCallContext): EgressBlocker | null {
   if (!hasCapability(ctx.tc.name, "egress")) return null;
@@ -201,7 +210,7 @@ export function probeDataLineage(ctx: ToolCallContext): EgressBlocker | null {
   return {
     layer: "data-lineage", label: "data lineage",
     reason: egress.reason ?? "The session is tainted by an earlier sensitive read; outbound data is blocked.",
-    recovery: "Sensitive data was read earlier this session, so outbound content is blocked. If that read was intended, tell the user to click \"Declassify & retry\" on this blocked card in the chat — that is the only place the control exists, it is not in Settings. Otherwise, leave the tainted data out of the payload.",
+    recovery: DATA_LINEAGE_RECOVERY,
     userHint: USER_HINTS.outboundContent,
   };
 }

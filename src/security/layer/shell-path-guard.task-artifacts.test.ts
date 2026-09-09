@@ -31,7 +31,19 @@ writeFileSync(REGISTERED, "# agent deliverable\n", "utf-8");
 writeFileSync(REGISTERED_TXT, "agent deliverable\n", "utf-8");
 writeFileSync(USER_FILE, "the user's own file\n", "utf-8");
 writeFileSync(join(OUT, "report.md"), "the user's own out/report.md\n", "utf-8");
-symlinkSync(REGISTERED, LINK);
+// A FILE symlink needs elevation or Developer Mode on Windows — a junction
+// substitutes only for a DIRECTORY link — and this runs at module scope, so the
+// throw took the whole suite down at import: all 20 assertions here, including
+// ones that have nothing to do with links, reported as a failed file. Probe once
+// and skip only the test that needs the symlinked spelling.
+const fileLinksSupported = ((): boolean => {
+	try {
+		symlinkSync(REGISTERED, LINK);
+		return true;
+	} catch {
+		return false;
+	}
+})();
 recordTaskArtifact(SESSION, REGISTERED);
 recordTaskArtifact(SESSION, REGISTERED_TXT);
 
@@ -96,7 +108,7 @@ describe("shell task-artifact delete guard — every spelling of a registered fi
 		expectArtifactBlock(`rm ${join(WORKSPACE, "..", "workspace", "report.md")}`);
 	});
 
-	it("DENIES a SYMLINKED spelling (registry realpath identity, not string match)", () => {
+	it.skipIf(!fileLinksSupported)("DENIES a SYMLINKED spelling (registry realpath identity, not string match)", () => {
 		expectArtifactBlock(`rm ${LINK}`);
 	});
 });

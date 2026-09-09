@@ -90,7 +90,7 @@ export function recoverAdapterThrow(op: Op, e: unknown, turnIdx: number): DriveT
       op.id,
       turnIdx + 1,
       `Your previous step did not complete — it hit a transient provider error: ${message}. This is not a mistake on your part. Resume exactly where you left off and finish the task; do not restart from scratch.`,
-      { name: "adapter-throw-recovery", reason: "adapter-retry" },
+      { name: "adapter-throw-recovery", reason: "adapter-retry", outcome: "nudge" },
     );
     return { terminalReason: null, toolCount: 0, messageCount: 0, cancelled: false };
   }

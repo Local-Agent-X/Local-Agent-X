@@ -317,8 +317,31 @@ export interface StateChangedBody extends Record<string, unknown> {
 
 // ── Middleware-fired event body shape ─────────────────────────────────────
 
+/**
+ * WHAT a guard's verdict did to the op. `name` says which guard spoke and
+ * `reason` says why, but without this every fire reads alike: "did this guard
+ * nudge the model or end the op?" is the first question a retirement review
+ * asks and, until now, the event could not answer it.
+ *
+ * The vocabulary is closed on purpose — a fire count is only comparable if the
+ * shapes are. `turn-loop/guard-fire.ts` carries the authoritative ledger of
+ * which code path mints each one.
+ */
+export type GuardOutcome =
+  /** A synthetic user-role nudge that actually reached `op_messages`. */
+  | "nudge"
+  /** The turn ended on the guard's error bubble. */
+  | "abort"
+  /** The op was parked for an autonomous lane to resume. */
+  | "suspend"
+  /** The guard edited the model's tool call instead of speaking. */
+  | "rewrite"
+  /** A completion gate let the turn END but authored its closing words. */
+  | "honest-terminal";
+
 export interface MiddlewareFiredBody extends Record<string, unknown> {
   name: string;
   reason: string;
+  outcome: GuardOutcome;
   turnIdx: number;
 }

@@ -33,6 +33,7 @@ import { appendQuestionAsAnswer, collectAskedQuestions } from "./ask-user-termin
 import { isRetractableHallucination, stripRetractedAssistant } from "./retract-false-claim.js";
 import { applyTerminalEpilogue } from "./terminal-epilogue.js";
 import { runCompletionGates } from "./decide-outcome-run-gates.js";
+import type { GuardFire } from "./guard-fire.js";
 import { appendEmptyTurnTerminal, appendHonestTerminal, evaluateEmptyInteractiveTurn } from "./empty-turn-termination.js";
 import { appendMissingToolResults } from "./orphan-tool-results.js";
 import { CODEBASE_ADVICE_GROUNDING_REASON, CODEBASE_ADVICE_GROUNDING_STATUS } from "../../agent-guards/index.js";
@@ -91,6 +92,12 @@ export interface DecideOutcomeResult {
   terminalReason: "done" | "error" | null;
   allMessages: CommitTurnMessage[];
   terminalOutcome: import("../../tool-tracker.js").OpOutcome | null;
+  /** Guard fires earned by effects this function actually applied — the gate
+   *  honest terminal today, the epilogue's verified-clean confirmation when it
+   *  is wired. Every one describes a message sitting in `allMessages`, which
+   *  exists nowhere until commitTurn, so driveTurn banks them AFTER the commit
+   *  rather than this function emitting them (guard-fire.ts bankEarnedFires). */
+  earnedFires: GuardFire[];
 }
 
 function replaceAssistantText(messages: CommitTurnMessage[], text: string): CommitTurnMessage[] {
@@ -279,7 +286,7 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
   let failureNudged = false;
   if (!middlewareAborted && !middlewareSuspended) {
     if (shouldNudgeForFailures(failureSummary)) {
-      appendNudgeAsUserMessage(op.id, turnIdx + 1, formatFailureNudgeForModel(failureSummary, op.id), { name: "tool-failure-summary", reason: "tool-failure-summary" });
+      appendNudgeAsUserMessage(op.id, turnIdx + 1, formatFailureNudgeForModel(failureSummary, op.id), { name: "tool-failure-summary", reason: "tool-failure-summary", outcome: "nudge" });
       failureNudged = true;
     }
   }
@@ -323,6 +330,11 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
   const gates = await runCompletionGates({ op, turnIdx, toolCalls, assistantText }, terminalReason, endsOnQuestion);
   terminalReason = gates.terminalReason;
   const { buildVerifyConfirmation, honestTerminal } = gates;
+  // Fires earned by an effect that actually landed on this turn. Returned, not
+  // emitted: everything appended below is in-memory until commitTurn, and
+  // driveTurn's cancel bail sits between here and it. turn-loop.ts banks these
+  // once the turn is durable (guard-fire.ts bankEarnedFires).
+  const earnedFires: GuardFire[] = [];
 
   // P-1 measurement sink (behavior-neutral — nothing above or below reads this).
   // Emit only when the mutation shortcut was the sole reason this turn could
@@ -363,9 +375,12 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
     appendEmptyTurnTerminal(op.id, turnIdx, allMessages, emptyInteractiveTerminal.signaledDone);
   }
   // A gate's honest terminal (unresolved-tool-intent's second fire) — same
-  // deferral and same re-check: a later gate's reopen discards it.
+  // deferral and same re-check: a later gate's reopen discards it. The append
+  // and the fire it earns are ONE statement, so no future edit can record a
+  // terminal that was never written.
   if (honestTerminal && terminalReason === "done") {
-    appendHonestTerminal(op.id, turnIdx, allMessages, honestTerminal, "gate-terminal");
+    appendHonestTerminal(op.id, turnIdx, allMessages, honestTerminal.text, "gate-terminal");
+    earnedFires.push(honestTerminal.fire);
   }
 
   // Terminal epilogue (terminal-epilogue.ts): loud-partial warning,
@@ -376,5 +391,5 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
     allMessages,
   );
 
-  return { terminalReason, allMessages, terminalOutcome };
+  return { terminalReason, allMessages, terminalOutcome, earnedFires };
 }

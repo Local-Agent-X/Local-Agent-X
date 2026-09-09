@@ -436,7 +436,7 @@ PK `(op_id, seq)`. Append-only.
 | `lease_acquired` | `{ worker_id }` | Best-effort durable. |
 | `lease_lost` | `{ worker_id, reason }` | Best-effort durable. |
 | `error` | `{ code, message, retryable }` | Best-effort durable. |
-| `middleware_fired` | `{ name, reason, turn_idx }` | Best-effort durable. Post-v1 addition. |
+| `middleware_fired` | `{ name, reason, outcome, turnIdx }` | Best-effort durable. Post-v1 addition. `outcome` is the closed `GuardOutcome` vocabulary — `nudge` / `abort` / `suspend` / `rewrite` / `honest-terminal`; `turn-loop/guard-fire.ts` is the only minter and carries the ledger. (The field is `turnIdx`, camelCase, as the code has always emitted it — this row said `turn_idx` in error. The snake_case in the rows above is the same pre-existing drift, left alone here.) |
 
 ### Persistence rules
 

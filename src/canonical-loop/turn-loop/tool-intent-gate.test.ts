@@ -71,9 +71,15 @@ describe("unresolved-tool-intent gate (wrapper in the completion-gate table)", (
     appended.mockClear();
     const out = await gate.evaluate(ctx("op-b", INCIDENT, [], 6));
     expect(out.reopen).toBe(false);
-    expect(out.honestTerminal).toBe(honestToolIntentTerminal("grep", 2));
-    expect(out.honestTerminal).toContain("`grep`");
-    expect(out.honestTerminal).toContain("2 times");
+    expect(out.honestTerminal?.text).toBe(honestToolIntentTerminal("grep", 2));
+    expect(out.honestTerminal?.text).toContain("`grep`");
+    expect(out.honestTerminal?.text).toContain("2 times");
+    // The gate NAMES the fire appending this terminal earns; it does not record
+    // it. decide-outcome mints it at the append, turn-loop banks it after the
+    // commit — see guard-fire.ts bankEarnedFires.
+    expect(out.honestTerminal?.fire).toEqual({
+      name: "unresolved-tool-intent", reason: "unresolved-tool-intent", outcome: "honest-terminal",
+    });
     expect(nudges()).toEqual([]);
   });
 
@@ -82,8 +88,8 @@ describe("unresolved-tool-intent gate (wrapper in the completion-gate table)", (
     await gate.evaluate(ctx("op-b3", INCIDENT));
     const out = await gate.evaluate(ctx("op-b3", INCIDENT));
     expect(out.reopen).toBe(false);
-    expect(out.honestTerminal).toBe(honestToolIntentTerminal("grep", 3));
-    expect(out.honestTerminal).toContain("3 times");
+    expect(out.honestTerminal?.text).toBe(honestToolIntentTerminal("grep", 3));
+    expect(out.honestTerminal?.text).toContain("3 times");
   });
 
   it("clean prose → CONTINUE, no nudge, no state consumed", async () => {

@@ -46,7 +46,7 @@ const PNG_DATA_URL = `data:image/png;base64,${PNG_B64}`;
 const IMAGE_BLOCK = { type: "image", source: { type: "base64", media_type: "image/png", data: PNG_B64 } };
 const NUDGE = "You claimed an action you did not take. Answer the user directly.";
 // Every nudge names its firing guard; this text is the action-claim middleware's.
-const NUDGE_SRC = { name: "action-claim", reason: "action-claim" };
+const NUDGE_SRC = { name: "action-claim", reason: "action-claim", outcome: "nudge" as const };
 const DIGEST_OPEN = "[SITUATIONAL CONTEXT";
 const UNREADABLE_NOTE = "[Attachment shot.png could not be read (ENOENT)]";
 

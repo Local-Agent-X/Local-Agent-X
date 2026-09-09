@@ -30,7 +30,8 @@ vi.mock("./turn-loop/nudges.js", () => ({
 }));
 
 import { driveTurn, type TurnLoopDeps } from "./turn-loop.js";
-import { publishStreamChunk } from "./event-emitter.js";
+import { emit, publishStreamChunk } from "./event-emitter.js";
+import type { GuardFire } from "./turn-loop/guard-fire.js";
 import { appendNudgeAsUserMessage } from "./turn-loop/nudges.js";
 import type { Adapter, TurnInput } from "./adapter-contract.js";
 import { makeCanonicalLoopContext } from "./middlewares/ctx.test-helper.js";
@@ -69,7 +70,7 @@ function makeDeps() {
     createIdleWatchdog: vi.fn(() => ({ noteActivity: vi.fn(), disarm: vi.fn() })),
     readIdleTimeoutMs: vi.fn(() => 600000),
     snapshotTouchedApps: vi.fn(async () => {}),
-    decideTurnOutcome: vi.fn(async () => ({ terminalReason: "done" as const, allMessages: [], terminalOutcome: "clean" as const })),
+    decideTurnOutcome: vi.fn(async () => ({ terminalReason: "done" as const, allMessages: [], terminalOutcome: "clean" as const, earnedFires: [] })),
     resolveLearningSessionId: vi.fn(() => "session-stable"),
     createTurnContextComposer: vi.fn(() => ({
       middlewareStack: [],
@@ -115,6 +116,7 @@ describe("driveTurn — cancel that lands during verify gates (CL-2)", () => {
       terminalReason,
       allMessages: [],
       terminalOutcome: outcome,
+      earnedFires: [],
     } as never);
     await driveTurn(freshOp(), okAdapter(), 0, { isCancelled: () => false }, deps);
     expect(deps.commitTurn).toHaveBeenCalledWith(expect.objectContaining({
@@ -130,6 +132,61 @@ describe("driveTurn — cancel that lands during verify gates (CL-2)", () => {
     await expect(
       driveTurn(freshOp(), okAdapter(), 0, { isCancelled: () => false }, deps),
     ).rejects.toThrow("disk full");
+  });
+});
+
+// CL-2's other half. decideTurnOutcome appends a gate's honest terminal to an
+// IN-MEMORY list; that message exists nowhere until commitTurn. The cancel bail
+// sits between the two — its own comment says it is for "a Stop during its
+// seconds–minutes verify gates", the window the gate chain runs in — so a fire
+// banked before the commit is a durable claim about a message the Stop erased.
+// decideTurnOutcome therefore returns its earned fires instead of emitting
+// them, and driveTurn banks them only after the turn is durable.
+describe("driveTurn — a guard fire is banked only once the turn is durable", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const GATE_FIRE: GuardFire = {
+    name: "unresolved-tool-intent", reason: "unresolved-tool-intent", outcome: "honest-terminal",
+  };
+  const withEarnedFire = () => {
+    const deps = makeDeps();
+    deps.decideTurnOutcome.mockResolvedValue({
+      terminalReason: "done", allMessages: [], terminalOutcome: "clean", earnedFires: [GATE_FIRE],
+    } as never);
+    return deps;
+  };
+  const banked = () => vi.mocked(emit).mock.calls.filter(c => c[1] === "middleware_fired");
+
+  it("banks the fire when the turn commits", async () => {
+    const deps = withEarnedFire();
+    await driveTurn(freshOp(), okAdapter(), 3, { isCancelled: () => false }, deps);
+    expect(deps.commitTurn).toHaveBeenCalledTimes(1);
+    expect(banked()).toHaveLength(1);
+    expect(banked()[0]![2]).toEqual({ ...GATE_FIRE, turnIdx: 3 });
+  });
+
+  it("banks NOTHING when a Stop lands in the verify-gate window", async () => {
+    // Same three-call cancel shape as the CL-2 bail test above: false, false,
+    // then true — a Stop arriving while the gates ran inside decideTurnOutcome.
+    const deps = withEarnedFire();
+    let calls = 0;
+    const res = await driveTurn(freshOp(), okAdapter(), 3, { isCancelled: () => ++calls >= 3 }, deps);
+    expect(res.cancelled).toBe(true);
+    expect(deps.commitTurn).not.toHaveBeenCalled();
+    // The honest terminal was never written, so the fire describing it must not
+    // exist either. Before the bank moved past commitTurn this was 1.
+    expect(banked()).toEqual([]);
+  });
+
+  it("banks after commitTurn, never before — a failing commit banks nothing", async () => {
+    // Ordering, not just presence: if the bank ran first, a commit that throws
+    // would leave a fire on disk for a turn that was never persisted at all.
+    const deps = withEarnedFire();
+    deps.commitTurn.mockImplementationOnce(() => { throw new Error("disk full"); });
+    await expect(
+      driveTurn(freshOp(), okAdapter(), 3, { isCancelled: () => false }, deps),
+    ).rejects.toThrow("disk full");
+    expect(banked()).toEqual([]);
   });
 });
 

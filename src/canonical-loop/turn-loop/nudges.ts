@@ -95,7 +95,7 @@ export function recoverCommittedStrategyPivot(opId: string, sourceTurnIdx: numbe
     opId,
     sourceTurnIdx + 1,
     pivot.message,
-    { name: pivot.firedBy ?? "unknown", reason: "strategy-pivot" },
+    { name: pivot.firedBy ?? "unknown", reason: "strategy-pivot", outcome: "nudge" },
     pivot.metadata,
     `strategy-pivot-${opId}-${sourceTurnIdx}`,
   );

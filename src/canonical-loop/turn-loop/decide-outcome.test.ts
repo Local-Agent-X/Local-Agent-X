@@ -77,7 +77,7 @@ vi.mock("./p1-metrics.js", () => ({ recordP1Outcome: vi.fn() }));
 
 import { decideTurnOutcome, type DecideOutcomeInput } from "./decide-outcome.js";
 import { recordCommittedLearningOutcome, recordTerminalOutcome } from "./record-outcome.js";
-import { publishStreamChunk } from "../event-emitter.js";
+import { emit, publishStreamChunk } from "../event-emitter.js";
 import { recordOpOutcome } from "../../tool-tracker.js";
 import crossSessionLearner from "../../cognition/cross-session-learning/index.js";
 import { clearExternalIngestion, recordExternalIngestion } from "../../data-lineage/external.js";
@@ -95,6 +95,13 @@ import { appendNudgeAsUserMessage } from "./nudges.js";
 import { createLogger } from "../../logger.js";
 
 const op = { id: "op-test", type: "chat_turn", ownerId: "local-user" } as unknown as Op;
+
+/** Guard fires that reached the emitter this test. `emit` is mocked file-wide,
+ *  so this is a call-level record — nudges.middleware-fired.test.ts carries the
+ *  on-disk half; what only THIS level can show is whether the settled terminal
+ *  gated the fire, since that decision lives in decideTurnOutcome. */
+const gateFires = (): unknown[] =>
+  vi.mocked(emit).mock.calls.filter(c => c[1] === "middleware_fired").map(c => c[2]);
 
 // Per-op state now carries the bookkeeping-deferral counter as well as the
 // interactive empty-turn counter, and every case in this file reuses `op-test`.
@@ -433,6 +440,11 @@ describe("decideTurnOutcome — nudge-suppression vs termination are separate qu
       assistantText: "Fixed it.",
     }));
     expect(await nudgeMock()).toHaveBeenCalled();
+    // The fire's shape, pinned on the 4th argument only: the nudge PROSE is
+    // formatFailureNudgeForModel's business and rewording it must not red this.
+    expect((await nudgeMock()).mock.calls[0]![3]).toEqual({
+      name: "tool-failure-summary", reason: "tool-failure-summary", outcome: "nudge",
+    });
     expect(r.terminalReason).toBeNull();
   });
 });
@@ -826,7 +838,7 @@ describe("decideTurnOutcome — op-outcome telemetry", () => {
       toolCalls: [], toolMessages: [], toolSummary: [], modelSignaledDone: true,
     }));
     expect(runBuildVerifyGate).toHaveBeenCalled();
-    expect(appendNudgeAsUserMessage).toHaveBeenCalledWith(op.id, 1, "STOP — build red: TS2339", { name: "build-verify", reason: "build-verify" });
+    expect(appendNudgeAsUserMessage).toHaveBeenCalledWith(op.id, 1, "STOP — build red: TS2339", { name: "build-verify", reason: "build-verify", outcome: "nudge" });
     expect(r.terminalReason).toBeNull();
   });
 
@@ -858,7 +870,7 @@ describe("decideTurnOutcome — op-outcome telemetry", () => {
       toolCalls: [], toolMessages: [], toolSummary: [], modelSignaledDone: true,
     }));
     expect(runSpecProbeGate).toHaveBeenCalled();
-    expect(appendNudgeAsUserMessage).toHaveBeenCalledWith(op.id, 1, "STOP — acceptance check failed", { name: "spec-probe", reason: "spec-probe" });
+    expect(appendNudgeAsUserMessage).toHaveBeenCalledWith(op.id, 1, "STOP — acceptance check failed", { name: "spec-probe", reason: "spec-probe", outcome: "nudge" });
     expect(r.terminalReason).toBeNull();
   });
 
@@ -990,6 +1002,12 @@ describe("completion-gate table — single ordering source", () => {
     ]);
     // The name list is derived from the table itself — they can never drift.
     expect(COMPLETION_GATES.map((g) => g.name)).toEqual([...COMPLETION_GATE_ORDER]);
+    // framework-serve LAST is load-bearing beyond its own side effect: it is
+    // why framework-serve needs no earned-fire deferral (nothing can reopen the
+    // turn after it), the argument guard-fire.ts makes for which branches do.
+    // The full-order assertion above pins it positionally; this names WHY, so a
+    // reorder fails against the reason rather than against a list.
+    expect(COMPLETION_GATE_ORDER.at(-1)).toBe("framework-serve");
   });
 });
 
@@ -1325,7 +1343,7 @@ describe("decideTurnOutcome — a done turn whose final text is a tool call writ
     const { WIRE_FORMAT_NUDGE } = await import("./nudges.js");
     const first = await decideTurnOutcome(leakedTurn());
     expect(first.terminalReason).toBeNull();
-    expect(appendNudgeAsUserMessage).toHaveBeenCalledWith(op.id, 1, WIRE_FORMAT_NUDGE, { name: "unresolved-tool-intent", reason: "unresolved-tool-intent" });
+    expect(appendNudgeAsUserMessage).toHaveBeenCalledWith(op.id, 1, WIRE_FORMAT_NUDGE, { name: "unresolved-tool-intent", reason: "unresolved-tool-intent", outcome: "nudge" });
     expect(first.allMessages.some((m) => (m.content as { text?: string })?.text?.includes("Nothing was executed"))).toBe(false);
 
     vi.mocked(appendNudgeAsUserMessage).mockClear();
@@ -1341,6 +1359,55 @@ describe("decideTurnOutcome — a done turn whose final text is a tool call writ
     expect(msg.messageId).toMatch(/^gate-terminal-/);
     // The honest terminal is COMMITTED after the model's own message, not in place of it.
     expect(second.allMessages.indexOf(msg)).toBeGreaterThan(0);
+    // ...and the fire it earns comes back with it, paired to the append that
+    // earned it. Nothing is emitted here: driveTurn banks it after commitTurn,
+    // so a Stop in the cancel window drops the terminal and the count together.
+    expect(second.earnedFires).toEqual([
+      { name: "unresolved-tool-intent", reason: "unresolved-tool-intent", outcome: "honest-terminal" },
+    ]);
+    expect(gateFires()).toEqual([]);
+  });
+
+  // CL-2 CANCEL WINDOW. decideTurnOutcome must not DURABLY record the gate's
+  // fire, because the honest terminal it describes is only in-memory
+  // `allMessages` at this point and does not exist anywhere until commitTurn.
+  // Between them sits driveTurn's cancel bail — whose own comment says it
+  // exists for "a Stop during its seconds-minutes verify gates", exactly the
+  // window the gate chain runs in. A Stop there means commitTurn never runs,
+  // the terminal is never written, and a fire emitted here is a durable claim
+  // about a message that does not exist. turn-loop.ts banks it post-commit.
+  it("records NOTHING durably for the honest terminal — the bank is post-commit", async () => {
+    await decideTurnOutcome(leakedTurn());
+    vi.mocked(emit).mockClear();
+    const second = await decideTurnOutcome({ ...leakedTurn(), turnIdx: 1 });
+    expect(second.terminalReason).toBe("done");
+    expect(second.allMessages.some(m => m.messageId?.startsWith("gate-terminal-"))).toBe(true);
+    expect(gateFires()).toEqual([]);
+  });
+
+  // The regression this seam exists for. unresolved-tool-intent is 6th of 9;
+  // earned-done runs 7th and can still reopen the turn, which nulls
+  // terminalReason and discards the honest terminal. A fire minted inside
+  // `evaluate` would already be on disk, asserting outcome:"honest-terminal"
+  // for a turn that neither ended nor said anything — a row that is not merely
+  // imprecise but FALSE, and worse than the absent row it replaced.
+  it("a later gate's reopen discards the honest terminal AND its fire", async () => {
+    const { earnedDoneNudge } = await import("../middlewares/open-steps.js");
+    const gate = earnedDoneNudge as unknown as ReturnType<typeof vi.fn>;
+    await decideTurnOutcome(leakedTurn());              // burn the one retry nudge
+    vi.mocked(emit).mockClear();
+    gate.mockReturnValue("Finish the open steps or justify stopping.");
+    try {
+      const second = await decideTurnOutcome({ ...leakedTurn(), turnIdx: 1 });
+      // earned-done vetoed the terminal, so nothing was appended...
+      expect(second.terminalReason).toBeNull();
+      expect(second.allMessages.some(m => m.messageId?.startsWith("gate-terminal-"))).toBe(false);
+      // ...and nothing was counted. Before the deferred seam this read
+      // [{outcome:"honest-terminal"}] against terminalReason:null.
+      expect(gateFires()).toEqual([]);
+    } finally {
+      gate.mockReturnValue(null);
+    }
   });
 });
 

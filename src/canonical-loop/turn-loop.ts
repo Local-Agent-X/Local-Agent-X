@@ -19,7 +19,7 @@ import { recoverAdapterThrow, clearAdapterThrowStreak } from "./turn-loop/adapte
 import { recoverReportedAdapterError } from "./turn-loop/reported-adapter-recovery.js";
 import { idleSuspension, middlewareSuspension, suspendedTurn } from "./turn-loop/suspension.js";
 import { applyCommittedDirective } from "./turn-loop/apply-directive.js";
-import { firedResultFire } from "./turn-loop/guard-fire.js";
+import { bankEarnedFires, firedResultFire } from "./turn-loop/guard-fire.js";
 
 // Map a per-phase middleware verdict (afterModelCall / afterToolExecution) to
 // the sticky MiddlewareDirective. Both phases translate abort/nudge/suspend the
@@ -307,7 +307,7 @@ export async function driveTurn(
   // Decide terminal reason + assemble the commit-message list, running the
   // retract / failure-nudge / continuation-guard / render-verify side
   // effects. See turn-loop/decide-outcome.ts.
-  const { terminalReason, allMessages, terminalOutcome } = await decideTurnOutcome({
+  const { terminalReason, allMessages, terminalOutcome, earnedFires } = await decideTurnOutcome({
     op,
     turnIdx,
     middlewareDirective,
@@ -367,6 +367,11 @@ export async function driveTurn(
   // Powers the IDE topbar's ↺ Revert dropdown so the user can undo a bad
   // edit without asking the agent to fix what it just broke.
   void snapshotTouchedApps(toolCalls, turnIdx);
+
+  // Fires earned inside decideTurnOutcome. Banked HERE because the message each
+  // describes lived only in `allMessages` until commitTurn above, with the
+  // cancel bail in between — same ordering contract as the records below.
+  bankEarnedFires(op.id, turnIdx, earnedFires);
 
   // Nudge materialization, the abort bubble and the abort/suspend fire records
   // all wait for the durable turn — see apply-directive.ts for that ordering

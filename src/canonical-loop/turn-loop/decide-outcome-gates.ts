@@ -27,7 +27,8 @@ import { createLogger } from "../../logger.js";
 import { hasInjects, opConsumesInjects } from "../../agent-loop/inject-queue.js";
 import { getSessionForOp } from "../../ops/session-bridge.js";
 import { appendNudgeAsUserMessage } from "./nudges.js";
-import { recordGuardFire, type GuardFire } from "./guard-fire.js";
+import type { GuardFire } from "./guard-fire.js";
+import type { GuardOutcome } from "../types.js";
 import { appIdsTouchedByTurn, registerOpAppTouch, runRenderVerifyGate, turnTouchedAppFiles } from "./render-verify.js";
 import { runBuildVerifyGate } from "./build-verify.js";
 import { runSpecProbeGate } from "./spec-probes.js";
@@ -48,6 +49,12 @@ export interface CompletionGateContext {
   assistantText: string;
 }
 
+/** A gate's terminal message paired with the fire appending it earns. */
+export interface GateHonestTerminal {
+  text: string;
+  fire: GuardFire;
+}
+
 export interface CompletionGateOutput {
   /** True → veto the terminal: the runner sets terminalReason=null and stops. */
   reopen: boolean;
@@ -64,8 +71,12 @@ export interface CompletionGateOutput {
    * terminator uses, AFTER the chain settles and only if the turn actually
    * stays "done" (a later gate's reopen discards it). Produced today only by
    * unresolved-tool-intent's second fire.
+   *
+   * The `fire` rides WITH the text: a gate must not predict its own effect, so
+   * it names the fire its terminal would earn and only the code that actually
+   * appends the text contributes it. One value, so the two cannot drift.
    */
-  honestTerminal?: string;
+  honestTerminal?: GateHonestTerminal;
 }
 
 /** A named completion gate. `evaluate` runs only while terminalReason is still
@@ -82,12 +93,24 @@ const CONTINUE: CompletionGateOutput = { reopen: false };
  *  reason string, so the gate name is both halves. A gate fire is as
  *  interesting as a middleware fire and is counted the same way.
  *
- *  KNOWN UNCOUNTED (guard-fire.ts repeats this ledger): the branches where a
- *  gate acts without speaking — late-inject re-opening the turn, framework-serve
- *  registering a dev server, render-verify's capReached, build-verify's
- *  verifiedClean confirmation. Counting "acted" as well as "spoke" is a
- *  semantics expansion, deliberately not made here; those four read 0. */
-const gateSource = (name: string): GuardFire => ({ name, reason: name });
+ *  `outcome` is NOT derivable from the gate — the same gate fires in two
+ *  shapes (unresolved-tool-intent nudges on its first fire and authors an
+ *  honest terminal on every later one), so each call site states which.
+ *
+ *  A nudge fire is banked HERE because appendNudgeAsUserMessage records it on
+ *  the path that writes the row: it is already in op_messages, and neither a
+ *  later reopen nor a cancel can un-write it. A fire describing THIS turn's
+ *  TERMINAL has neither property — see `honestTerminal` above.
+ *
+ *  KNOWN UNCOUNTED (guard-fire.ts carries the full ledger): late-inject
+ *  re-opening the turn and framework-serve registering a dev server both act
+ *  without speaking, a semantics expansion deliberately not made. The other two
+ *  are not that case: build-verify's verifiedClean SPEAKS (terminal-epilogue.ts
+ *  pushes `build-verify-ok-*`) and belongs on the earned-fire seam at THAT
+ *  append, whose `!endedPartial` condition is decided after this chain;
+ *  render-verify's capReached has already dropped the drained runtime errors
+ *  irreversibly, so deferring its fire would under-count it. */
+const gateSource = (name: string, outcome: GuardOutcome): GuardFire => ({ name, reason: name, outcome });
 
 const logger = createLogger("canonical-loop.framework-serve");
 
@@ -118,7 +141,7 @@ const renderVerifyGate: CompletionGate = {
     // separately via getDesignSpec(opId) inside the bootstrap probe.
     const gate = await runRenderVerifyGate(op.id, { appUrl: op.appUrl, appDescription: userAuthoredRequest(op.task ?? "") });
     if (gate.shouldRetry) {
-      appendNudgeAsUserMessage(op.id, turnIdx + 1, gate.nudge, gateSource("render-verify"));
+      appendNudgeAsUserMessage(op.id, turnIdx + 1, gate.nudge, gateSource("render-verify", "nudge"));
       return { reopen: true };
     }
     // gate.capReached → leave terminalReason="done" but the errors are
@@ -144,7 +167,7 @@ const buildVerifyGate: CompletionGate = {
     if (!opEditedSourceUnverified(op.id)) return CONTINUE;
     const gate = await runBuildVerifyGate(op);
     if (gate.shouldRetry) {
-      appendNudgeAsUserMessage(op.id, turnIdx + 1, gate.nudge, gateSource("build-verify"));
+      appendNudgeAsUserMessage(op.id, turnIdx + 1, gate.nudge, gateSource("build-verify", "nudge"));
       return { reopen: true };
     }
     if (gate.verifiedClean) {
@@ -177,7 +200,7 @@ const specProbeGate: CompletionGate = {
     if (opEditedSourcePaths(op.id).length === 0) return CONTINUE;
     const gate = await runSpecProbeGate(op);
     if (gate.shouldRetry) {
-      appendNudgeAsUserMessage(op.id, turnIdx + 1, gate.nudge, gateSource("spec-probe"));
+      appendNudgeAsUserMessage(op.id, turnIdx + 1, gate.nudge, gateSource("spec-probe", "nudge"));
       return { reopen: true };
     }
     return CONTINUE;
@@ -199,7 +222,7 @@ const specAuditGate: CompletionGate = {
     if (opEditedSourcePaths(op.id).length === 0) return CONTINUE;
     const gate = await runSpecAuditGate(op);
     if (gate.shouldRetry) {
-      appendNudgeAsUserMessage(op.id, turnIdx + 1, gate.nudge, gateSource("spec-audit"));
+      appendNudgeAsUserMessage(op.id, turnIdx + 1, gate.nudge, gateSource("spec-audit", "nudge"));
       return { reopen: true };
     }
     return CONTINUE;
@@ -218,7 +241,7 @@ const designVerifyGate: CompletionGate = {
   evaluate({ op, turnIdx }) {
     const gate = runDesignVerifyGate(op);
     if (gate.shouldRetry) {
-      appendNudgeAsUserMessage(op.id, turnIdx + 1, gate.nudge, gateSource("design-verify"));
+      appendNudgeAsUserMessage(op.id, turnIdx + 1, gate.nudge, gateSource("design-verify", "nudge"));
       return { reopen: true };
     }
     return CONTINUE;
@@ -240,15 +263,28 @@ export const unresolvedToolIntentGate: CompletionGate = {
   evaluate(ctx) {
     const gate = runToolIntentGate(ctx);
     if (gate.shouldRetry) {
-      appendNudgeAsUserMessage(ctx.op.id, ctx.turnIdx + 1, gate.nudge, gateSource("unresolved-tool-intent"));
+      appendNudgeAsUserMessage(ctx.op.id, ctx.turnIdx + 1, gate.nudge, gateSource("unresolved-tool-intent", "nudge"));
       return { reopen: true };
     }
     if (gate.honestTerminal !== undefined) {
       // tool-intent-gate.ts: "First fire per op → one retry nudge; every later
       // fire → honestTerminal". Only the first speaks through a nudge, so
       // without this an op that leaked tool syntax on ten turns would read 1.
-      recordGuardFire(ctx.op.id, ctx.turnIdx, gateSource("unresolved-tool-intent"));
-      return { reopen: false, honestTerminal: gate.honestTerminal };
+      //
+      // `honest-terminal`, not `nudge`: nothing is appended for the model to
+      // read, and not `abort` either — the turn stays "done". The shape is what
+      // separates this fire from the retry nudge above — same gate, same name,
+      // same turnIdx. The fire travels WITH the text and is minted by neither
+      // this gate nor the chain: a later gate can still reopen the turn, and
+      // even a settled terminal is only in-memory until commitTurn. Whoever
+      // appends the text earns the fire.
+      return {
+        reopen: false,
+        honestTerminal: {
+          text: gate.honestTerminal,
+          fire: gateSource("unresolved-tool-intent", "honest-terminal"),
+        },
+      };
     }
     return CONTINUE;
   },
@@ -269,7 +305,7 @@ const earnedDoneGate: CompletionGate = {
   evaluate({ op, turnIdx }) {
     const nudge = earnedDoneNudge(op);
     if (nudge) {
-      appendNudgeAsUserMessage(op.id, turnIdx + 1, nudge, gateSource("earned-done"));
+      appendNudgeAsUserMessage(op.id, turnIdx + 1, nudge, gateSource("earned-done", "nudge"));
       return { reopen: true };
     }
     return CONTINUE;

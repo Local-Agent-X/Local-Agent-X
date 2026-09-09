@@ -7,7 +7,14 @@
 // op_messages — a record that rewording a nudge silently destroys. Guards get
 // RETIRED on this evidence (2026-07-10), so an uncounted path reads as a dead
 // guard and the counter has to cover every way a guard's verdict lands: nudge,
-// abort (both phases), suspend (both phases), and a silent arg rewrite.
+// abort (both phases), suspend (both phases), a silent arg rewrite, and a gate
+// that authors a turn's closing words.
+//
+// `outcome` is the discriminator that makes those distinguishable at a
+// distance. Every body assertion below states it, because a fire filed under
+// the wrong shape is a real miscount hiding inside a green test — and the
+// unresolved-tool-intent pair proves the point: same name, same reason, same
+// turnIdx, two different things the guard did.
 //
 // Every assertion reads the REAL persisted event log (readCanonicalEvents),
 // never a spy on `emit`.
@@ -25,16 +32,36 @@ vi.mock("./render-verify.js", async (importOriginal) => {
   };
 });
 
+vi.mock("./spec-audit.js", () => ({
+  runSpecAuditGate: vi.fn(async () => ({ nudge: "Spec drift.", shouldRetry: true })),
+}));
+vi.mock("./design-verify.js", () => ({
+  runDesignVerifyGate: vi.fn(() => ({ nudge: "Design score too low.", shouldRetry: true, capReached: false })),
+}));
+// Partial — registry.ts imports openStepsMiddleware from here; only the gate's
+// entry condition is steered.
+vi.mock("../middlewares/open-steps.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../middlewares/open-steps.js")>()),
+  earnedDoneNudge: vi.fn(() => "Finish the open steps or justify stopping."),
+}));
+// Partial — spec-audit's entry condition is the only export these tests steer.
+vi.mock("../middlewares/verify-gate.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../middlewares/verify-gate.js")>()),
+  opEditedSourcePaths: vi.fn(() => ["src/x.ts"]),
+}));
+
 import { appendNudgeAsUserMessage, middlewareAbortResult, recoverCommittedStrategyPivot } from "./nudges.js";
+import { recoverAdapterThrow } from "./adapter-throw-recovery.js";
 import { applyCommittedDirective } from "./apply-directive.js";
 import { idleSuspension, suspendedTurn } from "./suspension.js";
-import { COMPLETION_GATES, unresolvedToolIntentGate } from "./decide-outcome-gates.js";
+import { COMPLETION_GATES, unresolvedToolIntentGate, type CompletionGate, type CompletionGateOutput } from "./decide-outcome-gates.js";
+import { bankEarnedFires } from "./guard-fire.js";
 import { runRenderVerifyGate } from "./render-verify.js";
 import { officeThemeGuardMiddleware } from "../middlewares/office-theme-guard.js";
 import { makeCanonicalLoopContext } from "../middlewares/ctx.test-helper.js";
 import { emitErrorOnce } from "../event-emitter.js";
 import { insertOpTurn, readCanonicalEvents } from "../store.js";
-import type { CanonicalEvent, MiddlewareFiredBody, OpTurnRow } from "../types.js";
+import type { CanonicalEvent, GuardOutcome, MiddlewareFiredBody, OpTurnRow } from "../types.js";
 import type { FiredMiddlewareResult } from "../middlewares/host.js";
 import type { MiddlewareDirective } from "./types.js";
 import type { Op } from "../../ops/types.js";
@@ -59,11 +86,25 @@ function typesOnDisk(id: string): string[] {
 
 const EFFECTS = { appendNudgeAsUserMessage, recoverCommittedStrategyPivot, emitErrorOnce };
 
+/** Exhaustive census of the closed outcome vocabulary — the same device
+ *  `event-vocabulary.test.ts` uses on the event union. Widening `GuardOutcome`
+ *  fails tsc HERE until the new shape is deliberately admitted, so a fifth
+ *  shape cannot ship unasserted. */
+const OUTCOME_CENSUS: Record<GuardOutcome, true> = {
+  nudge: true,
+  abort: true,
+  suspend: true,
+  rewrite: true,
+  "honest-terminal": true,
+};
+const OUTCOMES = Object.keys(OUTCOME_CENSUS);
+
 describe("middleware_fired — a nudging middleware is counted", () => {
   it("persists one event carrying the firing middleware's name, reason and turn", () => {
     expect(appendNudgeAsUserMessage(opId, 3, "Stop and re-read the task.", {
       name: "loop-detection",
       reason: "loop-detection",
+      outcome: "nudge",
     })).toBe(true);
 
     const fires = firesOnDisk(opId);
@@ -73,38 +114,42 @@ describe("middleware_fired — a nudging middleware is counted", () => {
     // NOT catch an extra field (MiddlewareFiredBody extends
     // Record<string, unknown>, so `{…, bogus: 1}` compiles clean); the
     // Object.keys assertion in the next test is what closes that half.
-    const expected: MiddlewareFiredBody = { name: "loop-detection", reason: "loop-detection", turnIdx: 3 };
+    const expected: MiddlewareFiredBody = { name: "loop-detection", reason: "loop-detection", outcome: "nudge", turnIdx: 3 };
     expect(fires[0]!.body).toEqual(expected);
     // The nudge itself still lands — the counter is additive, not a swap.
     expect(typesOnDisk(opId)).toEqual(["message_appended", "middleware_fired"]);
   });
 
-  it("body contract: exactly {name, reason, turnIdx}, string/string/number", () => {
-    appendNudgeAsUserMessage(opId, 0, "n", { name: "thrash-guard", reason: "thrash-guard" });
+  it("body contract: exactly {name, outcome, reason, turnIdx}", () => {
+    appendNudgeAsUserMessage(opId, 0, "n", { name: "thrash-guard", reason: "thrash-guard", outcome: "nudge" });
     const body = firesOnDisk(opId)[0]!.body as MiddlewareFiredBody;
-    // Exact key set — the only assertion that catches an ADDED field.
-    expect(Object.keys(body).sort()).toEqual(["name", "reason", "turnIdx"]);
+    // Exact key set — the only assertion that catches an ADDED field. Keep it
+    // exact: a subset check would let a fifth field ship uncounted, which is
+    // the whole failure this event exists to end.
+    expect(Object.keys(body).sort()).toEqual(["name", "outcome", "reason", "turnIdx"]);
     expect(typeof body.name).toBe("string");
     expect(typeof body.reason).toBe("string");
     expect(typeof body.turnIdx).toBe("number");
+    expect(OUTCOMES).toContain(body.outcome);
   });
 
   it("a middleware whose reason differs from its name keeps BOTH", () => {
     // post-turn-detector fires as `post-turn:<kind>`; collapsing reason into
     // name would erase which detector rule actually tripped.
-    appendNudgeAsUserMessage(opId, 1, "n", { name: "post-turn-detector", reason: "post-turn:tool-repeat" });
+    appendNudgeAsUserMessage(opId, 1, "n", { name: "post-turn-detector", reason: "post-turn:tool-repeat", outcome: "nudge" });
     expect(firesOnDisk(opId)[0]!.body).toEqual({
       name: "post-turn-detector",
       reason: "post-turn:tool-repeat",
+      outcome: "nudge",
       turnIdx: 1,
     });
   });
 
   it("a nudge SUPPRESSED by stableMessageId is not a fire", () => {
     const stable = `strategy-pivot-${opId}-0`;
-    expect(appendNudgeAsUserMessage(opId, 1, "pivot", { name: "strategy-pivot", reason: "strategy-pivot" }, undefined, stable)).toBe(true);
+    expect(appendNudgeAsUserMessage(opId, 1, "pivot", { name: "strategy-pivot", reason: "strategy-pivot", outcome: "nudge" }, undefined, stable)).toBe(true);
     // Same id again — restart recovery replaying the same committed pivot.
-    expect(appendNudgeAsUserMessage(opId, 1, "pivot", { name: "strategy-pivot", reason: "strategy-pivot" }, undefined, stable)).toBe(false);
+    expect(appendNudgeAsUserMessage(opId, 1, "pivot", { name: "strategy-pivot", reason: "strategy-pivot", outcome: "nudge" }, undefined, stable)).toBe(false);
     expect(firesOnDisk(opId)).toHaveLength(1);
     expect(typesOnDisk(opId)).toEqual(["message_appended", "middleware_fired"]);
   });
@@ -138,6 +183,10 @@ describe("middleware_fired — a recovered pivot keeps the ORIGINATING guard's n
     expect(firesOnDisk(opId)[0]!.body).toEqual({
       name: "loop-detection",
       reason: "strategy-pivot",
+      // The recovered pivot builds its own GuardFire literal rather than going
+      // through directiveFire/firedResultFire — it is one of the two producers
+      // a helper-only change would leave shapeless.
+      outcome: "nudge",
       turnIdx: 1,
     });
   });
@@ -169,7 +218,7 @@ describe("middleware_fired — an aborting middleware is counted in BOTH phases"
 
     const fires = firesOnDisk(opId);
     expect(fires).toHaveLength(1);
-    const expected: MiddlewareFiredBody = { name: "repeat-failure", reason: "repeat-failure", turnIdx: 7 };
+    const expected: MiddlewareFiredBody = { name: "repeat-failure", reason: "repeat-failure", outcome: "abort", turnIdx: 7 };
     expect(fires[0]!.body).toEqual(expected);
     // The pre-existing error bubble is untouched — the count is added, not swapped.
     expect(typesOnDisk(opId)).toEqual(["error", "middleware_fired"]);
@@ -184,7 +233,7 @@ describe("middleware_fired — an aborting middleware is counted in BOTH phases"
   // reading a retirement review would get wrong.
   it("afterModelCall / afterToolExecution: the sticky directive counts too", () => {
     applyCommittedDirective(op(), 4, stickyAbort, EFFECTS);
-    const expected: MiddlewareFiredBody = { name: "loop-detection", reason: "loop-detection", turnIdx: 4 };
+    const expected: MiddlewareFiredBody = { name: "loop-detection", reason: "loop-detection", outcome: "abort", turnIdx: 4 };
     expect(firesOnDisk(opId)[0]!.body).toEqual(expected);
     expect(typesOnDisk(opId)).toEqual(["error", "middleware_fired"]);
   });
@@ -213,7 +262,7 @@ describe("middleware_fired — a suspending middleware is counted in every phase
       kind: "suspend", reason: "thrash-guard", firedBy: "thrash-guard", message: "Thrashing.",
     });
     expect(out?.terminalReason).toBeNull();
-    const expected: MiddlewareFiredBody = { name: "thrash-guard", reason: "thrash-guard", turnIdx: 2 };
+    const expected: MiddlewareFiredBody = { name: "thrash-guard", reason: "thrash-guard", outcome: "suspend", turnIdx: 2 };
     expect(firesOnDisk(opId)[0]!.body).toEqual(expected);
   });
 
@@ -227,7 +276,7 @@ describe("middleware_fired — a suspending middleware is counted in every phase
       kind: "suspend", reason: "repeat-failure", firedBy: "repeat-failure", message: "Paused.",
     }, EFFECTS);
     expect(firesOnDisk(opId)[0]!.body).toEqual({
-      name: "repeat-failure", reason: "repeat-failure", turnIdx: 6,
+      name: "repeat-failure", reason: "repeat-failure", outcome: "suspend", turnIdx: 6,
     });
     // A suspend has no error bubble — the fire is the ONLY record.
     expect(typesOnDisk(opId)).toEqual(["middleware_fired"]);
@@ -237,7 +286,7 @@ describe("middleware_fired — a suspending middleware is counted in every phase
     const directive = idleSuspension("build", { code: "stalled", message: "No activity for 10m." });
     applyCommittedDirective(op(), 3, directive!, EFFECTS);
     expect(firesOnDisk(opId)[0]!.body).toEqual({
-      name: "idle-watchdog", reason: "idle-stalled", turnIdx: 3,
+      name: "idle-watchdog", reason: "idle-stalled", outcome: "suspend", turnIdx: 3,
     });
   });
 });
@@ -263,7 +312,7 @@ describe("middleware_fired — a completion gate is counted too", () => {
     const fires = firesOnDisk(opId);
     expect(fires).toHaveLength(1);
     // Gates carry no separate reason string, so the gate name is both halves.
-    const expected: MiddlewareFiredBody = { name: "render-verify", reason: "render-verify", turnIdx: 5 };
+    const expected: MiddlewareFiredBody = { name: "render-verify", reason: "render-verify", outcome: "nudge", turnIdx: 5 };
     expect(fires[0]!.body).toEqual(expected);
   });
 
@@ -282,25 +331,31 @@ describe("middleware_fired — a completion gate is counted too", () => {
 
   // D3 — tool-intent-gate.ts: "First fire per op → one retry nudge; every later
   // fire → honestTerminal". Only the first spoke through a nudge, so ten leaked
-  // turns used to record 1. decide-outcome.ts calls the second one a fire in
-  // its own comment; the counter now agrees with the codebase.
-  it("unresolved-tool-intent counts its honest-terminal fires, not just the first nudge", () => {
+  // turns used to record 1. Both are counted — but in two DIFFERENT places,
+  // because only one of them is safe to mint from inside the gate.
+  it("unresolved-tool-intent banks its nudge immediately and DEFERS its terminal", () => {
     const LEAKED =
       "Searching.\n" +
       '<atem:function_calls><atem:invoke name="grep"><atem:parameter name="pattern">x</atem:parameter></atem:invoke></atem:function_calls>';
     const ctx = { op: op(), turnIdx: 0, toolCalls: [], assistantText: LEAKED };
 
-    const first = unresolvedToolIntentGate.evaluate(ctx) as { reopen: boolean };
+    const first = unresolvedToolIntentGate.evaluate(ctx) as CompletionGateOutput;
     expect(first.reopen).toBe(true);
-    const second = unresolvedToolIntentGate.evaluate({ ...ctx, turnIdx: 1 }) as { honestTerminal?: string };
+    const second = unresolvedToolIntentGate.evaluate({ ...ctx, turnIdx: 1 }) as CompletionGateOutput;
     expect(second.honestTerminal).toBeDefined();
 
+    // The NUDGE is banked on the spot: appendNudgeAsUserMessage already wrote
+    // the row into op_messages, and a later reopen cannot un-write it.
     expect(firesOnDisk(opId).map(e => e.body)).toEqual([
-      // fire 1: the nudge, landing on the next turn.
-      { name: "unresolved-tool-intent", reason: "unresolved-tool-intent", turnIdx: 1 },
-      // fire 2: the honest terminal, landing on the turn it ends.
-      { name: "unresolved-tool-intent", reason: "unresolved-tool-intent", turnIdx: 1 },
+      { name: "unresolved-tool-intent", reason: "unresolved-tool-intent", outcome: "nudge", turnIdx: 1 },
     ]);
+    // The TERMINAL is not, and must not be: this gate is 6th of 9 and a later
+    // gate can still reopen the turn, and even a settled terminal is in-memory
+    // until commitTurn. The gate NAMES the fire beside the text it belongs to;
+    // whoever appends the text earns it.
+    expect(second.honestTerminal?.fire).toEqual(
+      { name: "unresolved-tool-intent", reason: "unresolved-tool-intent", outcome: "honest-terminal" },
+    );
   });
 });
 
@@ -324,7 +379,7 @@ describe("middleware_fired — a guard that rewrites tool args is counted", () =
     // It really did rewrite the call — the fire is not decorative.
     expect((toolCalls[0]!.args as Record<string, unknown>).theme).toBeUndefined();
     expect(firesOnDisk(opId)[0]!.body).toEqual({
-      name: "office-theme-guard", reason: "office-theme-strip", turnIdx: 2,
+      name: "office-theme-guard", reason: "office-theme-strip", outcome: "rewrite", turnIdx: 2,
     });
   });
 
@@ -337,5 +392,137 @@ describe("middleware_fired — a guard that rewrites tool args is counted", () =
     });
     officeThemeGuardMiddleware.afterModelCall!(ctx);
     expect(firesOnDisk(opId)).toHaveLength(0);
+  });
+});
+
+
+// The discriminator on its own. Every block above asserts it inside a whole-body
+// `toEqual`, where a wrong shape surfaces as a body diff; these isolate it so a
+// miscounted guard goes red under a test that NAMES the shape it should have had.
+// Each drives the real code path — no GuardFire is hand-built here except where
+// the production call site hand-builds one too.
+describe("middleware_fired — `outcome` says WHAT the guard did", () => {
+  const outcomes = (id: string): unknown[] =>
+    firesOnDisk(id).map(e => (e.body as MiddlewareFiredBody).outcome);
+
+  it("nudge: a post-commit nudge directive takes its shape from the directive kind", () => {
+    applyCommittedDirective(op(), 2, {
+      kind: "nudge", reason: "mid-turn-stale", firedBy: "mid-turn-stale", message: "Re-read the task.",
+    }, EFFECTS);
+    expect(outcomes(opId)).toEqual(["nudge"]);
+  });
+
+  it("abort: a guard that ENDED the turn is not filed as a nudge", () => {
+    middlewareAbortResult(op(), 1, {
+      kind: "abort", reason: "thrash-guard", firedBy: "thrash-guard", message: "Thrashing.",
+    });
+    expect(outcomes(opId)).toEqual(["abort"]);
+  });
+
+  it("suspend: the autonomous lane's pause is its own shape, not an abort", () => {
+    suspendedTurn(opId, 1, {
+      kind: "suspend", reason: "repeat-failure", firedBy: "repeat-failure", message: "Paused.",
+    });
+    expect(outcomes(opId)).toEqual(["suspend"]);
+  });
+
+  it("rewrite: a guard that edits the call instead of speaking is not a nudge", () => {
+    const ctx = makeCanonicalLoopContext({
+      op: { id: opId },
+      turnIdx: 0,
+      currentUserMessage: "make a power point about Q3",
+      toolCalls: [{ toolCallId: "t1", tool: "presentation", args: { action: "create", theme: "scandal red" } }],
+    });
+    officeThemeGuardMiddleware.afterModelCall!(ctx);
+    expect(outcomes(opId)).toEqual(["rewrite"]);
+  });
+
+  // The field's whole justification: banked together, these two fires agree on
+  // name, reason AND turnIdx, so `outcome` is the only thing separating the
+  // gate's retry nudge from the terminal it later authored. decide-outcome.test
+  // drives the real chain; here the deferred half goes through the seam itself,
+  // so this file's on-disk evidence covers both shapes.
+  it("honest-terminal: banked, the gate's terminal is separable from its own nudge", () => {
+    const LEAKED =
+      "Searching.\n" +
+      '<atem:function_calls><atem:invoke name="grep"><atem:parameter name="pattern">x</atem:parameter></atem:invoke></atem:function_calls>';
+    const ctx = { op: op(), turnIdx: 0, toolCalls: [], assistantText: LEAKED };
+    unresolvedToolIntentGate.evaluate(ctx);
+    const settled = unresolvedToolIntentGate.evaluate({ ...ctx, turnIdx: 1 }) as CompletionGateOutput;
+    // Exactly what decide-outcome contributes at the append and turn-loop
+    // banks once the turn is durable.
+    bankEarnedFires(opId, 1, settled.honestTerminal ? [settled.honestTerminal.fire] : []);
+
+    expect(outcomes(opId)).toEqual(["nudge", "honest-terminal"]);
+    const bodies = firesOnDisk(opId).map(e => e.body as MiddlewareFiredBody);
+    expect(bodies.map(b => `${b.name}/${b.reason}/${b.turnIdx}`))
+      .toEqual(["unresolved-tool-intent/unresolved-tool-intent/1", "unresolved-tool-intent/unresolved-tool-intent/1"]);
+  });
+
+  // The bug the seam exists to prevent, at the seam's own level: a gate NAMING
+  // a fire writes nothing by itself. The two ways the effect can still not
+  // happen — a later gate's reopen, and a Stop before commitTurn — are pinned
+  // in decide-outcome.test.ts and turn-loop.test.ts respectively.
+  it("a gate that merely NAMES a fire banks nothing on its own", () => {
+    const LEAKED =
+      "Searching.\n" +
+      '<atem:function_calls><atem:invoke name="grep"><atem:parameter name="pattern">x</atem:parameter></atem:invoke></atem:function_calls>';
+    unresolvedToolIntentGate.evaluate({ op: op(), turnIdx: 0, toolCalls: [], assistantText: LEAKED });
+    const settled = unresolvedToolIntentGate.evaluate(
+      { op: op(), turnIdx: 1, toolCalls: [], assistantText: LEAKED },
+    ) as CompletionGateOutput;
+    expect(settled.honestTerminal?.fire).toBeDefined();
+    // Nobody appended the text and nobody banked, so the only row on disk is
+    // the nudge — which was banked by the path that actually wrote it.
+    expect(outcomes(opId)).toEqual(["nudge"]);
+  });
+
+  it("every shape the counter mints is in the closed vocabulary", () => {
+    expect(OUTCOMES.sort()).toEqual(["abort", "honest-terminal", "nudge", "rewrite", "suspend"]);
+  });
+});
+
+// Sites the counter mints that NO test pinned: a sweep that set all five to
+// deliberately absurd outcomes at once ran the full canonical-loop suite green.
+// Three of them sit in the same gateSource(...) column as three that WERE
+// pinned, so the gap was invisible on inspection — only mutation found it.
+// Each case below drives the real producer and reads the real persisted row.
+describe("middleware_fired — the sites a mutation sweep found unpinned", () => {
+  const body = (id: string): MiddlewareFiredBody =>
+    firesOnDisk(id)[0]!.body as MiddlewareFiredBody;
+  const gate = (name: string): CompletionGate =>
+    COMPLETION_GATES.find(g => g.name === name)!;
+  const gateCtx = () => ({ op: op(), turnIdx: 2, toolCalls: [] as ToolCall[], assistantText: "" });
+
+  it("spec-audit's nudge is counted under the gate's own name", async () => {
+    expect((await gate("spec-audit").evaluate(gateCtx())).reopen).toBe(true);
+    expect(body(opId)).toEqual({
+      name: "spec-audit", reason: "spec-audit", outcome: "nudge", turnIdx: 3,
+    });
+  });
+
+  it("design-verify's nudge is counted under the gate's own name", async () => {
+    expect((await gate("design-verify").evaluate(gateCtx())).reopen).toBe(true);
+    expect(body(opId)).toEqual({
+      name: "design-verify", reason: "design-verify", outcome: "nudge", turnIdx: 3,
+    });
+  });
+
+  it("earned-done's one-shot push is counted under the gate's own name", async () => {
+    expect((await gate("earned-done").evaluate(gateCtx())).reopen).toBe(true);
+    expect(body(opId)).toEqual({
+      name: "earned-done", reason: "earned-done", outcome: "nudge", turnIdx: 3,
+    });
+  });
+
+  // Not a gate and not a middleware — a transient provider throw recovered by
+  // feeding the error back as a nudge. It builds its own GuardFire literal, so
+  // it is one of the producers a helper-only change would have left shapeless.
+  it("adapter-throw-recovery's resume nudge is counted", () => {
+    const r = recoverAdapterThrow(op(), new Error("xai call threw: timeout"), 4);
+    expect(r.terminalReason).toBeNull();
+    expect(body(opId)).toEqual({
+      name: "adapter-throw-recovery", reason: "adapter-retry", outcome: "nudge", turnIdx: 5,
+    });
   });
 });

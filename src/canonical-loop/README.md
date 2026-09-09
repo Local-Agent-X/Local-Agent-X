@@ -96,26 +96,82 @@ Add a new event type to all three lists in one commit.
 
 The union has outgrown the locked v1 table in PRD §12, which still does not
 list `iteration_checkpoint`, `approval_requested` or `approval_resolved`.
-The newest member is `middleware_fired` (`{ name, reason, turnIdx }` —
+The newest member is `middleware_fired` (`{ name, reason, outcome, turnIdx }` —
 `MiddlewareFiredBody` in `types.ts`), minted only by
 `turn-loop/guard-fire.ts`, which carries the authoritative ledger. It counts a
-guard whose verdict TOOK EFFECT, in four shapes:
+guard whose verdict TOOK EFFECT, and `outcome` — a closed `GuardOutcome`
+vocabulary, required on every `GuardFire` so an unstated shape is a compile
+error — says WHAT it did. Without it every row reads alike and the first
+question a retirement review asks ("did this guard nudge or end the op?") has
+no answer. The five shapes:
 
-| Shape | Where it is counted |
+| `outcome` | Where it is counted |
 | --- | --- |
-| nudge | `nudges.ts appendNudgeAsUserMessage` — middleware and completion-gate nudges alike. A nudge suppressed by `stableMessageId` is a replay, not a fire. |
-| abort | `nudges.ts middlewareAbortResult` (beforeTurn) and `apply-directive.ts` (afterModelCall / afterToolExecution). Counted only when the abort's error bubble is really emitted, so a repeat collapses with `emitErrorOnce`. |
-| suspend | `suspension.ts suspendedTurn` (beforeTurn) and `apply-directive.ts` (later phases + the idle-watchdog). |
-| rewrite | `middlewares/office-theme-guard.ts` — a guard that edits the tool call instead of speaking. |
+| `nudge` | `nudges.ts appendNudgeAsUserMessage` — middleware and completion-gate nudges alike, plus `adapter-throw-recovery.ts`'s resume nudge and `decide-outcome.ts`'s tool-failure summary. A nudge suppressed by `stableMessageId` is a replay, not a fire. |
+| `abort` | `nudges.ts middlewareAbortResult` (beforeTurn) and `apply-directive.ts` (afterModelCall / afterToolExecution). Counted only when the abort's error bubble is really emitted, so a repeat collapses with `emitErrorOnce`. |
+| `suspend` | `suspension.ts suspendedTurn` (beforeTurn) and `apply-directive.ts` (later phases + the idle-watchdog). |
+| `rewrite` | `middlewares/office-theme-guard.ts` — a guard that edits the tool call instead of speaking. |
+| `honest-terminal` | `decide-outcome-gates.ts` — a completion gate that LETS the turn end but authors its closing words (unresolved-tool-intent's second and later fires). Not a nudge; not an abort — the turn stays `done`. The gate NAMES it; `decide-outcome.ts` mints it at the append, and `turn-loop.ts` banks it after `commitTurn`: see below. |
+
+`directiveFire` and `firedResultFire` derive `outcome` from the verdict's own
+`kind`, so the sites that route through them cannot state it wrong; the
+handful of hand-built `GuardFire` literals state it themselves.
+
+**Every fire is gated on its own EFFECT, not on a guard's intent** — `nudge` on
+the path that writes the row, `abort` on `if (bubbled)`, `rewrite` on
+`if (stripped)`, `suspend` post-commit. A completion gate can see its own effect
+from nowhere inside `evaluate`: a later gate's reopen discards the terminal it
+authored, and even a settled terminal is only an entry in an in-memory
+`allMessages` until `commitTurn`, with `driveTurn`'s cancel bail in between. So
+a gate NAMES the fire beside the payload it belongs to
+(`CompletionGateOutput.honestTerminal` carries `{ text, fire }` as one value,
+which is what stops the append and the count from drifting), the code that
+performs the effect contributes it to `DecideOutcomeResult.earnedFires`, and
+`turn-loop.ts` banks the list via `bankEarnedFires` **after `commitTurn`** —
+beside `applyCommittedDirective`, under the same ordering contract. The seam has
+no idempotency key: two `decideTurnOutcome` calls for one `turnIdx` would bank
+two identical bodies.
+
+Read a slice with three caveats.
+
+(1) `outcome === "honest-terminal"` is a census of ONE gate, not of
+harness-authored terminals. The harness writes its own closing assistant message
+in six places and counts one; uncounted are `empty-turn-*`
+(empty-turn-termination.ts), `ask-user-*` (ask-user-terminal.ts) and
+`open-steps-warn-*` / `build-verify-ok-*` / `ground-truth-sizes-*`
+(terminal-epilogue.ts). Only `empty-turn-*` shares the `appendHonestTerminal`
+writer with the gate's — that helper has exactly two call sites — so a
+writer-based search will not find the other four.
+
+(2) A nudge that also suppressed tool dispatch (loop-detection's
+mutation-repeat, which empties `ctx.toolCalls` and sets `skipToolDispatch`)
+files as a plain `nudge` — a modifier on the verdict, not a shape of its own.
+
+(3) Rows minted between `e3e93aed` (which added the event) and the commit that
+added `outcome` carry no `outcome` at all and read `undefined`, so a
+`group by outcome` drops them.
+
+Two gate branches look like the next candidates for the seam and are NOT
+interchangeable. `verifiedClean` speaks a user-facing message
+(`build-verify-ok-*`), so counting it is not a semantics expansion — but its
+append is guarded by `!endedPartial`, decided inside the epilogue and later than
+the gate chain, so it must contribute its fire at that append. `capReached`
+drops the drained runtime errors before it returns and no reopen undoes that, so
+deferring its fire would under-count a real effect.
 
 It is NOT a census of every guard invocation. Uncounted, deliberately: a
 `continue` verdict; the completion-gate branches that act without nudging
-(late-inject re-opening the turn, framework-serve, render-verify's
-`capReached`, build-verify's `verifiedClean`); and a directive discarded by a
-user cancel before it is applied. Read a `0` with that list in hand.
+(late-inject re-opening the turn, framework-serve); and a directive discarded
+by a user cancel before it is applied. Read a `0` with that list in hand.
 
-Every nudge caller must name its guard — the required `GuardFire` argument is
-what keeps one from reaching op_messages uncounted.
+`capReached` and `verifiedClean` are uncounted too, but for their OWN reasons,
+not this one — see the paragraph above. `verifiedClean` SPEAKS, so counting it
+is the semantics already counted rather than an expansion; `capReached` has the
+opposite hazard, since it drops the drained errors and no reopen undoes that.
+
+Every nudge caller must name its guard AND state what the fire did — the
+required `GuardFire` argument is what keeps one from reaching op_messages
+uncounted or unclassified.
 
 ## Issue 04 — Reconnect / event replay
 

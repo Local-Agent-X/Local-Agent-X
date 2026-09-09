@@ -46,7 +46,7 @@ export const officeThemeGuardMiddleware: CanonicalMiddleware = {
     // This guard acts by REWRITING the call, not by speaking, so the verdict is
     // `continue` and no nudge records it. Count the rewrite itself or the guard
     // reads 0 forever while actively overriding the model (guard-fire.ts).
-    if (stripped) recordGuardFire(ctx.op.id, ctx.turnIdx, { name: "office-theme-guard", reason: "office-theme-strip" });
+    if (stripped) recordGuardFire(ctx.op.id, ctx.turnIdx, { name: "office-theme-guard", reason: "office-theme-strip", outcome: "rewrite" });
     return { kind: "continue" };
   },
 };

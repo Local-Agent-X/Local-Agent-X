@@ -20,6 +20,13 @@
  * back an honest terminal message (appended by decide-outcome only if the turn
  * actually stays "done").
  *
+ * A gate's honest terminal carries the GUARD FIRE that appending it earns, and
+ * a gate never mints that fire itself. It cannot: from inside `evaluate` it can
+ * see neither a later gate's reopen nor the cancel window that follows the whole
+ * chain, and a fire recorded against either is a durable claim about a message
+ * that does not exist. The effect site contributes it and turn-loop banks the
+ * result once the turn is DURABLE — guard-fire.ts bankEarnedFires.
+ *
  * A turn that ends on a QUESTION is the one terminal the chain must not touch.
  * Every gate answers "did the model finish the work?", and re-opening drives
  * one more turn to finish it — but the missing input is the user's answer,
@@ -34,14 +41,15 @@
  * effect — an app_build op that ends on a question registers no dev server —
  * which is correct: it is paused mid-build, not finished.
  */
-import { COMPLETION_GATES, type CompletionGateContext } from "./decide-outcome-gates.js";
+import { COMPLETION_GATES, type CompletionGateContext, type GateHonestTerminal } from "./decide-outcome-gates.js";
 
 export interface RunCompletionGatesResult {
   terminalReason: "done" | "error" | null;
   /** Build-verify's held green confirmation ("" when none). */
   buildVerifyConfirmation: string;
-  /** A gate's honest terminal message for a turn that stays "done" ("" when none). */
-  honestTerminal: string;
+  /** A gate's honest terminal for a turn that stays "done", with the fire that
+   *  appending it earns. Null when no gate produced one. */
+  honestTerminal: GateHonestTerminal | null;
 }
 
 export async function runCompletionGates(
@@ -50,7 +58,7 @@ export async function runCompletionGates(
   endsOnQuestion: boolean,
 ): Promise<RunCompletionGatesResult> {
   let buildVerifyConfirmation = "";
-  let honestTerminal = "";
+  let honestTerminal: GateHonestTerminal | null = null;
   for (const gate of endsOnQuestion ? [] : COMPLETION_GATES) {
     if (terminalReason !== "done") break;
     const out = await gate.evaluate(ctx);

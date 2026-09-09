@@ -197,21 +197,29 @@ function withoutControlFlags(m: ChatCompletionMessageParam): ChatCompletionMessa
  * before persisting a session.
  *
  * Two filter mechanisms (defense-in-depth):
- *  1. Structural — `_ephemeral: true` flag set by agent-loop/run.ts on every
- *     middleware nudge push. New nudges are auto-filtered without anyone
- *     having to remember to update a string list.
+ *  1. Structural — the `_ephemeral: true` flag. NOTHING IN THE LIVE TREE
+ *     SETS IT: its only writer was `src/agent-loop/run.ts`, deleted in the
+ *     canonical-loop consolidation, so the check now catches nothing but
+ *     sessions persisted before that. Today's nudges are emitted by
+ *     canonical-loop/turn-loop/nudges.ts:appendNudgeAsUserMessage as
+ *     op_messages stamped `content.kind === "nudge"`, and are dropped on
+ *     the way into session.messages by canonical-loop/chat-runner/
+ *     message-convert.ts:opMessageRowToChatParam — so a live nudge never
+ *     reaches this function at all.
  *  2. Legacy strings — covers nudges that were saved before the flag existed,
  *     plus self-check / quality-gate messages that aren't routed through the
  *     middleware nudge path.
  *
  * The model still sees the nudge during the turn (it's in the in-memory
- * messages array). The flag only kicks in at persist + replay boundaries so
+ * messages array). This filter runs only at persist + replay boundaries so
  * the chat transcript on reload doesn't show purple "You claimed..." bubbles
  * where tool calls used to render live.
  */
 export function stripEphemeralMessages(messages: ChatCompletionMessageParam[]): ChatCompletionMessageParam[] {
   return messages.filter((m) => {
-    // Structural marker — set on every middleware nudge in agent-loop/run.ts
+    // Structural marker — no live writer left (see the note above). Kept for
+    // sessions persisted before the canonical-loop consolidation, whose rows
+    // still carry the flag written by the since-deleted agent-loop/run.ts.
     if ((m as unknown as { _ephemeral?: boolean })._ephemeral === true) return false;
 
     if (m.role === "user" && typeof m.content === "string") {

@@ -2,9 +2,10 @@
  * Phase dispatcher for the canonical-loop middleware stack.
  *
  * Builds a CanonicalLoopContext and walks the registered middlewares for
- * one phase. Short-circuits on the first non-"continue" result (same
- * semantics as src/agent-loop/run.ts:runPhase) so a nudge / abort from an
- * earlier middleware preempts later ones for THIS phase.
+ * one phase, in stack order. Short-circuits on the first non-"continue"
+ * result, so a nudge / abort from an earlier middleware preempts later ones
+ * for THIS phase only — the next phase walks the whole stack again from the
+ * top.
  *
  * Returns the firing middleware's name in `firedBy` so the caller can
  * surface a friendly stop reason in chat.

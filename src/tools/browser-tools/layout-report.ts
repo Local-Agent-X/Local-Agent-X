@@ -65,6 +65,13 @@ export async function handleLayoutReport(manager: BrowserBackend, _sessionId?: s
   // truncation (LAYOUT_REPORT_MAX_CHARS); evaluateScript passes a string
   // through as-is instead of pretty-printing it.
   const raw = await manager.evaluate(LAYOUT_REPORT_SCRIPT);
+  // Deliberately NOT passed url/getCurrentUrl() here (see header: after a
+  // click-navigation it's stale relative to this async evaluate(), and the
+  // handler is pinned to not parse the JSON to pull the page's own url out).
+  // The loopback-alarm-floor gate (sanitize.ts) simply doesn't apply to this
+  // handler's output — which is fine: it's measurement JSON (dimensions,
+  // element counts), not page prose, so it isn't the shape of content that
+  // trips the injection scanner's false positives in the first place.
   return {
     content: wrapExternalContent(raw, "browser.layout_report"),
     metadata: { browserStatus: "layout-report" },

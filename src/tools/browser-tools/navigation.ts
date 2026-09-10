@@ -171,5 +171,5 @@ export async function handleSnapshot(
     return { content: HUMAN_VERIFICATION_MESSAGE, status: "blocked", isError: true, metadata: { browserStatus: "human-verification-required" } };
   }
   const prefix = computeAuthWallPrefix(raw);
-  return ok(wrapExternalContent(prefix + raw, "browser.snapshot"));
+  return ok(wrapExternalContent(prefix + raw, "browser.snapshot", { url: manager.getCurrentUrl() }));
 }

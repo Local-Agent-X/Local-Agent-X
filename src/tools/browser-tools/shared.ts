@@ -43,7 +43,8 @@ export async function appendPostActionSnapshot(
     const raw = await manager.snapshot();
     if (snapshotShowsHumanVerification(raw)) return `${base}\n\n${HUMAN_VERIFICATION_MESSAGE}`;
     const prefix = computeAuthWallPrefix(raw);
-    return `${base}\n\n--- Page snapshot ---\n${wrapExternalContent(prefix + raw, "browser.snapshot")}`;
+    const url = manager.getCurrentUrl ? manager.getCurrentUrl() : undefined;
+    return `${base}\n\n--- Page snapshot ---\n${wrapExternalContent(prefix + raw, "browser.snapshot", url ? { url } : undefined)}`;
   } catch {
     return base;
   }

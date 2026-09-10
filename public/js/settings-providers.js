@@ -104,6 +104,7 @@ const PROVIDER_MODELS = {
     { value: 'claude-opus-4-5', label: 'Claude Opus 4.5' },
   ],
   xai: [
+    { value: 'grok-4.6', label: 'Grok 4.6 (newest frontier, 500k ctx)' },
     { value: 'grok-4.5', label: 'Grok 4.5 (frontier, default)' },
     { value: 'grok-4.3', label: 'Grok 4.3 (general, 131k context)' },
     { value: 'grok-4.20-0309-reasoning', label: 'Grok 4.20 (reasoning)' },

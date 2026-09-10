@@ -121,6 +121,7 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     id: "xai",
     label: "xAI Grok",
     models: [
+      "grok-4.6",
       "grok-4.5",
       "grok-4.3",
       "grok-4.20-0309-reasoning",

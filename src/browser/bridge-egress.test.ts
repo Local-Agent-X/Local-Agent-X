@@ -12,6 +12,7 @@ vi.mock("./page-egress-taint.js", async (importOriginal) => {
 import { evaluateEgressForUrl } from "../security/layer/index.js";
 import { scanPageEgress } from "./page-egress-taint.js";
 import { answerEgressAsk, clearEgressDeny, enrichBlockedNavigation, peekEgressDeny, recentEgressDeny } from "./bridge-egress.js";
+import { _resetAdoptedViewsForTest, registerAdoptedView, unregisterAdoptedViews } from "./bridge-perception.js";
 
 describe("browser egress deny reason correlation", () => {
 	let sent: unknown[];
@@ -142,5 +143,60 @@ describe("browser egress deny reason correlation", () => {
 		const blocked = new Error("ERR_BLOCKED_BY_CLIENT");
 		expect(enrichBlockedNavigation(blocked, "https://other.example/", "view-a-work")).toBe(blocked);
 		expect((enrichBlockedNavigation(blocked, "https://kept.example/", "view-a-work") as Error).message).toContain("policy deny");
+	});
+});
+
+// ── Shared-state ownership audit (C2, 2026-09-10) ───────────────────────
+// An ADOPTED user tab (switch_tab onto a "[user tab]" row) keeps its USER
+// viewId, which carries no session, so attribution comes from the
+// adoptedViewSessions map instead. That map is an unconditional `set` — no
+// ownership arbitration — and unregisterAdoptedViews deletes by session VALUE.
+// Two sessions can adopt the SAME user tab (the tab list is global), so the
+// second adoption silently re-points attribution, and either session's close
+// can strip it entirely. `decideEgressAsk` skips the taint scan outright for an
+// unattributable view, so the drop is a scan bypass, not a fail-closed.
+//
+// Pins the CURRENT behavior so a fix flips it deliberately. Parked as finding
+// N1; no behavior is changed here.
+describe("adopted user view — egress attribution has no ownership arbitration", () => {
+	const USER_VIEW = "user-3"; // a user-origin viewId: sessionIdFromViewId cannot attribute it
+	let sent: unknown[] = [];
+
+	beforeEach(() => {
+		sent = [];
+		process.send = ((msg: unknown) => { sent.push(msg); return true; }) as typeof process.send;
+		vi.mocked(evaluateEgressForUrl).mockReset().mockReturnValue({ allowed: true, reason: "allowed" });
+		vi.mocked(scanPageEgress).mockReset().mockReturnValue({ allowed: true });
+		_resetAdoptedViewsForTest();
+	});
+
+	afterEach(() => {
+		_resetAdoptedViewsForTest();
+		delete (process as { send?: unknown }).send;
+	});
+
+	it("scans a second session's adoption against the SECOND session's taint set", () => {
+		registerAdoptedView(USER_VIEW, "alpha");
+		answerEgressAsk({ id: 100, url: "https://sink.example/a", viewId: USER_VIEW });
+		expect(vi.mocked(scanPageEgress).mock.calls.at(-1)?.[0]).toBe("alpha");
+
+		// Session beta switch_tabs onto the SAME user tab. Last writer wins.
+		registerAdoptedView(USER_VIEW, "beta");
+		answerEgressAsk({ id: 101, url: "https://sink.example/b", viewId: USER_VIEW });
+		// alpha is still driving that tab, but its egress is now judged as beta.
+		expect(vi.mocked(scanPageEgress).mock.calls.at(-1)?.[0]).toBe("beta");
+	});
+
+	it("skips the taint scan entirely once the adoption is dropped by the other session", () => {
+		registerAdoptedView(USER_VIEW, "alpha");
+		registerAdoptedView(USER_VIEW, "beta");
+		unregisterAdoptedViews("beta"); // beta's backend closed; alpha still drives the tab
+
+		vi.mocked(scanPageEgress).mockClear();
+		answerEgressAsk({ id: 102, url: "https://sink.example/c", viewId: USER_VIEW });
+
+		// Unattributable view -> URL policy only, the taint layer never runs.
+		expect(vi.mocked(scanPageEgress)).not.toHaveBeenCalled();
+		expect(sent).toEqual([{ type: "lax:browser-egress-ask-result", id: 102, allowed: true }]);
 	});
 });

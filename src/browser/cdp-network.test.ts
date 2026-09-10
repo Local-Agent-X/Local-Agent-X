@@ -105,3 +105,74 @@ describe("readResponseBody", () => {
 		expect(out).toContain(json);
 	});
 });
+
+// ── Shared-state ownership audit (C2, 2026-09-10) ───────────────────────
+// `sniffers` is keyed by viewId and has NO production invalidator: only
+// _setPageProviderForTest clears it. viewIds are deterministic per session
+// (`view-<session>-shared`, `<first>-tN`) and a view is RECREATED under the SAME
+// id on ordinary paths (wedge teardown, user ✕ on the tab — see
+// in-app-tabs.ensureTabView). getPageForView then resolves a BRAND-NEW Page, but
+// this module still serves the dead view's CDPSession and metadata.
+//
+// Contrast — the reader asymmetry that makes this a defect rather than a design:
+// in-app-driving-page.ts caches by the SAME recycled key and gates every hit on
+// page.isClosed() ("self-heals a recreated view"). This module has no liveness
+// gate at all.
+//
+// These pin the CURRENT behavior so a fix flips them deliberately rather than by
+// accident. Parked as finding H2; no behavior is changed here.
+describe("readResponseBody — H2: a recycled viewId is served the previous view's sniffer", () => {
+	const viewId = "view-chat-shared";
+	const json = '{"ok":true}';
+
+	/** A fresh in-app view under the same viewId: its own CDPSession + page. */
+	function recreatedView(session: unknown, counter: { attached: number }, contentType = "application/json") {
+		return {
+			context: () => ({ newCDPSession: async () => { counter.attached += 1; return session; } }),
+			request: { get: async () => fakeResponse(contentType, json) },
+		};
+	}
+
+	it("never attaches a sniffer to the recreated view — the dead CDPSession is reused", async () => {
+		const counter = { attached: 0 };
+		const s1 = fakeSession({ body: json, base64Encoded: false });
+		let current: unknown = recreatedView(s1.session, counter);
+		_setPageProviderForTest(async () => current as never);
+
+		await readResponseBody(viewId, "https://x/api");
+		expect(counter.attached).toBe(1);
+
+		// View destroyed and recreated under the SAME id → a different Page object.
+		const s2 = fakeSession({ body: json, base64Encoded: false });
+		current = recreatedView(s2.session, counter);
+		await readResponseBody(viewId, "https://x/api");
+
+		// A liveness-gated cache would attach to the new page. This one does not.
+		expect(counter.attached).toBe(1);
+	});
+
+	it("refuses a now-JSON endpoint using the DEAD view's stale content-type metadata", async () => {
+		const counter = { attached: 0 };
+		// Page 1 served an image at this url, so the sniffer records image/png.
+		const s1 = fakeSession({ body: "PNGDATA", base64Encoded: false });
+		let current: unknown = recreatedView(s1.session, counter, "image/png");
+		_setPageProviderForTest(async () => current as never);
+		await readResponseBody(viewId, "https://x/api");
+		s1.emit("Network.responseReceived", {
+			requestId: "req-old",
+			type: "Image",
+			response: { url: "https://x/api", mimeType: "image/png" },
+		});
+
+		// The view is recreated; the same url now serves JSON on the new page.
+		const s2 = fakeSession({ body: json, base64Encoded: false });
+		current = recreatedView(s2.session, counter);
+		const out = await readResponseBody(viewId, "https://x/api");
+
+		// The live page is never consulted: the stale meta wins and the read is
+		// refused on the PREVIOUS page's content-type.
+		expect(out).toContain("is not a data endpoint");
+		expect(out).toContain("image/png");
+		expect(out).not.toContain(json);
+	});
+});

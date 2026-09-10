@@ -18,7 +18,25 @@ interface PersistedPivot {
   };
 }
 
+// Ordered. `theory-falsification` is FIRST because every other rung tells the
+// agent to ACT differently — synthesize, reroute, re-decompose, refresh — and
+// none of them challenges what it BELIEVES. An agent holding a wrong theory
+// takes all four and stays wrong: it looks productive the whole time, because
+// it is editing files and the results genuinely differ.
+//
+// Measured: a clone-matching op spent 76 turns patching an override stylesheet
+// because the two sites built their mobile page by different mechanisms. No
+// rung here would have surfaced that; "which mechanism does the original
+// actually use" would have, in one call. So the cheapest rung asks for the
+// belief and the observation that kills it, before any more work is done.
+//
+// This makes the rotation 5, which loosens the worker ceiling by one rung
+// (workerStrategyPivot aborts after all STRATEGIES have been offered with no
+// novel result). Deliberate: the worst case gets one rung longer, the typical
+// case should get much shorter because this rung can END the loop rather than
+// redirect it, and the wall clock backstops every lane regardless.
 const STRATEGIES = [
+  "theory-falsification",
   "evidence-synthesis",
   "alternate-route",
   "step-redecomposition",
@@ -177,6 +195,9 @@ export function autonomousStrategyPivot(
 
   let instruction: string;
   switch (strategyId) {
+    case "theory-falsification":
+      instruction = "State, in one sentence, the theory your last few actions assumed. Name the single cheapest observation that would prove that theory WRONG — not one that would confirm it. Go get that observation before you change anything else. If no observation could disprove it, you are not testing a theory, you are repeating a habit: say so and pick a different explanation for what you are seeing.";
+      break;
     case "evidence-synthesis":
       instruction = "Stop repeating the stalled operation. Synthesize the evidence already collected, choose the smallest unfinished action that changes the task state, execute it, and verify the result.";
       break;

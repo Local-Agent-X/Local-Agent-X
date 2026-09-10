@@ -32,9 +32,9 @@ describe("autonomous strategy pivots", () => {
     _resetPersistedPivotRestores();
   });
 
-  it("walks four distinct deterministic strategies, then starts a new epoch", () => {
+  it("walks five distinct deterministic strategies, then starts a new epoch", () => {
     const ids: string[] = [];
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 6; i++) {
       const result = autonomousStrategyPivot(ctx(), "exact-repeat");
       expect(result.kind).toBe("nudge");
       if (result.kind !== "nudge") throw new Error("expected nudge");
@@ -42,13 +42,16 @@ describe("autonomous strategy pivots", () => {
       ids.push(meta?.strategyId ?? "");
       addPivot(meta!.strategyId, meta!.epoch);
     }
-    expect(ids.slice(0, 4)).toEqual([
+    // theory-falsification leads: every other rung redirects ACTION, and an
+    // agent holding a wrong theory takes all of them and stays wrong.
+    expect(ids.slice(0, 5)).toEqual([
+      "theory-falsification",
       "evidence-synthesis",
       "alternate-route",
       "step-redecomposition",
       "context-refresh",
     ]);
-    expect(ids[4]).toBe("evidence-synthesis");
+    expect(ids[5]).toBe("theory-falsification");
     const fifth = autonomousStrategyPivot(ctx(), "exact-repeat");
     if (fifth.kind !== "nudge") throw new Error("expected nudge");
     expect(fifth.metadata?.strategyPivot?.epoch).toBe(2);
@@ -56,6 +59,10 @@ describe("autonomous strategy pivots", () => {
   });
 
   it("mentions delegation only when agent_spawn is already advertised", () => {
+    // Seed the rotation up to step-redecomposition — the one rung that offers
+    // delegation. Its position tracks STRATEGIES order, so this list moves when
+    // a rung is added ahead of it.
+    addPivot("theory-falsification");
     addPivot("evidence-synthesis");
     addPivot("alternate-route");
     const withoutSpawn = autonomousStrategyPivot(ctx(), "flat-evidence");

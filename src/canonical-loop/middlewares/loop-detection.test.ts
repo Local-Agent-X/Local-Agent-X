@@ -77,7 +77,7 @@ describe("loop-detection middleware — lane policy", () => {
     expect(completed.kind).toBe("nudge");
     expect(completed.reason).toBe("strategy-pivot");
     expect((completed as { metadata?: { strategyPivot?: { strategyId: string } } }).metadata?.strategyPivot?.strategyId)
-      .toBe("evidence-synthesis");
+      .toBe("theory-falsification");
     expect((await loopDetectionMiddleware.beforeTurn!(ctxFor(op, "build", []))).kind).toBe("continue");
   });
 

@@ -79,7 +79,7 @@ describe("worker-lane strategy pivot ceiling — the recorded livelock ends at a
     expect(run.abortedAt).not.toBeNull();
     // Bounded well inside the wall clock, and only after the worker was
     // actually offered every strategy: the ceiling is a last resort.
-    expect(run.pivots).toBeGreaterThanOrEqual(4);
+    expect(run.pivots).toBeGreaterThanOrEqual(5);
     expect(run.abortedAt!).toBeLessThan(LONG_RUN.length);
     expect(run.abortMessage).toMatch(/strategy-pivot ceiling/i);
     expect(run.abortMessage).toMatch(/no-progress/);
@@ -131,9 +131,16 @@ describe("worker-lane strategy pivot ceiling — the recorded livelock ends at a
     expect(run.pivots).toBeGreaterThanOrEqual(4);
     expect(run.abortMessage).toMatch(/strategy-pivot ceiling/i);
     // Deterministic replay, so the bound is exact. Strong: cycle detection
-    // needs three laps of the six-step shape — the turn 7963d10e measured
-    // (index 365, turn 366). Medium detects on two laps and ends at index 67.
-    expect(run.abortedAt).toBe(tier === "strong" ? 365 : 67);
+    // needs three laps of the six-step shape; medium detects on two laps.
+    // These moved out by exactly one pivot rung when theory-falsification
+    // was added to STRATEGIES (365 -> 442 strong, 67 -> 89 medium): the
+    // ceiling fires after every rung has been offered with no novel result,
+    // so a fifth rung is a fifth cycle-length of turns. Accepted because the
+    // new rung is FIRST and can end the loop outright, and because every
+    // non-interactive lane now has an enforced wall clock (b5ad425c) that
+    // fires long before turn 442. If this number moves again, a rung was
+    // added or the ceiling changed — neither should happen silently.
+    expect(run.abortedAt).toBe(tier === "strong" ? 442 : 89);
   });
 
   it.each(MATRIX)("$lane / $tier: write-only work over distinct files never aborts", async ({ lane, tier }) => {
@@ -143,7 +150,7 @@ describe("worker-lane strategy pivot ceiling — the recorded livelock ends at a
     expect(run.pivots).toBe(0);
   });
 
-  it("a novel result after a pivot re-arms the ceiling — four more strategies before any abort", async () => {
+  it("a novel result after a pivot re-arms the ceiling — a full rotation more before any abort", async () => {
     // Identical results until the third pivot has been offered, then one
     // turn of real information, then identical again. The ceiling must count
     // from that novel turn, not from the first pivot.
@@ -151,8 +158,11 @@ describe("worker-lane strategy pivot ceiling — the recorded livelock ends at a
     let novelAt: number | null = null;
     const opId = `op-livelock-rearm`;
     let abortedAt: number | null = null;
-    for (let i = 0; i < LONG_RUN.length && abortedAt === null; i++) {
-      const names = LONG_RUN[i].split(",");
+    // Two passes of the recorded shape: one rotation is five rungs now, and a
+    // mid-run re-arm pushes the ceiling past the end of a single pass.
+    const REPLAY = [...LONG_RUN, ...LONG_RUN];
+    for (let i = 0; i < REPLAY.length && abortedAt === null; i++) {
+      const names = REPLAY[i].split(",");
       const toolCalls = names.map((tool, j) => ({ toolCallId: `r${i}-${j}`, tool, args: { path: `/w/s-${i}-${j}.html`, url: `https://x/${i}` } }));
       const novel = pivotsSeen === 3 && novelAt === null;
       if (novel) novelAt = i;
@@ -169,8 +179,10 @@ describe("worker-lane strategy pivot ceiling — the recorded livelock ends at a
     }
     expect(novelAt).not.toBeNull();
     expect(abortedAt).not.toBeNull();
-    // Three pivots before the novel turn, then a full four-strategy cycle
-    // AFTER it before the ceiling could fire: at least seven pivots total.
-    expect(pivotsSeen).toBeGreaterThanOrEqual(7);
+    // Three pivots before the novel turn, then a full FIVE-strategy rotation
+    // after it before the ceiling could fire: at least eight pivots total.
+    // The number tracks STRATEGIES.length — if a rung is added or removed
+    // this is one of the two places that must move with it.
+    expect(pivotsSeen).toBeGreaterThanOrEqual(8);
   });
 });

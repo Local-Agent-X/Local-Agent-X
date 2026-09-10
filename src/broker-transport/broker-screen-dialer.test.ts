@@ -5,6 +5,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { BrokerScreenDialer, type ScreenSessionLike } from "./broker-screen-dialer.js";
+import { ICE_GRACE_MS } from "./broker-dialer.js";
 import type { SocketAdapter, CloseReason } from "./vendor/socket-adapter.js";
 import { DataChannelControl, type ControlChannel, type ControlOutbound, type ScreenCommand } from "./control-channel.js";
 import type { ScreenSessionOptions } from "../screen-stream/session.js";
@@ -121,7 +122,7 @@ describe("BrokerScreenDialer — start trigger", () => {
     const { socket, session } = makeDialer();
     socket.deliver({ type: "joined", role: "desktop", peerPresent: true });
     socket.deliver({ type: "peer-left" });
-    vi.advanceTimersByTime(2000);
+    vi.advanceTimersByTime(ICE_GRACE_MS);
     expect(session.types).not.toContain("rtc_start");
   });
 
@@ -129,7 +130,7 @@ describe("BrokerScreenDialer — start trigger", () => {
     const { socket, session } = makeDialer();
     socket.deliver({ type: "joined", role: "desktop", peerPresent: true });
     socket.deliver({ type: "peer-left" });
-    vi.advanceTimersByTime(2000);
+    vi.advanceTimersByTime(ICE_GRACE_MS);
     expect(session.types).toEqual([]); // nothing started while the peer was away
 
     socket.deliver({ type: "peer-joined" });
@@ -138,11 +139,41 @@ describe("BrokerScreenDialer — start trigger", () => {
     expect(session.frames.filter((f) => f.type === "rtc_start")).toHaveLength(1);
   });
 
+  // The broker mints TURN AFTER both peers are present; a cold mint measured 3.17s
+  // against the live broker. Whenever it lands past the grace window the peer has
+  // already started host/STUN-only, which cannot traverse CGNAT — so the phone on
+  // cellular is dead for that session's whole life unless we rebuild on the relay.
+  it("rebuilds on a relay that arrives after a host/STUN-only start", () => {
+    const { socket, session, getOpts } = makeDialer();
+    socket.deliver({ type: "joined", role: "desktop", peerPresent: true });
+    vi.advanceTimersByTime(ICE_GRACE_MS);
+    expect(session.types).toEqual(["rtc_start"]);
+    expect(getOpts().getIceServers?.()).toEqual([]); // started with no relay
+
+    socket.deliver({ type: "ice-servers", iceServers: TURN, ttlSeconds: 300 });
+
+    expect(session.disconnects).toBe(1); // stale peer dropped
+    expect(session.frames.filter((f) => f.type === "rtc_start")).toHaveLength(2);
+    expect(getOpts().getIceServers?.()).toEqual(TURN); // rebuilt ON the relay
+  });
+
+  it("does not churn a healthy peer when an equivalent relay set is re-minted", () => {
+    const { socket, session } = makeDialer();
+    socket.deliver({ type: "joined", role: "desktop", peerPresent: true });
+    socket.deliver({ type: "ice-servers", iceServers: TURN, ttlSeconds: 300 });
+    expect(session.frames.filter((f) => f.type === "rtc_start")).toHaveLength(1);
+
+    socket.deliver({ type: "ice-servers", iceServers: TURN, ttlSeconds: 300 }); // TTL refresh
+
+    expect(session.disconnects).toBe(0);
+    expect(session.frames.filter((f) => f.type === "rtc_start")).toHaveLength(1);
+  });
+
   it("starts STUN/host-only after the grace window when a TURN-less broker sends no ice-servers", () => {
     const { socket, session, getOpts } = makeDialer();
     socket.deliver({ type: "joined", role: "desktop", peerPresent: true });
     expect(session.types).not.toContain("rtc_start");
-    vi.advanceTimersByTime(2000);
+    vi.advanceTimersByTime(ICE_GRACE_MS);
     expect(session.types).toEqual(["rtc_start"]);
     expect(getOpts().getIceServers?.()).toEqual([]); // no minted servers → empty list
   });

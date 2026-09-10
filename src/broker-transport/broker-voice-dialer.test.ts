@@ -3,8 +3,9 @@
 // fake VoicePeer records the answer/ice it receives and exposes its handlers so we can
 // simulate the peer trickling local ICE.
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { BrokerVoiceDialer, type VoicePeerLike } from "./broker-voice-dialer.js";
+import { ICE_GRACE_MS } from "./broker-dialer.js";
 import type { SocketAdapter, CloseReason } from "./vendor/socket-adapter.js";
 import type { VoicePeerHandlers, RtcIceCandidate } from "../voice/voice-peer.js";
 import type { ControlTransport, IceServerConfig } from "../screen-stream/peer.js";
@@ -81,13 +82,39 @@ describe("BrokerVoiceDialer — startup", () => {
   });
 
   it("starts STUN/host-only after the grace window when no ice-servers arrive", async () => {
-    const { socket, peers } = makeDialer();
-    socket.deliver({ type: "joined", role: "desktop", peerPresent: true });
-    // No ice-servers; wait out the 2s grace.
-    await new Promise((r) => setTimeout(r, 2100));
-    expect(peers.length).toBe(1);
-    expect(peers[0]!.ice).toEqual([]);
-    expect(socket.sentFrames.some((f) => f.signal?.kind === "offer")).toBe(true);
+    vi.useFakeTimers();
+    try {
+      const { socket, peers } = makeDialer();
+      socket.deliver({ type: "joined", role: "desktop", peerPresent: true });
+      await vi.advanceTimersByTimeAsync(ICE_GRACE_MS + 100);
+      expect(peers.length).toBe(1);
+      expect(peers[0]!.ice).toEqual([]);
+      expect(socket.sentFrames.some((f) => f.signal?.kind === "offer")).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // Voice shares BrokerDialer with the screen path, and is equally unreachable on
+  // cellular without a relay — so the late-relay rebuild must reach it too. Its
+  // onRebuild closes the stale peer rather than disconnecting a session.
+  it("rebuilds the voice peer on a relay that arrives after a host/STUN-only start", async () => {
+    vi.useFakeTimers();
+    try {
+      const { socket, peers } = makeDialer();
+      socket.deliver({ type: "joined", role: "desktop", peerPresent: true });
+      await vi.advanceTimersByTimeAsync(ICE_GRACE_MS + 100);
+      expect(peers).toHaveLength(1);
+      expect(peers[0]!.ice).toEqual([]);
+
+      socket.deliver({ type: "ice-servers", iceServers: [{ urls: "turn:x", username: "u", credential: "c" }], ttlSeconds: 300 });
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(peers).toHaveLength(2);
+      expect(peers[1]!.ice).toEqual([{ urls: "turn:x", username: "u", credential: "c" }]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

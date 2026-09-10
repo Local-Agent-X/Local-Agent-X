@@ -32,12 +32,25 @@ const TERMINAL_AUTH_CODES = new Set<BrokerErrorCode>([
 /** How long to wait after `peer-present` for the broker's `ice-servers` frame before
  *  starting anyway. A TURN-configured broker mints + sends ice-servers once both peers are
  *  present, so it normally arrives first; a TURN-less broker never sends it, so we must not
- *  wait forever (that would be a silent hang). */
-export const ICE_GRACE_MS = 2000;
+ *  wait forever (that would be a silent hang).
+ *
+ *  Measured against the live broker: a WARM mint lands in 20-100ms, but the COLD one (first
+ *  connect after a restart — exactly when a user tests) took 3.17s and blew the old 2s
+ *  window, starting the session with no relay. Under event-loop pressure the timer itself
+ *  fired ~1s late on top of that. 8s clears both with margin; the only cost is that a
+ *  genuinely TURN-less broker waits longer before its host/STUN-only start. */
+export const ICE_GRACE_MS = 8000;
 
 /** An IceServer's urls field is a single string or a list; normalize to a list. */
 function urlsOf(server: IceServer): string[] {
   return typeof server.urls === "string" ? [server.urls] : server.urls;
+}
+
+/** How many entries can RELAY (turn:/turns:). A relay is the only ICE path that works
+ *  when a peer is behind CGNAT — a phone on cellular — so STUN-only ICE is not merely
+ *  slower there, it cannot connect at all. */
+function relayCount(servers: IceServer[]): number {
+  return servers.filter((s) => urlsOf(s).some((u) => /^turns?:/i.test(u))).length;
 }
 
 /** An inbound remote ICE candidate, normalized from the broker's ice signal — the shape
@@ -140,19 +153,31 @@ export abstract class BrokerDialer {
   }
 
   private onIceServers(servers: IceServer[]): void {
+    const hadRelay = relayCount(this.iceServers) > 0;
+    // Refill BEFORE any rebuild: getIceServers is a live getter the session reads when
+    // it constructs the peer, so the new servers must already be in place.
     this.iceServers = servers;
-    // Relay-capable means at least one turn:/turns: URL — the only kind that works
-    // when both peers are behind CGNAT (phone on cellular). STUN-only ICE reaches a
-    // symmetric NAT and stops. Log the shape, never the short-lived credential.
-    const relay = servers.filter(s => urlsOf(s).some(u => /^turns?:/i.test(u))).length;
-    const late = this.started ? " AFTER the peer already started (host/STUN-only)" : "";
+    const relay = relayCount(servers);
+    // Log the shape, never the short-lived credential.
     logger.info(
-      `[broker-transport] ${this.logLabel}ice-servers: ${servers.length} server(s), ${relay} relay-capable${late}`,
+      `[broker-transport] ${this.logLabel}ice-servers: ${servers.length} server(s), ${relay} relay-capable`,
     );
     if (relay === 0) {
       logger.warn(
         `[broker-transport] ${this.logLabel}no TURN relay in ice-servers — direct P2P only; this fails on cellular/CGNAT`,
       );
+    }
+    // Late relay: the grace window already force-started us host/STUN-only, which cannot
+    // traverse CGNAT. Rebuild on the relay rather than stranding the session for its whole
+    // life — this is the same rebuild peer-left performs, so the phone already handles it.
+    // Only when we gained relay we did not have: a re-mint of an equivalent set (TTL
+    // refresh) must not churn a healthy peer.
+    if (this.started && !hadRelay && relay > 0) {
+      logger.warn(
+        `[broker-transport] ${this.logLabel}relay arrived after a host/STUN-only start — rebuilding the peer on it`,
+      );
+      this.onRebuild();
+      this.started = false;
     }
     this.maybeStart();
   }

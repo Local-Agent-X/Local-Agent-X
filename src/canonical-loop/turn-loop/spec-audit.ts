@@ -21,25 +21,17 @@
 // LAX_SPEC_AUDIT=0. Per-op state cleared on op terminal via
 // clearSpecAuditStateForOp (state-machine.ts).
 
-import { readFileSync } from "node:fs";
-import { basename, dirname } from "node:path";
 import { opEditedSourcePaths } from "../middlewares/verify-gate.js";
 import { firstUserMessageText, appliedRedirectTexts } from "../store.js";
 import { getSessionForOp } from "../../ops/session-bridge.js";
 import { resolveAgentPath } from "../../workspace/paths.js";
 import { auditDoneClaim, AUDIT_EVIDENCE_LIMIT } from "../../classifiers/done-claim-audit.js";
-import { bashTool } from "../../tools/shell-tool.js";
-import { statusOf } from "../../tools/result-helpers.js";
+import { collectDiffEvidence } from "./diff-evidence.js";
 import { createLogger } from "../../logger.js";
 import type { Op } from "../../ops/types.js";
 
 const logger = createLogger("canonical-loop.spec-audit");
 
-const DIFF_TIMEOUT_MS = 20_000;
-/** Paths handed to `git diff` / the contents fallback — beyond this a sweep is
- *  too wide for one audit context anyway; head of the list wins. */
-const MAX_EVIDENCE_PATHS = 25;
-const MAX_CONTENT_FILES = 3;
 const MIN_REQUEST_CHARS = 12;
 
 // One audit per op, whatever the verdict — a fresh done-claim after the nudge
@@ -58,49 +50,14 @@ export function _resetSpecAuditState(): void {
   AUDITED.clear();
 }
 
-function truncateHead(text: string, limit: number): string {
-  if (text.length <= limit) return text;
-  const dropped = text.slice(limit).split("\n").length;
-  return `${text.slice(0, limit)}\n… (truncated — ${dropped} more lines)`;
-}
-
 /**
- * The op's changes, as the auditor will see them. Prefer `git diff HEAD`
- * restricted to the edited paths (shows removals as well as additions); when
- * the project isn't a git repo, the diff errors, or the work was already
- * committed (empty diff), fall back to the final contents of the first few
- * edited files — completeness findings ("a live X remains") only need final
- * state. Empty string → the gate stands down.
+ * The op's changes, as the auditor will see them — completeness findings
+ * ("a live X remains") only need final state, so the shared collector's
+ * diff-first / contents-fallback shape (diff-evidence.ts) is exactly right
+ * here unmodified.
  */
 async function defaultCollectEvidence(absPaths: string[], signal?: AbortSignal): Promise<string> {
-  const paths = absPaths.slice(0, MAX_EVIDENCE_PATHS);
-  if (paths.length === 0) return "";
-  try {
-    const quoted = paths.map((p) => `"${p}"`).join(" ");
-    const r = await bashTool.execute({
-      command: `git diff HEAD -- ${quoted}`,
-      _cwd: dirname(paths[0]),
-      _signal: signal,
-      timeout: DIFF_TIMEOUT_MS,
-    });
-    const diff = (r.content ?? "").trim();
-    if (statusOf(r) === "ok" && diff.length > 0) {
-      return truncateHead(diff, AUDIT_EVIDENCE_LIMIT);
-    }
-  } catch {
-    // fall through to contents
-  }
-  const perFile = Math.floor(AUDIT_EVIDENCE_LIMIT / MAX_CONTENT_FILES);
-  const parts: string[] = [];
-  for (const p of paths.slice(0, MAX_CONTENT_FILES)) {
-    try {
-      const text = readFileSync(p, "utf-8");
-      parts.push(`===== FINAL CONTENT: ${basename(p)} =====\n${truncateHead(text, perFile)}`);
-    } catch {
-      continue; // deleted/unreadable — nothing to show for it
-    }
-  }
-  return parts.join("\n\n");
+  return collectDiffEvidence(absPaths, AUDIT_EVIDENCE_LIMIT, signal);
 }
 
 function formatUnmetForAgent(unmet: string[]): string {

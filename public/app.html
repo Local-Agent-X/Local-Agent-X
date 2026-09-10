@@ -851,6 +851,27 @@
             <div class="field-hint">"Always for this session" on an approval card remembers your choice until the server restarts.</div>
           </div>
           <div class="toggle-row"><div><div class="toggle-label">Verify deliverables</div><div class="toggle-desc">When a deliverable is built from external data (a report, spreadsheet, chart) — in a chat turn or a delegated task — run an independent verification pass that re-checks it against its sources. It waits until you have stopped editing, then runs once over everything that changed since the last check, so iterating on a file costs one background model run, not one per save.</div></div><div id="tp-toggle-verify-deliverables" class="toggle on" onclick="toolPolicyToggle('verifyDeliverables', this)"></div></div>
+          <div class="field-row">
+            <div class="field">
+              <label class="field-label">Regression-audit second opinion</label>
+              <select class="field-select" id="tp-select-regression-audit-provider" onchange="toolPolicySelect('regressionAuditProvider', this.value)">
+                <option value="">Same model, fresh context (default)</option>
+                <option value="anthropic">Anthropic</option>
+                <option value="codex">OpenAI Codex</option>
+                <option value="openai">OpenAI API</option>
+                <option value="xai">xAI Grok</option>
+                <option value="gemini">Gemini</option>
+                <option value="ollama">Ollama (local)</option>
+                <option value="local">Local runtime</option>
+              </select>
+              <div class="field-hint">After every code change, an independent pass audits the diff for breakage in files it didn't touch, unfiltered sensitive data reaching a client, error handling that masks real failures, and weakened tests — before "done" is allowed to stand. Default re-reads the diff with the SAME model, fresh eyes. Pick a different, already-connected provider here for a genuinely independent second opinion (falls back to the default if that provider isn't connected).</div>
+            </div>
+            <div class="field" style="max-width:220px">
+              <label class="field-label">Audit model (optional)</label>
+              <input class="field-input" id="tp-input-regression-audit-model" placeholder="provider default" onchange="toolPolicySelect('regressionAuditModel', this.value)"/>
+              <div class="field-hint">Only used when a second-opinion provider is picked above.</div>
+            </div>
+          </div>
         </div>
         <div class="section-card">
           <div class="section-title">Rollback</div>

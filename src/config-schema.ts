@@ -164,6 +164,12 @@ export const configSchema = z.object({
   // model run. Consulted live by the verification trigger, so flipping it
   // off skips the pass with no restart.
   verifyDeliverables: z.boolean().default(true),
+  // Regression-audit completion gate's optional second-provider audit target.
+  // Empty (default) = same-model fresh-context audit. Set to route the diff
+  // audit to a genuinely different, already-credentialed provider instead.
+  // Consulted live by resolve-regression-audit-provider.ts.
+  regressionAuditProvider: z.string().default(""),
+  regressionAuditModel: z.string().default(""),
 
   /** USD spend ceilings on REAL per-call API spend — ON by default ($15 per
    *  session, $75 per day) so a runaway op on a per-token API key is bounded

@@ -1,6 +1,6 @@
 /**
- * The five VERIFY gates of the completion chain — render-verify, build-verify,
- * spec-probe, spec-audit, design-verify.
+ * The six VERIFY gates of the completion chain — render-verify, build-verify,
+ * spec-probe, spec-audit, regression-audit, design-verify.
  *
  * Pure extraction from decide-outcome-gates.ts for the hard 400-LOC
  * source-hygiene ceiling it had reached, taking its piece the way
@@ -30,6 +30,7 @@ import { appIdsTouchedByTurn, registerOpAppTouch, runRenderVerifyGate, turnTouch
 import { runBuildVerifyGate } from "./build-verify.js";
 import { runSpecProbeGate } from "./spec-probes.js";
 import { runSpecAuditGate } from "./spec-audit.js";
+import { runRegressionAuditGate } from "./regression-audit.js";
 import { runDesignVerifyGate } from "./design-verify.js";
 import { opEditedSourceUnverified, opEditedSourcePaths } from "../middlewares/verify-gate.js";
 import { userAuthoredRequest } from "../../slash-commands.js";
@@ -161,6 +162,30 @@ export const specAuditGate: CompletionGate = {
     const gate = await runSpecAuditGate(op);
     if (gate.shouldRetry) {
       appendNudgeAsUserMessage(op.id, turnIdx + 1, gate.nudge, gateSource("spec-audit", "nudge"));
+      return { reopen: true };
+    }
+    return CONTINUE;
+  },
+};
+
+/**
+ * Regression-audit gate (the sixth gate). Complements spec-audit — that one
+ * asks "did the diff satisfy the request?"; this one asks "did the diff break
+ * something the request never mentioned?" A second fresh-context pass over
+ * the SAME diff (plus a best-effort blast-radius consumer grep), checking for
+ * consumer breakage, sensitive-data exposure, error-handling that masks
+ * failures, and weakened tests — the four categories a green build/test run
+ * and a completeness check both structurally miss. Runs only when the op
+ * edited source. Nudge-only, fires at most once per op, never demotes the
+ * label. Contract lives in regression-audit.ts.
+ */
+export const regressionAuditGate: CompletionGate = {
+  name: "regression-audit",
+  async evaluate({ op, turnIdx }) {
+    if (opEditedSourcePaths(op.id).length === 0) return CONTINUE;
+    const gate = await runRegressionAuditGate(op);
+    if (gate.shouldRetry) {
+      appendNudgeAsUserMessage(op.id, turnIdx + 1, gate.nudge, gateSource("regression-audit", "nudge"));
       return { reopen: true };
     }
     return CONTINUE;

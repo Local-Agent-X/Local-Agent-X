@@ -239,6 +239,47 @@ describe("classify-with-llm codex branch", () => {
   });
 });
 
+describe("classify-with-llm providerOverride — the one explicit cross-provider caller", () => {
+  const yieldText = (delta: string) => (async function* () {
+    yield { type: "text", delta };
+  })();
+  const parse = (raw: string) => raw.trim();
+  const resolveProviderContextSpy = vi.fn();
+
+  beforeEach(async () => {
+    codexMock.streamCodexResponse.mockReset();
+    mocks.ctx = { provider: "xai", apiKey: "k", model: "grok-4.3" }; // the active chat provider — must be ignored
+    const { resolveProviderContext } = await import("../providers/resolve-provider-context.js");
+    resolveProviderContextSpy.mockClear();
+    vi.mocked(resolveProviderContext).mockImplementation(async () => {
+      resolveProviderContextSpy();
+      return mocks.ctx;
+    });
+  });
+
+  it("routes to the override's provider/model, never touching resolveProviderContext", async () => {
+    codexMock.streamCodexResponse.mockImplementationOnce(() => yieldText("YES"));
+    const out = await classifyWithLLM({
+      category: "test", systemPrompt: "s", userPrompt: "u", timeoutMs: 2000, parse,
+      modelTier: "active",
+      providerOverride: { provider: "codex", apiKey: "override-key", model: "gpt-6-astra" },
+    });
+    expect(out).toBe("YES");
+    expect(resolveProviderContextSpy).not.toHaveBeenCalled();
+    const params: CodexCallParams = codexMock.streamCodexResponse.mock.calls[0][0];
+    expect(params.token).toBe("override-key");
+    expect(params.model).toBe("gpt-6-astra");
+  });
+
+  it("every existing caller (no override) is byte-for-byte unchanged", async () => {
+    // Regression guard for the additive-only claim: omitting providerOverride
+    // must still resolve through resolveProviderContext exactly as before.
+    dispatchMock.mockResolvedValueOnce("NO — not a give-up");
+    await classifyYesNo({ category: "test", systemPrompt: "s", userPrompt: "u", timeoutMs: 2000 });
+    expect(resolveProviderContextSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("parseYesNoReason", () => {
   it("splits verdict from reason across common separators", () => {
     expect(parseYesNoReason("YES — the build is broken")).toEqual({ verdict: true, reason: "the build is broken" });

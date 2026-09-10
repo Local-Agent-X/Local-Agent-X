@@ -990,6 +990,7 @@ describe("completion-gate table — single ordering source", () => {
       "build-verify",
       "spec-probe",
       "spec-audit",
+      "regression-audit",
       "design-verify",
       // A "done" whose final text still holds tool-call syntax — the call never
       // ran; sits before earned-done so the retry reissues the call.

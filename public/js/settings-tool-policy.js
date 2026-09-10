@@ -29,6 +29,12 @@ async function loadToolPolicyToggles() {
     setToolPolicyToggle('cfg-toggle-grok-media', s.preferGrokForMedia !== false);
     // Deliverable verification pass defaults ON (!== false).
     setToolPolicyToggle('tp-toggle-verify-deliverables', s.verifyDeliverables !== false);
+    // Regression-audit gate's optional second-provider target. Empty (default)
+    // = same-model fresh-context audit; the select's blank option covers that.
+    const auditProviderSelect = document.getElementById('tp-select-regression-audit-provider');
+    if (auditProviderSelect) auditProviderSelect.value = s.regressionAuditProvider || '';
+    const auditModelInput = document.getElementById('tp-input-regression-audit-model');
+    if (auditModelInput) auditModelInput.value = s.regressionAuditModel || '';
     // developer_mode defaults OFF (=== true), unlike the kill-switches above
     // which default ON (!== false). The card only renders on installs where
     // self_edit can exist at all (git checkout) — packaged installs hide it.

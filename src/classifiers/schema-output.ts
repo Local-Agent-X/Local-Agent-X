@@ -43,6 +43,8 @@ export interface ClassifySchemaOptions<T> {
   maxResponseChars?: number;
   envDisableVar?: string;
   signal?: AbortSignal;
+  /** Pass-through to classifyWithLLM's explicit cross-provider escape hatch. See its doc. */
+  providerOverride?: { provider: string; apiKey: string; model: string };
   /**
    * Test seam: override the LLM call. Receives (systemPrompt, userPrompt),
    * returns the raw model text or null for "unavailable". Defaults to the
@@ -115,6 +117,7 @@ export async function classifySchema<T>(opts: ClassifySchemaOptions<T>): Promise
         maxResponseChars: opts.maxResponseChars,
         envDisableVar: opts.envDisableVar,
         signal: opts.signal,
+        providerOverride: opts.providerOverride,
         parse: (raw) => raw,
       }));
 

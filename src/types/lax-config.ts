@@ -165,6 +165,14 @@ export interface LAXConfig {
    *  before hand-off. Costs one background model run each time it fires.
    *  Not a security kill-switch; user-flippable. */
   verifyDeliverables: boolean;
+  /** Optional second-provider audit target for the regression-audit completion
+   *  gate (a fresh-eyes pass over every code change, checking for breakage in
+   *  untouched files, unfiltered sensitive data, masked errors, weakened
+   *  tests). Empty (default) = same model, fresh context. Set to route that
+   *  one gate to a different, already-credentialed provider instead. */
+  regressionAuditProvider: string;
+  /** Model name within regressionAuditProvider. Empty = that provider's default. */
+  regressionAuditModel: string;
 
   /** Opt-in daily USD spend cap. 0 (default) = disabled. When > 0, the
    *  spend-cap pack blocks every tool call once today's total cost reaches

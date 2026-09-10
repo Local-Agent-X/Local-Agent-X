@@ -212,6 +212,20 @@ export const FLIPPABLE_SETTINGS: ReadonlyArray<FlippableSetting> = [
     broadcast: true,
     description: "Independent verification pass when a deliverable is built from external data (a report, spreadsheet, chart) — a background model re-checks the result against its sources. Covers work done in a chat turn as well as delegated tasks. On by default; it waits until you have stopped editing, then runs ONCE over everything that changed since the last check, so iterating on a file costs one verification and not one per save (unchanged files are never re-checked, and only one verification runs per chat at a time)",
   },
+  {
+    field: "regressionAuditProvider",
+    validate: z.string(),
+    runtime: true,
+    broadcast: true,
+    description: "Optional second provider id (codex, anthropic, xai, openai, gemini, ollama, local) for the regression-audit completion gate — a fresh-eyes pass over every code change that checks for breakage in files the change didn't touch, unfiltered sensitive data reaching a client, error handling that masks real failures, and weakened tests. Empty (default) audits with the SAME model that wrote the change, fresh context. Set this to route the audit to a genuinely different provider instead — needs that provider already connected/credentialed; silently falls back to the same-model audit if it isn't, or if this is set to the provider you're already chatting on",
+  },
+  {
+    field: "regressionAuditModel",
+    validate: z.string(),
+    runtime: true,
+    broadcast: true,
+    description: "Model name within regressionAuditProvider (e.g. claude-opus-5, gpt-6-astra, grok-4.6). Empty = that provider's default model. Ignored when regressionAuditProvider is empty",
+  },
 
   // ── UI-only (renderer reads settings.json directly; no runtime mirror needed) ──
   {

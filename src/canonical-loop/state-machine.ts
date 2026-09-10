@@ -25,6 +25,7 @@ import { clearBuildVerifyStateForOp } from "./turn-loop/build-verify.js";
 import { clearDesignVerifyStateForOp } from "./turn-loop/design-verify.js";
 import { clearSpecProbeStateForOp } from "./turn-loop/spec-probes.js";
 import { clearSpecAuditStateForOp } from "./turn-loop/spec-audit.js";
+import { clearRegressionAuditStateForOp } from "./turn-loop/regression-audit.js";
 import { clearEarnedDoneStateForOp } from "./middlewares/open-steps.js";
 import { clearOpLedger } from "./instruction-ledger/ledger.js";
 import { getSessionForOp } from "../ops/session-bridge.js";
@@ -201,6 +202,7 @@ function finalizeTerminalState(op: Op, to: CanonicalState): void {
   clearDesignVerifyStateForOp(op.id);
   clearSpecProbeStateForOp(op.id);
   clearSpecAuditStateForOp(op.id);
+  clearRegressionAuditStateForOp(op.id);
   clearEarnedDoneStateForOp(op.id);
   clearOpLedger(op.id);
   unregisterAdapterForOp(op.id);

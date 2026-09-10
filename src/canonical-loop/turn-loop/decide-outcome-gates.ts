@@ -46,6 +46,7 @@ import {
   buildVerifyGate,
   designVerifyGate,
   renderVerifyGate,
+  regressionAuditGate,
   specAuditGate,
   specProbeGate,
 } from "./decide-outcome-verify-gates.js";
@@ -240,6 +241,12 @@ export const COMPLETION_GATES: readonly CompletionGate[] = [
   buildVerifyGate,
   specProbeGate,
   specAuditGate,
+  // Different question from spec-audit (did the diff satisfy the request?):
+  // did the diff break something the request never mentioned? Runs right
+  // after spec-audit so both fresh-context passes sit together at the front
+  // of the chain, before the state-only gates below. Contract in
+  // regression-audit.ts.
+  regressionAuditGate,
   designVerifyGate,
   // A "done" whose final text still holds tool-call syntax is not a done at
   // all — the call never ran. Sits BEFORE earned-done so the retry goes to

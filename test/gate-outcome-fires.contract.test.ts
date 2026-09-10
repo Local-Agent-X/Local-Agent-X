@@ -98,6 +98,7 @@ import {
   buildVerifyGate,
   designVerifyGate,
   renderVerifyGate,
+  regressionAuditGate,
   specAuditGate,
   specProbeGate,
 } from "../src/canonical-loop/turn-loop/decide-outcome-verify-gates.js";
@@ -565,7 +566,7 @@ describe("E2 — the merged whole", () => {
   // loop walks holds the very objects those modules export.
   it("the table the loop walks is assembled from BOTH gate modules, by identity", () => {
     expect(COMPLETION_GATE_ORDER).toEqual([
-      "render-verify", "build-verify", "spec-probe", "spec-audit", "design-verify",
+      "render-verify", "build-verify", "spec-probe", "spec-audit", "regression-audit", "design-verify",
       "unresolved-tool-intent", "earned-done", "late-inject", "framework-serve",
     ]);
     const byName = new Map(COMPLETION_GATES.map(g => [g.name, g]));
@@ -573,6 +574,7 @@ describe("E2 — the merged whole", () => {
     expect(byName.get("build-verify")).toBe(buildVerifyGate);
     expect(byName.get("spec-probe")).toBe(specProbeGate);
     expect(byName.get("spec-audit")).toBe(specAuditGate);
+    expect(byName.get("regression-audit")).toBe(regressionAuditGate);
     expect(byName.get("design-verify")).toBe(designVerifyGate);
     // The contract module is the leaf both sides share: the same CONTINUE
     // value and the same fire factory, or the "one table" claim is cosmetic.

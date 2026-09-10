@@ -12,6 +12,7 @@ vi.mock("./turn-loop/build-verify.js", () => ({ clearBuildVerifyStateForOp: vi.f
 vi.mock("./turn-loop/design-verify.js", () => ({ clearDesignVerifyStateForOp: vi.fn() }));
 vi.mock("./turn-loop/spec-probes.js", () => ({ clearSpecProbeStateForOp: vi.fn() }));
 vi.mock("./turn-loop/spec-audit.js", () => ({ clearSpecAuditStateForOp: vi.fn() }));
+vi.mock("./turn-loop/regression-audit.js", () => ({ clearRegressionAuditStateForOp: vi.fn() }));
 vi.mock("./instruction-ledger/ledger.js", () => ({ clearOpLedger: vi.fn() }));
 vi.mock("../ops/session-bridge.js", () => ({ getSessionForOp: vi.fn(() => "sess-1") }));
 

@@ -96,6 +96,7 @@ describe("completion gate order", () => {
       "build-verify",
       "spec-probe",
       "spec-audit",
+      "regression-audit",
       "design-verify",
       "unresolved-tool-intent",
       "earned-done",

@@ -9,6 +9,7 @@ import { restoreFileTool } from "./restore-file-tool.js";
 import { bashTool } from "./shell-tools.js";
 import { processTools } from "./process-tools.js";
 import { webFetchTool } from "./web-tools.js";
+import { comparePagesTool } from "./compare-pages.js";
 import { viewImageTool, screenCaptureTool, listMonitorsTool, cameraCaptureTool, ocrTool } from "./vision-tools.js";
 import { sendVideoTool, sendImageTool } from "./media-send-tools.js";
 import { transcribeMediaTool, readVideoFramesTool } from "./media-read-tools.js";
@@ -55,7 +56,7 @@ import { recallTool } from "./recall-tool.js";
 const _toolSearchTool = createToolSearchTool(unifiedRegistry);
 
 export const allTools: ToolDefinition[] = applyPrompts([
-  readTool, writeTool, editTool, editLinesTool, multiEditTool, bulkReplaceTool, deleteFileTool, restoreFileTool, bashTool, webFetchTool,
+  readTool, writeTool, editTool, editLinesTool, multiEditTool, bulkReplaceTool, deleteFileTool, restoreFileTool, bashTool, webFetchTool, comparePagesTool,
   globTool, grepTool, structuralSearchTool, webSearchTool, imageSearchTool, _toolSearchTool,
   selfEditTool, recallTool, askUserTool, runBuildPlanTool, startAppBuildTool, finalizeAppBuildTool,
   buildPlanStatusTool, buildPlanResumeTool,

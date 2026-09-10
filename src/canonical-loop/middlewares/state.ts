@@ -8,8 +8,8 @@
  *
  * Instead, we key by `opId`. The op IS the across-turn boundary the legacy
  * loop got "for free" from the long-lived LoopContext. State is dropped via
- * `clearMiddlewareStateForOp` from the op-terminal hook in event-emitter.ts
- * so a long-running process doesn't leak.
+ * `clearMiddlewareStateForOp` from `finalizeTerminalState` in state-machine.ts
+ * (the op-terminal hook) so a long-running process doesn't leak.
  */
 
 const STATES = new Map<string, Map<string, unknown>>();

@@ -105,7 +105,10 @@ export function storeSummary(
   });
 }
 
-/** Drop one op's entry (op finished) or the whole cache (tests). */
+/** Drop one op's entry, or the whole cache (tests). The only production
+ *  caller is compact-history.ts's FORCED pass (an overflow retry must not
+ *  reuse the pinned summary); there is no op-terminal caller, so a finished
+ *  op's entry lives until the MAX_TRACKED_OPS LRU evicts it. */
 export function clearSummaryCache(opId?: string): void {
   if (opId === undefined) cache.clear();
   else cache.delete(opId);

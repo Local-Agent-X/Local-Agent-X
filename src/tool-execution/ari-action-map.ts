@@ -15,6 +15,8 @@
 export const ARI_ACTION_MAP: Record<string, string> = {
   read: "read", write: "write", edit: "write", edit_lines: "write", multi_edit: "write", bulk_replace: "write",
   web_search: "get", web_fetch: "get", http_request: "get", browser: "get",
+  // Two guarded GETs (desktop + phone UA) per URL, through canonicalFetch.
+  compare_pages: "get",
   image_search: "get",
   bash: "exec",
   memory_search: "search",

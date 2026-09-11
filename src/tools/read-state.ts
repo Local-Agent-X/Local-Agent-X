@@ -108,10 +108,20 @@ function hash(content: string): string {
 
 interface DiskSnapshot { content: string; hash: string; mtimeMs: number }
 
-/** One stat+read of the current disk state. null when missing/unreadable. */
+/** One stat+read of the current disk state. null when missing/unreadable.
+ *
+ *  mtimeMs is stored as an integer millisecond — Node reports it as a Number
+ *  computed from a nanosecond timespec (`s * 1000 + ns / 1_000_000`), so on
+ *  high-resolution Linux filesystems the double can hold a sub-millisecond
+ *  drift (e.g. utimesSync with `Date(N)` reads back as `N - 0.001`). Every
+ *  caller compares mtimeMs against another mtime (either a fresh statSync
+ *  result stored the same way, or a `Date.getTime()` from utimesSync — the
+ *  invariant assumed by tests), so rounding to whole millis keeps those
+ *  compares symmetric AND matches the integer-milli mental model the rest
+ *  of the codebase uses. */
 function readDisk(path: string): DiskSnapshot | null {
   try {
-    const mtimeMs = statSync(path).mtimeMs;
+    const mtimeMs = Math.round(statSync(path).mtimeMs);
     const content = readFileSync(path, "utf-8");
     return { content, hash: hash(content), mtimeMs };
   } catch {
@@ -201,7 +211,8 @@ export function unchangedSinceSeen(sessionId: string | undefined, path: string):
   const entry = seen.get(sid(sessionId))?.get(canonKey(path));
   if (entry === undefined || entry.partial) return false;
   try {
-    if (statSync(path).mtimeMs !== entry.mtimeMs) return false;
+    // Round to match how mtimeMs was stored (readDisk / sweepExternalChanges).
+    if (Math.round(statSync(path).mtimeMs) !== entry.mtimeMs) return false;
     if (hash(readFileSync(path, "utf-8")) !== entry.hash) return false;
   } catch {
     return false; // missing/unreadable → let the real read report it
@@ -247,7 +258,8 @@ export function sweepExternalChanges(
     if (exempt.has(key)) continue;
     let mtimeMs: number;
     try {
-      mtimeMs = statSync(key).mtimeMs;
+      // Match the rounding done in readDisk — see the note there for why.
+      mtimeMs = Math.round(statSync(key).mtimeMs);
     } catch (e) {
       const code = (e as NodeJS.ErrnoException).code;
       if (code === "ENOENT") {

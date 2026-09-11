@@ -87,9 +87,18 @@ function findWorkspaceApp(filePath: string): WorkspaceApp | null {
     }
   }
   for (let i = 0; i + 2 < values.length; i++) {
-    if (values[i] === "workspace" && values[i + 1] === "apps" && values[i + 2] !== "") {
+    // The "workspace"/"apps" segments are structural anchors owned by us —
+    // they always live in the canonical lowercase spelling regardless of the
+    // filesystem the *user's* path came from. On case-sensitive filesystems
+    // (Linux CI), normPath preserves case, so a Windows-flavored path like
+    // `C:\Data\Workspace\apps\Todo\a.ts` would fail the strict `===` check
+    // even when the segments are semantically the same. Fold the anchors and
+    // the returned slug so the caller always sees a canonical shape; the
+    // path prefixes (`dir`, `workspaceDir`) stay in the input's own spelling
+    // per the invariant this function documents above.
+    if (values[i].toLowerCase() === "workspace" && values[i + 1].toLowerCase() === "apps" && values[i + 2] !== "") {
       return {
-        slug: values[i + 2],
+        slug: values[i + 2].toLowerCase(),
         dir: filePath.slice(0, ends[i + 2]),
         workspaceDir: filePath.slice(0, ends[i]),
       };

@@ -87,7 +87,14 @@ export async function createContainerRuntimeProjection(
   const root = projectionRoot(projectionId);
   const state = join(root, "state");
   const secrets = join(root, "secrets");
-  mkdirSync(root, { mode: 0o700 });
+  // `root` is `<laxDir>/container-runtime/<uuid>`. On a fresh install the
+  // intermediate `container-runtime` parent hasn't been created yet, so a
+  // non-recursive mkdir throws ENOENT. Only the immediate uuid dir is new —
+  // Node's recursive mode is a no-op on `container-runtime` if it already
+  // exists (won't reset its mode) and creates it with default perms if not,
+  // which is what we want (the sensitive perm bits live on `state`/`secrets`
+  // one level deeper, both created explicitly below with mode 0o700).
+  mkdirSync(root, { mode: 0o700, recursive: true });
   try {
     writeProjectionReservation(root, projectionId, op.id, descriptor.integrity.mac);
     mkdirSync(state, { mode: 0o700 });

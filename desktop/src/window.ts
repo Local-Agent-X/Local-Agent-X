@@ -12,7 +12,7 @@
 
 import { BrowserWindow, Menu, MenuItem } from "electron";
 import { join } from "path";
-import { ICON_PATH, getLAXConfig } from "./config";
+import { ICON_PATH, getLAXConfig, reloadLAXConfig } from "./config";
 import { bgForTheme, overlayForTheme } from "./theme";
 import { getSetting, setSetting } from "./settings";
 import { buildSplashDataUrl } from "./splash";
@@ -158,7 +158,15 @@ export function createWindow(): void {
   // NOT maximized, so un-maximizing snaps back to the last chosen box.
   if (getSetting("windowMaximized")) mainWindow.maximize();
 
-  const url = `http://127.0.0.1:${laxConfig.port}/?token=${laxConfig.authToken}`;
+  // NOTE: don't build the tokenized URL from laxConfig here — on a fresh
+  // install the config file doesn't exist yet, so laxConfig.authToken is "".
+  // Build it fresh from disk every time we need it (pollAndNavigate, the
+  // did-fail-load retry). Using a stale empty-token URL captured at window
+  // creation was the root cause of "every request 401 after a fresh install".
+  const buildAppUrl = (): string => {
+    const fresh = reloadLAXConfig();
+    return `http://127.0.0.1:${fresh.port}/?token=${fresh.authToken}`;
+  };
   const serverOrigin = `http://127.0.0.1:${laxConfig.port}`;
 
   // Show the branded splash IMMEDIATELY so the user sees something the
@@ -184,7 +192,10 @@ export function createWindow(): void {
       if (mainWindow == null || mainWindow.isDestroyed()) return;
       if (await isServerRunning()) {
         navigatedToApp = true;
-        mainWindow.loadURL(url);
+        // Re-read config here (server has just written it, possibly for the
+        // first time on a fresh install) so the tokenized URL reflects the
+        // real authToken instead of the "" placeholder loaded earlier.
+        mainWindow.loadURL(buildAppUrl());
         return;
       }
       await new Promise((r) => setTimeout(r, HEALTH_POLL_DELAY_MS));
@@ -206,13 +217,13 @@ export function createWindow(): void {
     if (retryPending) return;
     if (retryStartedAt === 0) retryStartedAt = Date.now();
     if (Date.now() - retryStartedAt > LOAD_RETRY_DEADLINE_MS) {
-      console.error(`[desktop] Gave up loading ${url} after ${LOAD_RETRY_DEADLINE_MS}ms — server not responding`);
+      console.error(`[desktop] Gave up loading ${serverOrigin} after ${LOAD_RETRY_DEADLINE_MS}ms — server not responding`);
       return;
     }
     retryPending = true;
     setTimeout(() => {
       retryPending = false;
-      mainWindow?.loadURL(url);
+      mainWindow?.loadURL(buildAppUrl());
     }, LOAD_RETRY_DELAY_MS);
   });
 

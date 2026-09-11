@@ -148,25 +148,45 @@ const DEFAULTS: LAXConfig = { port: 7007, authToken: "" };
 
 let cached: LAXConfig | null = null;
 
-export function loadLAXConfig(): LAXConfig {
+/**
+ * Load config from ~/.lax/config.json, or return DEFAULTS when the file
+ * doesn't exist / can't be parsed. Second return value tells the caller
+ * whether the result came from a real file read (true) or is a placeholder
+ * (false) — placeholders MUST NOT be cached, because on first launch after
+ * a `-DeleteData` uninstall or a factory-reset install the server writes
+ * the real config.json a few seconds AFTER Electron starts, and caching an
+ * empty authToken here causes every subsequent request to 401 forever
+ * (the tokenized URL loaded into the main window has ?token= empty, and
+ * the app never re-reads the config).
+ */
+export function loadLAXConfig(): { config: LAXConfig; fromFile: boolean } {
   try {
     if (existsSync(CONFIG_PATH)) {
       const raw = JSON.parse(readFileSync(CONFIG_PATH, "utf-8"));
       return {
-        port: raw.port ?? DEFAULTS.port,
-        authToken: raw.authToken ?? DEFAULTS.authToken,
+        config: {
+          port: raw.port ?? DEFAULTS.port,
+          authToken: raw.authToken ?? DEFAULTS.authToken,
+        },
+        fromFile: true,
       };
     }
   } catch {}
-  return { ...DEFAULTS };
+  return { config: { ...DEFAULTS }, fromFile: false };
 }
 
 export function getLAXConfig(): LAXConfig {
-  if (!cached) cached = loadLAXConfig();
-  return cached;
+  if (cached) return cached;
+  const { config, fromFile } = loadLAXConfig();
+  // Only cache the result if it came from an actual file read — a default
+  // placeholder is "not yet ready", so the next call must retry the disk
+  // in case the server has now written the real config.
+  if (fromFile) cached = config;
+  return config;
 }
 
 export function reloadLAXConfig(): LAXConfig {
-  cached = loadLAXConfig();
-  return cached;
+  const { config, fromFile } = loadLAXConfig();
+  cached = fromFile ? config : null;
+  return config;
 }

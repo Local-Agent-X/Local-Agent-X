@@ -1,7 +1,7 @@
 import { lstatSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   DockerCliExecutionRuntime,
   DockerCreateOutcomeAmbiguousError,
@@ -19,6 +19,19 @@ const mountRoot = mkdtempSync(join(tmpdir(), "lax-docker-runtime-"));
 const mountSource = join(mountRoot, "op-1");
 writeFileSync(mountSource, "state");
 afterAll(() => rmSync(mountRoot, { recursive: true, force: true }));
+
+// The `mountSource` file is shared across every test in this describe. A
+// couple of tests intentionally overwrite it mid-run (e.g. line ~206 rewrites
+// it to "replacement" to prove the runtime holds the ORIGINAL inode via an
+// FD after a rename+replace attack). Without a reset, whichever test runs
+// next sees the polluted content — `expect(readFileSync(..)).toBe("state")`
+// then fails with "replacement" received. Reset before each test so
+// individual tests don't couple to run order (or to whichever previous
+// test happened to touch the file last). rmSync-then-write is cheap.
+beforeEach(() => {
+  try { rmSync(mountSource, { force: true }); } catch { /* fresh install */ }
+  writeFileSync(mountSource, "state");
+});
 
 describe("DockerCliExecutionRuntime", () => {
   it("requires an exact digest pin and verifies the local image identity", async () => {

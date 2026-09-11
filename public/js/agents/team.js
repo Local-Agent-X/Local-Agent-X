@@ -213,4 +213,3 @@ window.showHiredAgent = showHiredAgent;
 window.fireAgent = fireAgent;
 window.onAgentProviderChange = onAgentProviderChange;
 window.onAgentModelChange = onAgentModelChange;
-window.onAgentProfileChange = onAgentProfileChange;

@@ -39,13 +39,56 @@ async function hqDecommissionPreview() {
 async function hqDecommission(deleteData) {
   const status = document.getElementById('hq-decommission-status');
   if (deleteData) {
-    const typed = prompt(
-      'This removes Local Agent X AND permanently deletes all your data — chats, memory, scheduled jobs, saved API keys. This cannot be undone.\n\nType DECOMMISSION to proceed:'
-    );
-    if (typed !== 'DECOMMISSION') return;
+    // Electron 20+ disabled window.prompt() — it returns null instantly, so the
+    // old prompt-based confirm made the "Decommission everything" button
+    // silently do nothing. Use a custom modal (declared in app.html) instead.
+    const modal = document.getElementById('hq-decommission-modal');
+    const input = document.getElementById('hq-decommission-input');
+    if (!modal || !input) {
+      // Fallback for anyone running the page outside the packaged HTML
+      const typed = window.prompt && window.prompt('Type DECOMMISSION to confirm:');
+      if (typed !== 'DECOMMISSION') return;
+    } else {
+      input.value = '';
+      const confirmBtn = document.getElementById('hq-decommission-modal-confirm');
+      if (confirmBtn) confirmBtn.disabled = true;
+      modal.style.display = 'flex';
+      setTimeout(() => input.focus(), 20);
+      // The rest of this function is driven by the modal — hqDecommissionModalConfirm()
+      // calls hqDecommissionRun(true) when the user types DECOMMISSION and hits go.
+      window._hqPendingDecommission = true;
+      return;
+    }
   } else {
     if (!confirm('Remove Local Agent X from this machine? Your data stays in ~/.lax for a future reinstall. The app will close to finish the job.')) return;
   }
+  hqDecommissionRun(deleteData);
+}
+
+function hqDecommissionModalOnInput() {
+  const input = document.getElementById('hq-decommission-input');
+  const btn = document.getElementById('hq-decommission-modal-confirm');
+  if (!input || !btn) return;
+  btn.disabled = input.value.trim() !== 'DECOMMISSION';
+}
+
+function hqDecommissionModalCancel() {
+  const modal = document.getElementById('hq-decommission-modal');
+  if (modal) modal.style.display = 'none';
+  window._hqPendingDecommission = false;
+}
+
+function hqDecommissionModalConfirm() {
+  const input = document.getElementById('hq-decommission-input');
+  if (!input || input.value.trim() !== 'DECOMMISSION') return;
+  const modal = document.getElementById('hq-decommission-modal');
+  if (modal) modal.style.display = 'none';
+  window._hqPendingDecommission = false;
+  hqDecommissionRun(true);
+}
+
+async function hqDecommissionRun(deleteData) {
+  const status = document.getElementById('hq-decommission-status');
   if (status) {
     status.style.display = '';
     status.style.color = 'var(--muted)';

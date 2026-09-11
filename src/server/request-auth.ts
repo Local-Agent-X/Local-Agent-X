@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { authorizeAppConnectorHttp } from "./app-connector-auth.js";
-import { corsHeaders, isLoopbackOrigin, checkRateLimit, getRateLimitKey, recordAuthFailure, getAuthFloodGuard, jsonResponse } from "../server-utils.js";
+import { corsHeaders, isLoopbackOrigin, isLoopbackAddress, checkRateLimit, getRateLimitKey, recordAuthFailure, getAuthFloodGuard, jsonResponse } from "../server-utils.js";
 import type { LAXConfig } from "../types.js";
 import type { RBACManager, Role } from "../rbac.js";
 
@@ -36,7 +36,15 @@ export function authorizeRequest(
       return { handled: true, role: "operator" };
     }
   }
-  if (url.pathname.startsWith("/api/") && !checkRateLimit(getRateLimitKey(req))) {
+  const clientIp = req.socket.remoteAddress || "unknown";
+  // Loopback clients (127.0.0.0/8, ::1) bypass throttling entirely — see the
+  // rationale on isLoopbackAddress. Skipping BOTH the token bucket and the
+  // flood guard prevents cold-boot cascades where the UI fires ~20 bootstrap
+  // fetches in parallel and gets 429'd on all of them, breaking the whole app
+  // until the buckets refill (~15 min for the flood-guard lockout).
+  const trustedLocal = isLoopbackAddress(clientIp);
+
+  if (!trustedLocal && url.pathname.startsWith("/api/") && !checkRateLimit(getRateLimitKey(req))) {
     json(429, { error: "Rate limit exceeded." });
     return { handled: true, role: "operator" };
   }
@@ -44,21 +52,22 @@ export function authorizeRequest(
     return { handled: false, role: "operator" };
   }
 
-  const clientIp = req.socket.remoteAddress || "unknown";
   const authorization = req.headers.authorization || "";
   const headerToken = authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
   const queryToken = method === "GET" && BROWSER_OPENABLE_GET_API.test(url.pathname)
     ? (url.searchParams.get("token") || "")
     : "";
   const token = headerToken || queryToken;
-  const lockout = getAuthFloodGuard().get(clientIp);
-  if (lockout && lockout.lockedUntil > Date.now()) {
-    res.writeHead(429, {
-      ...corsHeaders(req),
-      "Retry-After": String(Math.ceil((lockout.lockedUntil - Date.now()) / 1000)),
-    });
-    res.end(JSON.stringify({ error: "Too many failed attempts." }));
-    return { handled: true, role: "operator" };
+  if (!trustedLocal) {
+    const lockout = getAuthFloodGuard().get(clientIp);
+    if (lockout && lockout.lockedUntil > Date.now()) {
+      res.writeHead(429, {
+        ...corsHeaders(req),
+        "Retry-After": String(Math.ceil((lockout.lockedUntil - Date.now()) / 1000)),
+      });
+      res.end(JSON.stringify({ error: "Too many failed attempts." }));
+      return { handled: true, role: "operator" };
+    }
   }
   if (!token) {
     json(401, { error: "Unauthorized" });
@@ -71,7 +80,7 @@ export function authorizeRequest(
       getAuthFloodGuard().delete(clientIp);
       return { handled: false, role: "user" };
     }
-    recordAuthFailure(clientIp);
+    if (!trustedLocal) recordAuthFailure(clientIp);
     json(401, { error: "Unauthorized" });
     return { handled: true, role: "operator" };
   }

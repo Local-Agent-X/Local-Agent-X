@@ -548,6 +548,20 @@
           </div>
           <div id="hq-decommission-status" style="display:none;font-size:.8rem;margin-top:10px"></div>
         </div>
+        <div id="hq-decommission-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:9999;align-items:center;justify-content:center">
+          <div style="background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:24px;max-width:520px;width:90%;box-shadow:0 20px 60px rgba(0,0,0,.5)">
+            <div style="font-size:1.05rem;color:var(--error,#d66);font-weight:600;margin-bottom:8px">⚠ Decommission Everything</div>
+            <div style="font-size:.82rem;color:var(--text);line-height:1.5">
+              This removes Local Agent X <strong>AND permanently deletes all your data</strong> — chats, memory, scheduled jobs, saved API keys. This cannot be undone.
+              <br><br>Type <code style="color:var(--error,#d66)">DECOMMISSION</code> below to confirm:
+            </div>
+            <input id="hq-decommission-input" type="text" autocomplete="off" spellcheck="false" class="field-input" style="margin-top:10px;width:100%;font-family:var(--mono)" placeholder="DECOMMISSION" oninput="hqDecommissionModalOnInput()" onkeydown="if(event.key==='Enter'&&!document.getElementById('hq-decommission-modal-confirm').disabled)hqDecommissionModalConfirm();if(event.key==='Escape')hqDecommissionModalCancel()"/>
+            <div class="btn-row" style="margin-top:14px;justify-content:flex-end;display:flex;gap:8px">
+              <button class="action-btn" onclick="hqDecommissionModalCancel()">Cancel</button>
+              <button id="hq-decommission-modal-confirm" class="action-btn danger" onclick="hqDecommissionModalConfirm()" disabled>Delete everything</button>
+            </div>
+          </div>
+        </div>
       </div>
       <!-- AI & Models -->
       <div id="stab-ai" class="tab-pane">

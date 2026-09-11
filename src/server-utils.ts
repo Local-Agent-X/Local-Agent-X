@@ -140,6 +140,24 @@ export function isLoopbackOrigin(origin: string | undefined): boolean {
   }
 }
 
+/**
+ * True for any IPv4/IPv6 loopback client address: 127.0.0.0/8, ::1, and the
+ * IPv6-mapped-IPv4 form (::ffff:127.x.x.x) that Node's default dual-stack
+ * socket reports. Used to skip the token-bucket rate limiter and the auth
+ * flood guard for local clients — the same-origin / cross-site checks earlier
+ * in authorizeRequest already reject any non-loopback origin, and a hostile
+ * local process can read the auth token from `~/.lax/config.json` directly
+ * rather than brute-forcing it. So throttling loopback traffic breaks cold-
+ * boot UX (parallel bootstrap fetches exhaust the bucket → cascading 429s
+ * across the whole UI) without providing any security value.
+ */
+export function isLoopbackAddress(addr: string | undefined): boolean {
+  if (!addr) return false;
+  if (addr === "::1") return true;
+  const stripped = addr.startsWith("::ffff:") ? addr.slice(7) : addr;
+  return /^127\.\d+\.\d+\.\d+$/.test(stripped);
+}
+
 export function corsHeaders(req: IncomingMessage): Record<string, string> {
   const origin = req.headers.origin;
   if (origin && isLoopbackOrigin(origin)) {

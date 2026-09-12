@@ -125,6 +125,12 @@ async function awaitTerminal(opId: string, timeoutMs = 20_000): Promise<void> {
 }
 
 describe("a pivot-ceiling abort fails the op WITH a reason that names the cycle", () => {
+  // awaitTerminal's own budget (20s) plus the awaitIdle after it (5s) already
+  // exceed vitest's global 15s testTimeout on paper — this normally finishes
+  // well under that in practice (a real dispatcher driving 300 turns through
+  // production loop-detection), but a slower CI runner needs the actual 20s+
+  // wait budget available rather than having vitest's outer timeout cut it
+  // off first.
   it("op.lastFailureReason carries the ceiling note after the worker is aborted", async () => {
     const op = mkOp();
     const fake = new FakeAdapter({ script: livelockScript(300) });
@@ -143,5 +149,5 @@ describe("a pivot-ceiling abort fails the op WITH a reason that names the cycle"
     expect(row?.lastFailureReason).toContain("no-progress");
     // Stored trimmed: the stream note's leading blank lines are presentation.
     expect(row?.lastFailureReason?.startsWith("(")).toBe(true);
-  });
+  }, 30_000);
 });

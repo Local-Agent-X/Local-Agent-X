@@ -21,7 +21,9 @@ import { registerSessionCanaries } from "../threat/canaries.js";
 import { aggregateBrowserSessionLineage } from "../browser/session-owner-registry.js";
 
 export const BROWSER_RELAY_TOKEN_FILE = "secrets/browser-relay-token";
-const CONTAINER_RELAY_SOCKET = "/var/lib/lax/browser-relay.sock";
+// Short filename: this socket's host path is `<laxDir>/cr/<uuid>/state/brs.sock`
+// and AF_UNIX paths are capped at 108 bytes on Linux — every byte here counts.
+const CONTAINER_RELAY_SOCKET = "/var/lib/lax/brs.sock";
 
 export interface ProjectionBrowserRelay {
   environment: Record<string, string>;
@@ -57,7 +59,7 @@ export async function openProjectionBrowserRelay(
     throw new Error("container browser relay token is invalid");
   }
   const handle: BrowserRelayServerHandle = await startBrowserContainerRelay({
-    socketPath: join(root, "state", "browser-relay.sock"),
+    socketPath: join(root, "state", "brs.sock"),
     token,
     ownerSessionId,
     browserOwnerSessionId,

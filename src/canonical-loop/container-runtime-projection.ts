@@ -87,10 +87,13 @@ export async function createContainerRuntimeProjection(
   const root = projectionRoot(projectionId);
   const state = join(root, "state");
   const secrets = join(root, "secrets");
-  // `root` is `<laxDir>/container-runtime/<uuid>`. On a fresh install the
-  // intermediate `container-runtime` parent hasn't been created yet, so a
-  // non-recursive mkdir throws ENOENT. Only the immediate uuid dir is new —
-  // Node's recursive mode is a no-op on `container-runtime` if it already
+  // `root` is `<laxDir>/cr/<uuid>` — kept short (not `container-runtime`)
+  // because the browser-relay unix socket lives under it, and AF_UNIX
+  // paths are capped at 108 bytes on Linux; a long laxDir + long directory
+  // names here pushed real installs (long usernames) past that limit.
+  // On a fresh install the intermediate `cr` parent hasn't been created
+  // yet, so a non-recursive mkdir throws ENOENT. Only the immediate uuid
+  // dir is new — Node's recursive mode is a no-op on `cr` if it already
   // exists (won't reset its mode) and creates it with default perms if not,
   // which is what we want (the sensitive perm bits live on `state`/`secrets`
   // one level deeper, both created explicitly below with mode 0o700).
@@ -274,7 +277,7 @@ function productionMountRoots(): string[] {
 }
 
 function containerStateRoot(): string {
-  return join(getLaxDir(), "container-runtime");
+  return join(getLaxDir(), "cr");
 }
 
 function projectionRoot(projectionId: string): string {

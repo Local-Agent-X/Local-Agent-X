@@ -52,7 +52,7 @@ describe.skipIf(!enabled)("production container runtime projection", () => {
     expect(spec.network).toEqual({ name: "lax-egress" });
     expect(spec.environment.LAX_CONTAINER_BROWSER_RELAY).toBe("1");
     expect(spec.environment.LAX_CONTAINER_BROWSER_RELAY_SOCKET)
-      .toBe("/var/lib/lax/browser-relay.sock");
+      .toBe("/var/lib/lax/brs.sock");
     expect(spec.environment.LAX_CONTAINER_BROWSER_RELAY_TOKEN).toMatch(/^[a-f0-9]{64}$/);
     expect(spec.environment.LAX_CONTAINER_BROWSER_ACTING_SESSION).toBe("session-projection");
     expect(spec.environment.LAX_CONTAINER_BROWSER_OWNER_SESSION).toBe("session-projection");
@@ -65,7 +65,7 @@ describe.skipIf(!enabled)("production container runtime projection", () => {
     const reopened = await reopenContainerRuntimeProjection(op, projection.durableId!);
     expect(reopened!.buildSpec({ op, image: image(), token: "token", placement: placement() }).mounts)
       .toHaveLength(spec.mounts.length);
-    const projectionRoot = join(root, "container-runtime", projection.durableId!);
+    const projectionRoot = join(root, "cr", projection.durableId!);
     await reopened!.cleanup();
     expect(existsSync(projectionRoot)).toBe(false);
   });
@@ -82,7 +82,7 @@ describe.skipIf(!enabled)("production container runtime projection", () => {
     const op = fixtureOp(sealDelegatedRuntime);
     opDir(op.id);
     const projection = await createContainerRuntimeProjection(op, randomUUID());
-    const credential = join(root, "container-runtime", projection.durableId!, "secrets", "runtime-credential.json");
+    const credential = join(root, "cr", projection.durableId!, "secrets", "runtime-credential.json");
     const originalCredential = readFileSync(credential, "utf8");
     writeFileSync(credential, "{}", "utf8");
 

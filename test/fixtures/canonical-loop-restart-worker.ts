@@ -44,7 +44,15 @@ const baseURL = `http://127.0.0.1:${port}/v1`;
 {
   const repoNodeModules = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "node_modules");
   const tempNodeModules = join(process.env.LAX_DATA_DIR!, "node_modules");
-  if (!existsSync(tempNodeModules)) symlinkSync(repoNodeModules, tempNodeModules, "dir");
+  // A directory SYMLINK needs SeCreateSymbolicLinkPrivilege on Windows — admin
+  // or Developer Mode, neither guaranteed for a contributor running this
+  // suite locally (unlike posix, where any user can symlink). An NTFS
+  // JUNCTION does the same job for a directory target with no such
+  // privilege, so use it there; it still requires an absolute target, which
+  // fileURLToPath already gives us.
+  if (!existsSync(tempNodeModules)) {
+    symlinkSync(repoNodeModules, tempNodeModules, process.platform === "win32" ? "junction" : "dir");
+  }
 }
 process.chdir(process.env.LAX_DATA_DIR!);
 

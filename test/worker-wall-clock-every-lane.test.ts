@@ -69,8 +69,16 @@ const tracked: string[] = [];
 const ORIGINAL_CONFIG = getRuntimeConfig();
 
 /** The op's whole budget. Long enough to commit several real turns on a busy
- *  box, short enough that the case finishes in well under the file timeout. */
-const WALL_CLOCK_MS = 400;
+ *  box, short enough that the case finishes in well under the file timeout.
+ *  400ms held locally but measured ~3x too tight on the actual CI runner —
+ *  worker-pivot-ceiling-failure-reason.test.ts's real dispatcher/loop-
+ *  detection path (the same class of synchronous, disk-writing turn loop
+ *  this file drives) took 12s locally and 36.7s on windows-latest CI in the
+ *  same run. A budget this close to a single turn's own real processing time
+ *  risks the wall-clock check landing mid-turn instead of at the boundary it
+ *  assumes, which is a different failure mode than the timer race the file
+ *  header is about. */
+const WALL_CLOCK_MS = 1_500;
 /** See HARNESS NOTE. The op must never reach the end of this script. */
 const SCRIPT_TURNS = 60;
 
@@ -135,7 +143,7 @@ function livelockScript(turns: number) {
   });
 }
 
-async function awaitTerminal(opId: string, timeoutMs = 8_000): Promise<void> {
+async function awaitTerminal(opId: string, timeoutMs = 20_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     const s = readOp(opId)?.canonical?.state;
@@ -179,7 +187,7 @@ describe("wall clock on every lane — a period-9 livelock ends partial, reason 
     // The clock stopped it, not the script running out — and it did so promptly.
     expect(fake.turnInputs.length).toBeGreaterThan(0);
     expect(fake.turnInputs.length).toBeLessThan(SCRIPT_TURNS);
-    expect(stoppedAfterMs).toBeLessThan(8_000);
+    expect(stoppedAfterMs).toBeLessThan(20_000);
     // The mechanism, pinned: the op was already terminal before the event
     // loop ever reached its timer phase. Re-arming this as a setTimeout only
     // (the shipped-and-reverted design) hangs the runner instead of failing.
@@ -200,7 +208,7 @@ describe("wall clock on every lane — a period-9 livelock ends partial, reason 
     expect(waited.isError).toBe(false);
     expect(waited.content).toMatch(new RegExp(`^PARTIAL — child op ${op.id} stopped at a checkpoint after \\d+ turns \\(reason: wall-clock: ran for`));
     expect(waited.content).toContain("NOT finished");
-  });
+  }, 45_000);
 });
 
 describe("wallClockBudgetMs — what arms the timer", () => {

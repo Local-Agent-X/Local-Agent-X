@@ -114,7 +114,7 @@ function livelockScript(turns: number) {
   });
 }
 
-async function awaitTerminal(opId: string, timeoutMs = 20_000): Promise<void> {
+async function awaitTerminal(opId: string, timeoutMs = 60_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     const s = readOp(opId)?.canonical?.state;
@@ -125,12 +125,17 @@ async function awaitTerminal(opId: string, timeoutMs = 20_000): Promise<void> {
 }
 
 describe("a pivot-ceiling abort fails the op WITH a reason that names the cycle", () => {
-  // awaitTerminal's own budget (20s) plus the awaitIdle after it (5s) already
-  // exceed vitest's global 15s testTimeout on paper — this normally finishes
-  // well under that in practice (a real dispatcher driving 300 turns through
-  // production loop-detection), but a slower CI runner needs the actual 20s+
-  // wait budget available rather than having vitest's outer timeout cut it
-  // off first.
+  // A real dispatcher drives 300 synchronous turns through production
+  // loop-detection — the same event-loop-starvation shape as
+  // worker-wall-clock-every-lane.test.ts, where a turn's own synchronous
+  // processing can outrun a poll loop's setTimeout ticks, so the "20s"
+  // budget below is 20s of CHECKED time, not a hard wall-clock cap.
+  // Measured on windows-latest CI (same run as this fix): this test took at
+  // LEAST 36.7s before vitest's prior 30s outer timeout could even
+  // interrupt it — and that interrupt itself needs an event-loop tick, so
+  // the true natural completion time on that runner could be longer still.
+  // Local runs finish in ~12s. Sized with real margin above the observed
+  // floor rather than the local number.
   it("op.lastFailureReason carries the ceiling note after the worker is aborted", async () => {
     const op = mkOp();
     const fake = new FakeAdapter({ script: livelockScript(300) });
@@ -149,5 +154,5 @@ describe("a pivot-ceiling abort fails the op WITH a reason that names the cycle"
     expect(row?.lastFailureReason).toContain("no-progress");
     // Stored trimmed: the stream note's leading blank lines are presentation.
     expect(row?.lastFailureReason?.startsWith("(")).toBe(true);
-  }, 30_000);
+  }, 90_000);
 });

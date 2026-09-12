@@ -266,12 +266,11 @@ describe("stripToolCallBlocks — non-greedy + nested-resilient", () => {
     expect(out).toContain("three");
   });
 
-  it("leaves an unclosed <tool_use> tag alone (regex requires closing tag)", () => {
-    // If the closing tag is missing, the .*? non-greedy match has nothing
-    // to terminate on and the regex doesn't match. The unclosed tag stays.
+  it("strips an unclosed <tool_use> opener and everything after it (cut off before the closer, so the whole tail is presumed leak)", () => {
     const input = "lead <tool_use><parameter name=\"x\">v</parameter> trailing";
     const out = stripToolCallBlocks(input);
-    expect(out).toContain("<tool_use>");
+    expect(out).not.toContain("<tool_use>");
+    expect(out).toContain("lead");
   });
 
   it("falls back to raw JSON regex when fenced block is missing its closing ```", () => {

@@ -59,26 +59,15 @@ describe("sanitizeAssistantTextForRebuild", () => {
     const text = '<tool_use><tool_name>bash</tool_name><parameter name="command">ls</parameter></tool_use>';
     const { cleaned, leaks } = sanitizeAssistantTextForRebuild(text, TOOLS);
     expect(leaks).toHaveLength(1);
-    expect(leaks[0].shape).toBe("anthropic-xml-tool-use");
+    expect(leaks[0].shape).toBe("xml-tool-call");
     expect(cleaned).not.toContain("<tool_use>");
   });
 
-  it("strips tree-style `Bash(...)` notation on its own line", () => {
+  it("does NOT strip tree-style `Bash(...)` notation (prose heuristic removed — stands as text)", () => {
     const text = 'Checking assets.\nBash(ls "C:/Users/alice/workspace")\nLet me try.';
     const { cleaned, leaks } = sanitizeAssistantTextForRebuild(text, TOOLS);
-    expect(leaks).toHaveLength(1);
-    expect(leaks[0].shape).toBe("tree-style-call");
-    expect(leaks[0].toolName).toBe("Bash");
-    expect(cleaned).toContain("wire-format-error");
-    expect(cleaned).toContain("Checking assets.");
-    expect(cleaned).toContain("Let me try.");
-  });
-
-  it("strips tree-style with `└` lead character", () => {
-    const text = "Now:\n└ Bash(ls -la /tmp)\nThen the result.";
-    const { cleaned, leaks } = sanitizeAssistantTextForRebuild(text, TOOLS);
-    expect(leaks).toHaveLength(1);
-    expect(leaks[0].shape).toBe("tree-style-call");
+    expect(leaks).toHaveLength(0);
+    expect(cleaned).toBe(text);
   });
 
   it("does NOT strip prose mentions of tools by name", () => {
@@ -88,13 +77,11 @@ describe("sanitizeAssistantTextForRebuild", () => {
     expect(cleaned).toBe(text);
   });
 
-  it("strips placeholder narration `[Calling]` on its own line", () => {
+  it("does NOT strip placeholder narration `[Calling]` (prose heuristic removed — stands as text)", () => {
     const text = "I'll check now.\n[Calling]\nResult will follow.";
     const { cleaned, leaks } = sanitizeAssistantTextForRebuild(text, TOOLS);
-    expect(leaks).toHaveLength(1);
-    expect(leaks[0].shape).toBe("placeholder-narration");
-    expect(cleaned).toContain("wire-format-error");
-    expect(cleaned).not.toContain("[Calling]");
+    expect(leaks).toHaveLength(0);
+    expect(cleaned).toBe(text);
   });
 
   it("does NOT strip placeholders inside prose", () => {
@@ -104,11 +91,13 @@ describe("sanitizeAssistantTextForRebuild", () => {
   });
 
   it("returns multiple leaks from a multi-shape message", () => {
-    const text = `OK doing it.\n{"name":"agent_spawn","input":{"agent":"researcher","task":"q"}}\n[Calling]\nBash(ls)`;
+    const text = `OK doing it.\n{"name":"agent_spawn","input":{"agent":"researcher","task":"q"}}\n` +
+      `Then: <tool_use><tool_name>bash</tool_name><parameter name="command">ls</parameter></tool_use>`;
     const { leaks } = sanitizeAssistantTextForRebuild(text, TOOLS);
     expect(leaks.length).toBeGreaterThanOrEqual(2);
     const shapes = leaks.map(l => l.shape);
     expect(shapes).toContain("anthropic-native");
+    expect(shapes).toContain("xml-tool-call");
   });
 
   it("preserves surrounding prose between leaks", () => {

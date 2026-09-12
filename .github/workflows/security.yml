@@ -93,6 +93,9 @@ jobs:
         with:
           node-version: 22
           cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            desktop/package-lock.json
 
       - name: Install dependencies
         run: npm ci
@@ -129,12 +132,22 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: npm run test:coverage
 
+      # desktop/ is its own npm package (own package.json + lockfile, not a
+      # root workspace member), so the root `npm ci` above never touches
+      # desktop/node_modules. tldts resolves from root node_modules fine (it's
+      # also a root dependency), which is why this ran for a while before
+      # anyone noticed — but electron is ONLY a desktop/package.json
+      # devDependency, so any test importing it failed "Cannot find package
+      # 'electron'" until desktop's own deps are installed too.
+      - name: Install desktop dependencies
+        working-directory: desktop
+        run: npm ci
+
       # Desktop (Electron main) tests run under their OWN vitest config
       # (desktop/vitest.config.ts) via the root vitest binary — the desktop
       # package ships no vitest of its own and the root config's setupFiles
       # can't resolve from desktop/. Without this step the desktop CSP-lockstep
-      # and Chromium-flag guards never execute in CI. tldts + vitest resolve
-      # from the root node_modules that `npm ci` above already installed.
+      # and Chromium-flag guards never execute in CI.
       - name: Desktop tests (vitest, blocking)
         run: npm run test:desktop
 

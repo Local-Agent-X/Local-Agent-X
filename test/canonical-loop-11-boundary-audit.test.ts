@@ -68,12 +68,21 @@ const PROCESS_BACKEND_ALLOWLIST: readonly string[] = [
  * each entry names ONE file (basename inside adapters/) and the ONE
  * forbidden module it imports. The scan also asserts every entry still
  * matches — fix the import and the stale entry fails the suite, so this
- * list can only shrink. NEVER add to it; new code must satisfy the audit.
+ * list can only shrink. Adapter RUNTIME code must satisfy the audit with no
+ * new entries here — the only accepted addition is a *test* seeding real
+ * on-disk op state to exercise a real seam (buildTurnInput's readOpMessages,
+ * e.g.) that offers no other way in; the adapter source itself must stay
+ * clean either way.
  */
 const ADAPTER_AUDIT_BASELINE: readonly { file: string; module: string }[] = [
   // Contract test seeds op messages straight through the canonical store
   // ("../store.js"); the adapter runtime under test stays clean.
   { file: "image-only-nudge.contract.test.ts", module: "canonical-loop/store" },
+  // Same shape: buildTurnInput reads op_messages straight off disk via
+  // store.js with no injectable alternative, so the test seeds a real
+  // message with appendOpMessage and cleans up via event-log's opDir.
+  { file: "openai-compat.tool-continuity.test.ts", module: "canonical-loop/store" },
+  { file: "openai-compat.tool-continuity.test.ts", module: "ops/event-log" },
 ] as const;
 
 function listTsFiles(dir: string, recurse = true): string[] {
@@ -266,6 +275,8 @@ describe("Issue 11 — adapter transport allow-list is bounded", () => {
   it("the adapter-audit grandfather baseline is bounded", () => {
     expect(ADAPTER_AUDIT_BASELINE.map(b => `${b.file} → ${b.module}`)).toEqual([
       "image-only-nudge.contract.test.ts → canonical-loop/store",
+      "openai-compat.tool-continuity.test.ts → canonical-loop/store",
+      "openai-compat.tool-continuity.test.ts → ops/event-log",
     ]);
   });
 

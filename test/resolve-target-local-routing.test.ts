@@ -64,6 +64,7 @@ vi.mock("../src/local-runtimes/index.js", () => ({
     runtimes = [LMSTUDIO_RT];
     return runtimes;
   }),
+  reprobeLocalModelWindow: vi.fn().mockResolvedValue(null),
 }));
 vi.mock("../src/ollama-cloud.js", () => ({
   isCloudModel: (m: string) => cloudModels.has(m),

@@ -28,6 +28,7 @@ vi.mock("../src/local-runtimes/index.js", () => ({
     tools: { advertised: true, verified: null, rejectsTools: false },
   }),
   refreshLocalRuntimes: vi.fn(),
+  reprobeLocalModelWindow: vi.fn().mockResolvedValue(null),
 }));
 vi.mock("../src/ollama-cloud.js", () => ({
   isCloudModel: () => useCloudTarget,

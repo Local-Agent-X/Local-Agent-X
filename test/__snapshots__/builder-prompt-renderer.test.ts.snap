@@ -28,8 +28,25 @@ RULES:
 - Do NOT ask questions — just build it based on the instructions
 
 DESIGN SYSTEM — Modern Web App. Implement these EXACT values; do not substitute your own colors, fonts, or sizes:
-Palette (exact CSS variables): --bg #ffffff · --muted-bg #f8fafc · --surface #ffffff · --text #111827 · --text-muted #6b7280 · --border #e5e7eb · --accent #2563eb · --accent-hover #1d4ed8
-Typography: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif. Scale: h1 28px/700/-0.02em · h2 20px/600/-0.01em · body 16px/400/1.6 · label 13px/500. Self-host Inter or fall back to system-ui.
+Color tokens (EXACT). Put \`color-scheme: light dark\` on :root and define each token once — every value is a light-dark() pair, so the app ships BOTH themes from one definition:
+  --bg: light-dark(oklch(0.99 0.003 250), oklch(0.16 0.012 250));
+  --bg-subtle: light-dark(oklch(0.975 0.005 250), oklch(0.19 0.014 250));
+  --surface: light-dark(oklch(1 0 0), oklch(0.21 0.014 250));
+  --surface-hover: light-dark(oklch(0.955 0.006 250), oklch(0.25 0.016 250));
+  --border-subtle: light-dark(oklch(0.925 0.007 250), oklch(0.27 0.016 250));
+  --border: light-dark(oklch(0.835 0.009 250), oklch(0.37 0.018 250));
+  --text-muted: light-dark(oklch(0.53 0.015 250), oklch(0.72 0.018 250));
+  --text: light-dark(oklch(0.24 0.02 250), oklch(0.96 0.004 250));
+  --accent-subtle: light-dark(oklch(0.95 0.035 180), oklch(0.26 0.045 180));
+  --accent-border: light-dark(oklch(0.82 0.07 180), oklch(0.38 0.07 180));
+  --accent: light-dark(oklch(0.52 0.1 180), oklch(0.62 0.1 180));
+  --accent-hover: light-dark(oklch(0.46 0.1 180), oklch(0.68 0.1 180));
+  --accent-contrast: light-dark(oklch(0.99 0 0), oklch(0.16 0.02 180));
+  --success: light-dark(oklch(0.52 0.13 152), oklch(0.72 0.15 152));
+  --warn: light-dark(oklch(0.55 0.13 75), oklch(0.79 0.14 80));
+  --danger: light-dark(oklch(0.52 0.19 27), oklch(0.7 0.17 27));
+Token roles — use the one that names the job: --surface-hover is a card under the pointer · --border is a component edge, --border-subtle a row divider · --accent is a FILL (buttons, active nav), never body-text color · --accent-contrast is the text ON --accent and is NOT always white · --success/--warn/--danger are semantic only. Derive any shade you still need with color-mix() against these, never a fresh invented hex.
+Typography: 'Manrope', system-ui, -apple-system, 'Segoe UI', sans-serif. Scale: h1 30px/800/-0.02em · h2 20px/700/-0.01em · body 16px/400/1.6 · label 13px/600. The weight gap between headings and body is doing the hierarchy work — do not flatten it.
 Radius: 8px controls / 12px cards. Shadow: 0 1px 2px rgba(0,0,0,.06), 0 6px 16px rgba(0,0,0,.05). Spacing: 4px base (4/8/12/16/24/32/48).
 Attitude: Clean, contemporary, content-first — polish through restraint, one clear center of gravity per view.
 Layout & hierarchy: Header → primary content → supporting sections → footer. Card/list groupings with generous gutters; one clear primary action per view.
@@ -44,6 +61,18 @@ CRAFT — what a polished, designed result concretely means (apply to every buil
 • COHESION: one radius, one border treatment, one icon set, one control style across the whole app — buttons, inputs, and cards share a single visual language. Mismatched components read as assembled, not designed.
 • CONTENT POLISH: use realistic sample content, never 'lorem ipsum' or 'Item 1'; format numbers (thousands separators, currency, aligned decimals); and make sure long strings truncate or wrap cleanly instead of breaking the layout.
 
+TECHNIQUES — build the design with these, not with the defaults (apply to every build):
+• FLUID, NOT STEPPED: express the page title and section padding as \`clamp(<small-screen>, <preferred vw>, <large-screen>)\`, where the size the DESIGN SYSTEM states is the large-screen end; body and label sizes stay exactly as given. The layout must hold at every width between 375 and 1440, not only at four of them.
+• CONTAINER QUERIES: a component sizes itself to ITS CONTAINER, not the viewport — \`container-type: inline-size\` on the wrapper, then \`@container (min-width: …)\` for the component's own breaks. The same card in a sidebar and at full width must both read correctly without knowing where it is. Keep viewport media queries for page-level layout only.
+• INTRINSIC GRIDS: lay card grids out with \`grid-template-columns: repeat(auto-fit, minmax(<min>, 1fr))\` so they reflow with no breakpoint math, and size widths with min()/max()/clamp() instead of fixed pixel columns.
+• MEASURE: cap running text at about 65ch. A paragraph spanning a 1440px window is the fastest sign nobody set a line length.
+• TEXT WRAPPING: \`text-wrap: balance\` on headings so the last line isn't a single orphaned word, and \`text-wrap: pretty\` on body copy. Two declarations, and the typography stops looking accidental.
+• FOCUS RING ON :focus-visible: style \`:focus-visible\`, not \`:focus\`, so keyboard users get the ring and a mouse click does not leave one behind. Give it \`outline-offset\` so it sits clear of the control's own edge.
+• NATIVE CONTROLS JOIN THE DESIGN: set \`accent-color: var(--accent)\` so checkboxes, radios and range inputs match the system instead of shipping browser blue. Validate with \`:user-invalid\`, never \`:invalid\` — the latter marks a field red before the user has typed anything.
+• NO LAYOUT SHIFT: every image and video carries width/height attributes or an \`aspect-ratio\` plus \`object-fit: cover\`, so nothing reflows as media loads. Below the fold, add \`loading="lazy"\` and \`decoding="async"\`.
+• STICKY HEADER OFFSET: if the header is sticky, give anchor targets \`scroll-margin-top\` equal to its height — otherwise every in-page link lands with its heading hidden underneath.
+• STYLE FROM CONTENT WITH :has(): let a parent react to what it contains (\`.card:has(img)\`, \`.field:has(:user-invalid)\`) instead of adding a JavaScript class to say the same thing.
+
 UNIVERSAL DESIGN RULES — apply to every build:
 • ICONS: use crisp inline SVG icons from one consistent stroke/line set; never use emoji as UI icons. Give each icon an accessible label (aria-label or adjacent text).
 • NO DEFAULT GRADIENT IDENTITY: do not reach for a generic purple→pink gradient as the brand. Use the archetype's exact palette; a flat, deliberate color beats a decorative gradient.
@@ -54,6 +83,12 @@ UNIVERSAL DESIGN RULES — apply to every build:
 • CONTRAST: body text and interactive text meet a contrast ratio of at least 4.5:1 against their background (WCAG AA); don't ship low-contrast grey-on-grey.
 • CURSOR AFFORDANCE: interactive elements show \`cursor: pointer\`; non-interactive text does not. The pointer must never lie about what is clickable.
 • RESPONSIVE: lay out and test at the common breakpoints ~375 (mobile), ~768 (tablet), ~1024 (small laptop), and ~1440 (desktop); no horizontal scroll or clipped content at any of them.
+• TYPEFACE: implement the archetype's named face. Do NOT substitute a default UI sans and do NOT let a bare system-ui stack stand in as the identity — the same safe sans on every site is the single most recognized tell of a machine-made page. When you self-host an open-licensed face, ship its license file alongside the font files.
+• NOT THE DEFAULT LAYOUT: a centered hero stacked over three equal feature cards is the shape every generated page takes; do not ship it. Vary the rhythm — an asymmetric split, a full-bleed band, cards of deliberately different sizes, content that starts left instead of centered.
+• ELEVATION IS HIERARCHY: do not put the same large radius and the same drop shadow on every surface. Most blocks are flat with a 1px --border; reserve shadow for what genuinely floats above the page (a menu, a modal, one focal card).
+• ICONS IN CONTEXT: no grid of icons each sitting in its own rounded-square tile, and no emoji standing in as feature bullets. An icon sits with its label, at text scale.
+• BLUR IS NOT A STYLE: no reflexive frosted-glass panels. backdrop-filter belongs on something that genuinely overlays moving content — a sticky header above a scrolling page — not on a resting card.
+• REAL COPY: write the actual sentence for the actual product. No filler voice — "Elevate your…", "Seamlessly…", "Unlock the power of…" — and no invented statistics or fake testimonials to fill a section.
 
 - After writing files, output: APP_READY: http://127.0.0.1:7007/apps/todo-app/index.html
 "
@@ -105,6 +140,18 @@ CRAFT — what a polished, designed result concretely means (apply to every buil
 • COHESION: one radius, one border treatment, one icon set, one control style across the whole app — buttons, inputs, and cards share a single visual language. Mismatched components read as assembled, not designed.
 • CONTENT POLISH: use realistic sample content, never 'lorem ipsum' or 'Item 1'; format numbers (thousands separators, currency, aligned decimals); and make sure long strings truncate or wrap cleanly instead of breaking the layout.
 
+TECHNIQUES — build the design with these, not with the defaults (apply to every build):
+• FLUID, NOT STEPPED: express the page title and section padding as \`clamp(<small-screen>, <preferred vw>, <large-screen>)\`, where the size the DESIGN SYSTEM states is the large-screen end; body and label sizes stay exactly as given. The layout must hold at every width between 375 and 1440, not only at four of them.
+• CONTAINER QUERIES: a component sizes itself to ITS CONTAINER, not the viewport — \`container-type: inline-size\` on the wrapper, then \`@container (min-width: …)\` for the component's own breaks. The same card in a sidebar and at full width must both read correctly without knowing where it is. Keep viewport media queries for page-level layout only.
+• INTRINSIC GRIDS: lay card grids out with \`grid-template-columns: repeat(auto-fit, minmax(<min>, 1fr))\` so they reflow with no breakpoint math, and size widths with min()/max()/clamp() instead of fixed pixel columns.
+• MEASURE: cap running text at about 65ch. A paragraph spanning a 1440px window is the fastest sign nobody set a line length.
+• TEXT WRAPPING: \`text-wrap: balance\` on headings so the last line isn't a single orphaned word, and \`text-wrap: pretty\` on body copy. Two declarations, and the typography stops looking accidental.
+• FOCUS RING ON :focus-visible: style \`:focus-visible\`, not \`:focus\`, so keyboard users get the ring and a mouse click does not leave one behind. Give it \`outline-offset\` so it sits clear of the control's own edge.
+• NATIVE CONTROLS JOIN THE DESIGN: set \`accent-color: var(--accent)\` so checkboxes, radios and range inputs match the system instead of shipping browser blue. Validate with \`:user-invalid\`, never \`:invalid\` — the latter marks a field red before the user has typed anything.
+• NO LAYOUT SHIFT: every image and video carries width/height attributes or an \`aspect-ratio\` plus \`object-fit: cover\`, so nothing reflows as media loads. Below the fold, add \`loading="lazy"\` and \`decoding="async"\`.
+• STICKY HEADER OFFSET: if the header is sticky, give anchor targets \`scroll-margin-top\` equal to its height — otherwise every in-page link lands with its heading hidden underneath.
+• STYLE FROM CONTENT WITH :has(): let a parent react to what it contains (\`.card:has(img)\`, \`.field:has(:user-invalid)\`) instead of adding a JavaScript class to say the same thing.
+
 UNIVERSAL DESIGN RULES — apply to every build:
 • ICONS: use crisp inline SVG icons from one consistent stroke/line set; never use emoji as UI icons. Give each icon an accessible label (aria-label or adjacent text).
 • NO DEFAULT GRADIENT IDENTITY: do not reach for a generic purple→pink gradient as the brand. Use the archetype's exact palette; a flat, deliberate color beats a decorative gradient.
@@ -115,6 +162,12 @@ UNIVERSAL DESIGN RULES — apply to every build:
 • CONTRAST: body text and interactive text meet a contrast ratio of at least 4.5:1 against their background (WCAG AA); don't ship low-contrast grey-on-grey.
 • CURSOR AFFORDANCE: interactive elements show \`cursor: pointer\`; non-interactive text does not. The pointer must never lie about what is clickable.
 • RESPONSIVE: lay out and test at the common breakpoints ~375 (mobile), ~768 (tablet), ~1024 (small laptop), and ~1440 (desktop); no horizontal scroll or clipped content at any of them.
+• TYPEFACE: implement the archetype's named face. Do NOT substitute a default UI sans and do NOT let a bare system-ui stack stand in as the identity — the same safe sans on every site is the single most recognized tell of a machine-made page. When you self-host an open-licensed face, ship its license file alongside the font files.
+• NOT THE DEFAULT LAYOUT: a centered hero stacked over three equal feature cards is the shape every generated page takes; do not ship it. Vary the rhythm — an asymmetric split, a full-bleed band, cards of deliberately different sizes, content that starts left instead of centered.
+• ELEVATION IS HIERARCHY: do not put the same large radius and the same drop shadow on every surface. Most blocks are flat with a 1px --border; reserve shadow for what genuinely floats above the page (a menu, a modal, one focal card).
+• ICONS IN CONTEXT: no grid of icons each sitting in its own rounded-square tile, and no emoji standing in as feature bullets. An icon sits with its label, at text scale.
+• BLUR IS NOT A STYLE: no reflexive frosted-glass panels. backdrop-filter belongs on something that genuinely overlays moving content — a sticky header above a scrolling page — not on a resting card.
+• REAL COPY: write the actual sentence for the actual product. No filler voice — "Elevate your…", "Seamlessly…", "Unlock the power of…" — and no invented statistics or fake testimonials to fill a section.
 
 - After writing files, output: APP_READY: http://127.0.0.1:7007/apps/trading-bot/index.html
 "
@@ -154,9 +207,27 @@ RULES:
 - Do NOT ask questions — just build it based on the instructions
 
 DESIGN SYSTEM — Marketing Landing Page. Implement these EXACT values; do not substitute your own colors, fonts, or sizes:
-Palette (exact): --bg #ffffff · --ink #0f0f1a · --text #18181b · --text-muted #52525b · --border #e4e4e7 · --accent #7c3aed · --accent-hover #6d28d9. Dark hero sections use --ink bg with #fafafa text (flat, never a purple→pink gradient).
-Typography: 'Sora', 'Inter', system-ui, sans-serif. Scale: h1 clamp(40px,6vw,72px)/800/-0.03em · sub 18px/400/1.6 · body 17px/400/1.6 · CTA 16px/600. Big benefit-led headlines, skimmable body.
-Radius: 10px cards / 999px pill CTAs. Shadow: CTA 0 8px 24px rgba(124,58,237,.3). Spacing: 4px base; generous 80–96px section padding.
+Color tokens (EXACT). Put \`color-scheme: light dark\` on :root and define each token once — every value is a light-dark() pair, so the app ships BOTH themes from one definition:
+  --bg: light-dark(oklch(0.99 0.004 40), oklch(0.15 0.012 30));
+  --bg-subtle: light-dark(oklch(0.97 0.007 40), oklch(0.18 0.014 30));
+  --surface: light-dark(oklch(1 0 0), oklch(0.2 0.014 30));
+  --surface-hover: light-dark(oklch(0.955 0.009 40), oklch(0.24 0.016 30));
+  --border-subtle: light-dark(oklch(0.93 0.009 40), oklch(0.26 0.016 30));
+  --border: light-dark(oklch(0.84 0.012 40), oklch(0.36 0.018 30));
+  --text-muted: light-dark(oklch(0.52 0.018 30), oklch(0.72 0.02 30));
+  --text: light-dark(oklch(0.21 0.022 30), oklch(0.97 0.006 30));
+  --accent-subtle: light-dark(oklch(0.95 0.045 25), oklch(0.25 0.06 25));
+  --accent-border: light-dark(oklch(0.82 0.095 25), oklch(0.39 0.1 25));
+  --accent: light-dark(oklch(0.55 0.19 25), oklch(0.64 0.18 25));
+  --accent-hover: light-dark(oklch(0.49 0.19 25), oklch(0.7 0.16 25));
+  --accent-contrast: light-dark(oklch(0.99 0 0), oklch(0.15 0.025 25));
+  --success: light-dark(oklch(0.52 0.13 152), oklch(0.72 0.15 152));
+  --warn: light-dark(oklch(0.55 0.13 75), oklch(0.79 0.14 80));
+  --danger: light-dark(oklch(0.52 0.19 27), oklch(0.7 0.17 27));
+Token roles — use the one that names the job: --surface-hover is a card under the pointer · --border is a component edge, --border-subtle a row divider · --accent is a FILL (buttons, active nav), never body-text color · --accent-contrast is the text ON --accent and is NOT always white · --success/--warn/--danger are semantic only. Derive any shade you still need with color-mix() against these, never a fresh invented hex.
+Typography: Display 'Sora', system-ui, sans-serif; body 'Manrope', system-ui, sans-serif. Scale: h1 clamp(40px,6vw,72px)/800/-0.03em · sub 18px/400/1.6 · body 17px/400/1.6 · CTA 16px/600. Big benefit-led headlines, skimmable body.
+Radius: 10px cards / 999px pill CTAs. Shadow: CTA 0 8px 24px color-mix(in oklch, var(--accent) 30%, transparent). Spacing: 4px base; generous 80–96px section padding.
+A dark band is welcome for one section: use --text as its background and --bg as its text. Flat and deliberate — never a gradient, and never more than one such band.
 Attitude: Persuasive and momentum-building — one clear narrative that guides the eye straight to a single conversion goal.
 Layout & hierarchy: Hero (headline + sub + primary CTA) → proof/benefits → features → testimonial/logos → repeated CTA. One dominant action throughout.
 
@@ -170,6 +241,18 @@ CRAFT — what a polished, designed result concretely means (apply to every buil
 • COHESION: one radius, one border treatment, one icon set, one control style across the whole app — buttons, inputs, and cards share a single visual language. Mismatched components read as assembled, not designed.
 • CONTENT POLISH: use realistic sample content, never 'lorem ipsum' or 'Item 1'; format numbers (thousands separators, currency, aligned decimals); and make sure long strings truncate or wrap cleanly instead of breaking the layout.
 
+TECHNIQUES — build the design with these, not with the defaults (apply to every build):
+• FLUID, NOT STEPPED: express the page title and section padding as \`clamp(<small-screen>, <preferred vw>, <large-screen>)\`, where the size the DESIGN SYSTEM states is the large-screen end; body and label sizes stay exactly as given. The layout must hold at every width between 375 and 1440, not only at four of them.
+• CONTAINER QUERIES: a component sizes itself to ITS CONTAINER, not the viewport — \`container-type: inline-size\` on the wrapper, then \`@container (min-width: …)\` for the component's own breaks. The same card in a sidebar and at full width must both read correctly without knowing where it is. Keep viewport media queries for page-level layout only.
+• INTRINSIC GRIDS: lay card grids out with \`grid-template-columns: repeat(auto-fit, minmax(<min>, 1fr))\` so they reflow with no breakpoint math, and size widths with min()/max()/clamp() instead of fixed pixel columns.
+• MEASURE: cap running text at about 65ch. A paragraph spanning a 1440px window is the fastest sign nobody set a line length.
+• TEXT WRAPPING: \`text-wrap: balance\` on headings so the last line isn't a single orphaned word, and \`text-wrap: pretty\` on body copy. Two declarations, and the typography stops looking accidental.
+• FOCUS RING ON :focus-visible: style \`:focus-visible\`, not \`:focus\`, so keyboard users get the ring and a mouse click does not leave one behind. Give it \`outline-offset\` so it sits clear of the control's own edge.
+• NATIVE CONTROLS JOIN THE DESIGN: set \`accent-color: var(--accent)\` so checkboxes, radios and range inputs match the system instead of shipping browser blue. Validate with \`:user-invalid\`, never \`:invalid\` — the latter marks a field red before the user has typed anything.
+• NO LAYOUT SHIFT: every image and video carries width/height attributes or an \`aspect-ratio\` plus \`object-fit: cover\`, so nothing reflows as media loads. Below the fold, add \`loading="lazy"\` and \`decoding="async"\`.
+• STICKY HEADER OFFSET: if the header is sticky, give anchor targets \`scroll-margin-top\` equal to its height — otherwise every in-page link lands with its heading hidden underneath.
+• STYLE FROM CONTENT WITH :has(): let a parent react to what it contains (\`.card:has(img)\`, \`.field:has(:user-invalid)\`) instead of adding a JavaScript class to say the same thing.
+
 UNIVERSAL DESIGN RULES — apply to every build:
 • ICONS: use crisp inline SVG icons from one consistent stroke/line set; never use emoji as UI icons. Give each icon an accessible label (aria-label or adjacent text).
 • NO DEFAULT GRADIENT IDENTITY: do not reach for a generic purple→pink gradient as the brand. Use the archetype's exact palette; a flat, deliberate color beats a decorative gradient.
@@ -180,6 +263,12 @@ UNIVERSAL DESIGN RULES — apply to every build:
 • CONTRAST: body text and interactive text meet a contrast ratio of at least 4.5:1 against their background (WCAG AA); don't ship low-contrast grey-on-grey.
 • CURSOR AFFORDANCE: interactive elements show \`cursor: pointer\`; non-interactive text does not. The pointer must never lie about what is clickable.
 • RESPONSIVE: lay out and test at the common breakpoints ~375 (mobile), ~768 (tablet), ~1024 (small laptop), and ~1440 (desktop); no horizontal scroll or clipped content at any of them.
+• TYPEFACE: implement the archetype's named face. Do NOT substitute a default UI sans and do NOT let a bare system-ui stack stand in as the identity — the same safe sans on every site is the single most recognized tell of a machine-made page. When you self-host an open-licensed face, ship its license file alongside the font files.
+• NOT THE DEFAULT LAYOUT: a centered hero stacked over three equal feature cards is the shape every generated page takes; do not ship it. Vary the rhythm — an asymmetric split, a full-bleed band, cards of deliberately different sizes, content that starts left instead of centered.
+• ELEVATION IS HIERARCHY: do not put the same large radius and the same drop shadow on every surface. Most blocks are flat with a 1px --border; reserve shadow for what genuinely floats above the page (a menu, a modal, one focal card).
+• ICONS IN CONTEXT: no grid of icons each sitting in its own rounded-square tile, and no emoji standing in as feature bullets. An icon sits with its label, at text scale.
+• BLUR IS NOT A STYLE: no reflexive frosted-glass panels. backdrop-filter belongs on something that genuinely overlays moving content — a sticky header above a scrolling page — not on a resting card.
+• REAL COPY: write the actual sentence for the actual product. No filler voice — "Elevate your…", "Seamlessly…", "Unlock the power of…" — and no invented statistics or fake testimonials to fill a section.
 
 - After writing files, output: APP_READY: http://127.0.0.1:7007/apps/initech/index.html
 
@@ -224,9 +313,27 @@ RULES:
 - Do NOT ask questions — just build it based on the instructions
 
 DESIGN SYSTEM — Marketing Landing Page. Implement these EXACT values; do not substitute your own colors, fonts, or sizes:
-Palette (exact): --bg #ffffff · --ink #0f0f1a · --text #18181b · --text-muted #52525b · --border #e4e4e7 · --accent #7c3aed · --accent-hover #6d28d9. Dark hero sections use --ink bg with #fafafa text (flat, never a purple→pink gradient).
-Typography: 'Sora', 'Inter', system-ui, sans-serif. Scale: h1 clamp(40px,6vw,72px)/800/-0.03em · sub 18px/400/1.6 · body 17px/400/1.6 · CTA 16px/600. Big benefit-led headlines, skimmable body.
-Radius: 10px cards / 999px pill CTAs. Shadow: CTA 0 8px 24px rgba(124,58,237,.3). Spacing: 4px base; generous 80–96px section padding.
+Color tokens (EXACT). Put \`color-scheme: light dark\` on :root and define each token once — every value is a light-dark() pair, so the app ships BOTH themes from one definition:
+  --bg: light-dark(oklch(0.99 0.004 40), oklch(0.15 0.012 30));
+  --bg-subtle: light-dark(oklch(0.97 0.007 40), oklch(0.18 0.014 30));
+  --surface: light-dark(oklch(1 0 0), oklch(0.2 0.014 30));
+  --surface-hover: light-dark(oklch(0.955 0.009 40), oklch(0.24 0.016 30));
+  --border-subtle: light-dark(oklch(0.93 0.009 40), oklch(0.26 0.016 30));
+  --border: light-dark(oklch(0.84 0.012 40), oklch(0.36 0.018 30));
+  --text-muted: light-dark(oklch(0.52 0.018 30), oklch(0.72 0.02 30));
+  --text: light-dark(oklch(0.21 0.022 30), oklch(0.97 0.006 30));
+  --accent-subtle: light-dark(oklch(0.95 0.045 25), oklch(0.25 0.06 25));
+  --accent-border: light-dark(oklch(0.82 0.095 25), oklch(0.39 0.1 25));
+  --accent: light-dark(oklch(0.55 0.19 25), oklch(0.64 0.18 25));
+  --accent-hover: light-dark(oklch(0.49 0.19 25), oklch(0.7 0.16 25));
+  --accent-contrast: light-dark(oklch(0.99 0 0), oklch(0.15 0.025 25));
+  --success: light-dark(oklch(0.52 0.13 152), oklch(0.72 0.15 152));
+  --warn: light-dark(oklch(0.55 0.13 75), oklch(0.79 0.14 80));
+  --danger: light-dark(oklch(0.52 0.19 27), oklch(0.7 0.17 27));
+Token roles — use the one that names the job: --surface-hover is a card under the pointer · --border is a component edge, --border-subtle a row divider · --accent is a FILL (buttons, active nav), never body-text color · --accent-contrast is the text ON --accent and is NOT always white · --success/--warn/--danger are semantic only. Derive any shade you still need with color-mix() against these, never a fresh invented hex.
+Typography: Display 'Sora', system-ui, sans-serif; body 'Manrope', system-ui, sans-serif. Scale: h1 clamp(40px,6vw,72px)/800/-0.03em · sub 18px/400/1.6 · body 17px/400/1.6 · CTA 16px/600. Big benefit-led headlines, skimmable body.
+Radius: 10px cards / 999px pill CTAs. Shadow: CTA 0 8px 24px color-mix(in oklch, var(--accent) 30%, transparent). Spacing: 4px base; generous 80–96px section padding.
+A dark band is welcome for one section: use --text as its background and --bg as its text. Flat and deliberate — never a gradient, and never more than one such band.
 Attitude: Persuasive and momentum-building — one clear narrative that guides the eye straight to a single conversion goal.
 Layout & hierarchy: Hero (headline + sub + primary CTA) → proof/benefits → features → testimonial/logos → repeated CTA. One dominant action throughout.
 
@@ -240,6 +347,18 @@ CRAFT — what a polished, designed result concretely means (apply to every buil
 • COHESION: one radius, one border treatment, one icon set, one control style across the whole app — buttons, inputs, and cards share a single visual language. Mismatched components read as assembled, not designed.
 • CONTENT POLISH: use realistic sample content, never 'lorem ipsum' or 'Item 1'; format numbers (thousands separators, currency, aligned decimals); and make sure long strings truncate or wrap cleanly instead of breaking the layout.
 
+TECHNIQUES — build the design with these, not with the defaults (apply to every build):
+• FLUID, NOT STEPPED: express the page title and section padding as \`clamp(<small-screen>, <preferred vw>, <large-screen>)\`, where the size the DESIGN SYSTEM states is the large-screen end; body and label sizes stay exactly as given. The layout must hold at every width between 375 and 1440, not only at four of them.
+• CONTAINER QUERIES: a component sizes itself to ITS CONTAINER, not the viewport — \`container-type: inline-size\` on the wrapper, then \`@container (min-width: …)\` for the component's own breaks. The same card in a sidebar and at full width must both read correctly without knowing where it is. Keep viewport media queries for page-level layout only.
+• INTRINSIC GRIDS: lay card grids out with \`grid-template-columns: repeat(auto-fit, minmax(<min>, 1fr))\` so they reflow with no breakpoint math, and size widths with min()/max()/clamp() instead of fixed pixel columns.
+• MEASURE: cap running text at about 65ch. A paragraph spanning a 1440px window is the fastest sign nobody set a line length.
+• TEXT WRAPPING: \`text-wrap: balance\` on headings so the last line isn't a single orphaned word, and \`text-wrap: pretty\` on body copy. Two declarations, and the typography stops looking accidental.
+• FOCUS RING ON :focus-visible: style \`:focus-visible\`, not \`:focus\`, so keyboard users get the ring and a mouse click does not leave one behind. Give it \`outline-offset\` so it sits clear of the control's own edge.
+• NATIVE CONTROLS JOIN THE DESIGN: set \`accent-color: var(--accent)\` so checkboxes, radios and range inputs match the system instead of shipping browser blue. Validate with \`:user-invalid\`, never \`:invalid\` — the latter marks a field red before the user has typed anything.
+• NO LAYOUT SHIFT: every image and video carries width/height attributes or an \`aspect-ratio\` plus \`object-fit: cover\`, so nothing reflows as media loads. Below the fold, add \`loading="lazy"\` and \`decoding="async"\`.
+• STICKY HEADER OFFSET: if the header is sticky, give anchor targets \`scroll-margin-top\` equal to its height — otherwise every in-page link lands with its heading hidden underneath.
+• STYLE FROM CONTENT WITH :has(): let a parent react to what it contains (\`.card:has(img)\`, \`.field:has(:user-invalid)\`) instead of adding a JavaScript class to say the same thing.
+
 UNIVERSAL DESIGN RULES — apply to every build:
 • ICONS: use crisp inline SVG icons from one consistent stroke/line set; never use emoji as UI icons. Give each icon an accessible label (aria-label or adjacent text).
 • NO DEFAULT GRADIENT IDENTITY: do not reach for a generic purple→pink gradient as the brand. Use the archetype's exact palette; a flat, deliberate color beats a decorative gradient.
@@ -250,6 +369,12 @@ UNIVERSAL DESIGN RULES — apply to every build:
 • CONTRAST: body text and interactive text meet a contrast ratio of at least 4.5:1 against their background (WCAG AA); don't ship low-contrast grey-on-grey.
 • CURSOR AFFORDANCE: interactive elements show \`cursor: pointer\`; non-interactive text does not. The pointer must never lie about what is clickable.
 • RESPONSIVE: lay out and test at the common breakpoints ~375 (mobile), ~768 (tablet), ~1024 (small laptop), and ~1440 (desktop); no horizontal scroll or clipped content at any of them.
+• TYPEFACE: implement the archetype's named face. Do NOT substitute a default UI sans and do NOT let a bare system-ui stack stand in as the identity — the same safe sans on every site is the single most recognized tell of a machine-made page. When you self-host an open-licensed face, ship its license file alongside the font files.
+• NOT THE DEFAULT LAYOUT: a centered hero stacked over three equal feature cards is the shape every generated page takes; do not ship it. Vary the rhythm — an asymmetric split, a full-bleed band, cards of deliberately different sizes, content that starts left instead of centered.
+• ELEVATION IS HIERARCHY: do not put the same large radius and the same drop shadow on every surface. Most blocks are flat with a 1px --border; reserve shadow for what genuinely floats above the page (a menu, a modal, one focal card).
+• ICONS IN CONTEXT: no grid of icons each sitting in its own rounded-square tile, and no emoji standing in as feature bullets. An icon sits with its label, at text scale.
+• BLUR IS NOT A STYLE: no reflexive frosted-glass panels. backdrop-filter belongs on something that genuinely overlays moving content — a sticky header above a scrolling page — not on a resting card.
+• REAL COPY: write the actual sentence for the actual product. No filler voice — "Elevate your…", "Seamlessly…", "Unlock the power of…" — and no invented statistics or fake testimonials to fill a section.
 
 - After writing files, output: APP_READY: http://127.0.0.1:7007/apps/biz/index.html
 

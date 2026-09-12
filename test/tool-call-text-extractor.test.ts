@@ -5,11 +5,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import {
-  extractToolCallsFromText,
-  proseLooksLikeToolCall,
-  annotatePersistentNarration,
-} from "../src/canonical-loop/adapters/tool-call-text-extractor.js";
+import { extractToolCallsFromText } from "../src/canonical-loop/adapters/tool-call-text-extractor.js";
 
 const TOOLS = new Set(["browser", "read", "write", "bash", "edit"]);
 
@@ -80,151 +76,19 @@ describe("extractToolCallsFromText — browser shorthand", () => {
   });
 });
 
-describe("extractToolCallsFromText — write/read prose narration", () => {
-  // Live failure 2026-06-05 (xAI Grok): the CEO agent narrated
-  // FIVE write calls as prose in one turn, then "Committed" tripped the guard.
-  const GROK_FIVE_WRITES = [
-    'run tool write with path is /Users/dev/Projects/Local-Agent-X/workspace/subtask1-project-setup.txt content is Committed Subtask 1: Initech Dallas Demo Project Setup. Status: Complete.',
-    'run tool write with path is /Users/dev/Projects/Local-Agent-X/workspace/subtask2-hire-agents.txt content is Committed Subtask 2: Hire 4 agents. Status: Complete.',
-    'run tool write with path is /Users/dev/Projects/Local-Agent-X/workspace/subtask3-product-catalog.txt content is Committed Subtask 3: Product Catalog Setup. Status: Complete.',
-    'run tool write with path is /Users/dev/Projects/Local-Agent-X/workspace/subtask4-marketing-strategy.txt content is Committed Subtask 4: Marketing Strategy. Status: Complete.',
-    'run tool write with path is /Users/dev/Projects/Local-Agent-X/workspace/subtask5-operations.txt content is Committed Subtask 5: Operations and Reporting. Status: Complete.',
-  ].join("\n");
-
-  it("reconstructs ALL five narrated write calls from one turn", () => {
-    const { toolCalls } = extractToolCallsFromText(GROK_FIVE_WRITES, TOOLS);
-    expect(toolCalls).toHaveLength(5);
-    expect(toolCalls.every((t) => t.name === "write")).toBe(true);
-    const first = JSON.parse(toolCalls[0].arguments);
-    expect(first.path).toBe("/Users/dev/Projects/Local-Agent-X/workspace/subtask1-project-setup.txt");
-    expect(first.content).toBe("Committed Subtask 1: Initech Dallas Demo Project Setup. Status: Complete.");
-    const last = JSON.parse(toolCalls[4].arguments);
-    expect(last.path).toBe("/Users/dev/Projects/Local-Agent-X/workspace/subtask5-operations.txt");
-    expect(last.content).toBe("Committed Subtask 5: Operations and Reporting. Status: Complete.");
-  });
-
-  it("reconstructs a single write (path + content)", () => {
+describe("extractToolCallsFromText — edges + safety", () => {
+  it("does not reconstruct a tool call from prose narration (heuristic removed)", () => {
     const text = "run tool write with path is /tmp/a.txt content is hello world";
-    const { toolCalls } = extractToolCallsFromText(text, TOOLS);
-    expect(toolCalls).toHaveLength(1);
-    expect(JSON.parse(toolCalls[0].arguments)).toEqual({ path: "/tmp/a.txt", content: "hello world" });
+    expect(extractToolCallsFromText(text, TOOLS).toolCalls).toHaveLength(0);
   });
 
-  it("captures multi-line content verbatim to end-of-call", () => {
-    const text = "run tool write with path is /tmp/note.md content is line one\nline two\nline three";
-    const { toolCalls } = extractToolCallsFromText(text, TOOLS);
-    expect(toolCalls).toHaveLength(1);
-    expect(JSON.parse(toolCalls[0].arguments).content).toBe("line one\nline two\nline three");
-  });
-
-  it("reconstructs a read call (path only)", () => {
-    const text = "use tool read with path is /etc/hosts";
-    const { toolCalls } = extractToolCallsFromText(text, TOOLS);
-    expect(toolCalls).toHaveLength(1);
-    expect(toolCalls[0].name).toBe("read");
-    expect(JSON.parse(toolCalls[0].arguments)).toEqual({ path: "/etc/hosts" });
-  });
-
-  it("does not fire on a write mention with no value markers", () => {
-    const { toolCalls } = extractToolCallsFromText("I'll write the results to a file shortly.", TOOLS);
-    expect(toolCalls).toHaveLength(0);
-  });
-
-  it("reconstructs mixed write + bash in one turn", () => {
-    const text = "run tool write with path is /tmp/x.txt content is hi\nrun tool bash with command is ls /tmp";
-    const { toolCalls } = extractToolCallsFromText(text, TOOLS);
-    expect(toolCalls).toHaveLength(2);
-    expect(toolCalls.map((t) => t.name)).toEqual(["write", "bash"]);
-    expect(JSON.parse(toolCalls[1].arguments).command).toBe("ls /tmp");
-  });
-});
-
-describe("extractToolCallsFromText — shell prose narration", () => {
-  // Live failure 2026-06-04 (xAI Grok): instead of a
-  // structured tool_call OR a JSON leak, Grok narrated the bash call in
-  // plain English. The JSON extractor can't see it; the call never fires
-  // and the trailing "File committed." trips the false-completion guard.
-  const GROK_PROSE = [
-    "run tool bash with command is cat > /Users/dev/Projects/Local-Agent-X/workspace/initech_execution_start.md << 'EOL'",
-    "Project execution started by CEO.",
-    "Agents: 4 hired.",
-    "Subtasks ready for assignment.",
-    "EOL",
-    'ls /Users/dev/Projects/Local-Agent-X/workspace/ && echo "File committed."',
-  ].join("\n");
-
-  it("reconstructs a bash call from the exact Grok narration (with heredoc)", () => {
-    const { toolCalls } = extractToolCallsFromText(GROK_PROSE, TOOLS);
-    expect(toolCalls).toHaveLength(1);
-    expect(toolCalls[0].name).toBe("bash");
-    const cmd = JSON.parse(toolCalls[0].arguments).command as string;
-    expect(cmd).toContain("cat > /Users/dev/Projects/Local-Agent-X/workspace/initech_execution_start.md");
-    expect(cmd).toContain("EOL"); // heredoc body captured, not truncated at newline
-    expect(cmd).toContain('echo "File committed."');
-  });
-
-  it("reconstructs a single-line bash narration", () => {
-    const { toolCalls } = extractToolCallsFromText("run tool bash with command is ls -la /tmp", TOOLS);
-    expect(toolCalls).toHaveLength(1);
-    expect(toolCalls[0].name).toBe("bash");
-    expect(JSON.parse(toolCalls[0].arguments).command).toBe("ls -la /tmp");
-  });
-
-  it("does not fire when no shell tool is allowed", () => {
-    const { toolCalls } = extractToolCallsFromText("run tool bash with command is ls", new Set(["read", "browser"]));
-    expect(toolCalls).toHaveLength(0);
-  });
-
-  it("does not fire on a casual mention without a value marker", () => {
-    // No "is/:/=" after "command" — this is explanatory prose, not an invocation.
-    const { toolCalls } = extractToolCallsFromText("I'll run the bash command to verify the workspace.", TOOLS);
-    expect(toolCalls).toHaveLength(0);
-  });
-
-  it("structured JSON still wins over prose when both could match", () => {
+  it("extracts a JSON tool call even when preceded by prose that looks like an invocation", () => {
     const text = 'run tool bash\n{"name":"read","arguments":{"path":"a.txt"}}';
     const { toolCalls } = extractToolCallsFromText(text, TOOLS);
     expect(toolCalls).toHaveLength(1);
     expect(toolCalls[0].name).toBe("read");
   });
-});
 
-describe("proseLooksLikeToolCall", () => {
-  it("detects a 'run tool <name>' narration", () => {
-    expect(proseLooksLikeToolCall("run tool bash with command is ls", TOOLS)).toBe(true);
-  });
-  it("detects 'call the read tool' narration", () => {
-    expect(proseLooksLikeToolCall("Next I'll call the read tool on the file.", TOOLS)).toBe(true);
-  });
-  it("is false for a normal completion with no invocation language", () => {
-    expect(proseLooksLikeToolCall("Done — the workspace looks healthy and all agents are hired.", TOOLS)).toBe(false);
-  });
-  it("is false for empty input", () => {
-    expect(proseLooksLikeToolCall("", TOOLS)).toBe(false);
-  });
-});
-
-describe("annotatePersistentNarration — visible no-op on stubborn narration", () => {
-  it("annotates a narrated edit that yielded no structured call (the silent no-op)", () => {
-    const text = "I'll call the edit tool on src/index.ts to fix the import.";
-    const out = annotatePersistentNarration(text, 0, TOOLS);
-    expect(out).not.toBeNull();
-    expect(out).toContain(text);
-    expect(out).toMatch(/wire-format-error/);
-    expect(out).toMatch(/nothing was executed/i);
-  });
-
-  it("returns null when a real tool call was salvaged", () => {
-    const text = "I'll call the edit tool on src/index.ts.";
-    expect(annotatePersistentNarration(text, 1, TOOLS)).toBeNull();
-  });
-
-  it("returns null for a healthy completion (leaves the turn untouched)", () => {
-    expect(annotatePersistentNarration("All set — the file looks correct now.", 0, TOOLS)).toBeNull();
-  });
-});
-
-describe("extractToolCallsFromText — edges + safety", () => {
   it("returns empty for plain prose with no JSON", () => {
     const r = extractToolCallsFromText("Hi Alex, how can I help?", TOOLS);
     expect(r.toolCalls).toHaveLength(0);

@@ -62,8 +62,17 @@ function installerAssertionNames(): Map<string, string[]> {
   const pack = qualificationBenchmarkCatalog.packs.find((item) => item.id === "installer")!;
   const output = join(mkdtempSync(join(tmpdir(), "lax-release-list-")), "tests.json");
   roots.push(dirname(output));
+  // npm.cmd is a batch file, not a PE executable — Windows' CreateProcess
+  // can't launch it directly (spawnSync EINVAL) without a shell to interpret
+  // it, unlike posix's real `npm` binary or `git` elsewhere in this file.
+  // (Pre-quoting the args ourselves to dodge DEP0190's shell+array warning
+  // breaks npm.cmd's own %~dp0-relative self-resolution — it started
+  // looking for a project-local npm install that doesn't exist here — so
+  // this keeps the plain array form; every argument is a repo-relative test
+  // path or a fixed flag, never untrusted input.)
   const npm = process.platform === "win32" ? "npm.cmd" : "npm";
-  execFileSync(npm, ["exec", "vitest", "list", ...pack.scenarios.map((scenario) => scenario.testPath), "--", `--json=${output}`]);
+  execFileSync(npm, ["exec", "vitest", "list", ...pack.scenarios.map((scenario) => scenario.testPath), "--", `--json=${output}`],
+    { shell: process.platform === "win32" });
   installerAssertions = new Map(pack.scenarios.map((scenario) => [scenario.testPath, []]));
   for (const item of JSON.parse(readFileSync(output, "utf8"))) {
     const path = relative(resolve("."), item.file).replaceAll("\\", "/");

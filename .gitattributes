@@ -6,6 +6,18 @@
 # Keep Python files LF for cross-platform consistency.
 *.py   text eol=lf
 
+# .mjs CLI scripts (scripts/*.mjs) open with a `#!/usr/bin/env node` shebang.
+# Vite/vitest's own shebang-stripping (used when a test imports one of these
+# scripts) matches only an LF-terminated shebang line; on a CRLF checkout
+# (windows-latest CI runners, or any Windows box without this rule) the match
+# fails, the raw `#!...` line survives into the transformed module, and
+# import blows up as "SyntaxError: Invalid or unexpected token" with no file
+# or line — plain `node` and esbuild's own CLI both tolerate CRLF here fine,
+# so this was invisible outside Vite's transform. Hit release-gate.test.ts,
+# source-hygiene-gate.test.ts and gate-outcome-fires.contract.test.ts, all of
+# which import a shebang'd script under scripts/.
+*.mjs  text eol=lf
+
 # Generated artifacts that a build gate byte-compares against freshly
 # generated content must keep the generator's line endings in the working
 # tree. gen-codebase-map.mjs emits LF and --check compares raw strings, so

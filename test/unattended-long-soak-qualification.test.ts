@@ -40,7 +40,10 @@ function runRestart(action: "persist" | "resume", opId: string, mutation = "") {
       LAX_DISABLE_OS_KEYCHAIN: "1",
     },
     encoding: "utf8",
-    timeout: 10_000,
+    // Must clear the fixture's own internal recovery deadline (15s,
+    // canonical-loop-restart-worker.ts) with room to spare — see that
+    // file's comment for the measured CI-vs-local speed evidence.
+    timeout: 30_000,
     windowsHide: true,
   });
 }
@@ -145,7 +148,7 @@ describe("unattended long-duration qualification", () => {
     expect(events.filter(event => event.type === "turn_committed")).toHaveLength(2);
     expect(events.some(event => event.type === "lease_lost")).toBe(true);
     expect(events.some(event => event.type === "state_changed")).toBe(true);
-  });
+  }, 40_000);
 
   it("does not replay an ambiguous non-idempotent effect after a hard process death", () => {
     const opId = "op_u6_irreversible";

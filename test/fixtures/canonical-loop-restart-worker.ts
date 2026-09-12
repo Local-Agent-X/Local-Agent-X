@@ -334,7 +334,15 @@ async function resumeThroughBootstrap(): Promise<never> {
   registerFixturePlugin();
   bootstrapCanonicalLoop();
 
-  const deadline = Date.now() + 5_000;
+  // 5s held locally but measured too tight on windows-latest CI ("restart
+  // recovery did not succeed: state=queued" — the recovery worker just
+  // hadn't been scheduled yet). Real cold-start cost here (AriKernel,
+  // canonical-loop bootstrap, a fixture HTTP provider) plus a ~2-3x
+  // slower CI runner (measured directly via worker-pivot-ceiling-failure-
+  // reason.test.ts's 12s-local vs 36.7s-CI split on the same PR) easily
+  // outruns 5s; callers' spawnSync `timeout` must stay comfortably above
+  // this.
+  const deadline = Date.now() + 15_000;
   while (readOp(opId)?.canonical?.state !== "succeeded") {
     const state = readOp(opId)?.canonical?.state;
     if (state === "failed" || Date.now() >= deadline) {

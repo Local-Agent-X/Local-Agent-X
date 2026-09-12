@@ -3,7 +3,14 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+// Every case spawns real "persist" then "resume" child processes; the
+// fixture's own recovery deadline alone is 15s (canonical-loop-restart-
+// worker.ts), so the global 15s testTimeout would clip an otherwise-
+// succeeding run before the child even gets to report. See that fixture's
+// comment for the measured CI-vs-local speed evidence behind these numbers.
+vi.setConfig({ testTimeout: 40_000 });
 
 const fixture = join(dirname(fileURLToPath(import.meta.url)), "fixtures", "canonical-loop-restart-worker.ts");
 let dataDir: string;
@@ -23,7 +30,10 @@ function run(action: "persist" | "resume", opId: string, mutation = "") {
       OLLAMA_CLOUD_API_KEY: "restart-cloud-secret",
     },
     encoding: "utf8",
-    timeout: 10_000,
+    // Must clear the fixture's own internal recovery deadline (15s) with
+    // room to spare, or a genuinely-slow-but-still-progressing child gets
+    // SIGTERM'd before it can report its own clean pass/fail.
+    timeout: 30_000,
     windowsHide: true,
   });
 }

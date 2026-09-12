@@ -313,7 +313,20 @@ async function observe(message = "send an email to bob and check my inbox") {
     memoryNotifications: [], memoryCurateBlock: "", forceBuildIntent: false,
   });
   const loadedNames = new Set(loaded.map((t) => t.name));
-  const manifested = new Set(allTools.filter((t) => prompt.includes(`- ${t.name}:`)).map((t) => t.name));
+  // The manifest names a deferred tool either solo (`- name: description`) or,
+  // once >=2 tools share a name-family prefix, grouped on one line
+  // (`- prefix_*: name1, name2`, tool-prompt-builder.ts familyKey/MANIFEST_
+  // GROUP_MIN) — the name is still present in the text, just not at `- name:`.
+  // Scanning only the deferred-manifest section (not the whole prompt) keeps
+  // this from matching a name that happens to appear in some other tool's
+  // loaded-tool usage guidance.
+  const manifestHeadingIdx = prompt.indexOf("## More tools available on demand");
+  const deferredManifestSection = manifestHeadingIdx === -1 ? "" : prompt.slice(manifestHeadingIdx);
+  const manifested = new Set(allTools.filter((t) => {
+    if (prompt.includes(`- ${t.name}:`)) return true;
+    const escaped = t.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`\\b${escaped}\\b`).test(deferredManifestSection);
+  }).map((t) => t.name));
   return {
     prompt, loadedNames, manifested,
     /** Everywhere the model could learn this tool exists. */

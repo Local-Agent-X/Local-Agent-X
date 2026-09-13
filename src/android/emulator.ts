@@ -67,7 +67,10 @@ export async function startEmulator(avdName: string, bootTimeoutMs = 90_000): Pr
   try {
     // -no-snapshot-load: a stale saved-state snapshot is a common source of
     // "boots but adb never sees sys.boot_completed" hangs on a fresh install.
-    proc = spawn(emulatorBin(), ["-avd", avdName, "-no-snapshot-load"], { stdio: "ignore", detached: true });
+    // -no-window: the device is mirrored into the app's ANDROID tab via
+    // frame-stream.ts — the emulator's own Qt window would just be a second,
+    // unmanaged copy of the same screen popping up outside the app.
+    proc = spawn(emulatorBin(), ["-avd", avdName, "-no-snapshot-load", "-no-window"], { stdio: "ignore", detached: true });
     proc.unref();
   } catch (e) {
     throw new Error(`spawn emulator failed: ${(e as Error).message}. Is the Android SDK installed?`);

@@ -7,7 +7,7 @@
  *   gates.ts          — SDK-readiness pre-dispatch gate
  *   devices.ts        — list_devices, start_emulator, stop_emulator
  *   interact.ts       — tap, swipe, type_text, key_event
- *   apps.ts           — install_apk, launch_app, list_apps
+ *   apps.ts           — install_apk, launch_app, list_apps, port_forward, open_url
  *   capture.ts        — screenshot
  */
 
@@ -22,7 +22,7 @@ import { READ_ONLY_ACTIONS } from "./action-tables.js";
 import { sdkReadinessGate } from "./gates.js";
 import { handleListDevices, handleStartEmulator, handleStopEmulator } from "./devices.js";
 import { handleTap, handleSwipe, handleTypeText, handleKeyEvent } from "./interact.js";
-import { handleInstallApk, handleLaunchApp, handleListApps } from "./apps.js";
+import { handleInstallApk, handleLaunchApp, handleListApps, handlePortForward, handleOpenUrl } from "./apps.js";
 import { handleScreenshot } from "./capture.js";
 import { err } from "../result-helpers.js";
 
@@ -52,8 +52,10 @@ export function createAndroidTools(): ToolDefinition[] {
           case "install_apk": return await handleInstallApk(args);
           case "launch_app": return await handleLaunchApp(args);
           case "list_apps": return await handleListApps(args);
+          case "port_forward": return await handlePortForward(args);
+          case "open_url": return await handleOpenUrl(args);
           default:
-            return err(`Unknown action: "${action}". Valid actions: list_devices, start_emulator, stop_emulator, screenshot, tap, swipe, type_text, key_event, install_apk, launch_app, list_apps`);
+            return err(`Unknown action: "${action}". Valid actions: list_devices, start_emulator, stop_emulator, screenshot, tap, swipe, type_text, key_event, install_apk, launch_app, list_apps, port_forward, open_url`);
         }
       } catch (e) {
         return err(`Android error: ${(e as Error).message}`);

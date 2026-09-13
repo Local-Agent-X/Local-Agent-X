@@ -5,7 +5,7 @@
 
 import { existsSync } from "node:fs";
 import type { ToolResult } from "../../types.js";
-import { resolveSerial, installApk, launchApp, listApps } from "../../android/index.js";
+import { resolveSerial, installApk, launchApp, listApps, reversePort, openUrl } from "../../android/index.js";
 import { resolveAgentPath } from "../../workspace/paths.js";
 import { ok, err } from "../result-helpers.js";
 
@@ -34,4 +34,20 @@ export async function handleListApps(args: Record<string, unknown>): Promise<Too
   const apps = await listApps(serial, args.all_apps !== true);
   if (apps.length === 0) return ok("No packages found.");
   return ok(apps.map((a) => a.packageName).join("\n"));
+}
+
+export async function handlePortForward(args: Record<string, unknown>): Promise<ToolResult> {
+  const port = Number(args.port);
+  if (!Number.isInteger(port) || port <= 0) return err("'port' (a positive integer) is required for port_forward.");
+  const serial = await resolveSerial(args.device ? String(args.device) : undefined);
+  await reversePort(serial, port);
+  return ok(`Port ${port} on this machine is now reachable from ${serial} at 127.0.0.1:${port} (e.g. a Metro/Expo dev server started with the dev_server tool).`);
+}
+
+export async function handleOpenUrl(args: Record<string, unknown>): Promise<ToolResult> {
+  const url = args.url ? String(args.url) : "";
+  if (!url) return err("'url' is required for open_url.");
+  const serial = await resolveSerial(args.device ? String(args.device) : undefined);
+  await openUrl(serial, url);
+  return ok(`Opened ${url} on ${serial}.`);
 }

@@ -97,5 +97,26 @@ export async function listApps(serial: string, thirdPartyOnly = true): Promise<I
 export async function launchApp(serial: string, packageName: string): Promise<void> {
   // monkey's LAUNCHER-category intent starts an app by package alone — no
   // caller-supplied launch activity needed, unlike `am start -n pkg/activity`.
-  await runAdbText(["-s", serial, "shell", "monkey", "-p", packageName, "-c", "android.intent.category.LAUNCHER", "1"]);
+  // On failure (package not installed / no launchable activity) monkey exits
+  // non-zero, but the useful diagnosis ("No activities found ... aborted") is
+  // on STDOUT — stderr is just an echo of the args we already passed it. Using
+  // runAdbText here would throw with that useless arg-echo as the message.
+  const result = await runAdb(["-s", serial, "shell", "monkey", "-p", packageName, "-c", "android.intent.category.LAUNCHER", "1"]);
+  const stdout = result.stdout.toString("utf8");
+  if (result.code !== 0 || /no activities found|aborted/i.test(stdout)) {
+    throw new Error(`"${packageName}" has no launchable activity on ${serial} — it isn't installed. Use 'list_apps' to check, or 'install_apk' to sideload it.`);
+  }
+}
+
+/** `adb reverse` — exposes a port on this machine (e.g. a Metro/Expo dev
+ *  server) to the emulator at the same-numbered port on its own loopback, so
+ *  an app on the device can reach a dev server that only listens on the host.
+ *  This is the bridge a local Expo/React-Native workflow needs; there is no
+ *  equivalent for reaching an arbitrary LAN host, only the host machine. */
+export async function reversePort(serial: string, port: number): Promise<void> {
+  await runAdbText(["-s", serial, "reverse", `tcp:${port}`, `tcp:${port}`]);
+}
+
+export async function openUrl(serial: string, url: string): Promise<void> {
+  await runAdbText(["-s", serial, "shell", "am", "start", "-a", "android.intent.action.VIEW", "-d", url]);
 }

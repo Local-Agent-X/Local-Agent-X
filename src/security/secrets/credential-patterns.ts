@@ -97,7 +97,15 @@ export const CREDENTIAL_PATTERNS: readonly CredentialPattern[] = [
   // ── Communication ──
   { type: "comm", name: "Slack Token", regex: /\b(xox[bpas]-[a-zA-Z0-9-]{20,})/g },
   { type: "comm", name: "Telegram Bot Token", regex: /\b(\d{8,10}:[A-Za-z0-9_-]{35})\b/g },
-  { type: "comm", name: "Discord Token", regex: /([MN][A-Za-z\d]{23,}\.[\w-]{6}\.[\w-]{27,})/g },
+  // The first segment is base64 of a snowflake user id — 24 chars for an
+  // 18-digit id, 28 for a 20-digit one — so it is BOUNDED. Left open as
+  // `{23,}` it was the one catastrophic backtracker in the catalog: on a long
+  // alphanumeric run (any base64 blob, and every decoded view the evasion pass
+  // feeds back through here) the greedy class ate the whole run, failed the
+  // `\.`, and unwound a character at a time from every `M`/`N` — O(n^2). It
+  // measured 1634ms of the 1638ms spent scanning one 150KB view, and 21.8s of
+  // a 21.9s encoded-view scan. An upper bound costs no real token.
+  { type: "comm", name: "Discord Token", regex: /([MN][A-Za-z\d]{23,32}\.[\w-]{6}\.[\w-]{27,})/g },
 
   // ── Cryptographic ──
   { type: "crypto", name: "Private Key (PEM)", regex: /-----BEGIN\s+(?:RSA\s+|EC\s+|OPENSSH\s+|ENCRYPTED\s+|PGP\s+)?PRIVATE\s+KEY(?:\s+BLOCK)?-----[\s\S]*?-----END\s+(?:RSA\s+|EC\s+|OPENSSH\s+|ENCRYPTED\s+|PGP\s+)?PRIVATE\s+KEY(?:\s+BLOCK)?-----/g },
@@ -121,7 +129,14 @@ export const CREDENTIAL_PATTERNS: readonly CredentialPattern[] = [
   // Requires a real URL scheme and userinfo chars that can't span JSON/prose
   // punctuation (no quotes/slashes/@) — a bare `//a:b@c` or a schema.org JSON-LD
   // blob (`//schema.org","@type":…@…`) is not a credential.
-  { type: "generic", name: "Password in URL", regex: /\b[a-z][a-z0-9+.-]*:\/\/[^\s:@/"']+:[^\s@/"']+@[^\s/"']+/gi },
+  // The scheme is bounded (RFC 3986: ALPHA then ALPHA/DIGIT/"+"/"-"/"."; the
+  // longest IANA-registered scheme is ~20 chars), and leaving it open as `*`
+  // made this the catalog's worst backtracker. The derived-view catalog strips
+  // the leading word-boundary anchor (so a prefix byte cannot hide a key), and
+  // without it the greedy class ate a whole 150KB alphanumeric run, failed the
+  // "://", and unwound one char at a time from EVERY offset -- 21,200ms of a
+  // 21,236ms view scan. Capping the scheme makes that unwind O(32), not O(n).
+  { type: "generic", name: "Password in URL", regex: /\b[a-z][a-z0-9+.-]{0,31}:\/\/[^\s:@/"']+:[^\s@/"']+@[^\s/"']+/gi },
   // Key list from CREDENTIAL_KEY_NAMES so this and the threat-scoring classifier
   // can never recognise different keys again (see that constant's doc comment).
   { type: "generic", name: "Key-Value Secret", regex: new RegExp(`(?:${CREDENTIAL_KEY_NAMES})\\s*[:=]\\s*["']?([^\\s"',]{12,})`, "gi") },

@@ -1,4 +1,5 @@
 import { existsSync, readFileSync, watch, writeFileSync } from "node:fs";
+import { handleWatcherErrors } from "../util/watcher-errors.js";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 
@@ -273,10 +274,10 @@ export class LiveToolPolicy extends ToolPolicy {
   private startWatching(): void {
     try {
       let debounce: ReturnType<typeof setTimeout> | null = null;
-      watch(this.policyPath, () => {
+      handleWatcherErrors(watch(this.policyPath, () => {
         if (debounce) clearTimeout(debounce);
         debounce = setTimeout(() => this.reload(), 500);
-      });
+      }), "tool-policy");
     } catch {
       // File may not exist yet — that's fine
     }

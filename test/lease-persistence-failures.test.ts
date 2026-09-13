@@ -45,7 +45,9 @@ function bytes(opId: string): string {
 }
 
 function expectNoTmp(opId: string): void {
-  expect(readdirSync(opDir(opId)).filter(name => name.endsWith(".tmp"))).toEqual([]);
+  // atomicWriteFileSync names its staging file `operation.json.tmp.<hex>`, so
+  // match anywhere in the name — `endsWith` would silently stop catching leaks.
+  expect(readdirSync(opDir(opId)).filter(name => name.includes(".tmp"))).toEqual([]);
 }
 
 describe.each(["before_write", "before_rename"] as const)("strict failure at %s", point => {

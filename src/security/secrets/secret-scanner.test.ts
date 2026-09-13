@@ -270,6 +270,48 @@ describe("scanForSecrets — round-3 encoding/normalization evasions (C3-6..19)"
   }, 30_000);
 });
 
+// ── Catalog backtracking bounds ───────────────────────────────────────────
+// Two catalog patterns ended a greedy character class with an open `{n,}` and
+// then required a literal. On a long alphanumeric run the class ate the whole
+// run, failed the literal, and unwound one character at a time from EVERY
+// offset. The raw catalog hid it behind a leading `\b` (a base64 blob has
+// almost no word boundaries), but the derived-view catalog STRIPS that anchor
+// so a prefix byte cannot hide a key — which made the scan quadratic on
+// exactly the decoded views the evasion pass feeds back through it. Measured
+// on one 150KB view: Password-in-URL 21,200ms, Discord 1,634ms. Both are
+// bounded now, so the whole encoded-view scan is 64ms.
+describe("scanForSecrets — catalog patterns cannot backtrack quadratically", () => {
+  // A long run of the exact shape both patterns grind on: all [A-Za-z0-9], no
+  // "://", no ".", starting at an `M` so the Discord class engages too. Unbounded
+  // quantifiers take tens of seconds here; bounded ones are linear. The timeout is
+  // the assertion (terminates fast vs grinds), with a wide margin over the ~60ms
+  // real cost so a slow CI box cannot flake it.
+  it("scans a 150KB alphanumeric run without quadratic unwind", () => {
+    const run = "M" + "a1B2c3D4e5F6g7H8".repeat(9_400);
+    expect(run.length).toBeGreaterThan(150_000);
+    expect(scanForSecrets(run).scannedLength).toBe(run.length);
+  }, 5_000);
+
+  // The bounds must not be tightened past real credentials: the Discord first
+  // segment is base64 of a snowflake id (24 chars for 18 digits, 28 for 20) and
+  // URL schemes are short. These pin the upper bounds from the other side.
+  it("still detects a Discord token with a 20-digit-snowflake first segment", () => {
+    const seg = Buffer.from("12345678901234567890", "utf8").toString("base64").replace(/=+$/, "");
+    const token = `M${seg.slice(1)}.GhIjKl.${"a1b2c3d4e5f6g7h8i9j0klmnopq"}`;
+    expect(scanForSecrets(`token=${token}`).clean).toBe(false);
+  });
+
+  it("still detects credentials in URLs across real scheme lengths", () => {
+    for (const url of [
+      "ftp://bob:pw@files.example.org/x",
+      "postgres://user:s3cr3t@db.example.com:5432/app",
+      "mongodb+srv://u:p@cluster0.mongodb.net/test",
+    ]) {
+      expect(scanForSecrets(url).clean).toBe(false);
+    }
+  });
+});
+
 // ── R4-14: category-Cf format-char interleaving (bidi + zero-width) ───────────
 // The scanner view folds NFKC/NFKD + strips Mn/Me + controls, but the bidi format
 // controls (U+202A–202E, U+2066–2069) are NFKC-stable and were NOT stripped, so a

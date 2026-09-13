@@ -11,6 +11,7 @@
  */
 
 import { readFileSync, existsSync, watch } from "node:fs";
+import { handleWatcherErrors } from "./util/watcher-errors.js";
 import { join, resolve, normalize, isAbsolute, relative } from "node:path";
 
 import { createLogger } from "./logger.js";
@@ -245,7 +246,7 @@ export function startConfigWatcher(): void {
   if (!existsSync(CONFIG_DIR)) return;
 
   try {
-    watch(CONFIG_DIR, { recursive: true }, (eventType, filename) => {
+    handleWatcherErrors(watch(CONFIG_DIR, { recursive: true }, (eventType, filename) => {
       if (!filename) return;
       const name = filename.replace(/\\/g, "/");
 
@@ -259,7 +260,7 @@ export function startConfigWatcher(): void {
         _toolsConfig = null;
         logger.info("[config-loader] Hot-reloaded tools.json");
       }
-    });
+    }), "config-loader");
     _watching = true;
     logger.info("[config-loader] Watching config/ for changes");
   } catch (e) {

@@ -1,4 +1,5 @@
 import { existsSync, watch } from "node:fs";
+import { handleWatcherErrors } from "../util/watcher-errors.js";
 import { join } from "node:path";
 
 import { createLogger } from "../logger.js";
@@ -27,7 +28,7 @@ export function startManifestWatcher(): void {
       let debounce: NodeJS.Timeout | null = null;
       // Per-app debounce so a flurry of edits doesn't re-broadcast 20 reload events
       const appDebounce = new Map<string, NodeJS.Timeout>();
-      watch(dir, { recursive: true }, (_event, filename) => {
+      handleWatcherErrors(watch(dir, { recursive: true }, (_event, filename) => {
         if (filename && filename.toString().includes("app-manifest")) return;
 
         // workspace/apps/<name>/... -> broadcast app-files-changed so any
@@ -52,7 +53,7 @@ export function startManifestWatcher(): void {
         debounce = setTimeout(() => {
           writeManifest();
         }, 5000);
-      });
+      }), "manifest");
     } catch {}
   }
   _manifestWatching = true;

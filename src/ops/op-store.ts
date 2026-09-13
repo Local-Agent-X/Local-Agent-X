@@ -26,6 +26,7 @@ import { getLaxDir } from "../lax-data-dir.js";
 import { opDir } from "./event-log.js";
 import type { Op, OpStatus } from "./types.js";
 import { randomId } from "../util/ids.js";
+import { atomicWriteFileSync, type AtomicWriteOperations } from "../util/json-store.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("workers.op-store");
@@ -73,28 +74,47 @@ export function writeOpStrict(op: Op): boolean {
   return error === null;
 }
 
+// Routed through the canonical atomic write rather than a local tmp+rename:
+// on Windows a rename over a destination another process holds open fails with
+// EPERM, and a bare renameSync has no answer to that. Measured on an idle
+// Windows box: 0% of renames fail with no concurrent reader, 5-34% with one.
+// A dropped write here silently loses an Op's lifecycle transition, so the
+// bounded contention retry in atomicWriteFileSync is load-bearing, not polish.
 function attemptWriteOp(op: Op, strict: boolean): Error | null {
   const target = join(opDir(op.id), "operation.json");
-  // Unique tmp per write: a fixed `.tmp` name is shared by every writer, so
-  // two processes on one ~/.lax can interleave (one renames the other's
-  // half-written or wrong-content file). rename() itself stays atomic.
-  const tmp = `${target}.${randomId()}.tmp`;
   try {
-    const failure = strict ? strictWriteFailureForTest : null;
-    const failureAttempt = failure ? ++failure.seen : 0;
-    if (failure && failureAttempt === failure.attempt && failure.point === "before_write") {
-      throw failure.error;
-    }
-    writeFileSync(tmp, JSON.stringify(op, null, 2), { encoding: "utf-8", mode: 0o600 });
-    if (failure && failureAttempt === failure.attempt && failure.point === "before_rename") {
-      throw failure.error;
-    }
-    renameSync(tmp, target);
+    atomicWriteFileSync(
+      target,
+      JSON.stringify(op, null, 2),
+      { mode: 0o600 },
+      injectedWriteFailure(strict),
+    );
     return null;
   } catch (e) {
-    try { rmSync(tmp, { force: true }); } catch { /* best-effort tmp cleanup */ }
     return e as Error;
   }
+}
+
+/**
+ * Test seam: fail one strict write at a chosen point. `seen` advances once per
+ * strict write and never per rename retry, so `attempt: 2` still selects the
+ * second write rather than the second attempt inside a single write.
+ */
+function injectedWriteFailure(strict: boolean): AtomicWriteOperations | undefined {
+  const failure = strict ? strictWriteFailureForTest : null;
+  if (!failure) return undefined;
+  if (++failure.seen !== failure.attempt) return undefined;
+  return {
+    write: (path, data, opts) => {
+      if (failure.point === "before_write") throw failure.error;
+      writeFileSync(path, data, opts);
+    },
+    rename: (source, destination) => {
+      if (failure.point === "before_rename") throw failure.error;
+      renameSync(source, destination);
+    },
+    unlink: path => rmSync(path, { force: true }),
+  };
 }
 
 const LOCK_STALE_MS = 2_000;

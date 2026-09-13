@@ -1,4 +1,5 @@
 import { watch } from "node:fs";
+import { handleWatcherErrors } from "../util/watcher-errors.js";
 import { createHash } from "node:crypto";
 import type Database from "better-sqlite3";
 import type { MemoryConfig } from "./types.js";
@@ -17,7 +18,7 @@ export function startWatcher(
   handle: WatcherHandle
 ): void {
   try {
-    handle.watcher = watch(memoryDir, { recursive: true }, (_event, filename) => {
+    handle.watcher = handleWatcherErrors(watch(memoryDir, { recursive: true }, (_event, filename) => {
       if (
         filename &&
         (filename.includes(".git") ||
@@ -32,7 +33,7 @@ export function startWatcher(
         setDirty();
         handle.debounceTimer = null;
       }, 500);
-    });
+    }), "memory-index");
   } catch {
   }
 }

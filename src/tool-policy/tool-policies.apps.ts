@@ -22,6 +22,15 @@ export const TOOL_POLICIES_APPS: Record<string, ToolPolicyEntry> = {
   // autonomous profiles still gate the call).
   computer:       { kernel: "internal", risk: "shell", rules: [{ id: "allow-computer", decision: "allow", reason: "Mouse/keyboard control allowed at policy layer; gated by enableComputerControl + OS permission + risk tier", priority: 40 }] },
   ocr:            { kernel: "internal", risk: "workspace-write", pathArgs: [{ arg: "path", action: "read" }], rules: [{ id: "allow-ocr", decision: "allow", reason: "OCR text extraction", priority: 50 }] },
+  // Genuinely "shell": every action spawns a real adb/emulator subprocess
+  // (unlike `computer`, which drives OS input APIs with no child process at
+  // all) — kernel:"shell" gives it the real taint/audit pipeline instead of
+  // pretending it's actuator-only. apk_path is gated UNCONDITIONALLY (no
+  // forActions) — it's simply absent on every action but install_apk, so
+  // this is the one path-gating shape that doesn't need every other action
+  // listed too (a forActions spec fails closed: an action in none of them
+  // gets denied outright, which would brick tap/screenshot/etc here).
+  android:        { kernel: "shell", risk: "shell", pathArgs: [{ arg: "apk_path", action: "read" }], rules: [{ id: "allow-android", decision: "allow", reason: "Android emulator/device control allowed at policy layer (subprocess spawn via adb/emulator, same tier as bash)", priority: 40 }] },
 
   // ── Apps (app_* glob) ──
   app_create:      { kernel: "internal", risk: "workspace-write" },

@@ -7,6 +7,7 @@ import { handlePreferencesRoutes } from "./preferences.js";
 import { handleProvidersRoutes } from "./providers.js";
 import { handleSecurityRoutes } from "./security.js";
 import { handleMoodRoutes } from "./mood.js";
+import { handleAndroidRoutes } from "./android.js";
 
 const handlers: RouteHandler[] = [
   handleSystemRoutes,
@@ -17,6 +18,7 @@ const handlers: RouteHandler[] = [
   handleProvidersRoutes,
   handleSecurityRoutes,
   handleMoodRoutes,
+  handleAndroidRoutes,
 ];
 
 export const handleSettingsRoutes: RouteHandler = async (method, url, req, res, ctx, role) => {

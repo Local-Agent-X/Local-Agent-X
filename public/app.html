@@ -597,6 +597,12 @@
           <div class="field-hint">A non-loopback entry extends what the agent itself may reach: the exact host:port you add is admitted for chat routing <em>and</em> for the agent's own HTTP tools. Nothing else on that network is.</div>
           <div id="lr-add-status" style="font-size:.75rem;margin-top:4px"></div>
         </div>
+        <div class="section-card">
+          <div class="section-title">Android SDK</div>
+          <div class="section-desc">Needed for the <code>android</code> tool (mobile app testing): boot an emulator, screenshot it, and tap/swipe/type into it. One-time setup installs platform-tools, the emulator, a system image, and a default AVD.</div>
+          <div id="android-sdk-status" style="margin-bottom:10px"></div>
+          <button class="action-btn primary" id="android-sdk-install-btn" onclick="installAndroidSdk()">Set up Android SDK</button>
+        </div>
       </div>
       <!-- Usage & Spending limits -->
       <div id="stab-usage" class="tab-pane">
@@ -1715,6 +1721,7 @@
 <script src="/js/settings-providers.js?v=v1"></script>
 <script src="/js/settings-ollama.js?v=v1"></script>
 <script src="/js/settings-local-runtimes.js?v=v1"></script>
+<script src="/js/settings-android.js?v=v1"></script>
 <script src="/js/settings-save-load.js?v=v1"></script>
 <script src="/js/settings-voice-tier4.js?v=v1"></script>
 <script src="/js/settings-embedding.js?v=v1"></script>

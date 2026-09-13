@@ -56,7 +56,8 @@
     "qualify:local-model": "tsx scripts/qualify-local-model.ts",
     "memory:check": "node scripts/check-memory-freshness.mjs",
     "hooks:install": "node scripts/install-git-hooks.mjs",
-    "setup-ai": "node scripts/setup-ai.js"
+    "setup-ai": "node scripts/setup-ai.js",
+    "android:install-sdk": "tsx scripts/install-android-sdk.ts"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",

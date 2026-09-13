@@ -79,6 +79,7 @@ function init_settings() {
   // loadSelfModify removed — platform files always protected
   loadIntegrations();
   if (typeof loadLocalRuntimesEditor === 'function') loadLocalRuntimesEditor();
+  if (typeof loadAndroidSdkStatus === 'function') loadAndroidSdkStatus();
   if (typeof loadMcpServers === 'function') loadMcpServers();
   waCheckStatus();
   tgCheckStatus();
@@ -116,6 +117,7 @@ function switchTab(id) {
   if (pill) pill.classList.add('active');
   if (id === 'hq' && typeof hqLoad === 'function') hqLoad();
   if (id === 'ai' && typeof loadLocalRuntimesEditor === 'function') loadLocalRuntimesEditor();
+  if (id === 'ai' && typeof loadAndroidSdkStatus === 'function') loadAndroidSdkStatus();
   if (id === 'image' && typeof refreshVoiceSetup === 'function') refreshVoiceSetup();
   if (id === 'image' && typeof loadUploadsStats === 'function') loadUploadsStats();
   if (id === 'usage' && typeof loadUsage === 'function') loadUsage();

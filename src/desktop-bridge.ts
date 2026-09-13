@@ -230,3 +230,14 @@ export function desktopRelaunchApp(): boolean {
   try { process.send!({ type: "lax:relaunch-app" }); return true; }
   catch (e) { logger.warn(`[bridge] relaunch-app send failed: ${(e as Error).message}`); return false; }
 }
+
+/** Fire-and-forget: push one Android device frame to Electron main
+ *  (desktop/src/android-view.ts), which relays it to the renderer canvas
+ *  sink. No reply — src/android/frame-stream.ts calls this every polled
+ *  frame and drops it silently outside the desktop app (headless/dev), same
+ *  as the other one-way pushes above. */
+export function desktopPushAndroidFrame(viewId: string, png: Buffer): boolean {
+  if (!desktopBridgeAvailable()) return false;
+  try { process.send!({ type: "lax:android-frame", viewId, pngBase64: png.toString("base64") }); return true; }
+  catch (e) { logger.warn(`[bridge] android-frame send failed: ${(e as Error).message}`); return false; }
+}

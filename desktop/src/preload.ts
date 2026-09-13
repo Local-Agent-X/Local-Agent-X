@@ -247,6 +247,16 @@ contextBridge.exposeInMainWorld("desktop", {
     },
   },
 
+  // Android device mirror (Settings/testing panel canvas). Frames are pushed
+  // from the server child's adb screencap poll (src/android/frame-stream.ts)
+  // through main; there is no bounds/attach negotiation like `browser` above
+  // because a canvas draw has no OS-level view to paint out of turn.
+  android: {
+    onFrame: (cb: (frame: { viewId: string; pngBase64: string }) => void) => {
+      ipcRenderer.on("android-frame", (_e, frame) => cb(frame));
+    },
+  },
+
   terminal: {
     create: (cols: number, rows: number): Promise<void> =>
       ipcRenderer.invoke("terminal-create", cols, rows),

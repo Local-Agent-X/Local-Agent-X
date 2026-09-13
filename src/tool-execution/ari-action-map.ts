@@ -60,6 +60,10 @@ export const ARI_ACTION_MAP: Record<string, string> = {
   // an http-style verb here would brick every call, the image_search failure
   // shape all over again.
   app_rebuild: "exec",
+  // Same schema-valid-shell-action story as app_rebuild above: every android
+  // action ultimately spawns adb/emulator, so "exec" is correct for all of
+  // them even though the tool has its own read/tap/type action vocabulary.
+  android: "exec",
   // database — SQL (read-class today; tools self-restrict writes)
   sql_query: "query", sql_explain: "query", sql_schema: "query",
   // retrieval — vector/keyword session search

@@ -8,6 +8,7 @@ import {
   type BrowserBridgeMessage,
 } from "./server-bridge-browser";
 import { captureScreenInMain } from "./screen-capture-native";
+import { handleAndroidFrameMessage, isAndroidFrameMessage, type AndroidFrameMessage } from "./android-view";
 
 // Fulfills native-capability requests from the server child over the IPC
 // channel using Electron main-only APIs:
@@ -34,7 +35,7 @@ interface CaptureScreenRequest {
   monitor?: number; region?: { x: number; y: number; width: number; height: number };
   format?: "png" | "jpg"; quality?: number; scale?: number;
 }
-type ServerMessage = TrashRequest | RestartRequest | RelaunchRequest | ProbeRequest | CaptureScreenRequest | BrowserBridgeMessage;
+type ServerMessage = TrashRequest | RestartRequest | RelaunchRequest | ProbeRequest | CaptureScreenRequest | BrowserBridgeMessage | AndroidFrameMessage;
 
 interface ProbeError { kind: string; message: string; source?: string; line?: number }
 interface ProbeOutcome { ok: boolean; booted: boolean; errors: ProbeError[]; screenshotB64?: string; error?: string }
@@ -59,6 +60,10 @@ export function attachServerBridge(proc: ChildProcess, handlers: ServerBridgeHan
     if (!msg || typeof msg.type !== "string") return;
     if (isBrowserBridgeMessage(msg)) {
       await handleBrowserBridgeMessage(proc, msg);
+      return;
+    }
+    if (isAndroidFrameMessage(msg)) {
+      handleAndroidFrameMessage(msg);
       return;
     }
     if (msg.type === "lax:trash-item") {

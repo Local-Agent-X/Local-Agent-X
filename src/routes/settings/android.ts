@@ -6,8 +6,8 @@
  */
 
 import type { RouteHandler } from "../../server-context.js";
-import { jsonResponse } from "../../server-utils.js";
-import { checkAndroidSdk, installAndroidSdk } from "../../android/index.js";
+import { jsonResponse, readBody } from "../../server-utils.js";
+import { checkAndroidSdk, installAndroidSdk, listDevices, startEmulator, stopEmulator, keyEvent } from "../../android/index.js";
 
 interface InstallState {
   running: boolean;
@@ -39,6 +39,46 @@ export const handleAndroidRoutes: RouteHandler = async (method, url, req, res, _
       .catch((e) => { state.error = (e as Error).message; })
       .finally(() => { state.running = false; });
     json(202, { ok: true, started: true });
+    return true;
+  }
+
+  // Below: device control for the ANDROID sidebar tab (public/js/android-tab.js).
+  // Same startEmulator/stopEmulator/listDevices the agent's `android` tool calls —
+  // the UI's Start/Stop button is just another caller, not a parallel path.
+
+  if (method === "GET" && url.pathname === "/api/android/devices") {
+    json(200, { devices: await listDevices() });
+    return true;
+  }
+
+  if (method === "POST" && url.pathname === "/api/android/emulator/start") {
+    const body = JSON.parse((await readBody(req)) || "{}") as { avdName?: string };
+    try {
+      const { serial } = await startEmulator(body.avdName || "lax_default");
+      json(200, { ok: true, serial });
+    } catch (e) {
+      json(500, { ok: false, error: (e as Error).message });
+    }
+    return true;
+  }
+
+  if (method === "POST" && url.pathname === "/api/android/emulator/stop") {
+    const body = JSON.parse((await readBody(req)) || "{}") as { serial?: string };
+    if (!body.serial) { json(400, { ok: false, error: "serial is required" }); return true; }
+    await stopEmulator(body.serial);
+    json(200, { ok: true });
+    return true;
+  }
+
+  if (method === "POST" && url.pathname === "/api/android/key") {
+    const body = JSON.parse((await readBody(req)) || "{}") as { serial?: string; key?: string };
+    if (!body.serial || !body.key) { json(400, { ok: false, error: "serial and key are required" }); return true; }
+    try {
+      await keyEvent(body.serial, body.key);
+      json(200, { ok: true });
+    } catch (e) {
+      json(400, { ok: false, error: (e as Error).message });
+    }
     return true;
   }
 

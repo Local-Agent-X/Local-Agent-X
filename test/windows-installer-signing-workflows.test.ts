@@ -374,6 +374,11 @@ describe("signed native desktop rolling release contract", () => {
     const gateTests = workflow.slice(workflow.indexOf("  gate-tests:"), publishStart);
     expect(gateTests).toContain("npm run test:unit");
     expect(gateTests).toContain("npm run test:desktop");
+    expect(gateTests).toMatch(
+      /- name: Install desktop dependencies\s+working-directory: desktop\s+run: npm ci/,
+    );
+    expect(gateTests.indexOf("- name: Install desktop dependencies"))
+      .toBeLessThan(gateTests.indexOf("npm run test:desktop"));
     expect(stable).toBeGreaterThanOrEqual(0);
     expect(rolling).toBeGreaterThan(stable);
     expect(publish).toContain("tag_name: desktop-stable");

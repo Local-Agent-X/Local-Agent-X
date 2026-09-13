@@ -583,6 +583,11 @@ jobs:
         run: npm run test:prepare
       - name: Unit tests (vitest, blocking)
         run: npm run test:unit
+      # desktop/ is a separate npm package. Root npm ci does not install
+      # Electron, which two desktop suites import at module load time.
+      - name: Install desktop dependencies
+        working-directory: desktop
+        run: npm ci
       - name: Desktop tests (vitest, blocking)
         run: npm run test:desktop
 

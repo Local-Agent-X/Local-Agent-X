@@ -478,6 +478,24 @@ describe("evaluateShellCommand — denylist denials name the binary and the way 
     }
   });
 
+  // Regression (2026-09-13 live audit): `/\bformat\b.*[/\\]/i` matched the WORD
+  // "format" anywhere followed by a slash ANYWHERE LATER in the string — so a
+  // bash payload containing `format: json` got denied as a disk-format command
+  // purely because the rest of the command happened to contain a "/" after it.
+  it("does not deny 'format' occurring as ordinary payload/flag text, only the real disk-format invocation", () => {
+    for (const cmd of [
+      `echo 'format: json' > /tmp/report/out.json`,
+      `eslint . --format json > reports/eslint.json`,
+      `git log --format=%H -- src/file.ts`,
+      `prettier --format=json src/`,
+    ]) {
+      expect(posixEval(cmd).allowed).toBe(true);
+    }
+    for (const cmd of [`format C:`, `format /FS:NTFS X:`, String.raw`format \\.\PhysicalDrive1`]) {
+      expect(posixEval(cmd).allowed).toBe(false);
+    }
+  });
+
   it("does not newly deny a benign command that merely mentions an argv[0]-aware bin", () => {
     // DANGEROUS_INVOKE_BINS (host/open/ping/mount/mail/dig/…) are argv[0]-aware,
     // so the word as an ARGUMENT passes. Assert the reporter change didn't regress

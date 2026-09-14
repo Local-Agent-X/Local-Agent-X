@@ -17,7 +17,15 @@ export const BLOCKED_COMMANDS = [
   /\bchmod\s+777\b/i,
   /\bmkfs\b/i,
   /\bdd\s+.*of=/i,
-  /\bformat\b.*[/\\]/i,
+  // Windows disk-format invocation only: `format C:`, `format /FS:NTFS X:`,
+  // `format \\.\PhysicalDrive1`. Previously `/\bformat\b.*[/\\]/i` matched the
+  // word "format" ANYWHERE followed by a slash ANYWHERE later in the string —
+  // so a curl body like `-d 'format: json' https://api.example.com/x` (the
+  // format: TOKEN comes from the payload, the slash from the URL) was denied
+  // as if it were a disk format. The lookbehind excludes `--format`/`-format`
+  // CLI flags; the required drive-letter-or-switch right after "format" scopes
+  // this to the actual destructive command.
+  /(?<!-)\bformat\b\s+(\/|\\|[A-Za-z]:)/i,
   // Shell `eval` builtin as a COMMAND (eval "$(curl …)"). Anchored so it does
   // NOT fire on "eval" inside a PATH or filename (/…/lais-eval/…, config.eval.ts,
   // this repo's own eval/ dir) — the unanchored /\beval\b/ blocked every verify

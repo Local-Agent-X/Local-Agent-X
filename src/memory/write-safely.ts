@@ -188,6 +188,42 @@ function snapshotBeforeOverwrite(target: string, incoming: string): void {
   }
 }
 
+/**
+ * Never lose a fact a profile write couldn't fit. Called by the UNATTENDED
+ * profile writers (end-of-turn, auto-extract) once dedupe + compaction have
+ * both failed to make room under MAX_PROFILE_CHARS — those callers have no
+ * model turn left to hand a MemoryWriteBlocked to, so the old behavior was to
+ * drop the content with a log line and nothing recoverable. Routes it to the
+ * daily log instead (uncapped, already searchable via memory_search).
+ *
+ * Not for the model-tool-call writers (memory_update_profile,
+ * memory_set_user_field): those already surface the cap to the model
+ * synchronously in the same turn, which is a strictly better outcome (the
+ * model can retry) than parking the content here.
+ */
+export function appendProfileOverflow(opts: {
+  memory: MemoryIndex;
+  /** Full path of the profile file the content couldn't fit into. */
+  target: string;
+  content: string;
+  source: MemoryWriteSource;
+  sessionId: string;
+  reason: string;
+  promotion?: MemoryPromotionContext;
+}): void {
+  logger.warn(
+    `${basename(opts.target)} would exceed ${MAX_PROFILE_CHARS} chars (${opts.reason}) — ` +
+    `routing new content to the daily log instead of dropping it`,
+  );
+  appendToDailyLogSafely({
+    memory: opts.memory,
+    content: `[${basename(opts.target)} overflow] ${opts.content}`,
+    source: opts.source,
+    sessionId: opts.sessionId,
+    promotion: opts.promotion,
+  });
+}
+
 /** Append to today's daily log via MemoryIndex (keeps markDirty + reindex). */
 export function appendToDailyLogSafely(opts: {
   memory: MemoryIndex;

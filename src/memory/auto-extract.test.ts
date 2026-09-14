@@ -211,6 +211,21 @@ describe("autoExtractAndSave — Phase 2 write paths", () => {
     expect(user).not.toContain("- Name: Stranger");
   });
 
+  it("agent_name write that would exceed MAX_PROFILE_CHARS: IDENTITY.md left untouched, name routed to the daily log instead of dropped", async () => {
+    const { MAX_PROFILE_CHARS } = await import("./write-safely.js");
+    __nextReturn = { agent_name: "Aria" };
+    const huge = "# Agent\n- Name: OldAgent\n" + "x".repeat(MAX_PROFILE_CHARS);
+    writeFileSync(join(memoryDir(), "IDENTITY.md"), huge, "utf-8");
+
+    await autoExtractAndSave(memory, "call yourself Aria", "ok");
+
+    // No credentialed provider in the test env, so semantic compaction fails
+    // open (unavailable) — the file is left exactly as it was rather than
+    // writing a still-over-cap blob.
+    expect(readFileSync(join(memoryDir(), "IDENTITY.md"), "utf-8")).toBe(huge);
+    expect(readDailyLogOrEmpty()).toContain("Aria");
+  });
+
   it("user_name → appends Name bullet to USER.md when missing", async () => {
     __nextReturn = { user_name: "Alex" };
     writeFileSync(join(memoryDir(), "USER.md"), "# User\n- Role: developer\n", "utf-8");

@@ -29,17 +29,10 @@ import { redactKnownSecrets } from "../sanitize.js";
 import { resetSession as resetCurateNudge } from "./curate-nudge.js";
 import { classifySchema } from "../classifiers/schema-output.js";
 import { resolveProviderContext } from "../providers/resolve-provider-context.js";
-import { hasExternalIngestion } from "../data-lineage/external.js";
 import { PERSONALITY_FILES } from "./personality.js";
-import { dedupeProfileMarkdownConfirmed } from "./personality-confirmed.js";
-import { writeMemorySafely, MemoryWriteBlocked, MAX_PROFILE_CHARS } from "./write-safely.js";
-import {
-  promotionContextFromToolArgs,
-  rowsContainUntrustedMarker,
-  stampCleanModelPromotion,
-  type MemoryPromotionContext,
-  type MemoryPromotionRequest,
-} from "./promotion-gate.js";
+import { dedupeProfileMarkdownConfirmed, compactProfileIfOverCap } from "./personality-confirmed.js";
+import { writeMemorySafely, appendProfileOverflow, MemoryWriteBlocked, MAX_PROFILE_CHARS } from "./write-safely.js";
+import { PROMOTION_SOURCE, unattendedPromotionBlocker, mintCleanSelfPromotion } from "./end-of-turn-promotion.js";
 import type { MemoryIndex } from "./index-core.js";
 
 const logger = createLogger("memory.end-of-turn-write");
@@ -250,85 +243,10 @@ const WriteDecisionSchema = z.union([
     }),
 ]);
 
-// ── Promotion capability ──
-// Every memory write must carry a capability whose claims the gate (write-
-// safely.ts → assertMemoryPromotionAllowed) recomputes and verifies. Tool calls
-// get theirs stamped by the approval phase; this out-of-band pass mints its own.
-
-/** Audit-trail source of this writer's claims. The clean-session mint appends
- *  CLEAN_SELF_SOURCE_SUFFIX, so a landed write is recorded as
- *  "end-of-turn-classifier:clean-self" — auto-allowed, NOT human-approved. */
-const PROMOTION_SOURCE = "end-of-turn-classifier";
-/** Claim target: the profile routing key memory_update_profile's sink stamps
- *  for USER.md (memory/tools/save.ts), so these claims twin the model's own
- *  profile write — same content (the new text), target, origin and tier. */
-const PROMOTION_TARGET = "memory:profile:user";
-/** Inference tier — what the approval phase assigns a model profile write
- *  that declares no provenance (factMetadata in promotion-gate.ts). The
- *  classifier's verdict is a model inference about the user, never a
- *  verbatim user statement. */
-const PROMOTION_PROVENANCE = "inference";
-const PROMOTION_CONFIDENCE = 0.6;
-
-/**
- * Why an unattended end-of-turn write may NOT promote on this turn, or null
- * when it may. Mirrors the approval phase's precondition for a silent model
- * self-save (require-approval.ts): the session never ingested off-box content
- * (data-lineage/external.ts, decision D6) AND the turn carries no
- * external-untrusted marker. Where the tool path falls through to an
- * interactive approval card, this background pass has nobody to ask — and a
- * profile file cannot carry per-item provenance the way the Facts DB can —
- * so the honest answer is to decline (the caller logs it as a taint-gate
- * block).
- */
-function unattendedPromotionBlocker(ctx: EndOfTurnContext): string | null {
-  if (hasExternalIngestion(ctx.sessionId)) {
-    return "session ingested external content — profile auto-promotion needs approval (D6)";
-  }
-  // Persist could not recover the turn's rows (readOpMessages fallback): the
-  // tool results are unknown, so the turn is not provably clean.
-  if (ctx.turnMessages === null) {
-    return "turn rows unavailable (persist fallback) — not provably clean, profile auto-promotion declined";
-  }
-  // Scan EVERY row of the turn — tool results included, no last-user-row
-  // anchor (a mid-turn inject row would shift cleanTurnForModelSelfSave's
-  // window past a marked tool result). Non-ingesting tools emit markers too
-  // (sql_* wrappers, read_file's INJECTION WARNING) and D6 excludes them.
-  if (rowsContainUntrustedMarker(ctx.turnMessages)) {
-    return "turn carries an external-untrusted marker — profile auto-promotion needs approval";
-  }
-  return null;
-}
-
-/**
- * Mint this write's capability through the SAME clean-session model-self-save
- * mint the approval phase uses (stampCleanModelPromotion), once
- * unattendedPromotionBlocker has established its precondition.
- * Not createInternalMemoryContext: that claims durable_memory origin at
- * confidence 1 — the mint for trusted-code rewrites of memory that already
- * passed the gate (compression, consolidation, sync). The classifier's verdict
- * is fresh assistant-origin inference; claiming otherwise would launder it past
- * the taint policy the tool path applies to identical content. The claims are
- * exactly what the gate recomputes: content (= evidenceContent), target,
- * source, session, provenance, confidence, origin.
- */
-function mintCleanSelfPromotion(d: WriteDecisionPayload, sessionId: string): MemoryPromotionContext {
-  const request: MemoryPromotionRequest = {
-    content: d.content,
-    target: PROMOTION_TARGET,
-    source: PROMOTION_SOURCE,
-    sessionId,
-    provenance: PROMOTION_PROVENANCE,
-    confidence: PROMOTION_CONFIDENCE,
-    origin: "assistant",
-  };
-  // The stamp rides a tool-args carrier (the approval→sink hand-off object in
-  // the dispatch pipeline). Mint and sink are one function here, so the
-  // carrier is local and never leaves this scope.
-  const carrier: Record<string, unknown> = {};
-  stampCleanModelPromotion(carrier, request);
-  return promotionContextFromToolArgs(carrier, request);
-}
+// Promotion capability minting lives in end-of-turn-promotion.ts (split out
+// for the 400-LOC ceiling): every memory write must carry a capability whose
+// claims the gate (write-safely.ts → assertMemoryPromotionAllowed) recomputes
+// and verifies, and this out-of-band pass mints its own.
 
 export async function applyWrite(d: WriteDecisionPayload, ctx: EndOfTurnContext): Promise<ApplyWriteResult> {
   // Promotion precondition first — ahead of the file read, the section regex
@@ -371,12 +289,30 @@ export async function applyWrite(d: WriteDecisionPayload, ctx: EndOfTurnContext)
     updated = await dedupeProfileMarkdownConfirmed(updated);
   }
 
-  // Char-limit pre-check (graceful skip); the write gate enforces the same cap
-  // as a hard backstop for writers that bypass this path.
+  // Char-limit: structural dedupe above already ran and wasn't enough. Try
+  // semantic compaction before giving up (fails open to `updated` unchanged
+  // on any failure — see compactProfileIfOverCap). The write gate still
+  // enforces the same cap as a hard backstop for writers that bypass this path.
   if (filename === "USER.md" && updated.length > MAX_PROFILE_CHARS) {
-    const reason = `${filename} would be ${updated.length}/${MAX_PROFILE_CHARS}`;
-    logger.warn(`[end-of-turn] skipped write — ${reason}`);
-    return { ok: false, reason };
+    updated = await compactProfileIfOverCap(updated, MAX_PROFILE_CHARS);
+  }
+  if (filename === "USER.md" && updated.length > MAX_PROFILE_CHARS) {
+    // Consolidation couldn't make room either. There's no model turn left to
+    // hand this to (unlike the tool-call writers) — never drop the fact:
+    // park it in the daily log so it's still searchable and recoverable.
+    appendProfileOverflow({
+      memory: ctx.memory,
+      target: filePath,
+      content: d.content,
+      source: "eot",
+      sessionId: ctx.sessionId,
+      reason: `would be ${updated.length}/${MAX_PROFILE_CHARS} chars after consolidation`,
+      promotion: mintCleanSelfPromotion(d, ctx.sessionId, { target: "memory:daily-log", source: `${PROMOTION_SOURCE}:overflow` }),
+    });
+    return {
+      ok: false,
+      reason: `${filename} would be ${updated.length}/${MAX_PROFILE_CHARS} chars — routed new content to the daily log instead of dropping it`,
+    };
   }
 
   try {

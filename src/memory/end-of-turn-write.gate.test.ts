@@ -16,13 +16,14 @@
  *     taint-gate block before any write; a clean turn with tool rows lands.
  */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { applyWrite, type EndOfTurnContext, type WriteDecisionPayload } from "./end-of-turn-write.js";
-import { MemoryWriteBlocked, getLastWriteTick, writeMemorySafely } from "./write-safely.js";
+import { MemoryWriteBlocked, MAX_PROFILE_CHARS, getLastWriteTick, writeMemorySafely } from "./write-safely.js";
 import { PERSONALITY_FILES } from "./personality.js";
 import { clearExternalIngestion, recordExternalIngestion } from "../data-lineage/external.js";
+import { MemoryIndex as RealMemoryIndex } from "./index.js";
 import type { MemoryIndex } from "./index-core.js";
 
 let tempDir: string;
@@ -188,6 +189,35 @@ describe("applyWrite — real write gate + real promotion gate", () => {
 
     expect(result).toEqual({ ok: true });
     expect(readFileSync(userPath, "utf-8")).toContain(content);
+  });
+
+  it("USER.md at capacity: never drops the fact — routes it to the real daily log instead", async () => {
+    // A real MemoryIndex here (not the getMemoryDir()-only fake) so the
+    // overflow fallback's appendToDailyLogSafely call has a real
+    // getDailyLogPath()/appendDailyLog() to land on, and the promotion this
+    // mints for "memory:daily-log" is checked against the REAL gate.
+    const realMemory = new RealMemoryIndex(tempDir, { minScore: -1 });
+    ctx.memory = realMemory as unknown as MemoryIndex;
+    try {
+      writeFileSync(userPath, "x".repeat(MAX_PROFILE_CHARS - 50), "utf-8");
+      const content = "y".repeat(200); // (cap - 50) + ~200 > cap, no LLM configured so compaction fails open
+
+      const result = await applyWrite(append(content), ctx);
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.blocked).toBeFalsy();
+        expect(result.reason).toMatch(new RegExp(String(MAX_PROFILE_CHARS)));
+      }
+      // USER.md itself was never overwritten with an over-cap blob.
+      expect(readFileSync(userPath, "utf-8")).toBe("x".repeat(MAX_PROFILE_CHARS - 50));
+      // The fact landed in the real daily log instead of being dropped.
+      const dailyLog = readFileSync(realMemory.getDailyLogPath(), "utf-8");
+      expect(dailyLog).toContain(content);
+      expect(dailyLog).toContain("USER.md overflow");
+    } finally {
+      realMemory.close();
+    }
   });
 
   it("persist fallback (turnMessages=null — tool rows unrecoverable): declined, nothing written", async () => {

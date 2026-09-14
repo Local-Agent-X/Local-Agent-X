@@ -20,30 +20,38 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-// Mock writeMemorySafely BEFORE importing end-of-turn-write so the binding
-// is in place when the module resolves its imports. The real MemoryWriteBlocked
-// class is re-exported so tests can throw the exact same shape production
-// catches.
+// Mock writeMemorySafely + appendProfileOverflow BEFORE importing
+// end-of-turn-write so the bindings are in place when the module resolves its
+// imports. The real MemoryWriteBlocked class is re-exported so tests can
+// throw the exact same shape production catches. appendProfileOverflow is the
+// daily-log overflow fallback (write-safely.ts) — mocked here for the same
+// reason as writeMemorySafely: this file pins the discriminated-union
+// CONTRACT, not the real write gate (that's end-of-turn-write.gate.test.ts).
 const writeMemorySafelyMock = vi.fn();
+const appendProfileOverflowMock = vi.fn();
 vi.mock("./write-safely.js", async () => {
   const actual =
     await vi.importActual<typeof import("./write-safely.js")>("./write-safely.js");
   return {
     ...actual,
     writeMemorySafely: writeMemorySafelyMock,
+    appendProfileOverflow: appendProfileOverflowMock,
   };
 });
 
 // Mock the classifier transport so runEndOfTurnMemoryWrite tests can script
 // the decision without an LLM call. __nextDecision is scripted per-test and
 // played back as the raw JSON reply on the wire — the real classifySchema
-// (schema validation + retry) runs on top of it.
+// (schema validation + retry) runs on top of it. classifyJson (used by
+// compactProfileIfOverCap's semantic-compaction step) defaults to null —
+// "unavailable", so the char-limit tests exercise the fail-open path.
 let __nextDecision: unknown = null;
 const classifyMock = vi.fn(async () =>
   __nextDecision == null ? null : JSON.stringify(__nextDecision),
 );
 vi.mock("../classifiers/classify-with-llm.js", () => ({
   classifyWithLLM: classifyMock,
+  classifyJson: vi.fn(async () => null),
 }));
 
 // Mock provider availability — runEndOfTurnMemoryWrite gates on it BEFORE
@@ -88,6 +96,7 @@ beforeEach(() => {
   mkdirSync(join(tempDir, "memory"), { recursive: true });
   memory = { getMemoryDir: () => join(tempDir, "memory") };
   writeMemorySafelyMock.mockReset();
+  appendProfileOverflowMock.mockReset();
   classifyMock.mockClear();
   __nextDecision = null;
   __providerCtx = { provider: "anthropic", apiKey: "k", model: "" };
@@ -155,9 +164,11 @@ describe("applyWrite — discriminated-union return contract", () => {
     await expect(applyWrite(appendDecision(), ctxFor("sess-apply"))).rejects.toThrow(/disk full/);
   });
 
-  it("returns { ok: false, reason: /limit/i } and does NOT set blocked when char limit is exceeded", async () => {
+  it("returns { ok: false, reason: /limit/i } and does NOT set blocked when char limit is exceeded — routes to the daily log instead of dropping the fact", async () => {
     // Seed USER.md with content just under the cap so the next append
-    // pushes it over the USER.md char cap.
+    // pushes it over the USER.md char cap. classifyJson defaults to null
+    // (mocked "unavailable" above), so compaction fails open and this still
+    // exceeds the cap after the attempt.
     const userPath = join(tempDir, "memory", PERSONALITY_FILES.user);
     writeFileSync(userPath, "x".repeat(MAX_PROFILE_CHARS - 50), "utf-8");
 
@@ -174,6 +185,14 @@ describe("applyWrite — discriminated-union return contract", () => {
       // taint-gate WARN.
       expect(result.blocked).toBeFalsy();
     }
+    // Never silently dropped: the new content was handed to the daily-log
+    // overflow fallback instead of writing (or discarding) the profile.
+    expect(appendProfileOverflowMock).toHaveBeenCalledTimes(1);
+    expect(appendProfileOverflowMock.mock.calls[0][0]).toMatchObject({
+      target: userPath,
+      content: "y".repeat(200),
+      source: "eot",
+    });
     expect(writeMemorySafelyMock).not.toHaveBeenCalled();
   });
 });

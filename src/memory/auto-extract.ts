@@ -5,9 +5,12 @@ import type { FactKind } from "./types.js";
 import { extractIdentityFactsWithLLM, type IdentityFacts } from "../classifiers/identity-extract.js";
 import {
   writeMemorySafely,
+  appendProfileOverflow,
   runMemoryGate,
   MemoryWriteBlocked,
+  MAX_PROFILE_CHARS,
 } from "./write-safely.js";
+import { compactProfileIfOverCap } from "./personality-confirmed.js";
 import { stripHarnessScaffolding } from "../sanitize.js";
 import { createUserEvidenceCapability, type MemoryPromotionContext } from "./promotion-gate.js";
 
@@ -125,6 +128,23 @@ export async function autoExtractAndSave(
       } else {
         content += `\n- Name: ${facts.agent_name}`;
       }
+      if (content.length > MAX_PROFILE_CHARS) {
+        content = await compactProfileIfOverCap(content, MAX_PROFILE_CHARS);
+      }
+      if (content.length > MAX_PROFILE_CHARS) {
+        // No model turn to hand this to (unattended background pass) — never
+        // drop the name: park it in the daily log instead of losing it.
+        appendProfileOverflow({
+          memory,
+          target: identityPath,
+          content: `- Name: ${facts.agent_name}`,
+          source: "auto-extract",
+          sessionId: sessionId ?? "default",
+          reason: `IDENTITY.md would be ${content.length}/${MAX_PROFILE_CHARS} chars after consolidation`,
+          promotion: promotionFor(facts.agent_name, "memory:daily-log", "agent_name", 1) ?? undefined,
+        });
+        return;
+      }
       try {
         writeMemorySafely({
           content,
@@ -157,6 +177,21 @@ export async function autoExtractAndSave(
         content = content.replace(/^- Name:.*$/m, `- Name: ${facts.user_name}`);
       } else {
         content += `\n- Name: ${facts.user_name}`;
+      }
+      if (content.length > MAX_PROFILE_CHARS) {
+        content = await compactProfileIfOverCap(content, MAX_PROFILE_CHARS);
+      }
+      if (content.length > MAX_PROFILE_CHARS) {
+        appendProfileOverflow({
+          memory,
+          target: userPath,
+          content: `- Name: ${facts.user_name}`,
+          source: "auto-extract",
+          sessionId: sessionId ?? "default",
+          reason: `USER.md would be ${content.length}/${MAX_PROFILE_CHARS} chars after consolidation`,
+          promotion: promotionFor(facts.user_name, "memory:daily-log", "user_name", 1) ?? undefined,
+        });
+        return;
       }
       try {
         writeMemorySafely({

@@ -73,7 +73,8 @@ export type RuleId =
   | "tool-call-must-be-structured-not-text"
   | "memory-search-when-unknown"
   | "read-before-you-change"
-  | "unverified-claim-is-a-hypothesis";
+  | "unverified-claim-is-a-hypothesis"
+  | "sequential-checklist-does-not-block-fanout";
 
 export const RULES: Record<RuleId, Rule> = {
   // The `bash` tool runs POSIX sh even on Windows. Delivered three ways, so a
@@ -214,6 +215,24 @@ export const RULES: Record<RuleId, Rule> = {
   "unverified-claim-is-a-hypothesis": {
     id: "unverified-claim-is-a-hypothesis",
     summary: "A code/system claim you haven't re-checked against the actual source is a hypothesis, not a finding.",
+    channels: [{ kind: "prompt-part", part: "core-identity/core-rules" }],
+  },
+
+  // Same 2026-09-13 incident as unverified-claim-is-a-hypothesis, other half:
+  // `## Delegation` (config/system-prompt.md:284) already told the model to
+  // fan out independent pieces — the miss wasn't that the principle was
+  // absent, it's that the specific protocol being followed laid its
+  // workstreams out as a sequential task ledger (task_create/task_update per
+  // step), and that concrete instruction overrode the vaguer general one. A
+  // generic "remember to fan out" reminder doesn't defeat that mechanism; this
+  // rule names it directly. Placed in `## Core rules` (`safety`, never shed)
+  // rather than duplicated into `## Delegation` (`tuning`, already shed on
+  // both local profiles) — checked `AGENTS.md` as the read-before-you-change
+  // pattern's second channel first: wrong fit, that file is codebase-editing
+  // invariants for Codex/self-edit, not general task-execution behavior.
+  "sequential-checklist-does-not-block-fanout": {
+    id: "sequential-checklist-does-not-block-fanout",
+    summary: "A numbered checklist is for tracking, not a command to work items one at a time — independent pieces still get fanned out.",
     channels: [{ kind: "prompt-part", part: "core-identity/core-rules" }],
   },
 };

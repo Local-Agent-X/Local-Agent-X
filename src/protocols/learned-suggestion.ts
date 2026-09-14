@@ -334,10 +334,22 @@ export function selectLearnedProtocolSuggestion(
   const best = ranked[0];
   if (!best) return null;
   const name = best.protocol.name;
+  // Tier-1 (custom) records the review fork authored on its own initiative
+  // carry zero evidence gate (unlike tier-0 managed learned records, which
+  // only reach `verifiedActiveProtocol` after a cross-session success-rate
+  // threshold) — a single shallow run can mint one. Surfacing that here, not
+  // just in `source.authoredBy` bookkeeping, is what makes it possible for
+  // the model to weigh an untested checklist differently than a proven one.
+  // Fixed literal, no brackets/newlines — same constraint as the rest of this
+  // notice (see SUGGESTIBLE_NAME's header comment).
+  const unverified = best.protocol.source?.type === "custom" && best.protocol.source?.authoredBy === "agent";
+  const caveat = unverified
+    ? " This one was authored autonomously by the agent from a single run and has not been reviewed — treat its steps as a starting point, not a verified checklist."
+    : "";
   return {
     name,
     score: best.score,
-    nudge: `"${name}" is a stored protocol matching this request. Load it with protocol(action:"get", params:{name:"${name}"}) before acting, then follow it.`,
+    nudge: `"${name}" is a stored protocol matching this request. Load it with protocol(action:"get", params:{name:"${name}"}) before acting, then follow it.${caveat}`,
   };
 }
 

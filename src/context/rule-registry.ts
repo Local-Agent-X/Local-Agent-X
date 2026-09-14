@@ -72,7 +72,8 @@ export type RuleId =
   | "edit-requires-exact-match"
   | "tool-call-must-be-structured-not-text"
   | "memory-search-when-unknown"
-  | "read-before-you-change";
+  | "read-before-you-change"
+  | "unverified-claim-is-a-hypothesis";
 
 export const RULES: Record<RuleId, Rule> = {
   // The `bash` tool runs POSIX sh even on Windows. Delivered three ways, so a
@@ -199,6 +200,21 @@ export const RULES: Record<RuleId, Rule> = {
       { kind: "prompt-part", part: "core-identity/coding-discipline" },
       { kind: "prompt-part", part: "agents-md" },
     ],
+  },
+
+  // Live failure 2026-09-13: a single-pass security audit reported findings
+  // graded only by the agent that found them — no independent re-check before
+  // they shipped. A comparison run on the same repo, same model, that DID
+  // verify caught 3 real privilege-escalation bugs the unverified pass missed
+  // entirely. Placed in `## Core rules` (config/system-prompt.md:339), class
+  // `safety` (src/config-loader.ts:98) — deliberately NOT `## How to work` or
+  // `## Coding discipline` (both `tuning`, shed on every local profile): this
+  // rule matters MORE on a weaker model, which is exactly the profile that
+  // would otherwise lose it, so it does not get a KNOWN_GAPS entry.
+  "unverified-claim-is-a-hypothesis": {
+    id: "unverified-claim-is-a-hypothesis",
+    summary: "A code/system claim you haven't re-checked against the actual source is a hypothesis, not a finding.",
+    channels: [{ kind: "prompt-part", part: "core-identity/core-rules" }],
   },
 };
 

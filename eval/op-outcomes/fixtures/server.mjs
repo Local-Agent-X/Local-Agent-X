@@ -76,11 +76,37 @@ const PAGES = {
      <p>Standard keys are limited to <strong>1,200 requests per minute</strong> per organization.</p>
      <p>Burst allowance: 150 requests in any 5-second window.</p>`),
 
+  // Moved two levels, bare 404: the only way in is the section index two
+  // levels up (/handbook/2023 is itself a 404).
+  "/handbook": PAGE("Ostmark Handbook",
+    `<h1>Employee handbook</h1><p>The yearly handbooks were merged into one.</p>
+     <ul><li><a href="/handbook/people/leave">Leave and holidays</a></li>
+     <li><a href="/handbook/finance/travel-expense-policy">Travel &amp; expense policy</a></li>
+     <li><a href="/handbook/it/equipment">Equipment</a></li></ul>`),
+  "/handbook/finance/travel-expense-policy": PAGE("Travel & expense policy",
+    `<h1>Travel &amp; expense policy</h1>
+     <p>Daily meal allowance while travelling: <strong>$74</strong>.</p>
+     <p>Hotel cap: $210 per night outside capital cities.</p>`),
+
+  "/history/incidents/march-2024-outage": PAGE("Incident INC-4471",
+    `<h1>March 2024 outage</h1>
+     <p>Incident ID: <strong>INC-4471</strong></p>
+     <p>Root cause: an expired TLS certificate on the edge proxy.</p>`),
+
   "/site/original": PAGE("Bellavista Wellness",
     `<header style="height:64px;display:flex;align-items:center;padding:0 24px"><strong>Bellavista</strong></header>
      <main><h1>Relax. Restore.</h1></main>
      <footer style="padding:24px"><div class="social" style="display:flex;justify-content:center;gap:16px">
        <a href="#">Instagram</a><a href="#">Facebook</a><a href="#">TikTok</a></div></footer>`),
+};
+
+// 404 pages that carry the site's own navigation — the only lead anywhere
+// (every parent path is a bare 404).
+const NOT_FOUND_PAGES = {
+  "/status/incidents/2024-03-outage": PAGE("Page not found — Ostmark Status",
+    `<nav><a href="/">Status home</a> · <a href="/history/incidents/march-2024-outage">March 2024 outage</a>
+     · <a href="/history/incidents/january-2024-latency">January 2024 latency</a></nav>
+     <h1>Page not found</h1><p>Incident pages moved when the status site was rebuilt.</p>`),
 };
 
 export async function startFixtureServer() {
@@ -107,6 +133,11 @@ export async function startFixtureServer() {
         res.end(JSON.stringify(authorized
           ? { id: "dpl_7Qx2", url: "https://bellavista-clone.fixture.app", state: "READY" }
           : { error: "invalid token" }));
+        return;
+      }
+      if (NOT_FOUND_PAGES[url.pathname]) {
+        res.writeHead(404, { "content-type": "text/html; charset=utf-8" });
+        res.end(NOT_FOUND_PAGES[url.pathname]);
         return;
       }
       res.writeHead(404, { "content-type": "text/plain" });

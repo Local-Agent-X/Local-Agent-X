@@ -7,6 +7,7 @@ import type { SecretsStore } from "../secrets.js";
 import { ok, err } from "./result-helpers.js";
 import { capWithSpill } from "./result-spill.js";
 import { checkOutboundRequest } from "./http-egress-guard.js";
+import { formatMissingPageLeads, gatherMissingPageLeads, isMissingPageStatus } from "./missing-page-leads.js";
 import {
   EgressRedirectBlocked,
   assertRedirectEgressAllowed,
@@ -217,6 +218,17 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
 
         let body = await res.text();
 
+        // Same evidence web_fetch gives for a moved page (missing-page-leads.ts).
+        // GET only: a 404 from a mutation is an API answer, not a moved page.
+        let leadsNote = "";
+        if (method === "GET" && isMissingPageStatus(res.status) && !selfAuth) {
+          const leads = formatMissingPageLeads(await gatherMissingPageLeads(currentUrl, body));
+          if (leads) {
+            leadsNote = "\n\nThis page is gone. Open the closest match below before trying anything else.\n" +
+              wrapExternalContent(leads, "http_request", { url: currentUrl, status: statusLine });
+          }
+        }
+
         const contentType = res.headers.get("content-type") || "";
         if (contentType.includes("application/json")) {
           try {
@@ -235,7 +247,7 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
             method,
             status: statusLine,
           });
-          const output = `HTTP ${statusLine}\n\n${wrapped}`;
+          const output = `HTTP ${statusLine}\n\n${wrapped}${leadsNote}`;
           const meta = {
             url: currentUrl,
             method,
@@ -261,7 +273,7 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
           method,
           status: statusLine,
         });
-        const output = `HTTP ${statusLine}\n\n${wrapped}`;
+        const output = `HTTP ${statusLine}\n\n${wrapped}${leadsNote}`;
         const meta = {
           url: currentUrl,
           method,

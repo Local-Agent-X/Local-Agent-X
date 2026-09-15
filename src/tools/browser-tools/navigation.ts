@@ -15,6 +15,8 @@ import { resolveNewTabUrls } from "../../security/layer/browser-egress-eval.js";
 import { getToolTimeout } from "../../tool-execution/tool-timeout.js";
 import { BROWSER_TOOL_NAME } from "./description.js";
 import { HUMAN_VERIFICATION_MESSAGE, requiresHumanVerification, snapshotShowsHumanVerification } from "../../browser/human-verification.js";
+import { formatMissingPageLeads, gatherMissingPageLeads, isMissingPageStatus } from "../missing-page-leads.js";
+import { selfCallAuthHeader } from "../web-egress.js";
 
 // Navigations were invisible in the logs — only browser *spawns* logged, never
 // where the agent went. That made route-arounds (X login wall -> navigate to a
@@ -30,7 +32,14 @@ export async function handleNavigate(
   const url = String(args.url || "");
   if (!url) return err("'url' parameter is required for navigate action.");
   log.info(`navigate -> ${safeBrowserPageLabel(url)}`);
-  const navResult = await manager.navigate(url, engine);
+  let navResult: string;
+  try {
+    navResult = await manager.navigate(url, engine);
+  } catch (e) {
+    const leads = await missingPageLeadsFor(url, (e as Error).message);
+    if (leads) return err(`${(e as Error).message} — this page is gone. Open the closest match below before trying anything else.\n\n${leads}`);
+    throw e;
+  }
   const sensitive = sensitivePageStub(manager.getCurrentUrl());
   if (sensitive) return ok(sensitive);
   // Auto-snapshot on navigate. Without this, the agent has to remember to call
@@ -40,6 +49,17 @@ export async function handleNavigate(
   // explicit snapshot action uses, and falls back to the bare nav result if the
   // page is still loading.
   return ok(await appendPostActionSnapshot(manager, navResult));
+}
+
+/** Leads for a navigation that failed with 404/410 — the same evidence
+ *  web_fetch gives (missing-page-leads.ts). Browser navigation passes the same
+ *  evaluateWebFetch host gate, and the leads stay on that origin. Never for a
+ *  self-call (token-bearing) or a sensitive page. */
+async function missingPageLeadsFor(url: string, message: string): Promise<string> {
+  const status = Number(/^Navigation failed: HTTP (\d{3})\b/.exec(message)?.[1]);
+  if (!isMissingPageStatus(status) || sensitivePageStub(url) || (await selfCallAuthHeader(url))) return "";
+  const leads = formatMissingPageLeads(await gatherMissingPageLeads(url, null));
+  return leads ? wrapExternalContent(leads, BROWSER_TOOL_NAME, { url: safeBrowserPageLabel(url), status: String(status) }) : "";
 }
 
 /** Test seam for the multi-URL budget: an injectable clock and timeout source.

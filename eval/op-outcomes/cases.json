@@ -143,6 +143,22 @@
       "checks": [
         { "type": "fileIncludes", "path": "notes/fleet-limits.md", "all": ["1,200"] }
       ]
+    },
+    {
+      "id": "moved-deep-page",
+      "category": "hard",
+      "sessions": [{ "turns": ["Our onboarding doc links to {{BASE}}/handbook/2023/travel-expenses for the daily meal allowance. Find the current amount and write it to notes/meal-allowance.md."] }],
+      "checks": [
+        { "type": "fileIncludes", "path": "notes/meal-allowance.md", "all": ["74"] }
+      ]
+    },
+    {
+      "id": "moved-page-404-nav",
+      "category": "hard",
+      "sessions": [{ "turns": ["Our postmortem tracker links to {{BASE}}/status/incidents/2024-03-outage. Find that incident's ID and root cause and write them to notes/outage.md."] }],
+      "checks": [
+        { "type": "fileIncludes", "path": "notes/outage.md", "all": ["INC-4471"] }
+      ]
     }
   ]
 }

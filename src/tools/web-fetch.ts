@@ -5,6 +5,7 @@ import { findInBody } from "./paginate-body.js";
 import { ok, err } from "./result-helpers.js";
 import { capWithSpill } from "./result-spill.js";
 import { extractFromHtml } from "./html-extract.js";
+import { formatMissingPageLeads, gatherMissingPageLeads, isMissingPageStatus } from "./missing-page-leads.js";
 import {
   EgressRedirectBlocked,
   assertRedirectEgressAllowed,
@@ -107,6 +108,18 @@ export const webFetchTool: ToolDefinition = {
 
       const durationMs = Date.now() - startMs;
       if (!res.ok && !(res.status >= 300 && res.status < 400)) {
+        // A missing page usually moved: hand back the site's own links toward
+        // its replacement instead of a generic "search the web".
+        if (isMissingPageStatus(res.status) && !selfAuth) {
+          const leads = formatMissingPageLeads(await gatherMissingPageLeads(currentUrl, await res.text().catch(() => null)));
+          if (leads) {
+            return err(
+              `HTTP ${res.status}: ${res.statusText} — this page is gone. Open the closest match below before trying anything else.\n\n` +
+                wrapExternalContent(leads, "web_fetch", { url: currentUrl, status: String(res.status) }),
+              { url: currentUrl, status: res.status, duration_ms: Date.now() - startMs },
+            );
+          }
+        }
         // Recovery hint inline in the error string so the agent's LLM
         // sees a clear next action instead of inferring one. Without
         // this hint, agents tend to give up after 2-3 failed fetches

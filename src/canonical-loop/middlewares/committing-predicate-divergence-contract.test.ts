@@ -19,7 +19,7 @@
  *      Owner: committing-tool-check.ts:opCommittedSubstantiveWork /
  *      rowCommittedSubstantiveWork, projected onto
  *      ctx.substantiveCommittingToolsThisOp by host.ts. Consumers: open-steps,
- *      premature-completion, refute-completion.
+ *      premature-completion.
  *
  *   Q3 LIVENESS — "is there ANY side effect on record I'd be aborting on top
  *      of?"  Owner: ctx.committingToolsThisOp, the name-only tally. Consumer:
@@ -71,7 +71,6 @@ import { buildCanonicalLoopContext } from "./host.js";
 import { makeCanonicalLoopContext } from "./ctx.test-helper.js";
 import { openStepsMiddleware } from "./open-steps.js";
 import { prematureCompletionMiddleware } from "./premature-completion.js";
-import { refuteCompletionMiddleware } from "./refute-completion.js";
 import { midTurnStaleMiddleware } from "./mid-turn-stale.js";
 import { _resetMiddlewareStates } from "./state.js";
 import { opCommittedSubstantiveWork } from "../../committing-tool-check.js";
@@ -161,7 +160,7 @@ function contextOver(op: Op, rows: ToolCallSummary[]): CanonicalLoopContext {
 /** The three completion gates, run in stack order against one context. */
 async function runGates(ctx: CanonicalLoopContext): Promise<Record<string, CanonicalMiddlewareResult>> {
   const out: Record<string, CanonicalMiddlewareResult> = {};
-  for (const mw of [openStepsMiddleware, prematureCompletionMiddleware, refuteCompletionMiddleware]) {
+  for (const mw of [openStepsMiddleware, prematureCompletionMiddleware]) {
     out[mw.name] = mw.when && !mw.when(ctx)
       ? { kind: "continue" }
       : await mw.afterModelCall!(ctx);
@@ -325,10 +324,6 @@ describe("the completion gates never mistake an op's own ledger for work", () =>
     // what made a read-only "summarize these contracts" turn pay a second
     // round-trip to tick checkboxes.
     expect(results["open-steps"]).toEqual({ kind: "continue" });
-    // Q2 at refute-completion: a planning-only op has nothing to refute, so no
-    // LLM skeptic panel is bought for it.
-    expect(results["refute-completion"]).toEqual({ kind: "continue" });
-    expect(refuteClaimMock).not.toHaveBeenCalled();
     // Q2 at premature-completion fires in the OPPOSITE direction: a worker that
     // wrote a to-do list and nothing else IS the no-action case this gate
     // exists to push. Unifying Q2 with Q3 would silence it here — so this
@@ -375,7 +370,6 @@ describe("the completion gates never mistake an op's own ledger for work", () =>
   });
 
   it("control: the same op with real work flips every gate the other way", async () => {
-    refuteClaimMock.mockResolvedValue({ refuted: true, verdict: {}, summary: "3/3", reasons: ["no tests"] });
     const { ctx, results } = await gatesOver("worked", [
       ...READ_ONLY,
       { tool: "write", args: { file_path: "parser.ts", content: "x" } },
@@ -386,8 +380,6 @@ describe("the completion gates never mistake an op's own ledger for work", () =>
     // three gates broken.
     expect(results["open-steps"]).toMatchObject({ kind: "nudge", reason: "open-steps" });
     expect(results["premature-completion"]).toEqual({ kind: "continue" });
-    expect(results["refute-completion"]).toMatchObject({ kind: "nudge", reason: "refute-completion" });
-    expect(refuteClaimMock).toHaveBeenCalled();
   });
 
   it("a read-only INTERACTIVE turn is never forced to keep working", async () => {

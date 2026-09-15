@@ -15,8 +15,6 @@ import type { CommitTurnMessage } from "../checkpoint.js";
 import type { Op } from "../../ops/types.js";
 import { publishStreamChunk } from "../event-emitter.js";
 import { openStepsTerminationWarning } from "../middlewares/open-steps.js";
-import { opGaveUpUnrecovered } from "../middlewares/browser-handoff.js";
-import { opCleanupUnverified } from "../middlewares/cleanup-verify.js";
 import { opEditedSourceUnverified, opDeletedTestDodge } from "../middlewares/verify-gate.js";
 import { groundTruthSizesNote } from "./build-verify.js";
 import { gateSource } from "./decide-outcome-gate-contract.js";
@@ -138,8 +136,6 @@ export function applyTerminalEpilogue(
     const outcome: OpOutcome =
       terminalReason === "error" ? "aborted"
         : endedPartial ? "partial"
-        : opGaveUpUnrecovered(op.id) ? "partial"
-        : opCleanupUnverified(op.id) ? "partial"
         : opEditedSourceUnverified(op.id) ? "partial"
         : opDeletedTestDodge(op.id) ? "partial"
         : "clean";

@@ -20,6 +20,7 @@ import type { FiredMiddlewareResult } from "../middlewares/host.js";
 import type { DriveTurnResult } from "./types.js";
 import type { NudgeMetadata } from "../middlewares/types.js";
 import { firedResultFire, recordGuardFire, type GuardFire } from "./guard-fire.js";
+import { consumeNudgeBudget } from "./nudge-budget.js";
 
 // Defined in a leaf module so context/rule-registry.ts can reach the id
 // through public/nudge-ids.js without importing this file's graph.
@@ -40,6 +41,10 @@ export function appendNudgeAsUserMessage(
 ): boolean {
   const messages = readOpMessages(opId);
   if (stableMessageId && messages.some(row => row.messageId === stableMessageId)) return false;
+  // The ONE place every guard's steering is charged against the op's shared
+  // budget — the seam all of them already funnel through. A refused nudge is
+  // not written and earns no fire, so the caller re-opens nothing.
+  if (!consumeNudgeBudget(opId, source)) return false;
   const existing = messages.filter(m => m.turnIdx === turnIdx).length;
   const row: OpMessageRow = {
     messageId: stableMessageId ?? `nudge-${opId}-${turnIdx}-${existing}-${randomUUID().slice(0, 6)}`,

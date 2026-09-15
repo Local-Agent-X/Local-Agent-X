@@ -12,17 +12,17 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 66 top-level dirs · 66 live · 0 with no live importer · 1614 non-test source files · 0 god files (>400 LOC).
+**Totals:** 65 top-level dirs · 65 live · 0 with no live importer · 1582 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | God files |
 |---|--:|--:|:--:|--:|
-| `src/ops/` | 129 | 26 | XL |  |
-| `src/security/` | 87 | 34 | XL |  |
+| `src/ops/` | 130 | 26 | XL |  |
+| `src/security/` | 86 | 34 | XL |  |
 | `src/tools/` | 69 | 192 | XL |  |
 | `src/providers/` | 62 | 21 | XL |  |
-| `src/canonical-loop/` | 61 | 250 | XL |  |
+| `src/canonical-loop/` | 61 | 236 | XL |  |
 | `src/memory/` | 46 | 129 | XL |  |
 | `src/workspace/` | 44 | 2 | M |  |
 | `src/util/` | 37 | 3 | S |  |
@@ -30,19 +30,18 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/auth/` | 34 | 10 | L |  |
 | `src/browser/` | 33 | 82 | XL |  |
 | `src/threat/` | 32 | 12 | L |  |
-| `src/classifiers/` | 31 | 18 | L |  |
 | `src/tool-policy/` | 30 | 20 | L |  |
 | `src/agency/` | 28 | 19 | L |  |
 | `src/data-lineage/` | 28 | 8 | L |  |
 | `src/local-runtimes/` | 27 | 18 | L |  |
 | `src/agent-store/` | 26 | 7 | M |  |
+| `src/classifiers/` | 24 | 15 | L |  |
 | `src/agent-request/` | 23 | 14 | L |  |
 | `src/app-runtime/` | 23 | 12 | L |  |
 | `src/context/` | 22 | 6 | M |  |
 | `src/chat-ws/` | 21 | 18 | L |  |
 | `src/context-manager/` | 21 | 11 | L |  |
 | `src/orchestrator/` | 20 | 24 | L |  |
-| `src/agent-guards/` | 19 | 17 | L |  |
 | `src/agents/` | 17 | 13 | L |  |
 | `src/protocols/` | 16 | 41 | XL |  |
 | `src/sandbox/` | 16 | 9 | L |  |
@@ -52,6 +51,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/server/` *(entrypoint)* | 12 | 50 | XL |  |
 | `src/tool-execution/` | 12 | 41 | XL |  |
 | `src/whatsapp-bridge/` | 12 | 8 | L |  |
+| `src/agent-guards/` | 11 | 11 | L |  |
 | `src/autonomy/` | 11 | 4 | M |  |
 | `src/self-edit/` | 11 | 20 | L |  |
 | `src/agent-loop/` | 10 | 1 | S |  |
@@ -83,7 +83,6 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/manifest-generator/` | 2 | 8 | M |  |
 | `src/net/` | 2 | 2 | M |  |
 | `src/types/` | 2 | 2 | M |  |
-| `src/agent-loop-detectors/` | 1 | 9 | M |  |
 
 ## No live importer (dead / superseded candidates)
 

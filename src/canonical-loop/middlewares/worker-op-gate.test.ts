@@ -1,9 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { isWorkerOp, type CanonicalLoopContext } from "./types.js";
-import { postTurnDetectorMiddleware } from "./post-turn-detector.js";
 import { prematureCompletionMiddleware } from "./premature-completion.js";
-import { actionClaimMiddleware } from "./action-claim.js";
-import { selfCheckMiddleware } from "./self-check.js";
 import { makeCanonicalLoopContext } from "./ctx.test-helper.js";
 
 function ctxWithLane(lane: string): CanonicalLoopContext {
@@ -23,7 +20,7 @@ describe("isWorkerOp", () => {
 });
 
 describe("nudge middlewares gate on isWorkerOp", () => {
-  // These inject stall-nudges that leak into interactive replies / voice, so
+  // This injects a stall-nudge that leaks into interactive replies / voice, so
   // they're skipped on the interactive lane. THREE guards are intentionally NOT
   // here because a spin must be broken on every lane: mid-turn-stale (its
   // second-strike abort caps a spinning interactive/voice turn), loop-detection
@@ -34,10 +31,7 @@ describe("nudge middlewares gate on isWorkerOp", () => {
   // d2f85ea4 "run the empty-result nudge on interactive chat too", same
   // rationale as loop-detection — see dead-end.ts).
   const middlewares = [
-    postTurnDetectorMiddleware,
     prematureCompletionMiddleware,
-    actionClaimMiddleware,
-    selfCheckMiddleware,
   ];
 
   for (const mw of middlewares) {

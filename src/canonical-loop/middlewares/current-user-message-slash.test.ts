@@ -28,9 +28,7 @@ vi.mock("../event-emitter.js", () => ({ emit: vi.fn() }));
 import { buildCanonicalLoopContext } from "./host.js";
 import { readOpMessages } from "../store.js";
 import { clearMiddlewareStateForOp } from "./state.js";
-import { looksLikeBroadSweep } from "./broad-sweep-nudge.js";
 import { officeThemeGuardMiddleware } from "./office-theme-guard.js";
-import { looksLikeCleanupSweep } from "../../agent-guards/cleanup-verify.js";
 import { expandSlashCommand, userAuthoredRequest } from "../../slash-commands.js";
 import type { Op } from "../../ops/types.js";
 import type { ToolCall } from "../contract-types.js";
@@ -67,13 +65,9 @@ beforeEach(() => {
 });
 
 describe("the expansions really are what the gates would misjudge", () => {
-  // If a template stops tripping the gates on its own, the assertions below
-  // stop proving anything — keep the premise pinned.
-  it("raw templates trip broad-sweep, cleanup-sweep and the look regex", () => {
-    for (const raw of [BARE, WITH_ARG]) {
-      expect(looksLikeBroadSweep(raw)).toBe(true);
-      expect(looksLikeCleanupSweep(raw)).toBe(true);
-    }
+  // If a template stops looking like a user request on its own, the assertions
+  // below stop proving anything — keep the premise pinned.
+  it("raw templates carry the whole skill body, not the user's line", () => {
     expect(BARE).not.toBe("/senior-engineer");
     expect(WITH_ARG).toContain("**SLASH COMMAND**");
   });
@@ -88,11 +82,8 @@ describe("currentUserMessage on a slash-command op", () => {
     expect(ctx(opWithTask(WITH_ARG)).currentUserMessage).toBe("/vibe-code fix the login bug");
   });
 
-  it("does not read as a broad sweep, a cleanup sweep, or a look request", async () => {
+  it("does not read as a look request", async () => {
     for (const raw of [BARE, WITH_ARG]) {
-      const c = ctx(opWithTask(raw));
-      expect(looksLikeBroadSweep(c.currentUserMessage)).toBe(false);
-      expect(looksLikeCleanupSweep(c.currentUserMessage)).toBe(false);
       expect(await themeSurvives(opWithTask(raw))).toBe(false);
     }
   });

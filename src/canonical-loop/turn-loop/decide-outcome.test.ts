@@ -26,7 +26,7 @@ vi.mock("../middlewares/open-steps.js", () => ({
 // constant from here; only the append is stubbed.
 vi.mock("./nudges.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./nudges.js")>()),
-  appendNudgeAsUserMessage: vi.fn(),
+  appendNudgeAsUserMessage: vi.fn(() => true),
 }));
 vi.mock("../store.js", () => ({ readOpTurns: vi.fn(() => []) }));
 vi.mock("../op-model.js", () => ({ resolveOpModel: vi.fn(() => "grok-4.3") }));
@@ -40,16 +40,6 @@ vi.mock("../../cognition/cross-session-learning/index.js", () => ({
 }));
 vi.mock("../../data-lineage/taint.js", () => ({
   getTaintSummary: vi.fn(() => ({ count: 0, sources: [] })),
-}));
-vi.mock("../middlewares/browser-handoff.js", () => ({
-  opGaveUpUnrecovered: vi.fn(() => false),
-  // retract-false-claim.ts imports the reason from its emitter; a partial mock
-  // that drops it would put `undefined` in RETRACTABLE_REASONS and silently
-  // stop the give-up punt from being retracted.
-  BROWSER_HANDOFF_REASON: "browser-handoff",
-}));
-vi.mock("../middlewares/cleanup-verify.js", () => ({
-  opCleanupUnverified: vi.fn(() => false),
 }));
 vi.mock("../middlewares/verify-gate.js", () => ({
   opEditedSourceUnverified: vi.fn(() => false),
@@ -807,22 +797,6 @@ describe("decideTurnOutcome — op-outcome telemetry", () => {
     expect(recordOpOutcome).toHaveBeenCalledWith("coding", "partial", "grok-4.3");
   });
 
-  it("records partial when the op ended still giving up (browser-handoff verdict)", async () => {
-    const { opGaveUpUnrecovered } = await import("../middlewares/browser-handoff.js");
-    (opGaveUpUnrecovered as unknown as ReturnType<typeof vi.fn>).mockReturnValueOnce(true);
-    const { recordOpOutcome } = await import("../../tool-tracker.js");
-    await decideTurnOutcome(input({ toolCalls: [], toolMessages: [], toolSummary: [] }));
-    expect(recordOpOutcome).toHaveBeenCalledWith("coding", "partial", "grok-4.3");
-  });
-
-  it("records partial when a cleanup ended without a confirming search (cleanup-verify verdict)", async () => {
-    const { opCleanupUnverified } = await import("../middlewares/cleanup-verify.js");
-    (opCleanupUnverified as unknown as ReturnType<typeof vi.fn>).mockReturnValueOnce(true);
-    const { recordOpOutcome } = await import("../../tool-tracker.js");
-    await decideTurnOutcome(input({ toolCalls: [], toolMessages: [], toolSummary: [] }));
-    expect(recordOpOutcome).toHaveBeenCalledWith("coding", "partial", "grok-4.3");
-  });
-
   it("orchestrator build-verify suppresses 'done' and loops when the build is red", async () => {
     // The model said done after editing source without a clean verify; the
     // orchestrator ran the build, it failed, so the turn must NOT terminate —
@@ -893,39 +867,22 @@ describe("decideTurnOutcome — op-outcome telemetry", () => {
     expect(recordOpOutcome).toHaveBeenCalledWith("coding", "aborted", "grok-4.3");
   });
 
-  it("retracts the give-up punt when the browser-handoff nudge fires (no doubling)", async () => {
-    const r = await decideTurnOutcome(input({
-      toolCalls: [], toolMessages: [], toolSummary: [],
-      middlewareDirective: { kind: "nudge", reason: "browser-handoff", firedBy: "browser-handoff", message: "keep driving" },
-      finalized: [{ messageId: "am1", role: "assistant", content: { text: "I'm blocked by the overlay — you dismiss it." } }],
-    }));
-    // The superseded punt is stripped from the commit; the nudge keeps the op
-    // running so the next turn (recovery or a single honest re-punt) is shown.
-    expect(r.allMessages.some(m => m.role === "assistant")).toBe(false);
-    expect(r.terminalReason).toBeNull();
-  });
-
-  it("replaces ungrounded codebase advice with a visible checking-status while the nudge continues", async () => {
+  it("a nudge never rewrites what the model said — the text stands and the op keeps running", async () => {
+    // The guards that retracted or replaced assistant text judged its WORDING;
+    // they went out with the prose-guard sweep. A nudge steers the next turn.
     const r = await decideTurnOutcome(input({
       toolCalls: [], toolMessages: [], toolSummary: [],
       middlewareDirective: {
         kind: "nudge",
-        reason: "codebase-advice-grounding",
-        firedBy: "codebase-advice",
-        message: "read the repo first",
+        reason: "premature-completion",
+        firedBy: "premature-completion",
+        message: "do the work first",
       },
       finalized: [{ messageId: "am1", role: "assistant", content: { text: "We should add a verifier middleware next." } }],
     }));
-    expect(publishStreamChunk).toHaveBeenCalledWith(
-      op.id,
-      { replace: true, text: "Checking the current repo before I recommend a harness change..." },
-    );
+    expect(publishStreamChunk).not.toHaveBeenCalledWith(op.id, expect.objectContaining({ replace: true }));
     expect(r.allMessages).toEqual([
-      {
-        messageId: "am1",
-        role: "assistant",
-        content: { text: "Checking the current repo before I recommend a harness change..." },
-      },
+      { messageId: "am1", role: "assistant", content: { text: "We should add a verifier middleware next." } },
     ]);
     expect(r.terminalReason).toBeNull();
   });
@@ -1804,11 +1761,4 @@ describe("decideTurnOutcome — skipped dispatch commits no orphan tool call", (
     expect(log.info.mock.calls.map(c => String(c[0])).join("\n")).not.toContain("synthesized tool_result");
   });
 
-  it("runs AFTER retraction: a retracted (hallucinated) assistant row leaves no call to answer", async () => {
-    const r = await decideTurnOutcome(skipped({
-      kind: "nudge", reason: "attribution-confabulation", firedBy: "attribution-claim",
-      message: "Your summary credits a tool you did not use.",
-    }));
-    expect(r.allMessages).toEqual([]);
-  });
 });

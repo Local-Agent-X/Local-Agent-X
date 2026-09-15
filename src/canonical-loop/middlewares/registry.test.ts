@@ -1,40 +1,26 @@
 import { describe, it, expect } from "vitest";
 import { getDefaultMiddlewareStack } from "./registry.js";
+import { verifyGateMiddleware } from "./verify-gate.js";
 import { loopDetectionMiddleware } from "./loop-detection.js";
-import { actionClaimMiddleware } from "./action-claim.js";
-import { attributionClaimMiddleware } from "./attribution-claim.js";
-import { operationalClaimMiddleware } from "./operational-claim.js";
-import { codebaseAdviceMiddleware } from "./codebase-advice.js";
-import { toolSearchNudgeMiddleware } from "./tool-search-nudge.js";
-import { falseRefusalMiddleware } from "./false-refusal.js";
 import { prematureCompletionMiddleware } from "./premature-completion.js";
 import { repeatFailureMiddleware } from "./repeat-failure.js";
-import { cleanupVerifyMiddleware } from "./cleanup-verify.js";
-import { refuteCompletionMiddleware } from "./refute-completion.js";
 import { instructionLedgerMiddleware } from "./instruction-ledger.js";
-import { instructionAuditMiddleware } from "./instruction-audit.js";
 import { thrashGuardMiddleware } from "./thrash-guard.js";
 
-// CLASS LOCK for the model-behavior guards. Each of these is a safety/quality
-// guard that catches a distinct LLM failure mode (looping, fabricated actions,
-// confabulated attribution, false refusals, no-tool denials, premature give-up,
-// repeat-error spirals). They're easy to drop by accident in a registry refactor
+// CLASS LOCK for the model-behavior guards. Each of these keys on structured
+// evidence — repeated tool calls, a turn that committed nothing, a same-error
+// spiral, settings thrash. (The guards that judged the model's WORDING were
+// deleted in the prose-guard sweep; see nudge-budget.ts for what bounds the
+// survivors.) They're easy to drop by accident in a registry refactor
 // — and a dropped guard fails NO unit test, since each middleware's own tests
 // exercise it in isolation, not its registration. This asserts the default
 // safety stack actually WIRES them, by reference (not a name string), so the
 // guards we built can't silently fall out of the loop.
 const REQUIRED_GUARDS = [
   loopDetectionMiddleware,
-  actionClaimMiddleware,
-  attributionClaimMiddleware,
-  operationalClaimMiddleware,
-  codebaseAdviceMiddleware,
-  toolSearchNudgeMiddleware,
-  falseRefusalMiddleware,
   prematureCompletionMiddleware,
   repeatFailureMiddleware,
   instructionLedgerMiddleware,
-  instructionAuditMiddleware,
   thrashGuardMiddleware,
 ];
 
@@ -47,13 +33,6 @@ describe("default middleware stack completeness", () => {
     });
   }
 
-  it("false-refusal runs before tool-search-nudge (file-permission refusals get the grounding remedy, not the search remedy)", () => {
-    const i = stack.indexOf(falseRefusalMiddleware);
-    const j = stack.indexOf(toolSearchNudgeMiddleware);
-    expect(i).toBeGreaterThanOrEqual(0);
-    expect(i).toBeLessThan(j);
-  });
-
   it("instruction-ledger runs near the top, before the persistence guards (turn-0 ledger population must precede every guard that reads it)", () => {
     const ledger = stack.indexOf(instructionLedgerMiddleware);
     const loopDetect = stack.indexOf(loopDetectionMiddleware);
@@ -61,22 +40,11 @@ describe("default middleware stack completeness", () => {
     expect(ledger).toBeLessThan(loopDetect);
   });
 
-  it("instruction-audit runs in the wrap-up band: after cleanup-verify, before refute-completion's LLM panel", () => {
-    const audit = stack.indexOf(instructionAuditMiddleware);
-    const cleanup = stack.indexOf(cleanupVerifyMiddleware);
-    const refute = stack.indexOf(refuteCompletionMiddleware);
-    expect(cleanup).toBeGreaterThanOrEqual(0);
-    expect(audit).toBeGreaterThan(cleanup);
-    expect(audit).toBeLessThan(refute);
-  });
-
-  it("codebase-advice runs after operational-claim and before broad action nudges", () => {
-    const operational = stack.indexOf(operationalClaimMiddleware);
-    const advice = stack.indexOf(codebaseAdviceMiddleware);
-    const toolSearch = stack.indexOf(toolSearchNudgeMiddleware);
-    expect(operational).toBeGreaterThanOrEqual(0);
-    expect(advice).toBeGreaterThan(operational);
-    expect(advice).toBeLessThan(toolSearch);
+  it("verify-gate runs after premature-completion (a no-commit stop gets the do-the-work nudge first)", () => {
+    const premature = stack.indexOf(prematureCompletionMiddleware);
+    const verify = stack.indexOf(verifyGateMiddleware);
+    expect(premature).toBeGreaterThanOrEqual(0);
+    expect(verify).toBeGreaterThan(premature);
   });
 });
 
@@ -95,24 +63,10 @@ const EXPECTED_ORDER = [
   "instruction-ledger",
   "loop-detection",
   "repeat-output",
-  "action-claim",
-  "attribution-claim",
-  "operational-claim",
-  "codebase-advice",
-  "false-refusal",
-  "tool-search-nudge",
-  "broad-sweep-nudge",
   "premature-completion",
   "verify-gate",
-  "cleanup-verify",
-  "instruction-audit",
-  "refute-completion",
   "open-steps",
   "budget-ladder",
-  "assertion-repeat",
-  "browser-handoff",
-  "self-check",
-  "post-turn-detector",
   "post-edit-diagnostics",
   "external-change-diff",
   "app-design-guard",

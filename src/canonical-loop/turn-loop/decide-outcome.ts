@@ -28,14 +28,12 @@ import { collectToolFailures, formatFailureNudgeForModel,
   resolveTerminatingMutation, shouldNudgeForFailures } from "./tool-failure-summary.js";
 import { isSilentToolCall } from "./silent-tool-check.js";
 import { appendQuestionAsAnswer, collectAskedQuestions } from "./ask-user-terminal.js";
-import { isRetractableHallucination, stripRetractedAssistant } from "./retract-false-claim.js";
 import { applyTerminalEpilogue } from "./terminal-epilogue.js";
 import { runCompletionGates } from "./decide-outcome-run-gates.js";
 import { continuationVetoedTerminal } from "./continuation-guard.js";
 import type { GuardFire } from "./guard-fire.js";
 import { appendEmptyTurnTerminal, appendHonestTerminal, evaluateEmptyInteractiveTurn } from "./empty-turn-termination.js";
 import { appendMissingToolResults } from "./orphan-tool-results.js";
-import { CODEBASE_ADVICE_GROUNDING_REASON, CODEBASE_ADVICE_GROUNDING_STATUS } from "../../agent-guards/index.js";
 import { createLogger } from "../../logger.js";
 import { recordP1Outcome } from "./p1-metrics.js";
 import { narrationPromisesFollowup } from "./p1-followup-detector.js";
@@ -121,30 +119,11 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
     assistantText, adapterTerminalReason, modelSignaledDone, modelWantsToContinue, hasReasoning, adapterError,
   } = in_;
 
-  // A confirmed-false-claim nudge (phantom worker, fake "I scheduled it")
-  // means this terminal turn's assistant text is a lie. Retract it: clear the
-  // live bubble and drop it from the committed transcript so the next turn's
-  // correction is the only assistant message the user sees. See
-  // turn-loop/retract-false-claim.ts.
-  const retractFalseClaim =
-    middlewareDirective?.kind === "nudge" &&
-    isRetractableHallucination(middlewareDirective.reason);
-  const replaceWithGroundingStatus =
-    middlewareDirective?.kind === "nudge" &&
-    middlewareDirective.reason === CODEBASE_ADVICE_GROUNDING_REASON;
-  if (retractFalseClaim) {
-    publishStreamChunk(op.id, { replace: true, text: "" });
-  } else if (replaceWithGroundingStatus) {
-    publishStreamChunk(op.id, { replace: true, text: CODEBASE_ADVICE_GROUNDING_STATUS });
-  }
-
   let allMessages: CommitTurnMessage[] = [];
   for (const m of finalized) {
     allMessages.push({ messageId: m.messageId, role: m.role, content: m.content });
   }
   for (const tm of toolMessages) allMessages.push(tm);
-  if (retractFalseClaim) allMessages = stripRetractedAssistant(allMessages);
-  if (replaceWithGroundingStatus) allMessages = replaceAssistantText(allMessages, CODEBASE_ADVICE_GROUNDING_STATUS);
   // A skipped dispatch must not commit calls with no results — orphan-tool-results.ts.
   appendMissingToolResults(allMessages, middlewareDirective);
 
@@ -285,8 +264,7 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
   let failureNudged = false;
   if (!middlewareAborted && !middlewareSuspended) {
     if (shouldNudgeForFailures(failureSummary)) {
-      appendNudgeAsUserMessage(op.id, turnIdx + 1, formatFailureNudgeForModel(failureSummary, op.id), { name: "tool-failure-summary", reason: "tool-failure-summary", outcome: "nudge" });
-      failureNudged = true;
+      failureNudged = appendNudgeAsUserMessage(op.id, turnIdx + 1, formatFailureNudgeForModel(failureSummary, op.id), { name: "tool-failure-summary", reason: "tool-failure-summary", outcome: "nudge" });
     }
   }
 

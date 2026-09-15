@@ -62,7 +62,7 @@ export const renderVerifyGate: CompletionGate = {
     // separately via getDesignSpec(opId) inside the bootstrap probe.
     const gate = await runRenderVerifyGate(op.id, { appUrl: op.appUrl, appDescription: userAuthoredRequest(op.task ?? "") });
     if (gate.shouldRetry) {
-      appendNudgeAsUserMessage(op.id, turnIdx + 1, gate.nudge, gateSource("render-verify", "nudge"));
+      if (!appendNudgeAsUserMessage(op.id, turnIdx + 1, gate.nudge, gateSource("render-verify", "nudge"))) return CONTINUE;
       return { reopen: true };
     }
     if (gate.capReached) {
@@ -106,7 +106,7 @@ export const buildVerifyGate: CompletionGate = {
     if (!opEditedSourceUnverified(op.id)) return CONTINUE;
     const gate = await runBuildVerifyGate(op);
     if (gate.shouldRetry) {
-      appendNudgeAsUserMessage(op.id, turnIdx + 1, gate.nudge, gateSource("build-verify", "nudge"));
+      if (!appendNudgeAsUserMessage(op.id, turnIdx + 1, gate.nudge, gateSource("build-verify", "nudge"))) return CONTINUE;
       return { reopen: true };
     }
     if (gate.verifiedClean) {
@@ -139,7 +139,7 @@ export const specProbeGate: CompletionGate = {
     if (opEditedSourcePaths(op.id).length === 0) return CONTINUE;
     const gate = await runSpecProbeGate(op);
     if (gate.shouldRetry) {
-      appendNudgeAsUserMessage(op.id, turnIdx + 1, gate.nudge, gateSource("spec-probe", "nudge"));
+      if (!appendNudgeAsUserMessage(op.id, turnIdx + 1, gate.nudge, gateSource("spec-probe", "nudge"))) return CONTINUE;
       return { reopen: true };
     }
     return CONTINUE;
@@ -161,7 +161,7 @@ export const specAuditGate: CompletionGate = {
     if (opEditedSourcePaths(op.id).length === 0) return CONTINUE;
     const gate = await runSpecAuditGate(op);
     if (gate.shouldRetry) {
-      appendNudgeAsUserMessage(op.id, turnIdx + 1, gate.nudge, gateSource("spec-audit", "nudge"));
+      if (!appendNudgeAsUserMessage(op.id, turnIdx + 1, gate.nudge, gateSource("spec-audit", "nudge"))) return CONTINUE;
       return { reopen: true };
     }
     return CONTINUE;
@@ -185,7 +185,7 @@ export const regressionAuditGate: CompletionGate = {
     if (opEditedSourcePaths(op.id).length === 0) return CONTINUE;
     const gate = await runRegressionAuditGate(op);
     if (gate.shouldRetry) {
-      appendNudgeAsUserMessage(op.id, turnIdx + 1, gate.nudge, gateSource("regression-audit", "nudge"));
+      if (!appendNudgeAsUserMessage(op.id, turnIdx + 1, gate.nudge, gateSource("regression-audit", "nudge"))) return CONTINUE;
       return { reopen: true };
     }
     return CONTINUE;
@@ -204,7 +204,7 @@ export const designVerifyGate: CompletionGate = {
   evaluate({ op, turnIdx }) {
     const gate = runDesignVerifyGate(op);
     if (gate.shouldRetry) {
-      appendNudgeAsUserMessage(op.id, turnIdx + 1, gate.nudge, gateSource("design-verify", "nudge"));
+      if (!appendNudgeAsUserMessage(op.id, turnIdx + 1, gate.nudge, gateSource("design-verify", "nudge"))) return CONTINUE;
       return { reopen: true };
     }
     return CONTINUE;

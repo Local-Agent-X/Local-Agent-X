@@ -12,8 +12,21 @@
  * SPIRALABLE_TOOLS and the thresholds are re-exported by loop-detection.ts so
  * existing importers (agent-guards/index.ts, the fence test) keep their path.
  */
-import { normalizeGrepPattern } from "./cleanup-verify.js";
 import { parseToolArgs } from "./loop-progress.js";
+
+const ANON_PATTERN = "__anon__";
+
+/** Two greps for the same alternation written in a different order are the same
+ *  search — sort the branches so a re-ordered retry counts as a repeat. */
+function normalizeGrepPattern(pattern?: string): string {
+  if (!pattern) return ANON_PATTERN;
+  const t = pattern.trim().toLowerCase();
+  if (!t) return ANON_PATTERN;
+  if (/^[^()\\[\]{}.*+?^$]*\|[^()\\[\]{}.*+?^$]*$/.test(t)) {
+    return t.split("|").map(s => s.trim()).filter(Boolean).sort().join("|");
+  }
+  return t;
+}
 
 // Read-only discovery / lookup tools an agent spins on when it can't find
 // something. No risk-taxonomy tier models "discovery spin", so this stays a

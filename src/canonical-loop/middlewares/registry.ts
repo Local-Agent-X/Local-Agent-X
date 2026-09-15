@@ -48,29 +48,15 @@ import { repeatOutputMiddleware } from "./repeat-output.js";
 import { deadEndMiddleware } from "./dead-end.js";
 import { repeatFailureMiddleware } from "./repeat-failure.js";
 import { officeThemeGuardMiddleware } from "./office-theme-guard.js";
-import { actionClaimMiddleware } from "./action-claim.js";
-import { attributionClaimMiddleware } from "./attribution-claim.js";
-import { operationalClaimMiddleware } from "./operational-claim.js";
-import { codebaseAdviceMiddleware } from "./codebase-advice.js";
-import { toolSearchNudgeMiddleware } from "./tool-search-nudge.js";
-import { broadSweepNudgeMiddleware } from "./broad-sweep-nudge.js";
-import { falseRefusalMiddleware } from "./false-refusal.js";
 import { prematureCompletionMiddleware } from "./premature-completion.js";
-import { refuteCompletionMiddleware } from "./refute-completion.js";
 import { openStepsMiddleware } from "./open-steps.js";
 import { budgetLadderMiddleware } from "./budget-ladder.js";
-import { assertionRepeatMiddleware } from "./assertion-repeat.js";
-import { browserHandoffMiddleware } from "./browser-handoff.js";
-import { selfCheckMiddleware } from "./self-check.js";
 import { midTurnStaleMiddleware } from "./mid-turn-stale.js";
-import { postTurnDetectorMiddleware } from "./post-turn-detector.js";
 import { verifyGateMiddleware } from "./verify-gate.js";
 import { postEditDiagnosticsMiddleware } from "./post-edit-diagnostics.js";
 import { appDesignGuardMiddleware } from "./app-design-guard.js";
 import { externalChangeDiffMiddleware } from "./external-change-diff.js";
-import { cleanupVerifyMiddleware } from "./cleanup-verify.js";
 import { instructionLedgerMiddleware } from "./instruction-ledger.js";
-import { instructionAuditMiddleware } from "./instruction-audit.js";
 import { thrashGuardMiddleware } from "./thrash-guard.js";
 
 /** One declarative stack entry: the middleware plus its explicit sort key. */
@@ -101,42 +87,6 @@ const DEFAULT_STACK: StackEntry[] = [
   // tool-call identity and can't see a text loop). Two-strike nudge→abort;
   // aborts on every lane because repeated identical prose has no legit form.
   { order: 50, mw: repeatOutputMiddleware },
-  // NOTE: hallucination-check (order 60) retired 2026-07-10 — its approval and
-  // phantom-worker branches never fired in 4.5 weeks of persisted ops, and its
-  // creation branch (incl. the fake tool-ID check) is folded into action-claim's
-  // unmatched-claim table below.
-  { order: 70, mw: actionClaimMiddleware },
-  // Interactive chat — catches a final summary that CREDITS the result with a
-  // tool/model/service it never used (action-claim is worker-only + checks
-  // action verbs, not attribution). Phrase-gated → model-graded; retractable.
-  { order: 80, mw: attributionClaimMiddleware },
-  // All lanes — memory and prior assistant prose are not evidence for
-  // runtime/security/policy causality. Require a fresh diagnostic read or an
-  // explicitly uncertain answer before a definitive claim reaches the user.
-  { order: 90, mw: operationalClaimMiddleware },
-  // All lanes — when the user asks for repo/harness implementation direction,
-  // docs and memory are not enough. Require current code inspection before a
-  // concrete "we should implement/change/wire X" recommendation reaches the
-  // user.
-  { order: 100, mw: codebaseAdviceMiddleware },
-  // Interactive + worker — in UNRESTRICTED file mode, a tool-less turn that
-  // refuses a file action on a guessed restriction ("outside the sandbox")
-  // without ever calling `read` gets a grounding nudge. Runs BEFORE
-  // tool-search-nudge so this file-permission case gets "you're permitted,
-  // call read" instead of the (useless-for-an-eager-read) "go search" nudge.
-  { order: 110, mw: falseRefusalMiddleware },
-  // All lanes (incl. interactive chat) — forces a tool_search when the model
-  // declines a capability with zero tool calls, before the denial reaches the
-  // user. Runs before premature-completion so a "no tool" denial gets the
-  // search nudge, not the do-the-work nudge.
-  { order: 120, mw: toolSearchNudgeMiddleware },
-  // All lanes — when the task is a codebase-wide sweep ("fix every X", "remove
-  // all references to Y") but the model wraps up tool-lessly without ever
-  // running grep/glob, force ONE enumeration pass first. Runs after
-  // tool-search-nudge (a capability denial gets the search nudge) and before
-  // premature-completion ("enumerate the surface" beats the generic "do the
-  // work" nudge for an under-scoped sweep).
-  { order: 130, mw: broadSweepNudgeMiddleware },
   { order: 140, mw: prematureCompletionMiddleware },
   // All lanes — edited source but never reached a clean build/type-check/test
   // before wrapping up → nudge (gently if nothing verified it, sharply if a
@@ -145,51 +95,12 @@ const DEFAULT_STACK: StackEntry[] = [
   // after premature-completion (they key on opposite signals: no-commit vs a
   // committed source edit, so they don't contend).
   { order: 150, mw: verifyGateMiddleware },
-  // All lanes — the SEARCH-verification sibling of verify-gate: on a
-  // removal/cleanup sweep ("remove all X", "finish cleaning up Y"), nudge once
-  // when the model reports it done without a grep ever coming back empty, and
-  // keep the outcome honest (an unconfirmed cleanup records `partial`). A
-  // passing build doesn't prove a ref is gone — dead refs in comments/docs/
-  // strings compile fine — so this checks the model's own clean-search
-  // evidence, not the build. Runs after verify-gate so an edited-but-unbuilt
-  // worker still gets the build nudge first.
-  { order: 160, mw: cleanupVerifyMiddleware },
-  // All lanes — wrap-up audit of the final answer against the instruction
-  // ledger: an unmet obligation ("commit when done" with no commit seen) or
-  // a forbidden-capability tool that leaked past pre-dispatch gating each
-  // nudge once. A deterministic ledger check, so it runs with the other
-  // wrap-up gates BEFORE refute-completion's LLM panel. Fail-open: no ledger
-  // or no matching constraint → continue.
-  { order: 170, mw: instructionAuditMiddleware },
-  // Worker ops only — a semantic last-resort completion check: when a worker
-  // claims done (text, no tools) AFTER committing work and none of the cheap
-  // deterministic gates above nudged, fire an independent skeptic panel at the
-  // done-claim and nudge once (with the skeptics' reasons) on a majority
-  // refutation. Fail-open + fire-once; sits AFTER the deterministic gates so
-  // the LLM panel only runs when they all passed. Disable: LAX_REFUTE_COMPLETION=0.
-  { order: 180, mw: refuteCompletionMiddleware },
   { order: 190, mw: openStepsMiddleware },
   // Forced self-assessment at 25/50/75% of the iteration budget, and an
   // honest stop when two consecutive rungs learn nothing new. All lanes:
   // the budget wall that prompted it fires on interactive ops, and the
   // same no-progress spend happens unattended on worker ops.
   { order: 195, mw: budgetLadderMiddleware },
-  // Interactive lanes only — the user reported a symptom in an environment the
-  // agent isn't looking at (a mobile viewport, their browser, their session)
-  // and supplied no artifact; nudge ONCE, in the first few turns, to ask for
-  // the screenshot / device / failing input instead of re-measuring the thing
-  // it CAN see. Sits with the reassessment family but cannot contend with
-  // budget-ladder: its window closes at turn 6 and the earliest possible rung
-  // Stagnation measured from restated conclusions rather than tool shape —
-  // the one signal the recorded livelock could not evade, since it wrote the
-  // same "both fixes are live on prod" eight times.
-  { order: 197, mw: assertionRepeatMiddleware },
-  // Interactive chat only — forces one more turn when a browser-driving turn
-  // ends by punting the obstruction back to the user while the page is still
-  // open (the chat analogue of premature-completion, which is worker-only).
-  { order: 200, mw: browserHandoffMiddleware },
-  { order: 210, mw: selfCheckMiddleware },
-  { order: 220, mw: postTurnDetectorMiddleware },
   // NOTE: auto-build-app (order 230) and post-commit (order 240) retired
   // 2026-07-10 — zero fires across the full persisted-op window (post-commit:
   // 33 days / 190 worker ops; auto-build-app: no log evidence and modern

@@ -9,28 +9,8 @@
  * re-export surface so callers keep importing from "../agent-guards/index.js".
  */
 
-export { detectUnresolvedErrors, buildReflectionPrompt } from "./reflection.js";
-export { checkUnmatchedActionClaim } from "./action-claim.js";
-export {
-  checkUnsupportedOperationalClaim,
-  findDefinitiveOperationalClaimSentence,
-  hasFreshOperationalEvidence,
-  looksLikeDefinitiveOperationalClaim,
-  runtimeCausalityEvidence,
-} from "./operational-claim.js";
-export {
-  checkUngroundedCodebaseAdvice,
-  hasFreshCodebaseEvidence,
-  looksLikeCodebaseAdviceRequest,
-  looksLikeImplementationAdvice,
-} from "./codebase-advice.js";
 export {
   CLAIM_GROUNDING_RULES,
-  CODEBASE_ADVICE_GROUNDING_REASON,
-  CODEBASE_ADVICE_GROUNDING_STATUS,
-  OPERATIONAL_CLAIM_REASON,
-  CLEANUP_VERIFY_REASON,
-  CLEANUP_VERIFY_FALSE_DONE_REASON,
   SOURCE_VERIFY_REASON,
   claimGroundingRule,
   evaluateClaimGrounding,
@@ -51,7 +31,6 @@ export {
   NO_PROGRESS_LIMIT,
   NO_PROGRESS_LIMIT_WEAK,
 } from "./loop-detection.js";
-export { checkPostCommit } from "./post-commit.js";
 export {
   checkDeadEnd,
   createDeadEndState,
@@ -80,14 +59,3 @@ export {
   type TestCommand,
   type FsProbe,
 } from "./build-command.js";
-export {
-  looksLikeCleanupSweep,
-  isEmptyGrepResult,
-  claimsCleanupDone,
-  noteCleanupEvidence,
-  checkCleanupVerify,
-  createCleanupVerifyState,
-  CLEANUP_VERIFY_MAX_NUDGES,
-  type CleanupVerifyState,
-  type CleanupToolResult,
-} from "./cleanup-verify.js";

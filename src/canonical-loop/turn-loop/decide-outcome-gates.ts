@@ -81,7 +81,9 @@ export const unresolvedToolIntentGate: CompletionGate = {
   evaluate(ctx) {
     const gate = runToolIntentGate(ctx);
     if (gate.shouldRetry) {
-      appendNudgeAsUserMessage(ctx.op.id, ctx.turnIdx + 1, gate.nudge, gateSource("unresolved-tool-intent", "nudge"));
+      // A refused nudge wrote nothing, so re-opening would drive a turn the
+      // model has no new instruction for.
+      if (!appendNudgeAsUserMessage(ctx.op.id, ctx.turnIdx + 1, gate.nudge, gateSource("unresolved-tool-intent", "nudge"))) return CONTINUE;
       return { reopen: true };
     }
     if (gate.honestTerminal !== undefined) {
@@ -123,7 +125,7 @@ const earnedDoneGate: CompletionGate = {
   evaluate({ op, turnIdx }) {
     const nudge = earnedDoneNudge(op);
     if (nudge) {
-      appendNudgeAsUserMessage(op.id, turnIdx + 1, nudge, gateSource("earned-done", "nudge"));
+      if (!appendNudgeAsUserMessage(op.id, turnIdx + 1, nudge, gateSource("earned-done", "nudge"))) return CONTINUE;
       return { reopen: true };
     }
     return CONTINUE;

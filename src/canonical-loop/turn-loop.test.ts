@@ -24,7 +24,7 @@ vi.mock("./event-emitter.js", () => ({
   publishStreamChunk: vi.fn(),
 }));
 vi.mock("./turn-loop/nudges.js", () => ({
-  appendNudgeAsUserMessage: vi.fn(),
+  appendNudgeAsUserMessage: vi.fn(() => true),
   recoverCommittedStrategyPivot: vi.fn(() => false),
   middlewareAbortResult: vi.fn(() => ({ terminalReason: "error", toolCount: 0, messageCount: 0, cancelled: false })),
 }));

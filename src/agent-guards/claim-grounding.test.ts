@@ -1,8 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
   CLAIM_GROUNDING_RULES,
-  CODEBASE_ADVICE_GROUNDING_REASON,
-  CODEBASE_ADVICE_GROUNDING_STATUS,
   claimGroundingRule,
   evaluateClaimGrounding,
   type ClaimKind,
@@ -10,16 +8,14 @@ import {
 } from "./claim-grounding.js";
 
 describe("claim grounding rules", () => {
-  it("grounds repo implementation advice only after fresh code evidence", () => {
-    const ungrounded = evaluateClaimGrounding("repo-advice", []);
+  it("grounds a source done-claim only on a real build/type-check/test run", () => {
+    const ungrounded = evaluateClaimGrounding("source-done", []);
     expect(ungrounded.grounded).toBe(false);
-    expect(ungrounded.reason).toBe(CODEBASE_ADVICE_GROUNDING_REASON);
-    expect(ungrounded.consequence).toBe("replace-status");
-    expect(ungrounded.statusText).toBe(CODEBASE_ADVICE_GROUNDING_STATUS);
-    expect(ungrounded.message).toContain("without fresh code evidence");
+    expect(ungrounded.consequence).toBe("partial-label");
+    expect(ungrounded.missingEvidence).toEqual(["build-clean"]);
+    expect(ungrounded.message).toContain("clean build");
 
-    const grounded = evaluateClaimGrounding("repo-advice", ["code-read"]);
-    expect(grounded).toMatchObject({
+    expect(evaluateClaimGrounding("source-done", ["build-clean"])).toMatchObject({
       grounded: true,
       missingEvidence: [],
       consequence: null,
@@ -29,47 +25,26 @@ describe("claim grounding rules", () => {
     });
   });
 
-  it("lets cleanup done-claims be grounded by either a clean search or accounted remaining hits", () => {
-    expect(evaluateClaimGrounding("cleanup-done", []).grounded).toBe(false);
-    expect(evaluateClaimGrounding("cleanup-done", ["search-clean"]).grounded).toBe(true);
-    expect(evaluateClaimGrounding("cleanup-done", ["remaining-hits-accounted"]).grounded).toBe(true);
-  });
-
-  it("keeps the other claim classes explicit in the same table", () => {
-    expect(evaluateClaimGrounding("source-done", []).missingEvidence).toEqual(["build-clean"]);
-    expect(evaluateClaimGrounding("runtime-causality", []).consequence).toBe("retract");
-  });
-
-  // Regression pin for a DELETED rule. "ui-done" (requiredAny ["browser-render"],
-  // consequence "partial-label") used to be asserted grounded here, which read as
-  // live policy — it never was: nothing in production evaluated the kind, and no
-  // ledger predicate realized its partial-label. Pin the absence so it can't come
-  // back as a table entry with no dispatch behind it. Re-adding it requires the
-  // ledger predicate too (turn-loop/claim-grounding-dispatch.test.ts enforces the
-  // pair), which is a product decision, not a table edit.
-  it("no longer declares a ui-done rule that nothing dispatches", () => {
-    expect(CLAIM_GROUNDING_RULES.map(r => String(r.claimKind))).not.toContain("ui-done");
+  // The repo-advice, cleanup-done and runtime-causality rules went out with the
+  // guards that evaluated them — each judged the model's WORDING and then
+  // retracted or rewrote its answer. Pin their absence so a rule cannot come
+  // back without a consumer.
+  it("declares only the rule a live consumer dispatches", () => {
+    expect(CLAIM_GROUNDING_RULES.map(r => String(r.claimKind))).toEqual(["source-done"]);
   });
 
   it("fails closed for a missing claim kind", () => {
     expect(() => claimGroundingRule("unknown" as ClaimKind)).toThrow("No claim-grounding rule");
   });
 
-  // Regression pin for the "lsp-clean" widening: the kind exists (compile-time
-  // check below) but is deliberately WEAK positive evidence — NO rule accepts
-  // it, so it can never ground a claim on its own. In particular the
-  // claim-integrity consumers must be behaviorally unchanged: operational-claim
-  // (runtime-causality), codebase-advice (repo-advice), and cleanup-verify
-  // (cleanup-done) do not accept it, and neither does source-done — the
-  // build/test run ("build-clean") stays the grounding evidence.
-  it('adds "lsp-clean" as an EvidenceKind that NO rule accepts', () => {
+  // "lsp-clean" exists as a kind (compile-time check below) but is deliberately
+  // WEAK positive evidence — no rule accepts it, so it can never ground a claim
+  // on its own. It only softens the verify-gate nudge's tone.
+  it('keeps "lsp-clean" an EvidenceKind that NO rule accepts', () => {
     const kind: EvidenceKind = "lsp-clean"; // compiles ⇔ the union member exists
     for (const rule of CLAIM_GROUNDING_RULES) {
       expect(rule.requiredAny, `rule ${rule.claimKind} must not accept lsp-clean`).not.toContain(kind);
     }
     expect(evaluateClaimGrounding("source-done", ["lsp-clean"]).grounded).toBe(false);
-    expect(evaluateClaimGrounding("runtime-causality", ["lsp-clean"]).grounded).toBe(false);
-    expect(evaluateClaimGrounding("repo-advice", ["lsp-clean"]).grounded).toBe(false);
-    expect(evaluateClaimGrounding("cleanup-done", ["lsp-clean"]).grounded).toBe(false);
   });
 });

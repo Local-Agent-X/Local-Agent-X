@@ -91,6 +91,58 @@
         { "type": "pathsAbsent", "paths": ["cleanup/build/app.tmp", "cleanup/build/assets.tmp", "cleanup/cache/index.tmp"] },
         { "type": "pathsPresent", "paths": ["cleanup/legacy/client-2019.tmp", "cleanup/legacy/invoice-draft.tmp", "cleanup/legacy/notes.md"] }
       ]
+    },
+    {
+      "id": "multi-page-site-match",
+      "category": "hard",
+      "sessions": [{ "turns": ["Our vistawell clone in vistawell-clone/ should match the original site at {{BASE}}/site2/ — check both the home page and the services page. Go through them and fix every difference you find in our clone."] }],
+      "checks": [
+        { "type": "cssProperty", "path": "vistawell-clone/styles.css", "selector": ".site-header", "property": "height", "equals": "72px" },
+        { "type": "cssProperty", "path": "vistawell-clone/styles.css", "selector": "nav", "property": "gap", "equals": "24px" },
+        { "type": "cssProperty", "path": "vistawell-clone/styles.css", "selector": "h1", "property": "font-size", "equals": "40px" },
+        { "type": "cssProperty", "path": "vistawell-clone/styles.css", "selector": ".cta", "property": "background", "equals": "#0e7c66" },
+        { "type": "fileIncludes", "path": "vistawell-clone/services.html", "all": ["Cupping therapy"] }
+      ]
+    },
+    {
+      "id": "correction-chain",
+      "category": "hard",
+      "sessions": [{ "turns": [
+        "In pricing-app, add a formatPrice(cents) function to src/format.js that turns cents into a price string like $12.50.",
+        "Actually negative amounts need to come out as -$12.50, not $-12.50. And large amounts need thousands separators, like $1,234.56.",
+        "One more thing: don't add any dependencies, and keep formatDate working exactly as it is."
+      ] }],
+      "checks": [
+        { "type": "moduleAssert", "path": "pricing-app/src/format.js", "asserts": [
+          { "expr": "m.formatPrice(1250)", "equals": "$12.50" },
+          { "expr": "m.formatPrice(-1250)", "equals": "-$12.50" },
+          { "expr": "m.formatPrice(123456)", "equals": "$1,234.56" },
+          { "expr": "m.formatPrice(5)", "equals": "$0.05" },
+          { "expr": "m.formatDate(new Date('2026-09-15T12:00:00Z'))", "equals": "2026-09-15" }
+        ] },
+        { "type": "fileUnchanged", "path": "pricing-app/package.json" }
+      ]
+    },
+    {
+      "id": "rename-with-shell-guard-collision",
+      "category": "hard",
+      "sessions": [{ "turns": ["In api-client, rename getJson to fetchJson everywhere — source and tests — and make sure the tests pass."] }],
+      "checks": [
+        { "type": "textAbsent", "dir": "api-client", "text": "getJson" },
+        { "type": "commandPasses", "cwd": "api-client", "command": "node --test" },
+        { "type": "moduleAssert", "path": "api-client/src/index.js", "asserts": [
+          { "expr": "typeof m.fetchJson", "equals": "function" },
+          { "expr": "typeof m.getUser", "equals": "function" }
+        ] }
+      ]
+    },
+    {
+      "id": "moved-docs-page",
+      "category": "hard",
+      "sessions": [{ "turns": ["Our notes link to {{BASE}}/docs/v2/limits for the Fleet API rate limit. Look up the current per-minute rate limit and write it to notes/fleet-limits.md."] }],
+      "checks": [
+        { "type": "fileIncludes", "path": "notes/fleet-limits.md", "all": ["1,200"] }
+      ]
     }
   ]
 }

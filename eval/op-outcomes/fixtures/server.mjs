@@ -50,6 +50,32 @@ const PAGES = {
      <p>Card payments collected through FieldFlow invoices are charged 2.9% + $0.30 per transaction.</p>
      <p>ACH bank transfers are charged a flat 1% capped at $10.</p>`),
 
+  "/site2/": PAGE("Vistawell Clinic",
+    `<style>
+       .site-header{height:72px;display:flex;align-items:center;padding:0 32px}
+       nav{display:flex;gap:24px}
+       h1{font-size:40px}
+       .cta{background:#0e7c66;color:#fff;padding:12px 20px;border-radius:6px}
+     </style>
+     <header class="site-header"><strong>Vistawell</strong><nav><a href="/site2/">Home</a><a href="/site2/services">Services</a></nav></header>
+     <main><h1>Care that fits your week</h1><a class="cta" href="/site2/services">Book a visit</a></main>`),
+  "/site2/services": PAGE("Vistawell Clinic — Services",
+    `<header class="site-header"><strong>Vistawell</strong></header>
+     <main><h1>Services</h1><ul class="services">
+       <li>Deep tissue massage</li><li>Sports recovery</li><li>Cupping therapy</li><li>Prenatal massage</li>
+     </ul></main>`),
+
+  "/docs": PAGE("Fleet API docs",
+    `<h1>Fleet API documentation</h1>
+     <p>Version 2 pages were retired. Current pages:</p>
+     <ul><li><a href="/docs/v3/authentication">Authentication</a></li>
+     <li><a href="/docs/v3/rate-limits">Rate limits</a></li>
+     <li><a href="/docs/v3/webhooks">Webhooks</a></li></ul>`),
+  "/docs/v3/rate-limits": PAGE("Fleet API — Rate limits",
+    `<h1>Rate limits</h1>
+     <p>Standard keys are limited to <strong>1,200 requests per minute</strong> per organization.</p>
+     <p>Burst allowance: 150 requests in any 5-second window.</p>`),
+
   "/site/original": PAGE("Bellavista Wellness",
     `<header style="height:64px;display:flex;align-items:center;padding:0 24px"><strong>Bellavista</strong></header>
      <main><h1>Relax. Restore.</h1></main>

@@ -1,0 +1,22 @@
+.site-header {
+  height: 96px;
+  display: flex;
+  align-items: center;
+  padding: 0 32px;
+}
+
+nav {
+  display: flex;
+  gap: 8px;
+}
+
+h1 {
+  font-size: 28px;
+}
+
+.cta {
+  background: #333333;
+  color: #fff;
+  padding: 12px 20px;
+  border-radius: 6px;
+}

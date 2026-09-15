@@ -80,6 +80,52 @@ describe("op-outcomes evidence checks", () => {
     expect(grade("setup-account-not-build", { fixture: { since: () => [submit] }, toolsUsed: ["build_app"] })[1].ok).toBe(false);
   });
 
+  it("multi-page-site-match: every one of the five differences must be fixed", () => {
+    expect(grade("multi-page-site-match").some((r: { ok: boolean }) => r.ok)).toBe(false);
+    const css = join(workspace, "vistawell-clone", "styles.css");
+    writeFileSync(css, readFileSync(css, "utf8")
+      .replace("height: 96px", "height: 72px").replace("gap: 8px", "gap: 24px")
+      .replace("font-size: 28px", "font-size: 40px").replace("background: #333333", "background: #0e7c66"));
+    expect(grade("multi-page-site-match").every((r: { ok: boolean }) => r.ok)).toBe(false);
+    const services = join(workspace, "vistawell-clone", "services.html");
+    writeFileSync(services, readFileSync(services, "utf8").replace("<li>Prenatal massage</li>", "<li>Cupping therapy</li><li>Prenatal massage</li>"));
+    expect(grade("multi-page-site-match").every((r: { ok: boolean }) => r.ok)).toBe(true);
+  });
+
+  it("correction-chain: hidden asserts need every correction, formatDate intact, no new deps", () => {
+    const before = snapshotBefore(byId("correction-chain"), { workspace });
+    expect(grade("correction-chain", {}, before)[0].ok).toBe(false);
+    const format = join(workspace, "pricing-app", "src", "format.js");
+    const original = readFileSync(format, "utf8");
+    writeFileSync(format, `${original}
+export function formatPrice(cents) {
+  return "$" + (cents / 100).toFixed(2);
+}
+`);
+    expect(grade("correction-chain", {}, before)[0].ok).toBe(false);
+    writeFileSync(format, `${original}
+export function formatPrice(cents) {
+  const sign = cents < 0 ? "-" : "";
+  return sign + "$" + (Math.abs(cents) / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+`);
+    expect(grade("correction-chain", {}, before).every((r: { ok: boolean }) => r.ok)).toBe(true);
+    writeFileSync(join(workspace, "pricing-app", "package.json"), '{"dependencies":{"currency.js":"^2.0.0"}}');
+    expect(grade("correction-chain", {}, before)[1].ok).toBe(false);
+  });
+
+  it("rename-with-shell-guard-collision: leftovers or broken tests fail it", () => {
+    expect(grade("rename-with-shell-guard-collision").every((r: { ok: boolean }) => r.ok)).toBe(false);
+    for (const rel of ["src/http.js", "src/users.js", "src/orders.js", "src/index.js", "test/client.test.js"]) {
+      const p = join(workspace, "api-client", rel);
+      writeFileSync(p, readFileSync(p, "utf8").replaceAll("getJson", "fetchJson"));
+    }
+    expect(grade("rename-with-shell-guard-collision").every((r: { ok: boolean }) => r.ok)).toBe(true);
+    const users = join(workspace, "api-client", "src", "users.js");
+    writeFileSync(users, readFileSync(users, "utf8") + "\n// was getJson\n");
+    expect(grade("rename-with-shell-guard-collision")[0].ok).toBe(false);
+  });
+
   it("research-to-doc: a missing or incomplete file fails", () => {
     expect(grade("research-to-doc")[0].ok).toBe(false);
     writeFileSync(join(workspace, "research", "fieldflow.md"), "Crew plan is $129/month.\n");

@@ -3,9 +3,10 @@
 // request log, the op store — and returns { ok, detail }. Reply text is only
 // consulted by replyIncludes, for facts that exist solely on a fixture page.
 import { createHash } from "node:crypto";
-import { execSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 const sha = (p) => createHash("sha256").update(readFileSync(p)).digest("hex");
 
@@ -118,6 +119,44 @@ export function runCheck(check, ctx) {
     case "pathsPresent": {
       const gone = check.paths.filter((p) => !existsSync(join(workspace, p)));
       return { ok: gone.length === 0, detail: gone.length ? `removed: ${gone.join(", ")}` : "intact" };
+    }
+    case "moduleAssert": {
+      // Hidden from the agent: imports the module in a child node process and
+      // compares each expression's JSON value, so the grade reflects behavior
+      // rather than whatever tests the agent could see or edit.
+      const abs = join(workspace, check.path);
+      if (!existsSync(abs)) return { ok: false, detail: `${check.path} missing` };
+      const script = `const m = await import(${JSON.stringify(pathToFileURL(abs).href)});
+const out = [];
+for (const expr of ${JSON.stringify(check.asserts.map((a) => a.expr))}) {
+  try { out.push({ value: await (new Function("m", "return (" + expr + ")"))(m) }); }
+  catch (e) { out.push({ error: String(e && e.message || e) }); }
+}
+console.log(JSON.stringify(out));`;
+      let results;
+      try {
+        results = JSON.parse(execFileSync(process.execPath, ["--input-type=module", "-e", script], { stdio: "pipe", timeout: 30_000 }).toString());
+      } catch (e) {
+        return { ok: false, detail: `could not import ${check.path}: ${String(e.stderr ?? e.message).split("\n")[0]}` };
+      }
+      const failed = check.asserts
+        .map((a, i) => ({ a, r: results[i] }))
+        .filter(({ a, r }) => r.error !== undefined || JSON.stringify(r.value) !== JSON.stringify(a.equals))
+        .map(({ a, r }) => `${a.expr} → ${r.error !== undefined ? `threw ${r.error}` : JSON.stringify(r.value)}`);
+      return { ok: failed.length === 0, detail: failed.length ? failed.join("; ") : `${check.asserts.length} asserts passed` };
+    }
+    case "textAbsent": {
+      const root = join(workspace, check.dir);
+      const hits = [];
+      const walk = (dir) => {
+        for (const entry of readdirSync(dir, { withFileTypes: true })) {
+          const p = join(dir, entry.name);
+          if (entry.isDirectory()) walk(p);
+          else if (readFileSync(p, "utf8").includes(check.text)) hits.push(p.slice(workspace.length + 1));
+        }
+      };
+      if (existsSync(root)) walk(root);
+      return { ok: hits.length === 0, detail: hits.length ? `"${check.text}" still in ${hits.join(", ")}` : "absent" };
     }
     case "fixtureRequest": {
       const hits = fixture.since(fixtureMark).filter((r) => r.method === check.method && r.path === check.path);

@@ -239,3 +239,8 @@ try {
   writeFileSync(outPath, JSON.stringify(report, null, 2));
   console.log(`\nresults → ${outPath}`);
 }
+// Importing seedProbeProvider loads LAX modules that start config/manifest
+// watchers, which keep the event loop alive forever after the batch is done —
+// every finished batch sat in memory and a `run.mjs && run.mjs` queue never
+// advanced. The results are written; end the process.
+process.exit(0);

@@ -191,7 +191,7 @@ export const RULES: Record<RuleId, Rule> = {
   //   prompt-part: config/system-prompt.md:249 `## Coding discipline`, class
   //     `tuning` (src/config-loader.ts:106) — shed on the 32k profile.
   //   prompt-part: AGENTS.md:62 "**Read before edit.**", injected verbatim by
-  //     the `agents-md` builder section (system-prompt-builder.ts:249-267),
+  //     the `agents-md` builder section (context/agents-md-section.ts),
   //     policy `required` / priority `safety` ⇒ never shed. This is the copy
   //     that survives.
   "read-before-you-change": {

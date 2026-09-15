@@ -6,7 +6,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 let manifest = "MANIFEST v1";
 vi.mock("../manifest-generator/index.js", () => ({ getManifestSummary: () => manifest }));
 
-import { _resetSessionSnapshotsForTests, createSystemPromptBuilder } from "./system-prompt-builder.js";
+import { createSystemPromptBuilder } from "./system-prompt-builder.js";
+import { _resetSessionSnapshotsForTests } from "./session-prompt-snapshot.js";
 
 async function renderManifest(sessionId?: string): Promise<string | undefined> {
   const built = await createSystemPromptBuilder({ basePrompt: "## Base\nx", providerHint: "", sessionId }).buildWithTelemetry();

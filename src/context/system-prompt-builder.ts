@@ -9,6 +9,8 @@
 import { createRequire } from "node:module";
 import { measurePromptSection, type PromptSectionTelemetry } from "../prompt-telemetry.js";
 import { basePromptSections } from "../config-loader.js";
+import { snapshotForSession } from "./session-prompt-snapshot.js";
+import { readAgentsMdSection } from "./agents-md-section.js";
 const require = createRequire(import.meta.url);
 
 /** Budget class (prompt-degradation.ts sheds tuning → navigation → facts; safety and
@@ -173,39 +175,6 @@ export class SystemPromptBuilder {
   }
 }
 
-// Per-session snapshots of sections read from disk that the agent's own writes
-// churn (app-manifest file counts, AGENTS.md). Frozen for the session so the
-// system prompt stays a byte-stable prompt-cache / KV-cache prefix across
-// messages; a new session picks up the current files. self_edit re-reads
-// AGENTS.md itself (self-edit/agents-rules.ts), so edits still govern edits.
-const SESSION_SNAPSHOT_MAX_SESSIONS = 500;
-const sessionSnapshots = new Map<string, Map<string, string>>();
-
-async function snapshotForSession(
-  sessionId: string | undefined,
-  sectionId: string,
-  read: () => Promise<string>,
-): Promise<string> {
-  if (!sessionId) return read();
-  let sections = sessionSnapshots.get(sessionId);
-  const cached = sections?.get(sectionId);
-  if (cached !== undefined) return cached;
-  const text = await read();
-  if (!sections) {
-    if (sessionSnapshots.size >= SESSION_SNAPSHOT_MAX_SESSIONS) {
-      sessionSnapshots.delete(sessionSnapshots.keys().next().value as string);
-    }
-    sections = new Map();
-    sessionSnapshots.set(sessionId, sections);
-  }
-  sections.set(sectionId, text);
-  return text;
-}
-
-export function _resetSessionSnapshotsForTests(): void {
-  sessionSnapshots.clear();
-}
-
 /**
  * Single builder factory for ALL paths — web chat, bridge, cron, sub-agents.
  * Callers pass what they have; empty strings are auto-skipped.
@@ -283,22 +252,7 @@ Reminder: file CRUD has native tools — \`read\`, \`write\`, \`edit\`, \`delete
   // rather than a drifty paraphrase.
   builder.addSection({
     id: "agents-md", label: "Rules", type: "static", policy: "required", priority: "safety",
-    build: () => snapshotForSession(opts.sessionId, "agents-md", async () => {
-      try {
-        const { readFileSync, existsSync } = await import("node:fs");
-        const { resolve, join, dirname } = await import("node:path");
-        const { fileURLToPath } = await import("node:url");
-        // Resolve from this file's location to the repo root. tsc preserves
-        // directories: dist/context/system-prompt-builder.js → up two → repo
-        // root (same shape when running from src/context/ under tsx/vitest).
-        const thisFile = fileURLToPath(import.meta.url);
-        const root = resolve(dirname(thisFile), "../..");
-        const p = join(root, "AGENTS.md");
-        if (!existsSync(p)) return "";
-        const md = readFileSync(p, "utf-8");
-        return `## Invariants (AGENTS.md)\n${md}`;
-      } catch { return ""; }
-    }),
+    build: () => snapshotForSession(opts.sessionId, "agents-md", readAgentsMdSection),
   });
 
   builder.addSection({

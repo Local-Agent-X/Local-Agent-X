@@ -51,15 +51,15 @@ import { registerAdapterForChat } from "../src/canonical-loop/chat-runner/regist
 // A section set shaped like the real builder's output: a stable head, then a
 // section the walk must stop at, then a dynamic tail. Concrete texts keep the
 // arithmetic checkable by hand.
-const STABLE_HEAD = "IDENTITY-BLOCK|RUNTIME-BLOCK";
+const STABLE_HEAD = "IDENTITY-BLOCK|RUNTIME-BLOCK|APP MAP SNAPSHOTTED FOR THE SESSION";
 
 function preparedAnthropic(): PreparedAgentRequest {
   const parts: Array<[string, "static" | "dynamic", string]> = [
     ["core-identity", "static", "IDENTITY-BLOCK"],
     ["runtime-context", "static", "|RUNTIME-BLOCK"],
-    // Turn-variant: the agent's own writes move this mid-session, so the walk
-    // must stop here (C6-polish F1).
-    ["app-manifest", "static", "|APP MAP WITH FILE COUNTS THAT MOVE"],
+    // Snapshotted per session (system-prompt-builder.ts), so part of the head.
+    ["app-manifest", "static", "|APP MAP SNAPSHOTTED FOR THE SESSION"],
+    // Turn-variant: the walk must stop here.
     ["tool-guidance", "static", "|PER-TURN DEFERRED MANIFEST"],
     ["turn-directive", "dynamic", "|DO THE THING THIS TURN"],
   ];

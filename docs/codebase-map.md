@@ -12,7 +12,7 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 65 top-level dirs · 65 live · 0 with no live importer · 1595 non-test source files · 0 god files (>400 LOC).
+**Totals:** 66 top-level dirs · 66 live · 0 with no live importer · 1614 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -20,11 +20,11 @@ over 400 LOC (the source-hygiene ceiling).
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 129 | 26 | XL |  |
 | `src/security/` | 87 | 34 | XL |  |
-| `src/tools/` | 69 | 183 | XL |  |
+| `src/tools/` | 69 | 191 | XL |  |
 | `src/providers/` | 63 | 21 | XL |  |
 | `src/canonical-loop/` | 61 | 250 | XL |  |
-| `src/memory/` | 46 | 128 | XL |  |
-| `src/workspace/` | 43 | 2 | M |  |
+| `src/memory/` | 46 | 129 | XL |  |
+| `src/workspace/` | 44 | 2 | M |  |
 | `src/util/` | 37 | 3 | S |  |
 | `src/session/` | 36 | 7 | L |  |
 | `src/auth/` | 34 | 10 | L |  |
@@ -36,9 +36,9 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/data-lineage/` | 28 | 8 | L |  |
 | `src/local-runtimes/` | 27 | 18 | L |  |
 | `src/agent-store/` | 26 | 7 | M |  |
+| `src/agent-request/` | 23 | 14 | L |  |
 | `src/app-runtime/` | 23 | 12 | L |  |
-| `src/agent-request/` | 22 | 14 | L |  |
-| `src/context/` | 22 | 4 | M |  |
+| `src/context/` | 22 | 6 | M |  |
 | `src/chat-ws/` | 21 | 18 | L |  |
 | `src/context-manager/` | 21 | 11 | L |  |
 | `src/orchestrator/` | 20 | 24 | L |  |
@@ -46,7 +46,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/agents/` | 17 | 13 | L |  |
 | `src/protocols/` | 16 | 41 | XL |  |
 | `src/sandbox/` | 16 | 9 | L |  |
-| `src/anthropic-client/` | 14 | 21 | L |  |
+| `src/anthropic-client/` | 14 | 21 | XL |  |
 | `src/voice/` | 13 | 74 | XL |  |
 | `src/cognition/` | 12 | 30 | XL |  |
 | `src/server/` *(entrypoint)* | 12 | 50 | XL |  |
@@ -61,12 +61,13 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/screen-stream/` | 9 | 8 | L |  |
 | `src/ari-kernel/` | 8 | 11 | L |  |
 | `src/bridge-voice/` | 8 | 5 | M |  |
-| `src/routes/` | 8 | 86 | XL |  |
+| `src/routes/` | 8 | 87 | XL |  |
 | `src/sync/` | 8 | 19 | L |  |
 | `src/telegram-bridge/` | 8 | 6 | M |  |
 | `src/auto-build/` | 7 | 52 | XL |  |
 | `src/autopilot/` | 7 | 13 | L |  |
 | `src/plugin-system/` | 7 | 10 | L |  |
+| `src/android/` | 6 | 7 | M |  |
 | `src/app-renderer/` | 6 | 7 | M |  |
 | `src/mcp-client/` | 6 | 9 | L |  |
 | `src/credentials/` | 5 | 1 | S |  |

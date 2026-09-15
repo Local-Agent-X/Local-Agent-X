@@ -34,6 +34,7 @@ For every case × repeat × provider:
 ## Run
 
 ```bash
+npm run build   # the battery boots dist/ and refuses one older than src/
 npx tsx eval/op-outcomes/run.mjs --provider muse --repeat 3
 npx tsx eval/op-outcomes/run.mjs --provider all --only coding
 npx tsx eval/op-outcomes/run.mjs --provider grok --only bugfix-with-followup --keep

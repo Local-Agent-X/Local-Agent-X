@@ -6,9 +6,14 @@
 // one: seedProbeProvider() names the user's canonical credential file, and
 // LAX_SELF_EDIT_PROBE=1 + LAX_PROBE_PROVIDER_AUTH_PATH let the child read it in
 // place (decrypted with the key beside it — nothing is copied or re-encrypted).
-import { spawn } from "node:child_process";
+//
+// The workspace lifecycle logs that it refuses to junction <repo>/workspace to
+// this temp workspace. That is expected and harmless here: file, search and
+// shell tools resolve against the configured workspace (LAX_WORKSPACE), and the
+// refusal is the guard that keeps the user's real workspace from being migrated.
+import { execSync, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,6 +21,26 @@ import { seedProbeProvider } from "../../src/self-edit/sandbox-gates.ts";
 import { killProcessTree } from "../../src/process-tree-kill.ts";
 
 const BOOT_TIMEOUT_MS = 180_000;
+
+/**
+ * The servers boot the compiled build (`dist/`), like the self_edit probe:
+ * tsx would recompile the whole tree for every run, and two batches booting in
+ * parallel stalled past the boot timeout. So a run must refuse a dist that
+ * predates source changes, or the results would describe old code.
+ */
+export function assertDistMatchesSource(repoRoot) {
+  const refPath = join(repoRoot, "dist", ".builtref");
+  if (!existsSync(join(repoRoot, "dist", "index.js")) || !existsSync(refPath)) {
+    throw new Error("dist/ is missing — run `npm run build` first");
+  }
+  const builtRef = readFileSync(refPath, "utf8").trim();
+  try {
+    execSync(`git diff --quiet ${builtRef} HEAD -- src config package.json package-lock.json`, { cwd: repoRoot, stdio: "ignore" });
+    execSync("git diff --quiet HEAD -- src config package.json package-lock.json", { cwd: repoRoot, stdio: "ignore" });
+  } catch {
+    throw new Error(`dist/ was built from ${builtRef.slice(0, 8)} but src/config changed since — run \`npm run build\` first`);
+  }
+}
 
 function freePort() {
   return new Promise((resolve, reject) => {
@@ -45,7 +70,7 @@ export async function startIsolatedServer({ repoRoot, provider, model, fixturePo
   const port = await freePort();
   const token = randomBytes(24).toString("hex");
   const tail = [];
-  const child = spawn(process.execPath, ["--import=tsx", "src/index.ts"], {
+  const child = spawn(process.execPath, ["--max-old-space-size=4096", "dist/index.js"], {
     cwd: repoRoot,
     windowsHide: true,
     stdio: ["ignore", "pipe", "pipe"],

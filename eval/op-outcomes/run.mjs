@@ -10,6 +10,8 @@
  * the way — rounds, model/tool time, tokens, cache, nudges, compaction — so a
  * harness change is judged on pass rate AND cost, not pass rate alone.
  *
+ * Needs a current build (`npm run build`); it refuses a dist older than src/.
+ *
  * Run:  npx tsx eval/op-outcomes/run.mjs --provider muse --repeat 3
  *       npx tsx eval/op-outcomes/run.mjs --provider all --only coding
  *       npx tsx eval/op-outcomes/run.mjs --provider grok --only bugfix-with-followup --keep
@@ -22,7 +24,7 @@ import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync } from 
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startFixtureServer, DEPLOY_TOKEN } from "./fixtures/server.mjs";
-import { startIsolatedServer } from "./isolated.mjs";
+import { assertDistMatchesSource, startIsolatedServer } from "./isolated.mjs";
 import { SETUP, runCheck, snapshotBefore } from "./checks.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -111,11 +113,30 @@ function collectMetrics(dataDir, sessionIds) {
   return { ...m, models: [...m.models] };
 }
 
+async function bootServer(provider, fixture) {
+  const opts = { repoRoot: REPO_ROOT, provider: provider.provider, model: provider.model, fixturePort: fixture.port };
+  try {
+    return await startIsolatedServer(opts);
+  } catch (first) {
+    console.log(`  [${provider.label}] server boot failed, retrying once: ${first.message.split("\n")[0]}`);
+    return await startIsolatedServer(opts);
+  }
+}
+
 async function runCase(provider, caseDef, fixture) {
   const started = Date.now();
-  const server = await startIsolatedServer({ repoRoot: REPO_ROOT, provider: provider.provider, model: provider.model, fixturePort: fixture.port });
   const fill = (s) => String(s).replaceAll("{{BASE}}", fixture.baseUrl).replaceAll("{{DEPLOY_TOKEN}}", DEPLOY_TOKEN);
-  const result = { id: caseDef.id, category: caseDef.category, pass: false, checks: [], replies: [], toolsUsed: [], errors: [], workspace: server.root };
+  const result = { id: caseDef.id, category: caseDef.category, pass: false, checks: [], replies: [], toolsUsed: [], errors: [] };
+  let server;
+  try {
+    server = await bootServer(provider, fixture);
+  } catch (e) {
+    result.errors.push(`server boot: ${e.message.split("\n")[0]}`);
+    result.logTail = e.message;
+    result.secs = Math.round((Date.now() - started) / 1000);
+    return result;
+  }
+  result.workspace = server.root;
   try {
     const fixtureMark = fixture.requests.length;
     for (const step of caseDef.setup ?? []) await SETUP[step]({ server, workspace: server.workspace, deployToken: DEPLOY_TOKEN });
@@ -167,6 +188,7 @@ function summarize(batch) {
   console.log(`  ${"TOTAL".padEnd(34)} ${passed}/${total} pass (${Math.round((100 * passed) / total)}%)`);
 }
 
+assertDistMatchesSource(REPO_ROOT);
 const fixture = await startFixtureServer();
 const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
 const outDir = join(HERE, "results");

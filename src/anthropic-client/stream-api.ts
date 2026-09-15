@@ -7,7 +7,7 @@ import {
 } from "./oauth-direct.js";
 import type { AnthropicContent } from "./types.js";
 import type { StreamEvent, StreamOptions } from "./types.js";
-import { markConversationCache, splitSystemBlocks } from "./cache-breakpoints.js";
+import { hasStableSystemSplit, markConversationCache, splitSystemBlocks } from "./cache-breakpoints.js";
 import { createLogger } from "../logger.js";
 import { toAnthropicTools } from "../providers/shared/tool-shape.js";
 
@@ -175,6 +175,7 @@ export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<Stre
     ? toAnthropicTools(tools, {
         mapName: oauth ? toOAuthWireName : undefined,
         cacheControlLast: true,
+        cacheTtl: systemPrompt && hasStableSystemSplit(systemPrompt, systemStablePrefixLen) ? "1h" : undefined,
       })
     : undefined;
   // Prior-turn tool_use blocks ride on the wire too; normalize their names to

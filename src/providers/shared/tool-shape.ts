@@ -39,7 +39,7 @@ export interface AnthropicTool {
   name: string;
   description: string;
   input_schema: Record<string, unknown>;
-  cache_control?: { type: "ephemeral" };
+  cache_control?: { type: "ephemeral"; ttl?: "1h" };
 }
 
 export interface CodexTool {
@@ -73,6 +73,8 @@ export function toAnthropicTools(
   options: {
     mapName?: (name: string) => string;
     cacheControlLast?: boolean;
+    /** Breakpoint lifetime; omitted = the API's 5-minute default. */
+    cacheTtl?: "1h";
   } = {},
 ): AnthropicTool[] {
   const shaped: AnthropicTool[] = tools.map(t => ({
@@ -81,7 +83,9 @@ export function toAnthropicTools(
     input_schema: t.parameters,
   }));
   if (options.cacheControlLast && shaped.length > 0) {
-    shaped[shaped.length - 1].cache_control = { type: "ephemeral" };
+    shaped[shaped.length - 1].cache_control = options.cacheTtl
+      ? { type: "ephemeral", ttl: options.cacheTtl }
+      : { type: "ephemeral" };
   }
   return shaped;
 }

@@ -46,17 +46,11 @@ export async function registerAdapterForChat(
         // instead, and the volatile tail is still covered by the conversation
         // breakpoint below — nothing that was cached stops being cached.
         //
-        // The head is the core-identity/* parts (config/system-prompt.md, one
-        // section per `## ` heading, same bytes) + runtime-context ONLY: ~76.9 KB /
-        // ~21,976 est tokens, 77.6% of the system prompt (measured
-        // 2026-09-07 by scripts/measure-prompt-prefix.mjs, snapshot
-        // catalog-sha256=276510d75470). Do NOT quote the larger ~26.5k figure
-        // from this file's history — that counted app-manifest and agents-md,
-        // which stableSystemPrefixLength now excludes precisely because a
-        // filesystem watcher rewrites the manifest and the agent itself edits
-        // AGENTS.md, so both churn during exactly the long app-build and
-        // self-edit sessions this optimisation exists for. estimateTokens is
-        // ceil(len/3.5), not a tokenizer.
+        // The head is core-identity/* + runtime-context + app-manifest +
+        // agents-md + provider-hint (stableSystemPrefixLength). The manifest
+        // and AGENTS.md are snapshotted per session (system-prompt-builder.ts),
+        // so they no longer churn mid-session. The head and the tools carry
+        // a 1-hour breakpoint (cache-breakpoints.ts hasStableSystemSplit).
         systemStablePrefixLen: stableSystemPrefixLength(prepared.renderedPromptSections),
         // Cache the conversation prefix, not just system+tools.
         //

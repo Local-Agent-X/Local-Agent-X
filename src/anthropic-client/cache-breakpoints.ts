@@ -10,16 +10,27 @@
 
 import type { AnthropicContent, AnthropicMessage } from "./types.js";
 
-export type SystemBlock = { type: "text"; text: string; cache_control?: { type: "ephemeral" } };
+export type SystemBlock = { type: "text"; text: string; cache_control?: { type: "ephemeral"; ttl?: "1h" } };
+
+// True when splitSystemBlocks will emit a [stable | volatile] pair. Only then
+// is the tools + stable-system prefix worth a 1-hour breakpoint: it changes
+// rarely (a grown tool set, an edited prompt file), so the 2x write is paid
+// seldom while every 5-60 minute pause between user messages reads it back
+// instead of re-writing it. The conversation tier stays on the 5-minute
+// default — it changes every round, and 1-hour entries must precede 5-minute
+// ones in the prefix, which tools -> system -> messages already guarantees.
+export function hasStableSystemSplit(systemPrompt: string, stableLen?: number): boolean {
+  return stableLen !== undefined && stableLen > 0 && stableLen < systemPrompt.length;
+}
 
 // System prompt → text blocks. Without a valid split point: one block carrying
 // the breakpoint (the long-standing behavior). With one: [stable w/ breakpoint,
 // volatile tail uncached], so a per-turn tail rewrite costs only the tail
 // instead of missing the whole tools+system tier.
 export function splitSystemBlocks(systemPrompt: string, stableLen?: number): SystemBlock[] {
-  if (stableLen !== undefined && stableLen > 0 && stableLen < systemPrompt.length) {
+  if (hasStableSystemSplit(systemPrompt, stableLen)) {
     return [
-      { type: "text", text: systemPrompt.slice(0, stableLen), cache_control: { type: "ephemeral" } },
+      { type: "text", text: systemPrompt.slice(0, stableLen), cache_control: { type: "ephemeral", ttl: "1h" } },
       { type: "text", text: systemPrompt.slice(stableLen) },
     ];
   }

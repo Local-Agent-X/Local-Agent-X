@@ -346,11 +346,11 @@ describe("streamViaAPI — stable/volatile system split (voice cache profile)", 
     { type: "message_delta", usage: { output_tokens: 1 }, delta: { stop_reason: "end_turn" } },
   ]);
 
-  it("splits the system prompt into [stable w/ breakpoint, volatile uncached] at the given byte", async () => {
+  it("splits the system prompt into [stable w/ 1-hour breakpoint, volatile uncached] at the given byte", async () => {
     const cap = stubFetchCapturing(done);
     await collect({ token: "sk-ant-api03-real", systemPrompt: "STABLE-PART" + "VOLATILE", systemStablePrefixLen: 11 });
     expect(cap.calls[0].body.system).toEqual([
-      { type: "text", text: "STABLE-PART", cache_control: { type: "ephemeral" } },
+      { type: "text", text: "STABLE-PART", cache_control: { type: "ephemeral", ttl: "1h" } },
       { type: "text", text: "VOLATILE" },
     ]);
   });
@@ -361,8 +361,21 @@ describe("streamViaAPI — stable/volatile system split (voice cache profile)", 
     const sys = cap.calls[0].body.system as Array<{ text: string; cache_control?: { type: string } }>;
     expect(sys).toHaveLength(3);
     expect(sys[0].cache_control).toBeUndefined(); // identity prefix rides inside the stable-block span
-    expect(sys[1]).toEqual({ type: "text", text: "AB", cache_control: { type: "ephemeral" } });
+    expect(sys[1]).toEqual({ type: "text", text: "AB", cache_control: { type: "ephemeral", ttl: "1h" } });
     expect(sys[2]).toEqual({ type: "text", text: "cd" });
+  });
+
+  it("gives the tools breakpoint the 1-hour TTL only when the system prompt splits", async () => {
+    const tools = [
+      { name: "alpha", description: "a", parameters: { type: "object" } },
+      { name: "beta", description: "b", parameters: { type: "object" } },
+    ];
+    const cap = stubFetchCapturing(done);
+    await collect({ token: "sk-ant-api03-real", systemPrompt: "STABLE" + "TAIL", systemStablePrefixLen: 6, tools });
+    await collect({ token: "sk-ant-api03-real", systemPrompt: "WHOLE", tools });
+    const [split, single] = cap.calls.map((c) => c.body.tools as Array<{ cache_control?: unknown }>);
+    expect(split[1].cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
+    expect(single[1].cache_control).toEqual({ type: "ephemeral" });
   });
 
   it("ignores a split length that is 0 or out of range (single cached block, legacy shape)", async () => {

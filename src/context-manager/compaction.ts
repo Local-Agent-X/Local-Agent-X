@@ -34,19 +34,7 @@ Rules:
 export async function summarizeOldMessages(
   oldMessages: ChatCompletionMessageParam[],
 ): Promise<string | null> {
-  const transcript = oldMessages
-    .map((m) => {
-      const content = typeof m.content === "string"
-        ? m.content
-        : Array.isArray(m.content)
-          ? m.content
-              .filter((p) => typeof p === "object" && "text" in p)
-              .map((p) => String((p as { text: string }).text))
-              .join(" ")
-          : "[non-text]";
-      return `[${m.role}]: ${content}`;
-    })
-    .join("\n\n");
+  const transcript = buildSummaryTranscript(oldMessages);
 
   const basePrompt = `Conversation segment to summarize (${oldMessages.length} messages):\n\n${transcript}`;
 
@@ -66,7 +54,7 @@ export async function summarizeOldMessages(
     // maxResponseChars 6000 makes a >10k-char line unreachable. Both branches
     // stay in the guard because it is a shared primitive — other seams have
     // different parse/limit envelopes.
-    return await guardedRewrite(
+    const summary = await guardedRewrite(
       (_attempt, feedback) =>
         classifyWithLLM<string>({
           category: "compaction",
@@ -82,10 +70,77 @@ export async function summarizeOldMessages(
             return trimmed.length > 0 ? trimmed : null;
           },
         }),
-      { maxAttempts: 2 },
+      { maxAttempts: 2, validate: transcriptEchoError },
     );
+    // guardedRewrite falls back to a candidate that failed only `validate`;
+    // a transcript echo is never usable, so it takes the null path instead.
+    return summary !== null && transcriptEchoError(summary) === null ? summary : null;
   } catch (e) {
     logger.warn(`[context] LLM compaction call failed: ${(e as Error).message}`);
     return null;
   }
+}
+
+// Transcript size bound. Local summaries run through dispatch at
+// DISPATCH_NUM_CTX (16,384 tokens, llm-dispatch/ollama.ts), and Ollama silently
+// truncates an over-long prompt from the FRONT, dropping the instructions
+// above. The model then continues the conversation instead of summarizing
+// (reproduced 2026-09-14: a ~42k-token head of browser snapshots came back as
+// "Now I'll archive the selected items. [called browser(...)]", which was
+// injected as the summary and derailed the next turns). 30k chars stays near
+// 10k tokens even for dense snapshot text, leaving room for the system prompt
+// and the 6000-char reply.
+const SUMMARY_TRANSCRIPT_CHAR_BUDGET = 30_000;
+// Tool results only need "what they accomplished" (the prompt says so); user
+// rows carry the constraints the summary must never drop, so they keep the most.
+const SUMMARY_CHARS_PER_KIND = { user: 2000, assistant: 800, tool: 400 } as const;
+
+function messageText(m: ChatCompletionMessageParam): string {
+  if (typeof m.content === "string") return m.content;
+  if (Array.isArray(m.content)) {
+    return m.content
+      .filter((p) => typeof p === "object" && "text" in p)
+      .map((p) => String((p as { text: string }).text))
+      .join(" ");
+  }
+  return "[non-text]";
+}
+
+function clip(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max)}… [${text.length - max} chars clipped]` : text;
+}
+
+/** Bounded `[role]: text` transcript. Tool results (role "tool", or the
+ *  canonical loop's "[tool result]"-prefixed user rows) are clipped hardest; if
+ *  it still exceeds the budget, the oldest non-user rows are dropped first and
+ *  user rows only after those run out. */
+export function buildSummaryTranscript(messages: ChatCompletionMessageParam[]): string {
+  const rows = messages.map((m) => {
+    const text = messageText(m);
+    const kind = m.role === "tool" || text.startsWith("[tool result]") ? "tool" : m.role === "user" ? "user" : "assistant";
+    return { line: `[${m.role}]: ${clip(text, SUMMARY_CHARS_PER_KIND[kind])}`, isUser: kind === "user", dropped: false };
+  });
+  let total = rows.reduce((sum, r) => sum + r.line.length + 2, 0);
+  for (const dropUsers of [false, true]) {
+    for (const row of rows) {
+      if (total <= SUMMARY_TRANSCRIPT_CHAR_BUDGET) break;
+      if (row.dropped || row.isUser !== dropUsers) continue;
+      row.dropped = true;
+      total -= row.line.length + 2;
+    }
+  }
+  const omitted = rows.filter((r) => r.dropped).length;
+  const kept = rows.filter((r) => !r.dropped).map((r) => r.line);
+  if (omitted > 0) kept.unshift(`[${omitted} older messages omitted to fit the summarizer's context]`);
+  return kept.join("\n\n");
+}
+
+// A summary never needs the transcript's own markup; seeing it means the model
+// continued the conversation instead of summarizing it.
+const TRANSCRIPT_MARKUP = /\[called [\w.-]+\(|\[tool result\]|^\[(user|assistant|tool|system)\]:/m;
+
+function transcriptEchoError(text: string): string | null {
+  return TRANSCRIPT_MARKUP.test(text)
+    ? "it continued the conversation (tool-call or role markup) instead of summarizing it"
+    : null;
 }

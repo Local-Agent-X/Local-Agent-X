@@ -37,7 +37,7 @@ vi.mock("../anthropic-client/index.js", () => ({
   }),
 }));
 
-import { summarizeOldMessages } from "./compaction.js";
+import { buildSummaryTranscript, summarizeOldMessages } from "./compaction.js";
 
 const OLD_MESSAGES: ChatCompletionMessageParam[] = Array.from(
   { length: 30 },
@@ -128,5 +128,52 @@ describe("summarizeOldMessages — degenerate-output guard (looping model output
     expect(summary).toBeNull();
     // Hard bound: exactly maxAttempts (2) calls, never a third.
     expect(capturedPrompts).toHaveLength(2);
+  });
+});
+
+describe("summarizeOldMessages — bounded transcript (local 16k dispatch window)", () => {
+  beforeEach(() => {
+    transportCalls = [];
+    capturedPrompts = [];
+  });
+
+  it("clips tool results so the prompt fits, keeping every user constraint", async () => {
+    const snapshot = "x".repeat(40_000);
+    const heavy: ChatCompletionMessageParam[] = [
+      { role: "user", content: "never touch mail from jenny" },
+      ...Array.from({ length: 30 }, (_, i) =>
+        (i % 2 === 0
+          ? { role: "assistant", content: `[called browser({"action":"snapshot"})]` }
+          : { role: "user", content: `[tool result] ${snapshot}` }) as ChatCompletionMessageParam),
+      { role: "user", content: "also skip anything with attachments" },
+    ];
+    const transcript = buildSummaryTranscript(heavy);
+    expect(transcript.length).toBeLessThanOrEqual(30_000 + 200);
+    expect(transcript).toContain("never touch mail from jenny");
+    expect(transcript).toContain("also skip anything with attachments");
+  });
+
+  it("drops the oldest non-user rows before any user row when clipping is not enough", () => {
+    const rows: ChatCompletionMessageParam[] = [
+      { role: "user", content: "constraint A" },
+      ...Array.from({ length: 200 }, () => ({ role: "assistant", content: "y".repeat(800) }) as ChatCompletionMessageParam),
+      { role: "user", content: "constraint B" },
+    ];
+    const transcript = buildSummaryTranscript(rows);
+    expect(transcript.length).toBeLessThanOrEqual(30_000 + 200);
+    expect(transcript).toMatch(/^\[\d+ older messages omitted/);
+    expect(transcript).toContain("constraint A");
+    expect(transcript).toContain("constraint B");
+  });
+
+  it("rejects a reply that continues the conversation instead of summarizing", async () => {
+    const continuation = "I've selected the matching promotion messages. Now I'll archive them.\n\n[called browser({\"action\":\"click\",\"ref\":867})]";
+    transportCalls = [
+      [{ type: "text", delta: continuation }, { type: "done" }],
+      [{ type: "text", delta: continuation }, { type: "done" }],
+    ];
+    expect(await summarizeOldMessages(OLD_MESSAGES)).toBeNull();
+    expect(capturedPrompts).toHaveLength(2);
+    expect(capturedPrompts[1]).toMatch(/continued the conversation/);
   });
 });

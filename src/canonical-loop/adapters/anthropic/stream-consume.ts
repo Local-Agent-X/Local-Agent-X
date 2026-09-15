@@ -14,8 +14,6 @@
 
 import type { AdapterReport } from "../../adapter-contract.js";
 import { hasInjects } from "../../../agent-loop/inject-queue.js";
-import { extractToolCallsFromText } from "../tool-call-text-extractor.js";
-import { createLogger } from "../../../logger.js";
 import { withTransportRetry } from "../transport-retry.js";
 import { parseArgs, redactSecrets } from "./helpers.js";
 import type {
@@ -23,8 +21,6 @@ import type {
   AnthropicTransportRequest,
   StreamConsumeResult,
 } from "./types.js";
-
-const logger = createLogger("canonical-loop.anthropic.stream");
 
 export interface StreamConsumeDeps {
   isAborted: () => boolean;
@@ -144,45 +140,4 @@ export async function streamConsume(
     report({ kind: "error", code: "transport_exception", message, retryable: false });
   }
   return out;
-}
-
-/**
- * Tool-call-in-text fallback. Mirror of the rescue path in openai-compat.
- * Anthropic models occasionally emit a tool call as raw JSON inside the
- * text channel instead of as a structured tool_use block — typically
- * after long sessions or when the model "explains" a call before making
- * it. Without this, the JSON shows up in chat, the loop sees zero tool
- * calls, and the turn stalls.
- *
- * Fires ONLY when no structured tool_use arrived AND the text contains
- * a clear pattern. Healthy turns are untouched.
- *
- * Mutates `result` in place: pushes extracted tool-call ids into
- * toolCallIds and overwrites assembledText with the leftover text.
- * Emits a stream_redact so the UI swaps the dirty stream chunks for
- * the cleaned text.
- */
-export function applyToolCallTextFallback(
-  result: StreamConsumeResult,
-  report: (r: AdapterReport) => void,
-  model: string,
-  validToolNames: Set<string>,
-): void {
-  if (result.toolCallIds.length > 0 || result.assembledText.length === 0) return;
-  const extracted = extractToolCallsFromText(result.assembledText, validToolNames);
-  if (extracted.toolCalls.length === 0) return;
-  logger.info(`${model} emitted ${extracted.toolCalls.length} tool call(s) as text — extracted`);
-  for (const tc of extracted.toolCalls) {
-    result.toolCallIds.push(tc.id);
-    result.toolCalls.push({ id: tc.id, name: tc.name, arguments: tc.arguments });
-    report({
-      kind: "tool_call_requested",
-      call: { toolCallId: tc.id, tool: tc.name, args: parseArgs(tc.arguments) },
-    });
-  }
-  result.assembledText = extracted.remainingText;
-  // Retract the JSON the UI already streamed into the bubble; the
-  // persisted message will use the cleaned text. Clients without
-  // stream_redact handling are no worse off than before.
-  report({ kind: "stream_redact", replacementText: extracted.remainingText });
 }

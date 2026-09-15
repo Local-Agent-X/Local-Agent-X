@@ -16,7 +16,6 @@ import type { ReasoningEffort } from "../../providers/reasoning-effort.js";
 import type { AnthropicTransportRequest } from "./anthropic.js";
 import { canonicalToTransport } from "./canonical-to-transport.js";
 import { hasInjects } from "../../agent-loop/inject-queue.js";
-import { extractToolCallsFromText } from "./tool-call-text-extractor.js";
 import { classifyModelStop } from "./model-stop.js";
 import { withTransportRetry } from "./transport-retry.js";
 import { resolveStepReasoningEffort } from "../step-effort.js";
@@ -237,34 +236,6 @@ export class CodexAdapter implements Adapter {
         "The model returned an empty response (no text or tool calls). This usually means your ChatGPT/OpenAI session expired or you signed in on another device — reconnect OpenAI to continue, or switch providers.";
       firstError = { code: "empty_response", message };
       report({ kind: "error", code: "empty_response", message, retryable: false });
-    }
-
-    // Tool-call-in-text fallback. Mirror of the rescue path in
-    // openai-compat.ts and anthropic.ts. After a few rounds Codex models
-    // (gpt-5 / o-series) sometimes drift to emitting the next tool call
-    // as raw JSON in the text channel — `{"name": "browser", "arguments":
-    // {...}}` — instead of as a structured function_call. Without this,
-    // the JSON shows up in chat, no tool dispatches, the loop stalls.
-    // Live failure: user-reported "codex takes 6 turns and stops with
-    // JSON in chat" — that's this regression: the model holds wire shape
-    // for several turns, then text-flips. Fires ONLY when no structured
-    // tool_call arrived this turn AND the text matches a clear pattern.
-    if (toolCallIds.length === 0 && assembledText.length > 0) {
-      const validNames = new Set(input.tools.map(t => t.name));
-      const extracted = extractToolCallsFromText(assembledText, validNames);
-      if (extracted.toolCalls.length > 0) {
-        logger.info(`${req.model} emitted ${extracted.toolCalls.length} tool call(s) as text — extracted`);
-        for (const tc of extracted.toolCalls) {
-          toolCallIds.push(tc.id);
-          pendingToolCalls.push({ id: tc.id, name: tc.name, arguments: tc.arguments });
-          report({
-            kind: "tool_call_requested",
-            call: { toolCallId: tc.id, tool: tc.name, args: parseArgs(tc.arguments) },
-          });
-        }
-        assembledText = extracted.remainingText;
-        report({ kind: "stream_redact", replacementText: extracted.remainingText });
-      }
     }
 
     // Finalize an assistant message whenever there is EITHER text OR tool

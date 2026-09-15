@@ -56,7 +56,7 @@ import {
   type StreamConsumeResult,
 } from "./anthropic/types.js";
 import { byteLengthUtf8, convertTools } from "./anthropic/helpers.js";
-import { streamConsume, applyToolCallTextFallback } from "./anthropic/stream-consume.js";
+import { streamConsume } from "./anthropic/stream-consume.js";
 import { classifyModelStop } from "./model-stop.js";
 
 export {
@@ -150,11 +150,6 @@ export class AnthropicAdapter implements Adapter {
     } finally {
       this.inflight = null;
     }
-
-    // Tool-call-in-text fallback: some turns emit a tool call as JSON in
-    // the text channel instead of as a structured tool_use block. Detect
-    // + rewrite. No-op for healthy turns.
-    applyToolCallTextFallback(result, report, model, new Set(input.tools.map(t => t.name)));
 
     // Finalize the assistant message whenever there is EITHER text OR tool
     // calls. A tool-only turn (no narration) MUST still finalize, carrying its

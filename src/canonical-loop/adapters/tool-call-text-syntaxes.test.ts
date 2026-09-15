@@ -284,6 +284,25 @@ describe("layer interplay", () => {
     expect(JSON.parse(toolCalls[1].arguments).path).toBe("b.txt");
   });
 
+  it("a fenced JSON envelope with prose after it is an example, not a call", () => {
+    const text = 'You would call it like this:\n```json\n{"name":"bash","arguments":{"command":"rm -rf dist"}}\n```\nThat clears the build output.';
+    const { toolCalls, remainingText } = extractToolCallsFromText(text, TOOLS);
+    expect(toolCalls).toHaveLength(0);
+    expect(remainingText).toBe(text);
+  });
+
+  it("a fenced JSON envelope that ends the message still promotes", () => {
+    const { call, remainingText } = single('Checking the file.\n```json\n{"name":"read","arguments":{"path":"a.txt"}}\n```\n');
+    expect(call.name).toBe("read");
+    expect(remainingText).toBe("Checking the file.");
+  });
+
+  it("only the trailing run of naked envelopes promotes", () => {
+    const text = '{"name":"read","arguments":{"path":"example.txt"}}\nfor instance. Now:\n{"name":"read","arguments":{"path":"a.txt"}}\n{"name":"read","arguments":{"path":"b.txt"}}';
+    const { toolCalls } = extractToolCallsFromText(text, TOOLS);
+    expect(toolCalls.map((t) => JSON.parse(t.arguments).path)).toEqual(["a.txt", "b.txt"]);
+  });
+
   it("scan returns exact non-overlapping ranges", () => {
     const text = 'pre <tool_call>{"name":"read","arguments":{}}</tool_call> post';
     const hits = scanTextToolCallSyntaxes(text);

@@ -15,12 +15,8 @@ import type { CanonicalMessage, ProviderStateEnvelope } from "../contract-types.
 import type { GeminiNativeTransport, GeminiNativeRequest } from "./gemini-native-transport.js";
 import { canonicalToTransport } from "./canonical-to-transport.js";
 import { hasInjects } from "../../agent-loop/inject-queue.js";
-import { extractToolCallsFromText } from "./tool-call-text-extractor.js";
 import { classifyModelStop } from "./model-stop.js";
 import { withTransportRetry } from "./transport-retry.js";
-import { createLogger } from "../../logger.js";
-
-const logger = createLogger("canonical-loop.gemini-native");
 
 export const GEMINI_NATIVE_ADAPTER_NAME = "gemini-native";
 export const GEMINI_NATIVE_ADAPTER_VERSION = "1.0.0";
@@ -130,24 +126,6 @@ export class GeminiNativeAdapter implements Adapter {
 
     this.inflight = consume();
     try { await this.inflight; } finally { this.inflight = null; }
-
-    // Tool-call-in-text fallback — mirror of codex.ts / openai-compat.ts. If a
-    // structured functionCall didn't arrive but the text reads like one, rescue
-    // it so the JSON doesn't leak to chat and stall the loop.
-    if (toolCallIds.length === 0 && assembledText.length > 0) {
-      const validNames = new Set(input.tools.map(t => t.name));
-      const extracted = extractToolCallsFromText(assembledText, validNames);
-      if (extracted.toolCalls.length > 0) {
-        logger.info(`${this.opts.model} emitted ${extracted.toolCalls.length} tool call(s) as text — extracted`);
-        for (const tc of extracted.toolCalls) {
-          toolCallIds.push(tc.id);
-          pendingToolCalls.push({ id: tc.id, name: tc.name, arguments: tc.arguments });
-          report({ kind: "tool_call_requested", call: { toolCallId: tc.id, tool: tc.name, args: parseArgs(tc.arguments) } });
-        }
-        assembledText = extracted.remainingText;
-        report({ kind: "stream_redact", replacementText: extracted.remainingText });
-      }
-    }
 
     let finalizedMessageId: string | null = null;
     if (assembledText.length > 0 || pendingToolCalls.length > 0) {

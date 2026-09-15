@@ -33,9 +33,11 @@
  *
  * Only fires when `tool_calls` is empty AND the text matches a clear
  * pattern; healthy providers never hit this path, and ambiguous text is
- * left alone. Unpromoted-but-recognized syntax (unresolvable name,
- * over-cap payload, structurally-truncated payload, `<execute_tool>None`)
- * stays in the text untouched — scrubbing it is delivery-sanitization's
+ * left alone. A naked JSON object (layer 2) promotes only when it ends the
+ * message; with prose after it, it is an example, not a hand-off.
+ * Unpromoted-but-recognized syntax (unresolvable name, over-cap payload,
+ * structurally-truncated payload, `<execute_tool>None`) stays in the text
+ * untouched — scrubbing it is delivery-sanitization's
  * job, not extraction's. Truncated payloads NEVER promote: a payload that
  * needed unbalanced braces/strings closed was cut mid-write, and a
  * partial write/command must not execute.
@@ -104,7 +106,7 @@ export function extractToolCallsFromText(
   // rejected here (truncated, over-cap, unresolvable) can't sneak back in
   // through its inner JSON.
   const syntaxHits = scanTextToolCallSyntaxes(working, { maskCodeSpans: true });
-  const found: Array<{ start: number; end: number; call: ExtractedToolCall }> = [];
+  const found: Array<{ start: number; end: number; call: ExtractedToolCall; marked: boolean }> = [];
   for (const hit of syntaxHits) {
     if (!hit.candidate || !withinCaps(hit.candidate)) continue;
     const resolved = resolveCandidateName(hit.candidate, validToolNames);
@@ -113,6 +115,7 @@ export function extractToolCallsFromText(
       start: hit.start,
       end: hit.end,
       call: { id: nextId(), name: resolved, arguments: hit.candidate.argsJson },
+      marked: true,
     });
   }
 
@@ -122,17 +125,29 @@ export function extractToolCallsFromText(
   for (const obj of findJsonObjects(maskCodeSpans(working))) {
     if (syntaxHits.some((h) => obj.start < h.end && h.start < obj.end)) continue;
     const synthesized = classify(obj.parsed, validToolNames);
-    if (synthesized) found.push({ start: obj.start, end: obj.end, call: synthesized });
+    if (synthesized) found.push({ start: obj.start, end: obj.end, call: synthesized, marked: false });
   }
 
-  if (found.length === 0) return { toolCalls: [], remainingText: text };
+  // A bare JSON object promotes only when it ENDS the message (whitespace or
+  // other calls after it): with prose after it, it is an example inside an
+  // answer, not a hand-off. Marked syntax is exempt — small models do write
+  // "Searching now. <call> Done.", and a backticked tag is already masked.
+  found.sort((a, b) => a.start - b.start);
+  let cursor = working.length;
+  let firstTrailing = found.length;
+  for (let i = found.length - 1; i >= 0; i--) {
+    if (working.slice(found[i].end, cursor).trim() !== "") break;
+    firstTrailing = i;
+    cursor = found[i].start;
+  }
+  const promoted = found.filter((f, i) => f.marked || i >= firstTrailing);
+  if (promoted.length === 0) return { toolCalls: [], remainingText: text };
 
   // Emit calls in source order; excise promoted ranges back-to-front so
   // indices stay valid.
-  found.sort((a, b) => a.start - b.start);
-  const calls = found.map((f) => f.call);
-  for (let i = found.length - 1; i >= 0; i--) {
-    working = working.slice(0, found[i].start) + working.slice(found[i].end);
+  const calls = promoted.map((f) => f.call);
+  for (let i = promoted.length - 1; i >= 0; i--) {
+    working = working.slice(0, promoted[i].start) + working.slice(promoted[i].end);
   }
   return { toolCalls: calls, remainingText: working.trim() };
 }

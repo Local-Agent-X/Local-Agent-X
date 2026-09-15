@@ -84,6 +84,24 @@ export function shouldLatchNoToolSupport(baseURL: string | undefined): boolean {
   return host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "0.0.0.0";
 }
 
+/**
+ * Frontier endpoints served through this adapter that emit structured
+ * tool_calls reliably. Text-rescue there only adds risk: a JSON example the
+ * model shows in its answer would dispatch as a real call. Tagged call syntax
+ * left in the final text still trips the unresolved-tool-intent gate's
+ * wire-format nudge; a bare JSON envelope just stands as the reply.
+ */
+const NATIVE_TOOL_CALL_HOSTS = new Set(["api.x.ai", "generativelanguage.googleapis.com"]);
+
+export function shouldRescueTextToolCalls(baseURL: string | undefined): boolean {
+  if (!baseURL) return true;
+  try {
+    return !NATIVE_TOOL_CALL_HOSTS.has(new URL(baseURL).hostname.toLowerCase());
+  } catch {
+    return true;
+  }
+}
+
 export class OpenAICompatAdapter implements Adapter {
   readonly name = OPENAI_COMPAT_ADAPTER_NAME;
   readonly version = OPENAI_COMPAT_ADAPTER_VERSION;
@@ -174,7 +192,9 @@ export class OpenAICompatAdapter implements Adapter {
     // Never mine a guard-stopped stream for tool calls — degenerate output
     // must not be able to dispatch anything.
     const toolNameSet = new Set(req.tools.map(t => t.name));
-    if (!result.stoppedByGuard) applyToolCallTextFallback(result, report, model, toolNameSet);
+    if (!result.stoppedByGuard && shouldRescueTextToolCalls(baseURL)) {
+      applyToolCallTextFallback(result, report, model, toolNameSet);
+    }
 
     // Empty-response retry. Some models (qwen2:7b is the canonical offender)
     // accept the `tools` field, run for several seconds, then return ZERO text

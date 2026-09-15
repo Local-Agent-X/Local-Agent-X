@@ -212,7 +212,9 @@ const fixture = await startFixtureServer();
 const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
 const outDir = join(HERE, "results");
 mkdirSync(outDir, { recursive: true });
-const outPath = join(outDir, `run-${stamp}.json`);
+// Provider label + pid: two batches started in the same second (muse and grok
+// run in parallel) otherwise overwrite each other's results file.
+const outPath = join(outDir, `run-${stamp}-${PROVIDER}-${process.pid}.json`);
 const report = { when: stamp, gitHead: null, repeat: REPEAT, batches: [] };
 try { report.gitHead = (await import("node:child_process")).execSync("git rev-parse --short HEAD", { cwd: REPO_ROOT }).toString().trim(); } catch { /* not a checkout */ }
 

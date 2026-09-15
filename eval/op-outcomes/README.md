@@ -1,64 +1,58 @@
 # op-outcomes battery
 
-The Phase-B instrument: a controlled A/B of how the big-3 models handle real
-tasks — especially **browser obstructions** (the failure mode where a model
-punts a consent banner / overlay back to the user instead of clearing it).
+The harness eval: real tasks, shaped like everyday LAX work, run end to end
+through the agent loop with real tool execution, and graded on evidence. It is
+the yardstick for harness changes — a change ships when pass rate holds or
+improves and the cost metrics don't regress.
 
-It drives `cases.json` against a **running dev server** via `/api/chat` with real
-tool execution, scores give-up vs success directly from each reply, snapshots
-the `~/.lax/op-outcomes.json` delta, and prints a per-provider comparison.
+## How a run works
 
-## Why it scores the reply, not just op-outcomes
+For every case × repeat × provider:
 
-A browser give-up with no task ledger records as `clean` in the telemetry (the
-known blind spot). So the trustworthy signal is **give-up detection on the
-assistant text** (`GIVEUP_RE` in `run.mjs`). The op-outcomes delta is shown
-alongside as a cross-check, not the primary score.
-
-## Before running
-
-1. **Quit the Local Agent X app** — it owns port 7007 and the `~/.lax` store; two
-   servers there is split-brain.
-2. Start the dev build (has the telemetry code): `npm run dev`
-3. Edit `providers.json` — set the exact model ids for `claude` and `openai`
-   (open the app's Settings → Model and copy them). `grok` is pre-filled.
-
-This opens **real browser windows** and **spends real tokens**. Run while away
-from the machine. The runner restores your original provider/model when done.
+1. **Isolated server** (`isolated.mjs`). A fresh LAX process with its own data
+   dir, its own copy of `fixtures/workspace/`, and its own port. Your running
+   app, `~/.lax` (sessions, memory, learned protocols) and real workspace are
+   never touched. Provider logins are read in place through the `self_edit`
+   probe mechanism (`seedProbeProvider`), never copied. The browser runs headless.
+2. **Fixture server** (`fixtures/server.mjs`). Local pages with invented facts
+   (so answers can't come from training data), a cookie wall, a two-step signup
+   form, pricing pages, the "original" site, and a mock deploy API. Every request
+   is recorded. Its port is registered as a local service in the isolated
+   server's `security.json`.
+3. **Sessions and turns** from `cases.json` go through `/api/chat`, including
+   multi-turn follow-ups and a second session for cross-session memory.
+4. **Evidence checks** (`checks.mjs`): file contents, CSS values, a test command
+   passing, test files left unmodified, paths deleted or preserved, requests the
+   fixture server received, tools not used, a secret absent from the transcript.
+   Reply text is checked only for facts that exist solely on a fixture page.
+   `test/op-outcomes-checks.test.ts` proves every check can fail.
+5. **Metrics** from the isolated op store: rounds, model and tool time, input and
+   output tokens, cache read/write, harness nudges, compacted rounds, errors. A run
+   whose ops report a different model than requested fails its `model` check
+   (silent provider fallback).
 
 ## Run
 
 ```bash
-node eval/op-outcomes/run.mjs --all --repeat 3        # big 3, 3 runs/case → give-up RATE
-node eval/op-outcomes/run.mjs --provider openai --repeat 5
-node eval/op-outcomes/run.mjs --only browser --repeat 5  # focus the obstruction cases
-node eval/op-outcomes/run.mjs --skip-intrusive        # skip computer-control cases
-node eval/op-outcomes/run.mjs --timeout 180000        # per-case timeout (ms)
+npx tsx eval/op-outcomes/run.mjs --provider muse --repeat 3
+npx tsx eval/op-outcomes/run.mjs --provider all --only coding
+npx tsx eval/op-outcomes/run.mjs --provider grok --only bugfix-with-followup --keep
 ```
 
-`--repeat N` runs each case N times — consent/overlay walls are
-non-deterministic, so a single pass/fail is a coin flip; the signal is the
-give-up *rate* over N. Default 1.
+- `--provider` — a label from `providers.json`, or `all` (default).
+- `--only` — a case id or category.
+- `--repeat N` — runs per case; model behaviour is non-deterministic, so compare
+  pass *rates* across N.
+- `--keep` — keep every run's temp folder. Failing runs are always kept and their
+  path is printed.
+- `--timeout ms` — per-turn timeout (default 15 minutes; a case can set `timeoutMs`).
 
-**Fallback guard:** before each batch the runner drives one probe op and reads
-the telemetry tag to confirm the flip actually routed to the target model. If
-the provider isn't authed the runtime *silently falls back* to another model
-(and both the model's self-report and `GET /api/settings` will lie about it) —
-the guard catches that and **skips the batch with a warning** instead of
-recording a mislabeled duplicate. This is exactly the bug that made an earlier
-"OpenAI" run secretly Grok.
+Results are written to `results/run-<timestamp>.json` (gitignored) with every
+reply, check detail and metric, stamped with the git HEAD they ran against.
 
-Verdicts: `PASS` (no give-up + expected/substantive answer), `GAVE-UP` (punted
-the obstruction), `MISS` (finished but wrong/empty answer), `ERR` (HTTP/timeout).
+## Adding a case
 
-Full per-case results are written to `results-<timestamp>.json`. The run leaves
-throwaway `lax-bench-*` sessions in the sidebar — safe to bulk-delete.
-
-## Caveats
-
-- A battery is only as representative as `cases.json` — it's weighted toward the
-  obstruction failure mode on purpose, not a random sample of real usage.
-- Give-up detection is heuristic. Eyeball the snippets / `results-*.json` before
-  treating a give-up rate as ground truth.
-- `--all` flips the live model between batches via `POST /api/settings`; if a
-  flip fails (wrong model id), that provider is skipped with a warning.
+Keep the task shape real, but point it at fixtures: add pages to
+`fixtures/server.mjs`, files to `fixtures/workspace/`, or a setup step to
+`SETUP` in `checks.mjs`. Grade with an evidence check, and add a
+fail-then-pass test for any new check type in `test/op-outcomes-checks.test.ts`.

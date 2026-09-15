@@ -150,3 +150,6 @@ CDP-WIRING-HANDOFF.md
 # Campaign ledgers at the repo root. Same class as the handoff notes above:
 # live resume state for an in-flight campaign, deleted when it completes.
 CAMPAIGN-*.md
+
+# op-outcomes battery run output (eval/op-outcomes/run.mjs)
+eval/op-outcomes/results/

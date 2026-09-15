@@ -1,0 +1,109 @@
+// One throwaway LAX server per case: fresh data dir, fresh workspace copied
+// from fixtures/workspace, its own port. Nothing a case does reaches the
+// user's ~/.lax (sessions, memory, learned protocols) or real workspace.
+//
+// Provider auth reuses the self_edit probe's mechanism rather than a second
+// one: seedProbeProvider() names the user's canonical credential file, and
+// LAX_SELF_EDIT_PROBE=1 + LAX_PROBE_PROVIDER_AUTH_PATH let the child read it in
+// place (decrypted with the key beside it — nothing is copied or re-encrypted).
+import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
+import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { seedProbeProvider } from "../../src/self-edit/sandbox-gates.ts";
+import { killProcessTree } from "../../src/process-tree-kill.ts";
+
+const BOOT_TIMEOUT_MS = 180_000;
+
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const srv = createServer();
+    srv.once("error", reject);
+    srv.listen(0, "127.0.0.1", () => {
+      const { port } = srv.address();
+      srv.close(() => resolve(port));
+    });
+  });
+}
+
+export async function startIsolatedServer({ repoRoot, provider, model, fixturePort, logLines = 200 }) {
+  const root = mkdtempSync(join(tmpdir(), "lax-eval-"));
+  const dataDir = join(root, "data");
+  const workspace = join(root, "workspace");
+  cpSync(join(repoRoot, "eval", "op-outcomes", "fixtures", "workspace"), workspace, { recursive: true });
+
+  mkdirSync(dataDir, { recursive: true });
+  const seed = seedProbeProvider(dataDir, provider);
+  if (seed.unavailable) throw new Error(`${provider}: ${seed.unavailable}`);
+  writeFileSync(join(dataDir, "settings.json"), JSON.stringify({ provider, model }));
+  // The fixture server is a loopback port the network policy must treat as a
+  // registered local service — the same knob a user sets for their own dev servers.
+  writeFileSync(join(dataDir, "security.json"), JSON.stringify({ localServicePorts: [fixturePort] }));
+
+  const port = await freePort();
+  const token = randomBytes(24).toString("hex");
+  const tail = [];
+  const child = spawn(process.execPath, ["--import=tsx", "src/index.ts"], {
+    cwd: repoRoot,
+    windowsHide: true,
+    stdio: ["ignore", "pipe", "pipe"],
+    env: {
+      ...process.env,
+      ...(seed.credentialPath ? { LAX_PROBE_PROVIDER_AUTH_PATH: seed.credentialPath } : {}),
+      LAX_SELF_EDIT_PROBE: "1",
+      LAX_DATA_DIR: dataDir,
+      LAX_WORKSPACE: workspace,
+      LAX_PORT: String(port),
+      LAX_AUTH_TOKEN: token,
+      LAX_PROBE_PARENT_PID: String(process.pid),
+      LAX_BROWSER_HEADLESS: "1",
+      LAX_INTEGRITY_WARN_ONLY: "1",
+    },
+  });
+  const capture = (chunk) => {
+    for (const line of chunk.toString().split("\n")) {
+      if (!line.trim()) continue;
+      tail.push(line);
+      if (tail.length > logLines) tail.shift();
+    }
+  };
+  child.stdout.on("data", capture);
+  child.stderr.on("data", capture);
+
+  const baseUrl = `http://127.0.0.1:${port}`;
+  const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+  const server = {
+    root, dataDir, workspace, baseUrl, headers, logTail: () => tail.join("\n"),
+    async api(method, path, body) {
+      const res = await fetch(`${baseUrl}${path}`, { method, headers, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+      if (!res.ok) throw new Error(`${method} ${path} → HTTP ${res.status}`);
+      return res.json();
+    },
+    async stop() {
+      if (child.exitCode === null) {
+        const exited = new Promise((resolve) => child.once("exit", resolve));
+        killProcessTree(child, "SIGTERM");
+        await Promise.race([exited, new Promise((r) => setTimeout(r, 8_000))]);
+        if (child.exitCode === null) killProcessTree(child, "SIGKILL");
+      }
+    },
+    cleanup() {
+      try { rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 }); } catch { /* temp dir; best effort */ }
+    },
+  };
+
+  const deadline = Date.now() + BOOT_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    if (child.exitCode !== null) throw new Error(`isolated server exited during boot (code ${child.exitCode})\n${server.logTail()}`);
+    try {
+      const res = await fetch(`${baseUrl}/api/health`, { headers, signal: AbortSignal.timeout(2_000) });
+      if (res.ok) return server;
+    } catch { /* not up yet */ }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  await server.stop();
+  throw new Error(`isolated server did not become healthy within ${BOOT_TIMEOUT_MS / 1000}s\n${server.logTail()}`);
+}
+

@@ -1,0 +1,16 @@
+.site-header {
+  height: 64px;
+  display: flex;
+  align-items: center;
+  padding: 0 24px;
+}
+
+.site-footer {
+  padding: 24px;
+}
+
+.social {
+  display: flex;
+  justify-content: flex-start;
+  gap: 16px;
+}

@@ -79,18 +79,37 @@ async function chatTurn(server, sessionId, message, timeoutMs) {
   return reply;
 }
 
-/** What the harness did for these sessions, read from the isolated op store. */
-function collectMetrics(dataDir, sessionIds) {
-  const m = { ops: 0, rounds: 0, modelMs: 0, toolMs: 0, inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheWrite: 0,
-    nudges: 0, compactedRounds: 0, errors: 0, models: new Set() };
+function readOps(dataDir) {
   const root = join(dataDir, "operations");
-  if (!existsSync(root)) return { ...m, models: [] };
+  if (!existsSync(root)) return [];
+  const ops = [];
   for (const id of readdirSync(root)) {
-    let op;
-    try { op = JSON.parse(readFileSync(join(root, id, "operation.json"), "utf8")); } catch { continue; }
-    if (!sessionIds.includes(op.sessionId)) continue;
+    try { ops.push({ dir: join(root, id), op: JSON.parse(readFileSync(join(root, id, "operation.json"), "utf8")) }); } catch { /* still being written */ }
+  }
+  return ops;
+}
+
+// A chat turn can hand work to background ops (agent_spawn, op_submit_async)
+// and end while they run. The user eventually gets that result, so grading
+// waits for every op to leave pending/running — or the case timeout.
+async function waitForBackgroundOps(dataDir, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const active = readOps(dataDir).filter(({ op }) => op.status === "pending" || op.status === "running");
+    if (active.length === 0) return null;
+    await new Promise((r) => setTimeout(r, 3_000));
+  }
+  return `background ops still running after ${Math.round(timeoutMs / 1000)}s`;
+}
+
+/** What the harness did for the whole run — the isolated store holds only this
+ *  case's ops, including any background ops a chat turn spawned. */
+function collectMetrics(dataDir) {
+  const m = { ops: 0, rounds: 0, modelMs: 0, toolMs: 0, inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheWrite: 0,
+    nudges: 0, compactedRounds: 0, errors: 0, chatModels: new Set() };
+  for (const { dir, op } of readOps(dataDir)) {
     m.ops++;
-    const turnsDir = join(root, id, "op-turns");
+    const turnsDir = join(dir, "op-turns");
     for (const f of existsSync(turnsDir) ? readdirSync(turnsDir) : []) {
       let turn;
       try { turn = JSON.parse(readFileSync(join(turnsDir, f), "utf8")).turn; } catch { continue; }
@@ -105,12 +124,12 @@ function collectMetrics(dataDir, sessionIds) {
       m.cacheWrite += p.cacheCreateTokens ?? 0;
       if (turn.providerState?.viewCompacted) m.compactedRounds++;
       if (turn.terminalReason === "error") m.errors++;
-      if (p.model) m.models.add(p.model);
+      if (p.model && op.type === "chat_turn") m.chatModels.add(p.model);
     }
-    const msgs = join(root, id, "op-messages.jsonl");
+    const msgs = join(dir, "op-messages.jsonl");
     if (existsSync(msgs)) m.nudges += (readFileSync(msgs, "utf8").match(/"messageId":"nudge-/g) ?? []).length;
   }
-  return { ...m, models: [...m.models] };
+  return { ...m, chatModels: [...m.chatModels] };
 }
 
 async function bootServer(provider, fixture) {
@@ -141,10 +160,8 @@ async function runCase(provider, caseDef, fixture) {
     const fixtureMark = fixture.requests.length;
     for (const step of caseDef.setup ?? []) await SETUP[step]({ server, workspace: server.workspace, deployToken: DEPLOY_TOKEN });
     const before = snapshotBefore(caseDef, { workspace: server.workspace });
-    const sessionIds = [];
     for (const [s, session] of caseDef.sessions.entries()) {
       const sessionId = `eval-${caseDef.id}-${s}-${Math.random().toString(36).slice(2, 8)}`;
-      sessionIds.push(sessionId);
       for (const turn of session.turns) {
         const reply = await chatTurn(server, sessionId, fill(turn), caseDef.timeoutMs ?? TURN_TIMEOUT_MS);
         result.replies.push(reply.text.trim());
@@ -154,12 +171,14 @@ async function runCase(provider, caseDef, fixture) {
       // Memory writes run after the reply streams; let them land before the next session reads.
       if (s < caseDef.sessions.length - 1) await new Promise((r) => setTimeout(r, 8_000));
     }
-    result.metrics = collectMetrics(server.dataDir, sessionIds);
-    if (result.metrics.models.length > 0 && !result.metrics.models.every((m) => m === provider.model)) {
-      result.checks.push({ type: "model", ok: false, detail: `ran on ${result.metrics.models.join(", ")}, expected ${provider.model}` });
+    const stillRunning = await waitForBackgroundOps(server.dataDir, caseDef.timeoutMs ?? TURN_TIMEOUT_MS);
+    if (stillRunning) result.errors.push(stillRunning);
+    result.metrics = collectMetrics(server.dataDir);
+    if (result.metrics.chatModels.length > 0 && !result.metrics.chatModels.every((m) => m === provider.model)) {
+      result.checks.push({ type: "model", ok: false, detail: `chat ran on ${result.metrics.chatModels.join(", ")}, expected ${provider.model}` });
     }
     const ctx = { workspace: server.workspace, fixture, fixtureMark, replies: result.replies, toolsUsed: result.toolsUsed,
-      before, dataDir: server.dataDir, sessionIds, fill };
+      before, dataDir: server.dataDir, fill };
     for (const check of caseDef.checks) result.checks.push({ type: check.type, ...runCheck(check, ctx) });
     result.pass = result.checks.every((c) => c.ok);
   } catch (e) {

@@ -65,7 +65,11 @@ export async function startIsolatedServer({ repoRoot, provider, model, fixturePo
   writeFileSync(join(dataDir, "settings.json"), JSON.stringify({ provider, model }));
   // The fixture server is a loopback port the network policy must treat as a
   // registered local service — the same knob a user sets for their own dev servers.
-  writeFileSync(join(dataDir, "security.json"), JSON.stringify({ localServicePorts: [fixturePort] }));
+  // File access stays inside the fixture workspace: under the default
+  // "unrestricted" mode a baseline run searched the real disk and found this
+  // repo's copy of the fixtures, which both leaks the user's files into an eval
+  // and lets a case pass or fail on files that aren't part of it.
+  writeFileSync(join(dataDir, "security.json"), JSON.stringify({ localServicePorts: [fixturePort], fileAccessMode: "workspace" }));
 
   const port = await freePort();
   const token = randomBytes(24).toString("hex");

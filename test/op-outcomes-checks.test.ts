@@ -25,7 +25,7 @@ function grade(id: string, overrides: Record<string, unknown> = {}, before?: unk
   const caseDef = byId(id);
   const ctx = {
     workspace, fixture: { since: () => [] }, fixtureMark: 0, replies: [""], toolsUsed: [],
-    before: before ?? snapshotBefore(caseDef, { workspace }), dataDir: workspace, sessionIds: [],
+    before: before ?? snapshotBefore(caseDef, { workspace }), dataDir: workspace,
     fill: (s: string) => s.replaceAll("{{DEPLOY_TOKEN}}", "tok"), ...overrides,
   };
   return caseDef.checks.map((check) => runCheck(check, ctx));

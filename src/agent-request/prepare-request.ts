@@ -123,7 +123,7 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
   // the right shape, with `[system_summary, ...recent_msgs]` when
   // compacted and just `[...msgs]` otherwise.
   end = stepStart("truncateHistory");
-  const cleanHistory = buildCleanHistory(input.sessionMessages, input.channel, input.maxHistory);
+  const cleanHistory = buildCleanHistory(input.sessionMessages, input.channel, input.maxHistory, resolved.provider);
   end();
 
   // 3. Tool selection (intent + tier filter + RAG re-rank). Must run

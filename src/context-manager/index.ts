@@ -14,10 +14,12 @@ export {
 	compactionTriggersFor,
 	turnCompactionKeepLast,
 	chatHistoryMaxKeep,
+	chatHistoryWindow,
 	DEFAULT_TRIGGERS,
 	CODEX_TRIGGERS,
 	TURN_KEEP_TIERS,
 	CHAT_KEEP,
+	CLOUD_CHAT_KEEP,
 	CHAT_DIGEST_BUDGETS,
 	type CompactionTriggers,
 } from "./compaction-policy.js";

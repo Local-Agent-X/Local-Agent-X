@@ -294,6 +294,8 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<void> {
         prepared.cleanHistory = buildCleanHistory(
           session.messages as Parameters<typeof buildCleanHistory>[0],
           channel,
+          undefined,
+          prepared.provider,
         );
       } catch (e) {
         logger.warn(`[turn-lock] cleanHistory refresh after replace failed: ${(e as Error).message}`);

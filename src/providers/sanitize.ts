@@ -1,5 +1,5 @@
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
-import { chatHistoryMaxKeep } from "../context-manager/compaction-policy.js";
+import { chatHistoryWindow } from "../context-manager/compaction-policy.js";
 import { stripSystemInjectionTags } from "../sanitize.js";
 import { truncateHistory } from "./truncate-history.js";
 
@@ -361,8 +361,8 @@ export function sanitizeHistory(messages: ChatCompletionMessageParam[]): ChatCom
 }
 
 // Build a chat turn's cleanHistory from raw session messages: sanitize
-// provider-illegal shapes, then keep the most recent `maxKeep` (40 for web
-// chat, 30 otherwise). Lives here next to its two building blocks so the resume
+// provider-illegal shapes, then keep a recent window — an explicit
+// `maxHistory`, else the provider-aware stepped window (chatHistoryWindow). Lives here next to its two building blocks so the resume
 // path (run-chat-turn orchestrator, after a turn-lock replace) can rebuild
 // cleanHistory from freshly-salvaged session.messages WITHOUT pulling in the
 // heavy prepare-request pipeline. `prepared` snapshots history before the lock
@@ -372,7 +372,8 @@ export function buildCleanHistory(
   sessionMessages: ChatCompletionMessageParam[],
   channel: string,
   maxHistory?: number,
+  provider?: string,
 ): ChatCompletionMessageParam[] {
-  const maxKeep = maxHistory || chatHistoryMaxKeep(channel);
-  return truncateHistory(sanitizeHistory(sessionMessages), maxKeep);
+  const window = maxHistory ? { maxKeep: maxHistory, step: 1 } : chatHistoryWindow(channel, provider);
+  return truncateHistory(sanitizeHistory(sessionMessages), window.maxKeep, window.step);
 }

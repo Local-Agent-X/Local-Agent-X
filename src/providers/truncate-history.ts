@@ -152,6 +152,7 @@ export async function awaitPendingHistorySummaries(): Promise<void> {
 export function truncateHistory(
   messages: ChatCompletionMessageParam[],
   maxKeep: number = chatHistoryMaxKeep("default"),
+  step = 1,
 ): ChatCompletionMessageParam[] {
   let preservedLeader: ChatCompletionMessageParam | null = null;
   let body: ChatCompletionMessageParam[] = messages;
@@ -164,7 +165,10 @@ export function truncateHistory(
     return preservedLeader ? [preservedLeader, ...body] : body;
   }
 
-  const targetIdx = body.length - maxKeep;
+  // Round the cut UP to a multiple of `step`: never keeps more than maxKeep,
+  // and the kept rows stay a stable prefix until the next multiple is crossed.
+  const safeStep = Math.max(1, Math.floor(step));
+  const targetIdx = Math.min(body.length, Math.ceil((body.length - maxKeep) / safeStep) * safeStep);
   // Find nearest user message at or after target
   let cutIdx = targetIdx;
   for (let i = targetIdx; i < body.length; i++) {

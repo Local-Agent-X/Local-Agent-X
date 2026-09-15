@@ -47,9 +47,9 @@ export async function registerAdapterForChat(
         // breakpoint below — nothing that was cached stops being cached.
         //
         // The head is core-identity/* + runtime-context + app-manifest +
-        // agents-md + provider-hint (stableSystemPrefixLength). The manifest
-        // and AGENTS.md are snapshotted per session (system-prompt-builder.ts),
-        // so they no longer churn mid-session. The head and the tools carry
+        // agents-md + provider-hint (stableSystemPrefixLength). The manifest is
+        // snapshotted per session; AGENTS.md is re-read and only changes when
+        // the rules are edited (one miss per edit). The head and the tools carry
         // a 1-hour breakpoint (cache-breakpoints.ts hasStableSystemSplit).
         systemStablePrefixLen: stableSystemPrefixLength(prepared.renderedPromptSections),
         // Cache the conversation prefix, not just system+tools.

@@ -186,7 +186,7 @@ export function createSystemPromptBuilder(opts: {
   integrationsContext?: string;
   /** Memory dir — when set, the project catalog (apps + entities) is injected. */
   memoryDir?: string;
-  /** Freezes the disk-read sections (app-manifest, agents-md) per session. */
+  /** Freezes the app-manifest section per session (session-prompt-snapshot.ts). */
   sessionId?: string;
   // Dynamic sections
   contextBlock?: string;
@@ -252,7 +252,7 @@ Reminder: file CRUD has native tools — \`read\`, \`write\`, \`edit\`, \`delete
   // rather than a drifty paraphrase.
   builder.addSection({
     id: "agents-md", label: "Rules", type: "static", policy: "required", priority: "safety",
-    build: () => snapshotForSession(opts.sessionId, "agents-md", readAgentsMdSection),
+    build: readAgentsMdSection,
   });
 
   builder.addSection({

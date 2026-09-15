@@ -1,9 +1,10 @@
-// Per-session snapshots of sections read from disk that the agent's own writes
-// churn (app-manifest file counts, AGENTS.md). Frozen for the session so the
-// system prompt stays a byte-stable prompt-cache / KV-cache prefix across
-// messages; a new session picks up the current files. self_edit re-reads
-// AGENTS.md itself (self-edit/agents-rules.ts), so edits still govern edits.
-// Leaf module: no local imports.
+// Per-session snapshots of prompt sections whose bytes churn without a
+// meaningful change — app-manifest file counts move whenever the agent writes
+// files. Frozen for the session so the system prompt stays a byte-stable
+// prompt-cache / KV-cache prefix across messages; a new session picks up the
+// current values. Rule text (AGENTS.md) is deliberately NOT snapshotted: an
+// edit must govern the very next message, and it only breaks the cache when
+// it actually changes. Leaf module: no local imports.
 const SESSION_SNAPSHOT_MAX_SESSIONS = 500;
 const sessionSnapshots = new Map<string, Map<string, string>>();
 

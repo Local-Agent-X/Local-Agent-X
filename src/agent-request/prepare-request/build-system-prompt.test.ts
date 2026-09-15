@@ -260,17 +260,16 @@ describe("stableSystemPrefixLength", () => {
     expect(prompt.slice(0, expected)).toBe("IDENTITYRUNTIME");
   });
 
-  // C6-polish F1, revised. app-manifest (watcher-rewritten file counts) and
-  // agents-md (re-read from disk) used to churn mid-session and were excluded.
-  // system-prompt-builder.ts now snapshots both per session, so they are stable
-  // for the session and extend the cached prefix.
-  it("includes app-manifest and agents-md, which are snapshotted per session", () => {
+  // C6-polish F1, revised. app-manifest (watcher-rewritten file counts) is now
+  // snapshotted per session; agents-md is re-read every build but only changes
+  // when the rules do. Both extend the cached prefix.
+  it("includes app-manifest and agents-md in the stable prefix", () => {
     for (const snapshotId of ["app-manifest", "agents-md"]) {
       expect(stableSystemPrefixLength([
         section("core-identity", "static", "IDENTITY"),
-        section(snapshotId, "static", "FROZEN FOR THE SESSION"),
+        section(snapshotId, "static", "STABLE FOR THE SESSION"),
         section("tool-guidance", "static", "VOLATILE"),
-      ])).toBe("IDENTITY".length + "FROZEN FOR THE SESSION".length);
+      ])).toBe("IDENTITY".length + "STABLE FOR THE SESSION".length);
     }
   });
 
@@ -373,18 +372,18 @@ describe("stableSystemPrefixLength", () => {
     // And the prompts genuinely diverge after it, so the test is not vacuous.
     expect(turn2.prompt).not.toBe(turn1.prompt);
 
-    // The cached head is the WHOLE base file + runtime-context + the per-session
-    // snapshots (app-manifest, agents-md) + provider-hint — splitting the
+    // The cached head is the WHOLE base file + runtime-context + app-manifest +
+    // agents-md + provider-hint — splitting the
     // file into core-identity/* parts must not have shortened it by a byte.
     // No tools are loaded here, so no tool-guidance stops the walk and the
     // byte-stable recall-reflex joins the head too.
     const basePrompt = loadSystemPrompt();
     const runtime = turn1.renderedSections.find((section) => section.id === "runtime-context")!;
     expect(turn1.prompt.startsWith(basePrompt)).toBe(true);
-    const snapshotted = ["app-manifest", "agents-md", "provider-hint", "recall-reflex"]
+    const stableSections = ["app-manifest", "agents-md", "provider-hint", "recall-reflex"]
       .map((id) => turn1.renderedSections.find((section) => section.id === id)?.text.length ?? 0)
       .reduce((sum, n) => sum + n, 0);
-    expect(len1).toBe(basePrompt.length + runtime.text.length + snapshotted);
+    expect(len1).toBe(basePrompt.length + runtime.text.length + stableSections);
     expect(turn1.renderedSections[0].id).toMatch(/^core-identity\//);
   });
 });

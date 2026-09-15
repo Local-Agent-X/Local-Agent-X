@@ -1,6 +1,8 @@
 import { estimateTokens } from "../../context-manager/token-estimation.js";
 import { makeChatToolDispatcher } from "../chat-tool-dispatcher.js";
+import { rememberSessionTools } from "../../agent-request/prepare-request/tool-selection.js";
 import {
+  getToolsForOp,
   registerOpBaselineTokens,
   registerToolDispatcherForOp,
   registerToolsForOp,
@@ -33,6 +35,7 @@ export async function registerChatRuntime(
   const dispose = () => {
     if (disposed) return;
     disposed = true;
+    rememberSessionTools(ctx.sessionId, getToolsForOp(opId).map(tool => tool.name));
     unregisterAdapterForOp(opId);
     unregisterToolDispatcherForOp(opId);
     unregisterToolsForOp(opId);

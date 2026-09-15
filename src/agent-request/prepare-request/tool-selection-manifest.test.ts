@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { selectTools } from "./tool-selection.js";
+import { beforeEach, describe, it, expect } from "vitest";
+import { _resetSessionToolsForTests, rememberSessionTools, selectTools } from "./tool-selection.js";
 import { buildDeferredToolManifest } from "../../tools/tool-prompt-builder.js";
 import { applyAudiences } from "../../tools/audience-map.js";
 import type { ToolDefinition } from "../../types.js";
@@ -72,5 +72,53 @@ describe("selectTools — Anthropic-strong lazy-load flip", () => {
     // the specific deferred capabilities are named so the model can tool_search them
     expect(manifest).toContain("- computer:");
     expect(manifest).toContain("- ocr:");
+  });
+});
+
+describe("selectTools — session-sticky tool set (prompt-cache prefix)", () => {
+  beforeEach(() => _resetSessionToolsForTests());
+
+  function select(all: ToolDefinition[], sessionId: string, resolvedModel = "claude-opus-4-8") {
+    return selectTools({
+      message: BENIGN,
+      sessionId,
+      channel: "web",
+      allAgentTools: all,
+      bridgeTools: [],
+      resolvedProvider: "anthropic",
+      resolvedModel,
+    });
+  }
+
+  it("a strong model keeps tools the session already loaded, in catalog order", async () => {
+    const all = catalog();
+    const first = await select(all, "sticky-a");
+    expect(first.tools.map((t) => t.name)).not.toContain("computer");
+
+    // e.g. the model tool_search'd `computer` during the previous op
+    rememberSessionTools("sticky-a", ["computer"]);
+    const second = await select(all, "sticky-a");
+    const names = second.tools.map((t) => t.name);
+    expect(names).toContain("computer");
+    expect(names).toEqual(all.map((t) => t.name).filter((n) => names.includes(n)));
+
+    const third = await select(all, "sticky-a");
+    expect(third.tools.map((t) => t.name)).toEqual(names);
+  });
+
+  it("does not leak one session's tools into another", async () => {
+    const all = catalog();
+    rememberSessionTools("sticky-b", ["computer"]);
+    const other = await select(all, "sticky-c");
+    expect(other.tools.map((t) => t.name)).not.toContain("computer");
+  });
+
+  it("does not grow the capped set of a weak model", async () => {
+    const all = catalog();
+    rememberSessionTools("sticky-d", ["computer", "ocr"]);
+    const weak = await select(all, "sticky-d", "qwen2:7b");
+    const names = weak.tools.map((t) => t.name);
+    expect(names).not.toContain("computer");
+    expect(names).not.toContain("ocr");
   });
 });

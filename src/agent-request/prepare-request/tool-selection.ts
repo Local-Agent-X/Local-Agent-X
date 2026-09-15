@@ -87,6 +87,35 @@ export function stripInlineBuildTools(
   return kept;
 }
 
+// Tool names each session has already shipped. The tools array is the FIRST
+// block of the prompt-cache prefix, so a per-message re-pick that drops or adds
+// one tool invalidates tools + system + history for that request (measured:
+// 34 of 46 full cache misses on quick chat follow-ups coincided with a changed
+// tool set). Strong models get the session's union instead: the set only grows,
+// so consecutive messages send byte-identical tools until a new one is needed.
+const SESSION_TOOLS_MAX_SESSIONS = 500;
+const sessionToolNames = new Map<string, Set<string>>();
+
+/** Union `names` into the session's shipped-tool set. Called with each
+ *  selection and with the op's final tool list (which includes tools the
+ *  model loaded mid-op via tool_search). */
+export function rememberSessionTools(sessionId: string, names: Iterable<string>): void {
+  if (!sessionId) return;
+  let known = sessionToolNames.get(sessionId);
+  if (!known) {
+    if (sessionToolNames.size >= SESSION_TOOLS_MAX_SESSIONS) {
+      sessionToolNames.delete(sessionToolNames.keys().next().value as string);
+    }
+    known = new Set();
+    sessionToolNames.set(sessionId, known);
+  }
+  for (const name of names) known.add(name);
+}
+
+export function _resetSessionToolsForTests(): void {
+  sessionToolNames.clear();
+}
+
 export async function selectTools(input: ToolSelectionInput): Promise<ToolSelectionResult> {
   const isBridge = input.channel === "telegram" || input.channel === "whatsapp";
 
@@ -250,6 +279,14 @@ export async function selectTools(input: ToolSelectionInput): Promise<ToolSelect
     } catch (e) {
       logger.warn(`[tool-rag] Skipped: ${(e as Error).message}`);
     }
+    // Weak/medium sets are capped for model capacity, so only strong grows.
+    // Re-derived in catalog order so the same union serializes identically.
+    const known = sessionToolNames.get(input.sessionId);
+    if (tier === "strong" && known) {
+      const union = new Set([...known, ...tools.map(t => t.name)]);
+      tools = input.allAgentTools.filter(t => union.has(t.name));
+    }
+    rememberSessionTools(input.sessionId, tools.map(t => t.name));
   }
 
   // Provider-aware tool cap — LAST, after RAG re-inflation. Tool capacity is a

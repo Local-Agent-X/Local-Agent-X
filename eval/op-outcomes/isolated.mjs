@@ -65,11 +65,14 @@ export async function startIsolatedServer({ repoRoot, provider, model, fixturePo
   writeFileSync(join(dataDir, "settings.json"), JSON.stringify({ provider, model }));
   // The fixture server is a loopback port the network policy must treat as a
   // registered local service — the same knob a user sets for their own dev servers.
-  // File access stays inside the fixture workspace: under the default
-  // "unrestricted" mode a baseline run searched the real disk and found this
-  // repo's copy of the fixtures, which both leaks the user's files into an eval
-  // and lets a case pass or fail on files that aren't part of it.
-  writeFileSync(join(dataDir, "security.json"), JSON.stringify({ localServicePorts: [fixturePort], fileAccessMode: "workspace" }));
+  // File access is left at the product default ("unrestricted"), so a run
+  // measures a normal install. Forcing "workspace" was tried and changed the
+  // measurement: relative agent paths anchor to the project root (the
+  // workspace's parent), so `cleanup/x.log` becomes a security BLOCK instead of
+  // a recoverable "not found", and muse gave up where it had recovered before.
+  // The cost of the default is that a model can still wander the real disk
+  // (one grok run found this repo's fixture copy) — visible in the replies.
+  writeFileSync(join(dataDir, "security.json"), JSON.stringify({ localServicePorts: [fixturePort] }));
 
   const port = await freePort();
   const token = randomBytes(24).toString("hex");

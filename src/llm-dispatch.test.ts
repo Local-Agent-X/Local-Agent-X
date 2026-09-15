@@ -121,9 +121,13 @@ describe("dispatch request shape (fetch stubbed — no network)", () => {
     vi.unstubAllGlobals();
   });
 
+  // Ollama dispatch first reads /api/ps so it never resizes a loaded model
+  // (local-runtimes/residency.ts dispatchNumCtx); that probe isn't the request.
+  const requestCalls = () => fetchSpy.mock.calls.filter((c) => !String(c[0]).endsWith("/api/ps"));
+
   function sentBody(): Record<string, unknown> {
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
-    return JSON.parse(fetchSpy.mock.calls[0][1].body as string) as Record<string, unknown>;
+    expect(requestCalls()).toHaveLength(1);
+    return JSON.parse(requestCalls()[0][1].body as string) as Record<string, unknown>;
   }
 
   // Model-explicit: haiku-4-5 is a legacy (non-adaptive) id, so `temperature`
@@ -255,7 +259,7 @@ describe("dispatch request shape (fetch stubbed — no network)", () => {
   it("ollama drops responseFormat silently — body unchanged", async () => {
     await dispatch({ prompt: "ping", provider: "ollama", responseFormat: RESPONSE_FORMAT });
     const body = sentBody();
-    expect(fetchSpy.mock.calls[0][0]).toBe("http://127.0.0.1:11434/api/generate");
+    expect(requestCalls()[0][0]).toBe("http://127.0.0.1:11434/api/generate");
     expect("response_format" in body).toBe(false);
   });
 

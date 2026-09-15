@@ -23,6 +23,7 @@
  * this module only answers "what should we pick if they haven't said?".
  */
 import { getLocalRuntimes } from "./cache.js";
+import { DISPATCH_MODEL_MAX_BYTES } from "./residency.js";
 import { hasPublishedCertification } from "./certification-runner.js";
 import { isLocalOnlyMode, isLoopbackUrl } from "../local-only-policy.js";
 import type { LocalRuntimeInfo, LocalRuntimeKind } from "./types.js";
@@ -41,9 +42,10 @@ export interface CertifiedLocalClassifierTarget {
  * JSON verdict against an 8s budget; anything big enough to miss that budget
  * defeats the purpose. Past this we return null and the caller keeps the chat
  * model — no worse than before, and never a "background" model that's slower than
- * the thing it was supposed to relieve.
+ * the thing it was supposed to relieve. The same cap decides which models a
+ * background call may load at the small dispatch context (residency.ts).
  */
-const MAX_CLASSIFIER_BYTES = 6e9;
+const MAX_CLASSIFIER_BYTES = DISPATCH_MODEL_MAX_BYTES;
 
 /**
  * Embedding models. THE critical exclusion: mxbai-embed-large is 0.67GB — the

@@ -12,7 +12,7 @@
 import { createLogger } from "../logger.js";
 import { getRuntimeConfig } from "../config.js";
 import { getLocalRuntimes, refreshLocalRuntimes } from "../local-runtimes/index.js";
-import { MODEL_KEEP_ALIVE } from "../local-runtimes/residency.js";
+import { dispatchNumCtx, MODEL_KEEP_ALIVE } from "../local-runtimes/residency.js";
 import { isEmbeddingModel } from "../canonical-loop/public/op-facts.js";
 
 // Same channel name as llm-dispatch.ts: these lines were emitted under
@@ -56,18 +56,13 @@ export async function resolveOllamaDispatchModel(): Promise<string | null> {
   return usable[0]?.id ?? null;
 }
 
-/**
- * Loaded-context size for single-shot dispatch calls (classifiers, background
- * extraction). Without it Ollama's auto default loads the model with
- * min(model_max, 131072) context, and the KV cache for that window dwarfs the
- * weights — a 2GB llama3.2:3b occupied 17GB of VRAM (observed 2026-08-25),
- * recreating the exact "classifier and chat model can't coexist" thrash the
- * small-classifier pick exists to end. 16384 is many times the largest
- * dispatch prompt while keeping the KV footprint in the hundreds of MB.
- * (Ollama truncates a longer prompt rather than erroring; a dispatch prompt
- * anywhere near 16k tokens is misrouted — those belong on the chat path.)
- */
-export const DISPATCH_NUM_CTX = 16_384;
+/** Disk size of `model` from the discovery cache; undefined when not discovered. */
+export function localModelSizeBytes(model: string): number | undefined {
+  const tagged = (id: string) => (id.includes(":") ? id : `${id}:latest`);
+  return getLocalRuntimes()
+    ?.flatMap((rt) => rt.models)
+    .find((m) => tagged(m.id) === tagged(model))?.sizeBytes;
+}
 
 export async function callOllama(
   prompt: string,
@@ -79,6 +74,13 @@ export async function callOllama(
 ): Promise<string | null> {
   try {
     const base = (exactBaseUrl ?? getRuntimeConfig().ollamaUrl).replace(/\/+$/, "");
+    // Never a fixed size: a num_ctx different from the loaded runner makes
+    // Ollama reload the model, and when this dispatch targets the chat model
+    // that shrinks the window the chat turn is sized against (residency.ts).
+    const numCtx = await dispatchNumCtx(
+      base, model, localModelSizeBytes(model), Math.min(2_000, Math.max(250, Math.floor(timeoutMs / 4))),
+      exactBaseUrl ? "manual" : undefined,
+    );
     const res = await fetch(`${base}/api/generate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -89,7 +91,7 @@ export async function callOllama(
       // timeout. Same knob the residency warm path uses.
       body: JSON.stringify({
         model, prompt, stream: false, keep_alive: MODEL_KEEP_ALIVE,
-        options: { temperature, num_predict: maxTokens, num_ctx: DISPATCH_NUM_CTX },
+        options: { temperature, num_predict: maxTokens, ...(numCtx !== undefined ? { num_ctx: numCtx } : {}) },
       }),
       signal: AbortSignal.timeout(timeoutMs),
       ...(exactBaseUrl ? { redirect: "manual" as const } : {}),

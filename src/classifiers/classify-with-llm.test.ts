@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   ctx: { provider: "xai", apiKey: "k", model: "grok-4.3" },
   isModelResident: vi.fn(async (): Promise<boolean | null> => null),
   warmModel: vi.fn(),
+  dispatchNumCtx: vi.fn(async (): Promise<number | undefined> => 16_384),
 }));
 vi.mock("../providers/resolve-provider-context.js", () => ({
   resolveProviderContext: vi.fn(async () => mocks.ctx),
@@ -20,6 +21,9 @@ vi.mock("../providers/resolve-provider-context.js", () => ({
 vi.mock("../local-runtimes/residency.js", () => ({
   isModelResident: mocks.isModelResident,
   warmModel: mocks.warmModel,
+  dispatchNumCtx: mocks.dispatchNumCtx,
+  MODEL_KEEP_ALIVE: "30m",
+  DISPATCH_MODEL_MAX_BYTES: 6e9,
 }));
 
 // The codex client is lazily imported by the branch under test, so the mock
@@ -93,9 +97,10 @@ describe("classify-with-llm local cold-skip", () => {
     expect(out).toBeNull();
     expect(dispatchMock).not.toHaveBeenCalled();
     expect(mocks.warmModel).toHaveBeenCalledTimes(1);
-    // The warm must carry the dispatch num_ctx: it fixes the loaded KV size,
-    // and a default-window warm (131k auto) pins 8x the VRAM the real
-    // DISPATCH_NUM_CTX call needs.
+    // The warm carries whatever context dispatchNumCtx decides for this model
+    // (the same decision the real call makes), never a fixed size that could
+    // reload a chat model the classifier fell back to.
+    expect(mocks.dispatchNumCtx).toHaveBeenCalledWith("http://127.0.0.1:11434", "llama3.2:3b", undefined, expect.any(Number), undefined);
     expect(mocks.warmModel).toHaveBeenCalledWith("http://127.0.0.1:11434", "llama3.2:3b", undefined, 16_384);
   });
 

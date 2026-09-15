@@ -21,8 +21,8 @@
  * unflattened.
  */
 import { getRuntimeConfig } from "../config.js";
-import { isModelResident, warmModel } from "../local-runtimes/residency.js";
-import { DISPATCH_NUM_CTX } from "../llm-dispatch/ollama.js";
+import { dispatchNumCtx, isModelResident, warmModel } from "../local-runtimes/residency.js";
+import { localModelSizeBytes } from "../llm-dispatch/ollama.js";
 import type { Logger } from "../logger.js";
 
 // Budgets below this cold-skip a non-resident local model instead of
@@ -174,11 +174,11 @@ export async function resolveProviderCall(input: ProviderCallInput): Promise<Pro
         : await isModelResident(ollamaBase, model, probeMs);
       if (resident === false) {
         logger.info(`cold-skip: model not resident (cold or not installed) — background warm attempted (provider=${provider}, model=${model})`);
-        // Warm at the dispatch window, not Ollama's auto default: the warm
-        // fixes the loaded KV size, and the real call that follows uses
-        // DISPATCH_NUM_CTX — a default-window warm would pin 8x the VRAM.
-        if (exactRedirect) warmModel(ollamaBase, model, exactRedirect, DISPATCH_NUM_CTX);
-        else warmModel(ollamaBase, model, undefined, DISPATCH_NUM_CTX);
+        // Warm at the same context the real call will request (dispatchNumCtx):
+        // a mismatched size would make that call reload the model, and a fixed
+        // small size would shrink a chat model that is the classifier fallback.
+        warmModel(ollamaBase, model, exactRedirect,
+          await dispatchNumCtx(ollamaBase, model, localModelSizeBytes(model), probeMs, exactRedirect));
         return SKIP;
       }
     }

@@ -57,6 +57,18 @@ export async function isModelResident(
   timeoutMs: number = PS_TIMEOUT_MS,
   redirect?: "follow" | "error" | "manual",
 ): Promise<boolean | null> {
+  const loaded = await loadedModel(baseUrl, model, timeoutMs, redirect);
+  return loaded === null ? null : loaded !== false;
+}
+
+/** The /api/ps row for `model`: its served context when loaded (null if the
+ *  runtime didn't report one), false when not loaded, null when unknowable. */
+async function loadedModel(
+  baseUrl: string,
+  model: string,
+  timeoutMs: number,
+  redirect?: "follow" | "error" | "manual",
+): Promise<{ contextLength: number | null } | false | null> {
   try {
     const res = await fetch(`${baseUrl.replace(/\/+$/, "")}/api/ps`, {
       signal: AbortSignal.timeout(timeoutMs),
@@ -67,16 +79,68 @@ export async function isModelResident(
     const models = data && typeof data === "object" ? (data as { models?: unknown }).models : null;
     if (!Array.isArray(models)) return null;
     const wanted = withDefaultTag(model);
-    return models.some((m) => {
-      if (!m || typeof m !== "object") return false;
-      const row = m as { name?: unknown; model?: unknown };
-      return (typeof row.name === "string" && withDefaultTag(row.name) === wanted)
+    for (const m of models) {
+      if (!m || typeof m !== "object") continue;
+      const row = m as { name?: unknown; model?: unknown; context_length?: unknown };
+      const matches = (typeof row.name === "string" && withDefaultTag(row.name) === wanted)
         || (typeof row.model === "string" && withDefaultTag(row.model) === wanted);
-    });
+      if (!matches) continue;
+      const ctx = row.context_length;
+      return { contextLength: typeof ctx === "number" && Number.isInteger(ctx) && ctx > 0 ? ctx : null };
+    }
+    return false;
   } catch (e) {
     logger.debug(`residency probe failed (${baseUrl}): ${(e as Error).message}`);
     return null;
   }
+}
+
+/**
+ * Loaded-context size for single-shot dispatch calls (classifiers, background
+ * extraction) to a model that isn't loaded yet. Without it Ollama's auto
+ * default loads the model with min(model_max, 131072) context, and the KV cache
+ * for that window dwarfs the weights — a 2GB llama3.2:3b occupied 17GB of VRAM
+ * (observed 2026-08-25). 16384 is many times the largest dispatch prompt while
+ * keeping the KV footprint in the hundreds of MB.
+ */
+export const DISPATCH_NUM_CTX = 16_384;
+
+/** Largest model LAX treats as dispatch-sized (the classifier auto-pick cap). */
+export const DISPATCH_MODEL_MAX_BYTES = 6e9;
+
+/**
+ * num_ctx for a background /api/generate (dispatch or warm) to `model`.
+ *
+ * Invariant: a background call never resizes a model someone is chatting with.
+ * Ollama reloads a runner whenever the requested num_ctx differs from the
+ * loaded one, so a fixed dispatch size reloaded the 17GB chat model at 16k
+ * whenever a classifier fell back to it, and the chat preflight then refused
+ * turns against the shrunken window (op-outcomes baseline 2026-09-15: six
+ * reloads in four minutes, three failed runs).
+ *
+ *   loaded                         → its current context: the runner is reused
+ *   the held chat model, or a model
+ *   larger than dispatch-sized      → undefined: Ollama's default, the same
+ *                                     shape a /v1 chat request loads
+ *   dispatch-sized, not loaded      → DISPATCH_NUM_CTX
+ *
+ * `sizeBytes` comes from the caller's discovery cache (unknown → not
+ * dispatch-sized), so this module stays free of runtime-discovery imports.
+ */
+export async function dispatchNumCtx(
+  baseUrl: string,
+  model: string,
+  sizeBytes: number | undefined,
+  timeoutMs: number = PS_TIMEOUT_MS,
+  redirect?: "follow" | "error" | "manual",
+): Promise<number | undefined> {
+  const loaded = await loadedModel(baseUrl, model, timeoutMs, redirect);
+  if (loaded) return loaded.contextLength ?? undefined;
+  const base = baseUrl.replace(/\/+$/, "");
+  if (heldChat?.key === `${base}|${model}`) return undefined;
+  return typeof sizeBytes === "number" && sizeBytes > 0 && sizeBytes <= DISPATCH_MODEL_MAX_BYTES
+    ? DISPATCH_NUM_CTX
+    : undefined;
 }
 
 // One in-flight warm per (baseUrl, model). Every cold turn re-fires warmModel

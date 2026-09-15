@@ -5,6 +5,9 @@ import {
   warmModel,
   holdChatModelResidency,
   releaseChatModelResidency,
+  dispatchNumCtx,
+  DISPATCH_MODEL_MAX_BYTES,
+  DISPATCH_NUM_CTX,
   MODEL_KEEP_ALIVE,
 } from "./residency.js";
 
@@ -88,6 +91,41 @@ describe("isModelResident", () => {
     const t0 = Date.now();
     expect(await isModelResident(BASE, "llama3.2:3b", 250)).toBeNull();
     expect(Date.now() - t0).toBeLessThan(1800); // 2s default would exceed this
+  });
+});
+
+describe("dispatchNumCtx — a background call never resizes a loaded model", () => {
+  afterEach(() => releaseChatModelResidency());
+
+  it("a loaded model keeps its current context", async () => {
+    psFetch({ models: [{ name: "muse-glimmer:30b", context_length: 65_536 }] });
+    expect(await dispatchNumCtx(BASE, "muse-glimmer:30b", 17e9)).toBe(65_536);
+    psFetch({ models: [{ name: "llama3.2:3b", context_length: 16_384 }] });
+    expect(await dispatchNumCtx(BASE, "llama3.2:3b", 2e9)).toBe(16_384);
+  });
+
+  it("an unloaded dispatch-sized model loads at the small dispatch context", async () => {
+    psFetch({ models: [] });
+    expect(await dispatchNumCtx(BASE, "llama3.2:3b", 2e9)).toBe(DISPATCH_NUM_CTX);
+  });
+
+  it("an unloaded chat-sized or unknown-size model is left at the runtime default", async () => {
+    psFetch({ models: [] });
+    expect(await dispatchNumCtx(BASE, "muse-glimmer:30b", DISPATCH_MODEL_MAX_BYTES + 1)).toBeUndefined();
+    expect(await dispatchNumCtx(BASE, "muse-glimmer:30b", undefined)).toBeUndefined();
+  });
+
+  it("the held chat model is never sized for dispatch, even when it is small", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 200 })));
+    holdChatModelResidency(BASE, "llama3.2:3b");
+    await tick();
+    psFetch({ models: [] });
+    expect(await dispatchNumCtx(BASE, "llama3.2:3b", 2e9)).toBeUndefined();
+  });
+
+  it("a loaded row without a reported context omits num_ctx rather than guessing", async () => {
+    psFetch({ models: [{ name: "llama3.2:3b" }] });
+    expect(await dispatchNumCtx(BASE, "llama3.2:3b", 2e9)).toBeUndefined();
   });
 });
 

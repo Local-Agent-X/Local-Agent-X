@@ -82,7 +82,7 @@ export async function summarizeOldMessages(
 }
 
 // Transcript size bound. Local summaries run through dispatch at
-// DISPATCH_NUM_CTX (16,384 tokens, llm-dispatch/ollama.ts), and Ollama silently
+// DISPATCH_NUM_CTX (16,384 tokens, local-runtimes/residency.ts), and Ollama silently
 // truncates an over-long prompt from the FRONT, dropping the instructions
 // above. The model then continues the conversation instead of summarizing
 // (reproduced 2026-09-14: a ~42k-token head of browser snapshots came back as

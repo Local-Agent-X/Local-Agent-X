@@ -61,23 +61,17 @@ export function fileAccessGroundingBlock(mode: FileAccessMode): string {
  *    writing a memory mid-op changes it.
  *  - `integrations`: IntegrationRegistry.getAgentContext(), which reflects live
  *    connector state and can change when a connector is added or gated.
- *  - `app-manifest`: getManifestSummary() renders per-app FILE COUNTS
- *    (manifest-generator/summary.ts), and manifest-generator/watcher.ts watches
- *    `public/`, `src/routes/`, `workspace/apps/` and CONFIG_DIR on a 5 s debounce
- *    and rewrites the manifest. During an app-build or `self_edit` session — the
- *    long, expensive sessions this split exists for — the agent's OWN writes
- *    move those counts, so the section changes turn to turn.
- *  - `agents-md`: re-read from disk on every build (system-prompt-builder.ts's
- *    `agents-md` section) and the agent edits AGENTS.md itself during self_edit.
  *
- * The last two are not a COST regression when they churn (a changed prefix is
- * the same miss the old single-block shape always took), but leaving them in
- * would make the cached prefix silently stop matching in exactly the workload
- * the split was measured for. Excluding them makes the win smaller and real.
+ * `app-manifest` and `agents-md` used to be listed here: the manifest renders
+ * per-app file counts the watcher rewrites during app-build / self_edit, and
+ * AGENTS.md was re-read every build. Both are now snapshotted per session
+ * (system-prompt-builder.ts snapshotForSession), so they are byte-stable for a
+ * session's lifetime and belong in the prefix.
  *
- * That leaves the core-identity/* parts + runtime-context as the prefix:
- * process-lifetime stable, invalidated only when config/system-prompt.md
- * changes. (The base prompt is one section per `## ` heading — config-loader's
+ * That leaves core-identity/* + runtime-context + app-manifest + agents-md +
+ * provider-hint as the prefix: stable for the session, invalidated only when a
+ * new session snapshots changed files or config/system-prompt.md changes. (The
+ * base prompt is one section per `## ` heading — config-loader's
  * basePromptSections — joined with "", so the walk sums the same bytes the
  * single `core-identity` section once contributed.)
  *
@@ -89,8 +83,6 @@ export function fileAccessGroundingBlock(mode: FileAccessMode): string {
  * therefore stops dead at the first volatile section, on purpose.
  */
 const TURN_VARIANT_STATIC_SECTIONS = new Set([
-  "app-manifest",
-  "agents-md",
   "tool-guidance",
   "project-catalog",
   "integrations",
@@ -307,6 +299,7 @@ export async function buildSystemPromptWithTelemetry(
       toolPromptSection,
       integrationsContext,
       memoryDir: (input.memoryIndex as unknown as { memoryDir?: string }).memoryDir,
+      sessionId: input.sessionId,
       contextBlock: input.contextBlock,
       relevantMemories: input.relevantMemories,
       smartContext: input.smartContext,

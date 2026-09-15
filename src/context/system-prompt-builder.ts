@@ -173,6 +173,39 @@ export class SystemPromptBuilder {
   }
 }
 
+// Per-session snapshots of sections read from disk that the agent's own writes
+// churn (app-manifest file counts, AGENTS.md). Frozen for the session so the
+// system prompt stays a byte-stable prompt-cache / KV-cache prefix across
+// messages; a new session picks up the current files. self_edit re-reads
+// AGENTS.md itself (self-edit/agents-rules.ts), so edits still govern edits.
+const SESSION_SNAPSHOT_MAX_SESSIONS = 500;
+const sessionSnapshots = new Map<string, Map<string, string>>();
+
+async function snapshotForSession(
+  sessionId: string | undefined,
+  sectionId: string,
+  read: () => Promise<string>,
+): Promise<string> {
+  if (!sessionId) return read();
+  let sections = sessionSnapshots.get(sessionId);
+  const cached = sections?.get(sectionId);
+  if (cached !== undefined) return cached;
+  const text = await read();
+  if (!sections) {
+    if (sessionSnapshots.size >= SESSION_SNAPSHOT_MAX_SESSIONS) {
+      sessionSnapshots.delete(sessionSnapshots.keys().next().value as string);
+    }
+    sections = new Map();
+    sessionSnapshots.set(sessionId, sections);
+  }
+  sections.set(sectionId, text);
+  return text;
+}
+
+export function _resetSessionSnapshotsForTests(): void {
+  sessionSnapshots.clear();
+}
+
 /**
  * Single builder factory for ALL paths — web chat, bridge, cron, sub-agents.
  * Callers pass what they have; empty strings are auto-skipped.
@@ -184,6 +217,8 @@ export function createSystemPromptBuilder(opts: {
   integrationsContext?: string;
   /** Memory dir — when set, the project catalog (apps + entities) is injected. */
   memoryDir?: string;
+  /** Freezes the disk-read sections (app-manifest, agents-md) per session. */
+  sessionId?: string;
   // Dynamic sections
   contextBlock?: string;
   relevantMemories?: string;
@@ -233,12 +268,12 @@ Reminder: file CRUD has native tools — \`read\`, \`write\`, \`edit\`, \`delete
   // App manifest — the agent's map of its own body (auto-generated catalog)
   builder.addSection({
     id: "app-manifest", label: "App Map", type: "static", policy: "degradable", priority: "navigation",
-    build: async () => {
+    build: () => snapshotForSession(opts.sessionId, "app-manifest", async () => {
       try {
         const { getManifestSummary } = await import("../manifest-generator/index.js");
         return getManifestSummary() || "";
       } catch { return ""; }
-    },
+    }),
   });
 
   // AGENTS.md — hand-written invariants and architectural rules. Pairs with
@@ -248,7 +283,7 @@ Reminder: file CRUD has native tools — \`read\`, \`write\`, \`edit\`, \`delete
   // rather than a drifty paraphrase.
   builder.addSection({
     id: "agents-md", label: "Rules", type: "static", policy: "required", priority: "safety",
-    build: async () => {
+    build: () => snapshotForSession(opts.sessionId, "agents-md", async () => {
       try {
         const { readFileSync, existsSync } = await import("node:fs");
         const { resolve, join, dirname } = await import("node:path");
@@ -263,7 +298,7 @@ Reminder: file CRUD has native tools — \`read\`, \`write\`, \`edit\`, \`delete
         const md = readFileSync(p, "utf-8");
         return `## Invariants (AGENTS.md)\n${md}`;
       } catch { return ""; }
-    },
+    }),
   });
 
   builder.addSection({

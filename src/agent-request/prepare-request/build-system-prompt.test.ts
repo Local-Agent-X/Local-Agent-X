@@ -260,19 +260,17 @@ describe("stableSystemPrefixLength", () => {
     expect(prompt.slice(0, expected)).toBe("IDENTITYRUNTIME");
   });
 
-  // C6-polish F1. app-manifest is rewritten by manifest-generator/watcher.ts
-  // (5 s debounce over public/, src/routes/, workspace/apps/, CONFIG_DIR) and
-  // renders per-app FILE COUNTS; agents-md is re-read from disk every build and
-  // the agent edits AGENTS.md itself. During an app-build or self_edit session —
-  // the workload this split exists for — both move turn to turn, so keeping them
-  // in the prefix would make the cache win silently evaporate exactly there.
-  it("excludes app-manifest and agents-md, which the agent's own writes churn", () => {
-    for (const churningId of ["app-manifest", "agents-md"]) {
+  // C6-polish F1, revised. app-manifest (watcher-rewritten file counts) and
+  // agents-md (re-read from disk) used to churn mid-session and were excluded.
+  // system-prompt-builder.ts now snapshots both per session, so they are stable
+  // for the session and extend the cached prefix.
+  it("includes app-manifest and agents-md, which are snapshotted per session", () => {
+    for (const snapshotId of ["app-manifest", "agents-md"]) {
       expect(stableSystemPrefixLength([
         section("core-identity", "static", "IDENTITY"),
-        section(churningId, "static", "COUNTS THAT MOVE MID-SESSION"),
-        section("provider-hint", "static", "HINT"),
-      ])).toBe("IDENTITY".length);
+        section(snapshotId, "static", "FROZEN FOR THE SESSION"),
+        section("tool-guidance", "static", "VOLATILE"),
+      ])).toBe("IDENTITY".length + "FROZEN FOR THE SESSION".length);
     }
   });
 
@@ -375,13 +373,18 @@ describe("stableSystemPrefixLength", () => {
     // And the prompts genuinely diverge after it, so the test is not vacuous.
     expect(turn2.prompt).not.toBe(turn1.prompt);
 
-    // The cached head is the WHOLE base file + runtime-context — splitting the
+    // The cached head is the WHOLE base file + runtime-context + the per-session
+    // snapshots (app-manifest, agents-md) + provider-hint — splitting the
     // file into core-identity/* parts must not have shortened it by a byte.
-    // (register-adapter.ts's ~76.9 KB figure is this number.)
+    // No tools are loaded here, so no tool-guidance stops the walk and the
+    // byte-stable recall-reflex joins the head too.
     const basePrompt = loadSystemPrompt();
     const runtime = turn1.renderedSections.find((section) => section.id === "runtime-context")!;
     expect(turn1.prompt.startsWith(basePrompt)).toBe(true);
-    expect(len1).toBe(basePrompt.length + runtime.text.length);
+    const snapshotted = ["app-manifest", "agents-md", "provider-hint", "recall-reflex"]
+      .map((id) => turn1.renderedSections.find((section) => section.id === id)?.text.length ?? 0)
+      .reduce((sum, n) => sum + n, 0);
+    expect(len1).toBe(basePrompt.length + runtime.text.length + snapshotted);
     expect(turn1.renderedSections[0].id).toMatch(/^core-identity\//);
   });
 });

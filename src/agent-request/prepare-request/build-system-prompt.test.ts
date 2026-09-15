@@ -66,7 +66,6 @@ describe("local model-family rider wiring", () => {
     memoryContext: "",
     memoryNotifications: [],
     memoryCurateBlock: "",
-    forceBuildIntent: false,
   });
 
   it("provider local + gemma model → base family rider present, no reasoning addition", async () => {
@@ -108,9 +107,7 @@ describe("local model-family rider wiring", () => {
     const localBase = {
       ...inputFor("local", "qwen3:32b"),
       systemPromptOverride: "Canonical prompt bytes.",
-      forceBuildIntent: true,
-      buildMode: "force" as const,
-      intentReason: "golden build route",
+      buildTurnDirective: "Golden build route directive.",
     };
     const local = await buildSystemPromptWithTelemetry(localBase);
     const cloud = await buildSystemPromptWithTelemetry({
@@ -122,13 +119,7 @@ describe("local model-family rider wiring", () => {
       "Canonical prompt bytes." +
       fileAccessGroundingBlock(loadFileAccessMode()) +
       modelFamilyRiderFor("qwen3:32b") +
-      harnessNotice(
-        "TURN DIRECTIVE",
-        "Intent classifier identified this turn as a build_app request: golden build route.\n" +
-        "Call the build_app tool \u2014 that is the ONLY way to build this. The build then runs as a background op (the \"side agent\") that owns the ENTIRE build: it runs the real toolchain, produces the artifact, and delivers the result to the user itself when done. " +
-        "Do NOT build it yourself this turn \u2014 no bash/cargo/compiler, no write/edit of source files, no send_image of a result you produced. Building it twice wastes minutes of compute and confuses the user with a duplicate output. " +
-        "After calling build_app, just briefly tell the user it's building and they'll see it when it's ready.",
-      );
+      harnessNotice("TURN DIRECTIVE", "Golden build route directive.");
     expect(local.prompt).toBe(expectedLocalPrompt);
     for (const result of [local, cloud]) {
       expect(result.renderedSections.map((section) => section.text).join("")).toBe(result.prompt);
@@ -174,7 +165,7 @@ describe("unified harness-notice format", () => {
       memoryContext: "",
       memoryNotifications: [{ message: "user's birthday is today", priority: 1 }],
       memoryCurateBlock: "",
-      forceBuildIntent: true, // fires the TURN DIRECTIVE (non-lean)
+      buildTurnDirective: "Continue the Product Build.", // fires the TURN DIRECTIVE
     };
 
     const prompt = await buildSystemPrompt(input);
@@ -226,13 +217,36 @@ describe("Product Build turn directive", () => {
       memoryContext: "",
       memoryNotifications: [],
       memoryCurateBlock: "",
-      forceBuildIntent: true,
       buildTurnDirective: directive,
       systemPromptOverride: "Base prompt.",
     });
     expect(prompt).toContain("[HARNESS NOTE: TURN DIRECTIVE]");
     expect(prompt).toContain(directive);
-    expect(prompt).not.toContain("Call the build_app tool");
+  });
+
+  it("a build-shaped message with no explicit route gets no turn directive", async () => {
+    // op-outcomes 2026-09-15: "And cleanup/logs/build-4.log?" was classified as a
+    // build request and the directive sent muse into a 30-minute app build.
+    const result = await buildSystemPromptWithTelemetry({
+      message: "build me a kanban app, and which step failed in build-4.log?",
+      channel: "web",
+      sessionId: "no-intent-directive",
+      config: { systemPrompt: "Base prompt." } as BuildSystemPromptInput["config"],
+      memoryIndex: {} as BuildSystemPromptInput["memoryIndex"],
+      integrations: { getAgentContext: () => "" } as BuildSystemPromptInput["integrations"],
+      allAgentTools: [],
+      resolvedProvider: "local",
+      resolvedModel: "muse-glimmer:30b",
+      contextBlock: "",
+      relevantMemories: "",
+      smartContext: "",
+      memoryContext: "",
+      memoryNotifications: [],
+      memoryCurateBlock: "",
+      systemPromptOverride: "Base prompt.",
+    });
+    expect(result.renderedSections.some((section) => section.id === "turn-directive")).toBe(false);
+    expect(result.prompt).not.toContain("TURN DIRECTIVE");
   });
 });
 
@@ -351,7 +365,6 @@ describe("stableSystemPrefixLength", () => {
       memoryContext: "",
       memoryNotifications: [],
       memoryCurateBlock: "",
-      forceBuildIntent: false,
     });
 
     const turn1 = await buildSystemPromptWithTelemetry(base());

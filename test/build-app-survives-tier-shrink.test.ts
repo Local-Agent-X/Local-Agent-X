@@ -53,11 +53,8 @@ describe("build_app survives the medium-tier shrink (local model regression)", (
   });
 
   it("keeps build_app even when the prefilter dropped it (pulled from allTools)", () => {
-    // filterToolsForMessage only force-includes build_app when the intent
-    // classifier or BUILD_INTENT_REGEX fires. Both missed here: the classifier
-    // timed out at 8s on the 27B, and "build me a side scroller" contains no
-    // "app". So the filtered set genuinely lacked build_app and the essentials
-    // pull from the full catalog is the only thing that saves it.
+    // A prefiltered set can lack build_app; the essentials pull from the full
+    // catalog is the only thing that restores it.
     const catalog = makeRealisticCatalog();
     const prefiltered = catalog.filter((t) => t.name !== "build_app");
     const out = shrinkToolsForTier(prefiltered, "medium", catalog);

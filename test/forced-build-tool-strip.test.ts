@@ -7,8 +7,7 @@
  * The fix is a hard, provider-agnostic guarantee: when build_app is force-pinned,
  * strip the inline-build tools from the turn's toolset so the main agent CANNOT
  * build it itself. build_app survives (tool_choice forcing pins it); read-only
- * tools survive (they can't build). The build-intent narrowing alone did NOT do
- * this — its audience set deliberately keeps bash/write/edit.
+ * tools survive (they can't build).
  */
 import { describe, it, expect } from "vitest";
 import { stripInlineBuildTools } from "../src/agent-request/prepare-request/tool-selection.js";

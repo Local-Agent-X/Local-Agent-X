@@ -1,19 +1,21 @@
-// Tool selection pipeline: intent classifier → filter → tier-shrink → RAG
-// re-rank. The intent verdict drives BOTH the filter narrowing and the
-// later tool_choice forcing in the orchestrator, so this module computes
-// the verdict and exposes it alongside the final tool list.
+// Tool selection pipeline: filter → tier-shrink → RAG re-rank → session union.
+//
+// There is no intent classification. The user's wording never narrows the tool
+// set, pins tool_choice, or injects a build directive — a classifier guessing
+// "build" from "which step failed in build-4.log?" launched a background app
+// build that held the local model for 30+ minutes (op-outcomes 2026-09-15).
+// build_app is an ordinary tool the model chooses. Only EXPLICIT build workflows
+// route tools: the /app-build slash command, and continuing a durable Product
+// Build this session already has.
 
 import type { ToolDefinition } from "../../types.js";
 import type { ChannelKind } from "../types.js";
 import { filterToolsForMessage } from "../tool-filter.js";
-import { classifyIntent, hasLiteralToolCall, mightNeedToolForcing, NO_SPAWN_OVERRIDE_RE } from "../../classifiers/intent-classifier.js";
 import { isSlashCommandExpansion } from "../../slash-commands.js";
-import { providerUndercallsTools } from "../../providers/provider-ids.js";
 import { createLogger } from "../../logger.js";
 import {
   applyProductBuildToolRoute,
   productBuildMethodologyTurn,
-  productBuildTurnFromIntent,
   resolveProductBuildContinuationTurn,
   type ContinuationResolver,
   type ProductBuildTurn,
@@ -21,7 +23,6 @@ import {
 
 const logger = createLogger("agent-request.prepare-request.tools");
 
-export type IntentVerdict = Awaited<ReturnType<typeof classifyIntent>>;
 export type Tier = "weak" | "medium" | "strong";
 
 export interface ToolSelectionInput {
@@ -33,39 +34,28 @@ export interface ToolSelectionInput {
   resolvedProvider: string;
   resolvedModel: string;
   /** True when an EARLIER turn this session was a slash-command methodology
-   *  invocation (the marker only rides the first turn). Keeps intent-forcing
-   *  suppressed for the whole methodology, not just its kickoff turn. */
+   *  invocation (the marker only rides the first turn), so the methodology's
+   *  tool routing holds for the whole session, not just its kickoff turn. */
   priorMethodology?: boolean;
-  /** Compact last-few-turns digest fed to the intent classifier as context, so
-   *  "build" mid-discovery and "yes, build it" after a spec convo classify
-   *  correctly instead of from the bare message. Built by buildHistoryDigest. */
-  historyDigest?: string;
-  /** Test seams for the two decisions owned by this canonical pipeline. */
-  classifyIntentFn?: typeof classifyIntent;
+  /** Test seam for the durable Product Build lookup. */
   continuationResolver?: ContinuationResolver;
 }
 
 export interface ToolSelectionResult {
   tools: ToolDefinition[];
   tier: Tier;
-  intentVerdict: IntentVerdict;
-  forceBuildIntent: boolean;
   productBuildTurn: ProductBuildTurn | null;
   forcedToolName?: string;
   isBridge: boolean;
 }
 
 // Tools that let the agent build something ITSELF — write source, run a
-// compiler/dev-server, or surface the artifact. When intent forcing pins
-// build_app, the build is owned by the background app_build op (the "side
-// agent"); the main chat agent must NOT also build it inline. That dual-build
-// bug shipped a Rust raytrace TWICE — the worker compiled it at apps/<id>/
-// while the main agent ALSO ran cargo at workspace/<id>/, producing two outputs
-// and a confusing double result. The TURN DIRECTIVE asks the model not to; this
-// strip is the hard guarantee across EVERY provider (the directive fired only on
-// Anthropic, and the build-intent narrowing keeps bash/write/edit by design).
-// Read-only tools (read/glob/grep) stay — they can't build. build_app is never
-// stripped (tool_choice forcing pins it).
+// compiler/dev-server, or surface the artifact. On an explicit build-workflow
+// turn (/app-build, Product Build continuation) the build is owned by a
+// background op; the main chat agent must NOT also build it inline. That
+// dual-build bug shipped a Rust raytrace TWICE — the worker compiled it at
+// apps/<id>/ while the main agent ALSO ran cargo at workspace/<id>/. Read-only
+// tools (read/glob/grep) stay — they can't build.
 const INLINE_BUILD_TOOLS = new Set([
   "write", "edit", "edit_lines", "multi_edit", "bulk_replace", "bash",
   "process_start", "process_status", "process_kill",
@@ -130,56 +120,15 @@ export async function selectTools(input: ToolSelectionInput): Promise<ToolSelect
         input.continuationResolver,
       );
 
-  // Run the intent classifier UP FRONT so its verdict drives both the
-  // tool-filter strip-down (here) AND the tool_choice forcing later.
-  // Regex alone misses phrasings like "build a log counting app" where
-  // modifiers sit between the article and the noun — the LLM classifier
-  // catches those and lets us narrow tools accordingly. Failure mode
-  // w/o this: full 39-tool set ships, model bypasses build_app and
-  // improvises with raw write/bash/http_request.
-  let intentVerdict: IntentVerdict = null;
   // A slash command (e.g. /app-build) is an EXPLICIT user-chosen workflow whose
   // injected methodology body defines how the agent works and which tools to
-  // call. Classifying it as build_app and pinning tool_choice to the one-shot
-  // builder overrides that methodology — the exact bug where /app-build "just
-  // built the app" instead of running its spec-first, ask-questions-first intake.
-  // Treat it like a literal tool call: explicit intent, so skip the classifier.
-  // priorMethodology extends this across the WHOLE session — the methodology
-  // spans many turns but only the first carries the marker, and without it the
-  // classifier re-forces build_app on a later reply ("step 2 kicked off the build").
+  // call. priorMethodology extends it across the whole session — only the
+  // first turn carries the marker.
   const inMethodology = isSlashCommandExpansion(input.message) || input.priorMethodology === true;
-  const skipClassifier =
-    isBridge ||
-    continuationTurn !== null ||
-    inMethodology ||
-    NO_SPAWN_OVERRIDE_RE.test(input.message) ||
-    hasLiteralToolCall(input.message) ||
-    // Cheap regex pre-gate: skip the LLM classifier (a 3-8s CLI round-trip on
-    // Anthropic) on ordinary conversation that can't map to a forceable
-    // intent. It returned "free"/null on those turns anyway.
-    !mightNeedToolForcing(input.message);
-  if (!skipClassifier) {
-    const t0 = Date.now();
-    logger.info(`[step] classifyIntent START`);
-    // Uses the user's selected provider+model. We tried pinning Sonnet on
-    // Anthropic to cut classify latency (2026-06-06) but it returned null
-    // (the CLI Sonnet path produced unparseable output) AND wasn't faster —
-    // the real Anthropic cost was the cold CLI spawn, since fixed by
-    // defaulting the warm pool on (warm-pool.ts). Reverted to the selected
-    // model so verdicts are valid; the warm pool keeps the classify process
-    // hot after its first call.
-    try {
-      const classifier = input.classifyIntentFn ?? classifyIntent;
-      intentVerdict = await classifier(input.message, { historyDigest: input.historyDigest });
-    }
-    catch (e) { logger.info(`[intent] classifier threw — skipping: ${(e as Error).message}`); }
-    logger.info(`[step] classifyIntent ${Date.now() - t0}ms verdict=${intentVerdict?.kind || "null"}`);
-  }
   const methodologyTurn = inMethodology
     ? productBuildMethodologyTurn(isSlashCommandExpansion(input.message))
     : null;
-  const productBuildTurn = continuationTurn ?? methodologyTurn ?? productBuildTurnFromIntent(intentVerdict);
-  const forceBuildIntent = productBuildTurn !== null;
+  const productBuildTurn = continuationTurn ?? methodologyTurn;
 
   // Tier gates how hard we shrink the schema. Weak/medium models are paralyzed
   // by 100+ tool catalogs (0-token responses), so they get filter → shrink →
@@ -201,17 +150,6 @@ export async function selectTools(input: ToolSelectionInput): Promise<ToolSelect
   const { classifyModel, shrinkToolsForTier } = await import("../../model-tiers.js");
   const tier = classifyModel(input.resolvedModel) as Tier;
 
-  const isAnthropicProvider = input.resolvedProvider === "anthropic";
-  // Strong providers that reason fine over the broad eager ∪ RAG union skip
-  // build-intent NARROWING: tool-shy providers (Grok under-calls tools, and
-  // build_app stays hard-pinned by tool_choice forcing in prepare-request) AND
-  // Anthropic — with the deferred manifest it can no longer fail-discover, so
-  // the old full-inventory special case is gone and it takes the same filtered
-  // path. Codex/OpenAI strong KEEP the narrowing — it's load-bearing (without it
-  // they improvise raw write/edit/bash instead of calling build_app).
-  const strongSkipNarrowing =
-    tier === "strong" &&
-    (providerUndercallsTools(input.resolvedProvider) || isAnthropicProvider);
   // THE PER-TOOL AVAILABILITY GATE DOES NOT RUN IN THIS FUNCTION. isToolAvailable()
   // /filterAvailableTools() (src/tools/tool-search.ts) are applied by
   // resolveToolsForRequest() and by the deferred-tool manifest in
@@ -238,7 +176,7 @@ export async function selectTools(input: ToolSelectionInput): Promise<ToolSelect
   if (isBridge) {
     tools = input.bridgeTools;
   } else {
-    tools = filterToolsForMessage(input.allAgentTools, input.message, { forceBuildIntent, skipBuildIntent: inMethodology || strongSkipNarrowing });
+    tools = filterToolsForMessage(input.allAgentTools, input.message);
     if (tier !== "strong") {
       const before = tools.length;
       tools = shrinkToolsForTier(tools, tier, input.allAgentTools);
@@ -315,10 +253,9 @@ export async function selectTools(input: ToolSelectionInput): Promise<ToolSelect
     }
   }
 
-  // Forced build_app turn: the background op owns the whole build, so deny the
-  // main agent the tools to build it inline (the dual-build fix). Last step, so
-  // it applies on every selection path — including the Anthropic-strong full
-  // inventory and the Grok strong-tool-shy path that both skip the narrowing.
+  // Explicit build-workflow turn: the background op owns the build, so deny the
+  // main agent the tools to build it inline (the dual-build fix). Applied after
+  // every other selection step so no path re-adds them.
   if (productBuildTurn && !isBridge) {
     tools = stripInlineBuildTools(tools, input.allAgentTools);
   }
@@ -333,8 +270,6 @@ export async function selectTools(input: ToolSelectionInput): Promise<ToolSelect
   return {
     tools,
     tier,
-    intentVerdict,
-    forceBuildIntent,
     productBuildTurn,
     forcedToolName: productBuildTurn?.targetTool,
     isBridge,

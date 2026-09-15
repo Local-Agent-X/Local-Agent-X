@@ -87,9 +87,8 @@ export function defaultAnthropicTransport(pinned?: { credential: string; source:
       // emit its native tool-call markdown (or worse, a hallucinated
       // routing token like `//gpu_dispatch:builder`) as plain text
       // instead of using the API's structured tool_use channel. The
-      // tool list narrowing in `tool-filter.ts:BUILD_INTENT_REGEX`
-      // already biases the model toward build_app on build requests, so
-      // we drop the directive and let the model pick naturally. The
+      // explicit build route already narrows the tool list to the target
+      // tool, so we drop the directive and let the model pick. The
       // forcedToolName is still passed through; HTTP-path consumers use
       // it, the CLI path ignores it.
       const forced = req.forcedToolChoice;

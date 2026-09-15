@@ -6,9 +6,9 @@ import { resolveToolsForRequest } from "../tools/tool-search.js";
 // tool_search is always included so the agent can discover anything else.
 
 // Audience mapping (which tools are eager for which audience) is owned by
-// src/tools/audience-map.ts. This file owns the keyword router, build-intent
-// regex, and literal-tool-call detector — all of which the main-chat resolver
-// injects into resolveToolsForRequest.
+// src/tools/audience-map.ts. This file owns the keyword router and the
+// literal-tool-call detector, which the main-chat resolver injects into
+// resolveToolsForRequest. Keywords only ADD tools; nothing here removes one.
 
 // Keywords that trigger including specific tool groups
 const TOOL_KEYWORD_MAP: Array<{ keywords: RegExp; exclude?: RegExp; toolPrefixes: string[] }> = [
@@ -74,16 +74,11 @@ const TOOL_KEYWORD_MAP: Array<{ keywords: RegExp; exclude?: RegExp; toolPrefixes
   { keywords: /\brecall\b|earlier (message|conversation)|what did (i|you) (say|ask)|scroll back/i, toolPrefixes: ["recall"] },
 ];
 
-// Build-intent narrowing fires when the user asks to build/create an app —
-// the resolver swaps main-chat audience for the smaller build-intent set so
-// Codex doesn't choke on the full inventory. Membership lives in audience-map.ts.
-const BUILD_INTENT_REGEX = /\b(build|create|make|write|generate|scaffold|set up)\s+(me\s+)?(a\s+|an\s+|the\s+)?(app|bot|dashboard|tracker|tool|game|website|page|site|form|calculator|chat|api|script)/i;
-
 /**
  * Detect literal tool-call syntax in the user message and return any
  * exact tool names referenced. Catches the pattern `tool_name({...})` —
  * when the user pastes a tool call directly, we MUST include that tool
- * regardless of keyword filters or build-intent strip-down. Otherwise
+ * regardless of keyword filters. Otherwise
  * the model sees "tool not in my schema" and routes to self_edit /
  * tool_search to try to "investigate."
  */
@@ -121,17 +116,12 @@ function keywordRouter(message: string, allTools: ToolDefinition[]): Set<string>
 }
 
 /**
- * Back-compat shim. Delegates to resolveToolsForRequest with
- * audience="main-chat" and the keyword/literal/build-intent helpers
- * wired in. Keeps existing callers working during P1.C3/C4 migration.
- *
- * Verified byte-identical to the pre-migration implementation for the
- * 10 representative messages in test/tool-filter-parity.test.ts.
+ * Main-chat tool set for a message: the eager main-chat audience plus
+ * keyword-routed and literally-called tools (resolveToolsForRequest).
  */
 export function filterToolsForMessage(
   allTools: ToolDefinition[],
   message: string,
-  opts?: { forceBuildIntent?: boolean; skipBuildIntent?: boolean },
 ): ToolDefinition[] {
   return resolveToolsForRequest(
     {
@@ -139,16 +129,6 @@ export function filterToolsForMessage(
       message,
       keywordRouter,
       literalCallDetector: detectLiteralToolCalls,
-      // forceBuildIntent comes from the LLM classifier verdict in
-      // prepare-request.ts. Regex alone misses phrasings like
-      // "build a log counting app" (modifiers between article and noun)
-      // — the classifier handles those, then short-circuits the regex.
-      // skipBuildIntent suppresses BOTH paths on slash-command turns: the
-      // injected methodology body is full of "build … app" prose that would
-      // false-trip the regex and strip the conversational toolset the
-      // workflow needs (write/edit/ask), so honor the workflow instead.
-      buildIntentTest: (m) =>
-        !opts?.skipBuildIntent && (opts?.forceBuildIntent === true || BUILD_INTENT_REGEX.test(m)),
     },
     allTools,
   );

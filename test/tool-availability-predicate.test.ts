@@ -32,7 +32,7 @@ function tool(
 }
 
 const names = (tools: ToolDefinition[]) => new Set(tools.map((t) => t.name));
-const EVERY_AUDIENCE: Audience[] = ["main-chat", "spawned-agent", "operator", "build-intent"];
+const EVERY_AUDIENCE: Audience[] = ["main-chat", "spawned-agent", "operator"];
 
 describe("availability predicate — non-narrowing defaults", () => {
   it("resolves a tool with NO predicate for every audience, exactly as before", () => {
@@ -40,12 +40,6 @@ describe("availability predicate — non-narrowing defaults", () => {
     for (const audience of ["main-chat", "spawned-agent", "operator"] as Audience[]) {
       expect(names(resolveToolsForRequest({ audience, message: "hi" }, all)).has("plain")).toBe(true);
     }
-    // build-intent is reached through main-chat's strip-down branch.
-    const stripped = resolveToolsForRequest(
-      { audience: "main-chat", message: "build me a site", buildIntentTest: () => true },
-      all,
-    );
-    expect(names(stripped).has("plain")).toBe(true);
   });
 
   it("treats a THROWING predicate as available and does not poison other tools", () => {
@@ -169,7 +163,7 @@ describe("availability predicate — the deferred manifest half", () => {
       resolvedProvider: "anthropic",
       resolvedModel: "claude-opus-4-8",
       contextBlock: "", relevantMemories: "", smartContext: "", memoryContext: "",
-      memoryNotifications: [], memoryCurateBlock: "", forceBuildIntent: false,
+      memoryNotifications: [], memoryCurateBlock: "",
     });
   }
 

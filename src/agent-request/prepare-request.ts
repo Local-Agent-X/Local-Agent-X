@@ -20,7 +20,6 @@ import { createLogger } from "../logger.js";
 import { buildContext, isTrivialToolRequest } from "./prepare-request/build-context.js";
 import { selectTools, type ToolSelectionResult } from "./prepare-request/tool-selection.js";
 import { isSlashCommandExpansion } from "../slash-commands.js";
-import { buildHistoryDigest } from "../classifiers/intent-classifier.js";
 import { detectAndBoostCurate } from "./prepare-request/curate-nudge.js";
 import { buildSystemPromptWithTelemetry } from "./prepare-request/build-system-prompt.js";
 import { createPromptTelemetry } from "../prompt-telemetry.js";
@@ -50,43 +49,6 @@ export function shouldForceRecallSearch(opts: {
     providerUndercallsTools(opts.provider) &&
     opts.toolNames.includes(RECALL_TOOL)
   );
-}
-
-/**
- * Whether an intent verdict should PIN tool_choice (hard-force the tool) this
- * turn. Pure so the force/lean rule is one named chokepoint, testable without
- * the pipeline. Pins ONLY when the verdict is a non-free, non-self_edit kind AND
- * graded mode="force" (explicit + fully-specified ask). A "lean" verdict — right
- * kind, thin/one-line ask — deliberately does NOT pin: the tool stays loaded and
- * the audience is still narrowed, but the model is free to ask 1-3 clarifying
- * questions first. self_edit is never pinnable (destructive, needs explicit
- * same-turn permission), regardless of mode.
- */
-export function shouldPinIntentToolChoice(
-  verdict: { kind: string; mode: string } | null | undefined,
-): boolean {
-  return (
-    !!verdict &&
-    verdict.kind !== "free" &&
-    verdict.kind !== "self_edit" &&
-    verdict.mode === "force"
-  );
-}
-
-// Rolling force/lean tally so the trigger-happy rate is visible in the log
-// without grepping and hand-counting per-turn lines. Only NON-FREE verdicts
-// count — those are the turns the fix is about (free turns never forced). The
-// pinned share is the trigger-happiness metric: before the fix every non-free
-// build/spawn turn pinned; after it, only fully-specified ones should. Process-
-// lifetime, in-memory — a debugging lens, not persisted telemetry.
-const intentTally = { forced: 0, leaned: 0 };
-
-export function recordIntentOutcome(pinned: boolean): { forced: number; leaned: number; pinnedPct: number } {
-  if (pinned) intentTally.forced++;
-  else intentTally.leaned++;
-  const total = intentTally.forced + intentTally.leaned;
-  const pinnedPct = total === 0 ? 0 : Math.round((intentTally.forced / total) * 100);
-  return { forced: intentTally.forced, leaned: intentTally.leaned, pinnedPct };
 }
 
 export async function prepareAgentRequest(input: AgentRequestInput): Promise<PreparedAgentRequest> {
@@ -126,40 +88,29 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
   const cleanHistory = buildCleanHistory(input.sessionMessages, input.channel, input.maxHistory, resolved.provider);
   end();
 
-  // 3. Tool selection (intent + tier filter + RAG re-rank). Must run
-  // before build-context so we know the tier (weak-tier context strip)
-  // and before system-prompt build so forceBuildIntent can drive the
-  // CLI nudge.
+  // 3. Tool selection (tier filter + RAG re-rank + explicit build routes). Must
+  // run before build-context so we know the tier (weak-tier context strip) and
+  // before system-prompt build so an explicit build route's directive lands.
   //
-  // Lean callers (voice) override tools + prompt downstream, so the whole
-  // selection — including the ~1.5-6s intent classifier — is wasted work on
-  // their critical path. Skip it; just compute the tier (cheap, sync) which
-  // build-context still needs for the weak-model strip.
+  // Lean callers (voice) override tools + prompt downstream, so selection is
+  // wasted work on their critical path. Skip it; just compute the tier (cheap,
+  // sync) which build-context still needs for the weak-model strip.
   let toolSel: ToolSelectionResult;
   if (input.leanPrep) {
     const { classifyModel } = await import("../model-tiers.js");
     toolSel = {
       tools: [],
       tier: classifyModel(resolved.model) as ToolSelectionResult["tier"],
-      intentVerdict: null,
-      forceBuildIntent: false,
       productBuildTurn: null,
       isBridge: false,
     };
   } else {
     // A slash-command methodology (e.g. /app-build) runs across MANY turns, but
-    // only its FIRST turn carries the marker. Without this, the intent classifier
-    // re-fires on every later reply and can force build_app mid-methodology — the
-    // "step 2 kicked off the build" regression. Treat the whole session as
+    // only its FIRST turn carries the marker. Treat the whole session as
     // methodology-active once ANY prior user turn was a slash-command expansion.
     const priorMethodology = cleanHistory.some(
       (m) => m.role === "user" && typeof m.content === "string" && isSlashCommandExpansion(m.content),
     );
-    // Digest the PRIOR turns only (drop the final entry — it's this turn's
-    // message, already classified directly). Gives the classifier the discussion
-    // context that disambiguates "build" / "yes, build it".
-    const priorTurns = cleanHistory.slice(0, -1) as ReadonlyArray<{ role: string; content: unknown }>;
-    const historyDigest = buildHistoryDigest(priorTurns);
     end = stepStart("selectTools");
     toolSel = await selectTools({
       message: input.message,
@@ -170,7 +121,6 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
       resolvedProvider: resolved.provider,
       resolvedModel: resolved.model,
       priorMethodology,
-      historyDigest,
     });
     end();
   }
@@ -221,7 +171,7 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
   }
 
   // 6. Build the final system prompt (base + blocks + provider rider +
-  // build-intent CLI nudge if applicable).
+  // explicit build-route directive if applicable).
   end = stepStart("buildSystemPrompt");
   const promptBuild = await buildSystemPromptWithTelemetry({
     channel: input.channel,
@@ -245,9 +195,6 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
     memoryContext: ctx.memoryContext,
     memoryNotifications: ctx.notifications,
     memoryCurateBlock,
-    forceBuildIntent: toolSel.forceBuildIntent,
-    buildMode: toolSel.intentVerdict?.kind === "build_app" ? toolSel.intentVerdict.mode : undefined,
-    intentReason: toolSel.intentVerdict?.reason,
     buildTurnDirective: toolSel.productBuildTurn?.directive,
   });
   end();
@@ -295,40 +242,18 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
     sections: renderedPromptSections.map((section) => section.measurement),
   });
 
-  // 8. Intent-classifier tool_choice forcing. Verdict was computed in
-  // step 3 so it could drive tool-filter narrowing; here we reuse it to
-  // pin tool_choice. Forces the LLM to emit a real tool_use block
-  // instead of narrating its plan in prose ([Reading routes/] etc.).
-  // HTTP-path providers consume this natively; CLI/OAuth ignores it
-  // but the tool-filter strip-down already biased the model toward
-  // the right choice.
+  // 8. tool_choice pin for an EXPLICIT build route only (/app-build kickoff,
+  // a resolved Product Build continuation action). Nothing guessed from the
+  // message's wording pins a tool.
   let toolChoice: ForcedToolChoice | undefined;
-  // self_edit is deliberately NOT force-pinnable. It modifies LAX's own
-  // source (destructive, propagates via git) and the system prompt already
-  // requires explicit user permission in the same turn — so hard-forcing it
-  // from a one-line intent guess contradicts its own invariant. The model
-  // keeps self_edit in its toolset and can still pick it, but a classifier
-  // false-positive (e.g. a workspace-app change misread as a LAX bug) no
-  // longer locks the model out of edit/write. build_app/agent_spawn stay
-  // forceable — they're reversible and models chronically under-call them.
-  // Force/lean rule lives in shouldPinIntentToolChoice: a "lean" verdict narrows
-  // + keeps the tool loaded (forceBuildIntent=kind, tool-selection.ts) but does
-  // NOT pin, so the model can ask clarifying questions before executing.
-  const forcedName = toolSel.forcedToolName
-    ?? (shouldPinIntentToolChoice(toolSel.intentVerdict) ? toolSel.intentVerdict!.kind : undefined);
+  const forcedName = toolSel.forcedToolName;
   if (forcedName) {
-    const inToolList = toolSel.tools.some(t => t.name === forcedName);
-    if (inToolList) {
+    if (toolSel.tools.some(t => t.name === forcedName)) {
       toolChoice = { type: "tool", name: forcedName };
-      const t = recordIntentOutcome(true);
-      const reason = toolSel.productBuildTurn?.reason ?? toolSel.intentVerdict?.reason ?? "resolved route";
-      logger.info(`[intent] forcing ${forcedName} pinned=${t.forced}/${t.forced + t.leaned} (${t.pinnedPct}%) (reason="${reason}")`);
+      logger.info(`[build-route] forcing ${forcedName} (reason="${toolSel.productBuildTurn?.reason ?? "resolved route"}")`);
     } else {
-      logger.warn(`[intent] classifier picked ${forcedName} but it's not in this turn's tool list — skipping force`);
+      logger.warn(`[build-route] ${forcedName} is not in this turn's tool list — skipping force`);
     }
-  } else if (toolSel.intentVerdict && toolSel.intentVerdict.kind !== "free") {
-    const t = recordIntentOutcome(false);
-    logger.info(`[intent] ${toolSel.intentVerdict.kind} mode=lean — narrowing without pin, pinned=${t.forced}/${t.forced + t.leaned} (${t.pinnedPct}%) (reason="${toolSel.intentVerdict.reason}")`);
   }
 
   // Tool-shy recall force. Grok (and any provider that under-calls tools)

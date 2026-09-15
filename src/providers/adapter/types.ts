@@ -53,7 +53,7 @@ export interface ProviderRequest {
   reasoningEffort?: ReasoningEffort;
   /** Force tool use on this request. "required" = model MUST call a
    *  tool of its choosing. `{ type: "tool", name }` = pin to the named
-   *  tool (intent-classifier path). */
+   *  tool (explicit build route). */
   toolChoice?: "auto" | "required" | { type: "tool"; name: string };
   /** Session id for downstream tracking (MCP bridge, telemetry). */
   sessionId?: string;

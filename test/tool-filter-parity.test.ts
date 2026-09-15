@@ -90,7 +90,6 @@ function buildTestToolList(): ToolDefinition[] {
   return [...allNames].map(name => {
     const audiences: Audience[] = [];
     if (CORE_NAMES.has(name)) audiences.push("main-chat");
-    if (BUILD_INTENT_NAMES.has(name)) audiences.push("build-intent");
     return mkTool(name, audiences.length ? audiences : undefined);
   });
 }
@@ -103,24 +102,6 @@ function replicaFilter(allTools: ToolDefinition[], message: string): ToolDefinit
   let m: RegExpExecArray | null;
   while ((m = re.exec(message)) !== null) {
     if (known.has(m[1])) literalCalls.add(m[1]);
-  }
-
-  const BUILD_RE = /\b(build|create|make|write|generate|scaffold|set up)\s+(me\s+)?(a\s+|an\s+|the\s+)?(app|bot|dashboard|tracker|tool|game|website|page|site|form|calculator|chat|api|script)/i;
-  if (BUILD_RE.test(message) && literalCalls.size === 0) {
-    // 2026-06-10: keyword-routed tools survive the build-intent strip-down —
-    // a message that names an artifact ("power point", "spreadsheet") keeps
-    // those tools in the schema even when the build classifier fires.
-    const keyworded = new Set<string>();
-    for (const { re: kw, prefixes } of PREFIXES_BY_KEYWORD) {
-      if (kw.test(message)) {
-        for (const tool of allTools) {
-          for (const p of prefixes) {
-            if (tool.name.startsWith(p) || tool.name === p) keyworded.add(tool.name);
-          }
-        }
-      }
-    }
-    return allTools.filter(t => BUILD_INTENT_NAMES.has(t.name) || keyworded.has(t.name));
   }
 
   const included = new Set<string>();
@@ -162,25 +143,14 @@ describe("filterToolsForMessage parity (P1.C3)", () => {
   }
 });
 
-describe("filterToolsForMessage — slash-command turns bypass build-intent narrowing", () => {
-  // The expanded /app-build body is saturated with "build … app" prose, which
-  // trips BUILD_INTENT_REGEX and strips the toolset to the build-intent set —
-  // leaving the methodology without the conversational tools it needs. The
-  // skipBuildIntent opt (set when the message is a slash-command expansion)
-  // must keep the full toolset. memory_search is the discriminator: it's
-  // main-chat core but NOT in the build-intent set.
+describe("filterToolsForMessage — build-shaped wording does not narrow", () => {
+  // Intent routing was deleted: "build me X" gets the same conversational core
+  // as any other message. memory_search is core-only, so it is the discriminator.
   const tools = buildTestToolList();
 
-  it("a raw build request still narrows (build-intent set, drops core-only tools)", () => {
-    const narrowed = filterToolsForMessage(tools, "build me a tracker app").map(t => t.name);
-    expect(narrowed).toContain("build_app");
-    expect(narrowed).not.toContain("memory_search"); // core-only → stripped by narrowing
-  });
-
-  it("the same intent with skipBuildIntent keeps the full conversational toolset", () => {
-    const full = filterToolsForMessage(tools, "build me a tracker app", { skipBuildIntent: true }).map(t => t.name);
-    expect(full).toContain("memory_search"); // core survives — methodology has its tools
-    expect(full).toContain("build_app");      // still available, just not narrowed-TO
+  it("a raw build request keeps the full conversational toolset", () => {
+    const names = filterToolsForMessage(tools, "build me a tracker app").map(t => t.name);
+    expect(names).toContain("memory_search");
   });
 });
 

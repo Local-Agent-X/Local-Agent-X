@@ -1,8 +1,8 @@
 // System prompt assembly: combines the base prompt (or override) with all
 // the per-turn blocks (provider hint, notification hint, cold-start hint,
 // background completions, tool prompt section) and provider riders. Also
-// owns the build-intent CLI nudge that pins Anthropic CLI turns to
-// build_app even when tool_choice gets dropped.
+// owns the turn directive for an explicit build route (/app-build, Product
+// Build continuation).
 
 import type { LAXConfig, ToolDefinition } from "../../types.js";
 import type { MemoryIndex } from "../../memory/index.js";
@@ -146,15 +146,8 @@ export interface BuildSystemPromptInput {
   memoryContext: string;
   memoryNotifications: Array<{ message: string; priority: number }>;
   memoryCurateBlock: string;
-  // Forced-intent signal from tool-selection — drives the build_app CLI
-  // nudge appended at the end when provider=anthropic.
-  forceBuildIntent: boolean;
-  // "force" = fully-specified build ask (hard hand-off directive); "lean" =
-  // thin/one-line build ask (prefer build_app but ask 2-3 questions first).
-  // Only set when forceBuildIntent is true.
-  buildMode?: "force" | "lean";
-  intentReason?: string;
-  /** Canonical Quick/Product/continuation decision for this turn. */
+  /** Directive for an explicit build route this turn (/app-build methodology
+   *  or a resolved Product Build continuation), from product-build-routing.ts. */
   buildTurnDirective?: string;
 }
 
@@ -323,37 +316,11 @@ export async function buildSystemPromptWithTelemetry(
     contextBuilder.addSection({ id, label, type: "dynamic", policy, build: () => text });
   }
 
-  let turnDirective = "";
-
-  // build_app hand-off directive. Fires for EVERY provider (not just the
-  // Anthropic CLI/OAuth path that ignores tool_choice) because the failure it
-  // prevents — the main agent building the app ITSELF in parallel with the
-  // background op — showed up worst on Grok/GPT, which previously got no
-  // directive at all and so ran cargo + send_image inline, duplicating the
-  // worker's build. The inline-build tools are also stripped from this turn's
-  // toolset (tool-selection.ts) as the hard guarantee; this directive explains
-  // WHY they're gone so the model hands off cleanly instead of flailing.
+  // Explicit build route only: the background op owns the build and this
+  // turn's inline-build tools are stripped (tool-selection.ts); the directive
+  // explains why, so the model hands off instead of flailing.
   if (input.buildTurnDirective) {
-    turnDirective = harnessNotice("TURN DIRECTIVE", input.buildTurnDirective);
-  } else if (input.forceBuildIntent && input.buildMode !== "lean") {
-    turnDirective = harnessNotice("TURN DIRECTIVE",
-      `Intent classifier identified this turn as a build_app request: ${input.intentReason ?? "(no reason)"}.\n` +
-      `Call the build_app tool — that is the ONLY way to build this. The build then runs as a background op (the "side agent") that owns the ENTIRE build: it runs the real toolchain, produces the artifact, and delivers the result to the user itself when done. ` +
-      `Do NOT build it yourself this turn — no bash/cargo/compiler, no write/edit of source files, no send_image of a result you produced. Building it twice wastes minutes of compute and confuses the user with a duplicate output. ` +
-      `After calling build_app, just briefly tell the user it's building and they'll see it when it's ready.`);
-  } else if (input.forceBuildIntent && input.buildMode === "lean") {
-    // Lean build ask: right intent, thin spec. Prefer build_app but DISCOVER
-    // first — a one-line ask ("build me a page for my gym") shipped a generic
-    // page with zero discovery when it hard-forced. No pin fires this turn, so
-    // the model is free to ask before building.
-    turnDirective = harnessNotice("TURN DIRECTIVE",
-      `The user is asking to build something (${input.intentReason ?? "runnable app/page/tool"}), but the ask is thin — the specifics aren't stated. ` +
-      `If you want to build a runnable app, build_app is the right tool (the build runs as a background op that owns the whole build — don't build it inline with bash/write/edit). ` +
-      `But do NOT build blind: if the spec is one line, first ask 2-3 short clarifying questions (purpose, audience, must-have features), then call build_app once you know what to make. ` +
-      `A generic page nobody asked for is worse than one clarifying question.`);
-  }
-
-  if (turnDirective) {
+    const turnDirective = harnessNotice("TURN DIRECTIVE", input.buildTurnDirective);
     contextBuilder.addSection({
       id: "turn-directive",
       label: "Turn Directive",

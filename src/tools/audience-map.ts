@@ -11,42 +11,41 @@ import type { Audience, ToolDefinition } from "../types.js";
  *   - main-chat:     the main agent's per-turn schema (filtered by message/keyword)
  *   - spawned-agent: agent_spawn sub-agents
  *   - operator:      Operations-phase workers (narrower file/web/memory set)
- *   - build-intent:  strip-down applied when the chat message matches "build me X"
  */
 export const AUDIENCES_BY_TOOL: Record<string, Audience[]> = {
   // Filesystem & code
-  read:        ["main-chat", "spawned-agent", "operator", "build-intent"],
-  write:       ["main-chat", "spawned-agent", "operator", "build-intent"],
-  edit:        ["main-chat", "spawned-agent", "operator", "build-intent"],
-  edit_lines:  ["main-chat", "spawned-agent", "operator", "build-intent"],
-  multi_edit:  ["main-chat", "spawned-agent", "operator", "build-intent"],
-  bulk_replace: ["main-chat", "spawned-agent", "operator", "build-intent"],
+  read:        ["main-chat", "spawned-agent", "operator"],
+  write:       ["main-chat", "spawned-agent", "operator"],
+  edit:        ["main-chat", "spawned-agent", "operator"],
+  edit_lines:  ["main-chat", "spawned-agent", "operator"],
+  multi_edit:  ["main-chat", "spawned-agent", "operator"],
+  bulk_replace: ["main-chat", "spawned-agent", "operator"],
   delete_file: ["main-chat"],
   // restore_file mirrors delete_file's surface exactly: it exists to keep the
   // promise delete_file's result text makes, so wherever that text can appear
   // the tool must be resolvable.
   restore_file: ["main-chat"],
-  bash:        ["main-chat", "spawned-agent", "operator", "build-intent"],
+  bash:        ["main-chat", "spawned-agent", "operator"],
   // glob/grep reach spawned agents too: the enforcement layer already
   // path-rewrites them for `agent-` sessions (enforce-policy.rewriteWorktreePaths),
   // and a code-working sub-agent that can only shell out via bash is degraded
   // vs main-chat. Read-only discovery (ARI action "read"), spiral-guarded.
-  glob:        ["main-chat", "spawned-agent", "build-intent"],
-  grep:        ["main-chat", "spawned-agent", "build-intent"],
+  glob:        ["main-chat", "spawned-agent"],
+  grep:        ["main-chat", "spawned-agent"],
   // structural_search is grep's symbol-accurate sibling. Demoted from
   // main-chat 2026-07-13: zero fires in 4 wks of telemetry — grep covers the
   // interactive path; kept for code-working sub-agents.
-  structural_search: ["spawned-agent", "build-intent"],
+  structural_search: ["spawned-agent"],
 
   // Web & search
-  web_fetch:   ["main-chat", "spawned-agent", "operator", "build-intent"],
-  web_search:  ["main-chat", "spawned-agent", "operator", "build-intent"],
-  image_search: ["main-chat", "spawned-agent", "operator", "build-intent"],
+  web_fetch:   ["main-chat", "spawned-agent", "operator"],
+  web_search:  ["main-chat", "spawned-agent", "operator"],
+  image_search: ["main-chat", "spawned-agent", "operator"],
   // create_chart/preview_document demoted from main-chat 2026-07-13 (zero
   // fires in 4 wks): the office keyword rules (chart|graph|preview) resurface
   // them on the messages that need them; workers keep them eager.
-  create_chart: ["spawned-agent", "operator", "build-intent"],
-  preview_document: ["spawned-agent", "operator", "build-intent"],
+  create_chart: ["spawned-agent", "operator"],
+  preview_document: ["spawned-agent", "operator"],
   http_request: ["main-chat", "spawned-agent", "operator"],
 
   // App self-control
@@ -58,10 +57,10 @@ export const AUDIENCES_BY_TOOL: Record<string, Audience[]> = {
   // The tool-search-nudge middleware that forces weak models to search assumes
   // this is present. Allow-listed templates stay authoritative (this only
   // affects the no-allowlist default surface).
-  tool_search: ["main-chat", "spawned-agent", "build-intent"],
+  tool_search: ["main-chat", "spawned-agent"],
 
   // Vision
-  view_image:     ["main-chat", "spawned-agent", "operator", "build-intent"],
+  view_image:     ["main-chat", "spawned-agent", "operator"],
   // send_video deferred 2026-07-13 (0 fires/4wks) — the video keyword rule
   // resurfaces it alongside generate_video.
   send_image:     ["main-chat"],
@@ -128,7 +127,7 @@ export const AUDIENCES_BY_TOOL: Record<string, Audience[]> = {
   op_redirect: ["main-chat"],
 
   // Self-edit
-  self_edit: ["main-chat", "build-intent"],
+  self_edit: ["main-chat"],
 
   // Asking the user
   // EAGER, and deliberately not routable any other way: a question
@@ -136,12 +135,10 @@ export const AUDIENCES_BY_TOOL: Record<string, Audience[]> = {
   // first tool_search for will not be reached then — it guesses instead, which
   // is the exact failure ask_user exists to remove. There is no keyword that
   // predicts a fork, so the keyword router (tool-filter.ts) cannot stand in for
-  // the eager slot the way it does for the 2026-07-13 demotions. build-intent is
-  // included for the same reason: "build me X" is the message MOST likely to
-  // hide an unstated decision, and the strip-down would otherwise drop it.
+  // the eager slot the way it does for the 2026-07-13 demotions.
   // NOT operator/spawned-agent: those lanes run unattended, and a question there
   // ends the op with nobody reading it.
-  ask_user: ["main-chat", "build-intent"],
+  ask_user: ["main-chat"],
 
   // Planning & tasks
   enter_plan_mode: ["main-chat"],
@@ -162,28 +159,27 @@ export const AUDIENCES_BY_TOOL: Record<string, Audience[]> = {
   // (social keywords) resurfaces the family; tool_search covers the rest.
 
   // Agents — canonical delegation surface
-  agent_list:   ["main-chat", "build-intent"],
-  agent_spawn:  ["main-chat", "build-intent"],
+  agent_list:   ["main-chat"],
+  agent_spawn:  ["main-chat"],
   // agent_create stays eager despite 0 fires/4wks — the supervisor-surface
   // contract (test/tool-filter-supervisor-surface.test.ts) pins the full
   // delegation trio on normal messages.
-  agent_create: ["main-chat", "build-intent"],
+  agent_create: ["main-chat"],
 
   // Project containers (sibling to agent_* — same eager visibility)
-  project_create:    ["main-chat", "build-intent"],
-  project_list:      ["main-chat", "build-intent"],
-  project_add_agent: ["main-chat", "build-intent"],
+  project_create:    ["main-chat"],
+  project_list:      ["main-chat"],
+  project_add_agent: ["main-chat"],
   // Project brief — the main agent answers project questions by reading the
   // brief, so it must be eager (not deferred). Spawned agents get both via
   // IDENTITY_TOOLS in tool-search.ts, not here.
-  project_brief_read:   ["main-chat", "build-intent"],
+  project_brief_read:   ["main-chat"],
   // project_brief_update demoted 2026-07-13 (0 fires/4wks) — the \bproject\b
   // keyword rule resurfaces the whole project_ family on project messages.
-  agent_status: ["main-chat", "build-intent"],
+  agent_status: ["main-chat"],
   // agent_cancel stays eager — same watch-and-cancel contract as op_kill.
   agent_cancel: ["main-chat"],
   agent_output: ["main-chat"],
-  agent_kill:   ["build-intent"],
 
   // Browser
   browser: ["main-chat", "spawned-agent", "operator"],
@@ -193,11 +189,11 @@ export const AUDIENCES_BY_TOOL: Record<string, Audience[]> = {
   // Apps. app_create/app_list are deferred — the keyword router's
   // /\bapp\b|dashboard|tracker/ rule surfaces app_* on the messages that
   // need them (same path as email_*/calendar_*).
-  build_app: ["main-chat", "build-intent"],
+  build_app: ["main-chat"],
   // Connector definition — eager wherever build_app is, so the main agent can
   // wire an app's data source. The in-canonical builder gets it directly via
   // BUILDER_AGENT_TOOLS (build-app.ts), not through this map.
-  connector_create: ["main-chat", "build-intent"],
+  connector_create: ["main-chat"],
 
   // Sidebar — eager main-chat visibility. The keyword router
   // (tool-filter.ts) used to be the only path that surfaced these, but

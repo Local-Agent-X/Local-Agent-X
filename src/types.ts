@@ -11,8 +11,7 @@ import type { ChatCompletionMessageParam } from "openai/resources/chat/completio
 export type Audience =
   | "main-chat"      // top-level user-facing chat (the main agent)
   | "spawned-agent"  // sub-agents spawned via agent_spawn (default)
-  | "operator"       // Operations-phase workers (browser + file + memory)
-  | "build-intent";  // strip-down used when main-chat detects build intent
+  | "operator";      // Operations-phase workers (browser + file + memory)
 
 export type ToolEffectClass =
   | "read-only"

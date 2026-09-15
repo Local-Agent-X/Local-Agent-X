@@ -86,7 +86,7 @@ vi.mock("./prepare-request/build-context.js", () => ({
 vi.mock("./prepare-request/tool-selection.js", () => ({
   selectTools: async () => ({
     tools: [], tier: "strong", intentVerdict: null,
-    forceBuildIntent: false, productBuildTurn: null, isBridge: false,
+    productBuildTurn: null, isBridge: false,
   }),
 }));
 

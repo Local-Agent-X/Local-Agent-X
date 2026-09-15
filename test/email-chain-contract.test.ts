@@ -310,7 +310,7 @@ async function observe(message = "send an email to bob and check my inbox") {
     resolvedProvider: "anthropic",
     resolvedModel: "claude-opus-4-8",
     contextBlock: "", relevantMemories: "", smartContext: "", memoryContext: "",
-    memoryNotifications: [], memoryCurateBlock: "", forceBuildIntent: false,
+    memoryNotifications: [], memoryCurateBlock: "",
   });
   const loadedNames = new Set(loaded.map((t) => t.name));
   // The manifest names a deferred tool either solo (`- name: description`) or,

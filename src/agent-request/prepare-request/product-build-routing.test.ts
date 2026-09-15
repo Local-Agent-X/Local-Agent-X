@@ -2,10 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import type { ToolDefinition } from "../../types.js";
 import type { AppBuildContinuationResolution } from "../../auto-build/workflow-resolver.js";
 import {
-  BUILD_ROUTE_QUESTION,
   applyProductBuildToolRoute,
   isProductBuildContinuationRequest,
-  productBuildTurnFromIntent,
   resolveProductBuildContinuationTurn,
 } from "./product-build-routing.js";
 import { selectTools } from "./tool-selection.js";
@@ -16,7 +14,7 @@ function tool(name: string): ToolDefinition {
     name,
     description: `${name} test tool`,
     parameters: { type: "object", properties: {} },
-    audiences: ["main-chat", "build-intent"],
+    audiences: ["main-chat"],
     execute: async () => ({ content: "" }),
   };
 }
@@ -86,37 +84,17 @@ describe("Product Build continuation trigger", () => {
   });
 });
 
-describe("Quick versus Product route mapping", () => {
-  it("maps an explicit quick route to build_app", () => {
-    const turn = productBuildTurnFromIntent({
-      kind: "build_app", mode: "lean", buildRoute: "quick", reason: "prototype",
-    });
-    expect(turn).toMatchObject({ kind: "quick", action: "build_app", targetTool: "build_app" });
-  });
-
-  it("maps an explicit product route to start_app_build even when lean", () => {
-    const turn = productBuildTurnFromIntent({
-      kind: "build_app", mode: "lean", buildRoute: "product", reason: "production",
-    });
-    expect(turn).toMatchObject({ kind: "product", action: "start_app_build", targetTool: "start_app_build" });
-  });
-
-  it("maps unclear lifecycle to the one canonical question", () => {
-    const turn = productBuildTurnFromIntent({
-      kind: "build_app", mode: "lean", buildRoute: "clarify", reason: "unclear",
-    });
-    expect(turn?.targetTool).toBeUndefined();
-    expect(turn?.directive).toContain(BUILD_ROUTE_QUESTION);
-    expect(turn?.directive.match(/\?/g)).toHaveLength(1);
-  });
-
+describe("explicit route tool mapping", () => {
   it("removes sibling build tools and re-adds only the exact target", () => {
-    const turn = productBuildTurnFromIntent({
-      kind: "build_app", mode: "force", buildRoute: "product", reason: "durable",
-    });
+    const turn = resolveProductBuildContinuationTurn(
+      "continue the build",
+      "session-1",
+      () => resolved("build_plan_resume", "halted"),
+    );
     const names = applyProductBuildToolRoute(allTools, allTools, turn).map(item => item.name);
-    expect(names).toContain("start_app_build");
+    expect(names).toContain("build_plan_resume");
     expect(names).not.toContain("build_app");
+    expect(names).not.toContain("start_app_build");
     expect(names).not.toContain("run_build_plan");
   });
 });
@@ -151,13 +129,10 @@ describe("durable continuation action mapping", () => {
 
 describe("canonical tool selection routing", () => {
   it("forces /app-build into Product Build and structurally removes Quick Build", async () => {
-    const classifier = vi.fn();
     const result = await selection({
       message: `${SLASH_COMMAND_MARKER} \`/app-build\`. The user's argument: Build me a CRM`,
-      classifyIntentFn: classifier,
     });
     const names = result.tools.map(item => item.name);
-    expect(classifier).not.toHaveBeenCalled();
     expect(result.forcedToolName).toBe("start_app_build");
     expect(names).toContain("start_app_build");
     expect(names).not.toContain("build_app");
@@ -178,56 +153,27 @@ describe("canonical tool selection routing", () => {
     expect(result.productBuildTurn?.directive).toContain("call finalize_app_build");
   });
 
-  it("exposes and forces only start_app_build for Product Build", async () => {
-    const result = await selection({
-      classifyIntentFn: async () => ({
-        kind: "build_app", mode: "lean", buildRoute: "product", reason: "durable product",
-      }),
-    });
+  // op-outcomes 2026-09-15: build-shaped wording used to be classified as a
+  // build request, which pinned build_app and sent a local model into a
+  // 30-minute app build for "And cleanup/logs/build-4.log?".
+  it.each([
+    "And cleanup/logs/build-4.log?",
+    "add a formatPrice function to the pricing app",
+    "Build a production CRM with accounts and persistent customer data",
+  ])("build-shaped wording without an explicit route never routes tools: %s", async message => {
+    const result = await selection({ message });
     const names = result.tools.map(item => item.name);
-    expect(result.forcedToolName).toBe("start_app_build");
-    expect(names).toContain("start_app_build");
-    expect(names).not.toContain("build_app");
-    expect(names).not.toContain("write");
-  });
-
-  it("exposes and forces only build_app for Quick Build", async () => {
-    const result = await selection({
-      message: "Prototype a tiny habit tracker demo",
-      classifyIntentFn: async () => ({
-        kind: "build_app", mode: "lean", buildRoute: "quick", reason: "prototype",
-      }),
-    });
-    const names = result.tools.map(item => item.name);
-    expect(result.forcedToolName).toBe("build_app");
-    expect(names).toContain("build_app");
-    expect(names).not.toContain("start_app_build");
-  });
-
-  it("exposes no build mutation tool for clarification", async () => {
-    const result = await selection({
-      message: "Build me an app",
-      classifyIntentFn: async () => ({
-        kind: "build_app", mode: "lean", buildRoute: "clarify", reason: "unclear",
-      }),
-    });
-    const names = result.tools.map(item => item.name);
+    expect(result.productBuildTurn).toBeNull();
     expect(result.forcedToolName).toBeUndefined();
-    expect(names).not.toContain("build_app");
-    expect(names).not.toContain("start_app_build");
-    expect(result.productBuildTurn?.directive).toContain(BUILD_ROUTE_QUESTION);
+    expect(names).toContain("read");
+    expect(names).toContain("write");
   });
 
-  it("resolves continuation before classification and forces status", async () => {
-    const classifier = vi.fn(async () => ({
-      kind: "build_app" as const, mode: "force" as const, buildRoute: "quick" as const, reason: "wrong",
-    }));
+  it("resolves a continuation request and forces status", async () => {
     const result = await selection({
       message: "what is the build status",
-      classifyIntentFn: classifier,
       continuationResolver: () => resolved("build_plan_status"),
     });
-    expect(classifier).not.toHaveBeenCalled();
     expect(result.forcedToolName).toBe("build_plan_status");
     expect(result.tools.map(item => item.name)).toContain("build_plan_status");
     expect(result.tools.map(item => item.name)).not.toContain("build_app");
@@ -239,9 +185,6 @@ describe("canonical tool selection routing", () => {
     await selection({
       message: "build another app",
       continuationResolver: resolver,
-      classifyIntentFn: async () => ({
-        kind: "build_app", mode: "lean", buildRoute: "clarify", reason: "new app",
-      }),
     });
     expect(resolver).not.toHaveBeenCalled();
   });

@@ -71,20 +71,17 @@ describe("ask_user — the barrel", () => {
 });
 
 describe("ask_user — the audience map (the wiring point that decides if it is ever used)", () => {
-  it("is EAGER for main-chat AND build-intent", () => {
-    // MUTATION: drop the entry (deferred) or drop "build-intent". Deferred means
-    // the model must tool_search for it at the exact moment it has a question —
-    // it will guess instead, which is the failure this tool removes. Dropping
-    // build-intent loses it on "build me X" messages, the ones MOST likely to
-    // hide an unstated decision (resolveMainChat's strip-down returns only
-    // build-intent-tagged tools).
-    expect(AUDIENCES_BY_TOOL[NAME]).toEqual(["main-chat", "build-intent"]);
+  it("is EAGER for main-chat", () => {
+    // MUTATION: drop the entry (deferred). Deferred means the model must
+    // tool_search for it at the exact moment it has a question — it will guess
+    // instead, which is the failure this tool removes.
+    expect(AUDIENCES_BY_TOOL[NAME]).toEqual(["main-chat"]);
   });
 
   it("is stamped onto the definition at registry build, not just declared in the map", async () => {
     const { buildToolRegistry } = await import("../src/tools/registry-build.js");
     buildToolRegistry();
-    expect(allTools.find((t) => t.name === NAME)!.audiences).toEqual(["main-chat", "build-intent"]);
+    expect(allTools.find((t) => t.name === NAME)!.audiences).toEqual(["main-chat"]);
   });
 
   it("survives into the schema for an ORDINARY message with no matching keyword", async () => {
@@ -96,7 +93,7 @@ describe("ask_user — the audience map (the wiring point that decides if it is 
     expect(surfaced).toContain(NAME);
   });
 
-  it("survives the build-intent strip-down", async () => {
+  it("survives into the schema for a build-shaped message", async () => {
     const { filterToolsForMessage } = await import("../src/agent-request/tool-filter.js");
     const surfaced = filterToolsForMessage(allTools, "build me an app that takes payments").map((t) => t.name);
     expect(surfaced).toContain(NAME);

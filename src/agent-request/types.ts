@@ -107,7 +107,7 @@ export interface PreparedAgentRequest {
    *  interactive chat path fails the turn on it rather than run on a model the
    *  composer never showed (routes/chat/run-chat-turn/orchestrator.ts). */
   providerSwitch?: ProviderSwitch;
-  /** Force a single tool for this turn — see intent-classifier.ts. */
+  /** Force a single tool for this turn — explicit build routes only (tool-selection.ts). */
   toolChoice?: ForcedToolChoice;
   /** Content-free prompt sizing persisted with the canonical operation. */
   promptTelemetry: PromptTelemetry;

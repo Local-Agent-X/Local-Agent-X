@@ -34,7 +34,7 @@ export interface StreamOptions {
   /** Force tool use: "required" makes the model call a tool. "auto" (default) lets it decide. */
   toolChoice?: "auto" | "required";
   /**
-   * Force a SPECIFIC tool by name (intent-classifier path). On the direct
+   * Force a SPECIFIC tool by name (explicit build route). On the direct
    * HTTP path this becomes `tool_choice: { type: "tool", name }`. On the
    * CLI path the caller is expected to have already nudged the system
    * prompt — this field is informational there.

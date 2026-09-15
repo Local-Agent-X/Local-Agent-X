@@ -1,12 +1,8 @@
 import type { ToolDefinition } from "../../types.js";
-import type { IntentVerdict } from "../../classifiers/intent-classifier.js";
 import {
   resolveAppBuildContinuation,
   type AppBuildContinuationResolution,
 } from "../../auto-build/workflow-resolver.js";
-
-export const BUILD_ROUTE_QUESTION =
-  "Is this a Quick Build (prototype/demo) or a Product Build (planned, production-ready app)?";
 
 export type ProductBuildAction =
   | "build_app"
@@ -17,7 +13,7 @@ export type ProductBuildAction =
   | "conversation";
 
 export interface ProductBuildTurn {
-  kind: "quick" | "product" | "clarify" | "continuation" | "ambiguous" | "methodology";
+  kind: "continuation" | "ambiguous" | "methodology";
   action: ProductBuildAction | null;
   targetTool?: Exclude<ProductBuildAction, "conversation">;
   allowedWorkflowTools?: string[];
@@ -99,39 +95,6 @@ export function resolveProductBuildContinuationTurn(
 ): ProductBuildTurn | null {
   if (!isProductBuildContinuationRequest(message)) return null;
   return continuationTurn(resolver(sessionId));
-}
-
-export function productBuildTurnFromIntent(verdict: IntentVerdict | null): ProductBuildTurn | null {
-  if (verdict?.kind !== "build_app") return null;
-  const reason = verdict.reason || "The request was classified as a new app build.";
-  if (verdict.buildRoute === "quick") {
-    return {
-      kind: "quick",
-      action: "build_app",
-      targetTool: "build_app",
-      reason,
-      directive:
-        `Build routing selected action=build_app (Quick Build). Reason: ${reason} ` +
-        "Call build_app now. The background builder owns the entire build; do not build it inline.",
-    };
-  }
-  if (verdict.buildRoute === "product") {
-    return {
-      kind: "product",
-      action: "start_app_build",
-      targetTool: "start_app_build",
-      reason,
-      directive:
-        `Build routing selected action=start_app_build (Product Build), project_dir=not-created. Reason: ${reason} ` +
-        "Call start_app_build now with the user's concept. It owns spec-first planning; do not call build_app or build inline.",
-    };
-  }
-  return {
-    kind: "clarify",
-    action: null,
-    reason,
-    directive: `Do not call a build tool and do not build inline. Ask exactly this and nothing else: ${BUILD_ROUTE_QUESTION}`,
-  };
 }
 
 export function productBuildMethodologyTurn(firstTurn: boolean): ProductBuildTurn {

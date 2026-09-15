@@ -86,7 +86,7 @@ describe("supervisor tool surface — canonical delegation included, op-submit e
     expect(names.has("agent_output")).toBe(true);
   });
 
-  it("build-intent messages still expose agent_spawn (not op_submit_async)", () => {
+  it("build-shaped messages still expose agent_spawn (not op_submit_async)", () => {
     const filtered = filterToolsForMessage(SAMPLE_TOOLS, "build me an app for tracking workouts");
     const names = new Set(filtered.map(t => t.name));
     expect(names.has("agent_spawn")).toBe(true);

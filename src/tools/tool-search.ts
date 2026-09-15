@@ -9,10 +9,8 @@ import { UnifiedToolRegistry } from "./registry.js";
  *
  * Behavior is keyed on audience:
  *  - "main-chat":     eager set for main-chat + keyword routing + literal-call detection
- *                     + build-intent strip-down when message matches
  *  - "spawned-agent": fixed eager set, no message inspection
  *  - "operator":      fixed eager set, no message inspection, no identity-tool intersection
- *  - "build-intent":  used internally by main-chat strip-down; callers shouldn't request directly
  *
  * Deterministic for a given (registry, request) pair. The only non-pure step is
  * the availability gate below: a tool may declare an `available()` predicate
@@ -59,8 +57,6 @@ export interface ResolveRequest {
   /** Optional literal-tool-call detector. Same injection pattern as
    *  keywordRouter. Only used for main-chat. */
   literalCallDetector?: (message: string, allTools: ToolDefinition[]) => Set<string>;
-  /** Optional build-intent test. Only used for main-chat. */
-  buildIntentTest?: (message: string) => boolean;
 }
 
 const ALWAYS_ON_TOOLS: ReadonlySet<string> = new Set([
@@ -158,17 +154,6 @@ function resolveMainChat(req: ResolveRequest, all: ToolDefinition[]): ToolDefini
   const keyworded = req.keywordRouter
     ? req.keywordRouter(msg, all)
     : new Set<string>();
-
-  // Build-intent strip-down. If the user message is "build me X" AND they
-  // didn't paste a literal tool call, narrow to build-intent audience.
-  // Literal calls always win — even on build-intent matches. Keyword-routed
-  // tools survive the strip-down too: a message that names an office
-  // artifact ("power point", "spreadsheet") must keep those tools in the
-  // schema even when the build classifier (mis)fires, or the model's only
-  // visible "make something" tool is build_app (2026-06-10 misroute).
-  if (req.buildIntentTest && req.buildIntentTest(msg) && literalCalls.size === 0) {
-    return all.filter(t => t.audiences?.includes("build-intent") || keyworded.has(t.name));
-  }
 
   const included = new Set<string>();
   for (const t of all) {

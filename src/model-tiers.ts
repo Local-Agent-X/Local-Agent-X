@@ -176,6 +176,17 @@ export const ESSENTIAL_TOOLS_ORDER: readonly string[] = [
   // so "edit this photo" reaches the model instead of falling back to a
   // from-scratch generate_image that never sees the source pixels.
   "generate_image", "edit_image", "generate_video",
+  // Deliverable producers, here for the same reason build_app is: when the
+  // user asks for the artifact ITSELF ("make me a deck/doc/sheet/pdf"), the
+  // tool that produces it is the whole task, and a medium model has only
+  // MEDIUM_INTENT_SLOTS of headroom to find it. Live 2026-09-16: across 27
+  // muse turns the two slots went to edit_lines+multi_edit on 21 of them —
+  // both redundant with the essential `edit` — and `presentation` won a slot
+  // exactly once. Asked for a PowerPoint on a turn where it lost, the model
+  // had no way to make one, so it improvised `write("…​.pptx", "placeholder")`
+  // and reported the deck as built. These are the family umbrellas (one tool,
+  // many actions), so four names buy every create/edit/read action.
+  "presentation", "document", "spreadsheet", "pdf",
   // The credential path, for the same reason the media tools are here and not
   // behind the intent filter: when it is missing the model does not degrade
   // gracefully, it degrades DANGEROUSLY. Live 2026-09-08, a medium local model

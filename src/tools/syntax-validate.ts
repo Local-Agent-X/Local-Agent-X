@@ -98,6 +98,48 @@ export function checkEditSyntax(filePath: string, before: string | null, after: 
   return { reject: beforeIssue === null, issue };
 }
 
+/**
+ * File types that are ZIP or binary containers, and the tool that builds each.
+ * `write` takes a JS string, so it CANNOT produce one of these — a write here
+ * is always a model improvising the deliverable it was asked for because the
+ * real tool wasn't in its schema (see ESSENTIAL_TOOLS_ORDER, model-tiers.ts).
+ */
+const BINARY_CONTAINER_TOOLS: Readonly<Record<string, string>> = {
+  pptx: "presentation", docx: "document", xlsx: "spreadsheet", pdf: "pdf",
+};
+
+/** A container file already carries its format signature; anything else is text. */
+function hasContainerSignature(ext: string, content: string): boolean {
+  if (ext === "pdf") return content.startsWith("%PDF-");
+  // OOXML is a zip: "PK" then 0x03 0x04, spelled by code point because the
+  // repo's source gate refuses raw control bytes in a literal.
+  return content.startsWith("PK")
+    && content.charCodeAt(2) === 3 && content.charCodeAt(3) === 4;
+}
+
+/**
+ * Reject writing text into a binary-container file, naming the tool that makes
+ * one. Returns null when the write is fine.
+ *
+ * Deliberately NOT part of checkEditSyntax: `allow_syntax_errors` exists for a
+ * user who knowingly wants unparseable content, and no user knowingly wants an
+ * 11-byte .pptx. The point is that the failure lands HERE, at the mistake,
+ * instead of as a truthful-sounding "it's built" the user only discovers when
+ * the file opens empty.
+ */
+export function binaryContainerRejection(filePath: string, content: string): string | null {
+  const ext = filePath.split(".").pop()?.toLowerCase() ?? "";
+  const tool = BINARY_CONTAINER_TOOLS[ext];
+  if (!tool || hasContainerSignature(ext, content)) return null;
+  return (
+    `Write NOT applied — a .${ext} is a binary container, and this wrote ${content.length} ` +
+    `bytes of text into it. The file would exist but open as corrupt.\n\n` +
+    `Use the \`${tool}\` tool to build it (e.g. \`${tool}({ action: "create", file_path: "${filePath}" , … })\`). ` +
+    `If \`${tool}\` is not in your schema, say so plainly — do NOT substitute a text file with this extension ` +
+    `and do NOT report the deliverable as produced.`
+  );
+}
+
 /** The message returned when a write-time edit is rejected for introducing a
  *  syntax error. Shared by every edit/write sink so the guidance can't drift. */
 export function syntaxRejectionMessage(filePath: string, issue: string): string {

@@ -324,6 +324,7 @@ const spreadsheetQuery: ToolDefinition = {
 export const spreadsheetTools: ToolDefinition[] = [
   collapseFamily({
     name: "spreadsheet",
+    compactDescription: "Read, create, edit and query Excel .xlsx / CSV files — never a Python pandas script. actions: read, write, edit, query. THE only way to produce an .xlsx; never write one with the write tool, it is a binary container.",
     intro:
       "Read, create, edit, and query Excel (.xlsx) / CSV spreadsheets. " +
       "Use for spreadsheet files — never write Python pandas scripts for this. " +

@@ -8,13 +8,10 @@
  *
  *   beforeTurn:           mid-turn-stale, open-steps
  *                         (turn-0 plan seed on agent/background lanes)
- *   afterModelCall:       loop-detection, action-claim,
- *                         tool-search-nudge (all lanes — forces a tool_search
- *                         when the model declines a capability tool-lessly),
+ *   afterModelCall:       loop-detection,
  *                         premature-completion (worker ops only — forces one
  *                         more turn when a non-chat op ends tool-lessly with
- *                         nothing committed; runs AFTER action-claim so a
- *                         claim-mismatch nudge wins first), open-steps
+ *                         nothing committed), open-steps
  *                         (forces continuation when the model left declared
  *                         task-list steps unfinished; runs on interactive too,
  *                         its open-tasks signal is safe for chat), browser-handoff

@@ -125,13 +125,23 @@ describe("shrinkToolsForTier — medium manifest size", () => {
     const shrunk = shrinkToolsForTier(set, "medium", set, set.length);
     const after = toolManifestTokens(shrunk.map(wire));
     expect(shrunk.map((t) => t.name)).toEqual(set.map((t) => t.name));
-    // Measured 2026-09-07 over these 25 tools: 14,030 → 6,352 (55% smaller);
-    // the 23-tool cap set went 13,653 → 6,100. The full-text baseline is pinned
-    // loosely so the assertion means "compaction still buys ≥50%", not "the
-    // catalog never grows".
+    // Measured 2026-09-07 over 25 tools: 14,030 → 6,352 (55% smaller). The
+    // full-text baseline is pinned loosely so the assertion means "compaction
+    // still buys ≥50%", not "the catalog never grows".
+    //
+    // Re-measured 2026-09-16 at 29 tools: 9,619. The four office families
+    // (presentation/document/spreadsheet/pdf) joined the essentials because a
+    // medium model could not otherwise reach the tool that produces the
+    // deliverable it was asked for (deliverable-path.test.ts). Each costs ~800
+    // tokens and almost all of it is the flat union PARAMETER schema, not
+    // prose — their compact descriptions are already at the 220-char cap. So
+    // this ceiling moved deliberately: 9.6k of tools against muse's 65k window
+    // is ~15%, which buys a working deck. If it needs to come back down, the
+    // lever is collapsing those families to the `{action, params}` schema for
+    // medium tier, NOT trimming the descriptions again.
     expect(before).toBeGreaterThan(12_000);
     expect(after).toBeLessThanOrEqual(before / 2);
-    expect(after).toBeLessThanOrEqual(7_000);
+    expect(after).toBeLessThanOrEqual(10_000);
   });
 
   it("shortens parameter descriptions past the cap and leaves shorter ones verbatim", () => {

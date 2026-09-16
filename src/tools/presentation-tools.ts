@@ -332,6 +332,7 @@ const presentationEdit: ToolDefinition = {
 export const presentationTools: ToolDefinition[] = [
   collapseFamily({
     name: "presentation",
+    compactDescription: "Build and edit PowerPoint .pptx decks. actions: create, from_outline, add_slide, edit. THE only way to produce a .pptx — never write one with the write tool, it is a binary container. Takes images:[{source,caption}].",
     intro: "Create and edit PowerPoint (.pptx) presentations. For advanced custom layouts beyond these actions, a Node build script may use pptxgenjs directly — it's bundled, so `require('pptxgenjs')` by bare name (never an absolute cwd/node_modules path).",
     actions: {
       create: presentationCreate,

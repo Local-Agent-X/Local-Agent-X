@@ -21,6 +21,11 @@ export interface CollapseFamilyOpts {
   name: string;
   /** Leading paragraph of the collapsed description (what/when, sibling notes). */
   intro: string;
+  /** What a medium/weak model sees instead of intro + every action's docs. A
+   *  family with `fullActionDocs` runs to thousands of characters, which is
+   *  affordable for a frontier model and not for a local one — and the local
+   *  model is exactly who needs the family in its set (model-tiers.ts). */
+  compactDescription?: string;
   /** action -> inner tool. Key is the model-facing action name. */
   actions: Record<string, ToolDefinition>;
   /** Flat union schema for office-style families. Must include neither
@@ -75,6 +80,7 @@ export function collapseFamily(opts: CollapseFamilyOpts): ToolDefinition {
   return {
     name: opts.name,
     description: `${opts.intro}\n\nActions:\n${docs.join("\n")}`,
+    ...(opts.compactDescription ? { compactDescription: opts.compactDescription } : {}),
     parameters,
     async execute(args, signal): Promise<ToolResult> {
       const action = String(args.action ?? "");

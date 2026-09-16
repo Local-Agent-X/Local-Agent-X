@@ -348,6 +348,7 @@ const documentTemplate: ToolDefinition = {
 export const documentTools: ToolDefinition[] = [
   collapseFamily({
     name: "document",
+    compactDescription: "Create, read, edit and template-fill Word .docx documents. actions: create, read, edit, template. THE only way to produce a .docx — never write one with the write tool, it is a binary container.",
     intro: "Create, read, edit, and template-fill Word .docx documents. For advanced custom layouts beyond these actions, a Node build script may use docx directly — it's bundled, so `require('docx')` by bare name (never an absolute cwd/node_modules path).",
     actions: {
       create: documentCreate,

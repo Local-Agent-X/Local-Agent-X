@@ -9,7 +9,7 @@ import type { ToolDefinition } from "../types.js";
 import { detectInjection } from "../sanitize.js";
 import { ok, err, blocked } from "./result-helpers.js";
 import { fileNotFoundError } from "./edit-recovery.js";
-import { checkEditSyntax, syntaxRejectionMessage } from "./syntax-validate.js";
+import { binaryContainerRejection, checkEditSyntax, syntaxRejectionMessage } from "./syntax-validate.js";
 import { checkHardcodedHomePath } from "./portable-path-check.js";
 import { checkAppWrite, writeGuardRejectionMessage } from "./app-tools/write-guard.js";
 import { appUrlHint, servedFileHint } from "./file-hints.js";
@@ -202,6 +202,8 @@ export const writeTool: ToolDefinition = {
         return err(`BLOCKED: Content appears to contain a secret/credential. Secrets must never be written to workspace files. Use the secrets vault instead.`);
       }
     }
+    const containerRejection = binaryContainerRejection(filePath, content);
+    if (containerRejection) return err(containerRejection);
     const guard = checkAppWrite(filePath, content);
     if (!guard.allow) return err(guard.message ?? writeGuardRejectionMessage(guard.reason ?? "policy violation"));
     try {

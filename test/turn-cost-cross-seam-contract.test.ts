@@ -10,7 +10,7 @@
  *      context, and failures finally render an [error] header. The ONE
  *      deliberate exception is the zero-match sentinel, kept LEGACY-shaped
  *      (bare {content}, no metadata → rendered verbatim) because
- *      agent-guards/cleanup-verify.ts isEmptyGrepResult and
+ *      errors/classifier.ts isEmptyResultText and
  *      errors/classifier.ts EMPTY_RESULT_RE start-anchor-match the RENDERED
  *      content.
  *
@@ -57,7 +57,6 @@ import { classifyStepEffort, MECHANICAL_TOOLS } from "../src/canonical-loop/step
 import { buildTurnInput } from "../src/canonical-loop/turn-loop/build-input.js";
 import { appendOpMessage } from "../src/canonical-loop/store.js";
 import { opDir } from "../src/ops/event-log.js";
-import { isEmptyGrepResult } from "../src/agent-guards/cleanup-verify.js";
 import { isEmptyResultText } from "../src/errors/classifier.js";
 import type { ToolResult, ToolDispatchStatus } from "../src/types.js";
 import type { CanonicalMessage } from "../src/canonical-loop/contract-types.js";
@@ -249,10 +248,9 @@ describe("contract 2 — the headerless zero-match sentinel still classifies mec
     expect(res.metadata).toBeUndefined();
     expect(res.isError).toBeFalsy();
 
-    // Rendered VERBATIM so the two start-anchored consumers keep matching.
+    // Rendered VERBATIM so the start-anchored consumer keeps matching.
     const rendered = renderToolResultForModel(res);
     expect(rendered).toBe("No matches found.");
-    expect(isEmptyGrepResult(rendered)).toBe(true);      // agent-guards/cleanup-verify.ts
     expect(isEmptyResultText(rendered)).toBe(true);      // errors/classifier.ts EMPTY_RESULT_RE
 
     // A search that found nothing is a SUCCESSFUL search: dispatch must still

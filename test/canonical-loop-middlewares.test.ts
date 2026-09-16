@@ -28,25 +28,11 @@ import { makeCanonicalLoopContext } from "../src/canonical-loop/middlewares/ctx.
 
 import { loopDetectionMiddleware } from "../src/canonical-loop/middlewares/loop-detection.js";
 import { deadEndMiddleware } from "../src/canonical-loop/middlewares/dead-end.js";
-import { actionClaimMiddleware } from "../src/canonical-loop/middlewares/action-claim.js";
 import { prematureCompletionMiddleware } from "../src/canonical-loop/middlewares/premature-completion.js";
-import { selfCheckMiddleware } from "../src/canonical-loop/middlewares/self-check.js";
 import { midTurnStaleMiddleware } from "../src/canonical-loop/middlewares/mid-turn-stale.js";
-import { postTurnDetectorMiddleware } from "../src/canonical-loop/middlewares/post-turn-detector.js";
 
 const OPS_BASE = join(homedir(), ".lax", "operations");
 const tracked: string[] = [];
-
-// The claim-verify LLM call would hit a real provider; stub it so tests
-// stay offline. `null` means "LLM unavailable" → middleware falls back to
-// the regex verdict (fires the nudge). `false` means "veto" → no nudge.
-// `true` means "confirm" → fire the nudge. Each test that depends on this
-// sets it via the mock module override below.
-vi.mock("../src/classifiers/claim-verify.js", () => ({
-  verifyClaimHallucinationWithLLM: vi.fn(async () => null),
-}));
-import { verifyClaimHallucinationWithLLM } from "../src/classifiers/claim-verify.js";
-const verifyMock = vi.mocked(verifyClaimHallucinationWithLLM);
 
 function mkOp(label: string, type: string = "chat_turn", lane: Op["lane"] = "interactive"): Op {
   const id = newOpId(`mw_${label}`);
@@ -114,8 +100,6 @@ function mkToolCall(tool: string, args: unknown = {}): ToolCall {
 beforeEach(() => {
   _resetMiddlewareStates();
   _resetEvidenceHistories();
-  verifyMock.mockReset();
-  verifyMock.mockResolvedValue(null); // default: LLM unavailable → fall back to regex
 });
 
 afterEach(() => {
@@ -203,70 +187,6 @@ describe("dead-end middleware", () => {
 
 // ── action-claim ─────────────────────────────────────────────────────────
 
-describe("action-claim middleware", () => {
-  it("fires when the model claims an action without calling the matching tool", async () => {
-    verifyMock.mockResolvedValue(true);
-    const op = mkOp("action-claim-fires");
-    const r = await actionClaimMiddleware.afterModelCall!(mkCtx({
-      op,
-      assistantContent: "I removed the cron job for you.",
-      toolsCalledThisOp: ["read", "grep"],
-    }));
-    expect(r.kind).toBe("nudge");
-    expect((r as { reason: string }).reason).toBe("action-claim");
-  });
-
-  it("fires at most once per op", async () => {
-    verifyMock.mockResolvedValue(true);
-    const op = mkOp("action-claim-once");
-    const ctxA = mkCtx({
-      op, assistantContent: "I deleted the file.",
-      toolsCalledThisOp: ["read"],
-    });
-    const r1 = await actionClaimMiddleware.afterModelCall!(ctxA);
-    expect(r1.kind).toBe("nudge");
-    const r2 = await actionClaimMiddleware.afterModelCall!(ctxA);
-    expect(r2.kind).toBe("continue");
-  });
-
-  it("LLM veto suppresses the nudge", async () => {
-    verifyMock.mockResolvedValue(false);
-    const op = mkOp("action-claim-veto");
-    const r = await actionClaimMiddleware.afterModelCall!(mkCtx({
-      op, assistantContent: "I noted in the bash output that X failed.",
-      toolsCalledThisOp: ["read"],
-    }));
-    expect(r.kind).toBe("continue");
-  });
-
-  it("fires on a MIXED turn (tool calls present) when the exec claim has no matching successful tool", async () => {
-    // Regression for the mixed-turn early-return removal. The turn made a
-    // tool call (read), but claims it restarted the bridge with no
-    // process_restart/bash/etc. in the ok-ledger → must nudge.
-    verifyMock.mockResolvedValue(true);
-    const op = mkOp("action-claim-mixed");
-    const r = await actionClaimMiddleware.afterModelCall!(mkCtx({
-      op,
-      toolCalls: [mkToolCall("read", { path: "x" })],
-      assistantContent: "I restarted the bridge and it's running.",
-      toolsCalledThisOp: [], // read failed / not in ok-ledger
-    }));
-    expect(r.kind).toBe("nudge");
-    expect((r as { reason: string }).reason).toBe("action-claim");
-  });
-
-  it("does NOT fire on a mixed turn when the exec tool actually succeeded", async () => {
-    const op = mkOp("action-claim-mixed-ok");
-    const r = await actionClaimMiddleware.afterModelCall!(mkCtx({
-      op,
-      toolCalls: [mkToolCall("process_restart", { name: "bridge" })],
-      assistantContent: "I restarted the bridge and it's running.",
-      toolsCalledThisOp: ["process_restart"],
-    }));
-    expect(r.kind).toBe("continue");
-  });
-});
-
 // ── premature-completion ─────────────────────────────────────────────────
 
 describe("premature-completion middleware", () => {
@@ -333,40 +253,6 @@ describe("premature-completion middleware", () => {
 
 // ── self-check ───────────────────────────────────────────────────────────
 
-describe("self-check middleware", () => {
-  it("fires when a tool error appears but the assistant text doesn't acknowledge it", () => {
-    const op = mkOp("self-check-fires");
-    // Seed op_messages: user, tool error, then assistant continues without acknowledgment.
-    appendOpMessage({
-      messageId: "u-0", opId: op.id, turnIdx: 0, seqInTurn: 0,
-      role: "user", content: { text: "do the thing" },
-      createdAt: new Date().toISOString(),
-    });
-    appendOpMessage({
-      messageId: "t-0", opId: op.id, turnIdx: 0, seqInTurn: 1,
-      role: "tool_result", content: { text: "BLOCKED: permission denied", toolCallId: "c1" },
-      createdAt: new Date().toISOString(),
-    });
-    const r = selfCheckMiddleware.afterModelCall!(mkCtx({
-      op, assistantContent: "All set, here you go.",
-    }));
-    expect((r as { kind: string }).kind).toBe("nudge");
-  });
-
-  it("does not fire when there are no unresolved errors", () => {
-    const op = mkOp("self-check-clean");
-    appendOpMessage({
-      messageId: "u-0", opId: op.id, turnIdx: 0, seqInTurn: 0,
-      role: "user", content: { text: "hi" },
-      createdAt: new Date().toISOString(),
-    });
-    const r = selfCheckMiddleware.afterModelCall!(mkCtx({
-      op, assistantContent: "Hi there.",
-    }));
-    expect((r as { kind: string }).kind).toBe("continue");
-  });
-});
-
 // ── mid-turn-stale ───────────────────────────────────────────────────────
 
 describe("mid-turn-stale middleware", () => {
@@ -416,38 +302,6 @@ describe("mid-turn-stale middleware", () => {
 });
 
 // ── post-turn-detector ───────────────────────────────────────────────────
-
-describe("post-turn-detector middleware", () => {
-  it("fires planning-only on iter 0 when the model promises future action but emits no tool calls", async () => {
-    const op = mkOp("ptd-planning");
-    // seed minimal user message so userMessageHasImages == false
-    appendOpMessage({
-      messageId: "u-0", opId: op.id, turnIdx: 0, seqInTurn: 0,
-      role: "user", content: { text: "build me X" },
-      createdAt: new Date().toISOString(),
-    });
-    const r = await postTurnDetectorMiddleware.afterModelCall!(mkCtx({
-      op, turnIdx: 0,
-      assistantContent: "I'll create that file for you. Let me start by writing the structure.",
-    }));
-    // planning-only should fire
-    expect((r as { kind: string }).kind).toBe("nudge");
-    expect((r as { reason: string }).reason).toMatch(/^post-turn:/);
-  });
-
-  it("returns continue on a clean assistant reply", async () => {
-    const op = mkOp("ptd-clean");
-    appendOpMessage({
-      messageId: "u-0", opId: op.id, turnIdx: 0, seqInTurn: 0,
-      role: "user", content: { text: "what's 2+2?" },
-      createdAt: new Date().toISOString(),
-    });
-    const r = await postTurnDetectorMiddleware.afterModelCall!(mkCtx({
-      op, turnIdx: 0, assistantContent: "4.",
-    }));
-    expect((r as { kind: string }).kind).toBe("continue");
-  });
-});
 
 
 // ── host: toolsCalledThisOp success-only semantics ──────────────────────

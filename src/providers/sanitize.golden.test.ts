@@ -11,8 +11,6 @@ import { describe, it, expect } from "vitest";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 
 import {
-	buildCleanHistory,
-	truncateHistory,
 	sanitizeHistory,
 	renderTurnErrorBoundary,
 	TURN_ERROR_BOUNDARY_HEAD,
@@ -34,90 +32,17 @@ const summaryOf = (msgs: ChatCompletionMessageParam[]): string => {
 	return msgs[0].content as string;
 };
 
-describe("golden: chat-lane keep counts", () => {
-	it("web channel keeps the last 40 rows (10 digested)", () => {
-		const out = buildCleanHistory(alternating(50), "web");
-		expect(out).toHaveLength(41); // digest row + 40 kept
-		expect(summaryOf(out)).toContain('<prior_conversation count="10">');
-		expect(out[1].content).toBe("ask 10"); // cut lands on the user row at idx 10
-	});
+// DELETED with the row window (2026-09-16): goldens for chat-lane keep counts
+// (web 40 / cli 30 / explicit maxHistory) and truncateHistory's default keep of
+// 30. History is no longer bounded by ROW COUNT — the conversation is
+// checkpointed against a token budget and the old part is summarized once
+// (context-manager/checkpoint-history.ts, whose own tests pin the new
+// behaviour). Sanitize's guarantees below are unchanged and still golden.
 
-	it("non-web channels keep the last 30 rows (20 digested)", () => {
-		const out = buildCleanHistory(alternating(50), "cli");
-		expect(out).toHaveLength(31);
-		expect(summaryOf(out)).toContain('<prior_conversation count="20">');
-		expect(out[1].content).toBe("ask 20");
-	});
-
-	it("an explicit maxHistory overrides the channel default", () => {
-		const out = buildCleanHistory(alternating(50), "web", 10);
-		expect(out).toHaveLength(11);
-		expect(summaryOf(out)).toContain('<prior_conversation count="40">');
-	});
-
-	it("truncateHistory defaults to a keep of 30", () => {
-		const out = truncateHistory(alternating(50));
-		expect(out).toHaveLength(31);
-	});
-
-	it("under the keep there is no digest row at all", () => {
-		const msgs = alternating(30);
-		expect(truncateHistory(msgs, 30)).toEqual(msgs);
-	});
-});
-
-describe("golden: deterministic digest clip boundaries", () => {
-	// Tail of 4 rows starting on a user row so the cut lands exactly there and
-	// `old` is precisely the rows before it.
-	const tail = [u("recent ask"), a("recent reply"), u("last ask"), a("last reply")];
-
-	it("clips an old user message to 2000 head + 1000 tail with an omission marker", () => {
-		const content = "H".repeat(2000) + "M".repeat(500) + "T".repeat(1000);
-		const out = truncateHistory([u(content), a("ok"), ...tail], 4);
-		expect(summaryOf(out)).toContain(
-			`<prior_user>${"H".repeat(2000)} … [500 chars omitted] … ${"T".repeat(1000)}</prior_user>`,
-		);
-	});
-
-	it("keeps an old user message of exactly 3000 chars verbatim (no clip)", () => {
-		const content = "H".repeat(2000) + "T".repeat(1000);
-		const out = truncateHistory([u(content), a("ok"), ...tail], 4);
-		expect(summaryOf(out)).toContain(`<prior_user>${content}</prior_user>`);
-	});
-
-	it("clips an old assistant message at 300 chars", () => {
-		const out = truncateHistory([u("q"), a("b".repeat(350)), ...tail], 4);
-		expect(summaryOf(out)).toContain(`<prior_assistant>${"b".repeat(300)}…</prior_assistant>`);
-	});
-
-	it("clips an old tool result at 200 chars", () => {
-		const toolRow = { role: "tool", content: "t".repeat(250), tool_call_id: "call_1" } as unknown as ChatCompletionMessageParam;
-		const out = truncateHistory([u("q"), toolRow, a("done"), ...tail], 4);
-		expect(summaryOf(out)).toContain(`<prior_tool_result>${"t".repeat(200)}…</prior_tool_result>`);
-	});
-
-	it("spends the 24k char budget newest-first and marks the omitted head", () => {
-		// 20 old user rows, 3000 chars each → 3025-char digest lines. Newest-first
-		// only 7 fit under 24_000; the older 13 collapse to an omission marker.
-		const old: ChatCompletionMessageParam[] = [];
-		for (let i = 0; i < 20; i++) old.push(u(`M${String(i).padStart(2, "0")}${"x".repeat(2997)}`));
-		const summary = summaryOf(truncateHistory([...old, ...tail], 4));
-		expect(summary).toContain('<prior_conversation count="20">');
-		expect(summary).toContain('<prior_omitted count="13"/>');
-		expect(summary.match(/<prior_user>/g)).toHaveLength(7);
-		expect(summary).toContain("M13"); // newest 7 (13..19) survive…
-		expect(summary).toContain("M19");
-		expect(summary).not.toContain("M12"); // …older ones don't
-	});
-
-	it("preserves a leading system row (manual /api/compact summary) ahead of the digest", () => {
-		const leader: ChatCompletionMessageParam = { role: "system", content: "[COMPACTED CONTEXT] earlier" };
-		const out = truncateHistory([leader, ...alternating(40)], 30);
-		expect(out[0]).toBe(leader);
-		expect(out[1].role).toBe("system");
-		expect(out[1].content).toContain('<prior_conversation count="10">');
-	});
-});
+// DELETED with the row window (2026-09-16): goldens for the <prior_conversation>
+// digest — the per-kind clip budgets and the omission marker. That digest was
+// how the deleted window explained what it had cut; the checkpoint summarises
+// the old part in prose instead (context-manager/checkpoint-history.ts).
 
 // GOLDEN for the `_error` boundary row canonical-run.ts writes after a
 // terminal stream error: the provider copy carries the canonical sentence
@@ -230,21 +155,24 @@ describe("golden: terminal-error boundary at the provider seam", () => {
 	});
 
 	it("no _error row → no marker anywhere (a recovered error leaves no trace)", () => {
-		const out = buildCleanHistory(alternating(50), "web");
+		const out = sanitizeHistory(alternating(50));
 		for (const m of out) expect(copiesIn(m)).toBe(0);
 	});
 
-	it("truncation keeps the _error row in the working window", () => {
-		// 48 alternating rows, then the errored turn in the 400 shape: user row, boundary, no speech.
-		const out = buildCleanHistory([...alternating(48), u("last ask"), errorRow(BOUNDARY)], "web");
-		expect(out).toHaveLength(41);
+	// The row window that used to bound this (keep 40, digest the rest) was
+	// deleted 2026-09-16; history is checkpointed by tokens instead. What still
+	// has to hold is the marker invariant: ONE rendered copy, wherever the row
+	// sits in a long transcript.
+	it("renders the _error row exactly once at the end of a long transcript", () => {
+		const out = sanitizeHistory([...alternating(48), u("last ask"), errorRow(BOUNDARY)]);
 		expect(out[out.length - 1]).toEqual({ role: "assistant", content: BOUNDARY });
 		expect(out.filter((m) => copiesIn(m) > 0)).toHaveLength(1);
 	});
 
-	it("an _error row that ages out of the window survives in the digest", () => {
-		const out = buildCleanHistory([u("first ask"), errorRow(BOUNDARY), ...alternating(48)], "web");
-		expect(summaryOf(out)).toContain(`<prior_assistant>${TURN_ERROR_BOUNDARY_HEAD}http_400: `);
+	it("renders it exactly once when it sits at the head instead", () => {
+		const out = sanitizeHistory([u("first ask"), errorRow(BOUNDARY), ...alternating(48)]);
+		expect(out.filter((m) => copiesIn(m) > 0)).toHaveLength(1);
+		expect(String(out[1].content)).toContain(TURN_ERROR_BOUNDARY_HEAD);
 	});
 
 	// The partial-text shape: the turn spoke ("Starting on it.") and THEN died,

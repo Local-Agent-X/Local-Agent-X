@@ -91,43 +91,6 @@ export function turnCompactionKeepLast(percentage: number, forced: boolean): num
 
 // ─── Chat-lane keep counts (consumed by providers/sanitize.ts) ──────────────
 
-/** Rows kept verbatim per channel when the chat lane truncates a session. */
-export const CHAT_KEEP = { web: 40, default: 30 } as const;
-
-export function chatHistoryMaxKeep(channel: string): number {
-	return channel === "web" ? CHAT_KEEP.web : CHAT_KEEP.default;
-}
-
-/**
- * Rows kept for cloud providers. Their windows are 200k-1M tokens, so the
- * turn loop's token-pressure compaction is the real bound; this cap only keeps
- * seeding and the CLI text prompt from growing without limit.
- */
-export const CLOUD_CHAT_KEEP = { web: 200, default: 150 } as const;
-
-export interface ChatHistoryWindow {
-	maxKeep: number;
-	/** The cut point only moves in multiples of this, so the kept history is a
-	 *  byte-stable prefix for `step` new rows at a time — a window that slides
-	 *  by one row per message changes the prefix on every message, which
-	 *  defeats Anthropic prompt caching and a local runtime's KV-cache reuse. */
-	step: number;
-}
-
-/**
- * History window for a chat turn. Local models keep today's row cap (never
- * more history than before — their windows are small) but step the cut so
- * Ollama / llama.cpp can reuse the previous prompt's prefix instead of
- * re-prefilling the whole history. Cloud models get a much larger stepped
- * window. No provider → the legacy one-row slide.
- */
-export function chatHistoryWindow(channel: string, provider?: string): ChatHistoryWindow {
-	if (!provider) return { maxKeep: chatHistoryMaxKeep(channel), step: 1 };
-	const table = provider === "local" ? CHAT_KEEP : CLOUD_CHAT_KEEP;
-	const maxKeep = channel === "web" ? table.web : table.default;
-	return { maxKeep, step: Math.floor(maxKeep / 2) };
-}
-
 // ─── Between-messages checkpoint (context-manager/checkpoint-history.ts) ────
 //
 // The successor to chatHistoryWindow above. That window bounds history by ROW

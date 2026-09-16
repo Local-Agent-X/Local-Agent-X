@@ -33,11 +33,7 @@ import { imagesToOpenAIParts } from "./images-to-openai-parts.js";
 import { toGeminiContents } from "./gemini-native-transport.js";
 import { convertMessages } from "../../anthropic-client/request.js";
 import { convertMessagesToInput } from "../../codex-message-convert.js";
-import {
-	buildCleanHistory,
-	renderTurnErrorBoundary,
-	TURN_ERROR_BOUNDARY_HEAD,
-} from "../../providers/sanitize.js";
+import { sanitizeHistory, renderTurnErrorBoundary, TURN_ERROR_BOUNDARY_HEAD } from "../../providers/sanitize.js";
 
 // Minimal valid 1x1 transparent PNG.
 const PNG_B64 =
@@ -349,7 +345,7 @@ describe("D. error-boundary history (C3) → Anthropic: alternating roles, bound
 
 	function replay(rows: ChatCompletionMessageParam[]): AnthropicMessage[] {
 		const before = structuredClone(rows);
-		const clean = buildCleanHistory(rows, "web");
+		const clean = sanitizeHistory(rows);
 		const wire = convertMessages(clean);
 		assertAnthropicWellFormed(wire);
 		for (let i = 1; i < wire.length; i++) {

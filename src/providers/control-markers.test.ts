@@ -6,14 +6,14 @@
 // " [interrupted by user]" marker was echoed by Grok into a single assistant
 // message containing 763 copies (session chat-mrog3e98-2uva8, 2026-07-17).
 // providers/sanitize.ts is the one seam every provider-bound history crosses
-// (buildCleanHistory → sanitizeHistory); these tests pin its guarantees:
+// (sanitizeHistory → sanitizeHistory); these tests pin its guarantees:
 //  - `_interrupted: true` metadata renders as the canonical boundary sentence
 //  - legacy/echoed marker text is scrubbed, so polluted sessions self-heal
 //  - no assistant content reaching a provider ever matches a retired marker
 import { describe, it, expect } from "vitest";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 
-import { sanitizeHistory, buildCleanHistory, INTERRUPTED_TURN_BOUNDARY } from "./sanitize.js";
+import { sanitizeHistory, INTERRUPTED_TURN_BOUNDARY } from "./sanitize.js";
 
 const u = (text: string): ChatCompletionMessageParam => ({ role: "user", content: text });
 const a = (text: string, extra?: Record<string, unknown>): ChatCompletionMessageParam =>
@@ -88,7 +88,7 @@ describe("control-marker invariant at the provider seam", () => {
 			u("q3"), a("r3 [Tool calls this turn: none]"),
 			u("q4"), a("r4", { _interrupted: true }),
 		];
-		const out = buildCleanHistory(polluted, "web");
+		const out = sanitizeHistory(polluted);
 		for (const m of out) {
 			if (m.role !== "assistant" || typeof m.content !== "string") continue;
 			expect(m.content).not.toMatch(/\[interrupted by user/);

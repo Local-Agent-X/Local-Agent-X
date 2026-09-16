@@ -4,7 +4,8 @@ import {
   invalidateTurnContextCache,
 } from "../src/agent-request/turn-context-cache.js";
 import { persistTurnState } from "../src/routes/chat/run-chat-turn/canonical-run.js";
-import { buildCleanHistory } from "../src/providers/sanitize.js";
+import { sanitizeHistory } from "../src/providers/sanitize.js";
+import { applyCheckpoint } from "../src/context-manager/checkpoint-history.js";
 
 // Committed-rows path for the checkpoint-text salvage test: a real op id makes
 // persistTurnState read op_messages; these mocks give it committed rows WITHOUT
@@ -151,11 +152,17 @@ interface TurnContextLike {
 
 // Race fix: when the user hits stop and immediately resumes, the resume turn's
 // `prepared` snapshots history BEFORE the lock awaits the prior turn's salvage.
-// The orchestrator rebuilds prepared.cleanHistory via buildCleanHistory from the
-// now-current session.messages after an aborted-non-committing acquire — so the
-// salvaged work must survive that rebuild into the resume's history window.
-describe("buildCleanHistory — resume turn re-reads salvaged work", () => {
-  it("keeps the most recent salvaged messages incl. the interrupted marker", () => {
+// The orchestrator rebuilds prepared.cleanHistory from the now-current
+// session.messages after an aborted-non-committing acquire — sanitizeHistory
+// plus the session's checkpoint, the same shape prepare-request used. The
+// salvaged work must survive that rebuild.
+//
+// It used to be rebuilt through a 40-ROW window (deleted 2026-09-16), and this
+// test asserted the truncation itself. What matters is not that history got
+// shorter — it is that the aborted request and its interrupted marker are
+// still there for the resume turn to read.
+describe("resume turn re-reads salvaged work", () => {
+  const salvaged = () => {
     const history: Array<{ role: string; content: string }> = [];
     for (let i = 0; i < 50; i++) {
       history.push({ role: i % 2 === 0 ? "user" : "assistant", content: `old-${i}` });
@@ -165,14 +172,28 @@ describe("buildCleanHistory — resume turn re-reads salvaged work", () => {
       role: "assistant",
       content: "[Previous turn was interrupted before it finished. The work above ran; continue from there.]",
     });
+    return history;
+  };
 
-    const clean = buildCleanHistory(history as never, "web");
+  it("keeps the most recent salvaged messages incl. the interrupted marker", () => {
+    const clean = sanitizeHistory(salvaged() as never);
     const texts = clean.map((m) => String((m as { content: unknown }).content));
-
-    // The aborted request + interrupted boundary survive into the resume turn.
     expect(texts.some((t) => t === "clone the repo and ingest it")).toBe(true);
     expect(texts.some((t) => /interrupted/i.test(t))).toBe(true);
-    // Truncated (older "old-*" turns dropped), but the recent salvaged work kept.
+  });
+
+  it("survives a checkpoint that summarises the older turns", () => {
+    const history = salvaged();
+    // A checkpoint covering the 50 stale rows: the resume turn sends a summary
+    // for those and the salvaged tail verbatim.
+    const clean = applyCheckpoint(
+      sanitizeHistory(history as never),
+      { summary: "earlier: fifty turns of unrelated work", coversThrough: 50 },
+    );
+    const texts = clean.map((m) => String((m as { content: unknown }).content));
+    expect(texts.some((t) => t === "clone the repo and ingest it")).toBe(true);
+    expect(texts.some((t) => /interrupted/i.test(t))).toBe(true);
+    expect(texts.some((t) => t.includes("old-0")), "the checkpointed head is summarised, not replayed").toBe(false);
     expect(clean.length).toBeLessThan(history.length);
   });
 });

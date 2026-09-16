@@ -12,22 +12,22 @@ import { describe, it, expect } from "vitest";
 //   retractLastTurn (src/memory/retract-last-turn.ts)   ← C5a, the mutation
 //        │  truncated session.messages
 //        ▼
-//   buildCleanHistory (src/providers/sanitize.ts)       ← the canonical
+//   sanitizeHistory (src/providers/sanitize.ts)         ← the canonical
 //        │                                                  context-assembly
 //        ▼                                                  read path that
 //   assembled per-turn model context                       prepare-request.ts
 //                                                           step 2 feeds the LLM
 //
-// buildCleanHistory is exactly what src/agent-request/prepare-request.ts calls
-// (`cleanHistory = buildCleanHistory(input.sessionMessages, input.channel,
+// sanitizeHistory is exactly what src/agent-request/prepare-request.ts calls
+// (`cleanHistory = checkpointedHistory(sanitizeHistory(input.sessionMessages),
 // input.maxHistory)`) to build every new turn's history. Driving the REAL
 // builder off the REAL retract output ties C5a to the actual context path —
 // the whole point of retract. (The full prepareAgentRequest pipeline needs a
-// live server + provider resolution + memory manager; buildCleanHistory is the
+// live server + provider resolution + memory manager; sanitizeHistory is the
 // tightest real seam that assembles history without any of that, so that is
 // what we exercise, unmocked.)
 import { retractLastTurn } from "./retract-last-turn.js";
-import { buildCleanHistory } from "../providers/sanitize.js";
+import { sanitizeHistory } from "../providers/sanitize.js";
 import { COMPACTION_PREFIX } from "../types.js";
 
 const user = (content: string): ChatCompletionMessageParam => ({ role: "user", content });
@@ -71,7 +71,7 @@ describe("retract → context contract (C5a propagates into next-turn model cont
 		// This is the anti-tautology proof. If retract were a no-op (or the seam
 		// were mocked), the polluted tokens would still reach the model. This
 		// assertion documents the baseline the real fix must change.
-		const contextNoRetract = buildCleanHistory(transcript(), "web");
+		const contextNoRetract = sanitizeHistory(transcript());
 		const flat = serialize(contextNoRetract);
 		expect(flat).toContain(LAST_ASK);
 		expect(flat).toContain(LAST_ANSWER);
@@ -86,7 +86,7 @@ describe("retract → context contract (C5a propagates into next-turn model cont
 
 		// (b) Feed the truncated session.messages through the REAL context builder
 		// — the exact call prepare-request.ts makes to seed the next turn.
-		const context = buildCleanHistory(truncated, "web");
+		const context = sanitizeHistory(truncated);
 		const flat = serialize(context);
 
 		// The polluted turn no longer reaches the model.
@@ -111,7 +111,7 @@ describe("retract → context contract (C5a propagates into next-turn model cont
 		const { messages: truncated, removed } = retractLastTurn(msgs, { includeUser: false });
 		expect(removed).toBe(1);
 
-		const context = buildCleanHistory(truncated, "web");
+		const context = sanitizeHistory(truncated);
 		const flat = serialize(context);
 
 		// The stale answer is gone from context…

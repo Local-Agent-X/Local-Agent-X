@@ -37,11 +37,13 @@ export interface CliPromptInput {
  *
  * No secondary truncation here. Serialize every prior user/assistant turn
  * in full, so the CLI transport sees the same history fidelity the HTTP
- * providers (Grok/Codex) replay. Bounding is delegated to the SINGLE shared
- * cap all providers go through — upstream truncateHistory(maxKeep=40) — so
- * the CLI proxy is no longer drastically lossier than every HTTP provider.
- * (This used to slice the last 20 messages × 1500 chars on top of that,
- * halving the window and clipping every substantial message.)
+ * providers (Grok/Codex) replay. Bounding is delegated upstream, where every
+ * provider shares it: the conversation is checkpointed against a token budget
+ * before it ever reaches a transport (context-manager/checkpoint-history.ts).
+ * It used to be a 40-ROW cap, which is what this comment promised until the
+ * row window was deleted on 2026-09-16 — worth stating plainly because this
+ * transport is hidden (stream.ts isAnthropicCliTransportEnabled), so a reader
+ * re-enabling it inherits the checkpoint and NOT a row cap.
  *
  * Skips tool/system rows: tool messages without their `tool_use` pair are
  * structurally orphan-prone, and re-serializing tool_use/tool_result as text

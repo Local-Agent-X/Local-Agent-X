@@ -61,7 +61,34 @@ export interface SessionSummaryRow {
   createdAt: string;
 }
 
-export type SessionLogRow = SessionMetaRow | SessionMessageRow | SessionSummaryRow;
+/**
+ * Compaction CHECKPOINT — deliberately NOT a `summary` row.
+ *
+ * A summary row SUBSUMES everything before it: the read path drops those msg
+ * rows entirely, which is right for the user-invoked /api/compact ("forget the
+ * details, keep the gist") and catastrophic for automatic compaction, where the
+ * harness would be deleting the user's transcript from disk to save tokens on a
+ * request.
+ *
+ * A checkpoint subsumes nothing. Every msg row stays on disk and in the
+ * projection; the row only records that the MODEL's view of the first
+ * `coversThrough` messages may be sent as `summary` instead. The transcript
+ * stays whole for the chat, fork, export, search and recall; only the request
+ * gets shorter. It is also what makes a request prefix stable: recomputing a
+ * summary every message reshuffles the prefix and voids the provider cache.
+ *
+ * `coversThrough` is a COUNT of projected messages, not an index into the
+ * file: a retract can shorten the transcript, and a checkpoint that reaches
+ * past the end is ignored rather than trusted (readSessionLog).
+ */
+export interface SessionCheckpointRow {
+  kind: "checkpoint";
+  summary: string;
+  coversThrough: number;
+  createdAt: string;
+}
+
+export type SessionLogRow = SessionMetaRow | SessionMessageRow | SessionSummaryRow | SessionCheckpointRow;
 
 /** Pre-Item-3 meta shape — kept only so logs migrated by the previous
  *  Phase 2 step (which wrote `compactedSummary`/`compactedAt` onto the
@@ -116,6 +143,7 @@ export function readSessionLog(dir: string, id: string): Session | null {
   let legacyCompaction: LegacyCompactionMeta = {};
   let recentMsgs: ChatCompletionMessageParam[] = [];
   let summaryContent: string | null = null;
+  let checkpoint: { summary: string; coversThrough: number } | null = null;
 
   for (const line of lines) {
     const trimmed = line.trim();
@@ -136,6 +164,11 @@ export function readSessionLog(dir: string, id: string): Session | null {
     } else if (row.kind === "summary") {
       summaryContent = row.content;
       recentMsgs = [];
+      // A manual compact rewrites what the transcript IS, so any checkpoint
+      // describing the old shape is meaningless.
+      checkpoint = null;
+    } else if (row.kind === "checkpoint") {
+      checkpoint = { summary: row.summary, coversThrough: row.coversThrough };
     }
   }
   if (!meta) return null;
@@ -152,6 +185,14 @@ export function readSessionLog(dir: string, id: string): Session | null {
     ? [{ role: "system", content: summaryContent } as ChatCompletionMessageParam, ...recentMsgs]
     : recentMsgs;
 
+  // A retract can shorten the transcript under a checkpoint. Trust it only
+  // while it still describes rows that exist; otherwise the model would be
+  // handed a summary covering messages nobody has.
+  const liveCheckpoint =
+    checkpoint && checkpoint.coversThrough > 0 && checkpoint.coversThrough <= projectedMessages.length
+      ? checkpoint
+      : null;
+
   return {
     id: meta.id,
     title: meta.title,
@@ -159,6 +200,7 @@ export function readSessionLog(dir: string, id: string): Session | null {
     updatedAt: meta.updatedAt,
     ...(meta.projectId ? { projectId: meta.projectId } : {}),
     messages: projectedMessages,
+    ...(liveCheckpoint ? { compactionCheckpoint: liveCheckpoint } : {}),
   };
 }
 
@@ -224,6 +266,20 @@ export function writeSessionLog(dir: string, session: Session): void {
       const row: SessionMessageRow = { kind: "msg", message: m, createdAt: now };
       lines.push(JSON.stringify(row));
     }
+  }
+  // A manual /api/compact rewrites what the transcript IS, so a checkpoint
+  // describing the old shape is not carried forward — and must not be written
+  // AFTER the summary row, where the read path would resurrect it.
+  if (!compactionLeader && session.compactionCheckpoint && session.compactionCheckpoint.coversThrough > 0) {
+    // LAST: it describes a count of the msg rows above it and, unlike a summary
+    // row, changes nothing about how they are read.
+    const checkpointRow: SessionCheckpointRow = {
+      kind: "checkpoint",
+      summary: session.compactionCheckpoint.summary,
+      coversThrough: session.compactionCheckpoint.coversThrough,
+      createdAt: now,
+    };
+    lines.push(JSON.stringify(checkpointRow));
   }
   atomicWriteFileSync(jsonlPath(dir, session.id), lines.join("\n") + "\n");
 }

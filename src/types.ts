@@ -323,6 +323,13 @@ export interface Session {
   id: string;
   title: string;
   messages: ChatCompletionMessageParam[];
+  /**
+   * Automatic-compaction checkpoint: the model may be sent `summary` in place
+   * of the first `coversThrough` messages. The messages themselves are still
+   * here — the chat, fork, export and recall show the whole transcript; only
+   * the request is shortened (memory/session-message-log.ts SessionCheckpointRow).
+   */
+  compactionCheckpoint?: { summary: string; coversThrough: number };
   createdAt: number;
   updatedAt: number;
   /** Session ID this session was forked from */

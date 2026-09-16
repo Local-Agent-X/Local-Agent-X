@@ -322,13 +322,29 @@ export class AppBuildVerifyAdapter implements Adapter {
       if (verdict === null) {
         report({ kind: "stream_chunk", body: { delta: `[verify] vision judge unavailable (no vision-capable credential) — skipped\n` } });
       } else if (!verdict.ok) {
+        // A taste verdict, NOT a broken build. Everything deterministic already
+        // passed: it compiled, served, mounted, threw nothing and survived its
+        // primary action. Failing the op here reported a working app the same
+        // way as a crash — the user watched a landing page they were about to
+        // keep get called "failed" because a judge scored its looks (2026-09-16).
+        //
+        // The repolish loop is the design-verify completion gate, which is
+        // capped and deliberately nudge-only for exactly this reason: "a low
+        // score must never demote an otherwise-honest outcome"
+        // (turn-loop/design-verify.ts). This adapter now says the same thing.
         const detail =
-          `The app renders without errors, but a vision check compared the screenshots against the brief and REJECTED the ` +
-          `build: ${verdict.reason || "does not look like what was asked"}. ` +
+          `The app renders without errors, but a vision check compared the screenshots against the brief and was not ` +
+          `satisfied: ${verdict.reason || "does not look like what was asked"}. ` +
           `Screenshots: ${judgeShots.join(", ")} — read/view them before claiming a fix.`;
+        // Evidence first (screenshots + reason), so a repolish pass has
+        // something concrete to work from.
         this.emitFailureEvidence(input, report, detail, shots);
-        report({ kind: "error", code: "app_vision_rejected", message: detail, retryable: false });
-        return { ...result, terminalReason: "error" };
+        // Then the durable note, which keeps the deliverable: it restates
+        // APP_READY so op_wait / op_status / the phone card still hand back the
+        // app instead of a complaint about it.
+        emitUnverifiedNote(input, report, { detail, builderText, url });
+        report({ kind: "stream_chunk", body: { delta: `[verify] vision judge was not satisfied — delivered anyway, design noted\n` } });
+        return result;
       } else {
         report({ kind: "stream_chunk", body: { delta: `[verify] vision judge passed — render matches the brief\n` } });
       }

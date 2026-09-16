@@ -301,16 +301,30 @@ describe("AppBuildVerifyAdapter — vision judge tier", () => {
     return { adapter, shot1, shot2 };
   }
 
-  it("a judge rejection flips done into error with the judge's reason AND screenshot evidence [regression]", async () => {
+  // A taste verdict is not a broken build. Everything deterministic already
+  // passed — compiled, served, mounted, threw nothing, survived its primary
+  // action — and failing here reported a working app exactly like a crash: a
+  // landing page the user was about to keep came back "failed" because a judge
+  // scored its looks (2026-09-16). Note the sibling test below: a MISSING judge
+  // never failed a build. A dissatisfied one used to. These now agree.
+  it("a judge rejection keeps the build and reports the concern with screenshot evidence", async () => {
     const { adapter, shot1, shot2 } = judgedAdapter(async () => ({ ok: false, reason: "black screen after Start — nothing resembling a maze" }));
     const { reports, report } = collect();
     const result = await adapter.runTurn(turnInput(), report);
-    expect(result.terminalReason).toBe("error");
-    const err = reports.find(r => r.kind === "error");
-    expect(err).toMatchObject({ code: "app_vision_rejected" });
-    expect((err as { message: string }).message).toContain("black screen after Start");
+    expect(result.terminalReason).toBe("done");
+    expect(reports.find(r => r.kind === "error"), "a design opinion must not be reported as a build error").toBeUndefined();
+
+    // The evidence a repolish pass needs: the reason and both screenshots.
     const evidence = evidenceMessageFrom(reports);
+    expect(evidence!.text).toContain("black screen after Start");
     expect(evidence!.images?.map(i => i.filePath)).toEqual([shot1, shot2]);
+
+    // And the deliverable survives: the durable note restates APP_READY so a
+    // waiting parent / the phone card gets the app, not a complaint about it.
+    const note = reports.find(r => r.kind === "message_finalized"
+      && r.message.role === "assistant"
+      && String((r.message.content as { text?: string }).text ?? "").includes("NOT VERIFIED —"));
+    expect(note, "the build stands, so its note must carry the deliverable").toBeDefined();
   });
 
   it("judge sees BOTH screenshots and the brief", async () => {

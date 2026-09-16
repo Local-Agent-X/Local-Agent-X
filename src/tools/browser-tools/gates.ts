@@ -19,6 +19,30 @@ import { getApprovalManager } from "../../approval-manager.js";
 import { blocked, declined } from "../result-helpers.js";
 import { HUMAN_VERIFICATION_MESSAGE, requiresHumanVerification } from "../../browser/human-verification.js";
 import { RESET_ACTIONS, TRACKED_ACTIONS, READ_ONLY_ACTIONS, HUMAN_VERIFICATION_BLOCKED_ACTIONS } from "./action-tables.js";
+import { decisionRequiresPrompt, getRiskDecision } from "../../approval-decision.js";
+import type { SensitivePageCategory } from "../../browser/sensitive-pages.js";
+import type { ToolRisk } from "../../autonomy/risk.js";
+import { createLogger } from "../../logger.js";
+
+const gateLog = createLogger("browser.gates");
+
+/**
+ * What a high-risk action on this page class really risks, in the vocabulary
+ * the autonomy profile already speaks. NOT the browser tool's own tier: that
+ * is "network-read", which every profile allows, and clicking Delete in an
+ * admin console is not a read. Mapped this way, Safe still asks everywhere,
+ * Power runs the cloud-console click it already trusts the agent to make and
+ * still asks before a bank or a password manager.
+ */
+function sensitivePageRisk(category: SensitivePageCategory | undefined): ToolRisk {
+  switch (category) {
+    case "financial account": return "money";
+    case "password manager":
+    case "account recovery":
+    case "private key management": return "secrets";
+    default: return "network-write"; // administration panel, cloud metadata
+  }
+}
 
 /**
  * Outcome of the pre-dispatch gates. `halt` is a terminal ToolResult the tool
@@ -78,6 +102,20 @@ export async function runPreDispatchGates(
       { layer: "browser-sensitive-page", browserStatus: "blocked", category: pageDecision.category },
     ));
     if (pageDecision.disposition === "approval-required") {
+      // ONE disposition, TWO concerns. `unlocksRead` means the approval would
+      // reveal a credential/banking page's CONTENTS to the model — that ladder
+      // is the browserSecrecy setting's own (sensitive-pages.ts), and the user
+      // set it to "ask", so it keeps asking. Everything else here is a
+      // high-risk ACTION on a sensitive page, which is what the autonomy
+      // profile governs for every other tool. That branch used to prompt
+      // unconditionally, so a profile set to never ask still raised a card on
+      // every cloud-console click and the user had no way to turn it off (live
+      // 2026-09-16). The "blocked" disposition above is untouched either way —
+      // a hard boundary, not a preference.
+      if (!pageDecision.unlocksRead && !decisionRequiresPrompt(getRiskDecision(sensitivePageRisk(pageDecision.category), sessionId))) {
+        gateLog.info(`sensitive-page ${action} on ${pageDecision.category} ran without a prompt — the autonomy profile allows browser actions`);
+        return { kind: "proceed", grantedReadUrl: null };
+      }
       if (!onEvent) return halt(blocked(
         `BLOCKED: ${pageDecision.reason} Explicit approval is unavailable in this run.`,
         { layer: "browser-sensitive-page", browserStatus: "approval-required", category: pageDecision.category },

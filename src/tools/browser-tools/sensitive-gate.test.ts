@@ -30,6 +30,7 @@ vi.mock("../../approval-manager.js", () => ({
 }));
 
 import { createBrowserTools } from "./index.js";
+import { setSessionProfile, clearSessionProfile } from "../../autonomy/profile-store.js";
 
 const VAULT = "https://vault.bitwarden.com/passwords";
 
@@ -87,5 +88,44 @@ describe("browser tool sensitive-page gate (browserSecrecy default = ask)", () =
 		const r = await tool().execute({ action: "read_console", _sessionId: "s-plain" });
 		expect(String(r.content)).toContain("Console: quiet");
 		expect(seam.approval).not.toHaveBeenCalled();
+	});
+});
+
+// A high-risk ACTION on a sensitive page is governed by the autonomy profile,
+// like every other tool — it used to prompt unconditionally, so a profile set
+// to never ask still raised a card on every cloud-console click and the user
+// had no way to turn it off (live 2026-09-16). Reading a credential page's
+// CONTENTS is a different concern and stays on browserSecrecy's ladder.
+describe("sensitive-page ACTIONS follow the user's autonomy profile", () => {
+	const CONSOLE_PAGE = "https://console.cloud.google.com/apis/library";
+	const BANK_PAGE = "https://www.chase.com/accounts";
+
+	// The gate itself, not a whole browser dispatch: the question is only
+	// whether a card is raised.
+	async function gate(page: string, sessionId: string): Promise<boolean> {
+		const { runPreDispatchGates } = await import("./gates.js");
+		const manager = { getCurrentUrl: () => page } as unknown as Parameters<typeof runPreDispatchGates>[2];
+		await runPreDispatchGates("click", { selector: "#go" }, manager, sessionId, () => {});
+		return seam.approval.mock.calls.length > 0;
+	}
+
+	it("Power (network-write allowed) clicks an admin console with no card", async () => {
+		setSessionProfile("prof-power", "Power");
+		try { expect(await gate(CONSOLE_PAGE, "prof-power")).toBe(false); }
+		finally { clearSessionProfile("prof-power"); }
+	});
+
+	it("Safe still asks for the same click", async () => {
+		setSessionProfile("prof-safe", "Safe");
+		seam.approval.mockResolvedValue({ approved: true });
+		try { expect(await gate(CONSOLE_PAGE, "prof-safe")).toBe(true); }
+		finally { clearSessionProfile("prof-safe"); }
+	});
+
+	it("a bank still asks under Power — money is not network-write", async () => {
+		setSessionProfile("prof-bank", "Power");
+		seam.approval.mockResolvedValue({ approved: true });
+		try { expect(await gate(BANK_PAGE, "prof-bank")).toBe(true); }
+		finally { clearSessionProfile("prof-bank"); }
 	});
 });

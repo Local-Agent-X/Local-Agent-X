@@ -168,7 +168,13 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<void> {
       sessionId, message, sessionMessages: session.messages, attachments, ctx,
       channel, bridgeContext: args.bridgeContext,
       skipMemory: args.skipMemory, maxHistory: args.maxHistory,
+      compactionCheckpoint: session.compactionCheckpoint,
     });
+    // A checkpoint computed for THIS request is stored on the session so every
+    // later message reuses the same summary bytes — recomputing it per message
+    // is what made the request prefix churn (context-manager/checkpoint-history.ts).
+    // Stored in memory here; persistTurnState writes the session at turn end.
+    if (prepared.newCheckpoint) session.compactionCheckpoint = prepared.newCheckpoint;
 
     await emitContextStatus(prepared, ctx, sessionId, emitSse);
 
@@ -290,12 +296,15 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<void> {
       // same-instant "keep going" race; the common stop→read→resume path was
       // already covered by the salvage landing before the resume's prepare.
       try {
-        const { buildCleanHistory } = await import("../../../providers/sanitize.js");
-        prepared.cleanHistory = buildCleanHistory(
-          session.messages as Parameters<typeof buildCleanHistory>[0],
-          channel,
-          undefined,
-          prepared.provider,
+        const { sanitizeHistory } = await import("../../../providers/sanitize.js");
+        const { applyCheckpoint } = await import("../../../context-manager/checkpoint-history.js");
+        // Same shape the turn was prepared with: sanitize, then the session's
+        // checkpoint. Deliberately does NOT compute a new checkpoint — a resume
+        // is mid-turn, and a fresh summary here would re-shape the prefix the
+        // interrupted turn already sent.
+        prepared.cleanHistory = applyCheckpoint(
+          sanitizeHistory(session.messages as Parameters<typeof sanitizeHistory>[0]),
+          session.compactionCheckpoint,
         );
       } catch (e) {
         logger.warn(`[turn-lock] cleanHistory refresh after replace failed: ${(e as Error).message}`);

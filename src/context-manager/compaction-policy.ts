@@ -128,6 +128,27 @@ export function chatHistoryWindow(channel: string, provider?: string): ChatHisto
 	return { maxKeep, step: Math.floor(maxKeep / 2) };
 }
 
+// ─── Between-messages checkpoint (context-manager/checkpoint-history.ts) ────
+//
+// The successor to chatHistoryWindow above. That window bounds history by ROW
+// COUNT and re-cuts on a schedule; these bound it by TOKENS and cut once,
+// persisting the result, so the old part of a conversation is byte-identical
+// from one message to the next.
+
+/** Share of the model's window the CONVERSATION may occupy before the old part
+ *  is checkpointed. Well under the in-turn compaction bands above: this runs
+ *  BETWEEN messages, where pre-empting an in-turn compaction is the point. */
+export const CONVERSATION_BUDGET_SHARE = 0.35;
+
+/** Messages always kept verbatim after a checkpoint, so the model still sees
+ *  the immediate exchange rather than a summary of it. */
+export const CHECKPOINT_KEEP_RECENT = 8;
+
+/** Re-cut only once the verbatim tail has grown this much past the last
+ *  checkpoint. Sibling of TURN_SUMMARY_REFRESH_MIN_GROWTH: without it the
+ *  boundary advances every message and the prefix churns again. */
+export const CHECKPOINT_REFRESH_MIN_GROWTH = 12;
+
 // ─── Manual compaction keep count (consumed by routes/chat/compact-route.ts) ─
 
 /**

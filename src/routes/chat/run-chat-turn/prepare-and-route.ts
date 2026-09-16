@@ -17,6 +17,9 @@ export interface PrepareInput {
   bridgeContext?: string;
   skipMemory?: boolean;
   maxHistory?: number;
+  /** The session's stored checkpoint, so the old part of the conversation is
+   *  sent as the SAME summary bytes every message. */
+  compactionCheckpoint?: { summary: string; coversThrough: number };
 }
 
 export async function preparePerTurnRequest(input: PrepareInput): Promise<PreparedAgentRequest> {
@@ -34,6 +37,7 @@ export async function preparePerTurnRequest(input: PrepareInput): Promise<Prepar
     bridgeContext: input.bridgeContext,
     skipMemory: input.skipMemory,
     maxHistory: input.maxHistory,
+    compactionCheckpoint: input.compactionCheckpoint,
   });
   logger.info(`[timing] prepareAgentRequest ${Date.now() - prepStart}ms (sess=${sessionId.slice(0, 16)})`);
   console.log(`[chat-diag] prepared sess=${sessionId.slice(-8)} provider=${prepared.provider} model=${prepared.model || "EMPTY"} hasKey=${!!prepared.apiKey}`);

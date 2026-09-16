@@ -23,6 +23,10 @@ export interface AgentRequestInput {
   message: string;
   /** Session messages (raw, will be sanitized) */
   sessionMessages: ChatCompletionMessageParam[];
+  /** The session's compaction checkpoint, if it has one. The old part of the
+   *  conversation is sent as this summary instead of verbatim rows
+   *  (context-manager/checkpoint-history.ts). */
+  compactionCheckpoint?: { summary: string; coversThrough: number };
   /** Session ID for the agent run */
   sessionId: string;
   /** App config */
@@ -91,6 +95,10 @@ export interface PreparedAgentRequest {
   systemPrompt: string;
   tools: ToolDefinition[];
   cleanHistory: ChatCompletionMessageParam[];
+  /** Set when THIS request computed a new checkpoint: the caller persists it
+   *  onto the session so later messages reuse the same summary bytes instead
+   *  of paying for — and re-shaping the prefix with — a fresh one. */
+  newCheckpoint?: { summary: string; coversThrough: number };
   images: Array<{ url: string; filePath?: string; name: string }>;
   temperature: number;
   maxIterations: number;

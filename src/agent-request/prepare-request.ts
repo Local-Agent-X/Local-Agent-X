@@ -8,7 +8,10 @@
 // unexpected provider switches, and never validated that workers can
 // make Codex perform on long tasks. Workers + fresh context IS the fix.
 
-import { buildCleanHistory } from "../providers/sanitize.js";
+import { checkpointedHistory } from "../context-manager/checkpoint-history.js";
+import { effectiveContextWindow } from "../context-manager/effective-window.js";
+import { sanitizeHistory } from "../providers/sanitize.js";
+import type { CheckpointedHistory } from "../context-manager/checkpoint-history.js";
 import { processAttachments } from "./attachments.js";
 import type { AgentRequestInput, ForcedToolChoice, PreparedAgentRequest } from "./types.js";
 import { resolveProvider } from "./resolve-provider.js";
@@ -78,14 +81,21 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
   noteResolvedAuthSource(resolved.authSource);
   noteResolvedModel(resolved.model);
 
-  // 2. Sanitize + truncate history. Compaction now lives as a leading
-  // `system` message in sessionMessages itself (round-tripped through a
-  // `summary` row in the per-session jsonl log on disk). No special-case
-  // slice/prepend logic needed here — the session passed in is already
-  // the right shape, with `[system_summary, ...recent_msgs]` when
-  // compacted and just `[...msgs]` otherwise.
-  end = stepStart("truncateHistory");
-  const cleanHistory = buildCleanHistory(input.sessionMessages, input.channel, input.maxHistory, resolved.provider);
+  // 2. Sanitize, then apply the session's compaction checkpoint.
+  //
+  // This used to keep the last N ROWS and slide the cut every message, which
+  // re-shaped the request prefix on a conversation that had not changed — the
+  // provider cache missed every turn and a local runtime re-prefilled the whole
+  // history. The checkpoint summarises the old part ONCE and reuses those exact
+  // bytes until the tail has grown enough to be worth re-cutting
+  // (context-manager/checkpoint-history.ts). A manual /api/compact still
+  // arrives as a leading `system` row in sessionMessages and is left alone.
+  end = stepStart("checkpointHistory");
+  const sanitized = sanitizeHistory(input.sessionMessages);
+  const checkpointed: CheckpointedHistory = input.maxHistory
+    ? { messages: sanitized.slice(-input.maxHistory) } // explicit caller cap (voice, sub-agents)
+    : await checkpointedHistory(sanitized, { compactionCheckpoint: input.compactionCheckpoint }, effectiveContextWindow(resolved.model));
+  const cleanHistory = checkpointed.messages;
   end();
 
   // 3. Tool selection (tier filter + RAG re-rank + explicit build routes). Must
@@ -282,6 +292,7 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
     systemPrompt,
     tools: toolSel.tools,
     cleanHistory,
+    ...(checkpointed.newCheckpoint ? { newCheckpoint: checkpointed.newCheckpoint } : {}),
     images,
     temperature: resolved.temperature,
     maxIterations: resolved.maxIterations,

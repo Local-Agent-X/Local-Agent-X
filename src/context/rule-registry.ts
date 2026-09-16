@@ -134,11 +134,11 @@ export const RULES: Record<RuleId, Rule> = {
 
   // Commit 7e80bec6 — glob/grep with no path used to search process.cwd().
   //   tool-description: src/tools/glob-tool.ts:149,165 and
-  //   src/tools/grep-tool.ts:249 — "defaults to the project root (the same
+  //   src/tools/grep-tool.ts:249 — "defaults to the workspace (the same
   //   root relative paths in read/bash resolve against)".
   "search-defaults-to-project-root": {
     id: "search-defaults-to-project-root",
-    summary: "glob/grep with no path search the project root, the same root read and bash use.",
+    summary: "glob/grep with no path search your workspace, the same root read and bash use.",
     channels: [
       { kind: "tool-description", tool: "glob" },
       { kind: "tool-description", tool: "grep" },

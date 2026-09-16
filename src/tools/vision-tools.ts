@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import type { ToolDefinition } from "../types.js";
 import { createLogger } from "../logger.js";
 // Resolve caller paths the SAME way SecurityLayer's file-access gate does
-// (project-root anchored, no ~ expansion) so the gated path == the opened path.
+// (workspace anchored, no ~ expansion) so the gated path == the opened path.
 import { resolveAgentPath } from "../workspace/paths.js";
 import { openValidatedRead, readValidatedFile } from "../security/layer/index.js";
 import { ALLOWED_MIME } from "./shared/image-acquire.js";

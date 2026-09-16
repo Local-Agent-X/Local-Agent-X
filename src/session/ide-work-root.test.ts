@@ -18,6 +18,7 @@
  */
 
 import { describe, it, expect, afterEach, beforeAll, vi } from "vitest";
+import { workspaceRoot } from "../config.js";
 import { mkdtempSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve, join } from "node:path";
@@ -96,15 +97,16 @@ describe("stampIdeWorkRoot", () => {
 });
 
 describe("cross-seam: the anchor reaches glob's default search base", () => {
-  it("a no-path glob searches the app dir, not the repo root (the wrong-file edit)", () => {
-    // Unanchored: the pre-fix behavior that found LAX's own public/css/app.css.
-    expect(searchBase(undefined, SESSION)).toBe(process.cwd());
+  it("a no-path glob searches the app dir, not the whole workspace (the wrong-file edit)", () => {
+    // Unanchored: the workspace root, which holds every app — the breadth that
+    // let an IDE turn for one app edit another's files.
+    expect(searchBase(undefined, SESSION)).toBe(workspaceRoot());
 
     stampIdeWorkRoot(SESSION, "todo-app");
 
     // Anchored: the same call now cannot see the repo at all.
     expect(searchBase(undefined, SESSION)).toBe(APP_DIR);
-    expect(searchBase(undefined, SESSION)).not.toBe(process.cwd());
+    expect(searchBase(undefined, SESSION)).not.toBe(workspaceRoot());
   });
 
   it("an explicit relative glob path still anchors to the app dir", () => {

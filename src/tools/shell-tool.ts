@@ -6,7 +6,7 @@ import { detectTargetShell, translateForShell, powershellCmdletHint } from "./sh
 import { resolveWindowsShell, recordAvSuspectKill, isLikelyAvKill, buildSanitizedEnv } from "./shell-env.js";
 import { shellProxyEnv } from "./shell-proxy-env.js";
 import { killProcessGroup } from "../process-tree-kill.js";
-import { projectRoot } from "../workspace/paths.js";
+import { workspaceRoot } from "../config.js";
 
 export const bashTool: ToolDefinition = {
   name: "bash",
@@ -128,10 +128,10 @@ export const bashTool: ToolDefinition = {
         const child = spawn(spawned.cmd, spawned.args, {
           env: sanitizedEnv,
           // _cwd (worktree, set by enforce-policy) wins; otherwise default to the
-          // project root — the anchor the file tools and the bash path-gate already
-          // assume — so a relative `cat notes.txt` finds project files instead of
-          // inheriting the server cwd and failing until the model retries absolute.
-          cwd: (args._cwd as string) || projectRoot(),
+          // WORKSPACE — the same anchor relative agent paths resolve against
+          // (workspace/paths.ts) — so `cat notes.txt` and write("notes.txt") mean
+          // one file, instead of the shell landing a folder above it.
+          cwd: (args._cwd as string) || workspaceRoot(),
           windowsHide: true,
           stdio: ["ignore", "pipe", "pipe"],
         });

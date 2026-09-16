@@ -124,22 +124,28 @@ export function mapMsysDrivePath(p: string): string | null {
 // (a resolution TOCTOU). This function is that single source of truth.
 //
 // Rule: absolute paths pass through untouched; RELATIVE paths anchor to the
-// PROJECT ROOT — the parent of the workspace — NOT process.cwd(). Two facts
-// make the project-root anchor the correct one:
+// WORKSPACE — the folder that holds the user's files — NOT process.cwd() and
+// not the workspace's parent.
 //
-//   • The agent's path convention is workspace-prefixed (e.g.
-//     "workspace/apps/<id>/index.html"). Anchoring to the workspace's PARENT
-//     makes that land inside the real workspace, wherever it physically lives
-//     — even after the packaged app relocates it into ~/Documents.
-//   • In dev the workspace is <repo>/workspace, so its parent is the repo root,
-//     which is also the process cwd. There this resolver is a literal no-op:
-//     every existing relative read (e.g. "package.json", "src/foo.ts") resolves
-//     exactly as it did when the base was cwd.
+// It anchored to the PARENT until 2026-09-16, on the reasoning that the agent's
+// convention is workspace-prefixed ("workspace/apps/<id>/index.html") so the
+// parent makes that land inside the real workspace. The cost showed up the
+// first time a user said what users actually say: "write it to
+// notes/fleet-limits.md", with notes/ sitting in the workspace next to their
+// other files. Both models fetched the right page, wrote the right content, and
+// created a BRAND-NEW notes/ folder beside the workspace, where nobody would
+// look (op-outcomes moved-docs-page, 2026-09-16). A path the user names is
+// relative to the folder the user's files are in.
 //
-// What this removes: the dependency on a <cwd>/workspace → <Documents> junction
-// to make cwd-relative agent paths reach the relocated workspace. The anchor is
-// derived from config.workspace, so it is correct whether or not that junction
-// was ever created.
+// The workspace-prefixed convention keeps working: a leading "workspace/" is
+// stripped, so "workspace/apps/x/index.html" and "apps/x/index.html" name the
+// same file instead of producing <workspace>/workspace/apps/…. Every prompt and
+// tool description that teaches the prefixed form stays correct.
+//
+// Anchors that move WITH this one (they are one convention, not three): the
+// bash/process default cwd (tools/shell-tool.ts, tools/process-session.ts) and
+// the glob/grep default search base. A relative path must mean the same folder
+// whether the model writes it, searches it, or cd's to it.
 // The pure resolver, parameterized by the workspace dir whose PARENT is the
 // project root. resolveAgentPath (file tools) calls it with config.workspace;
 // the SecurityLayer gate (evaluateFileAccess) calls it with its OWN workspace
@@ -164,7 +170,21 @@ export function resolveAgentPathFrom(workspace: string, p: string, sessionId?: s
   if (isAbsolute(p)) return resolve(p);
   const workRoot = sessionId ? sessionWorkRoots.get(sessionId) : undefined;
   if (workRoot) return resolve(workRoot, p);
-  return resolve(workspace, "..", p);
+  return resolve(workspace, stripWorkspacePrefix(p));
+}
+
+/** "workspace/notes/x" and "notes/x" name the same file: the prefixed form is
+ *  the convention the prompt teaches, and the workspace is the anchor, so the
+ *  segment would otherwise be doubled. Only a LEADING segment, and only the
+ *  whole segment — "workspaces/x" and "my-workspace/x" are untouched.
+ *
+ *  Exported because a glob PATTERN carries the same convention
+ *  ("workspace/apps/*​/index.html") but never reaches resolveAgentPathFrom —
+ *  it is matched against the search base, so it needs the identical strip or
+ *  the prefixed form silently matches nothing. */
+export function stripWorkspacePrefix(p: string): string {
+  const stripped = p.replace(/^\.[/\\]/, "").replace(/^workspace(?=[/\\])[/\\]/, "");
+  return stripped === "" ? "." : stripped;
 }
 
 export function resolveAgentPath(p: string, sessionId?: string): string {

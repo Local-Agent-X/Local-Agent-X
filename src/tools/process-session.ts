@@ -19,7 +19,7 @@ import { killProcessGroup } from "../process-tree-kill.js";
 import { evaluateShellCommand } from "../security/layer/index.js";
 import { getSandboxMode, getSandboxStatus, wrapSpawnForSandbox } from "../sandbox/index.js";
 import { shellProxyEnvSync } from "./shell-proxy-env.js";
-import { projectRoot } from "../workspace/paths.js";
+import { workspaceRoot } from "../config.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("tools.process");
@@ -150,10 +150,10 @@ export function startSession(
   const spawned = wrapSpawnForSandbox(shell, shellArgs);
 
   // An explicit caller cwd (build/dev flows) wins; otherwise default to the
-  // project root rather than inheriting the server cwd — same anchor as bash and
-  // the file tools, so a background command's relative paths resolve in the
-  // project. cwdHint reuses the resolved value so process_restart respawns there.
-  const effectiveCwd = cwd || projectRoot();
+  // workspace rather than inheriting the server cwd — same anchor as bash and
+  // the file tools, so a background command's relative paths resolve where the
+  // user's files are. cwdHint reuses it so process_restart respawns there.
+  const effectiveCwd = cwd || workspaceRoot();
 
   let child: ChildProcess;
   try {

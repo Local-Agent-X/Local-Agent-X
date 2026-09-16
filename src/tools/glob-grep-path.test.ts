@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { homedir } from "node:os";
 import type { LAXConfig } from "../types.js";
 import { setRuntimeConfig } from "../config.js";
-import { resolveAgentPath, projectRoot, setSessionWorkRoot, clearSessionWorkRoot, sessionWorkRootOf } from "../workspace/paths.js";
+import { resolveAgentPath, setSessionWorkRoot, clearSessionWorkRoot, sessionWorkRootOf } from "../workspace/paths.js";
 import { searchBase } from "./glob-tool.js";
 import { searchRoot } from "./grep-tool.js";
 
@@ -33,8 +33,8 @@ describe("glob/grep search-root resolution", () => {
     expect(searchRoot({ path: "~/x" }).startsWith(homedir())).toBe(true);
   });
 
-  it("a workspace-relative root anchors to the project root, NOT process.cwd()", () => {
-    expect(searchBase("apps/demo")).toBe(resolve(WS, "..", "apps", "demo"));
+  it("a relative root anchors to the workspace, NOT process.cwd()", () => {
+    expect(searchBase("apps/demo")).toBe(resolve(WS, "apps", "demo"));
     expect(searchBase("apps/demo").startsWith(process.cwd())).toBe(false);
   });
 
@@ -42,14 +42,13 @@ describe("glob/grep search-root resolution", () => {
   // git checkout, not the project — so a bare glob("**/*foo*") searched the
   // wrong tree and returned nothing while read/bash looked in the project
   // root. Both now resolve "." through resolveAgentPath: ONE rule.
-  it("an absent path resolves to the project root, the same root as a bare relative read", () => {
-    const root = resolve(WS, "..");
+  it("an absent path resolves to the workspace, the same root as a bare relative read", () => {
+    const root = WS;
     expect(searchBase(undefined)).toBe(root);
     expect(searchBase("")).toBe(root);
     expect(searchRoot({})).toBe(root);
     expect(searchRoot({ path: "" })).toBe(root);
     expect(searchBase(undefined)).toBe(resolveAgentPath("."));
-    expect(searchBase(undefined)).toBe(projectRoot());
   });
 
   it("an absent path never falls back to process.cwd()", () => {
@@ -69,6 +68,6 @@ describe("glob/grep search-root resolution", () => {
     } finally {
       clearSessionWorkRoot(sid);
     }
-    expect(searchBase(undefined, sid)).toBe(resolve(WS, ".."));
+    expect(searchBase(undefined, sid)).toBe(WS);
   });
 });

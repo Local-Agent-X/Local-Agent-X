@@ -181,20 +181,18 @@ describe("restore_file taught flow in a CONFINED mode (workspace) — the absolu
     expect(readFileSync(dest, "utf-8")).toBe("# findings");
   });
 
-  it("a bare basename is gate-blocked in workspace mode BEFORE the restore runs — why the absolute path is taught", async () => {
+  it("a bare basename names the workspace file it came from and restores it", async () => {
     const f = join(workDir, "note.txt");
     writeFileSync(f, "n", "utf-8");
     recordTaskArtifact(sid, f);
     await dispatch("delete_file", { path: f }, "workspace");
 
-    // A bare name resolves to the PROJECT ROOT (workspace parent) — outside
-    // the workspace — so the write gate refuses it; the file is NOT lost.
+    // Until 2026-09-16 a bare name resolved to the workspace's PARENT — outside
+    // the workspace — so the gate refused it and the absolute path was the only
+    // spelling that worked. The anchor is the workspace now, so the name the
+    // user would say resolves to the file they mean.
     const bare = await dispatch("restore_file", { path: "note.txt" }, "workspace");
-    expect(bare).toContain("Blocked");
-    expect(existsSync(f)).toBe(false); // nothing restored, nothing clobbered
-
-    const abs = await dispatch("restore_file", { path: f }, "workspace");
-    expect(abs).toContain(`Restored ${f}`);
+    expect(bare).toContain(`Restored ${f}`);
     expect(readFileSync(f, "utf-8")).toBe("n");
   });
 });

@@ -10,9 +10,8 @@ import { CAN_CREATE_WINDOWS_JUNCTION } from "../symlink-capabilities.test-helper
 
 // resolveAgentPath is the single source of truth for turning an agent's raw
 // `path` argument into an absolute path. It must anchor RELATIVE paths to the
-// project root (workspace parent), not process.cwd(), so the packaged app can
-// relocate the workspace without agent paths silently resolving against the
-// install directory.
+// WORKSPACE — where the user's files are — not process.cwd() and not the
+// workspace's parent, so "notes/x.md" means the notes folder the user can see.
 describe("resolveAgentPath", () => {
   // A relocated workspace whose parent is NOT the test process cwd — the whole
   // point of the resolver. (resolve() normalizes to the host's drive/root.)
@@ -27,23 +26,40 @@ describe("resolveAgentPath", () => {
     expect(resolveAgentPath(abs)).toBe(abs);
   });
 
-  it("anchors a bare relative path to the project root (workspace parent)", () => {
-    expect(resolveAgentPath("notes.txt")).toBe(resolve(WS, "..", "notes.txt"));
+  it("anchors a bare relative path to the workspace", () => {
+    // 2026-09-16: anchored to the workspace PARENT until a user said "write it
+    // to notes/fleet-limits.md" and got a new notes/ folder beside the
+    // workspace instead of the one holding their files.
+    expect(resolveAgentPath("notes.txt")).toBe(resolve(WS, "notes.txt"));
+    expect(resolveAgentPath("notes/fleet-limits.md")).toBe(resolve(WS, "notes", "fleet-limits.md"));
   });
 
   it("lands a workspace-prefixed agent path inside the real workspace", () => {
-    // "workspace/apps/<id>/index.html" is the agent's convention — anchoring to
-    // the workspace PARENT makes it resolve into the workspace itself.
+    // "workspace/apps/<id>/index.html" is the convention the prompt teaches. The
+    // leading segment is stripped, so it names the same file as the bare form
+    // rather than doubling into <workspace>/workspace/apps.
     expect(resolveAgentPath("workspace/apps/demo/index.html")).toBe(
+      resolve(WS, "apps", "demo", "index.html"),
+    );
+    expect(resolveAgentPath("apps/demo/index.html")).toBe(
+      resolveAgentPath("workspace/apps/demo/index.html"),
+    );
+    expect(resolveAgentPath("./workspace/apps/demo/index.html")).toBe(
       resolve(WS, "apps", "demo", "index.html"),
     );
   });
 
+  it("strips only a whole leading 'workspace' segment", () => {
+    expect(resolveAgentPath("workspaces/x.txt")).toBe(resolve(WS, "workspaces", "x.txt"));
+    expect(resolveAgentPath("my-workspace/x.txt")).toBe(resolve(WS, "my-workspace", "x.txt"));
+    expect(resolveAgentPath("docs/workspace/x.txt")).toBe(resolve(WS, "docs", "workspace", "x.txt"));
+  });
+
   it("does not resolve against process.cwd()", () => {
-    // The resolved path must live under the relocated workspace's parent, never
-    // under the test runner's cwd.
+    // The resolved path must live under the relocated workspace, never under
+    // the test runner's cwd.
     const out = resolveAgentPath("apps/demo/index.html");
-    expect(out.startsWith(resolve(WS, ".."))).toBe(true);
+    expect(out.startsWith(WS)).toBe(true);
     expect(out.startsWith(process.cwd())).toBe(false);
   });
 
@@ -77,7 +93,7 @@ describe("resolveAgentPath", () => {
 
   it("does not treat a ~ in the MIDDLE of a path as home (only a leading ~)", () => {
     // "backup~/x" is a real relative name, not a home reference.
-    expect(resolveAgentPath("backup~/x")).toBe(resolve(WS, "..", "backup~/x"));
+    expect(resolveAgentPath("backup~/x")).toBe(resolve(WS, "backup~/x"));
   });
 
   // The resolver is shared by the file tool AND the security gate, so expanding
@@ -91,9 +107,11 @@ describe("resolveAgentPath", () => {
   // The shell-class default working directory (bash / process_start with no cwd)
   // is the project root — the workspace parent, the same anchor relative agent
   // paths use — so a relative command resolves in the project, not the server cwd.
-  it("projectRoot is the workspace parent (the relative-path anchor)", () => {
+  it("projectRoot is the workspace parent, and no longer the relative-path anchor", () => {
     expect(projectRoot()).toBe(resolve(WS, ".."));
-    expect(projectRoot()).toBe(resolveAgentPath("."));
+    // The anchor moved into the workspace; projectRoot() stays what its name
+    // says and is now only used by code that genuinely wants the parent.
+    expect(resolveAgentPath(".")).toBe(WS);
   });
 });
 
@@ -114,16 +132,16 @@ describe("session work-root anchor", () => {
     try {
       expect(resolveAgentPath("app/layout.tsx", "agent-run-1")).toBe(resolve(PROJ, "app", "layout.tsx"));
       // Other sessions are unaffected.
-      expect(resolveAgentPath("app/layout.tsx", "agent-run-2")).toBe(resolve(WS, "..", "app", "layout.tsx"));
+      expect(resolveAgentPath("app/layout.tsx", "agent-run-2")).toBe(resolve(WS, "app", "layout.tsx"));
       // No session id → default anchor.
-      expect(resolveAgentPath("app/layout.tsx")).toBe(resolve(WS, "..", "app", "layout.tsx"));
+      expect(resolveAgentPath("app/layout.tsx")).toBe(resolve(WS, "app", "layout.tsx"));
       // Absolute paths still pass through.
       const abs = resolve("/some/abs/file.txt");
       expect(resolveAgentPath(abs, "agent-run-1")).toBe(abs);
     } finally {
       clearSessionWorkRoot("agent-run-1");
     }
-    expect(resolveAgentPath("app/layout.tsx", "agent-run-1")).toBe(resolve(WS, "..", "app", "layout.tsx"));
+    expect(resolveAgentPath("app/layout.tsx", "agent-run-1")).toBe(resolve(WS, "app", "layout.tsx"));
   });
 
   it("sessionIdOf extracts the executor-injected id and rejects non-strings", () => {

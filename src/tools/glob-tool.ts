@@ -8,7 +8,7 @@ import type { Readable } from "node:stream";
 import fg from "fast-glob";
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { ok, err } from "./result-helpers.js";
-import { resolveAgentPath, sessionIdOf } from "../workspace/paths.js";
+import { resolveAgentPath, sessionIdOf, stripWorkspacePrefix } from "../workspace/paths.js";
 
 // Resolve the search base through the canonical agent-path resolver — the SAME
 // one read/grep and the security gate use — so a "~/..." or workspace-relative
@@ -16,8 +16,8 @@ import { resolveAgentPath, sessionIdOf } from "../workspace/paths.js";
 // onto a raw cwd and failing until the model retries. Absent path → "." through
 // that same resolver, which is ONE rule for every tool: the session's work
 // root when one is registered (a chunk worker's bare glob("**/*.ts") must
-// search its project), else the project root — the workspace's parent that
-// read/write/bash anchor to. It used to fall back to process.cwd(), which in
+// search its project), else the workspace — the same anchor read/write/bash
+// resolve relative paths against. It used to fall back to process.cwd(), which in
 // the dev server is the git checkout: a model's first bare glob searched the
 // wrong tree and returned nothing (session chat-mtrxppqw-m7fah, 2026-09-08).
 // Exported for direct testing (guards against a regression back to cwd).
@@ -44,10 +44,10 @@ interface FileEntry { path: string; mtime: number; size: number }
 // and stat()ed before the 200-entry limit applied last. The Aug 30 OOM
 // snapshot — 3.9GB heap, 126-206 pending FSReqCallbacks — was that fan-out.
 //
-// Symlinks ARE still followed. The default search root is the project root
-// (the configured workspace's parent, via resolveAgentPath — see searchBase),
-// and the packaged app also bridges <cwd>/workspace to that workspace with a
-// dir symlink / junction (workspace/lifecycle.ts ensureWorkspaceLink); user
+// Symlinks ARE still followed. The default search root is the workspace (via
+// resolveAgentPath — see searchBase), and the packaged app also bridges
+// <cwd>/workspace to it with a dir symlink / junction
+// (workspace/lifecycle.ts ensureWorkspaceLink); user
 // files routinely sit behind such links, so a walk that skipped them would
 // return "No files matched." for every one of them. The depth and scan caps
 // below are what bound a cycle, not link-skipping.
@@ -154,7 +154,7 @@ async function globFiles(pattern: string, cwd: string, limit: number): Promise<{
 
 export const globTool: ToolDefinition = {
   name: "glob",
-  compactDescription: `Fast file pattern matching (e.g. src/**/*.tsx), newest first, from the project root by default. Walks at most ${MAX_DEPTH} levels and stops after ${MAX_SCAN} matches (a bare **/* truncates) — pass a path to narrow the search.`,
+  compactDescription: `Fast file pattern matching (e.g. src/**/*.tsx), newest first, from your workspace by default. Walks at most ${MAX_DEPTH} levels and stops after ${MAX_SCAN} matches (a bare **/* truncates) — pass a path to narrow the search.`,
   description:
     "Fast file pattern matching. Returns files matching a glob pattern, sorted by modification time (newest first). " +
     "Supports patterns like **/*.ts, src/**/*.tsx, *.json. " +
@@ -170,14 +170,19 @@ export const globTool: ToolDefinition = {
       },
       path: {
         type: "string",
-        description: "Directory to search in. Defaults to the project root (the same root relative paths in read/bash resolve against).",
+        description: "Directory to search in. Defaults to the workspace (the same root relative paths in read/bash resolve against).",
       },
     },
     required: ["pattern"],
   },
   async execute(args: Record<string, unknown>): Promise<ToolResult> {
-    const pattern = String(args.pattern ?? "");
-    if (!pattern) return err("pattern is required");
+    const raw = String(args.pattern ?? "");
+    if (!raw) return err("pattern is required");
+    // A pattern is matched against the base, never resolved as a path, so it
+    // needs the same leading-"workspace/" strip resolveAgentPath applies —
+    // otherwise the prefixed form the prompt teaches doubles the segment and
+    // matches nothing.
+    const pattern = stripWorkspacePrefix(raw);
 
     const cwd = searchBase(args.path, sessionIdOf(args));
     const startMs = Date.now();

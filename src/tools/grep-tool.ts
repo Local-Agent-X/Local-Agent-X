@@ -246,7 +246,7 @@ export const grepTool: ToolDefinition = {
     type: "object",
     properties: {
       pattern:          { type: "string", description: "Regex pattern to search for" },
-      path:             { type: "string", description: "File or directory to search (defaults to the project root, the same root relative paths in read/bash resolve against)" },
+      path:             { type: "string", description: "File or directory to search (defaults to the workspace, the same root relative paths in read/bash resolve against)" },
       type:             { type: "string", description: "File type filter, e.g. 'ts', 'py', 'js'" },
       glob:             { type: "string", description: "Glob pattern to filter files, e.g. '*.tsx'" },
       output_mode:      { type: "string", enum: ["content", "files_with_matches", "count"], description: "Output mode (default: files_with_matches)" },

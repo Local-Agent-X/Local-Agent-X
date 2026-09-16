@@ -7,7 +7,7 @@ import type { ToolDefinition, ToolResult } from "../types.js";
 import { acquireImages, imageAltText, IMAGES_PARAM_SCHEMA, type AcquiredImage, type ImageSpec } from "./shared/image-acquire.js";
 import { verifyWriteLanded } from "./verify.js";
 // Resolve caller paths the SAME way SecurityLayer's file-access gate does
-// (project-root anchored, no ~ expansion) so the gated path == the opened path.
+// (workspace anchored, no ~ expansion) so the gated path == the opened path.
 import { resolveAgentPath as resolvePath } from "../workspace/paths.js";
 import { readValidatedFile } from "../security/layer/index.js";
 import { resolveOfficeTheme, half, brandAuthor, brandFooter, type OfficeTheme, THEME_PARAM_SCHEMA } from "./shared/office-theme.js";

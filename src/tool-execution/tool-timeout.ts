@@ -111,17 +111,34 @@ export function setToolTimeout(toolName: string, ms: number): void {
   saveCustomTimeouts(custom);
 }
 
+/**
+ * `ms` bounds the TOOL's own work. `excludedMs` reports time the call spent
+ * waiting on something that is not the tool working — today, a human deciding
+ * an approval (approval-manager.ts approvalWaitMsFor). Without it the two
+ * budgets fought: a 30s browser timeout around a 5-minute approval card meant
+ * every sensitive-page action timed out before the user could answer, and the
+ * retry raised another card (live 2026-09-16, Google Cloud console).
+ */
 export async function withTimeout<T>(
   promise: Promise<T>,
   ms: number,
   toolName: string,
+  excludedMs?: () => number,
 ): Promise<T> {
   let timer: ReturnType<typeof setTimeout>;
+  const startedAt = Date.now();
 
   const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => {
-      reject(new ToolTimeoutError(toolName, ms));
-    }, ms);
+    const arm = (delay: number): void => {
+      timer = setTimeout(() => {
+        // Re-check at the deadline rather than polling: whatever was excluded
+        // while we waited buys exactly that much more wall clock, once.
+        const remaining = startedAt + ms + (excludedMs?.() ?? 0) - Date.now();
+        if (remaining > 0) { arm(remaining); return; }
+        reject(new ToolTimeoutError(toolName, ms));
+      }, Math.max(1, delay));
+    };
+    arm(ms);
   });
 
   try {

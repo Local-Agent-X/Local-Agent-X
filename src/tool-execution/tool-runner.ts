@@ -5,6 +5,7 @@ import { getToolTimeout, withTimeout } from "./tool-timeout.js";
 import { isRetryable, retrySignalForToolResult } from "../resilience-policy.js";
 import { createRetryCallSnapshot } from "./retry-call.js";
 import { createJournaledExecution } from "./journaled-execution.js";
+import { approvalWaitMsFor, clearApprovalWait } from "../approval-manager.js";
 
 export interface ToolRunner {
   /** True when the side-effect journal satisfied this call without executing
@@ -41,16 +42,26 @@ export function createToolRunner(input: {
       const args = call.freshArgs();
       args._onProgress = input.onProgress;
       const execution = input.tool.execute(args, input.signal);
-      return await (ms > 0 ? withTimeout(execution, ms, input.toolName) : execution);
+      // An approval card raised inside this execute is the user's time, not the
+      // tool's — the runner's budget excludes it (approval-manager.ts).
+      return await (ms > 0
+        ? withTimeout(execution, ms, input.toolName, () => approvalWaitMsFor(input.toolCallId))
+        : execution);
     });
     const retrySignal = journal.replayed ? null : retrySignalForToolResult(result, call.effect);
     if (retrySignal) throw retrySignal;
     return result;
   };
+  // The banked approval wait belongs to THIS call; drop it when the call is
+  // done so the map can't grow for the life of the process.
+  const runAndRelease = async (): Promise<ToolResult> => {
+    try { return await runOnce(); }
+    finally { clearApprovalWait(input.toolCallId); }
+  };
   return {
     replayed: journal.replayed,
     run: () => call.retryable
-      ? withRetry(runOnce, {
+      ? withRetry(runAndRelease, {
           maxRetries: 2,
           baseDelayMs: 500,
           maxDelayMs: 4000,
@@ -58,7 +69,7 @@ export function createToolRunner(input: {
           ctx: getRetryContext(input.sessionId),
           layer: "L1-tool",
         })
-      : runOnce(),
+      : runAndRelease(),
     reconcile: error => journal.reconcile(error),
     complete: result => journal.complete(result),
   };

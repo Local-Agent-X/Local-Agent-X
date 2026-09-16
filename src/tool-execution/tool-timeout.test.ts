@@ -36,6 +36,27 @@ describe("withTimeout", () => {
     const { withTimeout } = await import("./tool-timeout.js");
     await expect(withTimeout(resolvesAfter(5), 1000, "x")).resolves.toBe("done");
   });
+
+  // Live 2026-09-16: a browser action on the Google Cloud console raised a
+  // 5-minute approval card inside a 30s tool timeout. The call was dead half a
+  // minute in whatever the user did, and the retry raised another card.
+  it("does not spend the tool's budget on time the user spent deciding", async () => {
+    const { withTimeout } = await import("./tool-timeout.js");
+    let waited = 0;
+    // The call works for ~30ms total, but 60ms of its wall clock is a human
+    // answering an approval — more than the 50ms budget on its own.
+    const work = (async () => { await resolvesAfter(90); return "done"; })();
+    const excluded = () => waited;
+    const bump = setTimeout(() => { waited = 60; }, 10);
+    (bump as unknown as { unref?: () => void }).unref?.();
+    await expect(withTimeout(work, 50, "browser", excluded)).resolves.toBe("done");
+  });
+
+  it("still times out on the tool's own work when nothing was excluded", async () => {
+    const { withTimeout, ToolTimeoutError } = await import("./tool-timeout.js");
+    await expect(withTimeout(resolvesAfter(200), 20, "browser", () => 0))
+      .rejects.toBeInstanceOf(ToolTimeoutError);
+  });
 });
 
 describe("getToolTimeout exemptions", () => {

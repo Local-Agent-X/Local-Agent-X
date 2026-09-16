@@ -1,4 +1,5 @@
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
+import { isHarnessRow } from "../harness-rows.js";
 import { chatHistoryWindow } from "../context-manager/compaction-policy.js";
 import { stripSystemInjectionTags } from "../sanitize.js";
 import { truncateHistory } from "./truncate-history.js";
@@ -217,6 +218,11 @@ function withoutControlFlags(m: ChatCompletionMessageParam): ChatCompletionMessa
  */
 export function stripEphemeralMessages(messages: ChatCompletionMessageParam[]): ChatCompletionMessageParam[] {
   return messages.filter((m) => {
+    // A tagged harness row is kept ON PURPOSE (harness-rows.ts): the model must
+    // see the correction it was given last message. The prefix list below is
+    // the old, drift-prone way of recognising these rows and stays only for
+    // sessions written before the tag existed.
+    if (isHarnessRow(m)) return true;
     // Structural marker — no live writer left (see the note above). Kept for
     // sessions persisted before the canonical-loop consolidation, whose rows
     // still carry the flag written by the since-deleted agent-loop/run.ts.
@@ -345,7 +351,12 @@ export function sanitizeHistory(messages: ChatCompletionMessageParam[]): ChatCom
       !(last as unknown as MsgRecord).tool_calls &&
       !(m as unknown as MsgRecord).tool_calls &&
       !hasImagesProp(last) &&
-      !hasImagesProp(m)
+      !hasImagesProp(m) &&
+      // Never fuse a harness row into the user's own sentence: the merged row
+      // would read as something the person said, and would lose the tag every
+      // downstream consumer keys on.
+      !isHarnessRow(last) &&
+      !isHarnessRow(m)
     ) {
       // Merge into the previous message — on a COPY. `last` is often the live
       // session.messages row (callers pass stored history uncopied and

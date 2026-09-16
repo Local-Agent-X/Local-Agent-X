@@ -357,7 +357,41 @@ describe("compactHistory — replaced-range citation for recall", () => {
   // Boundary rows must survive recall's projection (opMessageRowToChatParam):
   // recall errors on a dropped startId and silently widens a dropped endId to
   // end-of-transcript — either way the cited cursor would be broken.
-  it("skips dropped rows (nudges, empty assistants) at the head boundaries", async () => {
+  it("skips rows recall cannot page (empty assistants) at the head boundaries", async () => {
+    mockStatus.mockReturnValue(status(96, true)); // keepLast = 4
+    mockSummarize.mockResolvedValue("DECISIONS: ship it");
+    const nudge = (id: string): CanonicalMessage =>
+      ({ messageId: id, role: "user", content: { text: "[auto] try again", kind: "nudge" } });
+    const msgs = [
+      a("e0", ""), u("u1", "q1"), a("a1", "r1"), a("e2", ""),
+      u("u3", "q3"), a("a3", "r3"), u("u4", "q4"), a("a4", "r4"),
+    ];
+    const { messages: out } = await compactHistory(msgs, "claude-sonnet-4-6");
+    // head = e0,u1,a1,e2 → both empty assistants are dropped by recall's
+    // projection → range u1:a1
+    const text = (out[0].content as { text: string }).text;
+    expect(text).toContain("messages, range u1:a1]");
+    expect(recallCursorOf(text)).toBe("u1:a1");
+  });
+
+  it("omits the range and recall hint entirely when no head row survives recall", async () => {
+    mockStatus.mockReturnValue(status(96, true)); // keepLast = 4
+    mockSummarize.mockResolvedValue("DECISIONS: ship it");
+    const msgs = [
+      a("e1", ""), a("e2", ""), a("e3", ""), a("e4", ""), // all dropped by recall
+      u("u3", "q3"), a("a3", "r3"), u("u4", "q4"), a("a4", "r4"),
+    ];
+    const { messages: out } = await compactHistory(msgs, "claude-sonnet-4-6");
+    const content = out[0].content as { text: string; summaryRange?: unknown };
+    expect(content.text).toContain("— 4 messages]"); // no range tag
+    expect(content.text).not.toContain("recall tool");
+    expect(content.summaryRange).toBeUndefined();
+  });
+
+  // A nudge USED to be dropped by recall's projection, so it could never be a
+  // boundary. It is persisted and pageable now (harness-rows.ts): the model can
+  // page back to the correction it was given, and the cursor may name it.
+  it("treats a harness nudge as a pageable row", async () => {
     mockStatus.mockReturnValue(status(96, true)); // keepLast = 4
     mockSummarize.mockResolvedValue("DECISIONS: ship it");
     const nudge = (id: string): CanonicalMessage =>
@@ -367,26 +401,8 @@ describe("compactHistory — replaced-range citation for recall", () => {
       u("u3", "q3"), a("a3", "r3"), u("u4", "q4"), a("a4", "r4"),
     ];
     const { messages: out } = await compactHistory(msgs, "claude-sonnet-4-6");
-    // head = n1,u1,a1,n2 → both boundary nudges skipped → range u1:a1
     const text = (out[0].content as { text: string }).text;
-    expect(text).toContain("messages, range u1:a1]");
-    expect(recallCursorOf(text)).toBe("u1:a1");
-  });
-
-  it("omits the range and recall hint entirely when no head row survives recall", async () => {
-    mockStatus.mockReturnValue(status(96, true)); // keepLast = 4
-    mockSummarize.mockResolvedValue("DECISIONS: ship it");
-    const nudge = (id: string): CanonicalMessage =>
-      ({ messageId: id, role: "user", content: { text: "[auto] try again", kind: "nudge" } });
-    const msgs = [
-      nudge("n1"), a("e1", ""), nudge("n2"), a("e2", ""), // all dropped by recall
-      u("u3", "q3"), a("a3", "r3"), u("u4", "q4"), a("a4", "r4"),
-    ];
-    const { messages: out } = await compactHistory(msgs, "claude-sonnet-4-6");
-    const content = out[0].content as { text: string; summaryRange?: unknown };
-    expect(content.text).toContain("— 4 messages]"); // no range tag
-    expect(content.text).not.toContain("recall tool");
-    expect(content.summaryRange).toBeUndefined();
+    expect(recallCursorOf(text)).toBe("n1:n2");
   });
 
   it("suppresses only the hint line on a session-less op (recall would refuse)", async () => {

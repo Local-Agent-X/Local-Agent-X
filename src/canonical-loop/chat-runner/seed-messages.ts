@@ -3,6 +3,7 @@
 // worker, on first turn, sees the full history instead of just the default
 // `seedInitialUserMessage` rendering.
 
+import { harnessRowKind, isHarnessRow } from "../../harness-rows.js";
 import { randomUUID } from "node:crypto";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { PreparedAgentRequest } from "../../agent-request/types.js";
@@ -90,7 +91,9 @@ export function seedOpMessages(opId: string, prepared: PreparedAgentRequest, cur
     // For tool_result rows, embed tool_call_id inside the content payload
     // (canonical OpMessageRow has a free-form `content` field; the adapter
     // reads tool_call_id from there when converting to provider messages).
-    let content: unknown = { text };
+    // A harness row re-enters the op tagged, so the next persist can tell it
+    // apart again — otherwise the tag survives exactly one message.
+    let content: unknown = isHarnessRow(msg) ? { text, kind: harnessRowKind(msg) } : { text };
     if (role === "tool_result") {
       const toolMsg = msg as ChatCompletionMessageParam & { tool_call_id?: string };
       if (toolMsg.tool_call_id) content = { text, toolCallId: toolMsg.tool_call_id };

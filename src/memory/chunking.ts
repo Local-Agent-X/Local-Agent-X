@@ -6,6 +6,7 @@
  *   2. Conversation-pair (for chat sessions — preserves Q+A semantic units)
  */
 
+import { isHarnessRow } from "../harness-rows.js";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import type { ChunkMetadata } from "./index.js";
@@ -215,6 +216,9 @@ export function extractSessionPairs(sessionPath: string): ConversationMessage[] 
   const messages: ConversationMessage[] = [];
   for (const msg of session.messages) {
     if (msg.role !== "user" && msg.role !== "assistant") continue;
+    // A nudge wears role:"user" but the person never said it — pairing on it
+    // would embed harness prose as a durable memory and shift every pair after.
+    if (isHarnessRow(msg as Parameters<typeof isHarnessRow>[0])) continue;
     const raw = typeof msg.content === "string"
       ? msg.content.trim()
       : Array.isArray(msg.content)

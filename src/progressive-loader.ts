@@ -1,3 +1,4 @@
+import { isHarnessRow } from "./harness-rows.js";
 import { existsSync, readFileSync } from "node:fs";
 
 interface StoredMessage {
@@ -25,6 +26,9 @@ const EPHEMERAL_USER_PREFIXES = [
 ];
 
 function isEphemeral(m: StoredMessage): boolean {
+  // Tagged harness rows (nudges) are for the model, never the reader. The
+  // prefix list below predates the tag and stays for older sessions.
+  if (isHarnessRow(m as Parameters<typeof isHarnessRow>[0])) return true;
   if (m._ephemeral === true) return true;
   if (m.role !== "user" || typeof m.content !== "string") return false;
   return EPHEMERAL_USER_PREFIXES.some((p) => (m.content as string).startsWith(p));

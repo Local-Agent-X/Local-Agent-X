@@ -4,6 +4,7 @@
 // turn-end (outbound: canonical → OpenAI, via opMessageRowToChatParam,
 // for appending to per-session.messages history).
 
+import { markHarnessRow } from "../../harness-rows.js";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { OpMessageRow } from "../types.js";
 
@@ -116,7 +117,16 @@ export function opMessageRowToChatParam(row: OpMessageRow): ChatCompletionMessag
     // as if they typed it. Live failure 2026-05-14: user saw "Your
     // previous attempt produced no visible reply..." and "You called
     // tools but none committed..." as user bubbles in chat.
-    if (content.kind === "nudge") return null;
+    // A nudge is the HARNESS talking, wearing role:"user" because that is the
+    // only role a provider obeys as an instruction. KEPT (tagged) rather than
+    // dropped: dropping it meant the model was corrected on one message and had
+    // no trace of that correction on the next, while the user saw replies
+    // answering a question absent from their transcript (live 2026-09-15). The
+    // tag is what keeps it out of the chat UI, memory and retract —
+    // harness-rows.ts names every consumer.
+    if (content.kind === "nudge") {
+      return markHarnessRow({ role: "user", content: text } as ChatCompletionMessageParam, "nudge");
+    }
     // Strip the engine-side temporal marker that turn-loop wraps mid-turn
     // injects with — the chat UI / future turns should see what the user
     // actually typed, not the wrapped form.

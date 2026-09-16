@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { isHarnessRow } from "../harness-rows.js";
 import { basename, join, sep } from "node:path";
 import type Database from "better-sqlite3";
 import type { Session } from "../types.js";
@@ -33,6 +34,7 @@ export function flattenSession(path: string): string {
     ];
 
     for (const msg of session.messages) {
+      if (isHarnessRow(msg)) continue; // harness prose is not indexed memory
       if (msg.role === "user" || msg.role === "assistant") {
         let content = "";
         if (typeof msg.content === "string") {

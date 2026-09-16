@@ -1,5 +1,6 @@
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 
+import { isHarnessRow } from "../harness-rows.js";
 import { COMPACTION_PREFIX } from "../types.js";
 
 export interface RetractOptions {
@@ -50,7 +51,9 @@ export function retractLastTurn(
 
 	let userIdx = -1;
 	for (let i = messages.length - 1; i >= floor; i--) {
-		if (messages[i].role === "user") { userIdx = i; break; }
+		// A trailing nudge is role:"user" but is not the user's turn — retracting
+		// to it would cut the harness's instruction and leave the real message.
+		if (messages[i].role === "user" && !isHarnessRow(messages[i])) { userIdx = i; break; }
 	}
 	if (userIdx === -1) return { messages, removed: 0 };
 

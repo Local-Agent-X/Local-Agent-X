@@ -22,6 +22,7 @@
  * function is idempotent — re-running on an already-migrated dir is a no-op.
  */
 
+import { isHarnessRow } from "../harness-rows.js";
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { atomicWriteFileSync } from "./utils.js";
@@ -216,6 +217,9 @@ export function projectSessionForUI(session: Session): Session {
 
   for (const m of session.messages) {
     if (m.role === "tool") continue;
+    // Harness rows (nudges) live in the transcript for the MODEL. The person
+    // never said them, so the chat never shows them.
+    if (isHarnessRow(m)) continue;
     if (m.role === "user") {
       // User message ends the prior assistant turn — flush its one bubble
       // (tools-only turns still emit, as an empty-content assistant with the

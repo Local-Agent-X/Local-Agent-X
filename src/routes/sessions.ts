@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { isHarnessRow } from "../harness-rows.js";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import type { RouteHandler } from "../server-context.js";
@@ -89,7 +90,12 @@ export const handleSessionRoutes: RouteHandler = async (method, url, req, res, c
     const source = ctx.getOrCreateSession(sourceId);
     if (atIndex < 0 || atIndex >= source.messages.length) { json(400, { error: "Invalid message index" }); return true; }
     const forkId = `fork-${randomBytes(8).toString("hex")}`;
-    const forkedMessages = source.messages.slice(0, atIndex + 1);
+    // Never end a fork on a harness row: a nudge is not a message the user
+    // could have clicked, and a fork ending there would open with the
+    // harness's own instruction as its last turn.
+    let sliceEnd = atIndex + 1;
+    while (sliceEnd > 0 && isHarnessRow(source.messages[sliceEnd - 1])) sliceEnd--;
+    const forkedMessages = source.messages.slice(0, sliceEnd);
     const forkSession = {
       id: forkId, title: `Fork: ${source.title}`,
       messages: JSON.parse(JSON.stringify(forkedMessages)),
@@ -135,7 +141,7 @@ export const handleSessionRoutes: RouteHandler = async (method, url, req, res, c
       if (existsSync(summaryFile)) continue;
       const session = ctx.sessionStore.load(meta.id);
       if (!session) continue;
-      const userMsgs = session.messages.filter(m => m.role === "user" && typeof m.content === "string");
+      const userMsgs = session.messages.filter(m => m.role === "user" && typeof m.content === "string" && !isHarnessRow(m));
       const assistMsgs = session.messages.filter(m => m.role === "assistant" && typeof m.content === "string");
       const topicLines = userMsgs.slice(0, 5).map(m => `- User: ${String(m.content).slice(0, 120)}`);
       const assistLines = assistMsgs.slice(0, 3).map(m => `- Agent: ${String(m.content).split("\n")[0]?.slice(0, 120)}`);

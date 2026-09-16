@@ -12,7 +12,7 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 65 top-level dirs · 65 live · 0 with no live importer · 1583 non-test source files · 0 god files (>400 LOC).
+**Totals:** 65 top-level dirs · 65 live · 0 with no live importer · 1583 non-test source files · 1 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -23,7 +23,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/tools/` | 70 | 192 | XL |  |
 | `src/providers/` | 62 | 21 | XL |  |
 | `src/canonical-loop/` | 61 | 237 | XL |  |
-| `src/memory/` | 46 | 129 | XL |  |
+| `src/memory/` | 46 | 129 | XL | 1 |
 | `src/workspace/` | 42 | 2 | M |  |
 | `src/util/` | 37 | 3 | S |  |
 | `src/session/` | 36 | 7 | L |  |
@@ -132,6 +132,7 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/ffmpeg-bin.ts` | S |
 | `src/ffmpeg-run.ts` | S |
 | `src/git-safety.ts` | S |
+| `src/harness-rows.ts` | S |
 | `src/harness-text.ts` | S |
 | `src/index.ts` | M |
 | `src/injection-patterns.ts` | S |
@@ -204,4 +205,14 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/update-service.ts` | M |
 | `src/user-notice.ts` | S |
 | `src/worker-session.ts` | S |
+
+## God files (> 400 LOC)
+
+Burn-down targets for `/refactor-godfiles`. Membership only (not exact LOC),
+so a god file growing a little doesn't churn this doc — only crossing the
+400-line line does.
+
+| File | Size |
+|---|:--:|
+| `src/memory/session-message-log.ts` | M |
 

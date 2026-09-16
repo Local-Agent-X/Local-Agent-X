@@ -167,11 +167,15 @@ describe("paging (low detail)", () => {
 });
 
 describe("low-detail rendering", () => {
-	it("skips synthetic nudge rows (adapter returns null)", async () => {
+	// recall pages what the MODEL saw. A nudge is an instruction it was given,
+	// and being unable to page back to it is the gap that let a correction
+	// evaporate between messages (harness-rows.ts). The chat UI and memory hide
+	// these rows; recall does not.
+	it("pages synthetic nudge rows — the model can look back at its own corrections", async () => {
 		const rows = [userRow("m1", "hello"), row("m2", "user", { text: "synthetic", kind: "nudge" }), asstRow("m3", "hi")];
 		const res = await run(deps(rows), {});
-		expect(res.content).toContain("of 2");
-		expect(res.content).not.toContain("synthetic");
+		expect(res.content).toContain("of 3");
+		expect(res.content).toContain("synthetic");
 	});
 	it("truncates long text at ~200 chars and appends the exact follow-up hint", async () => {
 		const long = "x".repeat(600);

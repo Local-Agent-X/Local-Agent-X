@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 
 import {
   isModelResident,
@@ -9,6 +9,7 @@ import {
   DISPATCH_MODEL_MAX_BYTES,
   DISPATCH_NUM_CTX,
   MODEL_KEEP_ALIVE,
+  _resetResidencyCache,
 } from "./residency.js";
 
 const BASE = "http://127.0.0.1:11434";
@@ -22,6 +23,9 @@ function psFetch(payload: unknown, status = 200) {
 const tick = () => new Promise((r) => setTimeout(r, 0));
 
 afterEach(() => vi.unstubAllGlobals());
+// Probes are cached for ~1s so one dispatch doesn't ask /api/ps twice; these
+// cases script a different answer per test within the same millisecond.
+beforeEach(() => _resetResidencyCache());
 
 describe("isModelResident", () => {
   it("true when /api/ps lists the model", async () => {

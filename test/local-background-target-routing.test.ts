@@ -34,6 +34,7 @@ vi.mock("../src/local-runtimes/index.js", () => ({
 }));
 
 import { classifyWithLLM } from "../src/classifiers/classify-with-llm.js";
+import { _resetResidencyCache } from "../src/local-runtimes/residency.js";
 import { dispatch } from "../src/llm-dispatch.js";
 
 const OPENAI_TARGET: CertifiedLocalClassifierTarget = {
@@ -85,6 +86,9 @@ beforeEach(() => {
   state.targetChecks = [];
   state.discoveredModel = null;
   state.pinnedModel = "";
+  // Residency probes are cached for ~1s so one dispatch doesn't ask /api/ps
+  // twice; each case here scripts its own answer for the same base URL.
+  _resetResidencyCache();
   vi.restoreAllMocks();
 });
 

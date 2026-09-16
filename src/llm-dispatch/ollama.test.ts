@@ -1,9 +1,12 @@
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 
 import { callOllama } from "./ollama.js";
-import { DISPATCH_NUM_CTX, MODEL_KEEP_ALIVE } from "../local-runtimes/residency.js";
+import { DISPATCH_NUM_CTX, MODEL_KEEP_ALIVE, _resetResidencyCache } from "../local-runtimes/residency.js";
 
 afterEach(() => vi.unstubAllGlobals());
+// Residency probes are cached for ~1s so one dispatch doesn't ask /api/ps
+// twice; each case scripts its own /api/ps answer for the same base URL.
+beforeEach(() => _resetResidencyCache());
 
 /** /api/ps answers with `loaded`; /api/generate answers with `response`. */
 function ollamaFetch(loaded: Array<Record<string, unknown>>, response = "YES") {

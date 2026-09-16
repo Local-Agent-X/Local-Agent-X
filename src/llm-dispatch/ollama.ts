@@ -56,12 +56,22 @@ export async function resolveOllamaDispatchModel(): Promise<string | null> {
   return usable[0]?.id ?? null;
 }
 
-/** Disk size of `model` from the discovery cache; undefined when not discovered. */
+/** Disk size of `model` from the discovery cache; undefined when not discovered.
+ *
+ *  Never throws: the size only SHARPENS the dispatch context choice (a model
+ *  above the dispatch cap keeps its own window), so an unavailable registry must
+ *  degrade to "unknown", not fail the call it was sizing. It threw once, when a
+ *  caller's runtime registry wasn't loaded, and took the whole background
+ *  dispatch down with it. */
 export function localModelSizeBytes(model: string): number | undefined {
   const tagged = (id: string) => (id.includes(":") ? id : `${id}:latest`);
-  return getLocalRuntimes()
-    ?.flatMap((rt) => rt.models)
-    .find((m) => tagged(m.id) === tagged(model))?.sizeBytes;
+  try {
+    return getLocalRuntimes()
+      ?.flatMap((rt) => rt.models)
+      .find((m) => tagged(m.id) === tagged(model))?.sizeBytes;
+  } catch {
+    return undefined;
+  }
 }
 
 export async function callOllama(

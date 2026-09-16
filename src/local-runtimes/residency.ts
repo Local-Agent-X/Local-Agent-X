@@ -63,6 +63,51 @@ export async function isModelResident(
 
 /** The /api/ps row for `model`: its served context when loaded (null if the
  *  runtime didn't report one), false when not loaded, null when unknowable. */
+/** One background dispatch asks /api/ps twice — once for the cold-skip check,
+ *  again inside dispatchNumCtx to size the call. The answer cannot change in
+ *  the microseconds between them, so the second read is pure latency and an
+ *  extra round trip the caller's wallclock pays for (it also broke the exact
+ *  request sequence test/local-background-target-routing.test.ts pins). Cached
+ *  per (baseUrl, redirect) for one call's worth of time, and dropped the moment
+ *  a warm changes what is loaded. */
+const PS_CACHE_MS = 1_000;
+const psCache = new Map<string, { at: number; rows: unknown[] | null }>();
+
+function invalidateResidencyCache(baseUrl: string): void {
+  const base = baseUrl.replace(/\/+$/, "");
+  for (const key of psCache.keys()) if (key.startsWith(`${base}|`)) psCache.delete(key);
+}
+
+/** Test-only: drop every cached probe. Production invalidation is per-warm
+ *  (above) plus the 1s expiry; a test that scripts several different /api/ps
+ *  answers in the same millisecond needs the slate cleared between them. */
+export function _resetResidencyCache(): void {
+  psCache.clear();
+}
+
+async function psRows(
+  baseUrl: string,
+  timeoutMs: number,
+  redirect?: "follow" | "error" | "manual",
+): Promise<unknown[] | null> {
+  const base = baseUrl.replace(/\/+$/, "");
+  const key = `${base}|${redirect ?? "follow"}`;
+  const hit = psCache.get(key);
+  if (hit && Date.now() - hit.at < PS_CACHE_MS) return hit.rows;
+  const res = await fetch(`${base}/api/ps`, {
+    signal: AbortSignal.timeout(timeoutMs),
+    ...(redirect ? { redirect } : {}),
+  });
+  let rows: unknown[] | null = null;
+  if (res.ok) {
+    const data: unknown = await res.json();
+    const models = data && typeof data === "object" ? (data as { models?: unknown }).models : null;
+    rows = Array.isArray(models) ? models : null;
+  }
+  psCache.set(key, { at: Date.now(), rows });
+  return rows;
+}
+
 async function loadedModel(
   baseUrl: string,
   model: string,
@@ -70,14 +115,8 @@ async function loadedModel(
   redirect?: "follow" | "error" | "manual",
 ): Promise<{ contextLength: number | null } | false | null> {
   try {
-    const res = await fetch(`${baseUrl.replace(/\/+$/, "")}/api/ps`, {
-      signal: AbortSignal.timeout(timeoutMs),
-      ...(redirect ? { redirect } : {}),
-    });
-    if (!res.ok) return null;
-    const data: unknown = await res.json();
-    const models = data && typeof data === "object" ? (data as { models?: unknown }).models : null;
-    if (!Array.isArray(models)) return null;
+    const models = await psRows(baseUrl, timeoutMs, redirect);
+    if (models === null) return null;
     const wanted = withDefaultTag(model);
     for (const m of models) {
       if (!m || typeof m !== "object") continue;
@@ -208,6 +247,9 @@ export function warmModel(
   const base = baseUrl.replace(/\/+$/, "");
   const key = `${base}|${model}|${redirect ?? "follow"}|${numCtx ?? "default"}`;
   if (inflightWarms.has(key)) return;
+  // A warm changes what is loaded and at what context — the one event that
+  // makes a cached /api/ps answer a lie.
+  invalidateResidencyCache(base);
   const run = (async () => {
     try {
       const res = await fetch(`${base}/api/generate`, {

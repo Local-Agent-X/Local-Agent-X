@@ -57,8 +57,7 @@ export const APPROVAL_TIMEOUT_MS = 5 * 60_000;
 const logger = createLogger("approval-manager");
 
 // Re-exported so existing importers of the approval surface keep one address.
-export { approvalWaitMsFor, clearApprovalWait } from "./approval-wait.js";
-import { recordApprovalWait } from "./approval-wait.js";
+import { beginApprovalWait } from "./approval-wait.js";
 
 /**
  * WHY a denial carries a reason: `requestApproval` resolves false on three
@@ -282,11 +281,11 @@ class ApprovalManager {
     void promise.then(() => this.inflight.delete(ekey));
     // Bank the wait against the CALL, so the runner's tool timeout can exclude
     // it. Accumulated (not overwritten): one call can ask more than once.
-    const waitStartedAt = Date.now();
-    return promise.then((outcome) => {
-      recordApprovalWait(opts.toolCallId, Date.now() - waitStartedAt);
-      return outcome;
-    });
+    // Bank the wait against the CALL currently executing (approval-wait.ts),
+    // so the runner's tool timeout excludes it — from the moment the card goes
+    // up, not from when it is answered: the deadline lands mid-decision.
+    const endWait = beginApprovalWait();
+    return promise.then((outcome) => { endWait(); return outcome; }, (error) => { endWait(); throw error; });
   }
 
   /**

@@ -3,8 +3,6 @@ import * as path from "node:path";
 import {
   computeArgsFingerprint,
   getApprovalManager,
-  approvalWaitMsFor,
-  clearApprovalWait,
   isDestructiveCommand,
   destructiveOperationReason,
   applyIrreversibleFloor,
@@ -705,41 +703,5 @@ describe("canonical bridge load failure (durable shadow is best-effort)", () => 
       errSpy.mockRestore();
       _setCanonicalBarrelImportForTest(null);
     }
-  });
-});
-
-// The tool's timeout must bound the TOOL's work, not the user's reading time.
-// Live 2026-09-16: a 30s browser timeout around a 5-minute approval card meant
-// every sensitive-page action died before the card could be answered, and each
-// retry raised a fresh one. tool-execution/tool-runner.ts excludes what this
-// banks; tool-timeout.test.ts pins the exclusion arithmetic.
-describe("ApprovalManager — the wait is banked against the call", () => {
-  it("records how long the human took, per toolCallId, and releases on clear", async () => {
-    const mgr = getApprovalManager();
-    const sessionId = sid("wait-banked");
-    const { emit, cap } = captureEmit();
-
-    expect(approvalWaitMsFor("tc-wait")).toBe(0);
-    const pending = mgr.requestApprovalDetailed({
-      toolName: "browser",
-      toolCallId: "tc-wait",
-      sessionId,
-      context: "sensitive page",
-      args: { action: "click", ref: 361 },
-      alwaysAsk: true,
-      emit,
-    });
-    await new Promise((r) => setTimeout(r, 25));
-    // Nothing is banked until the ask settles — a card still on screen has not
-    // finished costing the call anything.
-    expect(approvalWaitMsFor("tc-wait")).toBe(0);
-    expect(mgr.resolveApproval(cap.lastApprovalId!, true, false)).toBe(true);
-    await expect(pending).resolves.toMatchObject({ approved: true });
-
-    expect(approvalWaitMsFor("tc-wait")).toBeGreaterThanOrEqual(20);
-    expect(approvalWaitMsFor("tc-other-call")).toBe(0);
-
-    clearApprovalWait("tc-wait");
-    expect(approvalWaitMsFor("tc-wait")).toBe(0);
   });
 });

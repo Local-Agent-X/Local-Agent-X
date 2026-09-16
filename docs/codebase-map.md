@@ -47,12 +47,12 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/sandbox/` | 16 | 9 | L |  |
 | `src/anthropic-client/` | 14 | 21 | XL |  |
 | `src/voice/` | 13 | 74 | XL |  |
+| `src/autonomy/` | 12 | 4 | M |  |
 | `src/cognition/` | 12 | 30 | XL |  |
 | `src/server/` *(entrypoint)* | 12 | 50 | XL |  |
 | `src/tool-execution/` | 12 | 41 | XL |  |
 | `src/whatsapp-bridge/` | 12 | 8 | L |  |
 | `src/agent-guards/` | 11 | 11 | L |  |
-| `src/autonomy/` | 11 | 4 | M |  |
 | `src/self-edit/` | 11 | 20 | L |  |
 | `src/agent-loop/` | 10 | 1 | S |  |
 | `src/cron/` | 10 | 8 | L |  |
@@ -100,6 +100,7 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/approval-durable-record.ts` | S |
 | `src/approval-manager.ts` | M |
 | `src/approval-preview.ts` | S |
+| `src/approval-wait.ts` | S |
 | `src/auto-retry.ts` | S |
 | `src/benchmark-longmemeval.ts` | S |
 | `src/binary-sniff.ts` | S |

@@ -53,31 +53,12 @@ export {
  *  instead of forking a second constant that drifts. */
 export const APPROVAL_TIMEOUT_MS = 5 * 60_000;
 
-/**
- * How long a tool call has sat waiting for a human, per toolCallId.
- *
- * The ask happens INSIDE the tool's own execution, which the runner bounds with
- * a per-tool timeout (tool-execution/tool-timeout.ts). Those two budgets were
- * unrelated: a browser tool bounded at 30s could raise a 5-minute card, so
- * every sensitive-page action died half a minute in, no matter how fast the
- * user clicked — then the model retried and raised a fresh card, stacking
- * prompts the user could never satisfy (live 2026-09-16, Google Cloud console:
- * twelve minutes of 30s timeouts recorded in the side-effect journal).
- *
- * A tool's timeout is meant to bound the TOOL's work, not the person's reading
- * time, so the runner excludes whatever accrues here.
- */
-const approvalWaitMs = new Map<string, number>();
-
-export function approvalWaitMsFor(toolCallId: string): number {
-  return approvalWaitMs.get(toolCallId) ?? 0;
-}
-
-export function clearApprovalWait(toolCallId: string): void {
-  approvalWaitMs.delete(toolCallId);
-}
 
 const logger = createLogger("approval-manager");
+
+// Re-exported so existing importers of the approval surface keep one address.
+export { approvalWaitMsFor, clearApprovalWait } from "./approval-wait.js";
+import { recordApprovalWait } from "./approval-wait.js";
 
 /**
  * WHY a denial carries a reason: `requestApproval` resolves false on three
@@ -303,7 +284,7 @@ class ApprovalManager {
     // it. Accumulated (not overwritten): one call can ask more than once.
     const waitStartedAt = Date.now();
     return promise.then((outcome) => {
-      approvalWaitMs.set(opts.toolCallId, approvalWaitMsFor(opts.toolCallId) + (Date.now() - waitStartedAt));
+      recordApprovalWait(opts.toolCallId, Date.now() - waitStartedAt);
       return outcome;
     });
   }

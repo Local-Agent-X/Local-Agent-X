@@ -171,6 +171,17 @@ async function runCase(provider, caseDef, fixture) {
       // Memory writes run after the reply streams; let them land before the next session reads.
       if (s < caseDef.sessions.length - 1) await new Promise((r) => setTimeout(r, 8_000));
     }
+    // Before anything is graded: did the server outlive the run? A process
+    // that killed itself mid-turn leaves missing files and unfinished ops that
+    // look exactly like a model giving up — scored as model failures for
+    // months (the probe self-destruct's 10-minute cap, found 2026-09-16).
+    const died = server.exitedOnItsOwn();
+    if (died) {
+      result.harnessError = `server exited mid-run (code ${died.code}, signal ${died.signal}) — not a model result`;
+      result.errors.push(result.harnessError);
+      result.logTail = server.logTail();
+      return result;
+    }
     const stillRunning = await waitForBackgroundOps(server.dataDir, caseDef.timeoutMs ?? TURN_TIMEOUT_MS);
     if (stillRunning) result.errors.push(stillRunning);
     result.metrics = collectMetrics(server.dataDir);
@@ -228,7 +239,7 @@ try {
         const r = await runCase(provider, caseDef, fixture);
         batch.runs.push(r);
         const failed = r.checks.filter((c) => !c.ok).map((c) => `${c.type}: ${c.detail}`);
-        console.log(`  [${provider.label}] ${r.pass ? "PASS" : "FAIL"} ${caseDef.id}${REPEAT > 1 ? ` #${i + 1}` : ""} ${r.secs}s${failed.length ? `  — ${failed.join("; ")}` : ""}${r.errors.length ? `  errors: ${r.errors.join(" | ").slice(0, 200)}` : ""}${r.workspace ? `  kept: ${r.workspace}` : ""}`);
+        console.log(`  [${provider.label}] ${r.harnessError ? "HARNESS-ERROR" : r.pass ? "PASS" : "FAIL"} ${caseDef.id}${REPEAT > 1 ? ` #${i + 1}` : ""} ${r.secs}s${failed.length ? `  — ${failed.join("; ")}` : ""}${r.errors.length ? `  errors: ${r.errors.join(" | ").slice(0, 200)}` : ""}${r.workspace ? `  kept: ${r.workspace}` : ""}`);
         writeFileSync(outPath, JSON.stringify(report, null, 2));
       }
     }

@@ -85,6 +85,13 @@ export async function startIsolatedServer({ repoRoot, provider, model, fixturePo
       ...process.env,
       ...(seed.credentialPath ? { LAX_PROBE_PROVIDER_AUTH_PATH: seed.credentialPath } : {}),
       LAX_SELF_EDIT_PROBE: "1",
+      // The probe flag above (needed to read credentials in place) also arms a
+      // self-destruct sized for a 5-minute bind check. At its 10-minute default
+      // these servers died MID-TURN and the runs were scored as model failures
+      // — every case over ~10 minutes was measuring the harness killing itself.
+      // Comfortably past the per-turn ceiling; the parent-death watchdog, not
+      // this backstop, is what reaps an orphan when the runner dies.
+      LAX_PROBE_MAX_LIFETIME_MS: String(45 * 60_000),
       LAX_DATA_DIR: dataDir,
       LAX_WORKSPACE: workspace,
       LAX_PORT: String(port),
@@ -108,6 +115,10 @@ export async function startIsolatedServer({ repoRoot, provider, model, fixturePo
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
   const server = {
     root, dataDir, workspace, baseUrl, headers, logTail: () => tail.join("\n"),
+    /** Non-null once the server process is gone. A server that ends ITSELF
+     *  mid-run (the probe self-destruct did exactly this for months) makes
+     *  every later observation meaningless — the caller must not grade it. */
+    exitedOnItsOwn: () => (child.exitCode === null && child.signalCode === null ? null : { code: child.exitCode, signal: child.signalCode }),
     async api(method, path, body) {
       const res = await fetch(`${baseUrl}${path}`, { method, headers, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
       if (!res.ok) throw new Error(`${method} ${path} → HTTP ${res.status}`);

@@ -4,7 +4,7 @@
 // The fix makes the probe self-terminate. These pin both triggers (parent gone,
 // max-lifetime backstop) and the once-only guard.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { installProbeSelfDestruct } from "./probe-self-destruct.js";
+import { installProbeSelfDestruct, readProbeMaxLifetimeMs, DEFAULT_PROBE_MAX_LIFETIME_MS } from "./probe-self-destruct.js";
 
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
@@ -51,5 +51,36 @@ describe("installProbeSelfDestruct", () => {
     installProbeSelfDestruct({ parentPid: process.pid, maxLifetimeMs: 600_000, intervalMs: 5000, onTerminate });
     vi.advanceTimersByTime(30_000);
     expect(onTerminate).not.toHaveBeenCalled();
+  });
+});
+
+// The flag that arms this backstop is not only the bind probe's: the
+// op-outcomes eval boots real servers with LAX_SELF_EDIT_PROBE=1 to read
+// credentials in place. At the 10-minute default — sized for a 5-minute bind
+// check — those servers died MID-TURN, and the runs were scored as model
+// failures (2026-09-16). The backstop has to be sizeable by whoever hosts it,
+// while still refusing to become "never".
+describe("max-lifetime backstop is configurable, never disablable", () => {
+  const prev = process.env.LAX_PROBE_MAX_LIFETIME_MS;
+  afterEach(() => {
+    if (prev === undefined) delete process.env.LAX_PROBE_MAX_LIFETIME_MS;
+    else process.env.LAX_PROBE_MAX_LIFETIME_MS = prev;
+  });
+
+  it("defaults to the bind-probe backstop when unset", () => {
+    delete process.env.LAX_PROBE_MAX_LIFETIME_MS;
+    expect(readProbeMaxLifetimeMs()).toBe(DEFAULT_PROBE_MAX_LIFETIME_MS);
+  });
+
+  it("honours a host that needs longer than a bind check", () => {
+    process.env.LAX_PROBE_MAX_LIFETIME_MS = String(45 * 60_000);
+    expect(readProbeMaxLifetimeMs()).toBe(2_700_000);
+  });
+
+  it("falls back rather than letting a bad value mean 'never die'", () => {
+    for (const bad of ["0", "-1", "abc", ""]) {
+      process.env.LAX_PROBE_MAX_LIFETIME_MS = bad;
+      expect(readProbeMaxLifetimeMs(), `"${bad}" must not disable the backstop`).toBe(DEFAULT_PROBE_MAX_LIFETIME_MS);
+    }
   });
 });

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { getLaxDir } from "./lax-data-dir.js";
 
 import { createLogger } from "./logger.js";
-import { installProbeSelfDestruct } from "./probe-self-destruct.js";
+import { installProbeSelfDestruct, readProbeMaxLifetimeMs } from "./probe-self-destruct.js";
 const logger = createLogger("index");
 
 // Broken-pipe guard. Must be installed BEFORE any code writes to stdout/
@@ -336,6 +336,6 @@ if (!localModelQualificationBoot && process.env.LAX_SELF_EDIT_PROBE !== "1") {
   // BIND/BUILD timeout is 5min, so a live-at-10min probe is provably orphaned).
   installProbeSelfDestruct({
     parentPid: Number(process.env.LAX_PROBE_PARENT_PID),
-    maxLifetimeMs: 10 * 60_000,
+    maxLifetimeMs: readProbeMaxLifetimeMs(),
   });
 }

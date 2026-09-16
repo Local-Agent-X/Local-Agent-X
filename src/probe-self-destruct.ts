@@ -20,6 +20,26 @@ function parentAlive(pid: number): boolean {
   catch (e) { return (e as NodeJS.ErrnoException).code === "EPERM"; }
 }
 
+/** The bind-probe backstop: the self_edit gate's BIND/BUILD timeout is 5min,
+ *  so a probe alive at 10min is provably orphaned. */
+export const DEFAULT_PROBE_MAX_LIFETIME_MS = 10 * 60_000;
+
+/**
+ * The backstop any probe-flagged server uses. Read from the environment because
+ * the flag is not only the bind probe's: the op-outcomes eval boots real
+ * servers with LAX_SELF_EDIT_PROBE=1 (to read credentials in place), and the
+ * 10-minute cap sized for a 5-minute bind check silently killed them
+ * MID-TURN. The eval then waited out its own ceiling and scored the case as a
+ * model failure — a harness artifact recorded as evidence about a model
+ * (2026-09-16). Malformed values fall back to the default rather than
+ * disabling the backstop: an orphan that never dies is the failure this whole
+ * module exists to prevent.
+ */
+export function readProbeMaxLifetimeMs(): number {
+  const raw = parseInt(process.env.LAX_PROBE_MAX_LIFETIME_MS ?? "", 10);
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_PROBE_MAX_LIFETIME_MS;
+}
+
 export interface ProbeSelfDestructOpts {
   parentPid: number;
   maxLifetimeMs: number;

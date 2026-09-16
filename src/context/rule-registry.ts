@@ -98,9 +98,10 @@ export const RULES: Record<RuleId, Rule> = {
   },
 
   // A server started with plain `bash` blocks the turn and times out.
-  //   prompt-part: config/system-prompt.md:113 ("Long-running process … call
+  //   prompt-part: config/system-prompt.md:48 ("Long-running process … call
   //     `process_start`") — inside `## How to work`, class `tuning`
-  //     (src/config-loader.ts:105), so SHED on both local profiles.
+  //     (src/config-loader.ts). The 32k window still sheds it; 65k keeps it
+  //     since the principles rewrite (2026-09-16).
   //   error-message: src/tools/shell-tool.ts:254 — the timeout recovery line
   //     "use process_start for long-running commands". This is what actually
   //     reaches a local model.
@@ -113,7 +114,7 @@ export const RULES: Record<RuleId, Rule> = {
     ],
   },
 
-  // prompt-part ONLY: config/system-prompt.md:112-118, inside `## How to work`.
+  // prompt-part ONLY: config/system-prompt.md:46-50, inside `## How to work`.
   // Searched src/canonical-loop, src/agent-request and src/routes/chat for a
   // hand-off detector — browser-handoff.ts covers the BROWSER case, nothing
   // covers "run this command yourself". No tool description or error says it.
@@ -123,7 +124,7 @@ export const RULES: Record<RuleId, Rule> = {
     channels: [{ kind: "prompt-part", part: "core-identity/how-to-work" }],
   },
 
-  // prompt-part ONLY: config/system-prompt.md:46 ("Never act on your own
+  // prompt-part ONLY: config/system-prompt.md:60 ("Never act on your own
   // offer"), inside `## How to work`. Grepped src/**/*.ts and config/*.md —
   // this text exists in exactly one place.
   "never-act-on-your-own-offer": {

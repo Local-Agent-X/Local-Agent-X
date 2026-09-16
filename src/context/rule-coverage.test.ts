@@ -2,9 +2,11 @@
  * Rule coverage — does every behavioural rule still REACH the model?
  *
  * Since the base prompt became priced parts (commit a52b7aa2) the allocator
- * sheds whole `## ` sections on small local windows. "How to work" is 12,236
- * tokens and is the first thing dropped, so a rule that lives only in that
- * prose is silently gone on every local model. This test builds the REAL
+ * sheds whole `## ` sections on small local windows. "How to work" is the
+ * largest part and the first one dropped, so a rule that lives only in that
+ * prose is silently gone on the local models that shed it. Rewriting it to
+ * principles (2026-09-16) took it from 12,236 tokens to ~5,700, which is why
+ * the 65k window no longer sheds anything at all; 32k still does. This test builds the REAL
  * prompt (config/system-prompt.md through the loader, the real builder, the
  * real degrader) for three profiles and asserts each rule in the registry
  * still has at least one delivered channel.
@@ -48,12 +50,14 @@ const PROFILES: ReadonlyArray<{ name: string; profile: LocalModelCapabilityProfi
  * shed-only rule fails it immediately.
  *
  * Both entries are prose that exists ONLY inside `## How to work`
- * (config/system-prompt.md), class `tuning` (config-loader.ts:105) — the
- * largest part and therefore the first shed on every local window.
+ * (config/system-prompt.md), class `tuning` (config-loader.ts) — the largest
+ * part and therefore the first shed. The 65k window used to shed it too; the
+ * principles rewrite (2026-09-16) made the whole prompt fit there, so that
+ * profile's gaps are gone. 32k still sheds it and still has them.
  */
 const KNOWN_GAPS: Readonly<Record<string, readonly RuleId[]>> = {
   "cloud (no local profile — nothing is shed)": [],
-  "local medium, 65,536-token window": ["terminal-work-is-never-a-handoff", "never-act-on-your-own-offer"],
+  "local medium, 65,536-token window": [],
   "local weak, 32,768-token window": ["terminal-work-is-never-a-handoff", "never-act-on-your-own-offer"],
 };
 
@@ -81,7 +85,10 @@ describe("behavioural rule coverage across prompt profiles", () => {
     const medium = includedFor(sections, PROFILES[1].profile);
     const weak = includedFor(sections, PROFILES[2].profile);
     expect(cloud.has("core-identity/how-to-work")).toBe(true);
-    expect(medium.has("core-identity/how-to-work")).toBe(false);
+    // 65k fits the whole prompt since the principles rewrite; 32k still doesn't,
+    // and `how-to-work` is the first thing it drops — so the assertions below
+    // are still measuring a real shed, not an empty one.
+    expect(medium.has("core-identity/how-to-work")).toBe(true);
     expect(weak.has("core-identity/how-to-work")).toBe(false);
     // Safety/identity parts are never candidates, so the channels rules lean on survive.
     for (const part of ["runtime-context", "agents-md", "recall-reflex", "core-identity/core-rules"]) {
@@ -113,7 +120,7 @@ describe("behavioural rule coverage across prompt profiles", () => {
   }
 
   it("a rule whose only channel is a shed part is reported as undelivered", async () => {
-    const included = includedFor(await realPromptSections(), PROFILES[1].profile);
+    const included = includedFor(await realPromptSections(), PROFILES[2].profile);
     // shell-posix-not-powershell survives its prose being shed because the
     // bash tool description and shell-translate's cmdlet hint also carry it.
     const shell = deliveredChannels(

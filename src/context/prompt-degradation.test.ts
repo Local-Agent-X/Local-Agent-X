@@ -386,6 +386,10 @@ describe("priority-class allocation over the real base prompt", () => {
       .filter((s) => s.id !== "app-manifest");
     const budget = Math.floor(32_768 * 0.35);
     const nonTuning = sections.filter((s) => promptPriorityOf(s) !== "tuning");
+    // This is also the 32k FLOOR: safety and identity are never shed, so growing
+    // one of those sections (or promoting prose into `safety`, as the secret
+    // rules were on 2026-09-16) overflows the smallest window with nothing left
+    // to drop. If this line goes red, shrink the safety prose — don't raise it.
     expect(tokensOf(nonTuning), "precondition: everything but tuning fits the 32k share").toBeLessThanOrEqual(budget);
     expect(tokensOf(sections)).toBeGreaterThan(budget);
 

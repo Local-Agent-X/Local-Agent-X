@@ -131,6 +131,7 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/ffmpeg-bin.ts` | S |
 | `src/ffmpeg-run.ts` | S |
 | `src/git-safety.ts` | S |
+| `src/harness-text.ts` | S |
 | `src/index.ts` | M |
 | `src/injection-patterns.ts` | S |
 | `src/injection-views.ts` | S |

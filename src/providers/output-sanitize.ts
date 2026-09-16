@@ -42,6 +42,7 @@
 // wholesale WITH code it encloses (an unterminated <think> owns everything
 // after it) — that is removal of enclosed content, not editing code.
 
+import { HARNESS_MARKERS, stripHarnessMarkers } from "../harness-text.js";
 import { findTextToolCallRanges, maskCodeSpans, segmentCodeSpans } from "../canonical-loop/public/tool-call-text.js";
 
 export type ModelOutputProfile = "delivery" | "persist";
@@ -109,17 +110,17 @@ const ROLE_OPEN_RE = new RegExp(
 // operators — those stay.
 const SPECIAL_TOKEN_RE = new RegExp(`<${BAR}[^<>\\n|｜\\x00 \\t]{1,60}${BAR}>`, "g");
 
-// The harness's own wrapper around tool output (sanitize.ts
-// wrapExternalContent). A model that quotes its tool results back verbatim
-// drags the boundary markers into its reply, and the user watches a wall of
-// `<<<EXTERNAL_UNTRUSTED_CONTENT id="…">>>` stream into the chat (live
-// 2026-09-16). Never legitimate in model speech — the prompt tells it never to
-// echo them — and the markers alone go: text the model wrote around a quoted
-// block is still its reply.
-const UNTRUSTED_WRAPPER_RE = /<<<\/?(?:END_)?EXTERNAL_UNTRUSTED_CONTENT(?:\s+id="[^"\n]{0,80}")?>>>/gi;
-
-const SPECIAL_TOKEN_RULES = [CHANNEL_TOOL_RE, CHANNEL_PAIR_RE, HEADER_PAIR_RE, ROLE_OPEN_RE, SPECIAL_TOKEN_RE, UNTRUSTED_WRAPPER_RE];
-
+// The harness's OWN markers (harness-text.ts) — the untrusted-content wrapper,
+// the situational digest, the automatic-check nudge, the inject frame, the
+// repeated-call header. They travel INTO the model and must never come back
+// out: a model that echoes one is quoting plumbing, and the user watched a wall
+// of untrusted-content boundaries stream into the chat (live 2026-09-16). One
+// registry is the list, so a marker added later cannot miss this pass. Markers
+// alone go — prose the model wrote around a quoted block is still its reply.
+const SPECIAL_TOKEN_RULES = [
+  CHANNEL_TOOL_RE, CHANNEL_PAIR_RE, HEADER_PAIR_RE, ROLE_OPEN_RE, SPECIAL_TOKEN_RE,
+  ...HARNESS_MARKERS.map((m) => m.pattern),
+];
 // ── Pass 2: reasoning tags ──────────────────────────────────────────────────
 // <think>/<thinking>/<reasoning>/<thought> (the last is a known small-model
 // artifact). Tag AND enclosed content go. An opener never closed — cut-off
@@ -269,10 +270,14 @@ export function sanitizeModelOutput(text: string, profile: ModelOutputProfile): 
  * the worst plumbing off the live render.
  */
 export function stripLeakedSpecialTokensStreaming(delta: string): string {
-  if (!delta.includes("<")) return delta;
-  let out = delta.replace(CHANNEL_PAIR_RE, "");
+  // Harness markers first, and WITHOUT the "<" shortcut below: five of the
+  // seven are bracketed ("[automatic check]", "[SITUATIONAL CONTEXT …]"), so an
+  // early return on "<" let them stream to the user untouched
+  // (harness-text.contract.test.ts).
+  const marked = stripHarnessMarkers(delta);
+  if (!marked.includes("<")) return marked;
+  let out = marked.replace(CHANNEL_PAIR_RE, "");
   out = out.replace(HEADER_PAIR_RE, "");
   out = out.replace(ROLE_OPEN_RE, "");
-  out = out.replace(UNTRUSTED_WRAPPER_RE, "");
   return out.replace(SPECIAL_TOKEN_RE, "");
 }

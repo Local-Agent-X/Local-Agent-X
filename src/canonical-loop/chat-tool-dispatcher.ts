@@ -13,6 +13,7 @@
  * terminates, the chat runner calls `unregisterToolDispatcherForOp(opId)`
  * so the closure GC'd.
  */
+import { internalToolFailureText } from "./internal-tool-failure.js";
 import { envelopeStatusToDispatchStatus, type ToolDispatcher, type ToolDispatchResult } from "./tool-dispatch.js";
 import { parseStatusHeader } from "../tools/result-helpers.js";
 import type { ToolCall } from "./contract-types.js";
@@ -117,7 +118,9 @@ export function makeChatToolDispatcher(opts: ChatToolDispatcherOptions): ToolDis
   const errorResult = (call: ToolCall, e: unknown, durationMs: number): ToolDispatchResult => ({
     toolCallId: call.toolCallId,
     status: "error",
-    result: { error: (e as Error).message },
+    result: internalToolFailureText(
+      `${call.tool} failed inside the harness: ${(e as Error).message}`,
+    ),
     durationMs,
   });
 
@@ -221,7 +224,10 @@ function shapeCallResult(
     return {
       toolCallId: call.toolCallId,
       status: "error",
-      result: { error: `tool '${call.tool}' produced no result message` },
+      result: internalToolFailureText(
+        `${call.tool} ran but the harness captured no result.`,
+        "Treat the outcome as UNKNOWN: it may or may not have taken effect. Check the state before repeating it, and say so if you cannot.",
+      ),
       durationMs,
     };
   }

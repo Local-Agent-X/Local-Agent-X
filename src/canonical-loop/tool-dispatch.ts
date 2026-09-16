@@ -11,6 +11,7 @@
  *
  * Boundary: this module has no DB handle, no event-writer, no child_process.
  */
+import { internalToolFailureText } from "./internal-tool-failure.js";
 import type { ToolCall } from "./contract-types.js";
 import type { ToolDispatchStatus } from "./types.js";
 import type { ToolResultStatus } from "../types.js";
@@ -54,7 +55,10 @@ export class NotConfiguredToolDispatcher implements ToolDispatcher {
     return {
       toolCallId: call.toolCallId,
       status: "error",
-      result: { error: `no tool dispatcher configured for tool '${call.tool}'` },
+      result: internalToolFailureText(
+        `No dispatcher is configured for '${call.tool}' in this run.`,
+        "The tool cannot run here at all — retrying will not change that. Use a different approach, or tell the user this capability is unavailable in this context.",
+      ),
       durationMs: 0,
     };
   }

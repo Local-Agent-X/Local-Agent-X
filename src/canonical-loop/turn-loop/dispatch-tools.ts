@@ -25,6 +25,7 @@
 // by the approval gate before the tool body ever ran, is settled back down.
 // See NEVER_LANDED for why every other status latches.
 
+import { internalToolFailureText } from "../internal-tool-failure.js";
 import { createHash } from "node:crypto";
 import type { CanonicalMessageRole, ToolCallSummary, ToolDispatchStatus } from "../types.js";
 import type { ToolCall } from "../contract-types.js";
@@ -146,7 +147,10 @@ export async function dispatchTools(
       const out: ToolDispatchResult = outs[idx] ?? {
         toolCallId: call.toolCallId,
         status: "error",
-        result: { error: `dispatcher returned no result for tool '${call.tool}'` },
+        result: internalToolFailureText(
+          `The harness lost the result of '${call.tool}'.`,
+          "Treat the outcome as UNKNOWN: it may or may not have taken effect. Check the state before repeating it, and say so if you cannot.",
+        ),
         durationMs: 0,
       };
       if (committing[idx]) round.settle(!NEVER_LANDED.has(out.status));

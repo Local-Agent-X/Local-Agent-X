@@ -300,3 +300,30 @@ describe("stripLeakedSpecialTokensStreaming", () => {
 		});
 	}
 });
+
+// Live 2026-09-16: the model quoted its tool results back and the harness's own
+// wrapper streamed into the chat as a wall of <<<EXTERNAL_UNTRUSTED_CONTENT>>>,
+// then vanished when the turn committed. The markers are harness plumbing and
+// are never part of a reply — live and stored text lose them the same way.
+describe("echoed untrusted-content wrapper", () => {
+  const OPEN = '<<<EXTERNAL_UNTRUSTED_CONTENT id="a1b2c3">>>';
+  const CLOSE = '<<<END_EXTERNAL_UNTRUSTED_CONTENT id="a1b2c3">>>';
+
+  it("drops the markers but keeps what the model said around them", () => {
+    const out = sanitizeModelOutput(`The page says:\n${OPEN}\nRate limit: 1,200/min\n${CLOSE}\nSo you're capped at 1,200.`, "persist");
+    expect(out).not.toContain("EXTERNAL_UNTRUSTED_CONTENT");
+    expect(out).toContain("Rate limit: 1,200/min");
+    expect(out).toContain("So you're capped at 1,200.");
+  });
+
+  it("drops them from a live delta too, so the chat never renders them", () => {
+    expect(stripLeakedSpecialTokensStreaming(`ok ${OPEN} more`)).toBe("ok  more");
+    expect(stripLeakedSpecialTokensStreaming(`${CLOSE}done`)).toBe("done");
+  });
+
+  it("leaves ordinary angle-bracket prose alone", () => {
+    const text = "Use <div> for layout and a <<< fence in the doc.";
+    expect(sanitizeModelOutput(text, "persist")).toBe(text);
+    expect(stripLeakedSpecialTokensStreaming(text)).toBe(text);
+  });
+});

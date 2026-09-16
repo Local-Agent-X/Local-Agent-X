@@ -109,7 +109,16 @@ const ROLE_OPEN_RE = new RegExp(
 // operators — those stay.
 const SPECIAL_TOKEN_RE = new RegExp(`<${BAR}[^<>\\n|｜\\x00 \\t]{1,60}${BAR}>`, "g");
 
-const SPECIAL_TOKEN_RULES = [CHANNEL_TOOL_RE, CHANNEL_PAIR_RE, HEADER_PAIR_RE, ROLE_OPEN_RE, SPECIAL_TOKEN_RE];
+// The harness's own wrapper around tool output (sanitize.ts
+// wrapExternalContent). A model that quotes its tool results back verbatim
+// drags the boundary markers into its reply, and the user watches a wall of
+// `<<<EXTERNAL_UNTRUSTED_CONTENT id="…">>>` stream into the chat (live
+// 2026-09-16). Never legitimate in model speech — the prompt tells it never to
+// echo them — and the markers alone go: text the model wrote around a quoted
+// block is still its reply.
+const UNTRUSTED_WRAPPER_RE = /<<<\/?(?:END_)?EXTERNAL_UNTRUSTED_CONTENT(?:\s+id="[^"\n]{0,80}")?>>>/gi;
+
+const SPECIAL_TOKEN_RULES = [CHANNEL_TOOL_RE, CHANNEL_PAIR_RE, HEADER_PAIR_RE, ROLE_OPEN_RE, SPECIAL_TOKEN_RE, UNTRUSTED_WRAPPER_RE];
 
 // ── Pass 2: reasoning tags ──────────────────────────────────────────────────
 // <think>/<thinking>/<reasoning>/<thought> (the last is a known small-model
@@ -264,5 +273,6 @@ export function stripLeakedSpecialTokensStreaming(delta: string): string {
   let out = delta.replace(CHANNEL_PAIR_RE, "");
   out = out.replace(HEADER_PAIR_RE, "");
   out = out.replace(ROLE_OPEN_RE, "");
+  out = out.replace(UNTRUSTED_WRAPPER_RE, "");
   return out.replace(SPECIAL_TOKEN_RE, "");
 }

@@ -14,6 +14,8 @@ import { resolveOpModel } from "../op-model.js";
 import { classifyStepEffort } from "../step-effort.js";
 import { buildSituationalAwareness } from "./situational-awareness.js";
 import { compactHistory } from "./compact-history.js";
+import { opMessageRowToChatParam } from "../chat-runner/message-convert.js";
+import { setModelView } from "../../tool-execution/model-view.js";
 import { getSessionBaselineTokens } from "../session-baseline.js";
 import { resolveContextWindow } from "../../context-manager/model-windows.js";
 import { isRuntimeFailoverBoundary } from "../../ops/target-identity.js";
@@ -92,6 +94,17 @@ export async function buildTurnInput(
     messages = compacted.messages;
     viewCompacted = compacted.compacted;
   }
+  // Tool checks that ask "does the model still hold X" read this view, not the
+  // transcript (tool-execution/model-view.ts).
+  setModelView(op.id, viewCompacted ? messages.map((m) => opMessageRowToChatParam({
+    messageId: m.messageId,
+    opId: op.id,
+    turnIdx: m.turnIdx ?? turnIdx,
+    seqInTurn: m.seqInTurn ?? 0,
+    role: m.role,
+    content: m.content,
+    createdAt: m.createdAt ?? "",
+  })).filter((m): m is NonNullable<typeof m> => m !== null) : null);
   const prior = readLatestOpTurn(op.id);
   const descriptor = op.runtimeDescriptor?.kind === "delegated-op"
     && op.runtimeDescriptor.adapter === "provider-exact"

@@ -18,6 +18,8 @@ import { resolveAgentPath } from "../workspace/paths.js";
 import { isAbsolute } from "node:path";
 import { existsSync } from "node:fs";
 import { checkFreshness, recordFileSeen, unchangedSinceSeen, seenViewFromReadResult } from "../tools/read-state.js";
+import { READ_DEDUP_STUB_LEAD, readContentInView } from "./read-dedup-evidence.js";
+import { getModelView } from "./model-view.js";
 import { unattendedShellBlock } from "./unattended-shell-gate.js";
 import { createToolRunner } from "./tool-runner.js";
 import { recordTaskArtifact } from "../data-lineage/task-artifacts.js";
@@ -86,6 +88,8 @@ export const runSandboxedPhase: Phase = async (ctx) => {
   // include_imports read is NEVER served the stub: the seen-record and its
   // hash cover only the MAIN file, so a stub would silently drop the requested
   // import expansion (and depth-1 files can change while the main hash holds).
+  // The session having read the file is not enough: the model's input must
+  // still carry that read (read-dedup-evidence.ts).
   // Runs before execute and before accounting, like the freshness guard: a
   // served stub is guidance, not a tool run.
   if (tc.name === "read" && typeof args.path === "string" && args.path &&
@@ -93,9 +97,9 @@ export const runSandboxedPhase: Phase = async (ctx) => {
       isAbsolute(args.path)) {
     let resolved: string | null = null;
     try { resolved = resolveAgentPath(args.path); } catch { /* let the tool handle it */ }
-    if (resolved && unchangedSinceSeen(sessionId, resolved)) {
+    if (resolved && unchangedSinceSeen(sessionId, resolved) && readContentInView(getModelView(ctx.operationId) ?? ctx.priorMessages, resolved)) {
       ctx.result = ok(
-        `Unchanged since this session last read it: ${resolved} (content-hash verified). ` +
+        `${READ_DEDUP_STUB_LEAD}: ${resolved} (content-hash verified). ` +
         `Your existing view of this file is still current, so the re-read was skipped. ` +
         `To force a full re-read anyway, pass an explicit offset (e.g. offset=1).`,
         { path: resolved, unchanged: true },

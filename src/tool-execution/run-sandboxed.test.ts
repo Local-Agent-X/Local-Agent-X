@@ -13,6 +13,9 @@ import { runSandboxedPhase } from "./run-sandboxed.js";
 import type { CallContext, ToolCallContext } from "./context.js";
 import { readTool, editTool } from "../tools/file-tools.js";
 import type { ToolDefinition } from "../types.js";
+import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
+import { renderToolResultForModel } from "../tools/result-helpers.js";
+import { setModelView } from "./model-view.js";
 import { checkEgressTaint, clearSessionTaint, detectSecretsInOutput, getKernelTaintSources } from "../data-lineage/index.js";
 import { setUnconfinedHostAcknowledgement } from "../sandbox/index.js";
 
@@ -33,9 +36,13 @@ function tmpFile(body: string): string {
   return file;
 }
 
-function ctxFor(tool: ToolDefinition, args: Record<string, unknown>, sessionId: string, callContext: CallContext = "local"): ToolCallContext {
+function ctxFor(
+  tool: ToolDefinition, args: Record<string, unknown>, sessionId: string, callContext: CallContext = "local",
+  id = "tc1", priorMessages?: ChatCompletionMessageParam[],
+): ToolCallContext {
   return {
-    tc: { id: "tc1", name: tool.name, arguments: JSON.stringify(args) },
+    tc: { id, name: tool.name, arguments: JSON.stringify(args) },
+    priorMessages,
     toolMap: new Map([[tool.name, tool]]),
     tool,
     args,
@@ -48,9 +55,21 @@ function ctxFor(tool: ToolDefinition, args: Record<string, unknown>, sessionId: 
   } as unknown as ToolCallContext;
 }
 
+// What the model has in view, per session: every call run() makes lands here
+// the way the op transcript records it, so read-dedup sees real evidence.
+const transcripts = new Map<string, ChatCompletionMessageParam[]>();
+let callSeq = 0;
+
 async function run(tool: ToolDefinition, args: Record<string, unknown>, sessionId: string) {
-  const ctx = ctxFor(tool, args, sessionId);
+  const id = `call_${callSeq++}`;
+  const view = transcripts.get(sessionId) ?? [];
+  const ctx = ctxFor(tool, args, sessionId, "local", id, [...view]);
   await runSandboxedPhase(ctx);
+  view.push(
+    { role: "assistant", content: "", tool_calls: [{ id, type: "function", function: { name: tool.name, arguments: JSON.stringify(args) } }] },
+    { role: "tool", tool_call_id: id, content: renderToolResultForModel(ctx.result!) },
+  );
+  transcripts.set(sessionId, view);
   return ctx.result!;
 }
 
@@ -85,6 +104,43 @@ describe("stale-read guard (run-sandboxed integration)", () => {
 });
 
 describe("read-dedup (run-sandboxed integration)", () => {
+  it("returns the content when the earlier read is no longer in the model's view", async () => {
+    // A new op is seeded with only the tail of the last one (muse, grade-school).
+    const file = tmpFile("out of view\n");
+    const s = freshSession();
+    await run(readTool, { path: file }, s);
+    transcripts.set(s, []);
+    const again = await run(readTool, { path: file }, s);
+    expect(again.metadata?.unchanged).toBeUndefined();
+    expect(again.content).toContain("out of view");
+  });
+
+  it("judges by the compacted view the model was shown, not the transcript", async () => {
+    const file = tmpFile("summarized away\n");
+    const s = freshSession();
+    await run(readTool, { path: file }, s);
+    const opId = `op_view_${seq++}`;
+    setModelView(opId, [{ role: "user", content: "[summary] the file was read" }]);
+    try {
+      const ctx = { ...ctxFor(readTool, { path: file }, s, "local", "call_v", transcripts.get(s)), operationId: opId } as ToolCallContext;
+      await runSandboxedPhase(ctx);
+      expect(ctx.result!.content).toContain("summarized away");
+    } finally {
+      setModelView(opId, null);
+    }
+  });
+
+  it("does not count an earlier stub as the model holding the content", async () => {
+    const file = tmpFile("only a stub in view\n");
+    const s = freshSession();
+    await run(readTool, { path: file }, s);
+    const stub = await run(readTool, { path: file }, s);
+    expect(stub.metadata?.unchanged).toBe(true);
+    transcripts.set(s, transcripts.get(s)!.slice(-2)); // the seed kept the stub, not the read
+    const again = await run(readTool, { path: file }, s);
+    expect(again.content).toContain("only a stub in view");
+  });
+
   it("an identical full re-read returns the unchanged stub, not the content", async () => {
     const file = tmpFile("hello dedup world\n");
     const s = freshSession();

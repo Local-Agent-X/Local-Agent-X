@@ -73,7 +73,12 @@ async function main() {
 
     const claimed = claimsDone(drive.text) && !admitsIncomplete(drive.text);
     const falseDone = !score.ok && claimed;
-    const result = score.ok ? "PASS" : "FAIL";
+    // Only PASS and FAIL are verdicts on the MODEL. A row the harness broke
+    // (server unreachable, a turn that would not stop) or one that ran out of
+    // clock says nothing about capability and is reported, never scored.
+    const harnessBroke = /HARNESS-ERROR|^HTTP \d|ECONNREFUSED|fetch failed/i.test(drive.err);
+    const timedOut = /^timeout /.test(drive.err);
+    const result = score.ok ? "PASS" : harnessBroke ? "HARNESS" : timedOut ? "TIMEOUT" : "FAIL";
     const notes = [];
     if (drive.err) notes.push(`err=${drive.err}`);
     if (!changed) notes.push("stub-untouched");
@@ -83,7 +88,7 @@ async function main() {
     console.log(`${pad(slug, 18)} ${pad(result, 8)} ${pad(drive.secs, 6)} ${pad(drive.tools.length, 6)} ${notes.join(" ")}`);
 
     rows.push({
-      slug, pass: score.ok, secs: drive.secs, tools: drive.tools,
+      slug, result, pass: score.ok, secs: drive.secs, tools: drive.tools, sessionId,
       changed, falseDone, err: drive.err,
       reply: drive.text.slice(0, 1200),
       testOutput: score.ok ? "" : (score.results.find((r) => !r.ok)?.output || "").slice(-2000),
@@ -92,20 +97,26 @@ async function main() {
     if (!(args.keep && !score.ok)) cleanup(work);
   }
 
-  const passed = rows.filter((r) => r.pass).length;
+  const passed = rows.filter((r) => r.result === "PASS").length;
+  const scored = rows.filter((r) => r.result === "PASS" || r.result === "FAIL").length;
+  const unscored = rows.filter((r) => r.result === "HARNESS" || r.result === "TIMEOUT");
   const falseDones = rows.filter((r) => r.falseDone).length;
   console.log("-".repeat(72));
-  console.log(`\nRESULT: ${passed}/${rows.length} passed · ${falseDones} false-done · model=${model}\n`);
+  console.log(`\nRESULT: ${passed}/${scored} passed · ${falseDones} false-done · model=${model}`);
+  if (unscored.length) {
+    console.log(`NOT SCORED (${unscored.length}) — these say nothing about the model until explained: ${unscored.map((r) => `${r.slug}=${r.result}`).join(", ")}`);
+  }
+  console.log("");
 
   // Persist the full report (with test output + replies) for triage.
   const outDir = join(process.env.HOME, ".cache", "aider-polyglot-reports");
   mkdirSync(outDir, { recursive: true });
   const outPath = join(outDir, `${model.replace(/\//g, "_")}-${stamp}.json`);
-  writeFileSync(outPath, JSON.stringify({ model, stamp, passed, total: rows.length, falseDones, rows }, null, 2));
+  writeFileSync(outPath, JSON.stringify({ model, stamp, passed, scored, total: rows.length, falseDones, rows }, null, 2));
   console.log(`report: ${outPath}`);
 
   // List failures with a one-line reason for quick triage.
-  const fails = rows.filter((r) => !r.pass);
+  const fails = rows.filter((r) => r.result === "FAIL");
   if (fails.length) {
     console.log(`\nFAILURES (${fails.length}):`);
     for (const f of fails) {

@@ -68,7 +68,35 @@ export async function driveChat(message, sessionId, timeoutMs) {
     }
   } catch (e) { err = e.name === "AbortError" ? `timeout ${timeoutMs}ms` : e.message; }
   clearTimeout(timer);
-  return { text: text.trim(), tools, err, secs: Number(((Date.now() - t0) / 1000).toFixed(1)) };
+  const secs = Number(((Date.now() - t0) / 1000).toFixed(1));
+  // Aborting the fetch only drops OUR end of the stream — the server keeps the
+  // op running. The next exercise then shares the local model's single slot
+  // with it, and is measured as slow/idle for work it never got to do
+  // (2026-09-16: four ops stacked, three stuck at iteration 0, all scored
+  // "0 tools, stub-untouched"). Stop it and wait until it is really gone.
+  const leftover = await settleTurn(sessionId);
+  if (leftover) err = `${err ? err + "; " : ""}${leftover}`;
+  return { text: text.trim(), tools, err, secs };
+}
+
+/** Stop any turn still running for `sessionId` and wait until the server says
+ *  it has ended. Returns null when the session is idle, or a HARNESS error
+ *  string when the turn would not end — callers must not score that row. */
+export async function settleTurn(sessionId, waitMs = 60_000) {
+  const status = async () => {
+    try {
+      const r = await fetch(`${BASE}/api/chats/${encodeURIComponent(sessionId)}/status`, { headers: H });
+      return r.ok ? (await r.json()).active === true : false;
+    } catch { return false; }
+  };
+  if (!(await status())) return null;
+  await fetch(`${BASE}/api/chats/stop`, { method: "POST", headers: H, body: JSON.stringify({ sessionId }) }).catch(() => {});
+  const deadline = Date.now() + waitMs;
+  while (Date.now() < deadline) {
+    if (!(await status())) return null;
+    await sleep(1_000);
+  }
+  return `HARNESS-ERROR: turn for ${sessionId} still active ${waitMs / 1000}s after stop`;
 }
 
 // ── Throwaway project helpers ──

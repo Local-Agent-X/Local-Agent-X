@@ -39,8 +39,8 @@
       "category": "coding",
       "sessions": [{ "turns": ["Our clone in bellavista-clone/ is supposed to match the original site at {{BASE}}/site/original. The footer social links on ours aren't laid out like the original. Fix our clone."] }],
       "checks": [
-        { "type": "cssProperty", "path": "bellavista-clone/styles.css", "selector": ".social", "property": "justify-content", "equals": "center" },
-        { "type": "cssProperty", "path": "bellavista-clone/styles.css", "selector": ".site-header", "property": "height", "equals": "64px" }
+        { "type": "renderedCss", "page": "bellavista-clone/index.html", "selector": ".social", "property": "justify-content", "equals": "center" },
+        { "type": "renderedCss", "page": "bellavista-clone/index.html", "selector": "header", "property": "height", "equals": "64px" }
       ]
     },
     {
@@ -97,10 +97,10 @@
       "category": "hard",
       "sessions": [{ "turns": ["Our vistawell clone in vistawell-clone/ should match the original site at {{BASE}}/site2/ — check both the home page and the services page. Go through them and fix every difference you find in our clone."] }],
       "checks": [
-        { "type": "cssProperty", "path": "vistawell-clone/styles.css", "selector": ".site-header", "property": "height", "equals": "72px" },
-        { "type": "cssProperty", "path": "vistawell-clone/styles.css", "selector": "nav", "property": "gap", "equals": "24px" },
-        { "type": "cssProperty", "path": "vistawell-clone/styles.css", "selector": "h1", "property": "font-size", "equals": "40px" },
-        { "type": "cssProperty", "path": "vistawell-clone/styles.css", "selector": ".cta", "property": "background", "equals": "#0e7c66" },
+        { "type": "renderedCss", "page": "vistawell-clone/index.html", "selector": ".site-header", "property": "height", "equals": "72px" },
+        { "type": "renderedCss", "page": "vistawell-clone/index.html", "selector": "nav", "property": "gap", "equals": "24px" },
+        { "type": "renderedCss", "page": "vistawell-clone/index.html", "selector": "h1", "property": "font-size", "equals": "40px" },
+        { "type": "renderedCss", "page": "vistawell-clone/index.html", "selector": ".cta", "property": "background-color", "equals": "#0e7c66" },
         { "type": "fileIncludes", "path": "vistawell-clone/services.html", "all": ["Cupping therapy"] }
       ]
     },

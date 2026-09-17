@@ -10,13 +10,49 @@ import { pathToFileURL } from "node:url";
 
 const sha = (p) => createHash("sha256").update(readFileSync(p)).digest("hex");
 
-/** CSS declaration value for `property` inside the first `selector { … }` block. */
-function cssValue(css, selector, property) {
-  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const block = css.match(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`));
-  if (!block) return null;
-  const decl = block[1].match(new RegExp(`(?:^|;|\\s)${property}\\s*:\\s*([^;]+)`));
-  return decl ? decl[1].trim() : null;
+/**
+ * The computed value a real browser gives `selector`'s `property` on a page —
+ * linked stylesheets, <style> blocks and inline style="" all resolved by the
+ * cascade, exactly as a user would see it.
+ *
+ * A stylesheet-text check graded WHERE a fix was written, not whether the page
+ * matched: the Vistawell original serves an inline <style> block, muse matched
+ * it by inlining the same rules, and was failed twice because
+ * vistawell-clone/styles.css still held the old values (op-outcomes,
+ * 2026-09-16). One headless Chromium per process, launched on first use.
+ */
+let browserPromise = null;
+async function renderedCssValue(pageFile, selector, property) {
+  if (!browserPromise) {
+    const { chromium } = await import("playwright-core");
+    browserPromise = chromium.launch();
+  }
+  const page = await (await browserPromise).newPage({ viewport: { width: 1280, height: 800 } });
+  try {
+    await page.goto(pathToFileURL(pageFile).href);
+    return await page.evaluate(([sel, prop]) => {
+      const el = document.querySelector(sel);
+      return el ? getComputedStyle(el).getPropertyValue(prop).trim() : null;
+    }, [selector, property]);
+  } finally {
+    await page.close();
+  }
+}
+
+/** Close the browser renderedCss opened, if any. Call once at shutdown. */
+export async function closeChecks() {
+  if (!browserPromise) return;
+  const pending = browserPromise;
+  browserPromise = null;
+  await (await pending).close();
+}
+
+/** "#0e7c66" → "rgb(14, 124, 102)", the form getComputedStyle reports. */
+function normalizeCssValue(value) {
+  const hex = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(value);
+  if (!hex) return value;
+  const h = hex[1].length === 3 ? hex[1].split("").map((c) => c + c).join("") : hex[1];
+  return `rgb(${parseInt(h.slice(0, 2), 16)}, ${parseInt(h.slice(2, 4), 16)}, ${parseInt(h.slice(4, 6), 16)})`;
 }
 
 export const SETUP = {
@@ -92,11 +128,14 @@ export function runCheck(check, ctx) {
       const missing = check.all.filter((s) => !body.includes(fill(s)));
       return { ok: missing.length === 0, detail: missing.length ? `${check.path} missing ${missing.join(", ")}` : "found" };
     }
-    case "cssProperty": {
-      const abs = join(workspace, check.path);
-      if (!existsSync(abs)) return { ok: false, detail: `${check.path} missing` };
-      const value = cssValue(readFileSync(abs, "utf8"), check.selector, check.property);
-      return { ok: value === check.equals, detail: `${check.selector} ${check.property} = ${value ?? "(unset)"}` };
+    case "renderedCss": {
+      const abs = join(workspace, check.page);
+      if (!existsSync(abs)) return { ok: false, detail: `${check.page} missing` };
+      const want = normalizeCssValue(check.equals);
+      return renderedCssValue(abs, check.selector, check.property).then((value) => ({
+        ok: value === want,
+        detail: `${check.page}: ${check.selector} ${check.property} = ${value ?? "(no such element)"}${value === want ? "" : ` (want ${want})`}`,
+      }));
     }
     case "commandPasses": {
       try {
@@ -137,7 +176,12 @@ console.log(JSON.stringify(out));`;
       try {
         results = JSON.parse(execFileSync(process.execPath, ["--input-type=module", "-e", script], { stdio: "pipe", timeout: 30_000 }).toString());
       } catch (e) {
-        return { ok: false, detail: `could not import ${check.path}: ${String(e.stderr ?? e.message).split("\n")[0]}` };
+        // Name the actual error. The first stderr line is node's "file:line"
+        // location header — on Windows often a bare "\r" — so it hid the
+        // SyntaxError that made correction-chain fail (2026-09-16).
+        const lines = String(e.stderr ?? e.message).split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+        const reason = lines.find((l) => /^\w*Error\b|Error:/.test(l)) ?? lines.join(" ").slice(0, 200);
+        return { ok: false, detail: `could not import ${check.path}: ${reason}` };
       }
       const failed = check.asserts
         .map((a, i) => ({ a, r: results[i] }))

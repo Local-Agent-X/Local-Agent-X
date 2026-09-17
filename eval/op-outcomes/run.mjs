@@ -25,7 +25,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startFixtureServer, DEPLOY_TOKEN } from "./fixtures/server.mjs";
 import { assertDistMatchesSource, startIsolatedServer } from "./isolated.mjs";
-import { SETUP, runCheck, snapshotBefore } from "./checks.mjs";
+import { SETUP, closeChecks, runCheck, snapshotBefore } from "./checks.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, "..", "..");
@@ -190,7 +190,7 @@ async function runCase(provider, caseDef, fixture) {
     }
     const ctx = { workspace: server.workspace, fixture, fixtureMark, replies: result.replies, toolsUsed: result.toolsUsed,
       before, dataDir: server.dataDir, fill };
-    for (const check of caseDef.checks) result.checks.push({ type: check.type, ...runCheck(check, ctx) });
+    for (const check of caseDef.checks) result.checks.push({ type: check.type, ...(await runCheck(check, ctx)) });
     result.pass = result.checks.every((c) => c.ok);
   } catch (e) {
     result.errors.push(e.message);
@@ -247,6 +247,7 @@ try {
   }
 } finally {
   await fixture.close();
+  await closeChecks();
   writeFileSync(outPath, JSON.stringify(report, null, 2));
   console.log(`\nresults → ${outPath}`);
 }

@@ -89,6 +89,30 @@ describe("nudge budget", () => {
   });
 });
 
+  // muse, wordy, 2026-09-17: four "a tool call failed" notices spent the chat
+  // pool; the spec audit then found 2 unmet requirements and its nudge was
+  // refused, so the op ended one failing test short with the verdict in hand.
+  it("keeps a small pool for the guards that speak from evidence", () => {
+    for (const g of ["tool-failure-summary", "open-steps", "cleanup-verify", "tool-failure-summary"]) {
+      expect(consumeNudgeBudget("op-1", fire(g))).toBe(true);
+    }
+    expect(consumeNudgeBudget("op-1", fire("open-steps")), "shared pool is gone").toBe(false);
+    expect(consumeNudgeBudget("op-1", fire("spec-audit"))).toBe(true);
+    expect(consumeNudgeBudget("op-1", fire("build-verify"))).toBe(true);
+    // Their own pool is bounded too: a third queues for the spent shared pool.
+    expect(consumeNudgeBudget("op-1", fire("regression-audit"))).toBe(false);
+    expect(nudgesSpent("op-1"), "and their pool is not the shared one").toBe(4);
+  });
+
+  it("spends the verdict pool before the shared one, so chatter still gets its 4", () => {
+    expect(consumeNudgeBudget("op-1", fire("spec-audit"))).toBe(true);
+    expect(consumeNudgeBudget("op-1", fire("spec-probe"))).toBe(true);
+    expect(nudgesSpent("op-1")).toBe(0);
+    for (const g of ["tool-failure-summary", "open-steps", "cleanup-verify", "verify-gate"]) {
+      expect(consumeNudgeBudget("op-1", fire(g))).toBe(true);
+    }
+  });
+
 describe("appendNudgeAsUserMessage", () => {
   it("writes nothing once the budget is gone", () => {
     for (let i = 0; i < 4; i++) {

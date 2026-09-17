@@ -32,6 +32,8 @@ with justification). Mission: `docs/agent-prompts/local-model-harness.md`.
 
 | H-025 | spec-audit answered in budget but both replies were invalid JSON (fails at char ~101) → no verdict | HARNESS | A local model emits almost-JSON (raw newline in a string, trailing comma, smart quote, Python literal); the log named the parse error but never what was sent | One bounded repair pass before the retry (repair-json.ts) + the reply's first 200 chars in the failure message | tests |
 
+| H-026 | wordy: the spec audit found 2 unmet requirements and its nudge was REFUSED (shared pool spent on "a tool call failed" notices); op ended 1 failing test short | HARNESS | Flat nudge pool: chatter outbids the guards that speak from evidence (same class as the earlier self-bounded fix) | Verdict-bearing guards (build-verify, spec-probe, spec-audit, regression-audit, design-verify) get a bounded pool of their own, then queue for the shared one | tests |
+
 ## Documented MODEL failures (muse-glimmer:30b)
 
 | Exercise | Run | Reason (evidence) |
@@ -40,6 +42,7 @@ with justification). Mission: `docs/agent-prompts/local-model-harness.md`.
 | grade-school | 15 | `roster()` returns a dict grouped by grade |
 | grade-school | 18 | 189 tools, one write (not the stub): searched for the hidden tests for 36min across both attempts, never implemented. Harness clean: zero stalls, no summarizer/classifier failures |
 | grade-school | 16 | 70 turns searching for the hidden tests; never edited the stub |
+| wordy | 18 | One failing test: "syntax error" vs "unknown operation" — but the spec audit had found it and could not nudge (H-026), so re-run after that fix |
 | wordy | 15, 16 | swaps "syntax error" / "unknown operation"; retry explains instead of fixing |
 | bowling | 16 | Turns 42–86: no edits; re-read files and re-ran its own two failing checks until loop detection ended it |
 | forth | 13 | re-read five files ~20 times without editing; ran bare `python` |

@@ -50,17 +50,40 @@ const EXEMPT_REASONS = new Set(["adapter-retry", "reported-adapter-retry"]);
  */
 const SELF_BOUNDED_GUARDS = new Set(["budget-ladder", "loop-detection"]);
 
+/**
+ * Guards that speak from EVIDENCE about the work: a red build, a failing
+ * acceptance probe, an audit that named unmet requirements, a regression, a
+ * design score. Their nudge is the one that can still fix the deliverable.
+ *
+ * They lose a flat pool to chatter. muse's wordy op (2026-09-17) spent its 4
+ * on "a tool call failed" notices; the spec audit then found 2 unmet items
+ * from the request and its nudge was refused, so the op ended one failing
+ * test short of green with the verdict in hand and no way to say it.
+ *
+ * So they get a SMALL POOL OF THEIR OWN, on top of the shared one: evidence
+ * can speak twice however the shared pool was spent, and the shared pool is
+ * unchanged for everyone else. Past their own pool they queue for the shared
+ * one like any other guard, so this adds a bounded two nudges, not a bypass.
+ */
+const VERDICT_GUARDS = new Set(["build-verify", "spec-probe", "spec-audit", "regression-audit", "design-verify"]);
+const VERDICT_POOL = 2;
+
 export function nudgeBudgetFor(opType: string | undefined): number {
   return BUDGET_BY_OP_TYPE[opType ?? ""] ?? DEFAULT_BUDGET;
 }
 
-interface BudgetState { spent: number }
+interface BudgetState { spent: number; verdictSpent: number }
 
 /** Charge one nudge against the op's budget. False → the caller must NOT
  *  append: the budget is gone and the turn has to end on what it has. */
 export function consumeNudgeBudget(opId: string, source: GuardFire): boolean {
   if (EXEMPT_REASONS.has(source.reason) || SELF_BOUNDED_GUARDS.has(source.name)) return true;
-  const state = getMiddlewareState<BudgetState>(opId, "nudge-budget", () => ({ spent: 0 }));
+  const state = getMiddlewareState<BudgetState>(opId, "nudge-budget", () => ({ spent: 0, verdictSpent: 0 }));
+  // Evidence speaks from its own pool first, then queues for the shared one.
+  if (VERDICT_GUARDS.has(source.name) && state.verdictSpent < VERDICT_POOL) {
+    state.verdictSpent++;
+    return true;
+  }
   const budget = nudgeBudgetFor(readOp(opId)?.type);
   if (state.spent >= budget) {
     logger.info(`op=${opId} nudge budget spent (${budget}) — "${source.name}" refused`);
@@ -72,5 +95,5 @@ export function consumeNudgeBudget(opId: string, source: GuardFire): boolean {
 
 /** Nudges charged to this op so far. */
 export function nudgesSpent(opId: string): number {
-  return getMiddlewareState<BudgetState>(opId, "nudge-budget", () => ({ spent: 0 })).spent;
+  return getMiddlewareState<BudgetState>(opId, "nudge-budget", () => ({ spent: 0, verdictSpent: 0 })).spent;
 }

@@ -53,5 +53,6 @@ with justification). Mission: `docs/agent-prompts/local-model-harness.md`.
 | transpose | 19 | Keeps trailing spaces the suite forbids (3 failures), 22 tools. Harness clean: 0 stalls, regression verdicts delivered; one spec-audit empty response on the retry (gate no-op, watching) |
 | transpose | 16 | Drops the leading padding transposed rows need |
 | phone-number | 19 | Wrong ValueError messages ("Invalid NANP phone number" vs the required texts): 13 failures, 3 errors. Harness clean: 0 stalls; the spec audit had named the exact strings but its JSON was over-escaped (H-025 second candidate) |
+| dominoes | 19 | Retry spent the full 30min without converging (171 tools), tests red. Harness healthy: 0 stalls, no arg failures, spec audit delivered "2 unmet items". Also tried to read a PREVIOUS run's workspace path (already deleted — nothing leaked) |
 | bowling | 16 | Turns 42–86: no edits; re-read files and re-ran its own two failing checks until loop detection ended it |
 | forth | 13 | re-read five files ~20 times without editing; ran bare `python` |

@@ -143,6 +143,35 @@ export function locateAnchor(
 // them from here.
 export { forceCompactNext, compactionBreakerState } from "./compact-breaker.js";
 
+/**
+ * The earliest safe split whose tail sits under the compaction band, so the
+ * tail is as long as the window allows. Tail size shrinks as the split moves
+ * right, so the fit is monotone and a binary search over keep counts finds it.
+ * Never keeps less than the last turn.
+ */
+function largestFittingSplit(messages: CanonicalMessage[], model: string, baselineTokens: number): number {
+  const fits = (split: number) =>
+    !getContextStatus(toChatParams(messages.slice(split)), model, undefined, resolveAnthropicTransport(), baselineTokens).shouldCompact;
+  // At least one row is elided: a split of 0 would keep the view that must shrink.
+  const splitFor = (keep: number) => Math.max(1, safeSplitIndexUnbounded(messages, keep));
+  let lo = 1;
+  let hi = messages.length - 1;
+  let best = splitFor(1);
+  while (lo <= hi) {
+    const keep = (lo + hi) >> 1;
+    const split = splitFor(keep);
+    if (fits(split)) { best = split; lo = keep + 1; } else { hi = keep - 1; }
+  }
+  return best;
+}
+
+/** safeSplitIndex without its short-history guard: callers here already decided to compact. */
+function safeSplitIndexUnbounded(messages: CanonicalMessage[], keepLast: number): number {
+  let idx = messages.length - keepLast;
+  while (idx > 0 && (messages[idx].role === "tool_result" || messages[idx].role === "control")) idx--;
+  return idx;
+}
+
 export interface CompactHistoryResult {
   messages: CanonicalMessage[];
   /**
@@ -236,16 +265,15 @@ export async function compactHistory(
   if (!summary) {
     if (opId && !gate.skip && process.env.LAX_LLM_COMPACTION !== "0") recordBreakerFailure(opId);
     if (!mustFit) return { messages, compacted: false };
-    // The keep tier counts turns, not tokens: a tail of large tool results
-    // kept by count can still overflow, and the adapter then refuses the send
-    // anyway (two-bucket, 2026-09-17: 65,660 tokens after eliding 154 rows).
-    // Drop whole turns until the kept tail sits under the compaction band.
-    for (let k = keepLast - 1; k >= 1 && getContextStatus(toChatParams(recent), model, undefined, resolveAnthropicTransport(), baselineTokens).shouldCompact; k--) {
-      const split = safeSplitIndex(messages, k);
-      if (split <= head.length) continue;
-      head = messages.slice(0, split);
-      recent = messages.slice(split);
-    }
+    // With no summary, the kept tail IS the model's memory of this op, so keep
+    // as much of it as fits under the compaction band, not the keep tier's
+    // handful of messages. That tier is sized for a tail that follows a
+    // summary; alone it left muse seeing its last two tool calls each turn, so
+    // it re-read the same files every turn until loop detection ended the op
+    // (wordy, 2026-09-17). Measured by tokens, the tail also never overflows.
+    const split = largestFittingSplit(messages, model, baselineTokens);
+    head = messages.slice(0, split);
+    recent = messages.slice(split);
     logger.warn(`summarizer unavailable at ${status.percentage}% of the window — eliding ${head.length} older messages so the op can continue`);
   } else if (opId) {
     // Successful compaction resets the consecutive-failure count. When the op

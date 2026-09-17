@@ -256,20 +256,31 @@ describe("compactHistory — circuit breaker cool-down probes", () => {
     expect(compactionBreakerState(opId)?.failures).toBe(3);
   });
 
-  it("keeps dropping turns until the elided view is under the compaction band", async () => {
+  it("with no summary, keeps the longest tail that fits under the compaction band", async () => {
+    // wordy, 2026-09-17: the keep tier left muse two tool calls of memory per
+    // turn; it re-read the same files every turn until loop detection fired.
     const opId = "op-elide-fit";
     mockSummarize.mockResolvedValue(null);
-    // The first check (the full view) is critical; each re-check of the kept
-    // tail stays over the band until only the last turn remains.
     const rows = [
       u("u1", "q1"), a("a1", "r1"), u("u2", "q2"), a("a2", "r2"), u("u3", "q3"), a("a3", "r3"),
       u("u4", "q4"), a("a4", "r4"), u("u5", "q5"), a("a5", "r5"), u("u6", "q6"), a("a6", "r6"),
     ];
-    mockStatus.mockImplementation((msgs) => (msgs.length > 2
+    // Critical for the full view; any tail of up to 8 rows fits.
+    mockStatus.mockImplementation((msgs) => (msgs.length > 8
       ? { ...status(97, true), level: "critical" as const, forceCompact: true }
       : status(40, false)));
     const out = await compactHistory(rows, MODEL, null, opId);
     expect(out.compacted).toBe(true);
-    expect(out.messages.map((m) => m.messageId)).toEqual(["u6", "a6"]);
+    expect(out.messages.map((m) => m.messageId)).toEqual(["u3", "a3", "u4", "a4", "u5", "a5", "u6", "a6"]);
+  });
+
+  it("with no summary, keeps at least the last turn even when nothing fits", async () => {
+    const opId = "op-elide-min";
+    mockSummarize.mockResolvedValue(null);
+    mockStatus.mockReturnValue({ ...status(99, true), level: "critical" as const, forceCompact: true });
+    const out = await compactHistory(compactable(), MODEL, null, opId);
+    expect(out.compacted).toBe(true);
+    expect(out.messages.at(-1)?.messageId).toBe("a4");
+    expect(out.messages.length).toBeLessThanOrEqual(2);
   });
 });

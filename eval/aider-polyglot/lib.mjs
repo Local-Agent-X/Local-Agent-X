@@ -137,6 +137,10 @@ export function scoreExercise(work, ex) {
       const hung = Boolean(e.killed || e.signal);
       const out = `${e.stdout || ""}${e.stderr || ""}${hung ? "\n[killed: tests exceeded 60s — the solution hangs]" : ""}`;
       results.push({ test: t, ok: false, ran: hung || /\bRan \d+ tests?\b/.test(out), output: out.slice(-3000) });
+    } finally {
+      // Hidden again: a second attempt is shown the failures, never the suite.
+      rmSync(join(work, t), { force: true });
+      rmSync(join(work, "__pycache__"), { recursive: true, force: true });
     }
   }
   const broken = results.find((r) => !r.ran && !r.ok);
@@ -145,6 +149,26 @@ export function scoreExercise(work, ex) {
     harness: broken ? `test runner did not run ${broken.test}: ${broken.output.trim().split(/\r?\n/)[0] ?? ""}` : undefined,
     results,
   };
+}
+
+/**
+ * The second attempt, as Aider's own benchmark runs it: the model is shown the
+ * failing test output — never the test file — and asked to fix its code.
+ * Aider reports pass@1 and pass@2; a single blind attempt fails a model on
+ * details the instructions never state (phone-number's pretty() format appears
+ * only in the hidden tests), which is a measurement of the spec, not the model.
+ */
+export function buildRetryPrompt(ex, score) {
+  const errors = score.results.filter((r) => !r.ok).map((r) => r.output.trim()).join("\n\n").slice(-4000);
+  return [
+    errors,
+    ``,
+    `####`,
+    ``,
+    `See the testing errors above.`,
+    `The tests are correct, don't try and change them.`,
+    `Fix the code in ${ex.solution.join(", ")} to resolve the errors.`,
+  ].join("\n");
 }
 
 /** Did the model actually change the stub? (An untouched stub → it did nothing.) */

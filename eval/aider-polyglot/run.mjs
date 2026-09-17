@@ -28,13 +28,16 @@
 //
 // Scoring is filesystem ground truth (unittest), never the reply. The reply is
 // used only to flag a FALSE-DONE (claimed success while the tests are red).
+//
+// Two attempts, as Aider's benchmark runs them: a failed first attempt is shown
+// the test errors and tries once more. Both pass@1 and pass@2 are reported.
 
 import { copyFileSync, cpSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  ensureBenchmark, allSlugs, loadExercise, makeExerciseProject, buildPrompt,
+  ensureBenchmark, allSlugs, loadExercise, makeExerciseProject, buildPrompt, buildRetryPrompt,
   scoreExercise, solutionChanged, resolvePython,
   driveChat, claimsDone, admitsIncomplete,
 } from "./lib.mjs";
@@ -128,10 +131,27 @@ async function runExercise(slug, target, args, evidenceDir) {
   try {
     const work = makeExerciseProject(ex, server.workspace);
     const sessionId = `aider-${slug}`;
-    const drive = await driveChat(buildPrompt(work, ex), sessionId, args.timeout, server);
+    const first = await driveChat(buildPrompt(work, ex), sessionId, args.timeout, server);
+    let score = scoreExercise(work, ex);
+    const passAt1 = score.ok;
+    // Aider's protocol: a failed first attempt is shown the test errors and
+    // gets one more try in the same conversation. Not after a harness break —
+    // that row is not scored either way.
+    let second = null;
+    if (!score.ok && !score.harness && !server.exitedOnItsOwn()
+      && !/HARNESS-ERROR|^HTTP \d|ECONNREFUSED|fetch failed/i.test(first.err)) {
+      second = await driveChat(buildRetryPrompt(ex, score), sessionId, args.timeout, server);
+      score = scoreExercise(work, ex);
+    }
+    const last = second ?? first;
+    const drive = {
+      text: last.text,
+      tools: [...first.tools, ...(second?.tools ?? [])],
+      err: [first.err, second?.err].filter(Boolean).join("; "),
+      secs: Number((first.secs + (second?.secs ?? 0)).toFixed(1)),
+    };
     const died = server.exitedOnItsOwn();
     const changed = solutionChanged(work, ex);
-    const score = scoreExercise(work, ex);
     const models = chatModelsIn(server.dataDir);
     const wrongModel = models.length > 0 && !models.every((m) => m === target.model)
       ? `chat ran on ${models.join(", ")}, expected ${target.model}` : null;
@@ -142,7 +162,7 @@ async function runExercise(slug, target, args, evidenceDir) {
     // server died or unreachable, a turn that would not stop, a suite that never
     // ran, a different model answering, or a timeout the harness caused — says
     // nothing about capability, and is reported, never scored.
-    const timedOut = /^timeout /.test(drive.err);
+    const timedOut = /(^|; )timeout /.test(drive.err);
     const harness = died ? `server exited mid-run (code ${died.code}, signal ${died.signal})`
       : score.harness ?? wrongModel
       ?? (/HARNESS-ERROR|^HTTP \d|ECONNREFUSED|fetch failed/i.test(drive.err) ? drive.err : null)
@@ -163,13 +183,14 @@ async function runExercise(slug, target, args, evidenceDir) {
     if (contaminated) notes.push("SAW-HIDDEN-TESTS");
     if (timedOut && result === "FAIL") notes.push("did-not-converge (harness healthy, time budget spent)");
     if (!changed) notes.push("stub-untouched");
+    if (result === "PASS") notes.push(passAt1 ? "pass@1" : "pass@2 (after seeing the test errors)");
     if (falseDone) notes.push("FALSE-DONE");
     if (!score.ok && changed) notes.push("tests-red");
 
     keep = args.keep && result !== "PASS";
     return {
       row: {
-        slug, result, pass: score.ok, secs: drive.secs, tools: drive.tools,
+        slug, result, pass: score.ok, passAt1, attempts: second ? 2 : 1, secs: drive.secs, tools: drive.tools,
         changed, falseDone, err: drive.err, harness,
         reply: drive.text.slice(0, 1200),
         testOutput: score.ok ? "" : (score.results.find((r) => !r.ok)?.output || "").slice(-2000),
@@ -242,9 +263,13 @@ async function main() {
   mkdirSync(outDir, { recursive: true });
   const outPath = join(outDir, `${model.replace(/[/:]/g, "_")}-${stamp}.json`);
   const tally = () => {
-    const passed = rows.filter((r) => r.result === "PASS").length;
-    const scored = rows.filter((r) => r.result === "PASS" || r.result === "FAIL").length;
-    return { passed, scored, falseDones: rows.filter((r) => r.falseDone).length };
+    const scoredRows = rows.filter((r) => r.result === "PASS" || r.result === "FAIL");
+    return {
+      passed: scoredRows.filter((r) => r.result === "PASS").length,
+      passedAt1: scoredRows.filter((r) => r.result === "PASS" && r.passAt1).length,
+      scored: scoredRows.length,
+      falseDones: rows.filter((r) => r.falseDone).length,
+    };
   };
   // Written after EVERY exercise: a run that is stopped halfway still leaves
   // its results and the evidence paths behind.
@@ -262,10 +287,10 @@ async function main() {
     console.log(`${pad(slug, 18)} ${pad(out.row.result, 8)} ${pad(out.row.secs, 6)} ${pad(out.row.tools.length, 6)} ${out.notes.join(" ")}`);
   }
 
-  const { passed, scored, falseDones } = tally();
+  const { passed, passedAt1, scored, falseDones } = tally();
   const unscored = rows.filter((r) => r.result === "HARNESS" || r.result === "CONTAMINATED");
   console.log("-".repeat(72));
-  console.log(`\nRESULT: ${passed}/${scored} passed · ${falseDones} false-done · model=${model}`);
+  console.log(`\nRESULT: pass@1 ${passedAt1}/${scored} · pass@2 ${passed}/${scored} · ${falseDones} false-done · model=${model}`);
   if (unscored.length) {
     console.log(`NOT SCORED (${unscored.length}) — these say nothing about the model: ${unscored.map((r) => `${r.slug} (${r.harness ?? "saw the hidden tests"})`).join("; ")}`);
   }

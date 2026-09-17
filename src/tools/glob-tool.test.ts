@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync, utimesSync, realpathSync, type readdir as fsReaddir } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { globTool, walkBounded, MAX_DEPTH, MAX_SCAN, WALK_CONCURRENCY, type WalkFs } from "./glob-tool.js";
+import { globTool, walkBounded, MAX_DEPTH, MAX_DIRS, MAX_SCAN, WALK_CONCURRENCY, type WalkFs } from "./glob-tool.js";
 import { renderToolResultForModel } from "./result-helpers.js";
 
 // The glob walk used to be unbounded: no depth or readdir-concurrency cap (a
@@ -209,5 +209,39 @@ describe("glob tool — the walk is bounded", () => {
 		expect(readdirs).toBeGreaterThanOrEqual(needed);
 		expect(readdirs).toBeLessThanOrEqual(needed + 2 * WALK_CONCURRENCY); // only in-flight slack
 		expect(readdirs).toBeLessThan(DIRS / 4);
+	});
+
+	// A pattern that matches almost nothing under a huge root never reaches
+	// MAX_SCAN: muse's glob("**/two_bucket*") from C:\ opened the whole drive
+	// for 19.5s and blocked the event loop for 11s of it (2026-09-17).
+	function endlessTree() {
+		let readdirs = 0;
+		const dirent = (name: string) => ({ name, isFile: () => false, isDirectory: () => true, isSymbolicLink: () => false });
+		// Every directory holds 50 more directories and no files: nothing ever matches.
+		const readdir = (_path: string, _opts: unknown, cb: (err: null, entries: unknown[]) => void) => {
+			readdirs++;
+			cb(null, Array.from({ length: 50 }, (_, i) => dirent(`d${i}`)));
+		};
+		return { fs: { readdir: readdir as unknown as typeof fsReaddir } as WalkFs, count: () => readdirs };
+	}
+
+	it(`stops after opening ${MAX_DIRS} directories when nothing matches`, async () => {
+		const tree = endlessTree();
+		const walk = await walkBounded("**/two_bucket*", "/virtual-wide", tree.fs);
+		expect(walk).toMatchObject({ truncated: true, cut: "breadth", paths: [] });
+		expect(tree.count()).toBeLessThanOrEqual(MAX_DIRS + 2 * WALK_CONCURRENCY);
+	});
+
+	it("lets timers run while it walks", async () => {
+		// The stub answers synchronously, the worst case for starving the loop.
+		const tree = endlessTree();
+		let ticks = 0;
+		const timer = setInterval(() => { ticks++; }, 1);
+		try {
+			await walkBounded("**/two_bucket*", "/virtual-wide", tree.fs);
+		} finally {
+			clearInterval(timer);
+		}
+		expect(ticks).toBeGreaterThan(5);
 	});
 });

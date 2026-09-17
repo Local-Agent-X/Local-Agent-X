@@ -2,6 +2,7 @@
  * Glob Tool -- file pattern matching for agents.
  * Replaces bash find/ls with structured glob results sorted by mtime.
  */
+import { readdir as nodeReaddir } from "node:fs";
 import { stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { Readable } from "node:stream";
@@ -87,7 +88,15 @@ export const WALK_CONCURRENCY = 8;
 // instead of silently walking on.
 export const MAX_SCAN = 5000;
 
-interface Walk { paths: string[]; truncated: boolean }
+// Directories opened before the walk is cut off, however few matches it has.
+// MAX_SCAN bounds matches, not breadth: `**/two_bucket*` from C:\ matched one
+// file after opening the whole drive, 19.5s of walking (muse, 2026-09-17).
+export const MAX_DIRS = 20_000;
+
+/** Why a walk stopped early: too many matches, or too many directories opened. */
+export type WalkCut = "matches" | "breadth";
+
+interface Walk { paths: string[]; truncated: boolean; cut?: WalkCut }
 
 /** fast-glob's pluggable filesystem — a test seam for counting readdir()s. */
 export type WalkFs = NonNullable<fg.Options["fs"]>;
@@ -100,6 +109,26 @@ export function walkBounded(pattern: string, cwd: string, fs?: WalkFs): Promise<
   return new Promise((resolve, reject) => {
     const paths: string[] = [];
     let truncated = false;
+    let dirs = 0;
+    const stop = (cut: WalkCut) => {
+      if (truncated) return;
+      truncated = true;
+      stream.destroy();
+      resolve({ paths, truncated, cut });
+    };
+    // Every directory's entries are matched in one synchronous run, and the
+    // walker chains those runs through promises, so timers never fire in
+    // between: that walk of C:\ blocked the event loop for 11s. Handing each
+    // readdir result back on setImmediate gives the loop a turn per directory.
+    const readdirImpl = (fs?.readdir ?? nodeReaddir) as (...a: unknown[]) => void;
+    const readdir = (...args: unknown[]) => {
+      const cb = args.pop() as (...r: unknown[]) => void;
+      if (++dirs > MAX_DIRS) {
+        stop("breadth");
+        return setImmediate(cb, null, []);
+      }
+      readdirImpl(...args, (...r: unknown[]) => setImmediate(cb, ...r));
+    };
     // fast-glob types its stream as NodeJS.ReadableStream, which has no
     // destroy(); the object it constructs is a node:stream Readable.
     const stream = fg.stream(pattern, {
@@ -114,24 +143,20 @@ export function walkBounded(pattern: string, cwd: string, fs?: WalkFs): Promise<
       deep: MAX_DEPTH + 1,
       concurrency: WALK_CONCURRENCY,
       ignore: WALK_IGNORE,
-      fs,
+      fs: { ...fs, readdir: readdir as unknown as typeof nodeReaddir },
     }) as Readable;
     stream.on("data", (p: string) => {
       if (truncated) return;
       paths.push(p);
-      if (paths.length >= MAX_SCAN) {
-        truncated = true;
-        stream.destroy();
-        resolve({ paths, truncated });
-      }
+      if (paths.length >= MAX_SCAN) stop("matches");
     });
     stream.once("end", () => resolve({ paths, truncated }));
     stream.on("error", reject);
   });
 }
 
-async function globFiles(pattern: string, cwd: string, limit: number): Promise<{ entries: FileEntry[]; truncated: boolean }> {
-  const { paths, truncated } = await walkBounded(pattern, cwd);
+async function globFiles(pattern: string, cwd: string, limit: number): Promise<{ entries: FileEntry[]; truncated: boolean; cut?: WalkCut }> {
+  const { paths, truncated, cut } = await walkBounded(pattern, cwd);
 
   const entries: FileEntry[] = [];
   for (const p of paths) {
@@ -149,7 +174,7 @@ async function globFiles(pattern: string, cwd: string, limit: number): Promise<{
   }
 
   entries.sort((a, b) => b.mtime - a.mtime);
-  return { entries: entries.slice(0, limit), truncated };
+  return { entries: entries.slice(0, limit), truncated, cut };
 }
 
 export const globTool: ToolDefinition = {
@@ -188,14 +213,18 @@ export const globTool: ToolDefinition = {
     const startMs = Date.now();
 
     try {
-      const { entries, truncated } = await globFiles(pattern, cwd, 200);
+      const { entries, truncated, cut } = await globFiles(pattern, cwd, 200);
       const durationMs = Date.now() - startMs;
-      if (entries.length === 0) return ok("No files matched.", { pattern, cwd, count: 0, duration_ms: durationMs });
+      const warning = cut === "breadth"
+        ? `\nWARNING: the walk stopped after opening ${MAX_DIRS} directories — ${cwd} is too broad to search, so files in the part it never reached are not listed. Pass a narrower path.`
+        : truncated
+          ? `\nWARNING: the walk stopped after ${MAX_SCAN} matches — this list is the newest of THOSE, not of the whole tree; narrow the path or use a more specific pattern.`
+          : "";
+      if (entries.length === 0) {
+        return ok(`No files matched.${warning}`, { pattern, cwd, count: 0, scan_truncated: truncated || undefined, duration_ms: durationMs });
+      }
 
       const lines = entries.map((e) => `${e.path}  (${humanSize(e.size)})`);
-      const warning = truncated
-        ? `\nWARNING: the walk stopped after ${MAX_SCAN} matches — this list is the newest of THOSE, not of the whole tree; narrow the path or use a more specific pattern.`
-        : "";
       return ok(lines.join("\n") + warning, {
         pattern,
         cwd,
@@ -228,7 +257,7 @@ export function prompt(): string {
     "Use the glob tool for fast file pattern matching instead of bash find/ls.",
     "Supports patterns like **/*.ts, src/**/*.tsx, *.json.",
     "Results are sorted by modification time (newest first), limited to 200.",
-    `The walk enters at most ${MAX_DEPTH} directory levels below the search root and stops after ${MAX_SCAN} matches (the result says so) — pass path to re-root deeper, or narrow the pattern.`,
+    `The walk enters at most ${MAX_DEPTH} directory levels below the search root, opens at most ${MAX_DIRS} directories, and stops after ${MAX_SCAN} matches (the result says so) — pass path to re-root deeper, or narrow the pattern.`,
     "Provide an optional path to search in a specific directory.",
   ].join("\n");
 }

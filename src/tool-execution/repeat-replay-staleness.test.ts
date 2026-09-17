@@ -12,6 +12,7 @@
 import { describe, it, expect } from "vitest";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import { findPriorIdenticalResult } from "./resolve-tool.js";
+import { READ_DEDUP_STUB_LEAD } from "./read-dedup-evidence.js";
 
 const call = (id: string, name: string, args: Record<string, unknown>) =>
   ({ id, type: "function", function: { name, arguments: JSON.stringify(args) } });
@@ -89,5 +90,17 @@ describe("the guard still does its job when nothing changed", () => {
       assistant(call("r2", "read", READ)), result("r2", "new"),
     ];
     expect(findPriorIdenticalResult(now("read", READ), history)?.result).toBe("new");
+  });
+});
+
+describe("a replay never hands back a read-dedup stub", () => {
+  it("re-executes a read whose only prior answer was the no-content stub", () => {
+    // wordy, 2026-09-17: the stub came back as a REPEATED CALL replay, so the
+    // model's second try at reading the file got nothing again.
+    const history = [
+      assistant(call("r1", "read", READ)),
+      result("r1", `[ok, unchanged=true]\n${READ_DEDUP_STUB_LEAD}: grade_school.py (content-hash verified).`),
+    ];
+    expect(findPriorIdenticalResult(now("read", READ), history)).toBeNull();
   });
 });

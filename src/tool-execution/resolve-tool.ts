@@ -14,6 +14,7 @@ import { getRiskLevel, buildApprovalContext } from "./approval-context.js";
 import { ARI_ACTION_MAP } from "./enforce-policy.js";
 import { sessionWorkRootOf } from "../workspace/paths.js";
 import { STATEFUL_LIVE_STATE_TOOLS } from "./stateful-tools.js";
+import { READ_DEDUP_STUB_LEAD } from "./read-dedup-evidence.js";
 
 // Eval scaffolding — see markDryRunSession docstring below.
 const dryRunSessions = new Set<string>();
@@ -139,6 +140,9 @@ export function findPriorIdenticalResult(
         if (result !== null) {
           if (changedSince) return null;
           if (/(^|\n)\[error\](\r?\n|$)/i.test(result)) return null;
+          // A read-dedup stub carries no content; replaying it answers a
+          // re-read with the same nothing (wordy, 2026-09-17).
+          if (result.includes(READ_DEDUP_STUB_LEAD)) return null;
           return { result, turnIndex: i };
         }
       }

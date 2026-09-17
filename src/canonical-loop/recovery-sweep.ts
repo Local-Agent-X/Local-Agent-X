@@ -9,6 +9,7 @@ import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
 import { readOp } from "../ops/op-store.js";
+import type { Op } from "../ops/types.js";
 import { isLeaseExpired } from "./lease.js";
 import { rebuildDependencyScheduling } from "./scheduler.js";
 import { reconcilePublishedTurnCommitsForRecovery } from "./checkpoint.js";
@@ -48,6 +49,7 @@ export function sweepStaleCanonicalOps(): { opId: string; outcome: RecoveryOutco
     const c = op.canonical;
     if (!c || c.flagValue !== true) continue;
     if (c.state !== "running" && c.state !== "cancelling" && c.state !== "queued") continue;
+    if (heldByLiveWorker(op)) continue;
     reconcilePublishedTurnCommitsForRecovery(opId);
     op = readOp(opId);
     if (!op?.canonical) continue;
@@ -62,6 +64,19 @@ export function sweepStaleCanonicalOps(): { opId: string; outcome: RecoveryOutco
     out.push({ opId, outcome });
   }
   return out;
+}
+
+/**
+ * An op a live worker still holds the lease on. Nothing about it needs
+ * recovery — the worker is committing its own turns — and repairing it is not
+ * free: reconcile re-projects EVERY turn artifact of the op, synchronously.
+ * On the 30s janitor that grew with the conversation and blocked the event
+ * loop for 5.6s, then 6, 6.6, 7.9s, once a minute, through a muse polyglot
+ * run (2026-09-17). recoverStaleOp re-reads and re-checks the lease itself, so
+ * this only skips work that had nothing to do.
+ */
+function heldByLiveWorker(op: Op): boolean {
+  return Boolean(op.canonical?.leaseOwner) && !isLeaseExpired(op);
 }
 
 const COOPERATIVE_BATCH_SIZE = 16, COOPERATIVE_TIME_SLICE_MS = 8;
@@ -108,6 +123,7 @@ export async function sweepStaleCanonicalOpsCooperatively(
     try { op = readCandidate(opId); } catch { op = null; }
     // Same terminal-op gate as the sync sweep above (see its doc comment).
     const active = (s: unknown): boolean => s === "running" || s === "cancelling" || s === "queued";
+    if (op && heldByLiveWorker(op)) continue;
     if (op?.canonical?.flagValue === true && active(op.canonical.state)) {
       reconcileCandidate(opId);
       try { op = readCandidate(opId); } catch { op = null; }

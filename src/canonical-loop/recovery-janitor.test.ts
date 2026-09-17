@@ -186,3 +186,40 @@ describe("RecoveryJanitor", () => {
     janitor.stop();
   });
 });
+
+describe("the sweep leaves an op a live worker is holding alone", () => {
+  // Reconcile re-projects EVERY turn artifact of an op. On the 30s janitor
+  // that grew with the conversation and blocked the event loop for 5.6-7.9s
+  // once a minute through a muse polyglot run (2026-09-17). A leased op has
+  // a worker committing its own turns; there is nothing to recover.
+  const leased = (leaseExpiresAt: string): Op => ({
+    canonical: {
+      flagValue: true, state: "running", leaseOwner: "worker-1", leaseExpiresAt,
+    },
+  } as unknown as Op);
+
+  it("neither reconciles nor recovers an op whose lease is still alive", async () => {
+    const reconciled: string[] = [];
+    const recovered: string[] = [];
+    const out = await sweepStaleCanonicalOpsCooperatively({
+      listOpIds: () => ["op-live"],
+      readCandidate: () => leased(new Date(Date.now() + 60_000).toISOString()),
+      reconcileCandidate: (opId) => { reconciled.push(opId); return true; },
+      recoverCandidate: (opId) => { recovered.push(opId); return { ok: false, kind: "lease_fresh" }; },
+    });
+    expect(reconciled).toEqual([]);
+    expect(recovered).toEqual([]);
+    expect(out).toEqual([]);
+  });
+
+  it("still repairs an op whose lease has expired", async () => {
+    const reconciled: string[] = [];
+    await sweepStaleCanonicalOpsCooperatively({
+      listOpIds: () => ["op-stale"],
+      readCandidate: () => leased(new Date(Date.now() - 60_000).toISOString()),
+      reconcileCandidate: (opId) => { reconciled.push(opId); return true; },
+      recoverCandidate: () => ({ ok: false, kind: "lease_fresh" }),
+    });
+    expect(reconciled).toEqual(["op-stale"]);
+  });
+});

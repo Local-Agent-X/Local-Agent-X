@@ -12,7 +12,7 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 65 top-level dirs · 65 live · 0 with no live importer · 1589 non-test source files · 0 god files (>400 LOC).
+**Totals:** 65 top-level dirs · 65 live · 0 with no live importer · 1590 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -50,7 +50,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/voice/` | 13 | 74 | XL |  |
 | `src/autonomy/` | 12 | 4 | M |  |
 | `src/cognition/` | 12 | 30 | XL |  |
-| `src/server/` *(entrypoint)* | 12 | 50 | XL |  |
+| `src/server/` *(entrypoint)* | 12 | 51 | XL |  |
 | `src/whatsapp-bridge/` | 12 | 8 | L |  |
 | `src/agent-guards/` | 11 | 11 | L |  |
 | `src/self-edit/` | 11 | 20 | L |  |

@@ -241,8 +241,9 @@ export function readLatestOpTurn(opId: string): OpTurnRow | null {
       if (Number.isFinite(n) && n >= 0) idxs.push(n);
     }
     idxs.sort((a, b) => b - a);
+    const cache = createTurnReadCache();
     for (const turnIdx of idxs) {
-      const row = readOpTurn(opId, turnIdx);
+      const row = readOpTurn(opId, turnIdx, cache);
       if (row) return row;
     }
     return null;

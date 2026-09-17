@@ -131,7 +131,7 @@ function isNextTurnPivot(value: unknown): boolean {
     && integer(pivot.epoch);
 }
 
-function messagePosition(row: OpMessageRow): string {
+export function messagePosition(row: OpMessageRow): string {
   return `${row.turnIdx}:${row.seqInTurn}`;
 }
 function record(value: unknown): value is Record<string, unknown> {

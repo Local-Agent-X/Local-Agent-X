@@ -15,7 +15,7 @@
  *      not, so the "gone" assertions can genuinely fail).
  */
 import { describe, it, expect, afterAll } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Op } from "../ops/types.js";
@@ -219,6 +219,64 @@ describe("turn read cache — read cost is linear in turns", () => {
     const counts = countReads(() => { readTurnArtifact(opId, TURNS - 1, cache); });
     expect(cache.seeds).toBe(sentinel);
     expect(counts.seeds).toBe(0);
+  });
+});
+
+describe("turn read cache — collision checks do not rebuild prior history", () => {
+  // Reads were already linear, but every turn still rebuilt the accepted prior
+  // messages with fresh id/position sets per prior turn: cubic CPU. A 180-turn
+  // muse op blocked the event loop for 19s (2026-09-17).
+  it("rebuilds a 600-turn history quickly", () => {
+    const opId = "op_read_cache_long";
+    writeOp(makeOp(opId));
+    mkdirSync(join(opTurnPath(opId, 0), ".."), { recursive: true });
+    for (let turnIdx = 0; turnIdx < 600; turnIdx++) {
+      const turn = {
+        schemaVersion: 1, opId, turnIdx,
+        providerState: { adapterName: "test", adapterVersion: "1", providerPayload: null },
+        toolCallSummary: [], terminalReason: "done", redirectConsumed: false, createdAt: "2026-09-17T00:00:00.000Z",
+      };
+      const messages = [0, 1, 2].map((seqInTurn) => ({
+        messageId: `long-${turnIdx}-${seqInTurn}`, opId, turnIdx, seqInTurn,
+        role: seqInTurn === 0 ? "assistant" : "tool_result", content: "x", createdAt: "2026-09-17T00:00:00.000Z",
+      }));
+      // Written directly: publishing validates against every prior turn,
+      // which is the path under test, not the setup.
+      const { schemaVersion: _, ...row } = turn;
+      writeFileSync(opTurnPath(opId, turnIdx), JSON.stringify({
+        schemaVersion: 1, turn: row, messages,
+        projection: { opType: "app_build", task: "build the thing", sessionId: SESSION },
+      }), "utf-8");
+    }
+    const started = performance.now();
+    expect(readOpMessages(opId)).toHaveLength(1800);
+    expect(performance.now() - started).toBeLessThan(3_000);
+  });
+
+  it("a rejected turn's messages do not make a later turn collide", () => {
+    const opId = "op_read_cache_rejected";
+    writeOp(makeOp(opId));
+    mkdirSync(join(opTurnPath(opId, 0), ".."), { recursive: true });
+    const write = (turnIdx: number, ids: string[]) => writeFileSync(opTurnPath(opId, turnIdx), JSON.stringify({
+      schemaVersion: 1,
+      turn: {
+        opId, turnIdx,
+        providerState: { adapterName: "test", adapterVersion: "1", providerPayload: null },
+        toolCallSummary: [], terminalReason: "done", redirectConsumed: false, createdAt: "2026-09-17T00:00:00.000Z",
+      },
+      messages: ids.map((messageId, seqInTurn) => ({
+        messageId, opId, turnIdx, seqInTurn, role: "user", content: "x", createdAt: "2026-09-17T00:00:00.000Z",
+      })),
+      projection: { opType: "app_build", task: "build the thing", sessionId: SESSION },
+    }), "utf-8");
+    write(0, ["a"]);
+    write(1, ["a", "x"]); // collides with turn 0: rejected, so "x" is never accepted
+    write(2, ["x"]);
+    const shared = createTurnReadCache();
+    expect(readTurnArtifact(opId, 1, shared)).toBeNull();
+    expect(readTurnArtifact(opId, 2, shared)).not.toBeNull();
+    expect(readTurnArtifact(opId, 2)).not.toBeNull();
+    expect(readOpMessages(opId).map((m) => m.messageId)).toEqual(["a", "x"]);
   });
 });
 

@@ -27,6 +27,7 @@ import {
   projectionMatchesOp,
 } from "./turn-commit-validation.js";
 export { isTurnCommitEnvelope } from "./turn-commit-validation.js";
+import { collidesWithAcceptedBefore, extendAcceptedScan, type AcceptedScan } from "./turn-commit-accepted.js";
 import { readOp } from "../ops/op-store.js";
 import type { Op } from "../ops/types.js";
 import { getLaxDir } from "../lax-data-dir.js";
@@ -128,7 +129,10 @@ export interface TurnReadCache {
   op?: Op | null;
   seeds?: LegacyMessageSeedRead;
   base: Map<number, TurnCommitEnvelope | OpTurnRow | null>;
+  /** Accepted committed messages, scanned once in turn order (see acceptedBefore). */
+  accepted?: AcceptedScan;
 }
+
 
 /** Seed with whatever the caller has already parsed, so it is not parsed twice. */
 export function createTurnReadCache(
@@ -159,7 +163,7 @@ export function readTurnArtifact(
 ): TurnCommitEnvelope | OpTurnRow | null {
   const artifact = readBaseArtifact(opId, turnIdx, cache);
   if (!artifact || !("turn" in artifact)) return artifact;
-  return hasMessageCollision(artifact.messages, priorCommittedMessages(opId, turnIdx, cache))
+  return collidesWithAcceptedBefore(artifact.messages, turnIdx, acceptedBefore(opId, turnIdx, cache))
     ? null : artifact;
 }
 
@@ -211,26 +215,11 @@ function readStructurallyAuthorizedArtifact(
   }
 }
 
-function priorCommittedMessages(
-  opId: string,
-  beforeTurnIdx: number,
-  cache: TurnReadCache,
-): OpMessageRow[] {
-  const dir = opTurnsDir(opId);
-  if (!existsSync(dir)) return [];
-  const messages: OpMessageRow[] = [];
-  const indexes = readdirSync(dir).map((name) => /^(\d+)\.json$/.exec(name))
-    .filter((match): match is RegExpExecArray => !!match)
-    .map((match) => Number(match[1]))
-    .filter((turnIdx) => turnIdx < beforeTurnIdx)
-    .sort((a, b) => a - b);
-  for (const turnIdx of indexes) {
-    const artifact = readBaseArtifact(opId, turnIdx, cache);
-    if (!artifact || !("turn" in artifact)) continue;
-    if (hasMessageCollision(artifact.messages, messages)) continue;
-    messages.push(...artifact.messages);
-  }
-  return messages;
+/** Extend the accepted scan through every turn below `beforeTurnIdx`. */
+function acceptedBefore(opId: string, beforeTurnIdx: number, cache: TurnReadCache): AcceptedScan {
+  return (cache.accepted = extendAcceptedScan(
+    cache.accepted, opId, beforeTurnIdx, (turnIdx) => readBaseArtifact(opId, turnIdx, cache),
+  ));
 }
 
 export function publishTurnCommit(envelope: TurnCommitEnvelope): boolean {
@@ -304,7 +293,7 @@ export function quarantineInvalidTurnArtifact(opId: string, turnIdx: number): bo
     const seeds = cachedSeeds(opId, cache);
     if (seeds.issues.length) throw new LegacyMessageSeedIntegrityError(opId, seeds.issues);
     if (!hasMessageCollision(artifact.messages, seeds.rows)
-      && !hasMessageCollision(artifact.messages, priorCommittedMessages(opId, turnIdx, cache))) return false;
+      && !collidesWithAcceptedBefore(artifact.messages, turnIdx, acceptedBefore(opId, turnIdx, cache))) return false;
   } else if (artifact) {
     return false;
   }
@@ -364,8 +353,8 @@ function assertTurnCommitPublicationValid(envelope: TurnCommitEnvelope): void {
   const cache = createTurnReadCache({ seeds, op });
   if (!op || !projectionMatchesOp(envelope.projection, op)
     || hasMessageCollision(envelope.messages, seeds.rows)
-    || hasMessageCollision(envelope.messages,
-      priorCommittedMessages(envelope.turn.opId, envelope.turn.turnIdx, cache))) {
+    || collidesWithAcceptedBefore(envelope.messages, envelope.turn.turnIdx,
+      acceptedBefore(envelope.turn.opId, envelope.turn.turnIdx, cache))) {
     throw new Error(`turn commit message collision or invalid authority for ${envelope.turn.opId}#${envelope.turn.turnIdx}`);
   }
 }

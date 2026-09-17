@@ -71,3 +71,20 @@ export async function waitForIdleOps(dataDir, timeoutMs) {
   }
   return `background ops still running after ${Math.round(timeoutMs / 1000)}s`;
 }
+
+/** Every tool CALL the run's chat ops made, as { name, arguments } (arguments is the raw JSON string). */
+export function toolCalls(dataDir) {
+  const calls = [];
+  for (const { dir, op } of readOps(dataDir)) {
+    if (op.type !== "chat_turn") continue;
+    const turnsDir = join(dir, "op-turns");
+    for (const f of existsSync(turnsDir) ? readdirSync(turnsDir) : []) {
+      try {
+        for (const m of JSON.parse(readFileSync(join(turnsDir, f), "utf8")).messages ?? []) {
+          for (const c of m.content?.toolCalls ?? []) calls.push({ name: c.name, arguments: String(c.arguments ?? "") });
+        }
+      } catch { /* partial write */ }
+    }
+  }
+  return calls;
+}

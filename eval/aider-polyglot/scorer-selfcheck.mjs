@@ -10,7 +10,7 @@
 //
 //   node eval/aider-polyglot/scorer-selfcheck.mjs            # curated set
 //   node eval/aider-polyglot/scorer-selfcheck.mjs --all
-import { copyFileSync, existsSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   ensureBenchmark, allSlugs, loadExercise, makeExerciseProject, scoreExercise, cleanup, resolvePython,
@@ -29,8 +29,9 @@ for (const slug of slugs) {
 
   // Reference solution in place of the stub → must pass.
   const good = makeExerciseProject(ex);
-  const example = join(ex.dir, ".meta", "example.py");
-  if (ex.solution.length === 1 && existsSync(example)) copyFileSync(example, join(good, ex.solution[0]));
+  if (ex.solution.length === 1 && ex.files.includes(".meta/example.py")) {
+    writeFileSync(join(good, ex.solution[0]), ex.read(".meta/example.py"));
+  }
   const ref = scoreExercise(good, ex);
   cleanup(good);
 

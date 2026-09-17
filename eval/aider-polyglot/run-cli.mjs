@@ -13,12 +13,12 @@
 //   node eval/aider-polyglot/run-cli.mjs --cli grok --slugs wordy,forth
 //   node eval/aider-polyglot/run-cli.mjs --cli codex --model gpt-5.4 --timeout 420000
 
-import { writeFileSync, mkdirSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { execFile } from "node:child_process";
 import {
-  ensureBenchmark, allSlugs, loadExercise, makeExerciseProject, buildPrompt,
+  ensureBenchmark, allSlugs, loadExercise, makeExerciseProject, buildPrompt, writeSealed,
   scoreExercise, solutionChanged, cleanup, claimsDone, admitsIncomplete,
 } from "./lib.mjs";
 
@@ -149,8 +149,8 @@ async function main() {
   const outDir = join(process.env.HOME, ".cache", "aider-polyglot-reports");
   mkdirSync(outDir, { recursive: true });
   const outPath = join(outDir, `cli-${args.cli}_${model.replace(/\//g, "_")}-${stamp}.json`);
-  writeFileSync(outPath, JSON.stringify({ harness: `${args.cli}-cli`, model, stamp, passed, total: rows.length, falseDones, rows }, null, 2));
-  console.log(`report: ${outPath}`);
+  writeSealed(outPath, JSON.stringify({ harness: `${args.cli}-cli`, model, stamp, passed, total: rows.length, falseDones, rows }, null, 2));
+  console.log(`report: ${outPath}.gz`);
 
   const fails = rows.filter((r) => !r.pass);
   if (fails.length) {

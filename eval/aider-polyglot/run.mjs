@@ -13,7 +13,7 @@
 //   npx tsx eval/aider-polyglot/run.mjs --keep               # keep failed exercise dirs
 //
 // Verdicts: PASS, FAIL, HARNESS, or CONTAMINATED (passed after seeing the
-// hidden tests — unscored). Web tools are denied. Hitting the time cap is a FAIL
+// hidden tests, or after searching the disk outside its workspace — unscored). Web tools are denied. Hitting the time cap is a FAIL
 // ("did-not-converge") only when the harness was provably healthy throughout —
 // no event-loop stalls, the model getting turns; otherwise it is HARNESS.
 //
@@ -32,18 +32,18 @@
 // Two attempts, as Aider's benchmark runs them: a failed first attempt is shown
 // the test errors and tries once more. Both pass@1 and pass@2 are reported.
 
-import { copyFileSync, cpSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  ensureBenchmark, allSlugs, loadExercise, makeExerciseProject, buildPrompt, buildRetryPrompt,
-  scoreExercise, solutionChanged, resolvePython,
+  ensureBenchmark, allSlugs, loadExercise, makeExerciseProject, buildPrompt, buildRetryPrompt, sealTree, writeSealed,
+  scoreExercise, solutionChanged, resolvePython, lookedOutsideWorkspace,
   driveChat, claimsDone, admitsIncomplete,
 } from "./lib.mjs";
 import { CURATED } from "./curated.mjs";
 import { assertDistMatchesSource, startIsolatedServer } from "../op-outcomes/isolated.mjs";
-import { chatModelsIn, opTurnCount, toolResultText } from "../op-outcomes/op-store.mjs";
+import { chatModelsIn, opTurnCount, toolCalls, toolResultText } from "../op-outcomes/op-store.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, "..", "..");
@@ -86,7 +86,7 @@ const OFFLINE_RULES = ["web_fetch", "web_search", "browser", "http_request"].map
 function sawHiddenTests(dataDir, ex) {
   const names = new Set();
   for (const t of ex.test) {
-    for (const m of readFileSync(join(ex.dir, t), "utf8").matchAll(/def (test_\w+)\(/g)) names.add(m[1]);
+    for (const m of ex.text(t).matchAll(/def (test_\w+)\(/g)) names.add(m[1]);
   }
   const shown = toolResultText(dataDir);
   let hits = 0;
@@ -170,7 +170,9 @@ async function runExercise(slug, target, args, evidenceDir) {
       ?? (timedOut && !score.ok ? harnessDistress(server, drive.secs) : null);
     // A PASS on the leaked answer key is not a capability result. A FAIL with
     // it still is — the model had every advantage and did not get there.
-    const contaminated = sawHiddenTests(server.dataDir, ex);
+    const sawTests = sawHiddenTests(server.dataDir, ex);
+    const lookedElsewhere = lookedOutsideWorkspace(toolCalls(server.dataDir), ex, work);
+    const contaminated = sawTests || lookedElsewhere;
     const result = harness ? "HARNESS" : score.ok ? (contaminated ? "CONTAMINATED" : "PASS") : "FAIL";
 
     const notes = [];
@@ -180,7 +182,8 @@ async function runExercise(slug, target, args, evidenceDir) {
     // a clean measurement. Flagged, not failed — the model may have used it
     // for something else — but it is visible in every row.
     if (drive.tools.some((t) => /^(web_fetch|web_search|browser|http_request)/.test(t))) notes.push("tried-web (denied)");
-    if (contaminated) notes.push("SAW-HIDDEN-TESTS");
+    if (sawTests) notes.push("SAW-HIDDEN-TESTS");
+    if (lookedElsewhere) notes.push("LOOKED-OUTSIDE-WORKSPACE");
     if (timedOut && result === "FAIL") notes.push("did-not-converge (harness healthy, time budget spent)");
     if (!changed) notes.push("stub-untouched");
     if (result === "PASS") notes.push(passAt1 ? "pass@1" : "pass@2 (after seeing the test errors)");
@@ -216,10 +219,7 @@ async function runExercise(slug, target, args, evidenceDir) {
  * directory that said why had already been removed.
  */
 function keepEvidence(dataDir, dest) {
-  mkdirSync(dest, { recursive: true });
-  for (const part of ["operations", join("logs", "server.log")]) {
-    try { cpSync(join(dataDir, part), join(dest, part), { recursive: true }); } catch { /* absent */ }
-  }
+  for (const part of ["operations", join("logs", "server.log")]) sealTree(join(dataDir, part), join(dest, part));
 }
 
 /** Stall profiles die with the server's data dir; the reports dir outlives it. */
@@ -261,7 +261,7 @@ async function main() {
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   const outDir = join(homedir(), ".cache", "aider-polyglot-reports");
   mkdirSync(outDir, { recursive: true });
-  const outPath = join(outDir, `${model.replace(/[/:]/g, "_")}-${stamp}.json`);
+  const outPath = join(outDir, `${model.replace(/[/:]/g, "_")}-${stamp}.json`); // written as .json.gz
   const tally = () => {
     const scoredRows = rows.filter((r) => r.result === "PASS" || r.result === "FAIL");
     return {
@@ -273,7 +273,7 @@ async function main() {
   };
   // Written after EVERY exercise: a run that is stopped halfway still leaves
   // its results and the evidence paths behind.
-  const save = () => writeFileSync(outPath, JSON.stringify({ model, stamp, ...tally(), total: rows.length, rows }, null, 2));
+  const save = () => writeSealed(outPath, JSON.stringify({ model, stamp, ...tally(), total: rows.length, rows }, null, 2));
   for (const slug of slugs) {
     let out;
     try {
@@ -292,12 +292,12 @@ async function main() {
   console.log("-".repeat(72));
   console.log(`\nRESULT: pass@1 ${passedAt1}/${scored} · pass@2 ${passed}/${scored} · ${falseDones} false-done · model=${model}`);
   if (unscored.length) {
-    console.log(`NOT SCORED (${unscored.length}) — these say nothing about the model: ${unscored.map((r) => `${r.slug} (${r.harness ?? "saw the hidden tests"})`).join("; ")}`);
+    console.log(`NOT SCORED (${unscored.length}) — these say nothing about the model: ${unscored.map((r) => `${r.slug} (${r.harness ?? "saw the hidden tests or searched outside its workspace"})`).join("; ")}`);
   }
   console.log("");
 
   save();
-  console.log(`report: ${outPath}`);
+  console.log(`report: ${outPath}.gz`);
 
   // List failures with a one-line reason for quick triage.
   const fails = rows.filter((r) => r.result === "FAIL");

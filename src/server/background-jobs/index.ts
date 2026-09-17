@@ -10,6 +10,7 @@ import type { IntegrationRegistry } from "../../integrations/index.js";
 import type { AgentSync } from "../../sync/index.js";
 import { JobScheduler, type OverlapPolicy } from "../scheduler.js";
 import { createLogger } from "../../logger.js";
+import { listActiveCanonicalOps, type ActiveCanonicalOp } from "../../canonical-loop/active-ops.js";
 import { registerCronRunner } from "./cron-runner.js";
 import { registerWorkerRunnerForServer } from "./worker-runner.js";
 import { registerSelfEditSurgeonForServer } from "./self-edit-surgeon-runner.js";
@@ -125,18 +126,27 @@ export function readBgIdleThresholdMs(): number {
  * dream-check, the memory backfill, and the protocol curator all fire on
  * wall-clock timers, all hit the same provider key / rate-limit, and all lean
  * on the shared Ollama embedding CPU. Firing them mid-turn steals that budget
- * from the foreground. Every turn bumps its session's `updatedAt` on save, so
- * "a session was written within the threshold" is a sound foreground-busy
- * proxy — no new activity-tracking wiring required.
+ * from the foreground.
+ *
+ * Two signals, because either alone misses a case. A session saved within the
+ * threshold covers the gap between turns. A foreground op still running covers
+ * the turn itself: sessions are saved when a turn ENDS, so a local-model turn
+ * that runs for minutes looked idle 90s in, and skill-review started a model
+ * call on the same GPU mid-turn (muse, wordy, 2026-09-17). A paused op (waiting
+ * on an approval) holds no model, so it does not count.
  */
 export function isForegroundBusy(
   sessionStore: Pick<SessionStore, "list">,
   thresholdMs: number = readBgIdleThresholdMs(),
   now: number = Date.now(),
+  activeOps: () => Array<Pick<ActiveCanonicalOp, "lane" | "state">> = listActiveCanonicalOps,
 ): boolean {
   const mostRecent = sessionStore.list().reduce((max, s) => Math.max(max, s.updatedAt), 0);
-  return now - mostRecent < thresholdMs;
+  if (now - mostRecent < thresholdMs) return true;
+  return activeOps().some((op) => op.lane !== "background" && FOREGROUND_WORKING.has(op.state));
 }
+
+const FOREGROUND_WORKING = new Set(["queued", "running"]);
 
 /** The backfill scheduling gate lives in its own module (it has its own test
  *  file), but this file stays its public address — every existing importer,

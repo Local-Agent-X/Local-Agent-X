@@ -32,15 +32,17 @@ describe("powershellCmdletHint — coach a PowerShell cmdlet fired into the bash
   // It used to send the model to "the PowerShell tool", which does not exist.
   // A recovery hint may only name something the model can actually reach.
   it("never names a tool that does not exist", () => {
-    for (const platform of ["win32", "linux", "darwin"] as const) {
-      expect(powershellCmdletHint("bash: Get-ChildItem: command not found", platform)).not.toMatch(/PowerShell tool/i);
-    }
+    expect(powershellCmdletHint("bash: Get-ChildItem: command not found")).not.toMatch(/PowerShell tool/i);
   });
 
-  it("on Windows, offers PowerShell the way it is really reachable — through bash", () => {
-    expect(powershellCmdletHint("bash: Get-ChildItem: command not found", "win32"))
-      .toContain('powershell -NoProfile -Command "Get-ChildItem');
-    expect(powershellCmdletHint("bash: Get-ChildItem: command not found", "linux")).not.toContain("powershell -NoProfile");
+  // For one day the hint pointed at `powershell -NoProfile -Command "…"`, and
+  // the model used that wrapper to run `python -c` past the inline-eval block
+  // (2026-09-17). A recovery hint must never teach a way around a policy.
+  it("never advertises an interpreter wrapper", () => {
+    for (const cmdlet of ["Get-ChildItem", "Invoke-WebRequest", "Get-Content"]) {
+      const hint = powershellCmdletHint(`bash: ${cmdlet}: command not found`) ?? "";
+      expect(hint, cmdlet).not.toMatch(/powershell\s+-|pwsh\s+-|cmd(\.exe)?\s+\/c|-Command/i);
+    }
   });
 
   it("handles the exact cmdlets that misfired in the field", () => {

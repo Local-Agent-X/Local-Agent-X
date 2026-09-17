@@ -10,7 +10,7 @@ import type { IntegrationRegistry } from "../../integrations/index.js";
 import type { AgentSync } from "../../sync/index.js";
 import { JobScheduler, type OverlapPolicy } from "../scheduler.js";
 import { createLogger } from "../../logger.js";
-import { listActiveCanonicalOps, type ActiveCanonicalOp } from "../../canonical-loop/active-ops.js";
+import { listActiveCanonicalOps, type ActiveCanonicalOp } from "../../canonical-loop/index.js";
 import { registerCronRunner } from "./cron-runner.js";
 import { registerWorkerRunnerForServer } from "./worker-runner.js";
 import { registerSelfEditSurgeonForServer } from "./self-edit-surgeon-runner.js";

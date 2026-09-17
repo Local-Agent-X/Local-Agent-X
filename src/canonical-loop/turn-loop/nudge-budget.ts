@@ -34,6 +34,22 @@ const DEFAULT_BUDGET = 8;
 
 const EXEMPT_REASONS = new Set(["adapter-retry", "reported-adapter-retry"]);
 
+/**
+ * Guards whose firing is bounded BY CONSTRUCTION, so they do not draw on the
+ * shared pool. The budget exists to cap guards that could fire without limit;
+ * these two cannot, and they are the ones that END a stuck op:
+ *   budget-ladder   three rungs (25/50/75%) plus one dry-stop, ever;
+ *   loop-detection  NUDGE_CEILING warnings, then it aborts the turn.
+ *
+ * In a flat first-come pool they lost to cheaper voices. muse's grade-school
+ * op (2026-09-17) spent its 4 on two "a tool call failed" notices the model had
+ * already acted on, the 25% rung, and one more failure notice — so the 50%
+ * rung was refused and the op wandered on, unsteered, for 60+ turns without
+ * writing a line. The pool's own contract is that steering stops when it isn't
+ * working; the guards that decide it isn't working must be able to say so.
+ */
+const SELF_BOUNDED_GUARDS = new Set(["budget-ladder", "loop-detection"]);
+
 export function nudgeBudgetFor(opType: string | undefined): number {
   return BUDGET_BY_OP_TYPE[opType ?? ""] ?? DEFAULT_BUDGET;
 }
@@ -43,7 +59,7 @@ interface BudgetState { spent: number }
 /** Charge one nudge against the op's budget. False → the caller must NOT
  *  append: the budget is gone and the turn has to end on what it has. */
 export function consumeNudgeBudget(opId: string, source: GuardFire): boolean {
-  if (EXEMPT_REASONS.has(source.reason)) return true;
+  if (EXEMPT_REASONS.has(source.reason) || SELF_BOUNDED_GUARDS.has(source.name)) return true;
   const state = getMiddlewareState<BudgetState>(opId, "nudge-budget", () => ({ spent: 0 }));
   const budget = nudgeBudgetFor(readOp(opId)?.type);
   if (state.spent >= budget) {

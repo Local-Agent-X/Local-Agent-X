@@ -42,9 +42,29 @@ describe("nudge budget", () => {
     const guards = ["cleanup-verify", "verify-gate", "open-steps", "tool-failure-summary"];
     for (const g of guards) expect(consumeNudgeBudget("op-1", fire(g))).toBe(true);
     expect(nudgesSpent("op-1")).toBe(4);
-    // Fifth guard on the same chat op gets nothing, whoever it is.
-    expect(consumeNudgeBudget("op-1", fire("loop-detection"))).toBe(false);
+    // Fifth guard on the same chat op gets nothing — unless it is one of the
+    // self-bounded guards below.
+    expect(consumeNudgeBudget("op-1", fire("repeat-failure"))).toBe(false);
     expect(consumeNudgeBudget("op-1", fire("earned-done"))).toBe(false);
+  });
+
+  // muse, grade-school, 2026-09-17: two "a tool call failed" notices, the 25%
+  // rung and one more failure notice spent the chat pool, the 50% rung was
+  // refused, and the op wandered 60+ turns unsteered. The guards that decide
+  // steering has stopped working are bounded by construction and must speak.
+  it("never starves the self-bounded guards that end a stuck op", () => {
+    for (let i = 0; i < 4; i++) consumeNudgeBudget("op-1", fire("tool-failure-summary"));
+    expect(consumeNudgeBudget("op-1", fire("tool-failure-summary"))).toBe(false);
+    expect(consumeNudgeBudget("op-1", fire("budget-ladder"))).toBe(true);
+    expect(consumeNudgeBudget("op-1", fire("budget-ladder", "budget-ladder-dry"))).toBe(true);
+    expect(consumeNudgeBudget("op-1", fire("loop-detection"))).toBe(true);
+    expect(nudgesSpent("op-1"), "and they do not draw on the pool").toBe(4);
+  });
+
+  it("does not let a self-bounded guard spend the pool the others need", () => {
+    for (let i = 0; i < 3; i++) consumeNudgeBudget("op-1", fire("budget-ladder"));
+    expect(nudgesSpent("op-1")).toBe(0);
+    expect(consumeNudgeBudget("op-1", fire("verify-gate"))).toBe(true);
   });
 
   it("is per-op: a fresh op starts with a full budget", () => {

@@ -34,6 +34,8 @@ with justification). Mission: `docs/agent-prompts/local-model-harness.md`.
 
 | H-026 | wordy: the spec audit found 2 unmet requirements and its nudge was REFUSED (shared pool spent on "a tool call failed" notices); op ended 1 failing test short | HARNESS | Flat nudge pool: chatter outbids the guards that speak from evidence (same class as the earlier self-bounded fix) | Verdict-bearing guards (build-verify, spec-probe, spec-audit, regression-audit, design-verify) get a bounded pool of their own, then queue for the shared one | tests |
 
+| H-027 | bowling passed and was scored CONTAMINATED | EVAL | The detector's drive rewrite was anchored at the string start, so a WSL-style path ("/mnt/c/...") to the model's OWN workspace, written mid-command, never matched the root | Normalize each extracted path on its own; self-check 17 cases | re-scored PASS |
+
 ## Documented MODEL failures (muse-glimmer:30b)
 
 | Exercise | Run | Reason (evidence) |

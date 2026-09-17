@@ -1,5 +1,5 @@
 import { resolve, isAbsolute, join, basename, dirname } from "node:path";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { realpathSync } from "node:fs";
 import { workspaceRoot, uploadsDir } from "../config.js";
 
@@ -104,17 +104,26 @@ export function mapUploadsRef(p: string): string | null {
 const MSYS_DRIVE_PATH = /^[/\\]([a-zA-Z])(?:[/\\](.*))?$/;
 
 /**
- * Translate an MSYS/Git-Bash drive path ("/c/Users/me/x") to its Win32 spelling,
- * or null when `p` isn't one — or when we aren't on Windows, where such a path is
- * a real POSIX directory. Exported as the SINGLE source of truth so the file tool
+ * Translate an MSYS/Git-Bash path ("/c/Users/me/x", "/tmp/x") to its Win32
+ * spelling, or null when `p` isn't one — or when we aren't on Windows, where such
+ * a path is a real POSIX directory. Exported as the SINGLE source of truth so the file tool
  * and the SecurityLayer gate agree on the target (same contract as mapUploadsRef).
  */
 export function mapMsysDrivePath(p: string): string | null {
   if (process.platform !== "win32") return null;
+  const tmp = MSYS_TMP_PATH.exec(p);
+  if (tmp) return resolve(tmpdir(), tmp[1] ?? "");
   const m = MSYS_DRIVE_PATH.exec(p);
   if (!m) return null;
   return resolve(`${m[1].toUpperCase()}:\\`, m[2] ?? "");
 }
+
+// Git Bash's other user-facing spelling: its /tmp mount is the user's TEMP
+// folder (Git for Windows' default fstab, "none /tmp usertemp"), the same
+// directory os.tmpdir() reads from the env the shell inherits. `pwd` in a
+// workspace under TEMP prints "/tmp/...", and read resolved that to C:\tmp\...
+// and said the file did not exist (muse, two-bucket, 2026-09-17).
+const MSYS_TMP_PATH = /^[/\\]tmp(?:[/\\](.*))?$/;
 
 // ── Canonical resolver for AGENT-SUPPLIED file paths ──
 //

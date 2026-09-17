@@ -196,6 +196,14 @@ describe("MSYS/Git-Bash drive paths (win32 spelling equivalence)", () => {
     expect(mapMsysDrivePath("/d/data/f.txt")).toBe(resolve("D:\\", "data/f.txt"));
   });
 
+  it.skipIf(!onWin)("translates Git Bash's /tmp mount to the TEMP folder", () => {
+    // `pwd` under TEMP prints "/tmp/..."; read resolved that to C:	mp\...
+    expect(mapMsysDrivePath("/tmp/lax-ws-x/workspace/a.py")).toBe(resolve(tmpdir(), "lax-ws-x/workspace/a.py"));
+    expect(mapMsysDrivePath("/tmp")).toBe(resolve(tmpdir()));
+    expect(resolveAgentPath("/tmp/lax-ws-x/a.py")).toBe(resolve(tmpdir(), "lax-ws-x/a.py"));
+    expect(mapMsysDrivePath("/tmpfiles/a")).toBeNull();
+  });
+
   it.skipIf(!onWin)("uppercases the drive and handles the bare drive root", () => {
     expect(mapMsysDrivePath("/c")).toBe(resolve("C:\\"));
     expect(mapMsysDrivePath("/c/")).toBe(resolve("C:\\"));
@@ -221,11 +229,12 @@ describe("MSYS/Git-Bash drive paths (win32 spelling equivalence)", () => {
   });
 
   it.skipIf(!onWin)("leaves non-drive absolute forms alone", () => {
-    // Multi-char first segment is an MSYS VIRTUAL path (/tmp, /usr), not a drive
-    // mapping — translating it would invent a bogus target. UNC has an empty
-    // first segment. Neither may match.
-    expect(mapMsysDrivePath("/tmp/f")).toBeNull();
+    // A multi-char first segment is an MSYS VIRTUAL path into the Git install
+    // (/usr, /etc), not a drive — translating it would invent a target. /tmp is
+    // the one mount with a fixed user-facing home (TEMP; see the test above).
+    // UNC has an empty first segment. None of these may match.
     expect(mapMsysDrivePath("/usr/bin/node")).toBeNull();
+    expect(mapMsysDrivePath("/etc/fstab")).toBeNull();
     expect(mapMsysDrivePath("//server/share/x")).toBeNull();
     expect(mapMsysDrivePath("relative/path")).toBeNull();
   });

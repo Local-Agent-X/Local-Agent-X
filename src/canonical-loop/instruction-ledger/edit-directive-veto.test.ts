@@ -9,7 +9,8 @@
  * nothing enforced it.
  */
 import { describe, it, expect } from "vitest";
-import { extractConstraints, directsAnEdit } from "./extract.js";
+import { extractConstraints } from "./extract.js";
+import { directsAnEdit } from "./edit-directive.js";
 import type { ConfirmedConstraints } from "./extract.js";
 
 // The mistake the real confirm made, reproduced deterministically.

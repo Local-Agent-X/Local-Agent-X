@@ -8,7 +8,8 @@ import { lookedOutsideWorkspace } from "./lib.mjs";
 const ex = { solution: ["grade_school.py"], test: ["grade_school_test.py"] };
 const work = String.raw`C:\Users\peter\AppData\Local\Temp\lax-ws-m9LgLa\workspace\aider-grade-school-Svj8Vu`;
 const bash = (command) => ({ name: "bash", arguments: JSON.stringify({ command }) });
-const W = "C:/Users/peter/AppData/Local/Temp/lax-ws-m9LgLa/workspace/aider-grade-school-Svj8Vu";
+const ROOT = String.raw`C:\Users\peter\AppData\Local\Temp\lax-ws-m9LgLa`;
+const W ="C:/Users/peter/AppData/Local/Temp/lax-ws-m9LgLa/workspace/aider-grade-school-Svj8Vu";
 
 const cases = [
   ["find over the home dir (muse, 2026-09-17)", [bash('find "C:/Users/peter" -type f -name "grade_school.py" 2>/dev/null')], true],
@@ -20,12 +21,17 @@ const cases = [
   ["run own tests with an absolute interpreter", [bash(`cd "${W}" && C:/Users/peter/AppData/Local/Programs/Python/Python312/python.exe -m unittest grade_school_test`)], false],
   ["list the workspace", [bash(`ls -la "${W}"`)], false],
   ["glob inside the workspace root", [{ name: "glob", arguments: JSON.stringify({ pattern: "**/*grade_school*", path: "C:/Users/peter/AppData/Local/Temp/lax-ws-m9LgLa/workspace" }) }], false],
+  // run 13: searches of the exercise's own temp root, which holds nothing withheld
+  ["find in the temp root", [bash('find "C:/Users/peter/AppData/Local/Temp/lax-ws-m9LgLa" -type f -name "grade_school_test.py"')], false],
+  ["glob in the temp root, backslashes", [{ name: "glob", arguments: JSON.stringify({ pattern: "**/grade_school_test*", path: ROOT }) }], false],
+  ["grep in the temp root", [{ name: "grep", arguments: JSON.stringify({ pattern: "grade_school", path: ROOT, output_mode: "files_with_matches" }) }], false],
+  ["search beside the temp root", [bash('find "C:/Users/peter/AppData/Local/Temp" -name "*grade_school*"')], true],
   ["unrelated search outside", [bash("find C:/Users/peter -name '*.pdf'")], false],
 ];
 
 let bad = 0;
 for (const [label, calls, want] of cases) {
-  const got = lookedOutsideWorkspace(calls, ex, work);
+  const got = lookedOutsideWorkspace(calls, ex, ROOT);
   if (got !== want) bad++;
   console.log(`${got === want ? "OK  " : "BAD "} ${label}: ${got}`);
 }

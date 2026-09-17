@@ -171,7 +171,7 @@ async function runExercise(slug, target, args, evidenceDir) {
     // A PASS on the leaked answer key is not a capability result. A FAIL with
     // it still is — the model had every advantage and did not get there.
     const sawTests = sawHiddenTests(server.dataDir, ex);
-    const lookedElsewhere = lookedOutsideWorkspace(toolCalls(server.dataDir), ex, work);
+    const lookedElsewhere = lookedOutsideWorkspace(toolCalls(server.dataDir), ex, server.workspaceRoot);
     const contaminated = sawTests || lookedElsewhere;
     const result = harness ? "HARNESS" : score.ok ? (contaminated ? "CONTAMINATED" : "PASS") : "FAIL";
 

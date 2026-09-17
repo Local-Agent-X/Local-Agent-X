@@ -138,7 +138,7 @@ export async function startIsolatedServer({ repoRoot, provider, model, fixturePo
   const baseUrl = `http://127.0.0.1:${port}`;
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
   const server = {
-    root, roots: [root, workspaceRoot], dataDir, workspace, baseUrl, headers, logTail: () => tail.join("\n"),
+    root, roots: [root, workspaceRoot], workspaceRoot, dataDir, workspace, baseUrl, headers, logTail: () => tail.join("\n"),
     /** Non-null once the server process is gone. A server that ends ITSELF
      *  mid-run (the probe self-destruct did exactly this for months) makes
      *  every later observation meaningless — the caller must not grade it. */

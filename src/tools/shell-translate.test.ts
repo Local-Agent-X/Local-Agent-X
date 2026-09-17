@@ -6,7 +6,20 @@ describe("powershellCmdletHint — coach a PowerShell cmdlet fired into the bash
     const hint = powershellCmdletHint("/usr/bin/bash: line 1: Get-ChildItem: command not found");
     expect(hint).toContain("Get-ChildItem");
     expect(hint).toContain("ls");
-    expect(hint).toContain("PowerShell tool");
+  });
+
+  // It used to send the model to "the PowerShell tool", which does not exist.
+  // A recovery hint may only name something the model can actually reach.
+  it("never names a tool that does not exist", () => {
+    for (const platform of ["win32", "linux", "darwin"] as const) {
+      expect(powershellCmdletHint("bash: Get-ChildItem: command not found", platform)).not.toMatch(/PowerShell tool/i);
+    }
+  });
+
+  it("on Windows, offers PowerShell the way it is really reachable — through bash", () => {
+    expect(powershellCmdletHint("bash: Get-ChildItem: command not found", "win32"))
+      .toContain('powershell -NoProfile -Command "Get-ChildItem');
+    expect(powershellCmdletHint("bash: Get-ChildItem: command not found", "linux")).not.toContain("powershell -NoProfile");
   });
 
   it("handles the exact cmdlets that misfired in the field", () => {
@@ -17,7 +30,7 @@ describe("powershellCmdletHint — coach a PowerShell cmdlet fired into the bash
   it("still steers even when the cmdlet isn't in the POSIX map", () => {
     const hint = powershellCmdletHint("bash: Invoke-WebRequest: command not found");
     expect(hint).toContain("Invoke-WebRequest");
-    expect(hint).toContain("PowerShell tool");
+    expect(hint).toContain("POSIX equivalent");
   });
 
   it("returns null for a genuine bash failure (no cmdlet)", () => {

@@ -39,14 +39,21 @@ const CMDLET_POSIX: Record<string, string> = {
  *  tool. The Verb-Noun-with-hyphen shape is unique to cmdlets — bash builtins
  *  and binaries are lowercase — so this never fires on a genuine bash command.
  *  Returns null when the failure isn't a cmdlet misfire. */
-export function powershellCmdletHint(stderr: string): string | null {
+export function powershellCmdletHint(stderr: string, platform: NodeJS.Platform = process.platform): string | null {
   const m = stderr.match(/\b([A-Z][a-z]+-[A-Z][a-zA-Z]+)\b\s*:\s*command not found/);
   if (!m) return null;
   const cmdlet = m[1];
   const posix = CMDLET_POSIX[cmdlet];
+  // Name only what exists. This used to say "call the PowerShell tool" — there
+  // is no such tool, so a model that took the advice had nowhere to go and
+  // retried the cmdlet in bash instead (muse, twice in one op, 2026-09-16).
+  // PowerShell itself IS reachable through bash on Windows.
+  const escape = platform === "win32"
+    ? ` If you genuinely need PowerShell, run it from bash: \`powershell -NoProfile -Command "${cmdlet} …"\`.`
+    : "";
   return `'${cmdlet}' is a PowerShell cmdlet, but the bash tool runs POSIX sh. ` +
-    (posix ? `Use \`${posix}\` here, or ` : "Use the POSIX equivalent, or ") +
-    `call the PowerShell tool for cmdlets.`;
+    (posix ? `Use \`${posix}\` instead.` : "Use the POSIX equivalent instead.") +
+    escape;
 }
 
 export function detectTargetShell(shellPath: string): TargetShell {

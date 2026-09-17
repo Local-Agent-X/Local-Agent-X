@@ -54,6 +54,8 @@ import type { ProviderId } from "../providers/provider-ids.js";
 const DEFAULT_TIMEOUT_MS = 8000;
 const DEFAULT_MAX_RESPONSE_CHARS = 800;
 
+export type ClassifierRole = "review" | "routing";
+
 export interface ClassifyOptions<T> {
   /** Logical name for telemetry / env-disable. e.g. "follow-up", "claim-verify". */
   category: string;
@@ -68,14 +70,18 @@ export interface ClassifyOptions<T> {
   /** Override the model for this classifier. Default: the provider's background (non-reasoning) model. */
   model?: string;
   /**
-   * Which tier authors the reply when `model` isn't given. "background"
-   * (default) = the provider's fast non-reasoning model — right for yes/no
-   * verdicts that must return in seconds. "active" = the user's currently
-   * selected chat model — for the rare classifier whose OUTPUT QUALITY is the
-   * point (e.g. authoring an acceptance probe), where a reasoning tier is
-   * wanted and the call site owns a generous timeout.
+   * What the answer is FOR, which decides the model when `model` isn't given.
+   * Required, so no call site can end up judging on a weaker model by default.
+   *
+   * - "review": the answer judges, summarizes, or constrains the worker's own
+   *   work (audits, probes, summaries, bans, refusal votes). It runs on the
+   *   model doing the work, never a smaller one; a review that cannot run
+   *   returns null and the caller skips the check.
+   * - "routing": cheap triage whose mistake cannot block or mislead the work
+   *   (memory writes, recall filtering, intent tags). It runs on the
+   *   provider's background model.
    */
-  modelTier?: "background" | "active";
+  role: ClassifierRole;
   /** Stop reading the stream after this many chars (cheap circuit-break for runaway responses). Default 800. */
   maxResponseChars?: number;
   /** Disable via env var — caller's choice of name (e.g. "LAX_CLAIM_CLASSIFIER"). Set to "0" to skip. */
@@ -201,7 +207,7 @@ export async function classifyWithLLM<T>(opts: ClassifyOptions<T>): Promise<T | 
   // reasoner's chain-of-thought (grok-4.3 EVERY call, 2026-06-26; qwen3.6:27b,
   // 2026-07-15). Never cross-provider. Which model: background-model.ts.
   const legacyFallbackModel = ctx.model || MODEL_FALLBACKS[provider] || "";
-  const explicitModel = opts.model || (opts.modelTier === "active" && ctx.model) || "";
+  const explicitModel = opts.model || (opts.role === "review" && ctx.model) || "";
   const background = explicitModel
     ? null
     : await resolveBackgroundModel(provider as ProviderId, legacyFallbackModel);
@@ -254,7 +260,7 @@ export async function classifyWithLLM<T>(opts: ClassifyOptions<T>): Promise<T | 
     // return would have silently flattened away the wallclock race below.
     const resolved = await resolveProviderCall({
       provider, apiKey, model,
-      systemPrompt: opts.systemPrompt, userPrompt: opts.userPrompt, modelTier: opts.modelTier,
+      systemPrompt: opts.systemPrompt, userPrompt: opts.userPrompt, role: opts.role,
       maxChars, maxTokens, timeoutMs, defaultTimeoutMs: DEFAULT_TIMEOUT_MS,
       linkedSignal, certifiedLocalTarget, logger,
     });

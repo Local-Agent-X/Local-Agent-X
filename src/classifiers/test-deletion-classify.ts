@@ -100,6 +100,7 @@ export async function classifyTestDeletion(args: {
 
   const reply = await classifySchema({
     category: "test-deletion",
+    role: "review",
     systemPrompt: SYSTEM_PROMPT,
     userPrompt,
     schema: DeletionReplySchema,
@@ -107,7 +108,8 @@ export async function classifyTestDeletion(args: {
     // A test deletion is rare, so this only fires on the few wrap-up turns that
     // follow one — a slightly larger budget than give-up's 2500ms is fine, and
     // a timeout falls back to the advisory nudge without demoting the label.
-    timeoutMs: args.timeoutMs ?? 3000,
+    // Review: runs on the worker's model, which needs more than a 3B model's 3s.
+    timeoutMs: args.timeoutMs ?? 8000,
     model: args.model,
     envDisableVar: "LAX_LLM_TEST_DELETION_JUDGE",
     signal: args.signal,

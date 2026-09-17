@@ -18,7 +18,7 @@
 
 import type { ZodType, ZodTypeDef } from "zod";
 import { createLogger } from "../logger.js";
-import { classifyWithLLM } from "./classify-with-llm.js";
+import { classifyWithLLM, type ClassifierRole } from "./classify-with-llm.js";
 import { stripCodeFences } from "./strip-code-fences.js";
 
 export interface ClassifySchemaOptions<T> {
@@ -39,7 +39,8 @@ export interface ClassifySchemaOptions<T> {
   /** Pass-throughs to classifyWithLLM. */
   timeoutMs?: number;
   model?: string;
-  modelTier?: "background" | "active";
+  /** See ClassifyOptions.role. */
+  role: ClassifierRole;
   maxResponseChars?: number;
   envDisableVar?: string;
   signal?: AbortSignal;
@@ -113,7 +114,7 @@ export async function classifySchema<T>(opts: ClassifySchemaOptions<T>): Promise
         userPrompt: user,
         timeoutMs: opts.timeoutMs,
         model: opts.model,
-        modelTier: opts.modelTier,
+        role: opts.role,
         maxResponseChars: opts.maxResponseChars,
         envDisableVar: opts.envDisableVar,
         signal: opts.signal,

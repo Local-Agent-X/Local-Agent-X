@@ -88,7 +88,7 @@ export async function auditRegressionRisk(input: {
     maxResponseChars: 4_000,
     // Same trade as done-claim-audit: verdict QUALITY is the point, and this
     // only fires at a done-claim where latency is acceptable.
-    modelTier: "active",
+    role: "review",
     timeoutMs: input.timeoutMs ?? 45_000,
     envDisableVar: "LAX_REGRESSION_AUDIT",
     signal: input.signal,

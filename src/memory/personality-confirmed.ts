@@ -78,6 +78,7 @@ Reply with ONLY a JSON object: {"content": "<the rewritten file>"}. If you canno
 async function compactProfileWithLLM(args: { content: string; capChars: number }): Promise<string | null> {
   const result = await classifyJson<{ content: string | null }>({
     category: "profile-compact",
+    role: "routing",
     systemPrompt: COMPACT_SYSTEM_PROMPT,
     userPrompt: `Cap: ${args.capChars} characters. Current length: ${args.content.length}.\n\n${args.content}`,
     envDisableVar: "LAX_LLM_PROFILE_COMPACT",

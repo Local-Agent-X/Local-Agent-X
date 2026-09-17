@@ -96,7 +96,7 @@ export async function auditDoneClaim(input: {
     // The auditor is the ACTIVE (reasoning) model — verdict QUALITY is the
     // point, and the gate only fires at a done-claim where latency is
     // acceptable. Same trade as oracle-probe-gen.
-    modelTier: "active",
+    role: "review",
     timeoutMs: input.timeoutMs ?? 40_000,
     envDisableVar: "LAX_SPEC_AUDIT",
     signal: input.signal,

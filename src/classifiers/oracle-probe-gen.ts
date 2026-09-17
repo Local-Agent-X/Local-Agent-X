@@ -120,7 +120,7 @@ export async function generateOracleProbe(input: {
     // and the gate only fires at a done-claim where latency is acceptable. The
     // background tier authored measurably worse probes (2026-07-02: guessed
     // computed values, wrong APIs). A reasoning tier needs the longer ceiling.
-    modelTier: "active",
+    role: "review",
     timeoutMs: input.timeoutMs ?? 40_000,
     envDisableVar: "LAX_ORACLE_PROBES",
     signal: input.signal,

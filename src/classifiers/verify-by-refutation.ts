@@ -31,7 +31,9 @@
 import { classifyYesNoWithReason } from "./classify-with-llm.js";
 
 const DEFAULT_VOTERS = 3;
-const DEFAULT_TIMEOUT_MS = 4000;
+// Voters run on the worker's model (role "review"). A local model serves
+// them one after another, so each ballot's budget covers the queue ahead of it.
+const DEFAULT_TIMEOUT_MS = 10_000;
 
 /** One skeptic's ballot: whether it refuted, WHY (its one-line reason), and the
  *  scrutiny angle it was given. `refuted: null` = the voter was unavailable. */
@@ -80,7 +82,7 @@ export async function verifyByRefutation(args: {
 	userPrompt: string;          // the subject + context to scrutinize
 	voters?: number;             // default 3
 	lenses?: string[];           // optional: one distinct angle per voter (appended to userPrompt). If provided, voters = lenses.length
-	timeoutMs?: number;          // passed through to each classifyYesNo (default 4000)
+	timeoutMs?: number;          // passed through to each classifyYesNo (default 10000)
 	model?: string;
 	envDisableVar?: string;
 	signal?: AbortSignal;
@@ -113,6 +115,7 @@ export async function verifyByRefutation(args: {
 		prompts.map((userPrompt, i) =>
 			classifyYesNoWithReason({
 				category: args.category,
+				role: "review",
 				systemPrompt: args.systemPrompt,
 				userPrompt,
 				timeoutMs,

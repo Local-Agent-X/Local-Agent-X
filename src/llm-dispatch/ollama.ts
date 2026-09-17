@@ -81,6 +81,7 @@ export async function callOllama(
   maxTokens: number,
   timeoutMs: number,
   exactBaseUrl?: string,
+  think?: boolean,
 ): Promise<string | null> {
   try {
     const base = (exactBaseUrl ?? getRuntimeConfig().ollamaUrl).replace(/\/+$/, "");
@@ -101,6 +102,7 @@ export async function callOllama(
       // timeout. Same knob the residency warm path uses.
       body: JSON.stringify({
         model, prompt, stream: false, keep_alive: MODEL_KEEP_ALIVE,
+        ...(think !== undefined ? { think } : {}),
         options: { temperature, num_predict: maxTokens, ...(numCtx !== undefined ? { num_ctx: numCtx } : {}) },
       }),
       signal: AbortSignal.timeout(timeoutMs),

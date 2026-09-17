@@ -37,6 +37,7 @@ export async function confirmContradictionPair(
 
   return classifyYesNo({
     category: "contradiction-confirm",
+    role: "routing",
     systemPrompt: SYSTEM_PROMPT,
     userPrompt,
     // Profile saves happen at end-of-turn / tool time, not mid-stream; pairs

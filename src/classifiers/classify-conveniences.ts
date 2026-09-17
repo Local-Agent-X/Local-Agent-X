@@ -8,7 +8,7 @@
  * classify-with-llm.ts re-exports everything here, so existing import sites
  * are unchanged.
  */
-import { classifyWithLLM } from "./classify-with-llm.js";
+import { classifyWithLLM, type ClassifierRole } from "./classify-with-llm.js";
 import { stripCodeFences } from "./strip-code-fences.js";
 
 /**
@@ -21,6 +21,7 @@ export async function classifyYesNo(args: {
   userPrompt: string;
   timeoutMs?: number;
   model?: string;
+  role: ClassifierRole;
   envDisableVar?: string;
   signal?: AbortSignal;
 }): Promise<boolean | null> {
@@ -66,6 +67,7 @@ export async function classifyYesNoWithReason(args: {
   userPrompt: string;
   timeoutMs?: number;
   model?: string;
+  role: ClassifierRole;
   envDisableVar?: string;
   signal?: AbortSignal;
 }): Promise<{ verdict: boolean; reason: string } | null> {
@@ -85,6 +87,7 @@ export async function classifyJson<T>(args: {
   userPrompt: string;
   timeoutMs?: number;
   model?: string;
+  role: ClassifierRole;
   maxResponseChars?: number;
   envDisableVar?: string;
   signal?: AbortSignal;

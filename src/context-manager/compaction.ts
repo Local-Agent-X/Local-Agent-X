@@ -58,6 +58,7 @@ export async function summarizeOldMessages(
       (_attempt, feedback) =>
         classifyWithLLM<string>({
           category: "compaction",
+          role: "review",
           systemPrompt: COMPACTION_SYSTEM_PROMPT,
           userPrompt: feedback
             ? `${basePrompt}\n\nYour previous summary was rejected: ${feedback}. Produce a corrected summary following the same section rules.`

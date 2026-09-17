@@ -109,6 +109,7 @@ export async function parseScheduleNL(
   // 2. Ask the background model, gated on the real parser via the schema.
   return classifySchema<ParsedSchedule>({
     category: "schedule-nl",
+    role: "routing",
     systemPrompt: SYSTEM_PROMPT,
     userPrompt: [
       opts?.nowISO ? `Current local time (for relative phrasing): ${opts.nowISO}` : "",

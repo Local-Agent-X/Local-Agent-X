@@ -67,6 +67,13 @@ export interface DispatchOptions {
   maxTokens?: number;
   /** Request timeout in milliseconds (default 30000). */
   timeoutMs?: number;
+  /**
+   * Ollama only: false asks a thinking model to answer without a reasoning
+   * pass. A verdict or summary wants the answer; muse spent a review gate's
+   * whole budget thinking and returned nothing (2026-09-17). Ignored by
+   * models that do not think.
+   */
+  think?: boolean;
   /** Reject Anthropic OAuth tokens — bulk workloads can't use CLI subscriptions. */
   rejectOAuth?: boolean;
   /**
@@ -175,7 +182,7 @@ export async function dispatch(opts: DispatchOptions): Promise<string | null> {
       logger.warn("no chat-capable Ollama model installed — skipping dispatch");
       return null;
     }
-    return callOllama(opts.prompt, ollamaModel, temp, maxTokens, timeout);
+    return callOllama(opts.prompt, ollamaModel, temp, maxTokens, timeout, undefined, opts.think);
   }
   if (provider === "local") {
     const target = opts.localTarget;
@@ -184,7 +191,7 @@ export async function dispatch(opts: DispatchOptions): Promise<string | null> {
     if (!isCertifiedLocalClassifierTargetCurrent(target)) return null;
     if (target.kind === "ollama") {
       return callOllama(
-        opts.prompt, opts.ollamaModel, temp, maxTokens, timeout, target.endpointBaseUrl,
+        opts.prompt, opts.ollamaModel, temp, maxTokens, timeout, target.endpointBaseUrl, opts.think,
       );
     }
     return callOpenAICompatible(

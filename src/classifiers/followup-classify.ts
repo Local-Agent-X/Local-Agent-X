@@ -90,6 +90,7 @@ export async function classifyFollowupWithLLM(
 
   const reply = await classifySchema({
     category: "followup",
+    role: "routing",
     systemPrompt: SYSTEM_PROMPT,
     userPrompt,
     schema: FollowupReplySchema,

@@ -171,6 +171,7 @@ export async function extractIdentityFactsWithLLM(
 
   return classifySchema<IdentityFacts>({
     category: "identity-extract",
+    role: "routing",
     systemPrompt: SYSTEM_PROMPT,
     userPrompt: `User message:\n"${userMessage}"\n\nReply with the JSON object only.`,
     schema: identityFactsSchema(userMessage),

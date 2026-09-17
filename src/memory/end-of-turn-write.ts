@@ -142,6 +142,7 @@ export async function runEndOfTurnMemoryWrite(ctx: EndOfTurnContext): Promise<En
 
   const decision = await classifySchema<WriteDecision>({
     category: "end-of-turn-write",
+    role: "routing",
     systemPrompt: WRITE_DECISION_PROMPT,
     userPrompt: userBlock,
     schema: WriteDecisionSchema,

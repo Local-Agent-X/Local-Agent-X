@@ -52,10 +52,17 @@ process.env.LAX_OLLAMA_URL = "http://127.0.0.1:11434/";
 describe("classify-with-llm model selection", () => {
   beforeEach(() => dispatchMock.mockClear());
 
+  it("a review runs on the model doing the work, never the background model", async () => {
+    // A judge must be at least as strong as the worker (2026-09-17: a 3B model
+    // confirmed a shell ban the user never stated, and could not summarize).
+    await classifyYesNo({ category: "test", role: "review", systemPrompt: "s", userPrompt: "u", timeoutMs: 2000 });
+    expect(dispatchMock.mock.calls[0][0]).toMatchObject({ provider: "xai", xaiModel: "grok-4.3" });
+  });
+
   it("runs on the provider's background model, not the user's reasoning chat model", async () => {
     // Regression for 2026-06-26: classifiers inherited grok-4.3 (a reasoner)
     // and timed out every call, so the give-up verdict never ran on Grok.
-    await classifyYesNo({ category: "test", systemPrompt: "s", userPrompt: "u", timeoutMs: 2000 });
+    await classifyYesNo({ category: "test", role: "routing", systemPrompt: "s", userPrompt: "u", timeoutMs: 2000 });
     expect(dispatchMock).toHaveBeenCalledTimes(1);
     expect(dispatchMock.mock.calls[0][0]).toMatchObject({
       provider: "xai",
@@ -65,7 +72,7 @@ describe("classify-with-llm model selection", () => {
 
   it("honors an explicit per-call model override", async () => {
     await classifyYesNo({
-      category: "test", systemPrompt: "s", userPrompt: "u", timeoutMs: 2000, model: "grok-code-fast-1",
+      category: "test", role: "routing", systemPrompt: "s", userPrompt: "u", timeoutMs: 2000, model: "grok-code-fast-1",
     });
     expect(dispatchMock.mock.calls[0][0]).toMatchObject({ xaiModel: "grok-code-fast-1" });
   });
@@ -92,7 +99,7 @@ describe("classify-with-llm local cold-skip", () => {
     // configured base (normalized — the pinned env URL has a trailing slash).
     mocks.isModelResident.mockResolvedValueOnce(false);
     const out = await classifyYesNo({
-      category: "test", systemPrompt: "s", userPrompt: "u", timeoutMs: 2000, model: "llama3.2:3b",
+      category: "test", role: "routing", systemPrompt: "s", userPrompt: "u", timeoutMs: 2000, model: "llama3.2:3b",
     });
     expect(out).toBeNull();
     expect(dispatchMock).not.toHaveBeenCalled();
@@ -104,6 +111,14 @@ describe("classify-with-llm local cold-skip", () => {
     expect(mocks.warmModel).toHaveBeenCalledWith("http://127.0.0.1:11434", "llama3.2:3b", undefined, 16_384);
   });
 
+  it("a local review uses the chat model with its thinking pass off", async () => {
+    // muse spent a review gate's whole budget thinking and returned nothing.
+    mocks.isModelResident.mockResolvedValue(true);
+    dispatchMock.mockResolvedValueOnce("YES");
+    await classifyYesNo({ category: "test", role: "review", systemPrompt: "s", userPrompt: "u", timeoutMs: 2000 });
+    expect(dispatchMock.mock.calls[0][0]).toMatchObject({ provider: "ollama", ollamaModel: "qwen3.6:27b", think: false });
+  });
+
   it("long-budget callers proceed even when cold — they can afford the load", async () => {
     // Compaction-class budgets (30s) fit a 16.5s cold load with room to
     // answer; they must keep getting a REAL verdict, exactly as before the
@@ -112,7 +127,7 @@ describe("classify-with-llm local cold-skip", () => {
     mocks.isModelResident.mockResolvedValue(false); // even a cold model must not trigger a skip
     dispatchMock.mockResolvedValueOnce("YES");
     const out = await classifyYesNo({
-      category: "test", systemPrompt: "s", userPrompt: "u", timeoutMs: 30_000, model: "llama3.2:3b",
+      category: "test", role: "routing", systemPrompt: "s", userPrompt: "u", timeoutMs: 30_000, model: "llama3.2:3b",
     });
     expect(out).toBe(true);
     expect(dispatchMock).toHaveBeenCalledTimes(1);
@@ -124,7 +139,7 @@ describe("classify-with-llm local cold-skip", () => {
     mocks.isModelResident.mockResolvedValueOnce(null);
     dispatchMock.mockResolvedValueOnce("YES");
     const out = await classifyYesNo({
-      category: "test", systemPrompt: "s", userPrompt: "u", timeoutMs: 2000, model: "llama3.2:3b",
+      category: "test", role: "routing", systemPrompt: "s", userPrompt: "u", timeoutMs: 2000, model: "llama3.2:3b",
     });
     expect(out).toBe(true);
     expect(dispatchMock).toHaveBeenCalledTimes(1);
@@ -136,7 +151,7 @@ describe("classify-with-llm local cold-skip", () => {
     mocks.isModelResident.mockResolvedValueOnce(true);
     dispatchMock.mockResolvedValueOnce("NO");
     const out = await classifyYesNo({
-      category: "test", systemPrompt: "s", userPrompt: "u", timeoutMs: 2000, model: "llama3.2:3b",
+      category: "test", role: "routing", systemPrompt: "s", userPrompt: "u", timeoutMs: 2000, model: "llama3.2:3b",
     });
     expect(out).toBe(false);
     expect(dispatchMock).toHaveBeenCalledTimes(1);
@@ -145,7 +160,7 @@ describe("classify-with-llm local cold-skip", () => {
 
   it("non-local providers never consult residency", async () => {
     mocks.ctx = { provider: "xai", apiKey: "k", model: "grok-4.3" };
-    await classifyYesNo({ category: "test", systemPrompt: "s", userPrompt: "u", timeoutMs: 2000 });
+    await classifyYesNo({ category: "test", role: "routing", systemPrompt: "s", userPrompt: "u", timeoutMs: 2000 });
     expect(mocks.isModelResident).not.toHaveBeenCalled();
   });
 });
@@ -187,7 +202,7 @@ describe("classify-with-llm codex branch", () => {
       })(),
     );
     const out = await classifyWithLLM({
-      category: "test", systemPrompt: "s", userPrompt: "u", timeoutMs: 40, parse,
+      category: "test", role: "routing", systemPrompt: "s", userPrompt: "u", timeoutMs: 40, parse,
     });
     expect(out).toBeNull();
     expect(codexMock.streamCodexResponse).toHaveBeenCalledTimes(1);
@@ -202,7 +217,7 @@ describe("classify-with-llm codex branch", () => {
     // and the latency that pushed calls past the wallclock to begin with.
     codexMock.streamCodexResponse.mockImplementationOnce(() => yieldText("NO"));
     const out = await classifyWithLLM({
-      category: "test", systemPrompt: "s", userPrompt: "u", timeoutMs: 2000, parse,
+      category: "test", role: "routing", systemPrompt: "s", userPrompt: "u", timeoutMs: 2000, parse,
     });
     expect(out).toBe("NO");
     const params: CodexCallParams = codexMock.streamCodexResponse.mock.calls[0][0];
@@ -214,7 +229,7 @@ describe("classify-with-llm codex branch", () => {
     // Every evidenced codex wallclock timeout ran on a budget <= the 8000ms
     // DEFAULT_TIMEOUT_MS; the boundary itself must stay on the fast path.
     codexMock.streamCodexResponse.mockImplementationOnce(() => yieldText("NO"));
-    await classifyWithLLM({ category: "test", systemPrompt: "s", userPrompt: "u", timeoutMs: 8000, parse });
+    await classifyWithLLM({ category: "test", role: "routing", systemPrompt: "s", userPrompt: "u", timeoutMs: 8000, parse });
     const params: CodexCallParams = codexMock.streamCodexResponse.mock.calls[0][0];
     expect(params.reasoningEffort).toBe("low");
   });
@@ -224,18 +239,18 @@ describe("classify-with-llm codex branch", () => {
     // answer (scenario-judge 20s, compaction 30s — whose summary is persisted
     // over history). Budget is the only signal they give; honor it.
     codexMock.streamCodexResponse.mockImplementationOnce(() => yieldText("YES"));
-    await classifyWithLLM({ category: "test", systemPrompt: "s", userPrompt: "u", timeoutMs: 20_000, parse });
+    await classifyWithLLM({ category: "test", role: "routing", systemPrompt: "s", userPrompt: "u", timeoutMs: 20_000, parse });
     const params: CodexCallParams = codexMock.streamCodexResponse.mock.calls[0][0];
     expect(params.model).toBe("gpt-5.4-mini");
     expect(params.reasoningEffort).toBeUndefined();
   });
 
-  it("active tier keeps the chat model's effort untouched", async () => {
+  it("a review keeps the chat model and its effort untouched", async () => {
     // "active" is opted into BECAUSE output quality matters (probe authoring,
     // done-claim audit). The classifier must not quietly downgrade it.
     codexMock.streamCodexResponse.mockImplementationOnce(() => yieldText("YES"));
     const out = await classifyWithLLM({
-      category: "test", systemPrompt: "s", userPrompt: "u", timeoutMs: 2000, parse, modelTier: "active",
+      category: "test", systemPrompt: "s", userPrompt: "u", timeoutMs: 2000, parse, role: "review",
     });
     expect(out).toBe("YES");
     const params: CodexCallParams = codexMock.streamCodexResponse.mock.calls[0][0];
@@ -266,7 +281,7 @@ describe("classify-with-llm providerOverride — the one explicit cross-provider
     codexMock.streamCodexResponse.mockImplementationOnce(() => yieldText("YES"));
     const out = await classifyWithLLM({
       category: "test", systemPrompt: "s", userPrompt: "u", timeoutMs: 2000, parse,
-      modelTier: "active",
+      role: "review",
       providerOverride: { provider: "codex", apiKey: "override-key", model: "gpt-6-astra" },
     });
     expect(out).toBe("YES");
@@ -280,7 +295,7 @@ describe("classify-with-llm providerOverride — the one explicit cross-provider
     // Regression guard for the additive-only claim: omitting providerOverride
     // must still resolve through resolveProviderContext exactly as before.
     dispatchMock.mockResolvedValueOnce("NO — not a give-up");
-    await classifyYesNo({ category: "test", systemPrompt: "s", userPrompt: "u", timeoutMs: 2000 });
+    await classifyYesNo({ category: "test", role: "routing", systemPrompt: "s", userPrompt: "u", timeoutMs: 2000 });
     expect(resolveProviderContextSpy).toHaveBeenCalledTimes(1);
   });
 });
@@ -320,7 +335,7 @@ describe("classify-with-llm breaker — a classifier that cannot answer stops co
   beforeEach(() => { resetClassifierBreakers(); dispatchMock.mockClear(); });
   afterEach(() => resetClassifierBreakers());
 
-  const ask = () => classifyYesNo({ category: "test", systemPrompt: "s", userPrompt: "u", timeoutMs: 2000 });
+  const ask = () => classifyYesNo({ category: "test", role: "routing", systemPrompt: "s", userPrompt: "u", timeoutMs: 2000 });
 
   it("stops calling after three no-verdict replies, and keeps returning null", async () => {
     dispatchMock.mockResolvedValue("");

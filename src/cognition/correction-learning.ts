@@ -91,6 +91,7 @@ NO = false positive, do not record.`;
 const DEFAULT_CONFIRM: ConfirmCorrectionFn = (userMessage, agentMessage) =>
   classifyYesNo({
     category: "correction-learning-confirm",
+    role: "routing",
     systemPrompt: CONFIRM_SYSTEM_PROMPT,
     userPrompt:
       `Assistant's previous message:\n"${agentMessage.slice(0, 1500)}"\n\n` +

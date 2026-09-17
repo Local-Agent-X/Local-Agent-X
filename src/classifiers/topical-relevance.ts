@@ -99,6 +99,7 @@ export async function batchedTopicalRelevance(
 
   const result = await classifySchema<TopicalGateResult>({
     category: "topical-relevance",
+    role: "routing",
     systemPrompt: SYSTEM_PROMPT,
     userPrompt,
     schema: topicalGateSchema(signalTexts.length),

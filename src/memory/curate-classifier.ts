@@ -136,6 +136,7 @@ export async function classifyTeachMoment(
 
   return classifySchema<ClassifierResult>({
     category: "curate-teach-moment",
+    role: "routing",
     systemPrompt: SYSTEM_PROMPT,
     userPrompt: userBlock,
     schema: TeachSchema,

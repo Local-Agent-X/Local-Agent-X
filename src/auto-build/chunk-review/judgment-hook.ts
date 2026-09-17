@@ -110,6 +110,7 @@ export const defaultJudgmentHook: JudgmentHook = async (input) => {
 
   const result = await classifySchema<JudgmentEnvelope>({
     category: "chunk-review-judgment",
+    role: "review",
     systemPrompt: JUDGMENT_SYSTEM_PROMPT,
     userPrompt: prompt,
     schema: judgmentEnvelopeSchema,

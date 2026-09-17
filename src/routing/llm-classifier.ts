@@ -90,6 +90,7 @@ export async function classifyRouteWithLLM(
 
   const verdict = await classifySchema<ClassifierResult>({
     category: "route",
+    role: "routing",
     systemPrompt: CLASSIFIER_SYSTEM_PROMPT,
     userPrompt: message,
     schema: RouteVerdictSchema,

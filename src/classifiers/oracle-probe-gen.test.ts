@@ -82,7 +82,7 @@ describe("generateOracleProbe", () => {
       apiSurface: "# wordy.py\ndef answer(question)",
     });
     const call = mockClassify.mock.calls[0][0];
-    expect(call.modelTier).toBe("active");
+    expect(call.role).toBe("review");
     expect(String(call.userPrompt)).toContain("def answer(question)");
     expect(String(call.userPrompt)).toContain("EXACTLY these names");
   });

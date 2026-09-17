@@ -191,6 +191,7 @@ export type ConfirmRejectionFn = (args: { prompt: string; output: string; reason
 const DEFAULT_CONFIRM: ConfirmRejectionFn = ({ prompt, output, reason }) =>
   classifyYesNo({
     category: "mission-validate",
+    role: "routing",
     systemPrompt: CONFIRM_SYSTEM_PROMPT,
     userPrompt:
       `MISSION PROMPT:\n"${prompt.slice(0, 800)}"\n\n` +

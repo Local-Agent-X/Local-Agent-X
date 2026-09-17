@@ -126,6 +126,7 @@ export async function chooseStepAction(input: ChooseStepActionInput): Promise<St
 
   const plan = await classifySchema<StepActionPlan>({
     category: "scenario-step-planner",
+    role: "review",
     systemPrompt: STEP_PLANNER_SYSTEM_PROMPT,
     userPrompt: prompt,
     schema: stepActionPlanSchema,

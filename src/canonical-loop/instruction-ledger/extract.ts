@@ -303,6 +303,7 @@ export async function llmConfirm(
 ): Promise<ConfirmedConstraints | null> {
   return classifySchema<ConfirmedConstraints>({
     category: "constraint-extract",
+    role: "review",
     systemPrompt: SYSTEM_PROMPT,
     userPrompt:
       `USER MESSAGE:\n"""${userMessage.slice(0, 4000)}"""\n\n` +
@@ -311,10 +312,12 @@ export async function llmConfirm(
         .join("\n")}\n\nJSON:`,
     schema: ConfirmationSchema,
     shapeHint: `{"prohibitions":[],"obligations":[]}`,
-    // Fires only on a gated message, so a small budget; a timeout falls back
-    // to the deterministic strong tier without ever blocking the op. (The
-    // budget is per attempt — an invalid reply gets one schema-fed retry.)
-    timeoutMs: 1500,
+    // Fires only on a gated message. A timeout falls back to the
+    // deterministic strong tier without blocking the op. The budget is sized
+    // for the worker's own model (role "review"), not a 3B classifier: 1.5s
+    // could not fit a 30B prompt. (Per attempt — an invalid reply gets one
+    // schema-fed retry.)
+    timeoutMs: 6000,
     envDisableVar: "LAX_LLM_CONSTRAINT_EXTRACT",
     _llm,
   });

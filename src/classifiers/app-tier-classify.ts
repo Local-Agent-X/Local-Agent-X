@@ -79,6 +79,7 @@ export async function classifyAppTierEscalation(
 ): Promise<AppTier | AppTierClarify | null> {
   const reply = await classifySchema({
     category: "app-tier",
+    role: "routing",
     systemPrompt: SYSTEM_PROMPT,
     userPrompt: `BUILD BRIEF:\n"${args.prompt.slice(0, 2000)}"\n\nTier verdict, or a clarify verdict if materially ambiguous.`,
     schema: TierReplySchema,

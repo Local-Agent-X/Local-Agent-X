@@ -10,15 +10,22 @@ Gathered 2026-09-17.
 
 | Model | Params | Quant | Max ctx | Capabilities | Prefill tok/s | Decode tok/s | TTFT |
 |-------|--------|-------|---------|--------------|---------------|--------------|------|
-| muse-glimmer:30b | 27.9B | Q4_K_M | 131k (loaded at 65,536) | completion, vision, tools, thinking | TBD (idle GPU) | TBD | TBD |
+| muse-glimmer:30b | 27.9B | Q4_K_M | 131k (loaded at 65,536) | completion, vision, tools, thinking | ~4,200 | ~76 | <10ms warm |
 | qwen3.6:27b | 27.8B | Q4_K_M | 262k | completion, vision, tools, thinking | TBD | TBD | TBD |
 | gpt-oss:120b | 116.8B | MXFP4 | 131k | completion, tools, thinking | TBD | TBD | TBD |
-| llama3.2:3b-classifier | 3.2B | Q4_K_M | 131k (loaded at 16,384) | completion, tools | TBD | TBD | TBD |
+| llama3.2:3b-classifier | 3.2B | Q4_K_M | 131k (loaded at 16,384) | completion, tools | ~23,000 | ~400 | <10ms warm |
 | llama3.2:3b | 3.2B | Q4_K_M | 131k | completion, tools | TBD | TBD | TBD |
 | mxbai-embed-large | 334M | F16 | 512 | embedding | — | — | — |
 
-An earlier "~10 tok/s" figure for muse was measured while an eval run shared the GPU and is
-void. Measure only with no run active, at the loaded context size.
+Measured 2026-09-17 on an idle GPU at each model's loaded context, via Ollama's
+prompt_eval/eval counters. muse: a 12k-token prompt with 400 tokens out took 8.1s
+(think off; think on was the same for this prompt). An earlier "~10 tok/s" figure was
+measured under contention and is void. qwen3.6 and gpt-oss not yet measured (loading
+them evicts muse).
+
+Implication: a compaction summary on muse (~9k in, ~900 out) is ~14s, and review gates fit
+40s comfortably with thinking off. The review gates' timeouts (H-016) are budget spent on
+thinking or contention, not model speed.
 
 ## Where models judge models
 

@@ -77,7 +77,7 @@ describe("auditRegressionRisk — input guards (no LLM call wasted)", () => {
     expect(out).toEqual(["item"]);
     const opts = classifyWithLLM.mock.calls[0][0];
     expect(opts.category).toBe("regression-audit");
-    expect(opts.modelTier).toBe("active");
+    expect(opts.role).toBe("review");
     expect(opts.envDisableVar).toBe("LAX_REGRESSION_AUDIT");
     expect(opts.userPrompt).toContain("withinRange");
   });

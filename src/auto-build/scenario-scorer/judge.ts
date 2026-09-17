@@ -143,6 +143,7 @@ export async function judgeScenario(input: JudgeInput, signal?: AbortSignal): Pr
   // become a score.
   const result = await classifyWithLLM<JudgeResult>({
     category: "scenario-judge",
+    role: "review",
     systemPrompt: JUDGE_SYSTEM_PROMPT,
     userPrompt: prompt,
     parse: parseJudgeResponse,

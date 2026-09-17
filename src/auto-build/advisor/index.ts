@@ -130,6 +130,7 @@ export async function consultAdvisor(situation: AdvisorSituation, opts: AdvisorO
 
   return classifySchema<AdvisorRecommendation>({
     category: "auto-build-advisor",
+    role: "review",
     systemPrompt: ADVISOR_SYSTEM_PROMPT,
     userPrompt: prompt,
     schema: advisorResponseSchema,

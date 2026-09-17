@@ -41,7 +41,7 @@ export interface ProviderCallInput {
   model: string;
   systemPrompt: string;
   userPrompt: string;
-  modelTier?: "background" | "active";
+  role: "review" | "routing";
   maxChars: number;
   maxTokens: number;
   timeoutMs: number;
@@ -60,7 +60,7 @@ const SKIP: ProviderCallResult = { kind: "skip" };
 
 export async function resolveProviderCall(input: ProviderCallInput): Promise<ProviderCallResult> {
   const {
-    provider, apiKey, model, systemPrompt, userPrompt, modelTier,
+    provider, apiKey, model, systemPrompt, userPrompt, role,
     maxChars, maxTokens, timeoutMs, defaultTimeoutMs, linkedSignal, certifiedLocalTarget, logger,
   } = input;
 
@@ -117,7 +117,7 @@ export async function resolveProviderCall(input: ProviderCallInput): Promise<Pro
       // calls past the wallclock in the first place (every evidenced
       // timeout ran on a budget <= DEFAULT_TIMEOUT_MS). "low" is accepted
       // by every gpt-5.x. Two kinds of caller keep the client default:
-      // modelTier "active" (the chat model, chosen BECAUSE output quality
+      // role "review" (the chat model, chosen BECAUSE output quality
       // matters — probe authoring, done-claim audit), and long-budget
       // callers that pass no tier but bought the time for a considered
       // answer — scenario-step-planner 10s, chunk-review-judgment 12s,
@@ -131,7 +131,7 @@ export async function resolveProviderCall(input: ProviderCallInput): Promise<Pro
         systemPrompt,
         tools: [],
         sessionId: undefined,
-        reasoningEffort: modelTier === "active" || timeoutMs > defaultTimeoutMs ? undefined : "low",
+        reasoningEffort: role === "review" || timeoutMs > defaultTimeoutMs ? undefined : "low",
         signal: linkedSignal,
       });
       let acc = "";
@@ -192,6 +192,9 @@ export async function resolveProviderCall(input: ProviderCallInput): Promise<Pro
           ? { localTarget: { ...certifiedLocalTarget, apiKey } }
           : {}),
         temperature: 0, maxTokens, timeoutMs,
+        // A classifier wants the answer; a thinking pass spent a review
+        // gate's whole budget and returned nothing (muse, 2026-09-17).
+        think: false,
       });
     })());
   } else if (provider === "xai") {

@@ -43,6 +43,7 @@ export type ConfirmSignalFn = (
 const DEFAULT_CONFIRM: ConfirmSignalFn = (message, signal) =>
   classifyYesNo({
     category: "signal-confirm",
+    role: "routing",
     systemPrompt: SYSTEM_PROMPT,
     userPrompt:
       `USER'S MESSAGE:\n"${message.slice(0, 1200)}"\n\n` +

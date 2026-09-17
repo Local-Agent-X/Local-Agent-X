@@ -77,6 +77,7 @@ export async function checkSelfEditIntent(
 
   return classifySchema<IntentVerdict>({
     category: "self-edit-intent",
+    role: "review",
     systemPrompt: SYSTEM_PROMPT,
     userPrompt: userBlock,
     schema: VerdictSchema,

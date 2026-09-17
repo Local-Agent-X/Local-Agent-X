@@ -22,6 +22,7 @@ type Llm = (system: string, user: string) => Promise<string | null>;
 function opts(llm: Llm) {
   return {
     category: "test-schema",
+    role: "routing" as const,
     systemPrompt: "You judge a thing.",
     userPrompt: "Judge this.",
     schema,
@@ -131,7 +132,7 @@ describe("classifySchema", () => {
       userPrompt: "Judge this.",
       schema,
       shapeHint,
-      modelTier: "active",
+      role: "review",
       maxResponseChars: 1234,
       timeoutMs: 999,
       envDisableVar: "LAX_TEST_SCHEMA",
@@ -142,7 +143,7 @@ describe("classifySchema", () => {
     expect(passed).toMatchObject({
       category: "wiring",
       userPrompt: "Judge this.",
-      modelTier: "active",
+      role: "review",
       maxResponseChars: 1234,
       timeoutMs: 999,
       envDisableVar: "LAX_TEST_SCHEMA",

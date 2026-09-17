@@ -40,6 +40,7 @@ with justification). Mission: `docs/agent-prompts/local-model-harness.md`.
 |----------|-----|-------------------|
 | grade-school | 14 | `added()` returns names; retry answered "already verified" without editing |
 | grade-school | 15 | `roster()` returns a dict grouped by grade |
+| grade-school | 19 | Wrote the solution 7x and ran its own checks, but `added()` returns the student names where the tests expect [True, True] (3 failures, 7 errors); retry ended on loop detection while hunting the hidden tests. Harness clean: 0 stalls, spec audit MET, regression verdict delivered |
 | grade-school | 18 | 189 tools, one write (not the stub): searched for the hidden tests for 36min across both attempts, never implemented. Harness clean: zero stalls, no summarizer/classifier failures |
 | grade-school | 16 | 70 turns searching for the hidden tests; never edited the stub |
 | wordy | 18 | One failing test: "syntax error" vs "unknown operation" — but the spec audit had found it and could not nudge (H-026), so re-run after that fix |

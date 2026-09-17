@@ -1,15 +1,19 @@
 import type Database from "better-sqlite3";
 import type { Chunk } from "../types.js";
-import { bm25RankToScore, buildFtsQuery } from "../utils.js";
+import { bm25RankToScore, buildFtsAnyQuery, buildFtsQuery } from "../utils.js";
+
+/** "all": every keyword must appear. "any": at least one, bm25-ranked. */
+export type KeywordMatch = "all" | "any";
 
 export function searchKeyword(
   db: InstanceType<typeof Database>,
   query: string,
   limit: number,
   sources?: string[],
-  sessionFilter?: string | null
+  sessionFilter?: string | null,
+  match: KeywordMatch = "all",
 ): Array<Chunk & { score: number }> {
-  const ftsQuery = buildFtsQuery(query);
+  const ftsQuery = match === "any" ? buildFtsAnyQuery(query) : buildFtsQuery(query);
   if (!ftsQuery) return [];
 
   try {

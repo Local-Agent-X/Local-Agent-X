@@ -1,6 +1,5 @@
 import type { Chunk, MemorySearchResult } from "../types.js";
 import { toSearchResult, mergeHybridResults, type IdentifiedSearchResult } from "../search-helpers.js";
-import { extractKeywords } from "../utils.js";
 import { createLogger } from "../../logger.js";
 import type { SearchDeps, SearchOptions } from "./types.js";
 import { searchKeyword } from "./keyword-search.js";
@@ -37,20 +36,15 @@ export async function searchInIndex(
   if (deps.hasFts) {
     keywordResults = searchKeyword(deps.db, query, candidateLimit, options?.sources, sqlSessionFilter);
 
+    // Every-word missed: relax to any-word in ONE query. This used to issue a
+    // separate synchronous query PER KEYWORD, duplicates included — and
+    // better-sqlite3 is synchronous, so the event loop was frozen for all of
+    // them. A long message nearly always misses every-word, so a pasted
+    // coding exercise (330 keywords) ran 330 queries, materialized 53k rows —
+    // 57% of the whole index — and blocked the server 5-8s per turn, starving
+    // every other request (2026-09-16).
     if (keywordResults.length === 0) {
-      const keywords = extractKeywords(query);
-      for (const kw of keywords) {
-        const partial = searchKeyword(deps.db, kw, candidateLimit, options?.sources, sqlSessionFilter);
-        keywordResults.push(...partial);
-      }
-      const deduped = new Map<number, (typeof keywordResults)[0]>();
-      for (const r of keywordResults) {
-        const existing = deduped.get(r.id!);
-        if (!existing || r.score > existing.score) {
-          deduped.set(r.id!, r);
-        }
-      }
-      keywordResults = [...deduped.values()];
+      keywordResults = searchKeyword(deps.db, query, candidateLimit, options?.sources, sqlSessionFilter, "any");
     }
   }
 

@@ -36,7 +36,7 @@ with justification). Mission: `docs/agent-prompts/local-model-harness.md`.
 
 | H-027 | bowling passed and was scored CONTAMINATED | EVAL | The detector's drive rewrite was anchored at the string start, so a WSL-style path ("/mnt/c/...") to the model's OWN workspace, written mid-command, never matched the root | Normalize each extracted path on its own; self-check 17 cases | re-scored PASS |
 
-| H-028 | grep (run 19): every read/write/glob failed as `missing required field "path"`; the model reported its tools broken and stopped, stub untouched | HARNESS | muse emitted the argument object with its chat template leaking into the KEY (`read<\|message\|><atem:parameter name="path`), value intact. arg-repair handled malformed JSON and wrong types, not corrupted names | `repairMarkerKeys` recovers the property when a marker key ends with a schema name that is still missing; narrow by construction, logged as a repair | tests |
+| H-028 | grep (run 19): every read/write/glob failed as `missing required field "path"`; the model reported its tools broken and stopped, stub untouched | HARNESS | muse emitted the argument object with its chat template leaking into the KEY (`read<\|message\|><atem:parameter name="path`), value intact. arg-repair handled malformed JSON and wrong types, not corrupted names | `repairMarkerKeys` recovers the property when a marker key ends with a schema name that is still missing; narrow by construction, logged as a repair | tests; run 20. Also ended list-ops (run 19) outright: read blocked 5x → repeat-failure abort at 95s |
 
 ## Documented MODEL failures (muse-glimmer:30b)
 

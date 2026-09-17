@@ -25,6 +25,8 @@ with justification). Mission: `docs/agent-prompts/local-model-harness.md`.
 | H-019 | A timed-out background call keeps the GPU busy | HARNESS | Classifier race and tool backstop abandon the work without aborting it | OPEN | — |
 | H-020 | Compaction can block ~60s, not 30s | HARNESS | Budget is per attempt × guardedRewrite's 2 attempts | OPEN (Phase 1) | — |
 | H-021 | Periodic 5.7→8.9s event-loop blocks every ~66s in a long op (phone-number, run 16), growing with op length | HARNESS | Unknown: post-stall profiles show only idle time; op-store reads on this op take 17ms | Diagnostics: rolling CPU profile covering the stall (LAX_LOOP_SENTINEL_ROLLING, on in eval servers); root cause OPEN | — |
+| H-022 | poker: 56 `recall` calls, stub never edited | HARNESS? | Compaction's omitted/summary block advertises recall cursors; with the summarizer failing (213% of window) the model paged old history back in instead of working | OPEN — judge after H-016 (working summaries) | — |
+| H-023 | poker FAIL scored as MODEL despite 15s stalls | EVAL | Stall check ran only for timed-out rows | af06ec24 | — |
 | H-016 | Summaries fail; audits/probes return nothing (~75s/op) | HARNESS | Review calls run on the pinned 3B model (loops) or on muse with budgets not sized for it | OPEN — Phase 2 review/routing split | — |
 
 ## Documented MODEL failures (muse-glimmer:30b)
@@ -35,4 +37,5 @@ with justification). Mission: `docs/agent-prompts/local-model-harness.md`.
 | grade-school | 15 | `roster()` returns a dict grouped by grade |
 | grade-school | 16 | 70 turns searching for the hidden tests; never edited the stub |
 | wordy | 15, 16 | swaps "syntax error" / "unknown operation"; retry explains instead of fixing |
+| bowling | 16 | Turns 42–86: no edits; re-read files and re-ran its own two failing checks until loop detection ended it |
 | forth | 13 | re-read five files ~20 times without editing; ran bare `python` |

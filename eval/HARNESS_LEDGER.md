@@ -43,6 +43,7 @@ with justification). Mission: `docs/agent-prompts/local-model-harness.md`.
 | grade-school | 19 | Wrote the solution 7x and ran its own checks, but `added()` returns the student names where the tests expect [True, True] (3 failures, 7 errors); retry ended on loop detection while hunting the hidden tests. Harness clean: 0 stalls, spec audit MET, regression verdict delivered |
 | grade-school | 18 | 189 tools, one write (not the stub): searched for the hidden tests for 36min across both attempts, never implemented. Harness clean: zero stalls, no summarizer/classifier failures |
 | grade-school | 16 | 70 turns searching for the hidden tests; never edited the stub |
+| wordy | 19 | 2 failures on the swapped ValueError messages. The retry showed the exact diff ('unknown operation' != 'syntax error') and it did not swap them; Grok passes wordy pass@1. Harness clean: 0 stalls, spec audit MET, regression clean |
 | wordy | 18 | One failing test: "syntax error" vs "unknown operation" — but the spec audit had found it and could not nudge (H-026), so re-run after that fix |
 | wordy | 15, 16 | swaps "syntax error" / "unknown operation"; retry explains instead of fixing |
 | bowling | 16 | Turns 42–86: no edits; re-read files and re-ran its own two failing checks until loop detection ended it |

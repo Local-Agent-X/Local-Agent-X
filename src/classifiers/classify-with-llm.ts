@@ -32,7 +32,7 @@
  * takes effect on the next classifier invocation.
  */
 
-import { createLogger } from "../logger.js";
+import { createLogger, type Logger } from "../logger.js";
 import { resolveProviderContext } from "../providers/resolve-provider-context.js";
 import { resolveBackgroundModel } from "../providers/background-model.js";
 import { resolveProviderCall } from "./classify-with-llm-dispatch.js";
@@ -114,6 +114,66 @@ const MODEL_FALLBACKS: Record<string, string> = {
   local: "llama3:8b",
 };
 
+/**
+ * Circuit breaker per (provider, model).
+ *
+ * Every gate calls this module independently, and each one discovers an
+ * unreachable classifier by waiting out its own full budget. Live 2026-09-16,
+ * one local op's tail: oracle-probe burned its 40s wallclock, then spec-audit
+ * returned empty, then regression-audit returned empty — three gates, ~76s,
+ * and all three logged "gate is a no-op for this op". The verdicts were never
+ * coming; only the waiting was real.
+ *
+ * So the first few failures are paid for and the rest of the cooldown is free:
+ * callers get their null immediately and fall back to the heuristic they
+ * already have. This is the SAME outcome as before, minus the wait — it can't
+ * suppress a verdict that would otherwise have arrived, because it only opens
+ * after the classifier has already failed to produce one.
+ *
+ * A cold-skip does NOT count: that path means the model isn't resident yet,
+ * which the warm it kicks off is already fixing. A parse failure doesn't count
+ * either — the classifier answered, promptly; that's a prompt problem, not an
+ * availability one, and another caller's prompt may parse fine.
+ */
+const BREAKER_TRIP_AFTER = 3;
+const BREAKER_COOLDOWN_MS = 60_000;
+const breakers = new Map<string, { failures: number; openedAt: number }>();
+
+const breakerKey = (provider: string, model: string) => `${provider}|${model}`;
+
+function breakerIsOpen(provider: string, model: string, logger: Logger): boolean {
+  const state = breakers.get(breakerKey(provider, model));
+  if (!state || state.failures < BREAKER_TRIP_AFTER) return false;
+  if (Date.now() - state.openedAt >= BREAKER_COOLDOWN_MS) {
+    // Cooldown elapsed: let ONE call through to re-probe. It either succeeds
+    // (reset) or fails (re-opens for another cooldown).
+    state.failures = BREAKER_TRIP_AFTER - 1;
+    return false;
+  }
+  logger.info(`skipped: ${provider}/${model} produced no verdict ${state.failures}x — breaker open`);
+  return true;
+}
+
+function noteClassifierFailure(provider: string, model: string, logger: Logger): void {
+  const key = breakerKey(provider, model);
+  const state = breakers.get(key) ?? { failures: 0, openedAt: 0 };
+  state.failures += 1;
+  state.openedAt = Date.now();
+  breakers.set(key, state);
+  if (state.failures === BREAKER_TRIP_AFTER) {
+    logger.warn(`${provider}/${model} produced no verdict ${state.failures}x — pausing classifier calls for ${BREAKER_COOLDOWN_MS / 1000}s`);
+  }
+}
+
+function noteClassifierSuccess(provider: string, model: string): void {
+  breakers.delete(breakerKey(provider, model));
+}
+
+/** Test seam: forget every breaker so one case can't leak into the next. */
+export function resetClassifierBreakers(): void {
+  breakers.clear();
+}
+
 export async function classifyWithLLM<T>(opts: ClassifyOptions<T>): Promise<T | null> {
   const logger = createLogger(`classifier.${opts.category}`);
 
@@ -155,6 +215,7 @@ export async function classifyWithLLM<T>(opts: ClassifyOptions<T>): Promise<T | 
   }
 
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  if (breakerIsOpen(provider, model, logger)) return null;
   const maxChars = opts.maxResponseChars ?? DEFAULT_MAX_RESPONSE_CHARS;
   // Server-side output budget for the dispatch()-based providers, derived from
   // the same knob as the reader-side cut. The old hard-coded 400 silently
@@ -212,12 +273,14 @@ export async function classifyWithLLM<T>(opts: ClassifyOptions<T>): Promise<T | 
       // Best-effort: drop the orphan promise rejection if the provider call
       // eventually fails. We don't want it to surface as an unhandled rejection.
       providerCall.catch(() => {});
+      noteClassifierFailure(provider, model, logger);
       return null;
     }
     response = raced;
 
     if (!response || !response.trim()) {
       logger.warn(`empty response`);
+      noteClassifierFailure(provider, model, logger);
       return null;
     }
 
@@ -226,6 +289,7 @@ export async function classifyWithLLM<T>(opts: ClassifyOptions<T>): Promise<T | 
       logger.warn(`parse failed: "${response.slice(0, 200)}"`);
       return null;
     }
+    noteClassifierSuccess(provider, model);
     return parsed;
   } catch (e) {
     const msg = (e as Error).message || "";
@@ -234,6 +298,7 @@ export async function classifyWithLLM<T>(opts: ClassifyOptions<T>): Promise<T | 
     } else {
       logger.warn(`call failed (provider=${provider}): ${msg}`);
     }
+    noteClassifierFailure(provider, model, logger);
     return null;
   } finally {
     clearTimeout(timer);

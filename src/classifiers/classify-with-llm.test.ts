@@ -36,7 +36,7 @@ vi.mock("../codex-client/index.js", () => ({
 
 // classifyYesNo lives in classify-conveniences.ts and reaches call sites via
 // this re-export — importing it from here doubles as the seam's regression test.
-import { classifyWithLLM, classifyYesNo, parseYesNoReason } from "./classify-with-llm.js";
+import { classifyWithLLM, classifyYesNo, parseYesNoReason, resetClassifierBreakers } from "./classify-with-llm.js";
 // Type-only: erased at runtime, so the vi.mock above stays the only thing
 // this file loads from the codex client. Keeps the captured-params type
 // honest against the real signature instead of a hand-written copy.
@@ -308,5 +308,64 @@ describe("parseYesNoReason", () => {
     expect(parseYesNoReason("maybe, not sure")).toBeNull();
     expect(parseYesNoReason("")).toBeNull();
     expect(parseYesNoReason("the answer is YES")).toBeNull(); // verdict must lead
+  });
+});
+
+// Live 2026-09-16, the tail of ONE local op: oracle-probe burned its full 40s
+// wallclock, spec-audit returned empty, regression-audit returned empty — three
+// gates, ~76s, three "gate is a no-op for this op" log lines. Each gate
+// rediscovers an unreachable classifier by paying its own budget, and nothing
+// remembers that the previous one just failed the same way.
+describe("classify-with-llm breaker — a classifier that cannot answer stops costing the turn", () => {
+  beforeEach(() => { resetClassifierBreakers(); dispatchMock.mockClear(); });
+  afterEach(() => resetClassifierBreakers());
+
+  const ask = () => classifyYesNo({ category: "test", systemPrompt: "s", userPrompt: "u", timeoutMs: 2000 });
+
+  it("stops calling after three no-verdict replies, and keeps returning null", async () => {
+    dispatchMock.mockResolvedValue("");
+    for (let i = 0; i < 3; i++) expect(await ask()).toBeNull();
+    expect(dispatchMock).toHaveBeenCalledTimes(3);
+
+    // The 4th and 5th callers are the ones that used to each pay a full budget
+    // to learn what the first three already established.
+    expect(await ask()).toBeNull();
+    expect(await ask()).toBeNull();
+    expect(dispatchMock, "breaker open — no further provider calls").toHaveBeenCalledTimes(3);
+  });
+
+  it("a thrown call counts the same as an empty one", async () => {
+    dispatchMock.mockRejectedValue(new Error("aborted due to timeout"));
+    for (let i = 0; i < 3; i++) await ask();
+    await ask();
+    expect(dispatchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("one success clears it — a recovered classifier is used again immediately", async () => {
+    dispatchMock.mockResolvedValue("");
+    await ask(); await ask();
+    dispatchMock.mockResolvedValue("NO — not a give-up");
+    expect(await ask()).not.toBeNull();
+
+    dispatchMock.mockResolvedValue("");
+    for (let i = 0; i < 3; i++) await ask();
+    expect(dispatchMock, "the two pre-success failures must not carry over").toHaveBeenCalledTimes(6);
+  });
+
+  it("re-probes once the cooldown elapses instead of staying open forever", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      dispatchMock.mockResolvedValue("");
+      for (let i = 0; i < 3; i++) await ask();
+      await ask();
+      expect(dispatchMock).toHaveBeenCalledTimes(3);
+
+      await vi.advanceTimersByTimeAsync(61_000);
+      dispatchMock.mockResolvedValue("NO — back online");
+      expect(await ask(), "the re-probe must be allowed through").not.toBeNull();
+      expect(dispatchMock).toHaveBeenCalledTimes(4);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

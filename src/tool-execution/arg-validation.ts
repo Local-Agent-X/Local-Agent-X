@@ -82,7 +82,14 @@ export async function validateArgs(ctx: ToolCallContext): Promise<PhaseOutcome> 
 
   if (schema && typeof ctx.args === "object" && ctx.args && !("_raw" in ctx.args)) {
     try {
-      const { coerceArgs } = await import("./arg-repair.js");
+      const { coerceArgs, repairMarkerKeys } = await import("./arg-repair.js");
+      // Template markers in the KEY first: the value is already right, so the
+      // type coercion below then sees a normal argument object.
+      const keys = repairMarkerKeys(ctx.args as Record<string, unknown>, schema);
+      if (keys.fixes.length > 0) {
+        ctx.args = keys.coerced;
+        logRetry({ kind: "tool-arg-invalid", sessionId, tool: tc.name, detail: { phase: "marker-key", fixes: keys.fixes } });
+      }
       const coerce = coerceArgs(ctx.args as Record<string, unknown>, schema);
       if (coerce.fixes.length > 0) {
         ctx.args = coerce.coerced;

@@ -164,6 +164,37 @@ export interface CoerceResult {
   fixes: string[];
 }
 
+/**
+ * Recover a parameter whose NAME carries the model's chat-template markers.
+ *
+ * muse, grep, run 19: every read/write/glob arrived as
+ * `{"read<|message|><atem:parameter name=\"path": "C:/..."}` — the value was
+ * right, the key was the template leaking into the argument object. Each call
+ * failed validation as `missing required field "path"`, so the model could not
+ * edit its file and gave up, and the row scored as a model failure.
+ *
+ * Deliberately narrow: only a key that is NOT in the schema, only when it
+ * carries a marker, only when the name it ends with IS a schema property that
+ * is still missing, and only one such key per property. Anything else is left
+ * for validation to reject.
+ */
+const TEMPLATE_MARKER = /<\|[a-z_]+\|>|parameter\s+name=|<\/?[a-z]+:parameter/i;
+
+export function repairMarkerKeys(args: Record<string, unknown>, schema: ToolSchema | undefined): CoerceResult {
+  const fixes: string[] = [];
+  if (!schema?.properties) return { coerced: args, fixes };
+  const out: Record<string, unknown> = { ...args };
+  for (const key of Object.keys(args)) {
+    if (key in schema.properties || !TEMPLATE_MARKER.test(key)) continue;
+    const trailingName = key.match(/([A-Za-z_][A-Za-z0-9_]*)"?\s*$/)?.[1];
+    if (!trailingName || !(trailingName in schema.properties) || trailingName in out) continue;
+    out[trailingName] = out[key];
+    delete out[key];
+    fixes.push(`${trailingName}:recovered-from-template-key`);
+  }
+  return { coerced: out, fixes };
+}
+
 export function coerceArgs(args: Record<string, unknown>, schema: ToolSchema | undefined): CoerceResult {
   const fixes: string[] = [];
   if (!schema || !schema.properties) return { coerced: args, fixes };

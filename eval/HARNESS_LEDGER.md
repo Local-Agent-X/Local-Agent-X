@@ -30,6 +30,8 @@ with justification). Mission: `docs/agent-prompts/local-model-harness.md`.
 | H-024 | grep attempt 1 ended in 13s: the reply was muse's plan ("Let's list workspace."), no tool call | HARNESS | openai-compat surfaced reasoning as the answer on ANY stop, so decide-outcome saw text + end_turn and ended the turn; the reasoning-only re-drive path never engaged (and would have re-driven unbounded with no nudge) | Reasoning surfaces as the answer only on a length stop; a reasoning-only interactive turn gets one nudge to act on its plan, then ends honestly | tests |
 | H-016 | Summaries fail; audits/probes return nothing (~75s/op) | HARNESS | Review calls ran on the background model (the 3B pin loops; cloud providers use haiku-class models), and local review calls spent their budget on a thinking pass | Every classifier call declares `role: "review" \| "routing"` (required; tsc enumerates sites). Review runs on the worker's model; Ollama classifier calls send `think:false`; review budgets sized for the worker (constraint 6s, test-deletion 8s, refutation voters 10s). Measured muse idle: ~4.2k tok/s prefill, ~76 tok/s decode | run 17 |
 
+| H-025 | spec-audit answered in budget but both replies were invalid JSON (fails at char ~101) → no verdict | HARNESS | A local model emits almost-JSON (raw newline in a string, trailing comma, smart quote, Python literal); the log named the parse error but never what was sent | One bounded repair pass before the retry (repair-json.ts) + the reply's first 200 chars in the failure message | tests |
+
 ## Documented MODEL failures (muse-glimmer:30b)
 
 | Exercise | Run | Reason (evidence) |

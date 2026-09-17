@@ -20,6 +20,7 @@ import type { ZodType, ZodTypeDef } from "zod";
 import { createLogger } from "../logger.js";
 import { classifyWithLLM, type ClassifierRole } from "./classify-with-llm.js";
 import { stripCodeFences } from "./strip-code-fences.js";
+import { repairJsonText } from "./repair-json.js";
 
 export interface ClassifySchemaOptions<T> {
   /** Logical name for telemetry / env-disable. e.g. "mission-validate". */
@@ -69,7 +70,18 @@ function parseAgainstSchema<T>(raw: string, schema: ZodType<T, ZodTypeDef, unkno
   try {
     obj = JSON.parse(cleaned);
   } catch (e) {
-    return { ok: false, error: `not valid JSON (${(e as Error).message})` };
+    // One bounded repair pass for almost-JSON (repair-json.ts): a raw newline
+    // in a string, a trailing comma, a smart quote, a Python literal. muse's
+    // spec-audit failed at character ~101 twice and the gate lost its verdict.
+    const repaired = repairJsonText(cleaned);
+    try {
+      if (repaired === null) throw e;
+      obj = JSON.parse(repaired);
+    } catch {
+      // The snippet is what makes the next fix possible; the message alone
+      // never said WHAT the model sent.
+      return { ok: false, error: `not valid JSON (${(e as Error).message}) — reply began: ${cleaned.slice(0, 200)}` };
+    }
   }
   try {
     const result = schema.safeParse(obj);

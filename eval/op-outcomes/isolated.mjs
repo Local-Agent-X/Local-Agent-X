@@ -106,6 +106,11 @@ export async function startIsolatedServer({ repoRoot, provider, model, fixturePo
       LAX_PROBE_PARENT_PID: String(process.pid),
       LAX_BROWSER_HEADLESS: "1",
       LAX_INTEGRITY_WARN_ONLY: "1",
+      // Profile any event-loop stall of 4s+ (the product default is 30s). Eval
+      // runs are where short stalls get noticed, and a stall with no profile
+      // cannot be diagnosed — the 5.9s block in muse's grade-school run
+      // (2026-09-17) had nothing to go on. Profiles land in <data>/logs.
+      LAX_LOOP_SENTINEL_PROFILE_MS: process.env.LAX_LOOP_SENTINEL_PROFILE_MS ?? "4000",
     },
   });
   const capture = (chunk) => {

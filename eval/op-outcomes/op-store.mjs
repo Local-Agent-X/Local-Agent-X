@@ -32,6 +32,17 @@ export function chatModelsIn(dataDir) {
   return [...models];
 }
 
+/** Model turns the run's CHAT ops completed — how much the model actually got to do. */
+export function opTurnCount(dataDir) {
+  let n = 0;
+  for (const { dir, op } of readOps(dataDir)) {
+    if (op.type !== "chat_turn") continue;
+    const turnsDir = join(dir, "op-turns");
+    if (existsSync(turnsDir)) n += readdirSync(turnsDir).length;
+  }
+  return n;
+}
+
 /** Wait until no op is pending/running. Null when idle, else a reason string. */
 export async function waitForIdleOps(dataDir, timeoutMs) {
   const deadline = Date.now() + timeoutMs;

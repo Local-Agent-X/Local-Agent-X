@@ -12,6 +12,10 @@
 //   npx tsx eval/aider-polyglot/run.mjs --timeout 1800000    # per-exercise drive cap
 //   npx tsx eval/aider-polyglot/run.mjs --keep               # keep failed exercise dirs
 //
+// Verdicts: PASS, FAIL, or HARNESS. Hitting the time cap is a FAIL
+// ("did-not-converge") only when the harness was provably healthy throughout —
+// no event-loop stalls, the model getting turns; otherwise it is HARNESS.
+//
 // Every exercise gets its OWN throwaway LAX server (eval/op-outcomes/isolated.mjs):
 // fresh data dir, fresh workspace. The rig used to drive the user's running
 // server, and it wrote there — session summaries, and false "facts" about the
@@ -24,7 +28,7 @@
 // Scoring is filesystem ground truth (unittest), never the reply. The reply is
 // used only to flag a FALSE-DONE (claimed success while the tests are red).
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -35,7 +39,7 @@ import {
 } from "./lib.mjs";
 import { CURATED } from "./curated.mjs";
 import { assertDistMatchesSource, startIsolatedServer } from "../op-outcomes/isolated.mjs";
-import { chatModelsIn } from "../op-outcomes/op-store.mjs";
+import { chatModelsIn, opTurnCount } from "../op-outcomes/op-store.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, "..", "..");
@@ -55,6 +59,33 @@ function parseArgs(argv) {
 }
 
 const pad = (s, n) => String(s).padEnd(n);
+
+/**
+ * Was the harness healthy for the whole drive? Null when it was; otherwise
+ * the reason it was not.
+ *
+ * This is what decides whether a run that hit the time cap is a verdict on the
+ * model. A fixed budget is how benchmarks score: a model that is working the
+ * whole time and still has not solved the exercise when the clock runs out has
+ * failed it. But the same timeout is meaningless if the server's event loop
+ * froze, or the model was not getting turns at all — the harness ate the clock.
+ */
+function harnessDistress(server, driveSecs) {
+  const logPath = join(server.dataDir, "logs", "server.log");
+  let log = "";
+  try { log = readFileSync(logPath, "utf8"); } catch { /* no log yet */ }
+  const stalls = [...log.matchAll(/event loop blocked for (\d+)ms/g)].map((m) => Number(m[1]));
+  const stalled = stalls.reduce((a, b) => a + b, 0);
+  if (stalled > 30_000 || stalls.some((ms) => ms > 15_000)) {
+    return `event loop stalled ${Math.round(stalled / 1000)}s across ${stalls.length} block(s)`;
+  }
+  // A working model takes a turn every few seconds; far fewer means it was
+  // waiting on something that was not the model.
+  const turns = opTurnCount(server.dataDir);
+  const floor = Math.max(3, Math.floor(driveSecs / 120));
+  if (turns < floor) return `only ${turns} model turn(s) in ${Math.round(driveSecs)}s`;
+  return null;
+}
 
 async function runExercise(slug, target, args) {
   const ex = loadExercise(slug);
@@ -77,13 +108,15 @@ async function runExercise(slug, target, args) {
     const falseDone = !score.ok && claimed;
     // Only PASS and FAIL are verdicts on the MODEL. A row the harness broke —
     // server died or unreachable, a turn that would not stop, a suite that never
-    // ran, a different model answering — or one that ran out of clock says
+    // ran, a different model answering, or a timeout the harness caused — says
     // nothing about capability, and is reported, never scored.
+    const timedOut = /^timeout /.test(drive.err);
     const harness = died ? `server exited mid-run (code ${died.code}, signal ${died.signal})`
       : score.harness ?? wrongModel
-      ?? (/HARNESS-ERROR|^HTTP \d|ECONNREFUSED|fetch failed/i.test(drive.err) ? drive.err : null);
-    const timedOut = /^timeout /.test(drive.err);
-    const result = harness ? "HARNESS" : score.ok ? "PASS" : timedOut ? "TIMEOUT" : "FAIL";
+      ?? (/HARNESS-ERROR|^HTTP \d|ECONNREFUSED|fetch failed/i.test(drive.err) ? drive.err : null)
+      // A timeout is the model's failure only if the harness held up.
+      ?? (timedOut && !score.ok ? harnessDistress(server, drive.secs) : null);
+    const result = harness ? "HARNESS" : score.ok ? "PASS" : "FAIL";
 
     const notes = [];
     if (drive.err) notes.push(`err=${drive.err}`);
@@ -92,6 +125,7 @@ async function runExercise(slug, target, args) {
     // a clean measurement. Flagged, not failed — the model may have used it
     // for something else — but it is visible in every row.
     if (drive.tools.some((t) => /^(web_fetch|web_search|browser)/.test(t))) notes.push("used-web");
+    if (timedOut && result === "FAIL") notes.push("did-not-converge (harness healthy, time budget spent)");
     if (!changed) notes.push("stub-untouched");
     if (falseDone) notes.push("FALSE-DONE");
     if (!score.ok && changed) notes.push("tests-red");
@@ -110,8 +144,21 @@ async function runExercise(slug, target, args) {
     };
   } finally {
     await server.stop();
+    keepStallProfiles(server.dataDir, slug);
     if (!keep) server.cleanup();
   }
+}
+
+/** Stall profiles die with the server's data dir; the reports dir outlives it. */
+function keepStallProfiles(dataDir, slug) {
+  const logs = join(dataDir, "logs");
+  let files = [];
+  try { files = readdirSync(logs).filter((f) => f.startsWith("loop-stall-") && f.endsWith(".cpuprofile")); } catch { return; }
+  if (!files.length) return;
+  const dest = join(homedir(), ".cache", "aider-polyglot-reports", "stall-profiles", slug);
+  mkdirSync(dest, { recursive: true });
+  for (const f of files) copyFileSync(join(logs, f), join(dest, f));
+  console.error(`[aider] ${slug}: ${files.length} stall profile(s) → ${dest}`);
 }
 
 async function main() {
@@ -153,12 +200,12 @@ async function main() {
 
   const passed = rows.filter((r) => r.result === "PASS").length;
   const scored = rows.filter((r) => r.result === "PASS" || r.result === "FAIL").length;
-  const unscored = rows.filter((r) => r.result === "HARNESS" || r.result === "TIMEOUT");
+  const unscored = rows.filter((r) => r.result === "HARNESS");
   const falseDones = rows.filter((r) => r.falseDone).length;
   console.log("-".repeat(72));
   console.log(`\nRESULT: ${passed}/${scored} passed · ${falseDones} false-done · model=${model}`);
   if (unscored.length) {
-    console.log(`NOT SCORED (${unscored.length}) — these say nothing about the model until explained: ${unscored.map((r) => `${r.slug}=${r.result}`).join(", ")}`);
+    console.log(`NOT SCORED (${unscored.length}) — the harness broke; these say nothing about the model: ${unscored.map((r) => `${r.slug} (${r.harness})`).join("; ")}`);
   }
   console.log("");
 

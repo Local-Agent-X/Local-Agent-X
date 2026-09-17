@@ -143,6 +143,10 @@ export async function startIsolatedServer({ repoRoot, provider, model, fixturePo
       // cannot be diagnosed — the 5.9s block in muse's grade-school run
       // (2026-09-17) had nothing to go on. Profiles land in <data>/logs.
       LAX_LOOP_SENTINEL_PROFILE_MS: process.env.LAX_LOOP_SENTINEL_PROFILE_MS ?? "4000",
+      // Those profiles start after the stall and showed only idle time for the
+      // periodic 5-9s blocks in phone-number; the rolling profile covers the
+      // stall itself.
+      LAX_LOOP_SENTINEL_ROLLING: process.env.LAX_LOOP_SENTINEL_ROLLING ?? "1",
     },
   });
   const capture = (chunk) => {

@@ -56,6 +56,7 @@ import { getLaxDir } from "../lax-data-dir.js";
 import { getTurnRegistry } from "../session/turn-lock.js";
 import { createLogger, type Logger } from "../logger.js";
 import { createWorkerStallObserver, type StallObserver } from "./event-loop-sentinel-worker.js";
+import { defaultStallCapture } from "./rolling-stall-profile.js";
 
 const logger = createLogger("server.loop-sentinel");
 
@@ -84,7 +85,7 @@ const PROFILE_RETENTION = 12;
  *  check count, not by the choice of clock (see isSuspension). */
 const monotonicNowMs = (): number => Math.round(performance.now());
 
-type StallLogger = Pick<Logger, "info" | "warn" | "error">;
+export type StallLogger = Pick<Logger, "info" | "warn" | "error">;
 
 /** Node exposes these but does not document them; they are absent under some
  *  runtimes and embeddings, so every use is typeof-guarded. */
@@ -293,7 +294,7 @@ export function createEventLoopSentinel(deps: EventLoopSentinelDeps = {}): Event
   const profileEnabled = deps.profileEnabled ?? process.env.LAX_LOOP_SENTINEL_PROFILE !== "0";
   const profileCooldownMs = deps.profileCooldownMs ?? PROFILE_COOLDOWN_MS;
   const snapshotOf = deps.collectSnapshot ?? collectStallSnapshot;
-  const capture = deps.captureProfile ?? ((lagMs: number) => captureStallProfile(lagMs, log));
+  const capture = deps.captureProfile ?? defaultStallCapture(log);
   // The worker cannot import getLaxDir (see its header), so the path is
   // resolved here and handed over at spawn. Same warn threshold as this half:
   // one definition of "this loop is stalled", reported from both sides.

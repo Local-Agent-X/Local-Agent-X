@@ -24,6 +24,7 @@ with justification). Mission: `docs/agent-prompts/local-model-harness.md`.
 | H-018 | Classifier calls on a 30B model return null; breaker then pauses all classifiers 60s | HARNESS | 1.5–3s budgets (constraint-extract, curate, confirm-gate, followup, test-deletion) cannot fit a 30B prefill | OPEN — budgets from measured throughput (Phase 1) | — |
 | H-019 | A timed-out background call keeps the GPU busy | HARNESS | Classifier race and tool backstop abandon the work without aborting it | OPEN | — |
 | H-020 | Compaction can block ~60s, not 30s | HARNESS | Budget is per attempt × guardedRewrite's 2 attempts | OPEN (Phase 1) | — |
+| H-021 | Periodic 5.7→8.9s event-loop blocks every ~66s in a long op (phone-number, run 16), growing with op length | HARNESS | Unknown: post-stall profiles show only idle time; op-store reads on this op take 17ms | Diagnostics: rolling CPU profile covering the stall (LAX_LOOP_SENTINEL_ROLLING, on in eval servers); root cause OPEN | — |
 | H-016 | Summaries fail; audits/probes return nothing (~75s/op) | HARNESS | Review calls run on the pinned 3B model (loops) or on muse with budgets not sized for it | OPEN — Phase 2 review/routing split | — |
 
 ## Documented MODEL failures (muse-glimmer:30b)

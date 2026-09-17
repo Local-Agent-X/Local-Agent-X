@@ -43,6 +43,24 @@ export function opTurnCount(dataDir) {
   return n;
 }
 
+/** Every tool RESULT the run's chat ops received, concatenated — what the model
+ *  was shown, as opposed to what it wrote. */
+export function toolResultText(dataDir) {
+  let text = "";
+  for (const { dir, op } of readOps(dataDir)) {
+    if (op.type !== "chat_turn") continue;
+    const turnsDir = join(dir, "op-turns");
+    for (const f of existsSync(turnsDir) ? readdirSync(turnsDir) : []) {
+      try {
+        for (const m of JSON.parse(readFileSync(join(turnsDir, f), "utf8")).messages ?? []) {
+          if (m.role === "tool_result") text += `\n${JSON.stringify(m.content ?? "")}`;
+        }
+      } catch { /* partial write */ }
+    }
+  }
+  return text;
+}
+
 /** Wait until no op is pending/running. Null when idle, else a reason string. */
 export async function waitForIdleOps(dataDir, timeoutMs) {
   const deadline = Date.now() + timeoutMs;

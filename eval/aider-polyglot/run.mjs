@@ -12,7 +12,8 @@
 //   npx tsx eval/aider-polyglot/run.mjs --timeout 1800000    # per-exercise drive cap
 //   npx tsx eval/aider-polyglot/run.mjs --keep               # keep failed exercise dirs
 //
-// Verdicts: PASS, FAIL, or HARNESS. Hitting the time cap is a FAIL
+// Verdicts: PASS, FAIL, HARNESS, or CONTAMINATED (passed after seeing the
+// hidden tests — unscored). Web tools are denied. Hitting the time cap is a FAIL
 // ("did-not-converge") only when the harness was provably healthy throughout —
 // no event-loop stalls, the model getting turns; otherwise it is HARNESS.
 //
@@ -39,7 +40,7 @@ import {
 } from "./lib.mjs";
 import { CURATED } from "./curated.mjs";
 import { assertDistMatchesSource, startIsolatedServer } from "../op-outcomes/isolated.mjs";
-import { chatModelsIn, opTurnCount } from "../op-outcomes/op-store.mjs";
+import { chatModelsIn, opTurnCount, toolResultText } from "../op-outcomes/op-store.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, "..", "..");
@@ -59,6 +60,36 @@ function parseArgs(argv) {
 }
 
 const pad = (s, n) => String(s).padEnd(n);
+
+/**
+ * The benchmark is offline, as Aider's own is. With web tools a model can fetch
+ * the withheld test file — muse did exactly that on grade-school (2026-09-17),
+ * pulling grade_school_test.py from the polyglot-benchmark repo, and a PASS
+ * built on the answer key measures nothing. Seeded into each exercise's server;
+ * LAX merges its own policy under them.
+ */
+const OFFLINE_REASON = "Offline benchmark: solve this from the exercise instructions and the stub — network lookups are disabled for this run.";
+const OFFLINE_RULES = ["web_fetch", "web_search", "browser", "http_request"].map((tool) => ({
+  id: `eval-offline-${tool}`, tool, decision: "deny", reason: OFFLINE_REASON, priority: 100,
+}));
+
+/**
+ * Did the model SEE the hidden tests? A tool deny does not close every door
+ * (a shell can still download a file), so this reads what the model was shown:
+ * three or more of the suite's own test names in its tool results means the
+ * answer key reached it, by whatever route. Three, because a model writing its
+ * own tests may reuse one obvious name, not a run of them.
+ */
+function sawHiddenTests(dataDir, ex) {
+  const names = new Set();
+  for (const t of ex.test) {
+    for (const m of readFileSync(join(ex.dir, t), "utf8").matchAll(/def (test_\w+)\(/g)) names.add(m[1]);
+  }
+  const shown = toolResultText(dataDir);
+  let hits = 0;
+  for (const n of names) if (shown.includes(n) && ++hits >= 3) return true;
+  return false;
+}
 
 /**
  * Was the harness healthy for the whole drive? Null when it was; otherwise
@@ -91,6 +122,7 @@ async function runExercise(slug, target, args, evidenceDir) {
   const ex = loadExercise(slug);
   const server = await startIsolatedServer({
     repoRoot: REPO_ROOT, provider: target.provider, model: target.model, seedWorkspace: null,
+    toolPolicyRules: OFFLINE_RULES,
   });
   let keep = false;
   try {
@@ -116,7 +148,10 @@ async function runExercise(slug, target, args, evidenceDir) {
       ?? (/HARNESS-ERROR|^HTTP \d|ECONNREFUSED|fetch failed/i.test(drive.err) ? drive.err : null)
       // A timeout is the model's failure only if the harness held up.
       ?? (timedOut && !score.ok ? harnessDistress(server, drive.secs) : null);
-    const result = harness ? "HARNESS" : score.ok ? "PASS" : "FAIL";
+    // A PASS on the leaked answer key is not a capability result. A FAIL with
+    // it still is — the model had every advantage and did not get there.
+    const contaminated = sawHiddenTests(server.dataDir, ex);
+    const result = harness ? "HARNESS" : score.ok ? (contaminated ? "CONTAMINATED" : "PASS") : "FAIL";
 
     const notes = [];
     if (drive.err) notes.push(`err=${drive.err}`);
@@ -124,7 +159,8 @@ async function runExercise(slug, target, args, evidenceDir) {
     // Web access lets a model fetch the withheld tests; a PASS that did is not
     // a clean measurement. Flagged, not failed — the model may have used it
     // for something else — but it is visible in every row.
-    if (drive.tools.some((t) => /^(web_fetch|web_search|browser)/.test(t))) notes.push("used-web");
+    if (drive.tools.some((t) => /^(web_fetch|web_search|browser|http_request)/.test(t))) notes.push("tried-web (denied)");
+    if (contaminated) notes.push("SAW-HIDDEN-TESTS");
     if (timedOut && result === "FAIL") notes.push("did-not-converge (harness healthy, time budget spent)");
     if (!changed) notes.push("stub-untouched");
     if (falseDone) notes.push("FALSE-DONE");
@@ -227,11 +263,11 @@ async function main() {
   }
 
   const { passed, scored, falseDones } = tally();
-  const unscored = rows.filter((r) => r.result === "HARNESS");
+  const unscored = rows.filter((r) => r.result === "HARNESS" || r.result === "CONTAMINATED");
   console.log("-".repeat(72));
   console.log(`\nRESULT: ${passed}/${scored} passed · ${falseDones} false-done · model=${model}`);
   if (unscored.length) {
-    console.log(`NOT SCORED (${unscored.length}) — the harness broke; these say nothing about the model: ${unscored.map((r) => `${r.slug} (${r.harness})`).join("; ")}`);
+    console.log(`NOT SCORED (${unscored.length}) — these say nothing about the model: ${unscored.map((r) => `${r.slug} (${r.harness ?? "saw the hidden tests"})`).join("; ")}`);
   }
   console.log("");
 

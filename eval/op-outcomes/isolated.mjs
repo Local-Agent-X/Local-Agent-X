@@ -57,9 +57,12 @@ function freePort() {
  * `seedWorkspace` is the directory copied in as the workspace — the op-outcomes
  * fixtures by default; null starts it empty (the polyglot rig writes its own
  * exercise into it). `fixturePort` is optional for a rig with no fixture server.
+ * `toolPolicyRules` are seeded into the server's tool-policy.json; LAX merges
+ * its defaults under them at boot, so a rig can deny a tool without replacing
+ * the product policy.
  */
 export async function startIsolatedServer({ repoRoot, provider, model, fixturePort, logLines = 200,
-  seedWorkspace = join(repoRoot, "eval", "op-outcomes", "fixtures", "workspace") }) {
+  seedWorkspace = join(repoRoot, "eval", "op-outcomes", "fixtures", "workspace"), toolPolicyRules = [] }) {
   const root = mkdtempSync(join(tmpdir(), "lax-eval-"));
   const dataDir = join(root, "data");
   const workspace = join(root, "workspace");
@@ -70,6 +73,10 @@ export async function startIsolatedServer({ repoRoot, provider, model, fixturePo
   const seed = seedProbeProvider(dataDir, provider);
   if (seed.unavailable) throw new Error(`${provider}: ${seed.unavailable}`);
   writeFileSync(join(dataDir, "settings.json"), JSON.stringify({ provider, model }));
+  if (toolPolicyRules.length) {
+    // "deny" is the product default (src/tool-policy/default-rules.ts).
+    writeFileSync(join(dataDir, "tool-policy.json"), JSON.stringify({ defaultDecision: "deny", rules: toolPolicyRules }));
+  }
   // The fixture server is a loopback port the network policy must treat as a
   // registered local service — the same knob a user sets for their own dev servers.
   // File access is left at the product default ("unrestricted"), so a run

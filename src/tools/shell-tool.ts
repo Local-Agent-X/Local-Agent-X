@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import type { ServerEvent, ToolDefinition } from "../types.js";
 import { getSandboxMode, execInSandbox, wrapSpawnForSandbox, sandboxDenialHint, networkDenialHint } from "../sandbox/index.js";
 import { ok, err, blocked, timeout as timeoutResult } from "./result-helpers.js";
-import { detectTargetShell, translateForShell, powershellCmdletHint } from "./shell-translate.js";
+import { detectTargetShell, translateForShell, powershellCmdletHint, windowsPathHint } from "./shell-translate.js";
 import { resolveWindowsShell, recordAvSuspectKill, isLikelyAvKill, buildSanitizedEnv } from "./shell-env.js";
 import { shellProxyEnv } from "./shell-proxy-env.js";
 import { killProcessGroup } from "../process-tree-kill.js";
@@ -297,7 +297,8 @@ export const bashTool: ToolDefinition = {
       // found" (exit 127) — name the mistake so the agent switches tools instead
       // of re-emitting the same cmdlet (it did this 3× in one session).
       const cmdletNotice = powershellCmdletHint(stderr);
-      const notices = [cmdletNotice, cageNotice, netNotice].filter(Boolean).join("\n");
+      const pathNotice = windowsPathHint(stderr);
+      const notices = [cmdletNotice, pathNotice, cageNotice, netNotice].filter(Boolean).join("\n");
       return err((notices ? notices + "\n" : "") + (out || `Exit code: ${code}`), {
         exit_code: code,
         duration_ms: durationMs,

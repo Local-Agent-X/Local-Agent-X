@@ -56,6 +56,24 @@ export function powershellCmdletHint(stderr: string, platform: NodeJS.Platform =
     escape;
 }
 
+/**
+ * A Windows path with backslashes, sent to POSIX bash, arrives with every
+ * backslash consumed as an escape: `C:\Users\peter\x.exe` becomes
+ * `C:Userspeterx.exe`, and bash's error names only that mangled word. A drive
+ * letter glued straight to a name is the fingerprint — a real path has a slash
+ * after the colon. Seen in both muse sessions on 2026-09-16, where the model
+ * could not tell why a path it had just listed "did not exist".
+ *
+ * Not rewritten automatically: a backslash is a legitimate escape in bash, and
+ * guessing which ones were meant as separators would corrupt real commands.
+ */
+export function windowsPathHint(stderr: string): string | null {
+  const m = stderr.match(/(?:^|[\s'"`:])([A-Za-z]:[A-Za-z][^\s'"`:]*)/);
+  if (!m || !/command not found|No such file or directory|cannot access/.test(stderr)) return null;
+  return `\`${m[1]}\` looks like a Windows path whose backslashes bash consumed as escapes. ` +
+    `In the bash tool write it with forward slashes (\`C:/Users/...\`) or quote it in single quotes.`;
+}
+
 export function detectTargetShell(shellPath: string): TargetShell {
   const base = shellPath.toLowerCase().replace(/\\/g, "/").split("/").pop() || "";
   if (base === "pwsh.exe" || base === "pwsh") return "pwsh-7";

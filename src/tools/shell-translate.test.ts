@@ -1,5 +1,26 @@
 import { describe, expect, it } from "vitest";
-import { powershellCmdletHint } from "./shell-translate.js";
+import { powershellCmdletHint, windowsPathHint } from "./shell-translate.js";
+
+describe("windowsPathHint — a Windows path whose backslashes bash ate", () => {
+  // Verbatim stderr from the two muse sessions on 2026-09-16.
+  it("names the mangled path and the fix, for a command", () => {
+    const hint = windowsPathHint("/usr/bin/bash: line 1: C:UserspeterAppDataLocalProgramsPythonPython312python.exe: command not found");
+    expect(hint).toContain("C:UserspeterAppDataLocalProgramsPythonPython312python.exe");
+    expect(hint).toContain("forward slashes");
+  });
+
+  it("names it for an ls of a mangled path too", () => {
+    expect(windowsPathHint("ls: cannot access 'C:UserspeterDocumentsLocal': No such file or directory")).toContain("C:UserspeterDocumentsLocal");
+  });
+
+  it("stays silent on real paths and unrelated failures", () => {
+    expect(windowsPathHint("ls: cannot access 'C:/Users/peter/x': No such file or directory")).toBeNull();
+    expect(windowsPathHint("ls: cannot access '/c/Users/peter/x': No such file or directory")).toBeNull();
+    expect(windowsPathHint("bash: line 1: frobnicate: command not found")).toBeNull();
+    expect(windowsPathHint("Traceback: File C:Users is not a real error form")).toBeNull();
+    expect(windowsPathHint("")).toBeNull();
+  });
+});
 
 describe("powershellCmdletHint — coach a PowerShell cmdlet fired into the bash tool", () => {
   it("names the cmdlet and the POSIX equivalent for a known one", () => {

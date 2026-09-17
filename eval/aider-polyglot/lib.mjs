@@ -63,10 +63,41 @@ export function makeExerciseProject(ex) {
   return work;
 }
 
+/**
+ * A Python 3 interpreter that verifiably RUNS, as an absolute forward-slash
+ * path (valid in Git Bash and in Windows APIs alike). Null when none does.
+ *
+ * `python3` is not a safe assumption: on this Windows box it resolves to the
+ * Microsoft Store alias, which prints "Python was not found" and exits
+ * non-zero. The scorer ran exactly that, so EVERY exercise scored FAIL no
+ * matter what the model wrote (2026-09-17: grade-school's final code passes all
+ * 20 hidden tests and was recorded "FAIL tests-red"). The prompt told the model
+ * to use it too, and the model spent a dozen tool calls finding a real one.
+ */
+let resolvedPython;
+export function resolvePython() {
+  if (resolvedPython !== undefined) return resolvedPython;
+  const candidates = [
+    ...(process.env.AIDER_PYTHON ? [[process.env.AIDER_PYTHON, []]] : []),
+    ["py", ["-3"]],
+    ["python3", []],
+    ["python", []],
+  ];
+  const probe = "import sys; print(sys.version_info[0]); print(sys.executable)";
+  for (const [cmd, pre] of candidates) {
+    try {
+      const out = execFileSync(cmd, [...pre, "-c", probe], { stdio: ["ignore", "pipe", "pipe"], timeout: 15_000 }).toString().trim().split(/\r?\n/);
+      if (out[0] === "3" && out[1]) return (resolvedPython = out[1].trim().replace(/\\/g, "/"));
+    } catch { /* not this one */ }
+  }
+  return (resolvedPython = null);
+}
+
 /** The task prompt handed to the model. Standard Exercism framing: implement the
  *  stub, keep the public names the tests import, stdlib only, edit in place. */
 export function buildPrompt(work, ex) {
   const files = ex.solution.join(", ");
+  const python = resolvePython();
   return [
     `Solve this Python coding exercise. Working directory: ${work}`,
     ``,
@@ -74,8 +105,9 @@ export function buildPrompt(work, ex) {
     `complete solution: ${files}`,
     `Keep the class and function names / signatures the stub defines — an automated`,
     `test suite imports them by name. Use only the Python standard library. Do NOT`,
-    `create new files; edit the stub in place. You may run \`python3\` to check your`,
-    `own work. When you are done the solution must pass a hidden unittest suite.`,
+    `create new files; edit the stub in place. To run Python here, use this exact`,
+    `interpreter: \`${python}\`. When you are done the solution must pass a hidden`,
+    `unittest suite. Solve it yourself — do not look the exercise or its tests up online.`,
     ``,
     `--- EXERCISE INSTRUCTIONS ---`,
     ex.instructions.trim(),
@@ -83,21 +115,35 @@ export function buildPrompt(work, ex) {
 }
 
 /** Copy the hidden tests in and run them with stdlib unittest. ok=true iff every
- *  test module exits 0. Ground truth — independent of the model's reply. */
+ *  test module exits 0. Ground truth — independent of the model's reply.
+ *
+ *  `harness` is set when the suite never actually RAN. unittest prints
+ *  "Ran N test(s)" whenever it executes — including when the model's module
+ *  fails to import, which IS the model's failure — so its absence means the
+ *  interpreter or the runner broke, and that row must not be scored. */
 export function scoreExercise(work, ex) {
+  const python = resolvePython();
+  if (!python) return { ok: false, harness: "no working Python 3 interpreter", results: [] };
   const results = [];
   for (const t of ex.test) {
     copyFileSync(join(ex.dir, t), join(work, t));
     const mod = t.replace(/\.py$/, "");
     try {
-      execFileSync("python3", ["-m", "unittest", mod], { cwd: work, stdio: ["ignore", "pipe", "pipe"], timeout: 60_000 });
-      results.push({ test: t, ok: true, output: "" });
+      const out = execFileSync(python, ["-m", "unittest", mod], { cwd: work, stdio: ["ignore", "pipe", "pipe"], timeout: 60_000 });
+      results.push({ test: t, ok: true, ran: true, output: String(out) });
     } catch (e) {
-      const out = `${e.stdout || ""}${e.stderr || ""}`;
-      results.push({ test: t, ok: false, output: out.slice(-3000) });
+      // Killed at the timeout = the model's code hung; the runner did run it.
+      const hung = Boolean(e.killed || e.signal);
+      const out = `${e.stdout || ""}${e.stderr || ""}${hung ? "\n[killed: tests exceeded 60s — the solution hangs]" : ""}`;
+      results.push({ test: t, ok: false, ran: hung || /\bRan \d+ tests?\b/.test(out), output: out.slice(-3000) });
     }
   }
-  return { ok: results.every((r) => r.ok), results };
+  const broken = results.find((r) => !r.ran && !r.ok);
+  return {
+    ok: results.every((r) => r.ok),
+    harness: broken ? `test runner did not run ${broken.test}: ${broken.output.trim().split(/\r?\n/)[0] ?? ""}` : undefined,
+    results,
+  };
 }
 
 /** Did the model actually change the stub? (An untouched stub → it did nothing.) */

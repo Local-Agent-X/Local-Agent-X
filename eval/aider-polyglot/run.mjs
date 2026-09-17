@@ -15,18 +15,13 @@
 
 import { writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { homedir } from "node:os";
 import {
   ensureBenchmark, allSlugs, loadExercise, makeExerciseProject, buildPrompt,
-  scoreExercise, solutionChanged, cleanup,
+  scoreExercise, solutionChanged, cleanup, resolvePython,
   driveChat, activeModel, health, claimsDone, admitsIncomplete,
 } from "./lib.mjs";
-
-// A diverse default set spanning easy → hard so a single run surfaces varied
-// failure modes without running the full 34.
-const CURATED = [
-  "grade-school", "wordy", "transpose", "phone-number", "pig-latin", "bowling",
-  "poker", "grep", "dominoes", "list-ops", "two-bucket", "forth",
-];
+import { CURATED } from "./curated.mjs";
 
 function parseArgs(argv) {
   const a = { timeout: 300_000, keep: false, slugs: null, all: false, limit: 0 };
@@ -48,6 +43,10 @@ async function main() {
   ensureBenchmark();
 
   if (!(await health())) { console.error("ERROR: dev server not reachable — start it on :7007 first."); process.exit(2); }
+  // Refuse to run rather than score a whole set against a broken scorer.
+  const python = resolvePython();
+  if (!python) { console.error("HARNESS-ERROR: no working Python 3 interpreter (tried py -3, python3, python; set AIDER_PYTHON)."); process.exit(2); }
+  console.error(`[aider] scoring with ${python}`);
   const model = (await activeModel()) || "unknown";
 
   let slugs = args.all ? allSlugs() : (args.slugs || CURATED);
@@ -76,11 +75,16 @@ async function main() {
     // Only PASS and FAIL are verdicts on the MODEL. A row the harness broke
     // (server unreachable, a turn that would not stop) or one that ran out of
     // clock says nothing about capability and is reported, never scored.
-    const harnessBroke = /HARNESS-ERROR|^HTTP \d|ECONNREFUSED|fetch failed/i.test(drive.err);
+    const harnessBroke = Boolean(score.harness) || /HARNESS-ERROR|^HTTP \d|ECONNREFUSED|fetch failed/i.test(drive.err);
     const timedOut = /^timeout /.test(drive.err);
     const result = score.ok ? "PASS" : harnessBroke ? "HARNESS" : timedOut ? "TIMEOUT" : "FAIL";
     const notes = [];
     if (drive.err) notes.push(`err=${drive.err}`);
+    if (score.harness) notes.push(`HARNESS-ERROR: ${score.harness}`);
+    // Web access lets a model fetch the withheld tests; a PASS that did is not
+    // a clean measurement. Flagged, not failed — the model may have used it
+    // for something else — but it is visible in every row.
+    if (drive.tools.some((t) => /^(web_fetch|web_search|browser)/.test(t))) notes.push("used-web");
     if (!changed) notes.push("stub-untouched");
     if (falseDone) notes.push("FALSE-DONE");
     if (!score.ok && changed) notes.push("tests-red");
@@ -109,7 +113,7 @@ async function main() {
   console.log("");
 
   // Persist the full report (with test output + replies) for triage.
-  const outDir = join(process.env.HOME, ".cache", "aider-polyglot-reports");
+  const outDir = join(homedir(), ".cache", "aider-polyglot-reports");
   mkdirSync(outDir, { recursive: true });
   const outPath = join(outDir, `${model.replace(/\//g, "_")}-${stamp}.json`);
   writeFileSync(outPath, JSON.stringify({ model, stamp, passed, scored, total: rows.length, falseDones, rows }, null, 2));

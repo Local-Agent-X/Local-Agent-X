@@ -24,6 +24,11 @@ export function createJournaledExecution(input: {
 }): JournaledExecution {
   const decision = prepareSideEffect(input.operationId, input.toolCallId, input.tool, input.args, input.effect);
   let started = false;
+  // reconcile() releases the claim and records the outcome as ambiguous; the
+  // entry is then final. complete() afterwards used to look for the released
+  // claim, throw "side-effect journal claim lost", and turn a bash that simply
+  // timed out into "bash failed inside the harness" (2026-09-17).
+  let reconciled = false;
   const replayed = decision.kind === "replay" || decision.kind === "blocked";
   return {
     replayed,
@@ -39,10 +44,11 @@ export function createJournaledExecution(input: {
     },
     reconcile(error) {
       if (decision.kind !== "execute" || !started || input.effect.class !== "non-idempotent") return null;
+      reconciled = true;
       return markSideEffectAmbiguous(decision.entry, error instanceof Error ? error.message : String(error));
     },
     complete(result) {
-      if (decision.kind === "execute") completeSideEffect(decision.entry, result);
+      if (decision.kind === "execute" && !reconciled) completeSideEffect(decision.entry, result);
     },
   };
 }

@@ -8,7 +8,12 @@ import { getLaxDir } from "../lax-data-dir.js";
 // timeout here is a hang-catcher for tools that should finish quickly, not a
 // work-limiter — killing a real long-runner would be the bigger bug.
 export const DEFAULT_TIMEOUTS: Record<string, number> = {
-  bash: 120_000,
+  // ABOVE bash's own 120s default on purpose. bash kills its child at its
+  // deadline and returns a clean timeout that names process_start; this
+  // backstop only abandons the promise. At an equal 120s the backstop won the
+  // race, the command kept running, and the model was told the harness had
+  // failed (muse, wordy, 2026-09-17).
+  bash: 130_000,
   browser: 30_000,
   web_search: 15_000,
   http_request: 60_000,

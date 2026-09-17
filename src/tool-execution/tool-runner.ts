@@ -17,6 +17,24 @@ export interface ToolRunner {
   complete(result: ToolResult): void;
 }
 
+/** Margin the hang-catcher leaves past a tool's own deadline. */
+const BACKSTOP_MARGIN_MS = 10_000;
+
+/**
+ * The runner's timeout is a HANG-CATCHER: it abandons the execute promise
+ * without stopping the work. When a call carries its own `timeout` (bash kills
+ * its child at that deadline and says to use process_start), the tool must hit
+ * its deadline first — a caller-set 300s was being cut off at the 120s
+ * default. The default case is handled in the timeout table itself
+ * (tool-timeout.ts: bash's backstop sits above its own 120s default).
+ */
+export function backstopMs(configured: number, args: Record<string, unknown>): number {
+  if (configured <= 0) return configured; // unbounded tools stay unbounded
+  const own = typeof args.timeout === "number" && args.timeout > 0 ? args.timeout : 0;
+  if (own === 0) return configured;
+  return Math.max(configured, own + BACKSTOP_MARGIN_MS);
+}
+
 /** Execute one pinned call with timeout, effect-aware retry, and journaling. */
 export function createToolRunner(input: {
   tool: ToolDefinition;
@@ -36,7 +54,7 @@ export function createToolRunner(input: {
     args: call.args as Record<string, unknown>,
     effect: call.effect,
   });
-  const ms = getToolTimeout(input.toolName);
+  const ms = backstopMs(getToolTimeout(input.toolName), input.args);
   const runOnce = async () => {
     const result = await journal.run(async () => {
       const args = call.freshArgs();

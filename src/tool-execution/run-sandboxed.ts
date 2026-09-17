@@ -140,8 +140,13 @@ export const runSandboxedPhase: Phase = async (ctx) => {
     // the model, and commits taint ONLY for bytes actually delivered.
     ctx.result = applyResultTaintPolicy(tc.name, args, sessionId, ctx.result, floor);
   } catch (e) {
+    // The journal is always told (a non-idempotent call that was cut off is
+    // ambiguous and must not be replayed). But a TIMEOUT is shown to the model
+    // as a timeout: "outcome is ambiguous, reconcile the external system" said
+    // nothing about the fact that the command simply ran out of time, or that
+    // process_start exists for work this long.
     const reconciliation = runner.reconcile(e);
-    if (reconciliation) {
+    if (reconciliation && !(e instanceof ToolTimeoutError)) {
       ctx.result = reconciliation;
     } else if (e instanceof RetryableToolResultError) {
       ctx.result = e.result;

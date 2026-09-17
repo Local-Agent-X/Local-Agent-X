@@ -28,6 +28,7 @@ import type { CapabilityClass } from "../../tool-registry.js";
 import { z } from "zod";
 import { classifySchema } from "../../classifiers/schema-output.js";
 import { vetoWriteBanOnEditDirective } from "./edit-directive.js";
+import { supportedByCues } from "./cue-support.js";
 
 /** What the LLM (or an injected test double) confirms from the gated cues. */
 export interface ConfirmedConstraints {
@@ -358,7 +359,10 @@ export async function extractConstraints(
   }
 
   // LLM unavailable/failed → only the unambiguous deterministic tier stands.
-  const result = confirmed ?? gate.strong;
+  // A confirmed class must be one some cue can refer to (cue-support.ts).
+  const result = confirmed
+    ? { ...confirmed, prohibitions: supportedByCues(confirmed.prohibitions, gate.cues) }
+    : gate.strong;
   // The carve-out veto applies ONLY to the deterministic tier (phraseGate
   // already vetoed gate.strong): a per-phrase regex can't tell a spurious
   // carve-out ban from a real one standing beside it. The LLM CAN — it saw the

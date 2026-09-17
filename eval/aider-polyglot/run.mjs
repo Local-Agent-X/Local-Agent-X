@@ -28,7 +28,7 @@
 // Scoring is filesystem ground truth (unittest), never the reply. The reply is
 // used only to flag a FALSE-DONE (claimed success while the tests are red).
 
-import { copyFileSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, cpSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -87,7 +87,7 @@ function harnessDistress(server, driveSecs) {
   return null;
 }
 
-async function runExercise(slug, target, args) {
+async function runExercise(slug, target, args, evidenceDir) {
   const ex = loadExercise(slug);
   const server = await startIsolatedServer({
     repoRoot: REPO_ROOT, provider: target.provider, model: target.model, seedWorkspace: null,
@@ -138,14 +138,30 @@ async function runExercise(slug, target, args) {
         reply: drive.text.slice(0, 1200),
         testOutput: score.ok ? "" : (score.results.find((r) => !r.ok)?.output || "").slice(-2000),
         kept: keep ? server.root : undefined,
+        evidence: evidenceDir,
         serverLog: result === "HARNESS" ? server.logTail() : undefined,
       },
       notes,
     };
   } finally {
     await server.stop();
+    keepEvidence(server.dataDir, evidenceDir);
     keepStallProfiles(server.dataDir, slug);
     if (!keep) server.cleanup();
+  }
+}
+
+/**
+ * Everything needed to attribute a result — the op store (turns, guard fires,
+ * terminal reason) and the server log — copied out before the data dir is
+ * deleted. A FAIL nobody can explain is not a verdict: grade-school's first
+ * clean-run FAIL (2026-09-17) ended at 468s with no timeout, and the one
+ * directory that said why had already been removed.
+ */
+function keepEvidence(dataDir, dest) {
+  mkdirSync(dest, { recursive: true });
+  for (const part of ["operations", join("logs", "server.log")]) {
+    try { cpSync(join(dataDir, part), join(dest, part), { recursive: true }); } catch { /* absent */ }
   }
 }
 
@@ -186,22 +202,32 @@ async function main() {
 
   const rows = [];
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const outDir = join(homedir(), ".cache", "aider-polyglot-reports");
+  mkdirSync(outDir, { recursive: true });
+  const outPath = join(outDir, `${model.replace(/[/:]/g, "_")}-${stamp}.json`);
+  const tally = () => {
+    const passed = rows.filter((r) => r.result === "PASS").length;
+    const scored = rows.filter((r) => r.result === "PASS" || r.result === "FAIL").length;
+    return { passed, scored, falseDones: rows.filter((r) => r.falseDone).length };
+  };
+  // Written after EVERY exercise: a run that is stopped halfway still leaves
+  // its results and the evidence paths behind.
+  const save = () => writeFileSync(outPath, JSON.stringify({ model, stamp, ...tally(), total: rows.length, rows }, null, 2));
   for (const slug of slugs) {
     let out;
     try {
-      out = await runExercise(slug, target, args);
+      out = await runExercise(slug, target, args, join(outDir, "evidence", stamp, slug));
     } catch (e) {
       // Boot failure and the like: the harness never gave the model a chance.
       out = { row: { slug, result: "HARNESS", pass: false, secs: 0, tools: [], harness: e.message.split("\n")[0] }, notes: [`HARNESS-ERROR: ${e.message.split("\n")[0]}`] };
     }
     rows.push(out.row);
+    save();
     console.log(`${pad(slug, 18)} ${pad(out.row.result, 8)} ${pad(out.row.secs, 6)} ${pad(out.row.tools.length, 6)} ${out.notes.join(" ")}`);
   }
 
-  const passed = rows.filter((r) => r.result === "PASS").length;
-  const scored = rows.filter((r) => r.result === "PASS" || r.result === "FAIL").length;
+  const { passed, scored, falseDones } = tally();
   const unscored = rows.filter((r) => r.result === "HARNESS");
-  const falseDones = rows.filter((r) => r.falseDone).length;
   console.log("-".repeat(72));
   console.log(`\nRESULT: ${passed}/${scored} passed · ${falseDones} false-done · model=${model}`);
   if (unscored.length) {
@@ -209,11 +235,7 @@ async function main() {
   }
   console.log("");
 
-  // Persist the full report (with test output + replies) for triage.
-  const outDir = join(homedir(), ".cache", "aider-polyglot-reports");
-  mkdirSync(outDir, { recursive: true });
-  const outPath = join(outDir, `${model.replace(/[/:]/g, "_")}-${stamp}.json`);
-  writeFileSync(outPath, JSON.stringify({ model, stamp, passed, scored, total: rows.length, falseDones, rows }, null, 2));
+  save();
   console.log(`report: ${outPath}`);
 
   // List failures with a one-line reason for quick triage.

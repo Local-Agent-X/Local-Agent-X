@@ -94,6 +94,17 @@ function sawHiddenTests(dataDir, ex) {
   return false;
 }
 
+/** The server froze long enough to matter: 30s in total, or 15s at once. */
+function stallDistress(server) {
+  let log = "";
+  try { log = readFileSync(join(server.dataDir, "logs", "server.log"), "utf8"); } catch { /* no log yet */ }
+  const stalls = [...log.matchAll(/event loop blocked for (\d+)ms/g)].map((m) => Number(m[1]));
+  const stalled = stalls.reduce((a, b) => a + b, 0);
+  return stalled > 30_000 || stalls.some((ms) => ms > 15_000)
+    ? `event loop stalled ${Math.round(stalled / 1000)}s across ${stalls.length} block(s)`
+    : null;
+}
+
 /**
  * Was the harness healthy for the whole drive? Null when it was; otherwise
  * the reason it was not.
@@ -105,14 +116,8 @@ function sawHiddenTests(dataDir, ex) {
  * froze, or the model was not getting turns at all — the harness ate the clock.
  */
 function harnessDistress(server, driveSecs) {
-  const logPath = join(server.dataDir, "logs", "server.log");
-  let log = "";
-  try { log = readFileSync(logPath, "utf8"); } catch { /* no log yet */ }
-  const stalls = [...log.matchAll(/event loop blocked for (\d+)ms/g)].map((m) => Number(m[1]));
-  const stalled = stalls.reduce((a, b) => a + b, 0);
-  if (stalled > 30_000 || stalls.some((ms) => ms > 15_000)) {
-    return `event loop stalled ${Math.round(stalled / 1000)}s across ${stalls.length} block(s)`;
-  }
+  const stalled = stallDistress(server);
+  if (stalled) return stalled;
   // A working model takes a turn every few seconds; far fewer means it was
   // waiting on something that was not the model.
   const turns = opTurnCount(server.dataDir);
@@ -169,8 +174,10 @@ async function runExercise(slug, target, args, evidenceDir) {
     const harness = died ? `server exited mid-run (code ${died.code}, signal ${died.signal})`
       : score.harness ?? wrongModel
       ?? (/HARNESS-ERROR|^HTTP \d|ECONNREFUSED|fetch failed/i.test(drive.err) ? drive.err : null)
-      // A timeout is the model's failure only if the harness held up.
-      ?? (timedOut && !score.ok ? harnessDistress(server, drive.secs) : null);
+      // A timeout is the model's failure only if the harness held up. Any other
+      // failure is too: a server that froze for 15s at a time (poker, run 16)
+      // was not giving the model a fair run whether or not it hit the clock.
+      ?? (!score.ok ? (timedOut ? harnessDistress(server, drive.secs) : stallDistress(server)) : null);
     // A PASS on the leaked answer key is not a capability result. A FAIL with
     // it still is — the model had every advantage and did not get there.
     const sawTests = sawHiddenTests(server.dataDir, ex);

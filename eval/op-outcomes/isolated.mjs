@@ -79,7 +79,8 @@ function freePort() {
  * the product policy.
  */
 export async function startIsolatedServer({ repoRoot, provider, model, fixturePort, logLines = 200,
-  seedWorkspace = join(repoRoot, "eval", "op-outcomes", "fixtures", "workspace"), toolPolicyRules = [] }) {
+  seedWorkspace = join(repoRoot, "eval", "op-outcomes", "fixtures", "workspace"), toolPolicyRules = [],
+  maxLifetimeMs = 45 * 60_000 }) {
   // Two unrelated temp dirs. With the data dir beside the workspace, a model
   // listing the workspace's parent walked straight into the server's own
   // sessions and operations (muse, grade-school, 2026-09-17) — no real
@@ -125,9 +126,11 @@ export async function startIsolatedServer({ repoRoot, provider, model, fixturePo
       // self-destruct sized for a 5-minute bind check. At its 10-minute default
       // these servers died MID-TURN and the runs were scored as model failures
       // — every case over ~10 minutes was measuring the harness killing itself.
-      // Comfortably past the per-turn ceiling; the parent-death watchdog, not
-      // this backstop, is what reaps an orphan when the runner dies.
-      LAX_PROBE_MAX_LIFETIME_MS: String(45 * 60_000),
+      // The caller sizes it from its own worst case (every drive plus waits):
+      // a fixed 45 minutes sat under the polyglot rig's two 30-minute attempts.
+      // The parent-death watchdog, not this backstop, reaps an orphan when the
+      // runner dies.
+      LAX_PROBE_MAX_LIFETIME_MS: String(maxLifetimeMs),
       LAX_DATA_DIR: dataDir,
       LAX_WORKSPACE: workspace,
       LAX_PORT: String(port),

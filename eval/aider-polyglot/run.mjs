@@ -126,6 +126,8 @@ async function runExercise(slug, target, args, evidenceDir) {
   const server = await startIsolatedServer({
     repoRoot: REPO_ROOT, provider: target.provider, model: target.model, seedWorkspace: null,
     toolPolicyRules: OFFLINE_RULES,
+    // Two attempts, each up to the drive cap, plus settle and scoring time.
+    maxLifetimeMs: 2 * args.timeout + 15 * 60_000,
   });
   let keep = false;
   try {

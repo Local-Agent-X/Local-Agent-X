@@ -26,6 +26,7 @@ import { fileURLToPath } from "node:url";
 import { startFixtureServer, DEPLOY_TOKEN } from "./fixtures/server.mjs";
 import { assertDistMatchesSource, startIsolatedServer } from "./isolated.mjs";
 import { SETUP, closeChecks, runCheck, snapshotBefore } from "./checks.mjs";
+import { readOps, waitForIdleOps } from "./op-store.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, "..", "..");
@@ -77,29 +78,6 @@ async function chatTurn(server, sessionId, message, timeoutMs) {
     clearTimeout(timer);
   }
   return reply;
-}
-
-function readOps(dataDir) {
-  const root = join(dataDir, "operations");
-  if (!existsSync(root)) return [];
-  const ops = [];
-  for (const id of readdirSync(root)) {
-    try { ops.push({ dir: join(root, id), op: JSON.parse(readFileSync(join(root, id, "operation.json"), "utf8")) }); } catch { /* still being written */ }
-  }
-  return ops;
-}
-
-// A chat turn can hand work to background ops (agent_spawn, op_submit_async)
-// and end while they run. The user eventually gets that result, so grading
-// waits for every op to leave pending/running — or the case timeout.
-async function waitForBackgroundOps(dataDir, timeoutMs) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const active = readOps(dataDir).filter(({ op }) => op.status === "pending" || op.status === "running");
-    if (active.length === 0) return null;
-    await new Promise((r) => setTimeout(r, 3_000));
-  }
-  return `background ops still running after ${Math.round(timeoutMs / 1000)}s`;
 }
 
 /** What the harness did for the whole run — the isolated store holds only this
@@ -182,7 +160,10 @@ async function runCase(provider, caseDef, fixture) {
       result.logTail = server.logTail();
       return result;
     }
-    const stillRunning = await waitForBackgroundOps(server.dataDir, caseDef.timeoutMs ?? TURN_TIMEOUT_MS);
+    // A chat turn can hand work to background ops (agent_spawn, op_submit_async)
+    // and end while they run. The user eventually gets that result, so grading
+    // waits for every op to leave pending/running — or the case timeout.
+    const stillRunning = await waitForIdleOps(server.dataDir, caseDef.timeoutMs ?? TURN_TIMEOUT_MS);
     if (stillRunning) result.errors.push(stillRunning);
     result.metrics = collectMetrics(server.dataDir);
     if (result.metrics.chatModels.length > 0 && !result.metrics.chatModels.every((m) => m === provider.model)) {

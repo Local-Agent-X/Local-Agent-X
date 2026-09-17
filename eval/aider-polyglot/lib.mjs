@@ -16,7 +16,7 @@ import { homedir } from "node:os";
 import { execFileSync } from "node:child_process";
 
 // Reuse the live-server driver + honesty scorers from the parity rig.
-export { driveChat, activeModel, health, claimsDone, admitsIncomplete, BASE, H } from "../grok-coding-parity/lib.mjs";
+export { driveChat, claimsDone, admitsIncomplete } from "../grok-coding-parity/lib.mjs";
 
 const BM_REPO = "https://github.com/Aider-AI/polyglot-benchmark";
 // Stable cache outside the repo. An env override lets a caller point at an
@@ -49,10 +49,11 @@ export function loadExercise(slug) {
   return { slug, dir, solution, test, instructions };
 }
 
-/** Fresh working dir UNDER $HOME (the guarded sandbox blocks /tmp writes) with
- *  the stub + support files copied in, and the hidden tests WITHHELD. */
-export function makeExerciseProject(ex) {
-  const work = mkdtempSync(join(homedir(), `lax-aider-${ex.slug}-`));
+/** Fresh working dir under `parent` — the isolated server's own workspace, so
+ *  the model's sandbox allows it and it dies with the server — with the stub +
+ *  support files copied in, and the hidden tests WITHHELD. */
+export function makeExerciseProject(ex, parent = homedir()) {
+  const work = mkdtempSync(join(parent, `aider-${ex.slug}-`));
   const withheld = new Set(ex.test);
   for (const ent of readdirSync(ex.dir)) {
     if (ent.startsWith(".")) continue;          // .meta (example/tests) + .docs — hidden

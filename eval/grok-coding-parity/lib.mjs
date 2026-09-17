@@ -27,6 +27,9 @@ const TOKEN = config.authToken;
 if (!TOKEN) { console.error(`ERROR: no authToken in ${CONFIG_PATH}.`); process.exit(2); }
 export const BASE = `http://127.0.0.1:${PORT}`;
 export const H = { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json" };
+/** The user's own running server. A rig that should not touch ~/.lax passes an
+ *  isolated server's { baseUrl, headers } instead (eval/op-outcomes/isolated.mjs). */
+export const LIVE = { baseUrl: BASE, headers: H };
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -38,14 +41,14 @@ export async function activeModel() {
 
 /** Drive one chat op to completion, streaming SSE. Returns the final assistant
  *  text, the tool names used, any error, and elapsed seconds. */
-export async function driveChat(message, sessionId, timeoutMs) {
+export async function driveChat(message, sessionId, timeoutMs, target = LIVE) {
   let text = "", err = "";
   const tools = [];
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), timeoutMs);
   const t0 = Date.now();
   try {
-    const res = await fetch(`${BASE}/api/chat`, { method: "POST", headers: H, body: JSON.stringify({ message, sessionId }), signal: ac.signal });
+    const res = await fetch(`${target.baseUrl}/api/chat`, { method: "POST", headers: target.headers, body: JSON.stringify({ message, sessionId }), signal: ac.signal });
     if (!res.ok) { err = `HTTP ${res.status}`; }
     else {
       let buf = "";
@@ -74,7 +77,7 @@ export async function driveChat(message, sessionId, timeoutMs) {
   // with it, and is measured as slow/idle for work it never got to do
   // (2026-09-16: four ops stacked, three stuck at iteration 0, all scored
   // "0 tools, stub-untouched"). Stop it and wait until it is really gone.
-  const leftover = await settleTurn(sessionId);
+  const leftover = await settleTurn(sessionId, target);
   if (leftover) err = `${err ? err + "; " : ""}${leftover}`;
   return { text: text.trim(), tools, err, secs };
 }
@@ -82,15 +85,15 @@ export async function driveChat(message, sessionId, timeoutMs) {
 /** Stop any turn still running for `sessionId` and wait until the server says
  *  it has ended. Returns null when the session is idle, or a HARNESS error
  *  string when the turn would not end — callers must not score that row. */
-export async function settleTurn(sessionId, waitMs = 60_000) {
+export async function settleTurn(sessionId, target = LIVE, waitMs = 60_000) {
   const status = async () => {
     try {
-      const r = await fetch(`${BASE}/api/chats/${encodeURIComponent(sessionId)}/status`, { headers: H });
+      const r = await fetch(`${target.baseUrl}/api/chats/${encodeURIComponent(sessionId)}/status`, { headers: target.headers });
       return r.ok ? (await r.json()).active === true : false;
     } catch { return false; }
   };
   if (!(await status())) return null;
-  await fetch(`${BASE}/api/chats/stop`, { method: "POST", headers: H, body: JSON.stringify({ sessionId }) }).catch(() => {});
+  await fetch(`${target.baseUrl}/api/chats/stop`, { method: "POST", headers: target.headers, body: JSON.stringify({ sessionId }) }).catch(() => {});
   const deadline = Date.now() + waitMs;
   while (Date.now() < deadline) {
     if (!(await status())) return null;

@@ -53,11 +53,18 @@ function freePort() {
   });
 }
 
-export async function startIsolatedServer({ repoRoot, provider, model, fixturePort, logLines = 200 }) {
+/**
+ * `seedWorkspace` is the directory copied in as the workspace — the op-outcomes
+ * fixtures by default; null starts it empty (the polyglot rig writes its own
+ * exercise into it). `fixturePort` is optional for a rig with no fixture server.
+ */
+export async function startIsolatedServer({ repoRoot, provider, model, fixturePort, logLines = 200,
+  seedWorkspace = join(repoRoot, "eval", "op-outcomes", "fixtures", "workspace") }) {
   const root = mkdtempSync(join(tmpdir(), "lax-eval-"));
   const dataDir = join(root, "data");
   const workspace = join(root, "workspace");
-  cpSync(join(repoRoot, "eval", "op-outcomes", "fixtures", "workspace"), workspace, { recursive: true });
+  if (seedWorkspace) cpSync(seedWorkspace, workspace, { recursive: true });
+  else mkdirSync(workspace, { recursive: true });
 
   mkdirSync(dataDir, { recursive: true });
   const seed = seedProbeProvider(dataDir, provider);
@@ -72,7 +79,7 @@ export async function startIsolatedServer({ repoRoot, provider, model, fixturePo
   // a recoverable "not found", and muse gave up where it had recovered before.
   // The cost of the default is that a model can still wander the real disk
   // (one grok run found this repo's fixture copy) — visible in the replies.
-  writeFileSync(join(dataDir, "security.json"), JSON.stringify({ localServicePorts: [fixturePort] }));
+  writeFileSync(join(dataDir, "security.json"), JSON.stringify({ localServicePorts: fixturePort ? [fixturePort] : [] }));
 
   const port = await freePort();
   const token = randomBytes(24).toString("hex");

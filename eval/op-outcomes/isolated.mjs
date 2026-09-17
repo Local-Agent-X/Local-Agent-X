@@ -19,6 +19,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { seedProbeProvider } from "../../src/self-edit/sandbox-gates.ts";
 import { killProcessTree } from "../../src/process-tree-kill.ts";
+import { getLaxDir } from "../../src/lax-data-dir.ts";
 
 const BOOT_TIMEOUT_MS = 180_000;
 
@@ -39,6 +40,22 @@ export function assertDistMatchesSource(repoRoot) {
     execSync("git diff --quiet HEAD -- src config package.json package-lock.json", { cwd: repoRoot, stdio: "ignore" });
   } catch {
     throw new Error(`dist/ was built from ${builtRef.slice(0, 8)} but src/config changed since — run \`npm run build\` first`);
+  }
+}
+
+/**
+ * The user's pinned background model, if any — the one setting beyond provider
+ * and model a run inherits. Without it every background call (compaction
+ * summaries, spec probes, audits) ran on the 30B chat model the user's install
+ * never uses for them, timed out at 30s, and compaction fell back to eliding
+ * history the model then re-read in a loop (muse, grade-school, 2026-09-17).
+ */
+function backgroundModelSetting() {
+  try {
+    const pinned = JSON.parse(readFileSync(join(getLaxDir(), "settings.json"), "utf8")).localClassifierModel;
+    return typeof pinned === "string" && pinned ? { localClassifierModel: pinned } : {};
+  } catch {
+    return {};
   }
 }
 
@@ -77,7 +94,7 @@ export async function startIsolatedServer({ repoRoot, provider, model, fixturePo
   mkdirSync(dataDir, { recursive: true });
   const seed = seedProbeProvider(dataDir, provider);
   if (seed.unavailable) throw new Error(`${provider}: ${seed.unavailable}`);
-  writeFileSync(join(dataDir, "settings.json"), JSON.stringify({ provider, model }));
+  writeFileSync(join(dataDir, "settings.json"), JSON.stringify({ provider, model, ...backgroundModelSetting() }));
   if (toolPolicyRules.length) {
     // "deny" is the product default (src/tool-policy/default-rules.ts).
     writeFileSync(join(dataDir, "tool-policy.json"), JSON.stringify({ defaultDecision: "deny", rules: toolPolicyRules }));

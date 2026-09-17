@@ -40,10 +40,18 @@ export async function activeModel() {
 }
 
 /** Drive one chat op to completion, streaming SSE. Returns the final assistant
- *  text, the tool names used, any error, and elapsed seconds. */
+ *  text, the tool names used, any error, errors the turn recovered from, and
+ *  elapsed seconds.
+ *
+ *  An error the model kept working after is not the turn's error: the server
+ *  emits a recovery notice ("context exceeded — compacting and retrying") as an
+ *  error event, and recording it as `err` made a completed attempt read as one
+ *  the harness killed (two-bucket, 2026-09-17). */
 export async function driveChat(message, sessionId, timeoutMs, target = LIVE) {
   let text = "", err = "";
   const tools = [];
+  const recovered = [];
+  const resumed = () => { if (err) { recovered.push(err); err = ""; } };
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), timeoutMs);
   const t0 = Date.now();
@@ -62,9 +70,10 @@ export async function driveChat(message, sessionId, timeoutMs, target = LIVE) {
           if (!payload) continue;
           let ev; try { ev = JSON.parse(payload); } catch { continue; }
           if (ev.type === "stream") {
+            if (ev.delta || ev.text) resumed();
             if (typeof ev.delta === "string") text += ev.delta;
             else if (typeof ev.text === "string") text = ev.text;
-          } else if (ev.type === "tool_start" && ev.toolName) tools.push(ev.toolName);
+          } else if (ev.type === "tool_start" && ev.toolName) { resumed(); tools.push(ev.toolName); }
           else if (ev.type === "error" && ev.message) err = ev.message;
         }
       }
@@ -79,7 +88,7 @@ export async function driveChat(message, sessionId, timeoutMs, target = LIVE) {
   // "0 tools, stub-untouched"). Stop it and wait until it is really gone.
   const leftover = await settleTurn(sessionId, target);
   if (leftover) err = `${err ? err + "; " : ""}${leftover}`;
-  return { text: text.trim(), tools, err, secs };
+  return { text: text.trim(), tools, err, recovered, secs };
 }
 
 /** Stop any turn still running for `sessionId` and wait until the server says

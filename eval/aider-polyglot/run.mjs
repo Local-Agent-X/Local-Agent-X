@@ -148,6 +148,7 @@ async function runExercise(slug, target, args, evidenceDir) {
       text: last.text,
       tools: [...first.tools, ...(second?.tools ?? [])],
       err: [first.err, second?.err].filter(Boolean).join("; "),
+      recovered: [...(first.recovered ?? []), ...(second?.recovered ?? [])],
       secs: Number((first.secs + (second?.secs ?? 0)).toFixed(1)),
     };
     const died = server.exitedOnItsOwn();
@@ -177,6 +178,7 @@ async function runExercise(slug, target, args, evidenceDir) {
 
     const notes = [];
     if (drive.err) notes.push(`err=${drive.err}`);
+    if (drive.recovered.length) notes.push(`recovered-from=${drive.recovered.length}`);
     if (harness) notes.push(`HARNESS-ERROR: ${harness}`);
     // Web access lets a model fetch the withheld tests; a PASS that did is not
     // a clean measurement. Flagged, not failed — the model may have used it
@@ -194,7 +196,7 @@ async function runExercise(slug, target, args, evidenceDir) {
     return {
       row: {
         slug, result, pass: score.ok, passAt1, attempts: second ? 2 : 1, secs: drive.secs, tools: drive.tools,
-        changed, falseDone, err: drive.err, harness,
+        changed, falseDone, err: drive.err, recovered: drive.recovered, harness,
         reply: drive.text.slice(0, 1200),
         testOutput: score.ok ? "" : (score.results.find((r) => !r.ok)?.output || "").slice(-2000),
         kept: keep ? server.roots : undefined,

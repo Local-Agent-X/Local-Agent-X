@@ -175,13 +175,17 @@ export async function compactHistory(
   // PROBE_INTERVAL-th call (a recovery probe) and when forced.
   const forced = consumeForcedCompaction(opId);
   const gate = breakerGate(opId, forced);
-  if (gate.skip) return { messages, compacted: false };
   const usageAnchor = usage ? locateAnchor(messages, usage) : null;
   if (usage && !usageAnchor) {
     logger.debug(`anchor at turn ${usage.turnIdx} not mappable onto the current view; sizing by pure estimate`);
   }
   const status = getContextStatus(toChatParams(messages), model, usageAnchor ?? undefined, resolveAnthropicTransport(), baselineTokens);
   if (!forced && !status.shouldCompact) return { messages, compacted: false };
+  // A tripped breaker skips the SUMMARIZER, never the fit. Past the critical
+  // band the view must shrink with or without a summary; returning it whole
+  // guaranteed a refused send and a forced retry every time the breaker was
+  // open (two-bucket, 2026-09-17).
+  if (gate.skip && !status.forceCompact) return { messages, compacted: false };
 
   // Keep tiers (incl. the forced/overflow aggressive minimum) are policy —
   // context-manager/compaction-policy.ts owns the values.
@@ -207,10 +211,10 @@ export async function compactHistory(
   if (forced && opId) clearSummaryCache(opId);
   const reuse = opId && !forced ? reusableSummary(opId, messages, splitIdx) : null;
   const summarizedCount = reuse ? reuse.covered : splitIdx;
-  const head = messages.slice(0, summarizedCount);
-  const recent = messages.slice(summarizedCount);
+  let head = messages.slice(0, summarizedCount);
+  let recent = messages.slice(summarizedCount);
 
-  const summary = reuse ? reuse.summary : await summarizeOldMessages(toChatParams(head));
+  const summary = reuse ? reuse.summary : gate.skip ? null : await summarizeOldMessages(toChatParams(head));
   // The view MUST shrink when the request cannot fit as-is: the provider (or
   // the adapter's own preflight) already refused it, or the estimate is past
   // the critical band.
@@ -230,8 +234,18 @@ export async function compactHistory(
   // exclusion reads the env at the counting site (same check classify-with-llm.ts
   // makes): disabled-by-switch is intentional, not a failed attempt.
   if (!summary) {
-    if (opId && process.env.LAX_LLM_COMPACTION !== "0") recordBreakerFailure(opId);
+    if (opId && !gate.skip && process.env.LAX_LLM_COMPACTION !== "0") recordBreakerFailure(opId);
     if (!mustFit) return { messages, compacted: false };
+    // The keep tier counts turns, not tokens: a tail of large tool results
+    // kept by count can still overflow, and the adapter then refuses the send
+    // anyway (two-bucket, 2026-09-17: 65,660 tokens after eliding 154 rows).
+    // Drop whole turns until the kept tail sits under the compaction band.
+    for (let k = keepLast - 1; k >= 1 && getContextStatus(toChatParams(recent), model, undefined, resolveAnthropicTransport(), baselineTokens).shouldCompact; k--) {
+      const split = safeSplitIndex(messages, k);
+      if (split <= head.length) continue;
+      head = messages.slice(0, split);
+      recent = messages.slice(split);
+    }
     logger.warn(`summarizer unavailable at ${status.percentage}% of the window — eliding ${head.length} older messages so the op can continue`);
   } else if (opId) {
     // Successful compaction resets the consecutive-failure count. When the op

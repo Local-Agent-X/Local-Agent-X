@@ -238,4 +238,38 @@ describe("compactHistory — circuit breaker cool-down probes", () => {
     await compactHistory(compactable(), MODEL, null, opId);
     expect(mockSummarize).toHaveBeenCalledTimes(4);
   });
+
+  it("while tripped, a view past the critical band is still elided, with no summarize attempt", async () => {
+    // two-bucket, 2026-09-17: the open breaker returned the whole over-window
+    // view, the adapter refused it, and every such turn paid a forced retry.
+    const opId = "op-breaker-critical";
+    await trip(opId);
+    mockSummarize.mockClear();
+    mockStatus.mockReturnValue({ ...status(97, true), level: "critical" as const, forceCompact: true });
+
+    const out = await compactHistory(compactable(), MODEL, null, opId);
+    expect(mockSummarize).not.toHaveBeenCalled();
+    expect(out.compacted).toBe(true);
+    expect(out.messages.length).toBeLessThan(compactable().length);
+    expect(JSON.stringify(out.messages[0].content)).toContain("OMITTED to fit the context window");
+    // Not an attempt: the failure count is unchanged.
+    expect(compactionBreakerState(opId)?.failures).toBe(3);
+  });
+
+  it("keeps dropping turns until the elided view is under the compaction band", async () => {
+    const opId = "op-elide-fit";
+    mockSummarize.mockResolvedValue(null);
+    // The first check (the full view) is critical; each re-check of the kept
+    // tail stays over the band until only the last turn remains.
+    const rows = [
+      u("u1", "q1"), a("a1", "r1"), u("u2", "q2"), a("a2", "r2"), u("u3", "q3"), a("a3", "r3"),
+      u("u4", "q4"), a("a4", "r4"), u("u5", "q5"), a("a5", "r5"), u("u6", "q6"), a("a6", "r6"),
+    ];
+    mockStatus.mockImplementation((msgs) => (msgs.length > 2
+      ? { ...status(97, true), level: "critical" as const, forceCompact: true }
+      : status(40, false)));
+    const out = await compactHistory(rows, MODEL, null, opId);
+    expect(out.compacted).toBe(true);
+    expect(out.messages.map((m) => m.messageId)).toEqual(["u6", "a6"]);
+  });
 });

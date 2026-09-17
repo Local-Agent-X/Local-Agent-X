@@ -36,6 +36,7 @@ with justification). Mission: `docs/agent-prompts/local-model-harness.md`.
 |----------|-----|-------------------|
 | grade-school | 14 | `added()` returns names; retry answered "already verified" without editing |
 | grade-school | 15 | `roster()` returns a dict grouped by grade |
+| grade-school | 18 | 189 tools, one write (not the stub): searched for the hidden tests for 36min across both attempts, never implemented. Harness clean: zero stalls, no summarizer/classifier failures |
 | grade-school | 16 | 70 turns searching for the hidden tests; never edited the stub |
 | wordy | 15, 16 | swaps "syntax error" / "unknown operation"; retry explains instead of fixing |
 | bowling | 16 | Turns 42–86: no edits; re-read files and re-ran its own two failing checks until loop detection ended it |

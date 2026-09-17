@@ -17,11 +17,19 @@ const PACK_PRIORITY = 10;
  *  drift. The escalation sentence is load-bearing: a live agent that hit a
  *  FALSE-POSITIVE block read "adjust the call" alone as license to work
  *  around the block silently (hand-patching build artifacts) instead of
- *  surfacing it to the user. */
+ *  surfacing it to the user.
+ *
+ *  The escalation must not override a path the block ITSELF names. The reason
+ *  line is rendered after this one, and the inline-eval block's reason is
+ *  "write a script file and run that instead" — the sanctioned route for a
+ *  coding task. Read top-down, an unconditional "do not look for a workaround —
+ *  stop" told the model to abandon the task before it reached that line. A
+ *  named alternative is not a workaround; an improvised one still is. */
 export function securityDenyRecovery(): string {
   return (
     "Adjust the call to stay within the workspace and security boundaries — retrying the same args will be denied again. " +
-    "If this block is stopping a legitimate task, do not look for a workaround — stop and tell the user exactly what was blocked and why you needed it, so they can adjust settings or approve another path."
+    "If the block reason below names a safe alternative, use exactly that. " +
+    "Otherwise, if this block is stopping a legitimate task, do not look for a workaround — stop and tell the user exactly what was blocked and why you needed it, so they can adjust settings or approve another path."
   );
 }
 

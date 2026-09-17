@@ -80,6 +80,17 @@ describe("securityDenyRecovery — one canonical recovery for both security-bloc
     expect(msg).toMatch(/adjust settings or approve another path/i);
   });
 
+  it("defers to an alternative the block itself names, before telling the model to stop", () => {
+    // The inline-eval block's reason is "write a script file and run that
+    // instead". An unconditional "stop" ahead of it told the model to abandon a
+    // coding task whose sanctioned path was one line further down.
+    const msg = securityDenyRecovery();
+    const named = msg.search(/names a safe alternative, use exactly that/i);
+    const stop = msg.search(/do not look for a workaround/i);
+    expect(named).toBeGreaterThanOrEqual(0);
+    expect(named, "the named-alternative rule must come first").toBeLessThan(stop);
+  });
+
   it("never suggests the failure is transient", () => {
     const msg = securityDenyRecovery();
     expect(msg).toMatch(/denied again/i);

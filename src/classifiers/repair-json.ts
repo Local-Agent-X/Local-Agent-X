@@ -33,13 +33,22 @@ const PY_LITERALS = /\b(True|False|None)\b(?=\s*[,}\]])/g;
 const PY_MAP: Record<string, string> = { True: "true", False: "false", None: "null" };
 
 /**
- * The text with the repairs applied, or null when nothing changed (so the
- * caller does not re-parse the same string).
+ * Candidate repairs to try, in order, after a plain parse has already failed.
+ * Each is shape-only and every one is validated by the caller's parse, so a
+ * wrong guess costs nothing. Empty when nothing would change.
  */
-export function repairJsonText(raw: string): string | null {
-  const repaired = escapeControlsInStrings(raw)
+export function repairJsonCandidates(raw: string): string[] {
+  const base = escapeControlsInStrings(raw)
     .replace(SMART_QUOTES, '"')
     .replace(TRAILING_COMMA, "$1")
     .replace(PY_LITERALS, (m) => PY_MAP[m]);
-  return repaired === raw ? null : repaired;
+  const candidates = base === raw ? [] : [base];
+  // Over-escaped quotes: a model quoting code inside a JSON string writes two
+  // or more backslashes before a quote where JSON wants one (muse's spec
+  // audit, 2026-09-17 — it had named the exact unmet requirements and the
+  // verdict was discarded twice). Tried SECOND, because a doubled backslash
+  // before a closing quote is legal JSON on its own.
+  const unescaped = base.replace(/\\{2,}"/g, '\\"');
+  if (unescaped !== base) candidates.push(unescaped);
+  return candidates;
 }

@@ -86,30 +86,63 @@ const SESSION_REPEAT_SKIP_TOOLS = new Set([
   ...STATEFUL_LIVE_STATE_TOOLS,
 ]);
 
+type WireCall = { id: string; function: { name: string; arguments: string } };
+
+// Could this call have changed what a later identical call would return?
+// Judged by the same predicate plan mode enforces; anything not provably
+// read-only — bash included, since a shell can change anything — counts.
+function mayChangeState(call: WireCall): boolean {
+  let args: Record<string, unknown> = {};
+  try { args = JSON.parse(call.function.arguments) as Record<string, unknown>; } catch { /* treat as no args */ }
+  return !isReadOnlyCall(call.function.name, args);
+}
+
 // Scan back through prior assistant tool_calls for an exact match (name +
 // args). Catches "I'm stuck mid-task, let me redo the last thing I succeeded
 // at" hallucinations without hard-blocking legitimate repeats (the hint lets
 // the model realize what it did and pivot).
-function findPriorIdenticalResult(
-  tc: { name: string; arguments: string },
+//
+// A replay is only honest if nothing since could have changed the answer. It
+// used to ignore everything in between, so "run the tests → edit the code →
+// run the tests" got the FIRST run's output back, and the model concluded its
+// fix had not worked. Same for "read → edit → read". Any call after the match
+// that is not provably read-only now voids the replay; the tool re-executes.
+export function findPriorIdenticalResult(
+  tc: { id?: string; name: string; arguments: string },
   priorMessages: ChatCompletionMessageParam[],
 ): { result: string; turnIndex: number } | null {
   if (!priorMessages || priorMessages.length === 0) return null;
+  const resultOf = (id: string, from: number): string | null => {
+    for (let j = from; j < priorMessages.length; j++) {
+      const r = priorMessages[j] as unknown as { role: string; tool_call_id?: string; content?: unknown };
+      if (r.role === "tool" && r.tool_call_id === id && typeof r.content === "string") return r.content;
+    }
+    return null;
+  };
+  // Newest first. `changedSince`: some call NEWER than the one being examined
+  // may have changed state.
+  let changedSince = false;
   for (let i = priorMessages.length - 1; i >= 0; i--) {
     const m = priorMessages[i];
     if (m.role !== "assistant") continue;
-    const tcs = (m as unknown as { tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }> }).tool_calls;
+    const tcs = (m as unknown as { tool_calls?: WireCall[] }).tool_calls;
     if (!tcs || !Array.isArray(tcs)) continue;
-    const match = tcs.find(t => t.function.name === tc.name && t.function.arguments === tc.arguments);
-    if (!match) continue;
-    for (let j = i + 1; j < priorMessages.length; j++) {
-      const r = priorMessages[j];
-      if (r.role !== "tool") continue;
-      const rid = (r as unknown as { tool_call_id?: string }).tool_call_id;
-      if (rid === match.id && typeof r.content === "string") {
-        if (/(^|\n)\[error\](\r?\n|$)/i.test(r.content)) return null;
-        return { result: r.content, turnIndex: i };
+    // The persisted batch can already hold the CURRENT call; only the calls
+    // before it in that batch have run.
+    const self = tc.id ? tcs.findIndex((t) => t.id === tc.id) : -1;
+    const ran = self >= 0 ? tcs.slice(0, self) : tcs;
+    for (let k = ran.length - 1; k >= 0; k--) {
+      const call = ran[k];
+      const identical = call.function.name === tc.name && call.function.arguments === tc.arguments;
+      if (identical) {
+        const result = resultOf(call.id, i + 1);
+        if (result !== null) {
+          if (changedSince) return null;
+          if (/(^|\n)\[error\](\r?\n|$)/i.test(result)) return null;
+          return { result, turnIndex: i };
+        }
       }
+      if (mayChangeState(call)) changedSince = true;
     }
   }
   return null;

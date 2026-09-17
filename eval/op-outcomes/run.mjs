@@ -133,7 +133,7 @@ async function runCase(provider, caseDef, fixture) {
     result.secs = Math.round((Date.now() - started) / 1000);
     return result;
   }
-  result.workspace = server.root;
+  result.workspace = server.workspace;
   try {
     const fixtureMark = fixture.requests.length;
     for (const step of caseDef.setup ?? []) await SETUP[step]({ server, workspace: server.workspace, deployToken: DEPLOY_TOKEN });

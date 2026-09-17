@@ -63,9 +63,14 @@ function freePort() {
  */
 export async function startIsolatedServer({ repoRoot, provider, model, fixturePort, logLines = 200,
   seedWorkspace = join(repoRoot, "eval", "op-outcomes", "fixtures", "workspace"), toolPolicyRules = [] }) {
+  // Two unrelated temp dirs. With the data dir beside the workspace, a model
+  // listing the workspace's parent walked straight into the server's own
+  // sessions and operations (muse, grade-school, 2026-09-17) — no real
+  // install puts ~/.lax next to the user's project.
   const root = mkdtempSync(join(tmpdir(), "lax-eval-"));
   const dataDir = join(root, "data");
-  const workspace = join(root, "workspace");
+  const workspaceRoot = mkdtempSync(join(tmpdir(), "lax-ws-"));
+  const workspace = join(workspaceRoot, "workspace");
   if (seedWorkspace) cpSync(seedWorkspace, workspace, { recursive: true });
   else mkdirSync(workspace, { recursive: true });
 
@@ -133,7 +138,7 @@ export async function startIsolatedServer({ repoRoot, provider, model, fixturePo
   const baseUrl = `http://127.0.0.1:${port}`;
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
   const server = {
-    root, dataDir, workspace, baseUrl, headers, logTail: () => tail.join("\n"),
+    root, roots: [root, workspaceRoot], dataDir, workspace, baseUrl, headers, logTail: () => tail.join("\n"),
     /** Non-null once the server process is gone. A server that ends ITSELF
      *  mid-run (the probe self-destruct did exactly this for months) makes
      *  every later observation meaningless — the caller must not grade it. */
@@ -152,7 +157,9 @@ export async function startIsolatedServer({ repoRoot, provider, model, fixturePo
       }
     },
     cleanup() {
-      try { rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 }); } catch { /* temp dir; best effort */ }
+      for (const dir of [root, workspaceRoot]) {
+        try { rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 }); } catch { /* temp dir; best effort */ }
+      }
     },
   };
 

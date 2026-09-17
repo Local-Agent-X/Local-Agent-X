@@ -194,7 +194,7 @@ async function runExercise(slug, target, args, evidenceDir) {
         changed, falseDone, err: drive.err, harness,
         reply: drive.text.slice(0, 1200),
         testOutput: score.ok ? "" : (score.results.find((r) => !r.ok)?.output || "").slice(-2000),
-        kept: keep ? server.root : undefined,
+        kept: keep ? server.roots : undefined,
         evidence: evidenceDir,
         serverLog: result === "HARNESS" ? server.logTail() : undefined,
       },

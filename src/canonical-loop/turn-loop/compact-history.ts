@@ -211,20 +211,32 @@ export async function compactHistory(
   const recent = messages.slice(summarizedCount);
 
   const summary = reuse ? reuse.summary : await summarizeOldMessages(toChatParams(head));
-  // Disabled (LAX_LLM_COMPACTION), timed out, or failed: keep the full history
-  // rather than silently truncating. An over-window call surfaces as a provider
-  // error, which is honest; a silent drop corrupts the conversation.
+  // The view MUST shrink when the request cannot fit as-is: the provider (or
+  // the adapter's own preflight) already refused it, or the estimate is past
+  // the critical band.
+  const mustFit = forced || status.forceCompact;
+  // Disabled (LAX_LLM_COMPACTION), timed out, or failed.
+  //
+  // Short of mustFit, keep the full history — it still fits, and a summary can
+  // be tried next turn. At mustFit, keeping it is not "honest", it is fatal:
+  // the retry rebuilds the identical view, is refused again, and the op dies
+  // after OVERFLOW_RETRY_CAP attempts with the user's work half done. That is
+  // how a failing SUMMARIZER killed a coding task (op-outcomes, muse,
+  // 2026-09-16). So the head is elided instead — announced, counted, and
+  // pointed at the recall tool below, which is what separates this from the
+  // silent drop the summary path exists to avoid.
   //
   // summarizeOldMessages can't tell us WHY it returned null, so the kill-switch
   // exclusion reads the env at the counting site (same check classify-with-llm.ts
   // makes): disabled-by-switch is intentional, not a failed attempt.
   if (!summary) {
     if (opId && process.env.LAX_LLM_COMPACTION !== "0") recordBreakerFailure(opId);
-    return { messages, compacted: false };
-  }
-  // Successful compaction resets the consecutive-failure count. When the op was
-  // tripped this is a probe recovering — surface that once at info.
-  if (opId) {
+    if (!mustFit) return { messages, compacted: false };
+    logger.warn(`summarizer unavailable at ${status.percentage}% of the window — eliding ${head.length} older messages so the op can continue`);
+  } else if (opId) {
+    // Successful compaction resets the consecutive-failure count. When the op
+    // was tripped this is a probe recovering — surface that once at info. An
+    // elision is never cached: the next turn should try to summarize again.
     recordBreakerSuccess(opId, gate.tripped);
     if (!reuse) storeSummary(opId, messages, summarizedCount, summary);
   }
@@ -239,11 +251,16 @@ export async function compactHistory(
   const hint = range && sessionBacked
     ? `[Full original messages retrievable via the recall tool with cursor="${range.firstId}:${range.lastId}"]\n`
     : "";
-  const block =
-    `[Earlier conversation auto-summarized to save context — ${head.length} messages${rangeTag}]\n` +
-    `${summary}\n` +
-    hint +
-    `[End of summary. Your most recent messages follow.]`;
+  const block = summary
+    ? `[Earlier conversation auto-summarized to save context — ${head.length} messages${rangeTag}]\n` +
+      `${summary}\n` +
+      hint +
+      `[End of summary. Your most recent messages follow.]`
+    : `[Earlier conversation OMITTED to fit the context window — ${head.length} messages${rangeTag}. ` +
+      `No summary was available; do not assume what the omitted messages said.]\n` +
+      originalRequestLine(head) +
+      (hint || `[They cannot be retrieved in this op.]\n`) +
+      `[Your most recent messages follow.]`;
 
   // Fold the summary into a USER boundary row (no extra message → no adjacent-
   // user rejection, mirrors the situational-awareness digest). But when the tail
@@ -292,6 +309,23 @@ function recallRange(head: CanonicalMessage[]): { firstId: string; lastId: strin
   let last = head.length - 1;
   while (last > first && !survives(head[last])) last--;
   return { firstId: head[first].messageId, lastId: head[last].messageId };
+}
+
+/** Most of the original request an elision keeps verbatim. */
+const ORIGINAL_REQUEST_MAX_CHARS = 4_000;
+
+// An elided head can hold the op's ONLY user row — a long single-request task
+// is one user message and then tool calls — and a model that loses it no
+// longer knows what it was asked. A summary would have carried it; an elision
+// carries it verbatim instead.
+function originalRequestLine(head: CanonicalMessage[]): string {
+  const first = head.find((m) => m.role === "user");
+  const text = first ? extractText(first.content).trim() : "";
+  if (!text) return "";
+  const kept = text.length > ORIGINAL_REQUEST_MAX_CHARS
+    ? `${text.slice(0, ORIGINAL_REQUEST_MAX_CHARS)}… [truncated]`
+    : text;
+  return `[The original request, verbatim:]\n${kept}\n`;
 }
 
 function hasImages(content: unknown): boolean {

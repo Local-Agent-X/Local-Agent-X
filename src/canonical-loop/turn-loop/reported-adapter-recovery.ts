@@ -1,5 +1,6 @@
 import type { Op } from "../../ops/types.js";
 import { classify } from "../../errors/classifier.js";
+import { CONTEXT_WINDOW_EXCEEDED_CODE } from "../adapter-contract.js";
 import { clearOverflowAttempts, recoverContextOverflow } from "./adapter-throw-recovery.js";
 import type { DriveTurnResult } from "./types.js";
 
@@ -15,7 +16,11 @@ export function recoverReportedAdapterError(
   turnIdx: number,
   activity: { streamed: boolean; finalized: number; toolCalls: number; observedTools: number },
 ): DriveTurnResult | undefined {
-  if (error && classify(error.message).recovery === "compress") {
+  // The adapter's own measured refusal is identified by its code; a provider's
+  // rejection only by its wording. Both are the same overflow.
+  const overWindow = error !== null
+    && (error.code === CONTEXT_WINDOW_EXCEEDED_CODE || classify(error.message).recovery === "compress");
+  if (error && overWindow) {
     const recovered = recoverContextOverflow(op, error.message, turnIdx);
     if (recovered) return recovered;
   }

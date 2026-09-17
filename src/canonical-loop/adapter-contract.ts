@@ -135,6 +135,19 @@ export type AdapterReport =
   | { kind: "message_finalized"; message: CanonicalMessage }
   | { kind: "error"; code: string; message: string; retryable: boolean };
 
+/**
+ * Error `code` for a request an adapter measured as too big for the model's
+ * window and refused to send. The loop answers it with forced compaction and a
+ * retry — the same recovery a provider's own over-window rejection gets.
+ *
+ * It must be recognized by CODE. Recovery used to be routed only by matching
+ * the provider's error prose, and the adapter's own refusal ("Request needs
+ * ~65,721 tokens but … is running with a 65,536-token context window") matched
+ * none of those patterns, so the one component that knew the overflow exactly
+ * ended the op instead of compacting it (op-outcomes, muse, 2026-09-16).
+ */
+export const CONTEXT_WINDOW_EXCEEDED_CODE = "context_window_exceeded";
+
 export interface TurnResult {
   providerState: ProviderStateEnvelope;
   terminalReason?: "done" | "error";

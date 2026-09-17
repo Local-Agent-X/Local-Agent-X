@@ -29,6 +29,7 @@
  * Helpers split into ./openai-compat/* — this file is the adapter class.
  */
 import type { Adapter, AdapterReport, TurnInput, TurnResult } from "../adapter-contract.js";
+import { CONTEXT_WINDOW_EXCEEDED_CODE } from "../adapter-contract.js";
 import type { CanonicalMessage, ProviderStateEnvelope } from "../contract-types.js";
 import type { ProviderRequest } from "../../providers/adapter/types.js";
 import { markNoToolSupport } from "../../providers/types.js";
@@ -164,9 +165,9 @@ export class OpenAICompatAdapter implements Adapter {
     // numbers; a floor window is a placeholder and never refuses.
     const preflight = assessOpenAiCompatPreflight({ model, req });
     if (preflight.kind === "refuse") {
-      report({ kind: "error", code: "context_window_exceeded", message: preflight.message, retryable: false });
+      report({ kind: "error", code: CONTEXT_WINDOW_EXCEEDED_CODE, message: preflight.message, retryable: false });
       return {
-        providerState: this.buildProviderState(input, { preflight: "context_window_exceeded" }),
+        providerState: this.buildProviderState(input, { preflight: CONTEXT_WINDOW_EXCEEDED_CODE }),
         terminalReason: "error",
       };
     }

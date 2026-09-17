@@ -82,6 +82,7 @@ import type { Op } from "../../ops/types.js";
 import { _resetMiddlewareStates } from "../middlewares/state.js";
 import { MISSING_TOOL_RESULT_TEXT } from "./orphan-tool-results.js";
 import { appendNudgeAsUserMessage } from "./nudges.js";
+import { REASONING_ONLY_NUDGE } from "./empty-turn-termination.js";
 import { createLogger } from "../../logger.js";
 
 const op = { id: "op-test", type: "chat_turn", ownerId: "local-user" } as unknown as Op;
@@ -1451,14 +1452,26 @@ describe("decideTurnOutcome — interactive fully-empty turns terminate (no maxT
     expect(r2.terminalReason).toBeNull();
   });
 
-  it("(c) an interactive REASONING-ONLY empty turn is NOT terminated (the model was thinking)", async () => {
-    // No text, no tools, but reasoning streamed → excluded from 'fully empty'.
-    // Repeated so a missing reasoning guard would surface as a bounded terminate.
-    const r1 = await decideTurnOutcome(empty({ hasReasoning: true, modelSignaledDone: false }));
-    const r2 = await decideTurnOutcome(empty({ hasReasoning: true, modelSignaledDone: false }));
+  it("(c) a REASONING-ONLY turn is nudged to act once, then ends honestly", async () => {
+    // The model thought and stopped with no answer and no tool call. Re-driving
+    // the same input repeats the same turn, so the first one gets a nudge to act
+    // on its plan (muse, grep, 2026-09-17: "Let's list workspace." then nothing).
+    const r1 = await decideTurnOutcome(empty({ hasReasoning: true, modelSignaledDone: true }));
     expect(r1.terminalReason).toBeNull();
-    expect(r2.terminalReason).toBeNull();
-    expect(assistantTexts(r2)).toEqual([]);
+    expect(assistantTexts(r1)).toEqual([]);
+    expect(appendNudgeAsUserMessage).toHaveBeenCalledWith(
+      iop.id, 1, REASONING_ONLY_NUDGE, { name: "reasoning-only", reason: "reasoning-only", outcome: "nudge" },
+    );
+    // A second consecutive reasoning-only turn is not steerable: end, honestly.
+    const r2 = await decideTurnOutcome(empty({ hasReasoning: true, modelSignaledDone: false }));
+    expect(r2.terminalReason).toBe("done");
+    expect(assistantTexts(r2).join(" ")).toMatch(/wasn't able to produce a response/);
+  });
+
+  it("(c2) a reasoning-only turn with no nudge budget left ends honestly at once", async () => {
+    vi.mocked(appendNudgeAsUserMessage).mockReturnValueOnce(false);
+    const r = await decideTurnOutcome(empty({ hasReasoning: true, modelSignaledDone: false }));
+    expect(r.terminalReason).toBe("done");
   });
 
   it("(d) an interactive turn WITH text still terminates as before", async () => {

@@ -17,6 +17,7 @@ import { publishStreamChunk } from "../event-emitter.js";
 import { getMiddlewareState } from "../middlewares/state.js";
 import type { Op } from "../../ops/types.js";
 import type { ToolCall } from "../contract-types.js";
+import { appendNudgeAsUserMessage } from "./nudges.js";
 
 /**
  * Per-op key for the interactive fully-empty-turn counter, held in the same
@@ -28,8 +29,15 @@ import type { ToolCall } from "../contract-types.js";
  */
 const INTERACTIVE_EMPTY_TURN_KEY = "interactive-empty-turn-counter";
 
+/** Consecutive reasoning-only turns (thinking, then no text and no tool call). */
+const REASONING_ONLY_TURN_KEY = "interactive-reasoning-only-counter";
+const REASONING_ONLY_LIMIT = 2;
+export const REASONING_ONLY_NUDGE =
+  "Your last turn ended after thinking, with no answer and no tool call. Continue from your plan: make the tool call you intended, or give your answer.";
+
 export interface EmptyInteractiveTurnInput {
   op: Op;
+  turnIdx: number;
   assistantText: string;
   toolCalls: ToolCall[];
   hasReasoning: boolean;
@@ -79,9 +87,26 @@ export function evaluateEmptyInteractiveTurn(
   let terminalReason = in_.terminalReason;
   let emptyInteractiveTerminal: { signaledDone: boolean } | null = null;
   if (op.lane === "interactive" && !middlewareAborted && !middlewareSuspended) {
-    const fullyEmpty =
-      assistantText.trim().length === 0 && toolCalls.length === 0 && !hasReasoning;
+    const noOutput = assistantText.trim().length === 0 && toolCalls.length === 0;
+    const fullyEmpty = noOutput && !hasReasoning;
     const emptyState = getMiddlewareState(op.id, INTERACTIVE_EMPTY_TURN_KEY, () => ({ consecutive: 0 }));
+    const thinkingState = getMiddlewareState(op.id, REASONING_ONLY_TURN_KEY, () => ({ consecutive: 0 }));
+    if (!(noOutput && hasReasoning)) thinkingState.consecutive = 0;
+    if (noOutput && hasReasoning && terminalReason === null) {
+      // The model thought and stopped without an answer or a tool call. Ask
+      // it to act on its plan; re-driving the same input would repeat the
+      // same turn. Bounded: a second consecutive one, or a spent nudge
+      // budget, ends the turn honestly.
+      thinkingState.consecutive += 1;
+      const nudged = thinkingState.consecutive < REASONING_ONLY_LIMIT
+        && appendNudgeAsUserMessage(op.id, in_.turnIdx + 1, REASONING_ONLY_NUDGE,
+          { name: "reasoning-only", reason: "reasoning-only", outcome: "nudge" });
+      if (!nudged) {
+        terminalReason = "done";
+        thinkingState.consecutive = 0;
+        emptyInteractiveTerminal = { signaledDone: false };
+      }
+    }
     if (!fullyEmpty) {
       emptyState.consecutive = 0;
     } else if (terminalReason === null) {

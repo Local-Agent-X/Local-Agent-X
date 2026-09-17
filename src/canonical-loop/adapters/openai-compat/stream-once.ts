@@ -148,12 +148,19 @@ export async function streamOnce(
     report({ kind: "error", code: "transport_exception", message, retryable: false });
   }
   // Reasoning-only fallback. The model reasoned the entire output
-  // budget away and never emitted `content` — without this, the user
-  // sees an empty bubble. Surface the reasoning as the assistant text
-  // so the turn is at least visible. Skip when the turn produced tool
-  // calls (then text is optional) or had a transport error (the error
-  // event already surfaced).
+  // budget away (finish_reason "length") and never emitted `content` —
+  // without this, the user sees an empty bubble. Surface the reasoning as
+  // the assistant text so the turn is at least visible. Skip when the turn
+  // produced tool calls (then text is optional) or had a transport error
+  // (the error event already surfaced).
+  //
+  // ONLY on a length stop. A model that planned and then stopped ("We need to
+  // find the stub file. Let's list workspace.") had its plan committed as the
+  // answer, and the turn ended as done without the tool call it described
+  // (muse, grep, 2026-09-17). With no text, the turn loop sees a
+  // reasoning-only turn and re-drives it (empty-turn-termination.ts).
   if (
+    out.providerStop === "length" &&
     out.assembledText.length === 0 &&
     out.assembledThinking.length > 0 &&
     out.pendingToolCalls.length === 0 &&

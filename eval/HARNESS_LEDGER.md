@@ -27,6 +27,7 @@ with justification). Mission: `docs/agent-prompts/local-model-harness.md`.
 | H-021 | Periodic 5.7→8.9s event-loop blocks every ~66s in a long op (phone-number, run 16), growing with op length | HARNESS | Unknown: post-stall profiles show only idle time; op-store reads on this op take 17ms | Diagnostics: rolling CPU profile covering the stall (LAX_LOOP_SENTINEL_ROLLING, on in eval servers); root cause OPEN | — |
 | H-022 | poker: 56 `recall` calls, stub never edited | HARNESS? | Compaction's omitted/summary block advertises recall cursors; with the summarizer failing (213% of window) the model paged old history back in instead of working | OPEN — judge after H-016 (working summaries) | — |
 | H-023 | poker FAIL scored as MODEL despite 15s stalls | EVAL | Stall check ran only for timed-out rows | af06ec24 | — |
+| H-024 | grep attempt 1 ended in 13s: the reply was muse's plan ("Let's list workspace."), no tool call | HARNESS | openai-compat surfaced reasoning as the answer on ANY stop, so decide-outcome saw text + end_turn and ended the turn; the reasoning-only re-drive path never engaged (and would have re-driven unbounded with no nudge) | Reasoning surfaces as the answer only on a length stop; a reasoning-only interactive turn gets one nudge to act on its plan, then ends honestly | tests |
 | H-016 | Summaries fail; audits/probes return nothing (~75s/op) | HARNESS | Review calls run on the pinned 3B model (loops) or on muse with budgets not sized for it | OPEN — Phase 2 review/routing split | — |
 
 ## Documented MODEL failures (muse-glimmer:30b)

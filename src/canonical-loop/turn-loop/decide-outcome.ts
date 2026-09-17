@@ -226,7 +226,7 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
   // re-drive, then an honest terminal whose MESSAGE is deferred to after the
   // continuation guard + gate chain settle so a re-opened turn never shows it.
   const emptyEval = evaluateEmptyInteractiveTurn({
-    op, assistantText, toolCalls, hasReasoning,
+    op, turnIdx, assistantText, toolCalls, hasReasoning,
     terminalReason, middlewareAborted, middlewareSuspended, modelSignaledDone,
   });
   terminalReason = emptyEval.terminalReason;

@@ -273,3 +273,24 @@ describe("window-aware cap threading (runTurn → ProviderRequest)", () => {
     expect(sent.maxTokens!).toBeGreaterThan(4_000);
   });
 });
+
+describe("streamOnce reasoning-only fallback", () => {
+  const thinkingThen = (stopReason: string) => async function* () {
+    yield { type: "thinking" as const, delta: "We need to find the stub file. Let's list the workspace." };
+    yield { type: "done" as const, stopReason };
+  };
+
+  it("does not turn a plan into the answer when the model simply stopped", async () => {
+    // muse, grep, 2026-09-17: the plan became the reply and the turn ended as done.
+    streamMock.mockImplementation(thinkingThen("stop"));
+    const result = await streamOnce(req("http://127.0.0.1:11434/v1"), () => {}, { isAborted: () => false });
+    expect(result.assembledText).toBe("");
+    expect(result.assembledThinking).toMatch(/list the workspace/);
+  });
+
+  it("still shows the reasoning when the output budget ran out", async () => {
+    streamMock.mockImplementation(thinkingThen("length"));
+    const result = await streamOnce(req("http://127.0.0.1:11434/v1"), () => {}, { isAborted: () => false });
+    expect(result.assembledText).toMatch(/list the workspace/);
+  });
+});

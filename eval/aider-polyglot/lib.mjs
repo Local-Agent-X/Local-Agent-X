@@ -235,15 +235,20 @@ export function cleanup(dir) { try { rmSync(dir, { recursive: true, force: true 
 const SEARCH = /\b(find|grep|rg|locate|where|dir|ls|get-childitem|gci|select-string)\b/i;
 
 export function lookedOutsideWorkspace(calls, ex, rootDir) {
-  const norm = (p) => p.replaceAll("\\", "/").replace(/\/+/g, "/").toLowerCase()
-    .replace(/^\/mnt\/([a-z])\//, "$1:/").replace(/^\/([a-z])\//, "$1:/");
-  const root = `${norm(rootDir).replace(/\/$/, "")}/`;
+  // Scanning form: separators and case only. A drive rewrite must be applied to
+  // each PATH, not to the whole command — anchored at the string start it
+  // missed "/mnt/c/..." written mid-command, and muse's WSL-style path to its
+  // own workspace was flagged (bowling, run 19).
+  const flat = (p) => p.replaceAll("\\", "/").replace(/\/+/g, "/").toLowerCase();
+  const normPath = (p) => flat(p).replace(/^\/mnt\/([a-z])\//, "$1:/").replace(/^\/([a-z])\//, "$1:/");
+  const root = `${normPath(rootDir).replace(/\/$/, "")}/`;
   const names = [...ex.solution, ...ex.test].map((f) => f.toLowerCase());
   const stems = names.map((f) => f.replace(/\.py$/, ""));
   for (const { name, arguments: raw } of calls) {
-    const args = norm(raw);
+    const args = flat(raw);
     if (!stems.some((s) => args.includes(s))) continue;
     const outside = (args.match(/(?:[a-z]:\/|\/(?:mnt|home|users|tmp)\/)[^\s"'|;*,}]*/g) ?? [])
+      .map(normPath)
       .filter((p) => !`${p.replace(/\/$/, "")}/`.startsWith(root));
     if (outside.some((p) => names.some((n) => p.includes(n)))) return true;
     const searches = name === "glob" || name === "grep" || (name === "bash" && SEARCH.test(raw));

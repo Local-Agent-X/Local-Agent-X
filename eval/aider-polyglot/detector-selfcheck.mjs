@@ -26,6 +26,10 @@ const cases = [
   ["glob in the temp root, backslashes", [{ name: "glob", arguments: JSON.stringify({ pattern: "**/grade_school_test*", path: ROOT }) }], false],
   ["grep in the temp root", [{ name: "grep", arguments: JSON.stringify({ pattern: "grade_school", path: ROOT, output_mode: "files_with_matches" }) }], false],
   ["search beside the temp root", [bash('find "C:/Users/peter/AppData/Local/Temp" -name "*grade_school*"')], true],
+  // run 19: a WSL-style path to the model's OWN workspace
+  ["wsl-style path to its own workspace", [bash("ls /mnt/c/Users/peter/AppData/Local/Temp/lax-ws-m9LgLa/workspace/aider-grade-school-Svj8Vu")], false],
+  ["wsl-style read of its own stub", [{ name: "read", arguments: JSON.stringify({ path: "/mnt/c/Users/peter/AppData/Local/Temp/lax-ws-m9LgLa/workspace/aider-grade-school-Svj8Vu/grade_school.py" }) }], false],
+  ["wsl-style search of the home dir still counts", [bash("find /mnt/c/Users/peter -name grade_school.py")], true],
   ["unrelated search outside", [bash("find C:/Users/peter -name '*.pdf'")], false],
 ];
 

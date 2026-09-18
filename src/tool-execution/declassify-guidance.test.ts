@@ -68,9 +68,14 @@ describe("taint recovery guidance", () => {
     }
   });
 
-  it("the UI renders the card off the flag, not only off layer names", () => {
-    const render = read("public/js/chat-render-artifacts.js");
-    expect(render).toMatch(/md\.clearable\s*===\s*'declassify'/);
+  it("the UI decides off the flag, not only off layer names", () => {
+    // The rule lives with the card it gates; the renderer must defer to it
+    // rather than keep a second copy of the layer list. Behaviour (which
+    // payloads actually render a button) is proven against the real predicate
+    // and real DOM in test/declassify-card-render.test.ts — this only pins that
+    // the seam stays wired, since source text alone cannot show a card.
+    expect(read("public/js/chat-declassify-action.js")).toMatch(/clearable\s*===\s*'declassify'/);
+    expect(read("public/js/chat-render-artifacts.js")).toMatch(/isDeclassifiable\(/);
   });
 
   it("still tells the model the block is clearable, not terminal", () => {

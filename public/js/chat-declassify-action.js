@@ -11,6 +11,26 @@
 // External deps (runtime globals): apiPost (shared-api.js),
 // window.sendMessage (chat-send.js).
 
+/**
+ * Is this blocked tool result one the USER can clear themselves?
+ *
+ * The policy layer decides and says so (`metadata.clearable`), set wherever a
+ * blocker's recovery text names this button — see EgressBlocker.clearable.
+ * The layer-name list is a legacy fallback for cards rebuilt from stored events
+ * that predate the flag, and must never be the primary test: a kernel taint
+ * quarantine reports layer "arikernel" nested inside "egress-aggregate", which
+ * matched nothing, so the card silently never rendered for the block class that
+ * most needed it (2026-09-18).
+ */
+const LEGACY_TAINT_LAYERS = ['data-lineage', 'tainted-shell'];
+
+function isDeclassifiable(metadata) {
+  const md = metadata || {};
+  if (md.clearable === 'declassify') return true;
+  if (LEGACY_TAINT_LAYERS.includes(md.layer)) return true;
+  return Array.isArray(md.layers) && md.layers.some(l => LEGACY_TAINT_LAYERS.includes(l));
+}
+
 function appendDeclassifyAction(card, sessionId) {
   if (!card || !sessionId || card.querySelector('.declassify-action')) return;
   const el = document.createElement('div');

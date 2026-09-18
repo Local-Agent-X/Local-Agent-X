@@ -115,6 +115,13 @@ describe("SC-10 · kernel↔aggregate seam — a tainted POST surfaces the taint
     // The structured blockers array carries the same per-layer breakdown.
     const blockers = result!.metadata?.blockers as Array<{ layer: string }> | undefined;
     expect(blockers?.map((b) => b.layer)).toEqual(expect.arrayContaining(["arikernel", "data-lineage", "egress-guard"]));
+
+    // ...and the envelope SAYS the user can clear it, which is what makes the
+    // card render. The message above has always named the button; the UI keyed
+    // off layer names, and the authoritative layer here is "egress-aggregate"
+    // with the taint layers buried in `layers` — so the control the text points
+    // at never appeared, and a quarantine ended the conversation (2026-09-18).
+    expect(result!.metadata?.clearable).toBe("declassify");
   });
 
   it("a CLEAN, untainted POST to the same host is NOT blocked by the aggregate at the kernel", async () => {

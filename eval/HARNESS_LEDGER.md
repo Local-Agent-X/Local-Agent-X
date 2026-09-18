@@ -136,3 +136,27 @@ for a tool that had already refused it, alongside hunting the disk for the
 hidden tests in 6 of 12 exercises. qwen: zero web_search calls, zero disk hunts.
 Not a capability gap on either side.
 
+## Run 23 — op-outcomes (everyday tasks) on qwen3.6:27b
+
+| | muse | qwen3.6:27b |
+|---|---|---|
+| op-outcomes | 14/16 (88%) | 14/16 (88%) |
+| failing cases | setup-account / constraint (rotate run to run) | memory-cross-session, multi-page-site-match |
+
+Equivalent on everyday tasks, and both models' failures are VARIANCE, not
+deterministic defects: qwen's memory-cross-session passes on re-run (44s), the
+same way muse's constraint and setup-account cases each failed once and passed
+once. The recall path works - session 1 wrote the fact via `remember` and the
+reply confirmed it; on the failing run session 2 answered from general knowledge
+(and reached for web_search) instead of the recalled fact.
+
+multi-page-site-match is the decisiveness trade-off showing up as a cost: qwen
+finished in 10 rounds / 71s with the CSS close but wrong (header 96px vs 72,
+nav gap 8 vs 24, h1 28px vs 40, cta rgb(26,122,98) vs rgb(14,124,102)) - it
+eyeballed rather than measuring computed styles. muse ground the same case out
+in 95 rounds / 569s and PASSED it. The style that wins the coding benchmark
+(read, write, run - 11/12) is the same style that loses a pixel-matching task.
+
+Net: the two models are interchangeable for everyday tasks and are NOT
+interchangeable for coding (3/11 vs 11/12). No harness failure in either run.
+

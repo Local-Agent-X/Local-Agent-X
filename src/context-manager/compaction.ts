@@ -71,11 +71,13 @@ export async function summarizeOldMessages(
             return trimmed.length > 0 ? trimmed : null;
           },
         }),
-      { maxAttempts: 2, validate: transcriptEchoError },
+      { maxAttempts: 2, validate: (text) => summaryRejection(text, oldMessages) },
     );
     // guardedRewrite falls back to a candidate that failed only `validate`;
-    // a transcript echo is never usable, so it takes the null path instead.
-    return summary !== null && transcriptEchoError(summary) === null ? summary : null;
+    // a transcript echo, or "nothing notable" over real work, is never usable,
+    // so it takes the null path instead (the caller then keeps the longest
+    // tail that fits rather than injecting a summary that says nothing).
+    return summary !== null && summaryRejection(summary, oldMessages) === null ? summary : null;
   } catch (e) {
     logger.warn(`[context] LLM compaction call failed: ${(e as Error).message}`);
     return null;
@@ -139,6 +141,35 @@ export function buildSummaryTranscript(messages: ChatCompletionMessageParam[]): 
 // A summary never needs the transcript's own markup; seeing it means the model
 // continued the conversation instead of summarizing it.
 const TRANSCRIPT_MARKUP = /\[called [\w.-]+\(|\[tool result\]|^\[(user|assistant|tool|system)\]:/m;
+
+/**
+ * Substance: the segment holds work a summary must carry. muse answered
+ * NOTHING_NOTABLE for 56 messages of file reads, test runs and its own
+ * analysis of a failing suite (2026-09-17), and that one word replaced ~8,900
+ * tokens of history — which is why the model then re-read the same files up to
+ * 30 times in a run. The escape hatch is for a genuinely empty stretch.
+ */
+const SUBSTANCE_MIN_MESSAGES = 6;
+const SUBSTANCE_MIN_WORK_ROWS = 3;
+/** A row that carries work: a tool call, its result, or a substantial answer. */
+const WORK_ROW = /\[called [\w.-]+\(|\[tool result\]/;
+
+function hasSubstance(messages: ChatCompletionMessageParam[]): boolean {
+  if (messages.length < SUBSTANCE_MIN_MESSAGES) return false;
+  const work = messages.filter((m) => {
+    const text = typeof m.content === "string" ? m.content : "";
+    return WORK_ROW.test(text) || text.length > 200;
+  });
+  return work.length >= SUBSTANCE_MIN_WORK_ROWS;
+}
+
+/** Why this summary is unusable, or null when it stands. */
+function summaryRejection(text: string, messages: ChatCompletionMessageParam[]): string | null {
+  if (/^\s*NOTHING_NOTABLE\s*$/i.test(text) && hasSubstance(messages)) {
+    return `the segment is ${messages.length} messages of real work (file reads, commands, results) — summarize what was decided, what is still outstanding, and what you were in the middle of`;
+  }
+  return transcriptEchoError(text);
+}
 
 function transcriptEchoError(text: string): string | null {
   return TRANSCRIPT_MARKUP.test(text)

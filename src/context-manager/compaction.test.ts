@@ -177,3 +177,46 @@ describe("summarizeOldMessages — bounded transcript (local 16k dispatch window
     expect(capturedPrompts[1]).toMatch(/continued the conversation/);
   });
 });
+
+// muse, grade-school, run 20: the summarizer answered NOTHING_NOTABLE — the
+// prompt's escape hatch for an EMPTY stretch — for 56 messages of file reads,
+// test runs and its own analysis of a failing suite. That one word replaced
+// ~8,900 tokens of history, and the model then re-read the same files up to 30
+// times in a run.
+describe("summarizeOldMessages — 'nothing notable' over real work is rejected", () => {
+  const text = (delta: string): StreamEvent[] => [{ type: "text", delta } as StreamEvent];
+  // A segment with real work in it: tool results and analysis, not chatter.
+  const WORK: ChatCompletionMessageParam[] = Array.from({ length: 12 }, (_, i) => (
+    i % 2 === 0
+      ? { role: "user", content: `[tool result] [ok, path="C:/w/grade_school.py", bytes=680] class School:
+    def added(self):
+        return list(self._names)  # line ${i} of the file the agent just read` }
+      : { role: "assistant", content: `[called bash({"command":"python -m unittest grade_school_test"})] the suite fails: added() returns names where the tests expect booleans, attempt ${i}` }
+  ) as ChatCompletionMessageParam);
+
+  beforeEach(() => {
+    transportCalls = [];
+    capturedPrompts = [];
+  });
+
+  it("retries with feedback, and takes the corrected summary", async () => {
+    transportCalls = [text("NOTHING_NOTABLE"), text("CURRENT_TASK_STATE: mid-way through fixing added().")];
+    const out = await summarizeOldMessages(WORK);
+    expect(out).toMatch(/CURRENT_TASK_STATE/);
+    expect(capturedPrompts[1]).toMatch(/real work|summarize what was decided/i);
+  });
+
+  it("returns null when it insists, so the caller keeps history instead of a summary that says nothing", async () => {
+    transportCalls = [text("NOTHING_NOTABLE"), text("NOTHING_NOTABLE")];
+    expect(await summarizeOldMessages(WORK)).toBeNull();
+  });
+
+  it("still accepts it for a genuinely thin segment", async () => {
+    transportCalls = [text("NOTHING_NOTABLE")];
+    const thin: ChatCompletionMessageParam[] = [
+      { role: "user", content: "hi" },
+      { role: "assistant", content: "hello" },
+    ];
+    expect(await summarizeOldMessages(thin)).toBe("NOTHING_NOTABLE");
+  });
+});

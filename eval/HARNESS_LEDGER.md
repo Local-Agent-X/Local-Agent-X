@@ -38,6 +38,8 @@ with justification). Mission: `docs/agent-prompts/local-model-harness.md`.
 
 | H-028 | grep (run 19): every read/write/glob failed as `missing required field "path"`; the model reported its tools broken and stopped, stub untouched | HARNESS | muse emitted the argument object with its chat template leaking into the KEY (`read<\|message\|><atem:parameter name="path`), value intact. arg-repair handled malformed JSON and wrong types, not corrupted names | `repairMarkerKeys` recovers the property when a marker key ends with a schema name that is still missing; narrow by construction, logged as a repair | tests; run 20. Also ended list-ops (run 19) outright: read blocked 5x → repeat-failure abort at 95s |
 
+| H-029 | Compaction replaced ~8,900 tokens of real work with the single word NOTHING_NOTABLE | HARNESS | That is the prompt's escape hatch for a GENUINELY EMPTY stretch; muse used it for 56 messages of file reads, test runs and its own failure analysis, and nothing checked it. Explains the 10–35x re-reads of the same file in compacted ops | Reject it when the segment carries work (tool calls/results or long answers): one retry with feedback, then null so the caller keeps the longest fitting tail instead. Verified live: the same history now summarizes in 9.4s to a 971-char digest naming the added()/booleans mismatch and the outstanding asks | tests + live replay |
+
 ## Documented MODEL failures (muse-glimmer:30b)
 
 | Exercise | Run | Reason (evidence) |

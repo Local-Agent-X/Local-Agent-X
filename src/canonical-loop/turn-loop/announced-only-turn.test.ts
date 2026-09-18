@@ -58,6 +58,23 @@ describe("isAnnouncedOnlyReply", () => {
   it("is false for empty text", () => {
     expect(isAnnouncedOnlyReply("   ")).toBe(false);
   });
+
+  /** The second shape the same stall takes: the reply IS the command. */
+  it("is true for the command muse typed instead of calling", () => {
+    expect(isAnnouncedOnlyReply(
+      'bash -c "Get-ChildItem -Recurse -Filter *CRM* -Path C:\\\\Users\\\\peter\\\\workspace | Select-Object FullName"',
+    )).toBe(true);
+    expect(isAnnouncedOnlyReply("grep -rn CRM workspace/")).toBe(true);
+  });
+
+  it("is false for prose that merely mentions a command", () => {
+    expect(isAnnouncedOnlyReply("The build failed because npm run test exited 1.")).toBe(false);
+    expect(isAnnouncedOnlyReply("Run git status to see the change.")).toBe(false);
+  });
+
+  it("is false for a multi-line answer containing a command block", () => {
+    expect(isAnnouncedOnlyReply("Here is the fix:\nbash -c \"ls -la\"")).toBe(false);
+  });
 });
 
 describe("redriveAnnouncedOnlyTurn", () => {

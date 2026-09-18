@@ -50,13 +50,37 @@ export const REASONING_ONLY_NUDGE =
 const ANNOUNCED_ONLY_TURN_KEY = "interactive-announced-only-counter";
 const ANNOUNCED_ONLY_MAX_CHARS = 200;
 export const ANNOUNCED_ONLY_NUDGE =
-  "Your last turn said what you were about to do but made no tool call, so nothing happened. Do it now — make the call, then answer.";
+  "Your last turn described a command or an intention but made no tool call, so nothing ran. Make the tool call now, then answer from its result.";
+
+/**
+ * The other half of the same stall: the reply IS the command, typed out as
+ * prose instead of called. muse answered find-project with
+ * `bash -c "Get-ChildItem -Recurse -Filter *CRM* ..."` and stopped.
+ *
+ * Recognizing this can only ever produce a NUDGE — never a promoted call. The
+ * text extractor deliberately refuses to execute a bare command string
+ * (tool-call-text-syntaxes.ts: a truncated call must not run), and that
+ * invariant is not weakened here; the model is asked to make the call itself.
+ *
+ * One line, one leading command word, and an argument that looks like a flag,
+ * a quoted string or a path — prose that merely mentions a command has a
+ * sentence around it and fails the single-line test.
+ */
+const COMMAND_STARTERS = /^`?(?:bash|sh|zsh|powershell|pwsh|cmd|python3?|node|npm|npx|git|ls|dir|cat|grep|rg|find|glob|read|write|edit|curl)\b/i;
+const COMMAND_ARGUMENT = /\s(?:-{1,2}[a-z]|["'`/~]|[A-Za-z]:[\\/])/i;
+
+export function isBareCommandReply(text: string): boolean {
+  const t = text.trim();
+  if (t.length === 0 || t.length > ANNOUNCED_ONLY_MAX_CHARS) return false;
+  if (t.includes("\n")) return false;
+  return COMMAND_STARTERS.test(t) && COMMAND_ARGUMENT.test(t);
+}
 
 export function isAnnouncedOnlyReply(text: string): boolean {
   const t = text.trim();
   if (t.length === 0 || t.length > ANNOUNCED_ONLY_MAX_CHARS) return false;
   if (t.endsWith("?")) return false; // asking the user, not stalling
-  return narrationPromisesFollowup(t);
+  return narrationPromisesFollowup(t) || isBareCommandReply(t);
 }
 
 export interface AnnouncedOnlyTurnInput {

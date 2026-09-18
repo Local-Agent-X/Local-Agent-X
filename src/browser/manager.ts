@@ -1,6 +1,6 @@
 import type { Page, BrowserContext, Response } from "playwright";
 import { ObservationRegistry, type BrowserObservation } from "./observation.js";
-import { fingerprintPage, scrollPage, clickRefOn, fillRefOn, clickTextOn } from "./interactions.js";
+import { fingerprintPage, scrollPage, clickRefOn, fillRefOn, selectRefOn, clickTextOn } from "./interactions.js";
 import { installDialogHandler, handleNextDialog } from "./dialog-handler.js";
 import { installRequestGuard } from "./guards.js";
 import { wirePopupAdoption } from "./manager-popups.js";
@@ -300,6 +300,10 @@ export class BrowserManager implements BrowserBackend {
 
   async fillByRef(ref: number, value: string): Promise<InteractionResult> {
     return fillRefOn(await this.getPage(), this.registry, ref, value);
+  }
+
+  async selectByRef(ref: number, value: string): Promise<InteractionResult> {
+    return selectRefOn(await this.getPage(), this.registry, ref, value);
   }
 
   async clickByText(text: string): Promise<InteractionResult> {

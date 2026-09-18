@@ -19,6 +19,9 @@ import type { DurableRef, ObservationRegistry } from "./observation.js";
 import { waitForStability } from "./stability.js";
 import { stableSelectors } from "./stable-ids.js";
 
+/** What the resolution chain does once it has narrowed to one element. */
+type RefOp = "click" | "fill" | "select";
+
 export interface ActionResult {
   ok: boolean;
   via: "exact" | "role" | "text" | "xpath" | "coords" | "none";
@@ -101,11 +104,17 @@ export async function fillRef(
     return { ok: false, via: "none", message: `Ref [${refId}] not found — take a fresh observation` };
   }
 
+  // A <select> cannot be typed into, but "put this value in this ref" is a
+  // well-defined intent on one — the in-app backend has always honoured it
+  // (in-app-actions.ts selectFillScript). The element decides the DOM
+  // operation, so `fill` and `select` on the same ref do the same thing and
+  // the two backends can't disagree about what a ref-addressed write means.
+  const op: RefOp = ref.tag.toUpperCase() === "SELECT" ? "select" : "fill";
   await scrollRefIntoView(page, ref);
-  const trace = await tryResolutionChain(page, ref, "fill", value);
+  const trace = await tryResolutionChain(page, ref, op, value);
   if (trace.ok) return { ...trace, message: trace.message + staleNote(refId, ref) };
   await page.waitForTimeout(1500);
-  const retry = await tryResolutionChain(page, ref, "fill", value);
+  const retry = await tryResolutionChain(page, ref, op, value);
   return retry.ok ? { ...retry, message: retry.message + staleNote(refId, ref) } : retry;
 }
 
@@ -150,10 +159,19 @@ async function pickStable(loc: Locator, ref: DurableRef): Promise<Locator | null
   return best;
 }
 
+/** Apply the op to a resolved locator. `select` is a distinct DOM operation —
+ *  a <select> cannot be typed into — but from the model's side it is the same
+ *  "put this value in this ref" intent as fill, so it shares the whole chain. */
+async function applyOp(loc: Locator, op: RefOp, value: string): Promise<void> {
+  if (op === "click") await loc.click({ timeout: CLICK_TIMEOUT });
+  else if (op === "select") await loc.selectOption(value, { timeout: CLICK_TIMEOUT });
+  else await loc.fill(value, { timeout: CLICK_TIMEOUT });
+}
+
 async function tryResolutionChain(
   page: Page,
   ref: DurableRef,
-  op: "click" | "fill",
+  op: RefOp,
   value = ""
 ): Promise<ActionResult> {
   // Pick the right frame up front — main page or same-origin iframe.
@@ -175,8 +193,7 @@ async function tryResolutionChain(
     try {
       const loc = await pickStable(root.locator(s.sel), ref);
       if (!loc) continue;
-      if (op === "click") await loc.click({ timeout: CLICK_TIMEOUT });
-      else await loc.fill(value, { timeout: CLICK_TIMEOUT });
+      await applyOp(loc, op, value);
       return { ok: true, via: "exact", message: `[${ref.id}] ${op} via ${s.key}${viaSuffix}` };
     } catch { /* fall through */ }
   }
@@ -185,8 +202,7 @@ async function tryResolutionChain(
     try {
       const loc = root.getByRole(ref.role as Parameters<Page["getByRole"]>[0], { name: ref.name, exact: false });
       if ((await loc.count()) > 0) {
-        if (op === "click") await loc.first().click({ timeout: CLICK_TIMEOUT });
-        else await loc.first().fill(value, { timeout: CLICK_TIMEOUT });
+        await applyOp(loc.first(), op, value);
         return { ok: true, via: "role", message: `[${ref.id}] ${op} via role/name (${ref.role} "${ref.name}")${viaSuffix}` };
       }
     } catch { /* fall through */ }
@@ -206,8 +222,7 @@ async function tryResolutionChain(
     try {
       const loc = root.locator(`xpath=${ref.xpath}`);
       if ((await loc.count()) > 0) {
-        if (op === "click") await loc.first().click({ timeout: CLICK_TIMEOUT });
-        else await loc.first().fill(value, { timeout: CLICK_TIMEOUT });
+        await applyOp(loc.first(), op, value);
         return { ok: true, via: "xpath", message: `[${ref.id}] ${op} via XPath${viaSuffix}` };
       }
     } catch { /* fall through */ }

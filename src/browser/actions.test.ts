@@ -70,6 +70,7 @@ describe("clickByText budget", () => {
  */
 function fakeLocatorPage(matches: Record<string, Array<{ x: number; y: number }>>) {
   const filled: Array<{ sel: string; index: number; value: string }> = [];
+  const selected: Array<{ sel: string; value: string }> = [];
   const fuzzy: string[] = [];
   const locatorFor = (sel: string, index: number) => ({
     first: () => locatorFor(sel, 0),
@@ -83,6 +84,10 @@ function fakeLocatorPage(matches: Record<string, Array<{ x: number; y: number }>
       if (!(matches[sel] ?? [])[index]) throw new Error("no such element");
       filled.push({ sel, index, value });
     },
+    async selectOption(value: string) {
+      if (!(matches[sel] ?? [])[index]) throw new Error("no such element");
+      selected.push({ sel, value });
+    },
     async click() { /* unused here */ },
     async scrollIntoViewIfNeeded() { /* immediate */ },
   });
@@ -91,6 +96,7 @@ function fakeLocatorPage(matches: Record<string, Array<{ x: number; y: number }>
       first: () => loc,
       async count() { fuzzy.push(label); return 1; },
       async fill(value: string) { filled.push({ sel: label, index: 0, value }); },
+      async selectOption(value: string) { selected.push({ sel: label, value }); },
       async click() { /* unused */ },
       async scrollIntoViewIfNeeded() { /* immediate */ },
     };
@@ -104,7 +110,7 @@ function fakeLocatorPage(matches: Record<string, Array<{ x: number; y: number }>
     getByText: () => fuzzyLocator("text"),
     async waitForTimeout() { /* no retry delay in tests */ },
   } as unknown as Page & { mainFrame(): unknown };
-  return { page: page as unknown as Page, filled, fuzzy };
+  return { page: page as unknown as Page, filled, selected, fuzzy };
 }
 
 function mkRef(over: Partial<DurableRef> = {}): DurableRef {
@@ -164,6 +170,23 @@ describe("exact stable-identifier resolution (CDP path)", () => {
     const r = await fillRef(page, registryWith(ref), 12, "x");
     expect(r.via).toBe("role");
     expect(fuzzy).toContain("role");
+  });
+
+  /**
+   * A <select> cannot be typed into: Playwright's fill() throws on one, so a
+   * ref-addressed write to a dropdown failed on the CDP path while the in-app
+   * path honoured it (selectFillScript). The element decides the operation, so
+   * both backends now agree.
+   */
+  it("chooses an option when the ref is a <select>, rather than typing into it", async () => {
+    const { page, filled, selected } = fakeLocatorPage({ 'select[id="entityType"]': [{ x: 100, y: 100 }] });
+    const ref = mkRef({ tag: "SELECT", role: "combobox", ids: { id: "entityType" } });
+    const r = await fillRef(page, registryWith(ref), 12, "LLC");
+
+    expect(r.ok).toBe(true);
+    expect(selected).toEqual([{ sel: 'select[id="entityType"]', value: "LLC" }]);
+    expect(filled).toEqual([]);
+    expect(r.message).toContain("select via");
   });
 
   it("leaves a ref with no durable identity on its original path", async () => {

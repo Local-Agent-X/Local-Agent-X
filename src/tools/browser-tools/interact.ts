@@ -78,9 +78,20 @@ export async function handleSelect(
   manager: BrowserBackend,
   args: Record<string, unknown>,
 ): Promise<ToolResult> {
-  const selector = String(args.selector || "");
   const value = String(args.value || "");
-  if (!selector || !value) return err("'selector' and 'value' are required for select action.");
+  if (!value) return err("'value' is required for select action.");
+  // Same addressing as click/fill: a snapshot ref, or a CSS selector. A model
+  // that has just observed the page has a ref, not a selector, and telling it
+  // "'selector' is required" sent it off inventing CSS for a combobox it could
+  // already point at (op-outcomes setup-account, run 20).
+  if (args.ref !== undefined && args.ref !== null) {
+    const ref = Number(args.ref);
+    if (isNaN(ref)) return err("'ref' must be a number from the snapshot.");
+    const result = await manager.selectByRef(ref, value);
+    return result.ok ? ok(result.text) : err(result.text);
+  }
+  const selector = String(args.selector || "");
+  if (!selector) return err("Provide 'ref' (from snapshot) or 'selector' (CSS) for select.");
   const base = await manager.select(selector, value);
   return ok(await appendPostActionSnapshot(manager, base));
 }

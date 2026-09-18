@@ -79,6 +79,23 @@ export async function clickRefOn(page: Page, registry: ObservationRegistry, ref:
 }
 
 export async function fillRefOn(page: Page, registry: ObservationRegistry, ref: number, value: string): Promise<InteractionResult> {
+  return writeRefOn(page, registry, ref, value, `${value.length} chars`);
+}
+
+/** Ref-addressed select. Shares fillRef's chain — the element decides whether
+ *  the value is typed or chosen — so `select` accepts a snapshot ref the same
+ *  way `click` and `fill` do. */
+export async function selectRefOn(page: Page, registry: ObservationRegistry, ref: number, value: string): Promise<InteractionResult> {
+  return writeRefOn(page, registry, ref, value, `"${value}"`);
+}
+
+async function writeRefOn(
+  page: Page,
+  registry: ObservationRegistry,
+  ref: number,
+  value: string,
+  wrote: string,
+): Promise<InteractionResult> {
   let result = await fillRef(page, registry, ref, value);
   if (!result.ok) {
     await registry.observe(page);
@@ -88,7 +105,7 @@ export async function fillRefOn(page: Page, registry: ObservationRegistry, ref: 
     const refreshed = ObservationRegistry.format(await registry.observe(page));
     return { ok: false, text: `${result.message}\n\nCurrent page:\n\n${refreshed}` };
   }
-  return { ok: true, text: `${result.message} — ${value.length} chars` };
+  return { ok: true, text: `${result.message} — ${wrote}` };
 }
 
 export async function clickTextOn(page: Page, registry: ObservationRegistry, text: string): Promise<InteractionResult> {

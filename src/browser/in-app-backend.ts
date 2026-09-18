@@ -248,6 +248,14 @@ export class ElectronInAppBackend implements BrowserBackend {
 		return fillRefInApp(this.actionContext(), ref, value);
 	}
 
+	/** Shares the ref-addressed write path: fillRefInApp already routes a ref
+	 *  whose element is a <select> through selectFillScript, so `select` with a
+	 *  ref means the same thing on both backends. */
+	async selectByRef(ref: number, value: string): Promise<InteractionResult> {
+		await this.ensureView();
+		return fillRefInApp(this.actionContext(), ref, value);
+	}
+
 	async clickByText(text: string): Promise<InteractionResult> {
 		await this.ensureView();
 		return clickTextInApp(this.actionContext(), text);

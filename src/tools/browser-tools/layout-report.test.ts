@@ -279,7 +279,7 @@ describe("browser layout_report", () => {
   it("drives no mutating backend operation — one evaluate, nothing else", async () => {
     const evaluate = vi.fn(async () => JSON.stringify(CLEAN_REPORT));
     seam.manager.evaluate = evaluate;
-    const mutators = ["click", "clickByRef", "clickByText", "fill", "fillByRef", "select", "scroll", "navigate", "newTab", "dialogAccept", "dialogDismiss"];
+    const mutators = ["click", "clickByRef", "clickByText", "fill", "fillByRef", "select", "selectByRef", "scroll", "navigate", "newTab", "dialogAccept", "dialogDismiss"];
     for (const method of mutators) {
       seam.manager[method] = vi.fn(async () => { throw new Error(`layout_report must not call ${method}`); });
     }

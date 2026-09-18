@@ -60,6 +60,7 @@ export interface BrowserBackend {
   fill(selector: string, value: string): Promise<string>;
   fillByRef(ref: number, value: string): Promise<InteractionResult>;
   select(selector: string, value: string): Promise<string>;
+  selectByRef(ref: number, value: string): Promise<InteractionResult>;
   scroll(opts: ScrollOptions): Promise<string>;
 
   // ── Page reads / tabs ──

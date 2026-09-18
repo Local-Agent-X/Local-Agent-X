@@ -25,7 +25,7 @@ export const BROWSER_TOOL_DESCRIPTION =
   "- click: Click by ref number (set 'ref') or CSS selector (set 'selector'). Ref is more reliable.\n" +
   "- click_text: Click element by visible text (set 'text'). Good for popups/modals.\n" +
   "- fill: Fill input by ref (set 'ref' + 'value') or CSS selector (set 'selector' + 'value').\n" +
-  "- select: Choose dropdown option by CSS selector + value.\n" +
+  "- select: Choose dropdown option by ref (set 'ref' + 'value') or CSS selector (set 'selector' + 'value').\n" +
   "- extract: Get visible text from the page or a specific element. On a large page, pass 'find' to get only the matching lines instead of the whole page.\n" +
   "- screenshot: Capture the current page — the image is returned INLINE, so you SEE the page in this one call (no view_image or screen_capture needed). A full-resolution PNG is also saved; use its path with view_image to re-view later or send_image to share it.\n" +
   "- evaluate: Run read-only JavaScript to inspect the page. It cannot click, type, focus, remove overlays, or mutate DOM/form state; use click/fill/select with fresh refs for actions.\n" +
@@ -101,7 +101,7 @@ export const BROWSER_TOOL_PARAMETERS = {
     },
     ref: {
       type: "number",
-      description: "Ref number from snapshot (preferred for click/fill — more reliable than CSS selectors)",
+      description: "Ref number from snapshot (preferred for click/fill/select — more reliable than CSS selectors)",
     },
     selector: {
       type: "string",

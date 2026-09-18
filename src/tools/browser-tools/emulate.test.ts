@@ -78,7 +78,7 @@ function tool(sessionId: string = SESSION) {
  *  was protecting, now proven instead of avoided. */
 const MUTATING_BACKEND_CALLS = [
   "navigate", "newTab", "close", "closeTab", "switchTab", "click", "clickByRef", "clickByText",
-  "fill", "fillByRef", "select", "scroll", "evaluate", "screenshot", "snapshot",
+  "fill", "fillByRef", "select", "selectByRef", "scroll", "evaluate", "screenshot", "snapshot",
 ] as const;
 
 const untouched = (): void => {

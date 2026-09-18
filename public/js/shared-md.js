@@ -255,8 +255,15 @@ function md(s) {
   h = h.replace(/<p>(<(?:h[2-5]|ul|ol|table|div|blockquote|hr|pre))/g, '$1');
   h = h.replace(/(<\/(?:h[2-5]|ul|ol|table|div|blockquote|hr|pre)>)<\/p>/g, '$1');
 
-  // 12. Restore placeholders
-  for (let i = 0; i < placeholders.length; i++) {
+  // 12. Restore placeholders — HIGHEST INDEX FIRST, because they nest.
+  // Step 2.5 turns a bare URL into PH0; step 4 then finds that sentinel inside
+  // backticks and wraps it in a code span of its own, PH1, whose CONTENT is the
+  // text "\x00PH0\x00". Ascending, i=0 matched nothing (PH0 was not in the
+  // document yet, only inside placeholder 1) and i=1 put it there after the
+  // loop had passed — so the reader saw the literal "PH0" where the URL should
+  // be. A placeholder can only ever contain sentinels created BEFORE it, so
+  // descending restores every inner one before its own index comes up.
+  for (let i = placeholders.length - 1; i >= 0; i--) {
     h = h.replace('\x00PH' + i + '\x00', placeholders[i]);
   }
 

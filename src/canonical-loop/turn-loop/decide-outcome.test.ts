@@ -1474,6 +1474,52 @@ describe("decideTurnOutcome — interactive fully-empty turns terminate (no maxT
     expect(r.terminalReason).toBe("done");
   });
 
+  /**
+   * H-033. The done gate reads a tool-less turn carrying text as a finished
+   * informational turn — which is how muse ended op-outcomes find-project on
+   * "Let me search the workspace for it." with nothing done. The wiring under
+   * test is that the gate is SUPPRESSED (terminalReason stays null so the loop
+   * re-drives), not that a terminal is taken back afterwards.
+   */
+  const announced = (text: string, over: Partial<DecideOutcomeInput> = {}): DecideOutcomeInput =>
+    input({
+      op: iop,
+      finalized: [{ messageId: "am1", role: "assistant", content: { text } }],
+      assistantText: text,
+      toolCalls: [], toolMessages: [], toolSummary: [],
+      ...over,
+    });
+
+  it("(e) a turn that only announces an action does NOT terminate the op", async () => {
+    const r = await decideTurnOutcome(announced("Let me search the workspace for it."));
+    expect(r.terminalReason).toBe(null);
+    expect(appendNudgeAsUserMessage).toHaveBeenCalled();
+  });
+
+  it("(e2) a turn whose whole reply IS the command does not terminate either", async () => {
+    const r = await decideTurnOutcome(announced('bash -c "Get-ChildItem -Recurse -Filter *CRM*"'));
+    expect(r.terminalReason).toBe(null);
+  });
+
+  it("(e3) it fires once per op — the second announcement ends the turn", async () => {
+    expect((await decideTurnOutcome(announced("Let me search the workspace."))).terminalReason).toBe(null);
+    const second = await decideTurnOutcome(announced("Let me search the workspace.", { turnIdx: 1 }));
+    expect(second.terminalReason).toBe("done");
+  });
+
+  it("(e4) a real answer that happens to say I'll still terminates", async () => {
+    const r = await decideTurnOutcome(announced(
+      "Got it — I'll leave everything in cleanup/legacy untouched. It's archived client work, so no " +
+      "edits or deletes there, and the three .tmp files elsewhere are the ones I would remove.",
+    ));
+    expect(r.terminalReason).toBe("done");
+  });
+
+  it("(e5) a question back to the user still terminates", async () => {
+    const r = await decideTurnOutcome(announced("Sure, I'll take a look — which project do you mean?"));
+    expect(r.terminalReason).toBe("done");
+  });
+
   it("(d) an interactive turn WITH text still terminates as before", async () => {
     const r = await decideTurnOutcome(input({ op: iop, modelSignaledDone: true, toolCalls: [], toolMessages: [], toolSummary: [] }));
     expect(r.terminalReason).toBe("done");

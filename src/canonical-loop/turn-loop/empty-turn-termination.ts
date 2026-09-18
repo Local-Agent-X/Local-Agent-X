@@ -44,11 +44,18 @@ export const REASONING_ONLY_NUDGE =
  *
  * Kept deliberately hard to trip, because a finished answer may also contain
  * "I'll": it fires only when the op has dispatched NO tool at all, the reply is
- * short, it promises a next action, and it is not a question back to the user.
+ * a single short sentence (or a bare command line), it promises a next action,
+ * and it is not a question back to the user.
  * One nudge per op — if the model says it again, that is its answer.
  */
 const ANNOUNCED_ONLY_TURN_KEY = "interactive-announced-only-counter";
-const ANNOUNCED_ONLY_MAX_CHARS = 200;
+// A bare announcement is ONE short sentence ("Let me search the workspace for
+// it."). A real answer that happens to promise something carries the answer
+// with it and runs longer or into a second sentence — the discriminator is the
+// shape, not the length alone, because a 197-char reply that named exactly
+// which files it would delete tripped a length-only rule in test.
+const ANNOUNCED_ONLY_MAX_CHARS = 90;
+const COMMAND_MAX_CHARS = 300;
 export const ANNOUNCED_ONLY_NUDGE =
   "Your last turn described a command or an intention but made no tool call, so nothing ran. Make the tool call now, then answer from its result.";
 
@@ -71,16 +78,23 @@ const COMMAND_ARGUMENT = /\s(?:-{1,2}[a-z]|["'`/~]|[A-Za-z]:[\\/])/i;
 
 export function isBareCommandReply(text: string): boolean {
   const t = text.trim();
-  if (t.length === 0 || t.length > ANNOUNCED_ONLY_MAX_CHARS) return false;
+  if (t.length === 0 || t.length > COMMAND_MAX_CHARS) return false;
   if (t.includes("\n")) return false;
   return COMMAND_STARTERS.test(t) && COMMAND_ARGUMENT.test(t);
 }
 
+/** Sentences in a reply — a bare announcement is exactly one. */
+function sentenceCount(text: string): number {
+  return text.split(/[.!?]+(?:\s|$)/).filter((s) => s.trim().length > 0).length;
+}
+
 export function isAnnouncedOnlyReply(text: string): boolean {
   const t = text.trim();
-  if (t.length === 0 || t.length > ANNOUNCED_ONLY_MAX_CHARS) return false;
+  if (t.length === 0) return false;
+  if (isBareCommandReply(t)) return true;
+  if (t.length > ANNOUNCED_ONLY_MAX_CHARS || sentenceCount(t) > 1) return false;
   if (t.endsWith("?")) return false; // asking the user, not stalling
-  return narrationPromisesFollowup(t) || isBareCommandReply(t);
+  return narrationPromisesFollowup(t);
 }
 
 export interface AnnouncedOnlyTurnInput {

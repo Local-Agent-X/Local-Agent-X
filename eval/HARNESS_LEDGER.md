@@ -108,3 +108,31 @@ that. Compaction bears it out: 7 of 12 qwen exercises never compacted at all
 (reads/file 1.0-4.0) because the work fit; muse compacted 146 of 168 turns on
 grade-school alone (reads/file 12.0).
 
+### Run 22 follow-ups (asked and answered from the evidence)
+
+**qwen's forth failure is the model, not the rig.** Two things happened and only
+one is ours. The hang is its own code - an infinite loop, killed after 60s of
+tests. The retry WAS told: attempt 2's task begins literally
+`[killed: tests exceeded 60s - the solution hangs]`, so the harness reported the
+failure and the model had it. What looked like a harness bug was not: qwen ran
+`cd "C:\Users\peter\...\aider-forth-f2yk8E"` and bash consumed the backslashes
+as escapes (correct POSIX behaviour), leaving `C:UserspeterAppData...`. LAX
+already detects that and says so - "looks like a Windows path whose backslashes
+bash consumed as escapes ... use forward slashes or single quotes" - once, with
+the fix spelled out. The model then wrote its own _verify.py, broke it with a
+Python-2 print statement and an unmatched paren, and spent the rest of its turns
+there. No harness defect; no fix shipped.
+
+**Tool availability in the rig.** `web_search` is BLOCKED by tool-policy
+(`[blocked, layer="tool-policy"]`) on purpose - an exercise must be solved, not
+looked up, or the benchmark measures search. `memory_search` is NOT blocked: it
+runs and returns `count="0"` because an isolated server starts with an empty
+memory bank. Both are fully available in the product; only web is denied, and
+only here.
+
+**A third face of the same muse strategy failure.** grade-school (run 21): 6
+`web_search` calls and 14 blocked tool results across the op - it kept reaching
+for a tool that had already refused it, alongside hunting the disk for the
+hidden tests in 6 of 12 exercises. qwen: zero web_search calls, zero disk hunts.
+Not a capability gap on either side.
+

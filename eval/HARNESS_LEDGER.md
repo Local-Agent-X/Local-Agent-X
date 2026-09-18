@@ -78,3 +78,33 @@ with justification). Mission: `docs/agent-prompts/local-model-harness.md`.
 | grep | 21 | Did not converge in 30 min (143 tools, harness healthy). Output lines wrong. Its LOOKED-OUTSIDE flag was the harness's fault, not the model's - see H-034 |
 | dominoes | 21 | 'False is not None: there should be no valid chain' - accepts an impossible chain. Ran `find C:/ -maxdepth 4 -name dominoes_test.py` |
 | forth | 21 | Lists differ: [6, 6] != [5, 6] - 21 re-reads of forth.py, one distinct file, no convergence |
+
+## Run 22 — qwen3.6:27b on the same 12 exercises (2026-09-18)
+
+The comparison the whole harness campaign was building toward. Same rig, same
+sealed evidence, same scorer, same isolated servers; 17.4 GB vs muse's 18.2 GB,
+so the card is not the variable.
+
+| | muse (run 21) | qwen3.6:27b (run 22) | Grok (control) |
+|---|---|---|---|
+| pass@1 | 2/11 | 4/12 | 11/12 |
+| pass@2 | 3/11 | **11/12** | 12/12 |
+| false-done | 0 | 0 | - |
+| contaminated / unscored | 1 | 0 | - |
+| disk hunts for the hidden tests | 6 of 12 | **0 of 12** | - |
+| tool calls, grade-school | 163 | 13 | - |
+| turns, grade-school | 168 | 16 | - |
+| wall clock, 12 exercises | ~4h | ~55min | - |
+
+qwen's only failure is forth: the solution HANGS (killed after 60s of tests),
+an infinite loop in its own code - a model defect with no harness component.
+
+What this settles: the harness is not the limiter. The same rig that scores
+muse 3/11 scores a same-size model 11/12, with zero harness failures in both.
+muse's failures were largely a STRATEGY failure - it searches instead of
+writing (bash:70 glob:42 read:36 and ONE edit on grade-school; 6 of 12 runs
+spent time hunting the disk for the hidden tests) - and no harness fix reaches
+that. Compaction bears it out: 7 of 12 qwen exercises never compacted at all
+(reads/file 1.0-4.0) because the work fit; muse compacted 146 of 168 turns on
+grade-school alone (reads/file 12.0).
+

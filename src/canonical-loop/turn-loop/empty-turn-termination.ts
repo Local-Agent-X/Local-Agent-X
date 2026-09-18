@@ -18,6 +18,7 @@ import { getMiddlewareState } from "../middlewares/state.js";
 import type { Op } from "../../ops/types.js";
 import type { ToolCall } from "../contract-types.js";
 import { appendNudgeAsUserMessage } from "./nudges.js";
+import { narrationPromisesFollowup } from "./p1-followup-detector.js";
 
 /**
  * Per-op key for the interactive fully-empty-turn counter, held in the same
@@ -34,6 +35,60 @@ const REASONING_ONLY_TURN_KEY = "interactive-reasoning-only-counter";
 const REASONING_ONLY_LIMIT = 2;
 export const REASONING_ONLY_NUDGE =
   "Your last turn ended after thinking, with no answer and no tool call. Continue from your plan: make the tool call you intended, or give your answer.";
+
+/**
+ * The same rule as REASONING_ONLY, for the variant where the plan arrives as
+ * ANSWER text instead of reasoning: the model says what it is about to do and
+ * ends the turn having done nothing. The user is left with "Let me search the
+ * workspace for it." and no search (muse, op-outcomes find-project).
+ *
+ * Kept deliberately hard to trip, because a finished answer may also contain
+ * "I'll": it fires only when the op has dispatched NO tool at all, the reply is
+ * short, it promises a next action, and it is not a question back to the user.
+ * One nudge per op — if the model says it again, that is its answer.
+ */
+const ANNOUNCED_ONLY_TURN_KEY = "interactive-announced-only-counter";
+const ANNOUNCED_ONLY_MAX_CHARS = 200;
+export const ANNOUNCED_ONLY_NUDGE =
+  "Your last turn said what you were about to do but made no tool call, so nothing happened. Do it now — make the call, then answer.";
+
+export function isAnnouncedOnlyReply(text: string): boolean {
+  const t = text.trim();
+  if (t.length === 0 || t.length > ANNOUNCED_ONLY_MAX_CHARS) return false;
+  if (t.endsWith("?")) return false; // asking the user, not stalling
+  return narrationPromisesFollowup(t);
+}
+
+export interface AnnouncedOnlyTurnInput {
+  op: Op;
+  turnIdx: number;
+  assistantText: string;
+  toolCalls: ToolCall[];
+}
+
+/**
+ * True when this turn should be re-driven instead of ending: the model
+ * announced an action, made no call, and the op has done nothing at all. The
+ * nudge is queued here, so a false return (budget spent, already used once)
+ * means the turn ends as it otherwise would.
+ *
+ * Called by decide-outcome BEFORE the done gate — the gate would terminate a
+ * tool-less turn with text, and a terminal decision is never taken back.
+ */
+export function redriveAnnouncedOnlyTurn(in_: AnnouncedOnlyTurnInput): boolean {
+  const { op, assistantText, toolCalls } = in_;
+  if (op.lane !== "interactive") return false;
+  // Called on EVERY interactive turn so the op's own tool history is tracked
+  // here rather than threaded through the turn input.
+  const state = getMiddlewareState(op.id, ANNOUNCED_ONLY_TURN_KEY, () => ({ used: false, sawTool: false }));
+  if (toolCalls.length > 0) { state.sawTool = true; return false; }
+  if (state.sawTool || state.used) return false;
+  if (!isAnnouncedOnlyReply(assistantText)) return false;
+  const nudged = appendNudgeAsUserMessage(op.id, in_.turnIdx + 1, ANNOUNCED_ONLY_NUDGE,
+    { name: "announced-only", reason: "announced-only", outcome: "nudge" });
+  if (nudged) state.used = true;
+  return nudged;
+}
 
 export interface EmptyInteractiveTurnInput {
   op: Op;

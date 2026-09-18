@@ -32,7 +32,7 @@ import { applyTerminalEpilogue } from "./terminal-epilogue.js";
 import { runCompletionGates } from "./decide-outcome-run-gates.js";
 import { continuationVetoedTerminal } from "./continuation-guard.js";
 import type { GuardFire } from "./guard-fire.js";
-import { appendEmptyTurnTerminal, appendHonestTerminal, evaluateEmptyInteractiveTurn } from "./empty-turn-termination.js";
+import { appendEmptyTurnTerminal, appendHonestTerminal, evaluateEmptyInteractiveTurn, redriveAnnouncedOnlyTurn } from "./empty-turn-termination.js";
 import { appendMissingToolResults } from "./orphan-tool-results.js";
 import { createLogger } from "../../logger.js";
 import { recordP1Outcome } from "./p1-metrics.js";
@@ -209,10 +209,19 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
     !middlewareSuspended &&
     assistantText.trim().length > 0 &&
     mutationTerminates && !modelSignaledDone && !allSilent && !noTools;
+  // A turn that only ANNOUNCED an action ("Let me search the workspace for
+  // it.") would terminate here as a tool-less informational turn, leaving the
+  // user with a promise and no work. Asked BEFORE the gate because a terminal
+  // decision is never taken back; it queues one nudge per op and fires only
+  // when the op has dispatched nothing at all.
+  const announcedOnlyRedrive =
+    !middlewareAborted && !middlewareSuspended &&
+    redriveAnnouncedOnlyTurn({ op, turnIdx, assistantText, toolCalls });
   if (
     terminalReason === null &&
     !middlewareAborted &&
     !middlewareSuspended &&
+    !announcedOnlyRedrive &&
     (modelSignaledDone || silentTerminates || noTools || mutationTerminates) &&
     assistantText.trim().length > 0
   ) {

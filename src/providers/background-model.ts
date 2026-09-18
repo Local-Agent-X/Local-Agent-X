@@ -9,14 +9,23 @@
  * static `models` list), because there is no id we could safely declare: any
  * hardcoded local model 404s for every user who hasn't pulled it.
  *
- * Dynamic-catalog providers resolve explicitly pinned, then discovered. Local
- * alone may prefer a certified discovered candidate before the ordinary pick.
+ * Dynamic-catalog providers resolve explicitly pinned, then the chat model.
  *
  *   1. `localClassifierModel` setting — the user said so; nothing outranks it.
- *   2. Discovered smallest eligible model — small, non-reasoning, non-embedding
- *      (see local-runtimes/classifier-model.ts).
- *   3. The caller's fallback (the chat model) — exactly today's behavior, so a
- *      box with nothing suitable is never made worse.
+ *      A pinned model is also served its certified target when one matches.
+ *   2. The caller's fallback (the chat model).
+ *
+ * A small model is no longer auto-selected. Measured 2026-09-18 on this box,
+ * llama3.2:3b answered 3 of 8 routing cases correctly against muse-glimmer:30b's
+ * 7 of 8: it saved a one-off command as a durable fact, dropped a stated
+ * preference ("stop asking before you run the tests"), kept an unrelated memory
+ * as on-topic, and emitted two JSON objects for a follow-up verdict. Those are
+ * memory pollution and noisy recall, paid by every local user who happened to
+ * have a small model pulled. Routing work is also CONDITIONAL — the follow-up
+ * verdict fires only on 3-12 word messages, relevance only when session signals
+ * exist, and the memory write is fire-and-forget — so the chat model's extra
+ * ~1.2s lands on a minority of turns rather than all of them. A user who wants
+ * the small model back pins it.
  *
  * Async because tiers 1-2 read the settings + local-runtime caches, which
  * registry.ts must not statically depend on (it's a leaf contract imported
@@ -54,20 +63,17 @@ export async function resolveBackgroundModel(
       // This setting predates multi-runtime evidence and stores only a model
       // string. Keep its legacy default-Ollama transport; model-id lookup would
       // guess when two runtimes expose the same id.
-      if (typeof pinned === "string" && pinned.trim()) return { model: pinned.trim() };
-    } catch { /* settings unreadable — fall through to discovery */ }
-
-    try {
-      const localRuntimes = await import("../local-runtimes/index.js");
-      if (provider === "local") {
-        const certifiedLocalTarget = localRuntimes.pickCertifiedLocalClassifierTarget();
-        if (certifiedLocalTarget) {
-          return { model: certifiedLocalTarget.model, certifiedLocalTarget };
+      if (typeof pinned === "string" && pinned.trim()) {
+        const model = pinned.trim();
+        if (provider === "local") {
+          // A bare id cannot say which runtime serves it; a certification can.
+          const { certifiedTargetForModel } = await import("../local-runtimes/index.js");
+          const certifiedLocalTarget = certifiedTargetForModel(model);
+          if (certifiedLocalTarget) return { model, certifiedLocalTarget };
         }
+        return { model };
       }
-      const auto = localRuntimes.pickLocalClassifierModel();
-      if (auto) return { model: auto };
-    } catch { /* discovery unavailable — fall through to the caller's fallback */ }
+    } catch { /* settings unreadable — fall through to the chat model */ }
   }
 
   return { model: backgroundModelFor(provider, fallback) };

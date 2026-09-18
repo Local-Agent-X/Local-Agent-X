@@ -40,6 +40,8 @@ with justification). Mission: `docs/agent-prompts/local-model-harness.md`.
 
 | H-029 | Compaction replaced ~8,900 tokens of real work with the single word NOTHING_NOTABLE | HARNESS | That is the prompt's escape hatch for a GENUINELY EMPTY stretch; muse used it for 56 messages of file reads, test runs and its own failure analysis, and nothing checked it. Explains the 10–35x re-reads of the same file in compacted ops | Reject it when the segment carries work (tool calls/results or long answers): one retry with feedback, then null so the caller keeps the longest fitting tail instead. Verified live: the same history now summarizes in 9.4s to a 971-char digest naming the added()/booleans mismatch and the outstanding asks | tests + live replay |
 
+| H-030 | A small local model was auto-selected for routing whenever one happened to be installed | HARNESS | Routing was justified by CONSEQUENCE ("a wrong answer cannot block the work"), never by accuracy. Measured: llama3.2:3b 3/8 vs muse 7/8 — it saved a one-off command as a durable fact, dropped "stop asking before you run the tests", kept an unrelated memory as on-topic, and emitted two JSON objects for one verdict | Nothing is auto-selected: a pin wins (and is routed to the runtime that certified it), otherwise routing runs on the chat model. Cost is bounded because routing is conditional — follow-up verdict only on 3-12 word messages, relevance only when session signals exist, memory write fire-and-forget | tests |
+
 ## Documented MODEL failures (muse-glimmer:30b)
 
 | Exercise | Run | Reason (evidence) |

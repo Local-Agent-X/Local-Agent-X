@@ -28,6 +28,11 @@ vi.mock("../src/config.js", () => ({
 }));
 
 vi.mock("../src/local-runtimes/index.js", () => ({
+  // A certified target is reached through the user's PIN now that nothing is
+  // auto-selected (providers/background-model.ts): the pin names the model,
+  // the certification names the runtime that serves it.
+  certifiedTargetForModel: (id: string) =>
+    state.certifiedTarget && state.certifiedTarget.model === id ? state.certifiedTarget : null,
   pickCertifiedLocalClassifierTarget: () => state.certifiedTarget,
   pickLocalClassifierModel: () => state.discoveredModel,
   isCertifiedLocalClassifierTargetCurrent: () => state.targetChecks.shift() ?? state.targetCurrent,
@@ -95,6 +100,7 @@ beforeEach(() => {
 describe("certified local background endpoint ownership", () => {
   it("routes a duplicate model ID to its certified OpenAI-compatible runtime", async () => {
     state.certifiedTarget = OPENAI_TARGET;
+    state.pinnedModel = OPENAI_TARGET.model;
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       expect(String(input)).toBe("http://127.0.0.1:1234/v1/chat/completions");
       expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer ollama");
@@ -110,6 +116,7 @@ describe("certified local background endpoint ownership", () => {
 
   it("uses the exact second Ollama root and its native generate protocol", async () => {
     state.certifiedTarget = SECOND_OLLAMA_TARGET;
+    state.pinnedModel = SECOND_OLLAMA_TARGET.model;
     const urls: string[] = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
@@ -131,6 +138,7 @@ describe("certified local background endpoint ownership", () => {
 
   it("does not cross to default Ollama when an exact target goes stale before dispatch", async () => {
     state.certifiedTarget = OPENAI_TARGET;
+    state.pinnedModel = OPENAI_TARGET.model;
     state.targetChecks = [true, false];
     const fetchMock = vi.spyOn(globalThis, "fetch");
 
@@ -153,6 +161,7 @@ describe("certified local background endpoint ownership", () => {
       response.end();
     });
     const originPort = await listen(origin);
+    state.pinnedModel = OPENAI_TARGET.model;
     state.certifiedTarget = {
       ...OPENAI_TARGET,
       runtimeId: `openai-compat@127.0.0.1:${originPort}`,
@@ -184,6 +193,7 @@ describe("certified local background endpoint ownership", () => {
       response.end();
     });
     const originPort = await listen(origin);
+    state.pinnedModel = SECOND_OLLAMA_TARGET.model;
     state.certifiedTarget = {
       ...SECOND_OLLAMA_TARGET,
       runtimeId: `ollama@127.0.0.1:${originPort}`,
@@ -200,17 +210,20 @@ describe("certified local background endpoint ownership", () => {
     }
   });
 
-  it("preserves existing default-Ollama routing without certified evidence", async () => {
+  it("with no pin, background work runs on the chat model at default Ollama", async () => {
+    // Nothing is auto-selected: a small model that happens to be installed no
+    // longer judges anything (it answered 3 of 8 routing cases correctly here
+    // against the chat model's 7 of 8, 2026-09-18).
     state.discoveredModel = "small:3b";
     const urls: string[] = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = String(input);
       urls.push(url);
       if (url.endsWith("/api/ps")) {
-        return jsonResponse({ models: [{ name: "small:3b" }] });
+        return jsonResponse({ models: [{ name: "chat:27b" }] });
       }
       const body = JSON.parse(String(init?.body)) as { model: string };
-      expect(body.model).toBe("small:3b");
+      expect(body.model).toBe("chat:27b");
       return jsonResponse({ response: "OK" });
     });
 

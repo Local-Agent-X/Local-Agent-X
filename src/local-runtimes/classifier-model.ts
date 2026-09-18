@@ -125,6 +125,34 @@ export function pickCertifiedLocalClassifierTarget(): CertifiedLocalClassifierTa
 }
 
 /**
+ * The certified target for a model the user NAMED, or null when no runtime
+ * publishes a certification for it.
+ *
+ * A pinned id alone cannot say WHICH runtime serves it — two runtimes can
+ * expose the same id, and the legacy pin path assumed default Ollama. This
+ * keeps a pin routed to the runtime that actually certified it now that
+ * nothing is auto-selected (providers/background-model.ts).
+ */
+export function certifiedTargetForModel(modelId: string): CertifiedLocalClassifierTarget | null {
+  const runtimes = getLocalRuntimes();
+  if (!runtimes) return null;
+  for (const runtime of runtimes) {
+    for (const model of runtime.models) {
+      if (model.id !== modelId) continue;
+      if (!hasPublishedCertification(runtime, model)) continue;
+      return {
+        runtimeId: runtime.id,
+        kind: runtime.kind,
+        endpointBaseUrl: runtime.endpoint.baseUrl,
+        chatBaseUrl: runtime.chatBaseUrl,
+        model: model.id,
+      };
+    }
+  }
+  return null;
+}
+
+/**
  * Cache-only proof that a previously selected endpoint/model pair is still the
  * exact published target. Invalidation, discovery drift, or a certification
  * retry makes this false without initiating identity or scenario probes.

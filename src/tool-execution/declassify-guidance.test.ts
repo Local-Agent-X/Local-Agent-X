@@ -41,6 +41,38 @@ describe("taint recovery guidance", () => {
     for (const rel of RECOVERY_SOURCES) expect(read(rel)).toContain(label as string);
   });
 
+  /**
+   * The gap this suite did NOT close, found live 2026-09-18: every string was
+   * correct — the model dutifully told the user to click "Declassify & retry" —
+   * and the card could not render, because the UI decided from LAYER NAMES
+   * ('data-lineage' | 'tainted-shell') while a kernel taint quarantine reports
+   * layer "arikernel" inside an "egress-aggregate". Correct words, unreachable
+   * control, dead session. The policy layer now states clearability outright.
+   */
+  it("every blocker whose recovery names the button is marked clearable", () => {
+    for (const rel of RECOVERY_SOURCES) {
+      const lines = read(rel).split(/\r?\n/);
+      lines.forEach((line, i) => {
+        if (!line.includes("Declassify & retry")) return;
+        // Prose about the mechanism (this flag's own doc comment) is not a blocker.
+        if (/^\s*(?:\/\/|\*|\/\*)/.test(line)) return;
+        // The blocker/result literal this recovery belongs to. Scanned as a
+        // window because the text and the flag are not adjacent — and reaching
+        // FORWARD because a shared recovery constant (DATA_LINEAGE_RECOVERY) is
+        // declared above the blocker that carries it. A tripwire, not a proof:
+        // it catches a new blocker added with no flag, which is how this broke.
+        const block = lines.slice(Math.max(0, i - 14), i + 30).join(" ");
+        expect(block, `${rel}:${i + 1} names the button but sets no clearable flag`)
+          .toMatch(/clearable:\s*"declassify"/);
+      });
+    }
+  });
+
+  it("the UI renders the card off the flag, not only off layer names", () => {
+    const render = read("public/js/chat-render-artifacts.js");
+    expect(render).toMatch(/md\.clearable\s*===\s*'declassify'/);
+  });
+
   it("still tells the model the block is clearable, not terminal", () => {
     // The egress message used to say "end the session", which reads as no
     // recovery at all — the button was right there on the same card.

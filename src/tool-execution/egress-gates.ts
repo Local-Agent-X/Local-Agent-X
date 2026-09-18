@@ -40,6 +40,13 @@ export interface EgressBlocker {
    *  route to approval instead of blocking — a canary / taint / kernel blocker
    *  in the set keeps the whole set a hard block. */
   confirmable?: boolean;
+  /** The user can clear this block themselves by authorizing a declassify —
+   *  the chat renders its "Declassify & retry" card off this flag. Set it
+   *  wherever the recovery text names that button, so the control the model
+   *  points at actually exists; the UI must not re-derive it from layer names
+   *  (a kernel taint quarantine reports layer "arikernel", which is how the
+   *  card silently stopped rendering for the block that needed it most). */
+  clearable?: "declassify";
 }
 
 // Extract the OUTBOUND payload an egress-class sink would emit, so the secret
@@ -122,7 +129,7 @@ function blockerResult(b: EgressBlocker): ToolResult {
     content: `BLOCKED by ${b.label}: ${b.reason}`,
     isError: true,
     status: "blocked",
-    metadata: { layer: b.layer, ...(b.meta ?? {}), recovery: b.recovery, userHint: b.userHint },
+    metadata: { layer: b.layer, ...(b.meta ?? {}), recovery: b.recovery, userHint: b.userHint, ...(b.clearable ? { clearable: b.clearable } : {}) },
   };
 }
 
@@ -211,6 +218,7 @@ export function probeDataLineage(ctx: ToolCallContext): EgressBlocker | null {
     layer: "data-lineage", label: "data lineage",
     reason: egress.reason ?? "The session is tainted by an earlier sensitive read; outbound data is blocked.",
     recovery: DATA_LINEAGE_RECOVERY,
+    clearable: "declassify",
     userHint: USER_HINTS.outboundContent,
   };
 }
@@ -310,6 +318,10 @@ export function renderEgressAggregate(ctx: ToolCallContext, blockers: EgressBloc
     metadata: {
       layer: "egress-aggregate",
       layers: unique.map((b) => b.layer),
+      // Declassify is a necessary step whenever a taint blocker is in the set,
+      // even if other layers (host allowlist, canary) must be fixed too — the
+      // card says it clears the quarantine, not that the call will then succeed.
+      ...(unique.some((b) => b.clearable === "declassify") ? { clearable: "declassify" as const } : {}),
       blockers: unique.map((b) => ({ layer: b.layer, reason: b.reason, recovery: b.recovery, ...(b.meta ?? {}) })),
       recovery: unique.map((b) => `[${b.layer}] ${b.recovery}`).join("  "),
       userHint: unique[0].userHint,

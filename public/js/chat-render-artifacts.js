@@ -335,8 +335,16 @@ function _renderAssistantToolArtifacts(bodyEl, data) {
           // authoritative layer (single-gate `layer` or aggregate `layers`).
           if (endEvt.status === 'blocked') {
             const md = endEvt.metadata || {};
+            // The POLICY layer decides whether a block is user-clearable and says so
+            // (metadata.clearable, set wherever the recovery text names this button).
+            // The layer-name list below is the legacy fallback for sessions rendered
+            // from stored events that predate the flag — it must not be the primary
+            // test: a kernel taint quarantine reports layer "arikernel" (or
+            // "egress-aggregate"), matched nothing here, and the card silently never
+            // rendered for the one block class that most needed it.
             const TAINT_LAYERS = ['data-lineage', 'tainted-shell'];
-            const taintBlocked = TAINT_LAYERS.includes(md.layer)
+            const taintBlocked = md.clearable === 'declassify'
+              || TAINT_LAYERS.includes(md.layer)
               || (Array.isArray(md.layers) && md.layers.some(l => TAINT_LAYERS.includes(l)));
             if (taintBlocked && window.activeChat && activeChat.id) {
               try { appendDeclassifyAction(card, activeChat.id); } catch (e) { console.error('[chat] declassify action render error:', e); }

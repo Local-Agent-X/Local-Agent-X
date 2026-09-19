@@ -21,6 +21,7 @@ import { ToolBlocked } from "./errors.js";
 import type { Phase, PhaseOutcome, ToolCallContext } from "./context.js";
 import { terminate, CONTINUE, BLOCK } from "./context.js";
 import { egressAggregateGate, type EgressBlocker } from "./egress-gates.js";
+import { browserWriteIsTaintFree, withoutUntrustedContent } from "./taint-scope.js";
 import { rewritePathForWorktree } from "./worktree-paths.js";
 
 export { egressGuardGate, dataLineageGate, canaryEgressGate } from "./egress-gates.js";
@@ -124,6 +125,16 @@ async function ariKernelGate(ctx: ToolCallContext): Promise<PhaseOutcome> {
       // non-taint on the shell call; genuine exfil (secret bytes in the command)
       // was already terminated above and never reaches here.
       kernelTaintLabels = taintLabels.filter((s) => !SHELL_TAINT_DENY_SOURCES.has(s));
+    }
+    // The same adjudication for a BROWSER write. The kernel denies one on
+    // session taint alone, so an inbox read disarmed every later click/fill on
+    // every site for the rest of the run. browserWriteIsTaintFree answers the
+    // question the kernel cannot — do THESE bytes come from the tainted source
+    // — and only a payload proven clean (and fully fingerprinted) clears. A
+    // write that does carry tainted bytes keeps its labels and is denied below,
+    // then reported by the egress aggregate with the declassify card.
+    if (browserWriteIsTaintFree(sessionId || "default", tc.name, args, kernelTaintLabels)) {
+      kernelTaintLabels = withoutUntrustedContent(kernelTaintLabels);
     }
     const ariResult = await ariEvaluate(tc.name, deriveAriAction(tc.name, args), args, kernelTaintLabels, ariScopeId);
     if (!ariResult.allowed) {

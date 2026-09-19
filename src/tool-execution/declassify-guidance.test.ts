@@ -45,29 +45,15 @@ describe("taint recovery guidance", () => {
    * The gap this suite did NOT close, found live 2026-09-18: every string was
    * correct — the model dutifully told the user to click "Declassify & retry" —
    * and the card could not render, because the UI decided from LAYER NAMES
-   * ('data-lineage' | 'tainted-shell') while a kernel taint quarantine reports
-   * layer "arikernel" inside an "egress-aggregate". Correct words, unreachable
-   * control, dead session. The policy layer now states clearability outright.
+   * while a kernel taint quarantine reports layer "arikernel" inside an
+   * "egress-aggregate". Correct words, unreachable control, dead session.
+   *
+   * Whether a real blocker carries the flag is asserted against the real
+   * objects, not this file's text: browser-write-taint-scope.test.ts (the
+   * data-lineage blocker) and sc10-egress-aggregate.test.ts (the kernel one).
+   * A source-layout scan lived here briefly and broke on an unrelated edit —
+   * it measured where the lines sat, not what the gate returns.
    */
-  it("every blocker whose recovery names the button is marked clearable", () => {
-    for (const rel of RECOVERY_SOURCES) {
-      const lines = read(rel).split(/\r?\n/);
-      lines.forEach((line, i) => {
-        if (!line.includes("Declassify & retry")) return;
-        // Prose about the mechanism (this flag's own doc comment) is not a blocker.
-        if (/^\s*(?:\/\/|\*|\/\*)/.test(line)) return;
-        // The blocker/result literal this recovery belongs to. Scanned as a
-        // window because the text and the flag are not adjacent — and reaching
-        // FORWARD because a shared recovery constant (DATA_LINEAGE_RECOVERY) is
-        // declared above the blocker that carries it. A tripwire, not a proof:
-        // it catches a new blocker added with no flag, which is how this broke.
-        const block = lines.slice(Math.max(0, i - 14), i + 30).join(" ");
-        expect(block, `${rel}:${i + 1} names the button but sets no clearable flag`)
-          .toMatch(/clearable:\s*"declassify"/);
-      });
-    }
-  });
-
   it("the UI decides off the flag, not only off layer names", () => {
     // The rule lives with the card it gates; the renderer must defer to it
     // rather than keep a second copy of the layer list. Behaviour (which

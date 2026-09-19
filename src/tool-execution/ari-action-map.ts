@@ -91,7 +91,7 @@ const HTTP_WRITE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 // a write would deny it under web/rag taint (deny-tainted-http-write) — i.e.
 // exactly after browsing, which is the only time a mobile re-render is ever
 // wanted.
-const BROWSER_WRITE_ACTIONS = new Set(["click", "fill", "select", "type", "evaluate", "act"]);
+export const BROWSER_WRITE_ACTIONS: ReadonlySet<string> = new Set(["click", "fill", "select", "type", "evaluate", "act"]);
 
 export function deriveAriAction(toolName: string, args: Record<string, unknown>): string {
   if (toolName === "http_request") {

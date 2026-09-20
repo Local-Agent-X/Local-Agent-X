@@ -192,6 +192,11 @@ export interface TurnTrace {
     temperature?: number;
     maxTokens?: number;
     reasoningEffort?: string;
+    /** Why reasoningEffort is what it is: the profile's thinking policy and
+     *  how this step was classified. Absent for a model with no profile. A
+     *  trace that shows the effort without the decision cannot tell a
+     *  deliberate value from a default one. */
+    thinking?: { mode: string; kind: string };
     toolChoice?: unknown;
     /** The body that actually went on the wire, minus messages, as the HTTP
      *  adapter reported it: after a learned-unsupported omission or a

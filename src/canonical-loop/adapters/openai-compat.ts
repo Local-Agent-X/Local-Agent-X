@@ -155,6 +155,7 @@ export class OpenAICompatAdapter implements Adapter {
       this.opts.requireToolOnFirstTurn === true &&
       input.tools.length > 0;
 
+    const thinking = profileThinking(model, input);
     const req: ProviderRequest = {
       apiKey,
       baseURL,
@@ -172,7 +173,7 @@ export class OpenAICompatAdapter implements Adapter {
         input.stepEffortHint,
         this.opts.reasoningEffort,
         undefined,
-        profileThinking(this.opts.model, input),
+        thinking,
       ),
       sessionId: this.opts.sessionId,
       signal: this.aborter.signal,
@@ -333,7 +334,7 @@ export class OpenAICompatAdapter implements Adapter {
       providerState,
       terminalReason,
       modelStop: classifyModelStop(providerStop),
-      trace: buildTurnTrace({ req, result, startedAt: turnStartedAt, promptOverWindow }),
+      trace: buildTurnTrace({ req, thinking, result, startedAt: turnStartedAt, promptOverWindow }),
     };
   }
 

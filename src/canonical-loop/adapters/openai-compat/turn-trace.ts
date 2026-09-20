@@ -9,6 +9,7 @@ import type { StreamOnceResult } from "./types.js";
 
 export function buildTurnTrace(args: {
   req: ProviderRequest;
+  thinking?: { mode: string; kind: string };
   result: StreamOnceResult;
   startedAt: number;
   promptOverWindow: boolean;
@@ -26,6 +27,7 @@ export function buildTurnTrace(args: {
       ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
       ...(req.maxTokens !== undefined ? { maxTokens: req.maxTokens } : {}),
       ...(req.reasoningEffort ? { reasoningEffort: String(req.reasoningEffort) } : {}),
+      ...(args.thinking ? { thinking: args.thinking } : {}),
       ...(req.toolChoice ? { toolChoice: req.toolChoice } : {}),
       ...(result.wireParams ? { sent: result.wireParams } : {}),
     },

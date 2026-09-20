@@ -80,3 +80,20 @@ export function assessOpenAiCompatPreflight(args: {
   }
   return { kind: "send", window, fit };
 }
+
+/**
+ * Did the runtime accept more prompt tokens than the window it has loaded?
+ * Only a MEASURED window (exact table or probed) can say so; a floor or a
+ * name heuristic is a guess and must not accuse the runtime. When true on
+ * Ollama, the prompt was silently truncated at the front (verified 0.34.2:
+ * HTTP 200, done_reason "stop", the system prompt gone, only the server log
+ * and this count to tell) — the caller records it as a context overflow.
+ */
+export function promptExceedsMeasuredWindow(
+  promptTokens: number | undefined,
+  window: ContextWindowResolution,
+): boolean {
+  if (promptTokens === undefined) return false;
+  if (window.provenance !== "exact" && window.provenance !== "probed") return false;
+  return promptTokens > window.tokens;
+}

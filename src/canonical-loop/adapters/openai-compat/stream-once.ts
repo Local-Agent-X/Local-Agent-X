@@ -129,6 +129,7 @@ export async function streamOnce(
       if (ev.type === "usage") {
         out.usagePromptTokens = ev.promptTokens;
         out.usageCompletionTokens = ev.completionTokens;
+        out.usageCachedTokens = ev.cachedTokens;
         continue;
       }
       if (ev.type === "error") {
@@ -139,6 +140,7 @@ export async function streamOnce(
       }
       if (ev.type === "done") {
         out.providerStop = ev.stopReason;
+        if (ev.firstTokenMs !== undefined) out.firstTokenMs = ev.firstTokenMs;
         continue;
       }
     }

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 
-import { callOllama } from "./ollama.js";
+import { callOllama, summarizeOllamaUsage } from "./ollama.js";
 import { DISPATCH_NUM_CTX, MODEL_KEEP_ALIVE, _resetResidencyCache } from "../local-runtimes/residency.js";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -62,5 +62,30 @@ describe("callOllama", () => {
   it("null on an empty response field", async () => {
     ollamaFetch([], "");
     expect(await callOllama("p", "m", 0, 64, 1000)).toBeNull();
+  });
+
+  it("still returns the text when Ollama's counters ride along", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: unknown) =>
+      String(url).endsWith("/api/ps")
+        ? new Response(JSON.stringify({ models: [] }), { status: 200 })
+        : new Response(JSON.stringify({ response: "YES", prompt_eval_count: 19, eval_count: 2, load_duration: 2_000_000 }), { status: 200 })));
+    expect(await callOllama("p", "m", 0, 64, 1000)).toBe("YES");
+  });
+});
+
+// Ollama returns its per-request counters in nanoseconds; a load past a second
+// inside a background call is the context-size ping-pong (or an eviction)
+// showing itself where it happens.
+describe("summarizeOllamaUsage", () => {
+  it("converts the nanosecond counters to milliseconds and spots a (re)load", () => {
+    expect(summarizeOllamaUsage({
+      prompt_eval_count: 1411, eval_count: 12,
+      prompt_eval_duration: 472_440_000, eval_duration: 160_000_000, load_duration: 9_334_000_000,
+    })).toEqual({ promptEvalCount: 1411, evalCount: 12, promptEvalMs: 472, evalMs: 160, loadMs: 9334, reloaded: true });
+    expect(summarizeOllamaUsage({ prompt_eval_count: 19, eval_count: 2, load_duration: 2_000_000 })?.reloaded).toBe(false);
+  });
+
+  it("is null when the response carries no counters", () => {
+    expect(summarizeOllamaUsage({ response: "YES" })).toBeNull();
   });
 });

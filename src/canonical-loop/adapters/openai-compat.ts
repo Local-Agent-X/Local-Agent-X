@@ -47,7 +47,7 @@ import { byteLengthUtf8 } from "./openai-compat/helpers.js";
 import { canonicalToChatParam } from "./openai-compat/canonical-to-chat-param.js";
 import { resolveLocalCap } from "./openai-compat/local-cap.js";
 import { streamOnce, applyToolCallTextFallback } from "./openai-compat/stream-once.js";
-import { assessOpenAiCompatPreflight } from "./openai-compat/request-preflight.js";
+import { assessOpenAiCompatPreflight, promptExceedsMeasuredWindow } from "./openai-compat/request-preflight.js";
 import { resolveStepReasoningEffort } from "../step-effort.js";
 import { classifyModelStop } from "./model-stop.js";
 
@@ -222,7 +222,7 @@ export class OpenAICompatAdapter implements Adapter {
     }
     this.inflight = null;
 
-    const { assembledText, pendingToolCalls, firstError, providerStop, usagePromptTokens, usageCompletionTokens } = result;
+    const { assembledText, pendingToolCalls, firstError, providerStop, usagePromptTokens, usageCompletionTokens, usageCachedTokens, firstTokenMs } = result;
 
     // Live tool-capability evidence — AFTER the turn settled, gated on the
     // SAME policy helper as the no-tool latch (shouldLatchNoToolSupport):
@@ -266,6 +266,15 @@ export class OpenAICompatAdapter implements Adapter {
     else if (pendingToolCalls.length > 0) terminalReason = undefined;
     else terminalReason = "done";
 
+    // The runtime accepted more prompt tokens than the window it has loaded.
+    // On Ollama that means it silently dropped the FRONT of the prompt (the
+    // system prompt goes first) and answered from the tail — HTTP 200, no
+    // error field, only this counter to tell (measured 2026-09-19).
+    const promptOverWindow = promptExceedsMeasuredWindow(usagePromptTokens, preflight.window);
+    if (promptOverWindow) {
+      logger.warn(`${model}: runtime reports ${usagePromptTokens} prompt tokens against its ${preflight.window.tokens}-token window (${preflight.window.provenance}) — the prompt was truncated at the front`);
+    }
+
     let providerState = this.buildProviderState(input, {
       finalizedMessageId,
       stopReason: providerStop,
@@ -273,6 +282,14 @@ export class OpenAICompatAdapter implements Adapter {
       model,
       ...(usagePromptTokens !== undefined ? { usageInputTokens: usagePromptTokens } : {}),
       ...(usageCompletionTokens !== undefined ? { usageOutputTokens: usageCompletionTokens } : {}),
+      // NOT `cacheReadTokens`: that field is Anthropic's cache_read count,
+      // which its API reports SEPARATELY from input tokens and the cost
+      // ledger prices on top of them. OpenAI-style `cached_tokens` are a
+      // slice INSIDE prompt_tokens, so the same field would bill them twice
+      // on every cloud provider that reports them. Own field, own meaning.
+      ...(usageCachedTokens !== undefined ? { promptCachedTokens: usageCachedTokens } : {}),
+      ...(firstTokenMs !== undefined ? { ttftMs: firstTokenMs } : {}),
+      ...(promptOverWindow ? { promptOverWindow: true } : {}),
     });
 
     const sizeCheck = this.checkProviderStateSize(providerState);

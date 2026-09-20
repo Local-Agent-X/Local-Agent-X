@@ -6,7 +6,7 @@
  * silently dropping reasoning_effort.
  */
 import { describe, it, expect } from "vitest";
-import { isReasoningEffortRejection } from "../src/providers/adapters/openai-http.js";
+import { isReasoningEffortRejection } from "../src/providers/adapters/openai-param-rejections.js";
 
 describe("isReasoningEffortRejection — scopes the reasoning_effort retry", () => {
   it("matches the live xAI rejection (camelCase param in the message)", () => {

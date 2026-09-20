@@ -20,8 +20,9 @@ vi.mock("openai", () => ({
   },
 }));
 
-const { OpenAIHttpAdapter, isTemperatureRejection } = await import(
-  "../src/providers/adapters/openai-http.js"
+const { OpenAIHttpAdapter } = await import("../src/providers/adapters/openai-http.js");
+const { isTemperatureRejection } = await import(
+  "../src/providers/adapters/openai-param-rejections.js"
 );
 const { hasParamUnsupported, _resetUnsupportedParamsForTests } = await import(
   "../src/providers/types.js"

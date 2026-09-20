@@ -84,6 +84,7 @@ async function chatTurn(server, sessionId, message, timeoutMs) {
  *  case's ops, including any background ops a chat turn spawned. */
 function collectMetrics(dataDir) {
   const m = { ops: 0, rounds: 0, modelMs: 0, toolMs: 0, inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheWrite: 0,
+    ttftMs: 0, maxPromptTokens: 0, promptOverWindow: 0,
     nudges: 0, compactedRounds: 0, errors: 0, chatModels: new Set() };
   for (const { dir, op } of readOps(dataDir)) {
     m.ops++;
@@ -98,8 +99,14 @@ function collectMetrics(dataDir) {
       m.toolMs += turn.toolDispatchMs ?? 0;
       m.inputTokens += p.usageInputTokens ?? p.usagePromptTokens ?? 0;
       m.outputTokens += p.usageOutputTokens ?? p.usageCompletionTokens ?? 0;
-      m.cacheRead += p.cacheReadTokens ?? 0;
+      // Anthropic reports cache reads beside input tokens; OpenAI-compatible
+      // endpoints report cached_tokens inside them (promptCachedTokens).
+      // Either way this is "prompt tokens the runtime did not re-process".
+      m.cacheRead += p.cacheReadTokens ?? p.promptCachedTokens ?? 0;
       m.cacheWrite += p.cacheCreateTokens ?? 0;
+      m.ttftMs += p.ttftMs ?? 0;
+      m.maxPromptTokens = Math.max(m.maxPromptTokens, p.usageInputTokens ?? 0);
+      if (p.promptOverWindow) m.promptOverWindow++;
       if (turn.providerState?.viewCompacted) m.compactedRounds++;
       if (turn.terminalReason === "error") m.errors++;
       if (p.model && op.type === "chat_turn") m.chatModels.add(p.model);

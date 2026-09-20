@@ -5,12 +5,12 @@
 // temperature. Unrelated errors must still propagate as error chunks.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { OpenAIHttpAdapter, LOCAL_DEFAULT_MAX_TOKENS } from "./openai-http.js";
 import {
-  OpenAIHttpAdapter,
   isResponseFormatRejection,
   isMaxTokensRejection,
-  LOCAL_DEFAULT_MAX_TOKENS,
-} from "./openai-http.js";
+  isStreamOptionsRejection,
+} from "./openai-param-rejections.js";
 import { markParamUnsupported } from "../types.js";
 import type { ProviderRequest, StreamChunk } from "../adapter/types.js";
 
@@ -271,5 +271,67 @@ describe("isResponseFormatRejection", () => {
     expect(isResponseFormatRejection("Invalid 'response_format.json_schema.name': string does not match pattern")).toBe(false);
     expect(isResponseFormatRejection("rate limit exceeded")).toBe(false);
     expect(isResponseFormatRejection(undefined)).toBe(false);
+  });
+});
+
+// Usage reporting is requested from EVERY endpoint, not only known cloud
+// ones: local runs recorded zero tokens for months because the param was
+// withheld from Ollama, which honours it. A strict server that 400s on it
+// gets the same single-knob self-heal as the other params.
+describe("stream usage plumbing", () => {
+  function usageStream() {
+    return {
+      controller: { abort: vi.fn() },
+      async *[Symbol.asyncIterator]() {
+        yield { choices: [{ delta: { content: "ok" }, finish_reason: "stop" }] };
+        yield { choices: [], usage: { prompt_tokens: 120, completion_tokens: 7, prompt_tokens_details: { cached_tokens: 100 } } };
+      },
+    };
+  }
+
+  it("requests stream_options.include_usage from a local endpoint", async () => {
+    createMock.mockResolvedValueOnce(fakeStream());
+    await collect(baseReq({ baseURL: "http://127.0.0.1:11434/v1", model: "qwen3:8b" }));
+    expect(createMock.mock.calls[0][0].stream_options).toEqual({ include_usage: true });
+  });
+
+  it("and from an unknown endpoint too", async () => {
+    createMock.mockResolvedValueOnce(fakeStream());
+    await collect(baseReq({ baseURL: "https://llm.example.internal/v1" }));
+    expect(createMock.mock.calls[0][0].stream_options).toEqual({ include_usage: true });
+  });
+
+  it("a 400 naming stream_options drops it (and only it), marks the param, retries once", async () => {
+    createMock
+      .mockRejectedValueOnce(new Error("400 Unsupported parameter: 'stream_options' is not supported with this server"))
+      .mockResolvedValueOnce(fakeStream());
+    const chunks = await collect(baseReq({ baseURL: "http://127.0.0.1:1234/v1", model: "local-strict" }));
+    expect(chunks.some((c) => c.type === "error")).toBe(false);
+    expect(createMock).toHaveBeenCalledTimes(2);
+    expect(createMock.mock.calls[0][0].stream_options).toBeDefined();
+    const retryParams = createMock.mock.calls[1][0];
+    expect("stream_options" in retryParams).toBe(false);
+    expect(retryParams.max_tokens).toBe(createMock.mock.calls[0][0].max_tokens);
+    expect(retryParams.temperature).toBe(createMock.mock.calls[0][0].temperature);
+    expect(vi.mocked(markParamUnsupported)).toHaveBeenCalledWith("http://127.0.0.1:1234/v1", "local-strict", "stream_options");
+  });
+
+  it("carries cached_tokens on the usage chunk and time-to-first-token on done", async () => {
+    createMock.mockResolvedValueOnce(usageStream());
+    const chunks = await collect(baseReq({ baseURL: "http://127.0.0.1:11434/v1", model: "qwen3:8b" }));
+    expect(chunks.find((c) => c.type === "usage")).toEqual({ type: "usage", promptTokens: 120, completionTokens: 7, cachedTokens: 100 });
+    const done = chunks.find((c) => c.type === "done") as { type: "done"; firstTokenMs?: number };
+    expect(typeof done.firstTokenMs).toBe("number");
+    expect(done.firstTokenMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it("isStreamOptionsRejection matches unsupported phrasing only", () => {
+    expect(isStreamOptionsRejection("Unsupported parameter: 'stream_options'")).toBe(true);
+    expect(isStreamOptionsRejection("stream_options is not supported")).toBe(true);
+    expect(isStreamOptionsRejection("does not support parameter stream_options")).toBe(true);
+    expect(isStreamOptionsRejection("unknown field stream_options")).toBe(true);
+    expect(isStreamOptionsRejection("stream_options.include_usage must be a boolean")).toBe(false);
+    expect(isStreamOptionsRejection("rate limit exceeded")).toBe(false);
+    expect(isStreamOptionsRejection(undefined)).toBe(false);
   });
 });

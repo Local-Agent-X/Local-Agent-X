@@ -19,6 +19,13 @@ import { PROVIDERS, isHttpProvider } from "../registry.js";
 import { effortForChatCompletions, DEFAULT_REASONING_EFFORT } from "../reasoning-effort.js";
 import { PROVIDER_IDS, type ProviderId } from "../provider-ids.js";
 import { isLocalOnlyMode, isLoopbackUrl, isLoopbackOrPrivateUrl } from "../../local-only-policy.js";
+import {
+  isReasoningEffortRejection,
+  isTemperatureRejection,
+  isResponseFormatRejection,
+  isMaxTokensRejection,
+  isStreamOptionsRejection,
+} from "./openai-param-rejections.js";
 
 const logger = createLogger("providers.adapters.openai-http");
 
@@ -42,78 +49,11 @@ function isReasoningCapable(baseURL: string | undefined, model: string): boolean
   return /deepseek-r1|qwen.*reasoning|gpt-oss|glm-4\.7/i.test(model);
 }
 
-// Some models named as reasoners still 400 the whole request on the
-// `reasoning_effort` param (grok-4.20-0309-reasoning is the live case:
-// "does not support parameter reasoningEffort"). Match that specific
-// rejection — and only that — so the catch strips reasoning_effort and
-// retries, while every other 400 (rate limit, context length, auth) still
-// propagates untouched.
-export function isReasoningEffortRejection(message: string | undefined): boolean {
-  return /does not support parameter\s+reasoning_?effort/i.test(message ?? "");
-}
-
-// o1/o3/o-series models 400 the whole request on a non-default `temperature`
-// ("Unsupported value: 'temperature' does not support 0.7 with this model.
-// Only the default (1) value is supported."). Match that specific rejection —
-// and only that — so the catch drops the temperature field (letting the API
-// use its default) and retries, while every other 400 still propagates.
-export function isTemperatureRejection(message: string | undefined): boolean {
-  return /unsupported value:\s*'?temperature|temperature.*only the default|does not support.*temperature/i.test(
-    message ?? "",
-  );
-}
-
-// Not every OpenAI-compatible server implements `response_format` with
-// json_schema (strict servers 400 the whole request: "Invalid parameter:
-// 'response_format' of type 'json_schema' is not supported with this model").
-// Match UNSUPPORTED phrasing only — same discipline as the reasoning_effort
-// and temperature matchers above. Schema-validation 400s also name the param
-// ("Invalid schema for response_format 'x': ... 'additionalProperties' is
-// required...", "Invalid 'response_format.json_schema.name'...") but those
-// are a CALLER bug: they must propagate untouched, never mark the learned
-// store, and never silently heal — otherwise one bad schema permanently
-// disables structured output for the (baseURL, model).
-export function isResponseFormatRejection(message: string | undefined): boolean {
-  return /does not support(?: parameter)?\s+'?response_?format|response_?format'?[^.]*\bnot supported|unsupported (?:parameter:?\s*)?'?response_?format/i.test(
-    message ?? "",
-  );
-}
-
 // Runaway guard rail for LOCAL endpoints — see the constant's doc in
 // ../adapter/types.ts (declared there so the window-aware clamp in
 // canonical-loop/adapters/openai-compat/local-cap.ts shares it without
 // loading this module's SDK import). Re-exported for existing consumers.
 export { LOCAL_DEFAULT_MAX_TOKENS } from "../adapter/types.js";
-
-// o-series models 400 the whole request on `max_tokens` ("Unsupported
-// parameter: 'max_tokens' is not supported with this model. Use
-// 'max_completion_tokens' instead."), and a strict OpenAI-compat server may
-// not implement the param at all. Match UNSUPPORTED phrasing only — a VALUE
-// 400 ("max_tokens is too large: …") is a sizing problem that must propagate
-// untouched and never latch the learned store, same discipline as the
-// matchers above.
-export function isMaxTokensRejection(message: string | undefined): boolean {
-  return /unsupported parameter:?\s*'?max_tokens|does not support(?: parameter)?\s+'?max_tokens|'?max_tokens'?\s+is\s+not\s+supported/i.test(
-    message ?? "",
-  );
-}
-
-// stream_options.include_usage makes an OpenAI-compatible stream emit a final
-// usage-only chunk (it's omitted otherwise), which soak-metrics needs to price
-// the op. Only request it from KNOWN cloud http providers (xAI, OpenAI,
-// Gemini's OpenAI-compat endpoint) — their baseURLs are static and all support
-// the param. Unknown/local baseURLs (Ollama, custom) run free and some strict
-// servers reject the param, so leave them alone.
-function streamUsageSupported(baseURL: string | undefined): boolean {
-  if (!baseURL) return false;
-  for (const id of PROVIDER_IDS) {
-    const meta = PROVIDERS[id as ProviderId];
-    if (!isHttpProvider(meta)) continue;
-    const metaURL = typeof meta.baseURL === "string" ? meta.baseURL : null;
-    if (metaURL && baseURL.startsWith(metaURL)) return true;
-  }
-  return false;
-}
 
 export function strictFetchFor(baseURL: string | undefined): ClientOptions["fetch"] {
   if (!isLocalOnlyMode() || !baseURL || !isLoopbackUrl(baseURL)) return undefined;
@@ -139,7 +79,7 @@ export class OpenAIHttpAdapter extends BaseAdapter {
     // (baseURL, model) does, omit the field up front so the first call skips
     // the failed round-trip.
     const temperatureAllowed = !hasParamUnsupported(req.baseURL, req.model, "temperature");
-    const streamUsage = streamUsageSupported(req.baseURL);
+    const streamUsageAllowed = !hasParamUnsupported(req.baseURL, req.model, "stream_options");
     // Structured output only when the caller asked for it AND this
     // (baseURL, model) hasn't already rejected the param.
     const responseFormatAllowed =
@@ -180,6 +120,7 @@ export class OpenAIHttpAdapter extends BaseAdapter {
       includeTemperature: boolean;
       includeResponseFormat: boolean;
       includeMaxTokens: boolean;
+      includeStreamUsage: boolean;
     }) => ({
       model: req.model,
       messages: [
@@ -193,7 +134,7 @@ export class OpenAIHttpAdapter extends BaseAdapter {
         ? { max_tokens: resolvedMaxTokens }
         : {}),
       stream: true as const,
-      ...(streamUsage ? { stream_options: { include_usage: true } } : {}),
+      ...(opts.includeStreamUsage ? { stream_options: { include_usage: true } } : {}),
       // Cast: the installed SDK's ReasoningEffort union predates "minimal",
       // which the API accepts on gpt-5-class models.
       ...(opts.includeReasoningEffort
@@ -215,6 +156,7 @@ export class OpenAIHttpAdapter extends BaseAdapter {
         : {}),
     });
 
+    const startedAt = Date.now();
     let stream;
     try {
       stream = await client.chat.completions.create(
@@ -224,6 +166,7 @@ export class OpenAIHttpAdapter extends BaseAdapter {
           includeTemperature: temperatureAllowed,
           includeResponseFormat: responseFormatAllowed,
           includeMaxTokens: maxTokensAllowed,
+          includeStreamUsage: streamUsageAllowed,
         }),
         { signal: req.signal || undefined },
       ).catch(async (err: Error) => {
@@ -238,6 +181,7 @@ export class OpenAIHttpAdapter extends BaseAdapter {
           includeTemperature: boolean;
           includeResponseFormat: boolean;
           includeMaxTokens: boolean;
+          includeStreamUsage: boolean;
         }) =>
           client.chat.completions.create(buildParams(opts), { signal: req.signal || undefined });
 
@@ -254,6 +198,7 @@ export class OpenAIHttpAdapter extends BaseAdapter {
             includeTemperature: temperatureAllowed,
             includeResponseFormat: responseFormatAllowed,
             includeMaxTokens: maxTokensAllowed,
+            includeStreamUsage: streamUsageAllowed,
           });
         }
         // reasoning_effort 400 — only when WE sent the param and the server
@@ -267,6 +212,7 @@ export class OpenAIHttpAdapter extends BaseAdapter {
             includeTemperature: temperatureAllowed,
             includeResponseFormat: responseFormatAllowed,
             includeMaxTokens: maxTokensAllowed,
+            includeStreamUsage: streamUsageAllowed,
           });
         }
         // temperature 400 — o-series models reject a non-default temperature.
@@ -280,6 +226,7 @@ export class OpenAIHttpAdapter extends BaseAdapter {
             includeTemperature: false,
             includeResponseFormat: responseFormatAllowed,
             includeMaxTokens: maxTokensAllowed,
+            includeStreamUsage: streamUsageAllowed,
           });
         }
         // response_format 400 — some OpenAI-compatible servers don't support
@@ -296,6 +243,7 @@ export class OpenAIHttpAdapter extends BaseAdapter {
             includeTemperature: temperatureAllowed,
             includeResponseFormat: false,
             includeMaxTokens: maxTokensAllowed,
+            includeStreamUsage: streamUsageAllowed,
           });
         }
         // max_tokens 400 — the cap is a best-effort guard rail, so when a
@@ -312,6 +260,23 @@ export class OpenAIHttpAdapter extends BaseAdapter {
             includeTemperature: temperatureAllowed,
             includeResponseFormat: responseFormatAllowed,
             includeMaxTokens: false,
+            includeStreamUsage: streamUsageAllowed,
+          });
+        }
+        // stream_options 400 — a strict OpenAI-compatible server that does not
+        // implement the param. Usage is telemetry, never behaviour, so drop it
+        // and retry once; the learned store keeps it off for this (baseURL,
+        // model) afterwards.
+        if (streamUsageAllowed && isStreamOptionsRejection(err.message)) {
+          markParamUnsupported(req.baseURL, req.model, "stream_options");
+          logger.info(`model ${req.model} rejected stream_options — retrying without usage reporting`);
+          return retry({
+            includeTools: useTools,
+            includeReasoningEffort: reasoningCapable,
+            includeTemperature: temperatureAllowed,
+            includeResponseFormat: responseFormatAllowed,
+            includeMaxTokens: maxTokensAllowed,
+            includeStreamUsage: false,
           });
         }
         throw err;
@@ -323,6 +288,8 @@ export class OpenAIHttpAdapter extends BaseAdapter {
 
     let promptTokens = 0;
     let completionTokens = 0;
+    let cachedTokens = 0;
+    let firstTokenMs: number | undefined;
     let stopReason = "end_turn";
     const toolBuf: { id: string; name: string; arguments: string }[] = [];
 
@@ -341,22 +308,31 @@ export class OpenAIHttpAdapter extends BaseAdapter {
         if (chunk.usage) {
           promptTokens += chunk.usage.prompt_tokens || 0;
           completionTokens += chunk.usage.completion_tokens || 0;
+          cachedTokens += chunk.usage.prompt_tokens_details?.cached_tokens || 0;
         }
         const delta = choice?.delta;
         if (!delta) continue;
+
+        // Reasoning models (Cerebras gpt-oss/glm/qwen, DeepSeek R1, etc.)
+        // stream their chain-of-thought in a separate delta field —
+        // `reasoning` on Cerebras, `reasoning_content` on DeepSeek-style.
+        const deltaExt = delta as { reasoning?: string; reasoning_content?: string };
+        const reasoningDelta = deltaExt.reasoning ?? deltaExt.reasoning_content;
+        // Time-to-first-token: the first delta that carries anything the model
+        // produced. Prompt processing ends here, so on a local runtime this is
+        // the prefill cost of THIS request (a cache hit is tens of ms, a cold
+        // prefix is seconds).
+        if (firstTokenMs === undefined && (delta.content || delta.tool_calls || reasoningDelta)) {
+          firstTokenMs = Date.now() - startedAt;
+        }
 
         if (delta.content) {
           yield { type: "text", delta: delta.content };
         }
 
-        // Reasoning models (Cerebras gpt-oss/glm/qwen, DeepSeek R1, etc.)
-        // stream their chain-of-thought in a separate delta field —
-        // `reasoning` on Cerebras, `reasoning_content` on DeepSeek-style.
-        // Surface as `thinking` so callers can render it distinct from
-        // the final answer (or fall back to showing it as content when
+        // Surface reasoning as `thinking` so callers can render it distinct
+        // from the final answer (or fall back to showing it as content when
         // no final answer ever lands).
-        const deltaExt = delta as { reasoning?: string; reasoning_content?: string };
-        const reasoningDelta = deltaExt.reasoning ?? deltaExt.reasoning_content;
         if (typeof reasoningDelta === "string" && reasoningDelta.length > 0) {
           yield { type: "thinking", delta: reasoningDelta };
         }
@@ -385,9 +361,9 @@ export class OpenAIHttpAdapter extends BaseAdapter {
     }
 
     if (promptTokens || completionTokens) {
-      yield { type: "usage", promptTokens, completionTokens };
+      yield { type: "usage", promptTokens, completionTokens, cachedTokens };
     }
-    yield { type: "done", stopReason };
+    yield { type: "done", stopReason, ...(firstTokenMs !== undefined ? { firstTokenMs } : {}) };
   }
 }
 

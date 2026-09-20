@@ -83,9 +83,14 @@ export type StreamChunk =
   /** Codex encrypted reasoning item — opaque to non-Codex callers, must
    *  be preserved verbatim and threaded back via previousResponseId. */
   | { type: "reasoning"; item: unknown }
-  | { type: "usage"; promptTokens: number; completionTokens: number }
-  /** `responseId` is set by Codex (Responses API chain) and undefined elsewhere. */
-  | { type: "done"; stopReason: string; responseId?: string }
+  /** `cachedTokens` is the prompt-prefix count the runtime served from its
+   *  KV cache (OpenAI `prompt_tokens_details.cached_tokens`; Ollama reports
+   *  it too). Absent when the endpoint does not say. */
+  | { type: "usage"; promptTokens: number; completionTokens: number; cachedTokens?: number }
+  /** `responseId` is set by Codex (Responses API chain) and undefined elsewhere.
+   *  `firstTokenMs` is time-to-first-token measured by the adapter from the
+   *  request's start to the first content, reasoning or tool-call delta. */
+  | { type: "done"; stopReason: string; responseId?: string; firstTokenMs?: number }
   | { type: "error"; message: string; statusCode?: number }
   | { type: "mcp_activity"; toolName?: string; arguments?: string };
 

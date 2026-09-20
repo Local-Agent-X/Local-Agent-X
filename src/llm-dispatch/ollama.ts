@@ -74,6 +74,44 @@ export function localModelSizeBytes(model: string): number | undefined {
   }
 }
 
+interface OllamaGenerateResponse {
+  response?: string;
+  prompt_eval_count?: number;
+  eval_count?: number;
+  prompt_eval_duration?: number;
+  eval_duration?: number;
+  load_duration?: number;
+}
+
+export interface OllamaUsage {
+  promptEvalCount: number;
+  evalCount: number;
+  promptEvalMs: number;
+  evalMs: number;
+  loadMs: number;
+  /** A resident model reports a load of single-digit milliseconds; anything
+   *  past a second means the runner was (re)started for this call. */
+  reloaded: boolean;
+}
+
+const RELOAD_THRESHOLD_MS = 1_000;
+
+/** Ollama's per-request counters (nanoseconds on the wire), or null when the
+ *  response carries none. */
+export function summarizeOllamaUsage(data: OllamaGenerateResponse): OllamaUsage | null {
+  if (typeof data.prompt_eval_count !== "number" && typeof data.eval_count !== "number") return null;
+  const ms = (ns?: number) => Math.round((ns ?? 0) / 1e6);
+  const loadMs = ms(data.load_duration);
+  return {
+    promptEvalCount: data.prompt_eval_count ?? 0,
+    evalCount: data.eval_count ?? 0,
+    promptEvalMs: ms(data.prompt_eval_duration),
+    evalMs: ms(data.eval_duration),
+    loadMs,
+    reloaded: loadMs > RELOAD_THRESHOLD_MS,
+  };
+}
+
 export async function callOllama(
   prompt: string,
   model: string,
@@ -112,7 +150,19 @@ export async function callOllama(
       logger.warn(`ollama call failed: HTTP ${res.status} (model=${model})`);
       return null;
     }
-    const data = await res.json() as { response?: string };
+    const data = await res.json() as OllamaGenerateResponse;
+    const usage = summarizeOllamaUsage(data);
+    if (usage) {
+      const ctx = numCtx !== undefined ? ` num_ctx=${numCtx}` : "";
+      logger.info(`[ollama] usage model=${model} prompt_eval=${usage.promptEvalCount} eval=${usage.evalCount} prompt_ms=${usage.promptEvalMs} eval_ms=${usage.evalMs} load_ms=${usage.loadMs}${ctx}`);
+      // A load inside a dispatch call is the context-size ping-pong (or an
+      // eviction): the model was just restarted at a different size, and the
+      // next chat turn on it re-prefills its whole prompt. Say so where it
+      // happens instead of leaving it to the next slow turn.
+      if (usage.reloaded) {
+        logger.warn(`[ollama] ${model} (re)loaded during a background dispatch (load_ms=${usage.loadMs}${ctx}) — a context-size mismatch or an eviction`);
+      }
+    }
     return data.response || null;
   } catch (e) {
     // Callers fall back to the next provider on null — without the warn

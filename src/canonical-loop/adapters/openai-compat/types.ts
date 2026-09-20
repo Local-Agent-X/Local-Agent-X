@@ -54,6 +54,10 @@ export interface StreamOnceResult {
   providerStop: string | undefined;
   usagePromptTokens: number | undefined;
   usageCompletionTokens: number | undefined;
+  /** Prompt tokens the runtime served from its prefix cache this request. */
+  usageCachedTokens?: number;
+  /** Time-to-first-token as measured by the HTTP adapter, in ms. */
+  firstTokenMs?: number;
   /** Mid-stream user-inject interrupt — caller should set its own aborted
    *  flag so post-stream handling treats the turn as aborted. */
   interruptedByInject: boolean;

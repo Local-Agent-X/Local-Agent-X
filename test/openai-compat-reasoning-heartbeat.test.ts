@@ -40,10 +40,24 @@ describe("openai-compat reasoning heartbeat", () => {
     const reasoningChunks = reports.filter((r) => r.kind === "reasoning_chunk");
     expect(reasoningChunks).toHaveLength(3); // one per reasoning delta → watchdog never trips
 
-    // The reasoning is also accumulated and surfaced once at end-of-turn as a
-    // fallback, since the model never emitted a `content` answer.
+    // The reasoning is accumulated, but it is NOT the answer. Surfacing it as
+    // one on a normal stop is how a turn that only PLANNED got reported as
+    // finished work — the model said "Let's list workspace." and the loop
+    // ended (H-024, 2026-09-18). A reasoning-only turn is re-driven instead.
     expect(out.assembledThinking).toBe("let me think about this some more");
-    expect(out.assembledText).toBe("let me think about this some more");
+    expect(out.assembledText).toBe("");
+  });
+
+  it("surfaces reasoning as the answer ONLY when the provider cut the turn off", async () => {
+    // A `length` stop means the answer was truncated mid-generation: the
+    // reasoning is all that exists, so showing it beats showing nothing.
+    streamMock.mockReturnValue(makeStream([
+      { type: "thinking", delta: "half an answer" },
+      { type: "done", stopReason: "length" },
+    ])());
+
+    const out = await streamOnce(req, () => {}, { isAborted: () => false });
+    expect(out.assembledText).toBe("half an answer");
   });
 
   it("does not emit heartbeats when the model streams normal content", async () => {

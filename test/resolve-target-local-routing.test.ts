@@ -157,8 +157,10 @@ describe("resolveOpenAICompatTarget local per-model routing", () => {
       models: [{ id: "shared:3b", contextWindow: 8192, tools: true, sizeBytes: 3e9 }],
     };
     runtimes = [first, second];
+    // Nothing is auto-picked since H-030, so an unpinned session routes on the
+    // chat model. The duplicate-ID fallback below is what this test is for.
     discoveredBackgroundModel = "shared:3b";
-    expect(await resolveBackgroundModel("local", "chat:27b")).toEqual({ model: "shared:3b" });
+    expect(await resolveBackgroundModel("local", "chat:27b")).toEqual({ model: "chat:27b" });
     expect(await resolveOpenAICompatTarget("local", { apiKey: "" }, "shared:3b")).toMatchObject({
       baseURL: first.chatBaseUrl,
       modelProfile: { runtimeId: first.id },

@@ -114,6 +114,7 @@ demand via tool search and aren't all listed here.)
 ### Browser
 
 - `browser` — Drive a real browser. _e.g._ "open google.com and search for X"
+- `android`
 
 ### Apps. app_create/app_list are deferred
 
@@ -144,4 +145,4 @@ demand via tool search and aren't all listed here.)
 - `presentation`
 
 ---
-_64 capabilities · 47 with a description · 17 awaiting a blurb (add to scripts/gen-agent-capabilities.ts)._
+_65 capabilities · 47 with a description · 18 awaiting a blurb (add to scripts/gen-agent-capabilities.ts)._

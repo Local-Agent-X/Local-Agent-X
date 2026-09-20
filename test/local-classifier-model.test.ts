@@ -271,35 +271,43 @@ describe("resolveBackgroundModel — precedence", () => {
     expect(await resolveBackgroundModel("openai", "o3-pro")).toEqual({ model: PROVIDERS.openai.backgroundModel });
   });
 
-  it("honors the localClassifierModel setting above discovery", async () => {
+  it("honors the localClassifierModel setting above everything else", async () => {
     vi.doMock("../src/settings.js", () => ({ getSetting: () => "my-pinned:1b" }));
-    vi.doMock("../src/local-runtimes/index.js", () => ({
-      pickCertifiedLocalClassifierTarget: () => null,
-      pickLocalClassifierModel: () => "llama3.2:3b",
-    }));
+    vi.doMock("../src/local-runtimes/index.js", () => ({ certifiedTargetForModel: () => null }));
     const { resolveBackgroundModel } = await import("../src/providers/background-model.js");
     expect(await resolveBackgroundModel("local", "qwen3.6:27b")).toEqual({ model: "my-pinned:1b" });
   });
 
-  it("auto-picks the discovered model when the setting is empty", async () => {
+  /**
+   * H-030 (2026-09-17): nothing is auto-picked any more. Discovery chose a
+   * small model to JUDGE a larger one on consequence alone ("a wrong answer
+   * cannot block the work"), never on accuracy — measured, llama3.2:3b scored
+   * 3/8 against muse's 7/8 on the routing calls it owned. An unpinned session
+   * now routes on the chat model, which is the only model the user chose.
+   */
+  it("does NOT auto-pick a discovered model when the setting is empty", async () => {
     vi.doMock("../src/settings.js", () => ({ getSetting: () => "" }));
     vi.doMock("../src/local-runtimes/index.js", () => ({
-      pickCertifiedLocalClassifierTarget: () => null,
+      certifiedTargetForModel: () => null,
       pickLocalClassifierModel: () => "llama3.2:3b",
     }));
     const { resolveBackgroundModel } = await import("../src/providers/background-model.js");
-    expect(await resolveBackgroundModel("local", "qwen3.6:27b")).toEqual({ model: "llama3.2:3b" });
+    expect(await resolveBackgroundModel("local", "qwen3.6:27b")).toEqual({ model: "qwen3.6:27b" });
   });
 
-  it("prefers a certified local candidate after an empty setting without changing ollama-cloud", async () => {
-    vi.doMock("../src/settings.js", () => ({ getSetting: () => "" }));
+  /**
+   * Certification now RIDES a pin instead of replacing the absence of one: a
+   * pinned id is a bare string, and the certified target says which runtime
+   * serves it. With no pin there is nothing to certify and nothing to pick.
+   */
+  it("routes a PINNED model to the runtime that certified it, and leaks no credentials", async () => {
+    vi.doMock("../src/settings.js", () => ({ getSetting: () => "certified:3b" }));
     vi.doMock("../src/local-runtimes/index.js", () => ({
-      pickCertifiedLocalClassifierTarget: () => ({
+      certifiedTargetForModel: (id: string) => id === "certified:3b" ? {
         runtimeId: "runtime-a", kind: "ollama", model: "certified:3b",
         endpointBaseUrl: "http://127.0.0.1:11434",
         chatBaseUrl: "http://127.0.0.1:11434/v1",
-      }),
-      pickLocalClassifierModel: () => "discovered:1b",
+      } : null,
     }));
     const { resolveBackgroundModel } = await import("../src/providers/background-model.js");
     const resolved = await resolveBackgroundModel("local", "chat:27b");
@@ -308,19 +316,34 @@ describe("resolveBackgroundModel — precedence", () => {
       certifiedLocalTarget: { runtimeId: "runtime-a", model: "certified:3b" },
     });
     expect(JSON.stringify(resolved)).not.toMatch(/apiKey|credential|authorization/i);
-    expect(await resolveBackgroundModel("ollama-cloud", "chat:27b")).toEqual({ model: "discovered:1b" });
+    // ollama-cloud takes the pin without the local-runtime certification path.
+    expect(await resolveBackgroundModel("ollama-cloud", "chat:27b")).toEqual({ model: "certified:3b" });
   });
 
   it("keeps an explicit localClassifierModel above certified routing", async () => {
-    let certificationLookups = 0;
     vi.doMock("../src/settings.js", () => ({ getSetting: () => "chosen:1b" }));
     vi.doMock("../src/local-runtimes/index.js", () => ({
-      pickCertifiedLocalClassifierTarget: () => { certificationLookups += 1; return null; },
-      pickLocalClassifierModel: () => "discovered:1b",
+      certifiedTargetForModel: () => null,
     }));
     const { resolveBackgroundModel } = await import("../src/providers/background-model.js");
     expect(await resolveBackgroundModel("local", "chat:27b")).toEqual({ model: "chosen:1b" });
-    expect(certificationLookups).toBe(0);
+  });
+
+  /**
+   * The pin is the user's explicit choice, so an enrichment failure may never
+   * cost them it. One try/catch used to wrap the settings read AND the
+   * certification lookup, so a throw in the lookup fell through to the chat
+   * model — silently handing routing to the 27B the pin existed to avoid.
+   * CI caught this; a module without the export is exactly what production
+   * looks like mid-upgrade.
+   */
+  it("keeps the pin even when the certification lookup throws", async () => {
+    vi.doMock("../src/settings.js", () => ({ getSetting: () => "chosen:1b" }));
+    vi.doMock("../src/local-runtimes/index.js", () => ({
+      certifiedTargetForModel: () => { throw new Error("runtime registry unavailable"); },
+    }));
+    const { resolveBackgroundModel } = await import("../src/providers/background-model.js");
+    expect(await resolveBackgroundModel("local", "chat:27b")).toEqual({ model: "chosen:1b" });
   });
 
   it("falls back to the chat model when nothing is pinned or discovered", async () => {

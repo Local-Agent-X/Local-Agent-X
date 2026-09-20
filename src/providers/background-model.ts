@@ -57,23 +57,30 @@ export async function resolveBackgroundModel(
   if (declared) return { model: declared };
 
   if (hasDynamicCatalog(provider)) {
+    let pinned = "";
     try {
       const { getSetting } = await import("../settings.js");
-      const pinned = getSetting<string>("localClassifierModel");
       // This setting predates multi-runtime evidence and stores only a model
       // string. Keep its legacy default-Ollama transport; model-id lookup would
       // guess when two runtimes expose the same id.
-      if (typeof pinned === "string" && pinned.trim()) {
-        const model = pinned.trim();
-        if (provider === "local") {
-          // A bare id cannot say which runtime serves it; a certification can.
-          const { certifiedTargetForModel } = await import("../local-runtimes/index.js");
-          const certifiedLocalTarget = certifiedTargetForModel(model);
-          if (certifiedLocalTarget) return { model, certifiedLocalTarget };
-        }
-        return { model };
-      }
+      pinned = (getSetting<string>("localClassifierModel") ?? "").trim();
     } catch { /* settings unreadable — fall through to the chat model */ }
+
+    if (pinned) {
+      if (provider === "local") {
+        // A bare id cannot say which runtime serves it; a certification can.
+        // Scoped narrowly on purpose: this lookup is an ENRICHMENT, so nothing
+        // it does may cost the user their pin. One try/catch around both reads
+        // meant a throw here fell through to the chat model — the user's
+        // explicit choice silently replaced by the 27B they were avoiding.
+        try {
+          const { certifiedTargetForModel } = await import("../local-runtimes/index.js");
+          const certifiedLocalTarget = certifiedTargetForModel(pinned);
+          if (certifiedLocalTarget) return { model: pinned, certifiedLocalTarget };
+        } catch { /* no certification evidence — the pin itself still stands */ }
+      }
+      return { model: pinned };
+    }
   }
 
   return { model: backgroundModelFor(provider, fallback) };

@@ -37,9 +37,37 @@ export function capEffort(effort: ReasoningEffort, ceiling: ReasoningEffort): Re
     : ceiling;
 }
 
-/** Chat Completions accepts minimal|low|medium|high — clamp xhigh to high. */
+/**
+ * "none" — thinking OFF — is a WIRE value, not a rung on the ladder above.
+ *
+ * REASONING_EFFORTS is the user-selectable depth in settings, and every value
+ * there means "think this hard". "none" means "do not think", which is a
+ * different question and is not something the user picks per session; it is
+ * decided per step from the model profile (local-runtimes/model-profile.ts
+ * `thinking.mode`). Keeping it out of REASONING_EFFORTS also keeps it out of
+ * normalizeReasoningEffort, so a stray "none" in settings.json still resolves
+ * to medium rather than silently disabling thinking everywhere.
+ *
+ * Only endpoints measured to accept it get it. Verified on Ollama 0.34.2 /v1
+ * for both test models (docs/harness/phase0-evidence/probe-results.v1-extras.json,
+ * probes 2/8/12/18): HTTP 200, `reasoning_len` 0, and the tool call still
+ * emitted. Everywhere else it clamps to "minimal" at the edge.
+ */
+export type WireReasoningEffort = ReasoningEffort | "none";
+
+export const THINKING_OFF = "none" as const;
+
+/** Chat Completions accepts minimal|low|medium|high — clamp xhigh to high.
+ *  "none" passes through ONLY for callers that have checked their endpoint
+ *  accepts it; `clampNoneForCloud` is the guard for everyone else. */
 export function effortForChatCompletions(
-  e: ReasoningEffort,
-): "minimal" | "low" | "medium" | "high" {
+  e: WireReasoningEffort,
+): "none" | "minimal" | "low" | "medium" | "high" {
   return e === "xhigh" ? "high" : e;
+}
+
+/** An endpoint that has not been measured to accept "none" gets the closest
+ *  supported thing instead of a 400. */
+export function clampNoneForCloud(e: WireReasoningEffort): ReasoningEffort {
+  return e === THINKING_OFF ? "minimal" : e;
 }

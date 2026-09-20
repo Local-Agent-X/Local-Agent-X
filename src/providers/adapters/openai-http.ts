@@ -15,9 +15,7 @@ import { LOCAL_DEFAULT_MAX_TOKENS, type ProviderRequest, type StreamChunk } from
 import { toOpenAITools } from "../shared/tool-shape.js";
 import { hasNoToolSupport, markNoToolSupport, hasParamUnsupported, markParamUnsupported } from "../types.js";
 import { createLogger } from "../../logger.js";
-import { PROVIDERS, isHttpProvider } from "../registry.js";
-import { effortForChatCompletions, DEFAULT_REASONING_EFFORT } from "../reasoning-effort.js";
-import { PROVIDER_IDS, type ProviderId } from "../provider-ids.js";
+import { resolveReasoningParam } from "./openai-param-support.js";
 import { isLocalOnlyMode, isLoopbackUrl, isLoopbackOrPrivateUrl } from "../../local-only-policy.js";
 import {
   isReasoningEffortRejection,
@@ -28,26 +26,6 @@ import {
 } from "./openai-param-rejections.js";
 
 const logger = createLogger("providers.adapters.openai-http");
-
-// Reasoning capability now lives per-provider on PROVIDERS[id].capabilities.reasoning
-// (see src/providers/registry.ts). This adapter doesn't know which provider
-// it's running for at call time — req.baseURL is the only hint — so we
-// match by scanning the registry for any http provider whose baseURL
-// matches and whose reasoning regex matches the model.
-function isReasoningCapable(baseURL: string | undefined, model: string): boolean {
-  if (!baseURL) return false;
-  for (const id of PROVIDER_IDS) {
-    const meta = PROVIDERS[id as ProviderId];
-    if (!isHttpProvider(meta)) continue;
-    const metaURL = typeof meta.baseURL === "string" ? meta.baseURL : null;
-    if (metaURL && baseURL.startsWith(metaURL)) {
-      return meta.capabilities.reasoning ? meta.capabilities.reasoning.test(model) : false;
-    }
-  }
-  // Unknown baseURL (local ollama, custom, ollama-cloud) — fall back to
-  // OSS-style reasoning models so deepseek-r1/qwen/gpt-oss still opt in.
-  return /deepseek-r1|qwen.*reasoning|gpt-oss|glm-4\.7/i.test(model);
-}
 
 // Runaway guard rail for LOCAL endpoints — see the constant's doc in
 // ../adapter/types.ts (declared there so the window-aware clamp in
@@ -72,9 +50,11 @@ export class OpenAIHttpAdapter extends BaseAdapter {
     const strictFetch = strictFetchFor(req.baseURL);
     const client = new OpenAI({ apiKey: req.apiKey, baseURL: req.baseURL, ...(strictFetch ? { fetch: strictFetch } : {}) });
     const useTools = !hasNoToolSupport(req.baseURL, req.model);
-    const reasoningCapable =
-      isReasoningCapable(req.baseURL, req.model) &&
-      !hasParamUnsupported(req.baseURL, req.model, "reasoning_effort");
+    // Whether to send reasoning_effort, and with what value — one decision,
+    // in openai-param-support.ts. Includes "none" (thinking off) for the
+    // local runtimes measured to accept it.
+    const reasoning = resolveReasoningParam({ baseURL: req.baseURL, model: req.model, effort: req.reasoningEffort });
+    const reasoningCapable = reasoning.send;
     // o-series models reject a non-default temperature; once we've learned a
     // (baseURL, model) does, omit the field up front so the first call skips
     // the failed round-trip.
@@ -141,7 +121,7 @@ export class OpenAIHttpAdapter extends BaseAdapter {
       // Cast: the installed SDK's ReasoningEffort union predates "minimal",
       // which the API accepts on gpt-5-class models.
       ...(opts.includeReasoningEffort
-        ? { reasoning_effort: effortForChatCompletions(req.reasoningEffort ?? DEFAULT_REASONING_EFFORT) as "low" | "medium" | "high" }
+        ? { reasoning_effort: reasoning.value as "low" | "medium" | "high" }
         : {}),
       // OpenAI structured-output wire shape. Guarded by responseFormatAllowed,
       // so req.responseFormat is always set when this branch is included.

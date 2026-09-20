@@ -39,7 +39,10 @@ describe("bundled profiles", () => {
     expect(resolveModelProfile("qwen3.6:27b")!.maxToolsExposed).toBe(30);
     expect(resolveModelProfile("qwen3:8b")!.maxToolsExposed).toBe(8);
     expect(resolveModelProfile("qwen3.6:27b")!.sampling.toolStep.temperature).toBe(0.7);
-    expect(resolveModelProfile("qwen3:8b")!.thinking.mode).toBe("all");
+    // thinking.mode is the ONE field that no longer describes today's
+    // behaviour: Phase 1 recorded the observed "all", and the Phase 2
+    // thinking-off experiment sets it deliberately. Pinned in its own test
+    // below, with the measurement that justifies the value.
   });
 
   it("is null for a model with no profile", () => {
@@ -95,5 +98,19 @@ describe("classifyModel with a declared profile", () => {
   it("keeps today's tiers for the two test models", () => {
     expect(classifyModel("qwen3.6:27b")).toBe("medium");
     expect(classifyModel("qwen3:8b")).toBe("weak");
+  });
+});
+
+describe("shipped profiles declare when the model should think", () => {
+  it("both test models are planning_only — the toggle for the thinking-off experiment", () => {
+    // Flipping either back to "all" reverts the experiment with no code change,
+    // which is the point of putting the policy in the profile. Measured win:
+    // completion tokens per tool step 57 -> 26 (27B), 91 -> 21 (8B).
+    for (const id of ["qwen3.6:27b", "qwen3:8b"]) {
+      const p = resolveModelProfile(id)!;
+      expect(p, `${id} has no profile — the experiment would be a silent no-op`).toBeTruthy();
+      expect(p.thinking.supported).toBe(true);
+      expect(p.thinking.mode).toBe("planning_only");
+    }
   });
 });

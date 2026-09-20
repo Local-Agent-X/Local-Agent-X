@@ -15,6 +15,7 @@ import { BaseAdapter } from "../adapter/base-adapter.js";
 import type { ProviderRequest, StreamChunk } from "../adapter/types.js";
 import { streamCodexResponse } from "../../codex-client/index.js";
 import { toCodexTools } from "../shared/tool-shape.js";
+import { clampNoneForCloud } from "../reasoning-effort.js";
 
 export class CodexCliAdapter extends BaseAdapter {
   readonly name = "codex-cli";
@@ -31,7 +32,8 @@ export class CodexCliAdapter extends BaseAdapter {
         systemPrompt: req.systemPrompt,
         tools: codexTools,
         temperature: req.temperature,
-        reasoningEffort: req.reasoningEffort,
+        // The Codex CLI has no "none" — clamp to its nearest depth.
+        reasoningEffort: req.reasoningEffort === undefined ? undefined : clampNoneForCloud(req.reasoningEffort),
         previousResponseId: req.previousResponseId,
         sessionId: req.sessionId,
         toolChoice: req.toolChoice,

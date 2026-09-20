@@ -49,7 +49,8 @@ import { resolveLocalCap } from "./openai-compat/local-cap.js";
 import { streamOnce, applyToolCallTextFallback } from "./openai-compat/stream-once.js";
 import { assessOpenAiCompatPreflight, promptExceedsMeasuredWindow } from "./openai-compat/request-preflight.js";
 import { buildTurnTrace } from "./openai-compat/turn-trace.js";
-import { resolveStepReasoningEffort } from "../step-effort.js";
+import { classifyStepKind, resolveStepReasoningEffort, type ThinkingMode } from "../step-effort.js";
+import { resolveModelProfile } from "../../local-runtimes/model-profile.js";
 import { classifyModelStop } from "./model-stop.js";
 
 export { OPENAI_COMPAT_ADAPTER_NAME, OPENAI_COMPAT_ADAPTER_VERSION } from "./openai-compat/types.js";
@@ -104,6 +105,22 @@ export function shouldRescueTextToolCalls(baseURL: string | undefined): boolean 
   }
 }
 
+/**
+ * When should THIS model think? Answered by its declared profile, so the rule
+ * travels with the model rather than living in a name regex here. A model with
+ * no profile — every cloud model today — returns undefined and keeps the
+ * existing behavior exactly, which is what confines this to local runtimes.
+ */
+function profileThinking(
+  model: string | undefined,
+  input: TurnInput,
+): { mode: ThinkingMode; kind: ReturnType<typeof classifyStepKind> } | undefined {
+  if (!model) return undefined;
+  const profile = resolveModelProfile(model);
+  if (!profile?.thinking.supported) return undefined;
+  return { mode: profile.thinking.mode, kind: classifyStepKind(input) };
+}
+
 export class OpenAICompatAdapter implements Adapter {
   readonly name = OPENAI_COMPAT_ADAPTER_NAME;
   readonly version = OPENAI_COMPAT_ADAPTER_VERSION;
@@ -151,7 +168,12 @@ export class OpenAICompatAdapter implements Adapter {
       })) as ProviderRequest["tools"],
       temperature: this.opts.temperature ?? 0.7,
       maxTokens: this.opts.maxTokens,
-      reasoningEffort: resolveStepReasoningEffort(input.stepEffortHint, this.opts.reasoningEffort),
+      reasoningEffort: resolveStepReasoningEffort(
+        input.stepEffortHint,
+        this.opts.reasoningEffort,
+        undefined,
+        profileThinking(this.opts.model, input),
+      ),
       sessionId: this.opts.sessionId,
       signal: this.aborter.signal,
       ...(forcedInList && forced

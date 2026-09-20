@@ -9,7 +9,7 @@
 
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { ToolDefinition, ServerEvent } from "../../types.js";
-import type { ReasoningEffort } from "../reasoning-effort.js";
+import type { WireReasoningEffort } from "../reasoning-effort.js";
 
 /**
  * Runaway guard rail for LOCAL endpoints: a degenerate local model (observed:
@@ -50,7 +50,7 @@ export interface ProviderRequest {
   omitDefaultMaxTokens?: boolean;
   /** User-selected thinking depth for reasoning models. Adapters map it to
    *  their wire param (reasoning_effort / reasoning.effort); absent = medium. */
-  reasoningEffort?: ReasoningEffort;
+  reasoningEffort?: WireReasoningEffort;
   /** Force tool use on this request. "required" = model MUST call a
    *  tool of its choosing. `{ type: "tool", name }` = pin to the named
    *  tool (explicit build route). */

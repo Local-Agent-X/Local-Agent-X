@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import {
   classifyStepEffort,
+  classifyStepKind,
   resolveStepReasoningEffort,
   MECHANICAL_TOOLS,
 } from "./step-effort.js";
@@ -154,5 +155,84 @@ describe("resolveStepReasoningEffort", () => {
   it("adapter-specific ceiling never up-shifts either", () => {
     expect(resolveStepReasoningEffort("mechanical", "low", "medium")).toBe("low");
     expect(resolveStepReasoningEffort("mechanical", "minimal", "medium")).toBe("minimal");
+  });
+});
+
+/**
+ * Thinking is a per-MODEL policy, not a per-user depth.
+ *
+ * qwen3.6 and qwen3 reason on every /v1 call unless told not to, and on a
+ * continuation step that reasoning is pure cost: measured 57 -> 26 completion
+ * tokens on the 27B and 91 -> 21 on the 8B, and with a tight token budget the
+ * thinking turn produced NO tool call while the thinking-off turn produced a
+ * clean one (docs/harness/phase0-evidence/probe-results.v1-extras.json).
+ */
+describe("profile-driven thinking", () => {
+  const afterTools = [
+    user("fix it"),
+    assistantCalling({ id: "t1", name: "bash" }),
+    toolResult("t1", "error"),
+  ];
+  const planning = [user("fix it")];
+
+  it("planning_only turns thinking off once the model is continuing after tools", () => {
+    expect(resolveStepReasoningEffort(undefined, "high", undefined, {
+      mode: "planning_only", kind: classifyStepKind({ turnIdx: 1, messages: afterTools }),
+    })).toBe("none");
+  });
+
+  it("planning_only keeps the session's depth on the planning step", () => {
+    expect(resolveStepReasoningEffort(undefined, "high", undefined, {
+      mode: "planning_only", kind: classifyStepKind({ turnIdx: 0, messages: planning }),
+    })).toBe("high");
+  });
+
+  it("off means off, even on a planning step", () => {
+    expect(resolveStepReasoningEffort(undefined, "high", undefined, {
+      mode: "off", kind: "planning",
+    })).toBe("none");
+  });
+
+  it("all is today's behavior — no suppression anywhere", () => {
+    expect(resolveStepReasoningEffort(undefined, "high", undefined, { mode: "all", kind: "continuation" })).toBe("high");
+    expect(resolveStepReasoningEffort("mechanical", "high", undefined, { mode: "all", kind: "continuation" })).toBe("low");
+  });
+
+  it("a model with no profile is untouched — this is what confines it to local runtimes", () => {
+    expect(resolveStepReasoningEffort(undefined, "high", undefined, undefined)).toBe("high");
+  });
+
+  it("the module kill switch disables the profile rule too, not just the mechanical cap", () => {
+    process.env.LAX_STEP_EFFORT = "off";
+    expect(resolveStepReasoningEffort(undefined, "high", undefined, {
+      mode: "planning_only", kind: "continuation",
+    })).toBe("high");
+  });
+});
+
+describe("classifyStepKind", () => {
+  it("turn 0 is planning", () => {
+    expect(classifyStepKind({ turnIdx: 0, messages: [user("x")] })).toBe("planning");
+  });
+
+  it("a pending redirect is planning — a new instruction is when thinking earns its cost", () => {
+    expect(classifyStepKind({
+      turnIdx: 3,
+      messages: [user("x"), assistantCalling({ id: "t1", name: "read" }), toolResult("t1", "ok")],
+      pendingRedirect: { text: "actually, stop" } as never,
+    })).toBe("planning");
+  });
+
+  it("is broader than mechanical: a FAILED bash result still counts as continuing", () => {
+    const messages = [user("x"), assistantCalling({ id: "t1", name: "bash" }), toolResult("t1", "error")];
+    expect(classifyStepEffort({ turnIdx: 2, messages })).toBe("standard");
+    expect(classifyStepKind({ turnIdx: 2, messages })).toBe("continuation");
+  });
+
+  it("a trailing user row is planning, not a continuation", () => {
+    expect(classifyStepKind({
+      turnIdx: 2,
+      messages: [user("x"), assistantCalling({ id: "t1", name: "read" }), toolResult("t1", "ok"), user("also this")],
+    })).toBe("planning");
   });
 });

@@ -12,7 +12,7 @@
 import type { Adapter, AdapterReport, TurnInput, TurnResult } from "../adapter-contract.js";
 import type { CanonicalMessage, ProviderStateEnvelope } from "../contract-types.js";
 import type { CodexTransport } from "./codex-transport.js";
-import type { ReasoningEffort } from "../../providers/reasoning-effort.js";
+import { clampNoneForCloud, DEFAULT_REASONING_EFFORT, type ReasoningEffort } from "../../providers/reasoning-effort.js";
 import type { AnthropicTransportRequest } from "./anthropic.js";
 import { canonicalToTransport } from "./canonical-to-transport.js";
 import { hasInjects } from "../../agent-loop/inject-queue.js";
@@ -122,7 +122,12 @@ export class CodexAdapter implements Adapter {
       // (codex-client/request.ts:72-73), and the empty-turn recovery would
       // retry at the same capped effort then die as a false "session
       // expired". Never up-shifts. See step-effort.ts.
-      reasoningEffort: resolveStepReasoningEffort(input.stepEffortHint, this.opts.reasoningEffort, "medium"),
+      // clampNoneForCloud: this adapter passes no thinking profile, so the
+      // resolver cannot return "none" today — but the Responses API has no
+      // such value, and a type-level guarantee beats a reading of the call.
+      reasoningEffort: clampNoneForCloud(
+        resolveStepReasoningEffort(input.stepEffortHint, this.opts.reasoningEffort, "medium") ?? DEFAULT_REASONING_EFFORT,
+      ),
       forcedToolChoice,
     };
 

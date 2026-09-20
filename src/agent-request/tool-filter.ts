@@ -23,7 +23,13 @@ const TOOL_KEYWORD_MAP: Array<{ keywords: RegExp; exclude?: RegExp; toolPrefixes
   { keywords: /calendar|event|meeting|schedule.*event/i, toolPrefixes: ["calendar_"] },
   { keywords: /clipboard|copy|paste/i, toolPrefixes: ["clipboard_"] },
   { keywords: /sql|database|query.*table|postgres|sqlite/i, toolPrefixes: ["sql_"] },
-  { keywords: /image|photo|generate.*image|draw|picture|\bedit\b/i, toolPrefixes: ["generate_image", "edit_image", "generate_video", "ocr"] },
+  // image_search rides this rule too: FINDING a photo is what "add photos"
+  // usually means, and the prefix list only ever matched the GENERATE side, so
+  // the one tool that fetches real images never surfaced. The presentation
+  // tool's own failure text tells the model to "Run image_search for
+  // replacement URLs" — a local 27B did exactly that and was told the tool did
+  // not exist (2026-09-19).
+  { keywords: /image|photo|generate.*image|draw|picture|\bedit\b/i, toolPrefixes: ["generate_image", "edit_image", "generate_video", "image_search", "ocr"] },
   {
     keywords: /screen\s*shot|\bdesktop\b|\bmonitor\b|whole screen|my screen/i,
     exclude: /\b(browser|web\s*page|tab|site|website)\b/i,

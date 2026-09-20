@@ -93,6 +93,9 @@ export const MEDIUM_INTENT_SLOTS = 2;
  */
 export const GEMINI_STRONG_TOOL_CAP = 21;
 
+/** The one tool that reaches every other tool; never counted against a cap. */
+export const DISCOVERY_TOOL = "tool_search";
+
 /**
  * Max tool count to send per model tier. Weak models cap aggressively
  * (~8 tools) to prevent 0-token paralysis. Medium models take every essential
@@ -308,12 +311,42 @@ export function shrinkToolsForTier<T extends TierShrinkable>(
   for (const name of ESSENTIAL_TOOLS_ORDER) {
     const t = essentialSource.get(name);
     if (t && !seen.has(name)) { kept.push(maybeTruncate(t)); seen.add(name); }
-    if (kept.length >= cap) return kept;
-  }
-  // 2. Then the user-intent-matched tools (keyword/RAG selections)
-  for (const t of tools) {
-    if (!seen.has(t.name)) { kept.push(maybeTruncate(t)); seen.add(t.name); }
     if (kept.length >= cap) break;
   }
-  return kept;
+  // 2. Then the user-intent-matched tools (keyword/RAG selections)
+  if (kept.length < cap) {
+    for (const t of tools) {
+      if (!seen.has(t.name)) { kept.push(maybeTruncate(t)); seen.add(t.name); }
+      if (kept.length >= cap) break;
+    }
+  }
+  return withDiscovery(kept, essentialSource, seen, maybeTruncate);
+}
+
+/**
+ * tool_search is the INDEX, not a capability, so it never competes for a slot.
+ *
+ * Every trimmed schema tells the model what to do about a tool it cannot see —
+ * arg-validation's unknown-tool text ("call tool_search to load it") and the
+ * deferred-tool manifest both say so, and the manifest's stated guarantee is
+ * that every available tool is REACHABLE. All of that is void when the reaching
+ * mechanism is itself trimmed, which is what happened: tool_search sits at
+ * catalog position 17, the two medium intent slots go to whatever comes first
+ * in catalog order, and the only re-add lived inside a Gemini-only branch. A
+ * local 27B asked for a deck with photos was told to run image_search, did not
+ * have it, was told to call tool_search, did not have that either, and shipped
+ * the deck with no images (2026-09-19).
+ *
+ * Kept OUTSIDE the cap rather than added to ESSENTIAL_TOOLS_ORDER so it cannot
+ * evict a capability at the weak tier, where the cap of 8 truncates mid-list.
+ */
+function withDiscovery<T extends TierShrinkable>(
+  kept: T[],
+  source: Map<string, T>,
+  seen: Set<string>,
+  maybeTruncate: (t: T) => T,
+): T[] {
+  if (seen.has(DISCOVERY_TOOL)) return kept;
+  const discovery = source.get(DISCOVERY_TOOL);
+  return discovery ? [...kept, maybeTruncate(discovery)] : kept;
 }

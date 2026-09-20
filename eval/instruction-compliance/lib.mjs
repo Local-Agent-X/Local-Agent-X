@@ -24,6 +24,14 @@ const TSC_JS = join(REPO_ROOT, "node_modules", "typescript", "bin", "tsc");
 // Resolved on the first live call so the pure scoring helpers stay importable
 // by the vitest regression test on a machine without a running dev server.
 let server = null;
+
+/** Point every call in this module at a server the runner resolved (usually an
+ *  isolated one — see resolveRigTarget). Without this the module falls back to
+ *  the user's running server, which is what `--live` means. */
+export function useRigTarget(target) {
+  server = { base: target.baseUrl, headers: target.headers };
+}
+
 function serverConfig() {
   if (server) return server;
   const configPath = join(homedir(), ".lax", "config.json");

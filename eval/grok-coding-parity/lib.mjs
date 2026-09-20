@@ -19,23 +19,36 @@ export const REPO_ROOT = resolve(__dirname, "..", "..");
 const TSC_JS = join(REPO_ROOT, "node_modules", "typescript", "bin", "tsc");
 const VITEST_JS = join(REPO_ROOT, "node_modules", "vitest", "vitest.mjs");
 
+// Resolved LAZILY: this module is imported by a vitest regression test and by
+// runners that drive an ISOLATED server, neither of which has (or wants) the
+// user's ~/.lax. Reading it at import time made merely importing the file
+// exit the process on a machine with no install.
 const CONFIG_PATH = join(homedir(), ".lax", "config.json");
-if (!existsSync(CONFIG_PATH)) { console.error(`ERROR: ${CONFIG_PATH} not found — start the dev server once.`); process.exit(2); }
-const config = JSON.parse(readFileSync(CONFIG_PATH, "utf-8"));
-export const PORT = config.port || 7007;
-const TOKEN = config.authToken;
-if (!TOKEN) { console.error(`ERROR: no authToken in ${CONFIG_PATH}.`); process.exit(2); }
-export const BASE = `http://127.0.0.1:${PORT}`;
-export const H = { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json" };
-/** The user's own running server. A rig that should not touch ~/.lax passes an
- *  isolated server's { baseUrl, headers } instead (eval/op-outcomes/isolated.mjs). */
-export const LIVE = { baseUrl: BASE, headers: H };
+let live = null;
+function liveConfig() {
+  if (live) return live;
+  if (!existsSync(CONFIG_PATH)) { console.error(`ERROR: ${CONFIG_PATH} not found — start the dev server once, or run isolated.`); process.exit(2); }
+  const config = JSON.parse(readFileSync(CONFIG_PATH, "utf-8"));
+  if (!config.authToken) { console.error(`ERROR: no authToken in ${CONFIG_PATH}.`); process.exit(2); }
+  const base = `http://127.0.0.1:${config.port || 7007}`;
+  live = { baseUrl: base, headers: { Authorization: `Bearer ${config.authToken}`, "Content-Type": "application/json" } };
+  return live;
+}
+
+/** Point the default target at a server the runner resolved (usually isolated). */
+export function useRigTarget(target) {
+  live = { baseUrl: target.baseUrl, headers: target.headers };
+}
+/** The default target: whatever useRigTarget set, else the user's own server.
+ *  A function, not a const, because resolution is lazy now. */
+export const LIVE = () => liveConfig();
+export function baseUrl() { return liveConfig().baseUrl; }
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-export async function health() { try { const r = await fetch(`${BASE}/api/health`, { headers: H }); return r.ok; } catch { return false; } }
+export async function health() { try { const { baseUrl: b, headers } = liveConfig(); const r = await fetch(`${b}/api/health`, { headers }); return r.ok; } catch { return false; } }
 export async function activeModel() {
-  try { const r = await fetch(`${BASE}/api/settings`, { headers: H }); if (!r.ok) return null; const s = await r.json(); return `${s.provider}/${s.model}`; }
+  try { const { baseUrl: b, headers } = liveConfig(); const r = await fetch(`${b}/api/settings`, { headers }); if (!r.ok) return null; const s = await r.json(); return `${s.provider}/${s.model}`; }
   catch { return null; }
 }
 
@@ -47,7 +60,7 @@ export async function activeModel() {
  *  emits a recovery notice ("context exceeded — compacting and retrying") as an
  *  error event, and recording it as `err` made a completed attempt read as one
  *  the harness killed (two-bucket, 2026-09-17). */
-export async function driveChat(message, sessionId, timeoutMs, target = LIVE) {
+export async function driveChat(message, sessionId, timeoutMs, target = LIVE()) {
   let text = "", err = "";
   const tools = [];
   const recovered = [];
@@ -94,7 +107,7 @@ export async function driveChat(message, sessionId, timeoutMs, target = LIVE) {
 /** Stop any turn still running for `sessionId` and wait until the server says
  *  it has ended. Returns null when the session is idle, or a HARNESS error
  *  string when the turn would not end — callers must not score that row. */
-export async function settleTurn(sessionId, target = LIVE, waitMs = 60_000) {
+export async function settleTurn(sessionId, target = LIVE(), waitMs = 60_000) {
   const status = async () => {
     try {
       const r = await fetch(`${target.baseUrl}/api/chats/${encodeURIComponent(sessionId)}/status`, { headers: target.headers });

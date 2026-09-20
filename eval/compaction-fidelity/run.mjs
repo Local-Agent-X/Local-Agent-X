@@ -21,26 +21,32 @@
  *
  * Run:  node eval/compaction-fidelity/run.mjs
  *       node eval/compaction-fidelity/run.mjs --only constraints --filler 30
+ *       node eval/compaction-fidelity/run.mjs --provider qwen8b   # which model
+ *       node eval/compaction-fidelity/run.mjs --live              # YOUR server
+ *
+ * Boots its own isolated server by default (needs a current `npm run build`):
+ * these are long real conversations, so on the user's own server they fill the
+ * sidebar and can write their memory.
  *
  * Requires: the DEV build running (npm run dev), app quit (it owns port 7007).
  * Routes the summary through your configured provider's background model, so
  * it spends a small number of tokens per case.
  */
-import { readFileSync, existsSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
-import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
+
+import { resolveRigTarget } from "../op-outcomes/isolated.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-const CONFIG_PATH = join(homedir(), ".lax", "config.json");
-if (!existsSync(CONFIG_PATH)) { console.error(`ERROR: ${CONFIG_PATH} not found — start the server once.`); process.exit(2); }
-const config = JSON.parse(readFileSync(CONFIG_PATH, "utf-8"));
-const PORT = config.port || 7007;
-const TOKEN = config.authToken;
-if (!TOKEN) { console.error(`ERROR: no authToken in ${CONFIG_PATH}.`); process.exit(2); }
-const BASE = `http://127.0.0.1:${PORT}`;
-const H = { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json" };
+// Isolated by default: this battery drives long REAL conversations through
+// the summarizer, so on the user's own server it fills their sidebar and can
+// write their memory. `--live` is the explicit opt-out.
+const target = await resolveRigTarget({ repoRoot: join(__dirname, "..", ".."), provider: "qwen" });
+process.on("exit", () => { void target.stop(); });
+const BASE = target.baseUrl;
+const H = target.headers;
 
 const args = process.argv.slice(2);
 const opt = (n) => { const i = args.indexOf(n); return i >= 0 ? args[i + 1] : null; };

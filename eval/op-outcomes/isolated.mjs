@@ -15,8 +15,9 @@ import { execSync, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { seedProbeProvider } from "../../src/self-edit/sandbox-gates.ts";
 import { killProcessTree } from "../../src/process-tree-kill.ts";
 import { getLaxDir } from "../../src/lax-data-dir.ts";
@@ -200,3 +201,65 @@ export async function startIsolatedServer({ repoRoot, provider, model, fixturePo
   throw new Error(`isolated server did not become healthy within ${BOOT_TIMEOUT_MS / 1000}s\n${server.logTail()}`);
 }
 
+
+/**
+ * The server a rig drives, isolated by DEFAULT.
+ *
+ * A rig pointed at the user's own server writes into their real sessions and
+ * memory and reads their real state: one did exactly that and put false facts
+ * about the user into their memory bank (H-002), and its scores describe that
+ * machine's contents as much as the harness. So the safe target is the
+ * default and `--live` is the explicit, documented opt-out.
+ *
+ * Returns the isolated server (same shape startIsolatedServer gives) plus
+ * `isolated: true`; for `--live`, a `{ baseUrl, headers, isolated: false }`
+ * with no-op stop/cleanup so callers can treat both the same way.
+ */
+export async function resolveRigTarget({
+  repoRoot,
+  argv = process.argv.slice(2),
+  provider: providerLabel,
+  seedWorkspace,
+  maxLifetimeMs,
+  toolPolicyRules,
+}) {
+  if (argv.includes("--live")) {
+    const configPath = join(homedir(), ".lax", "config.json");
+    if (!existsSync(configPath)) {
+      console.error(`ERROR: --live needs ${configPath}; start the app once, or drop --live to run isolated.`);
+      process.exit(2);
+    }
+    const config = JSON.parse(readFileSync(configPath, "utf8"));
+    if (!config.authToken) { console.error(`ERROR: no authToken in ${configPath}.`); process.exit(2); }
+    const baseUrl = `http://127.0.0.1:${config.port || 7007}`;
+    console.log(`  *** --live: driving YOUR running server at ${baseUrl}. Real sessions, real memory, real workspace. ***`);
+    return {
+      baseUrl,
+      headers: { Authorization: `Bearer ${config.authToken}`, "Content-Type": "application/json" },
+      isolated: false,
+      logTail: () => "",
+      exitedOnItsOwn: () => null,
+      async stop() {},
+      cleanup() {},
+    };
+  }
+
+  const i = argv.indexOf("--provider");
+  const label = i >= 0 ? argv[i + 1] : (providerLabel ?? "qwen");
+  const here = dirname(fileURLToPath(import.meta.url));
+  const providers = JSON.parse(readFileSync(join(here, "providers.json"), "utf8")).providers;
+  const chosen = providers.find((p) => p.label === label);
+  if (!chosen) {
+    console.error(`ERROR: no provider "${label}" in eval/op-outcomes/providers.json (have: ${providers.map((p) => p.label).join(", ")})`);
+    process.exit(2);
+  }
+  assertDistMatchesSource(repoRoot);
+  const server = await startIsolatedServer({
+    repoRoot, provider: chosen.provider, model: chosen.model,
+    ...(seedWorkspace !== undefined ? { seedWorkspace } : {}),
+    ...(maxLifetimeMs !== undefined ? { maxLifetimeMs } : {}),
+    ...(toolPolicyRules !== undefined ? { toolPolicyRules } : {}),
+  });
+  console.log(`  isolated server on ${server.baseUrl} — ${chosen.provider}/${chosen.model} (--live to use your own server instead)`);
+  return { ...server, isolated: true, providerLabel: label, model: chosen.model };
+}

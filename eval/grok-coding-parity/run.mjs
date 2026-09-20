@@ -16,6 +16,12 @@
  *       node eval/grok-coding-parity/run.mjs --repeat 3      # all, ×3 (rate)
  *       node eval/grok-coding-parity/run.mjs --only cleanup  # one scenario
  *       node eval/grok-coding-parity/run.mjs --keep          # leave temp projects
+ *       node eval/grok-coding-parity/run.mjs --provider qwen8b  # which model
+ *       node eval/grok-coding-parity/run.mjs --live          # YOUR server, not an isolated one
+ *
+ * Boots its own isolated server by default (needs a current `npm run build`):
+ * these scenarios drive real turns with real tool execution, so on the user's
+ * own server they write their sessions and memory.
  *
  * Requires: the DEV build running (npm run dev) on the current model. Real
  * tokens are spent. Temp projects live at ~/lax-parity-<id>-XXXX (auto-removed
@@ -25,7 +31,8 @@ import { writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { scenarios } from "./scenarios.mjs";
-import { health, activeModel, driveChat, makeProject, cleanup, sleep, BASE } from "./lib.mjs";
+import { health, activeModel, driveChat, makeProject, cleanup, sleep, baseUrl, useRigTarget } from "./lib.mjs";
+import { resolveRigTarget } from "../op-outcomes/isolated.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
@@ -38,10 +45,15 @@ const KEEP = flag("--keep");
 const chosen = scenarios.filter((s) => (ONLY ? s.id.includes(ONLY) : true));
 if (chosen.length === 0) { console.error(`No scenario matches --only ${ONLY}. Have: ${scenarios.map((s) => s.id).join(", ")}`); process.exit(2); }
 
-if (!(await health())) { console.error(`ERROR: server unreachable at ${BASE}. Is the dev build running?`); process.exit(2); }
+// Isolated by default: this battery drives REAL turns with real tool
+// execution, so on the user's own server it writes their sessions and memory.
+const target = await resolveRigTarget({ repoRoot: join(__dirname, "..", ".."), provider: "qwen" });
+useRigTarget(target);
+process.on("exit", () => { void target.stop(); });
+if (!(await health())) { console.error(`ERROR: server unreachable at ${baseUrl()}.`); await target.stop(); process.exit(2); }
 const model = await activeModel();
 
-console.log(`\n  Coding-parity battery — ${chosen.length} scenario(s) ×${REPEAT} on ${model || "unknown model"}  (${BASE})\n`);
+console.log(`\n  Coding-parity battery — ${chosen.length} scenario(s) ×${REPEAT} on ${model || "unknown model"}  (${baseUrl()})\n`);
 
 const results = [];
 for (const s of chosen) {

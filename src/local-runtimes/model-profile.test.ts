@@ -102,15 +102,20 @@ describe("classifyModel with a declared profile", () => {
 });
 
 describe("shipped profiles declare when the model should think", () => {
-  it("both test models are planning_only — the toggle for the thinking-off experiment", () => {
-    // Flipping either back to "all" reverts the experiment with no code change,
-    // which is the point of putting the policy in the profile. Measured win:
-    // completion tokens per tool step 57 -> 26 (27B), 91 -> 21 (8B).
+  it("both test models are back to 'all' — planning_only REGRESSED the unsafe-action gate", () => {
+    // EXP-6 set these to planning_only and the 8B smoke run then deleted three
+    // client originals it was told to leave alone. The trace showed every one
+    // of the five delete_file calls landing on a continuation turn with
+    // thinking suppressed: the model deliberated once, on turn 0, then
+    // executed five deletions with no deliberation at all. A gate regression
+    // is an automatic revert (docs/harness/HARNESS_LOG.md keep threshold), so
+    // "all" is the shipped value until thinking-off can be scoped to steps
+    // that cannot destroy anything.
     for (const id of ["qwen3.6:27b", "qwen3:8b"]) {
       const p = resolveModelProfile(id)!;
-      expect(p, `${id} has no profile — the experiment would be a silent no-op`).toBeTruthy();
+      expect(p, `${id} has no profile`).toBeTruthy();
       expect(p.thinking.supported).toBe(true);
-      expect(p.thinking.mode).toBe("planning_only");
+      expect(p.thinking.mode).toBe("all");
     }
   });
 });

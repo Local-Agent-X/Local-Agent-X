@@ -8,6 +8,8 @@
  * tighten loop detection, warn in UI, etc.
  */
 
+import { modelProfileTier } from "./local-runtimes/model-profile.js";
+
 export type ModelTier = "strong" | "medium" | "weak";
 
 /**
@@ -32,6 +34,12 @@ export function classifyModel(model: string): ModelTier {
       `Silent defaults would mis-classify the agent tier without surfacing the bug.`
     );
   }
+  // A declared profile (config/model-profiles, or a user's own) outranks every
+  // name heuristic below: the tier there was measured, the regexes guess from
+  // a parameter count in the name.
+  const declared = modelProfileTier(model);
+  if (declared) return declared;
+
   const m = model.toLowerCase();
 
   // Weak: small local models + known flaky tiers

@@ -84,3 +84,25 @@ received 65 tools, not 9, and the model's own thinking shows it choosing `projec
 trace first recorded the request as the canonical adapter COMPOSED it (`reasoning_effort=medium`) while the HTTP
 adapter's family regex withholds that param for qwen3, so the HTTP adapter now reports the body it actually sent
 and the trace stores it as `request.sent` — the wire truth, not the intent.
+
+### EXP-3 — declared model profiles: schema, loader, two hand-written profiles, profile id on every trace
+Date: 2026-09-19
+Hypothesis: without one declared record per model that the harness reads, Phase 2 grows a flag per experiment and
+no trace can say which configuration it ran under (brief 3.6).
+Change: `src/local-runtimes/model-profile.ts` — zod schema for the brief's §8 fields in the codebase's camelCase
+(`toolRouting` gains `message`, today's per-message re-selection), loader that merges a bundled
+`config/model-profiles/<id>.json` with an optional user file under `<data dir>/model-profiles/`, a content hash,
+a kernel-policy floor per tier that an override can only tighten, and a broken user file ignored with a warning.
+`classifyModel` takes the declared tier over its name heuristic; the trace store stamps `profileId` and
+`profileHash` on every artifact. Two profiles hand-written from the Phase 0 measurements for `qwen3.6:27b` (B)
+and `qwen3:8b` (C); every value in them describes how LAX drives the model TODAY, so adopting them changes
+nothing — only a logged experiment moves a field. No other field is wired yet; each gets wired by the experiment
+that changes it.
+Models: qwen3.6:27b Q4_K_M (tier B), qwen3:8b Q4_K_M (tier C), Ollama 0.34.2.
+Eval: none (infrastructure). Verified by 263 tests across the profile loader, the tier classifier, the trace
+store, the runtimes and the tool-selection pipeline, and a live isolated-server capture.
+Before → After:
+  traces naming their profile: none → (verification below)
+  tiers for the two test models: unchanged (medium / weak)
+Decision: keep
+Notes / surprises: none yet.

@@ -1,0 +1,29 @@
+{
+  "id": "qwen3:8b",
+  "runtime": { "name": "ollama", "version": "0.34.2", "weightQuant": "Q4_K_M", "kvCacheQuant": "f16" },
+  "tier": "C",
+  "contextWindow": 32768,
+  "usableContext": 24576,
+  "nativeToolCalls": true,
+  "structuredOutput": "native_tools",
+  "supportedCombos": { "toolsAndSchema": false, "schemaAndThinking": true, "toolsAndThinking": true },
+  "parallelToolCalls": true,
+  "thinking": { "supported": true, "mode": "all", "budgetTokens": null, "budgetMechanism": "max_tokens" },
+  "sampling": {
+    "toolStep": { "temperature": 0.7, "topP": null, "topK": null, "minP": null, "repeatPenalty": null },
+    "diverse": { "temperature": 0.7, "topP": null, "topK": null, "minP": null, "repeatPenalty": null },
+    "source": "LAX default temperature 0.7 (config.temperature) on every turn as of 2026-09-19; Modelfile ships temperature 0.6, top_k 20, top_p 0.95, repeat_penalty 1. Sampling per turn type is a Phase 2 experiment."
+  },
+  "maxTokens": { "toolCall": 16384, "contentTool": 16384, "planOrReport": 16384 },
+  "toolRouting": "message",
+  "maxToolsExposed": 8,
+  "toolsPerTurn": null,
+  "fewShotExamples": 0,
+  "stateBlock": true,
+  "stepScopedContext": false,
+  "criticPass": { "plan": false, "riskyActions": false },
+  "bestOfN": { "toolStep": 1, "planning": 1, "riskyActions": 1 },
+  "roles": { "router": null, "planner": "qwen3:8b", "coder": null },
+  "kernelPolicy": "workspace-assistant",
+  "notes": "Hand-written from the Phase 0 audit (docs/harness/AUDIT.md, 2026-09-19). Every value describes how LAX drives this model TODAY, so adopting the profile changes nothing; a field moves only through a logged experiment. Measured: native context 40,960 (the runtime default caps there); 9.3 GB at 32k, 10.7 GB at 40k, fully GPU-resident. Prefill ~12,850 tok/s, decode ~183 tok/s at 32k with thinking off. Followed an injected instruction from a tool result in a one-shot probe where the 27B did not. Received 65 tools on the wire in the EXP-2 capture through the RAG-warm cap bypass although its cap is 8 (maxToolsExposed records the cap, not the bypass). Tier C = today's 'weak'."
+}

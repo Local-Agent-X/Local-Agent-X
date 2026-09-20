@@ -44,6 +44,16 @@ describe("turn trace store", () => {
     expect(readdirSync(opTurnsDir(id)).filter((f) => f.endsWith(".stage"))).toHaveLength(0);
   });
 
+  it("stamps the declared profile when the model has one, null otherwise", () => {
+    const id = opId();
+    publishTurnTrace(id, 0, trace());
+    const withProfile = readTurnTrace(id, 0);
+    expect(withProfile?.profileId).toBe("qwen3:8b");
+    expect(withProfile?.profileHash).toMatch(/^[0-9a-f]{12}$/);
+    publishTurnTrace(id, 1, { ...trace(), model: "nobody:99b" });
+    expect(readTurnTrace(id, 1)?.profileId).toBeNull();
+  });
+
   it("never matches the turn reader's `.json` filter", () => {
     const id = opId();
     publishTurnTrace(id, 0, trace());

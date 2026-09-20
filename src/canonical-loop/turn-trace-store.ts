@@ -18,6 +18,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { gunzipSync, gzipSync } from "node:zlib";
 import { opTurnsDir, opTurnTracePath } from "./schema.js";
 import type { TurnTrace } from "./adapter-contract.js";
+import { resolveModelProfile } from "../local-runtimes/model-profile.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("canonical-loop.turn-trace");
@@ -27,6 +28,10 @@ export interface StoredTurnTrace extends TurnTrace {
   runId: string;
   opId: string;
   turnIdx: number;
+  /** The declared profile the model ran under (config/model-profiles), or
+   *  null when it has none — so an experiment's traces name their profile. */
+  profileId: string | null;
+  profileHash: string | null;
 }
 
 const bootRunId = `run-${Date.now().toString(36)}-${randomBytes(3).toString("hex")}`;
@@ -49,7 +54,12 @@ export function publishTurnTrace(opId: string, turnIdx: number, trace: TurnTrace
     if (existsSync(target)) return false;
     const dir = opTurnsDir(opId);
     mkdirSync(dir, { recursive: true });
-    const stored: StoredTurnTrace = { schemaVersion: 1, runId: resolveRunId(), opId, turnIdx, ...trace };
+    const profile = profileFor(trace.model);
+    const stored: StoredTurnTrace = {
+      schemaVersion: 1, runId: resolveRunId(), opId, turnIdx,
+      profileId: profile?.profileId ?? null, profileHash: profile?.profileHash ?? null,
+      ...trace,
+    };
     const tmp = `${target}.${process.pid}-${randomUUID()}.stage`;
     writeFileSync(tmp, gzipSync(Buffer.from(JSON.stringify(stored))), { mode: 0o600 });
     renameSync(tmp, target);
@@ -57,6 +67,14 @@ export function publishTurnTrace(opId: string, turnIdx: number, trace: TurnTrace
   } catch (e) {
     logger.warn(`trace for ${opId}#${turnIdx} not written: ${(e as Error).message}`);
     return false;
+  }
+}
+
+function profileFor(model: string): { profileId: string; profileHash: string } | null {
+  try {
+    return resolveModelProfile(model);
+  } catch {
+    return null;
   }
 }
 

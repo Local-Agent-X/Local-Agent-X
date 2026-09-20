@@ -63,3 +63,14 @@ export {
   isEligibleClassifierModel,
   type CertifiedLocalClassifierTarget,
 } from "./classifier-model.js";
+export {
+  ModelProfileSchema,
+  KERNEL_POLICY_STRICTNESS,
+  KERNEL_POLICY_FLOOR_BY_TIER,
+  resolveModelProfile,
+  modelProfileTier,
+  profileFileName,
+  hashProfile,
+  _resetModelProfilesForTests,
+} from "./model-profile.js";
+export type { ModelProfile, ResolvedModelProfile } from "./model-profile.js";

@@ -1,0 +1,949 @@
+[
+ {
+  "name": "version",
+  "at": "2026-09-20T02:57:05.305Z",
+  "version": "0.34.2"
+ },
+ {
+  "name": "show qwen3:8b",
+  "at": "2026-09-20T02:57:05.312Z",
+  "status": 200,
+  "details": {
+   "parent_model": "",
+   "format": "gguf",
+   "family": "qwen3",
+   "families": [
+    "qwen3"
+   ],
+   "parameter_size": "8.2B",
+   "quantization_level": "Q4_K_M"
+  },
+  "capabilities": [
+   "completion",
+   "tools",
+   "thinking"
+  ],
+  "parameters": "repeat_penalty                 1\nstop                           \"<|im_start|>\"\nstop                           \"<|im_end|>\"\ntemperature                    0.6\ntop_k                          20\ntop_p                          0.95",
+  "model_info": {
+   "qwen3.attention.head_count": 32,
+   "qwen3.attention.head_count_kv": 8,
+   "qwen3.attention.key_length": 128,
+   "qwen3.block_count": 36,
+   "qwen3.context_length": 40960,
+   "qwen3.embedding_length": 4096
+  },
+  "kv": {
+   "layers": 36,
+   "kv_heads": 8,
+   "head_dim": 128,
+   "kv_bytes_per_token_f16": 147456,
+   "kv_gb_at_32k": 4.5,
+   "kv_gb_at_65k": 9,
+   "kv_gb_at_131k": 18
+  },
+  "template_len": 1723,
+  "template": "\n{{- $lastUserIdx := -1 -}}\n{{- range $idx, $msg := .Messages -}}\n{{- if eq $msg.Role \"user\" }}{{ $lastUserIdx = $idx }}{{ end -}}\n{{- end }}\n{{- if or .System .Tools }}<|im_start|>system\n{{ if .System }}\n{{ .System }}\n{{- end }}\n{{- if .Tools }}\n\n# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>\n{{- range .Tools }}\n{\"type\": \"function\", \"function\": {{ .Function }}}\n{{- end }}\n</tools>\n\nFor each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n<tool_call>\n{\"name\": <function-name>, \"arguments\": <args-json-object>}\n</tool_call>\n{{- end -}}\n<|im_end|>\n{{ end }}\n{{- range $i, $_ := .Messages }}\n{{- $last := eq (len (slice $.Messages $i)) 1 -}}\n{{- if eq .Role \"user\" }}<|im_start|>user\n{{ .Content }}\n{{- if and $.IsThinkSet (eq $i $lastUserIdx) }}\n   {{- if $.Think -}}\n      {{- \" \"}}/think\n   {{- else -}}\n      {{- \" \"}}/no_think\n   {{- end -}}\n{{- end }}<|im_end|>\n{{ else if eq .Role \"assistant\" }}<|im_start|>assistant\n{{ if (and $.IsThinkSet (and .Thinking (or $last (gt $i $lastUserIdx)))) -}}\n<think>{{ .Thinking }}</think>\n{{ end -}}\n{{ if .Content }}{{ .Content }}\n{{- else if .ToolCalls }}<tool_call>\n{{ range .ToolCalls }}{\"name\": \"{{ .Function.Name }}\", \"arguments\": {{ .Function.Arguments }}}\n{{ end }}</tool_call>\n{{- end }}{{ if not $last }}<|im_end|>\n{{ end }}\n{{- else if eq .Role \"tool\" }}<|im_start|>user\n<tool_response>\n{{ .Content }}\n</tool_response><|im_end|>\n{{ end }}\n{{- if and (ne .Role \"assistant\") $last }}<|im_start|>assistant\n{{ if and $.IsThinkSet (not $.Think) -}}\n<think>\n\n</think>\n\n{{ end -}}\n{{ end }}\n{{- end }}"
+ },
+ {
+  "name": "show muse-glimmer:30b",
+  "at": "2026-09-20T02:57:05.321Z",
+  "status": 200,
+  "details": {
+   "parent_model": "muse-glimmer:30b-q4_K_M",
+   "format": "gguf",
+   "family": "muse-glimmer",
+   "families": [
+    "muse-glimmer"
+   ],
+   "parameter_size": "27.9B",
+   "quantization_level": "Q4_K_M"
+  },
+  "capabilities": [
+   "completion",
+   "vision",
+   "tools",
+   "thinking"
+  ],
+  "parameters": "temperature                    1\ntop_k                          64\ntop_p                          0.95",
+  "model_info": {
+   "muse-glimmer.attention.head_count": 32,
+   "muse-glimmer.attention.head_count_kv": 2,
+   "muse-glimmer.attention.key_length": 128,
+   "muse-glimmer.block_count": 52,
+   "muse-glimmer.context_length": 131072,
+   "muse-glimmer.embedding_length": 6656
+  },
+  "kv": {
+   "layers": 52,
+   "kv_heads": 2,
+   "head_dim": 128,
+   "kv_bytes_per_token_f16": 53248,
+   "kv_gb_at_32k": 1.63,
+   "kv_gb_at_65k": 3.25,
+   "kv_gb_at_131k": 6.5
+  },
+  "template_len": 13,
+  "template": "{{ .Prompt }}"
+ },
+ {
+  "name": "show llama3.2:3b-classifier",
+  "at": "2026-09-20T02:57:05.338Z",
+  "status": 200,
+  "details": {
+   "parent_model": "llama3.2:3b",
+   "format": "gguf",
+   "family": "llama",
+   "families": [
+    "llama"
+   ],
+   "parameter_size": "3.2B",
+   "quantization_level": "Q4_K_M"
+  },
+  "capabilities": [
+   "completion",
+   "tools"
+  ],
+  "parameters": "num_ctx                        16384\nstop                           \"<|start_header_id|>\"\nstop                           \"<|end_header_id|>\"\nstop                           \"<|eot_id|>\"",
+  "model_info": {
+   "llama.attention.head_count": 24,
+   "llama.attention.head_count_kv": 8,
+   "llama.attention.key_length": 128,
+   "llama.block_count": 28,
+   "llama.context_length": 131072,
+   "llama.embedding_length": 3072
+  },
+  "kv": {
+   "layers": 28,
+   "kv_heads": 8,
+   "head_dim": 128,
+   "kv_bytes_per_token_f16": 114688,
+   "kv_gb_at_32k": 3.5,
+   "kv_gb_at_65k": 7,
+   "kv_gb_at_131k": 14
+  },
+  "template_len": 1429,
+  "template": "<|start_header_id|>system<|end_header_id|>\n\nCutting Knowledge Date: December 2023\n\n{{ if .System }}{{ .System }}\n{{- end }}\n{{- if .Tools }}When you receive a tool call response, use the output to format an answer to the orginal user question.\n\nYou are a helpful assistant with tool calling capabilities.\n{{- end }}<|eot_id|>\n{{- range $i, $_ := .Messages }}\n{{- $last := eq (len (slice $.Messages $i)) 1 }}\n{{- if eq .Role \"user\" }}<|start_header_id|>user<|end_header_id|>\n{{- if and $.Tools $last }}\n\nGiven the following functions, please respond with a JSON for a function call with its proper arguments that best answers the given prompt.\n\nRespond in the format {\"name\": function name, \"parameters\": dictionary of argument name and its value}. Do not use variables.\n\n{{ range $.Tools }}\n{{- . }}\n{{ end }}\n{{ .Content }}<|eot_id|>\n{{- else }}\n\n{{ .Content }}<|eot_id|>\n{{- end }}{{ if $last }}<|start_header_id|>assistant<|end_header_id|>\n\n{{ end }}\n{{- else if eq .Role \"assistant\" }}<|start_header_id|>assistant<|end_header_id|>\n{{- if .ToolCalls }}\n{{ range .ToolCalls }}\n{\"name\": \"{{ .Function.Name }}\", \"parameters\": {{ .Function.Arguments }}}{{ end }}\n{{- else }}\n\n{{ .Content }}\n{{- end }}"
+ },
+ {
+  "0": {
+   "name": "qwen3.6:27b",
+   "size": 20609782249,
+   "size_vram": 20609782249,
+   "gpu_pct": 100,
+   "ctx": 65536,
+   "expires_at": "2026-09-19T22:02:05.2255394-05:00",
+   "expires_in_min": 5
+  },
+  "name": "ps before",
+  "at": "2026-09-20T02:57:05.348Z"
+ },
+ {
+  "name": "default_ctx native /api/chat (no options, no keep_alive)",
+  "at": "2026-09-20T02:57:13.049Z",
+  "chat": {
+   "status": 200,
+   "ms": 7699,
+   "done_reason": "stop",
+   "load_ms": 3269,
+   "prompt_eval_count": 23,
+   "prompt_eval_ms": 93,
+   "eval_count": 2,
+   "eval_ms": 4333,
+   "total_ms": 7698,
+   "prefill_tps": 247,
+   "decode_tps": 0.5,
+   "thinking_chars": 0,
+   "content_head": "OK",
+   "content_len": 2,
+   "tool_calls": null
+  },
+  "ps": [
+   {
+    "name": "qwen3:8b",
+    "size": 11479621304,
+    "size_vram": 11479621304,
+    "gpu_pct": 100,
+    "ctx": 40960,
+    "expires_at": "2026-09-19T22:02:13.0478239-05:00",
+    "expires_in_min": 5
+   }
+  ]
+ },
+ {
+  "name": "default_ctx /v1/chat/completions (no options)",
+  "at": "2026-09-20T02:57:15.164Z",
+  "status": 200,
+  "ms": 2105,
+  "finish_reason": "stop",
+  "message_keys": [
+   "role",
+   "content",
+   "reasoning"
+  ],
+  "content_head": "OK",
+  "usage": {
+   "prompt_tokens": 17,
+   "prompt_tokens_details": {
+    "cached_tokens": 11
+   },
+   "completion_tokens": 90,
+   "total_tokens": 107
+  },
+  "ps": [
+   {
+    "name": "qwen3:8b",
+    "size": 11479621304,
+    "size_vram": 11479621304,
+    "gpu_pct": 100,
+    "ctx": 40960,
+    "expires_at": "2026-09-19T22:02:15.1539198-05:00",
+    "expires_in_min": 5
+   }
+  ]
+ },
+ {
+  "name": "num_ctx 16384",
+  "at": "2026-09-20T02:57:18.597Z",
+  "chat": {
+   "status": 200,
+   "ms": 3430,
+   "done_reason": "stop",
+   "load_ms": 3279,
+   "prompt_eval_count": 23,
+   "prompt_eval_ms": 94,
+   "eval_count": 2,
+   "eval_ms": 38,
+   "total_ms": 3415,
+   "prefill_tps": 246,
+   "decode_tps": 53,
+   "thinking_chars": 0,
+   "content_head": "OK",
+   "content_len": 2,
+   "tool_calls": null
+  },
+  "ps": [
+   {
+    "name": "qwen3:8b",
+    "size": 7520177356,
+    "size_vram": 7520177356,
+    "gpu_pct": 100,
+    "ctx": 16384,
+    "expires_at": "2026-09-19T22:02:18.5955896-05:00",
+    "expires_in_min": 5
+   }
+  ]
+ },
+ {
+  "name": "num_ctx 32768",
+  "at": "2026-09-20T02:57:21.753Z",
+  "chat": {
+   "status": 200,
+   "ms": 3141,
+   "done_reason": "stop",
+   "load_ms": 2996,
+   "prompt_eval_count": 23,
+   "prompt_eval_ms": 91,
+   "eval_count": 2,
+   "eval_ms": 37,
+   "total_ms": 3126,
+   "prefill_tps": 252,
+   "decode_tps": 54.3,
+   "thinking_chars": 0,
+   "content_head": "OK",
+   "content_len": 2,
+   "tool_calls": null
+  },
+  "ps": [
+   {
+    "name": "qwen3:8b",
+    "size": 9969650892,
+    "size_vram": 9969650892,
+    "gpu_pct": 100,
+    "ctx": 32768,
+    "expires_at": "2026-09-19T22:02:21.7396529-05:00",
+    "expires_in_min": 5
+   }
+  ]
+ },
+ {
+  "name": "num_ctx 32768",
+  "at": "2026-09-20T02:57:21.800Z",
+  "chat": {
+   "status": 200,
+   "ms": 33,
+   "done_reason": "stop",
+   "load_ms": 3,
+   "prompt_eval_count": 23,
+   "prompt_eval_ms": 8,
+   "eval_count": 2,
+   "eval_ms": 5,
+   "total_ms": 17,
+   "prefill_tps": 2888,
+   "decode_tps": 439.8,
+   "thinking_chars": 0,
+   "content_head": "OK",
+   "content_len": 2,
+   "tool_calls": null
+  },
+  "ps": [
+   {
+    "name": "qwen3:8b",
+    "size": 9969650892,
+    "size_vram": 9969650892,
+    "gpu_pct": 100,
+    "ctx": 32768,
+    "expires_at": "2026-09-19T22:02:21.7866876-05:00",
+    "expires_in_min": 5
+   }
+  ]
+ },
+ {
+  "name": "num_ctx 32768",
+  "at": "2026-09-20T02:57:21.847Z",
+  "chat": {
+   "status": 200,
+   "ms": 29,
+   "done_reason": "stop",
+   "load_ms": 3,
+   "prompt_eval_count": 23,
+   "prompt_eval_ms": 5,
+   "eval_count": 2,
+   "eval_ms": 4,
+   "total_ms": 14,
+   "prefill_tps": 4469,
+   "decode_tps": 459.5,
+   "thinking_chars": 0,
+   "content_head": "OK",
+   "content_len": 2,
+   "tool_calls": null
+  },
+  "ps": [
+   {
+    "name": "qwen3:8b",
+    "size": 9969650892,
+    "size_vram": 9969650892,
+    "gpu_pct": 100,
+    "ctx": 32768,
+    "expires_at": "2026-09-19T22:02:21.8309861-05:00",
+    "expires_in_min": 5
+   }
+  ]
+ },
+ {
+  "name": "throughput @32768 think:false",
+  "at": "2026-09-20T02:57:23.056Z",
+  "status": 200,
+  "ms": 1208,
+  "done_reason": "stop",
+  "load_ms": 3,
+  "prompt_eval_count": 9151,
+  "prompt_eval_ms": 712,
+  "eval_count": 82,
+  "eval_ms": 448,
+  "total_ms": 1193,
+  "prefill_tps": 12850,
+  "decode_tps": 183.2,
+  "thinking_chars": 0,
+  "content_head": "The text is a repetitive and fragmented sentence that mentions a quick brown fox, seven wizards, a lazy dog, a small harness, and a model performing tasks.  \nFive animals: quick brown fox, lazy dog, wizard (not an animal), small harness (not an animal), model (not an animal).  \nNote: Only two actual",
+  "content_len": 361,
+  "tool_calls": null
+ },
+ {
+  "name": "throughput @32768 think:true (same prompt)",
+  "at": "2026-09-20T02:57:25.308Z",
+  "status": 200,
+  "ms": 2251,
+  "done_reason": "length",
+  "load_ms": 6,
+  "prompt_eval_count": 9145,
+  "prompt_eval_ms": 30,
+  "eval_count": 400,
+  "eval_ms": 2178,
+  "total_ms": 2242,
+  "prefill_tps": 306684,
+  "decode_tps": 183.6,
+  "thinking_chars": 1886,
+  "content_head": "",
+  "content_len": 0,
+  "tool_calls": null
+ },
+ {
+  "name": "cache a: fresh 6k system",
+  "at": "2026-09-20T02:57:25.746Z",
+  "prompt_eval_count": 4583,
+  "prompt_eval_ms": 13,
+  "total_ms": 432
+ },
+ {
+  "name": "cache b: identical request",
+  "at": "2026-09-20T02:57:25.785Z",
+  "prompt_eval_count": 4583,
+  "prompt_eval_ms": 6,
+  "total_ms": 29
+ },
+ {
+  "name": "cache c: timestamp PREPENDED to system",
+  "at": "2026-09-20T02:57:26.371Z",
+  "prompt_eval_count": 4619,
+  "prompt_eval_ms": 335,
+  "total_ms": 569
+ },
+ {
+  "name": "cache d: timestamp APPENDED to system",
+  "at": "2026-09-20T02:57:26.748Z",
+  "prompt_eval_count": 4619,
+  "prompt_eval_ms": 16,
+  "total_ms": 364
+ },
+ {
+  "name": "cache e: same system, new user message",
+  "at": "2026-09-20T02:57:26.805Z",
+  "prompt_eval_count": 4586,
+  "prompt_eval_ms": 13,
+  "total_ms": 41
+ },
+ {
+  "name": "cache f: same system, same user + one extra turn",
+  "at": "2026-09-20T02:57:26.850Z",
+  "prompt_eval_count": 4596,
+  "prompt_eval_ms": 13
+ },
+ {
+  "name": "format schema + think:false",
+  "at": "2026-09-20T02:57:27.183Z",
+  "status": 200,
+  "ms": 333,
+  "done_reason": "stop",
+  "load_ms": 3,
+  "prompt_eval_count": 29,
+  "prompt_eval_ms": 13,
+  "eval_count": 19,
+  "eval_ms": 123,
+  "total_ms": 326,
+  "prefill_tps": 2160,
+  "decode_tps": 154.7,
+  "thinking_chars": 0,
+  "content_head": "{\n  \"answer\": \"Paris\",\n  \"confidence\": 1.0\n}",
+  "content_len": 44,
+  "tool_calls": null,
+  "parsed_ok": true
+ },
+ {
+  "name": "format schema + think:true",
+  "at": "2026-09-20T02:57:28.093Z",
+  "status": 200,
+  "ms": 908,
+  "done_reason": "stop",
+  "load_ms": 3,
+  "prompt_eval_count": 23,
+  "prompt_eval_ms": 10,
+  "eval_count": 174,
+  "eval_ms": 854,
+  "total_ms": 891,
+  "prefill_tps": 2264,
+  "decode_tps": 203.8,
+  "thinking_chars": 677,
+  "content_head": "{\"answer\": \"Paris\", \"confidence\": 1.0}",
+  "content_len": 38,
+  "tool_calls": null,
+  "parsed_ok": true
+ },
+ {
+  "name": "format 'json' + think:false",
+  "at": "2026-09-20T02:57:28.178Z",
+  "status": 200,
+  "ms": 85,
+  "done_reason": "stop",
+  "load_ms": 3,
+  "prompt_eval_count": 29,
+  "prompt_eval_ms": 5,
+  "eval_count": 13,
+  "eval_ms": 54,
+  "total_ms": 76,
+  "prefill_tps": 6000,
+  "decode_tps": 241.1,
+  "thinking_chars": 0,
+  "content_head": "{\n  \"capital_of_france\": \"Paris\"\n}",
+  "content_len": 34,
+  "tool_calls": null,
+  "parsed_ok": true
+ },
+ {
+  "name": "tools + format schema together",
+  "at": "2026-09-20T02:57:28.622Z",
+  "status": 200,
+  "ms": 443,
+  "done_reason": "stop",
+  "load_ms": 3,
+  "prompt_eval_count": 191,
+  "prompt_eval_ms": 32,
+  "eval_count": 59,
+  "eval_ms": 386,
+  "total_ms": 427,
+  "prefill_tps": 5984,
+  "decode_tps": 152.9,
+  "thinking_chars": 0,
+  "content_head": "{\n  \"answer\": \"I cannot directly read files, but you can use the `read_file` function to read the contents of `notes.txt` if you have access to it. Let me know if you need further assistance!\",\n  \"confidence\": 0.7\n}",
+  "content_len": 215,
+  "tool_calls": null
+ },
+ {
+  "name": "native tools + think:false",
+  "at": "2026-09-20T02:57:28.742Z",
+  "status": 200,
+  "ms": 119,
+  "done_reason": "stop",
+  "load_ms": 3,
+  "prompt_eval_count": 197,
+  "prompt_eval_ms": 12,
+  "eval_count": 21,
+  "eval_ms": 92,
+  "total_ms": 111,
+  "prefill_tps": 15823,
+  "decode_tps": 227.5,
+  "thinking_chars": 0,
+  "content_head": "",
+  "content_len": 0,
+  "tool_calls": [
+   {
+    "id": "call_ouslzqth",
+    "function": {
+     "index": 0,
+     "name": "read_file",
+     "arguments": {
+      "path": "notes.txt"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "name": "native tools + think:true",
+  "at": "2026-09-20T02:57:29.282Z",
+  "status": 200,
+  "ms": 540,
+  "done_reason": "stop",
+  "load_ms": 7,
+  "prompt_eval_count": 191,
+  "prompt_eval_ms": 11,
+  "eval_count": 115,
+  "eval_ms": 517,
+  "total_ms": 537,
+  "prefill_tps": 18022,
+  "decode_tps": 222.3,
+  "thinking_chars": 421,
+  "content_head": "",
+  "content_len": 0,
+  "tool_calls": [
+   {
+    "id": "call_6ujmxrjg",
+    "function": {
+     "index": 0,
+     "name": "read_file",
+     "arguments": {
+      "path": "notes.txt"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "name": "native tools + think:false + stream",
+  "at": "2026-09-20T02:57:29.415Z",
+  "status": 200,
+  "ms": 133,
+  "chunks": 2,
+  "tool_call_chunk_index": 0,
+  "content_chunks_before_first_call": 0,
+  "content_chunks_after_first_call": 0,
+  "final": {
+   "done_reason": "stop",
+   "load_ms": 8,
+   "prompt_eval_count": 197,
+   "prompt_eval_ms": 25,
+   "eval_count": 21,
+   "eval_ms": 94,
+   "total_ms": 129,
+   "prefill_tps": 7982,
+   "decode_tps": 223.2,
+   "thinking_chars": 0,
+   "content_head": "",
+   "content_len": 0,
+   "tool_calls": null
+  },
+  "seq_head": [
+   {
+    "i": 0,
+    "tool_calls": [
+     "read_file"
+    ]
+   },
+   {
+    "i": 1,
+    "done": "stop"
+   }
+  ],
+  "seq_tail": [
+   {
+    "i": 0,
+    "tool_calls": [
+     "read_file"
+    ]
+   },
+   {
+    "i": 1,
+    "done": "stop"
+   }
+  ]
+ },
+ {
+  "name": "native tools parallel request",
+  "at": "2026-09-20T02:57:29.620Z",
+  "status": 200,
+  "ms": 205,
+  "done_reason": "stop",
+  "load_ms": 6,
+  "prompt_eval_count": 198,
+  "prompt_eval_ms": 13,
+  "eval_count": 41,
+  "eval_ms": 182,
+  "total_ms": 203,
+  "prefill_tps": 15487,
+  "decode_tps": 225.8,
+  "thinking_chars": 0,
+  "content_head": "",
+  "content_len": 0,
+  "tool_calls": [
+   {
+    "id": "call_jwoh0xai",
+    "function": {
+     "index": 0,
+     "name": "list_dir",
+     "arguments": {
+      "path": "src"
+     }
+    }
+   },
+   {
+    "id": "call_ctzln4s8",
+    "function": {
+     "index": 1,
+     "name": "read_file",
+     "arguments": {
+      "path": "README.md"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "name": "native tools: second turn after a tool result",
+  "at": "2026-09-20T02:57:29.738Z",
+  "status": 200,
+  "ms": 118,
+  "done_reason": "stop",
+  "load_ms": 7,
+  "prompt_eval_count": 244,
+  "prompt_eval_ms": 15,
+  "eval_count": 19,
+  "eval_ms": 89,
+  "total_ms": 114,
+  "prefill_tps": 16401,
+  "decode_tps": 213.4,
+  "thinking_chars": 0,
+  "content_head": "",
+  "content_len": 0,
+  "tool_calls": [
+   {
+    "id": "call_mvsfypdo",
+    "function": {
+     "index": 0,
+     "name": "list_dir",
+     "arguments": {
+      "path": "/etc"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "name": "stop native",
+  "at": "2026-09-20T02:57:29.790Z",
+  "status": 200,
+  "ms": 51,
+  "done_reason": "stop",
+  "load_ms": 3,
+  "prompt_eval_count": 27,
+  "prompt_eval_ms": 13,
+  "eval_count": 3,
+  "eval_ms": 13,
+  "total_ms": 43,
+  "prefill_tps": 2146,
+  "decode_tps": 239.2,
+  "thinking_chars": 0,
+  "content_head": "alpha ",
+  "content_len": 6,
+  "tool_calls": null
+ },
+ {
+  "name": "stop /v1",
+  "at": "2026-09-20T02:57:33.279Z",
+  "status": 200,
+  "finish_reason": "stop",
+  "content": "",
+  "message_keys": [
+   "role",
+   "content",
+   "reasoning"
+  ],
+  "usage": {
+   "prompt_tokens": 21,
+   "prompt_tokens_details": {
+    "cached_tokens": 0
+   },
+   "completion_tokens": 15,
+   "total_tokens": 36
+  }
+ },
+ {
+  "name": "prefill: trailing assistant message, no tools",
+  "at": "2026-09-20T02:57:36.758Z",
+  "status": 200,
+  "ms": 3478,
+  "done_reason": "stop",
+  "load_ms": 3243,
+  "prompt_eval_count": 46,
+  "prompt_eval_ms": 94,
+  "eval_count": 23,
+  "eval_ms": 135,
+  "total_ms": 3476,
+  "prefill_tps": 489,
+  "decode_tps": 170.4,
+  "thinking_chars": 0,
+  "content_head": "notes.txt\"}}\n</think>\n\n{\"name\": \"read_file\", \"arguments\": {\"path\": \"notes.txt\"}}",
+  "content_len": 80,
+  "tool_calls": null
+ },
+ {
+  "name": "prefill: trailing assistant message, with tools",
+  "at": "2026-09-20T02:57:36.822Z",
+  "status": 200,
+  "ms": 64,
+  "done_reason": "stop",
+  "load_ms": 5,
+  "prompt_eval_count": 204,
+  "prompt_eval_ms": 24,
+  "eval_count": 5,
+  "eval_ms": 22,
+  "total_ms": 58,
+  "prefill_tps": 8374,
+  "decode_tps": 229.8,
+  "thinking_chars": 0,
+  "content_head": "notes.txt\"}}\n</tool_call>",
+  "content_len": 25,
+  "tool_calls": null
+ },
+ {
+  "name": "keep_alive native 30m",
+  "at": "2026-09-20T02:57:36.873Z",
+  "chat": {
+   "status": 200,
+   "ms": 44,
+   "done_reason": "stop",
+   "load_ms": 3,
+   "prompt_eval_count": 23,
+   "prompt_eval_ms": 12,
+   "eval_count": 3,
+   "eval_ms": 13,
+   "total_ms": 41,
+   "prefill_tps": 1887,
+   "decode_tps": 228.8,
+   "thinking_chars": 0,
+   "content_head": "OK.",
+   "content_len": 3,
+   "tool_calls": null
+  },
+  "ps": [
+   {
+    "name": "qwen3:8b",
+    "size": 9969650892,
+    "size_vram": 9969650892,
+    "gpu_pct": 100,
+    "ctx": 32768,
+    "expires_at": "2026-09-19T22:27:36.8675538-05:00",
+    "expires_in_min": 30
+   }
+  ]
+ },
+ {
+  "name": "keep_alive /v1 body 2h",
+  "at": "2026-09-20T02:57:40.300Z",
+  "status": 200,
+  "finish_reason": "length",
+  "ps": [
+   {
+    "name": "qwen3:8b",
+    "size": 11479621304,
+    "size_vram": 11479621304,
+    "gpu_pct": 100,
+    "ctx": 40960,
+    "expires_at": "2026-09-19T22:02:40.2963443-05:00",
+    "expires_in_min": 5
+   }
+  ]
+ },
+ {
+  "name": "think:'low' accepted?",
+  "at": "2026-09-20T02:57:44.335Z",
+  "status": 200,
+  "ms": 4034,
+  "done_reason": "stop",
+  "load_ms": 3253,
+  "prompt_eval_count": 17,
+  "prompt_eval_ms": 93,
+  "eval_count": 144,
+  "eval_ms": 669,
+  "total_ms": 4019,
+  "prefill_tps": 183,
+  "decode_tps": 215.3,
+  "thinking_chars": 664,
+  "content_head": "OK",
+  "content_len": 2,
+  "tool_calls": null
+ },
+ {
+  "name": "think:true on a trivial prompt",
+  "at": "2026-09-20T02:57:44.817Z",
+  "status": 200,
+  "ms": 481,
+  "done_reason": "stop",
+  "load_ms": 6,
+  "prompt_eval_count": 17,
+  "prompt_eval_ms": 5,
+  "eval_count": 104,
+  "eval_ms": 458,
+  "total_ms": 479,
+  "prefill_tps": 3524,
+  "decode_tps": 227,
+  "thinking_chars": 478,
+  "content_head": "OK",
+  "content_len": 2,
+  "tool_calls": null
+ },
+ {
+  "name": "/v1 default thinking behaviour",
+  "at": "2026-09-20T02:57:49.083Z",
+  "status": 200,
+  "finish_reason": "length",
+  "message_keys": [
+   "role",
+   "content",
+   "reasoning"
+  ],
+  "content": "",
+  "reasoning_len": 715,
+  "usage": {
+   "prompt_tokens": 25,
+   "prompt_tokens_details": {
+    "cached_tokens": 0
+   },
+   "completion_tokens": 200,
+   "total_tokens": 225
+  }
+ },
+ {
+  "name": "overflow: 6k prompt @ num_ctx 4096",
+  "at": "2026-09-20T02:57:52.438Z",
+  "status": 200,
+  "ms": 3351,
+  "done_reason": "stop",
+  "load_ms": 3011,
+  "prompt_eval_count": 2050,
+  "prompt_eval_ms": 237,
+  "eval_count": 11,
+  "eval_ms": 83,
+  "total_ms": 3349,
+  "prefill_tps": 8664,
+  "decode_tps": 132.8,
+  "thinking_chars": 0,
+  "content_head": "The secret word is **\"quick\"**.",
+  "content_len": 31,
+  "tool_calls": null,
+  "server_log_lines": [
+   "srv    load_model: context checkpoints enabled, max = 32, min spacing = 8192\r",
+   "time=2026-09-19T21:57:52.113-05:00 level=WARN source=llama_server.go:318 msg=\"truncating input prompt\" limit=2050 prompt=4609 keep=4 new=2050",
+   "slot      release: id  0 | task 0 | stop processing: n_tokens = 2060, truncated = 0\r"
+  ]
+ },
+ {
+  "name": "overflow: /v1 6k prompt after 4096 load",
+  "at": "2026-09-20T02:57:56.270Z",
+  "status": 200,
+  "finish_reason": "length",
+  "content": "",
+  "usage": {
+   "prompt_tokens": 4592,
+   "prompt_tokens_details": {
+    "cached_tokens": 0
+   },
+   "completion_tokens": 20,
+   "total_tokens": 4612
+  },
+  "ps": [
+   {
+    "name": "qwen3:8b",
+    "size": 11479621304,
+    "size_vram": 11479621304,
+    "gpu_pct": 100,
+    "ctx": 40960,
+    "expires_at": "2026-09-19T22:02:56.2596835-05:00",
+    "expires_in_min": 5
+   }
+  ]
+ },
+ {
+  "name": "restore @32768",
+  "at": "2026-09-20T02:57:59.671Z",
+  "chat": {
+   "status": 200,
+   "ms": 3397,
+   "done_reason": "stop",
+   "load_ms": 3264,
+   "prompt_eval_count": 23,
+   "prompt_eval_ms": 91,
+   "eval_count": 2,
+   "eval_ms": 38,
+   "total_ms": 3397,
+   "prefill_tps": 253,
+   "decode_tps": 53.2,
+   "thinking_chars": 0,
+   "content_head": "OK",
+   "content_len": 2,
+   "tool_calls": null
+  },
+  "ps": [
+   {
+    "name": "qwen3:8b",
+    "size": 9969650892,
+    "size_vram": 9969650892,
+    "gpu_pct": 100,
+    "ctx": 32768,
+    "expires_at": "2026-09-19T22:02:59.6689329-05:00",
+    "expires_in_min": 5
+   }
+  ]
+ },
+ {
+  "0": {
+   "name": "qwen3:8b",
+   "size": 9969650892,
+   "size_vram": 9969650892,
+   "gpu_pct": 100,
+   "ctx": 32768,
+   "expires_at": "2026-09-19T22:02:59.6689329-05:00",
+   "expires_in_min": 5
+  },
+  "name": "ps after",
+  "at": "2026-09-20T02:57:59.672Z"
+ }
+]

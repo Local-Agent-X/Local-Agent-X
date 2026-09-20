@@ -1,0 +1,98 @@
+[
+ {
+  "0": {
+   "name": "qwen3.6:27b",
+   "size": 20609782249,
+   "size_vram": 20609782249,
+   "gpu_pct": 100,
+   "ctx": 65536,
+   "expires_at": "2026-09-19T22:01:51.3462094-05:00",
+   "expires_in_min": 5
+  },
+  "name": "ps before",
+  "at": "2026-09-20T02:56:51.437Z"
+ },
+ {
+  "name": "num_ctx 131072 load",
+  "at": "2026-09-20T02:56:57.418Z",
+  "chat": {
+   "status": 200,
+   "ms": 5979,
+   "done_reason": "stop",
+   "load_ms": 5801,
+   "prompt_eval_count": 19,
+   "prompt_eval_ms": 146,
+   "eval_count": 2,
+   "eval_ms": 27,
+   "total_ms": 5975,
+   "prefill_tps": 130,
+   "decode_tps": 74.9,
+   "thinking_chars": 0,
+   "content_head": "OK",
+   "content_len": 2,
+   "tool_calls": null
+  },
+  "ps": [
+   {
+    "name": "qwen3.6:27b",
+    "size": 24776812787,
+    "size_vram": 24776812787,
+    "gpu_pct": 100,
+    "ctx": 131072,
+    "expires_at": "2026-09-19T22:01:57.4165135-05:00",
+    "expires_in_min": 5
+   }
+  ]
+ },
+ {
+  "name": "decode @131072",
+  "at": "2026-09-20T02:56:59.247Z",
+  "status": 200,
+  "ms": 1826,
+  "done_reason": "length",
+  "load_ms": 3,
+  "prompt_eval_count": 26,
+  "prompt_eval_ms": 107,
+  "eval_count": 120,
+  "eval_ms": 1611,
+  "total_ms": 1813,
+  "prefill_tps": 244,
+  "decode_tps": 74.5,
+  "thinking_chars": 0,
+  "content_head": "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n21\n22\n23\n24\n25\n26\n27\n28\n29\n30\n31\n32\n33\n34\n35\n36\n37\n38\n39\n40\n41\n42\n43",
+  "content_len": 119,
+  "tool_calls": null
+ },
+ {
+  "name": "restore @65536",
+  "at": "2026-09-20T02:57:05.228Z",
+  "chat": {
+   "status": 200,
+   "ms": 5977,
+   "done_reason": "stop",
+   "load_ms": 5796,
+   "prompt_eval_count": 19,
+   "prompt_eval_ms": 149,
+   "eval_count": 2,
+   "eval_ms": 26,
+   "total_ms": 5974,
+   "prefill_tps": 128,
+   "decode_tps": 77.2,
+   "thinking_chars": 0,
+   "content_head": "OK",
+   "content_len": 2,
+   "tool_calls": null
+  },
+  "ps": [
+   {
+    "name": "qwen3.6:27b",
+    "size": 20609782249,
+    "size_vram": 20609782249,
+    "gpu_pct": 100,
+    "ctx": 65536,
+    "expires_at": "2026-09-19T22:02:05.2255394-05:00",
+    "expires_in_min": 5
+   }
+  ]
+ }
+]

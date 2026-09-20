@@ -1,0 +1,796 @@
+{
+ "model": "qwen3.6:27b",
+ "turns": [
+  {
+   "msg": "List the projects in my workspace and tell me in one line what each one is.",
+   "text": "No projects or apps in your workspace yet — it's a clean slate. Want to build something?Here's what's in your workspace:\n\n| Folder | What it is |\n|---|---|\n| **api-client** | Node.js API client library with HTTP helpers, users & orders modules, and tests |\n| **pricing-app** | Pricing/formatting utility app |\n| **nav-app** | Navigation module with unit tests |\n| **vistawell-clone** | HTML/CSS clone of a \"VistaWell\" website |\n| **bellavista-clone** | HTML/CSS clone of a \"Bella Vista\" website |\n| *",
+   "err": "",
+   "tools": [
+    "?",
+    "?",
+    "?"
+   ],
+   "events": 469,
+   "secs": 25
+  },
+  {
+   "msg": "Read the README of the nav-app project and summarize it in two sentences.",
+   "text": "The nav-app doesn't have a README — it's just a minimal Node.js module with a `package.json` and a test script. It's an empty project skeleton, not much to summarize!Want me to check the actual source files inside it instead?",
+   "err": "",
+   "tools": [
+    "?",
+    "?",
+    "?"
+   ],
+   "events": 165,
+   "secs": 21
+  },
+  {
+   "msg": "Which of those projects has a test folder? Answer from what you already saw.",
+   "text": "Two of them — **api-client** and **nav-app**. Both have a `test/` folder with test files.",
+   "err": "",
+   "tools": [
+    "?",
+    "?"
+   ],
+   "events": 403,
+   "secs": 23
+  }
+ ],
+ "ops": [
+  {
+   "id": "op_chat_turn_52d7dbce21874a06",
+   "status": "completed",
+   "turns": null
+  },
+  {
+   "id": "op_chat_turn_a23d71dc2e364449",
+   "status": "completed",
+   "turns": null
+  },
+  {
+   "id": "op_chat_turn_ab88041568b24a9b",
+   "status": "completed",
+   "turns": null
+  }
+ ],
+ "serverLogTail": [
+  "[server.background-jobs.memory-bg] [memory-bg] Summarized 1 sessions",
+  "[server.background-jobs.memory-bg] [memory-bg] Atlas warm: 10 pts, 8 clusters (8ms)",
+  "[threat.audit-trail] [audit-anchor] seq=3 count=4 head=cd316a573d77d1e8336dd350195de41a59774aec4b3825b82926cdd0f2b09c08",
+  "[threat.audit-trail] [audit-anchor] seq=4 count=5 head=49d9a408b5ad9eb52f9223924b1a02cdeaca696ae750ffb57894fcf120cad2d9",
+  "[threat.audit-trail] [audit-anchor] seq=5 count=6 head=224d76fc9bd86bd398822f47ef679dc222375314b0871b8d975235c0ec8343f4",
+  "[ari-kernel]   [ari] Scope released: op_chat_turn_52d7dbce21874a06",
+  "[routes.chat.canonical-run] [timing] canonical/chat qwen3.6:27b 18608ms (sess=wire-17898735227)",
+  "[server.background-jobs] [memory-backfill] deferred (foreground-busy) — re-checking in 30s",
+  "[server.session-helpers] [memory-live] Indexing session wire-1789873522735 (15 messages)",
+  "[server.session-helpers] [memory-live] Indexed 1 new chunks from 1 pairs (session wire-1789873522735, total pairs: 2)",
+  "[routes.chat.run-turn] [retry] correlationId=4635340c-e088-4a13-88f8-74558b904d11 sess=wire-17898735227",
+  "[agent-request.prepare-request] [step] resolveProvider START sess=wire-17898735227",
+  "[agent-request.prepare-request] [step] resolveProvider 0ms sess=wire-17898735227",
+  "[agent-request.prepare-request] [step] checkpointHistory START sess=wire-17898735227",
+  "[agent-request.prepare-request] [step] checkpointHistory 0ms sess=wire-17898735227",
+  "[agent-request.prepare-request] [step] selectTools START sess=wire-17898735227",
+  "[agent-request.prepare-request.tools] [tools] Shrunk 64→31 for medium model qwen3.6:27b (read,write,edit,bash,http_request,browser,self_edit,memory_save,memory_search,build_app,memory_update_profile,memory_set_user_field,remember,forget,web_fetch,web_search,glob,grep,generate_image,edit_image,generate_video,presentation,document,spreadsheet,pdf,list_secrets,clipboard_write_from_secret,request_secret,edit_lines,multi_edit,tool_search)",
+  "[agent-request.prepare-request.tools] [step] tool-rag.select START",
+  "[agent-request.prepare-request.tools] [step] tool-rag.select 1ms picked=65",
+  "[agent-request.prepare-request] [step] selectTools 2ms sess=wire-17898735227",
+  "[agent-request.prepare-request] [step] buildContext START sess=wire-17898735227",
+  "[agent-request.prepare-request.context] [step] buildTurnContextCached START sess=wire-17898735227",
+  "[orchestrator.signals] [signals] produced=2 injected=2 dropped=0",
+  "[memory.manager] Orchestrator: 5 modules, 2ms",
+  "[agent-request.turn-context-cache] [turn-context-cache] MISS sess=wire-1789873522735 built in 29ms",
+  "[agent-request.prepare-request.context] [step] buildTurnContextCached 29ms sess=wire-17898735227",
+  "[agent-request.prepare-request] [step] buildContext 30ms sess=wire-17898735227",
+  "[agent-request.prepare-request] [step] buildSystemPrompt START sess=wire-17898735227",
+  "[agent-request.prepare-request] [step] buildSystemPrompt 2ms sess=wire-17898735227",
+  "[routes.chat.prepare] [timing] prepareAgentRequest 35ms (sess=wire-17898735227)",
+  "[chat-diag] prepared sess=73522735 provider=local model=qwen3.6:27b hasKey=true",
+  "[routing.router] decision=INLINE reason=no-predictor-default-inline provider=local words=14 msg=\"Which of those projects has a test folder? Answer from what you already saw.\"",
+  "[canonical-loop.prompt-preflight] [prompt-profile] mode=constrained-local reason=measured-context-budget window=65536 budget=22937 full=25669 top=core-identity/how-to-work:5835,app-manifest:2536,agents-md:1968 included=core-identity/preamble,core-identity/how-to-control-your-own-app,core-identity/identity,core-identity/coding-discipline,core-identity/delegation,core-identity/background-operations,core-identity/core-rules,core-identity/browser,core-identity/apps-pages,core-identity/memory,core-identity/personality,core-identity/self-modification,core-identity/self-repair-and-self-extension,core-identity/workspace-security,runtime-context,app-manifest,agents-md,provider-hint,tool-guidance,recall-reflex,context-block,relevant-memories,memory-orchestrator,channel-context,file-access,model-family-rider,security-canary degraded=core-identity/how-to-work",
+  "[canonical-loop.chat-runner] [chat-runner] submitted op op_chat_turn_ab88041568b24a9b sess=wire-17898735227 model=qwen3.6:27b tools=74 wallClock=7200000ms",
+  "[ari-kernel]   [ari] Scope started: op_chat_turn_ab88041568b24a9b",
+  "[threat.audit-trail] [audit-anchor] seq=6 count=7 head=7f7150ea359c110b3dbd8c86e3370d8bd6ba47c26a349be80d4b9d05bd883553",
+  "[threat.audit-trail] [audit-anchor] seq=7 count=8 head=e1de0b05771be45837d6bdb40bbc44f6e0a8242908e156452d87b60c0dcd547b",
+  "[ari-kernel]   [ari] Scope released: op_chat_turn_ab88041568b24a9b",
+  "[routes.chat.canonical-run] [timing] canonical/chat qwen3.6:27b 20770ms (sess=wire-17898735227)",
+  "[server.session-helpers] [memory-live] Indexing session wire-1789873522735 (20 messages)"
+ ],
+ "requests": [
+  {
+   "at": "03:05:22.810",
+   "path": "/api/generate",
+   "model": "qwen3.6:27b",
+   "stream": false,
+   "keep_alive": "30m",
+   "tools": 0,
+   "tools_json_chars": 0,
+   "messages": 0,
+   "roles": "",
+   "system_count": 0,
+   "system_chars": 0,
+   "total_chars": 69,
+   "other_keys": [
+    "prompt"
+   ]
+  },
+  {
+   "at": "03:05:45.196",
+   "path": "/api/generate",
+   "model": "qwen3.6:27b",
+   "stream": false,
+   "think": false,
+   "keep_alive": "30m",
+   "options": {
+    "temperature": 0,
+    "num_predict": 400,
+    "num_ctx": 65536
+   },
+   "tools": 0,
+   "tools_json_chars": 0,
+   "messages": 0,
+   "roles": "",
+   "system_count": 0,
+   "system_chars": 0,
+   "total_chars": 5792,
+   "other_keys": [
+    "prompt"
+   ]
+  },
+  {
+   "at": "03:05:47.329",
+   "path": "/api/generate",
+   "model": "qwen3.6:27b",
+   "stream": false,
+   "think": false,
+   "keep_alive": "30m",
+   "options": {
+    "temperature": 0,
+    "num_predict": 400,
+    "num_ctx": 65536
+   },
+   "tools": 0,
+   "tools_json_chars": 0,
+   "messages": 0,
+   "roles": "",
+   "system_count": 0,
+   "system_chars": 0,
+   "total_chars": 2676,
+   "other_keys": [
+    "prompt"
+   ]
+  },
+  {
+   "at": "03:06:05.910",
+   "path": "/api/generate",
+   "model": "qwen3.6:27b",
+   "stream": false,
+   "think": false,
+   "keep_alive": "30m",
+   "options": {
+    "temperature": 0,
+    "num_predict": 400,
+    "num_ctx": 65536
+   },
+   "tools": 0,
+   "tools_json_chars": 0,
+   "messages": 0,
+   "roles": "",
+   "system_count": 0,
+   "system_chars": 0,
+   "total_chars": 5790,
+   "other_keys": [
+    "prompt"
+   ]
+  },
+  {
+   "at": "03:06:08.236",
+   "path": "/api/generate",
+   "model": "qwen3.6:27b",
+   "stream": false,
+   "think": false,
+   "keep_alive": "30m",
+   "options": {
+    "temperature": 0,
+    "num_predict": 400,
+    "num_ctx": 65536
+   },
+   "tools": 0,
+   "tools_json_chars": 0,
+   "messages": 0,
+   "roles": "",
+   "system_count": 0,
+   "system_chars": 0,
+   "total_chars": 2674,
+   "other_keys": [
+    "prompt"
+   ]
+  },
+  {
+   "at": "03:06:28.975",
+   "path": "/api/generate",
+   "model": "qwen3.6:27b",
+   "stream": false,
+   "think": false,
+   "keep_alive": "30m",
+   "options": {
+    "temperature": 0,
+    "num_predict": 400,
+    "num_ctx": 65536
+   },
+   "tools": 0,
+   "tools_json_chars": 0,
+   "messages": 0,
+   "roles": "",
+   "system_count": 0,
+   "system_chars": 0,
+   "total_chars": 5793,
+   "other_keys": [
+    "prompt"
+   ]
+  }
+ ],
+ "responses": [
+  {
+   "at": "03:05:22.470",
+   "path": "/api/version",
+   "status": 200,
+   "ms": 7,
+   "bytes": 20
+  },
+  {
+   "at": "03:05:22.471",
+   "path": "/api/version",
+   "status": 200,
+   "ms": 4,
+   "bytes": 20
+  },
+  {
+   "at": "03:05:22.490",
+   "path": "/api/tags",
+   "status": 200,
+   "ms": 9,
+   "bytes": 3058
+  },
+  {
+   "at": "03:05:22.491",
+   "path": "/api/tags",
+   "status": 200,
+   "ms": 9,
+   "bytes": 3058
+  },
+  {
+   "at": "03:05:22.499",
+   "path": "/api/ps",
+   "status": 200,
+   "ms": 1,
+   "bytes": 380
+  },
+  {
+   "at": "03:05:22.502",
+   "path": "/api/ps",
+   "status": 200,
+   "ms": 3,
+   "bytes": 380
+  },
+  {
+   "at": "03:05:22.504",
+   "path": "/api/show",
+   "status": 200,
+   "ms": 6,
+   "bytes": 29206
+  },
+  {
+   "at": "03:05:22.505",
+   "path": "/api/ps",
+   "status": 200,
+   "ms": 5,
+   "bytes": 380
+  },
+  {
+   "at": "03:05:22.505",
+   "path": "/api/ps",
+   "status": 200,
+   "ms": 5,
+   "bytes": 380
+  },
+  {
+   "at": "03:05:22.506",
+   "path": "/api/show",
+   "status": 200,
+   "ms": 4,
+   "bytes": 40489
+  },
+  {
+   "at": "03:05:22.508",
+   "path": "/api/ps",
+   "status": 200,
+   "ms": 1,
+   "bytes": 380
+  },
+  {
+   "at": "03:05:22.509",
+   "path": "/api/show",
+   "status": 200,
+   "ms": 8,
+   "bytes": 3069
+  },
+  {
+   "at": "03:05:22.509",
+   "path": "/api/show",
+   "status": 200,
+   "ms": 8,
+   "bytes": 33085
+  },
+  {
+   "at": "03:05:22.510",
+   "path": "/api/ps",
+   "status": 200,
+   "ms": 1,
+   "bytes": 380
+  },
+  {
+   "at": "03:05:22.511",
+   "path": "/api/show",
+   "status": 200,
+   "ms": 3,
+   "bytes": 33000
+  },
+  {
+   "at": "03:05:22.513",
+   "path": "/api/show",
+   "status": 200,
+   "ms": 3,
+   "bytes": 26136
+  },
+  {
+   "at": "03:05:22.596",
+   "path": "/api/version",
+   "status": 200,
+   "ms": 1,
+   "bytes": 20
+  },
+  {
+   "at": "03:05:22.602",
+   "path": "/api/tags",
+   "status": 200,
+   "ms": 6,
+   "bytes": 3058
+  },
+  {
+   "at": "03:05:22.606",
+   "path": "/api/version",
+   "status": 200,
+   "ms": 0,
+   "bytes": 20
+  },
+  {
+   "at": "03:05:22.613",
+   "path": "/api/tags",
+   "status": 200,
+   "ms": 7,
+   "bytes": 3058
+  },
+  {
+   "at": "03:05:22.617",
+   "path": "/api/version",
+   "status": 200,
+   "ms": 1,
+   "bytes": 20
+  },
+  {
+   "at": "03:05:22.623",
+   "path": "/api/tags",
+   "status": 200,
+   "ms": 7,
+   "bytes": 3058
+  },
+  {
+   "at": "03:05:22.624",
+   "path": "/api/version",
+   "status": 200,
+   "ms": 0,
+   "bytes": 20
+  },
+  {
+   "at": "03:05:22.630",
+   "path": "/api/tags",
+   "status": 200,
+   "ms": 6,
+   "bytes": 3058
+  },
+  {
+   "at": "03:05:22.632",
+   "path": "/api/version",
+   "status": 200,
+   "ms": 0,
+   "bytes": 20
+  },
+  {
+   "at": "03:05:22.639",
+   "path": "/api/tags",
+   "status": 200,
+   "ms": 7,
+   "bytes": 3058
+  },
+  {
+   "at": "03:05:22.643",
+   "path": "/api/version",
+   "status": 200,
+   "ms": 1,
+   "bytes": 20
+  },
+  {
+   "at": "03:05:22.649",
+   "path": "/api/tags",
+   "status": 200,
+   "ms": 7,
+   "bytes": 3058
+  },
+  {
+   "at": "03:05:22.807",
+   "path": "/api/ps",
+   "status": 200,
+   "ms": 0,
+   "bytes": 380
+  },
+  {
+   "at": "03:05:28.664",
+   "path": "/api/generate",
+   "status": 200,
+   "ms": 5854,
+   "bytes": 114
+  },
+  {
+   "at": "03:05:45.194",
+   "path": "/api/ps",
+   "status": 200,
+   "ms": 2,
+   "bytes": 389
+  },
+  {
+   "at": "03:05:47.245",
+   "path": "/api/generate",
+   "status": 200,
+   "ms": 2050,
+   "bytes": 7340
+  },
+  {
+   "at": "03:05:47.297",
+   "path": "/api/ps",
+   "status": 200,
+   "ms": 1,
+   "bytes": 389
+  },
+  {
+   "at": "03:05:48.206",
+   "path": "/api/generate",
+   "status": 200,
+   "ms": 877,
+   "bytes": 3413
+  },
+  {
+   "at": "03:06:05.908",
+   "path": "/api/ps",
+   "status": 200,
+   "ms": 1,
+   "bytes": 389
+  },
+  {
+   "at": "03:06:08.154",
+   "path": "/api/generate",
+   "status": 200,
+   "ms": 2244,
+   "bytes": 7338
+  },
+  {
+   "at": "03:06:08.230",
+   "path": "/api/ps",
+   "status": 200,
+   "ms": 0,
+   "bytes": 389
+  },
+  {
+   "at": "03:06:09.093",
+   "path": "/api/generate",
+   "status": 200,
+   "ms": 857,
+   "bytes": 3357
+  },
+  {
+   "at": "03:06:21.973",
+   "path": "/api/version",
+   "status": 200,
+   "ms": 3,
+   "bytes": 20
+  },
+  {
+   "at": "03:06:21.980",
+   "path": "/api/version",
+   "status": 200,
+   "ms": 1,
+   "bytes": 20
+  },
+  {
+   "at": "03:06:21.981",
+   "path": "/api/tags",
+   "status": 200,
+   "ms": 5,
+   "bytes": 3058
+  },
+  {
+   "at": "03:06:21.990",
+   "path": "/api/tags",
+   "status": 200,
+   "ms": 8,
+   "bytes": 3058
+  },
+  {
+   "at": "03:06:21.994",
+   "path": "/api/ps",
+   "status": 200,
+   "ms": 0,
+   "bytes": 389
+  },
+  {
+   "at": "03:06:21.997",
+   "path": "/api/ps",
+   "status": 200,
+   "ms": 3,
+   "bytes": 389
+  },
+  {
+   "at": "03:06:21.997",
+   "path": "/api/ps",
+   "status": 200,
+   "ms": 2,
+   "bytes": 389
+  },
+  {
+   "at": "03:06:21.998",
+   "path": "/api/ps",
+   "status": 200,
+   "ms": 3,
+   "bytes": 389
+  },
+  {
+   "at": "03:06:22.001",
+   "path": "/api/show",
+   "status": 200,
+   "ms": 5,
+   "bytes": 40489
+  },
+  {
+   "at": "03:06:22.002",
+   "path": "/api/show",
+   "status": 200,
+   "ms": 7,
+   "bytes": 33085
+  },
+  {
+   "at": "03:06:22.002",
+   "path": "/api/show",
+   "status": 200,
+   "ms": 7,
+   "bytes": 3069
+  },
+  {
+   "at": "03:06:22.002",
+   "path": "/api/show",
+   "status": 200,
+   "ms": 6,
+   "bytes": 29206
+  },
+  {
+   "at": "03:06:22.004",
+   "path": "/api/ps",
+   "status": 200,
+   "ms": 1,
+   "bytes": 389
+  },
+  {
+   "at": "03:06:22.004",
+   "path": "/api/ps",
+   "status": 200,
+   "ms": 1,
+   "bytes": 389
+  },
+  {
+   "at": "03:06:22.006",
+   "path": "/api/show",
+   "status": 200,
+   "ms": 3,
+   "bytes": 33000
+  },
+  {
+   "at": "03:06:22.006",
+   "path": "/api/show",
+   "status": 200,
+   "ms": 2,
+   "bytes": 26136
+  },
+  {
+   "at": "03:06:28.974",
+   "path": "/api/ps",
+   "status": 200,
+   "ms": 1,
+   "bytes": 389
+  },
+  {
+   "at": "03:06:31.168",
+   "path": "/api/generate",
+   "status": 200,
+   "ms": 2193,
+   "bytes": 7341
+  }
+ ],
+ "ollama_prompt_evals": [
+  "srv    load_model: loading model 'C:\\Users\\peter\\.ollama\\models\\blobs\\sha256-83c54730a5fea8a0958598c01617c1419c431e93b33bacf980b49a420c798926'",
+  "srv    load_model: local path 'C:\\Users\\peter\\.ollama\\models\\blobs\\sha256-83c54730a5fea8a0958598c01617c1419c431e93b33bacf980b49a420c798926'",
+  "srv    load_model: [mtmd] estimated worst-case memory usage of mmproj is 1295.41 MiB (took 87.10 ms)",
+  "srv    load_model: loaded multimodal model, 'C:\\Users\\peter\\.ollama\\models\\blobs\\sha256-83c54730a5fea8a0958598c01617c1419c431e93b33bacf980b49a420c798926'",
+  "srv    load_model: speculative decoding will use checkpoints",
+  "srv    load_model: initializing, n_slots = 1, n_ctx_slot = 65536, kv_unified = 'false'",
+  "task -1 | new slot, n_ctx = 65536",
+  "srv    load_model: prompt cache is enabled, size limit: 8192 MiB",
+  "srv    load_model: use `--cache-ram 0` to disable the prompt cache",
+  "srv    load_model: for more info see https://github.com/ggml-org/llama.cpp/pull/16391",
+  "srv    load_model: context checkpoints enabled, max = 32, min spacing = 8192",
+  "task 0 | new prompt, n_ctx_slot = 65536, n_keep = 4, task.n_tokens = 24759",
+  "task 0 | cached n_tokens = 0, memory_seq_rm [0, end)",
+  "task 0 | cached n_tokens = 1024, memory_seq_rm [1024, end)",
+  "task 0 | cached n_tokens = 2048, memory_seq_rm [2048, end)",
+  "task 0 | cached n_tokens = 3072, memory_seq_rm [3072, end)",
+  "task 0 | cached n_tokens = 4096, memory_seq_rm [4096, end)",
+  "task 0 | cached n_tokens = 5120, memory_seq_rm [5120, end)",
+  "task 0 | cached n_tokens = 6144, memory_seq_rm [6144, end)",
+  "task 0 | cached n_tokens = 7168, memory_seq_rm [7168, end)",
+  "task 0 | cached n_tokens = 8192, memory_seq_rm [8192, end)",
+  "task 0 | cached n_tokens = 9216, memory_seq_rm [9216, end)",
+  "task 0 | cached n_tokens = 10240, memory_seq_rm [10240, end)",
+  "task 0 | cached n_tokens = 11264, memory_seq_rm [11264, end)",
+  "task 0 | cached n_tokens = 12288, memory_seq_rm [12288, end)",
+  "task 0 | cached n_tokens = 13312, memory_seq_rm [13312, end)",
+  "task 0 | cached n_tokens = 14336, memory_seq_rm [14336, end)",
+  "task 0 | cached n_tokens = 15360, memory_seq_rm [15360, end)",
+  "task 0 | cached n_tokens = 16384, memory_seq_rm [16384, end)",
+  "task 0 | cached n_tokens = 17408, memory_seq_rm [17408, end)",
+  "task 0 | cached n_tokens = 18432, memory_seq_rm [18432, end)",
+  "task 0 | cached n_tokens = 19456, memory_seq_rm [19456, end)",
+  "task 0 | cached n_tokens = 20480, memory_seq_rm [20480, end)",
+  "task 0 | cached n_tokens = 21504, memory_seq_rm [21504, end)",
+  "task 0 | cached n_tokens = 22528, memory_seq_rm [22528, end)",
+  "task 0 | cached n_tokens = 23552, memory_seq_rm [23552, end)",
+  "task 0 | cached n_tokens = 23735, memory_seq_rm [23735, end)",
+  "task 0 | cached n_tokens = 24755, memory_seq_rm [24755, end)",
+  "task 0 | prompt eval time =    7241.04 ms / 24759 tokens (    0.29 ms per token,  3419.26 tokens per second)",
+  "task 115 | new prompt, n_ctx_slot = 65536, n_keep = 4, task.n_tokens = 24940",
+  "task 115 | cached n_tokens = 24755, memory_seq_rm [24755, end)",
+  "task 115 | cached n_tokens = 24936, memory_seq_rm [24936, end)",
+  "task 115 | prompt eval time =     194.39 ms /   185 tokens (    1.05 ms per token,   951.68 tokens per second)",
+  "task 215 | new prompt, n_ctx_slot = 65536, n_keep = 4, task.n_tokens = 25794",
+  "task 215 | cached n_tokens = 24755, memory_seq_rm [24755, end)",
+  "task 215 | cached n_tokens = 24770, memory_seq_rm [24770, end)",
+  "task 215 | cached n_tokens = 25790, memory_seq_rm [25790, end)",
+  "task 215 | prompt eval time =     473.68 ms /  1039 tokens (    0.46 ms per token,  2193.47 tokens per second)",
+  "task 591 | new prompt, n_ctx_slot = 65536, n_keep = 4, task.n_tokens = 1411",
+  "task 591 | cached n_tokens = 0, memory_seq_rm [0, end)",
+  "task 591 | cached n_tokens = 387, memory_seq_rm [387, end)",
+  "task 591 | cached n_tokens = 1407, memory_seq_rm [1407, end)",
+  "task 591 | prompt eval time =     472.44 ms /  1411 tokens (    0.33 ms per token,  2986.59 tokens per second)",
+  "task 662 | new prompt, n_ctx_slot = 65536, n_keep = 4, task.n_tokens = 624",
+  "task 662 | cached n_tokens = 0, memory_seq_rm [0, end)",
+  "task 662 | cached n_tokens = 620, memory_seq_rm [620, end)",
+  "task 662 | prompt eval time =     224.71 ms /   624 tokens (    0.36 ms per token,  2776.89 tokens per second)",
+  "task 700 | new prompt, n_ctx_slot = 65536, n_keep = 4, task.n_tokens = 36798",
+  "task 700 | cached n_tokens = 0, memory_seq_rm [0, end)",
+  "task 700 | cached n_tokens = 1024, memory_seq_rm [1024, end)",
+  "task 700 | cached n_tokens = 2048, memory_seq_rm [2048, end)",
+  "task 700 | cached n_tokens = 3072, memory_seq_rm [3072, end)",
+  "task 700 | cached n_tokens = 4096, memory_seq_rm [4096, end)",
+  "task 700 | cached n_tokens = 5120, memory_seq_rm [5120, end)",
+  "task 700 | cached n_tokens = 6144, memory_seq_rm [6144, end)",
+  "task 700 | cached n_tokens = 7168, memory_seq_rm [7168, end)",
+  "task 700 | cached n_tokens = 8192, memory_seq_rm [8192, end)",
+  "task 700 | cached n_tokens = 9216, memory_seq_rm [9216, end)",
+  "task 700 | cached n_tokens = 10240, memory_seq_rm [10240, end)",
+  "task 700 | cached n_tokens = 11264, memory_seq_rm [11264, end)",
+  "task 700 | cached n_tokens = 12288, memory_seq_rm [12288, end)",
+  "task 700 | cached n_tokens = 13312, memory_seq_rm [13312, end)",
+  "task 700 | cached n_tokens = 14336, memory_seq_rm [14336, end)",
+  "task 700 | cached n_tokens = 15360, memory_seq_rm [15360, end)",
+  "task 700 | cached n_tokens = 16384, memory_seq_rm [16384, end)",
+  "task 700 | cached n_tokens = 17408, memory_seq_rm [17408, end)",
+  "task 700 | cached n_tokens = 18432, memory_seq_rm [18432, end)",
+  "task 700 | cached n_tokens = 19456, memory_seq_rm [19456, end)",
+  "task 700 | cached n_tokens = 20480, memory_seq_rm [20480, end)",
+  "task 700 | cached n_tokens = 21504, memory_seq_rm [21504, end)",
+  "task 700 | cached n_tokens = 22528, memory_seq_rm [22528, end)",
+  "task 700 | cached n_tokens = 23552, memory_seq_rm [23552, end)",
+  "task 700 | cached n_tokens = 24576, memory_seq_rm [24576, end)",
+  "task 700 | cached n_tokens = 25600, memory_seq_rm [25600, end)",
+  "task 700 | cached n_tokens = 26624, memory_seq_rm [26624, end)",
+  "task 700 | cached n_tokens = 27648, memory_seq_rm [27648, end)",
+  "task 700 | cached n_tokens = 28672, memory_seq_rm [28672, end)",
+  "task 700 | cached n_tokens = 29696, memory_seq_rm [29696, end)",
+  "task 700 | cached n_tokens = 30720, memory_seq_rm [30720, end)",
+  "task 700 | cached n_tokens = 31744, memory_seq_rm [31744, end)",
+  "task 700 | cached n_tokens = 32768, memory_seq_rm [32768, end)",
+  "task 700 | cached n_tokens = 33792, memory_seq_rm [33792, end)",
+  "task 700 | cached n_tokens = 34816, memory_seq_rm [34816, end)",
+  "task 700 | cached n_tokens = 35774, memory_seq_rm [35774, end)",
+  "task 700 | cached n_tokens = 36794, memory_seq_rm [36794, end)",
+  "task 700 | prompt eval time =   11341.23 ms / 36798 tokens (    0.31 ms per token,  3244.62 tokens per second)",
+  "task 792 | new prompt, n_ctx_slot = 65536, n_keep = 4, task.n_tokens = 36911",
+  "task 792 | cached n_tokens = 35774, memory_seq_rm [35774, end)",
+  "task 792 | cached n_tokens = 35887, memory_seq_rm [35887, end)",
+  "task 792 | cached n_tokens = 36907, memory_seq_rm [36907, end)",
+  "task 792 | prompt eval time =     523.75 ms /  1137 tokens (    0.46 ms per token,  2170.90 tokens per second)",
+  "task 847 | new prompt, n_ctx_slot = 65536, n_keep = 4, task.n_tokens = 37039",
+  "task 847 | cached n_tokens = 35887, memory_seq_rm [35887, end)",
+  "task 847 | cached n_tokens = 36015, memory_seq_rm [36015, end)",
+  "task 847 | cached n_tokens = 37035, memory_seq_rm [37035, end)",
+  "task 847 | prompt eval time =     526.93 ms /  1152 tokens (    0.46 ms per token,  2186.25 tokens per second)",
+  "task 907 | new prompt, n_ctx_slot = 65536, n_keep = 4, task.n_tokens = 37186",
+  "task 907 | cached n_tokens = 36015, memory_seq_rm [36015, end)",
+  "task 907 | cached n_tokens = 36162, memory_seq_rm [36162, end)",
+  "task 907 | cached n_tokens = 37182, memory_seq_rm [37182, end)",
+  "task 907 | prompt eval time =     541.81 ms /  1171 tokens (    0.46 ms per token,  2161.29 tokens per second)",
+  "task 1003 | new prompt, n_ctx_slot = 65536, n_keep = 4, task.n_tokens = 1409",
+  "task 1003 | cached n_tokens = 387, memory_seq_rm [387, end)",
+  "task 1003 | cached n_tokens = 1405, memory_seq_rm [1405, end)",
+  "task 1003 | prompt eval time =     382.72 ms /  1022 tokens (    0.37 ms per token,  2670.37 tokens per second)",
+  "task 1073 | new prompt, n_ctx_slot = 65536, n_keep = 4, task.n_tokens = 616",
+  "task 1073 | cached n_tokens = 0, memory_seq_rm [0, end)",
+  "task 1073 | cached n_tokens = 612, memory_seq_rm [612, end)",
+  "task 1073 | prompt eval time =     214.01 ms /   616 tokens (    0.35 ms per token,  2878.32 tokens per second)",
+  "task 1108 | new prompt, n_ctx_slot = 65536, n_keep = 4, task.n_tokens = 36837",
+  "task 1108 | cached n_tokens = 0, memory_seq_rm [0, end)",
+  "task 1108 | cached n_tokens = 1024, memory_seq_rm [1024, end)",
+  "task 1108 | cached n_tokens = 2048, memory_seq_rm [2048, end)",
+  "task 1108 | cached n_tokens = 3072, memory_seq_rm [3072, end)",
+  "task 1108 | cached n_tokens = 4096, memory_seq_rm [4096, end)",
+  "task 1108 | cached n_tokens = 5120, memory_seq_rm [5120, end)",
+  "task 1108 | cached n_tokens = 6144, memory_seq_rm [6144, end)",
+  "task 1108 | cached n_tokens = 7168, memory_seq_rm [7168, end)",
+  "task 1108 | cached n_tokens = 8192, memory_seq_rm [8192, end)",
+  "task 1108 | cached n_tokens = 9216, memory_seq_rm [9216, end)",
+  "task 1108 | cached n_tokens = 10240, memory_seq_rm [10240, end)",
+  "task 1108 | cached n_tokens = 11264, memory_seq_rm [11264, end)",
+  "task 1108 | cached n_tokens = 12288, memory_seq_rm [12288, end)",
+  "task 1108 | cached n_tokens = 13312, memory_seq_rm [13312, end)",
+  "task 1108 | cached n_tokens = 14336, memory_seq_rm [14336, end)",
+  "task 1108 | cached n_tokens = 15360, memory_seq_rm [15360, end)",
+  "task 1108 | cached n_tokens = 16384, memory_seq_rm [16384, end)",
+  "task 1108 | cached n_tokens = 17408, memory_seq_rm [17408, end)",
+  "task 1108 | cached n_tokens = 18432, memory_seq_rm [18432, end)",
+  "task 1108 | cached n_tokens = 19456, memory_seq_rm [19456, end)",
+  "task 1108 | cached n_tokens = 20480, memory_seq_rm [20480, end)",
+  "task 1108 | cached n_tokens = 21504, memory_seq_rm [21504, end)",
+  "task 1108 | cached n_tokens = 22528, memory_seq_rm [22528, end)",
+  "task 1108 | cached n_tokens = 23552, memory_seq_rm [23552, end)",
+  "task 1108 | cached n_tokens = 24576, memory_seq_rm [24576, end)",
+  "task 1108 | cached n_tokens = 25600, memory_seq_rm [25600, end)",
+  "task 1108 | cached n_tokens = 26624, memory_seq_rm [26624, end)",
+  "task 1108 | cached n_tokens = 27648, memory_seq_rm [27648, end)",
+  "task 1108 | cached n_tokens = 28672, memory_seq_rm [28672, end)",
+  "task 1108 | cached n_tokens = 29696, memory_seq_rm [29696, end)",
+  "task 1108 | cached n_tokens = 30720, memory_seq_rm [30720, end)",
+  "task 1108 | cached n_tokens = 31744, memory_seq_rm [31744, end)",
+  "task 1108 | cached n_tokens = 32768, memory_seq_rm [32768, end)",
+  "task 1108 | cached n_tokens = 33792, memory_seq_rm [33792, end)",
+  "task 1108 | cached n_tokens = 34816, memory_seq_rm [34816, end)",
+  "task 1108 | cached n_tokens = 35813, memory_seq_rm [35813, end)",
+  "task 1108 | cached n_tokens = 36833, memory_seq_rm [36833, end)",
+  "task 1108 | prompt eval time =   11416.73 ms / 36837 tokens (    0.31 ms per token,  3226.58 tokens per second)",
+  "task 1479 | new prompt, n_ctx_slot = 65536, n_keep = 4, task.n_tokens = 37116",
+  "task 1479 | cached n_tokens = 35813, memory_seq_rm [35813, end)",
+  "task 1479 | cached n_tokens = 36092, memory_seq_rm [36092, end)",
+  "task 1479 | cached n_tokens = 37112, memory_seq_rm [37112, end)",
+  "task 1479 | prompt eval time =     564.30 ms /  1303 tokens (    0.43 ms per token,  2309.06 tokens per second)",
+  "task 1626 | new prompt, n_ctx_slot = 65536, n_keep = 4, task.n_tokens = 1410",
+  "task 1626 | cached n_tokens = 387, memory_seq_rm [387, end)",
+  "task 1626 | cached n_tokens = 1406, memory_seq_rm [1406, end)",
+  "task 1626 | prompt eval time =     387.38 ms /  1023 tokens (    0.38 ms per token,  2640.85 tokens per second)"
+ ]
+}

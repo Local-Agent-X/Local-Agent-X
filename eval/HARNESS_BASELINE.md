@@ -1,5 +1,7 @@
 # Harness baseline — local models (Phase 0)
 
+> Superseded 2026-09-19 by `docs/harness/AUDIT.md` (Phase 0 of `docs/harness/LOCAL_MODEL_HARNESS_BRIEF.md`). The measured muse numbers below still stand; the `resolveBackgroundModel` order and the classifier-site table are out of date (H-030 removed auto-selection; review calls run on the worker).
+
 Mission: `docs/agent-prompts/local-model-harness.md`. Ledger: `eval/HARNESS_LEDGER.md`.
 Gathered 2026-09-17.
 

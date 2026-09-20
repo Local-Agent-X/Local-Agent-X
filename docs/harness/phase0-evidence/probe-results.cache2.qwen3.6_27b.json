@@ -1,0 +1,279 @@
+[
+ {
+  "name": "templates as exposed by /api/show",
+  "at": "2026-09-20T02:56:00.117Z",
+  "qwen3.6:27b": "\"{{ .Prompt }}\"",
+  "qwen3:8b_head": "\n{{- $lastUserIdx := -1 -}}\n{{- range $idx, $msg := .Messages -}}\n{{- if eq $msg.Role \"user\" }}{{ $lastUserIdx = $idx }}{{ end -}}\n{{- end }}\n{{- if or .System .Tools }}<|im_start|>system\n{{ if .System }}\n{{ .System }}\n{{- end }}\n{{- if .Tools }}\n\n# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>\n{{- range .Tools }}\n{\"type\": \"function\", \"function\": {{ .Function }}}\n{{- end }}\n</tools>\n\nFor each function call, return a json object with function name and arguments within <tool_call></tool",
+  "qwen3:8b_has_tool_call_tag": true,
+  "qwen3:8b_has_think": true
+ },
+ {
+  "name": "load @65536",
+  "at": "2026-09-20T02:56:00.429Z",
+  "chat": {
+   "status": 200,
+   "ms": 297,
+   "done_reason": "stop",
+   "load_ms": 3,
+   "prompt_eval_count": 19,
+   "prompt_eval_ms": 258,
+   "eval_count": 2,
+   "eval_ms": 23,
+   "decode_tps": 87.3,
+   "thinking_chars": 0,
+   "content": "OK"
+  },
+  "ps": [
+   {
+    "name": "qwen3.6:27b",
+    "size_gb": 19.19,
+    "vram_gb": 19.19,
+    "gpu_pct": 100,
+    "ctx": 65536,
+    "expires_in_min": 5
+   }
+  ]
+ },
+ {
+  "name": "server.log: slots / parallel / n_ctx at load",
+  "at": "2026-09-20T02:56:00.432Z",
+  "lines": [
+   "slot create_check: id  0 | task 26 | created context checkpoint 1 of 32 (pos_min = 14, pos_max = 14, n_tokens = 15, size = 149.626 MiB)\r",
+   "slot print_timing: id  0 | task 26 | prompt eval time =     108.50 ms /    19 tokens (    5.71 ms per token,   175.11 tokens per second)\r",
+   "slot print_timing: id  0 | task 26 |        eval time =      22.34 ms /     2 tokens (   22.34 ms per token,    44.76 tokens per second)\r",
+   "slot print_timing: id  0 | task 26 |       total time =     130.85 ms /    21 tokens\r",
+   "slot print_timing: id  0 | task 26 |    graphs reused =         19\r",
+   "slot      release: id  0 | task 26 | stop processing: n_tokens = 20, truncated = 0\r",
+   "srv  update_slots: all slots are idle\r",
+   "slot get_availabl: id  0 | task -1 |  - checking sim = 1.000 (19/19) > 0.100\r",
+   "slot get_availabl: id  0 | task -1 | selected slot by LCP similarity, f_sim_best = 1.000 (> 0.100 thold), f_keep = 0.950\r",
+   "slot launch_slot_: id  0 | task -1 | sampler chain: logits -> penalties -> ?dry -> ?top-n-sigma -> top-k -> ?typical -> top-p -> ?min-p -> ?xtc -> ?temp-ext -> dist \r",
+   "slot launch_slot_: id  0 | task -1 | sampler params: \r",
+   "slot launch_slot_: id  0 | task 30 | processing task, is_child = 0\r",
+   "slot   operator(): id  0 | task 30 | new prompt, n_ctx_slot = 65536, n_keep = 4, task.n_tokens = 19\r",
+   "slot   operator(): id  0 | task 30 | checking checkpoint with [14, 14] against 18...\r",
+   "slot   operator(): id  0 | task 30 | restored context checkpoint (pos_min = 14, pos_max = 14, n_tokens = 15, n_past = 15, size = 149.626 MiB)\r",
+   "slot   operator(): id  0 | task 30 | cached n_tokens = 15, memory_seq_rm [15, end)\r",
+   "slot init_sampler: id  0 | task 30 | init sampler, took 0.01 ms, tokens: text = 19, total = 19\r",
+   "slot create_check: id  0 | task 30 | superseding context checkpoint at n_tokens = 15\r",
+   "slot create_check: id  0 | task 30 | created context checkpoint 1 of 32 (pos_min = 14, pos_max = 14, n_tokens = 15, size = 149.626 MiB)\r",
+   "slot print_timing: id  0 | task 30 | prompt eval time =     258.00 ms /     4 tokens (   64.50 ms per token,    15.50 tokens per second)\r",
+   "slot print_timing: id  0 | task 30 |        eval time =      22.91 ms /     2 tokens (   22.91 ms per token,    43.65 tokens per second)\r",
+   "slot print_timing: id  0 | task 30 |       total time =     280.91 ms /     6 tokens\r",
+   "slot print_timing: id  0 | task 30 |    graphs reused =         19\r",
+   "slot      release: id  0 | task 30 | stop processing: n_tokens = 20, truncated = 0\r",
+   "srv  update_slots: all slots are idle\r"
+  ]
+ },
+ {
+  "name": "40k-token prompt @65536: truncated?",
+  "at": "2026-09-20T02:56:12.243Z",
+  "status": 200,
+  "ms": 11807,
+  "done_reason": "stop",
+  "load_ms": 3,
+  "prompt_eval_count": 40033,
+  "prompt_eval_ms": 11461,
+  "eval_count": 4,
+  "eval_ms": 69,
+  "decode_tps": 57.9,
+  "thinking_chars": 0,
+  "content": "PELICAN",
+  "server_log_lines": [
+   "slot      release: id  0 | task 33 | stop processing: n_tokens = 40036, truncated = 0\r"
+  ]
+ },
+ {
+  "name": "slots: A",
+  "at": "2026-09-20T02:56:14.596Z",
+  "prompt_eval_count": 4820,
+  "prompt_eval_ms": 1369
+ },
+ {
+  "name": "slots: B",
+  "at": "2026-09-20T02:56:16.231Z",
+  "prompt_eval_count": 4820,
+  "prompt_eval_ms": 1362
+ },
+ {
+  "name": "slots: A again (hit => 2+ slots)",
+  "at": "2026-09-20T02:56:16.668Z",
+  "prompt_eval_count": 4820,
+  "prompt_eval_ms": 91
+ },
+ {
+  "name": "slots: B again",
+  "at": "2026-09-20T02:56:17.084Z",
+  "prompt_eval_count": 4820,
+  "prompt_eval_ms": 97
+ },
+ {
+  "name": "cache: A + same user (baseline hit)",
+  "at": "2026-09-20T02:56:17.515Z",
+  "prompt_eval_count": 4820,
+  "prompt_eval_ms": 90
+ },
+ {
+  "name": "cache: A + NEW user message",
+  "at": "2026-09-20T02:56:17.981Z",
+  "prompt_eval_count": 4823,
+  "prompt_eval_ms": 410
+ },
+ {
+  "name": "cache: A + same user (re-hit)",
+  "at": "2026-09-20T02:56:18.434Z",
+  "prompt_eval_count": 4820,
+  "prompt_eval_ms": 389
+ },
+ {
+  "name": "cache: A with timestamp APPENDED",
+  "at": "2026-09-20T02:56:18.918Z",
+  "prompt_eval_count": 4856,
+  "prompt_eval_ms": 417
+ },
+ {
+  "name": "cache: A restored",
+  "at": "2026-09-20T02:56:19.363Z",
+  "prompt_eval_count": 4820,
+  "prompt_eval_ms": 391
+ },
+ {
+  "name": "cache: A with timestamp PREPENDED",
+  "at": "2026-09-20T02:56:21.131Z",
+  "prompt_eval_count": 4858,
+  "prompt_eval_ms": 1374
+ },
+ {
+  "name": "cache: A restored again",
+  "at": "2026-09-20T02:56:21.616Z",
+  "prompt_eval_count": 4820,
+  "prompt_eval_ms": 98
+ },
+ {
+  "name": "cache: A + 3-turn history",
+  "at": "2026-09-20T02:56:21.786Z",
+  "prompt_eval_count": 4820,
+  "prompt_eval_ms": 94
+ },
+ {
+  "name": "cache: A + history grown by one turn",
+  "at": "2026-09-20T02:56:22.009Z",
+  "prompt_eval_count": 4833,
+  "prompt_eval_ms": 165
+ },
+ {
+  "name": "cache: same history, tools ADDED to the request",
+  "at": "2026-09-20T02:56:23.891Z",
+  "prompt_eval_count": 5083,
+  "prompt_eval_ms": 1465,
+  "note": "if tools render before the system prompt in the template, this is a full re-prefill"
+ },
+ {
+  "name": "/v1 reasoning_effort none",
+  "at": "2026-09-20T02:56:24.302Z",
+  "status": 200,
+  "finish_reason": "stop",
+  "content": "391",
+  "reasoning_len": 0,
+  "usage": {
+   "prompt_tokens": 27,
+   "prompt_tokens_details": {
+    "cached_tokens": 0
+   },
+   "completion_tokens": 4,
+   "total_tokens": 31
+  }
+ },
+ {
+  "name": "/v1 stop with reasoning off",
+  "at": "2026-09-20T02:56:24.534Z",
+  "status": 200,
+  "finish_reason": "stop",
+  "content": "alpha",
+  "reasoning_len": 0
+ },
+ {
+  "name": "/v1 think:false (non-standard field)",
+  "at": "2026-09-20T02:56:25.449Z",
+  "status": 200,
+  "finish_reason": "length",
+  "content": "",
+  "reasoning_len": 163
+ },
+ {
+  "name": "/v1 response_format json_schema + reasoning none",
+  "at": "2026-09-20T02:56:25.866Z",
+  "status": 200,
+  "finish_reason": "stop",
+  "content": "{\n  \"answer\": \"Paris\"\n}"
+ },
+ {
+  "name": "num_ctx 262144 load (spill?)",
+  "at": "2026-09-20T02:56:40.608Z",
+  "chat": {
+   "status": 200,
+   "ms": 14740,
+   "done_reason": "stop",
+   "load_ms": 14367,
+   "prompt_eval_count": 19,
+   "prompt_eval_ms": 288,
+   "eval_count": 2,
+   "eval_ms": 66,
+   "decode_tps": 30.2,
+   "thinking_chars": 0,
+   "content": "OK"
+  },
+  "ps": [
+   {
+    "name": "qwen3.6:27b",
+    "size_gb": 33.17,
+    "vram_gb": 28.41,
+    "gpu_pct": 86,
+    "ctx": 262144,
+    "expires_in_min": 5
+   }
+  ]
+ },
+ {
+  "name": "decode @262144",
+  "at": "2026-09-20T02:56:45.127Z",
+  "status": 200,
+  "ms": 4518,
+  "done_reason": "length",
+  "load_ms": 2,
+  "prompt_eval_count": 26,
+  "prompt_eval_ms": 310,
+  "eval_count": 80,
+  "eval_ms": 4102,
+  "decode_tps": 19.5,
+  "thinking_chars": 0,
+  "content": "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n21\n22\n23\n24\n25\n26\n27\n28\n29\n30"
+ },
+ {
+  "name": "restore @65536",
+  "at": "2026-09-20T02:56:51.347Z",
+  "chat": {
+   "status": 200,
+   "ms": 6219,
+   "done_reason": "stop",
+   "load_ms": 6035,
+   "prompt_eval_count": 19,
+   "prompt_eval_ms": 153,
+   "eval_count": 2,
+   "eval_ms": 27,
+   "decode_tps": 74.1,
+   "thinking_chars": 0,
+   "content": "OK"
+  },
+  "ps": [
+   {
+    "name": "qwen3.6:27b",
+    "size_gb": 19.19,
+    "vram_gb": 19.19,
+    "gpu_pct": 100,
+    "ctx": 65536,
+    "expires_in_min": 5
+   }
+  ]
+ }
+]

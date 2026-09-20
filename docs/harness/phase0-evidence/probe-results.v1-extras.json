@@ -1,0 +1,374 @@
+[
+ {
+  "name": "qwen3.6:27b stream, no stream_options: usage present?",
+  "status": 200,
+  "chunks": 4,
+  "usage_chunks": 0,
+  "tool_call_chunks": 0,
+  "tool_calls": [],
+  "finish_reasons": [
+   "stop"
+  ],
+  "content": "Hello there friend",
+  "reasoning_len": 0,
+  "parse_errors": 0
+ },
+ {
+  "name": "qwen3.6:27b stream + stream_options.include_usage",
+  "status": 200,
+  "chunks": 5,
+  "usage_chunks": 1,
+  "usage": {
+   "prompt_tokens": 18,
+   "prompt_tokens_details": {
+    "cached_tokens": 14
+   },
+   "completion_tokens": 4,
+   "total_tokens": 22
+  },
+  "tool_call_chunks": 0,
+  "tool_calls": [],
+  "finish_reasons": [
+   "stop"
+  ],
+  "content": "Hello my friend",
+  "reasoning_len": 0,
+  "parse_errors": 0
+ },
+ {
+  "name": "qwen3.6:27b stream + tools, reasoning none: finish_reason + delta shape",
+  "status": 200,
+  "chunks": 3,
+  "usage_chunks": 1,
+  "usage": {
+   "prompt_tokens": 279,
+   "prompt_tokens_details": {
+    "cached_tokens": 0
+   },
+   "completion_tokens": 26,
+   "total_tokens": 305
+  },
+  "tool_call_chunks": 1,
+  "first_tool_chunk": 0,
+  "tool_calls": [
+   "read_file:{\"path\":\"notes.txt\"}"
+  ],
+  "finish_reasons": [
+   "tool_calls"
+  ],
+  "content": "",
+  "reasoning_len": 0,
+  "parse_errors": 0
+ },
+ {
+  "name": "qwen3.6:27b stream + tools, DEFAULT reasoning (what LAX sends)",
+  "status": 200,
+  "chunks": 30,
+  "usage_chunks": 1,
+  "usage": {
+   "prompt_tokens": 277,
+   "prompt_tokens_details": {
+    "cached_tokens": 275
+   },
+   "completion_tokens": 57,
+   "total_tokens": 334
+  },
+  "tool_call_chunks": 1,
+  "first_tool_chunk": 27,
+  "tool_calls": [
+   "read_file:{\"path\":\"notes.txt\"}"
+  ],
+  "finish_reasons": [
+   "tool_calls"
+  ],
+  "content": "",
+  "reasoning_len": 105,
+  "parse_errors": 0
+ },
+ {
+  "name": "qwen3.6:27b tool_choice required on a no-tool prompt",
+  "status": 200,
+  "finish_reason": "stop",
+  "content": "Hello my friend.",
+  "reasoning_len": 0,
+  "usage": {
+   "prompt_tokens": 273,
+   "prompt_tokens_details": {
+    "cached_tokens": 0
+   },
+   "completion_tokens": 5,
+   "total_tokens": 278
+  }
+ },
+ {
+  "name": "qwen3.6:27b tool_choice forced read_file on a no-tool prompt",
+  "status": 200,
+  "finish_reason": "stop",
+  "content": "Hello there friend",
+  "reasoning_len": 0,
+  "usage": {
+   "prompt_tokens": 273,
+   "prompt_tokens_details": {
+    "cached_tokens": 269
+   },
+   "completion_tokens": 4,
+   "total_tokens": 277
+  }
+ },
+ {
+  "name": "qwen3.6:27b tool_choice none on a tool prompt",
+  "status": 200,
+  "finish_reason": "tool_calls",
+  "content": "",
+  "reasoning_len": 0,
+  "tool_calls": [
+   "read_file({\"path\":\"notes.txt\"})"
+  ],
+  "usage": {
+   "prompt_tokens": 279,
+   "prompt_tokens_details": {
+    "cached_tokens": 0
+   },
+   "completion_tokens": 26,
+   "total_tokens": 305
+  }
+ },
+ {
+  "name": "qwen3.6:27b tools + default reasoning + max_tokens 60",
+  "status": 200,
+  "finish_reason": "length",
+  "content": "",
+  "reasoning_len": 218,
+  "usage": {
+   "prompt_tokens": 277,
+   "prompt_tokens_details": {
+    "cached_tokens": 275
+   },
+   "completion_tokens": 60,
+   "total_tokens": 337
+  }
+ },
+ {
+  "name": "qwen3.6:27b tools + reasoning none + max_tokens 60",
+  "status": 200,
+  "finish_reason": "tool_calls",
+  "content": "",
+  "reasoning_len": 0,
+  "tool_calls": [
+   "read_file({\"path\":\"notes.txt\"})"
+  ],
+  "usage": {
+   "prompt_tokens": 279,
+   "prompt_tokens_details": {
+    "cached_tokens": 275
+   },
+   "completion_tokens": 26,
+   "total_tokens": 305
+  }
+ },
+ {
+  "name": "qwen3.6:27b temperature 0.7 + repeat_penalty via options passthrough?",
+  "status": 200,
+  "finish_reason": "stop",
+  "content": "Hello there friend.",
+  "reasoning_len": 0,
+  "usage": {
+   "prompt_tokens": 18,
+   "prompt_tokens_details": {
+    "cached_tokens": 14
+   },
+   "completion_tokens": 5,
+   "total_tokens": 23
+  },
+  "loaded_ctx_after": [
+   "qwen3.6:27b@65536"
+  ],
+  "note": "if ctx shows 8192 the /v1 endpoint accepted options.num_ctx"
+ },
+ {
+  "name": "qwen3:8b stream, no stream_options: usage present?",
+  "status": 200,
+  "chunks": 8,
+  "usage_chunks": 0,
+  "tool_call_chunks": 0,
+  "tool_calls": [],
+  "finish_reasons": [
+   "stop"
+  ],
+  "content": "Hello! How can I help?",
+  "reasoning_len": 0,
+  "parse_errors": 0
+ },
+ {
+  "name": "qwen3:8b stream + stream_options.include_usage",
+  "status": 200,
+  "chunks": 8,
+  "usage_chunks": 1,
+  "usage": {
+   "prompt_tokens": 22,
+   "prompt_tokens_details": {
+    "cached_tokens": 21
+   },
+   "completion_tokens": 7,
+   "total_tokens": 29
+  },
+  "tool_call_chunks": 0,
+  "tool_calls": [],
+  "finish_reasons": [
+   "stop"
+  ],
+  "content": "Hello, how are you?",
+  "reasoning_len": 0,
+  "parse_errors": 0
+ },
+ {
+  "name": "qwen3:8b stream + tools, reasoning none: finish_reason + delta shape",
+  "status": 200,
+  "chunks": 3,
+  "usage_chunks": 1,
+  "usage": {
+   "prompt_tokens": 147,
+   "prompt_tokens_details": {
+    "cached_tokens": 1
+   },
+   "completion_tokens": 21,
+   "total_tokens": 168
+  },
+  "tool_call_chunks": 1,
+  "first_tool_chunk": 0,
+  "tool_calls": [
+   "read_file:{\"path\":\"notes.txt\"}"
+  ],
+  "finish_reasons": [
+   "tool_calls"
+  ],
+  "content": "",
+  "reasoning_len": 0,
+  "parse_errors": 0
+ },
+ {
+  "name": "qwen3:8b stream + tools, DEFAULT reasoning (what LAX sends)",
+  "status": 200,
+  "chunks": 69,
+  "usage_chunks": 1,
+  "usage": {
+   "prompt_tokens": 141,
+   "prompt_tokens_details": {
+    "cached_tokens": 135
+   },
+   "completion_tokens": 91,
+   "total_tokens": 232
+  },
+  "tool_call_chunks": 1,
+  "first_tool_chunk": 66,
+  "tool_calls": [
+   "read_file:{\"path\":\"notes.txt\"}"
+  ],
+  "finish_reasons": [
+   "tool_calls"
+  ],
+  "content": "",
+  "reasoning_len": 291,
+  "parse_errors": 0
+ },
+ {
+  "name": "qwen3:8b tool_choice required on a no-tool prompt",
+  "status": 200,
+  "finish_reason": "stop",
+  "content": "Hello, world!",
+  "reasoning_len": 0,
+  "usage": {
+   "prompt_tokens": 141,
+   "prompt_tokens_details": {
+    "cached_tokens": 122
+   },
+   "completion_tokens": 5,
+   "total_tokens": 146
+  }
+ },
+ {
+  "name": "qwen3:8b tool_choice forced read_file on a no-tool prompt",
+  "status": 200,
+  "finish_reason": "stop",
+  "content": "Hello, world!",
+  "reasoning_len": 0,
+  "usage": {
+   "prompt_tokens": 141,
+   "prompt_tokens_details": {
+    "cached_tokens": 140
+   },
+   "completion_tokens": 5,
+   "total_tokens": 146
+  }
+ },
+ {
+  "name": "qwen3:8b tool_choice none on a tool prompt",
+  "status": 200,
+  "finish_reason": "tool_calls",
+  "content": "",
+  "reasoning_len": 0,
+  "tool_calls": [
+   "read_file({\"path\":\"notes.txt\"})"
+  ],
+  "usage": {
+   "prompt_tokens": 147,
+   "prompt_tokens_details": {
+    "cached_tokens": 122
+   },
+   "completion_tokens": 21,
+   "total_tokens": 168
+  }
+ },
+ {
+  "name": "qwen3:8b tools + default reasoning + max_tokens 60",
+  "status": 200,
+  "finish_reason": "length",
+  "content": "",
+  "reasoning_len": 247,
+  "usage": {
+   "prompt_tokens": 141,
+   "prompt_tokens_details": {
+    "cached_tokens": 135
+   },
+   "completion_tokens": 60,
+   "total_tokens": 201
+  }
+ },
+ {
+  "name": "qwen3:8b tools + reasoning none + max_tokens 60",
+  "status": 200,
+  "finish_reason": "tool_calls",
+  "content": "",
+  "reasoning_len": 0,
+  "tool_calls": [
+   "read_file({\"path\":\"notes.txt\"})"
+  ],
+  "usage": {
+   "prompt_tokens": 147,
+   "prompt_tokens_details": {
+    "cached_tokens": 135
+   },
+   "completion_tokens": 21,
+   "total_tokens": 168
+  }
+ },
+ {
+  "name": "qwen3:8b temperature 0.7 + repeat_penalty via options passthrough?",
+  "status": 200,
+  "finish_reason": "stop",
+  "content": "Hello, how are you?",
+  "reasoning_len": 0,
+  "usage": {
+   "prompt_tokens": 22,
+   "prompt_tokens_details": {
+    "cached_tokens": 21
+   },
+   "completion_tokens": 7,
+   "total_tokens": 29
+  },
+  "loaded_ctx_after": [
+   "qwen3:8b@40960"
+  ],
+  "note": "if ctx shows 8192 the /v1 endpoint accepted options.num_ctx"
+ }
+]

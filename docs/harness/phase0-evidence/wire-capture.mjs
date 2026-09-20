@@ -70,6 +70,20 @@ try {
     await waitForIdleOps(server.dataDir, 120_000);
   }
   result.ops = [...readOps(server.dataDir)].map(({ op }) => ({ id: op.id, kind: op.kind, status: op.status, turns: op.turnCount ?? op.turns?.length ?? null }));
+  // Per-turn usage as the harness recorded it (the data dir is deleted on stop).
+  const { readdirSync: rd, existsSync: ex } = await import("node:fs");
+  const { join } = await import("node:path");
+  result.turnUsage = [];
+  for (const { dir, op } of readOps(server.dataDir)) {
+    const turnsDir = join(dir, "op-turns");
+    for (const f of ex(turnsDir) ? rd(turnsDir).sort() : []) {
+      try {
+        const t = JSON.parse(readFileSync(join(turnsDir, f), "utf8")).turn;
+        const p = t?.providerState?.providerPayload ?? {};
+        result.turnUsage.push({ op: op.id.slice(-8), turn: f, model: p.model, modelMs: t?.modelMs, ttftMs: p.ttftMs, in: p.usageInputTokens, out: p.usageOutputTokens, cached: p.promptCachedTokens, overWindow: p.promptOverWindow, stop: p.stopReason });
+      } catch {}
+    }
+  }
 } finally {
   result.serverLogTail = server.logTail().split("\n").slice(-40);
   await server.stop();

@@ -40,8 +40,13 @@ with a warning when a load happened inside the call (`llm-dispatch/ollama.ts`); 
 `ttftMs`, `maxPromptTokens`, `promptOverWindow`. No behaviour change on any path; no flag needed.
 Models: qwen3.6:27b Q4_K_M / qwen3:8b Q4_K_M, Ollama 0.34.2.
 Eval: none (infrastructure). Verified by unit tests (72 across 9 files) and a live isolated-server run.
-Before → After:
-  local turns recorded tokens: 0 → (see verification below)
+Before → After (isolated server, qwen3:8b, the three-message capture from the audit, `phase1-evidence/exp-1-wire-capture.qwen3_8b.json`):
+  local turns recording tokens: 0 of 4 → 4 of 4 (17,206 / 17,309 / 23,655 / 23,713 prompt tokens)
+  cached prompt tokens per turn: unrecorded → 0 / 17,199 / 1 / 11,813 — the within-op hit and the cross-message
+    loss the audit read from Ollama's log are now in the harness's own record
+  time-to-first-token per turn: unrecorded → 10,584 / 106 / 2,539 / 2,004 ms
+  promptOverWindow: unrecorded → absent on every turn (nothing truncated)
+  classifier calls: no counters → `[ollama] usage … prompt_eval=580 … load_ms=4 num_ctx=40960` per call
 Decision: keep
 Notes / surprises: the first draft reused `cacheReadTokens` (Anthropic's cache-read count, reported beside input
 tokens and priced on top of them by `cost-tracker.ts`) for OpenAI's `cached_tokens`, which are a slice INSIDE

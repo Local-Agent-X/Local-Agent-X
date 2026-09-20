@@ -1,0 +1,632 @@
+{
+ "model": "qwen3:8b",
+ "turns": [
+  {
+   "msg": "List the projects in my workspace and tell me in one line what each one is.",
+   "text": "There are no projects in your workspace yet. Use `project_create` to add a new project and define its purpose, agents, and tools.",
+   "err": "",
+   "tools": [
+    "?"
+   ],
+   "events": 598,
+   "secs": 16
+  },
+  {
+   "msg": "Read the README of the nav-app project and summarize it in two sentences.",
+   "text": "The project \"nav-app\" does not exist in your workspace. I cannot read its README. Would you like me to help you create a new project first?",
+   "err": "",
+   "tools": [],
+   "events": 264,
+   "secs": 6
+  },
+  {
+   "msg": "Which of those projects has a test folder? Answer from what you already saw.",
+   "text": "There are no projects in your workspace yet. No test folders to check — would you like me to help you create a new project first?",
+   "err": "",
+   "tools": [],
+   "events": 188,
+   "secs": 5
+  }
+ ],
+ "ops": [
+  {
+   "id": "op_chat_turn_35eb6098c65447b8",
+   "status": "completed",
+   "turns": null
+  },
+  {
+   "id": "op_chat_turn_6d2fe6a3306d4019",
+   "status": "completed",
+   "turns": null
+  },
+  {
+   "id": "op_chat_turn_80768a82cafe4953",
+   "status": "completed",
+   "turns": null
+  }
+ ],
+ "turnUsage": [
+  {
+   "op": "c65447b8",
+   "turn": "0.json",
+   "model": "qwen3:8b",
+   "modelMs": 13562,
+   "ttftMs": 10584,
+   "in": 17206,
+   "out": 477,
+   "cached": 0,
+   "stop": "tool_calls"
+  },
+  {
+   "op": "c65447b8",
+   "turn": "1.json",
+   "model": "qwen3:8b",
+   "modelMs": 955,
+   "ttftMs": 106,
+   "in": 17309,
+   "out": 140,
+   "cached": 17199,
+   "stop": "stop"
+  },
+  {
+   "op": "306d4019",
+   "turn": "0.json",
+   "model": "qwen3:8b",
+   "modelMs": 4319,
+   "ttftMs": 2539,
+   "in": 23655,
+   "out": 265,
+   "cached": 1,
+   "stop": "stop"
+  },
+  {
+   "op": "cafe4953",
+   "turn": "0.json",
+   "model": "qwen3:8b",
+   "modelMs": 3270,
+   "ttftMs": 2004,
+   "in": 23713,
+   "out": 189,
+   "cached": 11813,
+   "stop": "stop"
+  }
+ ],
+ "serverLogTail": [
+  "[canonical-loop.prompt-preflight] [prompt-profile] mode=constrained-local reason=measured-context-budget window=40960 budget=14336 full=24419 top=core-identity/how-to-work:5835,app-manifest:2536,tool-guidance:1994 included=core-identity/preamble,core-identity/how-to-control-your-own-app,core-identity/identity,core-identity/background-operations,core-identity/core-rules,core-identity/apps-pages,core-identity/memory,core-identity/personality,core-identity/self-modification,core-identity/workspace-security,runtime-context,app-manifest,agents-md,provider-hint,tool-guidance,recall-reflex,channel-context,file-access,model-family-rider,security-canary degraded=core-identity/how-to-work,core-identity/delegation,core-identity/coding-discipline,core-identity/self-repair-and-self-extension,core-identity/browser",
+  "[canonical-loop.chat-runner] [chat-runner] submitted op op_chat_turn_6d2fe6a3306d4019 sess=wire-17898765659 model=qwen3:8b tools=65 wallClock=7200000ms",
+  "[ari-kernel]   [ari] Scope started: op_chat_turn_6d2fe6a3306d4019",
+  "[llm-dispatch] [ollama] usage model=qwen3:8b prompt_eval=580 eval=23 prompt_ms=44 eval_ms=102 load_ms=4 num_ctx=40960",
+  "[ari-kernel]   [ari] Scope released: op_chat_turn_6d2fe6a3306d4019",
+  "[routes.chat.canonical-run] [timing] canonical/chat qwen3:8b 4374ms (sess=wire-17898765659)",
+  "[llm-dispatch] [ollama] usage model=qwen3:8b prompt_eval=1387 eval=68 prompt_ms=13 eval_ms=317 load_ms=3 num_ctx=40960",
+  "[server.session-helpers] [memory-live] Indexing session wire-1789876565979 (6 messages)",
+  "[server.session-helpers] [memory-live] Indexed 1 new chunks from 1 pairs (session wire-1789876565979, total pairs: 2)",
+  "[routes.chat.run-turn] [retry] correlationId=ad561c01-03ed-465c-a33e-3dccf4d9a865 sess=wire-17898765659",
+  "[agent-request.prepare-request] [step] resolveProvider START sess=wire-17898765659",
+  "[agent-request.prepare-request] [step] resolveProvider 0ms sess=wire-17898765659",
+  "[agent-request.prepare-request] [step] checkpointHistory START sess=wire-17898765659",
+  "[agent-request.prepare-request] [step] checkpointHistory 0ms sess=wire-17898765659",
+  "[agent-request.prepare-request] [step] selectTools START sess=wire-17898765659",
+  "[agent-request.prepare-request.tools] [tools] Shrunk 64→9 for weak model qwen3:8b (read,write,edit,bash,http_request,browser,self_edit,memory_save,tool_search)",
+  "[agent-request.prepare-request.tools] [step] tool-rag.select START",
+  "[agent-request.prepare-request.tools] [step] tool-rag.select 0ms picked=65",
+  "[agent-request.prepare-request] [step] selectTools 1ms sess=wire-17898765659",
+  "[agent-request.prepare-request] [step] buildContext START sess=wire-17898765659",
+  "[agent-request.prepare-request.context] [step] buildTurnContextCached START sess=wire-17898765659",
+  "[orchestrator.signals] [signals] produced=2 injected=2 dropped=0",
+  "[memory.manager] Orchestrator: 5 modules, 2ms",
+  "[agent-request.turn-context-cache] [turn-context-cache] MISS sess=wire-1789876565979 built in 26ms",
+  "[agent-request.prepare-request.context] [step] buildTurnContextCached 26ms sess=wire-17898765659",
+  "[agent-request.prepare-request.context] [chat] weak tier qwen3:8b — stripped memory/profile context to prevent roleplay drift",
+  "[agent-request.prepare-request] [step] buildContext 27ms sess=wire-17898765659",
+  "[agent-request.prepare-request] [step] buildSystemPrompt START sess=wire-17898765659",
+  "[agent-request.prepare-request] [step] buildSystemPrompt 2ms sess=wire-17898765659",
+  "[routes.chat.prepare] [timing] prepareAgentRequest 30ms (sess=wire-17898765659)",
+  "[chat-diag] prepared sess=76565979 provider=local model=qwen3:8b hasKey=true",
+  "[routing.router] decision=INLINE reason=no-predictor-default-inline provider=local words=14 msg=\"Which of those projects has a test folder? Answer from what you already saw.\"",
+  "[canonical-loop.prompt-preflight] [prompt-profile] mode=constrained-local reason=measured-context-budget window=40960 budget=14336 full=24419 top=core-identity/how-to-work:5835,app-manifest:2536,tool-guidance:1994 included=core-identity/preamble,core-identity/how-to-control-your-own-app,core-identity/identity,core-identity/background-operations,core-identity/core-rules,core-identity/apps-pages,core-identity/memory,core-identity/personality,core-identity/self-modification,core-identity/workspace-security,runtime-context,app-manifest,agents-md,provider-hint,tool-guidance,recall-reflex,channel-context,file-access,model-family-rider,security-canary degraded=core-identity/how-to-work,core-identity/delegation,core-identity/coding-discipline,core-identity/self-repair-and-self-extension,core-identity/browser",
+  "[canonical-loop.chat-runner] [chat-runner] submitted op op_chat_turn_80768a82cafe4953 sess=wire-17898765659 model=qwen3:8b tools=65 wallClock=7200000ms",
+  "[ari-kernel]   [ari] Scope started: op_chat_turn_80768a82cafe4953",
+  "[llm-dispatch] [ollama] usage model=qwen3:8b prompt_eval=585 eval=25 prompt_ms=17 eval_ms=113 load_ms=3 num_ctx=40960",
+  "[ari-kernel]   [ari] Scope released: op_chat_turn_80768a82cafe4953",
+  "[routes.chat.canonical-run] [timing] canonical/chat qwen3:8b 3318ms (sess=wire-17898765659)",
+  "[llm-dispatch] [ollama] usage model=qwen3:8b prompt_eval=1388 eval=68 prompt_ms=14 eval_ms=311 load_ms=2 num_ctx=40960",
+  "[server.session-helpers] [memory-live] Indexing session wire-1789876565979 (8 messages)"
+ ],
+ "requests": [
+  {
+   "at": "03:56:06.052",
+   "path": "/api/generate",
+   "model": "qwen3:8b",
+   "stream": false,
+   "keep_alive": "30m",
+   "options": {
+    "num_ctx": 16384
+   },
+   "tools": 0,
+   "tools_json_chars": 0,
+   "messages": 0,
+   "roles": "",
+   "system_count": 0,
+   "system_chars": 0,
+   "total_chars": 94,
+   "other_keys": [
+    "prompt"
+   ]
+  },
+  {
+   "at": "03:56:20.692",
+   "path": "/api/generate",
+   "model": "qwen3:8b",
+   "stream": false,
+   "think": false,
+   "keep_alive": "30m",
+   "options": {
+    "temperature": 0,
+    "num_predict": 400,
+    "num_ctx": 40960
+   },
+   "tools": 0,
+   "tools_json_chars": 0,
+   "messages": 0,
+   "roles": "",
+   "system_count": 0,
+   "system_chars": 0,
+   "total_chars": 5789,
+   "other_keys": [
+    "prompt"
+   ]
+  },
+  {
+   "at": "03:56:21.837",
+   "path": "/api/generate",
+   "model": "qwen3:8b",
+   "stream": false,
+   "think": false,
+   "keep_alive": "30m",
+   "options": {
+    "temperature": 0,
+    "num_predict": 400,
+    "num_ctx": 40960
+   },
+   "tools": 0,
+   "tools_json_chars": 0,
+   "messages": 0,
+   "roles": "",
+   "system_count": 0,
+   "system_chars": 0,
+   "total_chars": 2597,
+   "other_keys": [
+    "prompt"
+   ]
+  },
+  {
+   "at": "03:56:26.213",
+   "path": "/api/generate",
+   "model": "qwen3:8b",
+   "stream": false,
+   "think": false,
+   "keep_alive": "30m",
+   "options": {
+    "temperature": 0,
+    "num_predict": 400,
+    "num_ctx": 40960
+   },
+   "tools": 0,
+   "tools_json_chars": 0,
+   "messages": 0,
+   "roles": "",
+   "system_count": 0,
+   "system_chars": 0,
+   "total_chars": 5787,
+   "other_keys": [
+    "prompt"
+   ]
+  },
+  {
+   "at": "03:56:27.567",
+   "path": "/api/generate",
+   "model": "qwen3:8b",
+   "stream": false,
+   "think": false,
+   "keep_alive": "30m",
+   "options": {
+    "temperature": 0,
+    "num_predict": 400,
+    "num_ctx": 40960
+   },
+   "tools": 0,
+   "tools_json_chars": 0,
+   "messages": 0,
+   "roles": "",
+   "system_count": 0,
+   "system_chars": 0,
+   "total_chars": 2612,
+   "other_keys": [
+    "prompt"
+   ]
+  },
+  {
+   "at": "03:56:30.863",
+   "path": "/api/generate",
+   "model": "qwen3:8b",
+   "stream": false,
+   "think": false,
+   "keep_alive": "30m",
+   "options": {
+    "temperature": 0,
+    "num_predict": 400,
+    "num_ctx": 40960
+   },
+   "tools": 0,
+   "tools_json_chars": 0,
+   "messages": 0,
+   "roles": "",
+   "system_count": 0,
+   "system_chars": 0,
+   "total_chars": 5790,
+   "other_keys": [
+    "prompt"
+   ]
+  }
+ ],
+ "responses": [
+  {
+   "at": "03:56:05.709",
+   "path": "/api/version",
+   "status": 200,
+   "ms": 6,
+   "bytes": 20
+  },
+  {
+   "at": "03:56:05.710",
+   "path": "/api/version",
+   "status": 200,
+   "ms": 4,
+   "bytes": 20
+  },
+  {
+   "at": "03:56:05.733",
+   "path": "/api/tags",
+   "status": 200,
+   "ms": 11,
+   "bytes": 3058
+  },
+  {
+   "at": "03:56:05.734",
+   "path": "/api/tags",
+   "status": 200,
+   "ms": 11,
+   "bytes": 3058
+  },
+  {
+   "at": "03:56:05.743",
+   "path": "/api/ps",
+   "status": 200,
+   "ms": 2,
+   "bytes": 13
+  },
+  {
+   "at": "03:56:05.745",
+   "path": "/api/ps",
+   "status": 200,
+   "ms": 2,
+   "bytes": 13
+  },
+  {
+   "at": "03:56:05.747",
+   "path": "/api/show",
+   "status": 200,
+   "ms": 5,
+   "bytes": 29206
+  },
+  {
+   "at": "03:56:05.748",
+   "path": "/api/ps",
+   "status": 200,
+   "ms": 5,
+   "bytes": 13
+  },
+  {
+   "at": "03:56:05.748",
+   "path": "/api/ps",
+   "status": 200,
+   "ms": 4,
+   "bytes": 13
+  },
+  {
+   "at": "03:56:05.749",
+   "path": "/api/ps",
+   "status": 200,
+   "ms": 0,
+   "bytes": 13
+  },
+  {
+   "at": "03:56:05.752",
+   "path": "/api/show",
+   "status": 200,
+   "ms": 7,
+   "bytes": 40489
+  },
+  {
+   "at": "03:56:05.752",
+   "path": "/api/show",
+   "status": 200,
+   "ms": 9,
+   "bytes": 33085
+  },
+  {
+   "at": "03:56:05.753",
+   "path": "/api/show",
+   "status": 200,
+   "ms": 9,
+   "bytes": 3069
+  },
+  {
+   "at": "03:56:05.753",
+   "path": "/api/show",
+   "status": 200,
+   "ms": 4,
+   "bytes": 33000
+  },
+  {
+   "at": "03:56:05.754",
+   "path": "/api/ps",
+   "status": 200,
+   "ms": 1,
+   "bytes": 13
+  },
+  {
+   "at": "03:56:05.757",
+   "path": "/api/show",
+   "status": 200,
+   "ms": 3,
+   "bytes": 26136
+  },
+  {
+   "at": "03:56:05.837",
+   "path": "/api/version",
+   "status": 200,
+   "ms": 0,
+   "bytes": 20
+  },
+  {
+   "at": "03:56:05.844",
+   "path": "/api/tags",
+   "status": 200,
+   "ms": 7,
+   "bytes": 3058
+  },
+  {
+   "at": "03:56:05.848",
+   "path": "/api/version",
+   "status": 200,
+   "ms": 1,
+   "bytes": 20
+  },
+  {
+   "at": "03:56:05.855",
+   "path": "/api/tags",
+   "status": 200,
+   "ms": 7,
+   "bytes": 3058
+  },
+  {
+   "at": "03:56:05.856",
+   "path": "/api/version",
+   "status": 200,
+   "ms": 0,
+   "bytes": 20
+  },
+  {
+   "at": "03:56:05.863",
+   "path": "/api/tags",
+   "status": 200,
+   "ms": 7,
+   "bytes": 3058
+  },
+  {
+   "at": "03:56:05.869",
+   "path": "/api/version",
+   "status": 200,
+   "ms": 1,
+   "bytes": 20
+  },
+  {
+   "at": "03:56:05.875",
+   "path": "/api/tags",
+   "status": 200,
+   "ms": 6,
+   "bytes": 3058
+  },
+  {
+   "at": "03:56:05.879",
+   "path": "/api/version",
+   "status": 200,
+   "ms": 0,
+   "bytes": 20
+  },
+  {
+   "at": "03:56:05.886",
+   "path": "/api/tags",
+   "status": 200,
+   "ms": 7,
+   "bytes": 3058
+  },
+  {
+   "at": "03:56:05.890",
+   "path": "/api/version",
+   "status": 200,
+   "ms": 1,
+   "bytes": 20
+  },
+  {
+   "at": "03:56:05.896",
+   "path": "/api/tags",
+   "status": 200,
+   "ms": 7,
+   "bytes": 3058
+  },
+  {
+   "at": "03:56:06.048",
+   "path": "/api/ps",
+   "status": 200,
+   "ms": 0,
+   "bytes": 13
+  },
+  {
+   "at": "03:56:11.757",
+   "path": "/api/generate",
+   "status": 200,
+   "ms": 5705,
+   "bytes": 111
+  },
+  {
+   "at": "03:56:20.689",
+   "path": "/api/ps",
+   "status": 200,
+   "ms": 1,
+   "bytes": 380
+  },
+  {
+   "at": "03:56:21.785",
+   "path": "/api/generate",
+   "status": 200,
+   "ms": 1093,
+   "bytes": 7273
+  },
+  {
+   "at": "03:56:21.834",
+   "path": "/api/ps",
+   "status": 200,
+   "ms": 1,
+   "bytes": 379
+  },
+  {
+   "at": "03:56:22.057",
+   "path": "/api/generate",
+   "status": 200,
+   "ms": 220,
+   "bytes": 3154
+  },
+  {
+   "at": "03:56:26.210",
+   "path": "/api/ps",
+   "status": 200,
+   "ms": 1,
+   "bytes": 380
+  },
+  {
+   "at": "03:56:27.500",
+   "path": "/api/generate",
+   "status": 200,
+   "ms": 1287,
+   "bytes": 7273
+  },
+  {
+   "at": "03:56:27.565",
+   "path": "/api/ps",
+   "status": 200,
+   "ms": 1,
+   "bytes": 380
+  },
+  {
+   "at": "03:56:27.780",
+   "path": "/api/generate",
+   "status": 200,
+   "ms": 213,
+   "bytes": 3206
+  },
+  {
+   "at": "03:56:30.860",
+   "path": "/api/ps",
+   "status": 200,
+   "ms": 1,
+   "bytes": 380
+  },
+  {
+   "at": "03:56:32.151",
+   "path": "/api/generate",
+   "status": 200,
+   "ms": 1288,
+   "bytes": 7275
+  }
+ ],
+ "ollama_prompt_evals": [
+  "srv    load_model: loading model 'C:\\Users\\peter\\.ollama\\models\\blobs\\sha256-a3de86cd1c132c822487ededd47a324c50491393e6565cd14bafa40d0b8e686f'",
+  "srv    load_model: local path 'C:\\Users\\peter\\.ollama\\models\\blobs\\sha256-a3de86cd1c132c822487ededd47a324c50491393e6565cd14bafa40d0b8e686f'",
+  "srv    load_model: initializing, n_slots = 1, n_ctx_slot = 40960, kv_unified = 'false'",
+  "task -1 | new slot, n_ctx = 40960",
+  "srv    load_model: prompt cache is enabled, size limit: 8192 MiB",
+  "srv    load_model: use `--cache-ram 0` to disable the prompt cache",
+  "srv    load_model: for more info see https://github.com/ggml-org/llama.cpp/pull/16391",
+  "srv    load_model: context checkpoints enabled, max = 32, min spacing = 8192",
+  "srv    load_model: loading model 'C:\\Users\\peter\\.ollama\\models\\blobs\\sha256-a3de86cd1c132c822487ededd47a324c50491393e6565cd14bafa40d0b8e686f'",
+  "srv    load_model: local path 'C:\\Users\\peter\\.ollama\\models\\blobs\\sha256-a3de86cd1c132c822487ededd47a324c50491393e6565cd14bafa40d0b8e686f'",
+  "srv    load_model: initializing, n_slots = 1, n_ctx_slot = 16384, kv_unified = 'false'",
+  "task -1 | new slot, n_ctx = 16384",
+  "srv    load_model: prompt cache is enabled, size limit: 8192 MiB",
+  "srv    load_model: use `--cache-ram 0` to disable the prompt cache",
+  "srv    load_model: for more info see https://github.com/ggml-org/llama.cpp/pull/16391",
+  "srv    load_model: context checkpoints enabled, max = 32, min spacing = 8192",
+  "srv    load_model: loading model 'C:\\Users\\peter\\.ollama\\models\\blobs\\sha256-a3de86cd1c132c822487ededd47a324c50491393e6565cd14bafa40d0b8e686f'",
+  "srv    load_model: local path 'C:\\Users\\peter\\.ollama\\models\\blobs\\sha256-a3de86cd1c132c822487ededd47a324c50491393e6565cd14bafa40d0b8e686f'",
+  "srv    load_model: initializing, n_slots = 1, n_ctx_slot = 40960, kv_unified = 'false'",
+  "task -1 | new slot, n_ctx = 40960",
+  "srv    load_model: prompt cache is enabled, size limit: 8192 MiB",
+  "srv    load_model: use `--cache-ram 0` to disable the prompt cache",
+  "srv    load_model: for more info see https://github.com/ggml-org/llama.cpp/pull/16391",
+  "srv    load_model: context checkpoints enabled, max = 32, min spacing = 8192",
+  "task 0 | new prompt, n_ctx_slot = 40960, n_keep = 4, task.n_tokens = 17206",
+  "task 0 | cached n_tokens = 0, memory_seq_rm [0, end)",
+  "task 0 | cached n_tokens = 2048, memory_seq_rm [2048, end)",
+  "task 0 | cached n_tokens = 4096, memory_seq_rm [4096, end)",
+  "task 0 | cached n_tokens = 6144, memory_seq_rm [6144, end)",
+  "task 0 | cached n_tokens = 8192, memory_seq_rm [8192, end)",
+  "task 0 | cached n_tokens = 10240, memory_seq_rm [10240, end)",
+  "task 0 | cached n_tokens = 12288, memory_seq_rm [12288, end)",
+  "task 0 | cached n_tokens = 14336, memory_seq_rm [14336, end)",
+  "task 0 | cached n_tokens = 16384, memory_seq_rm [16384, end)",
+  "task 0 | prompt eval time =    1559.17 ms / 17206 tokens (    0.09 ms per token, 11035.37 tokens per second)",
+  "task 486 | new prompt, n_ctx_slot = 40960, n_keep = 4, task.n_tokens = 17309",
+  "task 486 | cached n_tokens = 17199, memory_seq_rm [17199, end)",
+  "task 486 | prompt eval time =      24.79 ms /   110 tokens (    0.23 ms per token,  4437.09 tokens per second)",
+  "task 627 | new prompt, n_ctx_slot = 40960, n_keep = 4, task.n_tokens = 1389",
+  "task 627 | cached n_tokens = 1, memory_seq_rm [1, end)",
+  "task 627 | prompt eval time =      96.46 ms /  1388 tokens (    0.07 ms per token, 14389.53 tokens per second)",
+  "task 696 | new prompt, n_ctx_slot = 40960, n_keep = 4, task.n_tokens = 580",
+  "task 696 | cached n_tokens = 4, memory_seq_rm [4, end)",
+  "task 696 | prompt eval time =      44.44 ms /   576 tokens (    0.08 ms per token, 12962.17 tokens per second)",
+  "task 720 | new prompt, n_ctx_slot = 40960, n_keep = 4, task.n_tokens = 23655",
+  "task 720 | cached n_tokens = 1, memory_seq_rm [1, end)",
+  "task 720 | cached n_tokens = 2049, memory_seq_rm [2049, end)",
+  "task 720 | cached n_tokens = 4097, memory_seq_rm [4097, end)",
+  "task 720 | cached n_tokens = 6145, memory_seq_rm [6145, end)",
+  "task 720 | cached n_tokens = 8193, memory_seq_rm [8193, end)",
+  "task 720 | cached n_tokens = 10241, memory_seq_rm [10241, end)",
+  "task 720 | cached n_tokens = 12289, memory_seq_rm [12289, end)",
+  "task 720 | cached n_tokens = 14337, memory_seq_rm [14337, end)",
+  "task 720 | cached n_tokens = 16385, memory_seq_rm [16385, end)",
+  "task 720 | cached n_tokens = 18433, memory_seq_rm [18433, end)",
+  "task 720 | cached n_tokens = 20481, memory_seq_rm [20481, end)",
+  "task 720 | cached n_tokens = 22529, memory_seq_rm [22529, end)",
+  "task 720 | prompt eval time =    2251.91 ms / 23654 tokens (    0.10 ms per token, 10503.97 tokens per second)",
+  "task 997 | new prompt, n_ctx_slot = 40960, n_keep = 4, task.n_tokens = 1387",
+  "task 997 | cached n_tokens = 1352, memory_seq_rm [1352, end)",
+  "task 997 | prompt eval time =      13.50 ms /    35 tokens (    0.39 ms per token,  2592.98 tokens per second)",
+  "task 1066 | new prompt, n_ctx_slot = 40960, n_keep = 4, task.n_tokens = 585",
+  "task 1066 | cached n_tokens = 495, memory_seq_rm [495, end)",
+  "task 1066 | prompt eval time =      16.77 ms /    90 tokens (    0.19 ms per token,  5365.45 tokens per second)",
+  "task 1092 | new prompt, n_ctx_slot = 40960, n_keep = 4, task.n_tokens = 23713",
+  "task 1092 | cached n_tokens = 11813, memory_seq_rm [11813, end)",
+  "task 1092 | cached n_tokens = 13861, memory_seq_rm [13861, end)",
+  "task 1092 | cached n_tokens = 15909, memory_seq_rm [15909, end)",
+  "task 1092 | cached n_tokens = 17957, memory_seq_rm [17957, end)",
+  "task 1092 | cached n_tokens = 20005, memory_seq_rm [20005, end)",
+  "task 1092 | cached n_tokens = 22053, memory_seq_rm [22053, end)",
+  "task 1092 | prompt eval time =    1330.68 ms / 11900 tokens (    0.11 ms per token,  8942.78 tokens per second)",
+  "task 1287 | new prompt, n_ctx_slot = 40960, n_keep = 4, task.n_tokens = 1388",
+  "task 1287 | cached n_tokens = 1352, memory_seq_rm [1352, end)",
+  "task 1287 | prompt eval time =      13.90 ms /    36 tokens (    0.39 ms per token,  2589.74 tokens per second)"
+ ]
+}

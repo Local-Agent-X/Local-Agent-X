@@ -839,9 +839,10 @@ experiment.
 14. Provenance (#8): one summary contract inside the untrusted delimiter, failure nudges quote inside the wrapper,
     wrap `read`/bash/email/observe; a `[HARNESS]` marker on every user-role harness message. Gate metrics only.
 
-Product decisions this plan does not make: whether cloud escalation is ever on by default (recommend no; local-only is
-the privacy promise), and whether protocols should become code-sequenced in Phase 4 (recommend yes; auto-build already
-proves the shape).
+Product decisions. Decided 2026-09-19: **cloud escalation stays off by default**; any escalation to another model,
+local or cloud, is a kernel-governed action per brief section 9, shown and approved, default-deny while the context
+holds content read from files or pages. Open: whether protocols become code-sequenced in Phase 4 (recommend yes;
+auto-build already proves the shape).
 
 ## 17. Corrections to the record
 

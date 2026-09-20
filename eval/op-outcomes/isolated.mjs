@@ -13,7 +13,7 @@
 // refusal is the guard that keeps the user's real workspace from being migrated.
 import { execSync, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -43,6 +43,41 @@ export function assertDistMatchesSource(repoRoot) {
     throw new Error(`dist/ was built from ${builtRef.slice(0, 8)} but src/config changed since — run \`npm run build\` first`);
   }
 }
+
+/**
+ * The build under test must not change WHILE a run is in flight.
+ *
+ * assertDistMatchesSource runs once, at startup, and every case then boots its
+ * own server from whatever dist/ holds at that moment. On 2026-09-20 a rebuild
+ * landed 27 minutes into a 37-minute run: 43 cases had already booted the old
+ * build and the remaining 20 booted the new one. Nothing noticed, and the
+ * reported 18/63 described neither build. A run that straddles two builds is
+ * not a slightly noisy measurement, it is not a measurement.
+ *
+ * Git state alone cannot see this — that rebuild re-stamped the SAME commit —
+ * so the identity pinned here is the artifact itself.
+ */
+let distPin = null;
+
+function distIdentity(repoRoot) {
+  const index = join(repoRoot, "dist", "index.js");
+  const { mtimeMs, size } = statSync(index);
+  return { builtRef: readFileSync(join(repoRoot, "dist", ".builtref"), "utf8").trim(), mtimeMs, size };
+}
+
+export function assertDistUnchangedDuringRun(repoRoot) {
+  const now = distIdentity(repoRoot);
+  if (!distPin) { distPin = now; return; }
+  if (now.mtimeMs === distPin.mtimeMs && now.size === distPin.size && now.builtRef === distPin.builtRef) return;
+  throw new Error(
+    `dist/ was rebuilt mid-run (${distPin.builtRef.slice(0, 8)} @ ${new Date(distPin.mtimeMs).toISOString()} → ` +
+    `${now.builtRef.slice(0, 8)} @ ${new Date(now.mtimeMs).toISOString()}). Earlier cases in this run measured the ` +
+    `previous build, so the results are not comparable — rebuild, then start the run again.`,
+  );
+}
+
+/** Test seam: forget the pin so a new run in the same process re-pins. */
+export function resetDistPin() { distPin = null; }
 
 /**
  * The user's pinned background model, if any — the one setting beyond provider
@@ -82,6 +117,10 @@ function freePort() {
 export async function startIsolatedServer({ repoRoot, provider, model, fixturePort, logLines = 200,
   seedWorkspace = join(repoRoot, "eval", "op-outcomes", "fixtures", "workspace"), toolPolicyRules = [],
   maxLifetimeMs = 45 * 60_000 }) {
+  // Per-case, not just at startup: a run boots one server per case, so this is
+  // the only place that sees every build a run actually measured.
+  assertDistMatchesSource(repoRoot);
+  assertDistUnchangedDuringRun(repoRoot);
   // Two unrelated temp dirs. With the data dir beside the workspace, a model
   // listing the workspace's parent walked straight into the server's own
   // sessions and operations (muse, grade-school, 2026-09-17) — no real

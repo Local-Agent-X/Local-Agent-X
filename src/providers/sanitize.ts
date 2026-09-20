@@ -1,6 +1,13 @@
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import { isHarnessRow } from "../harness-rows.js";
 import { stripSystemInjectionTags } from "../sanitize.js";
+import {
+  INTERRUPTED_TURN_BOUNDARY,
+  TURN_ERROR_BOUNDARY_HEAD,
+  TURN_ERROR_BOUNDARY_TAIL,
+  TURN_ERROR_BODY_BOUND,
+  TURN_ERROR_ECHO,
+} from "../harness-text.js";
 
 /** Sanitize tool result content to remove pseudo-system injection tags. */
 export function sanitizeToolResults(results: ChatCompletionMessageParam[]): ChatCompletionMessageParam[] {
@@ -35,29 +42,20 @@ export function sanitizeToolResults(results: ChatCompletionMessageParam[]): Chat
 //     path's deliberate standalone boundary row — kept verbatim.
 
 /**
- * The one canonical rendering of "this turn was cut short" for the model.
- * Full-sentence and instruction-shaped on purpose: short bracketed tokens
- * inline with speech (the old voice marker) are what models pattern-match
- * and spam. Owned here; canonical-run.ts imports it for the chat path.
+ * The two turn boundaries. Both are "this turn was cut short" facts rendered
+ * for the model: INTERRUPTED_TURN_BOUNDARY for a user stop, the HEAD/TAIL
+ * frame for a turn that died on a provider or loop error the UI already
+ * showed (a 400, an exhausted retry streak, a deadline). Without the latter
+ * the next turn's model sees a clean history plus "you errored out" and
+ * re-does the work instead of explaining it.
+ *
+ * The literals live in harness-text.ts — the registry has to strip a model's
+ * echo of them, and one definition is the only way that stays true. This
+ * module owns the RENDERING and re-exports them, so canonical-run.ts and the
+ * seam below keep importing them from here.
  */
-export const INTERRUPTED_TURN_BOUNDARY =
-  "[Previous turn was interrupted before it finished. The work above ran; continue from there.]";
-
-/**
- * The one canonical rendering of "this turn ended with a terminal error" —
- * INTERRUPTED_TURN_BOUNDARY's sibling for a turn that died on a provider or
- * loop error the UI already showed (a 400, an exhausted retry streak, a
- * deadline). Without it the next turn's model sees a clean history plus "you
- * errored out" and re-does the work instead of explaining. Same discipline:
- * full-sentence, instruction-shaped, never a short bracketed token. The
- * payload varies, so the frame is HEAD/TAIL and `renderTurnErrorBoundary` is
- * the single writer; canonical-run.ts uses it for the chat path's standalone
- * `_error` boundary row, and the seam below re-renders from the flag.
- */
+export { INTERRUPTED_TURN_BOUNDARY, TURN_ERROR_BOUNDARY_HEAD, TURN_ERROR_BOUNDARY_TAIL };
 export interface TurnError { code: string; message: string }
-export const TURN_ERROR_BOUNDARY_HEAD = "[The previous assistant turn ended with an error (";
-export const TURN_ERROR_BOUNDARY_TAIL =
-  "). Work completed before the error stands; do not repeat side-effecting actions — explain the error to the user and continue from the current state.]";
 
 export function renderTurnErrorBoundary(err: TurnError): string {
   const code = err.code.replace(/\s+/g, " ").trim() || "error";
@@ -71,16 +69,11 @@ function asTurnError(v: unknown): TurnError | null {
   return typeof code === "string" && typeof message === "string" ? { code, message } : null;
 }
 
-// Model echoes of an error boundary embedded in speech. The payload varies,
-// so match the fixed frame around a bounded single-line body; like
-// CONTROL_MARKERS, tolerates a model-mangled copy missing its closing bracket.
+// Model echoes of an error boundary embedded in speech are scrubbed by
+// TURN_ERROR_ECHO from the registry — the same pattern that guards the
+// delivered reply, so history and delivery cannot disagree about what counts
+// as an echo.
 const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-/** One shared body bound for the echo scrub and the standalone recognition. */
-const TURN_ERROR_BODY_BOUND = 400;
-const TURN_ERROR_ECHO = new RegExp(
-  `\\s*${escapeRe(TURN_ERROR_BOUNDARY_HEAD)}.{0,${TURN_ERROR_BODY_BOUND}}?${escapeRe(TURN_ERROR_BOUNDARY_TAIL.slice(0, -1))}\\]?`,
-  "g",
-);
 
 // A standalone `_error` boundary row is ALSO recognized by content — the
 // structural flag can be dropped by copy paths — but recognition is

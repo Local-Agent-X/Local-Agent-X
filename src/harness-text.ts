@@ -21,7 +21,37 @@
  * Adding a marker: add it here with a sample. harness-text.contract.test.ts
  * drives every entry through every assistant-text scrubber, so a marker that
  * no scrubber handles fails the build instead of reaching a user's screen.
+ * That test also SCANS src/ for marker-shaped constants, so forgetting this
+ * registry fails the build too — the list of emitters is derived, never typed.
  */
+
+/** Escape a literal for embedding in a RegExp source. */
+const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * The turn boundaries. These live here rather than beside their renderer
+ * because the literal is needed in two places that must never drift: the
+ * renderer that writes the boundary into history (providers/sanitize.ts, which
+ * re-exports these) and this registry, which strips a model's echo of it back
+ * out. Full-sentence and instruction-shaped on purpose — short bracketed
+ * tokens inline with speech are what models pattern-match and spam.
+ */
+export const INTERRUPTED_TURN_BOUNDARY =
+  "[Previous turn was interrupted before it finished. The work above ran; continue from there.]";
+export const TURN_ERROR_BOUNDARY_HEAD = "[The previous assistant turn ended with an error (";
+export const TURN_ERROR_BOUNDARY_TAIL =
+  "). Work completed before the error stands; do not repeat side-effecting actions — explain the error to the user and continue from the current state.]";
+
+/** Bound on the error payload, shared by the echo scrub and the strict
+ *  standalone-row recognition in providers/sanitize.ts. */
+export const TURN_ERROR_BODY_BOUND = 400;
+
+/** A model's echo of an error boundary, payload and all. Tolerates a mangled
+ *  copy missing its closing bracket, the way CONTROL_MARKERS do. */
+export const TURN_ERROR_ECHO = new RegExp(
+  `\\s*${escapeRe(TURN_ERROR_BOUNDARY_HEAD)}.{0,${TURN_ERROR_BODY_BOUND}}?${escapeRe(TURN_ERROR_BOUNDARY_TAIL.slice(0, -1))}\\]?`,
+  "g",
+);
 
 export interface HarnessMarker {
   id: string;
@@ -75,6 +105,42 @@ export const HARNESS_MARKERS: readonly HarnessMarker[] = [
     pattern: /\[REPEATED CALL[^\]\n]{0,200}\]/g,
     sample: "[REPEATED CALL — identical to a tool call made earlier this session. Returning the previous result without re-executing.]",
     emitter: "tool-execution/resolve-tool.ts",
+  },
+  // Observed 2026-09-20: a model closed a reply to the user by writing the
+  // error boundary itself, so the user read the harness talking to the model.
+  // The scrub existed, but only on the history copy — nothing guarded the
+  // delivered text. Registering it puts the boundary under the same rule as
+  // every other marker instead of under one subsystem's private scrubber.
+  {
+    id: "turn-error-boundary",
+    pattern: TURN_ERROR_ECHO,
+    sample: "[The previous assistant turn ended with an error (rate_limit: 429 from the provider). Work completed before the error stands; do not repeat side-effecting actions — explain the error to the user and continue from the current state.]",
+    emitter: "harness-text.ts (rendered by providers/sanitize.ts renderTurnErrorBoundary)",
+  },
+  {
+    id: "interrupted-turn-boundary",
+    pattern: new RegExp(`\\s*${escapeRe(INTERRUPTED_TURN_BOUNDARY)}`, "g"),
+    sample: INTERRUPTED_TURN_BOUNDARY,
+    emitter: "harness-text.ts (written by canonical-run.ts persistTurnState)",
+  },
+  {
+    id: "missing-tool-result",
+    pattern: /\s*\[No result was recorded for this tool call\.[^\]\n]{0,200}\]?/g,
+    sample: "[No result was recorded for this tool call. It may or may not have run; check current state before repeating any action with side effects.]",
+    emitter: "codex-message-convert.ts MISSING_TOOL_OUTPUT",
+  },
+  {
+    id: "compaction-prefix",
+    pattern: /\[COMPACTED CONTEXT —[^\]\n]{0,200}\]?/g,
+    sample: "[COMPACTED CONTEXT — the earlier part of this conversation was summarized.]",
+    emitter: "types.ts COMPACTION_PREFIX",
+  },
+  // Found by the derived scan, not by anyone remembering it existed.
+  {
+    id: "refetched-response-body",
+    pattern: /\s*\[re-fetched — original response body[^\]\n]{0,200}\]?/g,
+    sample: "[re-fetched — original response body was no longer buffered; a param-driven or one-shot endpoint may differ]",
+    emitter: "browser/cdp-network.ts REFETCH_PREFIX",
   },
 ];
 

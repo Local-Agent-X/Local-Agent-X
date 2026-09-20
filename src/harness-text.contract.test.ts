@@ -14,8 +14,8 @@
  * scrubber handles fails here instead of on a user's screen.
  */
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { HARNESS_MARKERS, containsHarnessMarker, stripHarnessMarkers } from "./harness-text.js";
 import { sanitizeModelOutput, stripLeakedSpecialTokensStreaming } from "./providers/output-sanitize.js";
@@ -58,39 +58,100 @@ describe("every harness marker is stripped at every assistant-text boundary", ()
 });
 
 /**
- * REACH — the half that catches the NEXT marker. Each emitter names the literal
- * it writes; this reads those files and asserts the registry recognizes what
- * they emit. A subsystem that invents a new bracketed marker and forgets the
- * registry fails here, which is exactly how the wrapper slipped through.
+ * REACH — the half that catches the NEXT marker.
+ *
+ * This used to be a hand-typed list of six emitters and their literals, which
+ * could only ever re-confirm markers someone had already thought of: a new
+ * subsystem inventing a new marker was invisible to it, the same rot that put
+ * the untrusted-content wrapper on a user's screen in the first place. So the
+ * list is DERIVED — src/ is scanned for marker-shaped constants, and each one
+ * must be registered or carry a written reason for not being.
  */
-describe("every emitted marker literal is registered", () => {
-  const EMITTERS: Array<{ file: string; literals: string[] }> = [
-    { file: "sanitize.ts", literals: ["<<<EXTERNAL_UNTRUSTED_CONTENT", "<<<END_EXTERNAL_UNTRUSTED_CONTENT"] },
-    { file: "context/system-prompt-builder.ts", literals: ["[HARNESS NOTE:", "[END HARNESS NOTE]"] },
-    { file: "canonical-loop/turn-loop/situational-awareness.ts", literals: ["[SITUATIONAL CONTEXT", "[END CONTEXT]"] },
-    { file: "canonical-loop/turn-loop/tool-failure-summary.ts", literals: ["[automatic check]"] },
-    { file: "canonical-loop/turn-loop/inject-drain.ts", literals: ["[mid-turn user message]"] },
-    { file: "tool-execution/resolve-tool.ts", literals: ["[REPEATED CALL"] },
-  ];
 
-  for (const emitter of EMITTERS) {
-    it(`${emitter.file} still writes markers this registry owns`, () => {
-      const source = readFileSync(join(SRC, emitter.file), "utf8");
-      for (const literal of emitter.literals) {
-        expect(source.includes(literal), `${emitter.file} no longer emits ${literal} — update HARNESS_MARKERS`).toBe(true);
-      }
-      // The registry names this file as an owner, so a marker cannot be
-      // emitted by a subsystem the registry has never heard of.
-      const owned = HARNESS_MARKERS.some((m) => emitter.file.endsWith(m.emitter.split(" ")[0]) || m.emitter.startsWith(emitter.file));
-      expect(owned, `no HARNESS_MARKERS entry names ${emitter.file} as its emitter`).toBe(true);
+/** Escape a literal the way the registry does, so a fragment of a frame
+ *  (a HEAD/TAIL pair) can be found inside a pattern's source. */
+const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * A marker-shaped constant: a module-level const whose value opens with `<<<`,
+ * or with `[` followed by prose (a space). That is the shape every marker in
+ * the registry is declared in. Requiring the space is what keeps the scan a
+ * usable gate — without it, regex fragments like `const BAR = "[|｜]"` match.
+ *
+ * A literal split across concatenated lines yields only its first fragment.
+ * That is enough: the registry's patterns close with an optional bracket, so a
+ * prefix of a marker still matches the marker.
+ */
+const MARKER_CONST = /(?:export\s+)?const\s+([A-Z][A-Z0-9_]*)\s*(?::[^=\n]+)?=\s*\n?\s*"(\[[^"\n]*\s[^"\n]*|<<<[^"\n]*)"/g;
+
+/**
+ * Constants that LOOK like markers and deliberately are not. An entry here is
+ * a claim that the text is not harness plumbing the model might echo back —
+ * write the reason, because the default is that it belongs in the registry.
+ */
+const NOT_A_MARKER: Record<string, string> = {
+  VOICE_INJECTION_NOTICE:
+    "user-facing. It replaces the user's own transcription so they see why their speech was withheld — scrubbing it would hide a notice they are supposed to read.",
+  EMPTY_USER_PLACEHOLDER:
+    "wire filler, not an instruction. The Messages API rejects an empty text block, so a contentless user turn ships this instead. It is also short and generic enough that stripping it would eat a user's own words quoted back.",
+};
+
+function sourceFiles(dir: string): string[] {
+  const out: string[] = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (entry.name === "node_modules" || entry.name.startsWith(".")) continue;
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...sourceFiles(full));
+    else if (entry.name.endsWith(".ts") && !entry.name.includes(".test.")) out.push(full);
+  }
+  return out;
+}
+
+/** Registered outright, or a distinctive fragment of a registered frame — the
+ *  HEAD/TAIL of the turn-error boundary are each half of one marker. */
+function isRegistered(literal: string): boolean {
+  if (containsHarnessMarker(literal)) return true;
+  const fragment = escapeRe(literal).slice(0, 32);
+  return fragment.length === 32 && HARNESS_MARKERS.some((m) => m.pattern.source.includes(fragment));
+}
+
+describe("every marker-shaped constant in src/ is registered", () => {
+  const found = sourceFiles(SRC).flatMap((file) => {
+    const source = readFileSync(file, "utf8");
+    return [...source.matchAll(MARKER_CONST)].map(([, name, literal]) => ({
+      name,
+      literal,
+      file: relative(SRC, file).replace(/\\/g, "/"),
+    }));
+  });
+
+  it("finds the constants at all, so a broken scan cannot pass vacuously", () => {
+    expect(found.length, "the marker scan matched nothing — MARKER_CONST has stopped matching").toBeGreaterThan(3);
+  });
+
+  for (const c of found) {
+    it(`${c.file} → ${c.name}`, () => {
+      if (NOT_A_MARKER[c.name]) return;
+      expect(
+        isRegistered(c.literal),
+        `${c.name} in ${c.file} writes harness text into the model and no HARNESS_MARKERS entry strips a model's echo of it. ` +
+          `Add it to the registry, or add it to NOT_A_MARKER with the reason it is not plumbing.`,
+      ).toBe(true);
     });
   }
+});
 
-  it("names an emitter for every registry entry, so the next maintainer can find it", () => {
+describe("the registry points at real code", () => {
+  it("every entry names an emitter file that exists, so the next maintainer can find it", () => {
     for (const marker of HARNESS_MARKERS) {
-      expect(marker.emitter, `${marker.id} has no emitter`).toBeTruthy();
       expect(marker.sample, `${marker.id} has no sample`).toBeTruthy();
       expect(containsHarnessMarker(marker.sample), `${marker.id}'s own sample does not match its pattern`).toBe(true);
+      const file = marker.emitter.split(/\s+/).find((t) => t.endsWith(".ts"));
+      expect(file, `${marker.id}'s emitter "${marker.emitter}" names no .ts file`).toBeTruthy();
+      expect(
+        existsSync(join(SRC, file!)),
+        `${marker.id} names emitter ${file} — that file no longer exists`,
+      ).toBe(true);
     }
   });
 });

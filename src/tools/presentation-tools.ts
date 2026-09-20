@@ -1,7 +1,7 @@
 import { dirname } from "node:path";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import type { ToolDefinition, ToolResult } from "../types.js";
-import { acquireImages, IMAGES_PARAM_SCHEMA, type ImageSpec } from "./shared/image-acquire.js";
+import { acquireImages, AllImagesFailedError, IMAGES_PARAM_SCHEMA, type AcquireOutcome, type ImageSpec } from "./shared/image-acquire.js";
 // Resolve caller paths the SAME way SecurityLayer's file-access gate does
 // (workspace anchored, no ~ expansion) so the gated path == the opened path.
 import { resolveAgentPath as resolvePath } from "../workspace/paths.js";
@@ -11,13 +11,24 @@ import { applySlide, appendImageSlides, type SlideSpec, type SlideBrand } from "
 import { collapseFamily } from "./shared/collapse-family.js";
 import { SOURCES_DOC_SENTENCE, SOURCES_PARAM_SCHEMA } from "./shared/provenance-sources.js";
 
-// Rung-3 guard text + note block shared by the create tools: a deck that
-// requested images but embedded none is a FAILURE the model must act on,
-// and any partial degradation is reported, never silent.
-function allImagesFailedMsg(requested: number, notes: string[]): string {
-  return `Deck not written — all ${requested} requested image(s) failed to embed:\n${notes.join("\n")}\n` +
-    "Run image_search for replacement URLs (pass each result's fallback URL as fallback_source), " +
-    "or omit images to explicitly create without them.";
+/**
+ * Every requested image failed. The deck is still WRITTEN — the user asked for
+ * slides and the text is fine — but the result stays a FAILURE so the model
+ * cannot report an illustrated deck it did not produce. Destroying the file too
+ * was pure loss: a live 27B lost nine good slides to three 404s, rebuilt the
+ * identical outline imageless, and the user read the exchange as the model
+ * lying about a deck that did in fact exist (2026-09-19).
+ *
+ * "error" is the right envelope for a call that DID land: only "declined" means
+ * nothing happened (dispatch-tools.ts NEVER_LANDED), so an errored call is
+ * already understood to have possibly had side effects.
+ */
+function allImagesFailedMsg(requested: number, notes: string[], filePath: string): string {
+  return `Deck written WITHOUT images — all ${requested} requested image(s) failed: ${filePath}\n${notes.join("\n")}\n` +
+    "The slides and text are intact; only the images are missing. Add them to the EXISTING file with the " +
+    "edit action's add_image_slide op (run image_search first for URLs that resolve — pass each result's " +
+    "fallback URL as fallback_source). Do not rebuild the deck from scratch, and do not tell the user it " +
+    "is illustrated.";
 }
 function noteBlock(notes: string[]): string {
   return notes.length ? `\nImage notes:\n${notes.join("\n")}` : "";
@@ -33,7 +44,7 @@ async function makePptx(): Promise<any> {
 function ok(content: string, metadata?: Record<string, unknown>): ToolResult {
   return { content, metadata };
 }
-function err(content: string): ToolResult { return { content, isError: true }; }
+function err(content: string, metadata?: Record<string, unknown>): ToolResult { return { content, isError: true, metadata }; }
 
 function ensureDir(p: string): void { mkdirSync(dirname(p), { recursive: true }); }
 
@@ -92,8 +103,10 @@ const presentationCreate: ToolDefinition = {
       appendImageSlides(pptx, acquired.images, theme);
       const requested = slides.filter((s) => s.image).length + specs.length;
       const embedded = slideImagesPlaced + acquired.images.length;
-      if (requested > 0 && embedded === 0) return err(allImagesFailedMsg(requested, imageNotes));
       await pptx.writeFile({ fileName: fp });
+      if (requested > 0 && embedded === 0) {
+        return err(allImagesFailedMsg(requested, imageNotes, fp), { file_path: fp, slide_count: slides.length, image_count: 0, images_requested: requested });
+      }
       const chartCount = slides.filter((s) => s.chart).length;
       return ok(`Created presentation with ${slides.length + acquired.images.length} slide(s)${chartCount ? `, ${chartCount} chart(s)` : ""}: ${fp}${noteBlock(imageNotes)}`, {
         file_path: fp, slide_count: slides.length + acquired.images.length, image_count: embedded, chart_count: chartCount,
@@ -149,8 +162,10 @@ const presentationAddSlide: ToolDefinition = {
       const imageNotes = [...acquired.notes, ...r.notes];
       const requested = (spec.image ? 1 : 0) + specs.length;
       const embedded = (r.imagePlaced ? 1 : 0) + acquired.images.length;
-      if (requested > 0 && embedded === 0) return err(allImagesFailedMsg(requested, imageNotes));
       await pptx.writeFile({ fileName: outPath });
+      if (requested > 0 && embedded === 0) {
+        return err(allImagesFailedMsg(requested, imageNotes, outPath), { file_path: outPath, position: pos, image_count: 0, images_requested: requested });
+      }
       return ok(`Created new slide file: ${outPath}${noteBlock(imageNotes)}`, { file_path: outPath, position: pos, image_count: embedded });
     } catch (e) { return err(`Failed to add slide: ${(e as Error).message}`); }
   },
@@ -219,7 +234,19 @@ const presentationFromOutline: ToolDefinition = {
       const slides = outlineToSlides(args.outline as string);
       if (!slides.length) return err("Outline produced no slides");
       const theme = resolveOfficeTheme(args.theme);
-      const acquired = await acquireImages((args.images as ImageSpec[] | undefined) ?? []);
+      const specs = (args.images as ImageSpec[] | undefined) ?? [];
+      // A dead image URL must not cost the user the deck. Acquire, remember the
+      // failure, build the slides anyway — the result below is still an error
+      // when nothing embedded, so success cannot be claimed.
+      let acquired: AcquireOutcome = { images: [], notes: [] };
+      let allImagesFailed = false;
+      try {
+        acquired = await acquireImages(specs);
+      } catch (e) {
+        if (!(e instanceof AllImagesFailedError)) throw e;
+        allImagesFailed = true;
+        acquired = { images: [], notes: e.failures };
+      }
       const brand: SlideBrand = { logo: (await acquireBrandLogo(theme)) ?? undefined, footer: brandFooter(theme) || undefined };
       ensureDir(fp);
       const pptx = await makePptx();
@@ -227,11 +254,13 @@ const presentationFromOutline: ToolDefinition = {
       pptx.author = brandAuthor(theme) || "";
       pptx.layout = "LAYOUT_WIDE";
       // Outline slides are text-only (no spec.image), so the images param is
-      // the only image path — acquireImages' all-failed throw is the rung-3
-      // guard here.
+      // the only image path.
       for (const s of slides) await applySlide(pptx, s, theme, brand);
       appendImageSlides(pptx, acquired.images, theme);
       await pptx.writeFile({ fileName: fp });
+      if (allImagesFailed) {
+        return err(allImagesFailedMsg(specs.length, acquired.notes, fp), { file_path: fp, slide_count: slides.length, image_count: 0, images_requested: specs.length });
+      }
       return ok(`Created presentation from outline with ${slides.length + acquired.images.length} slide(s): ${fp}${noteBlock(acquired.notes)}`, {
         file_path: fp, slide_count: slides.length + acquired.images.length, image_count: acquired.images.length,
       });

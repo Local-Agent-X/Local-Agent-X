@@ -131,18 +131,33 @@ export function checkAppWrite(filePath: string, content: string): WriteGuardResu
 
   for (const host of BLOCKED_CDNS) {
     if (content.includes(host)) {
+      const reason = `references blocked CDN host '${host}'`;
       return {
         allow: false,
-        reason: `references blocked CDN host '${host}'`,
+        reason,
+        // Name the route out. "Inline or self-host" alone left the model with
+        // no way to GET the bytes it was told to self-host, so it retried the
+        // same CDN tag (live 2026-09-20, fonts.googleapis.com).
+        message:
+          `Write rejected: ${reason}. The preview iframe cannot reach external CDNs, so this would render unstyled. ` +
+          (isFontHost(host)
+            ? `Either use a system font stack (font-family: system-ui, -apple-system, "Segoe UI", sans-serif), ` +
+              `or fetch the font CSS and the .woff2 files with the \`http_request\` tool and write them into the app.`
+            : `Fetch the library with the \`http_request\` tool and write it into the app as a local file, ` +
+              `then reference that local path.`),
       };
     }
   }
 
   if (isHtml(filePath) && content.length >= VIEWPORT_CHECK_MIN_BYTES) {
     if (!/<meta[^>]+name=["']viewport["']/i.test(content)) {
+      const reason = "html missing <meta name=\"viewport\"> (required for mobile-correct rendering)";
       return {
         allow: false,
-        reason: "html missing <meta name=\"viewport\"> (required for mobile-correct rendering)",
+        reason,
+        message:
+          `Write rejected: ${reason}. Add ` +
+          `<meta name="viewport" content="width=device-width, initial-scale=1"> inside <head> and write again.`,
       };
     }
   }
@@ -150,7 +165,14 @@ export function checkAppWrite(filePath: string, content: string): WriteGuardResu
   return { allow: true, warn: builtArtifactWarning(filePath) ?? undefined };
 }
 
-/** Convenience: render the rejection-message line the tools emit on block. */
+const FONT_HOSTS = ["fonts.googleapis.com", "fonts.gstatic.com"];
+const isFontHost = (host: string): boolean => FONT_HOSTS.includes(host);
+
+/** Fallback line for a rejection that carries no `message` of its own.
+ *  Deliberately says nothing about CDNs: this used to append "the preview
+ *  iframe blocks external CDNs (see AGENTS.md). Inline or self-host." to
+ *  EVERY rejection, so a model that merely forgot a viewport meta tag was
+ *  sent to read about CDNs. Each reason above states its own remedy. */
 export function writeGuardRejectionMessage(reason: string): string {
-  return `Write rejected: ${reason}. The preview iframe blocks external CDNs (see AGENTS.md). Inline or self-host.`;
+  return `Write rejected: ${reason}.`;
 }

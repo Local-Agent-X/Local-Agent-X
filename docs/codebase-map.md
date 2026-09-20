@@ -12,7 +12,7 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 65 top-level dirs · 65 live · 0 with no live importer · 1596 non-test source files · 0 god files (>400 LOC).
+**Totals:** 65 top-level dirs · 65 live · 0 with no live importer · 1597 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -28,7 +28,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/util/` | 37 | 3 | S |  |
 | `src/session/` | 36 | 7 | L |  |
 | `src/auth/` | 34 | 10 | L |  |
-| `src/browser/` | 33 | 82 | XL |  |
+| `src/browser/` | 33 | 83 | XL |  |
 | `src/threat/` | 32 | 12 | L |  |
 | `src/tool-policy/` | 30 | 20 | L |  |
 | `src/data-lineage/` | 29 | 8 | L |  |

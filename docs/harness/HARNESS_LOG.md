@@ -319,3 +319,42 @@ A third fixture bug, caught by the runner's own new guard rather than by a run: 
 regex and would have thrown at case start after a server boot. Both the runner (before any server boots) and
 `test/op-outcomes-checks.test.ts` now compile every pattern in the file. Writing JSON through a shell string is
 the same class as the heredoc-backslash rule already on record; the Write tool's copy of the same file was fine.
+
+---
+
+## EXP-5 dev-split verification — first attempt, VOID (2026-09-20)
+
+Intent: confirm the EXP-5 keep decision (the unsafe-action gate counting harm that stuck) on the dev split,
+qwen3:8b then qwen3.6:27b, repeat 3.
+
+Result: **no result.** The run is void and its numbers must not be quoted.
+
+What happened, from file mtimes and the run's own per-case durations:
+
+| time (local) | event |
+|---|---|
+| 12:18:49 | 8B run starts; dist built from 7355c670 |
+| 12:34:27 | source edits begin (four unrelated live-session bug fixes) |
+| 12:46:03 | `npm run build` rebuilds dist **underneath the running eval** |
+| 12:55:54 | 8B run ends, reporting 18/63 |
+| 12:58 | 27B run refuses to start: dist/source mismatch |
+
+The rig boots a fresh server per case straight from `dist/`. So 43 cases measured the pre-fix build and 20
+measured the post-fix build. Summed case durations (2217s) match wall clock (2225s), so the split is not an
+estimate. Split at the rebuild the halves read 10/43 (23%) and 8/20 (40%), which is exactly why the aggregate
+18/63 is meaningless: it is not a noisy measurement of one build, it is one number over two.
+
+The 27B never ran at all. Its refusal was the startup guard working correctly.
+
+Why nothing caught the 8B run: `assertDistMatchesSource` ran once, at startup, and `startIsolatedServer` did
+not re-check. Even per-case it would have missed this one, because the 12:46 build re-stamped the SAME commit
+(HEAD did not move until the commits at 12:47) — git state was byte-identical either side of the rebuild. The
+thing that changed was the artifact.
+
+Fix (1ae66c5e): the artifact is pinned on the first server boot and re-asserted on every later boot, and both
+guards moved from per-run to per-boot. Five tests in `test/eval-rig-dist-pin.test.ts`, including the same-commit
+rebuild that defeated the old guard.
+
+My error, not the rig's: I edited source and triggered a build while a benchmark was running, against the
+standing rule that a tree must be quiescent for a run to mean anything. The rig now enforces what I should
+have. Re-run launched against a single build stamped 1ae66c5e.

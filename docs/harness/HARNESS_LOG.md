@@ -101,8 +101,11 @@ that changes it.
 Models: qwen3.6:27b Q4_K_M (tier B), qwen3:8b Q4_K_M (tier C), Ollama 0.34.2.
 Eval: none (infrastructure). Verified by 263 tests across the profile loader, the tier classifier, the trace
 store, the runtimes and the tool-selection pipeline, and a live isolated-server capture.
-Before → After:
-  traces naming their profile: none → (verification below)
-  tiers for the two test models: unchanged (medium / weak)
+Before → After (capture at 50c84a49, `phase1-evidence/exp-3-trace-turn0.qwen3_8b.json`):
+  traces naming their profile: none → 4 of 4 stamped `profileId qwen3:8b`, `profileHash 97d31ec5de7e`, the same hash
+    the built loader computes from the bundled file (source `bundled`, tier C)
+  tiers for the two test models: unchanged (medium / weak); the wire body unchanged
 Decision: keep
-Notes / surprises: none yet.
+Notes / surprises: the packaged desktop app lists no config files explicitly; the runtime checkout that ships
+`config/system-prompt.md` ships `config/model-profiles/` the same way, and the loader resolves both from the same
+root. A model without a profile behaves exactly as before (heuristic tier, null stamps).

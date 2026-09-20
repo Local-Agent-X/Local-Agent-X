@@ -53,3 +53,34 @@ tokens and priced on top of them by `cost-tracker.ts`) for OpenAI's `cached_toke
 `prompt_tokens`. Blast-radius on the field found the cost ledger as a cross-concern consumer: every cloud provider
 that reports cached tokens would have been billed for them twice. The count now has its own field,
 `promptCachedTokens`, the ledger is untouched, and the eval metric reads either.
+
+### EXP-2 — per-turn trace on the op store, and a viewer
+Date: 2026-09-19
+Hypothesis: a run cannot be replayed or diffed as the model saw it because nothing persists the prompt as sent,
+the raw answer, or the thinking; adding that beside the turn record makes every later experiment inspectable
+without Ollama's own log.
+Change: `TurnResult.trace` on the adapter contract (request as composed, the body that went on the wire, raw
+text before extraction, text after, thinking, tool calls, stop, usage, first token, timing), built by
+openai-compat (`adapters/openai-compat/turn-trace.ts`), persisted by the store as
+`op-turns/<idx>.trace.json.gz` after the durable commit (`canonical-loop/turn-trace-store.ts`, `checkpoint.ts`),
+stamped with a run id (`LAX_RUN_ID` from a rig, else per boot), off with `LAX_TRACE_TURNS=0`; `scripts/lax-trace.mjs`
+`list` / `show <op> [--turn N] [--prompt]` / `diff <a> <b>`. No behaviour change on any path.
+Models: qwen3:8b Q4_K_M, Ollama 0.34.2 (the 27B path is identical code).
+Eval: none (infrastructure). Verified by 129 tests (store, viewer, adapter, commit-path durability and hard-kill
+recovery, adapter boundary audit) and a live isolated-server capture.
+Before → After (`phase1-evidence/exp-2-wire-capture.qwen3_8b.json`, `exp-2-trace-turn0.qwen3_8b.json`):
+  turns with a trace artifact: 0 → 8 of 8, all stamped with the rig's run id
+  what a turn 0 trace holds for the 8B: system prompt 47,966 chars; 1 message; **65 tools**; temperature 0.7;
+    max_tokens 11,299; thinking 1,288 chars before a `project_list` call; usage 23,528 in / 286 out / 7,129 cached;
+    first token 3,092 ms
+  viewer `diff` on two consecutive ops: system prompts diverge at char 47,754 of 47,966 (the dynamic tail),
+    tool lists identical
+  on the wire (final capture at af70f931): `{"model":"qwen3:8b","temperature":0.7,"max_tokens":11299,"stream":true,
+    "stream_options":{"include_usage":true}}` with 65 tools and **no reasoning_effort** — the composed request said
+    `medium`; the runtime's default (thinking on) is what the model ran under
+Decision: keep
+Notes / surprises: (1) the first trace confirmed the audit's RAG-warm cap bypass on the wire — the weak tier
+received 65 tools, not 9, and the model's own thinking shows it choosing `project_list` from that list; (2) the
+trace first recorded the request as the canonical adapter COMPOSED it (`reasoning_effort=medium`) while the HTTP
+adapter's family regex withholds that param for qwen3, so the HTTP adapter now reports the body it actually sent
+and the trace stores it as `request.sent` — the wire truth, not the intent.

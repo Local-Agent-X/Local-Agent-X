@@ -121,3 +121,16 @@ export class BridgeViewClosedError extends Error {
 		this.name = "BridgeViewClosedError";
 	}
 }
+/** The whole action ran out of budget, not one op. Says so in those words:
+ *  the model's move after this is a different approach, not a retry of the
+ *  same call, which is what a per-op "timed out after 10000ms" invited. */
+export class BridgeDeadlineError extends Error {
+	constructor(op: string, viewId: string, label: string, elapsedMs: number) {
+		super(
+			`browser ${label} ran out of time after ${Math.round(elapsedMs / 1000)}s while waiting on ${op} ` +
+			`(viewId=${viewId}). The desktop browser is not responding — retrying this action will fail the same way. ` +
+			`Check the pane is open, or work from the page text you already have.`,
+		);
+		this.name = "BridgeDeadlineError";
+	}
+}

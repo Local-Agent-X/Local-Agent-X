@@ -12,7 +12,9 @@ import {
 	type BridgeConsoleEntry,
 	type BridgeNetworkEntry,
 } from "./bridge-perception.js";
+import { bridgeDeadlineLabel, bridgeElapsedMs, bridgeRemainingMs } from "./bridge-deadline.js";
 import {
+	BridgeDeadlineError,
 	BridgeOpError, BridgeTimeoutError, BridgeUnavailableError, BridgeViewClosedError,
 	CAPTURE_TIMEOUT_MS, CLEAR_PARTITION_TIMEOUT_MS, EXEC_TIMEOUT_MS, INPUT_TIMEOUT_MS,
 	LIFECYCLE_TIMEOUT_MS, NAVIGATE_DESKTOP_TIMEOUT_MS, NAVIGATE_REPLY_GRACE_MS,
@@ -23,6 +25,7 @@ import {
 } from "./bridge-client-contract.js";
 
 export {
+	BridgeDeadlineError,
 	BridgeOpError, BridgeTimeoutError, BridgeUnavailableError, BridgeViewClosedError,
 	CAPTURE_TIMEOUT_MS, CLEAR_PARTITION_TIMEOUT_MS, EXEC_TIMEOUT_MS, INPUT_TIMEOUT_MS,
 	LIFECYCLE_TIMEOUT_MS, NAVIGATE_DESKTOP_TIMEOUT_MS, NAVIGATE_REPLY_GRACE_MS,
@@ -134,6 +137,29 @@ function request(
 	message: Record<string, unknown>,
 	timeoutMs: number,
 ): Promise<BridgeReply> {
+	// Clamp every op to what is left of the ACTION's budget. One action issues
+	// several ops in sequence; without this their fixed timeouts sum past the
+	// tool budget and the innermost rejection is the one the model reads.
+	// See bridge-deadline.ts.
+	const remaining = bridgeRemainingMs();
+	if (remaining !== null) {
+		const label = bridgeDeadlineLabel() ?? "action";
+		if (remaining <= 0) {
+			return Promise.reject(new BridgeDeadlineError(op, viewId, label, bridgeElapsedMs()));
+		}
+		if (remaining < timeoutMs) {
+			const deadlineTimeout = remaining;
+			const attempt = browserContainerRelayActivated()
+				? relayBrowserRequest({ op, viewId, message, timeoutMs: deadlineTimeout }) as Promise<BridgeReply>
+				: requestDesktopBrowserBridge({ op, viewId, message, timeoutMs: deadlineTimeout });
+			// The op was cut short by the action's budget, not by its own
+			// ceiling — report the budget, so the number names the real wait.
+			return attempt.catch((e: unknown) => {
+				if (e instanceof BridgeTimeoutError) throw new BridgeDeadlineError(op, viewId, label, bridgeElapsedMs());
+				throw e;
+			});
+		}
+	}
 	if (browserContainerRelayActivated()) {
 		return relayBrowserRequest({ op, viewId, message, timeoutMs }) as Promise<BridgeReply>;
 	}

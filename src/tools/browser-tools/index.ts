@@ -24,6 +24,7 @@ import type { ToolDefinition, ToolResult } from "../../types.js";
 import { getBrowserManager, closeBrowser, withBrowserLock, resetWedgedBrowser, BrowserWedgeError } from "../../browser/index.js";
 import type { BrowserEngine, WedgeRecoveryOutcome } from "../../browser/index.js";
 import { getToolTimeout } from "../../tool-execution/tool-timeout.js";
+import { withBridgeDeadline } from "../../browser/bridge-deadline.js";
 import { raceWedgeDeadline, WEDGED } from "./wedge-deadline.js";
 import { VALID_ENGINES, err } from "./shared.js";
 import {
@@ -152,7 +153,16 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
           const runGated = async (): Promise<ToolResult> => {
           const verificationBlock = await humanVerificationBlock(action, manager);
           if (verificationBlock) return verificationBlock;
-          const dispatch = (async (): Promise<ToolResult> => {
+          const toolMs = getToolTimeout(BROWSER_TOOL_NAME);
+          // ONE budget for every bridge op this action issues. A screenshot
+          // makes three round trips to the desktop, each with its own fixed
+          // ceiling; unbudgeted, their sum ran 31.9s past the tool's 30s and
+          // the model was handed the innermost op's "10000ms" (live
+          // 2026-09-20). Set 3s under the tool timeout so the action can
+          // RETURN the deadline error instead of being abandoned by it, and
+          // under the wedge deadline below so a slow bridge reports as slow
+          // rather than as a wedged session. See bridge-deadline.ts.
+          const dispatch = withBridgeDeadline(toolMs > 0 ? toolMs - 3_000 : 0, action, async (): Promise<ToolResult> => {
           switch (action) {
             case "navigate": return await handleNavigate(manager, args, engine);
             case "new_tab": return await handleNewTab(manager, args);
@@ -189,14 +199,13 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
                 `Unknown action: "${action}". Valid actions: navigate, click, fill, select, extract, screenshot, evaluate, act, observe, emulate, layout_report, tabs, switch_tab, info, close`
               );
           }
-          })();
+          });
 
           // In-process hang recovery: fire just under the per-tool browser
           // timeout (tool-timeout.ts) and recover the wedged session so the
           // NEXT call works — instead of the outer timeout abandoning the call
           // and leaving the wedged session to be reused until LAX restarts.
           // See wedge-deadline.ts / instance.ts:resetWedgedBrowser.
-          const toolMs = getToolTimeout(BROWSER_TOOL_NAME);
           const deadlineMs = toolMs > 0 ? Math.max(1_000, toolMs - 1_000) : 0;
           let recovery: Promise<WedgeRecoveryOutcome> | undefined;
           const result = await raceWedgeDeadline(dispatch, deadlineMs, () => {

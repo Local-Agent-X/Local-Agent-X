@@ -841,8 +841,8 @@ experiment.
 
 Product decisions. Decided 2026-09-19: **cloud escalation stays off by default**; any escalation to another model,
 local or cloud, is a kernel-governed action per brief section 9, shown and approved, default-deny while the context
-holds content read from files or pages. Open: whether protocols become code-sequenced in Phase 4 (recommend yes;
-auto-build already proves the shape).
+holds content read from files or pages. Decided 2026-09-19: **protocols become code-sequenced in Phase 4**, the
+bundled and typed packs first, SKILL.md bodies left free-form, the protocol-run eval category deciding how far to go.
 
 ## 17. Corrections to the record
 

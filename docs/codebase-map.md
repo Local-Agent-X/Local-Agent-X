@@ -34,7 +34,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/data-lineage/` | 29 | 8 | L |  |
 | `src/local-runtimes/` | 29 | 19 | L |  |
 | `src/agency/` | 28 | 19 | L |  |
-| `src/agent-store/` | 26 | 7 | M |  |
+| `src/agent-store/` | 26 | 7 | L |  |
 | `src/classifiers/` | 24 | 16 | L |  |
 | `src/agent-request/` | 23 | 14 | L |  |
 | `src/app-runtime/` | 23 | 12 | L |  |
@@ -194,6 +194,8 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/tool-registry.ts` | S |
 | `src/tool-tracker.ts` | M |
 | `src/tools.ts` | S |
+| `src/trash-journal.ts` | S |
+| `src/trash-restore.ts` | S |
 | `src/tts-stream.ts` | S |
 | `src/types.ts` | M |
 | `src/update-extracted-validation.ts` | S |

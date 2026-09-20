@@ -1,6 +1,6 @@
 import { basename } from "node:path";
 import { resolveAgentPath, sessionIdOf } from "../workspace/paths.js";
-import { restoreFromTaskTrash } from "../safe-delete.js";
+import { restoreDeleted } from "../trash-restore.js";
 import { recordTaskArtifact } from "../data-lineage/task-artifacts.js";
 import type { ToolDefinition } from "../types.js";
 import { ok, err } from "./result-helpers.js";
@@ -35,7 +35,7 @@ export const restoreFileTool: ToolDefinition = {
     "When the same name was deleted more than once, the most recent delete wins. " +
     "Refuses to overwrite a file that now exists at the original path — move or delete that file first, then restore again. " +
     "`destination` is ONLY for recovered entries (a restore error saying the original path was lost when the manifest was recovered): pass the full ABSOLUTE path to restore to, and it MUST keep the trashed file's basename — a recovered entry only matches a destination sharing that basename, so a different file name matches nothing. " +
-    "Only works until the task's trash scope closes; user files deleted with delete_file go to the OS Trash instead and are not restorable here.",
+    "Works for the user's own files too: delete_file records where every deletion went, so a file that went to the OS Recycle Bin / Trash is brought back from there. An agent-created file is only restorable until its task's trash scope closes.",
   parameters: {
     type: "object",
     properties: {
@@ -45,10 +45,9 @@ export const restoreFileTool: ToolDefinition = {
     required: ["path"],
   },
   async execute(args) {
+    // A session is required only for the task tier; a journalled deletion to
+    // the OS bin or the ~/.lax trash restores without one.
     const sid = sessionIdOf(args);
-    if (!sid) {
-      return err("restore_file has no session context, so there is no task-trash scope to look in. Nothing was restored.");
-    }
     const rawPath = String(args.path);
     const rawDest = typeof args.destination === "string" && args.destination ? args.destination : undefined;
     // A bare name (no directory part) is a basename / in-trash-name reference
@@ -72,12 +71,21 @@ export const restoreFileTool: ToolDefinition = {
       : /[\\/]/.test(rawPath) || rawPath.startsWith("~")
         ? resolveAgentPath(rawPath, sid)
         : rawPath;
-    const result = restoreFromTaskTrash(sid, ref);
-    if ("error" in result) return err(result.error, { path: rawPath });
-    // Registry coherence: the restored bytes are the agent's artifact again —
-    // re-enroll so the delete protections (delete_file's task-trash routing,
-    // the shell rm deny) cover the file exactly as before its deletion.
-    recordTaskArtifact(sid, result.restored);
-    return ok(`Restored ${result.restored} from the task trash${basename(result.restored) !== basename(rawPath) ? ` (matched via "${rawPath}")` : ""}.`);
+    const result = restoreDeleted(ref, sid ? { sessionId: sid } : {});
+    if ("error" in result) {
+      // Without a session the task tier is unreachable, and that is usually
+      // the real reason a restore found nothing — say so rather than leaving
+      // the caller to infer it from "nothing matched".
+      const why = sid ? "" : " This call had no session context, so the task trash could not be searched.";
+      return err(`${result.error}${why}`, { path: rawPath });
+    }
+    // Registry coherence, TASK TIER ONLY: those bytes are the agent's artifact
+    // again, so re-enroll and the delete protections (task-trash routing, the
+    // shell rm deny) cover the file exactly as before. A USER file restored
+    // from the OS bin was never an artifact — enrolling it here would quietly
+    // hand the agent's protections to a file the user owns.
+    if (result.tier === "task" && sid) recordTaskArtifact(sid, result.restored);
+    const where = result.tier === "task" ? "the task trash" : result.tier === "lax" ? "the LAX trash" : "the system Trash";
+    return ok(`Restored ${result.restored} from ${where}${basename(result.restored) !== basename(rawPath) ? ` (matched via "${rawPath}")` : ""}.`);
   },
 };

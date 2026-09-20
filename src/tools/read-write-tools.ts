@@ -336,7 +336,14 @@ export const deleteFileTool: ToolDefinition = {
         }
       }
       const trashed = await moveToTrash(filePath, "delete_file");
-      return ok(`Deleted ${filePath}${trashed ? ` (moved to ${trashed} — recoverable)` : ""}`);
+      // Name the undo, not just the destination. A model told only "moved to
+      // the system Trash" concludes it cannot help and tells the user to open
+      // the Recycle Bin by hand — measured on qwen3.6:27b, 2026-09-20, after
+      // it had deleted three client originals and been asked to put them back.
+      return ok(
+        `Deleted ${filePath}${trashed ? ` (moved to ${trashed})` : ""}` +
+        `${trashed ? ` — restore it with restore_file({ path: "${filePath}" })` : ""}`,
+      );
     } catch (e) {
       const code = (e as NodeJS.ErrnoException).code;
       // EBUSY/EPERM = a live process holds the file (classic case: a running

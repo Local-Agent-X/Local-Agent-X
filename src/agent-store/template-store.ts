@@ -12,7 +12,7 @@ import { TEMPLATES_FILE } from "./paths.js";
 import { ProjectRosterStore } from "../project-rosters.js";
 import { builtInTemplateDefaults } from "./template-defaults.js";
 import { renderPersonaPrompt, appBuilderPersonaRefresh } from "../tools/render-builder-prompt.js";
-import { trashRecord } from "../safe-delete.js";
+import { readTrashRecord, trashRecord } from "../safe-delete.js";
 import { createLogger } from "../logger.js";
 import type { AgentModelPin } from "../agents/types.js";
 
@@ -250,6 +250,19 @@ export class AgentTemplateStore {
       return true;
     }
     return false;
+  }
+
+  /** Put back an agent definition `delete` snapshotted. The snapshot was
+   *  write-only until now — nothing could read it back, so the "recoverable"
+   *  in that comment was about the bytes, not about the product. Null when no
+   *  snapshot survives; refuses to clobber a live id. */
+  restore(id: string): AgentTemplate | null {
+    if (this.templates.some(t => t.id === id)) return null;
+    const snapshot = readTrashRecord<AgentTemplate>(`agent-${id}`);
+    if (!snapshot?.id) return null;
+    this.templates.push(snapshot);
+    this.persist();
+    return snapshot;
   }
 
   /** Seed built-in templates on first run (won't overwrite user edits) */

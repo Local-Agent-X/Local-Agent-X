@@ -176,7 +176,11 @@ describe("delete_file routing", () => {
     writeFileSync(f, "user data", "utf-8");
     const r = await deleteFileTool.execute({ path: f, _sessionId: "route-sess-user" });
     expect(r.isError).toBeFalsy();
-    expect(String(r.content)).toMatch(/^Deleted .+ \(moved to .+ — recoverable\)$/);
+    // The message has to name the UNDO, not just the destination. Told only
+    // "moved to the system Trash", a model concludes it cannot help and sends
+    // the user to the Recycle Bin by hand — measured on qwen3.6:27b after it
+    // deleted three client originals and was asked to put them back.
+    expect(String(r.content)).toMatch(/^Deleted .+ \(moved to .+\) — restore it with restore_file\(\{ path: ".+" \}\)$/);
     expect(existsSync(f)).toBe(false);
     expect(existsSync(join(laxDir, "trash", "task"))).toBe(false);            // never entered the task tier
   });
@@ -186,7 +190,7 @@ describe("delete_file routing", () => {
     writeFileSync(f, "x", "utf-8");
     const r = await deleteFileTool.execute({ path: f });
     expect(r.isError).toBeFalsy();
-    expect(String(r.content)).toContain("recoverable");
+    expect(String(r.content)).toContain("restore_file");
     expect(existsSync(f)).toBe(false);
   });
 });

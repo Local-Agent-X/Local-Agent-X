@@ -4,6 +4,7 @@ import { join, basename, dirname, resolve } from "node:path";
 import { homedir } from "node:os";
 import { getLaxDir } from "./lax-data-dir.js";
 import { desktopTrashItem } from "./desktop-bridge.js";
+import { appendTrashJournal, findTrashEntry, listRestorable } from "./trash-journal.js";
 import { createLogger } from "./logger.js";
 
 const logger = createLogger("safe-delete");
@@ -47,8 +48,12 @@ export async function moveToTrash(path: string, reason?: string): Promise<string
   if (!existsSync(path)) return null;
   const tag = reason ? ` (${reason})` : "";
 
+  const original = resolve(path);
   if (await nativeTrash(path)) {
     logger.info(`[trash] ${path} -> OS recycle bin${tag}`);
+    // The bin renames what it takes, so there is no destination of ours to
+    // record — the original path is the whole key a restore has to work from.
+    appendTrashJournal({ original, tier: "os", dest: null, kind: "file", ...(reason ? { reason } : {}) });
     return "the system Trash";
   }
 
@@ -64,6 +69,7 @@ export async function moveToTrash(path: string, reason?: string): Promise<string
     rmSync(path, { recursive: true, force: true });
   }
   logger.info(`[trash] ${path} -> ${dest}${tag}`);
+  appendTrashJournal({ original, tier: "lax", dest, kind: "file", ...(reason ? { reason } : {}) });
   sweepOldTrash();
   return dest;
 }
@@ -119,10 +125,35 @@ export function trashRecord(name: string, data: unknown): void {
     const dest = join(dir, `${safe}.${now.getTime()}.json`);
     writeFileSync(dest, JSON.stringify(data, null, 2), "utf-8");
     logger.info(`[trash] snapshot ${name} -> ${dest}`);
+    // Journalled like any other deletion: these snapshots were write-only for
+    // months — the bytes were on disk and no code could name them, so a
+    // deleted project was unrecoverable in practice.
+    appendTrashJournal({ original: name, tier: "record", dest, kind: "record" });
     sweepOldTrash();
   } catch (e) {
     logger.warn(`[trash] failed to snapshot ${name}: ${(e as Error).message}`);
   }
+}
+
+/** Read a snapshot back. The counterpart trashRecord never had: for months it
+ *  wrote a deleted project's or agent's JSON to disk and nothing could name
+ *  the file again, so "recoverable" was true of the bytes and false of the
+ *  product. Returns the most recent snapshot for `name`, or null. */
+export function readTrashRecord<T = unknown>(name: string): T | null {
+  const entry = findTrashEntry(name, { kind: "record" });
+  if (!entry?.dest || !existsSync(entry.dest)) return null;
+  try {
+    return JSON.parse(readFileSync(entry.dest, "utf-8")) as T;
+  } catch (e) {
+    logger.warn(`[trash] snapshot for ${name} is unreadable: ${(e as Error).message}`);
+    return null;
+  }
+}
+
+/** Snapshots still on disk, newest first — what a restore could offer. */
+export function listTrashRecords(limit?: number): Array<{ name: string; at: number; path: string }> {
+  return listRestorable({ kind: "record", ...(limit ? { limit } : {}) })
+    .map((e) => ({ name: e.original, at: e.at, path: e.dest as string }));
 }
 
 // ---- Task-scoped trash tier (tier 3) ---------------------------------------
@@ -228,6 +259,7 @@ export function moveToTaskTrash(sessionId: string, path: string): string | null 
   entries.push({ original, trashed: basename(dest), at: stamp });
   writeTaskManifest(dir, entries);
   logger.info(`[trash] ${path} -> ${dest} (task scope ${sessionId})`);
+  appendTrashJournal({ original, tier: "task", dest, kind: "file", sessionId, at: stamp });
   sweep(dir); // belt: never sweep the scope that just received these bytes
   return dest;
 }

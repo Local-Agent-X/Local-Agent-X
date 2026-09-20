@@ -5,8 +5,8 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { PROJECTS_FILE } from "./paths.js";
-import { ProjectRosterStore } from "../project-rosters.js";
-import { trashRecord } from "../safe-delete.js";
+import { ProjectRosterStore, type ProjectRoster } from "../project-rosters.js";
+import { readTrashRecord, trashRecord } from "../safe-delete.js";
 
 export interface Project {
   id: string;
@@ -105,6 +105,32 @@ export class ProjectStore {
     trashRecord(`project-${id}`, { project: removed, rosters });
     this.persist();
     return true;
+  }
+
+  /**
+   * Put back a project `delete` snapshotted, container and roster together.
+   *
+   * The snapshot has been written since projects could be deleted, and until
+   * now nothing read it: the bytes were on disk and no code could name the
+   * file, so "recoverable" was true of the JSON and false of the product.
+   * Returns null when no snapshot survives (never written, or swept after the
+   * retention window), and refuses to clobber a live project with the same id.
+   */
+  restore(id: string): Project | null {
+    if (this.projects.some(p => p.id === id)) return null;
+    const snapshot = readTrashRecord<{ project: Project; rosters: ProjectRoster[] }>(`project-${id}`);
+    if (!snapshot?.project) return null;
+    this.projects.push(snapshot.project);
+    const rosterStore = ProjectRosterStore.getInstance();
+    for (const r of snapshot.rosters ?? []) {
+      rosterStore.upsert(r.projectId, r.agentId, {
+        ...(r.reportsTo ? { reportsTo: r.reportsTo } : {}),
+        ...(r.heartbeatSchedule ? { heartbeatSchedule: r.heartbeatSchedule } : {}),
+        ...(r.budget ? { budget: r.budget } : {}),
+      });
+    }
+    this.persist();
+    return snapshot.project;
   }
 
   /** Add an agent to a project */

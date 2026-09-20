@@ -353,6 +353,7 @@ export async function driveTurn(
     redirectText: pendingRedirect?.text,
     modelMs,
     toolDispatchMs,
+    trace: result.trace,
     learnedOutcome: terminalOutcome ?? undefined,
     learningSessionId: learningSessionId ?? undefined,
     // A middleware abort's note is the op's failure reason (commitTurn stamps it at the failed transition).

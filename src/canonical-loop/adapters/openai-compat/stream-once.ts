@@ -149,6 +149,7 @@ export async function streamOnce(
     if (!out.firstError) out.firstError = { code: "transport_exception", message };
     report({ kind: "error", code: "transport_exception", message, retryable: false });
   }
+  out.rawText = out.assembledText;
   // Reasoning-only fallback. The model reasoned the entire output
   // budget away (finish_reason "length") and never emitted `content` —
   // without this, the user sees an empty bubble. Surface the reasoning as

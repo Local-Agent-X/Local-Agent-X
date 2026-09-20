@@ -169,6 +169,46 @@ export interface TurnResult {
    * always safe (the shape inference still terminates the turn).
    */
   modelStop?: "ended" | "continue";
+  /**
+   * What this turn sent and what came back, for replay and eval. The adapter
+   * only BUILDS it; the store persists it beside the turn record as
+   * `op-turns/<idx>.trace.json.gz` (see turn-trace-store.ts). Absent on
+   * adapters that do not trace yet and on turns that never reached the wire.
+   */
+  trace?: TurnTrace;
+}
+
+/** One model request as composed by the adapter, and the model's answer as
+ *  received — before tool-call extraction, scrubbing, or the length-stop
+ *  reasoning promotion touched it. */
+export interface TurnTrace {
+  model: string;
+  baseURL?: string;
+  request: {
+    systemPrompt: string;
+    /** Transport-shaped history exactly as handed to the client. */
+    messages: unknown[];
+    tools: Array<{ name: string; description?: string; parameters?: unknown }>;
+    temperature?: number;
+    maxTokens?: number;
+    reasoningEffort?: string;
+    toolChoice?: unknown;
+  };
+  response: {
+    /** Answer text as streamed, before text-tag tool calls were cut out. */
+    rawText: string;
+    /** Answer text after extraction — what history keeps. */
+    text: string;
+    thinking: string;
+    toolCalls: Array<{ id: string; name: string; arguments: string }>;
+    stopReason?: string;
+    usage?: { promptTokens?: number; completionTokens?: number; cachedTokens?: number };
+    ttftMs?: number;
+    promptOverWindow?: boolean;
+    stoppedByGuard?: string;
+    error: { code: string; message: string } | null;
+  };
+  timing: { startedAt: string; endedAt: string; modelMs: number };
 }
 
 // ── Adapter sandbox boundary (PRD §15 "Sandbox") ─────────────────────────

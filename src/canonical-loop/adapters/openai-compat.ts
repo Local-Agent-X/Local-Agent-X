@@ -48,6 +48,7 @@ import { canonicalToChatParam } from "./openai-compat/canonical-to-chat-param.js
 import { resolveLocalCap } from "./openai-compat/local-cap.js";
 import { streamOnce, applyToolCallTextFallback } from "./openai-compat/stream-once.js";
 import { assessOpenAiCompatPreflight, promptExceedsMeasuredWindow } from "./openai-compat/request-preflight.js";
+import { buildTurnTrace } from "./openai-compat/turn-trace.js";
 import { resolveStepReasoningEffort } from "../step-effort.js";
 import { classifyModelStop } from "./model-stop.js";
 
@@ -120,6 +121,7 @@ export class OpenAICompatAdapter implements Adapter {
     }
 
     this.aborter = new AbortController();
+    const turnStartedAt = Date.now();
     const { model, baseURL, apiKey } = this.opts;
 
     // First-turn-only forcing — same posture as the legacy force-tool-use
@@ -305,7 +307,12 @@ export class OpenAICompatAdapter implements Adapter {
 
     // Real terminal signal — the provider's finish_reason, normalized. See
     // model-stop.ts; decide-outcome trusts it over the shape inference.
-    return { providerState, terminalReason, modelStop: classifyModelStop(providerStop) };
+    return {
+      providerState,
+      terminalReason,
+      modelStop: classifyModelStop(providerStop),
+      trace: buildTurnTrace({ req, result, startedAt: turnStartedAt, promptOverWindow }),
+    };
   }
 
   async abort(reason?: unknown): Promise<void> {

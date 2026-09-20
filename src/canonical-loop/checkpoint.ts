@@ -15,6 +15,8 @@ import {
   type TurnCommitEnvelope,
 } from "./turn-commit-store.js";
 import { hasMessageCollision, isTurnCommitEnvelope } from "./turn-commit-validation.js";
+import { publishTurnTrace } from "./turn-trace-store.js";
+import type { TurnTrace } from "./adapter-contract.js";
 import { appendActionLedgerOnce } from "../ops/action-ledger.js";
 import { readOp, tryWithOpLock } from "../ops/op-store.js";
 import type { Op } from "../ops/types.js";
@@ -51,6 +53,8 @@ export interface CommitTurnInput {
   redirectText?: string;
   modelMs?: number;
   toolDispatchMs?: number;
+  /** Written beside the turn record after it is durable; never part of it. */
+  trace?: TurnTrace;
   nextTurnPivot?: OpTurnRow["nextTurnPivot"];
   /** The note behind a terminalReason:"error" turn (a middleware abort's
    *  message). Becomes op.lastFailureReason when this commit fails the op —
@@ -212,6 +216,10 @@ function commitOwnedTurn(input: CommitTurnInput & { leaseClaim: LeaseClaim }): C
     else persistCheckpoint(input.op, input.turnIdx, false);
     return { turn: "turn" in winner ? winner.turn : winner, messages: [], inserted: false };
   }
+
+  // Evidence, after the durable commit: a trace that fails to write logs and
+  // drops; it can never take the committed turn down with it.
+  if (input.trace) publishTurnTrace(input.op.id, input.turnIdx, input.trace);
 
   try {
     recordSessionBaselineObservation(

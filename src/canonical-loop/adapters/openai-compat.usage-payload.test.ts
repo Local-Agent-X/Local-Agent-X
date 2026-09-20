@@ -79,3 +79,45 @@ describe("openai-compat turn record: usage, cache, first token", () => {
     expect("promptOverWindow" in payload).toBe(false);
   });
 });
+
+describe("openai-compat turn trace", () => {
+  it("carries the request as composed and the answer as received, raw text kept before extraction", async () => {
+    // A text-tag tool call with prose around it: extraction moves the call to
+    // pendingToolCalls and leaves the prose as `text`; the trace keeps the
+    // original stream as `rawText` so the replay shows what the model wrote.
+    const tagged = 'Let me look. <tool_call>{"name":"read_file","arguments":{"path":"a.txt"}}</tool_call>';
+    streamMock.mockImplementation(async function* () {
+      yield { type: "thinking" as const, delta: "plan: read the file" };
+      yield { type: "text" as const, delta: tagged };
+      yield { type: "usage" as const, promptTokens: 300, completionTokens: 40, cachedTokens: 250 };
+      yield { type: "done" as const, stopReason: "stop", firstTokenMs: 33 };
+    });
+    const adapter = createOpenAICompatAdapter({ model: "qwen3:8b", baseURL: "http://127.0.0.1:11434/v1", apiKey: "k", systemPrompt: "You are LAX.", temperature: 0.2 });
+    const result = await adapter.runTurn(
+      {
+        opId: "op-trace",
+        turnIdx: 2,
+        messages: [{ messageId: "m1", role: "user", content: { text: "read a.txt" } }],
+        tools: [{ name: "read_file", description: "read", inputSchema: { type: "object" } }],
+      },
+      () => {},
+    );
+    const trace = result.trace!;
+    expect(trace.model).toBe("qwen3:8b");
+    expect(trace.baseURL).toBe("http://127.0.0.1:11434/v1");
+    expect(trace.request.systemPrompt).toBe("You are LAX.");
+    expect(trace.request.tools.map((t) => t.name)).toEqual(["read_file"]);
+    expect(trace.request.temperature).toBe(0.2);
+    expect((trace.request.messages[0] as { role: string }).role).toBe("user");
+    expect(trace.response.rawText).toBe(tagged);
+    expect(trace.response.text).not.toContain("<tool_call>");
+    expect(trace.response.toolCalls.map((c) => c.name)).toEqual(["read_file"]);
+    expect(trace.response.thinking).toBe("plan: read the file");
+    expect(trace.response.usage).toEqual({ promptTokens: 300, completionTokens: 40, cachedTokens: 250 });
+    expect(trace.response.ttftMs).toBe(33);
+    expect(trace.response.stopReason).toBe("stop");
+    expect(trace.response.error).toBeNull();
+    expect(trace.timing.modelMs).toBeGreaterThanOrEqual(0);
+    expect(Date.parse(trace.timing.endedAt)).toBeGreaterThanOrEqual(Date.parse(trace.timing.startedAt));
+  });
+});

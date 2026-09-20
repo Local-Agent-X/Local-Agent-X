@@ -58,6 +58,9 @@ export interface StreamOnceResult {
   usageCachedTokens?: number;
   /** Time-to-first-token as measured by the HTTP adapter, in ms. */
   firstTokenMs?: number;
+  /** Answer text as streamed, kept before text-tag extraction or the
+   *  length-stop reasoning promotion rewrite `assembledText`. */
+  rawText?: string;
   /** Mid-stream user-inject interrupt — caller should set its own aborted
    *  flag so post-stream handling treats the turn as aborted. */
   interruptedByInject: boolean;

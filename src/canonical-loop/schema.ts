@@ -10,6 +10,8 @@
  *     checkpoint.json          ← legacy checkpoint (existing)
  *     canonical-events.jsonl   ← op_events (PRD §12) — append-only
  *     op-turns/<turn_idx>.json ← op_turns (PRD §11) — append-only
+ *     op-turns/<turn_idx>.trace.json.gz ← the request as sent + the raw
+ *                                 answer, for replay (turn-trace-store.ts)
  *     op-messages.jsonl        ← op_messages (PRD §9) — append-only
  *
  * Snake-case ↔ camelCase mapping for the PRD's `ops` additive columns:
@@ -42,6 +44,14 @@ export function opTurnsDir(opId: string): string {
 
 export function opTurnPath(opId: string, turnIdx: number): string {
   return join(opTurnsDir(opId), `${turnIdx}.json`);
+}
+
+/** Gzipped so it never matches the `.json` filter the turn reader uses, and
+ *  because a medium-tier prompt is ~150 KB per turn as text. */
+export const OP_TURN_TRACE_SUFFIX = ".trace.json.gz";
+
+export function opTurnTracePath(opId: string, turnIdx: number): string {
+  return join(opTurnsDir(opId), `${turnIdx}${OP_TURN_TRACE_SUFFIX}`);
 }
 
 export function opMessagesPath(opId: string): string {

@@ -1,0 +1,797 @@
+{
+ "model": "qwen3:8b",
+ "turns": [
+  {
+   "msg": "List the projects in my workspace and tell me in one line what each one is.",
+   "text": "There are no projects in your workspace yet. Use `project_create` to add a new project and define its purpose, agents, and tools.",
+   "err": "",
+   "tools": [
+    "?"
+   ],
+   "events": 402,
+   "secs": 8
+  },
+  {
+   "msg": "Read the README of the nav-app project and summarize it in two sentences.",
+   "text": "The `nav-app` project does not exist in your workspace. Use `project_create` to create a new project and its accompanying files, then try reading its README again.",
+   "err": "",
+   "tools": [
+    "?",
+    "?",
+    "?",
+    "?"
+   ],
+   "events": 1588,
+   "secs": 16
+  },
+  {
+   "msg": "Which of those projects has a test folder? Answer from what you already saw.",
+   "text": "None of the projects in your workspace have a test folder. The `nav-app` project does not exist, and there are no other projects listed in your workspace.",
+   "err": "",
+   "tools": [],
+   "events": 293,
+   "secs": 6
+  }
+ ],
+ "ops": [
+  {
+   "id": "op_chat_turn_17b49577dacb4269",
+   "status": "completed",
+   "turns": null
+  },
+  {
+   "id": "op_chat_turn_6233d60c69c54326",
+   "status": "completed",
+   "turns": null
+  },
+  {
+   "id": "op_chat_turn_90f083f39a2d424d",
+   "status": "completed",
+   "turns": null
+  }
+ ],
+ "turnUsage": [
+  {
+   "op": "dacb4269",
+   "turn": "0.json",
+   "model": "qwen3:8b",
+   "modelMs": 4114,
+   "ttftMs": 2117,
+   "in": 24158,
+   "out": 294,
+   "cached": 11814,
+   "stop": "stop"
+  },
+  {
+   "op": "69c54326",
+   "turn": "0.json",
+   "model": "qwen3:8b",
+   "modelMs": 5057,
+   "ttftMs": 3092,
+   "in": 23528,
+   "out": 286,
+   "cached": 7129,
+   "stop": "tool_calls"
+  },
+  {
+   "op": "69c54326",
+   "turn": "1.json",
+   "model": "qwen3:8b",
+   "modelMs": 1020,
+   "ttftMs": 125,
+   "in": 23631,
+   "out": 135,
+   "cached": 23521,
+   "stop": "stop"
+  },
+  {
+   "op": "9a2d424d",
+   "turn": "0.json",
+   "model": "qwen3:8b",
+   "modelMs": 3806,
+   "ttftMs": 1986,
+   "in": 23655,
+   "out": 271,
+   "cached": 11813,
+   "stop": "tool_calls"
+  },
+  {
+   "op": "9a2d424d",
+   "turn": "1.json",
+   "model": "qwen3:8b",
+   "modelMs": 3556,
+   "ttftMs": 132,
+   "in": 23759,
+   "out": 506,
+   "cached": 23604,
+   "stop": "tool_calls"
+  },
+  {
+   "op": "9a2d424d",
+   "turn": "2.json",
+   "model": "qwen3:8b",
+   "modelMs": 2143,
+   "ttftMs": 150,
+   "in": 23961,
+   "out": 296,
+   "cached": 23688,
+   "stop": "tool_calls"
+  },
+  {
+   "op": "9a2d424d",
+   "turn": "3.json",
+   "model": "qwen3:8b",
+   "modelMs": 2424,
+   "ttftMs": 141,
+   "in": 24066,
+   "out": 336,
+   "cached": 23888,
+   "stop": "tool_calls"
+  },
+  {
+   "op": "9a2d424d",
+   "turn": "4.json",
+   "model": "qwen3:8b",
+   "modelMs": 2042,
+   "ttftMs": 164,
+   "in": 24355,
+   "out": 276,
+   "cached": 23968,
+   "stop": "stop"
+  }
+ ],
+ "viewer": {
+  "runId": "capture-mu9anbbe",
+  "list": [
+   {
+    "op": "d60c69c54326",
+    "type": "chat_turn",
+    "status": "completed",
+    "run": "capture-mu9anbbe",
+    "model": "qwen3:8b",
+    "turns": 2,
+    "traced": 2,
+    "tokIn": 47159,
+    "tokOut": 421,
+    "cached": 30650,
+    "ttftAvgMs": 1609,
+    "modelMs": 6077,
+    "tools": 1,
+    "overWindow": 0,
+    "created": "2026-09-20T04:06:03"
+   },
+   {
+    "op": "83f39a2d424d",
+    "type": "chat_turn",
+    "status": "completed",
+    "run": "capture-mu9anbbe",
+    "model": "qwen3:8b",
+    "turns": 5,
+    "traced": 5,
+    "tokIn": 119796,
+    "tokOut": 1685,
+    "cached": 106961,
+    "ttftAvgMs": 515,
+    "modelMs": 13971,
+    "tools": 4,
+    "overWindow": 0,
+    "created": "2026-09-20T04:06:11"
+   },
+   {
+    "op": "9577dacb4269",
+    "type": "chat_turn",
+    "status": "completed",
+    "run": "capture-mu9anbbe",
+    "model": "qwen3:8b",
+    "turns": 1,
+    "traced": 1,
+    "tokIn": 24158,
+    "tokOut": 294,
+    "cached": 11814,
+    "ttftAvgMs": 2117,
+    "modelMs": 4114,
+    "tools": 0,
+    "overWindow": 0,
+    "created": "2026-09-20T04:06:26"
+   }
+  ],
+  "tracedTurns": 8,
+  "traceRunIds": [
+   "capture-mu9anbbe"
+  ],
+  "turnRows": [
+   {
+    "turn": 0,
+    "stop": "tool_calls",
+    "end": "",
+    "tokIn": 23528,
+    "cached": 7129,
+    "tokOut": 286,
+    "ttftMs": 3092,
+    "modelMs": 5057,
+    "tools": "project_list:ok",
+    "thinkChars": 1288,
+    "textChars": 0,
+    "promptTools": 65,
+    "over": ""
+   },
+   {
+    "turn": 1,
+    "stop": "stop",
+    "end": "done",
+    "tokIn": 23631,
+    "cached": 23521,
+    "tokOut": 135,
+    "ttftMs": 125,
+    "modelMs": 1020,
+    "tools": "",
+    "thinkChars": 509,
+    "textChars": 129,
+    "promptTools": 65,
+    "over": ""
+   }
+  ],
+  "turn0": "turn 0  run=capture-mu9anbbe  model=qwen3:8b  http://127.0.0.1:11434/v1\n  timing: 2026-09-20T04:06:03.604Z → 2026-09-20T04:06:08.660Z  modelMs=5056  ttftMs=3092\n  request: system 47966 chars, 1 messages [user], 65 tools [read,write,edit,bash,http_request,browser,self_edit,memory_save,memory_search,build_app,memory_update_profile,memory_set_user_field,remember,forget,web_fetch,web_search,glob,grep,generate_image,edit_image,generate_video,presentation,document,spreadsheet,pdf,list_secrets,clipboard_write_from_secret,request_secret,edit_lines,multi_edit,bulk_replace,delete_file,restore_file,image_search,tool_search,ask_user,run_build_plan,start_app_build,finalize_app_build,build_plan_status,build_plan_resume,view_image,send_image,screen_capture,connector_create,process_status,task_create,task_update,task_list,task_get,enter_plan_mode,exit_plan_mode,op_status,op_kill,op_redirect,setting,memory_get,update_fact,memory_recall,android,agent_list,agent_spawn,agent_create,project_create,project_list] temperature=0.7 max_tokens=11299 reasoning_effort=medium\n  response: stop=tool_calls usage=23528 in / 286 out / 7129 cached\n  thinking (1288 chars):\n    Okay, the user wants me to list the projects in their workspace and provide a one-line description of each. Let me think about how to approach this.\n    \n    First, I need to check the available tools. The user mentioned \"projects\" so I should look for a function related to project listing. Scanning through the tools, there's a function called project_list. The description says it lists projects with their IDs, names, and roster sizes. That sounds exactly what I need.\n    \n    The function doesn't require any arguments, so I can call it directly. Once I get the data from project_list, I'll have the necessary information to format the answer. The user wants each project's name and a brief description. The project_list might provide the names and possibly descriptions, but I should check if the response includes the required details. If not, I might need another tool, but based on the tool's description, it's likely that the names and summaries are included.\n    \n    So, I'll call project_list first. Then, using the returned data, I'll construct a list where each entry has the project name and its description. If the description isn't available, I might need to use another tool like project_get or project_r\n    … [88 more chars]\n  tool calls:\n    project_list({})\n  text (0 chars):\n    ",
+  "divergence": "system prompt: diverges at char 47754 of 47966/47966; tools: identical (65)"
+ },
+ "serverLogTail": [
+  "[circuit-breaker] [circuit-breaker] FAIL read (session=wire-1789877163507) #1: File not found: C:\\Users\\peter\\AppData\\Local\\Temp\\lax-ws-WZbpFD\\workspace\\nav-app\\README.md",
+  "[threat.audit-trail] [audit-anchor] seq=4 count=5 head=0937375d8256a0202a4fdfbb18be4594713b62057b93c6242ea1e2e81bc68e2e",
+  "[ari-kernel]   [ari] Scope released: op_chat_turn_90f083f39a2d424d",
+  "[routes.chat.canonical-run] [timing] canonical/chat qwen3:8b 14196ms (sess=wire-17898771635)",
+  "[memory.curate-nudge] [curate-nudge] boost sess=wire-17898771635 trigger=long-task-completed turnsSinceNudge=2",
+  "[llm-dispatch] [ollama] usage model=qwen3:8b prompt_eval=1387 eval=68 prompt_ms=13 eval_ms=316 load_ms=2 num_ctx=40960",
+  "[server.session-helpers] [memory-live] Indexing session wire-1789877163507 (16 messages)",
+  "[server.session-helpers] [memory-live] Indexed 1 new chunks from 1 pairs (session wire-1789877163507, total pairs: 2)",
+  "[routes.chat.run-turn] [retry] correlationId=04e1a670-10ed-490e-b50d-5e6dae52446d sess=wire-17898771635",
+  "[agent-request.prepare-request] [step] resolveProvider START sess=wire-17898771635",
+  "[agent-request.prepare-request] [step] resolveProvider 0ms sess=wire-17898771635",
+  "[agent-request.prepare-request] [step] checkpointHistory START sess=wire-17898771635",
+  "[agent-request.prepare-request] [step] checkpointHistory 0ms sess=wire-17898771635",
+  "[agent-request.prepare-request] [step] selectTools START sess=wire-17898771635",
+  "[agent-request.prepare-request.tools] [tools] Shrunk 64→9 for weak model qwen3:8b (read,write,edit,bash,http_request,browser,self_edit,memory_save,tool_search)",
+  "[agent-request.prepare-request.tools] [step] tool-rag.select START",
+  "[agent-request.prepare-request.tools] [step] tool-rag.select 1ms picked=65",
+  "[agent-request.prepare-request] [step] selectTools 2ms sess=wire-17898771635",
+  "[agent-request.prepare-request] [step] buildContext START sess=wire-17898771635",
+  "[agent-request.prepare-request.context] [step] buildTurnContextCached START sess=wire-17898771635",
+  "[orchestrator.signals] [signals] produced=2 injected=2 dropped=0",
+  "[memory.manager] Orchestrator: 5 modules, 1ms",
+  "[agent-request.turn-context-cache] [turn-context-cache] MISS sess=wire-1789877163507 built in 27ms",
+  "[agent-request.prepare-request.context] [step] buildTurnContextCached 28ms sess=wire-17898771635",
+  "[agent-request.prepare-request.context] [chat] weak tier qwen3:8b — stripped memory/profile context to prevent roleplay drift",
+  "[agent-request.prepare-request] [step] buildContext 28ms sess=wire-17898771635",
+  "[agent-request.prepare-request] [step] buildSystemPrompt START sess=wire-17898771635",
+  "[agent-request.prepare-request] [step] buildSystemPrompt 2ms sess=wire-17898771635",
+  "[routes.chat.prepare] [timing] prepareAgentRequest 33ms (sess=wire-17898771635)",
+  "[chat-diag] prepared sess=77163507 provider=local model=qwen3:8b hasKey=true",
+  "[routing.router] decision=INLINE reason=no-predictor-default-inline provider=local words=14 msg=\"Which of those projects has a test folder? Answer from what you already saw.\"",
+  "[canonical-loop.prompt-preflight] [prompt-profile] mode=constrained-local reason=measured-context-budget window=40960 budget=14336 full=24419 top=core-identity/how-to-work:5835,app-manifest:2536,tool-guidance:1994 included=core-identity/preamble,core-identity/how-to-control-your-own-app,core-identity/identity,core-identity/background-operations,core-identity/core-rules,core-identity/apps-pages,core-identity/memory,core-identity/personality,core-identity/self-modification,core-identity/workspace-security,runtime-context,app-manifest,agents-md,provider-hint,tool-guidance,recall-reflex,channel-context,file-access,model-family-rider,security-canary degraded=core-identity/how-to-work,core-identity/delegation,core-identity/coding-discipline,core-identity/self-repair-and-self-extension,core-identity/browser",
+  "[canonical-loop.chat-runner] [chat-runner] submitted op op_chat_turn_17b49577dacb4269 sess=wire-17898771635 model=qwen3:8b tools=65 wallClock=7200000ms",
+  "[ari-kernel]   [ari] Scope started: op_chat_turn_17b49577dacb4269",
+  "[llm-dispatch] [ollama] usage model=qwen3:8b prompt_eval=633 eval=6 prompt_ms=45 eval_ms=27 load_ms=3 num_ctx=40960",
+  "[llm-dispatch] [ollama] usage model=qwen3:8b prompt_eval=587 eval=25 prompt_ms=16 eval_ms=112 load_ms=2 num_ctx=40960",
+  "[ari-kernel]   [ari] Scope released: op_chat_turn_17b49577dacb4269",
+  "[routes.chat.canonical-run] [timing] canonical/chat qwen3:8b 4170ms (sess=wire-17898771635)",
+  "[llm-dispatch] [ollama] usage model=qwen3:8b prompt_eval=1388 eval=68 prompt_ms=13 eval_ms=313 load_ms=4 num_ctx=40960",
+  "[server.session-helpers] [memory-live] Indexing session wire-1789877163507 (18 messages)"
+ ],
+ "requests": [
+  {
+   "at": "04:06:03.656",
+   "path": "/api/generate",
+   "model": "qwen3:8b",
+   "stream": false,
+   "think": false,
+   "keep_alive": "30m",
+   "options": {
+    "temperature": 0,
+    "num_predict": 400,
+    "num_ctx": 40960
+   },
+   "tools": 0,
+   "tools_json_chars": 0,
+   "messages": 0,
+   "roles": "",
+   "system_count": 0,
+   "system_chars": 0,
+   "total_chars": 2413,
+   "other_keys": [
+    "prompt"
+   ]
+  },
+  {
+   "at": "04:06:09.771",
+   "path": "/api/generate",
+   "model": "qwen3:8b",
+   "stream": false,
+   "think": false,
+   "keep_alive": "30m",
+   "options": {
+    "temperature": 0,
+    "num_predict": 400,
+    "num_ctx": 40960
+   },
+   "tools": 0,
+   "tools_json_chars": 0,
+   "messages": 0,
+   "roles": "",
+   "system_count": 0,
+   "system_chars": 0,
+   "total_chars": 5789,
+   "other_keys": [
+    "prompt"
+   ]
+  },
+  {
+   "at": "04:06:11.126",
+   "path": "/api/generate",
+   "model": "qwen3:8b",
+   "stream": false,
+   "think": false,
+   "keep_alive": "30m",
+   "options": {
+    "temperature": 0,
+    "num_predict": 400,
+    "num_ctx": 40960
+   },
+   "tools": 0,
+   "tools_json_chars": 0,
+   "messages": 0,
+   "roles": "",
+   "system_count": 0,
+   "system_chars": 0,
+   "total_chars": 2597,
+   "other_keys": [
+    "prompt"
+   ]
+  },
+  {
+   "at": "04:06:25.307",
+   "path": "/api/generate",
+   "model": "qwen3:8b",
+   "stream": false,
+   "think": false,
+   "keep_alive": "30m",
+   "options": {
+    "temperature": 0,
+    "num_predict": 400,
+    "num_ctx": 40960
+   },
+   "tools": 0,
+   "tools_json_chars": 0,
+   "messages": 0,
+   "roles": "",
+   "system_count": 0,
+   "system_chars": 0,
+   "total_chars": 5787,
+   "other_keys": [
+    "prompt"
+   ]
+  },
+  {
+   "at": "04:06:26.617",
+   "path": "/api/generate",
+   "model": "qwen3:8b",
+   "stream": false,
+   "think": false,
+   "keep_alive": "30m",
+   "options": {
+    "temperature": 0,
+    "num_predict": 500,
+    "num_ctx": 40960
+   },
+   "tools": 0,
+   "tools_json_chars": 0,
+   "messages": 0,
+   "roles": "",
+   "system_count": 0,
+   "system_chars": 0,
+   "total_chars": 2989,
+   "other_keys": [
+    "prompt"
+   ]
+  },
+  {
+   "at": "04:06:26.685",
+   "path": "/api/generate",
+   "model": "qwen3:8b",
+   "stream": false,
+   "think": false,
+   "keep_alive": "30m",
+   "options": {
+    "temperature": 0,
+    "num_predict": 400,
+    "num_ctx": 40960
+   },
+   "tools": 0,
+   "tools_json_chars": 0,
+   "messages": 0,
+   "roles": "",
+   "system_count": 0,
+   "system_chars": 0,
+   "total_chars": 2634,
+   "other_keys": [
+    "prompt"
+   ]
+  },
+  {
+   "at": "04:06:30.830",
+   "path": "/api/generate",
+   "model": "qwen3:8b",
+   "stream": false,
+   "think": false,
+   "keep_alive": "30m",
+   "options": {
+    "temperature": 0,
+    "num_predict": 400,
+    "num_ctx": 40960
+   },
+   "tools": 0,
+   "tools_json_chars": 0,
+   "messages": 0,
+   "roles": "",
+   "system_count": 0,
+   "system_chars": 0,
+   "total_chars": 5790,
+   "other_keys": [
+    "prompt"
+   ]
+  }
+ ],
+ "responses": [
+  {
+   "at": "04:06:03.200",
+   "path": "/api/version",
+   "status": 200,
+   "ms": 3,
+   "bytes": 20
+  },
+  {
+   "at": "04:06:03.201",
+   "path": "/api/version",
+   "status": 200,
+   "ms": 7,
+   "bytes": 20
+  },
+  {
+   "at": "04:06:03.223",
+   "path": "/api/tags",
+   "status": 200,
+   "ms": 10,
+   "bytes": 3058
+  },
+  {
+   "at": "04:06:03.223",
+   "path": "/api/tags",
+   "status": 200,
+   "ms": 9,
+   "bytes": 3058
+  },
+  {
+   "at": "04:06:03.235",
+   "path": "/api/ps",
+   "status": 200,
+   "ms": 3,
+   "bytes": 379
+  },
+  {
+   "at": "04:06:03.238",
+   "path": "/api/show",
+   "status": 200,
+   "ms": 5,
+   "bytes": 29206
+  },
+  {
+   "at": "04:06:03.239",
+   "path": "/api/ps",
+   "status": 200,
+   "ms": 6,
+   "bytes": 379
+  },
+  {
+   "at": "04:06:03.239",
+   "path": "/api/ps",
+   "status": 200,
+   "ms": 5,
+   "bytes": 379
+  },
+  {
+   "at": "04:06:03.240",
+   "path": "/api/ps",
+   "status": 200,
+   "ms": 6,
+   "bytes": 379
+  },
+  {
+   "at": "04:06:03.240",
+   "path": "/api/show",
+   "status": 200,
+   "ms": 5,
+   "bytes": 3069
+  },
+  {
+   "at": "04:06:03.242",
+   "path": "/api/ps",
+   "status": 200,
+   "ms": 1,
+   "bytes": 379
+  },
+  {
+   "at": "04:06:03.242",
+   "path": "/api/show",
+   "status": 200,
+   "ms": 7,
+   "bytes": 33085
+  },
+  {
+   "at": "04:06:03.242",
+   "path": "/api/show",
+   "status": 200,
+   "ms": 6,
+   "bytes": 40489
+  },
+  {
+   "at": "04:06:03.243",
+   "path": "/api/ps",
+   "status": 200,
+   "ms": 0,
+   "bytes": 379
+  },
+  {
+   "at": "04:06:03.244",
+   "path": "/api/show",
+   "status": 200,
+   "ms": 3,
+   "bytes": 33000
+  },
+  {
+   "at": "04:06:03.246",
+   "path": "/api/show",
+   "status": 200,
+   "ms": 3,
+   "bytes": 26136
+  },
+  {
+   "at": "04:06:03.326",
+   "path": "/api/version",
+   "status": 200,
+   "ms": 1,
+   "bytes": 20
+  },
+  {
+   "at": "04:06:03.332",
+   "path": "/api/tags",
+   "status": 200,
+   "ms": 6,
+   "bytes": 3058
+  },
+  {
+   "at": "04:06:03.336",
+   "path": "/api/version",
+   "status": 200,
+   "ms": 0,
+   "bytes": 20
+  },
+  {
+   "at": "04:06:03.342",
+   "path": "/api/tags",
+   "status": 200,
+   "ms": 6,
+   "bytes": 3058
+  },
+  {
+   "at": "04:06:03.347",
+   "path": "/api/version",
+   "status": 200,
+   "ms": 1,
+   "bytes": 20
+  },
+  {
+   "at": "04:06:03.354",
+   "path": "/api/tags",
+   "status": 200,
+   "ms": 8,
+   "bytes": 3058
+  },
+  {
+   "at": "04:06:03.358",
+   "path": "/api/version",
+   "status": 200,
+   "ms": 1,
+   "bytes": 20
+  },
+  {
+   "at": "04:06:03.363",
+   "path": "/api/tags",
+   "status": 200,
+   "ms": 6,
+   "bytes": 3058
+  },
+  {
+   "at": "04:06:03.368",
+   "path": "/api/version",
+   "status": 200,
+   "ms": 1,
+   "bytes": 20
+  },
+  {
+   "at": "04:06:03.374",
+   "path": "/api/tags",
+   "status": 200,
+   "ms": 7,
+   "bytes": 3058
+  },
+  {
+   "at": "04:06:03.378",
+   "path": "/api/version",
+   "status": 200,
+   "ms": 1,
+   "bytes": 20
+  },
+  {
+   "at": "04:06:03.384",
+   "path": "/api/tags",
+   "status": 200,
+   "ms": 6,
+   "bytes": 3058
+  },
+  {
+   "at": "04:06:03.649",
+   "path": "/api/ps",
+   "status": 200,
+   "ms": 1,
+   "bytes": 379
+  },
+  {
+   "at": "04:06:04.144",
+   "path": "/api/generate",
+   "status": 200,
+   "ms": 488,
+   "bytes": 2977
+  },
+  {
+   "at": "04:06:09.769",
+   "path": "/api/ps",
+   "status": 200,
+   "ms": 2,
+   "bytes": 380
+  },
+  {
+   "at": "04:06:11.051",
+   "path": "/api/generate",
+   "status": 200,
+   "ms": 1280,
+   "bytes": 7276
+  },
+  {
+   "at": "04:06:11.123",
+   "path": "/api/ps",
+   "status": 200,
+   "ms": 1,
+   "bytes": 380
+  },
+  {
+   "at": "04:06:11.332",
+   "path": "/api/generate",
+   "status": 200,
+   "ms": 206,
+   "bytes": 3156
+  },
+  {
+   "at": "04:06:25.305",
+   "path": "/api/ps",
+   "status": 200,
+   "ms": 2,
+   "bytes": 380
+  },
+  {
+   "at": "04:06:26.610",
+   "path": "/api/generate",
+   "status": 200,
+   "ms": 1303,
+   "bytes": 7273
+  },
+  {
+   "at": "04:06:26.615",
+   "path": "/api/ps",
+   "status": 200,
+   "ms": 1,
+   "bytes": 380
+  },
+  {
+   "at": "04:06:26.760",
+   "path": "/api/generate",
+   "status": 200,
+   "ms": 143,
+   "bytes": 3271
+  },
+  {
+   "at": "04:06:26.935",
+   "path": "/api/generate",
+   "status": 200,
+   "ms": 250,
+   "bytes": 3221
+  },
+  {
+   "at": "04:06:30.828",
+   "path": "/api/ps",
+   "status": 200,
+   "ms": 1,
+   "bytes": 380
+  },
+  {
+   "at": "04:06:32.122",
+   "path": "/api/generate",
+   "status": 200,
+   "ms": 1292,
+   "bytes": 7275
+  }
+ ],
+ "ollama_prompt_evals": [
+  "task 1356 | new prompt, n_ctx_slot = 40960, n_keep = 4, task.n_tokens = 538",
+  "task 1356 | cached n_tokens = 495, memory_seq_rm [495, end)",
+  "task 1356 | prompt eval time =     128.39 ms /    43 tokens (    2.99 ms per token,   334.91 tokens per second)",
+  "task 1381 | new prompt, n_ctx_slot = 40960, n_keep = 4, task.n_tokens = 23528",
+  "task 1381 | cached n_tokens = 7129, memory_seq_rm [7129, end)",
+  "task 1381 | cached n_tokens = 9177, memory_seq_rm [9177, end)",
+  "task 1381 | cached n_tokens = 11225, memory_seq_rm [11225, end)",
+  "task 1381 | cached n_tokens = 13273, memory_seq_rm [13273, end)",
+  "task 1381 | cached n_tokens = 15321, memory_seq_rm [15321, end)",
+  "task 1381 | cached n_tokens = 17369, memory_seq_rm [17369, end)",
+  "task 1381 | cached n_tokens = 19417, memory_seq_rm [19417, end)",
+  "task 1381 | cached n_tokens = 21465, memory_seq_rm [21465, end)",
+  "task 1381 | cached n_tokens = 23513, memory_seq_rm [23513, end)",
+  "task 1381 | prompt eval time =    1725.69 ms / 16399 tokens (    0.11 ms per token,  9502.84 tokens per second)",
+  "task 1676 | new prompt, n_ctx_slot = 40960, n_keep = 4, task.n_tokens = 23631",
+  "task 1676 | cached n_tokens = 23521, memory_seq_rm [23521, end)",
+  "task 1676 | prompt eval time =      26.44 ms /   110 tokens (    0.24 ms per token,  4160.84 tokens per second)",
+  "task 1812 | new prompt, n_ctx_slot = 40960, n_keep = 4, task.n_tokens = 1389",
+  "task 1812 | cached n_tokens = 1352, memory_seq_rm [1352, end)",
+  "task 1812 | prompt eval time =      13.07 ms /    37 tokens (    0.35 ms per token,  2830.48 tokens per second)",
+  "task 1881 | new prompt, n_ctx_slot = 40960, n_keep = 4, task.n_tokens = 580",
+  "task 1881 | cached n_tokens = 495, memory_seq_rm [495, end)",
+  "task 1881 | prompt eval time =      16.23 ms /    85 tokens (    0.19 ms per token,  5237.86 tokens per second)",
+  "task 1905 | new prompt, n_ctx_slot = 40960, n_keep = 4, task.n_tokens = 23655",
+  "task 1905 | cached n_tokens = 11813, memory_seq_rm [11813, end)",
+  "task 1905 | cached n_tokens = 13861, memory_seq_rm [13861, end)",
+  "task 1905 | cached n_tokens = 15909, memory_seq_rm [15909, end)",
+  "task 1905 | cached n_tokens = 17957, memory_seq_rm [17957, end)",
+  "task 1905 | cached n_tokens = 20005, memory_seq_rm [20005, end)",
+  "task 1905 | cached n_tokens = 22053, memory_seq_rm [22053, end)",
+  "task 1905 | prompt eval time =    1316.39 ms / 11842 tokens (    0.11 ms per token,  8995.82 tokens per second)",
+  "task 2182 | new prompt, n_ctx_slot = 40960, n_keep = 4, task.n_tokens = 23759",
+  "task 2182 | cached n_tokens = 23604, memory_seq_rm [23604, end)",
+  "task 2182 | prompt eval time =      32.08 ms /   155 tokens (    0.21 ms per token,  4831.52 tokens per second)",
+  "task 2689 | new prompt, n_ctx_slot = 40960, n_keep = 4, task.n_tokens = 23961",
+  "task 2689 | cached n_tokens = 23688, memory_seq_rm [23688, end)",
+  "task 2689 | prompt eval time =      48.41 ms /   273 tokens (    0.18 ms per token,  5639.45 tokens per second)",
+  "task 2986 | new prompt, n_ctx_slot = 40960, n_keep = 4, task.n_tokens = 24066",
+  "task 2986 | cached n_tokens = 23888, memory_seq_rm [23888, end)",
+  "task 2986 | prompt eval time =      40.63 ms /   178 tokens (    0.23 ms per token,  4381.11 tokens per second)",
+  "task 3323 | new prompt, n_ctx_slot = 40960, n_keep = 4, task.n_tokens = 24355",
+  "task 3323 | cached n_tokens = 23968, memory_seq_rm [23968, end)",
+  "task 3323 | prompt eval time =      62.18 ms /   387 tokens (    0.16 ms per token,  6223.67 tokens per second)",
+  "task 3600 | new prompt, n_ctx_slot = 40960, n_keep = 4, task.n_tokens = 1387",
+  "task 3600 | cached n_tokens = 1352, memory_seq_rm [1352, end)",
+  "task 3600 | prompt eval time =      13.20 ms /    35 tokens (    0.38 ms per token,  2651.31 tokens per second)",
+  "task 3669 | new prompt, n_ctx_slot = 40960, n_keep = 4, task.n_tokens = 633",
+  "task 3669 | cached n_tokens = 4, memory_seq_rm [4, end)",
+  "task 3669 | prompt eval time =      44.52 ms /   629 tokens (    0.07 ms per token, 14126.90 tokens per second)",
+  "task 3676 | new prompt, n_ctx_slot = 40960, n_keep = 4, task.n_tokens = 587",
+  "task 3676 | cached n_tokens = 495, memory_seq_rm [495, end)",
+  "task 3676 | prompt eval time =      16.27 ms /    92 tokens (    0.18 ms per token,  5655.62 tokens per second)",
+  "task 3702 | new prompt, n_ctx_slot = 40960, n_keep = 4, task.n_tokens = 24158",
+  "task 3702 | cached n_tokens = 11814, memory_seq_rm [11814, end)",
+  "task 3702 | cached n_tokens = 13862, memory_seq_rm [13862, end)",
+  "task 3702 | cached n_tokens = 15910, memory_seq_rm [15910, end)",
+  "task 3702 | cached n_tokens = 17958, memory_seq_rm [17958, end)",
+  "task 3702 | cached n_tokens = 20006, memory_seq_rm [20006, end)",
+  "task 3702 | cached n_tokens = 22054, memory_seq_rm [22054, end)",
+  "task 3702 | cached n_tokens = 24102, memory_seq_rm [24102, end)",
+  "task 3702 | prompt eval time =    1395.21 ms / 12344 tokens (    0.11 ms per token,  8847.39 tokens per second)",
+  "task 4003 | new prompt, n_ctx_slot = 40960, n_keep = 4, task.n_tokens = 1388",
+  "task 4003 | cached n_tokens = 1352, memory_seq_rm [1352, end)",
+  "task 4003 | prompt eval time =      13.04 ms /    36 tokens (    0.36 ms per token,  2759.68 tokens per second)"
+ ]
+}

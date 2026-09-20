@@ -114,6 +114,9 @@ export class OpenAIHttpAdapter extends BaseAdapter {
     // so the params can't drift between the initial call and a self-heal.
     // When includeTemperature is false we OMIT the field entirely (the API
     // falls back to its own default) instead of sending a value.
+    // The body of the attempt that went through, for the turn trace: after a
+    // self-heal retry this is the RETRY's body, i.e. what the server accepted.
+    let sentParams: Record<string, unknown> | null = null;
     const buildParams = (opts: {
       includeTools: boolean;
       includeReasoningEffort: boolean;
@@ -121,7 +124,7 @@ export class OpenAIHttpAdapter extends BaseAdapter {
       includeResponseFormat: boolean;
       includeMaxTokens: boolean;
       includeStreamUsage: boolean;
-    }) => ({
+    }) => (sentParams = {
       model: req.model,
       messages: [
         { role: "system" as const, content: req.systemPrompt },
@@ -284,6 +287,21 @@ export class OpenAIHttpAdapter extends BaseAdapter {
     } catch (e) {
       yield { type: "error", message: (e as Error).message || "OpenAI stream error" };
       return;
+    }
+
+    if (sentParams) {
+      const { messages: _messages, tools, response_format, ...rest } = sentParams as Record<string, unknown> & {
+        tools?: Array<{ function?: { name?: string } }>;
+        response_format?: { json_schema?: { name?: string } };
+      };
+      yield {
+        type: "request_sent",
+        params: {
+          ...rest,
+          ...(tools ? { tools: tools.map((t) => t.function?.name ?? "?") } : {}),
+          ...(response_format ? { response_format: response_format.json_schema?.name ?? "json_schema" } : {}),
+        },
+      };
     }
 
     let promptTokens = 0;

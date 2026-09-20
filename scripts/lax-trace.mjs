@@ -117,6 +117,10 @@ export function renderTurn(t, { prompt = false } = {}) {
     ` [${rq.tools.map((x) => x.name).join(",")}]` +
     `${rq.temperature !== undefined ? ` temperature=${rq.temperature}` : ""}${rq.maxTokens !== undefined ? ` max_tokens=${rq.maxTokens}` : ""}` +
     `${rq.reasoningEffort ? ` reasoning_effort=${rq.reasoningEffort}` : ""}${rq.toolChoice ? ` tool_choice=${JSON.stringify(rq.toolChoice)}` : ""}`);
+  if (rq.sent) {
+    const { tools: sentTools, ...sentRest } = rq.sent;
+    out.push(`  on the wire: ${JSON.stringify(sentRest)}${Array.isArray(sentTools) ? ` tools=${sentTools.length}` : " tools=none"}`);
+  }
   const rs = tr.response;
   out.push(`  response: stop=${rs.stopReason ?? "-"} usage=${rs.usage ? `${rs.usage.promptTokens ?? "-"} in / ${rs.usage.completionTokens ?? "-"} out / ${rs.usage.cachedTokens ?? "-"} cached` : "none"}` +
     `${rs.promptOverWindow ? " PROMPT-OVER-WINDOW" : ""}${rs.stoppedByGuard ? ` guard=${rs.stoppedByGuard}` : ""}${rs.error ? ` error=${rs.error.code}: ${rs.error.message}` : ""}`);

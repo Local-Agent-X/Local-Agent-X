@@ -13,6 +13,7 @@ const SERVER_LOG = "C:/Users/peter/AppData/Local/Ollama/server.log";
 const OUT = `${HERE}wire-capture.${MODEL.replace(/[^a-z0-9.]/gi, "_")}.json`;
 
 process.env.LAX_OLLAMA_URL = `http://127.0.0.1:${PROXY_PORT}`;
+process.env.LAX_RUN_ID = `capture-${Date.now().toString(36)}`;
 const { startIsolatedServer, assertDistMatchesSource } = await import(`file:///${REPO}/eval/op-outcomes/isolated.mjs`);
 const { waitForIdleOps, readOps } = await import(`file:///${REPO}/eval/op-outcomes/op-store.mjs`);
 
@@ -84,6 +85,21 @@ try {
       } catch {}
     }
   }
+  // The trace artifacts and the viewer, exercised on the live store before it goes away.
+  const viewer = await import(`file:///${REPO}/scripts/lax-trace.mjs`);
+  const ops = viewer.listOps(server.dataDir);
+  const traced = ops.flatMap((o) => o.turns.filter((t) => t.trace));
+  result.viewer = {
+    runId: process.env.LAX_RUN_ID,
+    list: ops.map(viewer.summarizeOp),
+    tracedTurns: traced.length,
+    traceRunIds: [...new Set(traced.map((t) => t.trace.runId))],
+    turnRows: ops[0] ? viewer.turnRows(ops[0]) : [],
+    turn0: ops[0]?.turns[0] ? viewer.renderTurn(ops[0].turns[0]) : null,
+    divergence: ops.length > 1 ? viewer.firstDivergence(ops[0], ops[1]) : null,
+  };
+  const t0 = ops[0]?.turns[0]?.trace;
+  if (t0) writeFileSync(`${HERE}wire-capture.${MODEL.replace(/[^a-z0-9.]/gi, "_")}.trace0.json`, JSON.stringify(t0, null, 1));
 } finally {
   result.serverLogTail = server.logTail().split("\n").slice(-40);
   await server.stop();

@@ -126,6 +126,10 @@ export async function streamOnce(
         report({ kind: "tool_call_requested", call: { toolCallId: ev.id, tool: ev.name, args: parseArgs(ev.arguments) } });
         continue;
       }
+      if (ev.type === "request_sent") {
+        out.wireParams = ev.params;
+        continue;
+      }
       if (ev.type === "usage") {
         out.usagePromptTokens = ev.promptTokens;
         out.usageCompletionTokens = ev.completionTokens;

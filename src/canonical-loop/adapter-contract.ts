@@ -193,6 +193,10 @@ export interface TurnTrace {
     maxTokens?: number;
     reasoningEffort?: string;
     toolChoice?: unknown;
+    /** The body that actually went on the wire, minus messages, as the HTTP
+     *  adapter reported it: after a learned-unsupported omission or a
+     *  self-heal retry this can be smaller than the fields above. */
+    sent?: Record<string, unknown>;
   };
   response: {
     /** Answer text as streamed, before text-tag tool calls were cut out. */

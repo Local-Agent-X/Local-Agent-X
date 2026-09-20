@@ -61,6 +61,8 @@ export interface StreamOnceResult {
   /** Answer text as streamed, kept before text-tag extraction or the
    *  length-stop reasoning promotion rewrite `assembledText`. */
   rawText?: string;
+  /** The body the HTTP adapter finally sent, minus messages (request_sent). */
+  wireParams?: Record<string, unknown>;
   /** Mid-stream user-inject interrupt — caller should set its own aborted
    *  flag so post-stream handling treats the turn as aborted. */
   interruptedByInject: boolean;

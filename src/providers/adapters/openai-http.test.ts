@@ -289,10 +289,18 @@ describe("stream usage plumbing", () => {
     };
   }
 
-  it("requests stream_options.include_usage from a local endpoint", async () => {
+  it("requests stream_options.include_usage from a local endpoint, and reports the body it sent", async () => {
     createMock.mockResolvedValueOnce(fakeStream());
-    await collect(baseReq({ baseURL: "http://127.0.0.1:11434/v1", model: "qwen3:8b" }));
+    const tools = [{ name: "read_file", description: "r", parameters: { type: "object" } }] as unknown as ProviderRequest["tools"];
+    const chunks = await collect(baseReq({ baseURL: "http://127.0.0.1:11434/v1", model: "qwen3:8b", tools }));
     expect(createMock.mock.calls[0][0].stream_options).toEqual({ include_usage: true });
+    const sent = chunks.find((c) => c.type === "request_sent") as { type: "request_sent"; params: Record<string, unknown> };
+    expect(sent.params).toMatchObject({ model: "qwen3:8b", stream_options: { include_usage: true }, temperature: 0.7, max_tokens: LOCAL_DEFAULT_MAX_TOKENS, tools: ["read_file"] });
+    expect("messages" in sent.params).toBe(false);
+    // qwen3:8b is not in the reasoning-family regex, so nothing about
+    // reasoning went on the wire — the runtime's own default (thinking on)
+    // applies, and the trace must show that absence, not the composed intent.
+    expect("reasoning_effort" in sent.params).toBe(false);
   });
 
   it("and from an unknown endpoint too", async () => {
@@ -314,6 +322,10 @@ describe("stream usage plumbing", () => {
     expect(retryParams.max_tokens).toBe(createMock.mock.calls[0][0].max_tokens);
     expect(retryParams.temperature).toBe(createMock.mock.calls[0][0].temperature);
     expect(vi.mocked(markParamUnsupported)).toHaveBeenCalledWith("http://127.0.0.1:1234/v1", "local-strict", "stream_options");
+    // The reported body is the RETRY's — what the server accepted.
+    const sent = chunks.find((c) => c.type === "request_sent") as { type: "request_sent"; params: Record<string, unknown> };
+    expect("stream_options" in sent.params).toBe(false);
+    expect(sent.params.max_tokens).toBe(retryParams.max_tokens);
   });
 
   it("carries cached_tokens on the usage chunk and time-to-first-token on done", async () => {

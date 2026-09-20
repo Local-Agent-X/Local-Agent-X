@@ -288,7 +288,8 @@ medium selection carries 166 parameters, **129 optional (78 %)**. The 15 largest
 `audit-notes/tools-and-prompt.md` §3; `browser` alone is 17,579 wire chars (≈5k tokens) uncompacted and still 933
 tokens compacted because its 20 parameter descriptions survive.
 
-**RAG-warm cap bypass (mechanism verified, live occurrence inferred).** When the tool-RAG index is ready, `rag.select`
+**RAG-warm cap bypass (mechanism verified; confirmed live 2026-09-19 by the EXP-2 trace: 65 tools on the wire to
+`qwen3:8b`, weak tier, on an isolated server whose index had warmed).** When the tool-RAG index is ready, `rag.select`
 returns every `corePinned` tool (all 64 main-chat eager, `tool-selection.ts:200`; pinned are exempt from `topK`,
 `src/tools/tool-rag.ts:181`), and the union is re-shrunk **with the union's own size as the cap** (`:212`). Measured with a
 stub embedder: **65 tools / ≈15k tokens to the weak tier and 74 tools / ≈20.6k tokens to medium**, right after the log

@@ -76,6 +76,9 @@ export interface ProviderRequest {
  * translated to this in the adapter.
  */
 export type StreamChunk =
+  /** The request body the adapter finally sent (after any self-heal retry),
+   *  minus the messages: which params were on the wire and their values. */
+  | { type: "request_sent"; params: Record<string, unknown> }
   | { type: "text"; delta: string }
   | { type: "tool_call"; id: string; name: string; arguments: string }
   | { type: "tool_call_delta"; id: string; argumentsDelta: string }

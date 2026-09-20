@@ -87,6 +87,7 @@ describe("openai-compat turn trace", () => {
     // original stream as `rawText` so the replay shows what the model wrote.
     const tagged = 'Let me look. <tool_call>{"name":"read_file","arguments":{"path":"a.txt"}}</tool_call>';
     streamMock.mockImplementation(async function* () {
+      yield { type: "request_sent" as const, params: { model: "qwen3:8b", temperature: 0.2, max_tokens: 16384, tools: ["read_file"] } };
       yield { type: "thinking" as const, delta: "plan: read the file" };
       yield { type: "text" as const, delta: tagged };
       yield { type: "usage" as const, promptTokens: 300, completionTokens: 40, cachedTokens: 250 };
@@ -108,6 +109,7 @@ describe("openai-compat turn trace", () => {
     expect(trace.request.systemPrompt).toBe("You are LAX.");
     expect(trace.request.tools.map((t) => t.name)).toEqual(["read_file"]);
     expect(trace.request.temperature).toBe(0.2);
+    expect(trace.request.sent).toEqual({ model: "qwen3:8b", temperature: 0.2, max_tokens: 16384, tools: ["read_file"] });
     expect((trace.request.messages[0] as { role: string }).role).toBe("user");
     expect(trace.response.rawText).toBe(tagged);
     expect(trace.response.text).not.toContain("<tool_call>");

@@ -26,6 +26,7 @@ function req(): ProviderRequest {
 describe("streamOnce usage plumbing", () => {
   it("keeps cached_tokens and time-to-first-token from the adapter", async () => {
     streamMock.mockImplementation(async function* () {
+      yield { type: "request_sent", params: { model: "qwen3:8b", temperature: 0.7, tools: ["read_file"] } };
       yield { type: "text", delta: "ok" };
       yield { type: "usage", promptTokens: 120, completionTokens: 7, cachedTokens: 100 };
       yield { type: "done", stopReason: "stop", firstTokenMs: 42 };
@@ -35,6 +36,8 @@ describe("streamOnce usage plumbing", () => {
     expect(out.usageCompletionTokens).toBe(7);
     expect(out.usageCachedTokens).toBe(100);
     expect(out.firstTokenMs).toBe(42);
+    expect(out.wireParams).toEqual({ model: "qwen3:8b", temperature: 0.7, tools: ["read_file"] });
+    expect(out.rawText).toBe("ok");
   });
 
   it("leaves both undefined when the endpoint reports nothing", async () => {

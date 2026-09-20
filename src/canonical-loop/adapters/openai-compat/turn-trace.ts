@@ -27,6 +27,7 @@ export function buildTurnTrace(args: {
       ...(req.maxTokens !== undefined ? { maxTokens: req.maxTokens } : {}),
       ...(req.reasoningEffort ? { reasoningEffort: String(req.reasoningEffort) } : {}),
       ...(req.toolChoice ? { toolChoice: req.toolChoice } : {}),
+      ...(result.wireParams ? { sent: result.wireParams } : {}),
     },
     response: {
       rawText: result.rawText ?? result.assembledText,

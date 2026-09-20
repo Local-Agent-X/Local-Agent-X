@@ -64,6 +64,15 @@ export interface TurnInput {
    */
   stepEffortHint?: "mechanical";
   /**
+   * Whether the model is CONTINUING after tool results or deciding what to do
+   * (canonical-loop/step-effort.ts classifyStepKind). Computed in the loop for
+   * the same reason stepEffortHint is: both key off the trailing tool_result
+   * batch, and the situational digest appends a trailing user row that hides
+   * it. An adapter that classified this itself would see "planning" on every
+   * continuation — measured, EXP-6, before this field existed.
+   */
+  stepKind?: "planning" | "continuation";
+  /**
    * True when `messages` is an ephemerally COMPACTED view of op_messages
    * (compact-history.ts swapped older turns for a summary). Additive v1
    * metadata: adapters ignore it; turn-loop copies it onto the committed

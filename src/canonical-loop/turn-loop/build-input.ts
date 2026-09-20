@@ -11,7 +11,7 @@ import { lastTurnUsage } from "../op-usage.js";
 import { getToolsForOp, getOpBaselineTokens } from "../runtime.js";
 import { readOp } from "../../ops/op-store.js";
 import { resolveOpModel } from "../op-model.js";
-import { classifyStepEffort } from "../step-effort.js";
+import { classifyStepEffort, classifyStepKind } from "../step-effort.js";
 import { buildSituationalAwareness } from "./situational-awareness.js";
 import { compactHistory } from "./compact-history.js";
 import { opMessageRowToChatParam } from "../chat-runner/message-convert.js";
@@ -139,6 +139,8 @@ export async function buildTurnInput(
   // makes `start === messages.length` in step-effort.ts and every mechanical
   // continuation silently classifies "standard".
   if (classifyStepEffort(input) === "mechanical") input.stepEffortHint = "mechanical";
+  // Same ordering requirement, same reason — see classifyStepKind.
+  input.stepKind = classifyStepKind(input);
 
   // Ephemeral situational-awareness digest — goal/constraint re-anchoring +
   // the durable open-plan, recomputed each turn and APPENDED as its own

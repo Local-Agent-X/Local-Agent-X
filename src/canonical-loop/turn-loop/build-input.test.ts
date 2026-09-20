@@ -291,6 +291,11 @@ describe("buildTurnInput — situational-awareness wiring", () => {
     const last = input.messages[input.messages.length - 1];
     expect((last.content as { text: string }).text).toContain("[SITUATIONAL CONTEXT");
     expect(input.stepEffortHint).toBe("mechanical");
+    // Same trap, same fix: the step KIND also keys off the trailing batch. An
+    // adapter that classified this for itself would read the digest row and
+    // report "planning" on every continuation — which is exactly what EXP-6's
+    // first run measured, silently, before this field was carried.
+    expect(input.stepKind).toBe("continuation");
   });
 
   // F2 — a redirect turn. The `[REDIRECT]` row is appended by the ADAPTER,

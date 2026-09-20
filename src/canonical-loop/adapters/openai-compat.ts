@@ -49,7 +49,7 @@ import { resolveLocalCap } from "./openai-compat/local-cap.js";
 import { streamOnce, applyToolCallTextFallback } from "./openai-compat/stream-once.js";
 import { assessOpenAiCompatPreflight, promptExceedsMeasuredWindow } from "./openai-compat/request-preflight.js";
 import { buildTurnTrace } from "./openai-compat/turn-trace.js";
-import { classifyStepKind, resolveStepReasoningEffort, type ThinkingMode } from "../step-effort.js";
+import { resolveStepReasoningEffort, type StepKind, type ThinkingMode } from "../step-effort.js";
 import { resolveModelProfile } from "../../local-runtimes/model-profile.js";
 import { classifyModelStop } from "./model-stop.js";
 
@@ -114,11 +114,15 @@ export function shouldRescueTextToolCalls(baseURL: string | undefined): boolean 
 function profileThinking(
   model: string | undefined,
   input: TurnInput,
-): { mode: ThinkingMode; kind: ReturnType<typeof classifyStepKind> } | undefined {
+): { mode: ThinkingMode; kind: StepKind } | undefined {
   if (!model) return undefined;
   const profile = resolveModelProfile(model);
   if (!profile?.thinking.supported) return undefined;
-  return { mode: profile.thinking.mode, kind: classifyStepKind(input) };
+  // input.stepKind, NOT a fresh classification: by the time an adapter runs,
+  // the situational digest has appended a trailing user row and the
+  // tool_result batch is no longer last, so classifying here reports
+  // "planning" on every single step. The loop classifies before that append.
+  return { mode: profile.thinking.mode, kind: input.stepKind ?? "planning" };
 }
 
 export class OpenAICompatAdapter implements Adapter {

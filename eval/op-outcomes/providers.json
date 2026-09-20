@@ -3,6 +3,7 @@
   "providers": [
     { "label": "muse", "provider": "local", "model": "muse-glimmer:30b" },
     { "label": "qwen", "provider": "local", "model": "qwen3.6:27b" },
+    { "label": "qwen8b", "provider": "local", "model": "qwen3:8b" },
     { "label": "grok", "provider": "xai", "model": "grok-4.6" }
   ]
 }

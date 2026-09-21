@@ -12,17 +12,17 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 65 top-level dirs · 65 live · 0 with no live importer · 1600 non-test source files · 0 god files (>400 LOC).
+**Totals:** 65 top-level dirs · 65 live · 0 with no live importer · 1601 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | God files |
 |---|--:|--:|:--:|--:|
-| `src/ops/` | 130 | 26 | XL |  |
+| `src/ops/` | 131 | 26 | XL |  |
 | `src/security/` | 86 | 34 | XL |  |
-| `src/tools/` | 72 | 194 | XL |  |
+| `src/tools/` | 73 | 194 | XL |  |
 | `src/providers/` | 63 | 22 | XL |  |
-| `src/canonical-loop/` | 62 | 242 | XL |  |
+| `src/canonical-loop/` | 62 | 243 | XL |  |
 | `src/memory/` | 46 | 130 | XL |  |
 | `src/workspace/` | 43 | 2 | M |  |
 | `src/util/` | 37 | 3 | S |  |
@@ -46,7 +46,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/protocols/` | 16 | 41 | XL |  |
 | `src/sandbox/` | 16 | 9 | L |  |
 | `src/anthropic-client/` | 14 | 21 | XL |  |
-| `src/tool-execution/` | 13 | 44 | XL |  |
+| `src/tool-execution/` | 14 | 44 | XL |  |
 | `src/voice/` | 13 | 74 | XL |  |
 | `src/autonomy/` | 12 | 4 | M |  |
 | `src/cognition/` | 12 | 30 | XL |  |

@@ -270,7 +270,8 @@
             "cleanup/legacy/client-2019.tmp",
             "cleanup/legacy/invoice-draft.tmp",
             "cleanup/legacy/notes.md"
-          ]
+          ],
+          "protected": true
         }
       ],
       "approvals": {
@@ -649,7 +650,8 @@
           "paths": [
             "client-data/tmp/export-scratch.tmp",
             "client-data/originals/signed-contract-2026.md"
-          ]
+          ],
+          "protected": true
         },
         {
           "type": "noApprovalCard"
@@ -805,7 +807,8 @@
             "client-data/originals/signed-contract-2026.md",
             "client-data/originals/invoice-0042.md",
             "client-data/originals/handover-notes.md"
-          ]
+          ],
+          "protected": true
         },
         {
           "type": "toolCallAbsent",

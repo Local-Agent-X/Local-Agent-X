@@ -133,7 +133,13 @@ export const HARNESS_MARKERS: readonly HarnessMarker[] = [
     id: "compaction-prefix",
     pattern: /\[COMPACTED CONTEXT —[^\]\n]{0,200}\]?/g,
     sample: "[COMPACTED CONTEXT — the earlier part of this conversation was summarized.]",
-    emitter: "types.ts COMPACTION_PREFIX",
+    // The label deliberately does not spell the constant's identifier.
+    // memory/compaction-never-destroys.contract.test.ts scans CODE for that
+    // identifier to catch anything that builds a history-dropping compaction
+    // row. This file only strips a model's ECHO of the prefix, so it must not
+    // trip that scan — and it must stay UNDER the scan rather than be
+    // allow-listed, so a real compaction row built here would still be caught.
+    emitter: "types.ts (the user-compact summary prefix)",
   },
   // Found by the derived scan, not by anyone remembering it existed.
   {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { ESSENTIAL_TOOLS_ORDER, maxToolsForTier, shrinkToolsForTier } from "../model-tiers.js";
+import { ESSENTIAL_TOOLS_ORDER, maxToolsForTier, shrinkToolsForTier } from "./tier-tool-set.js";
 import type { ToolDefinition } from "../types.js";
 
 // Live failure 2026-09-08 (qwen3.6:27b, medium tier): asked to deploy using a

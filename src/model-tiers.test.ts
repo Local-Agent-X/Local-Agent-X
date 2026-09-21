@@ -13,12 +13,7 @@
  * model actually pays.
  */
 import { describe, expect, it } from "vitest";
-import {
-  COMPACT_PARAM_DESCRIPTION_MAX,
-  ESSENTIAL_TOOLS_ORDER,
-  compactSchemaDescriptions,
-  shrinkToolsForTier,
-} from "./model-tiers.js";
+import { COMPACT_PARAM_DESCRIPTION_MAX, ESSENTIAL_TOOLS_ORDER, compactSchemaDescriptions, shrinkToolsForTier } from "./tools/tier-tool-set.js";
 import { toolManifestTokens } from "./context-manager/request-fit.js";
 import { collectArgViolations } from "./tool-execution/arg-validation.js";
 import { allTools } from "./tools/registry-build.js";

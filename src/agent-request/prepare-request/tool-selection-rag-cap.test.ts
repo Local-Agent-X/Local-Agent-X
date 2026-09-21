@@ -17,7 +17,7 @@ import { beforeEach, afterEach, describe, it, expect } from "vitest";
 import { _resetSessionToolsForTests, selectTools } from "./tool-selection.js";
 import { _setToolRAGForTests } from "../../tools/tool-rag.js";
 import { applyAudiences } from "../../tools/audience-map.js";
-import { ESSENTIAL_TOOLS_ORDER } from "../../model-tiers.js";
+import { ESSENTIAL_TOOLS_ORDER } from "../../tools/tier-tool-set.js";
 import type { ToolDefinition } from "../../types.js";
 
 /** Long descriptions on purpose: the weak tier truncates them, and that half

@@ -158,7 +158,8 @@ export async function selectTools(input: ToolSelectionInput): Promise<ToolSelect
   // not hold either — `loaded` is re-derived below from the RAW catalog, so it
   // can carry an unavailable tool into the schema (fail-open, see the block at
   // the availability-gate note further down).
-  const { classifyModel, shrinkToolsForTier } = await import("../../model-tiers.js");
+  const { classifyModel } = await import("../../model-tiers.js");
+  const { shrinkToolsForTier } = await import("../../tools/tier-tool-set.js");
   const tier = classifyModel(input.resolvedModel) as Tier;
 
   // THE PER-TOOL AVAILABILITY GATE DOES NOT RUN IN THIS FUNCTION. isToolAvailable()
@@ -268,7 +269,7 @@ export async function selectTools(input: ToolSelectionInput): Promise<ToolSelect
   // unchanged. The filter+RAG above already picked the message-relevant tools;
   // shrink preserves essentials, and we keep tool_search so the model can still
   // reach the rest (Google's "dynamic tool selection").
-  const { toolCapTierForProvider, GEMINI_STRONG_TOOL_CAP } = await import("../../model-tiers.js");
+  const { toolCapTierForProvider, GEMINI_STRONG_TOOL_CAP } = await import("../../tools/tier-tool-set.js");
   const capTier = toolCapTierForProvider(input.resolvedProvider, input.resolvedModel);
   if (!isBridge && capTier !== tier) {
     const before = tools.length;

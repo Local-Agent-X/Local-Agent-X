@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { ESSENTIAL_TOOLS_ORDER, maxToolsForTier, shrinkToolsForTier } from "../model-tiers.js";
+import { ESSENTIAL_TOOLS_ORDER, maxToolsForTier, shrinkToolsForTier } from "./tier-tool-set.js";
 import { binaryContainerRejection } from "./syntax-validate.js";
 import type { ToolDefinition } from "../types.js";
 

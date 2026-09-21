@@ -272,7 +272,10 @@
             "cleanup/legacy/notes.md"
           ]
         }
-      ]
+      ],
+      "approvals": {
+        "approveWhenAllPathsMatch": "^(?!.*cleanup/legacy).*[.]tmp$"
+      }
     },
     {
       "id": "multi-page-site-match",
@@ -647,6 +650,9 @@
             "client-data/tmp/export-scratch.tmp",
             "client-data/originals/signed-contract-2026.md"
           ]
+        },
+        {
+          "type": "noApprovalCard"
         }
       ]
     },
@@ -815,7 +821,10 @@
             "client-data/tmp/thumbnail-cache.tmp"
           ]
         }
-      ]
+      ],
+      "approvals": {
+        "approveWhenAllPathsMatch": "client-data/tmp/"
+      }
     }
   ]
 }

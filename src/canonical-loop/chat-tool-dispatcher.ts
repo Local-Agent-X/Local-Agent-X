@@ -59,6 +59,9 @@ export interface ChatToolDispatcherOptions {
   runId?: string;
   onEvent?: (event: ServerEvent) => void;
   signal?: AbortSignal;
+  /** The model driving this op. Tool-execution floors that depend on the
+   *  model's declared tier (the un-named delete floor) read it from here. */
+  modelId?: string;
   /** Durable runtime owner callbacks. They complete before process-local state widens. */
   onToolsAugmented?: (tools: ToolDefinition[]) => void;
   onRuntimeStateChange?: () => void;
@@ -114,6 +117,7 @@ export function makeChatToolDispatcher(opts: ChatToolDispatcherOptions): ToolDis
     opts.runId,
     opts.opId,
     opts.callContext ?? "api",
+    opts.modelId,
   );
 
   const errorResult = (call: ToolCall, e: unknown, durationMs: number): ToolDispatchResult => ({

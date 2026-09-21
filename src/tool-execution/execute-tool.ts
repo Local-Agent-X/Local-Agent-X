@@ -14,6 +14,7 @@ import { resolvePhase } from "./resolve-tool.js";
 import { enforcePolicyPhase } from "./enforce-policy.js";
 import { dedupCheckPhase, dedupRecordPhase } from "./dedup-check.js";
 import { requireApprovalPhase } from "./require-approval.js";
+import { preauthorizeUnnamedDeletes } from "./unnamed-delete-preauth.js";
 import { captureRollbackPhase } from "./capture-rollback.js";
 import { emitTraceStartPhase, emitTraceCompletePhase } from "./emit-trace.js";
 import { runSandboxedPhase } from "./run-sandboxed.js";
@@ -234,8 +235,16 @@ export async function executeToolCalls(
   runId?: string,
   operationId?: string,
   callContext: CallContext = "api",
+  /** The model driving this dispatch, when the caller knows it. Decides
+   *  whether the un-named delete floor applies (profile tier B/C). */
+  modelId?: string,
 ): Promise<ChatCompletionMessageParam[]> {
   const results: ChatCompletionMessageParam[] = [];
+  // ONE card for every delete in this turn whose target the user did not
+  // name, asked before anything dispatches; each call collects its answer in
+  // requireApprovalPhase. No-op for unattended runs, tier-A and unprofiled
+  // models, and turns with no such delete. See unnamed-delete-gate.ts.
+  await preauthorizeUnnamedDeletes({ toolCalls, priorMessages, modelId, callContext, sessionId, operationId, onEvent });
   const turn = newHeapGuardTurn();
   const width = maxParallelToolBatch();
 

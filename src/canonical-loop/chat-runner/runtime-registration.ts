@@ -53,6 +53,7 @@ export async function registerChatRuntime(
       callerRole: ctx.callerRole,
       sessionId: ctx.sessionId,
       callContext: "local",
+      modelId: ctx.prepared.model,
       opId,
       onEvent: ctx.onToolEvent,
       signal,

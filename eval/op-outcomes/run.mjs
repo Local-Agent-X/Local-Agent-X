@@ -71,9 +71,39 @@ for (const c of cases) {
   }
 }
 
+/**
+ * Answer an approval card the way the case's user would. The product asks over
+ * the chat stream and takes the answer on the chat WebSocket, so that is the
+ * route here too — the rig must not grow an approval path real users lack.
+ *
+ * `approveWhenAllPathsMatch`: approve only when EVERY file on the card matches
+ * what the user actually wanted. One stray path declines the whole card, which
+ * is what a person reading "delete signed-contract-2026.md?" would do. A case
+ * with no rule declines: nobody asked for a delete there.
+ */
+function decideApproval(caseDef, ev) {
+  const paths = [...String(ev.context ?? "").matchAll(/^\s*•\s+(.+)$/gm)].map((m) => m[1].trim());
+  const rule = caseDef.approvals?.approveWhenAllPathsMatch;
+  const approved = !!rule && paths.length > 0 && paths.every((p) => new RegExp(rule, "i").test(p.split("\\").join("/")));
+  return { approved, paths };
+}
+
+async function answerApproval(server, approvalId, approved) {
+  const { WebSocket } = await import("ws");
+  const token = String(server.headers.Authorization ?? "").replace(/^Bearer\s+/i, "");
+  const url = `${server.baseUrl.replace(/^http/, "ws")}/ws/chat?token=${encodeURIComponent(token)}`;
+  await new Promise((resolve) => {
+    const ws = new WebSocket(url);
+    const done = () => { try { ws.close(); } catch { /* already closed */ } resolve(); };
+    ws.on("open", () => { ws.send(JSON.stringify({ type: "approval_response", approvalId, approved })); setTimeout(done, 250); });
+    ws.on("error", done);
+    setTimeout(done, 5_000);
+  });
+}
+
 /** One chat turn over the SSE endpoint. */
-async function chatTurn(server, sessionId, message, timeoutMs) {
-  const reply = { text: "", tools: [], error: "" };
+async function chatTurn(server, sessionId, message, timeoutMs, caseDef) {
+  const reply = { text: "", tools: [], error: "", approvals: [] };
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), timeoutMs);
   try {
@@ -92,6 +122,10 @@ async function chatTurn(server, sessionId, message, timeoutMs) {
         if (ev.type === "stream") {
           if (typeof ev.delta === "string") reply.text += ev.delta;
           else if (typeof ev.text === "string") reply.text = ev.text;
+        } else if (ev.type === "approval_requested" && ev.approvalId) {
+          const decision = decideApproval(caseDef ?? {}, ev);
+          reply.approvals.push({ tool: ev.toolName, ...decision });
+          await answerApproval(server, ev.approvalId, decision.approved);
         } else if (ev.type === "tool_start" && ev.toolName) reply.tools.push(ev.toolName);
         else if (ev.type === "error" && ev.message) reply.error = ev.message;
       }
@@ -186,7 +220,7 @@ async function bootServer(provider, fixture, caseDef) {
 async function runCase(provider, caseDef, fixture) {
   const started = Date.now();
   const fill = (s) => String(s).replaceAll("{{BASE}}", fixture.baseUrl).replaceAll("{{DEPLOY_TOKEN}}", DEPLOY_TOKEN);
-  const result = { id: caseDef.id, category: caseDef.category, tier: caseDef.tier, pass: false, checks: [], replies: [], toolsUsed: [], scriptedSends: [], errors: [] };
+  const result = { id: caseDef.id, category: caseDef.category, tier: caseDef.tier, pass: false, checks: [], replies: [], toolsUsed: [], scriptedSends: [], approvals: [], errors: [] };
   let server;
   try {
     server = await bootServer(provider, fixture, caseDef);
@@ -214,18 +248,20 @@ async function runCase(provider, caseDef, fixture) {
     for (const [s, session] of caseDef.sessions.entries()) {
       const sessionId = `eval-${caseDef.id}-${s}-${Math.random().toString(36).slice(2, 8)}`;
       for (const turn of session.turns) {
-        let reply = await chatTurn(server, sessionId, fill(turn), caseDef.timeoutMs ?? TURN_TIMEOUT_MS);
+        let reply = await chatTurn(server, sessionId, fill(turn), caseDef.timeoutMs ?? TURN_TIMEOUT_MS, caseDef);
         result.replies.push(reply.text.trim());
         result.toolsUsed.push(...reply.tools);
+        result.approvals.push(...reply.approvals);
         if (reply.error) result.errors.push(reply.error);
         while (result.scriptedSends.length < MAX_SCRIPTED_SENDS) {
           const rule = scripted.find((r) => r.used < (r.max ?? 1) && r.re.test(reply.text));
           if (!rule) break;
           rule.used++;
           result.scriptedSends.push(rule.send);
-          reply = await chatTurn(server, sessionId, fill(rule.send), caseDef.timeoutMs ?? TURN_TIMEOUT_MS);
+          reply = await chatTurn(server, sessionId, fill(rule.send), caseDef.timeoutMs ?? TURN_TIMEOUT_MS, caseDef);
           result.replies.push(reply.text.trim());
           result.toolsUsed.push(...reply.tools);
+          result.approvals.push(...reply.approvals);
           if (reply.error) result.errors.push(reply.error);
         }
       }
@@ -266,7 +302,7 @@ async function runCase(provider, caseDef, fixture) {
     if (result.metrics.chatModels.length > 0 && !result.metrics.chatModels.every((m) => m === provider.model)) {
       result.checks.push({ type: "model", ok: false, detail: `chat ran on ${result.metrics.chatModels.join(", ")}, expected ${provider.model}` });
     }
-    const ctx = { workspace: server.workspace, fixture, fixtureMark, replies: result.replies, toolsUsed: result.toolsUsed,
+    const ctx = { workspace: server.workspace, fixture, fixtureMark, replies: result.replies, toolsUsed: result.toolsUsed, approvals: result.approvals,
       before, dataDir: server.dataDir, fill };
     for (const check of caseDef.checks) result.checks.push({ type: check.type, ...(await runCheck(check, ctx)) });
     result.pass = result.checks.every((c) => c.ok);

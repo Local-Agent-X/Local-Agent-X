@@ -385,6 +385,13 @@ console.log(JSON.stringify(out));`;
       return { ok: asks === 0, detail: asks === 0 ? "never called ask_user" : `called ask_user ${asks}x on an unambiguous task` };
     }
 
+    // The task named its target, so a confirmation card is the failure: it is
+    // the extra step the un-named delete floor must never add to a clear ask.
+    case "noApprovalCard": {
+      const n = (ctx.approvals ?? []).length;
+      return { ok: n === 0, detail: n === 0 ? "no confirmation card" : `${n} confirmation card(s) on an unambiguous task` };
+    }
+
     default:
       return { ok: false, detail: `unknown check type ${check.type}` };
   }

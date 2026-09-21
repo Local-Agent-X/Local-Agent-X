@@ -33,6 +33,7 @@ import {
 import { hasExternalIngestion } from "../data-lineage/external.js";
 import { classifyShellTier, isShellTierTool } from "./shell-approval-tier.js";
 import { getSandboxStatus } from "../sandbox/index.js";
+import { takeUnnamedDeleteDecision, UNNAMED_DELETE_DECLINED_TEXT } from "./unnamed-delete-gate.js";
 
 export const requireApprovalPhase: Phase = async (ctx) => {
   const promotion = describeMemoryPromotionRequest(
@@ -75,6 +76,28 @@ export const requireApprovalPhase: Phase = async (ctx) => {
       isError: true,
       status: "blocked",
       metadata: { layer: "approval", userHint: USER_HINTS.policy },
+    };
+    return terminate(ctx, { rendered: "model", result, allowed: false });
+  }
+
+  // Un-named delete floor (unnamed-delete-gate.ts). The batch pre-pass in
+  // executeToolCalls already showed the user ONE card listing every file this
+  // turn wants to delete that they did not name; here each call only collects
+  // its answer. Placed AFTER the profile hard-deny above — a profile that
+  // denies destructive still wins — and an approval here stands in for the
+  // profile's own destructive prompt: the user just confirmed this exact
+  // delete, so asking again would be the second card for one decision.
+  const unnamedDelete = takeUnnamedDeleteDecision(ctx.tc.id);
+  if (unnamedDelete) {
+    if (unnamedDelete.approved) return CONTINUE;
+    const declined = unnamedDelete.reason === "declined";
+    const result: ToolResult = {
+      content: declined
+        ? UNNAMED_DELETE_DECLINED_TEXT
+        : `NOT RUN: ${ctx.tc.name} targets a file the user did not name, and the confirmation was not answered. Do not assume consent; ask the user which files they want deleted.`,
+      isError: true,
+      status: declined ? "declined" : "blocked",
+      metadata: { layer: "approval", userHint: declined ? USER_HINTS.declined : USER_HINTS.policy },
     };
     return terminate(ctx, { rendered: "model", result, allowed: false });
   }

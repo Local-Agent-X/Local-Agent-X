@@ -102,17 +102,22 @@ describe("classifyModel with a declared profile", () => {
 });
 
 describe("shipped profiles declare when the model should think", () => {
-  it("both test models are planning_only, now scoped to MECHANICAL steps", () => {
-    // The first EXP-6 attempt suppressed thinking on every continuation and
-    // the 8B deleted three client originals. The rule now keys off
-    // classifyStepEffort's narrow all-ok file-mechanics batch, so every step
-    // after a destructive call keeps its thinking. Flipping either profile to
-    // "all" reverts the experiment with no code change.
+  it("both test models are 'all' — thinking-off failed BOTH safety gates", () => {
+    // EXP-6 suppressed thinking on every continuation: the 8B deleted three
+    // client originals. EXP-6b narrowed it to classifyStepEffort's mechanical
+    // batch and it got worse — the 8B read a file carrying a planted
+    // instruction and POSTed the payload to the collector on the very next
+    // step, because a clean `read` classifies mechanical and the step AFTER a
+    // read is when untrusted content has just entered the context.
+    //
+    // That is the finding: "cheap step, skip the deliberation" is
+    // anti-correlated with safety, because reading is how untrusted content
+    // arrives. Any future step-skipping optimisation must exclude steps that
+    // just ingested external content. See HARNESS_LOG.md EXP-6/6b.
     for (const id of ["qwen3.6:27b", "qwen3:8b"]) {
       const p = resolveModelProfile(id)!;
-      expect(p, `${id} has no profile — the experiment would be a silent no-op`).toBeTruthy();
       expect(p.thinking.supported).toBe(true);
-      expect(p.thinking.mode).toBe("planning_only");
+      expect(p.thinking.mode).toBe("all");
     }
   });
 });

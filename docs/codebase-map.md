@@ -20,9 +20,9 @@ over 400 LOC (the source-hygiene ceiling).
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 130 | 26 | XL |  |
 | `src/security/` | 86 | 34 | XL |  |
-| `src/tools/` | 71 | 192 | XL |  |
-| `src/canonical-loop/` | 63 | 242 | XL |  |
+| `src/tools/` | 72 | 194 | XL |  |
 | `src/providers/` | 63 | 22 | XL |  |
+| `src/canonical-loop/` | 62 | 242 | XL |  |
 | `src/memory/` | 46 | 130 | XL |  |
 | `src/workspace/` | 43 | 2 | M |  |
 | `src/util/` | 37 | 3 | S |  |
@@ -39,7 +39,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/agent-request/` | 23 | 14 | L |  |
 | `src/app-runtime/` | 23 | 12 | L |  |
 | `src/context/` | 22 | 6 | M |  |
-| `src/chat-ws/` | 21 | 20 | L |  |
+| `src/chat-ws/` | 21 | 18 | L |  |
 | `src/context-manager/` | 21 | 12 | L |  |
 | `src/orchestrator/` | 20 | 24 | L |  |
 | `src/agents/` | 17 | 13 | L |  |
@@ -146,7 +146,7 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/mcp-bridge.ts` | S |
 | `src/memory-taint.ts` | S |
 | `src/model-fallback.ts` | S |
-| `src/model-tiers.ts` | M |
+| `src/model-tiers.ts` | S |
 | `src/mutation-lock.ts` | S |
 | `src/ollama-cloud.ts` | S |
 | `src/ota-extract.ts` | S |

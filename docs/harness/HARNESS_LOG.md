@@ -485,8 +485,22 @@ decision behind it, so a deliberate value and a default one were indistinguishab
 
 ### What to try next, not now
 
-Scope thinking-off to steps that cannot destroy anything, rather than to all continuations. `classifyStepEffort`
-already encodes a narrow, all-ok, eight-file-tool notion of "mechanical" — the same criterion would have kept
-thinking ON before every one of those five `delete_file` calls. Reusing it beats inventing a second classifier,
-and it tests the real hypothesis (thinking is wasted on mechanical continuations) rather than the broader one
-that just failed (thinking is wasted on all continuations).
+Scope thinking-off to mechanical continuations rather than all continuations. `classifyStepEffort` already
+encodes a narrow, all-ok, eight-file-tool notion of "mechanical". Reusing it beats inventing a second classifier,
+and it tests the real hypothesis (thinking is wasted on MECHANICAL continuations) rather than the broader one
+that just failed.
+
+**Correction, same day.** I first wrote here that the narrow criterion "would have kept thinking ON before every
+one of those five `delete_file` calls". That was asserted, not checked, and replaying the run against the rule
+shows it is false:
+
+| turn | preceded by | narrow rule | called |
+|---|---|---|---|
+| 1 | glob | thinking OFF | glob |
+| 2 | glob | **thinking OFF** | **delete_file** |
+| 3–6 | delete_file | thinking ON | delete_file |
+
+`delete_file` is not in MECHANICAL_TOOLS, so every step AFTER a delete keeps its thinking — but the step after a
+clean `glob` does not, and that is the step that issued the FIRST delete. The narrow rule cuts the exposure from
+five unthinking destructive calls to one; it does not remove it. Whether that one matters is a question for a
+measurement, not for another assertion.

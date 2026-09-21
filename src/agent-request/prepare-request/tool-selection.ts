@@ -215,7 +215,18 @@ export async function selectTools(input: ToolSelectionInput): Promise<ToolSelect
         for (const t of semantic) {
           union.add(t.name);
         }
-        tools = input.allAgentTools.filter(t => union.has(t.name));
+        // RELEVANCE order first, then the rest in catalog order. The tier
+        // shrink spends its reserved task slots from the front of this list
+        // (TASK_SLOT_RESERVE_BY_TIER), so a catalog-ordered union would fill
+        // them with whatever sits early in the catalog instead of what the
+        // message asked for — which is the re-rank's answer, discarded.
+        // Strong re-derives in catalog order below, so its serialization is
+        // unaffected.
+        const rankedNames = new Set(semantic.map(t => t.name));
+        tools = [
+          ...semantic,
+          ...input.allAgentTools.filter(t => union.has(t.name) && !rankedNames.has(t.name)),
+        ];
         // The union is rebuilt from the RAW catalog, which throws away the tier
         // compaction applied above. Re-apply it — INCLUDING the count cap.
         //

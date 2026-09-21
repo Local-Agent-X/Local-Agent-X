@@ -133,3 +133,70 @@ describe("a warm index cannot inflate a capped tier", () => {
     expect(picked.length).toBeGreaterThan(30);
   });
 });
+
+/**
+ * The cap decides SIZE. It must not decide capability independently of the
+ * task, and it must never void a guarantee the product already made.
+ *
+ * Both failures are measured, EXP-7, 2026-09-21:
+ *  - qwen3:8b, "delete exactly this file": 3/3 → 0/3 with NO tool called at
+ *    all, because delete_file is in no essentials position and a weak model
+ *    had zero slots left for the task.
+ *  - qwen3.6:27b, restraint: delete_file survived the cap and restore_file
+ *    did not, so three recovered deletions became three unrecovered ones and
+ *    unsafe_action went 0 → 2.
+ */
+describe("the cap reserves room for the task", () => {
+  it("a weak model gets message-relevant tools, not just the top of a static list", async () => {
+    const all = bigCatalog();
+    all.push(...[tool("delete_file"), tool("restore_file")]);
+    applyAudiences(all);
+    // A warm index that ranks the deletion tool first, the way a real
+    // re-rank would for a deletion request.
+    _setToolRAGForTests({
+      isReady: true,
+      select: async (_m: string, t: ToolDefinition[]) => {
+        const del = t.filter(x => x.name === "delete_file");
+        return [...del, ...t.filter(x => x.name !== "delete_file")];
+      },
+    });
+    const picked = await selectFor("qwen3:8b", all);
+    const names = picked.map(t => t.name);
+    expect(names, `got: ${names.join(",")}`).toContain("delete_file");
+  });
+
+  it("a tool that promises an undo brings the undo, cap or no cap", async () => {
+    const all = bigCatalog();
+    all.push(...[tool("delete_file"), tool("restore_file")]);
+    applyAudiences(all);
+    _setToolRAGForTests({
+      isReady: true,
+      select: async (_m: string, t: ToolDefinition[]) => {
+        const del = t.filter(x => x.name === "delete_file");
+        return [...del, ...t.filter(x => x.name !== "delete_file")];
+      },
+    });
+    for (const model of ["qwen3:8b", "qwen3.6:27b"]) {
+      _resetSessionToolsForTests();
+      const names = (await selectFor(model, all)).map(t => t.name);
+      expect(names, `${model} got delete_file`).toContain("delete_file");
+      expect(names, `${model} shipped delete_file WITHOUT restore_file`).toContain("restore_file");
+    }
+  });
+
+  it("the core verbs still survive the reserve", async () => {
+    _setToolRAGForTests(warmIndexReturningAll());
+    const names = new Set((await selectFor("qwen3:8b", bigCatalog())).map(t => t.name));
+    for (const core of ["read", "write", "edit", "bash", "http_request"]) {
+      expect(names.has(core), `${core} was evicted by the task reserve`).toBe(true);
+    }
+  });
+
+  it("the reserve does not blow the size budget open again", async () => {
+    _setToolRAGForTests(warmIndexReturningAll());
+    const picked = await selectFor("qwen3:8b", bigCatalog());
+    // cap 8 + tool_search. Companions ride outside the cap by design, but
+    // none apply here, so this pins that the reserve only REDISTRIBUTES.
+    expect(picked.length, `got ${picked.length}`).toBeLessThanOrEqual(9);
+  });
+});

@@ -9,6 +9,7 @@
  */
 
 import { modelProfileTier } from "./local-runtimes/model-profile.js";
+import { companionsFor } from "./tools/tool-companions.js";
 
 export type ModelTier = "strong" | "medium" | "weak";
 
@@ -90,6 +91,30 @@ export function isMediumOrWeak(model: string): boolean {
  * again — that's the actual bug class, not the missing tool.
  */
 export const MEDIUM_INTENT_SLOTS = 2;
+
+/**
+ * Slots inside a tier's cap that the ESSENTIALS may not take, reserved for
+ * tools the MESSAGE actually calls for.
+ *
+ * ESSENTIAL_TOOLS_ORDER is 29 long and the weak cap is 8, so a weak model got
+ * the first 8 entries and nothing else — zero slots for the task. Measured
+ * 2026-09-21 (EXP-7, qwen3:8b): "delete exactly this file" went 3/3 → 0/3 and
+ * the model called NO tool at all, because `delete_file` is not in the
+ * essentials at any position and there was no room left for it to arrive. The
+ * re-rank computed which tools the task needed and the fill order threw the
+ * answer away.
+ *
+ * Weak reserves 3 of its 8: read/write/edit/bash/http_request stay
+ * guaranteed, and browser/self_edit/memory_save now have to be relevant to
+ * ship — which is the right trade at a cap this tight. Medium already has
+ * headroom (MEDIUM_INTENT_SLOTS) and its EXP-7 failure was a companion
+ * problem, not a headroom one, so it is left alone until measured.
+ */
+export const TASK_SLOT_RESERVE_BY_TIER: Readonly<Record<ModelTier, number>> = {
+  weak: 3,
+  medium: 0,
+  strong: 0,
+};
 
 /**
  * Gemini's OpenAI-compat endpoint cap. Historically this rode on the medium
@@ -315,20 +340,33 @@ export function shrinkToolsForTier<T extends TierShrinkable>(
   const kept: T[] = [];
   const seen = new Set<string>();
 
-  // 1. Pull essentials in priority order (from full catalog if needed)
+  // Essentials may not spend the whole budget: a tier with a tight cap needs
+  // room for what the MESSAGE asked for. See TASK_SLOT_RESERVE_BY_TIER.
+  const essentialBudget = Math.max(1, cap - (TASK_SLOT_RESERVE_BY_TIER[tier] ?? 0));
+
+  // 1. Essentials in priority order (from the full catalog if needed), but
+  //    only up to the essentials budget.
   for (const name of ESSENTIAL_TOOLS_ORDER) {
     const t = essentialSource.get(name);
     if (t && !seen.has(name)) { kept.push(maybeTruncate(t)); seen.add(name); }
-    if (kept.length >= cap) break;
+    if (kept.length >= essentialBudget) break;
   }
-  // 2. Then the user-intent-matched tools (keyword/RAG selections)
+  // 2. Then the message-relevant tools, in the order the caller ranked them.
   if (kept.length < cap) {
     for (const t of tools) {
       if (!seen.has(t.name)) { kept.push(maybeTruncate(t)); seen.add(t.name); }
       if (kept.length >= cap) break;
     }
   }
-  return withDiscovery(kept, essentialSource, seen, maybeTruncate);
+  // 3. Backfill any essentials the reserve held back, if relevance left room.
+  if (kept.length < cap) {
+    for (const name of ESSENTIAL_TOOLS_ORDER) {
+      const t = essentialSource.get(name);
+      if (t && !seen.has(name)) { kept.push(maybeTruncate(t)); seen.add(name); }
+      if (kept.length >= cap) break;
+    }
+  }
+  return withDiscovery(withCompanions(kept, essentialSource, seen, maybeTruncate), essentialSource, seen, maybeTruncate);
 }
 
 /**
@@ -348,6 +386,30 @@ export function shrinkToolsForTier<T extends TierShrinkable>(
  * Kept OUTSIDE the cap rather than added to ESSENTIAL_TOOLS_ORDER so it cannot
  * evict a capability at the weak tier, where the cap of 8 truncates mid-list.
  */
+/**
+ * A tool whose own output promises a counterpart brings that counterpart, cap
+ * or no cap. Same argument as withDiscovery below: a capability limit may
+ * decide how MUCH a model can do and must never void a guarantee the product
+ * already made. `delete_file` tells the user the file can be restored; EXP-7
+ * shipped that sentence without `restore_file` and the 27B's three recovered
+ * deletions became three unrecovered ones. See tools/tool-companions.ts.
+ */
+function withCompanions<T extends TierShrinkable>(
+  kept: T[],
+  source: Map<string, T>,
+  seen: Set<string>,
+  maybeTruncate: (t: T) => T,
+): T[] {
+  const needed = companionsFor(seen);
+  if (needed.length === 0) return kept;
+  const out = [...kept];
+  for (const name of needed) {
+    const t = source.get(name);
+    if (t) { out.push(maybeTruncate(t)); seen.add(name); }
+  }
+  return out;
+}
+
 function withDiscovery<T extends TierShrinkable>(
   kept: T[],
   source: Map<string, T>,

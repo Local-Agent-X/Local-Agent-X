@@ -19,7 +19,7 @@
   "parallelToolCalls": true,
   "thinking": {
     "supported": true,
-    "mode": "all",
+    "mode": "planning_only",
     "budgetTokens": null,
     "budgetMechanism": "max_tokens"
   },

@@ -9,7 +9,7 @@ import type { StreamOnceResult } from "./types.js";
 
 export function buildTurnTrace(args: {
   req: ProviderRequest;
-  thinking?: { mode: string; kind: string };
+  thinking?: { mode: string; step: string };
   result: StreamOnceResult;
   startedAt: number;
   promptOverWindow: boolean;

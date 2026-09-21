@@ -117,52 +117,38 @@ export function resolveStepReasoningEffort(
   stepEffortHint: TurnInput["stepEffortHint"],
   sessionEffort: ReasoningEffort | undefined,
   ceiling: ReasoningEffort = MECHANICAL_EFFORT_CEILING,
-  thinking?: { mode: ThinkingMode; kind: StepKind },
+  thinking?: { mode: ThinkingMode },
 ): WireReasoningEffort | undefined {
+  const mechanical = stepEffortHint === "mechanical";
   // A declared profile that says when this model should think outranks the
   // session depth, because it is a statement about the RUNTIME rather than a
-  // preference: qwen3.6 reasons on every /v1 call unless told not to, and on
-  // a continuation step that reasoning is pure cost. Measured on both test
-  // models: completion tokens per tool step 57 → 26 (27B) and 91 → 21 (8B),
-  // and with a tight budget the thinking turn emitted NO tool call at all
-  // while the thinking-off turn emitted a clean one.
+  // preference: qwen3.6 reasons on every /v1 call unless told not to, and on a
+  // mechanical continuation that reasoning is pure cost. Measured on both test
+  // models: completion tokens per tool step 57 -> 26 (27B) and 91 -> 21 (8B).
+  //
+  // "planning_only" keys off MECHANICAL, not merely "continuing after tools".
+  // The broader reading shipped first and regressed the unsafe-action gate:
+  // the 8B deleted three client originals across five delete_file calls, every
+  // one on a suppressed step. Anything whose last batch was not an all-ok
+  // file-mechanics read keeps its thinking, which covers every step after a
+  // destructive call. It does NOT cover the step right after a clean glob —
+  // that one still classifies mechanical, and in the failure it was the step
+  // that issued the FIRST delete. Known exposure, measured rather than
+  // assumed; see HARNESS_LOG.md EXP-6.
+  //
   // LAX_STEP_EFFORT=off is this module's kill switch for ALL per-step effort
   // shaping, so it covers the profile rule too — one switch, not two.
   if (process.env.LAX_STEP_EFFORT !== "off" && thinking
-    && (thinking.mode === "off" || (thinking.mode === "planning_only" && thinking.kind === "continuation"))) {
+    && (thinking.mode === "off" || (thinking.mode === "planning_only" && mechanical))) {
     return THINKING_OFF;
   }
-  return stepEffortHint === "mechanical"
+  return mechanical
     ? capEffort(sessionEffort ?? DEFAULT_REASONING_EFFORT, ceiling)
     : sessionEffort;
 }
 
 /** What the profile says about when this model should think. */
 export type ThinkingMode = "all" | "planning_only" | "off";
-export type StepKind = "planning" | "continuation";
-
-/**
- * Is this step the model CONTINUING after tool results, or deciding what to
- * do? Deliberately broader than classifyStepEffort's "mechanical": that one
- * asks whether a step can be done with LESS thinking and so demands ok
- * results from eight named file tools, while this one only asks whether the
- * model is mid-task. A failed `bash` result still wants the model's judgment
- * about depth, but it does not want a fresh chain of thought re-deriving the
- * plan — the plan is already in the transcript above it.
- *
- * Turn 0 and any pending redirect are planning: a redirect is a new user
- * instruction, which is exactly when thinking earns its cost.
- */
-export function classifyStepKind(
-  input: Pick<TurnInput, "turnIdx" | "messages" | "pendingRedirect">,
-): StepKind {
-  if (input.pendingRedirect) return "planning";
-  if (input.turnIdx <= 0) return "planning";
-  const messages = input.messages;
-  return messages.length > 0 && messages[messages.length - 1].role === "tool_result"
-    ? "continuation"
-    : "planning";
-}
 
 // Assistant rows finalize tool calls as `content.toolCalls:
 // [{ id, name, arguments }]` (openai-compat.ts / codex.ts message_finalized;

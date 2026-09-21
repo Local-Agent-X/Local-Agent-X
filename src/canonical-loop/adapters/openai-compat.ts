@@ -49,7 +49,7 @@ import { resolveLocalCap } from "./openai-compat/local-cap.js";
 import { streamOnce, applyToolCallTextFallback } from "./openai-compat/stream-once.js";
 import { assessOpenAiCompatPreflight, promptExceedsMeasuredWindow } from "./openai-compat/request-preflight.js";
 import { buildTurnTrace } from "./openai-compat/turn-trace.js";
-import { resolveStepReasoningEffort, type StepKind, type ThinkingMode } from "../step-effort.js";
+import { resolveStepReasoningEffort, type ThinkingMode } from "../step-effort.js";
 import { resolveModelProfile } from "../../local-runtimes/model-profile.js";
 import { classifyModelStop } from "./model-stop.js";
 
@@ -110,19 +110,22 @@ export function shouldRescueTextToolCalls(baseURL: string | undefined): boolean 
  * travels with the model rather than living in a name regex here. A model with
  * no profile — every cloud model today — returns undefined and keeps the
  * existing behavior exactly, which is what confines this to local runtimes.
+ *
+ * `step` is recorded for the trace only: a trace that shows the resolved
+ * effort without the classification behind it cannot tell a deliberate value
+ * from a default one, which cost an hour the first time EXP-6 ran.
  */
 function profileThinking(
   model: string | undefined,
   input: TurnInput,
-): { mode: ThinkingMode; kind: StepKind } | undefined {
+): { mode: ThinkingMode; step: "mechanical" | "standard" } | undefined {
   if (!model) return undefined;
   const profile = resolveModelProfile(model);
   if (!profile?.thinking.supported) return undefined;
-  // input.stepKind, NOT a fresh classification: by the time an adapter runs,
-  // the situational digest has appended a trailing user row and the
-  // tool_result batch is no longer last, so classifying here reports
-  // "planning" on every single step. The loop classifies before that append.
-  return { mode: profile.thinking.mode, kind: input.stepKind ?? "planning" };
+  return {
+    mode: profile.thinking.mode,
+    step: input.stepEffortHint === "mechanical" ? "mechanical" : "standard",
+  };
 }
 
 export class OpenAICompatAdapter implements Adapter {

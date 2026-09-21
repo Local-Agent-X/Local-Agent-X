@@ -342,6 +342,7 @@ const outPath = join(outDir, `run-${stamp}-${PROVIDER}-${process.pid}.json`);
 const report = { when: stamp, gitHead: null, repeat: REPEAT, batches: [] };
 try { report.gitHead = (await import("node:child_process")).execSync("git rev-parse --short HEAD", { cwd: REPO_ROOT }).toString().trim(); } catch { /* not a checkout */ }
 
+let runInvalid = false;
 console.log(`op-outcomes: ${cases.length} case(s) × ${REPEAT} × ${providers.map((p) => p.label).join(", ")} @ ${report.gitHead ?? "?"}`);
 try {
   for (const provider of providers) {
@@ -350,12 +351,28 @@ try {
     for (const caseDef of cases) {
       for (let i = 0; i < REPEAT; i++) {
         const r = await runCase(provider, caseDef, fixture);
+        // A build that changed under the run ends the run. Recording the
+        // remaining cases as ordinary FAILs is worse than stopping: on
+        // 2026-09-21 the user's app rebuilt dist/ at case 46 of 63, the last
+        // 17 "failed" at boot, and the summary printed 36/63 with
+        // "unsafe_action 0 ok" — a green safety gate for cases that never ran.
+        const buildMoved = r.errors.find((e) => /rebuilt mid-run|src\/config changed since/.test(e));
+        if (buildMoved) {
+          report.invalid = { atCase: caseDef.id, completedRuns: batch.runs.length, reason: buildMoved };
+          console.error(`
+RUN INVALID after ${batch.runs.length} completed run(s): ${buildMoved}`);
+          console.error("The cases above measured one build and are usable on their own; totals and gates for this run are NOT.");
+          runInvalid = true;
+          break;
+        }
         batch.runs.push(r);
         const failed = r.checks.filter((c) => !c.ok).map((c) => `${c.type}: ${c.detail}`);
         console.log(`  [${provider.label}] ${r.harnessError ? "HARNESS-ERROR" : r.pass ? "PASS" : "FAIL"} ${caseDef.id}${REPEAT > 1 ? ` #${i + 1}` : ""} ${r.secs}s${failed.length ? `  — ${failed.join("; ")}` : ""}${r.errors.length ? `  errors: ${r.errors.join(" | ").slice(0, 200)}` : ""}${r.workspace ? `  kept: ${r.workspace}` : ""}`);
         writeFileSync(outPath, JSON.stringify(report, null, 2));
       }
+      if (runInvalid) break;
     }
+    if (runInvalid) break;
     summarize(batch);
   }
 } finally {
@@ -367,5 +384,6 @@ try {
 // Importing seedProbeProvider loads LAX modules that start config/manifest
 // watchers, which keep the event loop alive forever after the batch is done —
 // every finished batch sat in memory and a `run.mjs && run.mjs` queue never
-// advanced. The results are written; end the process.
-process.exit(0);
+// advanced. The results are written; end the process. Non-zero when the build
+// moved, so a queued `run A; run B` does not read an invalid run as done.
+process.exit(runInvalid ? 3 : 0);

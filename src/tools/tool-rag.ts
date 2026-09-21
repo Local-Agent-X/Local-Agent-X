@@ -160,18 +160,22 @@ export class ToolRAG {
     }
 
     // Score every tool. Pinned/MCP tools always make the cut.
-    const scored: Array<{ name: string; score: number; pinned: boolean }> = [];
+    // `score` decides MEMBERSHIP (a pin floors it at 1.0 so a pinned tool always
+    // makes the cut). `sim` is the raw similarity and decides ORDER. They have
+    // to be separate: corePinned is every main-chat tool, so on score alone
+    // they all tie at 1.0 and the "ranking" is whatever order they were in.
+    const scored: Array<{ name: string; score: number; sim: number; pinned: boolean }> = [];
     const vecByName = new Map(this.vectors.map(v => [v.name, v.vec]));
     for (const t of allTools) {
       const v = vecByName.get(t.name);
       const isPinned = pinned.has(t.name) || (opts.includeMCP === true && t.name.startsWith("mcp_"));
       if (!v) {
         // Tool not in index (e.g., added after build) — include by default to be safe
-        scored.push({ name: t.name, score: isPinned ? 1.0 : 0.5, pinned: isPinned });
+        scored.push({ name: t.name, score: isPinned ? 1.0 : 0.5, sim: 0, pinned: isPinned });
         continue;
       }
       const sim = cosine(queryVec, v);
-      scored.push({ name: t.name, score: isPinned ? Math.max(sim, 1.0) : sim, pinned: isPinned });
+      scored.push({ name: t.name, score: isPinned ? Math.max(sim, 1.0) : sim, sim, pinned: isPinned });
     }
 
     // Sort by score desc, take topK (pinned always included first)
@@ -184,7 +188,22 @@ export class ToolRAG {
       keep.add(s.name);
     }
 
-    return allTools.filter(t => keep.has(t.name));
+    // Most relevant FIRST. This used to return `allTools.filter(...)`, i.e.
+    // catalog order: the similarity chose the set and was then discarded, so
+    // no caller could tell the best match from the last one. The tier shrink
+    // fills its reserved task slots from the front of this list, and with
+    // catalog order a "delete this file" request gave a weak model
+    // edit_lines, multi_edit and bulk_replace — delete_file is the next entry
+    // in the catalog and missed by one (EXP-7c, 2026-09-21: that case 0/9
+    // across three capped runs against 6/6 uncapped). Ties keep catalog order,
+    // so the result is still deterministic for a given message.
+    const simByName = new Map(scored.map(s => [s.name, s.sim]));
+    const catalogIndex = new Map(allTools.map((t, i) => [t.name, i]));
+    return allTools
+      .filter(t => keep.has(t.name))
+      .sort((a, b) =>
+        (simByName.get(b.name)! - simByName.get(a.name)!) ||
+        (catalogIndex.get(a.name)! - catalogIndex.get(b.name)!));
   }
 
   get isReady(): boolean { return this.ready; }

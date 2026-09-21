@@ -32,8 +32,7 @@ import { isDeniedForDelegatedWorker } from "../ops/tools/delegated-toolset.js";
 import { enqueueBridgeMedia } from "../bridge-media-queue.js";
 import { createLogger } from "../logger.js";
 import type { CallContext } from "../tool-execution/context.js";
-import { TOOL_COMPANIONS } from "../tools/tool-companions.js";
-import { augmentCompanions, augmentFromToolSearch } from "./tool-augmentation.js";
+import { augmentFromToolSearch } from "./tool-augmentation.js";
 
 const logger = createLogger("canonical-loop.chat-tool-dispatcher");
 
@@ -301,24 +300,6 @@ function shapeCallResult(
     } catch (e) {
       if (opts.onToolsAugmented) throw e;
       logger.warn(`[augment] tool_search augmentation failed: ${(e as Error).message}`);
-    }
-  }
-
-  // A tool whose RESULT promises a counterpart brings that counterpart into
-  // the op, at the moment the promise is made. Selection-time closure is not
-  // enough: the schema is advisory, and a model can call a tool that was
-  // never offered. Measured 2026-09-21 (EXP-7b, qwen3.6:27b): `delete_file`
-  // was absent from all 12 turns' schemas, the model called it five times
-  // anyway and dispatch ran it, and the files were gone with no `restore_file`
-  // anywhere to undo them. Destructive verbs are guessable across harnesses;
-  // product-specific recovery verbs are not, so a size limit takes away the
-  // undo and leaves the delete.
-  if (opts.opId && canonicalStatus === "ok" && TOOL_COMPANIONS[call.tool]) {
-    try {
-      augmentCompanions(call.tool, opts.opId, toolMap, opts.onToolsAugmented, opts.callContext);
-    } catch (e) {
-      if (opts.onToolsAugmented) throw e;
-      logger.warn(`[augment] companion augmentation failed: ${(e as Error).message}`);
     }
   }
 

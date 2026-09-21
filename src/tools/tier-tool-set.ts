@@ -27,14 +27,15 @@ export const MEDIUM_INTENT_SLOTS = 2;
  * re-rank computed which tools the task needed and the fill order threw the
  * answer away.
  *
- * Weak reserves 3 of its 8: read/write/edit/bash/http_request stay
- * guaranteed, and browser/self_edit/memory_save now have to be relevant to
- * ship — which is the right trade at a cap this tight. Medium already has
- * headroom (MEDIUM_INTENT_SLOTS) and its EXP-7 failure was a companion
- * problem, not a headroom one, so it is left alone until measured.
+ * Set to 0 everywhere after EXP-7b–7d: a reserve only helps if something can
+ * rank tools for a message, and in practice the picks were wrong — "delete
+ * exactly this file" got start_app_build/browser/presentation, and "remember
+ * this" lost memory_save and the 8B answered "I've captured it" with no tool
+ * to capture anything. A guaranteed static list beat a bad ranking. The
+ * mechanism stays for the day the ranking is good enough to deserve it.
  */
 export const TASK_SLOT_RESERVE_BY_TIER: Readonly<Record<ModelTier, number>> = {
-  weak: 3,
+  weak: 0,
   medium: 0,
   strong: 0,
 };

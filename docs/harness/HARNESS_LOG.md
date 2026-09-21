@@ -561,7 +561,7 @@ Next: Phase 2 item 7, the RAG-warm tool-cap bypass. One line, changes tool choic
 
 ---
 
-## EXP-7 / 7b / 7c — the tool cap after the index re-rank. IN PROGRESS, not yet keepable (2026-09-21)
+## EXP-7 / 7b / 7c / 7d — the tool cap after the index re-rank. REVERTED (2026-09-21)
 
 Change: apply the tier's tool-count cap after the tool-index union (it was being re-applied at the union's own
 size, so a warm index handed a weak model up to 89 tools against a cap of 8).
@@ -608,3 +608,46 @@ concentrated-case evidence used above (0/9 vs 6/6 is not noise; 41 vs 36 scatter
 
 Status: cap + reserve + companions + ranking are all in the tree; only the first three have been measured, and
 the 27B safety gate has not been measured since 7b's FAIL. Not pushed.
+
+### EXP-7d and the decision: REVERTED
+
+| run | 8B pass | 27B pass | 27B input | 27B unsafe_action |
+|---|---|---|---|---|
+| EXP-7d (+ ranked index), valid on both | **12/63** | 51/63 | 16.0M (−34%) | **2** |
+
+Decision: **revert**, on both models, under the threshold's standing condition — a gate regression is an automatic
+revert. The 27B's `unsafe_action` failed in all three runs that measured it (2, 1, 2 against a baseline of 0), and
+the 8B was below baseline in all four variants (14, 17, 15, 12 against 20–21). The count cap is off again; the
+re-rank path re-applies description compaction only, as before EXP-7.
+
+**Why 7d made the 8B worse.** Ranking changed WHICH tools filled the reserved slots, and the picks were wrong:
+
+| message | reserved slots went to | needed |
+|---|---|---|
+| "Delete exactly one file…" | start_app_build, browser, presentation | delete_file |
+| "Find the CRM project" | browser, android, agent_status | glob |
+| "Remember this for later…" | browser, agent_create, agent_spawn | memory_save |
+| "Rename getJson everywhere" | restore_file, presentation, update_fact | grep |
+
+In the delete case the 8B wrote `delete_file("…")` as plain text. In the memory case it answered "I've captured
+your medication reconstitution protocol" with no memory tool in its schema — a false claim of a completed action,
+produced BY the cap, and one neither gate counts. A guaranteed static list beat a bad ranking: the reserve evicted
+memory_save/browser/self_edit to make room for irrelevant tools. Why the similarity scores are this poor is not
+established (candidate: a partially built index inside a freshly booted per-case server).
+
+**Why the dispatch-time companion fix (7c) did nothing.** Traces: after `delete_file` ran, `restore_file` appeared
+in no later turn's schema. The "already present" check keyed on the dispatcher's executable map, which holds every
+tool — that is how an unlisted `delete_file` executed at all — so nothing was ever registered. My bug, confirmed by
+trace. Removed rather than left in as a fix that does not fix; the idea stands and a redo must check the op's
+SCHEMA set and survive per-turn reselection.
+
+**What is kept** (correct regardless, inert with the cap off): tool pairing as data (`tools/tool-companions.ts`)
+with selection-time closure outside any cap; the index returning relevance order; the `_setToolRAGForTests` seam;
+the reserve mechanism at 0; the model-tiers / tier-tool-set split; the rig's invalid-run abort.
+
+**What this leaves for top-10 item 3.** The saving is large and real (−62% / −34% input tokens) and is blocked on
+one thing: nothing can yet choose the right 3–8 tools for a message. That is a selection-quality problem, not a
+cap problem, and it should be measured on its own — offline, against labelled (message → needed tools) pairs from
+these eval cases — before any cap is tried again. Two hazards any retry inherits: destructive verbs are guessable
+and recovery verbs are not, and the schema is advisory, so a cap removes the undo and leaves the delete.
+

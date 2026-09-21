@@ -1,27 +1,34 @@
 /**
- * CLASS INVARIANT: a warm tool index re-ranks the set, it does not resize it.
+ * What the tool-index re-rank does to a capped tier's tool set — pinned as a
+ * MEASURED decision, so the next attempt starts from the numbers.
  *
- * The instance: when the index is warm, tool-selection.ts rebuilds the set
- * from the RAW catalog and re-applies the tier shrink. 711f2cd6 re-applied it
- * at the union's own size so every re-rank pick would survive — which fixed
- * description compaction and silently disabled the COUNT cap. A weak model,
- * whose cap of 8 exists to stop 0-token paralysis, was handed the whole union
- * on exactly the turns the re-rank fired. More tools with a warm index than a
- * cold one: the cap did the opposite of its job.
+ * With the index warm, tool-selection.ts rebuilds the set from the raw catalog
+ * and re-applies the tier shrink at the union's own size: descriptions compact,
+ * the tool COUNT is not enforced. That looks like a bug (a weak model's cap is
+ * 8 and it can receive the whole union), and EXP-7 through 7d (2026-09-21,
+ * docs/harness/HARNESS_LOG.md) treated it as one, four ways:
  *
- * This branch was unreachable in tests until _setToolRAGForTests, which is
- * why it went unnoticed. Description compaction is asserted here too, so the
- * fix cannot regress what 711f2cd6 was actually for.
+ *   input tokens   −62% qwen3:8b, −34% qwen3.6:27b — real, held in every variant
+ *   qwen3:8b       20/63 → 14, 17, 15, 12 — worse in every variant
+ *   qwen3.6:27b    unsafe_action 0 → 2, 1, 2 — failed in every run that measured it
+ *
+ * The 27B failure is the instructive one: a capped set kept a guessable
+ * `delete_file` reachable (the model called it from memory, unlisted, and
+ * dispatch ran it) and lost the product-specific `restore_file`, so recovered
+ * deletions became unrecovered ones. And nothing here can yet choose WHICH few
+ * tools a message needs — the reserve's picks for "delete exactly this file"
+ * were start_app_build, browser, presentation.
+ *
+ * So the count stays unenforced until selection is good enough to deserve a
+ * cap. These tests pin the pieces that are right regardless.
  */
 import { beforeEach, afterEach, describe, it, expect } from "vitest";
 import { _resetSessionToolsForTests, selectTools } from "./tool-selection.js";
 import { _setToolRAGForTests } from "../../tools/tool-rag.js";
 import { applyAudiences } from "../../tools/audience-map.js";
-import { ESSENTIAL_TOOLS_ORDER } from "../../tools/tier-tool-set.js";
+import { ESSENTIAL_TOOLS_ORDER, shrinkToolsForTier } from "../../tools/tier-tool-set.js";
 import type { ToolDefinition } from "../../types.js";
 
-/** Long descriptions on purpose: the weak tier truncates them, and that half
- *  of the prior fix has to keep working. */
 function tool(name: string): ToolDefinition {
   return {
     name,
@@ -31,31 +38,25 @@ function tool(name: string): ToolDefinition {
   };
 }
 
-/** The essentials plus enough filler to blow past every tier cap. */
-function bigCatalog(): ToolDefinition[] {
-  const names = new Set<string>([...ESSENTIAL_TOOLS_ORDER, "tool_search"]);
+function bigCatalog(extra: string[] = []): ToolDefinition[] {
+  const names = new Set<string>([...ESSENTIAL_TOOLS_ORDER, "tool_search", ...extra]);
   for (let i = 0; i < 60; i++) names.add(`filler_tool_${i}`);
   const all = [...names].map(tool);
   applyAudiences(all);
   return all;
 }
 
-/** A warm index that returns EVERYTHING — the worst case for the union. */
-function warmIndexReturningAll() {
-  return {
-    isReady: true,
-    select: async (_m: string, allTools: ToolDefinition[]) => allTools,
-  };
-}
-
-const BENIGN = "Hello, how are you today?";
+const warmIndexReturningAll = () => ({
+  isReady: true,
+  select: async (_m: string, allTools: ToolDefinition[]) => allTools,
+});
 
 beforeEach(() => _resetSessionToolsForTests());
 afterEach(() => _setToolRAGForTests(null));
 
 async function selectFor(model: string, all: ToolDefinition[]): Promise<ToolDefinition[]> {
   const res = await selectTools({
-    message: BENIGN,
+    message: "Hello, how are you today?",
     sessionId: `rag-cap-${model}`,
     channel: "web",
     allAgentTools: all,
@@ -66,137 +67,53 @@ async function selectFor(model: string, all: ToolDefinition[]): Promise<ToolDefi
   return res.tools;
 }
 
-describe("a warm index cannot inflate a capped tier", () => {
-  it("the weak local model stays at its declared cap, not the union's size", async () => {
-    _setToolRAGForTests(warmIndexReturningAll());
-    const all = bigCatalog();
-    const picked = await selectFor("qwen3:8b", all);
-    // qwen3:8b's profile declares maxToolsExposed 8, plus tool_search: the
-    // discovery tool is deliberately kept OUTSIDE the cap (model-tiers.ts) so
-    // a capped model can still reach everything the cap took away. Without
-    // the fix this was 89.
-    expect(picked.length, `got ${picked.length} tools: ${picked.map(t => t.name).join(",")}`).toBeLessThanOrEqual(9);
-    expect(picked.map(t => t.name)).toContain("tool_search");
-  });
-
-  it("the medium local model stays at its declared cap too", async () => {
-    _setToolRAGForTests(warmIndexReturningAll());
-    const picked = await selectFor("qwen3.6:27b", bigCatalog());
-    // 30 declared + the out-of-cap discovery tool.
-    expect(picked.length, `got ${picked.length}`).toBeLessThanOrEqual(31);
-  });
-
-  it("keeps the essentials — the cap must never cost the model its core verbs", async () => {
+describe("the re-rank path, as measured", () => {
+  it("keeps every re-rank pick for a capped tier — the count is deliberately not enforced", async () => {
     _setToolRAGForTests(warmIndexReturningAll());
     const picked = await selectFor("qwen3:8b", bigCatalog());
-    const names = new Set(picked.map(t => t.name));
-    // The weak cap is 8 and essentials are pulled in priority order, so the
-    // first 8 of ESSENTIAL_TOOLS_ORDER are the contract. A cap that evicted
-    // read/write/bash would be the capability-filter hazard, not a fix.
-    for (const essential of ESSENTIAL_TOOLS_ORDER.slice(0, 8)) {
-      expect(names.has(essential), `${essential} was evicted by the cap`).toBe(true);
-    }
+    // If this starts failing because someone enforced the cap: read the header
+    // and HARNESS_LOG.md EXP-7 first. It has been tried four ways.
+    expect(picked.length).toBeGreaterThan(30);
   });
 
-  it("still compacts descriptions, which is what the prior fix was for", async () => {
+  it("still compacts descriptions for a weak model, which is what 711f2cd6 was for", async () => {
     _setToolRAGForTests(warmIndexReturningAll());
-    const picked = await selectFor("qwen3:8b", bigCatalog());
-    for (const t of picked) {
+    for (const t of await selectFor("qwen3:8b", bigCatalog())) {
       expect(t.description.length, `${t.name} kept a full-length description`).toBeLessThanOrEqual(200);
     }
   });
 
-  it("a cold index gives the same size as a warm one — the cap is not a function of index state", async () => {
-    const all = bigCatalog();
-    _setToolRAGForTests({ isReady: false, select: async (_m, t) => t });
-    const cold = await selectFor("qwen3:8b", all);
-    _resetSessionToolsForTests();
+  it("never costs the model its core verbs", async () => {
     _setToolRAGForTests(warmIndexReturningAll());
-    const warm = await selectFor("qwen3:8b", all);
-    expect(warm.length).toBe(cold.length);
-  });
-
-  it("a model with no profile is untouched — cloud keeps its tier cap", async () => {
-    _setToolRAGForTests(warmIndexReturningAll());
-    const res = await selectTools({
-      message: BENIGN,
-      sessionId: "rag-cap-cloud",
-      channel: "web",
-      allAgentTools: bigCatalog(),
-      bridgeTools: [],
-      resolvedProvider: "anthropic",
-      resolvedModel: "claude-opus-4-8",
-    });
-    const picked = res.tools;
-    // Strong is uncapped by tier, and the RAG branch's shrink is skipped for
-    // it entirely, so the union survives exactly as before this change.
-    expect(picked.length).toBeGreaterThan(30);
+    const names = new Set((await selectFor("qwen3:8b", bigCatalog())).map(t => t.name));
+    for (const essential of ESSENTIAL_TOOLS_ORDER.slice(0, 8)) {
+      expect(names.has(essential), `${essential} missing`).toBe(true);
+    }
   });
 });
 
-/**
- * The cap decides SIZE. It must not decide capability independently of the
- * task, and it must never void a guarantee the product already made.
- *
- * Both failures are measured, EXP-7, 2026-09-21:
- *  - qwen3:8b, "delete exactly this file": 3/3 → 0/3 with NO tool called at
- *    all, because delete_file is in no essentials position and a weak model
- *    had zero slots left for the task.
- *  - qwen3.6:27b, restraint: delete_file survived the cap and restore_file
- *    did not, so three recovered deletions became three unrecovered ones and
- *    unsafe_action went 0 → 2.
- */
-describe("the cap reserves room for the task", () => {
-  it("a weak model gets message-relevant tools, not just the top of a static list", async () => {
-    const all = bigCatalog();
-    all.push(...[tool("delete_file"), tool("restore_file")]);
-    applyAudiences(all);
-    // A warm index that ranks the deletion tool first, the way a real
-    // re-rank would for a deletion request.
-    _setToolRAGForTests({
-      isReady: true,
-      select: async (_m: string, t: ToolDefinition[]) => {
-        const del = t.filter(x => x.name === "delete_file");
-        return [...del, ...t.filter(x => x.name !== "delete_file")];
-      },
-    });
-    const picked = await selectFor("qwen3:8b", all);
-    const names = picked.map(t => t.name);
-    expect(names, `got: ${names.join(",")}`).toContain("delete_file");
+describe("whenever a set IS capped, a promise-making tool brings its counterpart", () => {
+  it("delete_file never ships without restore_file", () => {
+    // Exercised on the shrink directly: this is the invariant any future cap
+    // inherits. delete_file's result text offers the undo; EXP-7 shipped that
+    // sentence without the tool and the 27B's recovered deletions became
+    // unrecovered ones. Medium tier, because it has message slots: at the weak
+    // cap all 8 slots go to essentials and delete_file does not ship at all.
+    const all = bigCatalog(["delete_file", "restore_file"]);
+    const asked = [all.find(t => t.name === "delete_file")!];
+    const kept = shrinkToolsForTier(asked, "medium", all).map(t => t.name);
+    expect(kept).toContain("delete_file");
+    expect(kept, "delete_file shipped WITHOUT its undo").toContain("restore_file");
   });
 
-  it("a tool that promises an undo brings the undo, cap or no cap", async () => {
-    const all = bigCatalog();
-    all.push(...[tool("delete_file"), tool("restore_file")]);
-    applyAudiences(all);
-    _setToolRAGForTests({
-      isReady: true,
-      select: async (_m: string, t: ToolDefinition[]) => {
-        const del = t.filter(x => x.name === "delete_file");
-        return [...del, ...t.filter(x => x.name !== "delete_file")];
-      },
-    });
-    for (const model of ["qwen3:8b", "qwen3.6:27b"]) {
-      _resetSessionToolsForTests();
-      const names = (await selectFor(model, all)).map(t => t.name);
-      expect(names, `${model} got delete_file`).toContain("delete_file");
-      expect(names, `${model} shipped delete_file WITHOUT restore_file`).toContain("restore_file");
-    }
-  });
-
-  it("the core verbs still survive the reserve", async () => {
-    _setToolRAGForTests(warmIndexReturningAll());
-    const names = new Set((await selectFor("qwen3:8b", bigCatalog())).map(t => t.name));
-    for (const core of ["read", "write", "edit", "bash", "http_request"]) {
-      expect(names.has(core), `${core} was evicted by the task reserve`).toBe(true);
-    }
-  });
-
-  it("the reserve does not blow the size budget open again", async () => {
-    _setToolRAGForTests(warmIndexReturningAll());
-    const picked = await selectFor("qwen3:8b", bigCatalog());
-    // cap 8 + tool_search. Companions ride outside the cap by design, but
-    // none apply here, so this pins that the reserve only REDISTRIBUTES.
-    expect(picked.length, `got ${picked.length}`).toBeLessThanOrEqual(9);
+  it("the companion rides outside the cap, so it cannot be the thing that gets evicted", () => {
+    const all = bigCatalog(["delete_file", "restore_file"]);
+    const asked = [all.find(t => t.name === "delete_file")!];
+    // A cap with exactly one message slot: delete_file takes it, and the undo
+    // still ships.
+    const cap = ESSENTIAL_TOOLS_ORDER.length + 1;
+    const kept = shrinkToolsForTier(asked, "medium", all, cap).map(t => t.name);
+    expect(kept).toContain("delete_file");
+    expect(kept).toContain("restore_file");
   });
 });

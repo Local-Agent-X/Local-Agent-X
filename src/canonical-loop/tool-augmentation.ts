@@ -1,16 +1,21 @@
 /**
  * Widening an op's tool set mid-flight.
  *
- * Two callers, one mechanism: look the tool up in the unified registry, add it
- * to the dispatcher's executable map, and re-register the op's tool list so
- * the model's NEXT request schema includes it.
+ * Look the tool up in the unified registry, add it to the dispatcher's
+ * executable map, and re-register the op's tool list so the model's NEXT
+ * request schema includes it. Today's one caller is tool_search: the model
+ * asked for a tool it could not see.
  *
- *  - tool_search: the model asked for a tool it could not see.
- *  - companions: a tool's result promised a counterpart (tools/tool-companions.ts).
+ * The delegated-worker denylist applies at augmentation time, not just at
+ * spawn time: a search is not a reason to widen a worker that was
+ * deliberately restricted.
  *
- * Both apply the delegated-worker denylist at augmentation time, not just at
- * spawn time: neither a search nor a promise is a reason to widen a worker
- * that was deliberately restricted.
+ * A second caller was tried and removed (EXP-7c/7d, 2026-09-21): adding a
+ * tool's COMPANION when it runs, so delete_file's promised undo is always
+ * reachable. The idea stands; the implementation keyed its "already present"
+ * check on the executable map, which holds every tool — that is how an
+ * unlisted delete_file ran at all — so it never registered anything. A redo
+ * has to check the op's SCHEMA set, and survive the per-turn reselection.
  *
  * Split out of chat-tool-dispatcher.ts, which crossed the 400-LOC gate when
  * the companion path landed.
@@ -20,7 +25,6 @@ import type { CallContext } from "../tool-execution/context.js";
 import { unifiedRegistry } from "../tools/registry.js";
 import { registerToolsForOp } from "./runtime.js";
 import { isDeniedForDelegatedWorker } from "../ops/tools/delegated-toolset.js";
-import { companionsFor } from "../tools/tool-companions.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("canonical-loop.tool-augmentation");
@@ -90,43 +94,3 @@ export function augmentFromToolSearch(
   logger.info(`[augment] +${discovered.length} tool(s) for op=${opId.slice(0, 12)}: ${discovered.map(tool => tool.name).join(", ")}`);
 }
 
-/**
- * Union a tool's declared companions into the op's executable and
- * schema-visible sets, so the next turn can act on the promise the tool's
- * result just made. Same mechanism as augmentFromToolSearch — registry
- * lookup, toolMap mutation, re-register — and the same delegated-worker
- * denylist, because a promise is not a reason to widen a restricted worker.
- *
- * Idempotent: a companion already present is skipped, so repeated deletes do
- * not re-register.
- */
-export function augmentCompanions(
-  toolName: string,
-  opId: string,
-  toolMap: Map<string, ToolDefinition>,
-  beforeRegister?: (tools: ToolDefinition[]) => void,
-  callContext?: CallContext,
-): void {
-  const discovered: ToolDefinition[] = [];
-  for (const name of companionsFor([toolName])) {
-    if (toolMap.has(name)) continue;
-    if (callContext === "delegated" && isDeniedForDelegatedWorker(name)) {
-      logger.warn(`[augment] companion '${name}' denied for delegated worker op=${opId.slice(0, 12)}`);
-      continue;
-    }
-    const tool = unifiedRegistry.get(name);
-    if (!tool) continue;
-    discovered.push(tool);
-  }
-  if (discovered.length === 0) return;
-
-  const augmentedTools = [...toolMap.values(), ...discovered];
-  beforeRegister?.(augmentedTools);
-  for (const tool of discovered) toolMap.set(tool.name, tool);
-  registerToolsForOp(opId, augmentedTools.map((t) => ({
-    name: t.name,
-    description: t.description,
-    inputSchema: t.parameters,
-  })));
-  logger.info(`[augment] +${discovered.length} companion(s) for '${toolName}' op=${opId.slice(0, 12)}: ${discovered.map(t => t.name).join(", ")}`);
-}

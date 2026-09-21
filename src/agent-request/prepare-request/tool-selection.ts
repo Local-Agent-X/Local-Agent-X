@@ -13,7 +13,6 @@ import type { ChannelKind } from "../types.js";
 import { filterToolsForMessage } from "../tool-filter.js";
 import { isSlashCommandExpansion } from "../../slash-commands.js";
 import { createLogger } from "../../logger.js";
-import { resolveModelProfile } from "../../local-runtimes/model-profile.js";
 import {
   applyProductBuildToolRoute,
   productBuildMethodologyTurn,
@@ -24,15 +23,6 @@ import {
 
 const logger = createLogger("agent-request.prepare-request.tools");
 
-/**
- * The declared per-model tool cap, when the model has a profile. Null means
- * "use the tier's own cap" — every cloud model today, so this is confined to
- * local runtimes the same way the rest of the profile is.
- */
-function profileToolCap(model: string | undefined): number | undefined {
-  if (!model) return undefined;
-  return resolveModelProfile(model)?.maxToolsExposed;
-}
 
 export type Tier = "weak" | "medium" | "strong";
 
@@ -216,34 +206,20 @@ export async function selectTools(input: ToolSelectionInput): Promise<ToolSelect
         for (const t of semantic) {
           union.add(t.name);
         }
-        // RELEVANCE order first, then the rest in catalog order. The tier
-        // shrink spends its reserved task slots from the front of this list
-        // (TASK_SLOT_RESERVE_BY_TIER), so a catalog-ordered union would fill
-        // them with whatever sits early in the catalog instead of what the
-        // message asked for — which is the re-rank's answer, discarded.
-        // Strong re-derives in catalog order below, so its serialization is
-        // unaffected.
-        const rankedNames = new Set(semantic.map(t => t.name));
-        tools = [
-          ...semantic,
-          ...input.allAgentTools.filter(t => union.has(t.name) && !rankedNames.has(t.name)),
-        ];
-        // The union is rebuilt from the RAW catalog, which throws away the tier
-        // compaction applied above. Re-apply it — INCLUDING the count cap.
+        tools = input.allAgentTools.filter(t => union.has(t.name));
+        // Re-apply the tier's DESCRIPTION compaction at the union's own size,
+        // so the re-rank's picks all survive (711f2cd6).
         //
-        // 711f2cd6 re-applied this at the union's own size (capOverride =
-        // tools.length) so every re-rank pick would survive, which fixed the
-        // description half and silently disabled the count half. Those are two
-        // different limits: description length is a model-comprehension limit,
-        // tool COUNT is a capacity limit, and the weak cap of 8 exists
-        // specifically to stop 0-token paralysis. With the index warm a weak
-        // model was handed 65–74 tools — more than with a cold index, so the
-        // cap did the opposite of its job on exactly the turns it mattered.
-        //
-        // shrinkToolsForTier pulls ESSENTIAL_TOOLS_ORDER first and the
-        // re-rank's picks into whatever headroom is left, so relevance still
-        // decides the tail; it just stops deciding the size.
-        if (tier !== "strong") tools = shrinkToolsForTier(tools, tier, input.allAgentTools, profileToolCap(input.resolvedModel));
+        // This deliberately does NOT enforce the tier's tool COUNT, and that
+        // is a measured decision, not an oversight. EXP-7 through 7d
+        // (2026-09-21, docs/harness/HARNESS_LOG.md) enforced it four ways.
+        // It cut input tokens 62% on qwen3:8b and 34% on qwen3.6:27b — and
+        // cost the 8B 3-8 cases in every variant (20/63 -> 14, 17, 15, 12) and
+        // failed the 27B's unsafe_action gate in all three runs that measured
+        // it (0 -> 2, 1, 2): a capped set kept a guessable `delete_file`
+        // reachable and lost the product-specific `restore_file`. The saving is
+        // real; nothing here can yet choose WHICH few tools a message needs.
+        if (tier !== "strong") tools = shrinkToolsForTier(tools, tier, input.allAgentTools, tools.length);
         logger.info(`[step] tool-rag.select ${Date.now() - ragT0}ms picked=${semantic.length}`);
       } else {
         logger.info(`[tool-rag] not ready yet — shipping filtered set without RAG re-rank`);

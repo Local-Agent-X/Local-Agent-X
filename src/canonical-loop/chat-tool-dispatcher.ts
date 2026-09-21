@@ -32,6 +32,8 @@ import { isDeniedForDelegatedWorker } from "../ops/tools/delegated-toolset.js";
 import { enqueueBridgeMedia } from "../bridge-media-queue.js";
 import { createLogger } from "../logger.js";
 import type { CallContext } from "../tool-execution/context.js";
+import { TOOL_COMPANIONS } from "../tools/tool-companions.js";
+import { augmentCompanions, augmentFromToolSearch } from "./tool-augmentation.js";
 
 const logger = createLogger("canonical-loop.chat-tool-dispatcher");
 
@@ -302,75 +304,28 @@ function shapeCallResult(
     }
   }
 
+  // A tool whose RESULT promises a counterpart brings that counterpart into
+  // the op, at the moment the promise is made. Selection-time closure is not
+  // enough: the schema is advisory, and a model can call a tool that was
+  // never offered. Measured 2026-09-21 (EXP-7b, qwen3.6:27b): `delete_file`
+  // was absent from all 12 turns' schemas, the model called it five times
+  // anyway and dispatch ran it, and the files were gone with no `restore_file`
+  // anywhere to undo them. Destructive verbs are guessable across harnesses;
+  // product-specific recovery verbs are not, so a size limit takes away the
+  // undo and leaves the delete.
+  if (opts.opId && canonicalStatus === "ok" && TOOL_COMPANIONS[call.tool]) {
+    try {
+      augmentCompanions(call.tool, opts.opId, toolMap, opts.onToolsAugmented, opts.callContext);
+    } catch (e) {
+      if (opts.onToolsAugmented) throw e;
+      logger.warn(`[augment] companion augmentation failed: ${(e as Error).message}`);
+    }
+  }
+
   return {
     toolCallId: call.toolCallId,
     status: canonicalStatus,
     result,
     durationMs,
   };
-}
-
-/**
- * Parse tool_search's JSON output, look discovered tools up in the unified
- * registry, and union them into the op's executable + schema-visible tool
- * sets. Mutates `toolMap` in place and re-registers the op's tool list.
- *
- * Idempotent — tools already present in toolMap are skipped, so repeated
- * tool_search calls don't blow up the schema with duplicates.
- *
- * Delegated-worker guard: when `callContext === "delegated"`, discovered tools
- * are filtered through the SAME denylist that shapes the spawn-time belt
- * (isDeniedForDelegatedWorker — one source of truth). Without this a
- * "read-only" worker could tool_search its way back to op_submit_async,
- * mission_schedule_*, or write/edit at runtime. Non-delegated contexts
- * ("local"/"api"/"cron") are unfiltered — behavior unchanged.
- *
- * Exported for unit testing — production callers go through the dispatcher
- * closure above.
- */
-export function augmentFromToolSearch(
-  content: string,
-  opId: string,
-  toolMap: Map<string, ToolDefinition>,
-  beforeRegister?: (tools: ToolDefinition[]) => void,
-  callContext?: CallContext,
-): void {
-  // tool_search returns content like:
-  //   "No tools matched the query."   (skip path)
-  //   "[ { name, description, parameters }, ... ]"
-  if (!content.trim().startsWith("[")) return;
-
-  let parsed: unknown;
-  try { parsed = JSON.parse(content); } catch { return; }
-  if (!Array.isArray(parsed)) return;
-
-  const discovered: ToolDefinition[] = [];
-  for (const entry of parsed) {
-    if (!entry || typeof entry !== "object") continue;
-    const name = (entry as { name?: unknown }).name;
-    if (typeof name !== "string" || !name) continue;
-    if (toolMap.has(name)) continue;
-    // Denylist holds at AUGMENTATION time, not just spawn time: a delegated
-    // worker must not tool_search its way back to a denied tool.
-    if (callContext === "delegated" && isDeniedForDelegatedWorker(name)) {
-      logger.warn(`[augment] blocked denied tool '${name}' for delegated worker op=${opId.slice(0, 12)}`);
-      continue;
-    }
-    const tool = unifiedRegistry.get(name);
-    if (!tool) continue;
-    discovered.push(tool);
-  }
-
-  if (discovered.length === 0) return;
-
-  const augmentedTools = [...toolMap.values(), ...discovered];
-  beforeRegister?.(augmentedTools);
-  for (const tool of discovered) toolMap.set(tool.name, tool);
-  const augmented = augmentedTools.map((t) => ({
-    name: t.name,
-    description: t.description,
-    inputSchema: t.parameters,
-  }));
-  registerToolsForOp(opId, augmented);
-  logger.info(`[augment] +${discovered.length} tool(s) for op=${opId.slice(0, 12)}: ${discovered.map(tool => tool.name).join(", ")}`);
 }

@@ -13,6 +13,7 @@ import type { ChannelKind } from "../types.js";
 import { filterToolsForMessage } from "../tool-filter.js";
 import { isSlashCommandExpansion } from "../../slash-commands.js";
 import { createLogger } from "../../logger.js";
+import { resolveModelProfile } from "../../local-runtimes/model-profile.js";
 import {
   applyProductBuildToolRoute,
   productBuildMethodologyTurn,
@@ -22,6 +23,16 @@ import {
 } from "./product-build-routing.js";
 
 const logger = createLogger("agent-request.prepare-request.tools");
+
+/**
+ * The declared per-model tool cap, when the model has a profile. Null means
+ * "use the tier's own cap" — every cloud model today, so this is confined to
+ * local runtimes the same way the rest of the profile is.
+ */
+function profileToolCap(model: string | undefined): number | undefined {
+  if (!model) return undefined;
+  return resolveModelProfile(model)?.maxToolsExposed;
+}
 
 export type Tier = "weak" | "medium" | "strong";
 
@@ -205,11 +216,22 @@ export async function selectTools(input: ToolSelectionInput): Promise<ToolSelect
           union.add(t.name);
         }
         tools = input.allAgentTools.filter(t => union.has(t.name));
-        // The union is rebuilt from the RAW catalog, which throws away the
-        // tier compaction applied above. Re-apply it — capped at the union's
-        // own size so the re-rank's picks survive, since the cap here is the
-        // endpoint's concern and description length is the model's.
-        if (tier !== "strong") tools = shrinkToolsForTier(tools, tier, input.allAgentTools, tools.length);
+        // The union is rebuilt from the RAW catalog, which throws away the tier
+        // compaction applied above. Re-apply it — INCLUDING the count cap.
+        //
+        // 711f2cd6 re-applied this at the union's own size (capOverride =
+        // tools.length) so every re-rank pick would survive, which fixed the
+        // description half and silently disabled the count half. Those are two
+        // different limits: description length is a model-comprehension limit,
+        // tool COUNT is a capacity limit, and the weak cap of 8 exists
+        // specifically to stop 0-token paralysis. With the index warm a weak
+        // model was handed 65–74 tools — more than with a cold index, so the
+        // cap did the opposite of its job on exactly the turns it mattered.
+        //
+        // shrinkToolsForTier pulls ESSENTIAL_TOOLS_ORDER first and the
+        // re-rank's picks into whatever headroom is left, so relevance still
+        // decides the tail; it just stops deciding the size.
+        if (tier !== "strong") tools = shrinkToolsForTier(tools, tier, input.allAgentTools, profileToolCap(input.resolvedModel));
         logger.info(`[step] tool-rag.select ${Date.now() - ragT0}ms picked=${semantic.length}`);
       } else {
         logger.info(`[tool-rag] not ready yet — shipping filtered set without RAG re-rank`);

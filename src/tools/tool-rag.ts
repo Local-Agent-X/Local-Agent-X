@@ -199,6 +199,20 @@ export function getToolRAG(): ToolRAG {
   return instance;
 }
 
+/**
+ * Test seam: install a stand-in index, or null to restore the real one.
+ *
+ * The re-rank branch in prepare-request/tool-selection.ts is only reachable
+ * with a WARM index, and nothing could warm one in a test without embedding
+ * the whole catalog. That is how a tool-cap bypass lived in that branch
+ * unnoticed: with the index cold a weak model got its 8 tools, and with it
+ * warm it got 65–74. Same shape as _resetSessionToolsForTests and
+ * _resetModelProfilesForTests elsewhere.
+ */
+export function _setToolRAGForTests(fake: Pick<ToolRAG, "isReady" | "select"> | null): void {
+  instance = fake as ToolRAG | null;
+}
+
 // ── Helpers ───────────────────────────────────────────────
 
 function cosine(a: number[], b: number[]): number {

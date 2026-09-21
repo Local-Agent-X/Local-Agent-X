@@ -121,6 +121,11 @@
           // wipe doesn't fire, the replay lands untouched either way.
           e.content = '';
           e.reasoning = '';
+          // Mirror startTurn: the replacement turn stamps its text frames from
+          // its own sequence, which starts over. Without this reset the mark
+          // left by the turn being replaced would swallow the new turn's
+          // opening frames.
+          e.lastTextSeq = -1;
           e.toolsSinceText = false;
           e.toolEvents = [];
           e.chips = [];

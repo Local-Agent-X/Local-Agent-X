@@ -60,6 +60,7 @@ function registerChat(sessionId: string, events: ServerEvent[] = [], streamText 
     sessionId, events: [...events], abortController, startedAt: Date.now(), done: false,
     streamText, sawStream: streamText !== "", reasoningText: "", sawReasoning: false, toolsSinceText: false,
     runs: streamText ? [{ lane: "stream" as const, text: streamText }] : [], runBoundary: false,
+    textSeq: 0,
   });
   broadcastActiveChats();
   return abortController;
@@ -218,7 +219,7 @@ describe("CT-4 — stop during the prep window", () => {
     activeChats.set(sessionId, {
       sessionId, events: [], abortController: new AbortController(), startedAt: Date.now(), done: true,
       streamText: "", sawStream: false, reasoningText: "", sawReasoning: false, toolsSinceText: false,
-      runs: [], runBoundary: false,
+      runs: [], runBoundary: false, textSeq: 0,
     });
     markChatHandlerPending(sessionId); // new turn mid-prep
     try {
@@ -483,5 +484,63 @@ describe("CT-8 — a chat re-send during a live turn is absorbed as an inject", 
     // The duplicate got a consumed ack rather than a second inject_queued.
     expect(events.some(e => e.type === "inject_consumed")).toBe(true);
     expect(events.filter(e => e.type === "inject_queued")).toHaveLength(1);
+  });
+});
+
+/**
+ * reconnect_op holds ONE live subscription per socket per op (2026-09-21).
+ *
+ * The client's stuck-stream watchdog re-sends reconnect_op every 15s for as
+ * long as a turn looks stalled, and each call used to install a subscription
+ * detached only on socket close. A turn that stalled for a few minutes — the
+ * 218s/252s event-loop blocks — therefore delivered its single error/done once
+ * per elapsed tick, which is the "4 identical error bubbles from one server
+ * event" trace the stream reducer's error-dedup guard was written against.
+ */
+describe("reconnect_op subscription lifetime", () => {
+  it("replaces the previous subscription for the same op instead of stacking", async () => {
+    const offs: Array<{ off: () => void; calls: number }> = [];
+    vi.doMock("../canonical-loop/index.js", () => ({
+      OP_EVENTS_FROM_BEGINNING: -1,
+      readOpMessages: () => [],
+      reconnectOp: async () => {
+        const rec = { calls: 0, off: () => { rec.calls++; } };
+        offs.push(rec);
+        return { ok: true, off: rec.off };
+      },
+    }));
+
+    const r = makeRouter();
+    for (let i = 0; i < 4; i++) {
+      await r.dispatch({ type: "reconnect_op", sessionId: "s-leak", opId: "op-1" });
+    }
+
+    expect(offs).toHaveLength(4);
+    // Every earlier subscription was detached when its successor arrived; only
+    // the newest is still live.
+    expect(offs.slice(0, 3).every(o => o.calls === 1)).toBe(true);
+    expect(offs[3].calls).toBe(0);
+    vi.doUnmock("../canonical-loop/index.js");
+  });
+
+  it("keeps one subscription per op — a second op does not evict the first", async () => {
+    const byOp = new Map<string, { calls: number }>();
+    vi.doMock("../canonical-loop/index.js", () => ({
+      OP_EVENTS_FROM_BEGINNING: -1,
+      readOpMessages: () => [],
+      reconnectOp: async (opId: string) => {
+        const rec = { calls: 0 };
+        byOp.set(opId, rec);
+        return { ok: true, off: () => { rec.calls++; } };
+      },
+    }));
+
+    const r = makeRouter();
+    await r.dispatch({ type: "reconnect_op", sessionId: "s-two", opId: "op-1" });
+    await r.dispatch({ type: "reconnect_op", sessionId: "s-two", opId: "op-2" });
+
+    expect(byOp.get("op-1")!.calls).toBe(0);
+    expect(byOp.get("op-2")!.calls).toBe(0);
+    vi.doUnmock("../canonical-loop/index.js");
   });
 });

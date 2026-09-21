@@ -44,6 +44,7 @@ function registerChat(sessionId: string): { events: ServerEvent[] } {
     toolsSinceText: false,
     runs: [],
     runBoundary: false,
+    textSeq: 0,
   };
   activeChats.set(sessionId, chat);
   return chat;

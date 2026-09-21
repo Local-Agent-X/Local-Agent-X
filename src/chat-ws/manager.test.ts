@@ -771,9 +771,9 @@ describe("delta coalescing (2026-07-13 audit I2)", () => {
     // Three runs — consecutive same-lane deltas merged, inter-lane order kept.
     const evs = eventFrames(frames()).map(f => f.event as { type: string; delta: string });
     expect(evs).toEqual([
-      { type: "reasoning", delta: "think hard" },
-      { type: "stream", delta: "answer text" },
-      { type: "reasoning", delta: " more" },
+      { type: "reasoning", delta: "think hard", seq: 1 },
+      { type: "stream", delta: "answer text", seq: 2 },
+      { type: "reasoning", delta: " more", seq: 3 },
     ]);
   });
 
@@ -812,8 +812,8 @@ describe("delta coalescing (2026-07-13 audit I2)", () => {
     onEvent({ type: "stream", replace: true, text: "" } as ServerEvent);
     const evs = eventFrames(frames()).map(f => f.event as Record<string, unknown>);
     expect(evs).toEqual([
-      { type: "stream", delta: '{"tool":"x"}' },
-      { type: "stream", replace: true, text: "" },
+      { type: "stream", delta: '{"tool":"x"}', seq: 1 },
+      { type: "stream", replace: true, text: "", seq: 2 },
     ]);
   });
 });
@@ -954,10 +954,13 @@ describe("op attribution on live envelopes", () => {
       { type: "chat_op_started", opId: "op-A" },
       { type: "chat_op_started", opId: "op-B", supersedes: "op-A" },
     ]);
+    // Each turn counts its own text frames: the retired turn's late delta is
+    // numbered 2 in A's sequence, not 2 in B's, so it can never read as the
+    // replacement's next frame on a client that is still holding both.
     expect(evs.filter(f => f.event?.type === "stream").map(f => f.event)).toEqual([
-      { type: "stream", delta: "dead draft", opId: "op-A" },
-      { type: "stream", delta: "live answer", opId: "op-B" },
-      { type: "stream", delta: " trailing", opId: "op-A" },
+      { type: "stream", delta: "dead draft", opId: "op-A", seq: 1 },
+      { type: "stream", delta: "live answer", opId: "op-B", seq: 1 },
+      { type: "stream", delta: " trailing", opId: "op-A", seq: 2 },
     ]);
     expect(evs.find(f => f.event?.type === "tool_start")!.event).toMatchObject({ opId: "op-A" });
     // Stamping is non-mutating — the caller's event object is untouched.
@@ -997,3 +1000,112 @@ describe("op attribution on live envelopes", () => {
   });
 });
 
+
+/**
+ * Text frames carry their position in the turn (2026-09-21).
+ *
+ * Delivery is not once-only. A socket the browser is still closing keeps
+ * handing frames to onmessage alongside its replacement, and while the server
+ * is stalled — 218s in the incident — that overlap lasts minutes. Every other
+ * event class survives a double delivery because it has an identity the client
+ * dedupes on; text had none, so the same delta appended twice and the reply
+ * rendered on top of itself. These pin the stamp the client's guard relies on
+ * (public/js/chat-stream-store.js isAppliedTextFrame).
+ */
+describe("text frames are stamped with their position in the turn", () => {
+  const reasoningDelta = (d: string): ServerEvent => ({ type: "reasoning", delta: d });
+  const eventFrames = (frames: Frame[]) => frames.filter(f => f.type === "event");
+  const seqs = (frames: Frame[]) =>
+    eventFrames(frames)
+      .map(f => f.event as { type?: string; seq?: number })
+      .filter(e => e.type === "stream" || e.type === "reasoning")
+      .map(e => e.seq);
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    return () => vi.useRealTimers();
+  });
+
+  it("numbers both lanes from one counter, in broadcast order", () => {
+    const m = buildManager();
+    const { onEvent } = m.startChat("s-seq");
+    const { ws, frames } = makeWs();
+    clients.set(ws, new Set(["s-seq"]));
+
+    onEvent(reasoningDelta("thinking"));
+    vi.advanceTimersByTime(30);
+    onEvent(delta("answer"));
+    vi.advanceTimersByTime(30);
+    onEvent(reasoningDelta("more"));
+    vi.advanceTimersByTime(30);
+
+    // One timeline, so one sequence — a per-lane counter would let a
+    // reasoning frame's number vouch for an unseen stream frame.
+    expect(seqs(frames())).toEqual([1, 2, 3]);
+  });
+
+  it("stamps a replace as well — it is ordered against the deltas", () => {
+    const m = buildManager();
+    const { onEvent } = m.startChat("s-seq-replace");
+    const { ws, frames } = makeWs();
+    clients.set(ws, new Set(["s-seq-replace"]));
+
+    onEvent(delta("draft"));
+    onEvent({ type: "stream", replace: true, text: "clean" } as ServerEvent);
+    vi.advanceTimersByTime(30);
+
+    expect(seqs(frames())).toEqual([1, 2]);
+  });
+
+  it("does not stamp anything but the two text lanes", () => {
+    const m = buildManager();
+    const { onEvent } = m.startChat("s-seq-other");
+    const { ws, frames } = makeWs();
+    clients.set(ws, new Set(["s-seq-other"]));
+
+    onEvent(toolStart);
+    onEvent(toolEnd);
+    vi.advanceTimersByTime(30);
+
+    for (const f of eventFrames(frames())) expect(f.event).not.toHaveProperty("seq");
+  });
+
+  it("restarts the sequence for each turn", () => {
+    const m = buildManager();
+    const { ws, frames } = makeWs();
+    clients.set(ws, new Set(["s-seq-turns"]));
+
+    m.startChat("s-seq-turns").onEvent(delta("turn one"));
+    vi.advanceTimersByTime(30);
+    m.startChat("s-seq-turns").onEvent(delta("turn two"));
+    vi.advanceTimersByTime(30);
+
+    expect(seqs(frames())).toEqual([1, 1]);
+  });
+
+  it("replays the wipe at the turn's current position, and the runs unstamped", () => {
+    // The wipe hands the reconnecting client a baseline that already accounts
+    // for everything broadcast so far, so a copy still in flight on the socket
+    // it is replacing is recognized as applied. The runs that rebuild the text
+    // carry no position: they follow the wipe and are authoritative by order.
+    const m = buildManager();
+    const { onEvent } = m.startChat("s-seq-replay");
+    const live = makeWs();
+    clients.set(live.ws, new Set(["s-seq-replay"]));
+
+    onEvent(delta("first "));
+    vi.advanceTimersByTime(30);
+    onEvent(delta("second"));
+    vi.advanceTimersByTime(30);
+
+    const { ws, frames } = makeWs();
+    replayBufferedEvents(ws, "s-seq-replay");
+    const streamFrames = frames()
+      .filter(f => f.event?.type === "stream")
+      .map(f => f.event as { replace?: boolean; seq?: number; delta?: string });
+
+    expect(streamFrames[0]).toMatchObject({ replace: true, text: "", seq: 2 });
+    expect(streamFrames[1]).toMatchObject({ delta: "first second" });
+    expect(streamFrames[1]).not.toHaveProperty("seq");
+  });
+});

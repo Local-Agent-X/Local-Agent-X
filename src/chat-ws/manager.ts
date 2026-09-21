@@ -13,6 +13,7 @@ import {
   replaceRunLane,
 } from "./state.js";
 import { broadcastActiveChats, broadcastToSession, terminateChat } from "./broadcast.js";
+import { stampOpId, stampTextSeq } from "./frame-stamp.js";
 import { setChatHandler, type ChatHandler } from "./chat-handler.js";
 
 const logger = createLogger("chat-ws");
@@ -30,22 +31,6 @@ const COALESCE_MS = 30;
 interface PendingDeltaRun {
   lane: "stream" | "reasoning";
   text: string;
-}
-
-// Attach the owning op to one live envelope, without mutating the caller's
-// event. Only the variants that DECLARE `opId` (types/server-events.ts) are
-// stamped — the rest have no such field on the wire contract. An event that
-// already names its op keeps it: the emitter knew better than the channel.
-function stampOpId(event: ServerEvent, opId: string | undefined): ServerEvent {
-  if (!opId) return event;
-  switch (event.type) {
-    case "stream": case "reasoning": case "tool_start": case "tool_progress":
-    case "tool_end": case "tool_chip": case "done": case "stopped":
-    case "error": case "op_heartbeat":
-      return event.opId ? event : { ...event, opId };
-    default:
-      return event;
-  }
 }
 
 /** Fold a `tool_progress` into the buffered line it supersedes; false when
@@ -127,6 +112,7 @@ export function buildManager(): ChatWsManager {
         toolsSinceText: false,
         runs: [],
         runBoundary: false,
+        textSeq: 0,
         opId: undefined,
         abortController,
         startedAt: Date.now(),
@@ -169,7 +155,7 @@ export function buildManager(): ChatWsManager {
           const frame: ServerEvent = run.lane === "stream"
             ? { type: "stream", delta: run.text, opId: chat.opId }
             : { type: "reasoning", delta: run.text, opId: chat.opId };
-          broadcastToSession(sessionId, frame);
+          broadcastToSession(sessionId, stampTextSeq(frame, chat));
         }
       };
 
@@ -310,7 +296,7 @@ export function buildManager(): ChatWsManager {
           // Non-delta: pending deltas precede this event chronologically —
           // flush them first so the client sees the original order.
           flushPendingDeltas();
-          broadcastToSession(sessionId, stampOpId(event, chat.opId));
+          broadcastToSession(sessionId, stampTextSeq(stampOpId(event, chat.opId), chat));
 
           // Mark done only on real completion — non-terminal errors
           // should not end the chat.

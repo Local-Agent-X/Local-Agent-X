@@ -87,7 +87,7 @@ function loadClientModules() {
 	)() as { _renderAssistantToolArtifacts: RenderArtifacts };
 	renderArtifacts = artifacts._renderAssistantToolArtifacts;
 
-	for (const f of ["chat-stream-blocks.js", "chat-stream-reducer.js", "chat-stream-store.js", "chat-stream-finalize.js"]) {
+	for (const f of ["chat-stream-blocks.js", "chat-stream-reducer.js", "chat-stream-admit.js", "chat-stream-store.js", "chat-stream-finalize.js"]) {
 		new Function(src(f))();
 	}
 	store = (g.window as { ChatStreamStore: Store }).ChatStreamStore;

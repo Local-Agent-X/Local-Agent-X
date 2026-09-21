@@ -98,6 +98,9 @@
       // keeps an interposed op's scratch out of it. Null until a send
       // interrupts a live op.
       pendingSupersedeOpId: null,
+      // Highest text-frame position applied to this entry (isAppliedTextFrame).
+      // -1 = nothing applied yet, so an unstamped or first frame always lands.
+      lastTextSeq: -1,
       lastActivityMs: 0,
       // Timestamp of the last event that produced VISIBLE progress — stream
       // text, reasoning, tool cards/chips/progress. Deliberately NOT bumped
@@ -185,6 +188,9 @@
     const e = ensure(sessionId);
     e.content = '';
     e.reasoning = '';
+    // Each turn starts its own text sequence server-side, so the mark has to
+    // start over too or the new turn's early frames read as already-applied.
+    e.lastTextSeq = -1;
     window._ChatBlocks.resetBlocks(e);
     e.toolsSinceText = false;
     e.toolEvents = [];
@@ -210,39 +216,11 @@
     return e;
   }
 
-  // Content-bearing frame types the server stamps with their owning op
-  // (src/chat-ws/manager.ts stampOpId). Terminal/lifecycle frames are
-  // deliberately absent: a retired op's done/error/stopped must still land so
-  // the turn's bookkeeping closes out instead of hanging on 'streaming'.
-  const OP_SCOPED_TYPES = new Set([
-    'stream', 'reasoning', 'tool_start', 'tool_end', 'tool_progress', 'tool_chip',
-  ]);
-
-  // True when this frame belongs to a turn that was already taken over — a
-  // dead op still flushing buffered output at the replacement's bubble. A
-  // frame with NO opId is from an emitter that predates op attribution
-  // (manager.emit outside a live turn, replay's synthesized run deltas), so
-  // the un-stamped path keeps exactly its pre-attribution behavior.
-  // Also read by the WS dispatcher (chat-ws-handler.js) so a dropped frame
-  // costs no bubble repaint and no TTS either.
+  // Frame admission lives in chat-stream-admit.js (both questions are pure
+  // over the entry). This wrapper keeps the sessionId-shaped public form the
+  // WS dispatcher calls.
   function isSupersededFrame(sessionId, event) {
-    if (!event || !event.opId || !OP_SCOPED_TYPES.has(event.type)) return false;
-    const e = entries.get(sessionId);
-    if (!e || !e.supersededOpIds.has(event.opId)) return false;
-    // Pairing invariant: a tool_end whose tool_start is ALREADY on screen
-    // still lands. Dropping one half of a pair is worse than rendering a dead
-    // op's card — chat-render-artifacts.js pairs starts to ends, so an
-    // unpaired start renders as a never-completing card, and the WS path
-    // never runs endTurn's '(interrupted)' synthesis, so
-    // promoteLiveToMessages persists it stuck forever. The takeover wipe
-    // normally clears the start first (then the end closes nothing and is
-    // correctly dropped); this covers the entries the wipe can't fire for,
-    // e.g. one rendering a different op when the takeover was announced.
-    if (event.type === 'tool_end' && event.toolCallId
-        && e.toolEvents.some(t => t.type === 'start' && t.toolCallId === event.toolCallId)) {
-      return false;
-    }
-    return true;
+    return window._ChatAdmit.isSupersededFrame(entries.get(sessionId), event);
   }
 
   // Mutate entry from a raw WS event (the switch lives in
@@ -254,6 +232,9 @@
     // Dead turn's output — never mutate state for it, never notify.
     if (isSupersededFrame(sessionId, event)) return;
     const e = ensure(sessionId);
+    // Already on screen — no state change, and no repaint or TTS for a copy.
+    if (window._ChatAdmit.isAppliedTextFrame(e, event)) return;
+    window._ChatAdmit.markTextFrame(e, event);
     window._chatStreamReduce(e, event, Date.now(), { rememberDoneOp, rememberSupersededOp });
     notify(sessionId, event);
   }

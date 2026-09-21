@@ -66,6 +66,22 @@ export interface ActiveChat {
    *  EITHER lane starts a new run (stamped boundary:true) instead of
    *  merging into the tail. */
   runBoundary: boolean;
+  /** Monotonic position of the last text-bearing frame BROADCAST for this
+   *  turn — one counter across both lanes, because the client applies them
+   *  to one ordered timeline. Stamped onto every live stream/reasoning frame
+   *  (manager.ts flushPendingDeltas and the replace branch) so the client can
+   *  recognize a frame it has already applied.
+   *
+   *  Text is the only event class with no natural identity: tool_* dedupe by
+   *  toolCallId, approval_* by approvalId, `error` by its own text, `done` is
+   *  terminal — so a duplicate delivery of any of those is a no-op, while a
+   *  duplicate `stream` delta silently appends twice (live failure
+   *  2026-09-21: a socket orphaned by a 218s event-loop stall kept delivering
+   *  alongside its replacement; the bubble showed the answer twice,
+   *  interleaved). This is that identity. Gaps are expected and harmless —
+   *  backpressure drops delta frames (broadcast.ts) and the replay repairs
+   *  the hole — so the client compares with <=, never for contiguity. */
+  textSeq: number;
   /** Canonical op this turn's channel is streaming, learned from the turn's
    *  own `chat_op_started` (manager.onEvent). Two readers: the channel stamps
    *  it onto every live envelope so a client can tell a dead turn's frames

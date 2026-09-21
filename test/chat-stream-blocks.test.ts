@@ -40,7 +40,7 @@ interface Store {
 let ChatStreamStore: Store;
 
 beforeEach(() => {
-  for (const f of ["chat-stream-blocks.js", "chat-stream-reducer.js", "chat-stream-store.js", "chat-stream-finalize.js"]) {
+  for (const f of ["chat-stream-blocks.js", "chat-stream-reducer.js", "chat-stream-admit.js", "chat-stream-store.js", "chat-stream-finalize.js"]) {
     const src = readFileSync(join(here, "../public/js/" + f), "utf8");
     // eslint-disable-next-line no-new-func
     new Function(src)();

@@ -69,8 +69,15 @@ export function replayBufferedEvents(ws: WebSocket, sessionId: string): void {
   // empty accumulator after a stream event means the extractor REPLACED the
   // text with "" (visible text was all tool-call JSON) — the client needs
   // that empty wipe to clear its stale partial. No lane activity → no frame.
-  if (chat.sawStream) send({ type: "stream", replace: true, text: "" });
-  if (chat.sawReasoning) send({ type: "reasoning", replace: true, text: "" });
+  // Each wipe carries the turn's CURRENT text position, which becomes the
+  // client's new baseline: every text frame the turn has broadcast so far is
+  // accounted for by the runs that follow, so a copy of one still in flight on
+  // another socket (an orphan the client hasn't finished closing — live
+  // failure 2026-09-21) is recognized as already-applied and dropped instead
+  // of appending a second time. The run deltas below deliberately carry NO
+  // seq: they are bracketed by the wipe and authoritative by position.
+  if (chat.sawStream) send({ type: "stream", replace: true, text: "", seq: chat.textSeq });
+  if (chat.sawReasoning) send({ type: "reasoning", replace: true, text: "", seq: chat.textSeq });
   for (const run of chat.runs) {
     if (run.lane === "inject") {
       send({ type: "inject_consumed", injectId: run.injectId, message: run.text });

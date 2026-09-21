@@ -186,6 +186,7 @@ beforeEach(() => {
 	for (const file of [
 		"chat-stream-blocks.js",
 		"chat-stream-reducer.js",
+		"chat-stream-admit.js",
 		"chat-stream-store.js",
 		"chat-stream-finalize.js",
 		"chat-stream-store-approvals.js",

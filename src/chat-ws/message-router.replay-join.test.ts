@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { joinAssistantText } from "./message-router.js";
+import { joinAssistantText } from "./reconnect-op.js";
 
 // Reconnect replay must collapse an op's committed assistant messages into
 // ONE replace payload — the client's replace handler sets `content = text`

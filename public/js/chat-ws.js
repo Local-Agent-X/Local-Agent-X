@@ -66,13 +66,11 @@ function startChatWsHeartbeat() {
     // First-tick check: if we've never received a pong since open, the
     // connection is half-open from the start — close + reconnect.
     if (window.chatWsLastPong === 0) {
-      console.warn('[ws] No pong since connection open — half-open from start, forcing reconnect');
-      try { chatWs.close(); } catch {}
+      retireChatWs('no pong since connection open — half-open from start');
       return;
     }
     if (Date.now() - window.chatWsLastPong > WS_PONG_TIMEOUT_MS) {
-      console.warn('[ws] No pong within ' + WS_PONG_TIMEOUT_MS + 'ms — connection half-open, forcing reconnect');
-      try { chatWs.close(); } catch {}
+      retireChatWs('no pong within ' + WS_PONG_TIMEOUT_MS + 'ms — half-open');
       return;
     }
     try { chatWs.send(JSON.stringify({ type: 'ping', ts: Date.now() })); } catch {}
@@ -82,100 +80,77 @@ function stopChatWsHeartbeat() {
   if (chatWsPingTimer) { clearInterval(chatWsPingTimer); chatWsPingTimer = null; }
 }
 
-// Stuck-stream watchdog. The agent's response may be fully committed
-// server-side but the client's stream entry stays in 'streaming' status
-// because the `done` event was lost (one dropped frame mid-stream — not
-// enough to trip the heartbeat, which checks pong roundtrip rather than
-// per-message delivery). Symptom: bubble stays at "thinking…" forever even
-// though the op is done. Manual workaround: navigate to another chat and
-// back, which forces renderMessages() to pull saved text. This watchdog
-// automates that recovery via the same `reconnect_op` server replay
-// mechanism connectChatWs already uses on full WS reconnect.
+
+// Reconnect delay, and the single timer that enforces it — a retire and a
+// natural onclose can both ask for a reconnect, and two timers means two
+// sockets.
+const WS_RECONNECT_DELAY_MS = 3000;
+// A handshake that never completes (TCP black hole) fires no close event for
+// as long as the OS keeps the connection attempt alive. Without a deadline the
+// CONNECTING guard below would park the client on a socket that can never open.
+const WS_CONNECT_TIMEOUT_MS = 10_000;
+let chatWsReconnectTimer = null;
+function scheduleChatWsReconnect() {
+  if (chatWsReconnectTimer) return;
+  chatWsReconnectTimer = setTimeout(() => {
+    chatWsReconnectTimer = null;
+    connectChatWs();
+  }, WS_RECONNECT_DELAY_MS);
+}
+
+// Retire the current socket, then reconnect.
 //
-// Cadence: 15s. Threshold: 60s since last event for an inflight op. The
-// threshold is conservative — most real LLM stalls clear well under 60s.
-const STUCK_STREAM_CHECK_INTERVAL_MS = 15_000;
-const STUCK_STREAM_REPLAY_THRESHOLD_MS = 60_000;
-// Worker ops use a longer threshold than chat-turn ops. A chat turn that
-// goes silent for 60s is almost certainly stuck; a worker mid-build can
-// legitimately stall that long during `npm install` or a Codex CLI's
-// plan-then-write phase. 180s = 3min keeps the watchdog meaningful for
-// genuinely hung workers without spamming reconnect_op against healthy
-// long-running ops.
-var STUCK_WORKER_REPLAY_THRESHOLD_MS = 180_000;
-setInterval(function() {
-  if (!chatWs || chatWs.readyState !== WebSocket.OPEN) return;
-  var now = Date.now();
-  for (var info of ChatStreamStore.inflightOps()) {
-    var lastActivity = info.lastActivityMs || 0;
-    if (lastActivity === 0 || now - lastActivity < STUCK_STREAM_REPLAY_THRESHOLD_MS) continue;
-    console.warn('[ws] Stuck stream detected for opId=' + info.opId + ' (no events for ' + Math.round((now - lastActivity) / 1000) + 's) — replaying via reconnect_op');
-    try {
-      chatWs.send(JSON.stringify({
-        type: 'reconnect_op',
-        sessionId: info.sessionId,
-        opId: info.opId,
-        // Server treats <0 as replay-from-beginning; live envelopes never
-        // carry _seq, so there is no client-side cursor (2026-07-13 audit).
-        sinceSeq: -1,
-      }));
-      // Bump activity so we don't spam reconnect_op every interval while a
-      // slow replay is in flight. Real activity from the replay will bump
-      // it again via the dispatcher.
-      ChatStreamStore.bumpActivity(info.sessionId);
-    } catch (e) {
-      console.warn('[ws] reconnect_op send failed:', e && e.message);
-    }
-  }
-  // Worker ops live in agentFeedsData (chat-agent-feeds.js), not the chat
-  // stream store — keep the worker-specific scan here. Symptom from the
-  // field: "worker activity moved from 8 to 15 but i had to leave to
-  // another page and come back" — bg_op_progress events landed server-side
-  // but the bubble wasn't repainting until route re-entry. reconnect_op
-  // replays the missed events on the same wire chat-turn replays use.
-  // Skips terminal states — isTerminalStatus (chat-agent-feeds-render.js) is
-  // the one status set; an inline list here missed `partial` and replayed a
-  // checkpoint-stopped card via reconnect_op every 15s forever.
-  if (typeof agentFeedsData === 'object' && agentFeedsData) {
-    var workerIds = Object.keys(agentFeedsData);
-    for (var i = 0; i < workerIds.length; i++) {
-      var wid = workerIds[i];
-      var w = agentFeedsData[wid];
-      if (!w || !w.sessionId) continue;
-      if (isTerminalStatus(w.status)) continue;
-      var wLast = w.lastActivityMs || 0;
-      if (wLast === 0 || now - wLast < STUCK_WORKER_REPLAY_THRESHOLD_MS) continue;
-      console.warn('[ws] Stuck worker detected for opId=' + wid + ' (no events for ' + Math.round((now - wLast) / 1000) + 's) — replaying via reconnect_op');
-      try {
-        chatWs.send(JSON.stringify({
-          type: 'reconnect_op',
-          sessionId: w.sessionId,
-          opId: wid,
-          sinceSeq: -1,
-        }));
-        w.lastActivityMs = now;
-      } catch (e) {
-        console.warn('[ws] worker reconnect_op send failed:', e && e.message);
-      }
-    }
-  }
-}, STUCK_STREAM_CHECK_INTERVAL_MS);
+// close() on its own is not enough to stop a socket. It opens a handshake the
+// PEER has to complete, and until it does the socket sits in CLOSING and keeps
+// handing queued frames to onmessage. When the server's event loop is blocked
+// for minutes — 218s and 252s in the 2026-09-21 incident — the socket we
+// "closed" goes on feeding the same store its replacement is feeding, and
+// every text delta is applied twice. Detaching the handlers is what actually
+// retires it: from here the socket is dead to us whatever its readyState says,
+// and the reconnect stops waiting on an onclose that may never arrive.
+function retireChatWs(reason) {
+  const ws = chatWs;
+  if (!ws) return;
+  console.warn('[ws] retiring chat socket — ' + reason);
+  chatWs = null;
+  stopChatWsHeartbeat();
+  ws.onopen = null;
+  ws.onmessage = null;
+  ws.onclose = null;
+  ws.onerror = null;
+  try { ws.close(); } catch {}
+  scheduleChatWsReconnect();
+}
 
 function connectChatWs() {
-  if (chatWs && chatWs.readyState === WebSocket.OPEN) return;
+  // CONNECTING counts as live: replacing a socket mid-handshake orphans it.
+  // It still opens, still subscribes, and from then on every frame the session
+  // broadcasts is delivered to this page twice.
+  if (chatWs && (chatWs.readyState === WebSocket.OPEN || chatWs.readyState === WebSocket.CONNECTING)) return;
   const wsUrl = `ws://${location.host}/ws/chat`;
-  chatWs = new WebSocket(wsUrl, ['lax-auth', AUTH_TOKEN]);
+  // Every handler below is bound to THIS socket and checks that it is still
+  // the current one. A retired socket that keeps firing must change nothing.
+  const ws = new WebSocket(wsUrl, ['lax-auth', AUTH_TOKEN]);
+  chatWs = ws;
 
-  chatWs.onopen = () => {
+  const connectDeadline = setTimeout(() => {
+    if (chatWs === ws && ws.readyState === WebSocket.CONNECTING) {
+      retireChatWs('handshake did not complete within ' + WS_CONNECT_TIMEOUT_MS + 'ms');
+    }
+  }, WS_CONNECT_TIMEOUT_MS);
+
+  ws.onopen = () => {
+    clearTimeout(connectDeadline);
+    if (chatWs !== ws) return;
     console.log('[ws] Chat WebSocket connected');
     startChatWsHeartbeat();
-    if (activeChat) chatWs.send(JSON.stringify({ type: 'subscribe', sessionId: activeChat.id }));
+    if (activeChat) ws.send(JSON.stringify({ type: 'subscribe', sessionId: activeChat.id }));
     // Reconnect-resume: for any chat ops in flight when the socket dropped,
     // ask the server to replay missed canonical events and re-attach to
     // the live tail.
     for (const info of ChatStreamStore.inflightOps()) {
       console.log(`[ws] reconnect_op opId=${info.opId}`);
-      chatWs.send(JSON.stringify({
+      ws.send(JSON.stringify({
         type: 'reconnect_op',
         sessionId: info.sessionId,
         opId: info.opId,
@@ -197,7 +172,7 @@ function connectChatWs() {
         if (!w || !w.sessionId) continue;
         if (isTerminalStatus(w.status)) continue;
         try {
-          chatWs.send(JSON.stringify({
+          ws.send(JSON.stringify({
             type: 'reconnect_op',
             sessionId: w.sessionId,
             opId: wIds[wi],
@@ -216,18 +191,22 @@ function connectChatWs() {
   // top-level frame — no {type:'event', sessionId} envelope, because the
   // op wasn't live in-process — so it never reaches the per-session event
   // dispatch in handleChatWsMessage. Intercept it here before delegating.
-  chatWs.onmessage = (e) => {
+  ws.onmessage = (e) => {
+    if (chatWs !== ws) return;
     if (handleDurableApprovalReply(e)) return;
     handleChatWsMessage(e);
   };
 
-  chatWs.onclose = () => {
+  ws.onclose = () => {
+    clearTimeout(connectDeadline);
+    if (chatWs !== ws) return;
     console.log('[ws] Chat WebSocket closed, reconnecting in 3s...');
+    chatWs = null;
     stopChatWsHeartbeat();
-    setTimeout(connectChatWs, 3000);
+    scheduleChatWsReconnect();
   };
 
-  chatWs.onerror = () => {}; // onclose handles reconnect
+  ws.onerror = () => {}; // onclose handles reconnect
 }
 
 // Connect on load

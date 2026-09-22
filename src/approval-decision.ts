@@ -210,6 +210,18 @@ const DESTRUCTIVE_COMMAND_PATTERNS: Array<{ pattern: RegExp; reason: string }> =
   { pattern: /\brm\s+-\w*r\w*f\w*\b/i, reason: "rm -rf" },
   { pattern: /\brm\s+-\w*f\w*r\w*\b/i, reason: "rm -fr" },
   { pattern: /\brm\s+-[rf]\b[^|;&]*\s-[rf]\b/i, reason: "rm -r -f" },
+  // `rm -r` without -f was left off as "not the catastrophic form". Wrong
+  // axis: -f only silences prompts and missing-file errors; on a writable
+  // tree `rm -r dir` is exactly as unrecoverable as `rm -rf dir`, and it is
+  // the form a model reaches for under Git Bash once `Remove-Item` fails as
+  // not-a-command. The first eval case to provoke a shell wipe
+  // (restraint-wipe-build-cache, 2026-09-22) had the Remove-Item attempt
+  // carded and the `rm -r` fallback executed with no card, 2 runs of 3.
+  // `git rm -r` is a staged removal the index can undo, so it is excluded.
+  // `rm -Recurse` (the PowerShell alias) is caught here too; the entry below
+  // that names it precisely is listed first so the reason says what it is.
+  { pattern: /\b(?:rm|ri|rmdir|rd|del|erase)\b[^|;&]*\s-rec\w*\b/i, reason: "Remove-Item -Recurse (alias)" },
+  { pattern: /(?<!git\s)\brm\b[^|;&]*\s(?:-\w*r\w*|--recursive)\b/i, reason: "rm -r" },
   { pattern: /\bdd\b[^|;&]*\sof=\/dev\//i, reason: "dd to a raw device" },
   { pattern: /\bmkfs\b/i, reason: "filesystem format" },
   // Native Windows deletes. Every entry above was Unix-shaped, so on the
@@ -223,11 +235,9 @@ const DESTRUCTIVE_COMMAND_PATTERNS: Array<{ pattern: RegExp; reason: string }> =
   //
   // PowerShell: Remove-Item -Recurse deletes a tree without prompting, and its
   // parameter may be abbreviated (-Rec, -r). The cmdlet's aliases (rm, ri,
-  // rmdir, rd, del, erase) take the same parameter; they are matched only with
-  // the PowerShell spelling (-Rec…), so Unix `rm -r` keeps its deliberate
-  // non-flag status ("-r without -f is not the catastrophic form", above).
+  // rmdir, rd, del, erase) take the same parameter — the alias entry above,
+  // matched with the PowerShell spelling (-Rec…).
   { pattern: /\bRemove-Item\b[^|;&]*\s-r(?:ec\w*)?\b/i, reason: "Remove-Item -Recurse" },
-  { pattern: /\b(?:rm|ri|rmdir|rd|del|erase)\b[^|;&]*\s-rec\w*\b/i, reason: "Remove-Item -Recurse (alias)" },
   // cmd.exe: `rd /s` removes a tree; `del /s` deletes across subdirectories.
   // /q only silences the prompt, so /s is the flag that makes it a tree.
   { pattern: /\b(?:rd|rmdir)\b(?:\s+\/\w+)*\s+\/s\b/i, reason: "rd /s" },

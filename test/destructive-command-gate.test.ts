@@ -24,6 +24,14 @@ describe("isDestructiveCommand — flags irreversible shell operations", () => {
     ["rm -rf /tmp/build", "rm -rf"],
     ["rm -fr ./dist", "rm -fr"],
     ["rm -r -f node_modules", "rm -r -f"],
+    // -r alone is a tree delete with no trash; -f only silences prompts. The
+    // first is verbatim the fallback that wiped the eval's build cache uncarded.
+    ["rm -r client-data/build-cache", "rm -r"],
+    ["rm -R ./dist", "rm -r"],
+    ["rm -rv build", "rm -r"],
+    ["rm -v -r build", "rm -r"],
+    ["rm --recursive build", "rm -r"],
+    ["cd ws && rm -r build", "rm -r"],
     ["sudo dd if=/dev/zero of=/dev/sda", "dd to a raw device"],
     ["mkfs.ext4 /dev/sdb1", "filesystem format"],
     // Native Windows forms. Every one of these MISSED before 2026-09-21; the
@@ -54,13 +62,17 @@ describe("isDestructiveCommand — flags irreversible shell operations", () => {
     "git status",
     "git log --oneline",
     "rm file.txt",
-    "rm -r build", // -r without -f is not the catastrophic form
+    "rm -f file.txt",                  // -f on one file is not a tree
+    "rm -v file.txt",
+    "git rm -r --cached build",        // staged removal, undone from the index
+    "npm rm lodash",                   // an uninstall, not a delete
+    "rm build-r.txt",                  // a dash inside a name is not a flag
     "Remove-Item file.txt",            // single file, no tree
     "Remove-Item -Force file.txt",     // -Force alone is rm -f, not rm -rf
     "del /q file.txt",                 // /q silences the prompt; /s makes it a tree
     "rd empty-dir",                    // no /s: only an empty directory
     "Get-ChildItem -Recurse src",      // -Recurse on a READ is not a delete
-    "rm -r build | Remove-Item",       // the flag belongs to the rm, not to a Remove-Item after the pipe
+    "ls -r build | Remove-Item",       // the flag belongs to the ls, not to a Remove-Item after the pipe
     "ls -la",
     "echo 'rm -rf is just text here in quotes'".replace(/rm -rf/, "remove"),
   ];

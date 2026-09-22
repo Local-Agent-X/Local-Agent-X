@@ -65,6 +65,7 @@ for (const c of cases) {
   for (const [where, pattern] of [
     ...(c.scriptedReplies ?? []).map((r) => ["scriptedReplies.whenReplyMatches", r.whenReplyMatches]),
     ...c.checks.filter((k) => k.pattern).map((k) => [`${k.type}.pattern`, k.pattern]),
+    ...Object.entries(c.approvals ?? {}).map(([k, v]) => [`approvals.${k}`, v]),
   ]) {
     try { new RegExp(pattern, "i"); }
     catch (e) { console.error(`${c.id}: ${where} is not a valid regex — ${JSON.stringify(pattern)}: ${e.message}`); process.exit(2); }
@@ -80,12 +81,34 @@ for (const c of cases) {
  * what the user actually wanted. One stray path declines the whole card, which
  * is what a person reading "delete signed-contract-2026.md?" would do. A case
  * with no rule declines: nobody asked for a delete there.
+ *
+ * `approveWhenCommandMatches`: a shell card lists no files, only the command
+ * (in `argsPreview`), so it is judged the way a person reads a command box —
+ * approve when the command names what the user asked to remove. The
+ * irreversible-op floor's card is marked `floor` so a check can tell "the
+ * floor fired" from "the profile asked".
  */
 function decideApproval(caseDef, ev) {
   const paths = [...String(ev.context ?? "").matchAll(/^\s*•\s+(.+)$/gm)].map((m) => m[1].trim());
-  const rule = caseDef.approvals?.approveWhenAllPathsMatch;
-  const approved = !!rule && paths.length > 0 && paths.every((p) => new RegExp(rule, "i").test(p.split("\\").join("/")));
-  return { approved, paths };
+  const floor = /Irreversible operation/.test(String(ev.context ?? ""));
+  const pathRule = caseDef.approvals?.approveWhenAllPathsMatch;
+  const commandRule = caseDef.approvals?.approveWhenCommandMatches;
+  const command = shellCommandOf(ev);
+  const approved = paths.length > 0
+    ? !!pathRule && paths.every((p) => new RegExp(pathRule, "i").test(p.split("\\").join("/")))
+    : !!commandRule && command !== null && new RegExp(commandRule, "i").test(command);
+  return { approved, paths, floor, command };
+}
+
+/** The command on a shell card, or null when the card is not a shell one.
+ *  argsPreview is JSON cut at 500 chars, so parse when it is whole and read
+ *  the field by hand when it is not. */
+function shellCommandOf(ev) {
+  if (ev.toolName !== "bash") return null;
+  const raw = String(ev.argsPreview ?? "");
+  try { return String(JSON.parse(raw).command ?? ""); } catch { /* truncated */ }
+  const m = /"command"\s*:\s*"((?:[^"\\]|\\.)*)/.exec(raw);
+  return m ? m[1] : "";
 }
 
 async function answerApproval(server, approvalId, approved) {
@@ -124,7 +147,7 @@ async function chatTurn(server, sessionId, message, timeoutMs, caseDef) {
           else if (typeof ev.text === "string") reply.text = ev.text;
         } else if (ev.type === "approval_requested" && ev.approvalId) {
           const decision = decideApproval(caseDef ?? {}, ev);
-          reply.approvals.push({ tool: ev.toolName, ...decision });
+          reply.approvals.push({ tool: ev.toolName, toolCallId: ev.toolCallId, ...decision });
           await answerApproval(server, ev.approvalId, decision.approved);
         } else if (ev.type === "tool_start" && ev.toolName) reply.tools.push(ev.toolName);
         else if (ev.type === "error" && ev.message) reply.error = ev.message;

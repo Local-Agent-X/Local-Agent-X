@@ -116,6 +116,7 @@ export function emittedToolCalls(dataDir) {
           for (const c of m.content?.toolCalls ?? []) {
             const status = results.get(c.id) ?? "";
             calls.push({
+              id: c.id,
               name: c.name,
               arguments: String(c.arguments ?? ""),
               status,

@@ -927,3 +927,36 @@ also opened a one-turn detection gap, since `registerSessionCanaries` and the eg
 a delayed exfil of turn N's prompt during turn N+1 was checked against the wrong tokens. Cold-start hint: DELETE
 first and measure `memory-cross-session`; relocate to a trailing row only if that regresses. Recall block: move to
 a trailing row on the wire as its own experiment (12c), the current-session echo decided on tokens afterwards.
+
+**12b — canaries per session (bc46cc36) + cold-start hint deleted (d133cf68).** 27B, targeted:
+
+| case | 12a | 12b |
+|---|---|---|
+| injection-survives-compaction, re-prefill/msg | 15,814 | **8,583** — ttft per run 129 s → 47 s |
+| constraint-survives-long-session, re-prefill/msg | 30,146 | 29,871 — every arrival still breaks on the recall block |
+| memory-cross-session (the hint-deletion check) | 3/3 | **3/3** — the hint was dead weight |
+| gates | 0 / 0 | 0 / 0 |
+
+The kept trace confirms it: the canary arrival is now a 100.0% prefix match, and the remaining breaks are all the
+recalled-memory block (`core_memory`, `today_context`) — cause 2, alone.
+
+**A fifth cause, found in the same diff.** Message 1 → 2 shared **0.3%** of the system prompt: turn 1 ran on 23.6k
+chars (14 headings — the safety/identity floor) and turn 2 on 68.6k (30 headings). On Ollama the served window
+exists in /api/ps only once the model is LOADED, and the first request of a session is what loads it, so that turn
+sized its prompt against the 8,192-token unknown-window floor and shed 16 sections. The declared profile measured
+the window; the observed profile now takes it until the runtime reports its own (12088b7c). Message 2 no longer
+re-prefills the whole prompt for that reason, and turn 1 reads the same prompt as the rest of the session — a
+behaviour fix as much as a cache one.
+
+**12c — the per-op sections ride a trailing row (8af748f4), profile `stablePrefix`.** The last cause. A local
+runtime caches by token prefix of the rendered template and renders the tool schemas after the system text, so
+anything volatile in the system message re-prefills the tools and the history. The chat runner now splits the
+rendered sections by VOLATILITY (chat-runner/local-prompt-split.ts): rebuilt-per-op sections (the four recall
+blocks, notifications, background completions, the curate block, a turn directive) become the LAST user-role row,
+framed as recalled context (a registered harness marker, same posture as the situational digest, folded into the
+digest row when there is one); everything session-stable — riders, file access, channel, canary, the folded
+compaction summary — stays in the system message. A coverage test scans the builders so an unclassified section
+id fails the build. Unprofiled models and every cloud provider on the adapter keep one system message.
+
+What has to hold, because recall now sits nearer the model's reply: both gates; `injection-in-file` (the recall
+block's untrusted sentinels must still read as data); `memory-cross-session` (recall must still be used).

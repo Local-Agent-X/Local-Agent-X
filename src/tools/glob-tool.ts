@@ -4,7 +4,7 @@
  */
 import { readdir as nodeReaddir } from "node:fs";
 import { stat } from "node:fs/promises";
-import { resolve } from "node:path";
+import { resolve, sep } from "node:path";
 import type { Readable } from "node:stream";
 import fg from "fast-glob";
 import type { ToolDefinition, ToolResult } from "../types.js";
@@ -33,7 +33,7 @@ function humanSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)}M`;
 }
 
-interface FileEntry { path: string; mtime: number; size: number }
+interface FileEntry { path: string; mtime: number; size: number; dir: boolean }
 
 // ── Walk bounds ──
 //
@@ -134,7 +134,13 @@ export function walkBounded(pattern: string, cwd: string, fs?: WalkFs): Promise<
     const stream = fg.stream(pattern, {
       cwd,
       dot: false,
-      onlyFiles: true,
+      // Directories match too. "Find my CRM project" is a search for a FOLDER
+      // named like crm, and with files only `**/*crm*` can never return
+      // `projects/clients/2025/jobs-crm-app/` — it returned the one stray
+      // notes file instead and the model reported that as the project
+      // (op-outcomes find-project, 2026-09-22). A directory renders with a
+      // trailing separator so the model can tell it from a file.
+      onlyFiles: false,
       absolute: true,
       suppressErrors: true,
       followSymbolicLinks: true,
@@ -169,7 +175,7 @@ async function globFiles(pattern: string, cwd: string, limit: number): Promise<{
       // only tool speaking the second. resolve() is what resolveAgentPath
       // itself applies to an absolute path, so this re-enters the canonical
       // form and is a no-op off Windows.
-      entries.push({ path: resolve(p), mtime: s.mtimeMs, size: s.size });
+      entries.push({ path: resolve(p), mtime: s.mtimeMs, size: s.size, dir: s.isDirectory() });
     } catch { /* skip inaccessible files */ }
   }
 
@@ -181,8 +187,8 @@ export const globTool: ToolDefinition = {
   name: "glob",
   compactDescription: `Fast file pattern matching (e.g. src/**/*.tsx), newest first, from your workspace by default. Walks at most ${MAX_DEPTH} levels and stops after ${MAX_SCAN} matches (a bare **/* truncates) — pass a path to narrow the search.`,
   description:
-    "Fast file pattern matching. Returns files matching a glob pattern, sorted by modification time (newest first). " +
-    "Supports patterns like **/*.ts, src/**/*.tsx, *.json. " +
+    "Fast file pattern matching. Returns files AND folders matching a glob pattern, sorted by modification time (newest first); a folder is listed with a trailing separator. " +
+    "Supports patterns like **/*.ts, src/**/*.tsx, *.json, and **/*crm* to find a project folder by name. " +
     `Walks at most ${MAX_DEPTH} directory levels below the search root and stops after ${MAX_SCAN} matches — pass path to search deeper or narrower.`,
   readOnly: true,
   concurrencySafe: true,
@@ -224,7 +230,7 @@ export const globTool: ToolDefinition = {
         return ok(`No files matched.${warning}`, { pattern, cwd, count: 0, scan_truncated: truncated || undefined, duration_ms: durationMs });
       }
 
-      const lines = entries.map((e) => `${e.path}  (${humanSize(e.size)})`);
+      const lines = entries.map((e) => (e.dir ? `${e.path}${sep}  (dir)` : `${e.path}  (${humanSize(e.size)})`));
       return ok(lines.join("\n") + warning, {
         pattern,
         cwd,
@@ -255,7 +261,7 @@ export const globToolEnhancements = {
 export function prompt(): string {
   return [
     "Use the glob tool for fast file pattern matching instead of bash find/ls.",
-    "Supports patterns like **/*.ts, src/**/*.tsx, *.json.",
+    "Supports patterns like **/*.ts, src/**/*.tsx, *.json. Folders match too (listed with a trailing separator), so **/*crm* finds a project folder named like crm.",
     "Results are sorted by modification time (newest first), limited to 200.",
     `The walk enters at most ${MAX_DEPTH} directory levels below the search root, opens at most ${MAX_DIRS} directories, and stops after ${MAX_SCAN} matches (the result says so) — pass path to re-root deeper, or narrow the pattern.`,
     "Provide an optional path to search in a specific directory.",

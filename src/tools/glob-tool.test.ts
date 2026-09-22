@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync, utimesSync, realpathSync, type readdir as fsReaddir } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import { globTool, walkBounded, MAX_DEPTH, MAX_DIRS, MAX_SCAN, WALK_CONCURRENCY, type WalkFs } from "./glob-tool.js";
 import { renderToolResultForModel } from "./result-helpers.js";
 
@@ -56,6 +56,24 @@ describe("glob tool — ordinary output is unchanged", () => {
 		expect(rendered).not.toContain("capped");
 		expect(rendered).not.toContain("scan_truncated");
 		expect(rendered).not.toContain("WARNING");
+	});
+
+	it("a folder whose name matches is returned, marked as a folder", async () => {
+		// "Find my CRM project": the project is a DIRECTORY, and a files-only walk
+		// could only ever return the stray notes file beside it — which is what
+		// the model then reported as the project (op-outcomes find-project,
+		// 2026-09-22). The decoy is still listed; the folder is listed too.
+		const dir = join(root, "folders");
+		file("folders/projects/archive/crm-notes.txt", "notes", 1_700_000_000);
+		file("folders/projects/clients/2025/jobs-crm-app/package.json", "{}", 1_700_000_100);
+
+		const res = await run("**/*crm*", dir);
+		const lines = res.content.split("\n");
+		expect(lines).toContain(`${at(dir, "projects/clients/2025/jobs-crm-app")}${sep}  (dir)`);
+		expect(lines).toContain(`${at(dir, "projects/archive/crm-notes.txt")}  (5B)`);
+		expect(res.metadata).toMatchObject({ count: 2 });
+		// A file-typed pattern still lists only files.
+		expect((await run("**/*.json", dir)).content).toBe(`${at(dir, "projects/clients/2025/jobs-crm-app/package.json")}  (2B)`);
 	});
 
 	it("reports no matches exactly as before", async () => {

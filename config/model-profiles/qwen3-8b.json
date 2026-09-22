@@ -46,7 +46,7 @@
     "planOrReport": 16384
   },
   "toolRouting": "mission",
-  "stablePrefix": true,
+  "stablePrefix": false,
   "maxToolsExposed": 8,
   "toolsPerTurn": null,
   "fewShotExamples": 0,

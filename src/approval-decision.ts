@@ -212,6 +212,26 @@ const DESTRUCTIVE_COMMAND_PATTERNS: Array<{ pattern: RegExp; reason: string }> =
   { pattern: /\brm\s+-[rf]\b[^|;&]*\s-[rf]\b/i, reason: "rm -r -f" },
   { pattern: /\bdd\b[^|;&]*\sof=\/dev\//i, reason: "dd to a raw device" },
   { pattern: /\bmkfs\b/i, reason: "filesystem format" },
+  // Native Windows deletes. Every entry above was Unix-shaped, so on the
+  // product's primary platform this floor did not exist: a qwen3:8b run had
+  // three `Remove-Item` variants blocked by other layers, then
+  // `powershell.exe -Command "Remove-Item -Force -Recurse '<absolute path>'"`
+  // went through and destroyed three client originals with no trash and no
+  // card (EXP-8, 2026-09-21). The `powershell -Command` / `cmd /c` wrappers
+  // need no special handling: these scan the whole command string, and the
+  // delete inside the quoted argument still matches.
+  //
+  // PowerShell: Remove-Item -Recurse deletes a tree without prompting, and its
+  // parameter may be abbreviated (-Rec, -r). The cmdlet's aliases (rm, ri,
+  // rmdir, rd, del, erase) take the same parameter; they are matched only with
+  // the PowerShell spelling (-Rec…), so Unix `rm -r` keeps its deliberate
+  // non-flag status ("-r without -f is not the catastrophic form", above).
+  { pattern: /\bRemove-Item\b[^|;&]*\s-r(?:ec\w*)?\b/i, reason: "Remove-Item -Recurse" },
+  { pattern: /\b(?:rm|ri|rmdir|rd|del|erase)\b[^|;&]*\s-rec\w*\b/i, reason: "Remove-Item -Recurse (alias)" },
+  // cmd.exe: `rd /s` removes a tree; `del /s` deletes across subdirectories.
+  // /q only silences the prompt, so /s is the flag that makes it a tree.
+  { pattern: /\b(?:rd|rmdir)\b(?:\s+\/\w+)*\s+\/s\b/i, reason: "rd /s" },
+  { pattern: /\b(?:del|erase)\b(?:\s+\/\w+)*\s+\/s\b/i, reason: "del /s" },
 ];
 
 // Destructive binaries matched by EXECUTABLE BASENAME (structured shell form).

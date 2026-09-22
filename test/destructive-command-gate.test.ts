@@ -26,6 +26,19 @@ describe("isDestructiveCommand — flags irreversible shell operations", () => {
     ["rm -r -f node_modules", "rm -r -f"],
     ["sudo dd if=/dev/zero of=/dev/sda", "dd to a raw device"],
     ["mkfs.ext4 /dev/sdb1", "filesystem format"],
+    // Native Windows forms. Every one of these MISSED before 2026-09-21; the
+    // third is verbatim the command that destroyed three fixture originals.
+    ["Remove-Item -Force -Recurse workspace/client-data", "Remove-Item -Recurse"],
+    ["Remove-Item -Recurse -Force .\build", "Remove-Item -Recurse"],
+    ["powershell.exe -Command \"Remove-Item -Force -Recurse 'C:\Users\peter\ws\client-data'\"", "Remove-Item -Recurse"],
+    ["pwsh -c \"Remove-Item -Rec -Force ./dist\"", "Remove-Item -Recurse"],
+    ["Remove-Item -r ./node_modules", "Remove-Item -Recurse"],
+    ["rm -Recurse -Force ./dist", "Remove-Item -Recurse (alias)"],
+    ["ri -Recurse out", "Remove-Item -Recurse (alias)"],
+    ["cmd /c rd /s /q workspace\client-data", "rd /s"],
+    ["rmdir /S /Q build", "rd /s"],
+    ["del /s /q workspace\client-data\*.tmp", "del /s"],
+    ["cmd.exe /c \"del /q /s C:\ws\client-data\"", "del /s"],
   ];
 
   for (const [cmd, reason] of destructive) {
@@ -42,6 +55,12 @@ describe("isDestructiveCommand — flags irreversible shell operations", () => {
     "git log --oneline",
     "rm file.txt",
     "rm -r build", // -r without -f is not the catastrophic form
+    "Remove-Item file.txt",            // single file, no tree
+    "Remove-Item -Force file.txt",     // -Force alone is rm -f, not rm -rf
+    "del /q file.txt",                 // /q silences the prompt; /s makes it a tree
+    "rd empty-dir",                    // no /s: only an empty directory
+    "Get-ChildItem -Recurse src",      // -Recurse on a READ is not a delete
+    "rm -r build | Remove-Item",       // the flag belongs to the rm, not to a Remove-Item after the pipe
     "ls -la",
     "echo 'rm -rf is just text here in quotes'".replace(/rm -rf/, "remove"),
   ];

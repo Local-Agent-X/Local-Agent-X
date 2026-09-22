@@ -209,7 +209,45 @@ function collectMetrics(dataDir) {
   const fabrications = fabricationAttempts(dataDir);
   m.fabricationAttempts = fabrications.length;
   if (fabrications.length) m.fabricationSamples = fabrications.slice(0, 3);
+  m.prefix = prefixReuse(dataDir);
   return { ...m, chatModels: [...m.chatModels] };
+}
+
+/**
+ * Where the runtime's prompt cache breaks. `promptCachedTokens` is what the
+ * runtime reports it did NOT re-process; the remainder of each round's prompt
+ * was prefilled again. Split by where the round sits:
+ *   - `newMessage`: the first round of every chat op after the first — a new
+ *     user message arrived. With a byte-stable prefix this would be about the
+ *     size of that message plus whatever the previous op appended.
+ *   - `midLoop`: every later round of an op — a tool result was appended.
+ *   - `firstOp`: the very first round of the session, a cold prefill by nature.
+ * Each is the SUM of uncached tokens over its rounds, so a case with six user
+ * messages reports what those six arrivals cost. The stable-prefix experiment
+ * (AUDIT.md item 8) exists to move `newMessage`; `midLoop` says whether the
+ * loop itself is stable.
+ */
+function prefixReuse(dataDir) {
+  const ops = readOps(dataDir)
+    .filter(({ op }) => op.type === "chat_turn")
+    .sort((a, b) => String(a.op.createdAt).localeCompare(String(b.op.createdAt)));
+  const out = { firstOp: 0, newMessage: 0, midLoop: 0, newMessageRounds: 0, midLoopRounds: 0 };
+  ops.forEach(({ dir }, opIdx) => {
+    const turnsDir = join(dir, "op-turns");
+    const files = (existsSync(turnsDir) ? readdirSync(turnsDir) : [])
+      .filter((f) => /^\d+\.json$/.test(f))
+      .sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
+    files.forEach((f, roundIdx) => {
+      let p;
+      try { p = JSON.parse(readFileSync(join(turnsDir, f), "utf8")).turn?.providerState?.providerPayload ?? {}; } catch { return; }
+      const input = p.usageInputTokens ?? p.usagePromptTokens ?? 0;
+      const uncached = Math.max(0, input - (p.cacheReadTokens ?? p.promptCachedTokens ?? 0));
+      if (opIdx === 0 && roundIdx === 0) out.firstOp += uncached;
+      else if (roundIdx === 0) { out.newMessage += uncached; out.newMessageRounds++; }
+      else { out.midLoop += uncached; out.midLoopRounds++; }
+    });
+  });
+  return out;
 }
 
 /** Did the model emit the call an injection was fishing for, and did it run?
@@ -350,7 +388,11 @@ function summarize(batch) {
     const pass = runs.filter((r) => r.pass).length;
     const med = (k) => median(runs.map((r) => r.metrics?.[k] ?? 0));
     const steps = median(runs.map((r) => r.metrics?.stepsVsReference ?? 0));
-    console.log(`  ${id.padEnd(34)} ${pass}/${runs.length} pass  ${String(median(runs.map((r) => r.secs))).padStart(4)}s  rounds ${med("rounds")}${steps ? ` (${steps}x ref)` : ""}  nudges ${med("nudges")}  in ${med("inputTokens")}  out ${med("outputTokens")}  ttft ${med("ttftMs")}ms`);
+    // Re-prefilled tokens per arrival: what a new user message costs in prompt
+    // processing, and what a tool result costs. The stable-prefix work is
+    // graded on the first number.
+    const per = (k, n) => { const v = runs.map((r) => (r.metrics?.prefix?.[n] ? r.metrics.prefix[k] / r.metrics.prefix[n] : null)).filter((x) => x !== null); return v.length ? `${Math.round(median(v))}` : "—"; };
+    console.log(`  ${id.padEnd(34)} ${pass}/${runs.length} pass  ${String(median(runs.map((r) => r.secs))).padStart(4)}s  rounds ${med("rounds")}${steps ? ` (${steps}x ref)` : ""}  nudges ${med("nudges")}  in ${med("inputTokens")}  out ${med("outputTokens")}  ttft ${med("ttftMs")}ms  re-prefill/msg ${per("newMessage", "newMessageRounds")}  /tool ${per("midLoop", "midLoopRounds")}`);
   }
   const total = batch.runs.length, passed = batch.runs.filter((r) => r.pass).length;
   console.log(`  ${"TOTAL".padEnd(34)} ${passed}/${total} pass (${Math.round((100 * passed) / total)}%)`);

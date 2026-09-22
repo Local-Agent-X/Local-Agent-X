@@ -45,7 +45,7 @@
     "contentTool": 16384,
     "planOrReport": 16384
   },
-  "toolRouting": "message",
+  "toolRouting": "mission",
   "maxToolsExposed": 30,
   "toolsPerTurn": null,
   "fewShotExamples": 0,

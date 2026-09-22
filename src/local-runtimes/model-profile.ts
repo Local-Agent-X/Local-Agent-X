@@ -206,15 +206,28 @@ function load(modelId: string): ResolvedModelProfile | null {
   return { ...merged, profileId: merged.id, profileHash: hashProfile(merged), source };
 }
 
-/** The declared tier as the tool pipeline's ModelTier, or null when the model
- *  has no profile. Never throws: a profile problem is logged by the loader and
- *  the caller falls back to its own heuristic. */
-export function modelProfileTier(modelId: string): ModelTier | null {
+/** The declared profile, or null when there is none or it is unreadable —
+ *  for callers on the request path, where a profile problem must cost a
+ *  warning and a default, never the turn. */
+function profileOrNull(modelId: string, fallback: string): ResolvedModelProfile | null {
   try {
-    const p = resolveModelProfile(modelId);
-    return p ? TIER_TO_MODEL_TIER[p.tier] : null;
+    return resolveModelProfile(modelId);
   } catch (e) {
-    logger.warn(`profile for ${modelId} unreadable, falling back to the name heuristic: ${(e as Error).message}`);
+    logger.warn(`profile for ${modelId} unreadable, ${fallback}: ${(e as Error).message}`);
     return null;
   }
+}
+
+/** The declared tier as the tool pipeline's ModelTier, or null when the model
+ *  has no profile. */
+export function modelProfileTier(modelId: string): ModelTier | null {
+  const p = profileOrNull(modelId, "falling back to the name heuristic");
+  return p ? TIER_TO_MODEL_TIER[p.tier] : null;
+}
+
+/** How this model's tool set is re-derived: per `message` (today's default,
+ *  and what an unprofiled model gets) or per `mission` — the session's union,
+ *  byte-identical between messages until a new tool is needed. */
+export function modelToolRouting(modelId: string): ModelProfile["toolRouting"] {
+  return profileOrNull(modelId, "tool routing stays per-message")?.toolRouting ?? "message";
 }

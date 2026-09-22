@@ -207,19 +207,6 @@ export async function selectTools(input: ToolSelectionInput): Promise<ToolSelect
           union.add(t.name);
         }
         tools = input.allAgentTools.filter(t => union.has(t.name));
-        // Re-apply the tier's DESCRIPTION compaction at the union's own size,
-        // so the re-rank's picks all survive (711f2cd6).
-        //
-        // This deliberately does NOT enforce the tier's tool COUNT, and that
-        // is a measured decision, not an oversight. EXP-7 through 7d
-        // (2026-09-21, docs/harness/HARNESS_LOG.md) enforced it four ways.
-        // It cut input tokens 62% on qwen3:8b and 34% on qwen3.6:27b — and
-        // cost the 8B 3-8 cases in every variant (20/63 -> 14, 17, 15, 12) and
-        // failed the 27B's unsafe_action gate in all three runs that measured
-        // it (0 -> 2, 1, 2): a capped set kept a guessable `delete_file`
-        // reachable and lost the product-specific `restore_file`. The saving is
-        // real; nothing here can yet choose WHICH few tools a message needs.
-        if (tier !== "strong") tools = shrinkToolsForTier(tools, tier, input.allAgentTools, tools.length);
         logger.info(`[step] tool-rag.select ${Date.now() - ragT0}ms picked=${semantic.length}`);
       } else {
         logger.info(`[tool-rag] not ready yet — shipping filtered set without RAG re-rank`);
@@ -227,13 +214,34 @@ export async function selectTools(input: ToolSelectionInput): Promise<ToolSelect
     } catch (e) {
       logger.warn(`[tool-rag] Skipped: ${(e as Error).message}`);
     }
-    // Weak/medium sets are capped for model capacity, so only strong grows.
-    // Re-derived in catalog order so the same union serializes identically.
+    // The session's union: the set only grows, so consecutive messages send
+    // byte-identical tools until a new one is needed. Strong models always;
+    // a local model when its profile routes tools per mission (EXP-12: on the
+    // local wire the tool schemas render after the system text, so a set that
+    // changes 74→75→74 across messages re-prefilled the whole prompt at every
+    // arrival — 30-37k tokens, measured). Re-derived in catalog order so the
+    // same union serializes identically.
+    const { modelToolRouting } = await import("../../local-runtimes/model-profile.js");
+    const sticky = tier === "strong" || modelToolRouting(input.resolvedModel) === "mission";
     const known = sessionToolNames.get(input.sessionId);
-    if (tier === "strong" && known) {
+    if (sticky && known) {
       const union = new Set([...known, ...tools.map(t => t.name)]);
       tools = input.allAgentTools.filter(t => union.has(t.name));
     }
+    // The tier's DESCRIPTION compaction at the final set's own size, so every
+    // pick survives (711f2cd6). Applied after the union so the bytes are a
+    // function of the set alone.
+    //
+    // This deliberately does NOT enforce the tier's tool COUNT, and that
+    // is a measured decision, not an oversight. EXP-7 through 7d
+    // (2026-09-21, docs/harness/HARNESS_LOG.md) enforced it four ways.
+    // It cut input tokens 62% on qwen3:8b and 34% on qwen3.6:27b — and
+    // cost the 8B 3-8 cases in every variant (20/63 -> 14, 17, 15, 12) and
+    // failed the 27B's unsafe_action gate in all three runs that measured
+    // it (0 -> 2, 1, 2): a capped set kept a guessable `delete_file`
+    // reachable and lost the product-specific `restore_file`. The saving is
+    // real; nothing here can yet choose WHICH few tools a message needs.
+    if (tier !== "strong") tools = shrinkToolsForTier(tools, tier, input.allAgentTools, tools.length);
     rememberSessionTools(input.sessionId, tools.map(t => t.name));
   }
 

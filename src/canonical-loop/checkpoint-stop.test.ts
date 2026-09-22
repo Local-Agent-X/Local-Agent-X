@@ -36,7 +36,7 @@ const { configSchema } = await import("../config-schema.js");
 const { getMiddlewareState, _resetMiddlewareStates } = await import("./middlewares/state.js");
 const { createLoopState, noteToolResults } = await import("../agent-guards/loop-detection.js");
 const { RESULT_SIG_MEMORY } = await import("../agent-guards/loop-progress.js");
-const { evaluateCheckpointStop, checkpointStopFromEvents, describeCheckpointStop } = await import("./checkpoint-stop.js");
+const { evaluateCheckpointStop, evaluateTokenCeiling, checkpointStopFromEvents, describeCheckpointStop } = await import("./checkpoint-stop.js");
 type CanonicalEvent = import("./types.js").CanonicalEvent;
 type LoopState = import("../agent-guards/loop-detection.js").LoopState;
 type Op = import("../ops/types.js").Op;
@@ -442,5 +442,68 @@ describe("spend budgets — schema defaults", () => {
     const op = mkOp("op-default-sub", "oauth");
     learn(op.id, 1);
     expect(evaluateCheckpointStop(op)).toMatchObject({ stop: false, reason: null });
+  });
+});
+
+/**
+ * The op's own token ceiling, as a stop.
+ *
+ * It used to be a hard failure in worker.ts — `running → failed`, outcome
+ * `aborted` — which threw away every turn the op had already paid for. Live
+ * case 2026-09-22: a verification pass spent 85,419 of its 80,000 tokens over
+ * eight turns, reported `failed` with no verdict, and because a failed
+ * verification is deliberately quiet, the spend bought silence.
+ *
+ * Only the parts that are genuinely decidable without a committed op live
+ * here. Whether the ceiling actually TRIPS, and on which turn, depends on real
+ * usage summed from persisted turn artifacts — those go through the commit
+ * protocol's structural authorization, so hand-written rows read back as zero
+ * usage and would make an assertion pass vacuously. That behaviour is proved
+ * against a real worker in test/worker-honors-token-budget.test.ts.
+ */
+describe("the token ceiling predicate", () => {
+  function opWithCeiling(id: string, maxTokens: number): Op {
+    const op = mkOp(id);
+    op.contextPack.budget.maxTokens = maxTokens;
+    return op;
+  }
+
+  it("is dormant when no ceiling is stamped — 0 means off, not zero tokens allowed", () => {
+    // Short-circuits before any usage read, which is what makes this decidable
+    // here: context-pack-builder defaults maxTokens to 0 for every op that does
+    // not deliberately stamp one.
+    expect(evaluateTokenCeiling(opWithCeiling("op-tok-off", 0))).toMatchObject({ stop: false, reason: null });
+    expect(evaluateTokenCeiling(opWithCeiling("op-tok-neg", -1))).toMatchObject({ stop: false, reason: null });
+    expect(evaluateTokenCeiling(opWithCeiling("op-tok-nan", Number.NaN))).toMatchObject({ stop: false, reason: null });
+  });
+
+  it("is PURE — the worker calls it every turn, so it must not consume the cadence", () => {
+    // evaluateCheckpointStop mutates the dry-checkpoint snapshot and may run
+    // only once per checkpoint. If the ceiling shared that path, a per-turn
+    // call would count phantom checkpoints and trip "dry" long before the
+    // cadence had actually come round.
+    const op = opWithCeiling("op-tok-pure", 80_000);
+    const cadence = getMiddlewareState<{ dryCheckpoints: number; lastNovelTotal: number | null }>(
+      op.id, "checkpoint-cadence", () => ({ lastNovelTotal: null, dryCheckpoints: 0 }),
+    );
+    cadence.dryCheckpoints = 1;
+    cadence.lastNovelTotal = 7;
+
+    for (let i = 0; i < 5; i++) evaluateTokenCeiling(op);
+
+    expect(cadence.dryCheckpoints).toBe(1);
+    expect(cadence.lastNovelTotal).toBe(7);
+  });
+
+  it("reads back as a recognized stop, so every partial surface renders it", () => {
+    // An unrecognized stopReason is dropped to null by checkpointStopFromEvents
+    // and the user is told only a turn count, never why it stopped.
+    const events: CanonicalEvent[] = [{
+      opId: "op-tok-read", seq: 1, type: "iteration_checkpoint", ts: new Date().toISOString(),
+      body: { continuing: false, stopReason: "token-ceiling", stopDetail: "budget spent", completedTurns: 8 },
+    }];
+    const facts = checkpointStopFromEvents(events);
+    expect(facts).toMatchObject({ reason: "token-ceiling", completedTurns: 8 });
+    expect(describeCheckpointStop("op-tok-read", facts!)).toContain("PARTIAL");
   });
 });

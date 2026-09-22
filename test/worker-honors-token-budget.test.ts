@@ -4,14 +4,20 @@
  *
  * Two mechanisms, backend only:
  *
- *  (1) ENFORCEMENT. `OpBudget.maxTokens` was written but never read: only
- *      maxWallTimeMs and maxIterations gated a run. This test drives an op whose
- *      every turn is a non-terminal tool call carrying usage tokens, with a
- *      maxTokens budget that the SECOND turn's cumulative total crosses. The
- *      worker must stop after exactly 2 turns and finalize the op `failed` with a
- *      `max_tokens_exceeded` error whose message quotes the budget cap — mirroring
- *      the existing max_turns_exceeded floor. maxIterations is set high (10) so
- *      the turn cap can't be what stops it.
+ *  (1) ENFORCEMENT, as a STOP. This test drives an op whose every turn is a
+ *      non-terminal tool call carrying usage tokens, with a maxTokens budget
+ *      that the SECOND turn's cumulative total crosses. The worker must stop
+ *      after exactly 2 turns and finalize the op `succeeded / partial` with an
+ *      `iteration_checkpoint` naming reason `token-ceiling`. maxIterations is
+ *      set high (10) so the turn cap can't be what stops it.
+ *
+ *      It used to finalize `failed / aborted` with a `max_tokens_exceeded`
+ *      error, which discarded every turn the op had already paid for and told
+ *      every reporting surface the work was worthless. Live case 2026-09-22: a
+ *      verification pass spent 85,419 of its 80,000 tokens over eight turns and
+ *      reported `failed` with no verdict. The meter is cumulative — each turn
+ *      re-sends the transcript and is billed for it — so reaching a ceiling is
+ *      an ORDINARY way for a multi-turn op to end, not a fault.
  *
  *      Dormancy: the mechanism stays inert when maxTokens is unset/0 — proven by
  *      test (2), whose op runs to natural completion with maxTokens: 0 despite
@@ -43,6 +49,8 @@ import {
   setToolDispatcher,
   readCanonicalEvents,
 } from "../src/canonical-loop/index.js";
+import { resolveTerminalOpStatus } from "../src/canonical-loop/checkpoint-stop.js";
+import { readOpTurns } from "../src/canonical-loop/store.js";
 import { readOp, newOpId } from "../src/ops/op-store.js";
 import type { Op } from "../src/ops/types.js";
 
@@ -121,7 +129,7 @@ async function awaitTerminal(opId: string, timeoutMs = 5_000): Promise<void> {
 }
 
 describe("worker honors budget.maxTokens (C4)", () => {
-  it("caps the drive loop when cumulative tokens meet/exceed maxTokens → failed + max_tokens_exceeded", async () => {
+  it("caps the drive loop when cumulative tokens meet/exceed maxTokens → succeeded/partial + token-ceiling", async () => {
     // Budget of 1000: turn 0 lands 600 (< 1000, continue), turn 1 lands 1200
     // (>= 1000, trip). maxIterations 10 so the iteration cap can't fire first.
     const op = mkOp({ maxIterations: 10, maxTokens: 1000 });
@@ -144,24 +152,37 @@ describe("worker honors budget.maxTokens (C4)", () => {
 
     const after = readOp(op.id);
 
-    // The op tripped the token ceiling and finalized `failed` — it did NOT run
-    // the full 10-turn script to a natural `succeeded`.
-    expect(after?.canonical?.state).toBe("failed");
+    // The op tripped the token ceiling and STOPPED — it did NOT run the full
+    // 10-turn script to a natural completion, and it did not fail.
+    expect(after?.canonical?.state).toBe("succeeded");
 
     // Exactly 2 driveTurn calls: turn 0 (600 total, under) then turn 1 (1200
     // total, trips the cap after commit, before a 3rd turn).
     expect(fake.turnInputs.length).toBe(2);
 
-    // The reason event quotes the budget cap and the observed usage.
+    // No error event: a spent budget is not a fault, and an error here is what
+    // made the AGENTS card read "failed" with nothing to show for the spend.
     const events = readCanonicalEvents(op.id);
-    const capEvent = events.find(e =>
-      e.type === "error" &&
-      (e.body as { code?: string } | undefined)?.code === "max_tokens_exceeded",
+    expect(events.find(e => e.type === "error")).toBeUndefined();
+
+    // The stop rides the checkpoint record every partial surface reads.
+    const stop = events.find(e =>
+      e.type === "iteration_checkpoint" &&
+      (e.body as { continuing?: boolean } | undefined)?.continuing === false,
     );
-    expect(capEvent).toBeDefined();
-    const msg = (capEvent!.body as { message?: string } | undefined)?.message ?? "";
-    expect(msg).toContain("maxTokens=1000");
-    expect(msg).toContain(`used ${2 * PER_TURN}`);
+    expect(stop).toBeDefined();
+    const body = stop!.body as { stopReason?: string; stopDetail?: string; completedTurns?: number };
+    expect(body.stopReason).toBe("token-ceiling");
+    expect(body.stopDetail).toContain(`${2 * PER_TURN} of 1000`);
+
+    // And the surfaces render it as PARTIAL, not completed — the whole point
+    // of the stop is that the work is kept and reported honestly.
+    const resolved = resolveTerminalOpStatus(op.id, "succeeded");
+    expect(resolved.status).toBe("partial");
+    expect(resolved.partialSummary).toContain("token-ceiling");
+
+    // The work survives: both committed turns are still on disk.
+    expect(readOpTurns(op.id).length).toBe(2);
   });
 
   it("stays dormant when maxTokens is 0 (op runs to natural completion) and every turn_committed carries the running total", async () => {

@@ -72,14 +72,17 @@ export async function buildContextPack(input: BuildPackInput): Promise<ContextPa
 
   const budget: OpBudget = {
     maxIterations: input.budget?.maxIterations ?? 30,
-    // 0 = OFF. maxTokens is a hard per-op cumulative-token ceiling the worker
-    // now ENFORCES (canonical-loop/worker.ts): a positive value stops the op
-    // with `max_tokens_exceeded`. It was a dead field defaulting to 80_000 while
-    // nothing read it; waking the enforcement would turn that vestige into a live
-    // guillotine (input tokens compound across turns, so a normal multi-turn op
-    // blows past 80k in a few rounds). Default to 0 so the ceiling stays dormant
-    // unless a caller deliberately stamps a budget — matching maxTokens: 0 used
-    // across the op fixtures. Set a real number here (or at the call site) to arm it.
+    // 0 = OFF. maxTokens is a per-op cumulative-token ceiling the worker checks
+    // after every turn (checkpoint-stop.ts evaluateTokenCeiling): a positive
+    // value STOPS the op — `succeeded / partial`, reason `token-ceiling`, work
+    // kept. It is no longer the guillotine this comment used to warn about
+    // (it ended the op `failed / aborted` and discarded every turn already paid
+    // for), but the underlying arithmetic is unchanged: input tokens compound
+    // across turns, so a normal multi-turn op reaches 80k in a few rounds. A
+    // ceiling is therefore a stopping point, not an error budget — pick one
+    // that says "this is all this task is worth", not one you expect to clear.
+    // Default stays 0 so nothing is bounded by accident; stamp a real number
+    // here or at the call site to arm it.
     maxTokens: input.budget?.maxTokens ?? 0,
     maxWallTimeMs: input.budget?.maxWallTimeMs ?? 15 * 60 * 1000,
     maxSelfEditCalls: input.budget?.maxSelfEditCalls ?? 5,

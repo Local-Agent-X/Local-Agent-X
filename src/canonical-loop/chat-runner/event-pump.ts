@@ -44,6 +44,11 @@ function checkpointStopPhrase(
         line: `I stopped here to stay inside your spend budget${stopDetail ? ` (${stopDetail})` : ""}. You can raise it in Settings.`,
         short: "Stopped — spend budget reached.",
       };
+    case "token-ceiling":
+      return {
+        line: `I stopped here: this task used up the token budget allowed for it${stopDetail ? ` (${stopDetail})` : ""}. The work so far is saved.`,
+        short: "Stopped — this task's token budget is spent.",
+      };
     default:
       return maxTurns
         ? {

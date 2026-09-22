@@ -35,13 +35,12 @@ import { startHeartbeat, stopHeartbeat } from "./worker-heartbeat.js";
 export { _pauseHeartbeat } from "./worker-heartbeat.js";
 import { readLatestOpTurn, readOpTurn } from "./store.js";
 import { REPEAT_FAILURE_REASON } from "./middlewares/repeat-failure.js";
-import { aggregateOpUsage } from "./op-usage.js";
 import { ensureAriKernelScope, releaseAriKernelScope } from "../ari-kernel/index.js";
 import type { Op } from "../ops/types.js";
 import type { Adapter } from "./adapter-contract.js";
 import { clearAdapterRetryState, handleAdapterRetry } from "./worker-adapter-retry.js";
 import { reconcileLatestTurnCommit, TurnCommitFenceError } from "./checkpoint.js";
-import { evaluateCheckpointStop } from "./checkpoint-stop.js";
+import { evaluateCheckpointStop, evaluateTokenCeiling } from "./checkpoint-stop.js";
 import { armWallClock, finishOnWallClock, wallClockBudgetMs } from "./worker-wall-clock.js";
 import { createLogger } from "../logger.js";
 
@@ -260,21 +259,23 @@ async function drive(op: Op, adapter: Adapter, workerId: string): Promise<void> 
       // turn commitTurn already transitioned the op to succeeded/failed, so a
       // running → failed here would throw IllegalTransitionError. At this line the
       // op is provably still `running` and mid-loop, so the transition is legal.
-      const maxTokens = op.contextPack?.budget?.maxTokens;
-      if (typeof maxTokens === "number" && Number.isFinite(maxTokens) && maxTokens > 0) {
-        const usage = aggregateOpUsage(op.id);
-        const totalTokens = usage.usageInputTokens + usage.usageOutputTokens;
-        if (totalTokens >= maxTokens) {
-          releaseReason = "max_tokens_exceeded";
-          emit(op.id, "error", {
-            code: "max_tokens_exceeded",
-            message: `worker exceeded maxTokens=${maxTokens} (used ${totalTokens})`,
-            retryable: false,
-          });
-          recordTerminalOutcome(op, "aborted");
-          transitionOp(op, "failed", "max_tokens_exceeded", { learnedOutcome: "aborted" });
-          break;
-        }
+      const tokenStop = evaluateTokenCeiling(op);
+      if (tokenStop.stop) {
+        // The SAME terminal the cadence branch above takes, not a failure: the
+        // op spent what it was given, which for a multi-turn op is an ordinary
+        // way to end. Ending `failed`/`aborted` threw away every turn already
+        // paid for and told every reporting surface the work was worthless.
+        emit(op.id, "iteration_checkpoint", {
+          maxTurns,
+          completedTurns: turnIdx,
+          continuing: false,
+          stopReason: tokenStop.reason,
+          stopDetail: tokenStop.detail,
+        });
+        releaseReason = "iteration_checkpoint";
+        recordTerminalOutcome(op, "partial");
+        transitionOp(op, "succeeded", "iteration_checkpoint", { learnedOutcome: "partial" });
+        break;
       }
 
       // Turn-boundary signal check (PRD §13 precedence: cancel > pause >

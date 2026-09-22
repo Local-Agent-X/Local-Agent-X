@@ -70,8 +70,13 @@ const logger = createLogger("canonical-loop.verification-submit");
 /**
  * Budget for a verification pass. HONEST ACCOUNT of what binds on the
  * background lane:
- *   - maxTokens BINDS: worker.ts enforces a positive cumulative-token
- *     ceiling on every lane (running → failed max_tokens_exceeded).
+ *   - maxTokens BINDS, as a STOP: worker.ts checks the op's cumulative-token
+ *     ceiling after every turn (checkpoint-stop.ts evaluateTokenCeiling) and
+ *     ends the op `succeeded / partial` with reason `token-ceiling`. Reaching
+ *     it is an ordinary way for a multi-turn pass to end, not a fault — the
+ *     meter is cumulative, so cost grows with the square of the turn count.
+ *     Measured 2026-09-22: eight turns of document reads plus web fetches
+ *     spent 85,419 against this 80,000.
  *   - maxWallTimeMs BINDS — but via THIS module's deadline timer
  *     (armVerificationDeadline → opCancel), not the worker's wall-clock
  *     timer, which arms on the interactive lane ONLY, by documented design

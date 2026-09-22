@@ -66,6 +66,7 @@ import { createLoopState, type LoopState } from "../agent-guards/loop-detection.
 import { getRuntimeConfig } from "../config.js";
 import { getSessionBillableCost, getTodayBillableCost, isBillableSource } from "../cost-tracker.js";
 import { readCanonicalEvents } from "./store.js";
+import { aggregateOpUsage } from "./op-usage.js";
 import type { Op } from "../ops/types.js";
 import type { CanonicalEvent } from "./types.js";
 
@@ -73,7 +74,7 @@ import type { CanonicalEvent } from "./types.js";
  *  below — it is the one stop decided against elapsed time rather than at a
  *  reached checkpoint. It rides the SAME record so every partial reader
  *  renders it unchanged. */
-export type CheckpointStopReason = "dry-checkpoints" | "spend-ceiling" | "wall-clock";
+export type CheckpointStopReason = "dry-checkpoints" | "spend-ceiling" | "wall-clock" | "token-ceiling";
 
 // ── Reading a stop back ────────────────────────────────────────────────────
 //
@@ -101,7 +102,7 @@ export interface CheckpointStopFacts {
   detail: string | null;
 }
 
-const STOP_REASONS: ReadonlySet<string> = new Set<CheckpointStopReason>(["dry-checkpoints", "spend-ceiling", "wall-clock"]);
+const STOP_REASONS: ReadonlySet<string> = new Set<CheckpointStopReason>(["dry-checkpoints", "spend-ceiling", "wall-clock", "token-ceiling"]);
 
 /** The stop recorded in an op's event log, or null when its latest checkpoint
  *  (if any) continued. A stop is always the LAST checkpoint the op reached. */
@@ -221,6 +222,40 @@ export function evaluateCheckpointStop(op: Op): CheckpointStopDecision {
 
   // (b) Spend ceiling.
   return evaluateSpendCeiling(op);
+}
+
+/**
+ * The op's own cumulative-token ceiling, as a STOP rather than a failure.
+ *
+ * Deliberately separate from evaluateCheckpointStop, which mutates the cadence
+ * snapshot and so may be called only once per checkpoint. This one is pure, and
+ * the worker calls it after EVERY turn — a token ceiling reached on turn 7 of a
+ * 12-turn cadence must not run five more turns before anyone notices.
+ *
+ * It lives here, beside the other reasons, because it is the same decision they
+ * are: the op has spent what it was given and should stop. It used to be a hard
+ * failure in worker.ts — error, learnedOutcome "aborted", running → failed —
+ * which discarded every turn the op had already paid for. Live case
+ * 2026-09-22: a verification pass spent 85,419 of its 80,000 tokens over eight
+ * turns and reported `failed` with nothing, and because a failed verification
+ * is deliberately quiet, the spend bought silence.
+ *
+ * Note the meter is cumulative per turn, so a multi-turn op's cost grows with
+ * the square of its turn count — each turn re-sends the transcript and is
+ * billed for it. Reaching this ceiling is therefore ORDINARY for a long op, not
+ * exceptional, which is the other half of why failure was the wrong shape.
+ */
+export function evaluateTokenCeiling(op: Op): CheckpointStopDecision {
+  const maxTokens = op.contextPack?.budget?.maxTokens;
+  if (typeof maxTokens !== "number" || !Number.isFinite(maxTokens) || maxTokens <= 0) return CONTINUE;
+  const usage = aggregateOpUsage(op.id);
+  const totalTokens = usage.usageInputTokens + usage.usageOutputTokens;
+  if (totalTokens < maxTokens) return CONTINUE;
+  return {
+    stop: true,
+    reason: "token-ceiling",
+    detail: `this op's token budget is spent (${totalTokens} of ${maxTokens})`,
+  };
 }
 
 function evaluateSpendCeiling(op: Op): CheckpointStopDecision {

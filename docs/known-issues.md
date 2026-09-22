@@ -65,3 +65,52 @@ now honored by the sovits installers). The structural item below remains.
   omits `transport` or sets `"pcm"`), and its removal is deferred until this
   on-device verification passes.
 - **Type:** unverified-on-hardware · **Severity:** medium
+
+## Popup-mode Google sign-in renders blank in the in-app browser, and the popup's failure is never logged
+
+- **Where:** [desktop/src/browser-view-popups.ts](../desktop/src/browser-view-popups.ts),
+  [desktop/src/browser-partition.ts:346](../desktop/src/browser-partition.ts#L346)
+  (`viewWebPreferences`),
+  [desktop/src/embedded-chrome-identity.ts:29](../desktop/src/embedded-chrome-identity.ts#L29)
+  (`identityOverrideEnabled = false`)
+- **What:** Observed 2026-09-22 on LinkedIn → "Continue with Google". The popup
+  window opens, titled "Sign In - Google Accounts", and paints nothing but
+  white. Sign-in does not visibly complete. The user then chose LinkedIn's
+  "Sign in with email" instead, at which point a Google account badge appeared
+  in-page and signed them in via Google.
+- **Cause is NOT isolated.** Two readings fit the evidence and this entry
+  deliberately does not pick one:
+  1. *Google refuses the embedded browser.* `identityOverrideEnabled` is false
+     by design (a 2026-07-30 bisect found Chrome impersonation is refused by
+     Cloudflare while the native UA passes), and the UA normalization strips
+     only the app token — the `Electron/…` token survives. Google blocks
+     sign-in from embedded browsers. Under this reading the in-page badge came
+     from a Google session already present in the partition: the browser
+     history shows `accounts.google.com/v3/signin/accountchooser` →
+     `dash.cloudflare.com/login/google` on 2026-07-31 in `lax-profile-v2`.
+  2. *The popup authenticated but never painted.* The popup's webPreferences
+     are unremarkable — no preload, `contextIsolation`, `sandbox`,
+     same partition — so nothing local obviously blanks it, and the account
+     badge appearing immediately afterwards is consistent with the popup
+     having established state.
+- **Decisive test (not yet run):** sign out of Google inside the
+  `lax-profile-v2` partition, then retry "Continue with Google". If sign-in
+  still completes behind a blank popup, it is a paint defect and fixable here;
+  if it does not, it is Google's embedded-browser policy and the workaround
+  below is the only answer.
+- **Second, independent defect — FIXED 2026-09-22:** the episode produced no
+  log line at all, so nobody could tell reading 1 from reading 2 after the
+  fact. Adopted popups now trace their whole lifetime to `desktop-stdio.log`
+  ([browser-view-popups.ts](../desktop/src/browser-view-popups.ts)): opened,
+  each main-frame navigation, finished load, a real load failure, a dead or
+  unresponsive renderer, closed, and a cap denial. The SUCCESS path is logged
+  deliberately — `did-fail-load` alone stays silent for this bug, because the
+  load does not fail; a "finished load" line beside a white window is what
+  isolates it to paint or page content, and its absence isolates it to the
+  network. Only origins are written, never URLs, since an OAuth URL carries a
+  live credential. **The next occurrence should therefore be diagnosable from
+  the log alone** — re-read it before re-running the decisive test above.
+- **Workaround:** use the site's own email/password sign-in where it exists
+  ("Sign in with email" on LinkedIn). Do not re-enable the Chrome identity
+  override to chase this — that path is already known to break Cloudflare.
+- **Type:** unverified-cause + observability gap · **Severity:** medium

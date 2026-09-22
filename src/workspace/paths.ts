@@ -185,14 +185,18 @@ export function resolveAgentPathFrom(workspace: string, p: string, sessionId?: s
 /** "workspace/notes/x" and "notes/x" name the same file: the prefixed form is
  *  the convention the prompt teaches, and the workspace is the anchor, so the
  *  segment would otherwise be doubled. Only a LEADING segment, and only the
- *  whole segment — "workspaces/x" and "my-workspace/x" are untouched.
+ *  whole segment — "workspaces/x" and "my-workspace/x" are untouched. A bare
+ *  "workspace" is the same convention with nothing after it and names the
+ *  root itself; until 2026-09-22 only the slash-followed form was stripped,
+ *  so `glob {path: "workspace"}` searched a nonexistent <workspace>/workspace
+ *  and reported the user's files as absent.
  *
  *  Exported because a glob PATTERN carries the same convention
  *  ("workspace/apps/*​/index.html") but never reaches resolveAgentPathFrom —
  *  it is matched against the search base, so it needs the identical strip or
  *  the prefixed form silently matches nothing. */
 export function stripWorkspacePrefix(p: string): string {
-  const stripped = p.replace(/^\.[/\\]/, "").replace(/^workspace(?=[/\\])[/\\]/, "");
+  const stripped = p.replace(/^\.[/\\]/, "").replace(/^workspace(?:[/\\]|$)/, "");
   return stripped === "" ? "." : stripped;
 }
 

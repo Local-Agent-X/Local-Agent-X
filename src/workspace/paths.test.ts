@@ -4,7 +4,7 @@ import { homedir, tmpdir } from "node:os";
 import { mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import type { LAXConfig } from "../types.js";
 import { setRuntimeConfig, uploadsDir } from "../config.js";
-import { resolveAgentPath, projectRoot, setSessionWorkRoot, clearSessionWorkRoot, sessionIdOf, realpathDeep, mapMsysDrivePath, resolveAgentPathFrom } from "./paths.js";
+import { resolveAgentPath, projectRoot, setSessionWorkRoot, clearSessionWorkRoot, sessionIdOf, realpathDeep, mapMsysDrivePath, resolveAgentPathFrom, stripWorkspacePrefix } from "./paths.js";
 import { isSensitivePath } from "../data-lineage/index.js";
 import { CAN_CREATE_WINDOWS_JUNCTION } from "../symlink-capabilities.test-helper.js";
 
@@ -47,6 +47,20 @@ describe("resolveAgentPath", () => {
     expect(resolveAgentPath("./workspace/apps/demo/index.html")).toBe(
       resolve(WS, "apps", "demo", "index.html"),
     );
+  });
+
+  it("a bare 'workspace' names the workspace itself, the same as '.'", () => {
+    // The prefixed convention with nothing after it. A 27B passed
+    // `glob {path: "workspace"}` four ways and got "No files matched" four
+    // times, then told the user the workspace was empty (op-outcomes
+    // find-project, 2026-09-22): only the slash-followed form was stripped, so
+    // the root's own name resolved to a nonexistent <workspace>/workspace.
+    expect(resolveAgentPath("workspace")).toBe(WS);
+    expect(resolveAgentPath("workspace/")).toBe(WS);
+    expect(resolveAgentPath("./workspace")).toBe(WS);
+    expect(resolveAgentPath(".")).toBe(WS);
+    expect(stripWorkspacePrefix("workspace")).toBe(".");
+    expect(stripWorkspacePrefix("workspaces")).toBe("workspaces");
   });
 
   it("strips only a whole leading 'workspace' segment", () => {

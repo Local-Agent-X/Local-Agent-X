@@ -12,6 +12,7 @@ import { maybeAutostartLmStudio } from "./lmstudio-autostart.js";
 import { restorePublishedCertifications } from "./certification-runner.js";
 import type { LocalModel, LocalRuntimeInfo } from "./types.js";
 import { classifyModel, type ModelTier } from "../model-tiers.js";
+import { modelDeclaredContextWindow } from "./model-profile.js";
 import { maxToolsForTier } from "../tools/tier-tool-set.js";
 import { getToolsVerified, hasNoTools } from "../providers/model-capabilities-store.js";
 import { isLocalModelQualificationBoot } from "../qualification-boot.js";
@@ -160,7 +161,14 @@ export function getLocalModelCapabilityProfile(
     model,
     tier,
     maxTools: maxToolsForTier(tier),
-    contextWindow: localModel?.contextWindow ?? null,
+    // The runtime's own number when it has reported one; the declared
+    // profile's measured window until then. On Ollama the served window only
+    // exists in /api/ps once the model is LOADED, and the first request of a
+    // session is what loads it — so that turn used to size its prompt against
+    // the 8,192-token unknown-window floor and shed 16 of 30 sections, while
+    // every later turn got the full prompt (op-outcomes, 27B, 2026-09-22:
+    // turn 1 at 23.6k chars, turn 2 at 68.6k, 0.3% shared prefix).
+    contextWindow: localModel?.contextWindow ?? modelDeclaredContextWindow(model),
     tools: {
       advertised: localModel?.tools ?? null,
       verified: getToolsVerified(chatBaseUrl, model)?.ok ?? null,

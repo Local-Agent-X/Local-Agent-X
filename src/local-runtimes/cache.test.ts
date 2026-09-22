@@ -94,6 +94,23 @@ describe("local-runtime cache", () => {
     expect(getRuntimeForModel("absent")).toBeNull();
   });
 
+  it("the observed profile takes the declared window until the runtime reports one", async () => {
+    // Ollama reports a served window only once the model is LOADED, and the
+    // first request of a session is what loads it: that turn used to size
+    // its prompt against the 8,192 floor and shed half the sections
+    // (op-outcomes 27B, 2026-09-22). The declared profile measured the window.
+    await refreshLocalRuntimes();
+    const { resolveModelProfile } = await import("./model-profile.js");
+    const declared = resolveModelProfile("qwen3:8b")!.contextWindow;
+    expect(declared).toBeGreaterThan(8_192);
+    // Not in discovery at all: declared window.
+    expect(getLocalModelCapabilityProfile("http://127.0.0.1:11434/v1", "qwen3:8b").contextWindow).toBe(declared);
+    // Discovered with a number: the runtime's number wins, even over the declaration.
+    expect(getLocalModelCapabilityProfile("http://127.0.0.1:11434/v1", "qwen3.6:27b").contextWindow).toBe(32768);
+    // No declaration and no report: still null — never an optimistic default.
+    expect(getLocalModelCapabilityProfile("http://127.0.0.1:11434/v1", "mystery:latest").contextWindow).toBeNull();
+  });
+
   it("coalesces concurrent refreshes into one sweep", async () => {
     const { discoverLocalRuntimes } = await import("./discovery.js");
     vi.mocked(discoverLocalRuntimes).mockClear();

@@ -113,7 +113,7 @@ const REASONING_FAMILY_ADDITION =
  * question.
  */
 export const SCOPE_CHECK_RULE =
-  `**CHECK SCOPE BEFORE YOU ACT.** If the request names one target but several match, or sets no bounds on what an edit or delete may touch, ask one question and stop — never act on every match. A request that names its exact target needs no question.`;
+  `**A SINGULAR TARGET MEANS ONE FILE.** When the request refers to a single thing ("the brief", "the config") and more than one file could be it, ask which one BEFORE touching any of them — never edit or delete all the candidates. A request that names its exact target needs no question.`;
 
 const LOCAL_RIDER_END = `[END LOCAL MODEL RIDER]\n`;
 

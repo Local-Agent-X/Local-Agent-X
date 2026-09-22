@@ -854,3 +854,16 @@ across the day, vs 2/3 in both EXP-9-era runs. The kept op stores show why: the 
 prefix only when a slash followed it, so a bare `workspace` resolved to `<root>/workspace`, an empty nonexistent
 dir: "No files matched", four times, then "the workspace is empty". In the earlier runs the model omitted `path`.
 One seam, two spellings of the same convention.
+
+**`find-project` follow-through (three seam fixes after the full run, each verified by a targeted ×3 replay on the
+27B, not by a full split — the next full run covers them):**
+
+| build | change | find-project | what the kept op store showed |
+|---|---|---|---|
+| a9b009fb | — | 0/3 (0/8 that day) | `glob {path:"workspace"}` → cwd `<ws>/workspace`, "No files matched" ×4, "the workspace is empty" |
+| 0a4d85e0 | bare `workspace` names the root (paths.ts) | 1/3 | right root now; `**/*crm*` returns only `archive/crm-notes.txt` — glob was files-only, a project FOLDER can never match |
+| 990fab35 | glob returns matching folders, marked `(dir)` | 1/3 | `**/CRM*` → 0: fast-glob matched case-sensitively on a case-insensitive filesystem |
+| c0eb8fd3 | glob matches case as the filesystem does (exact on Linux) | **2/3**, 2 rounds | the last miss is the model's `**/crm*` (a prefix pattern); a model matter |
+
+Three harness holes under one three-word case, each invisible until the previous one was closed — and none of them a
+prompt matter. The pass rate is back where it was before the day started, at a quarter of the rounds.

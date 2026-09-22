@@ -66,5 +66,8 @@
     "coder": null
   },
   "kernelPolicy": "workspace-assistant",
+  "promptRules": {
+    "scopeCheck": true
+  },
   "notes": "Hand-written from the Phase 0 audit (docs/harness/AUDIT.md, 2026-09-19). Every value describes how LAX drives this model TODAY, so adopting the profile changes nothing; a field moves only through a logged experiment. Measured: native context 40,960 (the runtime default caps there); 9.3 GB at 32k, 10.7 GB at 40k, fully GPU-resident. Prefill ~12,850 tok/s, decode ~183 tok/s at 32k with thinking off. Followed an injected instruction from a tool result in a one-shot probe where the 27B did not. Received 65 tools on the wire in the EXP-2 capture through the RAG-warm cap bypass although its cap is 8 (maxToolsExposed records the cap, not the bypass). Tier C = today's 'weak'."
 }

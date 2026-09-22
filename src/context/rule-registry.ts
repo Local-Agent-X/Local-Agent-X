@@ -74,7 +74,8 @@ export type RuleId =
   | "memory-search-when-unknown"
   | "read-before-you-change"
   | "unverified-claim-is-a-hypothesis"
-  | "sequential-checklist-does-not-block-fanout";
+  | "sequential-checklist-does-not-block-fanout"
+  | "check-scope-before-acting";
 
 export const RULES: Record<RuleId, Rule> = {
   // The `bash` tool runs POSIX sh even on Windows. Delivered three ways, so a
@@ -235,6 +236,25 @@ export const RULES: Record<RuleId, Rule> = {
     id: "sequential-checklist-does-not-block-fanout",
     summary: "A numbered checklist is for tracking, not a command to work items one at a time — independent pieces still get fanned out.",
     channels: [{ kind: "prompt-part", part: "core-identity/core-rules" }],
+  },
+
+  // EXP-10 (HARNESS_LOG.md). The 27B edited BOTH client briefs when asked to
+  // change "the client brief", in every campaign run; the delete gates cannot
+  // see an edit, so this is the only lever for it.
+  //   rider: src/agent-request/prepare-request/provider-riders.ts
+  //     SCOPE_CHECK_RULE — in the local rider only when the model's declared
+  //     profile has promptRules.scopeCheck (config/model-profiles/*.json).
+  //     Riders are appended after allocation, never shed.
+  //   prompt-part: config/system-prompt.md `## How to work` ("ask only on
+  //     material ambiguity", "Clarifying questions end the turn") — the
+  //     general form, shed on the 32k profile.
+  "check-scope-before-acting": {
+    id: "check-scope-before-acting",
+    summary: "One named target with several matches, or an edit/delete with no bounds, gets one question first — never an action on every match.",
+    channels: [
+      { kind: "rider", id: "local-model-rider" },
+      { kind: "prompt-part", part: "core-identity/how-to-work" },
+    ],
   },
 };
 

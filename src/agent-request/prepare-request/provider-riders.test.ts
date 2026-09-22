@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { codexBehaviorRider, grokUnleashedRider, modelFamilyRiderFor, providerRiderFor } from "./provider-riders.js";
+import { SCOPE_CHECK_RULE, codexBehaviorRider, grokUnleashedRider, modelFamilyRiderFor, providerRiderFor } from "./provider-riders.js";
+import { modelPromptRules } from "../../local-runtimes/model-profile.js";
 
 describe("providerRiderFor", () => {
   it("codex gets the codex behavior rider", () => {
@@ -136,8 +137,32 @@ describe("modelFamilyRiderFor", () => {
     // Every rider token displaces user context on a small local model. Fails
     // when someone bloats base+family past ~2000 chars (~500 tokens) — trim
     // or split before raising this.
-    for (const model of [...BASE_ONLY_MODELS, ...REASONING_MODELS, "deepseek-r1-distill-qwen-14b"]) {
+    for (const model of [...BASE_ONLY_MODELS, ...REASONING_MODELS, "deepseek-r1-distill-qwen-14b", ...PROFILED_MODELS]) {
       expect(modelFamilyRiderFor(model).length).toBeLessThan(2000);
     }
+  });
+
+  // EXP-10. The line rides the profile, not the model name: a model with no
+  // declared profile keeps yesterday's rider byte for byte.
+  const PROFILED_MODELS = ["qwen3:8b", "qwen3.6:27b"];
+
+  it("the scope-check line is present exactly when the model's profile switches it on", () => {
+    for (const model of PROFILED_MODELS) {
+      expect(modelPromptRules(model).scopeCheck).toBe(true);
+      expect(modelFamilyRiderFor(model)).toContain(SCOPE_CHECK_RULE);
+    }
+    for (const model of [...BASE_ONLY_MODELS, ...REASONING_MODELS]) {
+      expect(modelPromptRules(model).scopeCheck).toBe(false);
+      expect(modelFamilyRiderFor(model)).not.toContain(SCOPE_CHECK_RULE);
+    }
+  });
+
+  it("rules are numbered contiguously however many are switched on", () => {
+    for (const model of [...BASE_ONLY_MODELS, ...REASONING_MODELS, ...PROFILED_MODELS]) {
+      const numbers = [...modelFamilyRiderFor(model).matchAll(/^(\d+)\. \*\*/gm)].map((m) => Number(m[1]));
+      expect(numbers).toEqual(numbers.map((_, i) => i + 1));
+      expect(numbers.length).toBeGreaterThanOrEqual(4);
+    }
+    expect(modelFamilyRiderFor("qwen3.6:27b")).toContain(`6. ${SCOPE_CHECK_RULE}`);
   });
 });

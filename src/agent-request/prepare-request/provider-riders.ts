@@ -5,6 +5,8 @@
 // are string templates kept here so the rest of the prepare-request flow
 // stays readable.
 
+import { modelPromptRules } from "../../local-runtimes/model-profile.js";
+
 /**
  * Codex-specific behavioral rider. Vague tone-shift instructions ("be a
  * senior dev") barely move Codex; concrete IF-THEN behavioral rules tied
@@ -88,17 +90,36 @@ export function providerRiderFor(provider: string): string {
  * rider token displaces the user's context.
  */
 
-const BASE_LOCAL_RIDER =
-  `\n\n[LOCAL MODEL RIDER — concrete rules, follow strictly]\n` +
-  `1. **TOOL CALLS USE THE NATIVE MECHANISM ONLY.** Never write tool-call syntax in your reply text — no XML-style tags, bracket blocks, or JSON envelopes (\`<tool_call>\`, \`<execute_tool>\`, \`[TOOL_REQUEST]\`). Typed-out syntax runs NOTHING. If you cannot make a native tool call, say what you would do in plain language.\n` +
-  `2. **CALL OR ANSWER — NEVER NARRATE.** "I will now use the web_search tool" is not a tool call. Either actually call the tool, or answer directly. Prose about a tool runs nothing.\n` +
-  `3. **NO CONTROL TOKENS OR REASONING TAGS.** Chat-template markers and thinking tags (\`<thought>\`, \`<think>\`, role/end-of-turn tokens) are machinery — they must never appear in your reply.\n` +
-  `4. **ANSWER ONCE, THEN STOP.** One complete, self-contained reply. Do not restate it or loop on the same sentences — when the answer is done, end the message.\n`;
+const LOCAL_RIDER_HEAD = `\n\n[LOCAL MODEL RIDER — concrete rules, follow strictly]\n`;
+
+const BASE_LOCAL_RULES: readonly string[] = [
+  `**TOOL CALLS USE THE NATIVE MECHANISM ONLY.** Never write tool-call syntax in your reply text — no XML-style tags, bracket blocks, or JSON envelopes (\`<tool_call>\`, \`<execute_tool>\`, \`[TOOL_REQUEST]\`). Typed-out syntax runs NOTHING. If you cannot make a native tool call, say what you would do in plain language.`,
+  `**CALL OR ANSWER — NEVER NARRATE.** "I will now use the web_search tool" is not a tool call. Either actually call the tool, or answer directly. Prose about a tool runs nothing.`,
+  `**NO CONTROL TOKENS OR REASONING TAGS.** Chat-template markers and thinking tags (\`<thought>\`, \`<think>\`, role/end-of-turn tokens) are machinery — they must never appear in your reply.`,
+  `**ANSWER ONCE, THEN STOP.** One complete, self-contained reply. Do not restate it or loop on the same sentences — when the answer is done, end the message.`,
+];
 
 const REASONING_FAMILY_ADDITION =
-  `5. **DELIBERATE BRIEFLY, ANSWER FIRST.** In interactive chat and voice, keep internal thinking to a few sentences — never spend the whole reply deliberating. The user only sees or hears the final answer; get to it at conversational length.\n`;
+  `**DELIBERATE BRIEFLY, ANSWER FIRST.** In interactive chat and voice, keep internal thinking to a few sentences — never spend the whole reply deliberating. The user only sees or hears the final answer; get to it at conversational length.`;
+
+/**
+ * Profile-switched (promptRules.scopeCheck). The two failures it names were
+ * the same move in every campaign run on the 27B: "change the contact email in
+ * the client brief" with two briefs present → edited both; "clean up the
+ * client data" with no scope given → wiped it. The approval gates catch the
+ * delete; only the model can catch the edit, so this is the one rule that
+ * asks it to. The last clause is what keeps a fully specified request
+ * ("delete exactly this file, leave the rest alone") from turning into a
+ * question.
+ */
+export const SCOPE_CHECK_RULE =
+  `**CHECK SCOPE BEFORE YOU ACT.** If the request names one target but several match, or sets no bounds on what an edit or delete may touch, ask one question and stop — never act on every match. A request that names its exact target needs no question.`;
 
 const LOCAL_RIDER_END = `[END LOCAL MODEL RIDER]\n`;
+
+function numbered(rules: readonly string[]): string {
+  return rules.map((rule, i) => `${i + 1}. ${rule}\n`).join("");
+}
 
 /**
  * Per-family ADDITIONS on top of the shared base, matched by lowercase
@@ -117,13 +138,17 @@ const FAMILY_ADDITIONS: ReadonlyArray<{ match: readonly string[]; addition: stri
 ];
 
 /**
- * Family-guidance rider for a LOCAL model id. Always returns the base rider
+ * Family-guidance rider for a LOCAL model id. Always returns the base rules
  * (every local model shares the plain-text-tool-syntax / leaked-tags /
- * repetition failure class) plus the first matching family addition. Callers
- * gate on provider === "local" — this function never sees cloud turns.
+ * repetition failure class) plus the first matching family addition, plus the
+ * lines the model's declared profile switches on. Callers gate on
+ * provider === "local" — this function never sees cloud turns.
  */
 export function modelFamilyRiderFor(model: string): string {
   const id = (model || "").toLowerCase();
   const family = FAMILY_ADDITIONS.find((f) => f.match.some((m) => id.includes(m)));
-  return BASE_LOCAL_RIDER + (family?.addition ?? "") + LOCAL_RIDER_END;
+  const rules = [...BASE_LOCAL_RULES];
+  if (family) rules.push(family.addition);
+  if (modelPromptRules(model).scopeCheck) rules.push(SCOPE_CHECK_RULE);
+  return LOCAL_RIDER_HEAD + numbered(rules) + LOCAL_RIDER_END;
 }

@@ -94,6 +94,13 @@ export const ModelProfileSchema = z.object({
     coder: z.string().nullable(),
   }).strict(),
   kernelPolicy: z.string().min(1),
+  /** Behavioural lines added to the local rider for this model — each one a
+   *  logged experiment, off until its numbers said otherwise. */
+  promptRules: z.object({
+    /** EXP-10: ask before acting when the request names one target but
+     *  several match, or sets no scope for an edit/delete. */
+    scopeCheck: z.boolean(),
+  }).strict(),
   notes: z.string().optional(),
 }).strict();
 
@@ -206,15 +213,27 @@ function load(modelId: string): ResolvedModelProfile | null {
   return { ...merged, profileId: merged.id, profileHash: hashProfile(merged), source };
 }
 
-/** The declared tier as the tool pipeline's ModelTier, or null when the model
- *  has no profile. Never throws: a profile problem is logged by the loader and
- *  the caller falls back to its own heuristic. */
-export function modelProfileTier(modelId: string): ModelTier | null {
+/** The declared profile, or null when there is none or it is unreadable —
+ *  for callers on the request path, where a profile problem must cost a
+ *  warning and a default, never the turn. */
+function profileOrNull(modelId: string, fallback: string): ResolvedModelProfile | null {
   try {
-    const p = resolveModelProfile(modelId);
-    return p ? TIER_TO_MODEL_TIER[p.tier] : null;
+    return resolveModelProfile(modelId);
   } catch (e) {
-    logger.warn(`profile for ${modelId} unreadable, falling back to the name heuristic: ${(e as Error).message}`);
+    logger.warn(`profile for ${modelId} unreadable, ${fallback}: ${(e as Error).message}`);
     return null;
   }
+}
+
+/** The declared tier as the tool pipeline's ModelTier, or null when the model
+ *  has no profile. */
+export function modelProfileTier(modelId: string): ModelTier | null {
+  const p = profileOrNull(modelId, "falling back to the name heuristic");
+  return p ? TIER_TO_MODEL_TIER[p.tier] : null;
+}
+
+/** The prompt lines this model's profile switches on; every line off when
+ *  the model has no profile, so an unprofiled local model gets today's rider. */
+export function modelPromptRules(modelId: string): ModelProfile["promptRules"] {
+  return profileOrNull(modelId, "no profile prompt rules apply")?.promptRules ?? { scopeCheck: false };
 }

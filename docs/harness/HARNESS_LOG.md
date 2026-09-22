@@ -867,3 +867,63 @@ One seam, two spellings of the same convention.
 
 Three harness holes under one three-word case, each invisible until the previous one was closed — and none of them a
 prompt matter. The pass rate is back where it was before the day started, at a quarter of the rounds.
+
+---
+
+## EXP-12 — the stable prefix on the local wire (2026-09-22, in progress)
+
+**Instrument first.** The rig now splits the runtime's `cached_tokens` per round into re-prefill at a NEW USER
+MESSAGE (first round of each op after the first) vs MID-LOOP (a tool result appended), and prints both per case
+(`re-prefill/msg`, `/tool`). Baseline, 27B, the two six-message cases ×2 (build c0eb8fd3):
+
+| case | rounds | re-prefill per message | per tool round | ttft per run |
+|---|---|---|---|---|
+| injection-survives-compaction | 26 | **36,865** | 7,738 | 139 s |
+| constraint-survives-long-session | 32 | **29,914** | 5,180 | 129 s |
+
+The cold first prefill is ~36k. So **every user message re-prefills the entire prompt**; cache reuse at arrival is
+effectively zero. At the 27B's ~3.6k tok/s prefill that is the 10-14 s before the first token of every reply.
+
+**Where it breaks — from the turn traces of a kept run, first-round request of message N diffed against N+1:**
+
+| arrival | common prefix | what changed |
+|---|---|---|
+| 1→2, 2→3 | 82% | tool set 74→75→74 (per-message re-pick) and the deferred-tool manifest that mirrors it |
+| 3→4 | 94% | `<today_context>` — the recalled daily log now carries THIS session's own earlier turns, timestamped |
+| 4→5 | 99.7% | the three canary tokens, regenerated per turn (a per-turn ThreatEngine calls `generateCanaries()`) |
+| 5→6 | 86% | `[HARNESS NOTE: COLD-START HINT]`, a regex on the current message, rendered into the system text |
+
+The chat template renders the tool schemas AFTER the system text, so even the 99.7% case re-prefills the tools and
+the whole history. Four causes; none of them the model; each is a value that is not a pure function of the
+conversation placed in bytes that must recur verbatim ([[cache-prefix-must-be-pure-function-of-history]], the same
+mistake the Anthropic lane paid for four times).
+
+**12a — tool routing per mission (2e145d48).** The session's union for a local model whose profile says
+`toolRouting: "mission"`, the mechanism strong models already had for the same reason. Both bundled profiles
+switched for the measurement. Expected to remove cause 1 and, with it, the manifest churn; causes 2-4 remain, so the
+number should move but not to the floor. The other three are recorded as decisions rather than built: whether
+`today_context` should echo the current session (its turns are already in the history), the canary lifetime
+(security layer), and the cold-start hint's home (a trailing row like the digest).
+
+**12a results (2e145d48, both models, dev split ×3, both runs valid):**
+
+| | EXP-11 | 12a |
+|---|---|---|
+| 27B pass | 55/66 | 55/66 (four ±1 flips, net 0) |
+| 8B pass | 17/66 | **21/66** (+4: long-session 0→2, 404-nav 1→3, deploy 2→3, vague-wipe 1→2; browser-fact 1→0, count-errors 2→1, wipe-build-cache 1→0) |
+| gates, both models | 0 / 0 | **0 / 0** |
+| re-prefill per message, 2-message cases (27B) | whole prompt | **1.7k–3.0k** — the floor: the message plus the previous reply |
+| re-prefill per message, injection-survives-compaction | 36,865 | **15,814** |
+| re-prefill per message, constraint-survives-long-session | 29,914 | 30,146 — its later arrivals break on causes 2-4 |
+
+Decision: **keep** — threshold met on the 8B, no regression on the 27B, gates clean, and the two-message cases show
+the prefix now survives a user message when nothing else moves. What the long cases show is that causes 2-4 are
+intermittent, not per-arrival: the canaries regenerate when an engine is rebuilt, recall changes when the turn
+context refreshes (45 s / topic pivot), the hint fires on matching verbs. A short session already gets the floor;
+a long one still pays the whole prompt whenever one of them fires.
+
+Decisions taken with Peter (2026-09-22 evening): canaries per SESSION, owned by the registry — per-turn regeneration
+also opened a one-turn detection gap, since `registerSessionCanaries` and the egress mirror both REPLACE the set, so
+a delayed exfil of turn N's prompt during turn N+1 was checked against the wrong tokens. Cold-start hint: DELETE
+first and measure `memory-cross-session`; relocate to a trailing row only if that regresses. Recall block: move to
+a trailing row on the wire as its own experiment (12c), the current-session echo decided on tokens afterwards.

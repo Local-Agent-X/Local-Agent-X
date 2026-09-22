@@ -16,8 +16,9 @@ import { describe, it, expect } from "vitest";
 import { HEAD_SECTION_IDS, TRAILING_SECTION_IDS, splitPromptForStablePrefix } from "./local-prompt-split.js";
 import type { RenderedPromptSection } from "../../context/system-prompt-builder.js";
 
+/** The split reads id and text only; the measurement is irrelevant to it. */
 function section(id: string, text: string, type: "static" | "dynamic" = "dynamic"): RenderedPromptSection {
-  return { id, label: id, type, policy: "required", text, measurement: { id, type, chars: text.length, estimatedTokens: 1 } } as RenderedPromptSection;
+  return { id, label: id, type, policy: "required", text } as unknown as RenderedPromptSection;
 }
 
 /** Every `id: "…"` and every `["id", "Label", …]` tuple in the files that add sections. */

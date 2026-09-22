@@ -141,6 +141,12 @@ export function walkBounded(pattern: string, cwd: string, fs?: WalkFs): Promise<
       // (op-outcomes find-project, 2026-09-22). A directory renders with a
       // trailing separator so the model can tell it from a file.
       onlyFiles: false,
+      // Match case the way the filesystem does. Windows and macOS resolve
+      // `CRM/` and `crm/` to the same folder, so a pattern that names one
+      // must find the other — `**/CRM*` returned nothing for a `crm` project
+      // on Windows (op-outcomes find-project, 2026-09-22). Linux keeps exact
+      // case, as its filesystem does.
+      caseSensitiveMatch: process.platform === "linux",
       absolute: true,
       suppressErrors: true,
       followSymbolicLinks: true,

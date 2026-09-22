@@ -76,6 +76,13 @@ describe("glob tool — ordinary output is unchanged", () => {
 		expect((await run("**/*.json", dir)).content).toBe(`${at(dir, "projects/clients/2025/jobs-crm-app/package.json")}  (2B)`);
 	});
 
+	it("matches case the way the filesystem does", async () => {
+		const dir = join(root, "folders");
+		const upper = await run("**/*CRM*", dir);
+		if (process.platform === "linux") expect(upper.content).toBe("No files matched.");
+		else expect(upper.metadata).toMatchObject({ count: 2 });
+	});
+
 	it("reports no matches exactly as before", async () => {
 		const dir = join(root, "pinned");
 		const res = await run("**/*.nope", dir);

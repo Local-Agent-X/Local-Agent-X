@@ -66,8 +66,5 @@
     "coder": null
   },
   "kernelPolicy": "workspace-assistant",
-  "promptRules": {
-    "scopeCheck": true
-  },
   "notes": "Hand-written from the Phase 0 audit (docs/harness/AUDIT.md, 2026-09-19). Every value describes how LAX drives this model TODAY, so adopting the profile changes nothing; a field moves only through a logged experiment. Measured: native context 262,144; fully GPU-resident to 131,072 (24.8 GB); 262,144 spills (86% GPU, decode 74 -> 19.5 tok/s). Prefill ~3,634 tok/s, decode 71-77 tok/s at 65k with thinking off. /v1 thinks by default and LAX sends no reasoning control for this family (mode 'all' records that). tools + format together: no tool call, fabricated answer. Thinking levels accepted by the API, not honoured. Tier B = today's 'medium' (30 tools)."
 }

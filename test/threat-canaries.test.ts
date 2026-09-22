@@ -7,6 +7,8 @@ import {
   getSessionCanaries,
   clearSessionCanaries,
   checkCanariesInPayload,
+  adoptSessionCanaries,
+  remintSessionCanaries,
 } from "../src/threat/canaries.js";
 
 describe("generateCanaries", () => {
@@ -128,5 +130,38 @@ describe("session canary registry + payload check", () => {
 
   it("returns null when the session has no registered canaries", () => {
     expect(checkCanariesInPayload(sessionId, canaries[0])).toBeNull();
+  });
+});
+
+describe("a session's canaries live for the session, not the turn", () => {
+  // One engine is built per chat turn. Each used to mint its own set and
+  // REPLACE the registry's, so the egress check for turn N+1 no longer knew
+  // turn N's tokens, and the system prompt changed every turn.
+  const sessionId = "canary-lifetime-test";
+  beforeEach(() => clearSessionCanaries(sessionId));
+
+  it("the second engine for a session adopts the first one's tokens, and the registry still holds them", () => {
+    const first = adoptSessionCanaries(sessionId);
+    const second = adoptSessionCanaries(sessionId);
+    expect(second).toEqual(first);
+    expect(getSessionCanaries(sessionId)).toEqual(first);
+    // What a later turn's engine embeds is what the egress gate checks.
+    expect(checkCanariesInPayload(sessionId, `leak ${first[2]}`)).not.toBeNull();
+  });
+
+  it("two sessions never share a set", () => {
+    const a = adoptSessionCanaries(sessionId);
+    const b = adoptSessionCanaries(`${sessionId}-other`);
+    expect(a[0]).not.toBe(b[0]);
+    clearSessionCanaries(`${sessionId}-other`);
+  });
+
+  it("a re-mint (breach recovery, reset) rotates the set; a cleared session mints fresh", () => {
+    const first = adoptSessionCanaries(sessionId);
+    const rotated = remintSessionCanaries(sessionId);
+    expect(rotated[0]).not.toBe(first[0]);
+    expect(adoptSessionCanaries(sessionId)).toEqual(rotated);
+    clearSessionCanaries(sessionId);
+    expect(adoptSessionCanaries(sessionId)[0]).not.toBe(rotated[0]);
   });
 });

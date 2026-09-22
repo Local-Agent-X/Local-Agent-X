@@ -135,6 +135,26 @@ export function remintSessionCanaries(sessionId: string): string[] {
   return fresh;
 }
 
+/**
+ * The session's canaries: minted on first use, then reused by every engine
+ * built for the session. Rotation happens only through remintSessionCanaries
+ * (breach recovery, an explicit reset).
+ *
+ * A ThreatEngine is constructed per chat turn, and until 2026-09-22 each one
+ * minted its own set. Two costs. The registry and the egress mirror both
+ * REPLACE the set, so a page that captured turn N's prompt and exfiltrated it
+ * during turn N+1 was checked against turn N+1's tokens — a one-turn detection
+ * gap on every turn. And the tokens sit in the system prompt, so on the local
+ * wire every rotation re-prefilled the prompt, tools and history (EXP-12,
+ * docs/harness/HARNESS_LOG.md). Per-turn rotation bought nothing: a canary is a
+ * tripwire, not a secret — knowing last turn's value helps no attacker.
+ */
+export function adoptSessionCanaries(sessionId: string): string[] {
+  const existing = sessionCanaries.get(sessionId);
+  if (existing && existing.length > 0) return existing;
+  return remintSessionCanaries(sessionId);
+}
+
 // ── Session confirmed-breach signal ──────────────────────────────────────────
 //
 // A tripped canary is a CONFIRMED breach. The ThreatScorer latches it per-engine

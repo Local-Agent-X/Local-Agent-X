@@ -25,7 +25,7 @@
 
 import { registrableDomain } from "../browser/registrable-domain.js";
 import {
-  canaryPromptBlock, checkCanaries, generateCanaries, registerSessionCanaries,
+  canaryPromptBlock, checkCanaries, adoptSessionCanaries, registerSessionCanaries,
   remintSessionCanaries, recordCanaryRecoveryAudit, markSessionBreach, clearSessionBreach,
 } from "./canaries.js";
 import { classifyData, stripExternalUntrusted, type DataLabel } from "./classification.js";
@@ -113,12 +113,14 @@ export class ThreatEngine {
     // they must share ONE instance or their independent chain heads collide and
     // break verify() during normal operation.
     this.audit = getSharedAuditTrail(dataDir);
-    this.canaries = generateCanaries();
     this.sessionId = sessionId;
-    // Publish this session's canaries to the shared registry so the egress
-    // seam can check outbound payloads against the SAME tokens embedded in the
-    // model's system prompt (these are also what checkOutput watches for).
-    registerSessionCanaries(this.sessionId, this.canaries);
+    // The SESSION's canaries, from the shared registry the egress seam reads:
+    // minted by the first engine built for the session, adopted by every later
+    // one (an engine is built per chat turn), so the tokens embedded in the
+    // model's system prompt are the same ones checkOutput and the egress gate
+    // watch for across the whole session. Rotated only on breach recovery or
+    // reset — see adoptSessionCanaries for what per-turn minting cost.
+    this.canaries = adoptSessionCanaries(this.sessionId);
   }
 
   /** Get canary tokens for system prompt injection */
@@ -381,8 +383,7 @@ export class ThreatEngine {
     this.scorer.reset();
     clearSessionBreach(this.sessionId);
     this.implicatedSinks.clear();
-    this.canaries = generateCanaries();
     if (newSessionId) this.sessionId = newSessionId;
-    registerSessionCanaries(this.sessionId, this.canaries);
+    this.canaries = remintSessionCanaries(this.sessionId);
   }
 }

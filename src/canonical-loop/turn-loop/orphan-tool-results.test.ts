@@ -7,12 +7,7 @@ vi.mock("../../logger.js", () => {
 });
 
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
-import {
-  appendMissingToolResults,
-  DISPATCH_SKIPPED_CODE,
-  MISSING_TOOL_RESULT_TEXT,
-  type SynthesizedToolResultContent,
-} from "./orphan-tool-results.js";
+import { appendMissingToolResults, DISPATCH_SKIPPED_CODE, MISSING_TOOL_RESULT_TEXT, type SynthesizedToolResultContent, dropStrandedToolResults } from "./orphan-tool-results.js";
 import { createLogger } from "../../logger.js";
 import { MISSING_TOOL_OUTPUT, convertMessagesToInput } from "../../codex-message-convert.js";
 import { convertMessages } from "../../anthropic-client/request.js";
@@ -231,5 +226,50 @@ describe("synthesized rows through the next turn's replay", () => {
     const answered = [assistantRow(read), realRow("r1")];
     expect(classifyStepEffort({ turnIdx: 1, messages: answered.map(asCanonical), pendingRedirect: undefined }))
       .toBe("mechanical");
+  });
+});
+
+/**
+ * The reverse direction, enforced where history is READ. A tool_result whose
+ * call is on no earlier assistant row is dropped once, for every adapter,
+ * before any transport conversion — a session poisoned by one such row used
+ * to 400 on every subsequent turn ("messages.0 … unexpected tool_use_id",
+ * live 2026-09-21), with a new chat as the user's only exit.
+ */
+describe("dropStrandedToolResults", () => {
+  const user = (text: string): CanonicalMessage => ({ messageId: "u", role: "user", content: { text } });
+  const assistant = (id: string): CanonicalMessage => ({
+    messageId: "a", role: "assistant", content: { text: "", toolCalls: [{ id, name: "grep", arguments: "{}" }] },
+  });
+  const result = (id: string): CanonicalMessage => ({
+    messageId: `r-${id}`, role: "tool_result", content: { toolCallId: id, result: "x", status: "ok" },
+  });
+
+  it("drops a result whose assistant call was never committed — the observed poison", () => {
+    // History as the user's session had it: the assistant row that carried
+    // toolu_011K… is gone; its result sits at position 0.
+    const out = dropStrandedToolResults([result("toolu_011K"), user("continue")]);
+    expect(out.map(m => m.role)).toEqual(["user"]);
+  });
+
+  it("keeps a result whose call precedes it, and drops one whose call comes AFTER", () => {
+    const out = dropStrandedToolResults([user("go"), assistant("t1"), result("t1"), result("t2"), assistant("t2")]);
+    expect(out.map(m => m.messageId)).toEqual(["u", "a", "r-t1", "a"]);
+  });
+
+  it("returns the same array when nothing is stranded, so the common path allocates nothing", () => {
+    const history = [user("go"), assistant("t1"), result("t1")];
+    expect(dropStrandedToolResults(history)).toBe(history);
+  });
+
+  it("what it drops is exactly what the Messages API would have rejected", () => {
+    // Round-trip the cleaned history through the real converters — the same
+    // canonical → transport → wire path the Anthropic adapter takes — and
+    // hold the API's own rule: every tool_result names a tool_use that
+    // appeared in an EARLIER block.
+    const cleaned = dropStrandedToolResults([result("stranded"), user("continue"), assistant("t1"), result("t1")]);
+    const { uses, results } = pairing(canonicalToTransport(cleaned, undefined, new Set(["grep"])).map(toChatParam));
+    expect(results.length).toBe(1);
+    for (const r of results) expect(uses, `stranded ${r} reached the wire`).toContain(r);
   });
 });

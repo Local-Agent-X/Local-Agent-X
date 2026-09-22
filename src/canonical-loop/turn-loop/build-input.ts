@@ -19,6 +19,7 @@ import { setModelView } from "../../tool-execution/model-view.js";
 import { getSessionBaselineTokens } from "../session-baseline.js";
 import { resolveContextWindow } from "../../context-manager/model-windows.js";
 import { isRuntimeFailoverBoundary } from "../../ops/target-identity.js";
+import { dropStrandedToolResults } from "./orphan-tool-results.js";
 
 export async function buildTurnInput(
   op: Op,
@@ -27,7 +28,7 @@ export async function buildTurnInput(
 ): Promise<TurnInput> {
   const history = readOpMessages(op.id);
   let messages: CanonicalMessage[] = collapseAdjacentUserMessages(
-    history.map(m => ({
+    dropStrandedToolResults(history).map(m => ({
       messageId: m.messageId,
       role: m.role,
       content: m.content,

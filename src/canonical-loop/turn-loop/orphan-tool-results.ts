@@ -113,6 +113,43 @@ export function appendMissingToolResults(
   return missing.length;
 }
 
+/**
+ * The other direction of the same invariant, enforced where history is READ:
+ * a tool_result row whose call is not on any assistant row before it is
+ * dropped, so no adapter ever sends one.
+ *
+ * appendMissingToolResults above repairs a call with no result at the commit
+ * seam. A RESULT with no call can still reach the transcript from any path
+ * that loses an assistant row after its tools ran — a turn killed mid-loop
+ * by a 429 is the observed one (2026-09-21, a user's chat: "messages.0 …
+ * unexpected tool_use_id … Each tool_result block must have a corresponding
+ * tool_use", 400 on every turn thereafter). Because history is replayed in
+ * full each turn, that row poisons the session permanently; the user's only
+ * exit is a new chat. Dropping it here, once, for every adapter, is the
+ * class fix; the origins are repaired separately as they are found.
+ *
+ * Only a result whose call appears EARLIER counts as paired — the Messages
+ * API requires that order, and a result before its call is as broken as
+ * one with no call at all.
+ */
+export function dropStrandedToolResults<T extends { role: string; content: unknown }>(messages: T[]): T[] {
+  const called = new Set<string>();
+  let dropped = 0;
+  const kept = messages.filter((m) => {
+    if (m.role === "assistant") {
+      for (const call of toolCallsOf(m.content)) called.add(call.id);
+      return true;
+    }
+    if (m.role !== "tool_result") return true;
+    const id = (m.content as { toolCallId?: unknown } | null | undefined)?.toolCallId;
+    if (typeof id === "string" && called.has(id)) return true;
+    dropped++;
+    logger.warn(`[canonical-loop] dropped a stranded tool_result (${typeof id === "string" ? id : "no toolCallId"}): no assistant tool call precedes it`);
+    return false;
+  });
+  return dropped === 0 ? messages : kept;
+}
+
 // Assistant rows finalize tool calls as `content.toolCalls: [{ id, name,
 // arguments }]` (anthropic.ts / codex.ts / openai-compat.ts message_finalized;
 // canonical-to-transport.ts and step-effort.ts read the identical shape). The

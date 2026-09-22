@@ -108,7 +108,7 @@ export const handleAnthropicAuthRoutes: RouteHandler = async (method, url, req, 
     // the browser a second time and can never receive the code, which is the
     // dead-end this replaces.
     try {
-      const { startAnthropicCliOAuth } = await import("../../../auth/anthropic.js");
+      const { startAnthropicCliOAuth } = await import("../../../auth/anthropic-login.js");
       const { authUrl } = startAnthropicCliOAuth();
       json(200, { ok: true, authUrl });
     } catch (e) { json(500, { error: safeErrorMessage(e) }); }
@@ -118,14 +118,14 @@ export const handleAnthropicAuthRoutes: RouteHandler = async (method, url, req, 
     try {
       const body = await safeParseBody(req); if (body === null) { json(400, { error: "Invalid JSON" }); return true; }
       const code = String((body as { code?: string }).code || "").trim();
-      const { completeAnthropicCliOAuth } = await import("../../../auth/anthropic.js");
+      const { completeAnthropicCliOAuth } = await import("../../../auth/anthropic-login.js");
       await completeAnthropicCliOAuth(code);
       json(200, { ok: true, method: "cli-session" });
     } catch (e) { json(400, { error: safeErrorMessage(e) }); }
     return true;
   }
   if (method === "POST" && url.pathname === "/api/auth/anthropic/cli-login-cancel") {
-    try { const { cancelAnthropicCliOAuth } = await import("../../../auth/anthropic.js"); cancelAnthropicCliOAuth(); } catch {}
+    try { const { cancelAnthropicCliOAuth } = await import("../../../auth/anthropic-login.js"); cancelAnthropicCliOAuth(); } catch {}
     json(200, { ok: true }); return true;
   }
 

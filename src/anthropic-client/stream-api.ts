@@ -28,6 +28,12 @@ const warnedThinkingAlwaysOn = new Set<string>();
 // thinking instead is NOT lossy and does not warn.
 const warnedEffortDropped = new Set<string>();
 
+/** What a user reads when their Claude sign-in stopped being accepted and a
+ *  refresh did not help. Exported so the test pins it against the UI label. */
+export const SIGN_IN_AGAIN_MESSAGE =
+  "Your Claude sign-in is no longer accepted by Anthropic (401), and refreshing it did not help. " +
+  "Open Settings → Anthropic Authentication and click \"Sign in with Claude subscription\" to reconnect, then send your message again.";
+
 export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<StreamEvent> {
   const { token, model, messages, systemPrompt, tools, maxTokens, toolChoice, forcedToolName, signal, temperature, disableThinking, effort, systemStablePrefixLen, cacheConversation, ephemeralTailMessages } = options;
   // Subscription OAuth tokens reach the Messages API only when the request wears
@@ -66,7 +72,7 @@ export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<Stre
     return;
   }
 
-  const headers: Record<string, string> = oauth
+  let headers: Record<string, string> = oauth
     ? buildOAuthHeaders(unwrapDirectOAuthToken(token))
     : {
         "Content-Type": "application/json",
@@ -214,14 +220,41 @@ export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<Stre
 
   let externalAbortHandler: (() => void) | null = null;
   try {
-    const response = await fetch(`${API_BASE}/v1/messages`, {
+    let response = await fetch(`${API_BASE}/v1/messages`, {
       method: "POST", headers, body: JSON.stringify(body),
       signal: conn.signal,
     });
+
+    // A subscription token the API rejects is refreshed and the request sent
+    // ONCE more. Refresh used to run only when the STORED expiry had passed,
+    // so a token that died early — rotated by the Claude CLI, revoked, the
+    // file a stale copy — was re-sent unchanged on every turn until the user
+    // signed in again (a user's chat, 2026-09-21: 401 "Invalid bearer token"
+    // one minute after a working turn). The resolver never returns the
+    // rejected token, so this cannot loop.
+    if (response.status === 401 && oauth) {
+      const { getAnthropicDirectToken } = await import("../auth/anthropic.js");
+      const fresh = await getAnthropicDirectToken({ rejected: unwrapDirectOAuthToken(token) }).catch(() => null);
+      if (fresh) {
+        await response.text().catch(() => undefined); // drain the rejected response before replacing it
+        headers = buildOAuthHeaders(fresh);
+        response = await fetch(`${API_BASE}/v1/messages`, {
+          method: "POST", headers, body: JSON.stringify(body),
+          signal: conn.signal,
+        });
+      }
+    }
     conn.clear();
 
     if (!response.ok) {
       const errorText = await response.text();
+      if (response.status === 401 && oauth) {
+        // Nothing left to retry with. The message names the control as the
+        // UI labels it (public/app.html "Anthropic Authentication"), because
+        // recovery text a user follows is a UI contract.
+        yield { type: "error", error: SIGN_IN_AGAIN_MESSAGE };
+        return;
+      }
       // The OAuth-direct token shape isn't recognized by usesAnthropicSubscriptionAuth;
       // pass an `oauth:`-shaped marker so a 429 still gets the subscription hint.
       const hint = buildAnthropicRateLimitHint(response.status, oauth ? "oauth:direct" : token);

@@ -719,3 +719,60 @@ describe("streamViaAPI — short-path effort resolution", () => {
     expect(legacy.temperature).toBe(0);
   });
 });
+
+/**
+ * A subscription token the API rejects with 401 is refreshed and the request
+ * sent ONCE more; failing that, the user reads a sign-in message, not the
+ * raw wire JSON. See auth/anthropic-rejected-token.test.ts for the resolver's
+ * half of this contract.
+ */
+describe("401 on the direct-OAuth path", () => {
+  const OK = sse([
+    { type: "message_start", message: { usage: { input_tokens: 1 } } },
+    { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+    { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "hello" } },
+    { type: "content_block_stop", index: 0 },
+    { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 1 } },
+    { type: "message_stop" },
+  ]);
+  const REJECTED = JSON.stringify({ type: "error", error: { type: "authentication_error", message: "Invalid bearer token" }, request_id: "req_x" });
+
+  afterEach(() => vi.doUnmock("../auth/anthropic.js"));
+
+  it("refreshes and retries once, and the retry carries the NEW token", async () => {
+    vi.doMock("../auth/anthropic.js", () => ({ getAnthropicDirectToken: async (o?: { rejected?: string }) => (o?.rejected === "dead" ? "fresh" : "dead") }));
+    const seen: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {
+      const auth = (init.headers as Record<string, string>)["Authorization"] ?? (init.headers as Record<string, string>)["authorization"] ?? "";
+      seen.push(auth);
+      return auth.includes("fresh") ? new Response(OK, { status: 200 }) : new Response(REJECTED, { status: 401 });
+    }));
+    const events = await collect({ token: "direct-oauth:dead" });
+    expect(seen).toHaveLength(2);
+    expect(seen[0]).toContain("dead");
+    expect(seen[1]).toContain("fresh");
+    expect(events.some(e => e.type === "text"), "the retried request must stream normally").toBe(true);
+    expect(events.some(e => e.type === "error")).toBe(false);
+  });
+
+  it("with nothing to refresh, tells the user to sign in again — once, no loop", async () => {
+    vi.doMock("../auth/anthropic.js", () => ({ getAnthropicDirectToken: async () => null }));
+    const fetchMock = vi.fn(async () => new Response(REJECTED, { status: 401 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const events = await collect({ token: "direct-oauth:dead" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const err = events.find(e => e.type === "error") as { error: string } | undefined;
+    expect(err?.error).toContain("Sign in with Claude subscription");
+    expect(err?.error).not.toContain("authentication_error");
+  });
+
+  it("an API-key 401 is untouched — no refresh, the plain error as before", async () => {
+    const resolver = vi.fn(async () => "should-not-be-called");
+    vi.doMock("../auth/anthropic.js", () => ({ getAnthropicDirectToken: resolver }));
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(REJECTED, { status: 401 })));
+    const events = await collect({ token: "sk-ant-api03-test" });
+    expect(resolver).not.toHaveBeenCalled();
+    const err = events.find(e => e.type === "error") as { error: string } | undefined;
+    expect(err?.error).toMatch(/^Anthropic 401/);
+  });
+});

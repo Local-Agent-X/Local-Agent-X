@@ -12,6 +12,8 @@ import { stableSystemPrefixLength } from "../../agent-request/prepare-request/bu
 import { registerAdapterForOp } from "../runtime.js";
 import { createAnthropicAdapter } from "../adapters/anthropic.js";
 import type { OpenAICompatTarget } from "../adapters/openai-compat.js";
+import { splitPromptForStablePrefix } from "./local-prompt-split.js";
+import { modelStablePrefix } from "../../local-runtimes/model-profile.js";
 
 export async function registerAdapterForChat(
   opId: string,
@@ -143,9 +145,23 @@ export async function registerAdapterForChat(
     prepared.provider,
     finalTarget,
   );
-  registerAdapterForOp(opId, () =>
-    createOpenAICompatAdapter({
-      systemPrompt: prepared.systemPrompt,
+  registerAdapterForOp(opId, () => {
+    // The local wire's stable prefix (EXP-12c). Computed HERE, inside the
+    // lazy factory, for the same reason the Anthropic split above is: the
+    // capability-aware degradation pass and create-op's appends have all
+    // landed by now, so the sections are the final ones. The per-op sections
+    // become the last user-role row (appendTrailingContext) and the system
+    // message is byte-stable for the session — which is the only way a
+    // runtime that caches by token prefix, and renders the tool schemas
+    // after the system text, can reuse the tools and the history across
+    // user messages. Off for an unprofiled model and for every cloud
+    // provider on this adapter: they keep one system message.
+    const split = prepared.provider === "local" && modelStablePrefix(prepared.model)
+      ? splitPromptForStablePrefix(prepared.renderedPromptSections)
+      : null;
+    return createOpenAICompatAdapter({
+      systemPrompt: split ? split.head : prepared.systemPrompt,
+      trailingContext: split?.tail || undefined,
       model: prepared.model,
       baseURL: finalTarget.baseURL,
       apiKey: finalTarget.apiKey,
@@ -153,6 +169,6 @@ export async function registerAdapterForChat(
       reasoningEffort: prepared.reasoningEffort,
       sessionId,
       forcedToolChoice,
-    }),
-  );
+    });
+  });
 }

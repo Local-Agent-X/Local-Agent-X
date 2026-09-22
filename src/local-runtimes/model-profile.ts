@@ -77,6 +77,10 @@ export const ModelProfileSchema = z.object({
   }).strict(),
   /** `message` is today's per-message re-selection; the brief's values are the target. */
   toolRouting: z.enum(["message", "mission", "phase", "step"]),
+  /** EXP-12c: the prompt's per-op sections ride a trailing row instead of
+   *  the system message, so the runtime's prefix cache survives a new user
+   *  message (chat-runner/local-prompt-split.ts). */
+  stablePrefix: z.boolean(),
   maxToolsExposed: z.number().int().positive(),
   toolsPerTurn: z.number().int().positive().nullable(),
   fewShotExamples: z.number().int().min(0),
@@ -230,4 +234,18 @@ export function modelProfileTier(modelId: string): ModelTier | null {
  *  byte-identical between messages until a new tool is needed. */
 export function modelToolRouting(modelId: string): ModelProfile["toolRouting"] {
   return profileOrNull(modelId, "tool routing stays per-message")?.toolRouting ?? "message";
+}
+
+/** Whether this model's per-op prompt sections ride a trailing row so the
+ *  local runtime's prefix cache survives a new user message. Off without a
+ *  profile: an unprofiled local model keeps today's single system message. */
+export function modelStablePrefix(modelId: string): boolean {
+  return profileOrNull(modelId, "prompt stays one system message")?.stablePrefix ?? false;
+}
+
+/** The window the declared profile measured, or null without a profile. Used
+ *  to size the prompt before the runtime has loaded the model and reported
+ *  its own — the first request of a session is the one that loads it. */
+export function modelDeclaredContextWindow(modelId: string): number | null {
+  return profileOrNull(modelId, "no declared context window")?.contextWindow ?? null;
 }

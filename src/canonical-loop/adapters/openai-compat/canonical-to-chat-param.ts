@@ -10,6 +10,7 @@ import type { CanonicalMessage } from "../../contract-types.js";
 import type { TurnInput } from "../../adapter-contract.js";
 import { sanitizeAssistantTextForRebuild } from "../../../anthropic-client/parse.js";
 import { createLogger } from "../../../logger.js";
+import { RECALLED_CONTEXT_CLOSE, RECALLED_CONTEXT_OPEN } from "../../../harness-text.js";
 import { extractText } from "./helpers.js";
 import type { CanonicalImageRef } from "./types.js";
 import { imagesToOpenAIParts } from "../images-to-openai-parts.js";
@@ -120,6 +121,29 @@ export function canonicalToChatParam(
     out.push({ role: "user", content: `[REDIRECT] ${pendingRedirect.text}` });
   }
   return out;
+}
+
+/**
+ * Append the prompt's per-op sections as the LAST row, framed as recalled
+ * context. Folded into the final row when that row is already a plain user
+ * message (a fresh user turn, the situational digest, a redirect), so no
+ * transport ever sees two user rows in a row — the shape providers/sanitize.ts
+ * exists to prevent. Placed last on purpose: the runtime's prefix cache then
+ * covers the system message, the tools and the entire history, and only this
+ * row and the model's reply are prefilled fresh (EXP-12c).
+ */
+export function appendTrailingContext(
+  messages: ChatCompletionMessageParam[],
+  trailingContext: string | undefined,
+): ChatCompletionMessageParam[] {
+  const body = trailingContext?.trim();
+  if (!body) return messages;
+  const framed = `${RECALLED_CONTEXT_OPEN}\n${body}\n${RECALLED_CONTEXT_CLOSE}`;
+  const last = messages.at(-1);
+  if (last && last.role === "user" && typeof last.content === "string") {
+    return [...messages.slice(0, -1), { role: "user", content: `${last.content}\n\n${framed}` }];
+  }
+  return [...messages, { role: "user", content: framed }];
 }
 
 function extractImages(c: unknown): CanonicalImageRef[] {

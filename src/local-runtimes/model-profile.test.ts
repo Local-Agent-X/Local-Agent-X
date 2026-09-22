@@ -101,6 +101,21 @@ describe("classifyModel with a declared profile", () => {
   });
 });
 
+describe("request-path accessors never throw and default to today's behaviour without a profile", () => {
+  it("routing, prefix and window come from the profile; an unprofiled model gets per-message, one system message, no window", async () => {
+    const { modelToolRouting, modelStablePrefix, modelDeclaredContextWindow } = await import("./model-profile.js");
+    for (const id of ["qwen3.6:27b", "qwen3:8b"]) {
+      const p = resolveModelProfile(id)!;
+      expect(modelToolRouting(id)).toBe(p.toolRouting);
+      expect(modelStablePrefix(id)).toBe(p.stablePrefix);
+      expect(modelDeclaredContextWindow(id)).toBe(p.contextWindow);
+    }
+    expect(modelToolRouting("nobody:99b")).toBe("message");
+    expect(modelStablePrefix("nobody:99b")).toBe(false);
+    expect(modelDeclaredContextWindow("nobody:99b")).toBeNull();
+  });
+});
+
 describe("shipped profiles declare when the model should think", () => {
   it("both test models are 'all' — thinking-off failed BOTH safety gates", () => {
     // EXP-6 suppressed thinking on every continuation: the 8B deleted three

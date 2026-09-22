@@ -18,6 +18,16 @@ export interface OpenAICompatAdapterOptions {
    *  Ollama which doesn't auth. */
   apiKey: string;
   systemPrompt?: string;
+  /**
+   * The prompt's per-op sections (recalled memory, notifications, a turn
+   * directive) carried as the LAST user-role row instead of inside
+   * `systemPrompt`, framed by RECALLED_CONTEXT_OPEN/CLOSE. Set by the chat
+   * runner for a local model whose profile asks for a stable prefix
+   * (chat-runner/local-prompt-split.ts): the runtime caches by token prefix
+   * and renders tool schemas after the system text, so anything volatile in
+   * the system message re-prefills the tools and the whole history.
+   */
+  trailingContext?: string;
   temperature?: number;
   /** Hard output-token cap forwarded as ProviderRequest.maxTokens →
    *  `max_tokens` on the wire. Same contract as the Anthropic/Codex adapter

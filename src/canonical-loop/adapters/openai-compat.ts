@@ -44,7 +44,7 @@ import {
   type StreamOnceResult,
 } from "./openai-compat/types.js";
 import { byteLengthUtf8 } from "./openai-compat/helpers.js";
-import { canonicalToChatParam } from "./openai-compat/canonical-to-chat-param.js";
+import { appendTrailingContext, canonicalToChatParam } from "./openai-compat/canonical-to-chat-param.js";
 import { resolveLocalCap } from "./openai-compat/local-cap.js";
 import { streamOnce, applyToolCallTextFallback } from "./openai-compat/stream-once.js";
 import { assessOpenAiCompatPreflight, promptExceedsMeasuredWindow } from "./openai-compat/request-preflight.js";
@@ -168,7 +168,10 @@ export class OpenAICompatAdapter implements Adapter {
       baseURL,
       model,
       systemPrompt: this.opts.systemPrompt ?? "You are a helpful assistant.",
-      messages: canonicalToChatParam(input.messages, input.pendingRedirect, new Set(input.tools.map(t => t.name))),
+      messages: appendTrailingContext(
+        canonicalToChatParam(input.messages, input.pendingRedirect, new Set(input.tools.map(t => t.name))),
+        this.opts.trailingContext,
+      ),
       tools: input.tools.map(t => ({
         name: t.name,
         description: t.description ?? "",

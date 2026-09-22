@@ -1,6 +1,6 @@
 // System prompt assembly: combines the base prompt (or override) with all
-// the per-turn blocks (provider hint, notification hint, cold-start hint,
-// background completions, tool prompt section) and provider riders. Also
+// the per-turn blocks (provider hint, notification hint, background
+// completions, tool prompt section) and provider riders. Also
 // owns the turn directive for an explicit build route (/app-build, Product
 // Build continuation).
 
@@ -27,8 +27,6 @@ const PROVIDER_NAMES: Record<string, string> = {
   openai: "OpenAI", local: "Local (Ollama)", gemini: "Google Gemini",
 };
 
-const COLD_START_VERBS = /\b(build|create|make|deploy|publish|launch|set\s+up|put\s+\S+\s+(live|online)|ship|generate|scaffold|spin\s+up)\b/i;
-
 /**
  * Per-turn grounding for the live file-access mode. The model is otherwise
  * never told which of the three modes is active, so it guesses — and guesses
@@ -54,9 +52,9 @@ export function fileAccessGroundingBlock(mode: FileAccessMode): string {
  * checked reason, not a guess:
  *
  *  - `tool-guidance`: contains the deferred-tool manifest, which is the
- *    complement of the PER-TURN selected tool set (buildDeferredToolManifest),
- *    and also absorbs the COLD-START HINT below, which is gated on a regex over
- *    THIS TURN'S message. Both change mid-op.
+ *    complement of the selected tool set (buildDeferredToolManifest) — stable
+ *    for a session only when the tool set is (profile toolRouting "mission",
+ *    or a strong model), per-message otherwise.
  *  - `project-catalog`: derived from the memory dir (60 s cache); the agent
  *    writing a memory mid-op changes it.
  *  - `integrations`: IntegrationRegistry.getAgentContext(), which reflects live
@@ -210,16 +208,15 @@ export async function buildSystemPromptWithTelemetry(
     // side for that reason.
   } catch { /* best-effort */ }
 
-  // Cold-start nudge — applies to BOTH providers. A cold-start message is
-  // usually also a task-start turn, which now auto-injects cross-session
-  // recall (src/memory/auto-search-context.ts), so the hint points at that
-  // block first. The two triggers are NOT the same predicate — these verbs can
-  // fire mid-session, where no injection happens — so the hint still names the
-  // tool for the case where the block is absent or empty. Scoped to
-  // ship/build/deploy class messages so we don't burn tokens on simple chats.
-  if (COLD_START_VERBS.test(input.message)) {
-    toolPromptSection += harnessNotice("COLD-START HINT", "This message looks like the start of a project/deploy/build task. Prior context (URLs, prior decisions, brand assets, user preferences) from earlier sessions is normally already in the RELEVANT MEMORIES block above — entries tagged PAST SESSION. Read it before writing code. If no such block arrived, or it's empty, or it says nothing about the project/domain/business name in this message, run memory_search or search_past_sessions on that name first. Cold-starting on a project that already has history is a real failure mode — the agent reinvents stuff that was already discussed and ships thinner output.");
-  }
+  // No cold-start hint here any more. It was a regex over THIS turn's message
+  // ("build/deploy/ship…") that appended a paragraph to the system text on
+  // matching turns only — so it toggled in and out across a session and broke
+  // the local runtime's prompt cache twice per occurrence, tools and history
+  // included (EXP-12, docs/harness/HARNESS_LOG.md). Task-start turns already
+  // auto-inject cross-session recall (src/memory/auto-search-context.ts) and
+  // the recall-reflex section already names the search tools; the hint was a
+  // belt over those suspenders. Removed and measured rather than relocated —
+  // if memory-cross-session regresses, the words go in a trailing row.
 
   // Drain pending background-op completions for this session so the agent
   // can narrate them naturally on this turn (per the agent-narrates pattern

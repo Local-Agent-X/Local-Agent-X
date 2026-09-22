@@ -134,11 +134,14 @@ describe("local model-family rider wiring", () => {
 });
 
 describe("unified harness-notice format", () => {
-  // Regression for the five-wrapper unification: every first-party harness
-  // notice (background completions, memory notification, turn directive,
-  // file access, cold-start hint) must emit through harnessNotice(), and no
-  // old-style wrapper may survive anywhere in the assembled prompt.
-  it("all five notices emit as [HARNESS NOTE: <LABEL>] blocks with zero old-style markers", async () => {
+  // Regression for the wrapper unification: every first-party harness notice
+  // (background completions, memory notification, turn directive, file
+  // access, channel) must emit through harnessNotice(), and no old-style
+  // wrapper may survive anywhere in the assembled prompt. The cold-start hint
+  // was one of them until EXP-12 removed it: a regex over the current
+  // message rendered into the system text broke the local prompt cache on
+  // every toggle, and task-start turns already inject cross-session recall.
+  it("every notice emits as a [HARNESS NOTE: <LABEL>] block with zero old-style markers", async () => {
     const sessionId = `harness-note-regression-${Date.now()}`;
     pushPendingNotification(sessionId, {
       opId: "op-hn-1",
@@ -150,7 +153,7 @@ describe("unified harness-notice format", () => {
     });
 
     const input: BuildSystemPromptInput = {
-      message: "build me a landing page for my gym", // trips COLD_START_VERBS
+      message: "build me a landing page for my gym", // a task-start message: no per-message notice may appear for it
       channel: "web",
       sessionId,
       config: { systemPrompt: "Base prompt." } as BuildSystemPromptInput["config"],
@@ -172,18 +175,19 @@ describe("unified harness-notice format", () => {
 
     const opens = prompt.match(/\[HARNESS NOTE: /g) ?? [];
     const closes = prompt.match(/\[END HARNESS NOTE\]/g) ?? [];
-    expect(opens).toHaveLength(6);
-    expect(closes).toHaveLength(6);
+    expect(opens).toHaveLength(5);
+    expect(closes).toHaveLength(5);
     for (const label of [
       "BACKGROUND COMPLETIONS",
       "MEMORY NOTIFICATION",
       "TURN DIRECTIVE",
       "FILE ACCESS",
-      "COLD-START HINT",
       "CHANNEL",
     ]) {
       expect(prompt).toContain(`[HARNESS NOTE: ${label}]`);
     }
+    // The system text must not carry anything keyed on the message's verbs.
+    expect(prompt).not.toContain("COLD-START");
 
     // Old-style wrappers must be gone.
     expect(prompt).not.toContain("[BACKGROUND COMPLETIONS");

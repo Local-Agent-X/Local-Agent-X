@@ -41,7 +41,7 @@
  * and no HTTP request is ever spent on that key.
  */
 
-import { hasNoToolSupport, getToolsVerified, markToolsVerified } from "./types.js";
+import { hasNoToolSupport, getToolsVerified, markToolsVerified, clearNoToolSupport } from "./types.js";
 import { isLoopbackUrl } from "../local-only-policy.js";
 import { createLogger } from "../logger.js";
 
@@ -206,6 +206,10 @@ const attempted = new Set<string>();
 export function noteLiveToolCallEvidence(baseURL: string | undefined, model: string): void {
   try {
     if (!baseURL || !model || !isLoopbackUrl(baseURL)) return;
+    // A structured tool call outranks a learned no-tools latch: the latch is
+    // one empty reply, this is the model doing the thing. Cleared before the
+    // early return so a latch set after the evidence is still lifted.
+    clearNoToolSupport(baseURL, model);
     if (getToolsVerified(baseURL, model)?.ok === true) return; // already on file
     markToolsVerified(baseURL, model, true);
     logger.info(`live evidence: ${model} emitted a structured tool_call on a real turn — verified without a probe`);

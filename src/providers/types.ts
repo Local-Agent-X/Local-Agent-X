@@ -63,6 +63,12 @@ export function markNoToolSupport(baseURL: string | undefined, model: string): v
   capStore.recordNoTools(baseURL, model);
 }
 
+/** Drop a LEARNED no-tools latch — live evidence of a structured tool call
+ *  outranks one empty reply. A seeded latch is untouched. */
+export function clearNoToolSupport(baseURL: string | undefined, model: string): void {
+  capStore.clearNoTools(baseURL, model);
+}
+
 /**
  * The LIVE-verified tool-calling observation for (baseURL, model) — did a
  * structured tool_call actually come back when we asked for one? undefined =

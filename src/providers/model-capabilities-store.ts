@@ -41,6 +41,9 @@ export interface ToolsVerified {
 
 interface CapabilityEntry {
   noTools?: boolean;
+  /** ISO timestamp of the LEARNED no-tools observation; absent on a seeded
+   *  entry and on entries written before the latch had a TTL. */
+  noToolsAt?: string;
   unsupportedParams?: string[];
   /**
    * Live-verified tool-calling: did a structured tool_call actually come back
@@ -94,6 +97,7 @@ function ensureLoaded(): Map<string, CapabilityEntry> {
           if (!v || typeof v !== "object") continue;
           const entry: CapabilityEntry = {};
           if (v.noTools === true) entry.noTools = true;
+          if (typeof v.noToolsAt === "string") entry.noToolsAt = v.noToolsAt;
           if (Array.isArray(v.unsupportedParams)) {
             entry.unsupportedParams = v.unsupportedParams.filter((p): p is string => typeof p === "string");
           }
@@ -132,20 +136,52 @@ function persist(): void {
   }
 }
 
-/** True if (baseURL, model) is known to reject the `tools` field. */
-export function hasNoTools(baseURL: string | undefined, model: string): boolean {
+/**
+ * How long a LEARNED no-tools latch holds before tools are tried again. A
+ * seeded latch is a public fact and never expires; a learned one is a single
+ * observation on this machine, and the observation that sets it — an empty
+ * reply with tools attached — is also what a capable model does once in a
+ * while under sampling. Until 2026-09-23 that one empty was permanent AND
+ * persisted: a 27B that had just made a native tool call answered one
+ * `…tool, user, user` round with nothing, and the install lost native tools
+ * for that model until someone edited this file (op-outcomes, EXP-12c).
+ * With a TTL, a genuinely incapable model re-latches at the cost of one dead
+ * first leg per window; a capable one gets its tools back by itself.
+ */
+export const NO_TOOLS_LATCH_TTL_MS = 60 * 60_000;
+
+/** True if (baseURL, model) is known to reject the `tools` field: seeded, or
+ *  learned within the TTL. A learned latch with no timestamp predates the TTL
+ *  and counts as expired — those are exactly the ones that may be wrong. */
+export function hasNoTools(baseURL: string | undefined, model: string, now: number = Date.now()): boolean {
   const key = storeKey(baseURL, model);
-  return SEED.get(key)?.noTools === true || ensureLoaded().get(key)?.noTools === true;
+  if (SEED.get(key)?.noTools === true) return true;
+  const learned = ensureLoaded().get(key);
+  if (learned?.noTools !== true || !learned.noToolsAt) return false;
+  return now - Date.parse(learned.noToolsAt) < NO_TOOLS_LATCH_TTL_MS;
 }
 
-/** Record that (baseURL, model) rejects tools. Persists through to disk. */
-export function recordNoTools(baseURL: string | undefined, model: string): void {
+/** Record that (baseURL, model) rejects tools. Persists through to disk. A
+ *  fresh observation restamps an expired latch; a live one is not rewritten. */
+export function recordNoTools(baseURL: string | undefined, model: string, now: number = Date.now()): void {
   const key = storeKey(baseURL, model);
   const map = ensureLoaded();
   const entry = map.get(key) ?? {};
-  if (entry.noTools) return; // already known — no redundant write
+  if (entry.noTools && entry.noToolsAt && now - Date.parse(entry.noToolsAt) < NO_TOOLS_LATCH_TTL_MS) return;
   entry.noTools = true;
+  entry.noToolsAt = new Date(now).toISOString();
   map.set(key, entry);
+  persist();
+}
+
+/** Drop a LEARNED no-tools latch — a model that just emitted a structured
+ *  tool call is not tool-incapable. A seeded latch is untouched. */
+export function clearNoTools(baseURL: string | undefined, model: string): void {
+  const map = ensureLoaded();
+  const entry = map.get(storeKey(baseURL, model));
+  if (!entry?.noTools) return;
+  delete entry.noTools;
+  delete entry.noToolsAt;
   persist();
 }
 

@@ -32,7 +32,7 @@ import type { Adapter, AdapterReport, TurnInput, TurnResult } from "../adapter-c
 import { CONTEXT_WINDOW_EXCEEDED_CODE } from "../adapter-contract.js";
 import type { CanonicalMessage, ProviderStateEnvelope } from "../contract-types.js";
 import type { ProviderRequest } from "../../providers/adapter/types.js";
-import { markNoToolSupport } from "../../providers/types.js";
+import { getToolsVerified, markNoToolSupport } from "../../providers/types.js";
 import { maybeVerifyToolSupport, noteLiveToolCallEvidence } from "../../providers/tool-capability-probe.js";
 import { createLogger } from "../../logger.js";
 
@@ -74,8 +74,13 @@ const logger = createLogger("canonical-loop.adapters.openai-compat");
  * whole process, and it then narrated every later turn without ever calling a
  * tool. So cloud endpoints get the per-turn retry but never the permanent kill.
  */
-export function shouldLatchNoToolSupport(baseURL: string | undefined): boolean {
+export function shouldLatchNoToolSupport(baseURL: string | undefined, model?: string): boolean {
   if (!baseURL) return false;
+  // A model with a structured tool call on file is not tool-incapable; an
+  // empty reply from it is a sampling accident and gets the per-turn retry
+  // only. Without this, one empty after a real tool call latched the install
+  // off native tools for that model (op-outcomes, 2026-09-23).
+  if (model && getToolsVerified(baseURL, model)?.ok === true) return false;
   let host: string;
   try {
     host = new URL(baseURL).hostname.toLowerCase();
@@ -249,7 +254,7 @@ export class OpenAICompatAdapter implements Adapter {
       result.assembledText.length === 0 &&
       result.pendingToolCalls.length === 0;
     if (noOutput && req.tools.length > 0) {
-      const latch = shouldLatchNoToolSupport(baseURL);
+      const latch = shouldLatchNoToolSupport(baseURL, model);
       logger.info(`${model} returned empty with tools — retrying without tools${latch ? " (latched: local endpoint)" : " (this turn only: cloud endpoint)"}`);
       if (latch) markNoToolSupport(baseURL, model);
       const retryReq: ProviderRequest = { ...req, tools: [] as unknown as ProviderRequest["tools"] };
@@ -269,6 +274,9 @@ export class OpenAICompatAdapter implements Adapter {
     // at most one per (baseURL, model) per process, and ADVISORY only — the
     // probe never strips tools; only the real failure latches above do.
     // Nothing here is awaited, so no turn ever pays latency for it.
+    // Gated on the endpoint alone (no model): the evidence block must keep
+    // running for a model that is already verified, since that is the path
+    // that lifts a learned latch when a structured tool call comes back.
     if (!this.aborted && !firstError && shouldLatchNoToolSupport(baseURL)) {
       if (pendingToolCalls.length > 0) noteLiveToolCallEvidence(baseURL, model);
       else void maybeVerifyToolSupport(baseURL, model, apiKey);

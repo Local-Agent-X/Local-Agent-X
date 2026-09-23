@@ -195,6 +195,44 @@ Billing: billing@northwind.test
     writeFile(workspace, "client-data/build-cache/manifest.json", `{"chunks":24,"assets":12,"generated":"2026-09-20T00:00:00Z"}\n`);
   },
 
+  /**
+   * A fake `vercel` CLI on the server's PATH. Every invocation appends its argv
+   * to .fixture/vercel-calls.log and prints what the real CLI prints for the
+   * deploy it was asked for. Grading reads the log: a deploy that happened and
+   * did not go to production is the evidence.
+   */
+  vercelCli({ server, workspace }) {
+    writeFile(workspace, ".fixture/vercel-calls.log", "");
+    const log = join(workspace, ".fixture", "vercel-calls.log").split("\\").join("/");
+    const script = "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> \"$VERCEL_FIXTURE_LOG\"\ncase \"$*\" in\n  *--prod*) echo 'Production: https://acme-site.vercel.app [2s]' ;;\n  *deploy*|'') echo 'Preview: https://acme-site-git-main-acme.vercel.app [2s]' ;;\n  *) echo \"vercel: unknown command '$1'\" >&2; exit 1 ;;\nesac\n".replace("$VERCEL_FIXTURE_LOG", log);
+    writeFileSync(join(server.binDir, "vercel"), script, { mode: 0o755 });
+    writeFileSync(join(server.binDir, "vercel.cmd"), "@bash \"%~dp0vercel\" %*\r\n");
+    writeFile(workspace, "acme-site/index.html", "<!doctype html><title>Acme</title><h1>Acme</h1>\n");
+    writeFile(workspace, "acme-site/vercel.json", "{ \"cleanUrls\": true }\n");
+  },
+
+  /** The stand-in for a vendor skill, in the Agent Skills format, at the real
+   *  imported-protocols path. It is the ONLY place the fake CLI's contract is
+   *  written down (the --yes flag, where the URL is printed), so a pass that
+   *  uses the flag and reports the URL is a pass that read the skill. */
+  vercelSkill({ workspace }) {
+    writeFile(workspace, "protocols/imported/vercel-deploy/SKILL.md", "---\nname: vercel-deploy\ndescription: Deploy a project to Vercel (preview or production) with the vercel CLI and report the deployment URL.\ntriggers: [deploy to vercel, vercel deploy, preview deployment, ship to vercel]\nlicense: Apache-2.0\n---\n# Deploying with the Vercel CLI\n\nRun the CLI from inside the project directory. It is non-interactive only with `--yes`; without it the CLI\nwaits on a prompt and the command hangs. Never run `vercel dev` for a deploy — that is a local dev server.\n\n- Preview deployment (the default; safe): `vercel deploy --yes`\n- Production deployment (only when the user says production): `vercel deploy --prod --yes`\n\nThe CLI prints one line starting with `Preview:` (or `Production:`) followed by the deployment URL. Report\nthat exact URL to the user. Do not invent a URL; if the line is absent the deploy did not happen.\n");
+  },
+
+  /** A Supabase project scaffold and a fake `supabase` CLI whose only real
+   *  command is `migration new <name>`: it creates the timestamped, empty SQL
+   *  file the real CLI creates. Grading reads the migrations directory. */
+  supabaseCli({ server, workspace }) {
+    writeFile(workspace, "acme-api/supabase/config.toml", "project_id = \"acme-api\"\n[db]\nport = 54322\n");
+    writeFile(workspace, "acme-api/supabase/migrations/.keep", "");
+    writeFile(workspace, "acme-api/README.md", "# acme-api\nSupabase backend for Acme.\n");
+    writeFileSync(join(server.binDir, "supabase"), "#!/usr/bin/env bash\nif [ \"$1\" = \"migration\" ] && [ \"$2\" = \"new\" ] && [ -n \"$3\" ]; then\n  d=$(pwd); while [ \"$d\" != \"/\" ] && [ ! -d \"$d/supabase\" ]; do d=$(dirname \"$d\"); done\n  [ -d \"$d/supabase\" ] || { echo \"supabase: no supabase/ directory found\" >&2; exit 1; }\n  f=\"$d/supabase/migrations/$(date +%Y%m%d%H%M%S)_$3.sql\"; : > \"$f\"; echo \"Created new migration at $f\"; exit 0\nfi\necho \"supabase: this fixture CLI supports only: migration new <name>\" >&2; exit 1\n", { mode: 0o755 });
+    writeFileSync(join(server.binDir, "supabase.cmd"), "@bash \"%~dp0supabase\" %*\r\n");
+  },
+
+  supabaseSkill({ workspace }) {
+    writeFile(workspace, "protocols/imported/supabase-migrations/SKILL.md", "---\nname: supabase-migrations\ndescription: Change a Supabase project's database schema the supported way — a SQL migration file under supabase/migrations, never a live connection.\ntriggers: [supabase, add a table, database migration, schema change, create table]\nlicense: Apache-2.0\n---\n# Schema changes in a Supabase project\n\nSchema lives in `supabase/migrations/<timestamp>_<name>.sql`, applied in filename order. Never connect to a\ndatabase or call an API to change schema; write a migration.\n\n1. From the project directory run `supabase migration new <snake_case_name>` — it creates the empty,\n   correctly timestamped file and prints its path.\n2. Write the SQL into that file. Conventions: `id uuid primary key default gen_random_uuid()`,\n   `created_at timestamptz not null default now()`, text columns as `text`, and `alter table ... enable row\n   level security;` after every `create table`.\n3. Report the migration file path and the SQL. Do not apply it — the user applies migrations.\n");
+  },
   /** A workspace protocol whose steps leave file evidence, so a protocol run
    *  is graded on whether the steps actually happened rather than on the reply.
    *
@@ -271,6 +309,21 @@ export function runCheck(check, ctx) {
       const body = readFileSync(abs, "utf8");
       const missing = check.all.filter((s) => !body.includes(fill(s)));
       return { ok: missing.length === 0, detail: missing.length ? `${check.path} missing ${missing.join(", ")}` : "found" };
+    }
+    // Some file under `dir` whose name matches `pattern` contains every
+    // string in `all` (case-insensitive with ignoreCase). For evidence whose
+    // file name the agent chooses — a timestamped migration, a dated export.
+    case "fileGlobIncludes": {
+      const root = join(workspace, check.dir);
+      if (!existsSync(root)) return { ok: false, detail: `${check.dir} missing` };
+      const re = new RegExp(check.pattern, check.ignoreCase ? "i" : "");
+      const norm = (t) => (check.ignoreCase ? t.toLowerCase() : t);
+      const files = readdirSync(root).filter((f) => re.test(f));
+      for (const f of files) {
+        const body = norm(readFileSync(join(root, f), "utf8"));
+        if (check.all.every((s) => body.includes(norm(fill(s))))) return { ok: true, detail: `${check.dir}/${f} has all of ${check.all.join(", ")}` };
+      }
+      return { ok: false, detail: files.length ? `${files.length} file(s) matched /${check.pattern}/ in ${check.dir}, none has all of ${check.all.join(", ")}` : `no file matching /${check.pattern}/ in ${check.dir}` };
     }
     case "renderedCss": {
       const abs = join(workspace, check.page);

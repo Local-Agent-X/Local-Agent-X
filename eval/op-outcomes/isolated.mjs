@@ -133,6 +133,8 @@ export async function startIsolatedServer({ repoRoot, provider, model, fixturePo
   else mkdirSync(workspace, { recursive: true });
 
   mkdirSync(dataDir, { recursive: true });
+  const binDir = join(root, "bin");
+  mkdirSync(binDir, { recursive: true });
   const seed = seedProbeProvider(dataDir, provider);
   if (seed.unavailable) throw new Error(`${provider}: ${seed.unavailable}`);
   writeFileSync(join(dataDir, "settings.json"), JSON.stringify({ provider, model, ...backgroundModelSetting() }));
@@ -160,6 +162,10 @@ export async function startIsolatedServer({ repoRoot, provider, model, fixturePo
     stdio: ["ignore", "pipe", "pipe"],
     env: {
       ...process.env,
+      // Fixture executables a case seeds into binDir (a fake `vercel`, a fake
+      // `supabase`) resolve first, so a skill that teaches a CLI can be graded
+      // on what the CLI was asked to do without any network or account.
+      PATH: `${binDir}${process.platform === "win32" ? ";" : ":"}${process.env.PATH ?? ""}`,
       ...(seed.credentialPath ? { LAX_PROBE_PROVIDER_AUTH_PATH: seed.credentialPath } : {}),
       LAX_SELF_EDIT_PROBE: "1",
       // The probe flag above (needed to read credentials in place) also arms a
@@ -202,7 +208,7 @@ export async function startIsolatedServer({ repoRoot, provider, model, fixturePo
   const baseUrl = `http://127.0.0.1:${port}`;
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
   const server = {
-    root, roots: [root, workspaceRoot], workspaceRoot, dataDir, workspace, baseUrl, headers, logTail: () => tail.join("\n"),
+    root, roots: [root, workspaceRoot], workspaceRoot, dataDir, workspace, binDir, baseUrl, headers, logTail: () => tail.join("\n"),
     /** Non-null once the server process is gone. A server that ends ITSELF
      *  mid-run (the probe self-destruct did exactly this for months) makes
      *  every later observation meaningless — the caller must not grade it. */

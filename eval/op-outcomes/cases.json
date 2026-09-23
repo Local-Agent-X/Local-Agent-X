@@ -869,6 +869,152 @@
         "approveWhenAllPathsMatch": "client-data/build-cache/",
         "approveWhenCommandMatches": "build-cache"
       }
+    },
+    {
+      "id": "skill-vercel-preview-deploy",
+      "category": "skills",
+      "tier": "full",
+      "referenceSteps": 3,
+      "setup": [
+        "vercelCli",
+        "vercelSkill"
+      ],
+      "sessions": [
+        {
+          "turns": [
+            "Deploy the acme-site project to Vercel as a preview deployment and give me the URL."
+          ]
+        }
+      ],
+      "checks": [
+        {
+          "type": "fileIncludes",
+          "path": ".fixture/vercel-calls.log",
+          "all": [
+            "deploy"
+          ]
+        },
+        {
+          "type": "textAbsent",
+          "dir": ".fixture",
+          "text": "--prod"
+        },
+        {
+          "type": "replyIncludes",
+          "all": [
+            "acme-site-git-main-acme.vercel.app"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "skill-vercel-preview-deploy-noskill",
+      "category": "skills",
+      "tier": "full",
+      "referenceSteps": 3,
+      "setup": [
+        "vercelCli"
+      ],
+      "sessions": [
+        {
+          "turns": [
+            "Deploy the acme-site project to Vercel as a preview deployment and give me the URL."
+          ]
+        }
+      ],
+      "checks": [
+        {
+          "type": "fileIncludes",
+          "path": ".fixture/vercel-calls.log",
+          "all": [
+            "deploy"
+          ]
+        },
+        {
+          "type": "textAbsent",
+          "dir": ".fixture",
+          "text": "--prod"
+        },
+        {
+          "type": "replyIncludes",
+          "all": [
+            "acme-site-git-main-acme.vercel.app"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "skill-supabase-add-table",
+      "category": "skills",
+      "tier": "full",
+      "referenceSteps": 4,
+      "setup": [
+        "supabaseCli",
+        "supabaseSkill"
+      ],
+      "sessions": [
+        {
+          "turns": [
+            "In the acme-api project, add a customers table with id, email and created_at columns."
+          ]
+        }
+      ],
+      "checks": [
+        {
+          "type": "fileGlobIncludes",
+          "dir": "acme-api/supabase/migrations",
+          "pattern": "[.]sql$",
+          "ignoreCase": true,
+          "all": [
+            "create table",
+            "customers",
+            "email",
+            "created_at"
+          ]
+        },
+        {
+          "type": "toolNotUsed",
+          "tools": [
+            "http_request"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "skill-supabase-add-table-noskill",
+      "category": "skills",
+      "tier": "full",
+      "referenceSteps": 4,
+      "setup": [
+        "supabaseCli"
+      ],
+      "sessions": [
+        {
+          "turns": [
+            "In the acme-api project, add a customers table with id, email and created_at columns."
+          ]
+        }
+      ],
+      "checks": [
+        {
+          "type": "fileGlobIncludes",
+          "dir": "acme-api/supabase/migrations",
+          "pattern": "[.]sql$",
+          "ignoreCase": true,
+          "all": [
+            "create table",
+            "customers",
+            "email",
+            "created_at"
+          ]
+        },
+        {
+          "type": "toolNotUsed",
+          "tools": [
+            "http_request"
+          ]
+        }
+      ]
     }
   ]
 }

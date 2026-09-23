@@ -22,8 +22,12 @@ const MODEL_CONTEXTS: Record<string, number> = {
   "grok-4.20-multi-agent-0309": 131_072,
   "grok-code-fast-1": 131_072,
   "grok-build-0.1": 131_072,
-  // Fable 5 — 1M context (native; the maximum is also the default)
+  // Opus 5.5 — current Opus tier; 1M context, 128K output
+  "claude-opus-5-5": 1_000_000,
+  // Fable 5 / 5.1 — 1M context (native; the maximum is also the default)
   "claude-fable-5": 1_000_000,
+  "claude-fable-5-1": 1_000_000,
+  "claude-mythos-5-1": 1_000_000,
   // Sonnet 5 — Claude 5 balanced tier, 1M context
   "claude-sonnet-5": 1_000_000,
   // Opus 5 — Claude 5 Opus tier; 1M is both the default and the maximum
@@ -41,6 +45,7 @@ const MODEL_CONTEXTS: Record<string, number> = {
   "claude-opus-4-7[1m]": 1_000_000,
   "claude-opus-4-8[1m]": 1_000_000,
   "claude-opus-5[1m]": 1_000_000,
+  "claude-opus-5-5[1m]": 1_000_000,
   // Gemini 2.x family (GA aliases)
   "gemini-2.0-flash": 1_000_000,
   "gemini-2.5-pro": 1_000_000,

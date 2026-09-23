@@ -8,6 +8,7 @@ import { describe, it, expect } from "vitest";
 import { normalizeAnthropicModel, anthropicUsesAdaptiveThinking, anthropicThinkingOffMode, anthropicMaxOutputTokens, anthropicEffortLevels, resolveAnthropicEffort, planAnthropicReasoning } from "./anthropic-models.js";
 import { classifyModel } from "./model-tiers.js";
 import { PROVIDERS } from "./providers/registry.js";
+import { lookupContextWindow } from "./context-manager/model-windows.js";
 
 describe("Claude Sonnet 5 wiring", () => {
   it("uses the adaptive-thinking request shape (the 400 guard)", () => {
@@ -340,5 +341,100 @@ describe("planAnthropicReasoning — one intent, per-model levers", () => {
   it("no intent at all leaves both knobs alone", () => {
     expect(planAnthropicReasoning("claude-opus-5", {})).toEqual({ thinkingOff: false });
     expect(planAnthropicReasoning("claude-haiku-4-5", {})).toEqual({ thinkingOff: false });
+  });
+});
+
+// Claude Opus 5.5 (released 2026-09-22). The load-bearing invariant here is an
+// ID COLLISION, not a capability: `claude-opus-5-5` starts with
+// `claude-opus-5`, so every prefix rule in this file matched it by accident.
+// normalizeAnthropicModel rewrote it to `claude-opus-5` outright — the turn
+// would have run on the wrong model, billed at $5/$25 instead of $4/$20, and
+// carried `thinking: {type: "disabled"}` to a model that rejects it with a 400.
+// Nothing about that failure is visible in a unit test of any single function,
+// which is why the collision is pinned end-to-end below.
+describe("Claude Opus 5.5 wiring", () => {
+  it("keeps its own identity — the dotted version is NOT a snapshot of opus-5", () => {
+    expect(normalizeAnthropicModel("claude-opus-5-5")).toBe("claude-opus-5-5");
+    expect(normalizeAnthropicModel("anthropic/claude-opus-5-5")).toBe("claude-opus-5-5");
+    expect(normalizeAnthropicModel("claude-opus-5-5[1m]")).toBe("claude-opus-5-5");
+    expect(normalizeAnthropicModel("claude-opus-5.5")).toBe("claude-opus-5-5");
+    expect(normalizeAnthropicModel("Claude-Opus-5-5")).toBe("claude-opus-5-5");
+  });
+
+  // The other half of the same rule: a real DATED snapshot must still collapse
+  // onto its base id, or every pinned id in saved settings stops resolving.
+  it("still collapses dated snapshots onto the base id", () => {
+    expect(normalizeAnthropicModel("claude-opus-5-20260601")).toBe("claude-opus-5");
+    expect(normalizeAnthropicModel("claude-opus-5-5-20260922")).toBe("claude-opus-5-5");
+    expect(normalizeAnthropicModel("claude-opus-4-8-20260501")).toBe("claude-opus-4-8");
+  });
+
+  it("uses the adaptive-thinking request shape (the 400 guard)", () => {
+    expect(anthropicUsesAdaptiveThinking("claude-opus-5-5")).toBe(true);
+    expect(anthropicUsesAdaptiveThinking("claude-opus-5-5[1m]")).toBe(true);
+  });
+
+  // The 400 this whole block exists to prevent: 5.5 dropped thinking-off
+  // entirely, so inheriting Opus 5's "disabled-block" puts an outright-rejected
+  // parameter on the wire for every turn that asks for low latency.
+  it("cannot turn thinking off — always-on, NOT opus-5's disabled-block", () => {
+    expect(anthropicThinkingOffMode("claude-opus-5-5")).toBe("always-on");
+    expect(anthropicThinkingOffMode("claude-opus-5-5[1m]")).toBe("always-on");
+    expect(anthropicThinkingOffMode("claude-opus-5")).toBe("disabled-block");
+  });
+
+  it("accepts all five effort levels", () => {
+    expect(anthropicEffortLevels("claude-opus-5-5")).toEqual(["low", "medium", "high", "xhigh", "max"]);
+  });
+
+  // Opus 5's xhigh/max ceiling exists only because Opus 5 ACCEPTS a disabled
+  // block at effort <= high. On 5.5 thinking can't be disabled at all, so the
+  // ceiling must not apply — inheriting it would silently downgrade effort.
+  it("does not inherit opus-5's disabled+xhigh effort ceiling", () => {
+    expect(resolveAnthropicEffort("claude-opus-5-5", "xhigh", true)).toBe("xhigh");
+    expect(resolveAnthropicEffort("claude-opus-5-5", "max", true)).toBe("max");
+    expect(resolveAnthropicEffort("claude-opus-5", "xhigh", true)).toBeUndefined();
+    expect(planAnthropicReasoning("claude-opus-5-5", { effort: "xhigh", disableThinking: true }))
+      .toEqual({ thinkingOff: true, effort: "xhigh" });
+  });
+
+  it("streams up to 128K output and holds a 1M context window", () => {
+    expect(anthropicMaxOutputTokens("claude-opus-5-5")).toBe(128_000);
+    expect(anthropicMaxOutputTokens("anthropic/claude-opus-5-5")).toBe(128_000);
+    expect(lookupContextWindow("claude-opus-5-5")).toBe(1_000_000);
+    expect(lookupContextWindow("claude-opus-5-5[1m]")).toBe(1_000_000);
+  });
+
+  it("classifies as a strong tool-use tier", () => {
+    expect(classifyModel("claude-opus-5-5")).toBe("strong");
+  });
+
+  it("is selectable on the anthropic provider, and is the default", () => {
+    expect(PROVIDERS.anthropic.models).toContain("claude-opus-5-5");
+    expect(PROVIDERS.anthropic.defaultModel).toBe("claude-opus-5-5");
+  });
+
+  it("leaves Opus 5 itself intact — it is legacy, not retired", () => {
+    expect(normalizeAnthropicModel("claude-opus-5")).toBe("claude-opus-5");
+    expect(anthropicMaxOutputTokens("claude-opus-5")).toBe(128_000);
+    expect(PROVIDERS.anthropic.models).toContain("claude-opus-5");
+  });
+});
+
+// The .1 tier collides with the same base-id rule as Opus 5.5. These ids aren't
+// selectable in the UI, but a user can type one into the custom-model field,
+// and the dated-snapshot fix would otherwise strand them on the 8K output floor.
+describe("Fable 5.1 / Mythos 5.1 — same collision, same rule", () => {
+  it("keeps its own identity rather than collapsing onto the .0 id", () => {
+    expect(normalizeAnthropicModel("claude-fable-5-1")).toBe("claude-fable-5-1");
+    expect(normalizeAnthropicModel("claude-mythos-5-1")).toBe("claude-mythos-5-1");
+    expect(normalizeAnthropicModel("claude-fable-5")).toBe("claude-fable-5");
+  });
+
+  it("keeps the always-on shape and the 128K ceiling", () => {
+    expect(anthropicThinkingOffMode("claude-fable-5-1")).toBe("always-on");
+    expect(anthropicThinkingOffMode("claude-mythos-5-1")).toBe("always-on");
+    expect(anthropicMaxOutputTokens("claude-fable-5-1")).toBe(128_000);
+    expect(anthropicMaxOutputTokens("claude-mythos-5-1")).toBe(128_000);
   });
 });

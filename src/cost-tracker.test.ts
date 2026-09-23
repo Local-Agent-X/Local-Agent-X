@@ -148,3 +148,49 @@ describe("trackUsage — cached tokens are billed, not dropped", () => {
     expect(rec.costUsd).toBeCloseTo(27.00, 2);    // what the op actually cost
   });
 });
+
+// Opus 5.5 is the first Claude model whose cache READ rate is not 0.1x input
+// (5%, and 2.5% on the Fable/Mythos 5.1 tier). It is also the first whose id
+// prefix-matches an existing PRICING key, so without an exact row resolvePricing
+// hands it Opus 5's $5/$25 and marks the result "prefix" — priced wrong WITHOUT
+// setting pricingEstimated. That is the grok-4.3 bug class exactly.
+describe("Claude Opus 5.5 pricing", () => {
+  it("has an exact rate, not a prefix match onto Opus 5", () => {
+    expect(hasExactPricing("claude-opus-5-5")).toBe(true);
+    expect(getPricing("claude-opus-5-5")).toMatchObject({ input: 4, output: 20 });
+    expect(getPricing("claude-opus-5")).toMatchObject({ input: 5, output: 25 });
+  });
+
+  it("bills cache reads at 5% of input, not the default 10%", () => {
+    // 1M cached reads @ $4 x 0.05 = $0.20; 1M cache writes @ $4 x 1.25 = $5.00.
+    const rec = trackUsage("s", "claude-opus-5-5", "anthropic", 0, 0, undefined, "env", {
+      readTokens: 1_000_000,
+      writeTokens: 1_000_000,
+    });
+    expect(rec.costUsd).toBeCloseTo(5.2, 4);
+    expect(rec.pricingEstimated).toBeUndefined();
+  });
+
+  it("keeps the 0.1x default for models that did not reprice", () => {
+    // 1M cached reads @ $5 x 0.1 = $0.50.
+    const rec = trackUsage("s", "claude-opus-5", "anthropic", 0, 0, undefined, "env", {
+      readTokens: 1_000_000,
+    });
+    expect(rec.costUsd).toBeCloseTo(0.5, 4);
+  });
+
+  // The table carried $3/$15 on the theory that $2/$10 was an intro rate expiring
+  // 2026-08-31 and reverting. It didn't — $2/$10 is the standing rate, so every
+  // Sonnet 5 record billed 50% high and inflated the USD spend cap with it.
+  it("bills Sonnet 5 at the standing $2/$10, not the assumed $3/$15 revert", () => {
+    expect(getPricing("claude-sonnet-5")).toMatchObject({ input: 2, output: 10 });
+  });
+
+  it("prices the Fable/Mythos 5.1 tier at 2.5% cache reads", () => {
+    // 1M cached reads @ $10 x 0.025 = $0.25.
+    const rec = trackUsage("s", "claude-fable-5-1", "anthropic", 0, 0, undefined, "env", {
+      readTokens: 1_000_000,
+    });
+    expect(rec.costUsd).toBeCloseTo(0.25, 4);
+  });
+});

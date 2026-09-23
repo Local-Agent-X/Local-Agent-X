@@ -4,8 +4,22 @@ function stripAnthropicPrefix(model: string): string {
   return model.trim().replace(/^anthropic\//i, "");
 }
 
+/** A dated snapshot suffix, and the only suffix that means "same model": `-20260922`. */
+const DATED_SNAPSHOT = /^-\d{8}$/;
+
+/**
+ * True when `model` IS `ref`, or a dated snapshot of it.
+ *
+ * The suffix must be a DATE. Anthropic encodes dotted versions with a hyphen
+ * too, so the older `startsWith(`${ref}-`)` read `claude-opus-5-5` as a
+ * snapshot of `claude-opus-5` and silently rewrote Opus 5.5 into Opus 5 —
+ * wrong rate, wrong cache rate, and a `thinking: {type: "disabled"}` on a
+ * model that 400s on it. Every future x.y release collides the same way
+ * (`claude-fable-5-1`, `claude-mythos-5-1`), so the rule is fixed here rather
+ * than patched per model.
+ */
 function matchesModelRef(model: string, refs: string[]): boolean {
-  return refs.some((ref) => model === ref || model.startsWith(`${ref}-`));
+  return refs.some((ref) => model === ref || (model.startsWith(ref) && DATED_SNAPSHOT.test(model.slice(ref.length))));
 }
 
 /**
@@ -18,8 +32,18 @@ export function normalizeAnthropicModel(model: string, mode: AnthropicAuthMode =
 
   const lower = trimmed.toLowerCase();
 
-  // Fable 5 — most capable GA model (1M context). Always-on thinking; the
-  // request layer must not send budget_tokens/temperature on this id.
+  // Opus 5.5 — current Opus tier (1M context, 128K output, $4/$20). Adaptive
+  // thinking is ALWAYS ON: unlike Opus 5, `{type: "disabled"}` is rejected
+  // outright, and the API's default effort drops to `medium`. Tested BEFORE
+  // the opus-5 branch below — see matchesModelRef for why the order matters.
+  if (matchesModelRef(lower, ["claude-opus-5-5", "claude-opus-5.5"]) || lower === "claude-opus-5-5[1m]") return "claude-opus-5-5";
+  // Fable 5.1 / Mythos 5.1 — same 1M/128K/always-on shape as their .0 siblings
+  // under their own ids. Listed so the dated-snapshot rule can't leave them
+  // unnormalized and falling back to the 8K output floor.
+  if (matchesModelRef(lower, ["claude-fable-5-1", "claude-fable.5.1"]) || lower === "claude-fable-5-1[1m]") return "claude-fable-5-1";
+  if (matchesModelRef(lower, ["claude-mythos-5-1", "claude-mythos.5.1"]) || lower === "claude-mythos-5-1[1m]") return "claude-mythos-5-1";
+  // Fable 5 — 1M context. Always-on thinking; the request layer must not send
+  // budget_tokens/temperature on this id.
   if (matchesModelRef(lower, ["claude-fable-5", "claude-fable.5"]) || lower === "claude-fable-5[1m]") return "claude-fable-5";
   // Sonnet 5 — Claude 5 balanced tier (1M context). Same adaptive-only request
   // shape as Fable 5: the request layer must not send budget_tokens/temperature.
@@ -72,7 +96,7 @@ export function normalizeAnthropicModel(model: string, mode: AnthropicAuthMode =
  */
 export function anthropicUsesAdaptiveThinking(model: string): boolean {
   const m = normalizeAnthropicModel(model).toLowerCase();
-  return /^claude-(fable-5|mythos-5|opus-5|opus-4-[678]|sonnet-5|sonnet-4-6)/.test(m);
+  return /^claude-(fable-5|mythos-5|opus-5-5|opus-5|opus-4-[678]|sonnet-5|sonnet-4-6)/.test(m);
 }
 
 export type AnthropicThinkingOffMode = "omit" | "disabled-block" | "always-on";
@@ -102,7 +126,11 @@ export type AnthropicThinkingOffMode = "omit" | "disabled-block" | "always-on";
  */
 export function anthropicThinkingOffMode(model: string): AnthropicThinkingOffMode {
   const m = normalizeAnthropicModel(model).toLowerCase();
-  if (/^claude-(fable-5|mythos-5)/.test(m)) return "always-on";
+  // opus-5-5 is listed here and FIRST on purpose: `^claude-opus-5` also matches
+  // `claude-opus-5-5`, so without this line Opus 5.5 would inherit Opus 5's
+  // "disabled-block" and put `thinking: {type: "disabled"}` on the wire for a
+  // model that rejects it outright.
+  if (/^claude-(fable-5|mythos-5|opus-5-5)/.test(m)) return "always-on";
   if (/^claude-(opus-5|sonnet-5|opus-4-[78])/.test(m)) return "disabled-block";
   return "omit";
 }
@@ -133,7 +161,7 @@ const EFFORT_NONE: readonly AnthropicEffort[] = [];
  */
 export function anthropicEffortLevels(model: string): readonly AnthropicEffort[] {
   const m = normalizeAnthropicModel(model).toLowerCase();
-  if (/^claude-(fable-5|mythos-5|opus-5|opus-4-[78]|sonnet-5)/.test(m)) return EFFORT_FULL;
+  if (/^claude-(fable-5|mythos-5|opus-5-5|opus-5|opus-4-[78]|sonnet-5)/.test(m)) return EFFORT_FULL;
   if (/^claude-(opus-4-6|sonnet-4-6)/.test(m)) return EFFORT_NO_XHIGH;
   if (/^claude-opus-4-5/.test(m)) return EFFORT_LEGACY;
   return EFFORT_NONE;
@@ -167,7 +195,11 @@ export function resolveAnthropicEffort(
 ): AnthropicEffort | undefined {
   if (!effort) return undefined;
   if (!anthropicEffortLevels(model).includes(effort)) return undefined;
-  const opus5 = /^claude-opus-5/.test(normalizeAnthropicModel(model).toLowerCase());
+  // `(?!-5)` keeps Opus 5.5 out: the ceiling exists because Opus 5 accepts a
+  // disabled block only at effort <= high. On 5.5 thinking cannot be disabled
+  // at all, so `thinkingDisabled` never reaches the wire and must not silently
+  // cost the caller xhigh/max.
+  const opus5 = /^claude-opus-5(?!-5)/.test(normalizeAnthropicModel(model).toLowerCase());
   if (thinkingDisabled && opus5 && (effort === "xhigh" || effort === "max")) return undefined;
   return effort;
 }
@@ -263,7 +295,8 @@ export function anthropicMaxOutputTokens(model: string): number {
   if (matchesModelRef(id, ["claude-haiku-4-5"])) return 64_000;
   if (
     matchesModelRef(id, [
-      "claude-fable-5", "claude-mythos-5", "claude-opus-5", "claude-sonnet-5",
+      "claude-fable-5", "claude-fable-5-1", "claude-mythos-5", "claude-mythos-5-1",
+      "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5",
       "claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6", "claude-opus-4-5",
       "claude-sonnet-4-6", "claude-sonnet-4-5",
     ])

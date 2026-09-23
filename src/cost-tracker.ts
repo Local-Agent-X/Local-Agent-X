@@ -44,15 +44,17 @@ export function getResolvedModel(): string | undefined {
 
 // ── Pricing per 1M tokens (USD) ──
 
-interface ModelPricing { input: number; output: number }
+/** `cacheRead` overrides CACHE_READ_MULTIPLIER for a model that repriced reads. */
+interface ModelPricing { input: number; output: number; cacheRead?: number }
 
 // ── Cache pricing ──
-// Anthropic prices cached tokens as multipliers on the model's INPUT rate:
-// a cache read is ~0.1x, and a cache write is 1.25x at the default 5-minute
-// TTL (2x at 1h). Expressed as multipliers rather than two more columns on
-// every PRICING row because the ratio is a property of the API contract, not
-// of the model — a new model added to the table gets correct cache pricing
-// for free, and there is no second table to drift.
+// Anthropic prices cached tokens as multipliers on the model's INPUT rate: a
+// cache read is ~0.1x, a cache write 1.25x at the default 5-min TTL (2x at 1h).
+// Multipliers, not two more columns per row, because the ratio holds for most
+// of the lineup — a new model gets correct cache pricing free. The READ rate
+// stopped being universal with Opus 5.5 (5%, and 2.5% on the Fable/Mythos 5.1
+// tier), so a row may override it via `cacheRead` — kept ON the PRICING row so
+// a prefix-resolved alias inherits the right rate, with no second table.
 //
 // This is why they must be billed at all: aggregateOpUsage already sums
 // cacheReadTokens / cacheCreateTokens per op, and trackUsage silently dropped
@@ -65,7 +67,7 @@ const CACHE_WRITE_MULTIPLIER = 1.25;
 /** Cached-token cost in USD for a model's resolved input rate. */
 function cacheCostUsd(pricing: ModelPricing, readTokens: number, writeTokens: number): number {
   return (
-    readTokens * pricing.input * CACHE_READ_MULTIPLIER +
+    readTokens * pricing.input * (pricing.cacheRead ?? CACHE_READ_MULTIPLIER) +
     writeTokens * pricing.input * CACHE_WRITE_MULTIPLIER
   ) / 1_000_000;
 }
@@ -77,7 +79,10 @@ const PRICING: Record<string, ModelPricing> = {
   "claude-sonnet-4-5-20250929": { input: 3, output: 15 },
   "claude-sonnet-4": { input: 3, output: 15 },
   "claude-fable-5": { input: 10, output: 50 },
-  "claude-sonnet-5": { input: 3, output: 15 },  // sticker; $2/$10 intro through 2026-08-31
+  "claude-fable-5-1": { input: 10, output: 50, cacheRead: 0.025 },
+  "claude-mythos-5-1": { input: 10, output: 50, cacheRead: 0.025 },
+  "claude-opus-5-5": { input: 4, output: 20, cacheRead: 0.05 },
+  "claude-sonnet-5": { input: 2, output: 10 },  // the 2026-08-31 intro rate became the standing rate
   "claude-opus-5": { input: 5, output: 25 },    // drop-in upgrade at Opus 4.8's pricing
   "claude-opus-4-8": { input: 5, output: 25 },
   "claude-opus-4-7": { input: 5, output: 25 },

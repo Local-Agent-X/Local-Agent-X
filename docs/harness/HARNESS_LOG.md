@@ -1026,3 +1026,26 @@ ephemeral (`ephemeralTailMessages` — the digest or a redirect), which keeps th
 is a row-boundary change (replaced wholesale next round), and stays its own row after a durable user row (the
 first cut's fold). Kept runs of both compacting cases first; then the full split on both models, this time with
 nothing touched in `src/` until it ends.
+
+**Third cut, kept runs (3bfdac69), 27B:** tools on the wire in every round of all three runs — the latch is gone.
+injection-survives-compaction 8,814/msg, 5,124/tool, 1/1. constraint-survives-long-session 2/2 but 37k/msg,
+33k/tool: still zero reuse on most rounds from op 1 on.
+
+**Replay bisect of that store (op 2, r1 → r2), what it ruled OUT and IN:**
+- The bytes are cache-correct. The first as-recorded replay of the pair missed (0), but the same pair replayed three
+  times back to back reused 35,449 each time, and either half of the trailing row stripped reused the same
+  35,449. Consecutive live rounds are strict row-extensions (first differing row is always the ephemeral digest
+  replaced by the assistant row), identical in shape to the clean stores. Row edits, the summary hash, prompt size
+  against the window, tool presence — all ruled out for this store.
+- The reuse boundary is the tell: r3 after r2 reuses through the USER message (35,449), never r2's appended rows
+  (~36.4k available). The runtime is matching against an older slot, not the most recent request. With 27B side
+  calls interleaving mid-op (the memory pipeline: consolidation, curate, backfill retries — all on the CHAT model,
+  13-20 per run; the long-session case triggers more of them via its `remember`), which slot a round lands on is
+  effectively a lottery: the clean stores reused a flat 35.7k per round, the broken ones 0, on the same bytes.
+
+So the remaining long-session cost is runtime slot behaviour under interleaved side calls, not the prompt. The
+harness lever is to keep side calls off the chat model while a chat op runs (route to the classifier model, or
+defer until idle — the backfill already defers "foreground-busy"); that is **12d**, its own experiment.
+
+Full split on both models at 3bfdac69 running for the keep decision of 12b + 12c (third cut) + the window seed —
+`src/` untouched until it ends.

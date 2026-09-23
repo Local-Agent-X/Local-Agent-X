@@ -104,6 +104,14 @@ export async function copyToSync(dataDir: string, syncDir: string, config: SyncC
     }
   }
 
+  // Unconditional: this cleans the MIRROR, so it must not depend on the source
+  // workspace still existing or on workspace sync being on. A machine whose
+  // workspace folder is gone, or that syncs protocols only, would otherwise
+  // keep re-hashing excluded trees mirrored by an earlier build forever.
+  const mirroredWorkspace = join(syncDir, "workspace");
+  const pruned = await pruneSkippedDirs(mirroredWorkspace);
+  if (pruned.length > 0) logger.info(`[sync] pruned ${pruned.length} excluded tree(s) from the mirror: ${pruned.slice(0, 5).join(", ")}`);
+
   if (config.syncWorkspace) {
     const workspace = workspaceRoot();
     if (existsSync(workspace)) {
@@ -112,10 +120,7 @@ export async function copyToSync(dataDir: string, syncDir: string, config: SyncC
       // additive-only so local-only apps on other machines aren't
       // obliterated when this machine pushes.
       writeTombstonesForDeletedApps(tombstonePaths(dataDir, syncDir), syncDir);
-      const mirrored = join(syncDir, "workspace");
-      const pruned = await pruneSkippedDirs(mirrored);
-      if (pruned.length > 0) logger.info(`[sync] pruned ${pruned.length} excluded tree(s) from the mirror: ${pruned.slice(0, 5).join(", ")}`);
-      await mirrorDir(workspace, mirrored, /* additiveOnly */ true);
+      await mirrorDir(workspace, mirroredWorkspace, /* additiveOnly */ true);
     }
   } else if (config.syncProtocols) {
     // Workspace sync is OFF but the user still wants protocols to flow

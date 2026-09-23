@@ -35,6 +35,14 @@ export interface ProtocolSource {
    * "custom": user-authored typed protocol in ~/.lax/custom-protocols.json
    */
   type: "builtin" | "bundled" | "imported" | "custom";
+  /** Which "imported" tier the loader read this from — the type is shared by
+   *  two directories with different trust: "workspace" is the user's own
+   *  workspace/protocols/imported/ (hand-dropped or repo-installed, and the
+   *  user chose it, so the suggestion nudge may name it); "managed" is the
+   *  system-written ~/.lax/protocols/learned/ tier, which is only ever
+   *  suggested through a verified learned record. Stamped by the loader,
+   *  never read from disk. */
+  origin?: "workspace" | "managed";
   /** Upstream repo URL/slug for bundled or imported protocols */
   repo?: string;
   /** Source commit SHA at import time */

@@ -35,6 +35,7 @@ import { createProgressTools } from "./progress.js";
 import { createRollbackTools } from "./rollback.js";
 import { createVariableTools } from "./variables.js";
 import { createProtocolSearchTool } from "./search.js";
+import { createSkillInstallTools } from "./skills-install-tools.js";
 import { createProtocolStatsTools } from "./stats-tools.js";
 import { createCuratorTools } from "./curator.js";
 import type { Protocol } from "./types.js";
@@ -109,6 +110,7 @@ export function createAllProtocolTools(): ToolDefinition[] {
     ...createVariableTools(),
     ...createProtocolStatsTools(),
     ...createCuratorTools(),
+    ...createSkillInstallTools(),
     createProtocolSearchTool(),
   ];
 }

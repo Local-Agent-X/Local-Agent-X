@@ -12,7 +12,7 @@ import type { MemoryManager } from "../../memory/index.js";
 import { buildTurnContextCached } from "../turn-context-cache.js";
 import { createLogger } from "../../logger.js";
 import { harnessNotice } from "../../context/system-prompt-builder.js";
-import { getLearnedProtocolSuggestion } from "../../protocols/learned-suggestion.js";
+import { getLearnedProtocolSuggestion, type LearnedProtocolSuggestion } from "../../protocols/learned-suggestion.js";
 
 const logger = createLogger("agent-request.prepare-request.context");
 
@@ -27,6 +27,10 @@ export interface BuildContextInput {
   isTrivialToolRequest: boolean;
   tier: "weak" | "medium" | "strong";
   resolvedModel: string;
+  /** The turn's learned-workflow suggestion when the caller already computed
+   *  it (prepare-request does, because tool selection needs it first).
+   *  Undefined = compute here; null = computed, nothing matched. */
+  protocolSuggestion?: LearnedProtocolSuggestion | null;
 }
 
 export interface BuildContextResult {
@@ -127,7 +131,9 @@ export async function buildContext(input: BuildContextInput): Promise<BuildConte
   // the protocol name, and selectLearnedProtocolSuggestion refuses to emit a
   // name outside a charset that cannot close the notice or the tool-argument
   // literal (protocol names have no write-path validation — F23).
-  const learnedSuggestion = getLearnedProtocolSuggestion(input.message);
+  const learnedSuggestion = input.protocolSuggestion === undefined
+    ? getLearnedProtocolSuggestion(input.message)
+    : input.protocolSuggestion;
   const protocolNotice = learnedSuggestion
     ? harnessNotice("LEARNED WORKFLOW", learnedSuggestion.nudge)
     : "";

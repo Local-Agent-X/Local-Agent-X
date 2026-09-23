@@ -185,6 +185,24 @@ describe("agent-authored custom protocol retrieval", () => {
     expect(selectLearnedProtocolSuggestion(message, [], catalog(), noLoad)?.name).toBe("instagram_post");
   });
 
+  it("suggests a workspace-imported skill (an installed vendor pack) by trigger match", () => {
+    const vercel: Protocol = {
+      ...protocol("vercel-deploy", "Deploy a project to Vercel with the CLI and report the deployment URL.", ["deploy to vercel", "vercel deploy", "preview deployment"]),
+      source: { type: "imported", origin: "workspace", sourcePath: "/ws/protocols/imported/vercel-deploy/SKILL.md", repo: "vercel/skills", commit: "abc" },
+    };
+    const hit = selectLearnedProtocolSuggestion("deploy the acme-site project to vercel as a preview and tell me the url", [], catalog(vercel), noLoad);
+    expect(hit?.name).toBe("vercel-deploy");
+    expect(hit?.nudge).not.toMatch(/authored autonomously/);
+  });
+
+  it("never suggests a managed-origin import without a verified learned record — the origin stamp is the boundary", () => {
+    const managed: Protocol = {
+      ...protocol("vercel-deploy", "Deploy a project to Vercel with the CLI and report the deployment URL.", ["deploy to vercel", "vercel deploy", "preview deployment"]),
+      source: { type: "imported", origin: "managed", sourcePath: "/lax/protocols/learned/vercel-deploy/SKILL.md" },
+    };
+    expect(selectLearnedProtocolSuggestion("deploy the acme-site project to vercel as a preview and tell me the url", [], catalog(managed), noLoad)).toBeNull();
+  });
+
   it("refuses a custom record wearing a managed learned slug", () => {
     const impostor = customProtocol(
       "learned-aaaaaaaaaaaaaaaaaaaa",

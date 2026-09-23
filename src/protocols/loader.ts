@@ -177,10 +177,30 @@ function noteCatalogIoFailure(): void {
 
 // ── SKILL.md directory scanning ───────────────────────────────────────────
 
+/** Provenance a repo install leaves beside its SKILL.md (skills-install.ts
+ *  SOURCE_FILE). Read here so the catalog carries repo + pinned commit; a
+ *  hand-dropped folder has none and loads exactly as before. */
+function readInstallProvenance(subdir: string): Pick<ProtocolSource, "repo" | "commit" | "license" | "attribution"> {
+  const file = join(subdir, "source.json");
+  if (!existsSync(file)) return {};
+  try {
+    const s = JSON.parse(readFileSync(file, "utf-8")) as { repo?: unknown; commit?: unknown; license?: unknown; url?: unknown };
+    if (typeof s.repo !== "string" || typeof s.commit !== "string") return {};
+    return {
+      repo: s.repo, commit: s.commit,
+      license: typeof s.license === "string" ? s.license : undefined,
+      attribution: `${s.repo}${typeof s.license === "string" ? ` (${s.license})` : ""}. Source: ${typeof s.url === "string" ? s.url : `https://github.com/${s.repo}`}`,
+    };
+  } catch {
+    return {};
+  }
+}
+
 function scanSkillMdDir(
   dir: string,
   sourceType: "bundled" | "imported",
   rejectManagedMarker = false,
+  origin?: ProtocolSource["origin"],
 ): Protocol[] {
   if (!existsSync(dir)) return [];
   const out: Protocol[] = [];
@@ -201,7 +221,11 @@ function scanSkillMdDir(
     if (!existsSync(skillFile)) continue;
     let raw: string;
     try { raw = readFileSync(skillFile, "utf-8"); } catch { noteCatalogIoFailure(); continue; }
-    const source: ProtocolSource = { type: sourceType, sourcePath: skillFile };
+    const source: ProtocolSource = {
+      type: sourceType, sourcePath: skillFile,
+      ...(origin ? { origin } : {}),
+      ...(origin === "workspace" ? readInstallProvenance(subdir) : {}),
+    };
     const protocol = parseSkillMd(raw, { source, fallbackName: name });
     if (protocol) out.push(protocol);
     // A SKILL.md that exists but yields nothing (empty file, truncated sync,
@@ -248,8 +272,8 @@ export function invalidateBundledCache(): void {
 
 export function loadImportedProtocols(): Protocol[] {
   runProtocolMigrations();
-  const userImports = scanSkillMdDir(importedProtocolsDir(), "imported", true);
-  const managedLearned = scanSkillMdDir(learnedProtocolsDir(), "imported");
+  const userImports = scanSkillMdDir(importedProtocolsDir(), "imported", true, "workspace");
+  const managedLearned = scanSkillMdDir(learnedProtocolsDir(), "imported", false, "managed");
   return mergeByName(userImports, managedLearned);
 }
 

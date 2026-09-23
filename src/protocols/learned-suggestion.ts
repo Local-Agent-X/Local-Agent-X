@@ -277,6 +277,16 @@ function verifiedActiveProtocol(
  *    background review fork writes custom.json. Before this, `custom` records
  *    could never be suggested at all and the write half was unreachable.
  *
+ * 3. WORKSPACE IMPORTS (`source.type === "imported"` + `source.origin ===
+ *    "workspace"`). A SKILL.md the user put in workspace/protocols/imported/
+ *    by hand or through `protocol(action:"install")` — a vendor skill pack.
+ *    The user chose it, it is pinned on disk, and a local model with a shrunk
+ *    tool set never finds it any other way (the `protocol` tool is not in the
+ *    weak/medium sets, and the "Protocols" prompt part is shed on small
+ *    windows). The origin stamp is what keeps this from being "the imported
+ *    tier opened wholesale": the managed learned directory shares the type but
+ *    is stamped "managed" and still only enters through tier 0.
+ *
  * Deliberately NOT scored: builtin and bundled. They are already reachable by
  * trigger match and `protocol(action:"search")`, they carry the longest
  * descriptions in the catalog (and so produced every measured false positive),
@@ -312,9 +322,9 @@ export function selectLearnedProtocolSuggestion(
     }
   }
   for (const protocol of protocols) {
-    if (protocol.source?.type !== "custom") continue;
     if (LEARNED_SLUG.test(protocol.name)) continue;
-    consider(protocol, 1);
+    if (protocol.source?.type === "custom") consider(protocol, 1);
+    else if (protocol.source?.type === "imported" && protocol.source.origin === "workspace") consider(protocol, 2);
   }
   // A tie is a RANKING problem, not a reason to say nothing. Suppressing on a
   // tie meant the more protocols the authoring fork wrote, the less retrieval

@@ -38,6 +38,11 @@ export interface ToolSelectionInput {
    *  invocation (the marker only rides the first turn), so the methodology's
    *  tool routing holds for the whole session, not just its kickoff turn. */
   priorMethodology?: boolean;
+  /** True when this turn's system prompt will carry a LEARNED WORKFLOW nudge
+   *  naming `protocol(action:"get")`. The nudge is only actionable if that
+   *  tool is in the schema, and it is in neither the weak nor the medium
+   *  essential set — so the nudge pulls it in, the way tool_search is kept. */
+  protocolSuggested?: boolean;
   /** Test seam for the durable Product Build lookup. */
   continuationResolver?: ContinuationResolver;
 }
@@ -269,6 +274,15 @@ export async function selectTools(input: ToolSelectionInput): Promise<ToolSelect
     if (tools.length !== before) {
       logger.info(`[tools] ${input.resolvedProvider} cap ${before}→${tools.length} (tier=${tier}→${capTier}; endpoint tool limit)`);
     }
+  }
+
+  // A nudge that names a tool the model does not have is dead text (the
+  // tier-tool-set header records exactly that failure for tool_search). Put
+  // `protocol` in the schema whenever the prompt will say to call it; after
+  // the cap so nothing below the cap trims it, before the build-route strip.
+  if (input.protocolSuggested && !isBridge && !tools.some((t) => t.name === "protocol")) {
+    const protocolTool = input.allAgentTools.find((t) => t.name === "protocol");
+    if (protocolTool) tools = [...tools, protocolTool];
   }
 
   // Explicit build-workflow turn: the background op owns the build, so deny the

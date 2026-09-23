@@ -22,6 +22,7 @@ import { createLogger } from "../logger.js";
 
 import { buildContext, isTrivialToolRequest } from "./prepare-request/build-context.js";
 import { selectTools, type ToolSelectionResult } from "./prepare-request/tool-selection.js";
+import { getLearnedProtocolSuggestion } from "../protocols/learned-suggestion.js";
 import { isSlashCommandExpansion } from "../slash-commands.js";
 import { detectAndBoostCurate } from "./prepare-request/curate-nudge.js";
 import { buildSystemPromptWithTelemetry } from "./prepare-request/build-system-prompt.js";
@@ -105,6 +106,11 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
   // Lean callers (voice) override tools + prompt downstream, so selection is
   // wasted work on their critical path. Skip it; just compute the tier (cheap,
   // sync) which build-context still needs for the weak-model strip.
+  // The learned-workflow suggestion is computed ONCE per turn, here, because
+  // two later steps need it: tool selection (the nudge's `protocol` tool must
+  // be in the schema) and build-context (the nudge text itself).
+  const protocolSuggestion = input.leanPrep ? null : getLearnedProtocolSuggestion(input.message);
+
   let toolSel: ToolSelectionResult;
   if (input.leanPrep) {
     const { classifyModel } = await import("../model-tiers.js");
@@ -131,6 +137,7 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
       resolvedProvider: resolved.provider,
       resolvedModel: resolved.model,
       priorMethodology,
+      protocolSuggested: protocolSuggestion !== null,
     });
     end();
   }
@@ -151,6 +158,7 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
     isTrivialToolRequest: isTrivialToolRequest(input.message),
     tier: toolSel.tier,
     resolvedModel: resolved.model,
+    protocolSuggestion,
   });
   end();
 

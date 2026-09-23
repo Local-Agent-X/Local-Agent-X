@@ -84,10 +84,15 @@ describe("collapsed real families", () => {
 
     const protocol = tools[0];
     const schema = protocol.parameters as { properties: { action: { enum: string[] } } };
-    // The five destructive actions must stay present — approval gating keys on them.
-    for (const a of ["delete", "prune", "archive_bulk", "rollback_undo", "var_delete"]) {
+    // The destructive actions must stay present — approval gating keys on them.
+    for (const a of ["delete", "prune", "archive_bulk", "rollback_undo", "var_delete", "install", "update"]) {
       expect(schema.properties.action.enum).toContain(a);
     }
+    // The read-only half of the skills family is NOT gated: a diff is not a write.
+    const { destructiveOperationReason } = await import("../../approval-decision.js");
+    expect(destructiveOperationReason("protocol", { action: "install", params: { repo: "o/r" } })).toMatch(/protocol\.install/);
+    expect(destructiveOperationReason("protocol", { action: "update", params: { name: "x" } })).toMatch(/protocol\.update/);
+    expect(destructiveOperationReason("protocol", { action: "refresh", params: { name: "x" } })).toBeNull();
     expect(schema.properties.action.enum.length).toBeGreaterThanOrEqual(30);
 
     const bad = await protocol.execute({ action: "definitely_not_real" });

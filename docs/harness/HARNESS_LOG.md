@@ -1194,3 +1194,48 @@ Decision: **keep.** A learned latch is now a one-hour fact that live evidence ov
 written by one sampling accident.
 
 ---
+
+## EXP-15 — installed vendor skills reach a local model (2026-09-23, in progress)
+
+**Why.** Vendor "Agent Skills" packs (Vercel's plugin, Supabase, firebase/agent-skills, google/skills, the
+skills.sh directory) are SKILL.md folders — the format `src/protocols` already parses (bundled tier at build
+time, `workspace/protocols/imported/<name>/` at run time). The question was whether a LOCAL model ever sees one.
+
+**Baseline (f1380660 src, ccb0107b dist; 27B, the four skills cases ×3):** 9/12 — vercel with-skill 2/3,
+without 1/3; supabase 3/3 on BOTH arms (the 27B writes the migration by hand with `write`; the case's evidence
+is the .sql file, so on this model it cannot separate skill use from prior knowledge — a rig limit to note, not
+a bug). The number that matters: **0 `protocol` calls in 12 runs.** The skill on disk was never read. 8B (from
+the EXP-14 split): 0/12 on both arms. Gates zero.
+
+Three seams, all confirmed in code, explain the zero:
+1. `selectLearnedProtocolSuggestion` scores only verified learned records and `custom` records — a SKILL.md in
+   the workspace import tier is never nudged (`learned-suggestion.ts`, the tier comment).
+2. The `protocol` tool is in neither the weak (8) nor the medium (31) essential set (`tier-tool-set.ts`), so even
+   a nudge would name a tool the model does not have — the failure the tool_search header already records.
+3. The "### Protocols" teaching lives in the How-to-work prompt part, which is shed on 65k local windows.
+
+**Change (this commit):**
+- `protocols/skills-install.ts` (+ `-tools.ts`): `protocol(action:"install", params:{repo})` fetches a GitHub
+  repo at a resolved commit (codeload zip via jszip — no git on PATH needed), walks `**/SKILL.md` (skipping
+  node_modules/.github/tests/examples), gates on MIT / Apache-2.0 / CC-BY-4.0 (frontmatter, repo LICENSE, or a
+  user assertion recorded as such), writes each folder verbatim into `importedProtocolsDir()` with a `source.json`
+  pin (repo, ref, commit, path, url, license, files, lint) — the ONE edit to upstream bytes is pinning the
+  frontmatter `name` to the folder slug, which the spec requires anyway and the nudge's slug charset needs.
+  `.mcp.json`, hooks, agents, commands are REPORTED, not installed (MCP servers go through the user's MCP
+  settings; hooks/agents would be code the harness runs). `refresh` = re-resolve the ref, return a patch, write
+  nothing; `update` = apply. install/update are in DESTRUCTIVE_TOOL_ACTIONS; refresh is not. Lint = warnings for
+  destructive shell examples (the same `isDestructiveCommand`) and rule-bypass phrasing, stored beside the skill.
+  Route: POST /api/protocols/import, POST /api/protocols/<name>/refresh.
+- Loader stamps `source.origin` ("workspace" | "managed") on the two directories that share type "imported",
+  and reads `source.json` into repo/commit/license. The selector gets tier 2: workspace-origin imports by
+  trigger match. Managed-origin records still enter only through a verified learned record (test pinned).
+- prepare-request computes the suggestion ONCE, before tool selection; `selectTools({protocolSuggested})` puts
+  `protocol` in the schema for that turn (after the cap, before the build-route strip); build-context takes the
+  precomputed suggestion. A nudge now always names a tool the model has.
+
+Not done, on purpose: no UI button (the route is there for it); no hooks/agents install (v2, behind the connector
+manifest gate if ever); no reading skills live off the network as instructions — a skill is installed, pinned,
+and refreshed with a diff the user approves. The eval fixture is unchanged: a hand-dropped SKILL.md in the
+import dir is exactly what the loader now stamps `workspace`.
+
+---

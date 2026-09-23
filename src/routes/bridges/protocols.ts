@@ -98,6 +98,34 @@ export const handleProtocolRoutes: RouteHandler = async (method, url, req, res, 
     } catch (e) { json(400, { error: safeErrorMessage(e) }); }
     return true;
   }
+  // Install skills from a GitHub repo, pinned to a commit (skills-install.ts).
+  if (method === "POST" && url.pathname === "/api/protocols/import") {
+    try {
+      const body = await safeParseBody(req); if (body === null) { json(400, { error: "Invalid JSON" }); return true; }
+      const repo = String(body.repo || "").trim();
+      if (!repo) { json(400, { error: "repo is required" }); return true; }
+      const { installSkills } = await import("../../protocols/skills-install.js");
+      const report = await installSkills({
+        repo,
+        ref: typeof body.ref === "string" ? body.ref : undefined,
+        path: typeof body.path === "string" ? body.path : undefined,
+        license: typeof body.license === "string" ? body.license : undefined,
+        force: body.force === true,
+      });
+      json(200, { ok: true, ...report });
+    } catch (e) { json(400, { error: safeErrorMessage(e) }); }
+    return true;
+  }
+  // Diff an installed skill against its repo; `apply: true` rewrites it.
+  if (method === "POST" && url.pathname.match(/^\/api\/protocols\/[^/]+\/refresh$/)) {
+    const name = decodeURIComponent(url.pathname.split("/")[3]);
+    try {
+      const body = (await safeParseBody(req)) ?? {};
+      const { refreshSkill } = await import("../../protocols/skills-install.js");
+      json(200, { ok: true, ...(await refreshSkill(name, { apply: body.apply === true })) });
+    } catch (e) { json(400, { error: safeErrorMessage(e) }); }
+    return true;
+  }
   // Edit — user/imported only. Built-in typed packs are read-only; UI must fork first.
   if (method === "PATCH" && url.pathname.match(/^\/api\/protocols\/[^/]+$/)) {
     const name = decodeURIComponent(url.pathname.split("/").pop()!);

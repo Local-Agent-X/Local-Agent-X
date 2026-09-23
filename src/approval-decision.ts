@@ -360,6 +360,8 @@ const DESTRUCTIVE_TOOL_ACTIONS: Record<string, Record<string, string>> = {
     archive_bulk: "bulk-archives protocols",
     rollback_undo: "rolls workspace state back to a snapshot",
     var_delete: "deletes a stored protocol variable",
+    install: "downloads skills from a repo and writes them into the workspace",
+    update: "overwrites an installed skill with its upstream version",
   },
 };
 

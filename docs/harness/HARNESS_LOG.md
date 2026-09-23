@@ -991,3 +991,15 @@ folded the digest into the op's user row at round 0; both are row edits at round
 **Second cut (1271d1ce):** the recalled block is always its own row, and for a local-provider op the digest is
 too (the fold stays on the cloud lanes: the Anthropic breakpoint sits above the volatile tail, and the codex shape
 that motivated the fold is not on this wire). Not a guess this time — the shape was replayed before it was built.
+
+**Second cut, kept run (1271d1ce), constraint-survives-long-session ×1:** re-prefill/msg **8,794** (12b: 29,871),
+/tool **3,337** (12b: 6,674), ttft per run **43 s** (12b: 121 s; the day's baseline: 129 s), 1/1. From message 3
+on, every round reuses a flat 35,403 tokens and re-prefills 1.6–2.7k — the new rows plus the two trailing ones.
+
+Flat, not climbing, is the next cause showing through: at each op boundary a large tool result from the previous
+op (the 900-line log read) is trimmed in the replayed history, which rewrites an EARLY row, so everything after it
+re-prefills at every round of every later op. Small while the history is short (~2k here); it grows with the
+session. Same class as the folds — a deliberate token saver that edits a row in place — and it needs the same
+treatment: trim at the row's first appearance or never. Recorded, not chased in this experiment.
+
+Full split on both models at 1271d1ce running for the keep decision of 12b + 12c + the window seed together.

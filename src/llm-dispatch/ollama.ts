@@ -14,7 +14,6 @@ import { getRuntimeConfig } from "../config.js";
 import { getLocalRuntimes, refreshLocalRuntimes } from "../local-runtimes/index.js";
 import { dispatchNumCtx, MODEL_KEEP_ALIVE } from "../local-runtimes/residency.js";
 import { isEmbeddingModel } from "../canonical-loop/public/op-facts.js";
-import { awaitForegroundModelIdle } from "./foreground-model-lease.js";
 
 // Same channel name as llm-dispatch.ts: these lines were emitted under
 // "[llm-dispatch]" before the split and callers grep for them.
@@ -123,10 +122,6 @@ export async function callOllama(
   think?: boolean,
 ): Promise<string | null> {
   try {
-    // A side call on the model a chat op is driving waits for that op to
-    // finish (foreground-model-lease.ts): landing between two of its rounds
-    // would cost the op its whole prompt cache. The op's own calls pass through.
-    await awaitForegroundModelIdle(model);
     const base = (exactBaseUrl ?? getRuntimeConfig().ollamaUrl).replace(/\/+$/, "");
     // Never a fixed size: a num_ctx different from the loaded runner makes
     // Ollama reload the model, and when this dispatch targets the chat model

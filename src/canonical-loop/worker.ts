@@ -32,7 +32,6 @@ import {
 } from "./cancel-handler.js";
 import { acquireLease, releaseLease } from "./lease.js";
 import { startHeartbeat, stopHeartbeat } from "./worker-heartbeat.js";
-import { runAsForegroundOp } from "../llm-dispatch/foreground-model-lease.js";
 export { _pauseHeartbeat } from "./worker-heartbeat.js";
 import { readLatestOpTurn, readOpTurn } from "./store.js";
 import { REPEAT_FAILURE_REASON } from "./middlewares/repeat-failure.js";
@@ -59,7 +58,7 @@ export interface WorkerHandle {
 
 export function runWorker(op: Op, adapter: Adapter): WorkerHandle {
   const workerId = `w-${randomUUID().slice(0, 8)}`;
-  const done = runAsForegroundOp(op, () => drive(op, adapter, workerId));
+  const done = drive(op, adapter, workerId);
   return { workerId, done };
 }
 

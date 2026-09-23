@@ -90,6 +90,13 @@ export interface Protocol {
    *  present, protocol_get returns this as the executable instruction text;
    *  steps[] is empty. Built-in typed packs use steps[] and leave body unset. */
   body?: string;
+  /** Files whose presence marks a project as this protocol's kind — e.g.
+   *  `supabase/config.toml`, `vercel.json` — relative to a project directory.
+   *  A LAX extension to the Agent Skills frontmatter (`project-markers`). The
+   *  suggestion selector treats a marker found in the workspace, or in a
+   *  project the message names, as a match the wording alone would not give:
+   *  a user in a Supabase project says "add a customers table", not "supabase". */
+  projectMarkers?: string[];
   /** Tools the agent is allowed to call while executing this protocol.
    *  Enforced via session policy on protocol_get, mirroring the prior
    *  skill_run gating. Empty/undefined = no restriction. */

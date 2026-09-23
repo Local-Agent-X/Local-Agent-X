@@ -105,6 +105,12 @@ export function parseSkillMd(text: string, opts: ParseSkillMdOpts): Protocol | n
   const description = asString(meta.description) || `Protocol: ${name}`;
   const triggers = asArray(meta.triggers) ?? asArray(meta["when-to-use"]) ?? [name];
   const allowedTools = asArray(meta["allowed-tools"]) ?? asArray(meta.allowedTools);
+  // LAX extension: files that mark a project as this skill's kind (see
+  // Protocol.projectMarkers). Relative paths only; anything absolute or
+  // climbing out of a project directory is dropped rather than resolved.
+  const projectMarkers = (asArray(meta["project-markers"]) ?? asArray(meta.projectMarkers))
+    ?.map((m) => m.replace(/\\/g, "/").replace(/^\.\//, ""))
+    .filter((m) => m.length > 0 && !m.startsWith("/") && !/^[a-z]:\//i.test(m) && !m.split("/").includes(".."));
   const tags = asArray(meta.tags);
   const category = deriveCategory(name, asString(meta.category));
 
@@ -122,6 +128,7 @@ export function parseSkillMd(text: string, opts: ParseSkillMdOpts): Protocol | n
     learnablePreferences: [],
     body,
     allowedTools,
+    ...(projectMarkers && projectMarkers.length > 0 ? { projectMarkers } : {}),
     source,
     category,
     tags,

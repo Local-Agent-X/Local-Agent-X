@@ -1,10 +1,35 @@
 {
   "_comment": "Models the battery runs against. provider/model are written into each isolated server's settings.json; a run whose ops report a different model fails its 'model' check (silent provider fallback). Credentials are read in place from ~/.lax via the self_edit probe mechanism.",
   "providers": [
-    { "label": "muse", "provider": "local", "model": "muse-glimmer:30b" },
-    { "label": "qwen", "provider": "local", "model": "qwen3.6:27b" },
-    { "label": "qwen8b", "provider": "local", "model": "qwen3:8b" },
-    { "label": "grok", "provider": "xai", "model": "grok-4.6" },
-    { "label": "codex", "provider": "codex", "model": "gpt-5.6-sol" }
+    {
+      "label": "muse",
+      "provider": "local",
+      "model": "muse-glimmer:30b"
+    },
+    {
+      "label": "qwen",
+      "provider": "local",
+      "model": "qwen3.6:27b"
+    },
+    {
+      "label": "qwen8b",
+      "provider": "local",
+      "model": "qwen3:8b"
+    },
+    {
+      "label": "qwen14b",
+      "provider": "local",
+      "model": "qwen3:14b"
+    },
+    {
+      "label": "grok",
+      "provider": "xai",
+      "model": "grok-4.6"
+    },
+    {
+      "label": "codex",
+      "provider": "codex",
+      "model": "gpt-5.6-sol"
+    }
   ]
 }

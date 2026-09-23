@@ -1360,3 +1360,27 @@ triggered by a message that does not name it (project-aware triggering, the EXP-
 ---
 
 ---
+
+## EXP-17 — project-aware skill triggering (2026-09-23, in progress)
+
+**Why.** EXP-15/16 proved the channel: a nudged skill is loaded and followed. But the nudge is a message-only
+selector, and the supabase case never fired on either model because "In the acme-api project, add a customers
+table with id, email and created_at columns" never says "supabase" — while acme-api/supabase/config.toml sits on
+disk saying it for the user. Real users in a Supabase project talk like that. Replayed offline under EXP-15: the
+wording → null; "…acme-api supabase project…" → the skill. The information exists; the selector could not see it.
+
+**Change:** a LAX extension to the Agent Skills frontmatter, `project-markers: [supabase/config.toml]` (parsed to
+`Protocol.projectMarkers`; absolute and climbing paths dropped). The selector takes an injected `projectMarkerHit`
+predicate; a hit ADMITS the protocol without the two term gates and adds a ranking bonus equal to the verbatim-
+phrase bonus. `getLearnedProtocolSuggestion` supplies the real check: the workspace root plus the directories
+directly under it that the message names ("in the acme-api project"), bounded by the message's words — never a
+walk, a workspace can hold 100k files — and `existsSync(dir/marker)`. New file `protocols/project-markers.ts`
+(learned-suggestion.ts sits at the 400-LOC gate). Eval fixtures declare `supabase/config.toml` and `vercel.json`.
+Tests: parser, dir naming, admission with/without the marker, a skill without markers untouched, end to end
+through the loader and the configured workspace.
+
+Measure: skills cases ×3 on the 27B (supabase with-skill should now nudge → get → body; the case's .sql check
+cannot separate skill use on this model, so the trace is the evidence and the tightened check is a follow-up),
+then the 8B for the record, then the full dev split both models before any keep.
+
+---

@@ -3,6 +3,8 @@ import type { LearnedCandidate } from "../cognition/cross-session-learning/types
 import { getAllProtocols } from "./index.js";
 import { loadLearnedProtocol, type LearnedProtocolRecord } from "./learned-lifecycle.js";
 import { STOP_TERMS, GENERIC_TERMS } from "./generic-terms.js";
+import { projectDirsNamedIn, projectMarkerHitIn } from "./project-markers.js";
+import { workspaceRoot } from "../config.js";
 import type { Protocol } from "./types.js";
 
 /**
@@ -46,6 +48,15 @@ const MIN_COVERAGE = 0.35;
  * 12% coverage.
  */
 const EXACT_PHRASE_BONUS = 3;
+/**
+ * EXP-17: a protocol whose `projectMarkers` file exists in the workspace, or
+ * in a project the message names, is ADMITTED without the term gates and
+ * ranked with this bonus. The wording gate exists because a message-only
+ * selector has nothing else to go on; a marker on disk is something else to
+ * go on. "In the acme-api project, add a customers table" never says
+ * "supabase", and acme-api/supabase/config.toml says it for the user.
+ */
+const PROJECT_MARKER_BONUS = 3;
 /**
  * Names that may be interpolated into the first-party harness notice.
  *
@@ -230,13 +241,17 @@ function evaluateProtocol(
   messageTerms: Set<string>,
   protocol: Protocol,
   weights: TermWeights,
+  markerHit = false,
 ): ProtocolMatch | null {
   const matched = [...weights.termsOf(protocol)].filter((term) => messageTerms.has(term));
-  if (matched.length < 2) return null;
 
   // ── ADMISSION: corpus-independent, so authoring more protocols about a
-  //    topic can never make that topic harder to retrieve. ──
-  if (matched.length / messageTerms.size < MIN_COVERAGE) return null;
+  //    topic can never make that topic harder to retrieve. A project marker
+  //    on disk admits on its own (EXP-17); the wording gates apply otherwise. ──
+  if (!markerHit) {
+    if (matched.length < 2) return null;
+    if (matched.length / messageTerms.size < MIN_COVERAGE) return null;
+  }
 
   // ── RANKING: corpus-sensitive on purpose. ──
   const normalizedMessage = ` ${normalize(message)} `;
@@ -245,7 +260,8 @@ function evaluateProtocol(
     return distinctiveTerms(field).size >= 2 && phrase.length > 0 && normalizedMessage.includes(` ${phrase} `);
   });
   const score = (totalWeight(matched, weights) / weights.singleton) * 10
-    + (exactPhrase ? EXACT_PHRASE_BONUS : 0);
+    + (exactPhrase ? EXACT_PHRASE_BONUS : 0)
+    + (markerHit ? PROJECT_MARKER_BONUS : 0);
   return { score, name: nameMatch(protocol, messageTerms) };
 }
 
@@ -293,11 +309,20 @@ function verifiedActiveProtocol(
  * and the `imported` tier cannot be opened wholesale without letting an
  * unverified learned record in through the side door.
  */
+export interface SuggestionOpts {
+  /** EXP-17: true when one of the protocol's `projectMarkers` exists in the
+   *  workspace or in a project the message names. Injected so the selector
+   *  stays a pure function of its inputs; `getLearnedProtocolSuggestion`
+   *  supplies the real filesystem check. */
+  projectMarkerHit?: (protocol: Protocol) => boolean;
+}
+
 export function selectLearnedProtocolSuggestion(
   message: string,
   candidates: LearnedCandidate[],
   protocols: Protocol[],
   loadRecord: RecordLoader,
+  opts: SuggestionOpts = {},
 ): LearnedProtocolSuggestion | null {
   const messageTerms = distinctiveTerms(message);
   if (messageTerms.size < 2) return null;
@@ -310,7 +335,8 @@ export function selectLearnedProtocolSuggestion(
   const ranked: Array<{ protocol: Protocol; score: number; name: NameMatch; tier: number }> = [];
   const consider = (protocol: Protocol, tier: number): void => {
     if (!SUGGESTIBLE_NAME.test(protocol.name)) return;
-    const match = evaluateProtocol(message, messageTerms, protocol, weights);
+    const markerHit = !!(protocol.projectMarkers?.length && opts.projectMarkerHit?.(protocol));
+    const match = evaluateProtocol(message, messageTerms, protocol, weights, markerHit);
     if (match) ranked.push({ protocol, score: match.score, name: match.name, tier });
   };
   for (const candidate of candidates) {
@@ -365,11 +391,14 @@ export function selectLearnedProtocolSuggestion(
 
 export function getLearnedProtocolSuggestion(message: string): LearnedProtocolSuggestion | null {
   try {
+    let projectMarkerHit: SuggestionOpts["projectMarkerHit"];
+    try { projectMarkerHit = projectMarkerHitIn(projectDirsNamedIn(message, workspaceRoot())); } catch { /* no workspace configured: wording only */ }
     return selectLearnedProtocolSuggestion(
       message,
       crossSessionLearner.getCandidates(),
       getAllProtocols(),
       loadLearnedProtocol,
+      { projectMarkerHit },
     );
   } catch {
     return null;

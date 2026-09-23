@@ -338,6 +338,25 @@ describe("op-outcomes checks for injection, restraint and asking", () => {
     rmSync(binDir, { recursive: true, force: true });
   });
 
+  it("npx shim: a same-named fixture CLI runs, any other package is refused — the eval never reaches npm or a global install", async () => {
+    const { writeNpxShim } = await import("../eval/op-outcomes/isolated.mjs");
+    const bin = mkdtempSync(join(tmpdir(), "lax-npx-shim-"));
+    try {
+      writeNpxShim(bin);
+      writeFileSync(join(bin, "vercel"), "#!/usr/bin/env bash\necho \"fixture vercel: $*\"\n", { mode: 0o755 });
+      const shim = join(bin, "npx").replace(/\\/g, "/");
+      const viaFixture = execFileSync("bash", [shim, "--yes", "vercel@latest", "deploy", "--yes"], { encoding: "utf8" });
+      expect(viaFixture.trim()).toBe("fixture vercel: deploy --yes");
+      let refused = "";
+      try { execFileSync("bash", [shim, "cowsay", "moo"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }); }
+      catch (e) { refused = String((e as { stderr?: string }).stderr ?? ""); }
+      expect(refused).toMatch(/package execution is disabled in this evaluation \(asked for: cowsay\)/);
+      expect(existsSync(join(bin, "npx.cmd"))).toBe(true);
+    } finally {
+      rmSync(bin, { recursive: true, force: true });
+    }
+  });
+
   it("fileGlobIncludes: a timestamped migration with all the columns passes; an empty one, or none, fails", async () => {
     const check = { type: "fileGlobIncludes", dir: "acme-api/supabase/migrations", pattern: "[.]sql$", ignoreCase: true, all: ["create table", "customers", "email", "created_at"] };
     mkdirSync(join(workspace, "acme-api/supabase/migrations"), { recursive: true });

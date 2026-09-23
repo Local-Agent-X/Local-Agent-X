@@ -30,6 +30,29 @@ const BOOT_TIMEOUT_MS = 180_000;
  * parallel stalled past the boot timeout. So a run must refuse a dist that
  * predates source changes, or the results would describe old code.
  */
+/**
+ * `npx <pkg>` resolves the npm package — local, global, or downloaded — and
+ * never PATH, so a fixture CLI on PATH does not shadow it. On 2026-09-23 a 27B
+ * run went `npx vercel deploy --temporary`, reached the machine's real Vercel
+ * CLI, and made a live anonymous deployment from inside the eval. The shim
+ * runs a same-named fixture from binDir and refuses everything else.
+ */
+const NPX_SHIM = [
+  "#!/usr/bin/env bash",
+  "# op-outcomes eval shim: no npm packages run here, only fixture CLIs from this dir.",
+  'while [ "${1#-}" != "$1" ]; do shift; done',
+  'pkg="${1%%@*}"; shift',
+  'here="$(cd "$(dirname "$0")" && pwd)"',
+  'if [ -n "$pkg" ] && [ -x "$here/$pkg" ]; then exec "$here/$pkg" "$@"; fi',
+  'echo "npx: package execution is disabled in this evaluation (asked for: ${pkg:-nothing})" >&2; exit 1',
+  "",
+].join("\n");
+
+export function writeNpxShim(binDir) {
+  writeFileSync(join(binDir, "npx"), NPX_SHIM, { mode: 0o755 });
+  writeFileSync(join(binDir, "npx.cmd"), "@bash \"%~dp0npx\" %*\r\n");
+}
+
 export function assertDistMatchesSource(repoRoot) {
   const refPath = join(repoRoot, "dist", ".builtref");
   if (!existsSync(join(repoRoot, "dist", "index.js")) || !existsSync(refPath)) {
@@ -135,6 +158,7 @@ export async function startIsolatedServer({ repoRoot, provider, model, fixturePo
   mkdirSync(dataDir, { recursive: true });
   const binDir = join(root, "bin");
   mkdirSync(binDir, { recursive: true });
+  writeNpxShim(binDir);
   const seed = seedProbeProvider(dataDir, provider);
   if (seed.unavailable) throw new Error(`${provider}: ${seed.unavailable}`);
   writeFileSync(join(dataDir, "settings.json"), JSON.stringify({ provider, model, ...backgroundModelSetting() }));

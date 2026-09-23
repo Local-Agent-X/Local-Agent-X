@@ -4,7 +4,7 @@ import { getRuntimeConfig } from "../../config.js";
 import { loadSettings, saveSettings } from "../../settings.js";
 import { isEmbeddingModel } from "../../canonical-loop/public/op-facts.js";
 import type { ProviderId } from "../../providers/provider-ids.js";
-import { PROVIDERS } from "../../providers/registry.js";
+import { PROVIDERS, providerRegistryView } from "../../providers/registry.js";
 import {
   refreshCloudOllama,
   getCachedCloudModels,
@@ -250,13 +250,7 @@ export const handleProvidersRoutes: RouteHandler = async (method, url, req, res,
     const customBaseUrl = String(loadSettings().customBaseUrl || "");
     const out = (Object.keys(PROVIDERS) as ProviderId[])
       .filter(id => localProviderDecision(id, getRuntimeConfig(), customBaseUrl).allowed)
-      .map(id => ({
-      id,
-      label: PROVIDERS[id].label,
-      models: PROVIDERS[id].models,
-      defaultModel: PROVIDERS[id].defaultModel,
-      transport: PROVIDERS[id].transport,
-    }));
+      .map(providerRegistryView);
     json(200, { providers: out, localOnlyMode: isLocalOnlyMode() });
     return true;
   }

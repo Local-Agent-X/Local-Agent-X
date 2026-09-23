@@ -53,6 +53,13 @@ export interface ProviderMetaHttp {
   /** Static model list. Some providers (local, ollama-cloud) populate
    *  models dynamically at runtime; their static list may be empty. */
   models: string[];
+  /**
+   * Models that are real for routing/background work but must NOT be offered
+   * as a chat selection — e.g. a heavy tier served over a deferred completion
+   * flow the streaming chat adapter can't drive. The settings picker is
+   * generated from `models` minus this; everything else still sees them.
+   */
+  chatExcludedModels?: readonly string[];
   defaultModel: string;
   /**
    * Cheap/fast model for non-load-bearing background work (memory dream,
@@ -83,6 +90,8 @@ export interface ProviderMetaCli {
   id: ProviderId;
   label: string;
   models: string[];
+  /** See ProviderMetaHttp.chatExcludedModels. */
+  chatExcludedModels?: readonly string[];
   defaultModel: string;
   /** Cheap/fast background model — see ProviderMetaHttp.backgroundModel. */
   backgroundModel?: string;
@@ -134,6 +143,10 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
       "grok-code-fast-1",
       "grok-build-0.1",
     ],
+    // Multi-agent/heavy tier: served via a deferred (async) completion flow,
+    // not the streaming /chat/completions path the chat adapter drives, so it
+    // errors if picked for chat. Stays in `models` for background/routing.
+    chatExcludedModels: ["grok-4.20-multi-agent-0309"],
     defaultModel: "grok-4.5",
     // Non-reasoning variant: no chain-of-thought to burn time on, and it
     // sidesteps the reasoning-stream watchdog interaction entirely.
@@ -181,6 +194,7 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     models: [
       "claude-opus-5-5",
       "claude-opus-5",
+      "claude-fable-5-1",
       "claude-fable-5",
       "claude-sonnet-5",
       "claude-opus-4-8",
@@ -274,6 +288,37 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     auth: AUTH_PROVIDERS.custom,
   },
 };
+
+/**
+ * Models a user may pick for CHAT: the static list minus anything the provider
+ * flagged as non-chat. Derived, never hand-maintained — the settings picker
+ * used to keep its own copy of this list in public/js/settings-providers.js and
+ * had drifted three models behind on Anthropic, missed gpt-6-astra on two
+ * providers, and omitted OpenAI's own defaultModel (o3-pro) while offering four
+ * models this registry does not list. That last one is not cosmetic:
+ * resolveBuildModel swaps any model absent from `models` for defaultModel, so
+ * the picker was offering builds that silently ran on something else.
+ */
+export function chatModelsFor(id: ProviderId): string[] {
+  const meta = PROVIDERS[id];
+  const excluded = meta.chatExcludedModels;
+  return excluded ? meta.models.filter(m => !excluded.includes(m)) : [...meta.models];
+}
+
+/**
+ * The shape GET /api/providers/registry serves for one provider. Lives here so
+ * the wire view and the data it projects can't drift apart in a route file.
+ */
+export function providerRegistryView(id: ProviderId) {
+  return {
+    id,
+    label: PROVIDERS[id].label,
+    models: PROVIDERS[id].models,
+    chatModels: chatModelsFor(id),
+    defaultModel: PROVIDERS[id].defaultModel,
+    transport: PROVIDERS[id].transport,
+  };
+}
 
 /** Type guard — narrows ProviderMeta to the http variant. */
 export function isHttpProvider(

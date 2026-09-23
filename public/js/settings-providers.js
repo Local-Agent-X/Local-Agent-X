@@ -84,60 +84,12 @@ function toggleApiKeyVisibility() {
 }
 
 // ── Provider change → toggle model input vs dropdown ──
-
-const PROVIDER_MODELS = {
-  codex: [
-    { value: 'gpt-5.6-sol', label: 'GPT-5.6 Sol (frontier, 1M ctx)' },
-    { value: 'gpt-5.6-terra', label: 'GPT-5.6 Terra (balanced)' },
-    { value: 'gpt-5.6-luna', label: 'GPT-5.6 Luna (fastest)' },
-    { value: 'gpt-5.5', label: 'GPT-5.5 (1M ctx, $5/$30)' },
-    { value: 'gpt-5.4', label: 'GPT-5.4' },
-    { value: 'gpt-5.4-mini', label: 'GPT-5.4 Mini (faster)' },
-  ],
-  anthropic: [
-    { value: 'claude-opus-5-5', label: 'Claude Opus 5.5 (current flagship, 1M context)' },
-    { value: 'claude-opus-4-8', label: 'Claude Opus 4.8 (frontier, 1M context)' },
-    { value: 'claude-opus-4-7', label: 'Claude Opus 4.7 (1M context)' },
-    { value: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6 (faster)' },
-    { value: 'claude-opus-4-6', label: 'Claude Opus 4.6' },
-    { value: 'claude-haiku-4-5', label: 'Claude Haiku 4.5 (fastest)' },
-    { value: 'claude-sonnet-4-5', label: 'Claude Sonnet 4.5' },
-    { value: 'claude-opus-4-5', label: 'Claude Opus 4.5' },
-  ],
-  xai: [
-    { value: 'grok-4.6', label: 'Grok 4.6 (newest frontier, 500k ctx)' },
-    { value: 'grok-4.5', label: 'Grok 4.5 (frontier, default)' },
-    { value: 'grok-4.3', label: 'Grok 4.3 (general, 131k context)' },
-    { value: 'grok-4.20-0309-reasoning', label: 'Grok 4.20 (reasoning)' },
-    { value: 'grok-4.20-0309-non-reasoning', label: 'Grok 4.20 (non-reasoning, fast)' },
-    // grok-4.20-multi-agent-0309 is intentionally omitted from the picker: it's a
-    // multi-agent/heavy tier served via a deferred (async) completion flow, not the
-    // streaming /chat/completions path the chat adapter drives — so it errors in
-    // chat. It stays in the registry (registry.ts) for background/routing use.
-    { value: 'grok-code-fast-1', label: 'Grok Code Fast 1 (coding)' },
-    { value: 'grok-build-0.1', label: 'Grok Build 0.1 (coding)' },
-  ],
-  openai: [
-    { value: 'gpt-5.6-sol', label: 'GPT-5.6 Sol (frontier, 1M ctx)' },
-    { value: 'gpt-5.6-terra', label: 'GPT-5.6 Terra (balanced)' },
-    { value: 'gpt-5.6-luna', label: 'GPT-5.6 Luna (fastest)' },
-    { value: 'gpt-4o', label: 'GPT-4o (default)' },
-    { value: 'gpt-4o-mini', label: 'GPT-4o Mini' },
-    { value: 'gpt-4.1', label: 'GPT-4.1' },
-    { value: 'gpt-4.1-mini', label: 'GPT-4.1 Mini' },
-    { value: 'o3', label: 'o3' },
-    { value: 'o4-mini', label: 'o4-mini' },
-  ],
-  gemini: [
-    { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro (default)' },
-    { value: 'gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro (preview)' },
-    { value: 'gemini-3-pro-preview', label: 'Gemini 3 Pro (preview)' },
-  ],
-  cerebras: [
-    { value: 'gpt-oss-120b', label: 'OpenAI GPT-OSS 120B (default, production)' },
-    { value: 'zai-glm-4.7', label: 'Z.ai GLM 4.7 355B (preview)' },
-  ],
-};
+//
+// Model lists are NOT held here. They come from /api/providers/registry via
+// provider-registry.js, whose server side (src/providers/registry.ts) is the
+// one source of truth — adding a model there shows up in this picker with no
+// UI edit. A hand-kept copy lived here and drifted: three Anthropic models
+// behind, no gpt-6-astra, and four OpenAI models the registry had dropped.
 
 async function onProviderChange(provider, keepModel) {
   const modelInput = document.getElementById('cfg-model');
@@ -166,7 +118,7 @@ async function onProviderChange(provider, keepModel) {
   } else {
     const cloudCard = document.getElementById('ollama-cloud-card');
     if (cloudCard) cloudCard.style.display = 'none';
-    const models = PROVIDER_MODELS[provider] || [];
+    const models = laxProviderChatModelOptions(await laxProviderRegistry(), provider);
     if (models.length) {
       modelSelect.style.display = '';
       modelInput.style.display = 'none';

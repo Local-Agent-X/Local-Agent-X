@@ -67,6 +67,24 @@ function laxProviderModels(registry) {
   return Object.fromEntries((registry || []).map(p => [p.id, p.models || []]));
 }
 
+/**
+ * Chat-selectable models for one provider, as <option> data: [{value, label}].
+ *
+ * Reads `chatModels` — the server's `models` minus anything flagged non-chat
+ * (src/providers/registry.ts chatModelsFor). The settings page used to hold its
+ * own hand-written copy of every provider's model list, which is how it ended
+ * up three models behind on Anthropic and offering four OpenAI models the
+ * registry had dropped.
+ */
+function laxProviderChatModelOptions(registry, providerId) {
+  const p = (registry || []).find(x => x.id === providerId);
+  if (!p) return [];
+  return (p.chatModels || []).map(id => ({
+    value: id,
+    label: id === p.defaultModel ? id + ' (default)' : id,
+  }));
+}
+
 /** id → label. Names a provider that /api/providers dropped for lack of a credential. */
 function laxProviderLabels(registry) {
   return Object.fromEntries((registry || []).map(p => [p.id, p.label]));

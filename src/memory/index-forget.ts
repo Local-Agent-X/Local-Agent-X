@@ -107,10 +107,16 @@ export function updateEntityPage(
     }
   }
 
+  // "Last reflected" is a MAINTENANCE timestamp — when this page was last
+  // rebuilt — and it is kept because consolidation timing is what you want when
+  // debugging why recall looks the way it does. It is relabelled because it used
+  // to be the only date on the page, and a reader (model or human) takes the one
+  // date on a page to be the date of the thing it describes. Per-fact event
+  // dates are rendered below; this line is explicitly not one of them.
   const lines: string[] = [
     `# ${displayName}`,
     "",
-    `*Last reflected: ${new Date().toISOString().split("T")[0]}*`,
+    `*Page rebuilt: ${new Date().toISOString().split("T")[0]} (memory maintenance — NOT when these things happened; each fact carries its own date below)*`,
     "",
   ];
 
@@ -129,8 +135,18 @@ export function updateEntityPage(
     for (const fact of facts) {
       const conf =
         kind === "opinion" ? ` (confidence: ${fact.confidence.toFixed(2)})` : "";
-      const date = new Date(fact.timestamp).toISOString().split("T")[0];
-      lines.push(`- ${fact.content}${conf} — *${date}*`);
+      // The EVENT date when the source carried one, never the write time.
+      // Falling back to `timestamp` is what made a conversation from the 22nd
+      // read as having happened on the 23rd, because that is when the
+      // consolidation pass that recorded it happened to run.
+      const occurred = fact.occurredAt != null
+        ? new Date(fact.occurredAt).toISOString().split("T")[0]
+        : null;
+      const recorded = new Date(fact.timestamp).toISOString().split("T")[0];
+      const when = occurred !== null
+        ? `*${occurred}*`
+        : `*date unknown* (recorded ${recorded})`;
+      lines.push(`- ${fact.content}${conf} — ${when}`);
     }
     lines.push("");
   }

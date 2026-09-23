@@ -30,15 +30,21 @@ export abstract class MemoryFactsBase {
 
   // ── RETAIN ──
 
-  retain(text: string, sourceFile: string, sourceLine = 0, promotion?: MemoryPromotionContext): RetainedFact[] {
-    return Facts.retain(this.db, this.hasFts, text, sourceFile, sourceLine, promotion);
+  retain(
+    text: string,
+    sourceFile: string,
+    sourceLine = 0,
+    promotion?: MemoryPromotionContext,
+    occurredAt?: number | null,
+  ): RetainedFact[] {
+    return Facts.retain(this.db, this.hasFts, text, sourceFile, sourceLine, promotion, occurredAt);
   }
 
   async retainSmart(
     text: string,
     sourceFile: string,
     sourceLine = 0,
-    opts?: { candidateLimit?: number; resolverOpts?: { provider?: "ollama" | "anthropic" | "openai" | "auto"; model?: string }; promotion?: MemoryPromotionContext }
+    opts?: { candidateLimit?: number; resolverOpts?: { provider?: "ollama" | "anthropic" | "openai" | "auto"; model?: string }; promotion?: MemoryPromotionContext; occurredAt?: number | null }
   ): Promise<{ facts: RetainedFact[]; decisions: Array<{ content: string; op: string; targetId?: number; reason: string }> }> {
     return Facts.retainSmart(this.db, this.hasFts, text, sourceFile, sourceLine, opts);
   }

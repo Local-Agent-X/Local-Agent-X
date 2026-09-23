@@ -1153,7 +1153,7 @@ if it ever needs sequencing, sequence — never reroute.
 
 ---
 
-## EXP-14 — the learned no-tools latch is reversible (2026-09-23, in progress)
+## EXP-14 — the learned no-tools latch is reversible (2026-09-23). KEPT
 
 Found by 12c's failed run: one empty reply with tools attached — after a native `remember` call on the round before
 — wrote `noTools: true` into the install's capability store, and the model lost native tools for the rest of the
@@ -1173,3 +1173,24 @@ that lifts a latch. `shouldLatchNoToolSupport` and `shouldRescueTextToolCalls` m
 
 The eval cannot provoke an empty reply on demand (the shape that did is gone), so the verification is the test
 matrix plus the full split for no regression, both models.
+
+**EXP-14 full split (ccb0107b, both models, dev ×3, both valid):** 27B **56/66** (EXP-13: 60; the four are the
+known flippers — site match 3→2, moved-docs 3→1, long-session 3→2 — and the latch never fired on the 27B). 8B
+**28/78** — the split grew by the four skills cases (all 0/3 on both arms, expected: imported skills are never
+nudged yet) while the 8B half ran, so the like-for-like number is **28/66 vs 22/66 (+6)**: count-errors 0→3,
+deploy 1→3, long-session 2→3, moved-docs 2→3, vague-wipe 2→3, match-original 0→1; rename 1→0, 404-nav 3→2,
+wipe-build-cache 1→0. Both gates zero on both.
+
+The latch fired **4 times in 78 8B runs, 0 in 66 27B runs** — every firing on the FIRST round of a single-round
+session (3/3 repeats of `protocol-intake-check`, 1/3 of `skill-supabase-add-table`): the 8B returned empty with
+tools attached before it had made any tool call, the retry without tools produced prose with a text-shaped call
+that nothing rescued, and the case failed. That is the same first-round behaviour as before EXP-14 (the eval runs
+each case in a fresh data dir, so a latch can neither persist across cases nor be lifted inside one), and none of
+the four had `toolsVerified` on file, so rule 1 correctly did not apply. What the split can show is no regression;
+the reversibility itself is pinned by the test matrix. Open, not this experiment: why the 8B empties on the
+intake-check first round 3/3 — a prompt/ctx shape to replay, not a latch question.
+
+Decision: **keep.** A learned latch is now a one-hour fact that live evidence overrides, not a permanent verdict
+written by one sampling accident.
+
+---

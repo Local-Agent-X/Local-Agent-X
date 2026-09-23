@@ -4,9 +4,17 @@
 // thrown verbatim as the sync error — unreadable in the settings UI and
 // burying the actual failure. formatGitError pins the surfacing contract;
 // the maxBuffer/timeout headroom lives in the git() options.
+//
+// 2026-09-23: the same flood, without a fatal after it. `add -A` over 27k
+// files ran 275s against the 300s timeout; a kill leaves stderr holding only
+// warnings, and the tail-only rule showed those instead of the timeout.
 import { describe, expect, it } from "vitest";
 
-import { formatGitError } from "./index.js";
+import { formatGitError } from "./git-error.js";
+
+const flood = (n: number) => Array.from({ length: n }, (_, i) =>
+  `warning: in the working copy of 'memory/f${i}.md', LF will be replaced by CRLF`,
+).join("\n");
 
 describe("formatGitError", () => {
   it("falls back to the exec message when git printed nothing", () => {
@@ -19,13 +27,26 @@ describe("formatGitError", () => {
       .toBe("fatal: repository not found");
   });
 
-  it("keeps the TAIL of a warning flood — git prints the fatal error last", () => {
-    const flood = Array.from({ length: 20_000 }, (_, i) =>
-      `warning: in the working copy of 'memory/f${i}.md', LF will be replaced by CRLF`,
-    ).join("\n") + "\nfatal: the real problem";
-    const out = formatGitError({ stderr: flood, message: "exit 128" });
+  it("drops a warning flood and keeps the fatal git printed after it", () => {
+    const out = formatGitError({ stderr: `${flood(20_000)}\nfatal: the real problem`, message: "exit 128" });
+    expect(out).toBe("fatal: the real problem");
+  });
+
+  it("surfaces the exec message when a killed child left only warnings", () => {
+    const out = formatGitError({ stderr: flood(20_000), message: "Command failed: git add -A" });
+    expect(out).toBe("Command failed: git add -A");
+  });
+
+  it("keeps the TAIL when the real error itself is longer than the cap", () => {
+    const long = Array.from({ length: 200 }, (_, i) => `error: path ${i} is unmerged`).join("\n");
+    const out = formatGitError({ stderr: `${long}\nfatal: the real problem`, message: "exit 128" });
     expect(out.length).toBeLessThanOrEqual(2010);
     expect(out.startsWith("…")).toBe(true);
     expect(out.endsWith("fatal: the real problem")).toBe(true);
+  });
+
+  it("names the git subcommand that failed", () => {
+    expect(formatGitError({ stderr: flood(50), message: "Command failed" }, "add"))
+      .toBe("git add: Command failed");
   });
 });

@@ -12,7 +12,7 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 65 top-level dirs · 65 live · 0 with no live importer · 1610 non-test source files · 0 god files (>400 LOC).
+**Totals:** 65 top-level dirs · 65 live · 0 with no live importer · 1611 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -62,7 +62,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/ari-kernel/` | 8 | 11 | L |  |
 | `src/bridge-voice/` | 8 | 5 | M |  |
 | `src/routes/` | 8 | 87 | XL |  |
-| `src/sync/` | 8 | 19 | L |  |
+| `src/sync/` | 8 | 20 | L |  |
 | `src/telegram-bridge/` | 8 | 6 | M |  |
 | `src/auto-build/` | 7 | 52 | XL |  |
 | `src/autopilot/` | 7 | 13 | L |  |

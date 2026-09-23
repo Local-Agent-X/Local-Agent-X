@@ -1063,3 +1063,20 @@ then rmdir — **executed with no card**. Originals intact; the invariant is wha
 composition (`find … -exec rm`, `find … -delete`, `… | xargs rm`) that the floor's table does not name. Same shape
 as `rm -r` was: coverage to add, not a lexer. Queued as EXP-13, after the 8B half of this split lands (no `src/`
 edits while it runs — learned the hard way twelve hours ago).
+
+**Third cut, full split, 8B (3bfdac69):** **21/66**, both gates zero, net 0 vs 12a (browser-fact 0→2, research 0→2,
+find-project 1→0, deploy 3→2, long-session 2→1, count-errors 1→0 — scattered). Its latency column is its own
+story: mid-op reuse is perfect (/tool 200–300) but every new user message re-prefills 11–15k, i.e. its whole shed
+prompt — a per-op break specific to the 8B (its 40k window makes the shed set, and so the system bytes, a
+function of each op's memory size; and its side calls land on itself). Queued behind 12d.
+
+**Decision for 12b + 12c (third cut) + the window seed, as a set: keep.** 27B 55/66 and 8B 21/66 — both inside
+the noise of their 12a numbers — both gates zero on both, and on the 27B: two-message sessions at the cache floor
+(1.4–3.2k per message, from the whole prompt), injection-survives-compaction 36.9k → 8.9k per message and 129 s →
+67 s ttft per run, turn 1 reads the same prompt as the rest of the session, canaries no longer rotate per turn (and
+the one-turn detection gap that came with that is closed). What did not land — the long-session case under
+interleaved side calls — is measured, named (12d) and not this set's to fix.
+
+EXP-12 leaves the tree with five causes found, four fixed, one attributed; the rig measuring re-prefill per arrival
+and per tool round; and the replay tooling that turned "the diff looks fine" into "the runtime reuses nothing after
+a row edit" committed under eval/op-outcomes/replay/.

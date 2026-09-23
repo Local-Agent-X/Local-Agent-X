@@ -1300,7 +1300,7 @@ noise floor on both models. Three items leave this experiment open-ended rather 
 
 ---
 
-## EXP-16 — the nudge rides in the protocol tool's description (2026-09-23, in progress)
+## EXP-16 — the nudge rides in the protocol tool's description (2026-09-23). KEPT
 
 **Why.** EXP-15 closed the plumbing: on a nudge turn the 8B has the LEARNED WORKFLOW notice in its prompt and the
 `protocol` tool in its schema, 3/3 — and 3/3 it did not load the skill. Its thinking opens with "the available
@@ -1324,5 +1324,39 @@ the skills cases are single-turn — but it was two re-prefills where one would 
 
 Measure: the four skills cases ×3 on both models (the vercel with-skill arm on the 8B is the target: nudge →
 `get` → body), then the full dev split both models before any keep.
+
+**Skills cases ×3, 8B (4a003520):** 2/12 — and the two are the first 8B passes this case has ever had.
+
+| arm (8B) | prompt nudge | nudge in tool description | `protocol get` | skill body in context | pass |
+|---|---|---|---|---|---|
+| vercel with skill | 3/3 | 3/3 | 3/3 | 3/3 | **2/3** |
+| vercel without | 0/3 | 0/3 | 0 | – | 0/3 |
+
+Both passes ran `cd acme-site && vercel deploy --yes` — the skill's exact line — as the first shell command after
+the get. The fail loaded the skill too, then went to `http_request` and `request_secret` for a token and stalled;
+one of three is the model, not the channel. Under EXP-15 the same arm was 0/3 with the model walking past the
+prompt notice every time; the only difference on the wire is the first sentence of one tool's description.
+Supabase 0/3 on both arms (never nudged — the message-only selector, as recorded under EXP-15).
+
+**Skills cases ×3, 27B (4a003520):** 10/12 — vercel with skill **3/3** (EXP-15: 3/3), without 1/3; supabase 3/3
+both arms. On every with-skill run `protocol` was the FIRST call (under EXP-15 it came after a glob), the body was
+in context before any shell command. No change in outcome on this model, which is the expected shape: the 27B
+already followed the prompt notice; the description channel only moves the model that did not.
+
+**Full dev split (4a003520, 26 cases ×3):**
+- 8B **24/78**, gates 0/0. Old cases **24/66** (EXP-15: 22; EXP-14: 28; EXP-13: 22 — the floor, fourth time).
+  Skills 0/12 in the split against 2/3 on the vercel with-skill arm in the kept ×3 run an hour earlier, same build,
+  same prompt bytes: on this model the pass is noisy even when the skill is loaded, and the split has no kept stores
+  to say why. The measurement that holds is the kept run's 3/3 nudge → get → body; the pass rate is ~1 in 3.
+- 27B **70/78**, gates 0/0. Old cases **60/66** — ties the campaign high (EXP-13), every case 3/3 except the two
+  known model behaviours. Skills 10/12: vercel with skill 3/3, without 1/3, supabase 3/3 both arms.
+
+Decision: **keep.** The channel does what it was built for — the model that walked past the prompt notice 3/3 now
+loads the skill 3/3 — at no cost to any old case on either model and with both gates untouched. Two things stay
+open and are recorded rather than chased here: the 8B's pass on the vercel case after loading the skill is roughly
+one in three (token-hunting after the get is the model, not the channel), and the supabase skill is still never
+triggered by a message that does not name it (project-aware triggering, the EXP-15 follow-up).
+
+---
 
 ---

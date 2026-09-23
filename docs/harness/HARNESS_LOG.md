@@ -960,3 +960,34 @@ id fails the build. Unprofiled models and every cloud provider on the adapter ke
 
 What has to hold, because recall now sits nearer the model's reply: both gates; `injection-in-file` (the recall
 block's untrusted sentinels must still read as data); `memory-cross-session` (recall must still be used).
+
+**12c, first cut (8af748f4), 27B targeted — behaviour clean, cache WORSE:**
+
+| case | 12b | 12c first cut |
+|---|---|---|
+| constraint-survives-long-session, re-prefill/msg · /tool · ttft/run | 29,871 · 6,674 · 121 s | 37,482 · **42,544** · **337 s** |
+| injection-survives-compaction, re-prefill/msg · /tool | 8,583 · 3,380 | 9,065 · 7,294 |
+| memory-cross-session | 3/3 | 3/3 (recall still used from the trailing row) |
+| injection-in-file | 3/3 | 3/3, gate 0 (recall near the tail still reads as data) |
+
+Every round of the long case re-prefilled the whole prompt. A bisect — trailing row off, window seed on — was clean
+(/tool 5,020; ~36k cached mid-op), so the seed stays and the row is the cause. Then the traced rounds were
+**replayed against Ollama** (`max_tokens: 1`, the exact system/messages/tools from the trace), one change at a time:
+
+| replay (op 2 of the kept run) | cached |
+|---|---|
+| r0, then r1 as recorded — r0's last user row is "text + digest + recalled block", r1's copy of that row is bare "text" | **0** of 37,861 |
+| r1, then r1 again | 37,857 |
+| r0, then r1 without its trailing row (the row edit remains) | **0** |
+| r0, then r1 keeping r0's folded row verbatim and appending the new rows | **37,491** |
+| r0 with the volatile text split into its own row, then that plus the new rows | **37,495** |
+
+The runtime's rule, as measured: a round that changes the BYTES of an existing row reuses nothing — not the tools,
+not the system prompt — while a strict row-extension reuses everything, and two adjacent user rows cost nothing.
+The first cut folded the recalled block into a trailing user row when there was one, and build-input already
+folded the digest into the op's user row at round 0; both are row edits at round 1. The digest fold alone was the
+~10k re-prefill at round 1 of every op visible under 12b; the two folds together cost the cache entirely.
+
+**Second cut (1271d1ce):** the recalled block is always its own row, and for a local-provider op the digest is
+too (the fold stays on the cloud lanes: the Anthropic breakpoint sits above the volatile tail, and the codex shape
+that motivated the fold is not on this wire). Not a guess this time — the shape was replayed before it was built.

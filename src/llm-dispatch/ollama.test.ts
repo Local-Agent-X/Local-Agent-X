@@ -89,3 +89,20 @@ describe("summarizeOllamaUsage", () => {
     expect(summarizeOllamaUsage({ response: "YES" })).toBeNull();
   });
 });
+
+describe("callOllama waits for the foreground op on the same model", () => {
+  it("defers a side call while a chat op leases the model, and runs it once the op is done", async () => {
+    const { runAsForegroundOp, _resetForegroundLeasesForTests } = await import("./foreground-model-lease.js");
+    _resetForegroundLeasesForTests();
+    const spy = ollamaFetch([{ name: "qwen3.6:27b", context_length: 65536 }]);
+    const events: string[] = [];
+    const opDone = runAsForegroundOp({ id: "op1", lane: "interactive", model: "qwen3.6:27b" }, async () => {
+      await new Promise((r) => setTimeout(r, 300));
+      events.push("op-finished");
+    });
+    const side = callOllama("classify this", "qwen3.6:27b", 0, 16, 5_000).then((r) => { events.push("side-call-returned"); return r; });
+    await Promise.all([opDone, side]);
+    expect(events).toEqual(["op-finished", "side-call-returned"]);
+    expect(spy.mock.calls.some((c) => String(c[0]).endsWith("/api/generate"))).toBe(true);
+  });
+});

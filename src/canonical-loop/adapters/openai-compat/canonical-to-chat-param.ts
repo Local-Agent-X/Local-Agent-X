@@ -125,12 +125,17 @@ export function canonicalToChatParam(
 
 /**
  * Append the prompt's per-op sections as the LAST row, framed as recalled
- * context. Folded into the final row when that row is already a plain user
- * message (a fresh user turn, the situational digest, a redirect), so no
- * transport ever sees two user rows in a row — the shape providers/sanitize.ts
- * exists to prevent. Placed last on purpose: the runtime's prefix cache then
- * covers the system message, the tools and the entire history, and only this
- * row and the model's reply are prefilled fresh (EXP-12c).
+ * context — ALWAYS its own row, never folded into the row before it, even
+ * when that row is a user message.
+ *
+ * Measured on Ollama (qwen3.6:27b, 2026-09-22, replayed from traces): a round
+ * whose array is a strict row-extension of the previous round reuses the
+ * whole cached prompt (37,495 of 39,215 tokens); a round that changes the
+ * BYTES of an existing row — the fold undone, because the row that was
+ * "user text + this block" at round 0 is bare "user text" at round 1 — reuses
+ * NOTHING, not even the system prompt (0 of 37,861). Two adjacent user rows
+ * cost that runtime nothing. This is the local wire only, so the codex-shape
+ * concern behind providers/sanitize.ts's collapsing does not apply here.
  */
 export function appendTrailingContext(
   messages: ChatCompletionMessageParam[],
@@ -138,12 +143,7 @@ export function appendTrailingContext(
 ): ChatCompletionMessageParam[] {
   const body = trailingContext?.trim();
   if (!body) return messages;
-  const framed = `${RECALLED_CONTEXT_OPEN}\n${body}\n${RECALLED_CONTEXT_CLOSE}`;
-  const last = messages.at(-1);
-  if (last && last.role === "user" && typeof last.content === "string") {
-    return [...messages.slice(0, -1), { role: "user", content: `${last.content}\n\n${framed}` }];
-  }
-  return [...messages, { role: "user", content: framed }];
+  return [...messages, { role: "user", content: `${RECALLED_CONTEXT_OPEN}\n${body}\n${RECALLED_CONTEXT_CLOSE}` }];
 }
 
 function extractImages(c: unknown): CanonicalImageRef[] {

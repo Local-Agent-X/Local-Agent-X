@@ -47,18 +47,21 @@ function input(messages: TurnInput["messages"]): TurnInput {
 beforeEach(() => { vi.clearAllMocks(); mockStream.mockResolvedValue(result()); });
 
 describe("trailing context on the local wire", () => {
-  it("the system message is the head alone and the recalled block is folded into the final user row", async () => {
+  it("the system message is the head alone and the recalled block is its OWN last row, even right after a user row", async () => {
+    // Never folded into the user row: a row whose bytes change between rounds
+    // (folded at round 0, bare at round 1) cost the runtime its entire cache.
+    // Measured, see appendTrailingContext.
     await adapter(TAIL).runTurn(input([{ messageId: "u1", role: "user", content: { text: "hello" } }]), () => {});
     const req = mockStream.mock.calls[0][0];
     expect(req.systemPrompt).toBe(HEAD);
     expect(req.systemPrompt).not.toContain(TAIL);
-    const last = req.messages.at(-1) as { role: string; content: string };
-    expect(last.role).toBe("user");
-    expect(last.content).toBe(`hello\n\n${RECALLED_CONTEXT_OPEN}\n${TAIL}\n${RECALLED_CONTEXT_CLOSE}`);
-    expect(req.messages).toHaveLength(1);
+    expect(req.messages).toEqual([
+      { role: "user", content: "hello" },
+      { role: "user", content: `${RECALLED_CONTEXT_OPEN}\n${TAIL}\n${RECALLED_CONTEXT_CLOSE}` },
+    ]);
   });
 
-  it("after a tool round the block becomes its own last row, never a second user row after a user row", async () => {
+  it("after a tool round the block is the last row, after the tool row", async () => {
     await adapter(TAIL).runTurn(input([
       { messageId: "u1", role: "user", content: { text: "read it" } },
       { messageId: "a1", role: "assistant", content: { text: "", toolCalls: [{ id: "c1", name: "read", arguments: "{}" }] } },

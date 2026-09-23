@@ -163,20 +163,27 @@ export async function buildTurnInput(
   if (op.lane === "interactive" || op.lane === "agent" || op.lane === "background") {
     const digest = buildSituationalAwareness(op, turnIdx);
     if (digest) {
-      // Run the append back through collapseAdjacentUserMessages. When the
-      // history already ENDS on a user row (a fresh user turn, a nudge), a
-      // bare append hands codex/gemini a run of user-only rows — the shape
-      // this file's own comment (and providers/sanitize.ts) says makes Codex
-      // return EMPTY responses, and the canonical view exists precisely so no
-      // transport has to repair it. Collapsing reuses the rule already here
-      // instead of teaching each transport a second one, and it costs the
-      // cache nothing: the merged row is still the LAST row, so it is exactly
-      // the one ephemeralTailMessages already declares volatile, and
-      // everything above it stays byte-identical turn over turn.
-      input.messages = collapseAdjacentUserMessages([
-        ...input.messages,
-        situationalMessage(op.id, turnIdx, digest),
-      ]);
+      // Cloud lanes run the append back through collapseAdjacentUserMessages.
+      // When the history already ENDS on a user row (a fresh user turn, a
+      // nudge), a bare append hands codex/gemini a run of user-only rows —
+      // the shape this file's own comment (and providers/sanitize.ts) says
+      // makes Codex return EMPTY responses, and the canonical view exists
+      // precisely so no transport has to repair it. The merged row is still
+      // the LAST row, the one ephemeralTailMessages declares volatile, so the
+      // Anthropic breakpoint sits above it and nothing cached is lost.
+      //
+      // The LOCAL wire has no breakpoint — the runtime caches by token prefix
+      // of the whole rendered prompt — and there the fold is a mutation of an
+      // EXISTING row between rounds: round 0's user row is "text + digest",
+      // round 1's copy of that row is bare "text". Measured on Ollama by
+      // replaying traced rounds (2026-09-22): a strict row-extension reuses
+      // the whole cached prompt; a round that changes one row's bytes reuses
+      // nothing, not even the system prompt. Two adjacent user rows cost that
+      // runtime nothing, so the digest is its own row there, always.
+      const appended = [...input.messages, situationalMessage(op.id, turnIdx, digest)];
+      input.messages = op.contextPack?.routing?.preferredProvider === "local"
+        ? appended
+        : collapseAdjacentUserMessages(appended);
       digestAppended = true;
     }
   }

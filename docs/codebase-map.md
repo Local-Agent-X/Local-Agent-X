@@ -12,7 +12,7 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 65 top-level dirs · 65 live · 0 with no live importer · 1612 non-test source files · 1 god files (>400 LOC).
+**Totals:** 65 top-level dirs · 65 live · 0 with no live importer · 1612 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -43,7 +43,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/context-manager/` | 21 | 12 | L |  |
 | `src/orchestrator/` | 20 | 24 | L |  |
 | `src/agents/` | 17 | 13 | L |  |
-| `src/protocols/` | 17 | 44 | XL | 1 |
+| `src/protocols/` | 17 | 44 | XL |  |
 | `src/sandbox/` | 16 | 9 | L |  |
 | `src/anthropic-client/` | 15 | 21 | XL |  |
 | `src/tool-execution/` | 14 | 46 | XL |  |
@@ -207,14 +207,4 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/update-service.ts` | M |
 | `src/user-notice.ts` | S |
 | `src/worker-session.ts` | S |
-
-## God files (> 400 LOC)
-
-Burn-down targets for `/refactor-godfiles`. Membership only (not exact LOC),
-so a god file growing a little doesn't churn this doc — only crossing the
-400-line line does.
-
-| File | Size |
-|---|:--:|
-| `src/protocols/learned-suggestion.ts` | M |
 

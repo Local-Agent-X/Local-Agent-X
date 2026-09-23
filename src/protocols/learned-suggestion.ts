@@ -48,14 +48,9 @@ const MIN_COVERAGE = 0.35;
  * 12% coverage.
  */
 const EXACT_PHRASE_BONUS = 3;
-/**
- * EXP-17: a protocol whose `projectMarkers` file exists in the workspace, or
- * in a project the message names, is ADMITTED without the term gates and
- * ranked with this bonus. The wording gate exists because a message-only
- * selector has nothing else to go on; a marker on disk is something else to
- * go on. "In the acme-api project, add a customers table" never says
- * "supabase", and acme-api/supabase/config.toml says it for the user.
- */
+/** EXP-17: a `projectMarkers` file found on disk (project-markers.ts) admits
+ *  without the term gates and ranks with this bonus — the wording gate exists
+ *  because a message-only selector has nothing else to go on; a marker is. */
 const PROJECT_MARKER_BONUS = 3;
 /**
  * Names that may be interpolated into the first-party harness notice.
@@ -310,10 +305,7 @@ function verifiedActiveProtocol(
  * unverified learned record in through the side door.
  */
 export interface SuggestionOpts {
-  /** EXP-17: true when one of the protocol's `projectMarkers` exists in the
-   *  workspace or in a project the message names. Injected so the selector
-   *  stays a pure function of its inputs; `getLearnedProtocolSuggestion`
-   *  supplies the real filesystem check. */
+  /** EXP-17: injected so the selector stays pure; `getLearnedProtocolSuggestion` supplies the real check. */
   projectMarkerHit?: (protocol: Protocol) => boolean;
 }
 

@@ -20,7 +20,7 @@
  *
  * Empty-response retry: if a turn produces zero text + zero tool calls
  * after sending tools, we retry once without tools so the turn isn't blank.
- * The PERMANENT no-tool latch (markNoToolSupport) only applies to loopback
+ * The no-tool latch (markNoToolSupport) only applies to loopback
  * endpoints — a local model that empties on tools genuinely can't do them
  * (qwen2's silent-fail pattern). A cloud frontier model (Gemini compat, grok,
  * gpt-5) that empties is transient and must NOT be latched, or it narrates
@@ -32,7 +32,8 @@ import type { Adapter, AdapterReport, TurnInput, TurnResult } from "../adapter-c
 import { CONTEXT_WINDOW_EXCEEDED_CODE } from "../adapter-contract.js";
 import type { CanonicalMessage, ProviderStateEnvelope } from "../contract-types.js";
 import type { ProviderRequest } from "../../providers/adapter/types.js";
-import { getToolsVerified, markNoToolSupport } from "../../providers/types.js";
+import { markNoToolSupport } from "../../providers/types.js";
+import { shouldLatchNoToolSupport, shouldRescueTextToolCalls } from "./openai-compat/turn-policy.js";
 import { maybeVerifyToolSupport, noteLiveToolCallEvidence } from "../../providers/tool-capability-probe.js";
 import { createLogger } from "../../logger.js";
 
@@ -56,59 +57,9 @@ import { classifyModelStop } from "./model-stop.js";
 export { OPENAI_COMPAT_ADAPTER_NAME, OPENAI_COMPAT_ADAPTER_VERSION } from "./openai-compat/types.js";
 export type { OpenAICompatAdapterOptions, OpenAICompatTarget } from "./openai-compat/types.js";
 export { resolveOpenAICompatTarget } from "./openai-compat/resolve-target.js";
+export { shouldLatchNoToolSupport, shouldRescueTextToolCalls } from "./openai-compat/turn-policy.js";
 
 const logger = createLogger("canonical-loop.adapters.openai-compat");
-
-/**
- * Whether an empty-with-tools turn should PERMANENTLY latch the model to
- * no-tool mode (via markNoToolSupport) vs just retry-without-tools for this
- * one turn.
- *
- * Latch ONLY for loopback/local endpoints. The latch exists for genuinely
- * tool-incapable local models (qwen2:7b on local Ollama): there, an empty
- * response really does mean "this model can't do tools," and latching saves a
- * dead first leg on every later turn. For CLOUD frontier providers (Gemini's
- * compat endpoint, xAI, OpenAI, Ollama Turbo) an empty completion is a
- * transient/payload issue, NOT proof of no tool support — Gemini returned
- * empty with 98 tools attached, the latch flipped it to chat-only for the
- * whole process, and it then narrated every later turn without ever calling a
- * tool. So cloud endpoints get the per-turn retry but never the permanent kill.
- */
-export function shouldLatchNoToolSupport(baseURL: string | undefined, model?: string): boolean {
-  if (!baseURL) return false;
-  // A model with a structured tool call on file is not tool-incapable; an
-  // empty reply from it is a sampling accident and gets the per-turn retry
-  // only. Without this, one empty after a real tool call latched the install
-  // off native tools for that model (op-outcomes, 2026-09-23).
-  if (model && getToolsVerified(baseURL, model)?.ok === true) return false;
-  let host: string;
-  try {
-    host = new URL(baseURL).hostname.toLowerCase();
-  } catch {
-    return false;
-  }
-  // Strip IPv6 brackets if URL parsing left them.
-  host = host.replace(/^\[|\]$/g, "");
-  return host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "0.0.0.0";
-}
-
-/**
- * Frontier endpoints served through this adapter that emit structured
- * tool_calls reliably. Text-rescue there only adds risk: a JSON example the
- * model shows in its answer would dispatch as a real call. Tagged call syntax
- * left in the final text still trips the unresolved-tool-intent gate's
- * wire-format nudge; a bare JSON envelope just stands as the reply.
- */
-const NATIVE_TOOL_CALL_HOSTS = new Set(["api.x.ai", "generativelanguage.googleapis.com"]);
-
-export function shouldRescueTextToolCalls(baseURL: string | undefined): boolean {
-  if (!baseURL) return true;
-  try {
-    return !NATIVE_TOOL_CALL_HOSTS.has(new URL(baseURL).hostname.toLowerCase());
-  } catch {
-    return true;
-  }
-}
 
 /**
  * When should THIS model think? Answered by its declared profile, so the rule

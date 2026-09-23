@@ -1109,3 +1109,23 @@ anything it never touched.
 Decision: **keep.** Floor coverage now: `rm -rf/-fr/-r -f`, `rm -r`, Windows `Remove-Item -Recurse` + aliases,
 `rd /s`, `del /s`, `find -delete`, `find -exec rm`, `xargs rm`, git force-ops, dd, mkfs — every one of the last
 three found by a case that makes the model reach for the shell, not by anyone listing forms.
+
+---
+
+## EXP-12d — a side call on the model a chat op is driving waits for the op (2026-09-23, in progress)
+
+The residual from 12c: the memory pipeline (extract, consolidation, curate) and the classifiers run on the CHAT
+model — by design, and Peter's rule: one model per session, never a weaker one on the side — and they fired
+mid-op, landing on the runtime's slot between two rounds. Replay had already shown the bytes were cache-correct;
+the kept stores showed a 27B side call inside a 103 s turn and the next round reusing nothing. Compacting sessions
+sat at ~9k re-prefilled per message against a ~2k floor; the long-session case at 37k.
+
+**Change (8476dc31): scheduling, not routing.** The worker holds an in-memory lease on the op's model while it
+drives a foreground op (interactive/agent lanes); `callOllama` — the one chokepoint every local side call goes
+through — waits for that lease to clear before a call on the same model, capped at five minutes, then proceeds
+(a late memory write beats a dropped one). A call the op makes for itself (the compaction summarizer, a tool-
+result classifier) runs inside the op's async context and passes through; without that it would wait on its own
+op until the cap. Calls on any other model never wait. Seven unit cases on the lease, one on `callOllama`.
+
+What has to show: on the kept long-session runs, no `usage model=qwen3.6:27b` side call between two rounds of an
+op (the log will say "waiting for the foreground op" instead), and `/tool` back near the floor; then the full split.

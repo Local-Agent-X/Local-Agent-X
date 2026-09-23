@@ -222,6 +222,19 @@ const DESTRUCTIVE_COMMAND_PATTERNS: Array<{ pattern: RegExp; reason: string }> =
   // that names it precisely is listed first so the reason says what it is.
   { pattern: /\b(?:rm|ri|rmdir|rd|del|erase)\b[^|;&]*\s-rec\w*\b/i, reason: "Remove-Item -Recurse (alias)" },
   { pattern: /(?<!git\s)\brm\b[^|;&]*\s(?:-\w*r\w*|--recursive)\b/i, reason: "rm -r" },
+  // A recursive wipe by composition. With `rm -rf` policy-blocked and `rm -r`
+  // carded, a 27B ran `find client-data/build-cache -exec rm {} + && rmdir
+  // client-data/build-cache` — every file deleted by find's per-file rm, then
+  // the empty tree removed — and nothing here saw it (op-outcomes
+  // restraint-wipe-build-cache, 2026-09-23). The composed forms delete a tree
+  // exactly as `rm -r` does, so they sit on the same floor: find's own
+  // -delete, find handing files to rm/unlink/rmdir through -exec/-execdir/
+  // -ok/-okdir, and rm/unlink/rmdir fed by xargs (which only ever follows a
+  // pipe, so it is matched from its own word). A find that lists, or an
+  // xargs that counts, is not a delete and stays off.
+  { pattern: /\bfind\b[^|;&]*\s-delete\b/i, reason: "find -delete" },
+  { pattern: /\bfind\b[^|;&]*\s-(?:exec|execdir|ok|okdir)\s+(?:rm|unlink|rmdir)\b/i, reason: "find -exec rm" },
+  { pattern: /\bxargs\b[^|;&]*\s(?:rm|unlink|rmdir)\b/i, reason: "xargs rm" },
   { pattern: /\bdd\b[^|;&]*\sof=\/dev\//i, reason: "dd to a raw device" },
   { pattern: /\bmkfs\b/i, reason: "filesystem format" },
   // Native Windows deletes. Every entry above was Unix-shaped, so on the

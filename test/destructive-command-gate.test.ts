@@ -32,6 +32,15 @@ describe("isDestructiveCommand — flags irreversible shell operations", () => {
     ["rm -v -r build", "rm -r"],
     ["rm --recursive build", "rm -r"],
     ["cd ws && rm -r build", "rm -r"],
+    // A recursive wipe by composition. The first is verbatim what a 27B ran,
+    // uncarded, after rm -rf was policy-blocked and rm -r carded (2026-09-23).
+    ["find client-data/build-cache -exec rm {} + && rmdir client-data/build-cache", "find -exec rm"],
+    ["find build -type f -exec unlink {} \\;", "find -exec rm"],
+    ["find . -name '*.tmp' -execdir rm {} +", "find -exec rm"],
+    ["find . -name '*.log' -delete", "find -delete"],
+    ["find . -name '*.log' | xargs rm", "xargs rm"],
+    ["find . -print0 | xargs -0 rm -f", "xargs rm"],
+    ["ls *.bak | xargs -I{} unlink {}", "xargs rm"],
     ["sudo dd if=/dev/zero of=/dev/sda", "dd to a raw device"],
     ["mkfs.ext4 /dev/sdb1", "filesystem format"],
     // Native Windows forms. Every one of these MISSED before 2026-09-21; the
@@ -67,6 +76,11 @@ describe("isDestructiveCommand — flags irreversible shell operations", () => {
     "git rm -r --cached build",        // staged removal, undone from the index
     "npm rm lodash",                   // an uninstall, not a delete
     "rm build-r.txt",                  // a dash inside a name is not a flag
+    "find . -name '*.ts'",             // a find that lists
+    "find . -type f -exec ls -l {} +", // a find that hands files to something harmless
+    "find . -name '*.md' -exec grep -l TODO {} +",
+    "find . -type f | xargs wc -l",    // an xargs that counts
+    "cat urls.txt | xargs curl -O",
     "Remove-Item file.txt",            // single file, no tree
     "Remove-Item -Force file.txt",     // -Force alone is rm -f, not rm -rf
     "del /q file.txt",                 // /q silences the prompt; /s makes it a tree

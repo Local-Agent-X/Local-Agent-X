@@ -1003,3 +1003,26 @@ session. Same class as the folds — a deliberate token saver that edits a row i
 treatment: trim at the row's first appearance or never. Recorded, not chased in this experiment.
 
 Full split on both models at 1271d1ce running for the keep decision of 12b + 12c + the window seed together.
+
+**Full split at the second cut (1271d1ce):** 27B **57/66** (12a: 55; find-project 1→3, protocol-intake 2→3,
+long-session 3→2), both gates zero — the campaign's best 27B total. The 8B half is **invalid and that is my
+doing**: I edited `src/` for the third cut while the 8B split was still running, and the rig's dist guard aborted
+it after 17 runs (exit 3). The rule is written in this log and in my notes; the guard caught what I did not.
+
+**What the 27B split also showed, from the one kept (failed) long-session run:** the compacting runs were back at
+37k/msg, and the failed one had **no tools on the wire for 18 of 19 rounds**. Its server log: `qwen3.6:27b
+returned empty with tools — retrying without tools (latched: local endpoint)` at op 0 round 1 — the first round
+whose array ended `…tool, user, user` (digest row, then the recalled block as its own row). One empty reply under
+sampling (the second-cut kept run had the same shape for 13 rounds without incident), and the adapter's
+empty-with-tools latch dropped native tools for the rest of the process; every later "call" was text-rescued and
+the case failed. Two causes recorded, not fixed here:
+- the latch is PROCESS-WIDE and fires on one sampling accident — audit item 12's "reversible noTools latch";
+- `[llm-dispatch] [ollama] usage model=qwen3.6:27b` right after every op: **memory auto-extract runs on the CHAT
+  model between ops**, which empties the runtime's slot at every message boundary. That is why compacting cases sit
+  at ~9k/msg rather than the ~2k floor the two-message cases reach.
+
+**Third cut (3bfdac69):** the recalled block merges into the trailing row only when the loop declares it
+ephemeral (`ephemeralTailMessages` — the digest or a redirect), which keeps the `…tool, user` shape 12b ran on and
+is a row-boundary change (replaced wholesale next round), and stays its own row after a durable user row (the
+first cut's fold). Kept runs of both compacting cases first; then the full split on both models, this time with
+nothing touched in `src/` until it ends.

@@ -278,8 +278,24 @@ export interface RetainedFact {
   evidenceAgainst: string[];
   sourceFile: string;
   sourceLine: number;
+  /** WRITE time — when this fact was indexed, not when the thing happened. */
   timestamp: number;
   lastUpdated: number;
+  /**
+   * EVENT time — when the thing this fact describes actually happened, epoch ms.
+   * Derived from the source chunk's provenance at extraction (extract.ts).
+   *
+   * Separate from `timestamp` because they diverge by however long memory took
+   * to get around to writing: a conversation on the 22nd consolidated on the
+   * 23rd has timestamp=23rd, occurredAt=22nd. Rendering `timestamp` as the
+   * event date is what told the agent a day-old conversation happened "today"
+   * (2026-09-22 live case).
+   *
+   * null/undefined = genuinely unknown, which is the honest state for every
+   * fact retained before this field existed and for any source that carries no
+   * date. Renderers must say "unknown", never fall back to `timestamp`.
+   */
+  occurredAt?: number | null;
   // Bi-temporal validity (Zep-style). Facts with valid_to != null are superseded.
   validFrom?: number;
   validTo?: number | null;

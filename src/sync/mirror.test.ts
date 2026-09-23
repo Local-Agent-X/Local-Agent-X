@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { mirrorDir, pullDir } from "./mirror.js";
+import { mirrorDir, pruneSkippedDirs, pullDir } from "./mirror.js";
 
 describe("mirrorDir (async, non-blocking workspace copy)", () => {
   let root: string;
@@ -119,5 +119,36 @@ describe("mirrorDir (async, non-blocking workspace copy)", () => {
     expect(readFileSync(join(dest, "real.md"), "utf-8")).toBe("real");
     expect(existsSync(join(dest, ".worktrees", "c4"))).toBe(false);
     expect(readFileSync(join(dest, ".worktrees", "local", "mine.md"), "utf-8")).toBe("mine");
+  });
+});
+
+// A name added to SKIP_DIRS only stops future copying: the workspace push is
+// additive, so 16,452 files already mirrored under a venv's site-packages
+// stayed put and kept getting re-hashed by every `git add`.
+describe("pruneSkippedDirs", () => {
+  let root: string;
+  afterEach(() => { if (root) rmSync(root, { recursive: true, force: true }); });
+
+  it("removes already-mirrored trees the skip list now excludes", async () => {
+    root = mkdtempSync(join(tmpdir(), "lax-prune-"));
+    mkdirSync(join(root, "voice", "venv-x", "Lib", "site-packages", "numpy"), { recursive: true });
+    writeFileSync(join(root, "voice", "venv-x", "Lib", "site-packages", "numpy", "core.py"), "x");
+    mkdirSync(join(root, "voice", "notes"), { recursive: true });
+    writeFileSync(join(root, "voice", "notes", "take.txt"), "keep me");
+
+    const removed = await pruneSkippedDirs(root);
+
+    expect(existsSync(join(root, "voice", "venv-x", "Lib", "site-packages"))).toBe(false);
+    expect(readFileSync(join(root, "voice", "notes", "take.txt"), "utf-8")).toBe("keep me");
+    expect(removed).toHaveLength(1);
+  });
+
+  it("is idempotent and leaves a clean mirror untouched", async () => {
+    root = mkdtempSync(join(tmpdir(), "lax-prune-"));
+    mkdirSync(join(root, "app"), { recursive: true });
+    writeFileSync(join(root, "app", "index.html"), "<p>hi</p>");
+
+    expect(await pruneSkippedDirs(root)).toEqual([]);
+    expect(existsSync(join(root, "app", "index.html"))).toBe(true);
   });
 });

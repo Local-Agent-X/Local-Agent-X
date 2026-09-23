@@ -13,7 +13,7 @@ import { backfillEntityLinks } from "./entity-derive.js";
 import { createLogger } from "../logger.js";
 const logger = createLogger("memory.index-schema");
 
-export const CURRENT_SCHEMA_VERSION = 13;
+export const CURRENT_SCHEMA_VERSION = 14;
 
 function backfillValidChunkSessionIds(db: InstanceType<typeof Database>): void {
   const rows = db
@@ -329,6 +329,26 @@ export function migrateSchema(
       } catch (e) {
         logger.warn(`[memory] v13 entity backfill failed (non-fatal): ${(e as Error).message}`);
       }
+    }
+
+    if (fromVersion < 14) {
+      // WHEN THE THING HAPPENED, as opposed to when we wrote it down.
+      //
+      // `timestamp` is set to Date.now() at index time (index-facts.ts), so a
+      // fact extracted from yesterday's conversation by a consolidation pass
+      // that ran this morning is stamped this morning. The entity page renders
+      // that stamp, and the agent reads it as the date of the event. Live case
+      // 2026-09-22: the user asked about nerve peptides on the 22nd,
+      // consolidation ran 11:43 on the 23rd, and the agent answered "today,
+      // 2026-09-23" — faithfully, from what memory told it.
+      //
+      // Deliberately NOT backfilled from `timestamp`. Copying the write time
+      // into an event-time column would launder the same wrong answer into a
+      // field that claims to be authoritative. NULL means "we don't know when
+      // this happened", which is the truth for every fact retained before this
+      // column existed, and the renderer says so.
+      try { db.exec(`ALTER TABLE facts ADD COLUMN occurred_at INTEGER`); } catch {}
+      try { db.exec(`CREATE INDEX IF NOT EXISTS idx_facts_occurred_at ON facts(occurred_at)`); } catch {}
     }
 
     db

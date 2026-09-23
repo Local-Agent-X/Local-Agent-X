@@ -174,6 +174,7 @@ export function rowToFact(row: Record<string, unknown>): RetainedFact {
     sourceLine: row.source_line as number,
     timestamp: row.timestamp as number,
     lastUpdated: row.last_updated as number,
+    occurredAt: (row.occurred_at as number | null) ?? null,
     validFrom: (row.valid_from as number | null) ?? undefined,
     validTo: (row.valid_to as number | null) ?? null,
     invalidatedBy: (row.invalidated_by as number | null) ?? null,

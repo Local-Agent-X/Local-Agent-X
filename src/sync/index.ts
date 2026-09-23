@@ -10,6 +10,7 @@ import { resolveConflicts } from "./conflict-resolver.js";
 import { copyFromSync } from "./pull-files.js";
 import { copyToSync } from "./push-files.js";
 import { ABORT_THRESHOLD, findUnauthorizedAppDeletions, massDeleteAbortMessage } from "./mass-delete-guard.js";
+import { formatGitError } from "./git-error.js";
 import { isLocalOnlyMode, LOCAL_ONLY_BLOCK_MESSAGE } from "../local-only-policy.js";
 
 export type { SyncConfig } from "./constants.js";
@@ -36,19 +37,6 @@ const STALE_GIT_LOCK_MS = 360_000;
 // child mid-add and surfaced the truncated warning stream as the sync error
 // (2026-07-23 live failure). Warnings must never be able to kill the op.
 const GIT_MAX_BUFFER = 64 * 1024 * 1024;
-
-/**
- * Compress a failed git child into a message fit for the UI/log. Git prints
- * per-file warnings FIRST and the actual fatal error LAST, so surface the
- * tail — the old code threw the whole stderr, and a warning flood buried the
- * real failure under megabytes of "LF will be replaced by CRLF" noise.
- * Exported for tests.
- */
-export function formatGitError(e: { stderr?: string; message: string }): string {
-  const stderr = (e.stderr ?? "").trim();
-  if (!stderr) return e.message;
-  return stderr.length > 2000 ? `… ${stderr.slice(-2000)}` : stderr;
-}
 
 export class AgentSync {
   private config: SyncConfig;
@@ -98,7 +86,7 @@ export class AgentSync {
       });
       return stdout.trim();
     } catch (e) {
-      throw new Error(formatGitError(e as { stderr?: string; message: string }));
+      throw new Error(formatGitError(e as { stderr?: string; message: string }, args[0]));
     }
   };
 

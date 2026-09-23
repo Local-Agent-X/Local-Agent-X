@@ -12,7 +12,7 @@ import {
   type SyncConfig,
   canonicalizeHomePaths,
 } from "./constants.js";
-import { mirrorDir } from "./mirror.js";
+import { mirrorDir, pruneSkippedDirs } from "./mirror.js";
 import { exportFactsForSync } from "./facts-sync.js";
 import { tombstonePaths, writeTombstonesForDeletedApps } from "./tombstones.js";
 
@@ -112,7 +112,10 @@ export async function copyToSync(dataDir: string, syncDir: string, config: SyncC
       // additive-only so local-only apps on other machines aren't
       // obliterated when this machine pushes.
       writeTombstonesForDeletedApps(tombstonePaths(dataDir, syncDir), syncDir);
-      await mirrorDir(workspace, join(syncDir, "workspace"), /* additiveOnly */ true);
+      const mirrored = join(syncDir, "workspace");
+      const pruned = await pruneSkippedDirs(mirrored);
+      if (pruned.length > 0) logger.info(`[sync] pruned ${pruned.length} excluded tree(s) from the mirror: ${pruned.slice(0, 5).join(", ")}`);
+      await mirrorDir(workspace, mirrored, /* additiveOnly */ true);
     }
   } else if (config.syncProtocols) {
     // Workspace sync is OFF but the user still wants protocols to flow

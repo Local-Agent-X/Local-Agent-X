@@ -69,6 +69,35 @@ export async function mirrorDir(src: string, dest: string, additiveOnly = false)
 }
 
 /**
+ * Drop mirrored trees that SKIP_DIRS now excludes.
+ *
+ * The workspace push is additive (see mirrorDir), so a name added to
+ * SKIP_DIRS only stops FUTURE copying — anything already mirrored under it
+ * stays forever and keeps getting re-hashed by every `git add`. A path under
+ * a skipped directory can no longer be produced by the walk above, so it is
+ * stale by definition rather than a deletion the tombstone system owns.
+ *
+ * Returns the directories removed, for the caller to log.
+ */
+export async function pruneSkippedDirs(root: string): Promise<string[]> {
+  const removed: string[] = [];
+  const walk = async (dir: string): Promise<void> => {
+    for (const entry of await readdir(dir)) {
+      const path = join(dir, entry);
+      if (!(await lstat(path)).isDirectory()) continue;
+      if (SKIP_DIRS.has(entry)) {
+        await rm(path, { recursive: true, force: true });
+        removed.push(relative(root, path));
+      } else {
+        await walk(path);
+      }
+    }
+  };
+  if (existsSync(root)) await walk(root);
+  return removed;
+}
+
+/**
  * Pull from sync → local.
  *
  * When `additiveOnly` is true, local entries missing from src are LEFT

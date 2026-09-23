@@ -73,7 +73,7 @@ describe("schema v12 fact provenance migration", () => {
       const rows = db.prepare("SELECT provenance FROM facts ORDER BY id").all() as Array<{ provenance: string | null }>;
       expect(rows).toEqual([{ provenance: null }, { provenance: null }]);
       expect(schemaVersion(db)).toBe(CURRENT_SCHEMA_VERSION);
-      expect(CURRENT_SCHEMA_VERSION).toBe(13);
+      expect(CURRENT_SCHEMA_VERSION).toBe(14);
     } finally {
       db.close();
     }
@@ -137,6 +137,55 @@ describe("schema v13 entity-link backfill", () => {
         .map((r) => r.entity_slug);
       expect(slugs).toContain("merchhelm");
       expect(slugs).toContain("stockpilot");
+    } finally {
+      db.close();
+    }
+  });
+});
+
+/**
+ * Schema v14 — event time, separate from write time.
+ *
+ * `facts.timestamp` is Date.now() at index time. Consolidation runs whenever it
+ * runs, so that is not when the thing happened, and the entity page rendered it
+ * as though it were (live case 2026-09-22: a conversation from the 22nd read as
+ * "today, 2026-09-23" because the pass that recorded it ran on the 23rd).
+ */
+describe("schema v14 fact event-time migration", () => {
+  it("adds occurred_at and leaves pre-existing rows NULL rather than backfilling the write time", () => {
+    const db = buildV11Db();
+    try {
+      migrateSchema(db, 13);
+
+      expect(factColumns(db)).toContain("occurred_at");
+
+      // THE load-bearing assertion. Backfilling occurred_at from timestamp
+      // would launder the wrong answer into a column that claims to be
+      // authoritative — every one of those rows would then assert an event
+      // date that is really a write date. NULL is the truth: we do not know
+      // when these happened.
+      const rows = db.prepare("SELECT occurred_at, timestamp FROM facts ORDER BY id")
+        .all() as Array<{ occurred_at: number | null; timestamp: number }>;
+      expect(rows.every(r => r.occurred_at === null)).toBe(true);
+      expect(rows.every(r => typeof r.timestamp === "number")).toBe(true);
+
+      expect(schemaVersion(db)).toBe(CURRENT_SCHEMA_VERSION);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("survives a database that has no facts table at all", () => {
+    // search-helpers.test.ts migrates a chunks-only DB. An unguarded CREATE
+    // INDEX on facts threw there and took the whole migration transaction with
+    // it, which would brick any install whose schema is shaped that way.
+    const db = new Database(":memory:");
+    try {
+      db.exec(`
+        CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        INSERT INTO meta (key, value) VALUES ('schema_version', '13');
+      `);
+      expect(() => migrateSchema(db, 13)).not.toThrow();
     } finally {
       db.close();
     }

@@ -51,6 +51,48 @@ interface ChunkRow {
   metadata: string | null;
 }
 
+/**
+ * WHEN the material these facts came from actually happened, epoch ms.
+ *
+ * Consolidation runs whenever it runs — often a day or more after the
+ * conversation — so Date.now() at write time is not the event time, and using
+ * it is what made a chat from the 22nd read as having happened on the 23rd.
+ *
+ * Preference order is deliberate. `metadata.date` is the chunk's own recorded
+ * date (session and daily-log chunks carry it; it is the same field
+ * search_past_sessions renders), so it is the closest thing to ground truth.
+ * `updated_at` is when the chunk row was last written — still far better than
+ * consolidation time, since chunks are written as the conversation happens.
+ *
+ * Returns null when NOTHING carries a date. Null is a real answer here: the
+ * renderer prints "date unknown" rather than inventing one, which is the whole
+ * point of separating this from the write timestamp.
+ *
+ * Uses the EARLIEST date across the chunks — a fact extracted from a span is
+ * attributed to when that span started, not to whichever chunk happened to be
+ * written last.
+ */
+function occurredAtFromChunks(chunks: ChunkRow[]): number | null {
+  let earliest: number | null = null;
+  for (const chunk of chunks) {
+    let when: number | null = null;
+    if (chunk.metadata) {
+      try {
+        const meta = JSON.parse(chunk.metadata) as { date?: unknown };
+        if (typeof meta.date === "string" && meta.date.trim()) {
+          const parsed = Date.parse(meta.date);
+          if (Number.isFinite(parsed)) when = parsed;
+        }
+      } catch { /* unparseable metadata is not a date */ }
+    }
+    if (when === null && Number.isFinite(chunk.updated_at) && chunk.updated_at > 0) {
+      when = chunk.updated_at;
+    }
+    if (when !== null && (earliest === null || when < earliest)) earliest = when;
+  }
+  return earliest;
+}
+
 function hasImportedOrUntrustedLineage(chunk: ChunkRow): boolean {
   if (chunk.source === "import" || chunk.path.startsWith("import/")) return true;
   if (!chunk.metadata) return false;
@@ -160,6 +202,7 @@ export async function runExtraction(
       const { facts, decisions } = await memory.retainSmart(gated, sourceFile, 0, {
         resolverOpts: { provider: opts.provider, model: opts.model },
         promotion,
+        occurredAt: occurredAtFromChunks(chunks),
       });
 
       result.factsExtracted += facts.length;

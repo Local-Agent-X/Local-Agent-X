@@ -17,6 +17,11 @@ export function retain(
   sourceFile: string,
   sourceLine = 0,
   promotion?: MemoryPromotionContext,
+  /** EVENT time of the source material, epoch ms. Omit when unknown — it is
+   *  written as NULL and renderers say so, rather than falling back to the
+   *  write time and asserting a date that is off by however long memory took
+   *  to run (see RetainedFact.occurredAt). */
+  occurredAt?: number | null,
 ): RetainedFact[] {
   assertMemoryPromotionAllowed(text, promotion?.target ?? "memory:retain", promotion);
   const facts: RetainedFact[] = [];
@@ -47,8 +52,8 @@ export function retain(
       const result = db
         .prepare(
           `INSERT INTO facts (kind, content, entities, confidence, evidence_for, evidence_against,
-           source_file, source_line, timestamp, last_updated, provenance)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           source_file, source_line, timestamp, last_updated, provenance, occurred_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .run(
           parsed.kind,
@@ -61,7 +66,8 @@ export function retain(
           sourceLine + i + 1,
           now,
           now,
-          promotion?.origin ?? null
+          promotion?.origin ?? null,
+          occurredAt ?? null
         );
 
       const factId = result.lastInsertRowid as number;
@@ -78,6 +84,7 @@ export function retain(
         sourceLine: sourceLine + i + 1,
         timestamp: now,
         lastUpdated: now,
+        occurredAt: occurredAt ?? null,
         provenance: promotion?.origin ?? null,
       };
 
@@ -128,7 +135,7 @@ export async function retainSmart(
   text: string,
   sourceFile: string,
   sourceLine = 0,
-  opts?: { candidateLimit?: number; resolverOpts?: { provider?: "ollama" | "anthropic" | "openai" | "auto"; model?: string }; promotion?: MemoryPromotionContext }
+  opts?: { candidateLimit?: number; resolverOpts?: { provider?: "ollama" | "anthropic" | "openai" | "auto"; model?: string }; promotion?: MemoryPromotionContext; occurredAt?: number | null }
 ): Promise<{ facts: RetainedFact[]; decisions: Array<{ content: string; op: string; targetId?: number; reason: string }> }> {
   assertMemoryPromotionAllowed(text, opts?.promotion?.target ?? "memory:retain", opts?.promotion);
   const { resolveFact } = await import("./resolver.js");
@@ -164,10 +171,11 @@ export async function retainSmart(
     try {
       const result = db.prepare(
         `INSERT INTO facts (kind, content, entities, confidence, evidence_for, evidence_against,
-           source_file, source_line, timestamp, last_updated, valid_from, provenance)
-         VALUES (?, ?, ?, ?, '[]', '[]', ?, ?, ?, ?, ?, ?)`
+           source_file, source_line, timestamp, last_updated, valid_from, provenance, occurred_at)
+         VALUES (?, ?, ?, ?, '[]', '[]', ?, ?, ?, ?, ?, ?, ?)`
       ).run(parsed.kind, parsed.content, entitiesJson, parsed.confidence,
-            sourceFile, sourceLine + i + 1, now, now, now, opts?.promotion?.origin ?? null);
+            sourceFile, sourceLine + i + 1, now, now, now, opts?.promotion?.origin ?? null,
+            opts?.occurredAt ?? null);
       const factId = result.lastInsertRowid as number;
 
       if (decision.op === "UPDATE" && decision.targetId !== undefined) {
@@ -187,6 +195,7 @@ export async function retainSmart(
         id: factId, kind: parsed.kind, content: parsed.content, entities: validEntities,
         confidence: parsed.confidence, evidenceFor: [], evidenceAgainst: [],
         sourceFile, sourceLine: sourceLine + i + 1, timestamp: now, lastUpdated: now,
+        occurredAt: opts?.occurredAt ?? null,
         validFrom: now, validTo: null, provenance: opts?.promotion?.origin ?? null,
       });
     } catch (e) {

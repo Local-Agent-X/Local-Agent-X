@@ -59,6 +59,12 @@ export const SKIP_DIRS = new Set([
   // every git command there died on Windows path-length limits ("Filename too
   // long"), wedging sync entirely.
   ".worktrees", ".pnpm-store", ".pnpm", ".yarn", ".turbo",
+  // Installed dependency trees, not the user's work. site-packages is the
+  // Python analogue of node_modules: a voice-synthesis venv under
+  // workspace/ put 16,452 of the mirror's 27,250 files inside one, and every
+  // push re-hashed all of them. ComfyUI is a checked-out third-party app —
+  // reinstallable, ~1k files, and nobody's cross-machine state.
+  "site-packages", "ComfyUI",
 ]);
 
 export const MAX_FILE_SIZE = 10_000_000;

@@ -125,25 +125,39 @@ export function canonicalToChatParam(
 
 /**
  * Append the prompt's per-op sections as the LAST row, framed as recalled
- * context — ALWAYS its own row, never folded into the row before it, even
- * when that row is a user message.
+ * context. Merged into the final row only when that row is EPHEMERAL — the
+ * loop's `ephemeralTailMessages` says the situational digest (or a redirect)
+ * is there, regenerated every round and never part of the next round's
+ * history — and otherwise its own row, never folded into a durable one.
  *
- * Measured on Ollama (qwen3.6:27b, 2026-09-22, replayed from traces): a round
- * whose array is a strict row-extension of the previous round reuses the
- * whole cached prompt (37,495 of 39,215 tokens); a round that changes the
- * BYTES of an existing row — the fold undone, because the row that was
- * "user text + this block" at round 0 is bare "user text" at round 1 — reuses
- * NOTHING, not even the system prompt (0 of 37,861). Two adjacent user rows
- * cost that runtime nothing. This is the local wire only, so the codex-shape
- * concern behind providers/sanitize.ts's collapsing does not apply here.
+ * Both halves are measured on Ollama (qwen3.6:27b, 2026-09-22/23, replayed
+ * from traces and read off kept runs):
+ *   - Folding into a DURABLE user row (the op's own message) is a row edit at
+ *     the next round — "text + block" becomes bare "text" — and the runtime
+ *     then reuses NOTHING, not even the system prompt (0 of 37,861). A strict
+ *     row-extension reuses everything (37,495 of 39,215). Hence never fold
+ *     into a durable row.
+ *   - Two adjacent user rows after a TOOL row (digest row, then this block as
+ *     its own row) cost the cache nothing, but qwen3.6 answered that shape
+ *     with an EMPTY reply once in two runs, and the adapter's empty-with-tools
+ *     latch then dropped native tools for the rest of the process. Merging
+ *     into the ephemeral digest row keeps the `…tool, user` shape 12b ran on
+ *     without incident; that row is replaced wholesale next round, so the
+ *     merge is a row-boundary change, not a row edit.
  */
 export function appendTrailingContext(
   messages: ChatCompletionMessageParam[],
   trailingContext: string | undefined,
+  ephemeralTailMessages = 0,
 ): ChatCompletionMessageParam[] {
   const body = trailingContext?.trim();
   if (!body) return messages;
-  return [...messages, { role: "user", content: `${RECALLED_CONTEXT_OPEN}\n${body}\n${RECALLED_CONTEXT_CLOSE}` }];
+  const framed = `${RECALLED_CONTEXT_OPEN}\n${body}\n${RECALLED_CONTEXT_CLOSE}`;
+  const last = messages.at(-1);
+  if (ephemeralTailMessages > 0 && last && last.role === "user" && typeof last.content === "string") {
+    return [...messages.slice(0, -1), { role: "user", content: `${last.content}\n\n${framed}` }];
+  }
+  return [...messages, { role: "user", content: framed }];
 }
 
 function extractImages(c: unknown): CanonicalImageRef[] {

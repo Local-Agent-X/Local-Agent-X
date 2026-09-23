@@ -171,6 +171,7 @@ export class OpenAICompatAdapter implements Adapter {
       messages: appendTrailingContext(
         canonicalToChatParam(input.messages, input.pendingRedirect, new Set(input.tools.map(t => t.name))),
         this.opts.trailingContext,
+        input.ephemeralTailMessages ?? 0,
       ),
       tools: input.tools.map(t => ({
         name: t.name,

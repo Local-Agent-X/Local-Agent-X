@@ -61,6 +61,25 @@ describe("trailing context on the local wire", () => {
     ]);
   });
 
+  it("merges into the trailing row when the loop declares it ephemeral (the digest row), so the wire never carries tool, user, user", async () => {
+    // qwen3.6 answered `…tool, user, user` with an EMPTY reply once in two
+    // runs and the empty-with-tools latch then dropped native tools for the
+    // rest of the process. The digest row is regenerated every round and is
+    // not in the next round's history, so merging into it is a row-boundary
+    // change (cache-safe), unlike folding into the op's own user row.
+    const digest = "[SITUATIONAL CONTEXT — system-generated, not from the user.] goal: read it";
+    const adapterOn = adapter(TAIL);
+    await adapterOn.runTurn({ ...input([
+      { messageId: "u1", role: "user", content: { text: "read it" } },
+      { messageId: "a1", role: "assistant", content: { text: "", toolCalls: [{ id: "c1", name: "read", arguments: "{}" }] } },
+      { messageId: "t1", role: "tool_result", content: { toolCallId: "c1", result: "contents", status: "ok" } },
+      { messageId: "sa-op-1", role: "user", content: { text: digest } },
+    ]), ephemeralTailMessages: 1 }, () => {});
+    const msgs = mockStream.mock.calls[0][0].messages as Array<{ role: string; content: unknown }>;
+    expect(msgs.map((m) => m.role)).toEqual(["user", "assistant", "tool", "user"]);
+    expect(String(msgs.at(-1)?.content)).toBe(`${digest}\n\n${RECALLED_CONTEXT_OPEN}\n${TAIL}\n${RECALLED_CONTEXT_CLOSE}`);
+  });
+
   it("after a tool round the block is the last row, after the tool row", async () => {
     await adapter(TAIL).runTurn(input([
       { messageId: "u1", role: "user", content: { text: "read it" } },

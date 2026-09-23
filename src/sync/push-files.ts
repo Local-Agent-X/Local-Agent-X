@@ -12,7 +12,7 @@ import {
   type SyncConfig,
   canonicalizeHomePaths,
 } from "./constants.js";
-import { mirrorDir, pruneSkippedDirs } from "./mirror.js";
+import { engineCheckoutMarker, mirrorDir, pruneSkippedDirs } from "./mirror.js";
 import { exportFactsForSync } from "./facts-sync.js";
 import { tombstonePaths, writeTombstonesForDeletedApps } from "./tombstones.js";
 
@@ -114,7 +114,12 @@ export async function copyToSync(dataDir: string, syncDir: string, config: SyncC
 
   if (config.syncWorkspace) {
     const workspace = workspaceRoot();
-    if (existsSync(workspace)) {
+    const checkout = engineCheckoutMarker(workspace);
+    if (checkout) {
+      // Refuse, do not skip around it: the user's real files are in there too
+      // and will not be backed up until the checkout is moved out.
+      logger.warn(`[sync] workspace NOT mirrored: ${checkout}. Move the checkout out of the workspace (git clone the engine somewhere else); the workspace is the user's files, not tooling state.`);
+    } else if (existsSync(workspace)) {
       // Workspace push uses tombstone-driven deletion (see
       // writeTombstonesForDeletedApps + applyTombstones). The mirror is
       // additive-only so local-only apps on other machines aren't

@@ -79,6 +79,30 @@ export async function mirrorDir(src: string, dest: string, additiveOnly = false)
  *
  * Returns the directories removed, for the caller to log.
  */
+/**
+ * The workspace root itself being a checkout of this engine. On 2026-07-22 a
+ * coding session used one machine's agent workspace as its repo checkout; the
+ * next day sync mirrored the checkout's src/, test/, public/ and the rest to
+ * every machine (2,171 files of stale engine source under workspace/src for
+ * two months, read by agents as if it were the engine). SKIP_DIRS already
+ * keeps .git and .worktrees out, so history never replicated — but nothing
+ * stopped the tree itself. A workspace that IS the engine is tooling state,
+ * and the mirror never ingests tooling state; the fix is to move the
+ * checkout out of the workspace, not to sync around it, so this refuses
+ * loudly instead of skipping quietly.
+ */
+export function engineCheckoutMarker(dir: string): string | null {
+  if (!existsSync(join(dir, ".git"))) return null;
+  const pkg = join(dir, "package.json");
+  if (!existsSync(pkg)) return null;
+  try {
+    const name = (JSON.parse(readFileSync(pkg, "utf-8")) as { name?: unknown }).name;
+    return name === "local-agent-x" ? `${dir} is a git checkout of local-agent-x (.git + package.json)` : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function pruneSkippedDirs(root: string): Promise<string[]> {
   const removed: string[] = [];
   const walk = async (dir: string): Promise<void> => {

@@ -1150,3 +1150,26 @@ replay tooling that reproduces it; not an experiment to keep spending model time
 
 Peter's rule from this experiment stands regardless of the outcome: side work runs on the model the session is on;
 if it ever needs sequencing, sequence — never reroute.
+
+---
+
+## EXP-14 — the learned no-tools latch is reversible (2026-09-23, in progress)
+
+Found by 12c's failed run: one empty reply with tools attached — after a native `remember` call on the round before
+— wrote `noTools: true` into the install's capability store, and the model lost native tools for the rest of the
+process and every process after (the store is persisted; the fix was editing model-capabilities.json). Every later
+"tool call" in that session was text-rescued and the case failed. The trigger shape was fixed in 12c's third cut;
+this is the class.
+
+**Change (457c2d04 + the 400-LOC split):** three rules, each pinned by a test in `providers/no-tools-latch.test.ts`:
+1. an empty reply never latches a model with a structured tool call on file (`toolsVerified.ok`) — a sampling
+   accident gets the per-turn retry only;
+2. a LEARNED latch expires after an hour (`NO_TOOLS_LATCH_TTL_MS`) — a genuinely incapable model re-latches at the
+   cost of one dead first leg per window, a capable one gets its tools back by itself; seeded latches are public
+   facts and never expire; a learned latch on disk with no timestamp predates the TTL and counts as expired;
+3. live evidence of a structured tool call clears a learned latch (`noteLiveToolCallEvidence`).
+The post-turn evidence block keeps its endpoint-only gate so it still runs for a verified model — that is the path
+that lifts a latch. `shouldLatchNoToolSupport` and `shouldRescueTextToolCalls` moved to `openai-compat/turn-policy.ts`.
+
+The eval cannot provoke an empty reply on demand (the shape that did is gone), so the verification is the test
+matrix plus the full split for no regression, both models.

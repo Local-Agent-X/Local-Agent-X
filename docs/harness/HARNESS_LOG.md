@@ -1129,3 +1129,24 @@ op until the cap. Calls on any other model never wait. Seven unit cases on the l
 
 What has to show: on the kept long-session runs, no `usage model=qwen3.6:27b` side call between two rounds of an
 op (the log will say "waiting for the foreground op" instead), and `/tool` back near the floor; then the full split.
+
+**Result: hypothesis refuted, REVERTED (48365b67).** The lease worked as designed — the server log shows three
+post-turn memory writes waiting for the op, no cap hits — and moved nothing: long-session 37.2k/msg, 32.5k/tool
+(two kept runs, 2/2 pass); injection-survives-compaction 8.97k/msg vs 8.87k before. The correlation across four
+kept stores had already said so, and I read past it: a 27B side call between two rounds does not predict a
+zero-cached round (one store: 16 misses with none; another: side calls with full reuse). The calls that still
+landed "inside" an op were the op's own turn-end hooks (curate, end-of-turn memory write) after its last round.
+
+**What is actually known about mid-op reuse on this runtime, from the replays (all with the same bytes):**
+- a strict row-extension whose previous LAST row is kept reuses everything (37,491 / 37,495 of ~39.2k);
+- the live shape — the previous last row (the ephemeral digest) replaced by the assistant row, new rows after —
+  reuses a flat ~35.4k, i.e. through the op's user message and ~1k short of the divergence point, in both
+  directions of the pair; the identical request twice reuses all of it;
+- some live rounds reuse nothing at all, unpredictably; the same request replayed later reuses ~35.4k.
+So the harness bytes are correct and the residual is runtime behaviour — slot choice, or a reuse granularity
+coarser than the token prefix — that the prompt cannot fix from this side. Recorded as an open question with the
+replay tooling that reproduces it; not an experiment to keep spending model time on until there is a new lever
+(a runtime-side setting, or a different runtime).
+
+Peter's rule from this experiment stands regardless of the outcome: side work runs on the model the session is on;
+if it ever needs sequencing, sequence — never reroute.

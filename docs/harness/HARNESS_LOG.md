@@ -1238,4 +1238,40 @@ manifest gate if ever); no reading skills live off the network as instructions �
 and refreshed with a diff the user approves. The eval fixture is unchanged: a hand-dropped SKILL.md in the
 import dir is exactly what the loader now stamps `workspace`.
 
+**Skills cases ×3 on the change (3087b57c):** 27B 8/12 (baseline 9/12 — the vercel arms flip 2/3↔1/3 either
+way; supabase 3/3 both arms as before). 8B 0/12 (baseline 0/12). Those numbers are not the measurement; the
+traces are:
+
+| arm (27B) | nudge in prompt | `protocol` in schema | `protocol get` called | skill body in context |
+|---|---|---|---|---|
+| vercel with skill | 3/3 | 3/3 | 3/3 | 3/3 |
+| vercel without | 0/3 | 0/3 | 0 | – |
+| supabase with skill | 0/3 | 0/3 | 0 | – |
+
+Baseline had 0 protocol calls in 12 runs; the seam is closed end to end for the case whose message matches the
+skill. Two findings from the rest of the table:
+
+1. **The supabase skill is never nudged because the message never says "supabase"** ("In the acme-api project,
+   add a customers table with id, email and created_at columns"). Replayed through the selector offline: that
+   wording → null; "…acme-api supabase project…" → `supabase-migrations`; "Add a database migration for a
+   customers table" → `supabase-migrations`. Correct behaviour for a message-only selector, and a real limit:
+   the project IS a Supabase project (supabase/config.toml is on disk) and the user has no reason to say so.
+   Project-aware triggering — a skill declaring the file that marks its project, matched against the workspace —
+   is the follow-up, not this experiment. On the 27B the case passes anyway because the model writes the
+   migration by hand; on the 8B it fails on both arms, so this case measures nothing on either model today.
+2. **The 8B sees the nudge and has the tool, and still does not load the skill** (3/3): its thinking opens with
+   "the available functions include build_app and setting, but deploying to Vercel isn't listed", calls
+   `request_secret` for a token, is declined, and circles. The nudge is the last section of a ~64k-char system
+   prompt; the 8B reasons from the tool list. A nudge carried IN the `protocol` tool's description on nudge turns
+   is the obvious next probe (it is where this model looks) — but that edits a prefix row on nudge turns, so it
+   costs a re-prefill and is its own experiment (EXP-16 candidate), not a tweak.
+
+**Rig hole found and closed (37b0c2d1):** one failed 27B run went `npx vercel deploy --temporary`. `npx` resolves
+the npm package, not PATH, so the fixture CLI was bypassed, the machine's REAL Vercel CLI (the one installed under
+LocalAgentX's node) ran, and a live anonymous deployment of the fixture site went to a vercel.app URL from inside
+the eval — expires in 60 minutes, nothing sensitive in it, but the eval left the machine. The rig now writes an
+`npx` shim into each server's bin dir: a same-named fixture runs, any other package is refused. Test pinned.
+
+**Full dev split (26 cases ×3, both models): running.** Keep decision below when it lands.
+
 ---

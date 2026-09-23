@@ -137,7 +137,7 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
       resolvedProvider: resolved.provider,
       resolvedModel: resolved.model,
       priorMethodology,
-      protocolSuggested: protocolSuggestion !== null,
+      protocolSuggestion,
     });
     end();
   }

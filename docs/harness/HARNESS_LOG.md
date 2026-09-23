@@ -1299,3 +1299,30 @@ noise floor on both models. Three items leave this experiment open-ended rather 
 ---
 
 ---
+
+## EXP-16 — the nudge rides in the protocol tool's description (2026-09-23, in progress)
+
+**Why.** EXP-15 closed the plumbing: on a nudge turn the 8B has the LEARNED WORKFLOW notice in its prompt and the
+`protocol` tool in its schema, 3/3 — and 3/3 it did not load the skill. Its thinking opens with "the available
+functions include build_app and setting, but deploying to Vercel isn't listed": it reasons from the tool list.
+The notice is the last section of a ~64k-char system prompt. So put the instruction where this model looks.
+
+**Change (profile flag `nudgeInToolDescription`, true on both test profiles for the experiment):** on a turn with
+a suggestion, `selectTools` rewrites the `protocol` tool's description for that turn only, prepending `FIRST, for
+this request: a stored protocol "<name>" matches it — call protocol(action:"get", params:{name:"<name>"})
+before any other tool, then follow it.` The prompt notice stays too (two channels). The session set remembers
+names, not bytes, so the description reverts the next turn: one re-prefill each way on nudge turns, the
+experiment's price. Test pinned in tool-selection-protocol-nudge.test.ts (flag on/off/unprofiled, other tools'
+bytes untouched, next turn plain).
+
+**Found on the way, fixed in the same commit:** the EXP-15 include was appended after the session memory was
+written, so a mission-routed session forgot `protocol` on the next turn — and it must sit after the tier shrink,
+because the shrink refills from the essential list and evicts every non-essential pick on the weak tier (that is
+why the 8B's 9-tool set never contains a RAG pick). The include now runs after the shrink, reads the session memory
+as well as the suggestion, compacts the tool like its neighbours, and is remembered. Not a measured regression —
+the skills cases are single-turn — but it was two re-prefills where one would do on any real multi-turn session.
+
+Measure: the four skills cases ×3 on both models (the vercel with-skill arm on the 8B is the target: nudge →
+`get` → body), then the full dev split both models before any keep.
+
+---

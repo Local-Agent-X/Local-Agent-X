@@ -81,6 +81,12 @@ export const ModelProfileSchema = z.object({
    *  the system message, so the runtime's prefix cache survives a new user
    *  message (chat-runner/local-prompt-split.ts). */
   stablePrefix: z.boolean(),
+  /** EXP-16: on a turn whose prompt carries a LEARNED WORKFLOW nudge, the
+   *  `protocol` tool's own description opens with the same instruction. A
+   *  small model reasons from its tool list, not from the tail of a 64k-char
+   *  system prompt (the 8B saw the nudge and had the tool 3/3 and still asked
+   *  for a token instead). Costs a prefix re-prefill on nudge turns. */
+  nudgeInToolDescription: z.boolean(),
   maxToolsExposed: z.number().int().positive(),
   toolsPerTurn: z.number().int().positive().nullable(),
   fewShotExamples: z.number().int().min(0),
@@ -246,6 +252,12 @@ export function modelStablePrefix(modelId: string): boolean {
 /** The window the declared profile measured, or null without a profile. Used
  *  to size the prompt before the runtime has loaded the model and reported
  *  its own — the first request of a session is the one that loads it. */
+/** EXP-16: whether a nudge turn also carries the instruction in the
+ *  `protocol` tool's description. Unprofiled models keep the prompt-only nudge. */
+export function modelNudgeInToolDescription(modelId: string): boolean {
+  return profileOrNull(modelId, "nudge stays in the prompt only")?.nudgeInToolDescription ?? false;
+}
+
 export function modelDeclaredContextWindow(modelId: string): number | null {
   return profileOrNull(modelId, "no declared context window")?.contextWindow ?? null;
 }

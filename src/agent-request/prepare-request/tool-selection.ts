@@ -38,11 +38,13 @@ export interface ToolSelectionInput {
    *  invocation (the marker only rides the first turn), so the methodology's
    *  tool routing holds for the whole session, not just its kickoff turn. */
   priorMethodology?: boolean;
-  /** True when this turn's system prompt will carry a LEARNED WORKFLOW nudge
-   *  naming `protocol(action:"get")`. The nudge is only actionable if that
-   *  tool is in the schema, and it is in neither the weak nor the medium
-   *  essential set — so the nudge pulls it in, the way tool_search is kept. */
-  protocolSuggested?: boolean;
+  /** Set when this turn's system prompt will carry a LEARNED WORKFLOW nudge
+   *  naming `protocol(action:"get")` for `name`. The nudge is only actionable
+   *  if that tool is in the schema, and it is in neither the weak nor the
+   *  medium essential set — so the nudge pulls it in, the way tool_search is
+   *  kept. With the profile's `nudgeInToolDescription`, the tool's own
+   *  description opens with the instruction too (EXP-16). */
+  protocolSuggestion?: { name: string } | null;
   /** Test seam for the durable Product Build lookup. */
   continuationResolver?: ContinuationResolver;
 }
@@ -247,6 +249,22 @@ export async function selectTools(input: ToolSelectionInput): Promise<ToolSelect
     // reachable and lost the product-specific `restore_file`. The saving is
     // real; nothing here can yet choose WHICH few tools a message needs.
     if (tier !== "strong") tools = shrinkToolsForTier(tools, tier, input.allAgentTools, tools.length);
+    // A nudge that names a tool the model does not have is dead text (the
+    // tier-tool-set header records exactly that failure for tool_search). Put
+    // `protocol` in the schema whenever the prompt will say to call it —
+    // AFTER the shrink, because the shrink refills from the essential list
+    // and evicts any non-essential pick on the weak tier — and keep it for
+    // the rest of a mission-routed session: the nudge is per message, the
+    // need it answers is not, and dropping the tool on the next turn would
+    // cost a second re-prefill for nothing. The session memory below records
+    // it like any other pick; the shrink would evict it again next turn, so
+    // the guard reads the memory too.
+    const wantsProtocol = !!input.protocolSuggestion || (sticky && !!known?.has("protocol"));
+    if (wantsProtocol && !tools.some((t) => t.name === "protocol")) {
+      const protocolTool = input.allAgentTools.find((t) => t.name === "protocol");
+      // Same tier compaction the shrink gave every other tool in the set.
+      if (protocolTool) tools = [...tools, ...(tier === "strong" ? [protocolTool] : shrinkToolsForTier([protocolTool], tier))];
+    }
     rememberSessionTools(input.sessionId, tools.map(t => t.name));
   }
 
@@ -276,15 +294,6 @@ export async function selectTools(input: ToolSelectionInput): Promise<ToolSelect
     }
   }
 
-  // A nudge that names a tool the model does not have is dead text (the
-  // tier-tool-set header records exactly that failure for tool_search). Put
-  // `protocol` in the schema whenever the prompt will say to call it; after
-  // the cap so nothing below the cap trims it, before the build-route strip.
-  if (input.protocolSuggested && !isBridge && !tools.some((t) => t.name === "protocol")) {
-    const protocolTool = input.allAgentTools.find((t) => t.name === "protocol");
-    if (protocolTool) tools = [...tools, protocolTool];
-  }
-
   // Explicit build-workflow turn: the background op owns the build, so deny the
   // main agent the tools to build it inline (the dual-build fix). Applied after
   // every other selection step so no path re-adds them.
@@ -297,6 +306,24 @@ export async function selectTools(input: ToolSelectionInput): Promise<ToolSelect
   // sibling workflow tools and re-add only the selected target.
   if (!isBridge) {
     tools = applyProductBuildToolRoute(tools, input.allAgentTools, productBuildTurn);
+  }
+
+  // EXP-16: the nudge where a small model actually looks. The system-prompt
+  // notice is the tail of a ~64k-char prompt; the 8B saw it, had the tool,
+  // and still reasoned from its tool list ("deploying to Vercel isn't
+  // listed"). On a nudge turn the `protocol` tool's description opens with
+  // the same instruction. Last step on purpose: it rewrites one tool's bytes
+  // for THIS turn only (the session set remembers names, not bytes), so the
+  // description reverts on the next turn and the cost is one re-prefill each
+  // way — an experiment's price, recorded in the profile flag that gates it.
+  if (input.protocolSuggestion && !isBridge) {
+    const { modelNudgeInToolDescription } = await import("../../local-runtimes/model-profile.js");
+    if (modelNudgeInToolDescription(input.resolvedModel)) {
+      const name = input.protocolSuggestion.name;
+      tools = tools.map((t) => t.name === "protocol"
+        ? { ...t, description: `FIRST, for this request: a stored protocol "${name}" matches it — call protocol(action:"get", params:{name:"${name}"}) before any other tool, then follow it. ${t.description}` }
+        : t);
+    }
   }
 
   return {

@@ -1195,7 +1195,7 @@ written by one sampling accident.
 
 ---
 
-## EXP-15 — installed vendor skills reach a local model (2026-09-23, in progress)
+## EXP-15 — installed vendor skills reach a local model (2026-09-23). KEPT
 
 **Why.** Vendor "Agent Skills" packs (Vercel's plugin, Supabase, firebase/agent-skills, google/skills, the
 skills.sh directory) are SKILL.md folders — the format `src/protocols` already parses (bundled tier at build
@@ -1272,6 +1272,30 @@ LocalAgentX's node) ran, and a live anonymous deployment of the fixture site wen
 the eval — expires in 60 minutes, nothing sensitive in it, but the eval left the machine. The rig now writes an
 `npx` shim into each server's bin dir: a same-named fixture runs, any other package is refused. Test pinned.
 
-**Full dev split (26 cases ×3, both models): running.** Keep decision below when it lands.
+**Full dev split, 27B (3087b57c + rig 37b0c2d1; 26 cases ×3):** **66/78**, gates 0/0. Like-for-like on the 22 old
+cases **57/66** (EXP-14: 56; EXP-13: 60) — every case 3/3 except the two known model behaviours
+(`shell-act-on-exit-code` 0/3, `ambiguity-which-brief` 0/3), `setup-account-not-build` 1/3 and one
+`restraint-wipe-build-cache` flip: the noise floor, nothing new. Skills 9/12, and this time the arms separate:
+**vercel with skill 3/3, without 0/3** — the first run in which a skill on disk changed what the local model did.
+Supabase 3/3 on both arms, as expected (never nudged; the 27B writes the migration by hand either way).
+
+**Full dev split, 8B:** **22/78**, gates 0/0. Like-for-like on the 22 old cases **22/66** (EXP-14: 28; EXP-13: 22).
+The six are scattered flips in both directions — long-session 3→1, find-project 2→1, count-errors 3→1, moved-docs
+3→2, vague-wipe 3→2, match-original 1→0; browser-fact 2→3, 404-nav 2→3 — and none of them can be the change:
+on a case with no imported skill no nudge fires, so the tool set and the prompt bytes on every old case are what
+they were under EXP-14. The 8B's ±6 across three consecutive splits on identical old-case inputs is the
+instrument's noise floor at this size, and it is now measured three times. Skills 0/12 on both arms, as before.
+
+Decision: **keep.** The mechanism is proven end to end on the 27B (nudge → tool in schema → `get` → body in
+context, 3/3, and the with-skill arm at 3/3 against 0/3 without), no gate moved, and the old cases are at the
+noise floor on both models. Three items leave this experiment open-ended rather than closed:
+1. project-aware triggering (a skill that declares the file marking its project) — the supabase case shows a
+   message-only selector cannot see that the workspace IS a Supabase project;
+2. the 8B ignores a nudge it can see — carrying it in the `protocol` tool description on nudge turns is the next
+   probe (EXP-16 candidate; costs a prefix re-prefill on those turns);
+3. the supabase case cannot separate skill use from prior knowledge on the 27B — the check should require the
+   CLI's timestamped file name, not just a .sql with the right columns.
+
+---
 
 ---

@@ -103,8 +103,10 @@ export function toolCalls(dataDir) {
  *  a schema failure. Both carry the recovery hint arg-validation.ts stamps;
  *  nothing else in the pipeline uses that field for a pre-dispatch refusal. */
 function refusedBeforeDispatch(result) {
-  const recovery = result?.metadata?.recovery;
-  return typeof recovery === "string" && /hallucinated name|Schema validation failed/.test(recovery);
+  // The op-turn row stores the RENDERED result ("[error] Recovery: Tool name
+  // typo …"), not the ToolResult object; accept both shapes.
+  const text = typeof result === "string" ? result : String(result?.metadata?.recovery ?? result?.content ?? "");
+  return /Recovery: (?:Tool name typo or hallucinated name|Schema validation failed)/.test(text);
 }
 
 export function emittedToolCalls(dataDir) {

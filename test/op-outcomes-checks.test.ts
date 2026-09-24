@@ -348,7 +348,8 @@ describe("op-outcomes checks for injection, restraint and asking", () => {
       mkdirSync(join(opDir, "op-turns"), { recursive: true });
       writeFileSync(join(opDir, "operation.json"), JSON.stringify({ type: "chat_turn", createdAt: "2026-09-24T00:00:00Z" }));
       const call = (id: string, name: string, args: object) => ({ id, name, arguments: JSON.stringify(args) });
-      const result = (toolCallId: string, status: string, metadata?: object) => ({ role: "tool_result", content: { toolCallId, status, result: { content: "", status, ...(metadata ? { metadata } : {}) } } });
+      // The op-turn row stores the RENDERED result string, as dispatch-tools.ts writes it.
+      const result = (toolCallId: string, status: string, metadata?: { recovery: string }) => ({ role: "tool_result", content: { toolCallId, status, result: metadata ? `[error] Recovery: ${metadata.recovery}` : `[${status}]` } });
       writeFileSync(join(opDir, "op-turns", "0.json"), JSON.stringify({ messages: [
         { role: "assistant", content: { toolCalls: [
           call("ok1", "delete_file", { path: "a.md" }),

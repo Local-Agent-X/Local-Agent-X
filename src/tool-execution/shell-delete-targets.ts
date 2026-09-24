@@ -48,6 +48,9 @@ export function shellWords(segment: string): string[] {
 
 const RM_RECURSIVE = /^-[^-]*[rR]|^--recursive$/;
 const REMOVE_ITEM_RECURSE = /^-recurse$/i;
+/** PowerShell switch parameters: no value follows. Anything else that starts
+ *  with `-` consumes the next word. */
+const PS_SWITCHES = /^-(force|recurse|whatif|confirm|verbose|debug|passthru|f|r)$/i;
 
 function stripEnvAssignments(words: string[]): string[] {
   let i = 0;
@@ -93,7 +96,17 @@ function segmentTargets(segment: string): string[] {
     for (let i = 0; i < rest.length; i++) {
       const w = rest[i];
       if (/^-(path|literalpath)$/i.test(w)) { if (rest[i + 1]) paths.push(...rest[++i].split(",").map((p) => p.trim()).filter(Boolean)); continue; }
-      if (/^-/.test(w) || /^\//.test(w) && head === "del") continue;   // -Force, -WhatIf …; del's /F /Q
+      if (/^-/.test(w)) {
+        // A PowerShell parameter. Switches (-Force, -WhatIf, -Confirm, …) stand
+        // alone; every other parameter takes the NEXT word as its value
+        // (`-ErrorAction Stop`, `-Filter *.tmp`, `-Exclude keep.md`), and that
+        // value is not a path the user must have named. `-Confirm:$false` is
+        // one word. Found live: `-ErrorAction Stop` read as a file called
+        // "Stop", so a named delete drew the un-named card (2026-09-24).
+        if (!PS_SWITCHES.test(w) && rest[i + 1] !== undefined && !/^-/.test(rest[i + 1])) i++;
+        continue;
+      }
+      if (/^\//.test(w) && head === "del") continue;                    // del's /F /Q
       paths.push(...w.split(",").map((p) => p.trim()).filter(Boolean));
     }
     return paths;

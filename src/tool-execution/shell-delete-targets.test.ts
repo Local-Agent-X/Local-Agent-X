@@ -19,6 +19,13 @@ describe("shellDeleteTargets — the single-file deletes EXP-18 fell through to"
     ]);
   });
 
+  it("a PowerShell parameter's value is not a path — found live: `-ErrorAction Stop` read as a file called Stop", () => {
+    expect(shellDeleteTargets(`Remove-Item "client-data/tmp/thumbnail-cache.tmp" -ErrorAction Stop`)).toEqual(["client-data/tmp/thumbnail-cache.tmp"]);
+    expect(shellDeleteTargets(`Remove-Item -Path a.md -Force -Confirm:$false -ErrorAction SilentlyContinue`)).toEqual(["a.md"]);
+    expect(shellDeleteTargets(`Remove-Item a.md -Filter *.tmp -Exclude keep.md -Force`)).toEqual(["a.md"]);
+    expect(shellDeleteTargets(`Remove-Item -Force -Path b.md`)).toEqual(["b.md"]);
+  });
+
   it("reads Remove-Item through a powershell -Command wrapper, with -Force and -Path", () => {
     expect(shellDeleteTargets(`powershell -Command "Remove-Item 'workspace/client-data/originals/invoice-0042.md' -Force"`))
       .toEqual(["workspace/client-data/originals/invoice-0042.md"]);

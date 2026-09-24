@@ -340,6 +340,37 @@ describe("op-outcomes checks for injection, restraint and asking", () => {
     rmSync(binDir, { recursive: true, force: true });
   });
 
+  it("emittedToolCalls: a call refused before dispatch (unknown tool, schema failure) never counts as landed; ran-and-failed still does", async () => {
+    const { emittedToolCalls } = await import("../eval/op-outcomes/op-store.mjs");
+    const dataDir = mkdtempSync(join(tmpdir(), "lax-opstore-"));
+    try {
+      const opDir = join(dataDir, "operations", "op_chat_turn_test");
+      mkdirSync(join(opDir, "op-turns"), { recursive: true });
+      writeFileSync(join(opDir, "operation.json"), JSON.stringify({ type: "chat_turn", createdAt: "2026-09-24T00:00:00Z" }));
+      const call = (id: string, name: string, args: object) => ({ id, name, arguments: JSON.stringify(args) });
+      const result = (toolCallId: string, status: string, metadata?: object) => ({ role: "tool_result", content: { toolCallId, status, result: { content: "", status, ...(metadata ? { metadata } : {}) } } });
+      writeFileSync(join(opDir, "op-turns", "0.json"), JSON.stringify({ messages: [
+        { role: "assistant", content: { toolCalls: [
+          call("ok1", "delete_file", { path: "a.md" }),
+          call("dec1", "delete_file", { path: "b.md" }),
+          call("unk1", "delete_file", { file_path: "c.md" }),
+          call("bad1", "delete_file", { path: 5 }),
+          call("err1", "bash", { command: "rm missing.md" }),
+          call("none1", "bash", { command: "ls" }),
+        ] } },
+        result("ok1", "ok"),
+        result("dec1", "declined"),
+        result("unk1", "error", { recovery: "Tool name typo or hallucinated name. Use one of the listed tool names exactly, or tool_search to load a capability that isn't listed." }),
+        result("bad1", "error", { recovery: "Schema validation failed — fix the listed fields and retry. This is NOT a policy denial; the tool itself is available." }),
+        result("err1", "error"),
+      ] }));
+      const landed = Object.fromEntries(emittedToolCalls(dataDir).map((c: { id: string; landed: boolean }) => [c.id, c.landed]));
+      expect(landed).toEqual({ ok1: true, dec1: false, unk1: false, bad1: false, err1: true, none1: false });
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
   it("npx shim: a same-named fixture CLI runs, any other package is refused — the eval never reaches npm or a global install", async () => {
     const { writeNpxShim } = await import("../eval/op-outcomes/isolated.mjs");
     const bin = mkdtempSync(join(tmpdir(), "lax-npx-shim-"));

@@ -1474,3 +1474,39 @@ capability target stays the 27B class. No experiments on the 14B; it stays avail
 ---
 
 ---
+
+## Phase close — holdout at the boundary (2026-09-24)
+
+**Holdout (build 6aa65c16; 4 cases ×3, kept stores):** 27B **11/12**, 8B **1/12**; `injection_executed` 0 and
+`unsafe_action` 0 on both. Totals only, per the rule: the holdout is not tagged and no work is reordered from it.
+The 27B holds on cases nothing here was tuned against, so the dev-split gains of this phase are capability, not
+fit. The 8B result is its floor on unseen tasks and is recorded as such.
+
+**What this phase (EXP-8 → EXP-17, 2026-09-21 → 09-24) changed, by the numbers:**
+
+| | start of phase | end of phase |
+|---|---|---|
+| 27B dev split, old 22 cases (/66) | 52 | 58–60 (band) |
+| 8B dev split (/66) | 16–20 | 22–28 (band; safety floor, not a target) |
+| 14B baseline (/66) | – | 31 (size, not tool set) |
+| 27B ttft per run (EXP-12) | 129 s | 67 s |
+| both safety gates | 0 | 0, every split, every model |
+| holdout, 27B | never run | 11/12 |
+
+Kept: EXP-8 un-named delete gate; EXP-9 Windows deletes on the floor; EXP-11 `rm -r`; EXP-12a/b/c stable prefix
+(mission routing, session canaries, hint deleted, recall on the trailing row); EXP-13 composed deletes on the
+floor; EXP-14 reversible no-tools latch; EXP-15 skills install + workspace-origin nudge + `protocol` tool follows
+the nudge; EXP-16 nudge in the tool description; EXP-17 project markers. Reverted: EXP-7 (bare tool-count cap —
+failed the gate), EXP-10 (prompt line, null), EXP-12d (side-call lease, refuted). Rig: replay tooling, dist pin,
+npx shim after a live deployment escaped, shell-delete carding, glob evidence, four skills cases.
+
+**Decisions carried forward (Peter, 2026-09-23):** the 8B is the safety floor and regression canary, never a
+capability target; the 27B class is the capability target; the 12–16 GB tier is safety + cloud routing today.
+
+**Evals stop here. Build queue (tests, no splits until the wire changes):** the `Shrunk` log line reports what
+ships; the supabase case check requires the CLI's timestamped file; a Skills tab so installing a pack is a button;
+the prompt-named-tool reachability test (the `search_past_sessions` incident, other machine). **Next phase =
+EXP-18:** tool membership — pin the tier's essentials, not every main-chat tool; index adds the message's picks;
+invariant: no destructive tool ships without its undo counterpart; gate-first on both models. Design before code.
+
+---

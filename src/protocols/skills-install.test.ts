@@ -158,6 +158,21 @@ describe("installSkills", () => {
     expect(existsSync(join(importedProtocolsDir(), "skill-creator", "LICENSE.txt"))).toBe(true);
   });
 
+  it("a frontmatter license that only points at a file defers to that file (anthropics/skills convention)", async () => {
+    const APACHE = "Apache License\nVersion 2.0, January 2004\n";
+    const repo = {
+      "skills/open/SKILL.md": "---\nname: open\ndescription: d\nlicense: Complete terms in LICENSE.txt\n---\nbody",
+      "skills/open/LICENSE.txt": APACHE,
+      "skills/closed/SKILL.md": "---\nname: closed\ndescription: d\nlicense: Proprietary. LICENSE.txt has complete terms\n---\nbody",
+      "skills/closed/LICENSE.txt": "All rights reserved. No redistribution.",
+      "skills/plain/SKILL.md": "---\nname: plain\ndescription: d\nlicense: MIT\n---\nbody",
+    };
+    const report = await installSkills({ repo: "acme/skills", fetchImpl: github(SHA1, repo) });
+    expect(report.installed.map((s) => s.name).sort()).toEqual(["open", "plain"]);
+    expect(JSON.parse(readFileSync(join(importedProtocolsDir(), "open", SOURCE_FILE), "utf-8")).license).toBe("Apache-2.0");
+    expect(report.skipped).toEqual([{ path: "skills/closed", reason: expect.stringMatching(/"Proprietary\. LICENSE\.txt has complete terms" is not one of/) }]);
+  });
+
   it("never overwrites a same-named folder that came from elsewhere without force", async () => {
     const dir = join(importedProtocolsDir(), "vercel-deploy");
     mkdirSync(dir, { recursive: true });
@@ -246,6 +261,21 @@ describe("dry run and remove (the UI's preview and its delete)", () => {
     const real = await installSkills({ repo: "acme/skills", fetchImpl: github(SHA1, REPO_V1) });
     expect(real.installed.map((s) => [s.name, s.files])).toEqual(preview.installed.map((s) => [s.name, s.files]));
     expect(existsSync(join(importedProtocolsDir(), "vercel-deploy", "resources", "flags.md"))).toBe(true);
+  });
+
+  it("`only` installs the picked skills and counts the rest as not selected, in dry run and for real", async () => {
+    const preview = await installSkills({ repo: "acme/skills", dryRun: true, only: ["supabase-migrations"], fetchImpl: github(SHA1, REPO_V1) });
+    expect(preview.installed.map((s) => s.name)).toEqual(["supabase-migrations"]);
+    expect(preview.notSelected).toBe(1);
+    expect(preview.skipped.map((s) => s.path)).toEqual(["skills/empty"]);
+    const real = await installSkills({ repo: "acme/skills", only: ["skills/Supabase Migrations"], fetchImpl: github(SHA1, REPO_V1) });
+    expect(real.installed.map((s) => s.name)).toEqual(["supabase-migrations"]);
+    expect(real.notSelected).toBe(1);
+    expect(existsSync(join(importedProtocolsDir(), "supabase-migrations", "SKILL.md"))).toBe(true);
+    expect(existsSync(join(importedProtocolsDir(), "vercel-deploy"))).toBe(false);
+    const none = await installSkills({ repo: "acme/skills", only: [], fetchImpl: github(SHA1, REPO_V1) });
+    expect(none.installed).toEqual([]);
+    expect(none.notSelected).toBe(2);
   });
 
   it("removes an installed pack and refuses a hand-written one", async () => {

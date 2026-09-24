@@ -129,6 +129,7 @@ export const handleProtocolRoutes: RouteHandler = async (method, url, req, res, 
         license: typeof body.license === "string" ? body.license : undefined,
         force: body.force === true,
         dryRun: body.dryRun === true,
+        only: Array.isArray(body.only) ? (body.only as unknown[]).filter((x): x is string => typeof x === "string") : undefined,
       });
       json(200, { ok: true, ...report });
     } catch (e) { json(400, { error: safeErrorMessage(e) }); }

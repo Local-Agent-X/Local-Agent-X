@@ -10,7 +10,7 @@ import type { ToolDefinition } from "../types.js";
 import { installSkills, listInstalledSkills, refreshSkill, type InstallReport, type RefreshReport } from "./skills-install.js";
 
 function renderInstall(report: InstallReport): string {
-  const lines = [`${report.repo}@${report.ref} pinned at ${report.commit.slice(0, 8)}: installed ${report.installed.length}, skipped ${report.skipped.length}.`];
+  const lines = [`${report.repo}@${report.ref} pinned at ${report.commit.slice(0, 8)}: installed ${report.installed.length}, skipped ${report.skipped.length}${report.notSelected ? `, ${report.notSelected} not selected` : ""}.`];
   for (const s of report.installed) {
     lines.push(`• ${s.name} ← ${s.path} (${s.files.length} file${s.files.length === 1 ? "" : "s"})${s.warnings.length ? `\n  warnings: ${s.warnings.join("; ")}` : ""}`);
   }
@@ -49,6 +49,7 @@ export function createSkillInstallTools(): ToolDefinition[] {
           path: { type: "string", description: "Only install skills under this folder of the repo" },
           license: { type: "string", description: "Assert the license when neither the SKILL.md nor the repo's LICENSE file declares one" },
           force: { type: "boolean", description: "Replace a same-named skill that came from elsewhere" },
+          only: { type: "array", items: { type: "string" }, description: "Install only these skills (names or repo paths); a large repo is a catalog, so pick from it" },
         },
         required: ["repo"],
       },
@@ -60,6 +61,7 @@ export function createSkillInstallTools(): ToolDefinition[] {
             path: typeof args.path === "string" ? args.path : undefined,
             license: typeof args.license === "string" ? args.license : undefined,
             force: args.force === true,
+            only: Array.isArray(args.only) ? (args.only as unknown[]).filter((x): x is string => typeof x === "string") : undefined,
           });
           return { content: renderInstall(report) };
         } catch (e) {

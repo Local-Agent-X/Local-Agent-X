@@ -67,6 +67,9 @@ export interface InstallOpts {
   /** Resolve, download and classify, but write nothing: the same report the
    *  real install would produce, so a UI can show it before the user commits. */
   dryRun?: boolean;
+  /** Install only these skills (by normalized name or repo path). A repo of
+   *  eighty skills is a catalog, not a pack; the user picks from it. */
+  only?: string[];
   fetchImpl?: typeof fetch;
 }
 
@@ -75,6 +78,8 @@ export interface InstallReport {
   repo: string; ref: string; commit: string;
   installed: InstalledSkill[];
   skipped: Array<{ path: string; reason: string }>;
+  /** Skills the repo has that `only` left out — a count, not noise in `skipped`. */
+  notSelected: number;
   notInstalled: { mcpServers: string[]; hooks: number; agents: number; commands: number };
 }
 
@@ -272,7 +277,8 @@ export async function installSkills(opts: InstallOpts): Promise<InstallReport> {
   const commit = await resolveCommit(r, fetchImpl);
   const scan = await scanArchive(await downloadArchive(r, commit, fetchImpl), r.path);
   const repo = `${r.owner}/${r.repo}`;
-  const report: InstallReport = { repo, ref: r.ref, commit, installed: [], skipped: [], notInstalled: scan.notInstalled };
+  const report: InstallReport = { repo, ref: r.ref, commit, installed: [], skipped: [], notSelected: 0, notInstalled: scan.notInstalled };
+  const only = opts.only ? new Set(opts.only.map((s) => s.trim())) : null;
   const root = importedProtocolsDir();
   for (const skill of scan.skills) {
     if (Buffer.byteLength(skill.skillMd) > MAX_SKILL_MD_BYTES) { report.skipped.push({ path: skill.path, reason: "SKILL.md over 512 KB" }); continue; }
@@ -280,12 +286,19 @@ export async function installSkills(opts: InstallOpts): Promise<InstallReport> {
     if (!parsed) { report.skipped.push({ path: skill.path, reason: "no usable name or body" }); continue; }
     const name = normalizeSkillName(parsed.name);
     if (!name) { report.skipped.push({ path: skill.path, reason: `name "${parsed.name}" normalizes to nothing` }); continue; }
+    if (only && !only.has(name) && !only.has(skill.path)) { report.notSelected += 1; continue; }
     // Precedence: the skill's own frontmatter, a LICENSE inside its folder, the
-    // repo's root LICENSE, then the user's assertion — the only one recorded as such.
-    const declared = parsed.source?.license || skill.license || scan.license || null;
+    // repo's root LICENSE, then the user's assertion — the only one recorded as
+    // such. A frontmatter value that merely points at a file ("Complete terms
+    // in LICENSE.txt", the anthropics/skills convention) is a pointer, not a
+    // license: it defers to the file it names.
+    const frontmatter = parsed.source?.license?.trim() || null;
+    const pointer = !!frontmatter && /\bLICENSE\b/i.test(frontmatter) && !licenseAllowed(frontmatter);
+    const declared = (pointer ? null : frontmatter) || skill.license || scan.license || null;
     const license = declared || opts.license?.trim() || null;
     if (!licenseAllowed(license)) {
-      report.skipped.push({ path: skill.path, reason: license ? `license "${license}" is not one of ${ALLOWED_LICENSES.join("/")}` : `no license found (frontmatter, the skill folder, or the repo root); pass license:"MIT" to assert one` });
+      const shown = license ?? (pointer ? frontmatter : null);
+      report.skipped.push({ path: skill.path, reason: shown ? `license "${shown}" is not one of ${ALLOWED_LICENSES.join("/")}` : `no license found (frontmatter, the skill folder, or the repo root); pass license:"MIT" to assert one` });
       continue;
     }
     const dir = join(root, name);

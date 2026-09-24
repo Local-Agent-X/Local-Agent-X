@@ -1,4 +1,5 @@
 import { resolve, relative } from "node:path";
+import { RETRIEVAL_RESULTS_INSTRUCTION } from "../../../harness-text.js";
 import type { MemoryIndex } from "../../../memory/index.js";
 
 export function memorySearchTool(memory: MemoryIndex) {
@@ -95,10 +96,7 @@ export function memorySearchTool(memory: MemoryIndex) {
       // trained to respect <tag>...</tag> boundaries as non-quoted context.
       const wrapped =
         `<search_results count="${results.length}" query="${query.replace(/"/g, "&quot;").slice(0, 100)}">\n` +
-        `INSTRUCTION: The text below contains snippets from your own memory retrieved for reference.\n` +
-        `Use the information to answer the user's question. DO NOT paste these snippets verbatim\n` +
-        `into your reply — they include old user/assistant turns that aren't your current response.\n` +
-        `Summarize the relevant facts in your own words.\n\n` +
+        `${RETRIEVAL_RESULTS_INSTRUCTION}\n\n` +
         formatted + "\n" +
         `</search_results>`;
 

@@ -1,6 +1,7 @@
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 
 import { createLogger } from "../logger.js";
+import { stripHarnessMarkers } from "../harness-text.js";
 import { guardedRewrite } from "./llm-rewrite-guard.js";
 
 const logger = createLogger("context-manager");
@@ -116,12 +117,20 @@ function clip(text: string, max: number): string {
 /** Bounded `[role]: text` transcript. Tool results (role "tool", or the
  *  canonical loop's "[tool result]"-prefixed user rows) are clipped hardest; if
  *  it still exceeds the budget, the oldest non-user rows are dropped first and
- *  user rows only after those run out. */
+ *  user rows only after those run out.
+ *
+ *  A tool row's framing is dropped before the clip so the budget buys the
+ *  tool's OUTPUT. memory_search wraps its hits in ~480 characters of harness
+ *  instruction, which is longer than a tool row's whole allowance: the clip
+ *  kept the envelope and cut every retrieved value, leaving a summary that
+ *  read like the search had returned nothing (2026-09-23). Framing the
+ *  harness wrote tells a summarizer nothing it needs. */
 export function buildSummaryTranscript(messages: ChatCompletionMessageParam[]): string {
   const rows = messages.map((m) => {
     const text = messageText(m);
     const kind = m.role === "tool" || text.startsWith("[tool result]") ? "tool" : m.role === "user" ? "user" : "assistant";
-    return { line: `[${m.role}]: ${clip(text, SUMMARY_CHARS_PER_KIND[kind])}`, isUser: kind === "user", dropped: false };
+    const body = kind === "tool" ? stripHarnessMarkers(text).trim() : text;
+    return { line: `[${m.role}]: ${clip(body, SUMMARY_CHARS_PER_KIND[kind])}`, isUser: kind === "user", dropped: false };
   });
   let total = rows.reduce((sum, r) => sum + r.line.length + 2, 0);
   for (const dropUsers of [false, true]) {

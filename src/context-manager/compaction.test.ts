@@ -38,6 +38,7 @@ vi.mock("../anthropic-client/index.js", () => ({
 }));
 
 import { buildSummaryTranscript, summarizeOldMessages } from "./compaction.js";
+import { RETRIEVAL_RESULTS_INSTRUCTION } from "../harness-text.js";
 
 const OLD_MESSAGES: ChatCompletionMessageParam[] = Array.from(
   { length: 30 },
@@ -151,6 +152,30 @@ describe("summarizeOldMessages — bounded transcript (local 16k dispatch window
     expect(transcript.length).toBeLessThanOrEqual(30_000 + 200);
     expect(transcript).toContain("never touch mail from jenny");
     expect(transcript).toContain("also skip anything with attachments");
+  });
+
+  // 2026-09-23: memory_search's envelope is ~480 chars of harness instruction,
+  // longer than a tool row's whole 400-char allowance. The clip kept the
+  // envelope and cut every retrieved value, so a compacted history showed a
+  // search that had "returned" nothing but its own disclaimer.
+  it("spends a tool row's budget on retrieved facts, not on the harness envelope", () => {
+    const hit = "[1] source=entity:a1c — Total T 891 ng/dL, Free T 19.1 pg/mL (from 14.6 then 8.6)";
+    const wrapped =
+      `<search_results count="6" query="testosterone test levels trend">
+` +
+      `${RETRIEVAL_RESULTS_INSTRUCTION}
+
+` +
+      `${hit}
+` +
+      `</search_results>`;
+    expect(wrapped.indexOf("891")).toBeGreaterThan(400);
+
+    const transcript = buildSummaryTranscript([{ role: "tool", tool_call_id: "t1", content: wrapped } as ChatCompletionMessageParam]);
+
+    expect(transcript).toContain("891");
+    expect(transcript).not.toContain("DO NOT paste these snippets verbatim");
+    expect(transcript).not.toContain("<search_results");
   });
 
   it("drops the oldest non-user rows before any user row when clipping is not enough", () => {

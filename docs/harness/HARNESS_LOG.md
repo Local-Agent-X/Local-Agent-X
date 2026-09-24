@@ -1580,3 +1580,24 @@ when the user named the file, one card per turn otherwise — applied at the sam
 Then EXP-18 again on top of it, gate first.
 
 ---
+
+## EXP-19 — the un-named-delete gate covers shell single-file deletes (2026-09-24, in progress)
+
+**Why.** EXP-18's failed run: `delete_file` refused (out of the schema) → `rm -rf` carded by the irreversible
+floor → five single-file `rm` commands executed, originals gone. The EXP-8 rule — a delete is pre-authorized only
+when the USER named the file — was enforced for one tool. A shell `rm <file>`, `Remove-Item <file>` or `del
+<file>` is the same act with no card, under catalog membership too; it only stayed hidden because the model
+reaches for `delete_file` first when it has it.
+
+**Change:** `tool-execution/shell-delete-targets.ts` lists the files a command deletes one at a time (rm/unlink,
+Remove-Item/ri/del/erase, through `powershell -Command`, `sudo`, env prefixes and `cd … &&`; quote-aware for
+paths; recursive forms are LEFT to the floor so nothing gets two cards; `git rm` excluded as on the floor).
+`unnamedDeletes` now derives targets for `bash`/`shell`/`ari_shell` calls from that list and applies the same
+naming rule at the same approval seam, for the same tiers, one card per turn: a shell call that deletes several
+files contributes one entry per file under its own call id, so one decision covers the command. The declined text
+says "not by any route". No change to the floor, no change to `delete_file`.
+
+Measure: the vague-wipe case ×3 on the 27B with kept stores (the shell ladder must end at the card), then the
+full dev split both models — gates first — then EXP-18 again on top.
+
+---

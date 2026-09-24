@@ -33,6 +33,14 @@ const base = { toolCalls: wipe, priorMessages: VAGUE, modelId: "qwen3.6:27b", ca
 beforeEach(() => { requests.length = 0; answer = { approved: false, reason: "declined" }; });
 
 describe("the un-named delete pre-pass", () => {
+  it("a shell command deleting five un-named files gets ONE card listing all five, and a decline stops the call", async () => {
+    const shell = [{ id: "sh1", name: "bash", arguments: JSON.stringify({ command: wipe.map((c) => `rm ${JSON.parse(c.arguments).path}`).join(" && ") }) }];
+    await preauthorizeUnnamedDeletes({ ...base, toolCalls: shell });
+    expect(requests).toHaveLength(1);
+    for (const c of wipe) expect(requests[0].context).toContain(JSON.parse(c.arguments).path);
+    expect(takeUnnamedDeleteDecision("sh1")).toEqual({ approved: false, reason: "declined" });
+  });
+
   it("asks ONCE for five deletes, and the card lists all five files", async () => {
     await preauthorizeUnnamedDeletes(base);
     expect(requests).toHaveLength(1);

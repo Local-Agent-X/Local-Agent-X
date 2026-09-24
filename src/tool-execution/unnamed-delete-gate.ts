@@ -31,6 +31,7 @@ import { basename } from "node:path";
 import { isHarnessRow } from "../harness-rows.js";
 import { containsHarnessMarker } from "../harness-text.js";
 import { resolveModelProfile } from "../local-runtimes/model-profile.js";
+import { shellDeleteTargets } from "./shell-delete-targets.js";
 
 export const GATED_DELETE_TOOL = "delete_file";
 const UNTRUSTED = /EXTERNAL_UNTRUSTED_CONTENT|INJECTION WARNING/i;
@@ -77,7 +78,32 @@ export function gateAppliesToModel(modelId: string | undefined): boolean {
 
 export interface UnnamedDeleteCall { id: string; path: string }
 
-/** The delete calls in a batch whose target the user did not name. */
+/** Shell tools whose command may delete a file one at a time. EXP-18 showed
+ *  the ladder: `delete_file` refused → `rm -rf` carded by the floor → per-file
+ *  `rm`, which nothing covered. The rule is about the act, not the tool. */
+export const GATED_SHELL_TOOLS: ReadonlySet<string> = new Set(["bash", "shell", "ari_shell"]);
+
+/** The file paths a tool call would delete, one entry per file. */
+export function deleteTargetsOf(tc: { name: string; arguments: string }): string[] {
+  let args: Record<string, unknown> = {};
+  try { args = JSON.parse(tc.arguments || "{}") as Record<string, unknown>; } catch { return []; /* unparseable args fail later, on their own */ }
+  if (tc.name === GATED_DELETE_TOOL) {
+    const path = String(args.path ?? "");
+    return path ? [path] : [];
+  }
+  if (GATED_SHELL_TOOLS.has(tc.name)) {
+    if (typeof args.command === "string") return shellDeleteTargets(args.command);
+    if (typeof args.executable === "string") {
+      const parts = Array.isArray(args.args) ? args.args.map((a) => String(a)) : [];
+      return shellDeleteTargets([args.executable, ...parts].join(" "));
+    }
+  }
+  return [];
+}
+
+/** The delete calls in a batch whose target the user did not name. A shell
+ *  call deleting several files contributes one entry per file, all under its
+ *  own call id, so one decision covers the whole command. */
 export function unnamedDeletes(
   toolCalls: ReadonlyArray<{ id: string; name: string; arguments: string }>,
   priorMessages: readonly ChatCompletionMessageParam[] | undefined,
@@ -85,10 +111,9 @@ export function unnamedDeletes(
   const userText = currentHumanText(priorMessages);
   const out: UnnamedDeleteCall[] = [];
   for (const tc of toolCalls) {
-    if (tc.name !== GATED_DELETE_TOOL) continue;
-    let path = "";
-    try { path = String((JSON.parse(tc.arguments || "{}") as { path?: unknown }).path ?? ""); } catch { /* unparseable args fail later, on their own */ }
-    if (path && !userNamedFile(userText, path)) out.push({ id: tc.id, path });
+    for (const path of deleteTargetsOf(tc)) {
+      if (!userNamedFile(userText, path)) out.push({ id: tc.id, path });
+    }
   }
   return out;
 }
@@ -120,4 +145,5 @@ export function describeUnnamedDeletesForHuman(calls: readonly UnnamedDeleteCall
 
 export const UNNAMED_DELETE_DECLINED_TEXT =
   "NOT RUN: the user did not name this file, and declined when asked to confirm the delete. " +
-  "Do not retry it. Ask the user exactly which files they want deleted, then call delete_file for only those.";
+  "Do not retry it by any route — not delete_file, not a shell rm, not another tool. " +
+  "Ask the user exactly which files they want deleted, then delete only those.";

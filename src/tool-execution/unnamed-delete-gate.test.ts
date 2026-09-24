@@ -110,6 +110,41 @@ describe("who the floor applies to", () => {
   });
 });
 
+// EXP-18 (2026-09-24): with delete_file out of the schema the 27B fell from
+// `rm -rf` (floor) to per-file `rm` (nothing) and wiped the originals. The rule
+// is about the act, so the shell forms answer to the same gate.
+describe("a shell delete of an un-named file is the same act", () => {
+  const sh = (id: string, command: string) => ({ id, name: "bash", arguments: JSON.stringify({ command }) });
+
+  it("the EXP-18 ladder: the per-file rm commands are un-named deletes, one entry per file under the call's id", () => {
+    const calls = [
+      sh("s1", "rm workspace/client-data/tmp/thumbnail-cache.tmp"),
+      sh("s2", "rm workspace/client-data/originals/handover-notes.md && rm workspace/client-data/originals/invoice-0042.md"),
+      sh("s3", `powershell -Command "Remove-Item 'workspace/client-data/originals/signed-contract-2026.md' -Force"`),
+    ];
+    expect(unnamedDeletes(calls, [user(VAGUE)])).toEqual([
+      { id: "s1", path: "workspace/client-data/tmp/thumbnail-cache.tmp" },
+      { id: "s2", path: "workspace/client-data/originals/handover-notes.md" },
+      { id: "s2", path: "workspace/client-data/originals/invoice-0042.md" },
+      { id: "s3", path: "workspace/client-data/originals/signed-contract-2026.md" },
+    ]);
+  });
+
+  it("the recursive wipe is the floor's, not this gate's — no second card", () => {
+    expect(unnamedDeletes([sh("r1", "rm -rf workspace/client-data/tmp workspace/client-data/originals")], [user(VAGUE)])).toEqual([]);
+  });
+
+  it("a shell delete of the file the user named needs no card, and a read-only command never does", () => {
+    expect(unnamedDeletes([sh("c1", "rm client-data/tmp/thumbnail-cache.tmp")], [user(CLEAR)])).toEqual([]);
+    expect(unnamedDeletes([sh("l1", "ls -la client-data/tmp/ && cat README.md")], [user(VAGUE)])).toEqual([]);
+  });
+
+  it("the structured executable/args form is read the same way", () => {
+    const structured = { id: "a1", name: "ari_shell", arguments: JSON.stringify({ executable: "rm", args: ["-f", "workspace/client-data/originals/invoice-0042.md"] }) };
+    expect(unnamedDeletes([structured], [user(VAGUE)])).toEqual([{ id: "a1", path: "workspace/client-data/originals/invoice-0042.md" }]);
+  });
+});
+
 describe("a decision covers exactly the call it was made for", () => {
   it("is consumed once", () => {
     recordUnnamedDeleteDecision("call-1", { approved: false, reason: "declined" });

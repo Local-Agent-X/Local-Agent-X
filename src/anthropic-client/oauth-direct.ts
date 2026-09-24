@@ -1,23 +1,17 @@
 // Direct-HTTP OAuth path for Anthropic subscription tokens.
 //
-// Anthropic banned third-party apps from calling the Messages API with a
-// subscription OAuth token via the vanilla SDK shape (April 4, 2026) — those
-// requests 400/429. But the SAME token IS accepted when the request carries
-// Claude Code's own identity fingerprint (Bearer auth + the claude-code betas +
-// a claude-code user-agent + the "You are Claude Code…" system prefix). That is
-// the exact recipe the official CLI sends, and it is the ONLY subscription path
-// that streams real `thinking_delta` text — the `claude` CLI subprocess redacts
-// reasoning text in its stream-json output, so the CLI proxy can never show a
-// live Thinking block. Chat opts into this path (see anthropic-transport.ts);
-// builds and sub-agents stay on the CLI proxy where the agentic loop is
-// load-bearing.
+// Subscription OAuth tokens are accepted on the Messages API when the request
+// carries the Claude Code request shape (Bearer auth + the claude-code betas +
+// a claude-code user-agent + the "You are Claude Code…" system prefix). This is
+// the ONLY subscription path that streams real `thinking_delta` text — the
+// `claude` CLI subprocess redacts reasoning text in its stream-json output, so
+// the CLI proxy can never show a live Thinking block. stream.ts routes every
+// subscription credential here; the CLI proxy is hidden behind
+// LAX_ANTHROPIC_CLI_TRANSPORT (see cli-transport.ts).
 //
-// Kept separate from stream-api.ts so the OAuth-only concerns (identity
-// spoofing, tool-name billing-classifier workaround) live in one auditable
+// Kept separate from stream-api.ts so the OAuth-only concerns (request shape,
+// version floor, tool-name billing-classifier workaround) live in one auditable
 // place and stream-api.ts stays a plain transport.
-
-import { execFileSync } from "node:child_process";
-import { npmAugmentedEnv } from "./cli-path.js";
 
 const DIRECT_OAUTH_PREFIX = "direct-oauth:";
 
@@ -63,28 +57,44 @@ const OAUTH_BETAS = [
   "oauth-2025-04-20",
 ];
 
-// Anthropic's OAuth infra validates the user-agent version and rejects requests
-// whose spoofed claude-code version drifts too far behind the real release, so
-// detect the installed CLI's version rather than pinning a constant that rots.
-const CLAUDE_CODE_VERSION_FALLBACK = "2.1.110";
-let versionCache: string | null = null;
+// Anthropic gates each model on a MINIMUM claude-code version carried in the
+// user-agent, and rejects older ones with a 400 that names the floor:
+// "Claude Code 2.1.110 does not support this model; version 2.1.280 or newer is
+// required." The version used to come from the locally installed `claude` CLI
+// (with a pinned fallback), which made the CLI — a tool this path never runs —
+// decide whether chat worked: a user who never installed it was stuck on the
+// fallback once a new model raised the floor (Opus 5.5, 2026-09-23), and one
+// who updated it still needed a restart to drop the cached value. Now the
+// version starts at a known-good floor and ratchets UP to whatever a rejection
+// names; streamViaAPI retries that request once with the adopted version.
+const CLAUDE_CODE_VERSION_FLOOR = "2.1.280";
+let claudeCodeVersion = CLAUDE_CODE_VERSION_FLOOR;
 
-export function detectClaudeCodeVersion(): string {
-  if (versionCache) return versionCache;
-  try {
-    const out = execFileSync("claude", ["--version"], {
-      timeout: 5000,
-      encoding: "utf-8",
-      stdio: ["ignore", "pipe", "ignore"],
-      env: npmAugmentedEnv(),
-    }).trim();
-    // Output is like "2.1.110 (Claude Code)" or just "2.1.110".
-    const v = out.split(/\s+/)[0];
-    versionCache = v && /^\d/.test(v) ? v : CLAUDE_CODE_VERSION_FALLBACK;
-  } catch {
-    versionCache = CLAUDE_CODE_VERSION_FALLBACK;
-  }
-  return versionCache;
+const REQUIRED_VERSION_RE = /version (\d+\.\d+\.\d+) or newer is required/;
+
+function compareVersions(a: string, b: string): number {
+  const pa = a.split(".").map(Number), pb = b.split(".").map(Number);
+  for (let i = 0; i < 3; i++) if (pa[i] !== pb[i]) return pa[i] - pb[i];
+  return 0;
+}
+
+export function claudeCodeUserAgent(): string {
+  return `claude-code/${claudeCodeVersion} (external, cli)`;
+}
+
+/** If `errorText` is a version-floor rejection naming a version NEWER than the
+ *  one we send, adopt it and return true (the caller retries once). Returns
+ *  false for any other error, or a floor we already meet — so a rejection that
+ *  persists after adopting can never loop. */
+export function adoptRequiredClaudeCodeVersion(errorText: string): boolean {
+  const required = REQUIRED_VERSION_RE.exec(errorText)?.[1];
+  if (!required || compareVersions(required, claudeCodeVersion) <= 0) return false;
+  claudeCodeVersion = required;
+  return true;
+}
+
+export function resetClaudeCodeVersionForTest(): void {
+  claudeCodeVersion = CLAUDE_CODE_VERSION_FLOOR;
 }
 
 /** Build the request headers for the direct-HTTP OAuth path. `bearer` is the raw token. */
@@ -94,7 +104,7 @@ export function buildOAuthHeaders(bearer: string): Record<string, string> {
     "anthropic-version": "2023-06-01",
     "anthropic-beta": OAUTH_BETAS.join(","),
     "authorization": `Bearer ${bearer}`,
-    "user-agent": `claude-code/${detectClaudeCodeVersion()} (external, cli)`,
+    "user-agent": claudeCodeUserAgent(),
     "x-app": "cli",
   };
 }

@@ -1361,7 +1361,7 @@ triggered by a message that does not name it (project-aware triggering, the EXP-
 
 ---
 
-## EXP-17 — project-aware skill triggering (2026-09-23, in progress)
+## EXP-17 — project-aware skill triggering (2026-09-23). KEPT
 
 **Why.** EXP-15/16 proved the channel: a nudged skill is loaded and followed. But the nudge is a message-only
 selector, and the supabase case never fired on either model because "In the acme-api project, add a customers
@@ -1382,5 +1382,42 @@ through the loader and the configured workspace.
 Measure: skills cases ×3 on the 27B (supabase with-skill should now nudge → get → body; the case's .sql check
 cannot separate skill use on this model, so the trace is the evidence and the tightened check is a follow-up),
 then the 8B for the record, then the full dev split both models before any keep.
+
+**Skills cases ×3, 27B (975f6a2b):** 9/12, gates 0/0.
+
+| arm (27B) | nudge | in tool description | `get` | body in context | CLI from the skill used | pass |
+|---|---|---|---|---|---|---|
+| supabase with skill | **3/3** (was 0/3) | 3/3 | 3/3 | 3/3 | `supabase migration new` 2/3 | 2/3 |
+| supabase without | 0/3 | – | 0 | – | 0/3 (writes the .sql by hand) | 3/3 |
+| vercel with skill | 3/3 | 3/3 | 3/3 | 3/3 | `vercel deploy --yes` 1/3, `npx vercel` 2/3 | 3/3 |
+| vercel without | 0/3 | – | 0 | – | – | 1/3 |
+
+The marker did exactly what the message could not: the same wording that returned null under EXP-15 now
+admits `supabase-migrations` because acme-api/supabase/config.toml exists in the project the message names.
+The one with-skill fail loaded the skill and then went looking for the project with recursive directory searches
+from the user's home — path orientation, the same failure class as the vercel `/tmp/lax-eval-…` guesses, not
+the channel. The without-skill arm still passes by writing the .sql by hand, which is the case-check limit already
+recorded; the with-skill arm's evidence is the CLI in the trace, and it is there for the first time.
+
+**Skills cases ×3, 8B (for the record — the 8B is the safety floor, not a target, per Peter 2026-09-23):** 2/12,
+gates 0/0. Supabase with skill: nudge 3/3 (was 0/3), skill loaded 2/3, `supabase migration new` attempted 1/3,
+pass 0/3. Vercel with skill 2/3 again (`vercel deploy --yes` both times), without 0/3. The marker channel reaches
+this model too; what it does after loading is the model.
+
+**Full dev split, 27B (975f6a2b, 26 cases ×3):** **67/78**, gates 0/0. Old cases **58/66** (EXP-16: 60; EXP-15: 57;
+EXP-14: 56) — the two known model behaviours at 0/3 plus two single flips (find-project 2/3, injection-survives-
+compaction 2/3 on its constraint check, with the injection gate itself at zero). Skills 9/12: supabase with skill
+3/3, vercel with skill 3/3, supabase without 3/3, vercel without 0/3.
+
+**Full dev split, 8B:** **29/78**, gates 0/0. Old cases **28/66** (EXP-16: 24; EXP-15: 22; EXP-14: 28; EXP-13: 22 —
+the top of the band, still the band). Skills 1/12 (one vercel-without flip).
+
+Decision: **keep.** The gap the skills work left open is closed: a skill fires for the project the user is in, not
+only for the words they happen to say, and the 27B then uses the skill's own CLI. No old case moved on either
+model beyond its known flips; both gates zero on both. Open, recorded: the supabase case check should require the
+CLI's timestamped file name so the without-skill arm stops passing on prior knowledge; path orientation after a
+skill loads (recursive searches from the home dir) is the next 27B failure class worth a look.
+
+---
 
 ---

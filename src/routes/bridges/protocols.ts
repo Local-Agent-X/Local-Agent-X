@@ -60,6 +60,23 @@ export const handleProtocolRoutes: RouteHandler = async (method, url, req, res, 
     } catch (e) { json(500, { error: safeErrorMessage(e) }); }
     return true;
   }
+  // Installed skill packs (skills-install.ts): repo-pinned SKILL.md folders.
+  // "packs" is a reserved protocol name at the HTTP layer, like "archived".
+  if (method === "GET" && url.pathname === "/api/protocols/packs") {
+    try {
+      const { listInstalledSkills } = await import("../../protocols/skills-install.js");
+      json(200, { packs: listInstalledSkills() });
+    } catch (e) { json(500, { error: safeErrorMessage(e) }); }
+    return true;
+  }
+  if (method === "DELETE" && url.pathname.match(/^\/api\/protocols\/packs\/[^/]+$/)) {
+    const name = decodeURIComponent(url.pathname.split("/").pop()!);
+    try {
+      const { removeInstalledSkill } = await import("../../protocols/skills-install.js");
+      json(200, { ok: true, ...removeInstalledSkill(name) });
+    } catch (e) { json(400, { error: safeErrorMessage(e) }); }
+    return true;
+  }
   // Detail endpoint — full record including body, steps, rules, allowedTools.
   if (method === "GET" && url.pathname.match(/^\/api\/protocols\/[^/]+$/)) {
     const name = decodeURIComponent(url.pathname.split("/").pop()!);
@@ -111,6 +128,7 @@ export const handleProtocolRoutes: RouteHandler = async (method, url, req, res, 
         path: typeof body.path === "string" ? body.path : undefined,
         license: typeof body.license === "string" ? body.license : undefined,
         force: body.force === true,
+        dryRun: body.dryRun === true,
       });
       json(200, { ok: true, ...report });
     } catch (e) { json(400, { error: safeErrorMessage(e) }); }

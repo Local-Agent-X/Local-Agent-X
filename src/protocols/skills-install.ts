@@ -64,10 +64,13 @@ export interface InstallOpts {
   license?: string;
   /** Overwrite a folder that was not installed from this repo. */
   force?: boolean;
+  /** Resolve, download and classify, but write nothing: the same report the
+   *  real install would produce, so a UI can show it before the user commits. */
+  dryRun?: boolean;
   fetchImpl?: typeof fetch;
 }
 
-export interface InstalledSkill { name: string; path: string; files: string[]; warnings: string[] }
+export interface InstalledSkill { name: string; path: string; description: string; files: string[]; warnings: string[] }
 export interface InstallReport {
   repo: string; ref: string; commit: string;
   installed: InstalledSkill[];
@@ -115,7 +118,14 @@ async function downloadArchive(r: RepoRef, commit: string, fetchImpl: typeof fet
 
 // ── Archive walk ──────────────────────────────────────────────────────────
 
-interface ArchiveSkill { path: string; skillMd: string; siblings: Array<{ rel: string; entry: JSZip.JSZipObject }> }
+interface ArchiveSkill {
+  path: string;
+  skillMd: string;
+  siblings: Array<{ rel: string; entry: JSZip.JSZipObject }>;
+  /** A LICENSE file inside the skill folder itself — how anthropics/skills
+   *  and other multi-skill repos license per skill rather than per repo. */
+  license: string | null;
+}
 interface ArchiveScan { skills: ArchiveSkill[]; license: string | null; notInstalled: InstallReport["notInstalled"] }
 
 function unsafeEntryName(name: string): boolean {
@@ -160,7 +170,11 @@ async function scanArchive(zip: JSZip, onlyPath: string | undefined): Promise<Ar
       .filter((e) => { const s = rel(e.name); return s.startsWith(`${dir}/`) && s !== r && !unsafeEntryName(s); })
       .map((e) => ({ rel: rel(e.name).slice(dir.length + 1), entry: e }))
       .sort((a, b) => a.rel.localeCompare(b.rel));
-    skills.push({ path: dir, skillMd: await entry.async("string"), siblings });
+    const ownLicense = siblings.find((s) => /^LICENSE(\.(md|txt))?$/i.test(s.rel));
+    skills.push({
+      path: dir, skillMd: await entry.async("string"), siblings,
+      license: ownLicense ? detectLicense(await ownLicense.entry.async("string")) : null,
+    });
   }
   return { skills, license, notInstalled };
 }
@@ -266,9 +280,12 @@ export async function installSkills(opts: InstallOpts): Promise<InstallReport> {
     if (!parsed) { report.skipped.push({ path: skill.path, reason: "no usable name or body" }); continue; }
     const name = normalizeSkillName(parsed.name);
     if (!name) { report.skipped.push({ path: skill.path, reason: `name "${parsed.name}" normalizes to nothing` }); continue; }
-    const license = parsed.source?.license || scan.license || opts.license?.trim() || null;
+    // Precedence: the skill's own frontmatter, a LICENSE inside its folder, the
+    // repo's root LICENSE, then the user's assertion — the only one recorded as such.
+    const declared = parsed.source?.license || skill.license || scan.license || null;
+    const license = declared || opts.license?.trim() || null;
     if (!licenseAllowed(license)) {
-      report.skipped.push({ path: skill.path, reason: license ? `license "${license}" is not one of ${ALLOWED_LICENSES.join("/")}` : `no license found (frontmatter or LICENSE file); pass license:"MIT" to assert one` });
+      report.skipped.push({ path: skill.path, reason: license ? `license "${license}" is not one of ${ALLOWED_LICENSES.join("/")}` : `no license found (frontmatter, the skill folder, or the repo root); pass license:"MIT" to assert one` });
       continue;
     }
     const dir = join(root, name);
@@ -278,16 +295,30 @@ export async function installSkills(opts: InstallOpts): Promise<InstallReport> {
       continue;
     }
     const lint = lintSkillBody(parsed.body ?? "");
-    const files = await writeSkill(dir, { ...skill, skillMd: pinFrontmatterName(skill.skillMd, name) }, {
-      version: 1, repo, ref: r.ref, commit, path: skill.path,
-      url: `https://github.com/${repo}/tree/${commit}/${skill.path}`,
-      license: license!, ...(parsed.source?.license || scan.license ? {} : { licenseAssertedBy: "user" as const }),
-      installedAt: new Date().toISOString(),
-    }, lint);
-    report.installed.push({ name, path: skill.path, files, warnings: lint });
+    const files = opts.dryRun
+      ? ["SKILL.md", ...skill.siblings.slice(0, MAX_FILES_PER_SKILL - 1).map((s) => s.rel)]
+      : await writeSkill(dir, { ...skill, skillMd: pinFrontmatterName(skill.skillMd, name) }, {
+        version: 1, repo, ref: r.ref, commit, path: skill.path,
+        url: `https://github.com/${repo}/tree/${commit}/${skill.path}`,
+        license: license!, ...(declared ? {} : { licenseAssertedBy: "user" as const }),
+        installedAt: new Date().toISOString(),
+      }, lint);
+    report.installed.push({ name, path: skill.path, description: parsed.description, files, warnings: lint });
   }
-  logger.info(`[skills] ${repo}@${commit.slice(0, 8)}: installed ${report.installed.length}, skipped ${report.skipped.length}`);
+  if (!opts.dryRun) logger.info(`[skills] ${repo}@${commit.slice(0, 8)}: installed ${report.installed.length}, skipped ${report.skipped.length}`);
   return report;
+}
+
+/** Remove an installed pack. Only a folder carrying install provenance goes;
+ *  a hand-written SKILL.md in the same directory is the user's and is refused. */
+export function removeInstalledSkill(name: string): { name: string; repo: string } {
+  const slug = normalizeSkillName(name);
+  const dir = join(importedProtocolsDir(), slug);
+  const source = readInstalledSource(dir);
+  if (!source) throw new Error(`"${name}" is not a skill installed from a repo (no ${SOURCE_FILE}); remove it by hand if it is yours`);
+  rmSync(dir, { recursive: true, force: true });
+  logger.info(`[skills] removed ${slug} (${source.repo}@${source.commit.slice(0, 8)})`);
+  return { name: slug, repo: source.repo };
 }
 
 // ── Refresh ───────────────────────────────────────────────────────────────

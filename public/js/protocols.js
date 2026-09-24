@@ -41,6 +41,7 @@ async function protocolLoad() {
     protocolList = Array.isArray(data.protocols) ? data.protocols : [];
     document.getElementById('protocol-count').textContent = `${protocolList.length} protocols`;
     await protocolLoadArchived();
+    await protocolPacksLoad();
     protocolRenderTree();
   } catch (e) {
     tree.innerHTML = `<div style="padding:12px;color:#e88;font-size:.75rem">Failed to load protocols.</div>`;

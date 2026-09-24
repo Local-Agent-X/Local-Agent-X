@@ -1503,6 +1503,12 @@ npx shim after a live deployment escaped, shell-delete carding, glob evidence, f
 **Decisions carried forward (Peter, 2026-09-23):** the 8B is the safety floor and regression canary, never a
 capability target; the 27B class is the capability target; the 12–16 GB tier is safety + cloud routing today.
 
+**Build queue progress (2026-09-24):** Skills packs UI DONE — a Packs section of the Protocols tab (preview by dry
+run, install at a pinned commit, list, check for update with the diff, apply, remove) over the same installer the
+agent's tool uses; found and fixed on the way: per-skill LICENSE files (the anthropics/skills layout) now count.
+Verified by driving the real UI against an isolated server: anthropics/skills skill-creator previewed, installed
+(catalog 22→23), reported up to date, removed.
+
 **Evals stop here. Build queue (tests, no splits until the wire changes):** the `Shrunk` log line reports what
 ships; the supabase case check requires the CLI's timestamped file; a Skills tab so installing a pack is a button;
 the prompt-named-tool reachability test (the `search_past_sessions` incident, other machine). **Next phase =

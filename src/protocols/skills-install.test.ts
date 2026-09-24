@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { setRuntimeConfig, getRuntimeConfig } from "../config.js";
 import type { LAXConfig } from "../types.js";
 import {
-  installSkills, refreshSkill, listInstalledSkills, parseRepoRef, lintSkillBody, normalizeSkillName, SOURCE_FILE,
+  installSkills, refreshSkill, listInstalledSkills, removeInstalledSkill, parseRepoRef, lintSkillBody, normalizeSkillName, SOURCE_FILE,
 } from "./skills-install.js";
 import { importedProtocolsDir, loadImportedProtocols } from "./loader.js";
 import { selectLearnedProtocolSuggestion } from "./learned-suggestion.js";
@@ -140,6 +140,24 @@ describe("installSkills", () => {
     expect(gplFm.skipped[0].reason).toMatch(/"GPL-3.0" is not one of/);
   });
 
+  it("takes the license from a LICENSE file inside the skill folder when the repo root has none (anthropics/skills layout)", async () => {
+    const APACHE = "                                 Apache License\n                           Version 2.0, January 2004\n                        http://www.apache.org/licenses/\n";
+    const perSkill = {
+      "README.md": "# skills",
+      "skills/skill-creator/SKILL.md": "---\nname: skill-creator\ndescription: Write a new skill.\n---\nbody",
+      "skills/skill-creator/LICENSE.txt": APACHE,
+      "skills/unlicensed/SKILL.md": "---\nname: unlicensed\ndescription: d\n---\nbody",
+    };
+    const report = await installSkills({ repo: "acme/skills", fetchImpl: github(SHA1, perSkill) });
+    expect(report.installed.map((s) => s.name)).toEqual(["skill-creator"]);
+    expect(report.skipped.map((s) => s.path)).toEqual(["skills/unlicensed"]);
+    const source = JSON.parse(readFileSync(join(importedProtocolsDir(), "skill-creator", SOURCE_FILE), "utf-8"));
+    expect(source.license).toBe("Apache-2.0");
+    expect(source.licenseAssertedBy).toBeUndefined();
+    // The per-skill file travels with the install.
+    expect(existsSync(join(importedProtocolsDir(), "skill-creator", "LICENSE.txt"))).toBe(true);
+  });
+
   it("never overwrites a same-named folder that came from elsewhere without force", async () => {
     const dir = join(importedProtocolsDir(), "vercel-deploy");
     mkdirSync(dir, { recursive: true });
@@ -210,5 +228,36 @@ describe("refreshSkill", () => {
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "SKILL.md"), "---\nname: handmade\ndescription: d\n---\nbody");
     await expect(refreshSkill("handmade", { fetchImpl: github(SHA1, REPO_V1) })).rejects.toThrow(/not a skill installed from a repo/);
+  });
+});
+
+describe("dry run and remove (the UI's preview and its delete)", () => {
+  it("a dry run reports exactly what an install would do and writes nothing", async () => {
+    const preview = await installSkills({ repo: "acme/skills", dryRun: true, fetchImpl: github(SHA1, REPO_V1) });
+    expect(preview.commit).toBe(SHA1);
+    expect(preview.installed.map((s) => [s.name, s.description, s.files])).toEqual([
+      ["vercel-deploy", "Deploy a project to Vercel with the CLI and report the URL.", ["SKILL.md", "resources/flags.md"]],
+      ["supabase-migrations", "Schema changes as migrations.", ["SKILL.md"]],
+    ]);
+    expect(preview.skipped.map((s) => s.path)).toEqual(["skills/empty"]);
+    expect(preview.notInstalled.mcpServers).toEqual(["vercel"]);
+    expect(existsSync(importedProtocolsDir())).toBe(false);
+    // The real install produces the same report, plus the files on disk.
+    const real = await installSkills({ repo: "acme/skills", fetchImpl: github(SHA1, REPO_V1) });
+    expect(real.installed.map((s) => [s.name, s.files])).toEqual(preview.installed.map((s) => [s.name, s.files]));
+    expect(existsSync(join(importedProtocolsDir(), "vercel-deploy", "resources", "flags.md"))).toBe(true);
+  });
+
+  it("removes an installed pack and refuses a hand-written one", async () => {
+    await installSkills({ repo: "acme/skills", fetchImpl: github(SHA1, REPO_V1) });
+    const handmade = join(importedProtocolsDir(), "handmade");
+    mkdirSync(handmade, { recursive: true });
+    writeFileSync(join(handmade, "SKILL.md"), "---\nname: handmade\ndescription: d\n---\nbody");
+    expect(removeInstalledSkill("Vercel Deploy")).toEqual({ name: "vercel-deploy", repo: "acme/skills" });
+    expect(existsSync(join(importedProtocolsDir(), "vercel-deploy"))).toBe(false);
+    expect(listInstalledSkills().map((s) => s.name)).toEqual(["supabase-migrations"]);
+    expect(() => removeInstalledSkill("handmade")).toThrow(/not a skill installed from a repo/);
+    expect(existsSync(join(handmade, "SKILL.md"))).toBe(true);
+    expect(() => removeInstalledSkill("never-there")).toThrow(/not a skill installed/);
   });
 });

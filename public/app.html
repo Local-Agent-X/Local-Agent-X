@@ -1277,6 +1277,7 @@
             <div class="drill-toolbar">
               <input id="protocol-search" class="drill-search" type="search" placeholder="Search protocols…" autocomplete="off" oninput="protocolFilter()"/>
               <button class="action-btn" id="protocol-archived-toggle" style="padding:7px 14px;font-size:.78rem" onclick="protocolToggleArchived()" title="Archived protocols are recoverable — restore any of them from here.">Archived (0)</button>
+              <button class="action-btn" id="protocol-packs-toggle" style="padding:7px 14px;font-size:.78rem" onclick="protocolOpenPacks()" title="Skill packs installed from a GitHub repo at a pinned commit — preview, install, check for updates, remove.">Packs (0)</button>
               <button class="action-btn primary" style="padding:7px 14px;font-size:.78rem" onclick="protocolStartNew()">+ New Protocol</button>
             </div>
             <div id="protocol-tree"></div>
@@ -1791,6 +1792,7 @@
      runs), so it must precede protocols.js, which reads both at load time. -->
 <script src="/js/protocols-provenance.js"></script>
 <script src="/js/protocols-archive.js"></script>
+<script src="/js/protocols-packs.js"></script>
 <script src="/js/protocols.js"></script>
 <script src="/js/notifications.js"></script>
 <script src="/js/apps.js"></script>

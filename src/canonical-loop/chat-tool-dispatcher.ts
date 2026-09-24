@@ -32,7 +32,7 @@ import { isDeniedForDelegatedWorker } from "../ops/tools/delegated-toolset.js";
 import { enqueueBridgeMedia } from "../bridge-media-queue.js";
 import { createLogger } from "../logger.js";
 import type { CallContext } from "../tool-execution/context.js";
-import { augmentFromToolSearch } from "./tool-augmentation.js";
+import { augmentByName, augmentFromToolSearch } from "./tool-augmentation.js";
 
 const logger = createLogger("canonical-loop.chat-tool-dispatcher");
 
@@ -100,9 +100,28 @@ export function makeChatToolDispatcher(opts: ChatToolDispatcherOptions): ToolDis
         .filter((m): m is ChatCompletionMessageParam => m !== null)
     : undefined;
 
+  // A call by name to a tool the schema does not carry (EXP-20): load it the
+  // way a tool_search hit is loaded, then dispatch it through every per-call
+  // gate as usual. A name the registry lacks falls through to the ordinary
+  // unknown-tool corrective in arg-validation.ts.
+  const loadNamedTools = (wireCalls: ReadonlyArray<{ name: string }>): void => {
+    if (!opts.opId) return;
+    for (const c of wireCalls) {
+      if (toolMap.has(c.name)) continue;
+      try {
+        augmentByName(c.name, opts.opId, toolMap, opts.onToolsAugmented, opts.callContext);
+      } catch (e) {
+        if (opts.onToolsAugmented) throw e;
+        logger.warn(`[augment] by-name augmentation failed for '${c.name}': ${(e as Error).message}`);
+      }
+    }
+  };
+
   const runExecuteToolCalls = (
     wireCalls: Array<{ id: string; name: string; arguments: string }>,
-  ): Promise<ChatCompletionMessageParam[]> => executeToolCalls(
+  ): Promise<ChatCompletionMessageParam[]> => {
+    loadNamedTools(wireCalls);
+    return executeToolCalls(
     wireCalls,
     toolMap,
     opts.security,
@@ -118,7 +137,8 @@ export function makeChatToolDispatcher(opts: ChatToolDispatcherOptions): ToolDis
     opts.opId,
     opts.callContext ?? "api",
     opts.modelId,
-  );
+    );
+  };
 
   const errorResult = (call: ToolCall, e: unknown, durationMs: number): ToolDispatchResult => ({
     toolCallId: call.toolCallId,

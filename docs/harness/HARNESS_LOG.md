@@ -3370,3 +3370,24 @@ tools it knows about. Then essentials membership again, both models, gate first.
 ---
 
 ---
+
+## EXP-20 — a tool called by name is loaded, not refused (2026-09-24, in progress)
+
+**Why.** The EXP-18 retry held the gate and cut input tokens 31%, and lost four old cases, two of them to one
+shape: with `delete_file` out of an essentials-membership schema the 27B called it by name anyway, arg-validation
+refused it as "hallucinated", and the model fell to a shell ladder (six rounds on a one-call task) or gave up. The
+schema is advisory; a model calls the tools it knows. `tool_search` already lets it reach any registered tool — the
+refusal only costs a round and, under membership, sometimes the task.
+
+**Change (canonical-check EXTEND, blast-radius REVIEW → parity):** `tool-augmentation.ts` gains a second caller,
+`augmentByName`, on the SAME admission path as the tool_search hit (registry lookup, delegated denylist, toolMap
+mutation, re-register the op's schema); the dispatcher calls it for every wire call whose name the schema does not
+carry, before dispatch. The call then runs through every per-call gate unchanged. Presence is the op's schema set
+(the EXP-7c mistake was the executable map). Reach equals tool_search's — no new capability — and the
+availability gate is not applied, for parity with tool_search's documented fail-open. A name the registry lacks
+still gets the unknown-tool corrective. Tests: shared admission, denylist, idempotence; a dispatcher case.
+
+Measure: essentials membership on again (the EXP-18 retry build shape), smoke on the 27B, then the full dev split
+both models, gate first. The number to beat is EXP-19's 59/66 on the 27B with the token cut intact.
+
+---

@@ -51,6 +51,41 @@ function seedPriorCall(opId: string, argsJson: string, resultText: string): void
   } as OpMessageRow);
 }
 
+// EXP-20: a call by name to a tool the schema does not carry loads it the way
+// a tool_search hit is loaded, then dispatches; an unknown name still gets the
+// corrective. Reach equals tool_search's — no new capability, one fewer round.
+describe("a tool called by name that the schema does not carry", () => {
+  beforeAll(() => setAriRequired(false));
+  afterAll(() => setAriRequired(true));
+
+  it("is loaded from the registry and executed; an unknown name is still refused with the corrective", async () => {
+    const { unifiedRegistry } = await import("../tools/registry.js");
+    const calls = { n: 0 };
+    const echo = echoTool(calls);
+    unifiedRegistry.register(echo);
+    try {
+      const dispatcher = makeChatToolDispatcher({
+        tools: [],                       // the schema carries nothing
+        security: undefined as never,
+        sessionId: "s-byname",
+        callContext: "local",
+        opId: freshOpId(),
+      });
+      const res = await dispatcher.dispatch({ toolCallId: "call-byname", tool: "echo", args: { v: 7 } });
+      const text = typeof res.result === "string" ? res.result : JSON.stringify(res.result);
+      expect(text).toContain("FRESH");
+      expect(calls.n).toBe(1);
+
+      const unknown = await dispatcher.dispatch({ toolCallId: "call-unknown", tool: "echoo", args: {} });
+      const utext = typeof unknown.result === "string" ? unknown.result : JSON.stringify(unknown.result);
+      expect(utext).toMatch(/Unknown tool "echoo"/);
+      expect(calls.n).toBe(1);
+    } finally {
+      unifiedRegistry._resetForTesting();
+    }
+  });
+});
+
 describe("makeChatToolDispatcher wires priorMessages from op storage", () => {
   beforeAll(() => setAriRequired(false));
   afterAll(() => setAriRequired(true));

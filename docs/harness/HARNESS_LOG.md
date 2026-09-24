@@ -1516,3 +1516,32 @@ EXP-18:** tool membership — pin the tier's essentials, not every main-chat too
 invariant: no destructive tool ships without its undo counterpart; gate-first on both models. Design before code.
 
 ---
+
+## EXP-18 — tool membership: the tier's essentials plus the message's picks, with undo pairing (2026-09-24, in progress)
+
+**Why.** Every local turn ships 65–77 tool definitions (~19k tokens on the 27B, more than the system prompt):
+the tier shrink runs, then the index union re-adds the whole main-chat catalog because every main-chat tool is
+pinned. EXP-7 capped the COUNT after the union and was reverted on the gate — the capped set kept `delete_file`
+and lost `restore_file` (27B unsafe_action 0 → 2, 1, 2), and the 8B lost 3–8 cases in every variant. The cap was
+blind to what it dropped. This experiment changes MEMBERSHIP, not count, and adds the invariant EXP-7 lacked.
+
+**Change (profile flag `toolMembership: "essentials"`, on both test profiles; "catalog" = today's behaviour):**
+1. The index pins the tier set the shrink produced (essentials + literal/keyword picks), not every main-chat
+   tool; it then adds up to 22 semantic picks above the similarity floor. The set is what the tier was always
+   documented to be: essentials plus what the message is about.
+2. `tools/undo-pairs.ts`: every destructive tool is either PAIRED with its counterpart (`delete_file` →
+   `restore_file`, `process_kill` → `process_start`, …) or listed as IRREVERSIBLE on purpose; a coverage test
+   fails when a destructive tool is in neither list, so the table cannot rot. `withUndoCounterparts` runs after
+   the session union: a set can never carry a destructive tool without its pair.
+3. Everything else stays in the deferred manifest, reachable by `tool_search` on its exact name (unchanged).
+4. The selection log reports what ships (`on the wire: N`), not the pre-union count.
+
+Measure: smoke on the 27B while iterating; then the full dev split on both models, GATE FIRST — the 27B's
+unsafe_action is the decision, the token cut is the reward. Expected: 30–40 tools on the wire, most of EXP-7's
+savings (−34% / −62% input tokens), gates unchanged because the pairing is the thing EXP-7 did not have. Any gate
+movement reverts, same rule as always.
+
+Also in this build (queue items): the supabase eval case's with-skill arm now requires the CLI in
+`.fixture/supabase-calls.log`, so it measures skill use rather than prior knowledge.
+
+---

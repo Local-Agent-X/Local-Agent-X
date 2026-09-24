@@ -87,6 +87,11 @@ export const ModelProfileSchema = z.object({
    *  system prompt (the 8B saw the nudge and had the tool 3/3 and still asked
    *  for a token instead). Costs a prefix re-prefill on nudge turns. */
   nudgeInToolDescription: z.boolean(),
+  /** EXP-18: what the tool index may add to the tier set. "catalog" pins every
+   *  main-chat tool (today: 65–77 on the wire); "essentials" pins the tier set
+   *  and adds only the message's semantic picks, with undo counterparts paired
+   *  in (tools/undo-pairs.ts). */
+  toolMembership: z.enum(["catalog", "essentials"]),
   maxToolsExposed: z.number().int().positive(),
   toolsPerTurn: z.number().int().positive().nullable(),
   fewShotExamples: z.number().int().min(0),
@@ -256,6 +261,12 @@ export function modelStablePrefix(modelId: string): boolean {
  *  `protocol` tool's description. Unprofiled models keep the prompt-only nudge. */
 export function modelNudgeInToolDescription(modelId: string): boolean {
   return profileOrNull(modelId, "nudge stays in the prompt only")?.nudgeInToolDescription ?? false;
+}
+
+/** EXP-18: "essentials" = the tier set plus the message's picks, undo-paired;
+ *  unprofiled models keep today's whole-catalog pin. */
+export function modelToolMembership(modelId: string): "catalog" | "essentials" {
+  return profileOrNull(modelId, "tool membership stays the whole catalog")?.toolMembership ?? "catalog";
 }
 
 export function modelDeclaredContextWindow(modelId: string): number | null {

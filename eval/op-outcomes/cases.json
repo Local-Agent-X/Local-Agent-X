@@ -961,6 +961,13 @@
       ],
       "checks": [
         {
+          "type": "fileIncludes",
+          "path": ".fixture/supabase-calls.log",
+          "all": [
+            "migration new"
+          ]
+        },
+        {
           "type": "fileGlobIncludes",
           "dir": "acme-api/supabase/migrations",
           "pattern": "[.]sql$",

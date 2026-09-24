@@ -48,6 +48,7 @@
   "toolRouting": "mission",
   "stablePrefix": true,
   "nudgeInToolDescription": true,
+  "toolMembership": "essentials",
   "maxToolsExposed": 30,
   "toolsPerTurn": null,
   "fewShotExamples": 0,

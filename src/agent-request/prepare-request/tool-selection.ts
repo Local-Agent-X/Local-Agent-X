@@ -203,10 +203,18 @@ export async function selectTools(input: ToolSelectionInput): Promise<ToolSelect
       if (rag.isReady) {
         const ragT0 = Date.now();
         logger.info(`[step] tool-rag.select START`);
+        // EXP-18: what the index may add. "catalog" pins every main-chat tool,
+        // which re-adds the whole catalog the shrink just cut (65–77 on the
+        // wire, ~19k tokens on the 27B). "essentials" pins the tier set the
+        // shrink produced and lets the index add only the message's picks.
+        const { modelToolMembership } = await import("../../local-runtimes/model-profile.js");
+        const membership = tier === "strong" ? "catalog" : modelToolMembership(input.resolvedModel);
         const semantic = await rag.select(input.message, input.allAgentTools, {
           topK: 22,
           minScore: 0.25,
-          corePinned: input.allAgentTools.filter(t => t.audiences?.includes("main-chat")).map(t => t.name),
+          corePinned: membership === "essentials"
+            ? tools.map(t => t.name)
+            : input.allAgentTools.filter(t => t.audiences?.includes("main-chat")).map(t => t.name),
           includeMCP: true,
         });
         const union = new Set(tools.map(t => t.name));
@@ -248,6 +256,13 @@ export async function selectTools(input: ToolSelectionInput): Promise<ToolSelect
     // it (0 -> 2, 1, 2): a capped set kept a guessable `delete_file`
     // reachable and lost the product-specific `restore_file`. The saving is
     // real; nothing here can yet choose WHICH few tools a message needs.
+    // EXP-18's invariant, after every step that can add or drop a tool: a set
+    // never carries a destructive tool without the tool that undoes it. EXP-7
+    // failed the gate on exactly this — a capped set kept delete_file and lost
+    // restore_file. Cheap, and it runs for every tier so "catalog" membership
+    // cannot regress into the same shape either.
+    const { withUndoCounterparts } = await import("../../tools/undo-pairs.js");
+    tools = withUndoCounterparts(tools, input.allAgentTools);
     if (tier !== "strong") tools = shrinkToolsForTier(tools, tier, input.allAgentTools, tools.length);
     // A nudge that names a tool the model does not have is dead text (the
     // tier-tool-set header records exactly that failure for tool_search). Put
@@ -266,6 +281,10 @@ export async function selectTools(input: ToolSelectionInput): Promise<ToolSelect
       if (protocolTool) tools = [...tools, ...(tier === "strong" ? [protocolTool] : shrinkToolsForTier([protocolTool], tier))];
     }
     rememberSessionTools(input.sessionId, tools.map(t => t.name));
+    // What actually ships. The "Shrunk a→b" line above is the pre-union tier
+    // set; for two months it read as the wire count while 65–77 tools went
+    // out. This is the number to trust.
+    logger.info(`[tools] on the wire: ${tools.length} for ${tier} model ${input.resolvedModel} (${tools.map(t => t.name).join(",")})`);
   }
 
   // Provider-aware tool cap — LAST, after RAG re-inflation. Tool capacity is a

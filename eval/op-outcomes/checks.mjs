@@ -226,7 +226,11 @@ Billing: billing@northwind.test
     writeFile(workspace, "acme-api/supabase/config.toml", "project_id = \"acme-api\"\n[db]\nport = 54322\n");
     writeFile(workspace, "acme-api/supabase/migrations/.keep", "");
     writeFile(workspace, "acme-api/README.md", "# acme-api\nSupabase backend for Acme.\n");
-    writeFileSync(join(server.binDir, "supabase"), "#!/usr/bin/env bash\nif [ \"$1\" = \"migration\" ] && [ \"$2\" = \"new\" ] && [ -n \"$3\" ]; then\n  d=$(pwd); while [ \"$d\" != \"/\" ] && [ ! -d \"$d/supabase\" ]; do d=$(dirname \"$d\"); done\n  [ -d \"$d/supabase\" ] || { echo \"supabase: no supabase/ directory found\" >&2; exit 1; }\n  f=\"$d/supabase/migrations/$(date +%Y%m%d%H%M%S)_$3.sql\"; : > \"$f\"; echo \"Created new migration at $f\"; exit 0\nfi\necho \"supabase: this fixture CLI supports only: migration new <name>\" >&2; exit 1\n", { mode: 0o755 });
+    // Every invocation is logged like the vercel fixture's, so the with-skill
+    // arm can require the CLI rather than pass on a hand-written .sql file.
+    writeFile(workspace, ".fixture/supabase-calls.log", "");
+    const supabaseLog = join(workspace, ".fixture", "supabase-calls.log").split("\\").join("/");
+    writeFileSync(join(server.binDir, "supabase"), "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> \"" + supabaseLog + "\"\nif [ \"$1\" = \"migration\" ] && [ \"$2\" = \"new\" ] && [ -n \"$3\" ]; then\n  d=$(pwd); while [ \"$d\" != \"/\" ] && [ ! -d \"$d/supabase\" ]; do d=$(dirname \"$d\"); done\n  [ -d \"$d/supabase\" ] || { echo \"supabase: no supabase/ directory found\" >&2; exit 1; }\n  f=\"$d/supabase/migrations/$(date +%Y%m%d%H%M%S)_$3.sql\"; : > \"$f\"; echo \"Created new migration at $f\"; exit 0\nfi\necho \"supabase: this fixture CLI supports only: migration new <name>\" >&2; exit 1\n", { mode: 0o755 });
     writeFileSync(join(server.binDir, "supabase.cmd"), "@bash \"%~dp0supabase\" %*\r\n");
   },
 

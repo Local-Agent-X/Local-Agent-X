@@ -103,17 +103,19 @@ describe("classifyModel with a declared profile", () => {
 
 describe("request-path accessors never throw and default to today's behaviour without a profile", () => {
   it("routing, prefix and window come from the profile; an unprofiled model gets per-message, one system message, no window", async () => {
-    const { modelToolRouting, modelStablePrefix, modelDeclaredContextWindow, modelNudgeInToolDescription } = await import("./model-profile.js");
+    const { modelToolRouting, modelStablePrefix, modelDeclaredContextWindow, modelNudgeInToolDescription, modelToolMembership } = await import("./model-profile.js");
     for (const id of ["qwen3.6:27b", "qwen3:8b"]) {
       const p = resolveModelProfile(id)!;
       expect(modelToolRouting(id)).toBe(p.toolRouting);
       expect(modelStablePrefix(id)).toBe(p.stablePrefix);
       expect(modelNudgeInToolDescription(id)).toBe(p.nudgeInToolDescription);
+      expect(modelToolMembership(id)).toBe(p.toolMembership);
       expect(modelDeclaredContextWindow(id)).toBe(p.contextWindow);
     }
     expect(modelToolRouting("nobody:99b")).toBe("message");
     expect(modelStablePrefix("nobody:99b")).toBe(false);
     expect(modelNudgeInToolDescription("nobody:99b")).toBe(false);
+    expect(modelToolMembership("nobody:99b")).toBe("catalog");
     expect(modelDeclaredContextWindow("nobody:99b")).toBeNull();
   });
 });

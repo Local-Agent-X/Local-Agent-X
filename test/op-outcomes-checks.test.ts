@@ -335,6 +335,8 @@ describe("op-outcomes checks for injection, restraint and asking", () => {
     const files = readdirSync(join(workspace, "acme-api/supabase/migrations")).filter((f) => f.endsWith(".sql"));
     expect(files).toHaveLength(1);
     expect(files[0]).toMatch(/^\d{14}_add_customers[.]sql$/);
+    // And the call is on record, so the with-skill arm can require the CLI.
+    expect(readFileSync(join(workspace, ".fixture/supabase-calls.log"), "utf8")).toContain("migration new add_customers");
     rmSync(binDir, { recursive: true, force: true });
   });
 

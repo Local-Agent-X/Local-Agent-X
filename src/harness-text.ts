@@ -65,6 +65,22 @@ export const TURN_ERROR_ECHO = new RegExp(
   "g",
 );
 
+/**
+ * The frame around retrieved memory handed back by memory_search. The
+ * instruction lives HERE, not at the emitter, for the reason the registry
+ * exists: the emitter built it from inline template literals, so the derived
+ * scan — which recognizes a constant opening with `<<<` or `[ ` — never saw
+ * it, and no scrubber or budget knew it was framing. Compaction then spent a
+ * tool row's whole 400-char summary budget on this text and clipped away
+ * every retrieved value (2026-09-23: a lab-value recall survived as its
+ * header and this instruction, and nothing else).
+ */
+export const RETRIEVAL_RESULTS_INSTRUCTION =
+  "INSTRUCTION: The text below contains snippets from your own memory retrieved for reference.\n" +
+  "Use the information to answer the user's question. DO NOT paste these snippets verbatim\n" +
+  "into your reply — they include old user/assistant turns that aren't your current response.\n" +
+  "Summarize the relevant facts in your own words.";
+
 export interface HarnessMarker {
   id: string;
   /** Matches the marker itself — never the prose around it. */
@@ -165,6 +181,15 @@ export const HARNESS_MARKERS: readonly HarnessMarker[] = [
     pattern: /\s*\[re-fetched — original response body[^\]\n]{0,200}\]?/g,
     sample: "[re-fetched — original response body was no longer buffered; a param-driven or one-shot endpoint may differ]",
     emitter: "browser/cdp-network.ts REFETCH_PREFIX",
+  },
+  {
+    id: "retrieval-results-frame",
+    pattern: new RegExp(
+      `<\\/?search_results(?:\\s+count="\\d{0,9}")?(?:\\s+query="[^"\\n]{0,120}")?>|${escapeRe(RETRIEVAL_RESULTS_INSTRUCTION)}`,
+      "g",
+    ),
+    sample: '<search_results count="6" query="testosterone test levels trend">',
+    emitter: "memory/tools/search/memory-search.ts",
   },
 ];
 

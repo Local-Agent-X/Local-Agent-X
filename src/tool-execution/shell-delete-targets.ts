@@ -33,7 +33,10 @@ export function shellWords(segment: string): string[] {
     const ch = segment[i];
     if (quote) {
       if (ch === quote) { quote = null; continue; }
-      if (ch === "\\" && quote === '"' && i + 1 < segment.length) { cur += segment[++i]; continue; }
+      // Inside double quotes a backslash escapes only $ ` " \ and newline; any
+      // other backslash is literal — `del "client-data\tmp\x.tmp"` names that
+      // path, not "client-datatmpx.tmp". Found live on the EXP-18 retry.
+      if (ch === "\\" && quote === '"' && i + 1 < segment.length && /[$`"\\\n]/.test(segment[i + 1])) { cur += segment[++i]; continue; }
       cur += ch;
       continue;
     }

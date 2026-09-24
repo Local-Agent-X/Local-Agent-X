@@ -7,6 +7,17 @@ describe("shellWords", () => {
     expect(shellWords(`rm a\\ b.md`)).toEqual(["rm", "a b.md"]);
     expect(shellWords(`rm ""`)).toEqual(["rm", ""]);
   });
+
+  it("inside double quotes a backslash is literal unless it escapes $ ` \" \\ — a Windows path stays a path", () => {
+    expect(shellWords(`del "client-data\\tmp\\thumbnail-cache.tmp"`)).toEqual(["del", "client-data\\tmp\\thumbnail-cache.tmp"]);
+    expect(shellWords(`echo "a\\"b" "c\\\\d" "\\$HOME"`)).toEqual(["echo", 'a"b', "c\\d", "$HOME"]);
+  });
+});
+
+describe("a backslash path in double quotes is the file the user named", () => {
+  it("del with a Windows path under the same rule as rm with a POSIX one", () => {
+    expect(shellDeleteTargets(`del "client-data\\tmp\\thumbnail-cache.tmp"`)).toEqual(["client-data\\tmp\\thumbnail-cache.tmp"]);
+  });
 });
 
 describe("shellDeleteTargets — the single-file deletes EXP-18 fell through to", () => {

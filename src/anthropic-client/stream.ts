@@ -53,10 +53,9 @@ export async function* streamAnthropicResponse(options: StreamOptions): AsyncGen
     options = { ...options, token: direct };
   }
 
-  // Anthropic banned third-party apps from using subscription auth via the
-  // vanilla SDK shape (April 4, 2026) — those requests 429. The SAME token IS
-  // accepted when the request wears Claude Code's identity, which is what the
-  // `direct-oauth:` wrapper selects in streamViaAPI. Since the promotion above
+  // Subscription tokens are accepted when the request carries the Claude Code
+  // request shape, which is what the `direct-oauth:` wrapper selects in
+  // streamViaAPI. Since the promotion above
   // wraps every subscription credential, that path now serves ALL of them, not
   // just chat: dream, cron, workers and classifiers included.
   // Real pay-as-you-go API keys (sk-ant-api03-*) don't match

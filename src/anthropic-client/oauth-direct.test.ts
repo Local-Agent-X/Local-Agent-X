@@ -1,7 +1,8 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import {
   wrapDirectOAuthToken, isDirectOAuthToken, unwrapDirectOAuthToken,
   toOAuthWireName, fromOAuthWireName, buildOAuthHeaders, CLAUDE_CODE_SYSTEM_PREFIX,
+  adoptRequiredClaudeCodeVersion, claudeCodeUserAgent, resetClaudeCodeVersionForTest,
 } from "./oauth-direct.js";
 
 describe("oauth-direct token wrapper", () => {
@@ -85,5 +86,37 @@ describe("buildOAuthHeaders", () => {
 describe("system prefix", () => {
   it("is the exact string the OAuth router keys on", () => {
     expect(CLAUDE_CODE_SYSTEM_PREFIX).toBe("You are Claude Code, Anthropic's official CLI for Claude.");
+  });
+});
+
+describe("adoptRequiredClaudeCodeVersion — the claude-code version floor", () => {
+  const floorError = (current: string, required: string) => JSON.stringify({ type: "error", error: { type: "invalid_request_error", message: `Claude Code ${current} does not support this model; version ${required} or newer is required. Run 'claude update', or update the Claude desktop app, then try again.` } });
+
+  afterEach(() => resetClaudeCodeVersionForTest());
+
+  it("sends a floor that clears Opus 5.5 with no CLI installed", () => {
+    expect(claudeCodeUserAgent()).toBe("claude-code/2.1.280 (external, cli)");
+  });
+
+  it("adopts a newer required version from the real 400 text and puts it on the wire", () => {
+    expect(adoptRequiredClaudeCodeVersion(floorError("2.1.280", "2.1.300"))).toBe(true);
+    expect(buildOAuthHeaders("tok")["user-agent"]).toBe("claude-code/2.1.300 (external, cli)");
+  });
+
+  it("compares numerically, not lexically (2.1.1000 > 2.1.999)", () => {
+    expect(adoptRequiredClaudeCodeVersion(floorError("2.1.280", "2.1.999"))).toBe(true);
+    expect(adoptRequiredClaudeCodeVersion(floorError("2.1.999", "2.1.1000"))).toBe(true);
+    expect(claudeCodeUserAgent()).toContain("2.1.1000");
+  });
+
+  it("refuses a floor we already meet, so a persisting rejection cannot loop", () => {
+    expect(adoptRequiredClaudeCodeVersion(floorError("2.1.280", "2.1.280"))).toBe(false);
+    expect(adoptRequiredClaudeCodeVersion(floorError("2.1.280", "2.1.110"))).toBe(false);
+    expect(claudeCodeUserAgent()).toContain("2.1.280");
+  });
+
+  it("ignores unrelated 400s", () => {
+    expect(adoptRequiredClaudeCodeVersion(JSON.stringify({ type: "error", error: { type: "invalid_request_error", message: "You're out of extra usage" } }))).toBe(false);
+    expect(adoptRequiredClaudeCodeVersion("")).toBe(false);
   });
 });

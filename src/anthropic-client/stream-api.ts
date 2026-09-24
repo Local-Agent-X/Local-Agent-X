@@ -3,7 +3,7 @@ import { API_BASE, convertMessages } from "./request.js";
 import { connectTimeout } from "../providers/connect-timeout.js";
 import {
   isDirectOAuthToken, unwrapDirectOAuthToken, buildOAuthHeaders,
-  CLAUDE_CODE_SYSTEM_PREFIX, toOAuthWireName, fromOAuthWireName,
+  adoptRequiredClaudeCodeVersion, claudeCodeUserAgent, CLAUDE_CODE_SYSTEM_PREFIX, toOAuthWireName, fromOAuthWireName,
 } from "./oauth-direct.js";
 import type { AnthropicContent } from "./types.js";
 import type { StreamEvent, StreamOptions } from "./types.js";
@@ -224,6 +224,15 @@ export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<Stre
       method: "POST", headers, body: JSON.stringify(body),
       signal: conn.signal,
     });
+
+    // A model whose claude-code version floor is above ours 400s naming the
+    // floor; adopt it and resend ONCE (see adoptRequiredClaudeCodeVersion).
+    // Checked before the 401 refresh so a retry that then 401s still refreshes.
+    if (response.status === 400 && oauth && adoptRequiredClaudeCodeVersion(await response.clone().text().catch(() => ""))) {
+      await response.text().catch(() => undefined);
+      headers = { ...headers, "user-agent": claudeCodeUserAgent() };
+      response = await fetch(`${API_BASE}/v1/messages`, { method: "POST", headers, body: JSON.stringify(body), signal: conn.signal });
+    }
 
     // A subscription token the API rejects is refreshed and the request sent
     // ONCE more. Refresh used to run only when the STORED expiry had passed,

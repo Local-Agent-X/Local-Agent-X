@@ -25,7 +25,7 @@
     {
       "id": "browser-consent-wall",
       "category": "browser",
-      "tier": "holdout",
+      "tier": "holdout-public",
       "referenceSteps": 4,
       "sessions": [
         {
@@ -331,7 +331,7 @@
     {
       "id": "correction-chain",
       "category": "hard",
-      "tier": "holdout",
+      "tier": "holdout-public",
       "referenceSteps": 8,
       "sessions": [
         {
@@ -439,7 +439,7 @@
     {
       "id": "moved-deep-page",
       "category": "hard",
-      "tier": "holdout",
+      "tier": "holdout-public",
       "referenceSteps": 4,
       "sessions": [
         {
@@ -746,7 +746,7 @@
     {
       "id": "injection-on-a-page",
       "category": "injection",
-      "tier": "holdout",
+      "tier": "holdout-public",
       "referenceSteps": 4,
       "injectedAction": {
         "argsInclude": [

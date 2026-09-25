@@ -24,6 +24,7 @@ import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync } from 
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startFixtureServer, DEPLOY_TOKEN } from "./fixtures/server.mjs";
+import { copyPrivateFixture, loadPrivateHoldout, privateHoldoutDir, privatePage } from "./private.mjs";
 import { assertDistMatchesSource, startIsolatedServer } from "./isolated.mjs";
 import { SETUP, closeChecks, runCheck, snapshotBefore } from "./checks.mjs";
 import { argRepairCount, emittedToolCalls, fabricationAttempts, readOps, waitForIdleOps } from "./op-store.mjs";
@@ -47,11 +48,15 @@ if (providers.length === 0) { console.error(`no provider "${PROVIDER}" in provid
 // run at phase boundaries and for the final report only, and asking for it is
 // always explicit — an experiment that reads it has spent it.
 const TIER = (opt("--tier") ?? "dev").toLowerCase();
-const TIERS = { dev: ["smoke", "full"], smoke: ["smoke"], full: ["full"], holdout: ["holdout"], all: ["smoke", "full", "holdout"] }[TIER];
-if (!TIERS) { console.error(`--tier must be one of dev|smoke|full|holdout|all (got "${TIER}")`); process.exit(2); }
+// `holdout` is the PRIVATE set (private.mjs) — the four public holdout cases
+// were spent the day the repo went public and now run as `holdout-public`.
+const TIERS = { dev: ["smoke", "full"], smoke: ["smoke"], full: ["full"], holdout: ["holdout"], "holdout-public": ["holdout-public"], all: ["smoke", "full", "holdout", "holdout-public"] }[TIER];
+if (!TIERS) { console.error(`--tier must be one of dev|smoke|full|holdout|holdout-public|all (got "${TIER}")`); process.exit(2); }
 if (TIERS.includes("holdout")) console.log(`\n*** HOLDOUT SET — phase boundaries and the final report only. Do not tag these failures or reorder work from them. ***`);
 
-const cases = JSON.parse(readFileSync(join(HERE, "cases.json"), "utf8")).cases
+const privateHoldout = loadPrivateHoldout();
+if (TIERS.includes("holdout") && !privateHoldout) { console.error(`no private holdout: ${privateHoldoutDir()}/cases.json does not exist (LAX_EVAL_PRIVATE_DIR overrides the location)`); process.exit(2); }
+const cases = [...JSON.parse(readFileSync(join(HERE, "cases.json"), "utf8")).cases, ...(privateHoldout?.cases ?? [])]
   // An explicit --only names what it wants, tier included; otherwise the tier decides.
   .filter((c) => (ONLY ? (c.id === ONLY || c.category === ONLY) : TIERS.includes(c.tier)));
 if (cases.length === 0) { console.error(ONLY ? `no case or category matches "${ONLY}"` : `no case in tier ${TIER}`); process.exit(2); }
@@ -294,6 +299,7 @@ async function runCase(provider, caseDef, fixture) {
   result.workspace = server.workspace;
   try {
     const fixtureMark = fixture.requests.length;
+    if (caseDef.private) copyPrivateFixture(privateHoldout.dir, caseDef.id, server.workspace, { base: fixture.baseUrl, deployToken: DEPLOY_TOKEN });
     for (const step of caseDef.setup ?? []) {
       await SETUP[step]({ server, workspace: server.workspace, deployToken: DEPLOY_TOKEN, fixtureBase: fixture.baseUrl });
     }
@@ -443,18 +449,19 @@ function summarize(batch) {
 }
 
 assertDistMatchesSource(REPO_ROOT);
-const fixture = await startFixtureServer();
+const fixture = await startFixtureServer({ privatePage: (p) => (privateHoldout ? privatePage(privateHoldout.dir, p) : null) });
 const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
 const outDir = join(HERE, "results");
 mkdirSync(outDir, { recursive: true });
 // Provider label + pid: two batches started in the same second (muse and grok
 // run in parallel) otherwise overwrite each other's results file.
 const outPath = join(outDir, `run-${stamp}-${PROVIDER}-${process.pid}.json`);
-const report = { when: stamp, gitHead: null, repeat: REPEAT, batches: [] };
+const privateInRun = cases.some((c) => c.private);
+const report = { when: stamp, gitHead: null, repeat: REPEAT, privateHoldout: privateInRun ? { hash: privateHoldout.hash, cases: cases.filter((c) => c.private).length } : null, batches: [] };
 try { report.gitHead = (await import("node:child_process")).execSync("git rev-parse --short HEAD", { cwd: REPO_ROOT }).toString().trim(); } catch { /* not a checkout */ }
 
 let runInvalid = false;
-console.log(`op-outcomes: ${cases.length} case(s) × ${REPEAT} × ${providers.map((p) => p.label).join(", ")} @ ${report.gitHead ?? "?"}`);
+console.log(`op-outcomes: ${cases.length} case(s) × ${REPEAT} × ${providers.map((p) => p.label).join(", ")} @ ${report.gitHead ?? "?"}${privateInRun ? ` private-holdout ${privateHoldout.hash}` : ""}`);
 try {
   for (const provider of providers) {
     const batch = { ...provider, runs: [] };

@@ -121,7 +121,10 @@ const NOT_FOUND_PAGES = {
      <h1>Page not found</h1><p>Incident pages moved when the status site was rebuilt.</p>`),
 };
 
-export async function startFixtureServer() {
+/** `privatePage(pathname)` → HTML or null: the private holdout's pages under
+ *  /p/<name> (private.mjs). They sit ahead of the public table on purpose —
+ *  a private set must be able to shadow nothing and to add anything. */
+export async function startFixtureServer({ privatePage = () => null } = {}) {
   const requests = [];
   const server = createServer((req, res) => {
     let body = "";
@@ -129,6 +132,12 @@ export async function startFixtureServer() {
     req.on("end", () => {
       const url = new URL(req.url, "http://fixture");
       requests.push({ method: req.method, path: url.pathname, headers: req.headers, body, at: Date.now() });
+      const priv = req.method === "GET" ? privatePage(url.pathname) : null;
+      if (priv !== null) {
+        res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+        res.end(priv);
+        return;
+      }
       if (req.method === "GET" && PAGES[url.pathname]) {
         res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
         res.end(PAGES[url.pathname]);

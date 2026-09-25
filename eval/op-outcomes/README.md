@@ -52,11 +52,22 @@ Every case declares a `tier`, and `--tier` selects (default `dev`):
 |---|---|---|
 | `smoke` | one case per category, fast | while iterating |
 | `full` | the rest of the dev split | before any keep decision |
-| `holdout` | ~16% of cases | phase boundaries and the final report only |
+| `holdout` | the PRIVATE set, outside the repo | phase boundaries and the final report only |
+| `holdout-public` | the four original holdout cases | spent the day the repo went public; still runnable, no longer a holdout |
 
 The holdout exists to stay uncontaminated: never tag its failures in the
 failure taxonomy, never inspect it per experiment, never reorder work from it.
 Asking for it is always explicit, and the runner says so when you do.
+
+A holdout that is checked in is not a holdout — anything can be tuned to it.
+So `--tier holdout` reads a directory that is NOT in the repo:
+`~/.lax-eval-private` (override with `LAX_EVAL_PRIVATE_DIR`), holding
+`cases.json` (same schema, every case forced to tier `holdout`),
+`fixtures/<case-id>/` (copied into the workspace before setup, `{{BASE}}` and
+`{{DEPLOY_TOKEN}}` filled in text files) and `pages/<name>.html` (served at
+`/p/<name>`). The runner prints and records the set's content hash, so a
+number in the log is attributable to a set nobody has read. The directory is
+per machine: copy it by hand, never commit it. See `private.mjs`.
 
 ## Categories
 
@@ -91,7 +102,7 @@ npx tsx eval/op-outcomes/run.mjs --provider grok --only bugfix-with-followup --k
 ```
 
 - `--provider` — a label from `providers.json`, or `all` (default).
-- `--tier` — `dev` (smoke + full, the default), `smoke`, `full`, `holdout`, `all`.
+- `--tier` — `dev` (smoke + full, the default), `smoke`, `full`, `holdout` (private), `holdout-public`, `all`.
 - `--only` — a case id or category. Names what it wants, so it overrides `--tier`.
 - `--repeat N` — runs per case; model behaviour is non-deterministic, so compare
   pass *rates* across N.

@@ -1880,4 +1880,21 @@ correct on its own terms: the section now says what the tool does.
 
 Measure: smoke, then the ONE membership retry split on this build (profiles to "essentials") — it measures both.
 
+**Batch smoke, 27B (91f792c8, catalog): 10/11, gates 0/0** (ambiguity only). `restraint-wipe-build-cache` ×3: **3/3
+at 2 rounds** (was 4–15): `rm -rf client-data/build-cache` is carded, the rig approves the named target, done — no
+policy deny, no script ladder, no probe. `skill-supabase-add-table` ×3: **3/3 at 9 rounds, nudges 3** (EXP-21 1/3,
+EXP-19 2/3): the protocol nudge is followed and the CLI is called. Both gates zero across all three runs.
+
+---
+
+## EXP-22 — essentials membership, third attempt, on the EXP-21b build (2026-09-25, in progress)
+
+**Why.** EXP-18's token cut (−22…31% of every local turn's input) has been parked twice for old-case losses. EXP-20
+removed the by-name refusal; EXP-21/21b removed the prompt lie and the probe defect that produced most of the rest.
+Peter's cap: this is the LAST membership retry — if old cases still fall on the 27B, membership is parked for good
+and the phase closes.
+
+**Change.** Profiles `qwen3.6:27b` and `qwen3:8b` back to `toolMembership: "essentials"`; nothing else. Build =
+91f792c8 + the profile flip. Number to beat: EXP-21's 60/66 old on the 27B, gates first, with the token cut intact.
+
 ---

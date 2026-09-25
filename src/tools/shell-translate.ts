@@ -16,6 +16,9 @@
 // rewrite to PS 5.1-equivalent before spawn. Only fires on the PS 5.1
 // fallback path; pwsh 7+ and bash skip it (they handle natively).
 
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+
 export type TargetShell = "powershell-51" | "pwsh-7" | "bash";
 
 // The PowerShell cmdlets agents most often misfire into the bash tool, with the
@@ -70,6 +73,32 @@ export function windowsPathHint(stderr: string): string | null {
   if (!m || !/command not found|No such file or directory|cannot access/.test(stderr)) return null;
   return `\`${m[1]}\` looks like a Windows path whose backslashes bash consumed as escapes. ` +
     `In the bash tool write it with forward slashes (\`C:/Users/...\`) or quote it in single quotes.`;
+}
+
+/**
+ * The bash tool runs INSIDE the workspace, and every prompt and file tool
+ * teaches the `workspace/apps/x` spelling for the same files — the file tools
+ * strip that leading segment (workspace/paths.ts stripWorkspacePrefix), bash
+ * cannot, so `rm -r workspace/client-data/build-cache` lands on
+ * `<workspace>/workspace/…`, fails "No such file", and the model concludes the
+ * folder is already gone, hand-writes what a CLI should have produced, or acts
+ * on a bogus error (op-outcomes 2026-09-24: seven of 26 kept failure stores).
+ *
+ * Not rewritten: a command is never edited on the model's behalf. The hint
+ * names the doubled path and the spelling that works. Silent when the
+ * workspace really has a `workspace/` child, so a genuine miss stays a miss.
+ */
+export function workspacePrefixHint(stderr: string, cwd: string, exists: (p: string) => boolean = existsSync): string | null {
+  if (!/No such file or directory|cannot access|Cannot find module|not found/.test(stderr)) return null;
+  const rel = stderr.match(/(?:^|[\s'"`:(])(?:\.\/)?(workspace[/\\][^\s'"`:)]*)/);
+  const doubled = stderr.match(/[/\\]workspace[/\\]workspace[/\\]([^\s'"`:)]*)/);
+  const tail = rel ? rel[1].replace(/^workspace[/\\]/, "") : doubled ? doubled[1] : null;
+  if (tail === null) return null;
+  if (exists(join(cwd, "workspace"))) return null;
+  const shown = tail.replace(/\\/g, "/");
+  return `\`workspace/${shown}\` resolved to \`${join(cwd, "workspace", shown).replace(/\\/g, "/")}\`, which does not exist: ` +
+    `the bash tool already runs inside the workspace (\`${cwd.replace(/\\/g, "/")}\`), so write the path without the leading ` +
+    `\`workspace/\` — \`${shown}\`. (The file tools accept both spellings; bash does not.)`;
 }
 
 export function detectTargetShell(shellPath: string): TargetShell {

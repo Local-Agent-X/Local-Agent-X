@@ -11,6 +11,9 @@ import { measurePromptSection, type PromptSectionTelemetry } from "../prompt-tel
 import { basePromptSections } from "../config-loader.js";
 import { snapshotForSession } from "./session-prompt-snapshot.js";
 import { readAgentsMdSection } from "./agents-md-section.js";
+import { runtimeSection } from "./runtime-section.js";
+import { resolveWindowsShell } from "../tools/shell-env.js";
+import { workspaceRoot } from "../config.js";
 const require = createRequire(import.meta.url);
 
 /** Budget class (prompt-degradation.ts sheds tuning → navigation → facts; safety and
@@ -209,29 +212,18 @@ export function createSystemPromptBuilder(opts: {
   // local window can shed tuning before facts; same "" joiner ⇒ same bytes/prefix.
   for (const part of basePromptSections(opts.basePrompt)) builder.addSection(part);
 
-  // Runtime context — tells the model WHICH OS / shell it's actually on so
-  // it stops reaching for PowerShell verbs on macOS (Remove-Item, Get-ChildItem)
-  // or bash verbs on Windows. The bash tool description lists negative examples
-  // from both worlds mixed together; without this section the model infers OS
-  // from prior tool output, which on a fresh install means it guesses wrong.
+  // Runtime context — tells the model WHICH OS / shell it's actually on and
+  // WHERE relative paths land, so it stops reaching for PowerShell verbs and
+  // stops prefixing `workspace/` in shell commands. Both facts come from the
+  // same sources the bash tool spawns with (resolveWindowsShell, workspaceRoot):
+  // until 2026-09-25 this section said "PowerShell … Use PowerShell verbs" on
+  // win32 while the tool ran Git Bash, and named the SERVER's cwd as the working
+  // directory while bash and every file tool anchor at the workspace — the
+  // model followed the prompt and every shell path failed (op-outcomes EXP-20).
   // Static (process-lifetime stable) so it caches with the base prompt.
   builder.addSection({
     id: "runtime-context", label: "Runtime", type: "static", policy: "required", priority: "safety",
-    build: () => {
-      const plat = process.platform;
-      const friendly = plat === "darwin" ? "macOS" : plat === "win32" ? "Windows" : plat === "linux" ? "Linux" : plat;
-      const shell = plat === "win32" ? "PowerShell" : "bash (zsh on macOS)";
-      const fileVerbs = plat === "win32"
-        ? "Use PowerShell verbs: `Remove-Item`, `Get-ChildItem`, `New-Item -ItemType Directory`, `Set-Content`, `Copy-Item`."
-        : "Use POSIX verbs: `rm`, `ls`, `mkdir -p`, `cat`, `cp`, `mv`. NEVER `Remove-Item` / `Get-ChildItem` / `New-Item` — those are Windows-only and will fail with `command not found`.";
-      return `## Runtime
-- Platform: ${friendly} (\`process.platform === "${plat}"\`)
-- Default shell for the \`bash\` tool: ${shell}
-- Working directory: ${process.cwd()}
-- Shell commands: ${fileVerbs}
-
-Reminder: file CRUD has native tools — \`read\`, \`write\`, \`edit\`, \`delete_file\`. Prefer those over shell commands. The shell-command guidance above is for the rare case where you actually need bash (process listing, git ops, build/test runs).`;
-    },
+    build: () => runtimeSection(process.platform, process.platform === "win32" ? resolveWindowsShell().kind : null, workspaceRoot()),
   });
 
   // App manifest — the agent's map of its own body (auto-generated catalog)

@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import type { ServerEvent, ToolDefinition } from "../types.js";
 import { getSandboxMode, execInSandbox, wrapSpawnForSandbox, sandboxDenialHint, networkDenialHint } from "../sandbox/index.js";
 import { ok, err, blocked, timeout as timeoutResult } from "./result-helpers.js";
-import { detectTargetShell, translateForShell, powershellCmdletHint, windowsPathHint } from "./shell-translate.js";
+import { detectTargetShell, translateForShell, powershellCmdletHint, windowsPathHint, workspacePrefixHint } from "./shell-translate.js";
 import { resolveWindowsShell, recordAvSuspectKill, isLikelyAvKill, buildSanitizedEnv } from "./shell-env.js";
 import { shellProxyEnv } from "./shell-proxy-env.js";
 import { killProcessGroup } from "../process-tree-kill.js";
@@ -98,6 +98,11 @@ export const bashTool: ToolDefinition = {
 
     try {
       const startMs = Date.now();
+      // _cwd (worktree, set by enforce-policy) wins; otherwise the WORKSPACE —
+      // the same anchor relative agent paths resolve against (workspace/paths.ts)
+      // — so `cat notes.txt` and write("notes.txt") mean one file, instead of
+      // the shell landing a folder above it.
+      const cwd = (args._cwd as string) || workspaceRoot();
       // Resolve with structured fields so the call site can populate the
       // tool-result envelope (exit_code, duration_ms, stderr separately).
       // Rejection is reserved for runtime failures (spawn error, abort,
@@ -127,11 +132,7 @@ export const bashTool: ToolDefinition = {
         const spawned = wrapSpawnForSandbox(shell, shellArgs);
         const child = spawn(spawned.cmd, spawned.args, {
           env: sanitizedEnv,
-          // _cwd (worktree, set by enforce-policy) wins; otherwise default to the
-          // WORKSPACE — the same anchor relative agent paths resolve against
-          // (workspace/paths.ts) — so `cat notes.txt` and write("notes.txt") mean
-          // one file, instead of the shell landing a folder above it.
-          cwd: (args._cwd as string) || workspaceRoot(),
+          cwd,
           windowsHide: true,
           stdio: ["ignore", "pipe", "pipe"],
         });
@@ -298,7 +299,10 @@ export const bashTool: ToolDefinition = {
       // of re-emitting the same cmdlet (it did this 3× in one session).
       const cmdletNotice = powershellCmdletHint(stderr);
       const pathNotice = windowsPathHint(stderr);
-      const notices = [cmdletNotice, pathNotice, cageNotice, netNotice].filter(Boolean).join("\n");
+      // `workspace/x` in a command is `<workspace>/workspace/x` — the file tools
+      // forgive that prefix, bash cannot; say so instead of "No such file".
+      const prefixNotice = workspacePrefixHint(stderr, cwd);
+      const notices = [cmdletNotice, pathNotice, prefixNotice, cageNotice, netNotice].filter(Boolean).join("\n");
       return err((notices ? notices + "\n" : "") + (out || `Exit code: ${code}`), {
         exit_code: code,
         duration_ms: durationMs,

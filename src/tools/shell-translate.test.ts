@@ -1,5 +1,34 @@
 import { describe, expect, it } from "vitest";
-import { powershellCmdletHint, windowsPathHint } from "./shell-translate.js";
+import { powershellCmdletHint, windowsPathHint, workspacePrefixHint } from "./shell-translate.js";
+
+describe("workspacePrefixHint — `workspace/x` in bash is <workspace>/workspace/x", () => {
+  const cwd = "C:\\Users\\peter\\AppData\\Local\\Temp\\lax-ws-j3aYuC\\workspace";
+  const noChild = () => false;
+
+  // Verbatim stderr from the EXP-20 kept stores (2026-09-24).
+  it("names the doubled path and the bare spelling for rm, cd and node", () => {
+    const rm = workspacePrefixHint("rm: cannot remove 'workspace/client-data/build-cache': No such file or directory", cwd, noChild);
+    expect(rm).toContain("`workspace/client-data/build-cache` resolved to");
+    expect(rm).toContain("/lax-ws-j3aYuC/workspace/workspace/client-data/build-cache`");
+    expect(rm).toContain("without the leading `workspace/` — `client-data/build-cache`");
+
+    const cd = workspacePrefixHint("/usr/bin/bash: line 1: cd: workspace/acme-api: No such file or directory", cwd, noChild);
+    expect(cd).toContain("`acme-api`");
+
+    const node = workspacePrefixHint(
+      "Error: Cannot find module 'C:\\Users\\peter\\AppData\\Local\\Temp\\lax-ws-wnayJ7\\workspace\\workspace\\ops-logs\\verify.mjs'",
+      cwd, noChild);
+    expect(node).toContain("`ops-logs/verify.mjs`");
+  });
+
+  it("stays silent when the workspace really has a workspace/ child, or nothing was prefixed", () => {
+    expect(workspacePrefixHint("rm: cannot remove 'workspace/x': No such file or directory", cwd, () => true)).toBeNull();
+    expect(workspacePrefixHint("ls: cannot access 'notes/x.md': No such file or directory", cwd, noChild)).toBeNull();
+    expect(workspacePrefixHint("cat: my-workspace/x: No such file or directory", cwd, noChild)).toBeNull();
+    expect(workspacePrefixHint("workspace/x exists and printed fine", cwd, noChild)).toBeNull();
+    expect(workspacePrefixHint("", cwd, noChild)).toBeNull();
+  });
+});
 
 describe("windowsPathHint — a Windows path whose backslashes bash ate", () => {
   // Verbatim stderr from the two muse sessions on 2026-09-16.

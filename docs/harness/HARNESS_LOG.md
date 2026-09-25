@@ -1787,4 +1787,36 @@ against, and the `workspace/`-prefix clause), plus a bash corrective in the `win
 `workspace/…` path. Then the membership retry ONCE on that build; if old cases still fall, membership is parked for
 good and the phase closes.
 
+**Smoke on the catalog+loader build (6b2aec7e), 27B: 10/11, gates 0/0** — the known ambiguity miss only.
+
+---
+
+## EXP-21 — the Runtime prompt section tells the truth about the shell and the cwd (2026-09-25, in progress)
+
+**Why.** Found in the EXP-20 trace: `runtime-context` rendered `Working directory: ${process.cwd()}` (the server's cwd —
+the dev checkout here, the install dir in production) and, on win32, "Default shell for the `bash` tool: PowerShell …
+Use PowerShell verbs: `Remove-Item`, `Get-ChildItem` …", while the tool spawns Git Bash whenever Git is installed
+(`resolveWindowsShell`) and its description and corrective both say POSIX sh. The rule registry lists the section as a
+channel of `shell-posix-not-powershell`; on Windows the channel said the opposite. Consequences in the stores:
+`workspace/` prefixed onto every shell path (the prompt said the cwd was the parent), `Remove-Item` fired into bash,
+`cd C:\Users\…` with the backslashes eaten. Seven of 26 kept failure stores in the EXP-20 split; three cases.
+
+**Change (canonical-check EXTEND: the section stays, its inputs move to the tool's own resolvers).**
+- `src/context/runtime-section.ts` (new, pure): `runtimeSection(platform, windowsShellKind, workspace)`. The builder
+  passes `resolveWindowsShell().kind` and `workspaceRoot()` — the same calls the bash tool spawns with. POSIX verbs on
+  every platform (the PowerShell fallback translates them); the fallback is named as such. Working directory = the
+  workspace, with the rule "in a shell command never prefix a path with `workspace/`".
+- `workspacePrefixHint` in `shell-translate.ts`, appended by the bash tool in the same seam as `windowsPathHint`:
+  when a failed command names a `workspace/…` path (or the doubled `…/workspace/workspace/…`) and the workspace has
+  no `workspace/` child, the result says which path was tried, that bash already runs inside the workspace, and the
+  bare spelling. Commands are never rewritten.
+- Rule-registry note on the channel; tests: `runtime-section.test.ts` (four platforms/shells, never the process cwd,
+  never "Use PowerShell verbs"), `shell-translate.test.ts` (verbatim stderr from the three failing cases; silent
+  when a real `workspace/` child exists or nothing was prefixed).
+
+Blast radius: the static prompt bytes change once (one cache-prefix rebuild per session); prompt-degradation and
+rule-coverage reference the section by id only. `tsc` clean; context + shell suites green.
+
+Measure: smoke on the 27B, then the full dev split both models, gate first. Then the membership retry ONCE on this build.
+
 ---

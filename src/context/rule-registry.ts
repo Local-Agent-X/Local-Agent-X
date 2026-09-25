@@ -79,10 +79,12 @@ export type RuleId =
 export const RULES: Record<RuleId, Rule> = {
   // The `bash` tool runs POSIX sh even on Windows. Delivered three ways, so a
   // shed prompt part cannot silence it.
-  //   prompt-part: src/context/system-prompt-builder.ts:214-231 — the
-  //     `runtime-context` section ("Default shell for the `bash` tool: …",
-  //     "Use POSIX verbs" / "Use PowerShell verbs"). policy `required`,
-  //     priority `safety` ⇒ never a shed candidate.
+  //   prompt-part: src/context/system-prompt-builder.ts — the `runtime-context`
+  //     section ("Shell behind the `bash` tool: …", POSIX verbs on every
+  //     platform). policy `required`, priority `safety` ⇒ never a shed
+  //     candidate. Until 2026-09-25 this channel said "Use PowerShell verbs" on
+  //     win32 — the OPPOSITE of the rule — while the tool ran Git Bash; the
+  //     shell is now read from the same resolver the tool spawns with.
   //   tool-description: src/tools/shell-tool.ts:13-15 — "Run a shell command
   //     (bash; Git Bash on Windows, else PowerShell — write POSIX sh)".
   //   error-message: src/tools/shell-translate.ts:39-50 powershellCmdletHint —

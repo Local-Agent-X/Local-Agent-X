@@ -18,6 +18,7 @@
 
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { shellWords } from "../tool-execution/shell-delete-targets.js";
 
 export type TargetShell = "powershell-51" | "pwsh-7" | "bash";
 
@@ -88,15 +89,28 @@ export function windowsPathHint(stderr: string): string | null {
  * names the doubled path and the spelling that works. Silent when the
  * workspace really has a `workspace/` child, so a genuine miss stays a miss.
  */
-export function workspacePrefixHint(stderr: string, cwd: string, exists: (p: string) => boolean = existsSync): string | null {
-  if (!/No such file or directory|cannot access|Cannot find module|not found/.test(stderr)) return null;
-  const rel = stderr.match(/(?:^|[\s'"`:(])(?:\.\/)?(workspace[/\\][^\s'"`:)]*)/);
-  const doubled = stderr.match(/[/\\]workspace[/\\]workspace[/\\]([^\s'"`:)]*)/);
-  const tail = rel ? rel[1].replace(/^workspace[/\\]/, "") : doubled ? doubled[1] : null;
-  if (tail === null) return null;
+export function workspacePrefixHint(stderr: string, cwd: string, exists: (p: string) => boolean = existsSync, command = ""): string | null {
   if (exists(join(cwd, "workspace"))) return null;
+  const fromStderr = (): string | null => {
+    if (!/No such file or directory|cannot access|Cannot find module|not found/.test(stderr)) return null;
+    const rel = stderr.match(/(?:^|[\s'"`:(])(?:\.\/)?(workspace[/\\][^\s'"`:)]*)/);
+    const doubled = stderr.match(/[/\\]workspace[/\\]workspace[/\\]([^\s'"`:)]*)/);
+    return rel ? rel[1].replace(/^workspace[/\\]/, "") : doubled ? doubled[1] : null;
+  };
+  // `rm -rf workspace/x`, `ls workspace/x 2>/dev/null` — -f and redirects
+  // leave stderr empty and exit 0, so the failure is invisible there; the
+  // command's own word is the signal, when the un-prefixed path really exists.
+  const fromCommand = (): string | null => {
+    for (const w of shellWords(command)) {
+      const m = w.match(/^(?:\.\/)?workspace[/\\](.+)$/);
+      if (m && exists(join(cwd, m[1]))) return m[1];
+    }
+    return null;
+  };
+  const tail = fromStderr() ?? fromCommand();
+  if (tail === null) return null;
   const shown = tail.replace(/\\/g, "/");
-  return `\`workspace/${shown}\` resolved to \`${join(cwd, "workspace", shown).replace(/\\/g, "/")}\`, which does not exist: ` +
+  return `\`workspace/${shown}\` resolved to \`${join(cwd, "workspace", shown).replace(/\\/g, "/")}\`, which does not exist, so nothing there was read or changed: ` +
     `the bash tool already runs inside the workspace (\`${cwd.replace(/\\/g, "/")}\`), so write the path without the leading ` +
     `\`workspace/\` — \`${shown}\`. (The file tools accept both spellings; bash does not.)`;
 }

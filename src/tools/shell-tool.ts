@@ -281,7 +281,7 @@ export const bashTool: ToolDefinition = {
         // A `workspace/…` path that failed inside a `… || echo "not found"`
         // exits 0 with the failure only in stderr; the model then believes
         // the fallback ("the CLI is not installed") — say what really happened.
-        const prefixNotice = stderr ? workspacePrefixHint(stderr, cwd) : null;
+        const prefixNotice = workspacePrefixHint(stderr, cwd, undefined, command);
         return ok((prefixNotice ? prefixNotice + "\n" : "") + content, {
           exit_code: code,
           duration_ms: durationMs,
@@ -305,7 +305,7 @@ export const bashTool: ToolDefinition = {
       const pathNotice = windowsPathHint(stderr);
       // `workspace/x` in a command is `<workspace>/workspace/x` — the file tools
       // forgive that prefix, bash cannot; say so instead of "No such file".
-      const prefixNotice = workspacePrefixHint(stderr, cwd);
+      const prefixNotice = workspacePrefixHint(stderr, cwd, undefined, command);
       const notices = [cmdletNotice, pathNotice, prefixNotice, cageNotice, netNotice].filter(Boolean).join("\n");
       return err((notices ? notices + "\n" : "") + (out || `Exit code: ${code}`), {
         exit_code: code,

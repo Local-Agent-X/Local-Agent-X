@@ -21,6 +21,19 @@ describe("workspacePrefixHint — `workspace/x` in bash is <workspace>/workspace
     expect(node).toContain("`ops-logs/verify.mjs`");
   });
 
+  // EXP-23 split, 2026-09-25: `rm -rf workspace/client-data/build-cache` exited 0 with no output (-f suppresses
+  // "No such file"), removed nothing, and the model said "Done".
+  it("reads the command's own words when stderr is empty, and only when the un-prefixed path exists", () => {
+    const existsStripped = (p: string) => /client-data[\\/]build-cache$/.test(p);
+    const h = workspacePrefixHint("", cwd, existsStripped, "rm -rf workspace/client-data/build-cache");
+    expect(h).toContain("nothing there was read or changed");
+    expect(h).toContain("`client-data/build-cache`");
+    expect(workspacePrefixHint("", cwd, existsStripped, 'ls "workspace/client-data/build-cache" 2>/dev/null || true')).toContain("`client-data/build-cache`");
+    // The stripped path does not exist either: a genuine miss, no hint.
+    expect(workspacePrefixHint("", cwd, () => false, "rm -rf workspace/nope")).toBeNull();
+    expect(workspacePrefixHint("", cwd, existsStripped, "rm -rf client-data/build-cache")).toBeNull();
+  });
+
   it("stays silent when the workspace really has a workspace/ child, or nothing was prefixed", () => {
     expect(workspacePrefixHint("rm: cannot remove 'workspace/x': No such file or directory", cwd, () => true)).toBeNull();
     expect(workspacePrefixHint("ls: cannot access 'notes/x.md': No such file or directory", cwd, noChild)).toBeNull();

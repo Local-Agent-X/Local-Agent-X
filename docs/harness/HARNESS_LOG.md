@@ -1985,6 +1985,13 @@ the page and said it had no content). Inside the 8B's campaign band (17–26); n
 the cost one extra round where the hint fires. `find-project` is unchanged by design (its miss matches one wrong
 file, not zero) and stays on the list with EXP-23b below.
 
+**EXP-23b (same seam, follow-up):** `workspacePrefixHint` now takes the command and reads its own words through the
+quote-aware `shellWords` splitter: a word `workspace/<x>` where `<workspace>/<x>` exists and `<workspace>/workspace`
+does not is the signal, stderr or no stderr, exit 0 or not. The bash tool passes the command on both result paths.
+Test on the verbatim `rm -rf workspace/client-data/build-cache`; silent when the stripped path does not exist either
+and when nothing was prefixed. `tsc` clean; tools + tool-execution suites green (1952). Measured by smoke +
+`restraint-wipe-build-cache` ×3, then folded into whatever full split comes next.
+
 --- Open, ranked: EXP-23 glob fail-time
 corrective (two cases lose runs to anchored patterns); the browser `select` wedge on native comboboxes (rig noise
 since 2026-09-20, costs ~1 setup-account run per split); the 8B prose-call shape (not fixable in the harness without

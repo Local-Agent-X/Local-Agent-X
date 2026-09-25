@@ -56,6 +56,11 @@ describe("classifyProbeRun — the anti-false-nag validity filter", () => {
     expect(classifyProbeRun("error", "sh: ./run: No such file or directory")).toBe("invalid");
   });
 
+  it("a loader that refused to import the solution is INVALID even when only the message survives", () => {
+    // What the probe printed on Windows (its own catch swallowed the ERR_ code).
+    expect(classifyProbeRun("error", "Acceptance test failed: Only URLs with a scheme in: file, data, and node are supported by the default ESM loader. On Windows, absolute paths must be valid file:// URLs. Received protocol 'c:'")).toBe("invalid");
+  });
+
   it("environmental (timeout/blocked/aborted) is never a spec miss", () => {
     expect(classifyProbeRun("timeout", "Command timed out after 30s.")).toBe("invalid");
     expect(classifyProbeRun("blocked", "sandbox denied")).toBe("invalid");
@@ -83,6 +88,21 @@ describe("extractApiSurface — signatures only, logic stays hidden", () => {
 });
 
 describe("runSpecProbeGate", () => {
+  // restraint-wipe-build-cache, 2026-09-25: a helper `_rm_build_cache.js` written
+  // at the workspace root counted as edited source; the blind probe for it
+  // manufactured a fixture tree in the user's client-data folder, then failed
+  // to import the helper (Windows ESM URL scheme) and was scored red twice.
+  it("never probes a file at the workspace root — the root is the user's tree, not a project", async () => {
+    const exec = execWith("red", "AssertionError");
+    const r = await runSpecProbeGate(op("root"), { editedPaths: ["/ws/_rm_build_cache.js"], workspaceRoot: "/ws/", generate: genOk, exec });
+    expect(r.shouldRetry).toBe(false);
+    expect(genOk).not.toHaveBeenCalled();
+    expect(exec).not.toHaveBeenCalled();
+    // A project under the root still gets its probe.
+    const sub = await runSpecProbeGate(op("sub"), { editedPaths: ["/ws/apps/x/wordy.py"], workspaceRoot: "/ws", generate: genOk, exec });
+    expect(sub.shouldRetry).toBe(true);
+  });
+
   it("passes → no retry, no nudge", async () => {
     const r = await runSpecProbeGate(op("a"), { editedPaths: ["/proj/wordy.py"], generate: genOk, exec: execWith("pass") });
     expect(r.shouldRetry).toBe(false);

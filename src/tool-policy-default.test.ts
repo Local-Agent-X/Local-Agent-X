@@ -63,7 +63,7 @@ describe("behavior parity — representative decisions match the old table", () 
     { tool: "memory_recall", args: {}, allowed: true, note: "via memory_* glob" },
     { tool: "bash", args: { command: "ls -la" }, allowed: true, note: "allow-bash-limited" },
     { tool: "bash", args: { command: "git status" }, allowed: true, note: "allow-bash-git" },
-    { tool: "bash", args: { command: "rm -rf /home" }, allowed: false, note: "deny-bash-rm-rf" },
+    { tool: "bash", args: { command: "rm -rf /home" }, allowed: true, note: "allow-bash-limited — no policy deny; the irreversible-op floor cards every recursive delete (require-approval.test.ts)" },
     { tool: "write", args: { path: "src/a.ts" }, allowed: true, note: "allow-write" },
     { tool: "write", args: { path: "C:\\Windows\\System32\\x" }, allowed: false, note: "deny-write-system" },
     { tool: "edit", args: { path: "node_modules/foo/i.js" }, allowed: false, note: "deny-edit-node-modules" },

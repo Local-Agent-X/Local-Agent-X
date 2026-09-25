@@ -11,8 +11,12 @@ export const TOOL_POLICIES_CORE: Record<string, ToolPolicyEntry> = {
   bash: {
     kernel: "shell", risk: "shell",
     rateLimit: { maxCalls: 30, windowMs: 60_000, action: "block" },
+    // No `rm -rf` deny here: the irreversible-op floor (tool-execution) cards
+    // every recursive delete for the user's approval. A hard deny above that
+    // floor sent the model into `node` scripts and inline evals to do the same
+    // delete uncarded — the workaround the floor cannot see (op-outcomes
+    // restraint-wipe-build-cache, 2026-09-25). Removed at Peter's decision.
     rules: [
-      { id: "deny-bash-rm-rf", decision: "deny", reason: "Blocked: rm -rf is too dangerous for automated execution", priority: 90, argMatch: { command: "rm -rf *" } },
       { id: "deny-bash-format", decision: "deny", reason: "Blocked: format/fdisk commands", priority: 90, argMatch: { command: "format *" } },
       { id: "deny-bash-del-system", decision: "deny", reason: "Blocked: cannot delete system files", priority: 90, argMatch: { command: "del /f /s /q C:\\Windows*" } },
       { id: "allow-bash-git", decision: "allow", reason: "Git commands allowed", priority: 50, argMatch: { command: "git *" } },

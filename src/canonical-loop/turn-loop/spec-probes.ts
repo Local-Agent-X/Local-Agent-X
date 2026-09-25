@@ -25,7 +25,7 @@
 // terminal via clearSpecProbeStateForOp (state-machine.ts).
 
 import { writeFileSync, unlinkSync, readFileSync } from "node:fs";
-import { dirname, join, basename } from "node:path";
+import { dirname, join, basename, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { opEditedSourcePaths } from "../middlewares/verify-gate.js";
 import { firstUserMessageText } from "../store.js";
@@ -34,6 +34,8 @@ import { resolveAgentPath } from "../../workspace/paths.js";
 import { generateOracleProbe, type OracleProbe, type ProbeLanguage } from "../../classifiers/oracle-probe-gen.js";
 import { bashTool } from "../../tools/shell-tool.js";
 import { statusOf } from "../../tools/result-helpers.js";
+import { workspaceRoot } from "../../config.js";
+import { removeLeftovers, snapshotTree } from "./probe-leftovers.js";
 import { createLogger } from "../../logger.js";
 import type { Op } from "../../ops/types.js";
 
@@ -82,7 +84,7 @@ export function _resetSpecProbeState(): void {
 // never false-red-nag a correct implementation. AssertionError is intentionally
 // absent — that is the one signal we DO treat as a genuine behavioral miss.
 const PROBE_INVALID_RE =
-  /\b(ModuleNotFoundError|ImportError|No module named|SyntaxError|IndentationError|TabError|NameError|AttributeError|TypeError|ReferenceError|ERR_MODULE_NOT_FOUND|ERR_UNKNOWN_FILE_EXTENSION|ERR_UNSUPPORTED_[A-Z_]+|Cannot find module|command not found|not found|No such file|ENOENT|Permission denied|Aborted)\b/i;
+  /\b(ModuleNotFoundError|ImportError|No module named|SyntaxError|IndentationError|TabError|NameError|AttributeError|TypeError|ReferenceError|ERR_MODULE_NOT_FOUND|ERR_UNKNOWN_FILE_EXTENSION|ERR_UNSUPPORTED_[A-Z_]+|Cannot find module|command not found|not found|No such file|ENOENT|Permission denied|Aborted)\b|Only URLs with a scheme|must be valid file:\/\/ URLs|Received protocol '/i;
 
 const EXT: Record<ProbeLanguage, string> = { python: "py", node: "mjs", shell: "sh" };
 // `python3 -B`: never write .pyc. Co-locating the probe next to the solution
@@ -121,6 +123,10 @@ export function classifyProbeRun(status: string, output: string): ProbeVerdict {
 async function defaultExec(probe: OracleProbe, solutionDir: string, signal?: AbortSignal): Promise<{ verdict: ProbeVerdict; output: string }> {
   const fileName = `.lax-probe-${randomUUID().slice(0, 8)}.${EXT[probe.language]}`;
   const probePath = join(solutionDir, fileName);
+  // The probe may create files while it runs (a deletion task's probe builds
+  // the tree it then deletes); they land in the user's project. Everything new
+  // after the run is removed — see probe-leftovers.ts.
+  const before = snapshotTree(solutionDir);
   try {
     writeFileSync(probePath, probe.script, "utf-8");
     const r = await bashTool.execute({
@@ -135,6 +141,8 @@ async function defaultExec(probe: OracleProbe, solutionDir: string, signal?: Abo
     return { verdict: "invalid", output: (e as Error).message };
   } finally {
     try { unlinkSync(probePath); } catch { /* best-effort — a dotfile that outlives a crash is harmless */ }
+    const removed = removeLeftovers(solutionDir, before);
+    if (removed.length) logger.info(`probe left ${removed.length} new path(s) in ${solutionDir}, removed: ${removed.join(", ")}`);
   }
 }
 
@@ -189,6 +197,11 @@ function primaryEditDir(absPaths: string[]): string | null {
   return best;
 }
 
+function sameDir(a: string, b: string): boolean {
+  const norm = (p: string) => resolve(p).replace(/[\\/]+$/, "").toLowerCase();
+  return norm(a) === norm(b);
+}
+
 function truncateHead(text: string, limit: number): string {
   if (text.length <= limit) return text;
   const dropped = text.slice(limit).split("\n").length;
@@ -218,6 +231,9 @@ export interface SpecProbeGateResult {
 
 export interface SpecProbeOptions {
   editedPaths?: string[];
+  /** The agent's workspace root (default: the real one). A probe never runs
+   *  there: the root is the user's whole file tree, not a project. */
+  workspaceRoot?: string;
   generate?: typeof generateOracleProbe;
   exec?: (probe: OracleProbe, solutionDir: string, signal?: AbortSignal) => Promise<{ verdict: ProbeVerdict; output: string }>;
   signal?: AbortSignal;
@@ -245,6 +261,14 @@ export async function runSpecProbeGate(op: Op, opts: SpecProbeOptions = {}): Pro
   const abs = raw.map((p) => resolveAgentPath(p, sessionId));
   const solutionDir = primaryEditDir(abs);
   if (!solutionDir) return NO_RETRY;
+  // A throwaway helper written at the workspace root (a deletion task's
+  // `_rm_build_cache.js`) is not a solution module, and the root is the user's
+  // whole tree: a blind probe for it can only manufacture fixtures in the
+  // user's files. Projects live in subdirectories; the root gets no probe.
+  if (sameDir(solutionDir, opts.workspaceRoot ?? workspaceRoot())) {
+    logger.debug(`op=${op.id} edited files sit at the workspace root, not in a project — no probe`);
+    return NO_RETRY;
+  }
 
   let probe: OracleProbe | null;
   if (PROBE_CACHE.has(op.id)) {

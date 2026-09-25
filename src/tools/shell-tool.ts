@@ -278,7 +278,11 @@ export const bashTool: ToolDefinition = {
         const content = stdout
           ? (stderr ? stdout + "\n[stderr]\n" + stderr : stdout)
           : `[exit ${code === null ? "?" : code} in ${durationMs}ms — command finished with no captured output. If this was a CLI that writes progress to a TTY (ollama, npm install, winget), verify via filesystem or its REST API rather than re-running.]`;
-        return ok(content, {
+        // A `workspace/…` path that failed inside a `… || echo "not found"`
+        // exits 0 with the failure only in stderr; the model then believes
+        // the fallback ("the CLI is not installed") — say what really happened.
+        const prefixNotice = stderr ? workspacePrefixHint(stderr, cwd) : null;
+        return ok((prefixNotice ? prefixNotice + "\n" : "") + content, {
           exit_code: code,
           duration_ms: durationMs,
           stderr: stderr || undefined,

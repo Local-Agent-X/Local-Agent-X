@@ -253,6 +253,26 @@ describe("Context Builder", () => {
 // failure modes are caught by locking the invariant "the canonical repo-root
 // AGENTS.md is the one injected". The catch-and-return-"" makes the empty mode
 // invisible, so it needs an explicit test.
+describe("identity names ride a required section", () => {
+  // The first-turn identity ask keys on the two names; they used to live only
+  // in the degradable memory context block, which the weak tier strips and the
+  // local budget sheds — a named agent then re-asked its call sign.
+  it("is present, required, and ahead of every degradable section when names are known; absent otherwise", async () => {
+    const withNames = createSystemPromptBuilder({ ...MOCK_INPUTS, identityNames: "<identity_names>\n- Agent Name: Nova\n- User Name: Peter\n</identity_names>" });
+    const result = await withNames.buildWithTelemetry();
+    expect(result.prompt).toContain("<identity_names>");
+    const policy = withNames.getSectionPolicy();
+    const idx = policy.findIndex((s) => s.id === "identity-names");
+    expect(idx).toBeGreaterThan(0);
+    expect(policy[idx].policy).toBe("required");
+    expect(policy.findIndex((s) => s.id === "context-block")).toBeGreaterThan(idx);
+    expect(policy.findIndex((s) => s.id === "app-manifest")).toBeGreaterThan(idx);
+
+    const without = createSystemPromptBuilder({ ...MOCK_INPUTS, identityNames: "" });
+    expect(without.getSectionPolicy().some((s) => s.id === "identity-names")).toBe(false);
+  });
+});
+
 describe("AGENTS.md invariants injection", () => {
   const contextDir = dirname(fileURLToPath(import.meta.url)); // src/context/
   const repoRoot = resolve(contextDir, "../.."); // the fixed "../.." resolution

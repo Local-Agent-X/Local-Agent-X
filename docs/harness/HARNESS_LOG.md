@@ -2105,6 +2105,19 @@ the catalog smoke; the residue is deleted only with Peter's confirmation (it is 
 "Agent X reporting for duty …" line Codex echoes into replies is a quoted example in config/system-prompt.md:134.
 EXP-24 (frontier essentials) holds until the mode question is settled so its baseline and retry share one mode.
 
+**Peter's decisions (all three).** (1) The residue is deleted from his workspace. (2) Isolated eval servers now run
+at `fileAccessMode: "workspace"` (isolated.mjs), validated by a 27B smoke below. (3) The call-sign line is NOT an
+example to remove — it is the product's first-turn identity ask, sent only when neither name is known, and the eval
+has no names on file, so Codex was following the prompt. Peter's real observation stands, though: a NAMED agent
+sometimes re-asks, especially on weaker models. Root cause, from the live log and build-context.ts: the precondition
+reads `Name:` out of `<agent_identity>`/`<user_profile>`, and both live in the memory context block, which (a) the
+weak tier strips outright before the prompt is built, (b) the constrained-local budget degrades — 15 such turns in
+one day of the live log, one at an 8k window with the 5.4k block dropped — and (c) the stable-prefix path moves
+out of the system prompt. Fix: `context/identity-names.ts` extracts the two names BEFORE any of that and the builder
+carries them as `<identity_names>`, a required section ahead of everything degradable, in the local split's HEAD
+set; the prompt's precondition checks that block first. Tests: extraction (own blocks only, placeholders ignored),
+rendering, builder placement/policy. The running app needs a restart to pick it up.
+
 --- Open, ranked: EXP-23 glob fail-time
 corrective (two cases lose runs to anchored patterns); the browser `select` wedge on native comboboxes (rig noise
 since 2026-09-20, costs ~1 setup-account run per split); the 8B prose-call shape (not fixable in the harness without

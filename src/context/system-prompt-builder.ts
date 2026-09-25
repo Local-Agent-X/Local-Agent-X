@@ -193,6 +193,8 @@ export function createSystemPromptBuilder(opts: {
   sessionId?: string;
   // Dynamic sections
   contextBlock?: string;
+  /** `<identity_names>` block (context/identity-names.ts) — required, never shed. */
+  identityNames?: string;
   relevantMemories?: string;
   smartContext?: string;
   memoryContext?: string;
@@ -225,6 +227,19 @@ export function createSystemPromptBuilder(opts: {
     id: "runtime-context", label: "Runtime", type: "static", policy: "required", priority: "safety",
     build: () => runtimeSection(process.platform, process.platform === "win32" ? resolveWindowsShell().kind : null, workspaceRoot()),
   });
+
+  // The agent's and the user's names, in a section no budget can shed. The
+  // first-turn identity ask (config/system-prompt.md) keys on them; they also
+  // sit in the memory context block, which the weak tier strips, the
+  // constrained-local budget degrades and the stable-prefix path moves out of
+  // the system prompt — each of which had a named agent re-asking its call
+  // sign (live log, 2026-09-25). Tiny, required, ahead of everything degradable.
+  if (opts.identityNames) {
+    builder.addSection({
+      id: "identity-names", label: "Identity", type: "static", policy: "required", priority: "safety",
+      build: () => opts.identityNames!,
+    });
+  }
 
   // App manifest — the agent's map of its own body (auto-generated catalog)
   builder.addSection({

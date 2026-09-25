@@ -208,6 +208,7 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
     resolvedProvider: resolved.provider,
     resolvedModel: resolved.model,
     contextBlock: ctx.contextBlock,
+    identityNames: ctx.identityNames,
     relevantMemories: ctx.relevantMemories,
     smartContext: ctx.smartContext,
     memoryContext: ctx.memoryContext,

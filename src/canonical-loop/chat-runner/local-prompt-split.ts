@@ -43,6 +43,7 @@ export const HEAD_SECTION_IDS: ReadonlySet<string> = new Set([
   "system-prompt-override",
   "core-identity",
   "runtime-context",
+  "identity-names",
   "learned-protocol",
   "file-attachments",
   "app-manifest",

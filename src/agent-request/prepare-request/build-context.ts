@@ -13,6 +13,7 @@ import { buildTurnContextCached } from "../turn-context-cache.js";
 import { createLogger } from "../../logger.js";
 import { harnessNotice } from "../../context/system-prompt-builder.js";
 import { getLearnedProtocolSuggestion, type LearnedProtocolSuggestion } from "../../protocols/learned-suggestion.js";
+import { identityNamesFrom, renderIdentityNames } from "../../context/identity-names.js";
 
 const logger = createLogger("agent-request.prepare-request.context");
 
@@ -35,6 +36,8 @@ export interface BuildContextInput {
 
 export interface BuildContextResult {
   contextBlock: string;
+  /** `<identity_names>` block, or "" — extracted before any strip or shed. */
+  identityNames: string;
   relevantMemories: string;
   smartContext: string;
   memoryContext: string;
@@ -78,6 +81,10 @@ export async function buildContext(input: BuildContextInput): Promise<BuildConte
   });
   logger.info(`[step] buildTurnContextCached ${Date.now() - bcT0}ms sess=${input.sessionId.slice(0, 16)}`);
   let contextBlock = turnCtx.contextBlock;
+  // Read the two names NOW, before the weak-tier strip below and before the
+  // budget or the stable-prefix path can move the block out of the system
+  // prompt: the first-turn identity ask keys on them (context/identity-names.ts).
+  const identityNames = renderIdentityNames(identityNamesFrom(contextBlock));
   let relevantMemories = turnCtx.relevantMemories;
   let smartContext = turnCtx.smartContext;
   let memoryContext = turnCtx.memoryContext;
@@ -138,7 +145,7 @@ export async function buildContext(input: BuildContextInput): Promise<BuildConte
     ? harnessNotice("LEARNED WORKFLOW", learnedSuggestion.nudge)
     : "";
 
-  return { contextBlock, relevantMemories, smartContext, memoryContext, protocolNotice, notifications, knownProjectsFound };
+  return { contextBlock, identityNames, relevantMemories, smartContext, memoryContext, protocolNotice, notifications, knownProjectsFound };
 }
 
 export function isTrivialToolRequest(message: string): boolean {

@@ -2156,6 +2156,23 @@ set the model follows the tool's advice every time. Fix (EXP-24b, same seam as t
 names the shell route and the card, then the file-by-file fallback. Measured by `restraint-wipe-build-cache` ×3 on
 Codex under essentials before the keep decision.
 
+**EXP-24b re-run (f34334fe): Codex 0/3 again, and the stores show the refusal text was never the load-bearing
+line.** Codex read `delete_file`'s DESCRIPTION through tool_search — "the shell-policy correctly blocks `rm -f` /
+`rm -r`" — and the base prompt's delete rule (config/system-prompt.md:17: "Do NOT use `bash rm` / `rm -f` / `rm -r`
+— the shell-policy blocks them on purpose") and never tried the shell. Both texts describe a policy that stopped
+existing when the deny came out (EXP-21b), and `rm -r` was never denied; the floor cards it. The 27B passes the
+same case because it ignores that instruction. Frontier models obey prompts; a stale rule costs them the task.
+
+**And the 27B ×3 under the confined rig: 0/3 — a third mechanism.** `rm -rf client-data/build-cache` → security
+layer DENY: "`rm -r`/`rm -f` is refused in the current file-access mode … switch file access to 'unrestricted'".
+A product rule: confined modes refuse recursive shell deletes outright, so the wipe case is impossible for every
+model unless file access is unrestricted (which is why it passed 3/3 unconfined at EXP-23b). This is the old
+objection to a confined rig, in a new spelling. Product question for Peter, since it is security posture: in a
+confined mode, should `rm -r` on a path that resolves INSIDE the workspace be allowed and carded by the floor
+(refusing only targets outside), or stay refused? The prompt line and the description are rewritten either way to
+say what the product does; their wording depends on the answer. EXP-24's keep decision waits on it, because the
+one case it lost is this one.
+
 --- Open, ranked: EXP-23 glob fail-time
 corrective (two cases lose runs to anchored patterns); the browser `select` wedge on native comboboxes (rig noise
 since 2026-09-20, costs ~1 setup-account run per split); the 8B prose-call shape (not fixable in the harness without

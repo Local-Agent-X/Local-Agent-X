@@ -186,9 +186,19 @@ export async function selectTools(input: ToolSelectionInput): Promise<ToolSelect
     tools = input.bridgeTools;
   } else {
     tools = filterToolsForMessage(input.allAgentTools, input.message);
-    if (tier !== "strong") {
+    // EXP-18/EXP-24: "essentials" = the tier's essential set plus the message's
+    // picks, undo-paired; "catalog" pins every main-chat tool. An unprofiled
+    // model — every frontier model without a profile — is catalog, exactly as
+    // before. A strong model whose profile opts into essentials is shrunk to
+    // the MEDIUM tier's essential set as its base: the strong tier never had a
+    // shrink of its own (it lazy-loads from the manifest instead), and the
+    // medium set is the one the local campaign measured.
+    const { modelToolMembership } = await import("../../local-runtimes/model-profile.js");
+    const membership = modelToolMembership(input.resolvedModel);
+    const shrinkTier: Tier | null = tier !== "strong" ? tier : membership === "essentials" ? "medium" : null;
+    if (shrinkTier) {
       const before = tools.length;
-      tools = shrinkToolsForTier(tools, tier, input.allAgentTools);
+      tools = shrinkToolsForTier(tools, shrinkTier, input.allAgentTools);
       if (tools.length !== before) {
         logger.info(`[tools] Shrunk ${before}→${tools.length} for ${tier} model ${input.resolvedModel} (${tools.map(t => t.name).join(",")})`);
       }
@@ -207,8 +217,6 @@ export async function selectTools(input: ToolSelectionInput): Promise<ToolSelect
         // which re-adds the whole catalog the shrink just cut (65–77 on the
         // wire, ~19k tokens on the 27B). "essentials" pins the tier set the
         // shrink produced and lets the index add only the message's picks.
-        const { modelToolMembership } = await import("../../local-runtimes/model-profile.js");
-        const membership = tier === "strong" ? "catalog" : modelToolMembership(input.resolvedModel);
         const semantic = await rag.select(input.message, input.allAgentTools, {
           topK: 22,
           minScore: 0.25,
@@ -263,7 +271,7 @@ export async function selectTools(input: ToolSelectionInput): Promise<ToolSelect
     // cannot regress into the same shape either.
     const { withUndoCounterparts } = await import("../../tools/undo-pairs.js");
     tools = withUndoCounterparts(tools, input.allAgentTools);
-    if (tier !== "strong") tools = shrinkToolsForTier(tools, tier, input.allAgentTools, tools.length);
+    if (shrinkTier) tools = shrinkToolsForTier(tools, shrinkTier, input.allAgentTools, tools.length);
     // A nudge that names a tool the model does not have is dead text (the
     // tier-tool-set header records exactly that failure for tool_search). Put
     // `protocol` in the schema whenever the prompt will say to call it —

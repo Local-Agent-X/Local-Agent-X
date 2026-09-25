@@ -1,0 +1,50 @@
+{
+  "id": "gpt-5.6-sol",
+  "runtime": {
+    "name": "codex",
+    "version": null,
+    "weightQuant": null,
+    "kvCacheQuant": null
+  },
+  "tier": "A",
+  "contextWindow": 1000000,
+  "usableContext": 800000,
+  "nativeToolCalls": true,
+  "structuredOutput": "native_tools",
+  "supportedCombos": {
+    "toolsAndSchema": true,
+    "schemaAndThinking": true,
+    "toolsAndThinking": true
+  },
+  "parallelToolCalls": true,
+  "thinking": {
+    "supported": true,
+    "mode": "all",
+    "budgetTokens": null,
+    "budgetMechanism": "native"
+  },
+  "sampling": {
+    "toolStep": { "temperature": null, "topP": null, "topK": null, "minP": null, "repeatPenalty": null },
+    "diverse": { "temperature": null, "topP": null, "topK": null, "minP": null, "repeatPenalty": null },
+    "source": "Codex subscription route; LAX sends no sampling overrides to it. Recorded, not tuned."
+  },
+  "maxTokens": {
+    "toolCall": 16384,
+    "contentTool": 16384,
+    "planOrReport": 16384
+  },
+  "toolRouting": "message",
+  "stablePrefix": false,
+  "nudgeInToolDescription": false,
+  "toolMembership": "essentials",
+  "maxToolsExposed": 30,
+  "toolsPerTurn": null,
+  "fewShotExamples": 0,
+  "stateBlock": true,
+  "stepScopedContext": false,
+  "criticPass": { "plan": false, "riskyActions": false },
+  "bestOfN": { "toolStep": 1, "planning": 1, "riskyActions": 1 },
+  "roles": { "router": null, "planner": null, "coder": null },
+  "kernelPolicy": "workspace-assistant",
+  "notes": "EXP-24 (2026-09-25): the ONLY field that departs from an unprofiled strong model is toolMembership. toolRouting/stablePrefix/nudgeInToolDescription sit at the accessor defaults an unprofiled model gets; contextWindow is read only by the local-runtimes cache, so it is informational here. Baseline at catalog (724cab11): 74/78, old 65/66, 12.3M input tokens over the dev split."
+}

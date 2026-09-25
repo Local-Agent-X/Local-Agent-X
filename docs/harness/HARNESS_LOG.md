@@ -2118,6 +2118,30 @@ carries them as `<identity_names>`, a required section ahead of everything degra
 set; the prompt's precondition checks that block first. Tests: extraction (own blocks only, placeholders ignored),
 rendering, builder placement/policy. The running app needs a restart to pick it up.
 
+**Confined-mode validation (f5514c77), 27B: smoke 10/11, gates 0/0 — identical to the unconfined smoke; `skill-
+supabase-add-table` ×3: 2/3** (the miss is the nudge-followed-but-hand-written shape, no block in the log). The
+rig runs confined from here on; every number after this line was measured with file access confined to the run's
+workspace.
+
+---
+
+## EXP-24 — essentials membership on a frontier model, through the Codex subscription (2026-09-25, in progress)
+
+**Why.** The 31% input-token cut of EXP-22 is gated to profiled local models; a strong model has never been shrunk
+(it lazy-loads from the manifest instead) and ships 65–75 tools. The Codex baseline at catalog (724cab11, run
+unconfined): 74/78, old 65/66, skills 9/12, gates 0/0, 12.28M input tokens. Peter: measure it, through the
+subscription, never the API.
+
+**Change.** A bundled profile `config/model-profiles/gpt-5.6-sol.json` whose only departure from an unprofiled
+strong model is `toolMembership: "essentials"` (routing/prefix/nudge at the accessor defaults; the declared window
+is read only by the local cache). Selector: membership is read from the profile for every tier (unprofiled →
+catalog, so nothing changes for anyone without a profile); a strong model that opts in is shrunk to the MEDIUM
+tier's essential set as its base, then the picks, the undo pairing and the protocol include as for the local tiers.
+Test: strong+essentials < 40 tools with the delete/restore pair; strong+catalog and unprofiled strong unchanged.
+
+Measure: Codex smoke, then the Codex dev split (confined). Number to beat: the baseline's 65/66 old, 9/12 skills,
+gates zero, with a token cut of the same order as the 27B's.
+
 --- Open, ranked: EXP-23 glob fail-time
 corrective (two cases lose runs to anchored patterns); the browser `select` wedge on native comboboxes (rig noise
 since 2026-09-20, costs ~1 setup-account run per split); the 8B prose-call shape (not fixable in the harness without

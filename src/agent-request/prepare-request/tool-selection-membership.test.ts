@@ -37,11 +37,11 @@ function catalog(): ToolDefinition[] {
   return all;
 }
 
-function declareProfile(id: string, toolMembership: "catalog" | "essentials") {
+function declareProfile(id: string, toolMembership: "catalog" | "essentials", tier: "A" | "B" | "C" = "B") {
   const { profileId: _i, profileHash: _h, source: _s, ...whole } = resolveModelProfile("qwen3.6:27b")!;
   const dir = join(data, USER_PROFILE_SUBDIR);
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, profileFileName(id)), JSON.stringify({ ...whole, id, toolMembership }));
+  writeFileSync(join(dir, profileFileName(id)), JSON.stringify({ ...whole, id, toolMembership, tier }));
   _resetModelProfilesForTests();
 }
 
@@ -103,8 +103,27 @@ describe("EXP-18 tool membership", () => {
     expect(unpairedDestructive((await turn("catalog:27b", "delete the old build folder")).map(tool))).toEqual([]);
   });
 
-  it("a strong model is untouched by the flag", async () => {
+  it("an unprofiled strong model is untouched — the whole catalog, as before", async () => {
     const set = await turn("claude-opus-5-5", "delete the old build folder");
     expect(set.length).toBeGreaterThan(60);
+  });
+
+  // EXP-24: a strong model whose profile opts into essentials is shrunk to the
+  // MEDIUM tier's essential set as its base (the strong tier never had a shrink
+  // of its own), then gets the message's picks and the undo pairing like the
+  // local tiers. Only a profile can opt a strong model in.
+  it("a strong model whose profile says essentials gets the medium essential set plus the picks", async () => {
+    declareProfile("strong-essentials-test", "essentials", "A");
+    const set = await turn("strong-essentials-test", "delete the old build folder");
+    expect(set.length).toBeLessThan(40);
+    expect(set).toContain("read");
+    expect(set).toContain("tool_search");
+    expect(set).toContain("delete_file");
+    expect(set).toContain("restore_file");
+    expect(set).not.toContain("extra_tool_39");
+    expect(unpairedDestructive(set.map(tool))).toEqual([]);
+    // A strong profile that says catalog is the unprofiled behaviour.
+    declareProfile("strong-catalog-test", "catalog", "A");
+    expect((await turn("strong-catalog-test", "delete the old build folder")).length).toBeGreaterThan(60);
   });
 });

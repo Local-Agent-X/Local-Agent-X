@@ -32,6 +32,19 @@ function wedgedFetch(): typeof fetch {
   ) as unknown as typeof fetch;
 }
 
+/** A fetch that answers after `delayMs` regardless of batch size — a slow Ollama. */
+function slowFetch(delayMs: number): typeof fetch {
+  return vi.fn((_url, init?: RequestInit) =>
+    new Promise<Response>((resolve, reject) => {
+      const timer = setTimeout(() => resolve(okEmbedResponse(4, 10)), delayMs);
+      init?.signal?.addEventListener("abort", () => {
+        clearTimeout(timer);
+        reject(new Error("aborted"));
+      });
+    }),
+  ) as unknown as typeof fetch;
+}
+
 async function makeHealthyProvider(): Promise<OllamaEmbeddings> {
   const provider = new OllamaEmbeddings({ baseUrl: BASE, model: "mxbai-embed-large" });
   vi.stubGlobal("fetch", vi.fn(async () => okEmbedResponse()));
@@ -72,13 +85,42 @@ describe("OllamaEmbeddings fail-fast lifecycle", () => {
     vi.stubGlobal("fetch", wedged);
 
     const pending = provider.embedBatch(["a", "b", "c", "d", "e"]);
-    await vi.advanceTimersByTimeAsync(20_100);
+    // 5 items on the 5s-per-item budget. The cap scales with batch size so the
+    // health probe can never be the more generous path; only the deadline moved,
+    // the one-request-no-serial-fallback invariant below is unchanged.
+    await vi.advanceTimersByTimeAsync(25_100);
     const vecs = await pending;
     expect(vecs).toHaveLength(5);
     expect(vecs.every((v) => v.every((n) => n === 0))).toBe(true);
     // One batch request. The old code fell back to 5 sequential embeds,
     // each with its own 30s cap.
     expect(wedged).toHaveBeenCalledTimes(1);
+  });
+
+  // The re-embed livelock (2026-09-23, ran all day at 15-minute intervals and
+  // embedded 0 of 13310 chunks on every pass). The probe had a flat 60s budget
+  // for 1 text while a batch of 10 got a flat 20s — 30x the per-item allowance —
+  // so on a box where real work honestly overran, health reported serving, the
+  // recovery signal re-armed a re-embed, the batch expired, and the cycle
+  // repeated forever. Health is only evidence about the work when it is measured
+  // on the work's own budget.
+  it("health cannot pass on a budget the real work is denied", async () => {
+    const provider = await makeHealthyProvider();
+
+    // Answers every request in 7s whatever its size: past the 5s/item budget,
+    // but well inside the old 60s probe budget.
+    vi.stubGlobal("fetch", slowFetch(7_000));
+
+    const pending = provider.embedBatch(["a"]);
+    await vi.advanceTimersByTimeAsync(5_100);
+    expect((await pending)[0].every((n) => n === 0)).toBe(true);
+
+    // The recheck probe must overrun the same way instead of passing on a
+    // longer budget and re-arming work that cannot finish.
+    await vi.advanceTimersByTimeAsync(60_100); // recheck fires
+    await vi.advanceTimersByTimeAsync(5_100);  // and expires on its own budget
+    await vi.runOnlyPendingTimersAsync();
+    await expect(provider.ensureHealthy()).resolves.toBe(false);
   });
 
   it("recovers via the background recheck when the server comes back", async () => {

@@ -126,7 +126,13 @@ export class BackgroundReembed {
     const waitMs = this.notBefore - this.now();
     if (waitMs > 0) {
       if (!this.deferredKick) {
-        logger.info(`[memory] Background re-embed deferred ${Math.round(waitMs / 1000)}s (${reason}) — provider is flapping`);
+        // Say what is actually known: the previous pass left chunks behind, so
+        // retries are spaced. The old wording asserted "provider is flapping",
+        // which named a cause the backoff never tested — armBackoff fires on
+        // incomplete progress, not on a health oscillation — and pointed a live
+        // investigation at the provider when the passes were failing for their
+        // own reason.
+        logger.info(`[memory] Background re-embed deferred ${Math.round(waitMs / 1000)}s (${reason}) — previous pass left chunks unembedded`);
         this.deferredKick = setTimeout(() => {
           this.deferredKick = null;
           this.kick(reason);

@@ -13,10 +13,17 @@ const logger = createLogger("embedding-providers");
 // unhealthy so subsequent turn-path calls return instantly, and the
 // background recheck restores service — the turn path itself never waits on
 // sidecar lifecycle (model loads, health probes).
-const EMBED_TIMEOUT_MS = 5_000;
-const BATCH_TIMEOUT_MS = 20_000;
-// Model load into GPU/RAM can take 30-60s — allowed only in the background probe.
-const PROBE_TIMEOUT_MS = 60_000;
+//
+// ONE RATE FOR EVERY PATH, scaled by item count, so the probe can never be the
+// generous path: flat caps gave 1 probe text 60s and a 10-text batch 20s, and at
+// 30x the per-item allowance health reported serving while every real pass
+// embedded nothing — probe passes, recovery re-arms the re-embed, batch expires,
+// forever (see ollama.test.ts "health cannot pass on a budget the real work is
+// denied"). Matches how the caller already budgets (index-embedding.ts, 15s/item).
+const PER_ITEM_BUDGET_MS = 5_000;
+// A cold model load into GPU/RAM costs 30-60s, paid once by whichever path asks
+// first — so it rides on the first exchange, not only on the probe.
+const COLD_START_GRACE_MS = 60_000;
 const RECHECK_DELAY_MS = 60_000;
 // Pin the embed model resident. Ollama's default keep_alive is 5 minutes, so
 // the model unloaded between chats and the next turn paid the reload.
@@ -102,6 +109,8 @@ export class OllamaEmbeddings implements ExtendedEmbeddingProvider {
   private baseUrl: string;
   private healthy: boolean | null = null;
   private dimensionsDetected = false;
+  /** Set by the first exchange that comes back; retires the cold-start grace. */
+  private servedOnce = false;
   private probing: Promise<boolean> | null = null;
   private recheckTimer: NodeJS.Timeout | null = null;
   /** The one recovery subscriber (memory index) — see EmbeddingProvider.onRecovered. */
@@ -134,7 +143,7 @@ export class OllamaEmbeddings implements ExtendedEmbeddingProvider {
     // Truncate to ~512 tokens (~2000 chars) for models with smaller context windows
     const truncated = text.trim().slice(0, 2000);
     try {
-      const json = await this.embedRequest([truncated], EMBED_TIMEOUT_MS);
+      const json = await this.embedRequest([truncated], this.budgetFor(1));
       const vec = json.embeddings?.[0] ?? emptyVector(this.dimensions);
       this.detectDimensions(vec);
       return vec;
@@ -157,7 +166,7 @@ export class OllamaEmbeddings implements ExtendedEmbeddingProvider {
     const validTexts = cleaned.filter((t): t is string => t !== null);
     if (validTexts.length === 0) return texts.map(() => emptyVector(this.dimensions));
     try {
-      const json = await this.embedRequest(validTexts, BATCH_TIMEOUT_MS);
+      const json = await this.embedRequest(validTexts, this.budgetFor(validTexts.length));
       const validResults = json.embeddings ?? validTexts.map(() => emptyVector(this.dimensions));
       this.detectDimensions(validResults[0] ?? []);
       // Map results back to original positions
@@ -173,6 +182,12 @@ export class OllamaEmbeddings implements ExtendedEmbeddingProvider {
     }
   }
 
+  /** Deadline for an exchange of `itemCount` texts. The one rate, for every path. */
+  private budgetFor(itemCount: number): number {
+    const warm = PER_ITEM_BUDGET_MS * Math.max(1, itemCount);
+    return this.servedOnce ? warm : warm + COLD_START_GRACE_MS;
+  }
+
   /**
    * Run one exchange under a deadline — body read included, so a response whose
    * stream hangs cannot outlive the budget. A failure raised while OUR abort is
@@ -185,7 +200,11 @@ export class OllamaEmbeddings implements ExtendedEmbeddingProvider {
     const startedAt = this.now();
     const timer = setTimeout(() => ac.abort(), budgetMs);
     try {
-      return await exchange(ac.signal);
+      const out = await exchange(ac.signal);
+      // Answered at all, whatever the status: the model load is paid, so later
+      // exchanges are judged on the warm budget.
+      this.servedOnce = true;
+      return out;
     } catch (e) {
       if (ac.signal.aborted) throw new DeadlineExceeded(Math.round(this.now() - startedAt), budgetMs);
       throw e;
@@ -360,17 +379,18 @@ export class OllamaEmbeddings implements ExtendedEmbeddingProvider {
     if (isLocalOnlyMode() && !models.some((entry) => entry.name.replace(/:latest$/, "") === this.model)) {
       return false;
     }
-    // Verify the model is actually available — do a test embed. First call to
-    // a large model can take 30-60s to load into GPU/RAM; that cost lives
-    // here, in the background, never in a caller's turn.
-    const testRes = await this.probeEmbed(PROBE_TIMEOUT_MS);
+    // Verify the model is actually available — do a test embed on the same
+    // per-item budget the turn path gets, so a server too slow to serve real
+    // work cannot pass here. A cold model load is covered by the grace inside
+    // budgetFor, in the background, never in a caller's turn.
+    const testRes = await this.probeEmbed(this.budgetFor(1));
     if (testRes.ok) return true;
     // Model not available — try fallback to nomic-embed-text
     if (!isLocalOnlyMode() && this.model !== "nomic-embed-text") {
       logger.warn(`[ollama-embed] Model "${this.model}" not available (HTTP ${testRes.status}) — falling back to nomic-embed-text`);
       this.model = "nomic-embed-text";
       this.dimensions = 768;
-      const fallbackRes = await this.probeEmbed(PROBE_TIMEOUT_MS / 2);
+      const fallbackRes = await this.probeEmbed(this.budgetFor(1));
       return fallbackRes.ok;
     }
     return false;

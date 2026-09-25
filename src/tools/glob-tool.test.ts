@@ -97,6 +97,37 @@ describe("glob tool — ordinary output is unchanged", () => {
 	});
 });
 
+describe("glob tool — zero matches says what would have matched", () => {
+	it("an anchored pattern under a folder whose files sit one level down: names the recursive form and its count", async () => {
+		const dir = join(root, "cleanup");
+		file("cleanup/build/app.tmp");
+		file("cleanup/build/assets.tmp");
+		file("cleanup/cache/index.tmp");
+		file("cleanup/legacy/keep.md");
+		const res = await run("*.tmp", dir);
+		expect(res.content).toContain("No files matched.");
+		expect(res.content).toContain("`**/*.tmp` matches 3 under");
+		expect(res.metadata).toMatchObject({ count: 0 });
+	});
+
+	it("a name-anchored pattern with a substring match: names the * on both sides form", async () => {
+		const dir = join(root, "projects");
+		file("projects/clients/2025/jobs-crm-app/README.md");
+		const res = await run("**/CRM*", dir);
+		expect(res.content).toContain("No files matched.");
+		expect(res.content).toContain("`**/*CRM*` matches");
+	});
+
+	it("stays silent when the alternatives match nothing either, and on a missing search path says so", async () => {
+		const dir = join(root, "empty-tree");
+		file("empty-tree/a.md");
+		expect((await run("*.tmp", dir)).content).toBe("No files matched.");
+		const gone = await run("**/*", join(root, "apps", "no-such-app"));
+		expect(gone.content).toContain("the search path does not exist");
+		expect(gone.metadata).toMatchObject({ count: 0 });
+	});
+});
+
 describe("glob tool — symlinks are followed (the product depends on it)", () => {
 	it.skipIf(process.platform === "win32")(
 		"traverses a symlinked child dir named workspace — the packaged app's <cwd>/workspace bridge",

@@ -1930,7 +1930,36 @@ pricing-app doesn't exist yet" and CREATED one under `apps/` — the real `prici
 all along. The path-guess family again, on the read side. **8B ×3: 2/12 (previous boundary 1/12), gates 0/0** — same
 three cases lost as before; the floor held on the holdout as on the dev split.
 
-**Phase checkpoint.** EXP-18 through EXP-22 close the membership thread. Open, ranked: EXP-23 glob fail-time
+**Phase checkpoint.** EXP-18 through EXP-22 close the membership thread.
+
+---
+
+## EXP-23 — a search that finds nothing says what would have (2026-09-25, in progress)
+
+**Why.** Two loss shapes in the EXP-22 split and the boundary holdout are one family: a path the model GUESSED comes
+back empty and the model believes the emptiness. (1) `glob {pattern: "*.tmp", path: "cleanup"}` → "No files
+matched." → "already clean" (the files sit in cleanup/build/ and cleanup/cache/; two of three constraint-survives
+runs). (2) `read workspace/apps/pricing-app/src/format.js` → "File not found" → `glob **/*` under that same missing
+folder → "No files matched." → "the pricing-app doesn't exist yet", a new project created under apps/ while the
+real one sat at the workspace root (correction-chain, holdout). Both tools told the truth and nothing more.
+
+**Change (EXTEND, two existing seams, fail-time only — the match path is untouched):**
+- `glob` zero matches: `noMatchHint` runs the bounded walk once more for the recursive form (`**/<pattern>`, when
+  the pattern has no slash) and the substring form (`**/*<core>*`, when the name is anchored) and reports the first
+  that matches with its count and the one-line reason. Silent when neither matches or the walk was truncated.
+- `glob` on a search path that does not exist: says so, and names a folder of that name elsewhere in the workspace.
+- `read`/`edit` "File not found" when the FOLDER is missing (the sibling hint has nothing to list): `suggestElsewhere`
+  walks the workspace (bounded, skips dependency dirs) for the basename and names matches whose trailing segments
+  agree with the request, longest agreement first, plus "a path is relative to the workspace root — do not assume a
+  project sits under apps/". The existing sibling hint still wins when the folder exists.
+- Tests: glob (anchored → recursive count; name-anchored → substring form; silent when nothing matches; missing
+  path), edit-recovery (ranking, directories, nothing-found, sibling precedence). `tsc` clean; tools + workspace
+  suites green (1394).
+
+Measure: smoke, then `find-project` ×3 and `constraint-survives-long-session` ×3 (the two dev cases losing runs to
+the shape); correction-chain is holdout and waits for the next boundary. Then the full dev split, gate first.
+
+--- Open, ranked: EXP-23 glob fail-time
 corrective (two cases lose runs to anchored patterns); the browser `select` wedge on native comboboxes (rig noise
 since 2026-09-20, costs ~1 setup-account run per split); the 8B prose-call shape (not fixable in the harness without
 honouring text calls — declined by design); ambiguity-which-brief (product call, on record since EXP-10).

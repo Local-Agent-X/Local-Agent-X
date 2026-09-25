@@ -1,6 +1,7 @@
-import { existsSync, readdirSync } from "node:fs";
-import { dirname, basename } from "node:path";
+import { existsSync, readdirSync, statSync } from "node:fs";
+import { dirname, basename, join, relative } from "node:path";
 import { err } from "./result-helpers.js";
+import { workspaceRoot } from "../config.js";
 
 // ── Edit-failure recovery helpers ────────────────────────────────────────
 // When edit() fails, the model previously saw a bare string like
@@ -55,12 +56,60 @@ export function suggestNearbyLines(content: string, oldStr: string, max = 5): { 
 // all through here so the format can't drift.
 export function fileNotFoundError(filePath: string) {
   const siblings = suggestSiblingPaths(filePath);
-  return err(
-    `File not found: ${filePath}`,
-    siblings.length
-      ? { path: filePath, recovery: `Did you mean one of:\n  ${siblings.join("\n  ")}` }
-      : { path: filePath },
-  );
+  if (siblings.length) return err(`File not found: ${filePath}`, { path: filePath, recovery: `Did you mean one of:\n  ${siblings.join("\n  ")}` });
+  const elsewhere = suggestElsewhere(filePath);
+  if (elsewhere.length) {
+    return err(`File not found: ${filePath}`, {
+      path: filePath,
+      recovery: `Neither that file nor its folder exists. The same name exists elsewhere in the workspace:\n  ${elsewhere.join("\n  ")}\nA path is relative to the workspace root — do not assume a project sits under apps/.`,
+    });
+  }
+  return err(`File not found: ${filePath}`, { path: filePath });
+}
+
+const ELSEWHERE_SKIP = new Set(["node_modules", ".git", "dist", "build", ".next", "__pycache__", ".venv", "venv"]);
+const ELSEWHERE_MAX_DIRS = 3000;
+const ELSEWHERE_MAX_DEPTH = 8;
+
+/**
+ * Where the model guessed a whole folder that does not exist — the prompt
+ * teaches `workspace/apps/<name>`, the user said "in pricing-app", and the
+ * project sat at the workspace root — the sibling hint has nothing to list
+ * and the model concludes the project does not exist and CREATES one
+ * (op-outcomes correction-chain, 2026-09-25). Walk the workspace for the
+ * missing path's basename and report matches whose trailing segments agree
+ * with the request, longest agreement first. Bounded and synchronous: this
+ * is an error path, and the walk skips dependency and build dirs.
+ */
+export function suggestElsewhere(missingPath: string, root: string = workspaceRoot(), max = 3): string[] {
+  const segs = missingPath.replace(/\\/g, "/").split("/").filter(Boolean);
+  const name = segs[segs.length - 1];
+  if (!name) return [];
+  const hits: { rel: string; agree: number }[] = [];
+  const stack: { dir: string; depth: number }[] = [{ dir: root, depth: 0 }];
+  let opened = 0;
+  while (stack.length && opened < ELSEWHERE_MAX_DIRS) {
+    const { dir, depth } = stack.pop()!;
+    let entries: string[];
+    try { entries = readdirSync(dir); opened++; } catch { continue; }
+    for (const e of entries) {
+      if (ELSEWHERE_SKIP.has(e)) continue;
+      const abs = join(dir, e);
+      if (e.toLowerCase() === name.toLowerCase()) {
+        const rel = relative(root, abs).replace(/\\/g, "/");
+        const got = rel.split("/");
+        let agree = 0;
+        while (agree < segs.length && agree < got.length && segs[segs.length - 1 - agree].toLowerCase() === got[got.length - 1 - agree].toLowerCase()) agree++;
+        hits.push({ rel, agree });
+      }
+      if (depth < ELSEWHERE_MAX_DEPTH) {
+        let isDir = false;
+        try { isDir = statSync(abs).isDirectory(); } catch { /* unreadable entry */ }
+        if (isDir) stack.push({ dir: abs, depth: depth + 1 });
+      }
+    }
+  }
+  return hits.sort((a, b) => b.agree - a.agree || a.rel.length - b.rel.length).slice(0, max).map((h) => h.rel);
 }
 
 export function suggestSiblingPaths(missingPath: string, max = 5): string[] {

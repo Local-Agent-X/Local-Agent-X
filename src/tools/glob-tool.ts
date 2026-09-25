@@ -2,8 +2,9 @@
  * Glob Tool -- file pattern matching for agents.
  * Replaces bash find/ls with structured glob results sorted by mtime.
  */
-import { readdir as nodeReaddir } from "node:fs";
+import { existsSync, readdir as nodeReaddir } from "node:fs";
 import { stat } from "node:fs/promises";
+import { suggestElsewhere } from "./edit-recovery.js";
 import { resolve, sep } from "node:path";
 import type { Readable } from "node:stream";
 import fg from "fast-glob";
@@ -189,6 +190,30 @@ async function globFiles(pattern: string, cwd: string, limit: number): Promise<{
   return { entries: entries.slice(0, limit), truncated, cut };
 }
 
+/**
+ * Zero matches for an anchored pattern is usually the pattern, not the tree:
+ * `*.tmp` under cleanup/ matches only the top level while the files sit in
+ * cleanup/build/ and cleanup/cache/, and the model reported the folder
+ * "already clean" (op-outcomes constraint-survives-long-session, 2026-09-25,
+ * two of three runs). Try the recursive and the substring forms once, bounded,
+ * and say what they would have matched. Silent when they match nothing too.
+ */
+export async function noMatchHint(pattern: string, cwd: string): Promise<string> {
+  const base = pattern.split("/").pop() ?? pattern;
+  const core = base.replace(/^\*+/, "").replace(/\*+$/, "");
+  const alts: { alt: string; why: string }[] = [];
+  if (!pattern.includes("/")) alts.push({ alt: `**/${pattern}`, why: "a pattern without **/ matches only the top level of the search path" });
+  if (core && core !== base && !/[*?[\]{}]/.test(core)) alts.push({ alt: `**/*${core}*`, why: "a pattern is anchored at the start of the name; * on both sides matches a substring" });
+  for (const { alt, why } of alts) {
+    if (alt === pattern) continue;
+    try {
+      const { paths, truncated } = await walkBounded(alt, cwd);
+      if (paths.length) return `\n\`${alt}\` matches ${paths.length}${truncated ? "+" : ""} under ${cwd} — ${why}.`;
+    } catch { /* the hint is best-effort */ }
+  }
+  return "";
+}
+
 export const globTool: ToolDefinition = {
   name: "glob",
   compactDescription: `Fast file pattern matching (e.g. src/**/*.tsx), newest first, from your workspace by default. Walks at most ${MAX_DEPTH} levels and stops after ${MAX_SCAN} matches (a bare **/* truncates) — pass a path to narrow the search.`,
@@ -224,6 +249,19 @@ export const globTool: ToolDefinition = {
     const cwd = searchBase(args.path, sessionIdOf(args));
     const startMs = Date.now();
 
+    // A search rooted at a folder the model guessed (`workspace/apps/<name>`
+    // for a project that sits at the workspace root) used to say "No files
+    // matched" and the model concluded the project did not exist and created
+    // one (op-outcomes correction-chain, 2026-09-25). Say the root is missing,
+    // and where a folder of that name really is.
+    if (!existsSync(cwd)) {
+      const elsewhere = suggestElsewhere(cwd);
+      const hint = elsewhere.length
+        ? `\nA folder with that name exists elsewhere in the workspace: ${elsewhere.join(", ")} — a path is relative to the workspace root; do not assume a project sits under apps/.`
+        : "";
+      return ok(`No files matched — the search path does not exist: ${cwd}${hint}`, { pattern, cwd, count: 0, duration_ms: Date.now() - startMs });
+    }
+
     try {
       const { entries, truncated, cut } = await globFiles(pattern, cwd, 200);
       const durationMs = Date.now() - startMs;
@@ -233,7 +271,8 @@ export const globTool: ToolDefinition = {
           ? `\nWARNING: the walk stopped after ${MAX_SCAN} matches — this list is the newest of THOSE, not of the whole tree; narrow the path or use a more specific pattern.`
           : "";
       if (entries.length === 0) {
-        return ok(`No files matched.${warning}`, { pattern, cwd, count: 0, scan_truncated: truncated || undefined, duration_ms: durationMs });
+        const hint = truncated ? "" : await noMatchHint(pattern, cwd);
+        return ok(`No files matched.${hint}${warning}`, { pattern, cwd, count: 0, scan_truncated: truncated || undefined, duration_ms: Date.now() - startMs });
       }
 
       const lines = entries.map((e) => (e.dir ? `${e.path}${sep}  (dir)` : `${e.path}  (${humanSize(e.size)})`));

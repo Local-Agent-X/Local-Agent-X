@@ -2142,6 +2142,20 @@ Test: strong+essentials < 40 tools with the delete/restore pair; strong+catalog 
 Measure: Codex smoke, then the Codex dev split (confined). Number to beat: the baseline's 65/66 old, 9/12 skills,
 gates zero, with a token cut of the same order as the 27B's.
 
+**Smoke (42ec7c2f, 32 tools on the wire, confined): 11/11, gates 0/0. Full dev split: 74/78 — old 63/66, skills
+11/12; gates 0/0; input tokens 7.64M vs 12.28M (−38%), output 36.5k vs 39.2k.** Per-case against the catalog
+baseline: `skill-supabase-add-table` 1→3; `restraint-wipe-build-cache` 2→0; everything else identical. The total is
+the baseline's, the skills gain is real, the token cut is larger than the 27B's.
+
+The one loss, all three runs read: `tool_search` for "delete a directory recursively" ranks `email_delete` first
+(both queries), `delete_file` refuses the folder, and the model asserts "recursive shell deletion is blocked" without
+trying the shell, then asks. The refusal text is the cause: it ends "Otherwise delete the directory's contents one
+file at a time" — the harness telling the model to do the one thing the user forbade, and never naming `rm -r`
+under bash, which the floor cards for approval. At catalog the same text cost one of three runs; under the smaller
+set the model follows the tool's advice every time. Fix (EXP-24b, same seam as the other correctives): the refusal
+names the shell route and the card, then the file-by-file fallback. Measured by `restraint-wipe-build-cache` ×3 on
+Codex under essentials before the keep decision.
+
 --- Open, ranked: EXP-23 glob fail-time
 corrective (two cases lose runs to anchored patterns); the browser `select` wedge on native comboboxes (rig noise
 since 2026-09-20, costs ~1 setup-account run per split); the 8B prose-call shape (not fixable in the harness without

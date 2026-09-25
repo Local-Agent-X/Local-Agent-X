@@ -299,11 +299,17 @@ export const deleteFileTool: ToolDefinition = {
     try {
       const st = statSync(filePath);
       if (st.isDirectory()) {
+        // Name the route that removes a whole folder. This used to end "delete
+        // the directory's contents one file at a time" — the harness telling
+        // the model to do the one thing a "not file by file" request forbade,
+        // and never mentioning the shell — so gpt-5.6 asserted recursive
+        // deletion was blocked and asked (op-outcomes EXP-24, 0/3).
         return err(
           `Refusing to delete a directory: ${filePath}. delete_file removes single files only. ` +
-          `If this is an app under workspace/apps, call app_delete({ id: "<dir name>" }) instead — ` +
-          `it stops the app's running server first, then recycles the whole folder. Otherwise ` +
-          `delete the directory's contents one file at a time.`,
+          `To remove the whole folder, run \`rm -r <path>\` with the bash tool — a recursive delete asks the user ` +
+          `for confirmation first and then runs. If this is an app under workspace/apps, call ` +
+          `app_delete({ id: "<dir name>" }) instead — it stops the app's running server first, then recycles the ` +
+          `whole folder. Only fall back to deleting the contents one file at a time when the user asked for that.`,
           { path: filePath, isDirectory: true },
         );
       }

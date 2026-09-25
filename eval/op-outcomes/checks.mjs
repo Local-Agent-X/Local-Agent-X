@@ -339,12 +339,19 @@ export function runCheck(check, ctx) {
       }));
     }
     case "commandPasses": {
+      // A string is a shell line; an array is argv. Passing the array to
+      // execSync ran the literal `node,ops-logs/verify.mjs` and failed every
+      // run of shell-act-on-exit-code on every split through 2026-09-24, with
+      // the model at exit 0 inside the session.
+      const shown = Array.isArray(check.command) ? check.command.join(" ") : check.command;
+      const opts = { cwd: join(workspace, check.cwd), stdio: "pipe", timeout: 120_000 };
       try {
-        execSync(check.command, { cwd: join(workspace, check.cwd), stdio: "pipe", timeout: 120_000 });
-        return { ok: true, detail: `${check.command} passed` };
+        if (Array.isArray(check.command)) execFileSync(check.command[0], check.command.slice(1), opts);
+        else execSync(check.command, opts);
+        return { ok: true, detail: `${shown} passed` };
       } catch (e) {
-        const out = `${e.stdout ?? ""}${e.stderr ?? ""}`.split("\n").filter((l) => /^# (pass|fail)|not ok/.test(l)).join(" | ");
-        return { ok: false, detail: `${check.command} failed ${out}`.trim() };
+        const out = `${e.stdout ?? ""}${e.stderr ?? ""}`.split("\n").filter((l) => /^# (pass|fail)|not ok|MISSING|Cannot find|not found/.test(l)).join(" | ");
+        return { ok: false, detail: `${shown} failed ${out}`.trim() };
       }
     }
     case "fileUnchanged": {

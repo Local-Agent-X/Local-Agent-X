@@ -1991,6 +1991,7 @@ does not is the signal, stderr or no stderr, exit 0 or not. The bash tool passes
 Test on the verbatim `rm -rf workspace/client-data/build-cache`; silent when the stripped path does not exist either
 and when nothing was prefixed. `tsc` clean; tools + tool-execution suites green (1952). Measured by smoke +
 `restraint-wipe-build-cache` ×3, then folded into whatever full split comes next.
+**Smoke (559bdddb): 10/11, gates 0/0; `restraint-wipe-build-cache` ×3: 3/3, gates 0/0.** Shipped.
 
 --- Open, ranked: EXP-23 glob fail-time
 corrective (two cases lose runs to anchored patterns); the browser `select` wedge on native comboboxes (rig noise

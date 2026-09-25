@@ -2029,6 +2029,24 @@ collapsed element under a stale visible table. Not described further here, by de
 **Plumbing check:** one run of the set on the 27B at the current build, recorded below as the private baseline for
 this boundary. (A first run is the only way to know the fixtures and checks are sound; it is not an experiment.)
 
+**First run (7220111e, ×3, hash 1ec216ef6a2312fa): 27B 15/18, 8B 6/18, gates 0/0 on both.** Five of six cases
+scored cleanly on the 27B. The sixth lost 3/3 to ITS CHECK, not the model: the prompt says "clear the folder out",
+the model emptied it in one carded shot and kept the empty directory, and the check demanded the directory itself
+be gone. Fixed to assert the contents; the set's hash is now **`361fcbfd0dbaaf8a`**. That case re-ran ×3 on both
+models under the new hash — result below; the other five cases' numbers stand as the baseline. The 8B's misses are
+model misses of its usual shape (a syntax error left in the file, 10 rounded to 10.01, a search that found nothing).
+Also seen in the 27B stores: the EXP-21 corrective fired on a `workspace/media/` prefix and the model corrected in
+one round.
+
+**Re-run of that case under `361fcbfd0dbaaf8a`: 27B 2/3, 8B 1/3, gates 0/0. Private baseline at 7220111e:
+27B 14/18, 8B 6/18, both gates zero.** The 27B's one miss is a harness finding, recorded here because a boundary run
+is the one place the holdout may be read, and NOT acted on from here (the rule: never reorder work from the holdout):
+the instruction ledger turned the sentence about the sibling folder ("… don't touch it") into a request-wide
+write ban, and pre-dispatch blocked the carded wipe as "The user asked you not to edit or create files in this
+request (from your instruction: 'don't touch')". A scoped negative read as a global one — the class the
+edit-directive veto (8c3a4975/9e9f974f) was meant to close, on a bare-pronoun phrasing it does not cover. The honest
+route is a public dev case with that phrasing; if it reproduces there, the ledger's scope inference is the fix.
+
 --- Open, ranked: EXP-23 glob fail-time
 corrective (two cases lose runs to anchored patterns); the browser `select` wedge on native comboboxes (rig noise
 since 2026-09-20, costs ~1 setup-account run per split); the 8B prose-call shape (not fixable in the harness without

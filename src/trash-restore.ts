@@ -116,14 +116,26 @@ function restoreFromWindowsBin(original: string): RestoreResult {
     "$shell = New-Object -ComObject Shell.Application",
     "$bin = $shell.Namespace(10)",
     "$item = $null",
+    "$tdir = Split-Path -Parent $target",
+    "$tleaf = Split-Path -Leaf $target",
+    "$tstem = [IO.Path]::GetFileNameWithoutExtension($target)",
+    "$text = [IO.Path]::GetExtension($target)",
     // System.Recycle.DeletedFrom is the original FOLDER and is locale-stable;
     // the display column is a fallback because its index shifts across
-    // Windows versions. Name + folder rebuilds the path the file came from.
+    // Windows versions. Name + folder rebuilds the path the file came from —
+    // but the bin's Name follows Explorer's "hide extensions for known file
+    // types" and comes back as `invoice-0042` for `invoice-0042.md`, so every
+    // restore of a known-extension file reported NOTFOUND (op-outcomes,
+    // 2026-09-25: three client originals "not in the Recycle Bin" seconds
+    // after delete_file put them there). The $R file keeps the real
+    // extension; match the stem plus that extension when the name lacks one.
     "foreach ($i in @($bin.Items())) {",
     "  $from = $i.ExtendedProperty('System.Recycle.DeletedFrom')",
     "  if (-not $from) { $from = $bin.GetDetailsOf($i,1) }",
     "  if (-not $from) { continue }",
-    "  if ((Join-Path $from $i.Name) -ieq $target) { $item = $i; break }",
+    "  if (-not ($from -ieq $tdir)) { continue }",
+    "  if ($i.Name -ieq $tleaf) { $item = $i; break }",
+    "  if (($i.Name -ieq $tstem) -and ([IO.Path]::GetExtension($i.Path) -ieq $text)) { $item = $i; break }",
     "}",
     "if (-not $item) { Write-Output 'NOTFOUND'; exit 0 }",
     "$src = $item.Path",

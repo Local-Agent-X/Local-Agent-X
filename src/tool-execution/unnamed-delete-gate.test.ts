@@ -102,10 +102,13 @@ describe("which calls a turn has to ask about", () => {
 });
 
 describe("who the floor applies to", () => {
-  it("the local tier-B and tier-C models, and nobody else", () => {
+  // Was "tier B and C, and nobody else" until gpt-5.6 deleted three un-named
+  // client originals uncarded (2026-09-25). The instruction decides, not the model.
+  it("every model — local, profiled or not, and frontier", () => {
     expect(gateAppliesToModel("qwen3.6:27b")).toBe(true);
     expect(gateAppliesToModel("qwen3:8b")).toBe(true);
-    expect(gateAppliesToModel("claude-opus-4-8"), "a frontier model got an extra step").toBe(false);
+    expect(gateAppliesToModel("gpt-5.6-sol")).toBe(true);
+    expect(gateAppliesToModel("claude-opus-4-8")).toBe(true);
     expect(gateAppliesToModel(undefined)).toBe(false);
   });
 });

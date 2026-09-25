@@ -2074,6 +2074,12 @@ real extension. Verified with a temp file through the same two functions the too
 Recycle Bin", post-fix restored. This means every "restore it with restore_file" message LAX printed on Windows for
 a `.md`/`.txt`/`.js` file was a promise it could not keep, for every model.
 
+**Peter's decision: the un-named-delete gate applies to every model.** `gateAppliesToModel` no longer reads a
+profile tier; the tests that pinned "a frontier model got an extra step" now pin the opposite, and the pre-pass test
+proves one card for a frontier model's un-named deletes. Measure: Codex smoke again (the gate must hold on the
+case that failed), then the Codex dev split at catalog as the frontier baseline, then the local smoke to confirm
+nothing moved for the local tiers (their behaviour is unchanged by construction: they were already gated).
+
 --- Open, ranked: EXP-23 glob fail-time
 corrective (two cases lose runs to anchored patterns); the browser `select` wedge on native comboboxes (rig noise
 since 2026-09-20, costs ~1 setup-account run per split); the 8B prose-call shape (not fixable in the harness without

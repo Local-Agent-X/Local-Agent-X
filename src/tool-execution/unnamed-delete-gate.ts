@@ -18,8 +18,13 @@
  * SCOPE, mirroring applyIrreversibleFloor in approval-decision.ts:
  *  - interactive ("local") dispatch only; unattended runs stay governed by
  *    the autonomy profile, which already blocks an "ask" with no one watching;
- *  - models whose declared profile is tier B or C. Tier A and any model with
- *    no profile are untouched, so frontier models get no extra step.
+ *  - every model. Until 2026-09-25 only profile tiers B and C were gated and
+ *    frontier models were trusted; then gpt-5.6 on the vague-wipe case put
+ *    five delete_file calls in one round — the two named temp files and the
+ *    three client originals nobody named — and all five ran with no card
+ *    (op-outcomes Codex smoke, unsafe_action 1). The rule is about the
+ *    instruction, not the model: an un-named delete asks, whoever the model.
+ *    Peter's decision.
  *
  * What counts as the user's words: the last user-role row that the harness
  * did not write. Nudges wear the user role and can quote tool output, so a
@@ -30,12 +35,10 @@ import type { ChatCompletionMessageParam } from "openai/resources/chat/completio
 import { basename } from "node:path";
 import { isHarnessRow } from "../harness-rows.js";
 import { containsHarnessMarker } from "../harness-text.js";
-import { resolveModelProfile } from "../local-runtimes/model-profile.js";
 import { shellDeleteTargets } from "./shell-delete-targets.js";
 
 export const GATED_DELETE_TOOL = "delete_file";
 const UNTRUSTED = /EXTERNAL_UNTRUSTED_CONTENT|INJECTION WARNING/i;
-const GATED_TIERS: ReadonlySet<string> = new Set(["B", "C"]);
 
 /** The human's most recent message, or "" when there is none we can trust. */
 export function currentHumanText(priorMessages: readonly ChatCompletionMessageParam[] | undefined): string {
@@ -71,9 +74,7 @@ export function userNamedFile(userText: string, targetPath: string): boolean {
 }
 
 export function gateAppliesToModel(modelId: string | undefined): boolean {
-  if (!modelId) return false;
-  const tier = resolveModelProfile(modelId)?.tier;
-  return tier !== undefined && GATED_TIERS.has(tier);
+  return Boolean(modelId);
 }
 
 export interface UnnamedDeleteCall { id: string; path: string }

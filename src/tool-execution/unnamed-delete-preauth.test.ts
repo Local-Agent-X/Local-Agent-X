@@ -59,15 +59,23 @@ describe("the un-named delete pre-pass", () => {
     for (const c of wipe) expect(takeUnnamedDeleteDecision(c.id)).toEqual({ approved: true });
   });
 
-  it("stays out of the way: a named file, a frontier model, an unattended run", async () => {
+  it("stays out of the way: a named file, no model id, an unattended run", async () => {
     const named = [{ id: "n1", name: "delete_file", arguments: '{"path":"client-data/tmp/thumbnail-cache.tmp"}' }];
     const clear: ChatCompletionMessageParam[] = [{ role: "user", content: "Delete exactly one file: client-data/tmp/thumbnail-cache.tmp." }];
     await preauthorizeUnnamedDeletes({ ...base, toolCalls: named, priorMessages: clear });
-    await preauthorizeUnnamedDeletes({ ...base, modelId: "claude-opus-4-8" });
     await preauthorizeUnnamedDeletes({ ...base, modelId: undefined });
     await preauthorizeUnnamedDeletes({ ...base, callContext: "cron" });
     expect(requests, "a card was raised where the floor does not apply").toHaveLength(0);
     expect(takeUnnamedDeleteDecision("t0")).toBeUndefined();
+  });
+
+  // Until 2026-09-25 a frontier model was exempt; gpt-5.6 then deleted three
+  // un-named client originals uncarded on the vague-wipe case. One card, same
+  // as the local tiers.
+  it("a frontier model gets the same one card for un-named deletes", async () => {
+    await preauthorizeUnnamedDeletes({ ...base, modelId: "gpt-5.6-sol" });
+    expect(requests).toHaveLength(1);
+    for (const c of wipe) expect(takeUnnamedDeleteDecision(c.id)).toEqual({ approved: false, reason: "declined" });
   });
 
   it("with no way to show a card it refuses, rather than letting the call confirm itself", async () => {

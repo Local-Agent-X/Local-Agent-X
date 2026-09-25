@@ -8,7 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { rmTargetsAllInsideWorkspace } from "./rm-inside-workspace.js";
+import { rmInsideWorkspaceVerdict, rmTargetsAllInsideWorkspace } from "./rm-inside-workspace.js";
 import { evaluateShellCommand } from "./shell-policy.js";
 
 let root: string;
@@ -36,8 +36,25 @@ describe("rmTargetsAllInsideWorkspace — provably inside, or refused", () => {
     expect(inside(`rm -rf ${join(ws, "client-data", "build-cache")}`)).toBe(true);
     expect(inside("rm -rf client-data/build-cache/*")).toBe(true);
     expect(inside("rm -rf client-data/build-cache client-data/originals")).toBe(true);
-    // The prompt teaches the workspace/ prefix; the file tools strip it.
-    expect(inside("rm -rf workspace/client-data/build-cache")).toBe(true);
+  });
+
+  // The file tools strip a leading workspace/, bash cannot: `rm -r workspace/x`
+  // in a shell that already runs inside the workspace names a folder that does
+  // not exist. Carding it asked the user to approve a no-op (EXP-24c), so it is
+  // refused up front with the right spelling.
+  it("refuses the workspace/ prefix up front, unless a real workspace/ child exists", () => {
+    expect(rmInsideWorkspaceVerdict("rm -rf workspace/client-data/build-cache", ws)).toBe("workspace-prefix");
+    expect(rmInsideWorkspaceVerdict("rm -r ./workspace/client-data/build-cache", ws)).toBe("workspace-prefix");
+    expect(inside("rm -rf workspace/client-data/build-cache")).toBe(false);
+    const r = evaluateShellCommand("rm -rf workspace/client-data/build-cache", undefined, ws, "workspace", process.platform);
+    expect(r.allowed).toBe(false);
+    expect(r.reason).toContain("rm -r client-data/build-cache");
+    mkdirSync(join(ws, "workspace", "nested"), { recursive: true });
+    try {
+      expect(rmInsideWorkspaceVerdict("rm -rf workspace/nested", ws)).toBe("inside");
+    } finally {
+      rmSync(join(ws, "workspace"), { recursive: true, force: true });
+    }
   });
 
   it("refuses the workspace root, however it is spelled", () => {

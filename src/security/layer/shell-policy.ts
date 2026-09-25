@@ -5,7 +5,7 @@ import type { InlineEvalPolicy, FileAccessMode } from "./types.js";
 import { countTopLevelPipes } from "../../tools/shell-translate.js";
 import { BLOCKED_COMMANDS, BROWSER_OPEN_CMDS, RM_DESTRUCTIVE_FLAGS } from "./shell-rules.js";
 import { detectCatastrophicRm } from "./catastrophic-paths.js";
-import { rmTargetsAllInsideWorkspace } from "./rm-inside-workspace.js";
+import { rmInsideWorkspaceVerdict } from "./rm-inside-workspace.js";
 import {
   detectObfuscation,
   detectSecretPlaceholder,
@@ -337,12 +337,22 @@ export function evaluateShellCommand(
       if (catastrophic) {
         return { allowed: false, reason: catastrophic, userHint: USER_HINTS.commandShell };
       }
-    } else if (!(fileAccessMode && rmTargetsAllInsideWorkspace(command, workspace))) {
-      return {
-        allowed: false,
-        reason: "Blocked: in the current file-access mode `rm -r`/`rm -f` runs only on plain paths inside the workspace (the user is asked to confirm it). This command names a path outside the workspace, the workspace root itself, or a form that cannot be checked (a variable, ~, a glob outside the last path segment, a chained command). Name the folder inside the workspace plainly, use delete_file for single files, or ask the user to switch file access to 'unrestricted' in Settings.",
-        userHint: USER_HINTS.commandShell,
-      };
+    } else {
+      const verdict = fileAccessMode ? rmInsideWorkspaceVerdict(command, workspace) : "unprovable";
+      if (verdict === "workspace-prefix") {
+        return {
+          allowed: false,
+          reason: "Blocked: the bash tool already runs inside the workspace, so a `workspace/…` path names a folder that does not exist and this delete would remove nothing. Drop the leading `workspace/` — e.g. `rm -r client-data/build-cache` — and the user is asked to confirm it.",
+          userHint: USER_HINTS.commandShell,
+        };
+      }
+      if (verdict !== "inside") {
+        return {
+          allowed: false,
+          reason: "Blocked: in the current file-access mode `rm -r`/`rm -f` runs only on plain paths inside the workspace (the user is asked to confirm it). This command names a path outside the workspace, the workspace root itself, or a form that cannot be checked (a variable, ~, a glob outside the last path segment, a chained command). Name the folder inside the workspace plainly, use delete_file for single files, or ask the user to switch file access to 'unrestricted' in Settings.",
+          userHint: USER_HINTS.commandShell,
+        };
+      }
     }
   }
 

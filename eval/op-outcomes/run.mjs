@@ -57,6 +57,10 @@ if (TIERS.includes("holdout")) console.log(`\n*** HOLDOUT SET — phase boundari
 const privateHoldout = loadPrivateHoldout();
 if (TIERS.includes("holdout") && !privateHoldout) { console.error(`no private holdout: ${privateHoldoutDir()}/cases.json does not exist (LAX_EVAL_PRIVATE_DIR overrides the location)`); process.exit(2); }
 const cases = [...JSON.parse(readFileSync(join(HERE, "cases.json"), "utf8")).cases, ...(privateHoldout?.cases ?? [])]
+  // A private holdout case runs only when the holdout tier is asked for
+  // explicitly — never through --only. `--only restraint` once pulled the
+  // private restraint case into a dev rerun because it matched by category.
+  .filter((c) => !c.private || TIERS.includes("holdout"))
   // An explicit --only names what it wants, tier included; otherwise the tier decides.
   .filter((c) => (ONLY ? (c.id === ONLY || c.category === ONLY) : TIERS.includes(c.tier)));
 if (cases.length === 0) { console.error(ONLY ? `no case or category matches "${ONLY}"` : `no case in tier ${TIER}`); process.exit(2); }

@@ -27,7 +27,8 @@
  *  - every operand, after symlink resolution, strictly inside the workspace —
  *    the workspace root itself (`rm -rf .`, `rm -rf *`) is refused.
  */
-import { basename, dirname } from "node:path";
+import { existsSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { realpathDeep, resolveAgentPathFrom } from "../../workspace/paths.js";
 import { pathIsWithin } from "./file-access.js";
 import { execBasename, splitShellSegments, tokenizeCommand } from "./shell-lex.js";
@@ -65,22 +66,36 @@ function operandInside(workspace: string, operand: string): boolean {
   return basename(target) !== "" && strictlyInside(workspace, target);
 }
 
-export function rmTargetsAllInsideWorkspace(command: string, workspace: string | undefined): boolean {
-  if (!workspace) return false;
-  if (UNPROVABLE.test(command)) return false;
+/** `inside` → hand it to the floor's card. `workspace-prefix` → bash already
+ *  runs inside the workspace, so `workspace/x` names a folder that does not
+ *  exist and approving it deletes nothing — refused up front with the right
+ *  spelling rather than carded as a no-op (op-outcomes EXP-24c: the 27B's
+ *  first `rm -r workspace/client-data/build-cache` was carded, approved, and
+ *  removed nothing, and a second card followed). `unprovable` → refused. */
+export type RmInsideVerdict = "inside" | "workspace-prefix" | "unprovable";
+
+export function rmInsideWorkspaceVerdict(command: string, workspace: string | undefined): RmInsideVerdict {
+  if (!workspace) return "unprovable";
+  if (UNPROVABLE.test(command)) return "unprovable";
   const segments = splitShellSegments(command);
-  if (segments.length !== 1) return false;
+  if (segments.length !== 1) return "unprovable";
   const tokens = tokenizeCommand(segments[0]);
-  if (tokens.length < 2 || execBasename(tokens[0]) !== "rm") return false;
+  if (tokens.length < 2 || execBasename(tokens[0]) !== "rm") return "unprovable";
   const operands: string[] = [];
   let flagsDone = false;
   for (const tok of tokens.slice(1)) {
     if (!flagsDone && tok === "--") { flagsDone = true; continue; }
     if (!flagsDone && tok.startsWith("-")) {
       if (SHORT_FLAGS.test(tok) || LONG_FLAGS.has(tok)) continue;
-      return false;
+      return "unprovable";
     }
     operands.push(tok);
   }
-  return operands.length > 0 && operands.every((op) => operandInside(workspace, op));
+  if (operands.length === 0) return "unprovable";
+  if (!existsSync(join(workspace, "workspace")) && operands.some((op) => /^(\.\/)?workspace[/\\]/.test(op))) return "workspace-prefix";
+  return operands.every((op) => operandInside(workspace, op)) ? "inside" : "unprovable";
+}
+
+export function rmTargetsAllInsideWorkspace(command: string, workspace: string | undefined): boolean {
+  return rmInsideWorkspaceVerdict(command, workspace) === "inside";
 }

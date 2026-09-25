@@ -204,6 +204,17 @@ export async function noMatchHint(pattern: string, cwd: string): Promise<string>
   const alts: { alt: string; why: string }[] = [];
   if (!pattern.includes("/")) alts.push({ alt: `**/${pattern}`, why: "a pattern without **/ matches only the top level of the search path" });
   if (core && core !== base && !/[*?[\]{}]/.test(core)) alts.push({ alt: `**/*${core}*`, why: "a pattern is anchored at the start of the name; * on both sides matches a substring" });
+  // The same anchoring in a MIDDLE segment: `**/crm*/**` is "folders whose name
+  // starts with crm", and misses jobs-crm-app (op-outcomes find-project, 0/3
+  // at 6fdbcaee — the last-segment rule above could not see it).
+  const segs = pattern.split("/");
+  const mid = segs.findIndex((s, i) => i < segs.length - 1 && s !== "**" && /[*?]/.test(s) && !s.startsWith("*"));
+  if (mid >= 0) {
+    const midCore = segs[mid].replace(/\*+$/, "");
+    if (midCore && !/[*?[\]{}]/.test(midCore)) {
+      alts.push({ alt: [...segs.slice(0, mid), `*${midCore}*`, ...segs.slice(mid + 1)].join("/"), why: "a folder-name pattern is anchored at the start of the name; * on both sides matches a substring" });
+    }
+  }
   for (const { alt, why } of alts) {
     if (alt === pattern) continue;
     try {

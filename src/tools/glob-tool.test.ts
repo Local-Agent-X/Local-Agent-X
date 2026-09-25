@@ -118,6 +118,14 @@ describe("glob tool — zero matches says what would have matched", () => {
 		expect(res.content).toContain("`**/*CRM*` matches");
 	});
 
+	it("an anchored MIDDLE segment (`**/crm*/**`) names the substring form for that segment", async () => {
+		const dir = join(root, "projects-mid");
+		file("projects-mid/clients/2025/jobs-crm-app/README.md");
+		const res = await run("**/crm*/**", dir);
+		expect(res.content).toContain("No files matched.");
+		expect(res.content).toContain("`**/*crm*/**` matches");
+	});
+
 	it("stays silent when the alternatives match nothing either, and on a missing search path says so", async () => {
 		const dir = join(root, "empty-tree");
 		file("empty-tree/a.md");

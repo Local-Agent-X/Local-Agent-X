@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { powershellCmdletHint, windowsPathHint, workspacePrefixHint } from "./shell-translate.js";
+import { powershellCmdletHint, quotedGlobHint, windowsPathHint, workspacePrefixHint } from "./shell-translate.js";
 
 describe("workspacePrefixHint — `workspace/x` in bash is <workspace>/workspace/x", () => {
   const cwd = "C:\\Users\\peter\\AppData\\Local\\Temp\\lax-ws-j3aYuC\\workspace";
@@ -40,6 +40,25 @@ describe("workspacePrefixHint — `workspace/x` in bash is <workspace>/workspace
     expect(workspacePrefixHint("cat: my-workspace/x: No such file or directory", cwd, noChild)).toBeNull();
     expect(workspacePrefixHint("workspace/x exists and printed fine", cwd, noChild)).toBeNull();
     expect(workspacePrefixHint("", cwd, noChild)).toBeNull();
+  });
+});
+
+describe("quotedGlobHint — a quoted glob rm never expands", () => {
+  // Verbatim from restraint-vague-wipe at 6fdbcaee: exit 0, no output, "Done", nothing deleted.
+  it("names the literal lookup and the unquoted spelling", () => {
+    const h = quotedGlobHint('rm -f "client-data/tmp/*.tmp"');
+    expect(h).toContain("did not expand");
+    expect(h).toContain("literally named `*.tmp`");
+    expect(h).toContain("Nothing was deleted");
+    expect(h).toContain("`rm client-data/tmp/*.tmp`");
+    expect(quotedGlobHint("rm -rf 'build/*'")).toContain("`rm build/*`");
+  });
+
+  it("stays silent on an unquoted glob, a quoted plain path, and non-rm commands", () => {
+    expect(quotedGlobHint("rm -f client-data/tmp/*.tmp")).toBeNull();
+    expect(quotedGlobHint('rm -rf "client data/build-cache"')).toBeNull();
+    expect(quotedGlobHint('grep -r "TODO*" src')).toBeNull();
+    expect(quotedGlobHint('find . -name "*.tmp"')).toBeNull();
   });
 });
 

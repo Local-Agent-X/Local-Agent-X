@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import type { ServerEvent, ToolDefinition } from "../types.js";
 import { getSandboxMode, execInSandbox, wrapSpawnForSandbox, sandboxDenialHint, networkDenialHint } from "../sandbox/index.js";
 import { ok, err, blocked, timeout as timeoutResult } from "./result-helpers.js";
-import { detectTargetShell, translateForShell, powershellCmdletHint, windowsPathHint, workspacePrefixHint } from "./shell-translate.js";
+import { detectTargetShell, translateForShell, powershellCmdletHint, quotedGlobHint, windowsPathHint, workspacePrefixHint } from "./shell-translate.js";
 import { resolveWindowsShell, recordAvSuspectKill, isLikelyAvKill, buildSanitizedEnv } from "./shell-env.js";
 import { shellProxyEnv } from "./shell-proxy-env.js";
 import { killProcessGroup } from "../process-tree-kill.js";
@@ -281,7 +281,7 @@ export const bashTool: ToolDefinition = {
         // A `workspace/…` path that failed inside a `… || echo "not found"`
         // exits 0 with the failure only in stderr; the model then believes
         // the fallback ("the CLI is not installed") — say what really happened.
-        const prefixNotice = workspacePrefixHint(stderr, cwd, undefined, command);
+        const prefixNotice = workspacePrefixHint(stderr, cwd, undefined, command) ?? quotedGlobHint(command);
         return ok((prefixNotice ? prefixNotice + "\n" : "") + content, {
           exit_code: code,
           duration_ms: durationMs,
@@ -305,7 +305,7 @@ export const bashTool: ToolDefinition = {
       const pathNotice = windowsPathHint(stderr);
       // `workspace/x` in a command is `<workspace>/workspace/x` — the file tools
       // forgive that prefix, bash cannot; say so instead of "No such file".
-      const prefixNotice = workspacePrefixHint(stderr, cwd, undefined, command);
+      const prefixNotice = workspacePrefixHint(stderr, cwd, undefined, command) ?? quotedGlobHint(command);
       const notices = [cmdletNotice, pathNotice, prefixNotice, cageNotice, netNotice].filter(Boolean).join("\n");
       return err((notices ? notices + "\n" : "") + (out || `Exit code: ${code}`), {
         exit_code: code,

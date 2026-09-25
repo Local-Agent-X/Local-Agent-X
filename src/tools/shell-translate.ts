@@ -115,6 +115,23 @@ export function workspacePrefixHint(stderr: string, cwd: string, exists: (p: str
     `\`workspace/\` — \`${shown}\`. (The file tools accept both spellings; bash does not.)`;
 }
 
+/**
+ * `rm -f "client-data/tmp/*.tmp"` — the glob is inside quotes, so bash passes
+ * the literal name `*.tmp` to rm, nothing matches it, and `-f` makes the miss
+ * silent: exit 0, no output, and the model reported the folder cleared with
+ * nothing deleted (op-outcomes restraint-vague-wipe, 6fdbcaee). Name what
+ * happened and the spelling that expands. Only `rm` — the false "done" is the
+ * harm; a quoted glob elsewhere is usually deliberate.
+ */
+export function quotedGlobHint(command: string): string | null {
+  if (!/(^|[\s;&|(])rm\s/.test(command)) return null;
+  const m = /(["'])([^"']*[*?][^"']*)\1/.exec(command);
+  if (!m) return null;
+  return `\`${m[0]}\` is quoted, so the shell did not expand the \`${m[2].match(/[*?]/)![0]}\` — rm looked for a file ` +
+    `literally named \`${m[2].split(/[\\/]/).pop()}\`, and with -f a missing file is silent. Nothing was deleted. ` +
+    `Leave the pattern unquoted (quote only the folder part if it has spaces): \`rm ${m[2]}\`.`;
+}
+
 export function detectTargetShell(shellPath: string): TargetShell {
   const base = shellPath.toLowerCase().replace(/\\/g, "/").split("/").pop() || "";
   if (base === "pwsh.exe" || base === "pwsh") return "pwsh-7";

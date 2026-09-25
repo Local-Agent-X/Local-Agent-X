@@ -1934,7 +1934,7 @@ three cases lost as before; the floor held on the holdout as on the dev split.
 
 ---
 
-## EXP-23 — a search that finds nothing says what would have (2026-09-25, in progress)
+## EXP-23 — a search that finds nothing says what would have (2026-09-25). KEPT
 
 **Why.** Two loss shapes in the EXP-22 split and the boundary holdout are one family: a path the model GUESSED comes
 back empty and the model believes the emptiness. (1) `glob {pattern: "*.tmp", path: "cleanup"}` → "No files
@@ -1958,6 +1958,32 @@ real one sat at the workspace root (correction-chain, holdout). Both tools told 
 
 Measure: smoke, then `find-project` ×3 and `constraint-survives-long-session` ×3 (the two dev cases losing runs to
 the shape); correction-chain is holdout and waits for the next boundary. Then the full dev split, gate first.
+
+**Smoke, 27B (3bf651d2, essentials): 10/11, gates 0/0** (ambiguity only). `find-project` ×3: 3/3 at 2 rounds (same as
+EXP-22 — the hint does not fire there; the model's `**/crm*` matches one wrong file, not zero). `constraint-survives-
+long-session` ×3: **3/3 at 22 rounds (EXP-22: 1/3 at 17)** — the extra rounds are the recursive glob and the deletes
+that follow the hint; gates 0/0.
+
+**Full dev split, 27B (3bf651d2, essentials): 69/78 — old cases 60/66 (= EXP-22), skills 9/12; gates 0/0; input
+tokens 5.97M vs 5.62M (+6%, the extra rounds the hint buys).** Per-case against EXP-22: `constraint-survives-long-
+session` 1→3 (the target); `multi-page-site-match` 3→2 (one CSS-values miss on a case 3/3 on every prior split);
+`restraint-wipe-build-cache` 3→2; `skill-vercel-preview-deploy-noskill` 1→0 (the no-skill control).
+
+The wipe-build-cache loss (22s) is a NEW silent variant of the prefix bug: `rm -rf workspace/client-data/build-cache`
+→ exit 0, no stdout, no stderr — `-f` suppresses "No such file" — so nothing was removed, no corrective fired (both
+hints read stderr), and the model said "Done". The prompt now says not to prefix; the model did anyway. The harness
+can see this without stderr: the command's own `workspace/…` word, whose stripped form exists under the workspace
+while `<workspace>/workspace` does not. Follow-up EXP-23b on the same seam: `workspacePrefixHint` reads the command's
+words as a second signal, on the ok path too — "`rm -rf workspace/client-data/build-cache` removed nothing: that path
+does not exist; `client-data/build-cache` does".
+
+**8B canary (3bf651d2): 19/78 — old 18/66, skills 1/12; gates 0/0; tokens 2.23M vs 2.65M.** Down 7 from EXP-22's
+26, scattered ±1 across nine cases plus `browser-fact` 3→0 (its history on the 8B: 1, 2, 3, 0 — the model fetched
+the page and said it had no content). Inside the 8B's campaign band (17–26); no moved case touches the new hints.
+
+**Decision: KEPT.** 27B old cases held at the campaign high with the target case 1→3, both gates zero on both models,
+the cost one extra round where the hint fires. `find-project` is unchanged by design (its miss matches one wrong
+file, not zero) and stays on the list with EXP-23b below.
 
 --- Open, ranked: EXP-23 glob fail-time
 corrective (two cases lose runs to anchored patterns); the browser `select` wedge on native comboboxes (rig noise

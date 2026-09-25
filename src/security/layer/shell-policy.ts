@@ -5,6 +5,7 @@ import type { InlineEvalPolicy, FileAccessMode } from "./types.js";
 import { countTopLevelPipes } from "../../tools/shell-translate.js";
 import { BLOCKED_COMMANDS, BROWSER_OPEN_CMDS, RM_DESTRUCTIVE_FLAGS } from "./shell-rules.js";
 import { detectCatastrophicRm } from "./catastrophic-paths.js";
+import { rmTargetsAllInsideWorkspace } from "./rm-inside-workspace.js";
 import {
   detectObfuscation,
   detectSecretPlaceholder,
@@ -324,21 +325,22 @@ export function evaluateShellCommand(
   // granted full-filesystem access, so deleting their OWN files (Downloads,
   // Documents, projects, /tmp) via the shell must work — only the catastrophic
   // floor (rm -rf /, ~, system dirs → catastrophic-paths.ts) is held. In
-  // workspace/common mode, OR when the mode wasn't threaded through (undefined →
-  // fail SAFE), refuse outright and point at the recoverable delete_file tool.
-  // This is the split-out of the old blanket BLOCKED_COMMANDS rm rule that
-  // fired regardless of mode (the "can't delete my Downloads even on
-  // unrestricted" bug).
+  // workspace/common mode a recursive delete whose every target is PROVABLY
+  // strictly inside the workspace goes on to the irreversible floor, which
+  // cards it (rm-inside-workspace.ts); anything else — and an unthreaded mode
+  // or workspace (undefined → fail SAFE) — is refused and pointed at
+  // delete_file. This is the split-out of the old blanket BLOCKED_COMMANDS rm
+  // rule that fired regardless of mode.
   if (RM_DESTRUCTIVE_FLAGS.test(command)) {
     if (fileAccessMode === "unrestricted") {
       const catastrophic = detectCatastrophicRm(command, homedir(), platform);
       if (catastrophic) {
         return { allowed: false, reason: catastrophic, userHint: USER_HINTS.commandShell };
       }
-    } else {
+    } else if (!(fileAccessMode && rmTargetsAllInsideWorkspace(command, workspace))) {
       return {
         allowed: false,
-        reason: "Blocked: `rm -r`/`rm -f` is refused in the current file-access mode. Use the delete_file tool (single file, moved to trash, recoverable), or switch file access to 'unrestricted' in Settings to allow bulk shell deletes of your own files.",
+        reason: "Blocked: in the current file-access mode `rm -r`/`rm -f` runs only on plain paths inside the workspace (the user is asked to confirm it). This command names a path outside the workspace, the workspace root itself, or a form that cannot be checked (a variable, ~, a glob outside the last path segment, a chained command). Name the folder inside the workspace plainly, use delete_file for single files, or ask the user to switch file access to 'unrestricted' in Settings.",
         userHint: USER_HINTS.commandShell,
       };
     }

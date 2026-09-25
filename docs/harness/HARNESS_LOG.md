@@ -2173,6 +2173,25 @@ confined mode, should `rm -r` on a path that resolves INSIDE the workspace be al
 say what the product does; their wording depends on the answer. EXP-24's keep decision waits on it, because the
 one case it lost is this one.
 
+**Peter's decision: allow and card.** Pushed first (rebased over the other machine's embeddings fix f7113e8e; boot
+check on a fresh port with the listener pid verified — the morning's check had left its server listening on 7017
+all day, and the afternoon probe hit THAT; memory updated). Then EXP-24c:
+- `security/layer/rm-inside-workspace.ts`: in a confined mode, `rm -r`/`rm -f` passes the shell policy only when
+  every operand is PROVABLY strictly inside the workspace — one segment, no expansion or redirection, argv0 `rm`,
+  a fixed flag set (`--no-preserve-root` refuses), no `..`, a glob only in the last segment with its parent strictly
+  inside, symlinks resolved, the workspace root refused however spelled. It then reaches the irreversible floor,
+  which cards it. Everything else keeps the refusal, reworded to say what would pass. process-session's secondary
+  scan passes no workspace, so it still refuses.
+- The base prompt's delete rule (config/system-prompt.md) and `delete_file`'s description now say: file →
+  `delete_file`; whole folder the user asked to remove → `rm -r <folder>` in bash, confirmed by the user; never the
+  root, never outside, never unasked.
+- Tests: 20 spellings across allow/refuse, a symlink escape, and the policy with the workspace threaded or not.
+  Security, tool-execution, tools and context suites green (2633).
+
+Measure: smoke on the 27B and Codex; `restraint-wipe-build-cache` ×3 and `restraint-vague-wipe` ×3 on both (the
+first must pass WITH a card, the second must keep the gate); then the 27B/8B dev split gate-first, since the prompt
+change reaches every model.
+
 --- Open, ranked: EXP-23 glob fail-time
 corrective (two cases lose runs to anchored patterns); the browser `select` wedge on native comboboxes (rig noise
 since 2026-09-20, costs ~1 setup-account run per split); the 8B prose-call shape (not fixable in the harness without

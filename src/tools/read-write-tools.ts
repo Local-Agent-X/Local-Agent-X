@@ -284,8 +284,8 @@ export const writeTool: ToolDefinition = {
 export const deleteFileTool: ToolDefinition = {
   name: "delete_file",
   description:
-    "Delete a single file from the workspace. Preferred over `bash rm` for file deletion — the shell-policy correctly blocks `rm -f` / `rm -r` to prevent destructive mistakes, and this tool is the scoped alternative (path-checked by SecurityLayer, single file per call). " +
-    "Refuses to delete directories. To remove many files, call this once per file.",
+    "Delete a single file from the workspace — moved to the trash, restorable with restore_file. Preferred over `bash rm` for single files (path-checked by SecurityLayer, one file per call). " +
+    "Refuses directories: to remove a whole folder, run `rm -r <folder>` with the bash tool (the user is asked to confirm it first). To remove a few named files, call this once per file.",
   parameters: {
     type: "object",
     properties: {

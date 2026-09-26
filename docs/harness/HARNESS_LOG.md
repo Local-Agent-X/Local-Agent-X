@@ -2579,7 +2579,7 @@ nothing was deleted" would turn a false done into a true one for any model. Next
 
 ## EXP-31b — a file this request created: no card, a notice with Undo (2026-09-26, measuring)
 
-Change (0bd7d9a3..53d09107): the ns_tmp case. The task-artifacts registry only knows files the agent's FILE tools
+Change (1dcae79d + codemap 53d09107): the ns_tmp case. The task-artifacts registry only knows files the agent's FILE tools
 made, so a file a script wrote still asked. Now a `delete_file` target the user did not name, born after the current
 request began (the operation's first message row), goes to the trash with no card; after the batch, one
 `delete_notice` lists what went, in the chat and outside the collapsed activity block, with an Undo →

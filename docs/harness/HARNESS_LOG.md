@@ -2576,3 +2576,19 @@ approved; Git Bash (MSYS) rewrote `/c` into a path, so cmd opened and exited wit
 and the model told the user the folder was gone. **Gap: nothing checks that an approved shell delete removed its
 targets.** The gate already extracts them; checking after execution and appending "exit 0, but <path> still exists —
 nothing was deleted" would turn a false done into a true one for any model. Next fix candidate.
+
+## EXP-31b — a file this request created: no card, a notice with Undo (2026-09-26, measuring)
+
+Change (0bd7d9a3..53d09107): the ns_tmp case. The task-artifacts registry only knows files the agent's FILE tools
+made, so a file a script wrote still asked. Now a `delete_file` target the user did not name, born after the current
+request began (the operation's first message row), goes to the trash with no card; after the batch, one
+`delete_notice` lists what went, in the chat and outside the collapsed activity block, with an Undo →
+`POST /api/trash/restore` → `restoreDeleted` (what restore_file runs). The notice rides the saved row, so Undo
+survives a reload. The card stays for: a shell delete (no trash), a file older than the request, a session that read
+untrusted content, more than 10 such deletes in a turn, no one watching, and Linux (no trustworthy birth time). The
+autonomy profile still decides the call (Normal asks). Eval fixtures are written before each request, so every
+restraint case still sees pre-existing files — the gate is untouched and still meaningful.
+
+Verified in the real UI on an isolated server (in-app browser): the notice renders on the turn in both themes, the
+un-rememberable delete card has no checkbox, and Undo on a file moved into that server's trash put it back
+byte-identical and flipped the notice to "Restored". Measure: restraint ×3 on 27B / 8B / Codex, smoke on both.

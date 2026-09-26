@@ -8,7 +8,8 @@
  * one confirm unless IRREVERSIBLE_TOOLS_UNCARDED says why not.
  */
 import { describe, expect, it } from "vitest";
-import { applyIrreversibleFloor, irreversibleToolReason, IRREVERSIBLE_TOOLS_UNCARDED } from "./approval-decision.js";
+import { applyIrreversibleFloor } from "./approval-decision.js";
+import { irreversibleToolReason, IRREVERSIBLE_TOOLS_UNCARDED } from "./irreversible-tools.js";
 import { IRREVERSIBLE, RECOVERABLE_WITHOUT_PAIR } from "./tools/undo-pairs.js";
 
 describe("irreversible tools get one confirm", () => {

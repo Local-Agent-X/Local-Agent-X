@@ -12,7 +12,7 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 65 top-level dirs · 65 live · 0 with no live importer · 1620 non-test source files · 0 god files (>400 LOC).
+**Totals:** 65 top-level dirs · 65 live · 0 with no live importer · 1621 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -20,11 +20,11 @@ over 400 LOC (the source-hygiene ceiling).
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 131 | 26 | XL |  |
 | `src/security/` | 87 | 36 | XL |  |
-| `src/tools/` | 77 | 196 | XL |  |
+| `src/tools/` | 78 | 196 | XL |  |
+| `src/canonical-loop/` | 64 | 246 | XL |  |
 | `src/providers/` | 64 | 22 | XL |  |
-| `src/canonical-loop/` | 63 | 246 | XL |  |
+| `src/workspace/` | 47 | 2 | M |  |
 | `src/memory/` | 46 | 130 | XL |  |
-| `src/workspace/` | 46 | 2 | M |  |
 | `src/util/` | 37 | 3 | S |  |
 | `src/session/` | 36 | 7 | L |  |
 | `src/auth/` | 35 | 11 | L |  |
@@ -61,7 +61,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/screen-stream/` | 9 | 8 | L |  |
 | `src/ari-kernel/` | 8 | 11 | L |  |
 | `src/bridge-voice/` | 8 | 5 | M |  |
-| `src/routes/` | 8 | 87 | XL |  |
+| `src/routes/` | 8 | 88 | XL |  |
 | `src/sync/` | 8 | 20 | L |  |
 | `src/telegram-bridge/` | 8 | 6 | M |  |
 | `src/auto-build/` | 7 | 52 | XL |  |

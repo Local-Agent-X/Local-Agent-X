@@ -22,6 +22,11 @@
       "model": "qwen3:14b"
     },
     {
+      "label": "qwen-lms",
+      "provider": "local",
+      "model": "qwen3.6-27b"
+    },
+    {
       "label": "grok",
       "provider": "xai",
       "model": "grok-4.6"

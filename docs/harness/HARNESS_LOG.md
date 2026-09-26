@@ -2387,3 +2387,26 @@ Open before building: confirm LAX's head is byte-identical across chats (tool se
 text inside the head moves the divergence point back outside the window and defeats the pre-warm.
 
 ---
+
+### Why a new chat never reuses the head: the canaries are minted per chat (2026-09-26)
+
+Kept first-round traces from the recent runs, diffed pairwise per model (`request.systemPrompt`, then messages, then
+tools). Tools are byte-identical across chats (32 on the wire). The system prompt differs in three places:
+1. the per-case workspace path and 2. the per-case server port — eval artefacts; a user's path and port are fixed;
+3. **the canary block** (`CANARY-/SENTINEL-/TRIPWIRE-<id>`, src/threat/canaries.ts), minted once per SESSION by
+   `adoptSessionCanaries` — a new chat gets new tokens, ~200 characters before the end of the system text.
+With those three normalized, the 27B's and the 8B's system prompts are IDENTICAL across chats (67,441 / 41,252
+chars). (Muse's pair also differs in the deferred-tool list — one case's fixture configured email.)
+
+Ollama's qwen3.5 renderer puts the tools AFTER the system text, so the canary sits ~19k tokens before the end of the
+head. That is far outside the hybrid model's ~1k-token restore window above: a new chat's first round re-prefills the
+whole head even straight after a pre-warm. On the 8B (plain attention, reuses any exact prefix) the same canary
+caps cross-chat reuse at the system text before it; in the eval the path caps it earlier (the ~5k seen before).
+
+So a pre-warm alone buys nothing on the 27B. It needs the head to be the same for every chat first, and the only
+per-chat item in it is a security control — a design decision for Peter, not an experiment:
+- canaries minted per server process (or per install) instead of per chat: same tripwire, same place in the system
+  prompt (a "repeat your instructions" dump still carries them), breach recovery still re-mints;
+- NOT moving the block to a later row: a dump of the system prompt would then no longer carry a canary.
+
+---

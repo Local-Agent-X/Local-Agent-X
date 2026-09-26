@@ -119,7 +119,10 @@ describe("canonical recovery runtime rehydration", () => {
           role: "assistant",
           content: {
             text: "write finished",
-            toolCalls: [{ toolCallId: "call-1", tool: "write", args: { path: "notes.txt" } }],
+            // The STORED shape every adapter writes ({ id, name, arguments }), not
+            // the tool_call_requested event shape. Since c2ff594b a result is kept
+            // only when an earlier assistant row carries its call id.
+            toolCalls: [{ id: "call-1", name: "write", arguments: JSON.stringify({ path: "notes.txt" }) }],
           },
         },
         { role: "tool_result", content: { text: "saved result", toolCallId: "call-1" } },

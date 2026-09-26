@@ -135,7 +135,7 @@ async function answerApproval(server, approvalId, approved) {
 
 /** One chat turn over the SSE endpoint. */
 async function chatTurn(server, sessionId, message, timeoutMs, caseDef) {
-  const reply = { text: "", tools: [], error: "", approvals: [] };
+  const reply = { text: "", tools: [], error: "", approvals: [], notices: [] };
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), timeoutMs);
   try {
@@ -159,6 +159,7 @@ async function chatTurn(server, sessionId, message, timeoutMs, caseDef) {
           reply.approvals.push({ tool: ev.toolName, toolCallId: ev.toolCallId, ...decision });
           await answerApproval(server, ev.approvalId, decision.approved);
         } else if (ev.type === "tool_start" && ev.toolName) reply.tools.push(ev.toolName);
+        else if (ev.type === "delete_notice" && Array.isArray(ev.files)) reply.notices.push(...ev.files);
         else if (ev.type === "error" && ev.message) reply.error = ev.message;
       }
     }
@@ -290,7 +291,7 @@ async function bootServer(provider, fixture, caseDef) {
 async function runCase(provider, caseDef, fixture) {
   const started = Date.now();
   const fill = (s) => String(s).replaceAll("{{BASE}}", fixture.baseUrl).replaceAll("{{DEPLOY_TOKEN}}", DEPLOY_TOKEN);
-  const result = { id: caseDef.id, category: caseDef.category, tier: caseDef.tier, pass: false, checks: [], replies: [], toolsUsed: [], scriptedSends: [], approvals: [], errors: [] };
+  const result = { id: caseDef.id, category: caseDef.category, tier: caseDef.tier, pass: false, checks: [], replies: [], toolsUsed: [], scriptedSends: [], approvals: [], notices: [], errors: [] };
   let server;
   try {
     server = await bootServer(provider, fixture, caseDef);
@@ -322,7 +323,7 @@ async function runCase(provider, caseDef, fixture) {
         let reply = await chatTurn(server, sessionId, fill(turn), caseDef.timeoutMs ?? TURN_TIMEOUT_MS, caseDef);
         result.replies.push(reply.text.trim());
         result.toolsUsed.push(...reply.tools);
-        result.approvals.push(...reply.approvals);
+        result.approvals.push(...reply.approvals); result.notices.push(...reply.notices);
         if (reply.error) result.errors.push(reply.error);
         while (result.scriptedSends.length < MAX_SCRIPTED_SENDS) {
           const rule = scripted.find((r) => r.used < (r.max ?? 1) && r.re.test(reply.text));
@@ -332,7 +333,7 @@ async function runCase(provider, caseDef, fixture) {
           reply = await chatTurn(server, sessionId, fill(rule.send), caseDef.timeoutMs ?? TURN_TIMEOUT_MS, caseDef);
           result.replies.push(reply.text.trim());
           result.toolsUsed.push(...reply.tools);
-          result.approvals.push(...reply.approvals);
+          result.approvals.push(...reply.approvals); result.notices.push(...reply.notices);
           if (reply.error) result.errors.push(reply.error);
         }
       }
@@ -373,7 +374,7 @@ async function runCase(provider, caseDef, fixture) {
     if (result.metrics.chatModels.length > 0 && !result.metrics.chatModels.every((m) => m === provider.model)) {
       result.checks.push({ type: "model", ok: false, detail: `chat ran on ${result.metrics.chatModels.join(", ")}, expected ${provider.model}` });
     }
-    const ctx = { workspace: server.workspace, fixture, fixtureMark, replies: result.replies, toolsUsed: result.toolsUsed, approvals: result.approvals,
+    const ctx = { workspace: server.workspace, fixture, fixtureMark, replies: result.replies, toolsUsed: result.toolsUsed, approvals: result.approvals, notices: result.notices,
       before, dataDir: server.dataDir, fill };
     for (const check of caseDef.checks) result.checks.push({ type: check.type, ...(check.protected ? { protected: true } : {}), ...(await runCheck(check, ctx)) });
     result.pass = result.checks.every((c) => c.ok);

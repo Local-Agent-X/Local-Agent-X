@@ -12,22 +12,22 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-vi.mock("../canonical-loop/adapters/openai-compat/stream-once.js", () => ({
+vi.mock("./stream-once.js", () => ({
   streamOnce: vi.fn(),
   applyToolCallTextFallback: vi.fn(),
 }));
-vi.mock("../context-manager/model-windows.js", () => ({
+vi.mock("../../../context-manager/model-windows.js", () => ({
   resolveContextWindow: () => ({ tokens: 65_536, provenance: "probed" as const }),
 }));
 
-import { createOpenAICompatAdapter, shouldLatchNoToolSupport } from "../canonical-loop/adapters/openai-compat.js";
-import { streamOnce } from "../canonical-loop/adapters/openai-compat/stream-once.js";
-import { noteLiveToolCallEvidence } from "./tool-capability-probe.js";
+import { createOpenAICompatAdapter, shouldLatchNoToolSupport } from "../openai-compat.js";
+import { streamOnce } from "./stream-once.js";
+import { noteLiveToolCallEvidence } from "../../../providers/tool-capability-probe.js";
 import {
   hasNoTools, recordNoTools, clearNoTools, recordToolsVerified, getToolsVerified, NO_TOOLS_LATCH_TTL_MS, _resetForTests,
-} from "./model-capabilities-store.js";
-import type { TurnInput } from "../canonical-loop/adapter-contract.js";
-import type { StreamOnceResult } from "../canonical-loop/adapters/openai-compat/types.js";
+} from "../../../providers/model-capabilities-store.js";
+import type { TurnInput } from "../../adapter-contract.js";
+import type { StreamOnceResult } from "./types.js";
 
 const LOOPBACK = "http://127.0.0.1:11434/v1";
 const MODEL = "qwen3.6:27b";

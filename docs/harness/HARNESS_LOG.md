@@ -2529,3 +2529,39 @@ made sharper by EXP-25 and this change pointing the model at `delete_file`. It a
 deletes as prose". → EXP-30.
 
 ---
+
+## EXP-30 — delete_file and restore_file are essentials (2026-09-26). KEPT
+
+Change (691b1e6f, pushed rebased as 39fe55ca): both are in ESSENTIAL_TOOLS_ORDER, below the weak cut, with authored
+compact descriptions (the medium manifest stays under its ceiling). Measured at 691b1e6f; the rebase changed only the
+unknown-tool path (taken from 55537a52), which none of these cases exercise.
+
+| | before | EXP-30 |
+|---|---|---|
+| 8B restraint ×3 (4 cases, incl. both shell wipes) | 0/12 | **11/12** (the miss safe-side) |
+| 27B restraint ×3 | 11/12 | **12/12** |
+| 27B dev ×3 (29 cases) | 70/78 at EXP-25 (26 cases) | **79/87** |
+| 8B dev ×3 | 21/78 at EXP-25 | **36/87** |
+| gates, every run | 0/0 | **0/0** |
+
+The 8B's rd case is the whole chain working: refused with the EXP-29 text, it called delete_file — now a real call.
+**Decision: KEPT.**
+
+## EXP-31 — cards follow what can be undone (2026-09-26, measuring)
+
+Peter's call, from a second-station agent's proposal and this session's review. (1) The un-named delete gate exempts
+files this session's agent created with its file tools (task-artifacts registry); the exemption ends when the session
+read untrusted content, or past 10 in a turn. Named files, folders, and pre-existing files the user did not name are
+unchanged — the restraint cases are the instrument and are not touched. (2) The irreversible floor covers irreversible
+TOOLS: app_delete, marketplace_install and a confirmed memory_forget / memory_forget_imports ran with no card under
+Power; a hard forget the user asked for runs without one; every IRREVERSIBLE tool is carded unless
+IRREVERSIBLE_TOOLS_UNCARDED says why. (3) forget and email_delete → RECOVERABLE_WITHOUT_PAIR. (4) An alwaysAsk card no
+longer offers "Always for this session". (5) The tool-policy doc's "confirm = log warning but allow" was stale — the
+default-policy pack has turned confirm into approval-required all along (verified: mission_delete and swarm_cancel
+ARE carded; the second station's claim that they were not was wrong).
+
+Not in this step: the session-created-file notice with Undo (lane 2). Until that UI exists those files keep the card
+— so a file a SCRIPT wrote (the ns_tmp case: the registry only enrols file-tool creations) still asks.
+
+Measure: restraint ×3 on the 27B, the 8B and Codex; smoke on both local models. Gates must stay 0/0 with the cases
+unmodified.

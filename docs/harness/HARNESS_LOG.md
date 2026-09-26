@@ -2438,3 +2438,27 @@ variance. **Decision: EXP-27 KEPT.** No full split for a model-invisible change;
 the full split on both models, on a build that carries this one.
 
 ---
+
+## EXP-28 — new-chat pre-warm (2026-09-26). REVERT — the shared canaries already did it
+
+Change (7b4595a9): the first request of a fresh local chat is recorded; `POST /api/chat/prewarm`, sent by the UI when
+a new chat opens, replays it with a one-word turn. Measured with `eval/op-outcomes/replay/new-chat-latency.mjs`
+(isolated server, qwen3.6:27b, 3 trials per condition, 15 s "typing" pause), the new chat's first round:
+
+| previous chat | cold: TTFT / cached of prompt | pre-warmed: TTFT / cached |
+|---|---|---|
+| two short messages | 1.73–1.79 s / ~26.0k of ~27.6k | 1.76–1.80 s / ~26.1k |
+| + a ~5k-token paste | 1.68–1.89 s / 26.0k | 1.73–1.80 s / 26.0k |
+| + 12 more turns | 1.90–1.94 s / 25,965 | 1.72–1.82 s / 25,965 |
+
+Before EXP-27 the same first round re-read the whole head: 0 cached, TTFT 9–10 s. **EXP-27 is the fix.** The raw probe's
+"~1k-token window" was an artefact of one request per chat: Ollama keeps restore points from several recent
+requests, and a new chat's divergence lands near one of them even after a 14-turn chat. The pre-warm adds nothing
+measurable (identical cache reuse; ~0.1 s, inside run-to-run noise). **Decision: REVERT** — applied after the queued
+Codex / holdout / shell-wipe runs finish (a src change mid-queue aborts them; the pre-warm never fires inside the eval,
+so those runs measure the same thing either way). The latency script stays: it is the only cross-chat measurement.
+
+Rig bug found on the way: the script never exited (keep-alive sockets held the event loop) — three runs hung after
+printing, and a queue waiting on their exit sat idle ~2.5 h. Fixed with an explicit exit, as run.mjs does.
+
+---

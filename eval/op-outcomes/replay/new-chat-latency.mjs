@@ -69,3 +69,6 @@ try {
   await server.stop();
 }
 console.table(rows);
+// Undici keep-alive sockets to the stopped server hold the event loop open; the rig
+// (run.mjs) ends the same way.
+process.exit(0);

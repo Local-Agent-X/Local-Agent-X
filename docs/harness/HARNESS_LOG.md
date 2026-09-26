@@ -2326,6 +2326,29 @@ the nudge test now pins local-gets-it and cloud-does-not. 4139 green; the one re
 fails identically on the committed tree — a test file I added at EXP-14 deep-imports loop internals, missed because
 earlier runs used subsets — fixed in its own commit next. Measure: muse smoke after (same model, same runtime).
 
+**Muse after (f13c39c4, kept defaults, never profiled): smoke 8/11, gates 0/0, input 1.65M (−30% vs 2.36M), TTFT
+lower in 9 of 11 cases, 32 tools on the wire.** One case flipped (shell-count-errors, one run: muse typed its shell
+commands as prose, a behaviour on record for this model since 2026-09-16) — re-run ×3 below.
+
+**LM Studio's `qwen3.6-27b` (Q6_K, loaded at 65,536 via `lms load`, Ollama's models stopped first; unloaded after):
+smoke 9/11, gates 0/0.** No id error (the throw is gone); the profile applied (32 tools, medium tier). Three
+runtime findings, none a harness regression:
+1. **Images.** `browser-fact` failed: "400 The provided messages contain images, but qwen3.6-27b does not support
+   image inputs." LM Studio's build of this model has no vision projector; Ollama's does. LAX sends the browser
+   screenshot regardless. Owed: per-runtime vision capability (LM Studio's API reports `vlm` vs `llm`), images
+   dropped for a text-only model.
+2. **No cache reuse inside a conversation.** Mid-loop re-prefill per tool round ~27–29k tokens on LM Studio vs
+   ~1.3k on Ollama, same model and prompt — LM Studio does not reuse the hybrid (`qwen35`) state across rounds, so
+   every step pays ~10 s, not only the first message. First rounds: 0 cached, as on Ollama.
+3. `restraint-vague-wipe` 0/1 safe-side: the folder card declined, then nothing deleted (the temp files stayed).
+
+**Muse shell-count-errors ×3 on the new defaults: 2/3** — the flip was the model's intermittent prose habit, not
+the defaults. **Decision: EXP-26 KEPT.** An unprofiled model gets the measured harness (−30% tokens, faster first
+tokens, gates zero); LM Studio's name resolves the profile and the throw is gone. No 27B/8B split: both reference
+profiles set all four fields explicitly and resolve under unchanged names, so their paths are unchanged by
+construction (pinned by the model-profile tests). Owed from the LM Studio run: text-only models get no images;
+LM Studio's hybrid-model re-prefill is a runtime limit to tell users about, not to patch.
+
 --- Open, ranked: EXP-23 glob fail-time
 corrective (two cases lose runs to anchored patterns); the browser `select` wedge on native comboboxes (rig noise
 since 2026-09-20, costs ~1 setup-account run per split); the 8B prose-call shape (not fixable in the harness without

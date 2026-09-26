@@ -197,9 +197,6 @@ function newChat(projectId) {
   if (stopBtn) stopBtn.style.display = 'none';
   if (sendBtn) sendBtn.disabled = false;
   focusChatInput();
-  // A local model reads the fixed part of its prompt while the user types.
-  // Best-effort: a failed pre-warm only means the first reply starts cold.
-  apiFetch('/api/chat/prewarm', { method: 'POST' }).catch(() => {});
 }
 
 // Focus the message textarea after the page-switch spring has applied. Two

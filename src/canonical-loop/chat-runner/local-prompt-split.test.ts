@@ -13,7 +13,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it, expect } from "vitest";
-import { HEAD_SECTION_IDS, TRAILING_SECTION_IDS, isFreshChatHead, splitPromptForStablePrefix } from "./local-prompt-split.js";
+import { HEAD_SECTION_IDS, TRAILING_SECTION_IDS, splitPromptForStablePrefix } from "./local-prompt-split.js";
 import type { RenderedPromptSection } from "../../context/system-prompt-builder.js";
 
 /** The split reads id and text only; the measurement is irrelevant to it. */
@@ -77,25 +77,5 @@ describe("splitPromptForStablePrefix", () => {
     // `core-identity` is the family of every base-prompt part (core-identity/<heading>).
     const ghosts = [...HEAD_SECTION_IDS, ...TRAILING_SECTION_IDS].filter((id) => id !== "core-identity" && !emitted.has(id));
     expect(ghosts).toEqual([]);
-  });
-});
-
-describe("isFreshChatHead — the head a new chat's first request will repeat", () => {
-  const shared = [section("core-identity/role", "A"), section("canary", "C"), section("relevant-memories", "M")];
-
-  it("holds for a chat with no reply yet and nothing of its own in the head", () => {
-    expect(isFreshChatHead(shared, [])).toBe(true);
-    expect(isFreshChatHead(shared, [{ role: "user" }])).toBe(true);
-  });
-
-  it("fails once the chat has a reply or a compaction summary row", () => {
-    expect(isFreshChatHead(shared, [{ role: "user" }, { role: "assistant" }])).toBe(false);
-    expect(isFreshChatHead(shared, [{ role: "system" }, { role: "user" }])).toBe(false);
-  });
-
-  it("fails when the head carries this chat's summary, attachments or a matched workflow", () => {
-    for (const id of ["system-history", "file-attachments", "learned-protocol"]) {
-      expect(isFreshChatHead([...shared, section(id, "x")], [])).toBe(false);
-    }
   });
 });

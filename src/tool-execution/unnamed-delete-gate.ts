@@ -83,7 +83,16 @@ export function gateAppliesToModel(modelId: string | undefined): boolean {
   return Boolean(modelId);
 }
 
-export interface UnnamedDeleteCall { id: string; path: string; /** Set when the target is a folder: its file count ("61", "10000+"). */ folderFiles?: string }
+export interface UnnamedDeleteCall {
+  id: string;
+  path: string;
+  /** Set when the target is a folder: its file count ("61", "10000+"). */
+  folderFiles?: string;
+  /** Runs without a card and is announced afterwards, with Undo: a file created
+   *  during this request that the agent's file tools did not record (a script
+   *  wrote it), deleted to the trash. */
+  notice?: true;
+}
 
 /** Shell tools whose command may delete a file one at a time. EXP-18 showed
  *  the ladder: `delete_file` refused → `rm -rf` carded by the floor → per-file
@@ -118,9 +127,9 @@ function folderTarget(path: string): string | null {
   }
 }
 
-/** Above this many of the agent's own files in one turn, they ask too: a notice
- *  nobody reads is no protection, and a wipe spread over single-file calls is
- *  the shape an over-reach takes. */
+/** Above this many of the agent's own and this request's files in one turn,
+ *  they ask too: a notice nobody reads is no protection, and a wipe spread over
+ *  single-file calls is the shape an over-reach takes. */
 export const OWN_FILE_DELETES_PER_TURN = 10;
 
 export interface UnnamedDeleteScope {
@@ -129,6 +138,10 @@ export interface UnnamedDeleteScope {
   /** The session has read off-box content (web, email, MCP): a delete may be an
    *  injected instruction, so the agent's own files lose their exemption. */
   untrustedSession?: boolean;
+  /** When the current request began (epoch ms). A file born after it that the
+   *  file tools did not record was written by something the agent ran — or by
+   *  the user mid-request, which is why it earns a notice, not silence. */
+  requestStartedAt?: number;
 }
 
 /** Did this session's agent create the file with one of its file tools? */
@@ -136,14 +149,30 @@ function agentCreated(sessionId: string, path: string): boolean {
   try { return isTaskArtifact(sessionId, resolveAgentPath(path)); } catch { return false; /* unresolvable path: not provably the agent's */ }
 }
 
+/** Was the file created after `since`? Linux is excluded: where a filesystem has
+ *  no birth time, Node may report the change time instead, which would make an
+ *  old file edited this request look new. */
+function createdSince(path: string, since: number): boolean {
+  if (process.platform === "linux") return false;
+  try {
+    const { birthtimeMs } = statSync(resolveAgentPath(path));
+    return birthtimeMs > 0 && birthtimeMs >= since;
+  } catch {
+    return false; /* gone or unresolvable: nothing to prove new */
+  }
+}
+
 /** The delete calls in a batch that need the user's yes: every target the user
  *  did not name, and EVERY folder delete_file would remove — named or not,
  *  because "clean up client-data" names the folder it must not remove. A file
  *  the agent itself created this session is its scratch, not the user's data,
- *  and asks nothing — unless the session read untrusted content or the turn
- *  deletes more than OWN_FILE_DELETES_PER_TURN of them. A shell call deleting
- *  several files contributes one entry per file, all under its own call id, so
- *  one decision covers the whole command. */
+ *  and asks nothing. A file created during this request that the file tools
+ *  did not record (a script the agent ran wrote it) goes to the trash without
+ *  a card and is announced with Undo — entries marked `notice`; a shell delete
+ *  has no trash, so it asks. Both exemptions end when the session read
+ *  untrusted content, or past OWN_FILE_DELETES_PER_TURN in one turn. A shell
+ *  call deleting several files contributes one entry per file, all under its
+ *  own call id, so one decision covers the whole command. */
 export function unnamedDeletes(
   toolCalls: ReadonlyArray<{ id: string; name: string; arguments: string }>,
   priorMessages: readonly ChatCompletionMessageParam[] | undefined,
@@ -152,17 +181,24 @@ export function unnamedDeletes(
   const userText = currentHumanText(priorMessages);
   const out: UnnamedDeleteCall[] = [];
   const own: UnnamedDeleteCall[] = [];
+  const noticed: UnnamedDeleteCall[] = [];
+  const trusted = !!scope.sessionId && !scope.untrustedSession;
   for (const tc of toolCalls) {
     for (const path of deleteTargetsOf(tc)) {
       const folderFiles = tc.name === GATED_DELETE_TOOL ? folderTarget(path) : null;
       if (folderFiles !== null) out.push({ id: tc.id, path, folderFiles });
       else if (userNamedFile(userText, path)) continue;
-      else if (scope.sessionId && !scope.untrustedSession && agentCreated(scope.sessionId, path)) own.push({ id: tc.id, path });
+      else if (trusted && agentCreated(scope.sessionId!, path)) own.push({ id: tc.id, path });
+      else if (trusted && tc.name === GATED_DELETE_TOOL && scope.requestStartedAt !== undefined
+        && createdSince(path, scope.requestStartedAt)) noticed.push({ id: tc.id, path, notice: true });
       else out.push({ id: tc.id, path });
     }
   }
-  if (own.length > OWN_FILE_DELETES_PER_TURN) out.push(...own);
-  return out;
+  if (own.length + noticed.length > OWN_FILE_DELETES_PER_TURN) {
+    out.push(...own, ...noticed.map(({ notice: _n, ...ask }) => ask));
+    return out;
+  }
+  return [...out, ...noticed];
 }
 
 // ── Per-call decisions, written by the batch pre-pass, read by the approval phase ──

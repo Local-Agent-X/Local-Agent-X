@@ -14,7 +14,7 @@ import { resolvePhase } from "./resolve-tool.js";
 import { enforcePolicyPhase } from "./enforce-policy.js";
 import { dedupCheckPhase, dedupRecordPhase } from "./dedup-check.js";
 import { requireApprovalPhase } from "./require-approval.js";
-import { preauthorizeUnnamedDeletes } from "./unnamed-delete-preauth.js";
+import { announceNoticedDeletes, preauthorizeUnnamedDeletes } from "./unnamed-delete-preauth.js";
 import { captureRollbackPhase } from "./capture-rollback.js";
 import { emitTraceStartPhase, emitTraceCompletePhase } from "./emit-trace.js";
 import { runSandboxedPhase } from "./run-sandboxed.js";
@@ -244,7 +244,7 @@ export async function executeToolCalls(
   // name, asked before anything dispatches; each call collects its answer in
   // requireApprovalPhase. No-op for unattended runs, tier-A and unprofiled
   // models, and turns with no such delete. See unnamed-delete-gate.ts.
-  await preauthorizeUnnamedDeletes({ toolCalls, priorMessages, modelId, callContext, sessionId, operationId, onEvent });
+  const noticed = await preauthorizeUnnamedDeletes({ toolCalls, priorMessages, modelId, callContext, sessionId, operationId, onEvent });
   const turn = newHeapGuardTurn();
   const width = maxParallelToolBatch();
 
@@ -295,5 +295,6 @@ export async function executeToolCalls(
     i++;
   }
 
+  announceNoticedDeletes(noticed, results, onEvent);
   return results;
 }

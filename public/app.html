@@ -37,7 +37,7 @@
 <link rel="preload" href="/hero-master.png" as="image"/>
 <link rel="icon" type="image/x-icon" href="/favicon.ico"/>
 <link rel="icon" type="image/png" sizes="192x192" href="/favicon.png"/>
-<link rel="stylesheet" href="/css/app.css?v=vb31"/>
+<link rel="stylesheet" href="/css/app.css?v=vb32"/>
 <link rel="stylesheet" href="/css/browser-workspace.css?v=v2"/>
 <link rel="stylesheet" href="/vendor/xterm/xterm.css?v=v1"/>
 <link rel="stylesheet" href="/css/voice-sphere.css?v=vb2"/>
@@ -1625,12 +1625,12 @@
      core (state maps, exports _ChatStreamState) → approvals (attaches onto
      the exported object). -->
 <script src="/js/chat-stream-blocks.js?v=v2"></script>
-<script src="/js/chat-stream-reducer.js?v=v2"></script>
+<script src="/js/chat-stream-reducer.js?v=v3"></script>
 <!-- Frame admission (which frames may mutate an entry) is its own module for
      the 400-LOC gate; the store core delegates to it. -->
 <script src="/js/chat-stream-admit.js?v=v1"></script>
-<script src="/js/chat-stream-store.js?v=v5"></script>
-<script src="/js/chat-stream-finalize.js?v=v1"></script>
+<script src="/js/chat-stream-store.js?v=v6"></script>
+<script src="/js/chat-stream-finalize.js?v=v2"></script>
 <script src="/js/chat-stream-store-approvals.js?v=v1"></script>
 <!-- App shell modules. Load order matters: state.js defines the `let`
      bindings (chats, projects, activeChat, …) used by every other module.
@@ -1722,13 +1722,14 @@
 <!-- chat-render-artifacts.js split: the approval live/settled shape decision
      (chat-render-approvals.js) is its own module for the 400-LOC gate. -->
 <script src="/js/chat-render-approvals.js?v=v2"></script>
-<script src="/js/chat-render-artifacts.js?v=v4"></script>
+<script src="/js/chat-render-notices.js?v=v1"></script>
+<script src="/js/chat-render-artifacts.js?v=v5"></script>
 <script src="/js/thinking-phrases.js?v=v1"></script>
 <script src="/js/phrase-rain.js?v=v1"></script>
 <script src="/js/chat-render-window.js?v=v1"></script>
-<script src="/js/chat-render.js?v=v8"></script>
+<script src="/js/chat-render.js?v=v9"></script>
 <script src="/js/chat-render-open-state.js?v=v1"></script>
-<script src="/js/chat-render-live.js?v=v2"></script>
+<script src="/js/chat-render-live.js?v=v3"></script>
 <!-- chat-send split: dispatch modules must load before chat-send.js so
      sendMessage()'s wsHealthy check can reach _sendMessageWs/_sendMessageHttp. -->
 <script src="/js/chat-send-ws.js?v=v3"></script>

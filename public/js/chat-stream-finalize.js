@@ -57,6 +57,10 @@
     // them to a one-line record; without it a dead card re-painted its full
     // action box, green Approve button and all, on every reload forever.
     if (e.approvals.length) msg._approvals = e.approvals.map(a => ({ ...a, historical: true }));
+    // Delete notices stay actionable after the turn: their Undo works for as long
+    // as the trash keeps the files. The SAME objects, so an Undo clicked on the
+    // live bubble is remembered on the saved row.
+    if (e.notices && e.notices.length) msg._notices = e.notices.slice();
     if (e.stopNote) msg._stopNote = { ...e.stopNote };
     const raw = typeof e.liveAnchorIndex === 'number' ? e.liveAnchorIndex : chat.messages.length;
     let idx = Math.max(0, Math.min(raw, chat.messages.length));
@@ -94,6 +98,7 @@
     e.toolEvents = [];
     e.chips = [];
     e.approvals = [];
+    e.notices = [];
     e.progressByTool = {};
     e.stopNote = null;
     return msg;

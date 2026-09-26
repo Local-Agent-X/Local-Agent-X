@@ -233,6 +233,7 @@ function finalizeLiveMessageInPlace(sessionId, finalizedMsg) {
     chips: finalizedMsg._chips || [],
     progressByTool: finalizedMsg._progressByTool || {},
     approvals: finalizedMsg._approvals || [],
+    notices: finalizedMsg._notices || [],
     stopNote: finalizedMsg._stopNote || null,
   };
   const tmp = document.createElement('div');

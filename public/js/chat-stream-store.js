@@ -71,6 +71,8 @@
       // Pending approval cards in arrival order. status flips to
       // 'timeout' when approval_timeout lands.
       approvals: [],
+      // Files deleted to the trash without a card (delete_notice), each with Undo.
+      notices: [],
       // Single stop notice per turn — last write wins.
       stopNote: null,
       opId: null,
@@ -197,6 +199,7 @@
     e.chips = [];
     e.progressByTool = {};
     e.approvals = [];
+    e.notices = [];
     e.stopNote = null;
     // Park the outgoing op before dropping it: the server takes the turn lock
     // away from that op and announces the replacement with

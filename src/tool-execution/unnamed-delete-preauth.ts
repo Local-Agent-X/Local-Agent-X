@@ -12,6 +12,9 @@ import type { ChatCompletionMessageParam } from "openai/resources/chat/completio
 import type { ServerEvent } from "../types.js";
 import { getApprovalManager } from "../approval-manager.js";
 import { hasExternalIngestion } from "../data-lineage/external.js";
+import { readOpMessages } from "../canonical-loop/index.js";
+import { parseStatusHeader } from "../tools/result-helpers.js";
+import { resolveAgentPath } from "../workspace/paths.js";
 import {
   GATED_DELETE_TOOL,
   describeUnnamedDeletesForHuman,
@@ -19,6 +22,17 @@ import {
   recordUnnamedDeleteDecision,
   unnamedDeletes,
 } from "./unnamed-delete-gate.js";
+
+/** When the operation began: its first message row is the user's request. */
+function requestStartedAt(operationId: string | undefined): number | undefined {
+  if (!operationId) return undefined;
+  const first = readOpMessages(operationId)[0];
+  const at = first ? Date.parse(first.createdAt) : NaN;
+  return Number.isFinite(at) ? at : undefined;
+}
+
+/** A delete that runs without a card and is announced once it succeeded. */
+export interface NoticedDelete { id: string; path: string }
 
 export async function preauthorizeUnnamedDeletes(opts: {
   toolCalls: ReadonlyArray<{ id: string; name: string; arguments: string }>;
@@ -28,14 +42,22 @@ export async function preauthorizeUnnamedDeletes(opts: {
   sessionId?: string;
   operationId?: string;
   onEvent?: (event: ServerEvent) => void;
-}): Promise<void> {
-  // Interactive dispatch only, like the irreversible floor: an unattended run
-  // is governed by its autonomy profile, which already blocks an unanswerable ask.
-  const gated = unnamedDeletes(opts.toolCalls, opts.priorMessages, {
+}): Promise<NoticedDelete[]> {
+  // A notice needs someone watching and somewhere to show it; without both,
+  // those files ask (interactive) or follow the profile (unattended), as before.
+  const canNotice = opts.callContext === "local" && !!opts.onEvent && gateAppliesToModel(opts.modelId);
+  const classified = unnamedDeletes(opts.toolCalls, opts.priorMessages, {
     sessionId: opts.sessionId,
     untrustedSession: opts.sessionId ? hasExternalIngestion(opts.sessionId) : true,
+    requestStartedAt: canNotice ? requestStartedAt(opts.operationId) : undefined,
   });
-  if (gated.length === 0) return;
+  // A noticed delete records no decision: the autonomy profile still decides
+  // it (Power runs it, Normal asks), exactly as for the agent's own files.
+  const noticed = classified.filter((c) => c.notice).map(({ id, path }) => ({ id, path }));
+  const gated = classified.filter((c) => !c.notice);
+  if (gated.length === 0) return noticed;
+  // Interactive dispatch only, like the irreversible floor: an unattended run
+  // is governed by its autonomy profile, which already blocks an unanswerable ask.
   if (opts.callContext !== "local" || !gateAppliesToModel(opts.modelId)) {
     // No one can answer a card here. File deletes keep whatever the autonomy
     // profile allows, as before; a FOLDER delete is refused — it only became
@@ -44,14 +66,14 @@ export async function preauthorizeUnnamedDeletes(opts: {
     for (const c of gated) {
       if (c.folderFiles !== undefined) recordUnnamedDeleteDecision(c.id, { approved: false, reason: undefined });
     }
-    return;
+    return noticed;
   }
 
   // No event sink means no way to show a card, so an answer can never arrive.
   // Refuse rather than let a sink-less dispatch confirm its own delete.
   if (!opts.onEvent) {
     for (const c of gated) recordUnnamedDeleteDecision(c.id, { approved: false, reason: undefined });
-    return;
+    return noticed;
   }
 
   const outcome = await getApprovalManager().requestApprovalDetailed({
@@ -67,4 +89,26 @@ export async function preauthorizeUnnamedDeletes(opts: {
   for (const c of gated) {
     recordUnnamedDeleteDecision(c.id, outcome.approved ? { approved: true } : { approved: false, reason: outcome.reason });
   }
+  return noticed;
+}
+
+/** After the batch: one notice, with Undo, for every noticed delete that went
+ *  through. A delete that failed or was blocked announces nothing. The paths
+ *  are absolute, the spelling the Undo route and restore_file resolve. */
+export function announceNoticedDeletes(
+  noticed: readonly NoticedDelete[],
+  results: readonly ChatCompletionMessageParam[],
+  onEvent: ((event: ServerEvent) => void) | undefined,
+): void {
+  if (!onEvent || noticed.length === 0) return;
+  const deleted = noticed.filter((n) => {
+    const row = results.find((r) => r.role === "tool" && r.tool_call_id === n.id);
+    return !!row && typeof row.content === "string" && parseStatusHeader(row.content) === "ok";
+  });
+  if (deleted.length === 0) return;
+  onEvent({
+    type: "delete_notice",
+    files: deleted.map((n) => resolveAgentPath(n.path)),
+    toolCallIds: deleted.map((n) => n.id),
+  });
 }

@@ -22,7 +22,14 @@ vi.mock("../approval-manager.js", () => ({
   }),
 }));
 
-const { preauthorizeUnnamedDeletes } = await import("./unnamed-delete-preauth.js");
+// When the current request began, as the pre-pass reads it from the operation's
+// first message row. Only "op-req" has one.
+const clock = { requestStart: 0 };
+vi.mock("../canonical-loop/index.js", () => ({
+  readOpMessages: (opId: string) => (opId === "op-req" ? [{ createdAt: new Date(clock.requestStart).toISOString() }] : []),
+}));
+
+const { preauthorizeUnnamedDeletes, announceNoticedDeletes } = await import("./unnamed-delete-preauth.js");
 const { takeUnnamedDeleteDecision } = await import("./unnamed-delete-gate.js");
 
 const VAGUE: ChatCompletionMessageParam[] = [{ role: "user", content: "The client-data folder is getting messy. Just clear it out." }];
@@ -167,5 +174,57 @@ describe("the agent's own files", async () => {
     const p = own("tmp-out.txt");
     await preauthorizeUnnamedDeletes({ ...scope, toolCalls: [{ id: "o6", name: "bash", arguments: JSON.stringify({ command: `rm "${p}"` }) }] });
     expect(requests).toHaveLength(0);
+  });
+});
+
+// Lane 2 (2026-09-26): a file created during THIS request that the file tools did
+// not record — a script the agent ran wrote it, as with ns_tmp.json — is deleted
+// to the trash with no card and announced afterwards with Undo. Linux is excluded
+// in the gate (no trustworthy birth time), so these run where it applies.
+describe.skipIf(process.platform === "linux")("files this request created", async () => {
+  const { recordExternalIngestion, clearExternalIngestion } = await import("../data-lineage/external.js");
+  const dir = mkdtempSync(join(tmpdir(), "lax-preauth-req-"));
+  const made = (name: string) => { const p = join(dir, name); writeFileSync(p, "{}"); return p; };
+  const del = (id: string, path: string) => ({ id, name: "delete_file", arguments: JSON.stringify({ path }) });
+  const cleanUp: ChatCompletionMessageParam[] = [{ role: "user", content: "Clean up the temporary files." }];
+  const scope = { ...base, sessionId: "req", operationId: "op-req", priorMessages: cleanUp };
+  const events: Array<{ type: string; files?: string[] }> = [];
+  const sink = (e: { type: string }) => { events.push(e as { type: string; files?: string[] }); };
+
+  beforeEach(() => { clearExternalIngestion("req"); events.length = 0; clock.requestStart = Date.now() - 60_000; });
+
+  it("no card; once the delete succeeded, one notice lists the file for Undo", async () => {
+    const p = made("ns_tmp.json");
+    const noticed = await preauthorizeUnnamedDeletes({ ...scope, toolCalls: [del("r1", p)] });
+    expect(requests).toHaveLength(0);
+    expect(takeUnnamedDeleteDecision("r1")).toBeUndefined();
+    announceNoticedDeletes(noticed, [{ role: "tool", tool_call_id: "r1", content: "[ok] moved to the trash" }], sink);
+    expect(events).toEqual([{ type: "delete_notice", files: [p], toolCallIds: ["r1"] }]);
+  });
+
+  it("a delete that failed announces nothing", async () => {
+    const noticed = await preauthorizeUnnamedDeletes({ ...scope, toolCalls: [del("r2", made("ns_tmp.txt"))] });
+    announceNoticedDeletes(noticed, [{ role: "tool", tool_call_id: "r2", content: "[error] could not move" }], sink);
+    expect(events).toHaveLength(0);
+  });
+
+  it("a file older than the request still asks", async () => {
+    const p = made("handover.md");
+    clock.requestStart = Date.now() + 60_000;
+    await preauthorizeUnnamedDeletes({ ...scope, toolCalls: [del("r3", p)] });
+    expect(requests).toHaveLength(1);
+    expect(requests[0].context).toContain("handover.md");
+  });
+
+  it("after the session read untrusted content, it asks", async () => {
+    recordExternalIngestion("req");
+    await preauthorizeUnnamedDeletes({ ...scope, toolCalls: [del("r4", made("page-cache.json"))] });
+    expect(requests).toHaveLength(1);
+  });
+
+  it("a shell rm of it asks — a shell delete has no trash to undo from", async () => {
+    const p = made("scratch.log");
+    await preauthorizeUnnamedDeletes({ ...scope, toolCalls: [{ id: "r5", name: "bash", arguments: JSON.stringify({ command: `rm "${p}"` }) }] });
+    expect(requests).toHaveLength(1);
   });
 });

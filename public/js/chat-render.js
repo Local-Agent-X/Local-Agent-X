@@ -109,7 +109,7 @@ function renderMessage(msg, ctx) {
     // path so the agent's pin-bottom and tool-card logic doesn't apply.
     return appendStaticWorkerBubble(msg._opId, msg.content || '', msg._taskHint, msg._workerStatus);
   }
-  if (msg.role === 'assistant' && (msg.content || msg._tools || msg._chips || msg._approvals || msg._stopNote || msg._reasoning || msg._blocks)) {
+  if (msg.role === 'assistant' && (msg.content || msg._tools || msg._chips || msg._approvals || msg._notices || msg._stopNote || msg._reasoning || msg._blocks)) {
     const hasBlocks = Array.isArray(msg._blocks) && msg._blocks.length > 0;
     // Block-timeline rows carry their text inside _blocks — pass an empty
     // body to addMessageEl so the content isn't rendered twice.
@@ -132,6 +132,7 @@ function renderMessage(msg, ctx) {
       chips: msg._chips || [],
       progressByTool: msg._progressByTool || {},
       approvals: msg._approvals || [],
+      notices: msg._notices || [],
       stopNote: msg._stopNote || null,
     });
     appendReadAloudBtn(node, msg);

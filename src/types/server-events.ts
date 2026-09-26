@@ -134,6 +134,10 @@ export type ServerEvent =
   // "no deadline known" and show no countdown rather than inventing one.
   | { type: "approval_requested"; approvalId: string; toolName: string; toolCallId?: string; context: string; argsPreview: string; preview?: ActionPreview; expiresAt?: number; rememberable?: boolean }
   | { type: "approval_timeout"; approvalId: string; toolName: string; toolCallId?: string }
+  // Files deleted to the trash WITHOUT a card, because this request created
+  // them and the user did not name them (tool-execution/unnamed-delete-gate.ts).
+  // The chat shows them with an Undo; `files` are absolute original paths.
+  | { type: "delete_notice"; files: string[]; toolCallIds: string[] }
   // `reason` (optional, additive) says WHY an approved:false settle happened —
   // "declined" = the user clicked Deny; "timeout" = nobody answered;
   // "superseded" = the user replied in chat instead of clicking, so the card

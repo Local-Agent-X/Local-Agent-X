@@ -87,7 +87,7 @@ export interface ProcessRelayBrowserAck {
 export const SESSION_EVENT_TYPES = new Set<string>([
   "stream", "reasoning", "tool_start", "tool_progress", "tool_end", "usage",
   "done", "stopped", "error", "secret_request", "secrets_request",
-  "approval_requested", "approval_timeout", "approval_resolved", "context_status",
+  "approval_requested", "approval_timeout", "approval_resolved", "delete_notice", "context_status",
   "visual", "bg_op_queued", "bg_op_queue_reordered", "bg_op_started",
   "bg_op_progress", "bg_op_completed", "bg_op_nudge", "av_blocked_warning",
   "worker_stream", "worker_done", "chat_op_started", "inject_queued",

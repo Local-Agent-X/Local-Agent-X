@@ -395,6 +395,17 @@ body.platform-darwin #sidebar-agents-controls{top:3px;right:14px}
 .tool-card:has(.indicator.allowed),.tool-card:has(.indicator.blocked){opacity:.55}
 .tool-card:has(.indicator.allowed) .tool-header,.tool-card:has(.indicator.blocked) .tool-header{padding:4px 10px;font-size:.72rem}
 .tool-card:has(.indicator.allowed):hover,.tool-card:has(.indicator.blocked):hover{opacity:1}
+/* Delete notice: files deleted without a card (this request made them, the user
+   did not name them). Full strength, never faded like a settled tool card — the
+   notice is what stands in for the question. Same token-mixing as approvals. */
+.delete-notice{display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;margin:8px 0;padding:8px 12px;border-radius:8px;border:1px solid var(--warn);background:color-mix(in srgb, var(--warn) 8%, var(--surface));color:var(--text);font-size:.82rem}
+.delete-notice.restored{border-color:var(--ok);background:color-mix(in srgb, var(--ok) 8%, var(--surface))}
+.delete-notice-text{flex:1 1 240px}
+.delete-notice-file{font-family:var(--mono);font-size:.78rem}
+.delete-notice-undo{padding:4px 12px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer;font-size:.8rem;font-weight:600}
+.delete-notice-undo:hover:not(:disabled){border-color:var(--ok);color:var(--ok)}
+.delete-notice-undo:disabled{opacity:.5;cursor:default}
+.delete-notice-error{flex-basis:100%;color:var(--danger);font-size:.75rem}
 /* Approval cards are fully token-driven: the semantic hue (warn pending / ok
    approved / danger denied) is mixed into the theme's own --surface so the
    faint wash + border track every palette and both themes with no separate

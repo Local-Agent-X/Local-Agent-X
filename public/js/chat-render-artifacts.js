@@ -168,6 +168,7 @@ function _buildLiveAssistantInto(parent, store) {
     chips: store ? (store.chips || []) : [],
     progressByTool: store ? (store.progressByTool || {}) : {},
     approvals: store ? (store.approvals || []) : [],
+    notices: store ? (store.notices || []) : [],
     stopNote: store ? store.stopNote : null,
   });
   // Idle indicator sits UNDER the content + tool artifacts — same .thinking
@@ -375,6 +376,12 @@ function _renderAssistantToolArtifacts(bodyEl, data) {
   for (const ap of approvals) {
     try { bodyEl.appendChild(renderApproval(ap)); }
     catch (approvalRenderErr) { console.error('[chat] approval card render error:', approvalRenderErr); }
+  }
+  // Delete notices sit beside the approvals, outside the collapsible activity
+  // block: a notice scrolled away inside it would be no notice at all.
+  for (const n of (data.notices || [])) {
+    try { bodyEl.appendChild(renderDeleteNotice(n)); }
+    catch (noticeRenderErr) { console.error('[chat] delete notice render error:', noticeRenderErr); }
   }
   const stopNote = data.stopNote;
   if (stopNote) {

@@ -131,6 +131,7 @@
           e.chips = [];
           e.progressByTool = {};
           e.approvals = [];
+          e.notices = [];
           e.stopNote = null;
           e.abortReason = null;
           B.resetBlocks(e);
@@ -259,6 +260,14 @@
           });
         }
         e.lastActivityMs = now;
+        break;
+      case 'delete_notice':
+        // Deleted without a card because this request created them; shown with
+        // Undo (chat-render-notices.js). Idempotent by call ids for replays.
+        if (Array.isArray(event.files) && event.files.length) {
+          const id = 'dn-' + (event.toolCallIds || []).join('-');
+          if (!(e.notices || (e.notices = [])).some(n => n.id === id)) e.notices.push({ id, files: event.files.slice(), restored: false });
+        }
         break;
       case 'approval_timeout': {
         // Two independent sources drive this case — the server's broadcast

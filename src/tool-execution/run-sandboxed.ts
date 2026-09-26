@@ -24,6 +24,8 @@ import { unattendedShellBlock } from "./unattended-shell-gate.js";
 import { createToolRunner } from "./tool-runner.js";
 import { recordTaskArtifact } from "../data-lineage/task-artifacts.js";
 import { CREATE_CLASS, createTargetPath } from "./create-target-path.js";
+import { checkShellDeleteHappened } from "./verify-shell-deletes.js";
+import { GATED_SHELL_TOOLS } from "./unnamed-delete-gate.js";
 
 // Edit-family tools that must not touch a file the session hasn't seen the
 // current bytes of (stale-read guard). Read-before-edit, enforced at the layer
@@ -143,6 +145,11 @@ export const runSandboxedPhase: Phase = async (ctx) => {
     // the result, swaps in the redaction stub when sensitive bytes would reach
     // the model, and commits taint ONLY for bytes actually delivered.
     ctx.result = applyResultTaintPolicy(tc.name, args, sessionId, ctx.result, floor);
+    // An exit code says the shell ran, not that the delete happened: a delete
+    // whose targets are still there is reported as not done (verify-shell-deletes.ts).
+    if (ctx.result && GATED_SHELL_TOOLS.has(tc.name) && typeof args.command === "string") {
+      ctx.result = checkShellDeleteHappened(args.command, ctx.result);
+    }
   } catch (e) {
     // The journal is always told (a non-idempotent call that was cut off is
     // ambiguous and must not be replayed). But a TIMEOUT is shown to the model

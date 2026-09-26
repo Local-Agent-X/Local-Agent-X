@@ -17,7 +17,7 @@
  */
 
 /** Command segments: `a && b`, `a; b`, `a || b`, `a | b`, one per line. */
-function segments(command: string): string[] {
+export function segments(command: string): string[] {
   return command.split(/\r?\n|&&|\|\||;|\|/).map((s) => s.trim()).filter(Boolean);
 }
 

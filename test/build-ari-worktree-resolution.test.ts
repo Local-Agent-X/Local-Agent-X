@@ -38,10 +38,13 @@ function scaffold() {
     writeFileSync(join(dir, "package.json"), JSON.stringify({ name: `@arikernel/${pkg}` }));
   }
 
-  // Worktree node_modules symlinked at the decoy, like a real worktree setup.
+  // Worktree node_modules linked at the decoy, like a real worktree setup. On
+  // Windows a directory symlink needs admin or Developer Mode (EPERM on a stock
+  // box); a junction needs neither and realpath resolves through it the same way.
   mkdirSync(join(repo, "node_modules", "@arikernel"), { recursive: true });
   for (const pkg of PACKAGES) {
-    symlinkSync(join(decoy, "packages", "arikernel", pkg), join(repo, "node_modules", "@arikernel", pkg), "dir");
+    symlinkSync(join(decoy, "packages", "arikernel", pkg), join(repo, "node_modules", "@arikernel", pkg),
+      process.platform === "win32" ? "junction" : "dir");
   }
 
   return { repo, decoy };

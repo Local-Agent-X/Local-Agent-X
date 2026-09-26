@@ -257,12 +257,22 @@ describe("write-guard — built-artifact warn (run-target manifest-driven, never
   });
 });
 
+// 19c20abe (2026-09-20): each rejection states its OWN remedy. The shared
+// fallback used to bolt "read AGENTS.md / inline or self-host" onto every
+// reason, so a write missing only a viewport tag was sent to the CDN docs.
 describe("write-guard — rejection message format", () => {
-  it("includes the reason and points at AGENTS.md / inline-or-self-host", () => {
+  it("the shared fallback states the reason and carries no remedy, so it cannot carry a wrong one", () => {
     const msg = writeGuardRejectionMessage("references blocked CDN host 'unpkg.com'");
-    expect(msg).toContain("Write rejected");
-    expect(msg).toContain("unpkg.com");
-    expect(msg).toContain("AGENTS.md");
-    expect(msg).toMatch(/inline.*self-host/i);
+    expect(msg).toBe("Write rejected: references blocked CDN host 'unpkg.com'.");
+    expect(msg).not.toContain("AGENTS.md");
+  });
+
+  it("a blocked CDN names the route out: fetch it with http_request, or a system font stack for fonts", () => {
+    const script = checkAppWrite("/abs/workspace/apps/demo/index.html", '<script src="https://unpkg.com/react"></script>');
+    expect(script.allow).toBe(false);
+    expect(script.message).toMatch(/http_request/);
+    const font = checkAppWrite("/abs/workspace/apps/demo/index.html", '<link href="https://fonts.googleapis.com/css2?family=Inter" rel="stylesheet">');
+    expect(font.allow).toBe(false);
+    expect(font.message).toMatch(/system font stack/);
   });
 });

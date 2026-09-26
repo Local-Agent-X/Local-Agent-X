@@ -152,3 +152,37 @@ describe("makeChatToolDispatcher wires priorMessages from op storage", () => {
     expect(calls.n).toBe(1);
   });
 });
+
+// A second station's session (2026-09-26): the model called `switch_tab` — an
+// action of `browser` — as a tool. The kernel ran before the unknown-tool check, so
+// the model was told "not in TOOL_CLASS_MAP — classify it … app bug", and the
+// agent reviewing the session concluded the browser's tab actions were unmapped.
+// The kernel stays REQUIRED here (the default), as in the product.
+describe("a name that is not a tool is refused before the kernel", () => {
+  const browserLike = {
+    name: "browser",
+    description: "",
+    parameters: { type: "object", properties: { action: { type: "string", enum: ["navigate", "tabs", "switch_tab"] } } },
+    execute: async (): Promise<ToolResult> => ({ content: "ran", isError: false }),
+  } as unknown as ToolDefinition;
+
+  const dispatchText = async (tool: string) => {
+    const dispatcher = makeChatToolDispatcher({
+      tools: [browserLike], security: undefined as never, sessionId: "s-unknown-first", callContext: "local", opId: freshOpId(),
+    });
+    const res = await dispatcher.dispatch({ toolCallId: `call-${tool}`, tool, args: {} });
+    return typeof res.result === "string" ? res.result : JSON.stringify(res.result);
+  };
+
+  it("an action called as a tool is pointed at the tool that owns it, with no kernel text", async () => {
+    const text = await dispatchText("switch_tab");
+    expect(text).toContain('call browser with action="switch_tab"');
+    expect(text).not.toMatch(/ARI kernel|TOOL_CLASS_MAP/);
+  });
+
+  it("any other unknown name gets the list of real tool names, with no kernel text", async () => {
+    const text = await dispatchText("open_tab_now");
+    expect(text).toMatch(/Unknown tool "open_tab_now"|Tool name typo/);
+    expect(text).not.toMatch(/ARI kernel|TOOL_CLASS_MAP/);
+  });
+});

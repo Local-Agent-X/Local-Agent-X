@@ -315,7 +315,7 @@ export function evaluateShellCommand(
     if (pipeCount > 5) {
       return {
         allowed: false,
-        reason: `Blocked: too many pipes (${pipeCount}). Maximum 5 pipes allowed per command.`,
+        reason: `Blocked, nothing ran: too many pipes (${pipeCount}); at most 5 per command. Split it: run the first stages with their output redirected to a file in the workspace, then run the remaining stages on that file.`,
         userHint: USER_HINTS.commandShell,
       };
     }

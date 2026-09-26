@@ -10,6 +10,7 @@ import {
   execBasename, isShellReparseFlag, resolveRealArgv0Index, splitShellSegments, tokenizeCommand,
 } from "./shell-lex.js";
 import { detectLockedBaselineMutation, detectProtectedEngineMutation } from "./shell-mutation-guard.js";
+import { DOS_SWITCH, dosSwitchBlockReason } from "./dos-switch.js";
 
 // ── Best-effort shell file-access confinement (defense in depth) ──
 //
@@ -119,11 +120,15 @@ export function evaluateShellPaths(command: string, ctx: ShellPathGuardCtx): Sec
   if (ctx.fileAccessMode === "unrestricted") {
     return { allowed: true, reason: "Unrestricted mode — shell paths not confined" };
   }
+  let switchReason: string | null = null;
   for (const tok of extractPathTokens(command)) {
     const decision = evaluateFileAccess(
       ctx.workspace, ctx.fileAccessMode, ctx.allowedPathCheck, tok.action, tok.path, ctx.sessionId,
     );
     if (!decision.allowed) {
+      // A switch-shaped token is reported as such only when nothing else is outside.
+      const asSwitch = dosSwitchBlockReason(tok.path, ctx.fileAccessMode);
+      if (asSwitch) { switchReason ??= asSwitch; continue; }
       return {
         allowed: false,
         reason: `Blocked: shell command touches "${tok.path}" outside the ${ctx.fileAccessMode} file-access boundary. ${decision.reason}`,
@@ -131,6 +136,7 @@ export function evaluateShellPaths(command: string, ctx: ShellPathGuardCtx): Sec
       };
     }
   }
+  if (switchReason) return { allowed: false, reason: switchReason, userHint: USER_HINTS.commandShell };
   return { allowed: true, reason: "Shell paths within file-access boundary" };
 }
 
@@ -318,7 +324,7 @@ function extractPathTokens(command: string, depth = 0): PathToken[] {
         continue;
       }
       if (process.platform === "win32" && WINDOWS_SLASH_SWITCH_COMMANDS.has(headVerb)
-        && /^\/[A-Za-z?][A-Za-z0-9?-]*(?::[^\\/]*)?$/.test(raw)) continue;
+        && DOS_SWITCH.test(raw)) continue;
 
       // A redirect glued to / before a path (>f >>f 2>f <f) marks its target. The
       // operator can also sit MID-token when source and sink are glued

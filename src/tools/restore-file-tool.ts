@@ -29,6 +29,7 @@ import { ok, err } from "./result-helpers.js";
  */
 export const restoreFileTool: ToolDefinition = {
   name: "restore_file",
+  compactDescription: "Bring back a file or folder that delete_file moved to the trash. Pass `path` as the absolute original path printed in delete_file's result.",
   description:
     "Restore a file that delete_file moved to the task trash (agent-created files deleted during THIS task), byte-identical, back to the path it was deleted from. " +
     "Pass `path` as the ABSOLUTE original path exactly as printed in delete_file's result — that spelling works in every file-access mode. (A bare basename or in-trash name also matches, but only in unrestricted mode: confined modes resolve a bare name outside the workspace and block the call before the restore runs.) " +

@@ -93,9 +93,12 @@ describe("EXP-18 tool membership", () => {
     const set = await turn("essentials:27b", "delete the old build folder");
     expect(set).toContain("restore_file");
     expect(unpairedDestructive(set.map(tool))).toEqual([]);
+    // EXP-30: the recoverable delete and its undo are essentials, so a set that
+    // carries `bash` (a permanent delete) never lacks them, whatever the message.
     const plain = await turn("essentials:27b", "summarize the readme");
-    expect(plain).not.toContain("delete_file");
-    expect(plain).not.toContain("restore_file");
+    expect(plain).toContain("bash");
+    expect(plain).toContain("delete_file");
+    expect(plain).toContain("restore_file");
   });
 
   it("the pairing also holds under catalog membership", async () => {

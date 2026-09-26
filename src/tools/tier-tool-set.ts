@@ -97,6 +97,12 @@ export const ESSENTIAL_TOOLS_ORDER: readonly string[] = [
   "http_request", "browser",
   "self_edit",                      // agent self-repair via Claude Code
   "memory_save", "memory_search",
+  // The recoverable delete and its undo. Without them a capped set keeps only
+  // `bash`, whose delete is permanent — while the prompt's delete rule and the
+  // shell refusals point the model at delete_file. 2026-09-26 (EXP-29, qwen3:8b):
+  // refused an `rd`, it called delete_file as <tool_call> TEXT, 3/3, because the
+  // tool was not in its schema. Below the weak cut on purpose (weak keeps its 8).
+  "delete_file", "restore_file",
   // Flagship capability — "build me an app/game/site" is a primary reason this
   // product exists, so it cannot be left to compete for the intent slots. It
   // sits BELOW the weak-tier cut (first 8) on purpose: weak 1-13B models can't

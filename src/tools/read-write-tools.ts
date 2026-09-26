@@ -287,6 +287,7 @@ export const deleteFileTool: ToolDefinition = {
   description:
     "Delete a file, or a whole folder the user asked to remove — moved to the trash, restorable with restore_file (path-checked by SecurityLayer). " +
     "A folder delete always asks the user first and moves the entire folder in one call. Preferred over `bash rm`, which deletes permanently. To remove a few named files, call this once per file.",
+  compactDescription: "Delete a file or a whole folder to the trash, restorable with restore_file. Use this, not `bash rm` (permanent). A folder delete asks the user first.",
   parameters: {
     type: "object",
     properties: {

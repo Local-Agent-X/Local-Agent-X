@@ -91,3 +91,19 @@ export function splitPromptForStablePrefix(sections: readonly RenderedPromptSect
   }
   return { head: head.join(""), tail: tail.join(""), tailIds };
 }
+
+/** Head sections that belong to one chat or one message: a compaction summary,
+ *  the message's attachments, a workflow its words matched. */
+const PER_CHAT_HEAD_IDS: ReadonlySet<string> = new Set(["system-history", "file-attachments", "learned-protocol"]);
+
+/**
+ * Is this the head every fresh chat starts with — so a new chat's first request
+ * will begin with the same bytes (local-runtimes/prompt-prewarm.ts)? True for a
+ * chat with no reply yet whose head carries nothing of its own.
+ */
+export function isFreshChatHead(
+  sections: readonly RenderedPromptSection[],
+  history: readonly { role: string }[],
+): boolean {
+  return history.every(m => m.role === "user") && !sections.some(s => PER_CHAT_HEAD_IDS.has(family(s.id)));
+}

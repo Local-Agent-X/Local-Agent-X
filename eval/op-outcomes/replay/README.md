@@ -15,3 +15,7 @@ A failed (or `--keep`) op-outcomes case leaves its isolated store under the temp
 Why replay instead of reading diffs: on 2026-09-22 the JSON diff showed a LONGER shared
 prefix in the broken case; only the replay showed that a mid-row edit drops the whole
 cache while a strict row-extension reuses everything (HARNESS_LOG.md EXP-12c).
+- `new-chat-latency.mjs [--model qwen3.6:27b] [--trials 3] [--typing-ms 15000]` — one isolated server,
+  alternating trials: a two-message chat, then a NEW chat's first message, cold or after
+  `POST /api/chat/prewarm`. Prints the new chat's first-round time to first token and cached
+  prompt tokens. The op-outcomes rig cannot measure this: each case boots its own server.

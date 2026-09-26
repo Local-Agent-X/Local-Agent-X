@@ -54,6 +54,9 @@ export interface OpenAICompatAdapterOptions {
    * only; the pin releases afterward. No-op when the agent has no tools.
    */
   requireToolOnFirstTurn?: boolean;
+  /** This op is a fresh local chat's first message: its first request is the
+   *  head the new-chat pre-warm replays (local-runtimes/prompt-prewarm.ts). */
+  recordFreshChatHead?: boolean;
 }
 
 export interface StreamOnceResult {

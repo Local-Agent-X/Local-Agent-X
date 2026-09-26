@@ -12,7 +12,7 @@ import { stableSystemPrefixLength } from "../../agent-request/prepare-request/bu
 import { registerAdapterForOp } from "../runtime.js";
 import { createAnthropicAdapter } from "../adapters/anthropic.js";
 import type { OpenAICompatTarget } from "../adapters/openai-compat.js";
-import { splitPromptForStablePrefix } from "./local-prompt-split.js";
+import { isFreshChatHead, splitPromptForStablePrefix } from "./local-prompt-split.js";
 import { modelStablePrefix } from "../../local-runtimes/model-profile.js";
 
 export async function registerAdapterForChat(
@@ -154,14 +154,16 @@ export async function registerAdapterForChat(
     // message is byte-stable for the session — which is the only way a
     // runtime that caches by token prefix, and renders the tool schemas
     // after the system text, can reuse the tools and the history across
-    // user messages. Off for an unprofiled model and for every cloud
-    // provider on this adapter: they keep one system message.
+    // user messages. On for every local model unless its profile opts out;
+    // every cloud provider on this adapter keeps one system message. A
+    // fresh chat's split head is also what the new-chat pre-warm replays.
     const split = prepared.provider === "local" && modelStablePrefix(prepared.model, { provider: prepared.provider })
       ? splitPromptForStablePrefix(prepared.renderedPromptSections)
       : null;
     return createOpenAICompatAdapter({
       systemPrompt: split ? split.head : prepared.systemPrompt,
       trailingContext: split?.tail || undefined,
+      recordFreshChatHead: split !== null && isFreshChatHead(prepared.renderedPromptSections, prepared.cleanHistory),
       model: prepared.model,
       baseURL: finalTarget.baseURL,
       apiKey: finalTarget.apiKey,

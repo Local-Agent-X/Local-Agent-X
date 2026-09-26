@@ -35,6 +35,7 @@ import type { ProviderRequest } from "../../providers/adapter/types.js";
 import { markNoToolSupport } from "../../providers/types.js";
 import { shouldLatchNoToolSupport, shouldRescueTextToolCalls } from "./openai-compat/turn-policy.js";
 import { maybeVerifyToolSupport, noteLiveToolCallEvidence } from "../../providers/tool-capability-probe.js";
+import { noteFreshChatHead } from "../../local-runtimes/prompt-prewarm.js";
 import { createLogger } from "../../logger.js";
 
 import {
@@ -176,6 +177,7 @@ export class OpenAICompatAdapter implements Adapter {
     });
     req.maxTokens = cap.maxTokens;
     if (cap.omitDefault) req.omitDefaultMaxTokens = true;
+    if (input.turnIdx === 0 && this.opts.recordFreshChatHead) noteFreshChatHead(req);
 
     this.inflight = this.runStreamOnce(req, report);
     let result = await this.inflight;

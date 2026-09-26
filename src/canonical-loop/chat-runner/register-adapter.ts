@@ -156,7 +156,7 @@ export async function registerAdapterForChat(
     // after the system text, can reuse the tools and the history across
     // user messages. Off for an unprofiled model and for every cloud
     // provider on this adapter: they keep one system message.
-    const split = prepared.provider === "local" && modelStablePrefix(prepared.model)
+    const split = prepared.provider === "local" && modelStablePrefix(prepared.model, { provider: prepared.provider })
       ? splitPromptForStablePrefix(prepared.renderedPromptSections)
       : null;
     return createOpenAICompatAdapter({

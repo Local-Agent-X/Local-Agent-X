@@ -133,8 +133,16 @@ export const KERNEL_POLICY_FLOOR_BY_TIER: Readonly<Record<ModelProfile["tier"], 
 
 const TIER_TO_MODEL_TIER: Readonly<Record<ModelProfile["tier"], ModelTier>> = { A: "strong", B: "medium", C: "weak" };
 
+/** One model, whatever a runtime calls it: Ollama's `qwen3.6:27b`, LM Studio's
+ *  `qwen3.6-27b` and `sm54/qwen3.6-27b` are the same identity. A raw-string
+ *  comparison made LM Studio's name fail the profile's id check and throw
+ *  (2026-09-25), so every profile lookup and check goes through this. */
+export function modelIdentity(modelId: string): string {
+  return modelId.trim().toLowerCase().replace(/^[^/]+\//, "").replace(/:/g, "-");
+}
+
 export function profileFileName(modelId: string): string {
-  return `${modelId.replace(/[^a-z0-9._-]/gi, "-")}.json`;
+  return `${modelIdentity(modelId).replace(/[^a-z0-9._-]/g, "-")}.json`;
 }
 
 function stableStringify(value: unknown): string {
@@ -199,7 +207,7 @@ function load(modelId: string): ResolvedModelProfile | null {
   const bundledPath = join(BUNDLED_DIR, name);
   const userPath = join(getLaxDir(), USER_PROFILE_SUBDIR, name);
   const bundled = existsSync(bundledPath) ? ModelProfileSchema.parse(readJson(bundledPath)) : null;
-  if (bundled && bundled.id !== modelId) throw new Error(`bundled profile ${bundledPath} declares id "${bundled.id}", expected "${modelId}"`);
+  if (bundled && modelIdentity(bundled.id) !== modelIdentity(modelId)) throw new Error(`bundled profile ${bundledPath} declares id "${bundled.id}", expected "${modelId}"`);
 
   let merged: ModelProfile | null = bundled;
   let source: ResolvedModelProfile["source"] = "bundled";
@@ -208,7 +216,7 @@ function load(modelId: string): ResolvedModelProfile | null {
       const candidate = ModelProfileSchema.parse(deepMerge(bundled ?? {}, readJson(userPath)));
       const violation = kernelPolicyBelowFloor(candidate);
       if (violation) throw new Error(violation);
-      if (candidate.id !== modelId) throw new Error(`declares id "${candidate.id}"`);
+      if (modelIdentity(candidate.id) !== modelIdentity(modelId)) throw new Error(`declares id "${candidate.id}"`);
       merged = candidate;
       source = bundled ? "bundled+user" : "user";
     } catch (e) {
@@ -240,33 +248,55 @@ export function modelProfileTier(modelId: string): ModelTier | null {
   return p ? TIER_TO_MODEL_TIER[p.tier] : null;
 }
 
-/** How this model's tool set is re-derived: per `message` (today's default,
- *  and what an unprofiled model gets) or per `mission` — the session's union,
- *  byte-identical between messages until a new tool is needed. */
-export function modelToolRouting(modelId: string): ModelProfile["toolRouting"] {
-  return profileOrNull(modelId, "tool routing stays per-message")?.toolRouting ?? "message";
+/** Who is asking about a model. The settings the local campaign KEPT on its
+ *  reference models (EXP-12, -16, -22) are the default for every LOCAL model —
+ *  a profile only overrides — so a model nobody has profiled still gets the
+ *  harness that was measured, not the pre-campaign one. Cloud providers keep
+ *  the old defaults, and so does a strong-tier model for tool membership (a
+ *  hosted giant on Ollama Cloud rides provider "local"); a profile opts either
+ *  in, as gpt-5.6-sol's does. */
+export interface ModelDefaultsContext {
+  provider?: string;
+  tier?: string;
+}
+
+const isLocal = (ctx: ModelDefaultsContext) => ctx.provider === "local";
+
+/** How this model's tool set is re-derived: per `message`, or per `mission` —
+ *  the session's union, byte-identical between messages until a new tool is
+ *  needed. Local models default to `mission`. */
+export function modelToolRouting(modelId: string, ctx: ModelDefaultsContext = {}): ModelProfile["toolRouting"] {
+  return profileOrNull(modelId, "tool routing falls back to the default")?.toolRouting ?? (isLocal(ctx) ? "mission" : "message");
 }
 
 /** Whether this model's per-op prompt sections ride a trailing row so the
- *  local runtime's prefix cache survives a new user message. Off without a
- *  profile: an unprofiled local model keeps today's single system message. */
-export function modelStablePrefix(modelId: string): boolean {
-  return profileOrNull(modelId, "prompt stays one system message")?.stablePrefix ?? false;
+ *  local runtime's prefix cache survives a new user message. Local models
+ *  default to on. */
+export function modelStablePrefix(modelId: string, ctx: ModelDefaultsContext = {}): boolean {
+  return profileOrNull(modelId, "stable prefix falls back to the default")?.stablePrefix ?? isLocal(ctx);
+}
+
+/** The profile's thinking settings, or null — guarded like every accessor, so
+ *  a profile that cannot be read costs a warning, never the turn. */
+export function modelThinking(modelId: string): ModelProfile["thinking"] | null {
+  return profileOrNull(modelId, "no declared thinking settings")?.thinking ?? null;
 }
 
 /** The window the declared profile measured, or null without a profile. Used
  *  to size the prompt before the runtime has loaded the model and reported
  *  its own — the first request of a session is the one that loads it. */
 /** EXP-16: whether a nudge turn also carries the instruction in the
- *  `protocol` tool's description. Unprofiled models keep the prompt-only nudge. */
-export function modelNudgeInToolDescription(modelId: string): boolean {
-  return profileOrNull(modelId, "nudge stays in the prompt only")?.nudgeInToolDescription ?? false;
+ *  `protocol` tool's description. Local models default to on. */
+export function modelNudgeInToolDescription(modelId: string, ctx: ModelDefaultsContext = {}): boolean {
+  return profileOrNull(modelId, "nudge falls back to the default")?.nudgeInToolDescription ?? isLocal(ctx);
 }
 
-/** EXP-18: "essentials" = the tier set plus the message's picks, undo-paired;
- *  unprofiled models keep today's whole-catalog pin. */
-export function modelToolMembership(modelId: string): "catalog" | "essentials" {
-  return profileOrNull(modelId, "tool membership stays the whole catalog")?.toolMembership ?? "catalog";
+/** EXP-18/22: "essentials" = the tier set plus the message's picks,
+ *  undo-paired; "catalog" pins every main-chat tool. Local models below the
+ *  strong tier default to essentials. */
+export function modelToolMembership(modelId: string, ctx: ModelDefaultsContext = {}): "catalog" | "essentials" {
+  return profileOrNull(modelId, "tool membership falls back to the default")?.toolMembership
+    ?? (isLocal(ctx) && ctx.tier !== "strong" ? "essentials" : "catalog");
 }
 
 export function modelDeclaredContextWindow(modelId: string): number | null {

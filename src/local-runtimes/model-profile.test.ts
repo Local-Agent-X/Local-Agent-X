@@ -118,6 +118,44 @@ describe("request-path accessors never throw and default to today's behaviour wi
     expect(modelToolMembership("nobody:99b")).toBe("catalog");
     expect(modelDeclaredContextWindow("nobody:99b")).toBeNull();
   });
+
+  // The settings the campaign KEPT are the default for every local model, so a
+  // model nobody profiled gets the measured harness, not the pre-campaign one.
+  // Cloud keeps the old defaults; a strong-tier local model (Ollama Cloud's
+  // hosted giants ride provider "local") keeps the whole catalog.
+  it("an unprofiled LOCAL model gets the kept settings; cloud and strong-tier membership keep the old ones", async () => {
+    const { modelToolRouting, modelStablePrefix, modelNudgeInToolDescription, modelToolMembership } = await import("./model-profile.js");
+    const local = { provider: "local", tier: "medium" };
+    expect(modelToolRouting("nobody:99b", local)).toBe("mission");
+    expect(modelStablePrefix("nobody:99b", local)).toBe(true);
+    expect(modelNudgeInToolDescription("nobody:99b", local)).toBe(true);
+    expect(modelToolMembership("nobody:99b", local)).toBe("essentials");
+    expect(modelToolMembership("nobody:480b-cloud", { provider: "local", tier: "strong" })).toBe("catalog");
+    for (const ctx of [{ provider: "openai" }, { provider: "codex", tier: "strong" }, {}]) {
+      expect(modelToolRouting("nobody:99b", ctx)).toBe("message");
+      expect(modelStablePrefix("nobody:99b", ctx)).toBe(false);
+      expect(modelNudgeInToolDescription("nobody:99b", ctx)).toBe(false);
+      expect(modelToolMembership("nobody:99b", ctx)).toBe("catalog");
+    }
+  });
+});
+
+describe("one model, whatever the runtime calls it", () => {
+  // LM Studio names the 27B `qwen3.6-27b`; the profile declares `qwen3.6:27b`.
+  // The raw comparison threw "declares id" (2026-09-25) and the adapter's
+  // thinking lookup did not catch it.
+  it("Ollama's, LM Studio's and a publisher-prefixed name resolve the same profile", async () => {
+    const { modelIdentity, modelThinking } = await import("./model-profile.js");
+    expect(modelIdentity("qwen3.6:27b")).toBe("qwen3.6-27b");
+    expect(modelIdentity("qwen3.6-27b")).toBe("qwen3.6-27b");
+    expect(modelIdentity("sm54/Qwen3.6-27B")).toBe("qwen3.6-27b");
+    for (const id of ["qwen3.6-27b", "sm54/qwen3.6-27b", "QWEN3.6:27B"]) {
+      expect(resolveModelProfile(id)?.profileId, id).toBe("qwen3.6:27b");
+    }
+    expect(resolveModelProfile("qwen3-8b")?.profileId).toBe("qwen3:8b");
+    expect(modelThinking("qwen3.6-27b")?.mode).toBe("all");
+    expect(modelThinking("nobody:99b")).toBeNull();
+  });
 });
 
 describe("shipped profiles declare when the model should think", () => {

@@ -51,10 +51,10 @@ function declareProfile(id: string, nudgeInToolDescription: boolean) {
 const names = (ts: ToolDefinition[]) => ts.map((t) => t.name);
 const SUGGESTION = { name: "vercel-deploy" };
 
-async function turn(model: string, protocolSuggestion: { name: string } | null, message = "deploy the acme-site project to vercel as a preview") {
+async function turn(model: string, protocolSuggestion: { name: string } | null, message = "deploy the acme-site project to vercel as a preview", provider = "local") {
   return (await selectTools({
-    message, sessionId: `nudge-${model}-${protocolSuggestion ? "on" : "off"}`, channel: "web", allAgentTools: catalog(), bridgeTools: [],
-    resolvedProvider: "local", resolvedModel: model, protocolSuggestion,
+    message, sessionId: `nudge-${model}${provider === "local" ? "" : `-${provider}`}-${protocolSuggestion ? "on" : "off"}`, channel: "web", allAgentTools: catalog(), bridgeTools: [],
+    resolvedProvider: provider, resolvedModel: model, protocolSuggestion,
   })).tools;
 }
 
@@ -109,7 +109,11 @@ describe("EXP-16: the nudge rides in the protocol tool's description when the pr
     expect(protocolOf(await turn("plaindesc:8b", SUGGESTION)).description).toBe(PROTOCOL_DESC);
   });
 
-  it("an unprofiled model keeps the prompt-only nudge", async () => {
-    expect(protocolOf(await turn("granite3.3:8b", SUGGESTION)).description).toBe(PROTOCOL_DESC);
+  // The kept settings are the default for every local model (2026-09-26): an
+  // unprofiled LOCAL model gets the nudge in the description; a cloud one keeps
+  // the prompt-only nudge.
+  it("an unprofiled local model gets the nudge in the description; an unprofiled cloud model does not", async () => {
+    expect(protocolOf(await turn("granite3.3:8b", SUGGESTION)).description).toContain('protocol "vercel-deploy" matches it');
+    expect(protocolOf(await turn("granite3.3:8b", SUGGESTION, undefined, "openai")).description).toBe(PROTOCOL_DESC);
   });
 });

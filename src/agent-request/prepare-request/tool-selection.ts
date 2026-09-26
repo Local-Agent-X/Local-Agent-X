@@ -194,7 +194,7 @@ export async function selectTools(input: ToolSelectionInput): Promise<ToolSelect
     // shrink of its own (it lazy-loads from the manifest instead), and the
     // medium set is the one the local campaign measured.
     const { modelToolMembership } = await import("../../local-runtimes/model-profile.js");
-    const membership = modelToolMembership(input.resolvedModel);
+    const membership = modelToolMembership(input.resolvedModel, { provider: input.resolvedProvider, tier });
     const shrinkTier: Tier | null = tier !== "strong" ? tier : membership === "essentials" ? "medium" : null;
     if (shrinkTier) {
       const before = tools.length;
@@ -245,7 +245,7 @@ export async function selectTools(input: ToolSelectionInput): Promise<ToolSelect
     // arrival — 30-37k tokens, measured). Re-derived in catalog order so the
     // same union serializes identically.
     const { modelToolRouting } = await import("../../local-runtimes/model-profile.js");
-    const sticky = tier === "strong" || modelToolRouting(input.resolvedModel) === "mission";
+    const sticky = tier === "strong" || modelToolRouting(input.resolvedModel, { provider: input.resolvedProvider, tier }) === "mission";
     const known = sessionToolNames.get(input.sessionId);
     if (sticky && known) {
       const union = new Set([...known, ...tools.map(t => t.name)]);
@@ -345,7 +345,7 @@ export async function selectTools(input: ToolSelectionInput): Promise<ToolSelect
   // way — an experiment's price, recorded in the profile flag that gates it.
   if (input.protocolSuggestion && !isBridge) {
     const { modelNudgeInToolDescription } = await import("../../local-runtimes/model-profile.js");
-    if (modelNudgeInToolDescription(input.resolvedModel)) {
+    if (modelNudgeInToolDescription(input.resolvedModel, { provider: input.resolvedProvider, tier })) {
       const name = input.protocolSuggestion.name;
       tools = tools.map((t) => t.name === "protocol"
         ? { ...t, description: `FIRST, for this request: a stored protocol "${name}" matches it — call protocol(action:"get", params:{name:"${name}"}) before any other tool, then follow it. ${t.description}` }

@@ -51,7 +51,7 @@ import { streamOnce, applyToolCallTextFallback } from "./openai-compat/stream-on
 import { assessOpenAiCompatPreflight, promptExceedsMeasuredWindow } from "./openai-compat/request-preflight.js";
 import { buildTurnTrace } from "./openai-compat/turn-trace.js";
 import { resolveStepReasoningEffort, type ThinkingMode } from "../step-effort.js";
-import { resolveModelProfile } from "../../local-runtimes/model-profile.js";
+import { modelThinking } from "../../local-runtimes/model-profile.js";
 import { classifyModelStop } from "./model-stop.js";
 
 export { OPENAI_COMPAT_ADAPTER_NAME, OPENAI_COMPAT_ADAPTER_VERSION } from "./openai-compat/types.js";
@@ -76,10 +76,10 @@ function profileThinking(
   input: TurnInput,
 ): { mode: ThinkingMode; step: "mechanical" | "standard" } | undefined {
   if (!model) return undefined;
-  const profile = resolveModelProfile(model);
-  if (!profile?.thinking.supported) return undefined;
+  const thinking = modelThinking(model);
+  if (!thinking?.supported) return undefined;
   return {
-    mode: profile.thinking.mode,
+    mode: thinking.mode,
     step: input.stepEffortHint === "mechanical" ? "mechanical" : "standard",
   };
 }

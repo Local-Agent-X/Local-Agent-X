@@ -26,7 +26,7 @@
 import { registrableDomain } from "../browser/registrable-domain.js";
 import {
   canaryPromptBlock, checkCanaries, adoptSessionCanaries, registerSessionCanaries,
-  remintSessionCanaries, recordCanaryRecoveryAudit, markSessionBreach, clearSessionBreach,
+  rotateCanaries, recordCanaryRecoveryAudit, markSessionBreach, clearSessionBreach,
 } from "./canaries.js";
 import { classifyData, stripExternalUntrusted, type DataLabel } from "./classification.js";
 import { CryptoAuditTrail, getSharedAuditTrail } from "./audit-trail.js";
@@ -114,12 +114,11 @@ export class ThreatEngine {
     // break verify() during normal operation.
     this.audit = getSharedAuditTrail(dataDir);
     this.sessionId = sessionId;
-    // The SESSION's canaries, from the shared registry the egress seam reads:
-    // minted by the first engine built for the session, adopted by every later
-    // one (an engine is built per chat turn), so the tokens embedded in the
-    // model's system prompt are the same ones checkOutput and the egress gate
-    // watch for across the whole session. Rotated only on breach recovery or
-    // reset — see adoptSessionCanaries for what per-turn minting cost.
+    // The process's canaries, adopted into the session's entry in the shared
+    // registry the egress seam reads, so the tokens embedded in the model's
+    // system prompt are the same ones checkOutput and the egress gate watch
+    // for. Rotated only on breach recovery — see adoptSessionCanaries for what
+    // per-turn and per-session minting cost.
     this.canaries = adoptSessionCanaries(this.sessionId);
   }
 
@@ -342,11 +341,12 @@ export class ThreatEngine {
    *   1. Clears the breach latch (load/decay untouched — if residual effective
    *      load still exceeds HIGH_THRESHOLD the session stays restricted on its
    *      own merits), and clears the session-scoped breach signal.
-   *   2. Re-mints the session's canaries. The old tokens leaked into model
-   *      output, so the model now KNOWS them — worthless as a tripwire. We
-   *      replace this.canaries AND the shared registry (remintSessionCanaries →
-   *      registerSessionCanaries, the exact set the egress gate reads) so future
-   *      output/egress is guarded by tokens the model has never seen.
+   *   2. Rotates the canaries. The old tokens leaked into model output, so the
+   *      model now KNOWS them — worthless as a tripwire. We replace
+   *      this.canaries AND the shared registry (rotateCanaries, the exact set
+   *      the egress gate reads) so future output/egress is guarded by tokens
+   *      the model has never seen; every other session adopts the new set on
+   *      its next turn.
    *   3. Writes a tamper-evident recovery event on the SAME audit chain as the
    *      trip — never logging any canary token, old or new (the reason is
    *      redacted of any leaked token first).
@@ -359,7 +359,7 @@ export class ThreatEngine {
     clearSessionBreach(this.sessionId);
     // Burn the leaked tokens: mint fresh, register, and adopt into the set this
     // engine embeds in the system prompt + watches in checkOutput.
-    this.canaries = remintSessionCanaries(this.sessionId);
+    this.canaries = rotateCanaries(this.sessionId);
     // Defensive: a user could paste a leaked (now-old) token into their reason.
     // Redact it so the NEVER-log-a-canary invariant holds even for caller text.
     let safeReason = reason;
@@ -384,6 +384,6 @@ export class ThreatEngine {
     clearSessionBreach(this.sessionId);
     this.implicatedSinks.clear();
     if (newSessionId) this.sessionId = newSessionId;
-    this.canaries = remintSessionCanaries(this.sessionId);
+    this.canaries = adoptSessionCanaries(this.sessionId);
   }
 }

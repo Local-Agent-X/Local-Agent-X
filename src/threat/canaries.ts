@@ -121,38 +121,62 @@ export function clearSessionCanaries(sessionId: string): void {
   if (sessionCanaries.delete(sessionId)) notifyCanariesChanged(sessionId);
 }
 
-/**
- * Mint a fresh canary set for a session and publish it to the shared registry,
- * REPLACING whatever was there. The single mint-and-register path used by both
- * ThreatEngine (construct / reset / approveRecovery) and the session-scoped
- * `/approve` recovery below — so a re-mint always updates the exact tokens the
- * egress gate reads, never a second generator. Returns the new set so an engine
- * caller can adopt it into the tokens embedded in its system prompt.
- */
-export function remintSessionCanaries(sessionId: string): string[] {
-  const fresh = generateCanaries();
-  registerSessionCanaries(sessionId, fresh);
-  return fresh;
+// The process's canary set, shared by every session, and the tokens a breach
+// recovery burned.
+let processCanaries: string[] | null = null;
+const retiredCanaries = new Set<string>();
+
+function currentCanaries(): string[] {
+  return (processCanaries ??= generateCanaries());
+}
+
+/** A session's registered set with burned tokens dropped and the current set
+ *  added — merged lineage (browser buckets, container forwards) is kept. */
+function withCurrent(set: readonly string[]): string[] {
+  return [...new Set([...set.filter(t => !retiredCanaries.has(t)), ...currentCanaries()])];
 }
 
 /**
- * The session's canaries: minted on first use, then reused by every engine
- * built for the session. Rotation happens only through remintSessionCanaries
- * (breach recovery, an explicit reset).
+ * Burn the process's canaries after a confirmed breach and mint a fresh set:
+ * the single rotation path, used by ThreatEngine.approveRecovery and the
+ * session-scoped `/approve` recovery below, so a rotation always updates the
+ * exact tokens the egress gate reads, never a second generator. The breached
+ * session's registry entry swaps immediately, and every token it held is
+ * burned too (an op restored from an earlier process embeds that process's
+ * set). Every other session keeps the old tokens until its next turn adopts
+ * the new set, because a turn already in flight still carries the old ones
+ * in its prompt. Returns the new set for the engine to embed.
+ */
+export function rotateCanaries(breachedSessionId: string): string[] {
+  for (const t of [...currentCanaries(), ...(sessionCanaries.get(breachedSessionId) ?? [])]) retiredCanaries.add(t);
+  processCanaries = generateCanaries();
+  registerSessionCanaries(breachedSessionId, processCanaries);
+  return processCanaries;
+}
+
+/**
+ * The canaries a session's engine embeds in its system prompt: one set per
+ * process, minted on first use and shared by every session, rotated only by a
+ * breach recovery (rotateCanaries). The session's registry entry is brought up
+ * to date so the egress gate watches the same tokens.
  *
- * A ThreatEngine is constructed per chat turn, and until 2026-09-22 each one
- * minted its own set. Two costs. The registry and the egress mirror both
- * REPLACE the set, so a page that captured turn N's prompt and exfiltrated it
- * during turn N+1 was checked against turn N+1's tokens — a one-turn detection
- * gap on every turn. And the tokens sit in the system prompt, so on the local
- * wire every rotation re-prefilled the prompt, tools and history (EXP-12,
- * docs/harness/HARNESS_LOG.md). Per-turn rotation bought nothing: a canary is a
- * tripwire, not a secret — knowing last turn's value helps no attacker.
+ * Why per process. A ThreatEngine is built per chat turn, and until 2026-09-22
+ * each one minted its own set: every turn re-prefilled the local prompt, tools
+ * and history (EXP-12), and the registry's replace opened a one-turn detection
+ * gap. Until 2026-09-26 each SESSION minted its own set, and the tokens sit
+ * near the end of the system text with the tools rendered after them, so a new
+ * chat on a hybrid local model re-read the whole ~27k-token head (the cache
+ * restores only near the end of the last prefill; docs/harness/HARNESS_LOG.md).
+ * A canary is a tripwire, not a secret: another chat holding the same value
+ * helps no attacker, and a dumped system prompt still carries it.
  */
 export function adoptSessionCanaries(sessionId: string): string[] {
-  const existing = sessionCanaries.get(sessionId);
-  if (existing && existing.length > 0) return existing;
-  return remintSessionCanaries(sessionId);
+  const existing = sessionCanaries.get(sessionId) ?? [];
+  const next = withCurrent(existing);
+  if (next.length !== existing.length || next.some((t, i) => t !== existing[i])) {
+    registerSessionCanaries(sessionId, next);
+  }
+  return currentCanaries();
 }
 
 // ── Session confirmed-breach signal ──────────────────────────────────────────
@@ -289,7 +313,7 @@ export function recoverSessionBreach(sessionId: string, reason: string): boolean
   // any that a user pasted into their /approve reason — the NEVER-log-a-canary
   // invariant must hold even for caller-supplied text (mirrors approveRecovery).
   const old = getSessionCanaries(sessionId);
-  remintSessionCanaries(sessionId);
+  rotateCanaries(sessionId);
   let safeReason = reason;
   for (const c of old) safeReason = safeReason.split(c).join("[redacted-canary]");
   recordCanaryRecoveryAudit(sessionId, safeReason.slice(0, 160));

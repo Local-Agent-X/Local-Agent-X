@@ -186,9 +186,17 @@ export class FakeOllamaQualificationService {
     if (allText.includes("bellavidamassage clone") || allText.includes("defines the CSS class")) {
       return this.navigationReply(allText, messages, res);
     }
-    if (userText.includes("earlier compacted context")) {
-      const priorText = messages.slice(0, -1).map(contentText).join("\n");
-      return stream(res, priorText.includes(CONTINUITY_MARKER) ? CONTINUITY_MARKER : "NO_COMPACTED_CONTEXT");
+    // The ask is found anywhere, not only as the latest user row: the product
+    // appends its per-turn situational digest as a trailing user row after the
+    // request (1e895656). And the marker must come from a SYSTEM row — the
+    // compaction summary — because the surviving "keep remembering" user rows
+    // also carry it, and would pass this stage even if the summary dropped it.
+    const continuityAsk = messages.findLastIndex((entry) => (
+      entry.role === "user" && contentText(entry).includes("earlier compacted context")
+    ));
+    if (continuityAsk >= 0) {
+      const summaryText = messages.slice(0, continuityAsk).filter((entry) => entry.role === "system").map(contentText).join("\n");
+      return stream(res, summaryText.includes(CONTINUITY_MARKER) ? CONTINUITY_MARKER : "NO_COMPACTED_CONTEXT");
     }
     if (userText.includes("Reply with exactly READY")) return stream(res, "READY");
     if (userText.includes("Reply with exactly ACK")) return stream(res, "ACK");

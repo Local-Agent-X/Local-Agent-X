@@ -2355,3 +2355,35 @@ since 2026-09-20, costs ~1 setup-account run per split); the 8B prose-call shape
 honouring text calls — declined by design); ambiguity-which-brief (product call, on record since EXP-10).
 
 ---
+
+## Probe — can a new chat reuse the cache on the hybrid 27B? (2026-09-26). Pre-warm is FEASIBLE
+
+Raw `/api/generate` against Ollama 0.34.3, qwen3.6:27b (qwen35), num_ctx 65536, a ~15k-token synthetic system
+block; prefill time (`prompt_eval_duration`) is the measure, since `prompt_eval_count` reports the whole prompt
+even when cached. Scripts: `prewarm-probe*.mjs` in the session scratchpad (not committed).
+
+| Second request, after a first request on the same model | prefill |
+|---|---|
+| cold control (nothing shared) | ~4090 ms |
+| same system block, different user turn (the cross-chat case) | 419 ms |
+| system block alone was pre-filled (1 token generated), then system + user | 156 ms |
+| same, then an extra system row + user | 145 ms |
+| diverges 24 / 72 / 192 / 480 / 960 tokens before the end of the first prefill | 411–419 ms |
+| diverges at 90%, 50% or 25% of the system block (≈1.4k+ tokens before the end) | 4270–4380 ms (none) |
+
+Findings:
+1. **The runtime is not the wall.** A hybrid model's cache is restored only from a point near the end of the last
+   prefill — a window of roughly 1k tokens — not from an arbitrary shared prefix. Inside the window, reuse is near
+   total; outside it, zero, even with 90% of the prompt shared.
+2. **Why LAX sees zero cross-chat reuse:** by the end of a chat, the last prefill ends tens of thousands of tokens
+   past the shared system+tools head, so a new chat's divergence point is far outside the window.
+3. **Pre-warm works without rendering the prompt ourselves.** A request of the real shape (same system + tools) with a
+   short stub user turn leaves its end within the window of the real first turn. A generated token after the
+   pre-fill does not break reuse. `num_predict: 0` is NOT "prefill only" — it generated until a stop.
+4. **The trade-off:** one cache slot per model (num_parallel 1), so a pre-warm evicts the running chat's cache.
+   Pre-warm belongs at new-chat time (the user is typing), never after every turn.
+
+Open before building: confirm LAX's head is byte-identical across chats (tool set and system text); any volatile
+text inside the head moves the divergence point back outside the window and defeats the pre-warm.
+
+---

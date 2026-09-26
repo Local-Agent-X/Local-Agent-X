@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { formatUnknownToolCorrection, collectArgViolations } from "./enforce-policy.js";
+import { findActionOwner } from "./arg-validation.js";
+import type { ToolDefinition } from "../types.js";
 
 // A weak / non-Anthropic model that hallucinates a tool name or mangles args
 // must get a STRUCTURED corrective it can act on in one turn — the valid tool
@@ -18,6 +20,48 @@ describe("hallucinated tool name → corrective lists valid names", () => {
     const msg = formatUnknownToolCorrection("nope", many);
     expect(msg).toContain("more)");                    // truncation marker
     expect(msg).toContain("tool_search");
+  });
+});
+
+// A model that calls an ACTION by name ("switch_tab") has hallucinated a tool
+// that does not exist, but it is one edit away from the right call. The answer
+// is the call shape, not a list of 40 names to re-choose from.
+describe("an action called as a tool → corrective names the real call shape", () => {
+  const def = (name: string, props: Record<string, unknown>): ToolDefinition =>
+    ({ name, description: "", parameters: { properties: props }, execute: async () => ({ content: "" }) }) as unknown as ToolDefinition;
+
+  const browser = def("browser", { action: { enum: ["navigate", "tabs", "switch_tab"] }, device: { enum: ["iphone"] } });
+  const read = def("read", { path: { type: "string" } });
+
+  it("finds the tool whose schema declares the name, and the argument it belongs to", () => {
+    expect(findActionOwner("switch_tab", [read, browser])).toEqual({ tool: "browser", param: "action" });
+  });
+
+  it("reads what the tool declares, so it is not keyed to any one action or argument", () => {
+    expect(findActionOwner("iphone", [browser])).toEqual({ tool: "browser", param: "device" });
+    expect(findActionOwner("navigate", [browser])).toEqual({ tool: "browser", param: "action" });
+  });
+
+  it("stays silent for a name no available tool declares", () => {
+    expect(findActionOwner("switch_tab", [read])).toBeNull();
+    expect(findActionOwner("totally_made_up", [read, browser])).toBeNull();
+  });
+
+  // The name list is the op's own tier-capped surface on purpose. A hint built
+  // from the global tools table would disclose a capability withheld from this op.
+  it("is scoped to the op's surface, so a withheld tool is never disclosed", () => {
+    expect(findActionOwner("switch_tab", [read])).toBeNull();
+  });
+
+  it("leads the corrective with the call shape and still lists the valid names", () => {
+    const msg = formatUnknownToolCorrection("switch_tab", ["read", "browser"], { tool: "browser", param: "action" });
+    expect(msg).toContain('call browser with action="switch_tab"');
+    expect(msg.indexOf("call browser")).toBeLessThan(msg.indexOf("Use one of these exact names"));
+    expect(msg).toContain("tool_search");
+  });
+
+  it("is unchanged when there is no owner", () => {
+    expect(formatUnknownToolCorrection("nope", ["read"])).not.toContain("is a value of");
   });
 });
 

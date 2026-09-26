@@ -326,7 +326,24 @@ function rateLimitGate(ctx: ToolCallContext): PhaseOutcome {
  *  evaluations (no committing side effects), so a second pass is safe; the
  *  counting gates (circuit breaker, rate limit) stay outside and run once. */
 async function securityAndValidationGates(ctx: ToolCallContext): Promise<PhaseOutcome> {
-  let outcome = await ariKernelGate(ctx);
+  // FIRST, before any gate judges the call: a name that isn't a tool is not a
+  // policy question, it's a typo. The kernel used to see it first and
+  // fail-closed, because an unmapped name is indistinguishable there from a
+  // real tool someone forgot to classify — so a hallucinated `switch_tab`
+  // (an ACTION of `browser`, never a tool) was answered with "not in
+  // TOOL_CLASS_MAP — classify it in src/ari-kernel/tool-class-map.ts". The
+  // model read that as a broken engine and disowned work it had actually done;
+  // so did the engineer who later read the session. lookupTool's corrective —
+  // the exact names this op can call — existed the whole time and could never
+  // be reached.
+  //
+  // This loosens nothing. A name absent from the op's toolMap is refused
+  // either way and nothing executes; a REAL tool missing its kernel class
+  // still passes lookupTool and still fail-closes at the kernel below.
+  let outcome = lookupTool(ctx);
+  if (outcome.kind !== "continue") return outcome;
+
+  outcome = await ariKernelGate(ctx);
   if (outcome.kind !== "continue") return outcome;
   outcome = sessionPolicyGate(ctx);
   if (outcome.kind !== "continue") return outcome;
@@ -342,8 +359,6 @@ async function securityAndValidationGates(ctx: ToolCallContext): Promise<PhaseOu
   outcome = egressAggregateGate(ctx);
   if (outcome.kind !== "continue") return outcome;
 
-  outcome = lookupTool(ctx);
-  if (outcome.kind !== "continue") return outcome;
   return validateArgs(ctx);
 }
 

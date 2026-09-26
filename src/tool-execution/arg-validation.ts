@@ -4,7 +4,7 @@
 // a hallucinated tool, the specific failing field for malformed args.
 
 import { logRetry } from "../retry-telemetry.js";
-import type { ToolResult } from "../types.js";
+import type { ToolDefinition, ToolResult } from "../types.js";
 import type { PhaseOutcome, ToolCallContext } from "./context.js";
 import { terminate, CONTINUE, BLOCK } from "./context.js";
 
@@ -20,15 +20,42 @@ const AVAILABLE_TOOLS_CAP = 50;
  * available set is the op's own (already-tier-capped) surface, so the message
  * self-scales to the model's tier. Pure + exported for unit testing.
  */
-export function formatUnknownToolCorrection(toolName: string, available: string[]): string {
+export function formatUnknownToolCorrection(toolName: string, available: string[], owner?: ActionOwner | null): string {
   const names = [...available].sort();
   const head = `Unknown tool "${toolName}" — not one of your available tools. `;
+  // The precise answer leads. A model that called an action by name needs one
+  // correction, not a list of 40 names to re-choose from.
+  const hint = owner ? `"${toolName}" is a value of ${owner.tool}'s "${owner.param}" argument — call ${owner.tool} with ${owner.param}="${toolName}". ` : "";
   const tail = "If you need a capability that isn't listed, call tool_search to load it.";
-  if (names.length === 0) return head + tail;
+  if (names.length === 0) return head + hint + tail;
   const list = names.length <= AVAILABLE_TOOLS_CAP
     ? names.join(", ")
     : names.slice(0, AVAILABLE_TOOLS_CAP).join(", ") + `, …(+${names.length - AVAILABLE_TOOLS_CAP} more)`;
-  return head + `Use one of these exact names: ${list}. ` + tail;
+  return head + hint + `Use one of these exact names: ${list}. ` + tail;
+}
+
+export interface ActionOwner { tool: string; param: string }
+
+/**
+ * A hallucinated name that is really an ACTION of a tool the op can call.
+ * Multi-action tools publish their actions as an enum in their own parameter
+ * schema (browser lists 29 under "action"), so this reads what the tool already
+ * declares rather than carrying a table that drifts — it works for any tool
+ * with an enum-valued argument, and `switch_tab` is nothing special to it.
+ *
+ * Scoped to the op's OWN surface for the same reason the name list is: telling
+ * a tier-capped op that `browser` owns an action would disclose a capability
+ * deliberately withheld from it.
+ */
+export function findActionOwner(unknownName: string, available: Iterable<ToolDefinition>): ActionOwner | null {
+  for (const tool of available) {
+    const props = (tool.parameters as { properties?: Record<string, { enum?: unknown[] }> } | undefined)?.properties;
+    if (!props) continue;
+    for (const [param, schema] of Object.entries(props)) {
+      if (Array.isArray(schema?.enum) && schema.enum.includes(unknownName)) return { tool: tool.name, param };
+    }
+  }
+  return null;
 }
 
 export function lookupTool(ctx: ToolCallContext): PhaseOutcome {
@@ -36,7 +63,7 @@ export function lookupTool(ctx: ToolCallContext): PhaseOutcome {
   if (!tool) {
     ctx.allowed = false;
     ctx.result = {
-      content: formatUnknownToolCorrection(ctx.tc.name, [...ctx.toolMap.keys()]),
+      content: formatUnknownToolCorrection(ctx.tc.name, [...ctx.toolMap.keys()], findActionOwner(ctx.tc.name, ctx.toolMap.values())),
       isError: true,
       status: "error",
       metadata: { recovery: "Tool name typo or hallucinated name. Use one of the listed tool names exactly, or tool_search to load a capability that isn't listed." },

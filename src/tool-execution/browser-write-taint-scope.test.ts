@@ -27,10 +27,16 @@ import type { ToolCallContext } from "./context.js";
 // (KERNEL_TAINT_SOURCE maps memory/sensitive_file/secret to "rag" instead).
 const TAINTED_BODY = "Your verification code is 84213-QX and the recovery phrase is velvet-harbor-ninety.";
 
+// The tool must BE a tool: lookupTool settles the name before any security
+// gate runs, so an empty toolMap would short-circuit here on "unknown tool"
+// and the gate under test would never be reached. Production always resolves
+// the tool first; this fixture matches it.
+const toolStub = (name: string) => ({ name, description: "", parameters: {}, execute: async () => ({ content: "" }) });
+
 function makeCtx(args: Record<string, unknown>, sessionId: string): ToolCallContext {
   return {
     tc: { id: "1", name: "browser", arguments: JSON.stringify(args) },
-    toolMap: new Map(),
+    toolMap: new Map([["browser", toolStub("browser")]]),
     security: undefined as never,
     rbac: undefined as never,
     callerRole: undefined,

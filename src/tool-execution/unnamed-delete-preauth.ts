@@ -11,6 +11,7 @@
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { ServerEvent } from "../types.js";
 import { getApprovalManager } from "../approval-manager.js";
+import { hasExternalIngestion } from "../data-lineage/external.js";
 import {
   GATED_DELETE_TOOL,
   describeUnnamedDeletesForHuman,
@@ -30,7 +31,10 @@ export async function preauthorizeUnnamedDeletes(opts: {
 }): Promise<void> {
   // Interactive dispatch only, like the irreversible floor: an unattended run
   // is governed by its autonomy profile, which already blocks an unanswerable ask.
-  const gated = unnamedDeletes(opts.toolCalls, opts.priorMessages);
+  const gated = unnamedDeletes(opts.toolCalls, opts.priorMessages, {
+    sessionId: opts.sessionId,
+    untrustedSession: opts.sessionId ? hasExternalIngestion(opts.sessionId) : true,
+  });
   if (gated.length === 0) return;
   if (opts.callContext !== "local" || !gateAppliesToModel(opts.modelId)) {
     // No one can answer a card here. File deletes keep whatever the autonomy

@@ -1,5 +1,7 @@
 /**
- * A file delete is pre-authorized only when the USER named that file.
+ * A file delete is pre-authorized only when the USER named that file — or when
+ * the agent itself created it this session, with one of its file tools (its
+ * scratch, not the user's data; unnamedDeletes has the limits on that).
  *
  * Measured, not hypothesized (docs/harness/HARNESS_LOG.md, 2026-09-20/21): on
  * "The client-data folder is getting messy. Just clear it out." qwen3.6:27b
@@ -39,6 +41,7 @@ import { folderFileCount } from "../tools/delete-folder.js";
 import { isHarnessRow } from "../harness-rows.js";
 import { containsHarnessMarker } from "../harness-text.js";
 import { shellDeleteTargets } from "./shell-delete-targets.js";
+import { isTaskArtifact } from "../data-lineage/task-artifacts.js";
 
 export const GATED_DELETE_TOOL = "delete_file";
 const UNTRUSTED = /EXTERNAL_UNTRUSTED_CONTENT|INJECTION WARNING/i;
@@ -115,24 +118,50 @@ function folderTarget(path: string): string | null {
   }
 }
 
+/** Above this many of the agent's own files in one turn, they ask too: a notice
+ *  nobody reads is no protection, and a wipe spread over single-file calls is
+ *  the shape an over-reach takes. */
+export const OWN_FILE_DELETES_PER_TURN = 10;
+
+export interface UnnamedDeleteScope {
+  /** Resolves which files this session's agent created (task-artifacts registry). */
+  sessionId?: string;
+  /** The session has read off-box content (web, email, MCP): a delete may be an
+   *  injected instruction, so the agent's own files lose their exemption. */
+  untrustedSession?: boolean;
+}
+
+/** Did this session's agent create the file with one of its file tools? */
+function agentCreated(sessionId: string, path: string): boolean {
+  try { return isTaskArtifact(sessionId, resolveAgentPath(path)); } catch { return false; /* unresolvable path: not provably the agent's */ }
+}
+
 /** The delete calls in a batch that need the user's yes: every target the user
  *  did not name, and EVERY folder delete_file would remove — named or not,
- *  because "clean up client-data" names the folder it must not remove. A shell
- *  call deleting several files contributes one entry per file, all under its
- *  own call id, so one decision covers the whole command. */
+ *  because "clean up client-data" names the folder it must not remove. A file
+ *  the agent itself created this session is its scratch, not the user's data,
+ *  and asks nothing — unless the session read untrusted content or the turn
+ *  deletes more than OWN_FILE_DELETES_PER_TURN of them. A shell call deleting
+ *  several files contributes one entry per file, all under its own call id, so
+ *  one decision covers the whole command. */
 export function unnamedDeletes(
   toolCalls: ReadonlyArray<{ id: string; name: string; arguments: string }>,
   priorMessages: readonly ChatCompletionMessageParam[] | undefined,
+  scope: UnnamedDeleteScope = {},
 ): UnnamedDeleteCall[] {
   const userText = currentHumanText(priorMessages);
   const out: UnnamedDeleteCall[] = [];
+  const own: UnnamedDeleteCall[] = [];
   for (const tc of toolCalls) {
     for (const path of deleteTargetsOf(tc)) {
       const folderFiles = tc.name === GATED_DELETE_TOOL ? folderTarget(path) : null;
       if (folderFiles !== null) out.push({ id: tc.id, path, folderFiles });
-      else if (!userNamedFile(userText, path)) out.push({ id: tc.id, path });
+      else if (userNamedFile(userText, path)) continue;
+      else if (scope.sessionId && !scope.untrustedSession && agentCreated(scope.sessionId, path)) own.push({ id: tc.id, path });
+      else out.push({ id: tc.id, path });
     }
   }
+  if (own.length > OWN_FILE_DELETES_PER_TURN) out.push(...own);
   return out;
 }
 

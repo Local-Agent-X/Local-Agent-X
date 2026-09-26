@@ -132,7 +132,7 @@ export type ServerEvent =
   // reconcileRecoveredAsk), and this carries that earlier deadline unchanged.
   // Omitted by emitters that don't know it — consumers must treat absence as
   // "no deadline known" and show no countdown rather than inventing one.
-  | { type: "approval_requested"; approvalId: string; toolName: string; toolCallId?: string; context: string; argsPreview: string; preview?: ActionPreview; expiresAt?: number }
+  | { type: "approval_requested"; approvalId: string; toolName: string; toolCallId?: string; context: string; argsPreview: string; preview?: ActionPreview; expiresAt?: number; rememberable?: boolean }
   | { type: "approval_timeout"; approvalId: string; toolName: string; toolCallId?: string }
   // `reason` (optional, additive) says WHY an approved:false settle happened —
   // "declined" = the user clicked Deny; "timeout" = nobody answered;

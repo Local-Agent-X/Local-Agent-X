@@ -23,7 +23,8 @@ export { mergeWithDefaults, snapshotHashOf, stampedDefaultPolicy } from "./merge
  *
  * Each rule specifies:
  * - tool pattern (glob): "bash", "browser.*", "http_*", "*"
- * - decision: "allow", "deny", "confirm" (confirm = log warning but allow)
+ * - decision: "allow", "deny", "confirm" (confirm = the call runs only after the
+ *   user approves it: packs/default-policy-pack.ts turns it into approval-required)
  * - conditions: optional constraints (allowedHosts, blockedArgs, etc.)
  * - reason: human-readable explanation
  *

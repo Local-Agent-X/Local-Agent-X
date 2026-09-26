@@ -258,6 +258,9 @@ class ApprovalManager {
         // window is hidden), and the clock then overstates the window by
         // however long that paint was deferred.
         expiresAt: requestedAt + APPROVAL_TIMEOUT_MS,
+        // An alwaysAsk card is never remembered for the session (resolve()
+        // ignores rememberForSession for it), so the UI must not offer to.
+        rememberable: !opts.alwaysAsk,
       });
 
       // Durable shadow for op-scoped asks: pendingApproval signal column +

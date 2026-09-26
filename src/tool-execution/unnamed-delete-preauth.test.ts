@@ -115,3 +115,57 @@ describe("the un-named delete pre-pass", () => {
     expect(takeUnnamedDeleteDecision("t0")).toEqual({ approved: false, reason: undefined });
   });
 });
+
+// Lane 1 (2026-09-26): a file the agent itself created this session, with one of
+// its file tools, is its scratch — deleting it asks nothing. The card Peter hit
+// was for ns_tmp.json / ns_tmp.txt, the agent's own parse output. The exemption
+// ends where it could be abused: a session that read untrusted content, or more
+// than OWN_FILE_DELETES_PER_TURN of them in one turn.
+describe("the agent's own files", async () => {
+  const { recordTaskArtifact, clearTaskArtifacts } = await import("../data-lineage/task-artifacts.js");
+  const { recordExternalIngestion, clearExternalIngestion } = await import("../data-lineage/external.js");
+  const { OWN_FILE_DELETES_PER_TURN } = await import("./unnamed-delete-gate.js");
+  const dir = mkdtempSync(join(tmpdir(), "lax-preauth-own-"));
+  const own = (name: string) => { const p = join(dir, name); writeFileSync(p, "{}"); recordTaskArtifact("own", p); return p; };
+  const del = (id: string, path: string) => ({ id, name: "delete_file", arguments: JSON.stringify({ path }) });
+  const cleanUp: ChatCompletionMessageParam[] = [{ role: "user", content: "Clean up the temporary files." }];
+  const scope = { ...base, sessionId: "own", priorMessages: cleanUp };
+
+  beforeEach(() => { clearTaskArtifacts("own"); clearExternalIngestion("own"); });
+
+  it("deletes its own scratch with no card", async () => {
+    await preauthorizeUnnamedDeletes({ ...scope, toolCalls: [del("o1", own("ns_tmp.json")), del("o2", own("ns_tmp.txt"))] });
+    expect(requests).toHaveLength(0);
+    expect(takeUnnamedDeleteDecision("o1")).toBeUndefined();
+    expect(takeUnnamedDeleteDecision("o2")).toBeUndefined();
+  });
+
+  it("a file it did not create still asks, and the card lists only that one", async () => {
+    const theirs = join(dir, "handover-notes.md"); writeFileSync(theirs, "notes");
+    await preauthorizeUnnamedDeletes({ ...scope, toolCalls: [del("o3", own("scratch.json")), del("o4", theirs)] });
+    expect(requests).toHaveLength(1);
+    expect(requests[0].context).toContain("handover-notes.md");
+    expect(requests[0].context).not.toContain("scratch.json");
+    expect(takeUnnamedDeleteDecision("o3")).toBeUndefined();
+  });
+
+  it("after the session read untrusted content, its own files ask too", async () => {
+    recordExternalIngestion("own");
+    await preauthorizeUnnamedDeletes({ ...scope, toolCalls: [del("o5", own("page-dump.json"))] });
+    expect(requests).toHaveLength(1);
+    expect(takeUnnamedDeleteDecision("o5")).toEqual({ approved: false, reason: "declined" });
+  });
+
+  it(`more than ${OWN_FILE_DELETES_PER_TURN} in one turn: one card for all of them`, async () => {
+    const calls = Array.from({ length: OWN_FILE_DELETES_PER_TURN + 1 }, (_, i) => del(`m${i}`, own(`part-${i}.json`)));
+    await preauthorizeUnnamedDeletes({ ...scope, toolCalls: calls });
+    expect(requests).toHaveLength(1);
+    expect(requests[0].context).toContain(`${OWN_FILE_DELETES_PER_TURN + 1} files`);
+  });
+
+  it("a shell rm of its own scratch asks nothing either", async () => {
+    const p = own("tmp-out.txt");
+    await preauthorizeUnnamedDeletes({ ...scope, toolCalls: [{ id: "o6", name: "bash", arguments: JSON.stringify({ command: `rm "${p}"` }) }] });
+    expect(requests).toHaveLength(0);
+  });
+});

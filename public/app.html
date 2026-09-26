@@ -1625,7 +1625,7 @@
      core (state maps, exports _ChatStreamState) → approvals (attaches onto
      the exported object). -->
 <script src="/js/chat-stream-blocks.js?v=v2"></script>
-<script src="/js/chat-stream-reducer.js?v=v1"></script>
+<script src="/js/chat-stream-reducer.js?v=v2"></script>
 <!-- Frame admission (which frames may mutate an entry) is its own module for
      the 400-LOC gate; the store core delegates to it. -->
 <script src="/js/chat-stream-admit.js?v=v1"></script>
@@ -1650,7 +1650,7 @@
      extracted helpers (toolSummary, makeApprovalCard, addAgentFeed, …).
      Inverse direction (chat.js helpers like sendChatWsControl) resolves at
      runtime via the shared classic-script global lexical environment. -->
-<script src="/js/chat-tool-cards.js?v=v1"></script>
+<script src="/js/chat-tool-cards.js?v=v2"></script>
 <script src="/js/chat-declassify-action.js?v=v1"></script>
 <!-- chat-agent-feeds split: render + actions before core so the core's
      _renderAgentFeedsList sees renderAgentCard and updateAgentFeed's
@@ -1721,7 +1721,7 @@
 <script src="/js/chat-ws-watchdog.js?v=v1"></script>
 <!-- chat-render-artifacts.js split: the approval live/settled shape decision
      (chat-render-approvals.js) is its own module for the 400-LOC gate. -->
-<script src="/js/chat-render-approvals.js?v=v1"></script>
+<script src="/js/chat-render-approvals.js?v=v2"></script>
 <script src="/js/chat-render-artifacts.js?v=v4"></script>
 <script src="/js/thinking-phrases.js?v=v1"></script>
 <script src="/js/phrase-rain.js?v=v1"></script>

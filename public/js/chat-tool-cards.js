@@ -44,7 +44,7 @@ function toolSummary(name, args) {
   }
 }
 
-function makeApprovalCard(approvalId, toolName, context, argsPreview) {
+function makeApprovalCard(approvalId, toolName, context, argsPreview, rememberable = true) {
   const card = document.createElement('div');
   card.className = 'approval-card';
   card.setAttribute('data-id', approvalId);
@@ -56,12 +56,14 @@ function makeApprovalCard(approvalId, toolName, context, argsPreview) {
     + '<div class="approval-actions">'
     +   '<button class="btn-approve">Approve</button>'
     +   '<button class="btn-deny">Deny</button>'
-    +   '<label class="approval-always"><input type="checkbox" class="always-cb"> Always for this session</label>'
+    // A box the server would ignore is a control that silently does nothing.
+    +   (rememberable ? '<label class="approval-always"><input type="checkbox" class="always-cb"> Always for this session</label>' : '')
     + '</div>'
     + '<div class="approval-status"></div>';
 
   const send = (approved) => {
-    const always = card.querySelector('.always-cb').checked;
+    const cb = card.querySelector('.always-cb');
+    const always = !!(cb && cb.checked);
     try {
       if (typeof window.sendApprovalResponse === 'function') {
         // Durable-sourced cards (rediscovered via /api/approvals/pending)

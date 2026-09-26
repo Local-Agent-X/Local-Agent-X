@@ -1,22 +1,22 @@
 import { describe, expect, it } from "vitest";
 import { TOOL_RISK } from "../autonomy/risk.js";
 import { TOOLS } from "../tool-registry.js";
-import { IRREVERSIBLE, UNDO_PAIRS, unpairedDestructive, withUndoCounterparts } from "./undo-pairs.js";
+import { IRREVERSIBLE, RECOVERABLE_WITHOUT_PAIR, UNDO_PAIRS, unpairedDestructive, withUndoCounterparts } from "./undo-pairs.js";
 
 const destructive = Object.entries(TOOL_RISK).filter(([, risk]) => risk === "destructive").map(([name]) => name).sort();
 
 describe("undo pairing covers every destructive tool", () => {
-  it("every destructive-risk tool is paired or declared irreversible — never unclassified", () => {
-    const unclassified = destructive.filter((n) => !UNDO_PAIRS[n] && !IRREVERSIBLE.has(n));
-    expect(unclassified, "add each to UNDO_PAIRS (with its counterpart) or IRREVERSIBLE (on purpose) in tools/undo-pairs.ts").toEqual([]);
+  it("every destructive-risk tool is paired, recoverable without a pair, or declared irreversible — never unclassified", () => {
+    const unclassified = destructive.filter((n) => !UNDO_PAIRS[n] && !IRREVERSIBLE.has(n) && !RECOVERABLE_WITHOUT_PAIR[n]);
+    expect(unclassified, "add each to UNDO_PAIRS, RECOVERABLE_WITHOUT_PAIR or IRREVERSIBLE (on purpose) in tools/undo-pairs.ts").toEqual([]);
   });
 
-  it("no tool is in both lists, and every pair target is a registered tool", () => {
-    const both = Object.keys(UNDO_PAIRS).filter((n) => IRREVERSIBLE.has(n));
-    expect(both).toEqual([]);
+  it("no tool is in two lists, and every pair target is a registered tool", () => {
+    const listed = [...Object.keys(UNDO_PAIRS), ...IRREVERSIBLE, ...Object.keys(RECOVERABLE_WITHOUT_PAIR)];
+    expect(listed.filter((n, i) => listed.indexOf(n) !== i)).toEqual([]);
     const missing = Object.entries(UNDO_PAIRS).filter(([, pair]) => !TOOLS[pair]).map(([n, pair]) => `${n} → ${pair}`);
     expect(missing, "pair targets must be real registered tools").toEqual([]);
-    const notDestructive = [...Object.keys(UNDO_PAIRS), ...IRREVERSIBLE].filter((n) => TOOL_RISK[n] !== "destructive");
+    const notDestructive = listed.filter((n) => TOOL_RISK[n] !== "destructive");
     expect(notDestructive, "only destructive-risk tools belong in these lists").toEqual([]);
   });
 });

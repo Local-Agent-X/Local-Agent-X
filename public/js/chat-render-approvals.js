@@ -182,7 +182,7 @@ function announceApproval(id) {
 function renderApproval(ap) {
   const live = (!ap.status || ap.status === 'pending') && !ap.historical;
   if (!live) return makeApprovalRecord(ap);
-  const card = makeApprovalCard(ap.id, ap.toolName, ap.context, ap.argsPreview);
+  const card = makeApprovalCard(ap.id, ap.toolName, ap.context, ap.argsPreview, ap.rememberable !== false);
   card.classList.add('live');
   // Above the buttons — the consequence has to be read before the decision.
   // A null second argument appends, which is the right place anyway. The clock

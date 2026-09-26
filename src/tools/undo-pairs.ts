@@ -34,12 +34,18 @@ export const IRREVERSIBLE: ReadonlySet<string> = new Set([
   "mission_delete",        // no undelete; approval-gated
   "memory_forget",         // forgetting is the point
   "memory_forget_imports",
-  "forget",
   "self_edit",             // the engine's own source; git is the undo
-  "email_delete",          // provider-side
   "marketplace_install",   // overwrites a custom protocol record
   "apply_update",          // the installed app; the update pipeline owns rollback
 ]);
+
+/** Destructive, but recoverable without a paired tool. Listed apart so the
+ *  irreversible floor (approval-decision.ts) does not card them as if they
+ *  destroyed something; the coverage test holds all three lists disjoint. */
+export const RECOVERABLE_WITHOUT_PAIR: Readonly<Record<string, string>> = {
+  forget: "a soft delete of one fact; its history is kept",
+  email_delete: "moves the message to the mailbox's Trash — never an expunge (email-imap decision E1)",
+};
 
 /**
  * Adds each destructive tool's counterpart from the catalog when the set has

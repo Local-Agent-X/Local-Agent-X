@@ -247,6 +247,9 @@
             // hidden window pauses rAF and a non-viewed session never paints.
             opId: event.opId || null,
             expiresAt: typeof event.expiresAt === 'number' ? event.expiresAt : null,
+            // false = the server will not remember an answer to this ask, so the
+            // card offers no "Always for this session"; absent = older emitter.
+            rememberable: event.rememberable !== false,
             status: 'pending',
             resolvedAt: null,
             // Stamped by whoever settles the card definitively — see

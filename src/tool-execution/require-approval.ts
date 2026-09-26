@@ -33,7 +33,7 @@ import {
 import { hasExternalIngestion } from "../data-lineage/external.js";
 import { classifyShellTier, isShellTierTool } from "./shell-approval-tier.js";
 import { getSandboxStatus } from "../sandbox/index.js";
-import { takeUnnamedDeleteDecision, UNNAMED_DELETE_DECLINED_TEXT } from "./unnamed-delete-gate.js";
+import { currentHumanText, takeUnnamedDeleteDecision, UNNAMED_DELETE_DECLINED_TEXT } from "./unnamed-delete-gate.js";
 
 export const requireApprovalPhase: Phase = async (ctx) => {
   const promotion = describeMemoryPromotionRequest(
@@ -67,7 +67,7 @@ export const requireApprovalPhase: Phase = async (ctx) => {
   // truly-unrecoverable shell op (rm -rf, dd, force-push, …) even if the profile
   // would allow it silently. Unattended runs stay governed by the profile.
   if (ctx.callContext === "local") {
-    decision = applyIrreversibleFloor(decision, ctx.tc.name, ctx.args);
+    decision = applyIrreversibleFloor(decision, ctx.tc.name, ctx.args, currentHumanText(ctx.priorMessages));
   }
 
   if (decisionDenies(decision)) {

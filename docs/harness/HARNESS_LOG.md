@@ -2261,6 +2261,31 @@ loss is fixed and measured (Codex wipe 3/3 at 6fdbcaee). EXP-24c (confined `rm -
 KEPT at Peter's decision: wipe 3/3 on both models with one card each, gates zero on the 27B/8B split. EXP-24d KEPT:
 two fail-time correctives with no success-path change, and a delete rule that is at least accurate.
 
+---
+
+## EXP-25 — a folder delete is recoverable (2026-09-25, in progress)
+
+**Why.** Peter: "recovering a whole folder is important". An approved `rm -r` is permanent; an approved
+`delete_file` goes to the trash. Until now `delete_file` refused folders, so a folder could only go the permanent way.
+
+**Change.**
+- `delete_file` accepts a folder (`tools/delete-folder.ts`): the whole folder moves to Local Agent X's OWN trash
+  (kept 30 days), never the OS bin — Windows can permanently delete an item too large for the Recycle Bin when
+  confirmations are suppressed, and this path promises a restore. The result states the file count and the
+  `restore_file` call; `restore_file` brings the folder back whole (journal tier "lax", a rename).
+- Refused outright, card or not (pure `folderDeleteRefusal` over injected roots, so no test aims a delete at a real
+  workspace): the workspace root or any folder containing it, a folder containing the install, the data dir, or
+  any protected file (the resolve-phase protected check covers a protected file or a folder under one, but not a
+  folder that merely CONTAINS one — this closes that), system/home/drive roots, and an app's own folder (→
+  `app_delete`, which stops its server).
+- The un-named-delete gate cards EVERY folder delete, named or not — "clean up client-data" names the folder it
+  must not remove — listing it as `path/ (folder, N files)`. With no one to answer (unattended, or no model id) a
+  folder delete is refused; file deletes keep their old behaviour there. Decline and unanswered texts made neutral.
+- Prompt: a named folder → `delete_file` (asks once, recoverable); "do not use `rm -r` — a shell delete is
+  permanent". The confined-mode rm refusals point at `delete_file` too. `restore_file` says it restores folders.
+Tests: a real folder deleted and restored byte-identical; every refusal root; the count cap; a named folder still
+carded; unattended refusal. 2670 green. Measure: 27B restraint ×3 (Codex waits for Peter to reconnect).
+
 --- Open, ranked: EXP-23 glob fail-time
 corrective (two cases lose runs to anchored patterns); the browser `select` wedge on native comboboxes (rig noise
 since 2026-09-20, costs ~1 setup-account run per split); the 8B prose-call shape (not fixable in the harness without

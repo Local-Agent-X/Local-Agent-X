@@ -15,6 +15,7 @@ import { checkAppWrite, writeGuardRejectionMessage } from "./app-tools/write-gua
 import { appUrlHint, servedFileHint } from "./file-hints.js";
 import { connectorManifestWriteRejection } from "./connector-write-guard.js";
 import { buildImportAppendix, isJsFamilyFile } from "./read-imports.js";
+import { deleteFolderToTrash } from "./delete-folder.js";
 
 /**
  * Skip injection screening only for the agent's own generated CODE under
@@ -284,8 +285,8 @@ export const writeTool: ToolDefinition = {
 export const deleteFileTool: ToolDefinition = {
   name: "delete_file",
   description:
-    "Delete a single file from the workspace — moved to the trash, restorable with restore_file. Preferred over `bash rm` for single files (path-checked by SecurityLayer, one file per call). " +
-    "Refuses directories: to remove a whole folder, run `rm -r <folder>` with the bash tool (the user is asked to confirm it first). To remove a few named files, call this once per file.",
+    "Delete a file, or a whole folder the user asked to remove — moved to the trash, restorable with restore_file (path-checked by SecurityLayer). " +
+    "A folder delete always asks the user first and moves the entire folder in one call. Preferred over `bash rm`, which deletes permanently. To remove a few named files, call this once per file.",
   parameters: {
     type: "object",
     properties: {
@@ -298,21 +299,9 @@ export const deleteFileTool: ToolDefinition = {
     if (!existsSync(filePath)) return err(`File not found: ${filePath}`, { path: filePath });
     try {
       const st = statSync(filePath);
-      if (st.isDirectory()) {
-        // Name the route that removes a whole folder. This used to end "delete
-        // the directory's contents one file at a time" — the harness telling
-        // the model to do the one thing a "not file by file" request forbade,
-        // and never mentioning the shell — so gpt-5.6 asserted recursive
-        // deletion was blocked and asked (op-outcomes EXP-24, 0/3).
-        return err(
-          `Refusing to delete a directory: ${filePath}. delete_file removes single files only. ` +
-          `To remove the whole folder, run \`rm -r <path>\` with the bash tool — a recursive delete asks the user ` +
-          `for confirmation first and then runs. If this is an app under workspace/apps, call ` +
-          `app_delete({ id: "<dir name>" }) instead — it stops the app's running server first, then recycles the ` +
-          `whole folder. Only fall back to deleting the contents one file at a time when the user asked for that.`,
-          { path: filePath, isDirectory: true },
-        );
-      }
+      // A folder goes to the app trash, whole and restorable (delete-folder.ts);
+      // the un-named-delete gate has already asked the user.
+      if (st.isDirectory()) return deleteFolderToTrash(filePath);
       const sid = sessionIdOf(args);
       if (sid && isTaskArtifact(sid, filePath)) {
         // Agent-CREATED file (data-lineage/task-artifacts.ts): route to the

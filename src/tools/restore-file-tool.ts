@@ -35,7 +35,8 @@ export const restoreFileTool: ToolDefinition = {
     "When the same name was deleted more than once, the most recent delete wins. " +
     "Refuses to overwrite a file that now exists at the original path — move or delete that file first, then restore again. " +
     "`destination` is ONLY for recovered entries (a restore error saying the original path was lost when the manifest was recovered): pass the full ABSOLUTE path to restore to, and it MUST keep the trashed file's basename — a recovered entry only matches a destination sharing that basename, so a different file name matches nothing. " +
-    "Works for the user's own files too: delete_file records where every deletion went, so a file that went to the OS Recycle Bin / Trash is brought back from there. An agent-created file is only restorable until its task's trash scope closes.",
+    "Works for the user's own files too: delete_file records where every deletion went, so a file that went to the OS Recycle Bin / Trash is brought back from there. An agent-created file is only restorable until its task's trash scope closes. " +
+    "Works for a whole FOLDER delete_file removed, too: pass the folder's original path and the folder comes back with everything in it (kept 30 days).",
   parameters: {
     type: "object",
     properties: {

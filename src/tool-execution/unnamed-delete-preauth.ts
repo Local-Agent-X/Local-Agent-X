@@ -30,9 +30,18 @@ export async function preauthorizeUnnamedDeletes(opts: {
 }): Promise<void> {
   // Interactive dispatch only, like the irreversible floor: an unattended run
   // is governed by its autonomy profile, which already blocks an unanswerable ask.
-  if (opts.callContext !== "local" || !gateAppliesToModel(opts.modelId)) return;
   const gated = unnamedDeletes(opts.toolCalls, opts.priorMessages);
   if (gated.length === 0) return;
+  if (opts.callContext !== "local" || !gateAppliesToModel(opts.modelId)) {
+    // No one can answer a card here. File deletes keep whatever the autonomy
+    // profile allows, as before; a FOLDER delete is refused — it only became
+    // possible on 2026-09-25, with a card, and must not become possible with
+    // no one watching.
+    for (const c of gated) {
+      if (c.folderFiles !== undefined) recordUnnamedDeleteDecision(c.id, { approved: false, reason: undefined });
+    }
+    return;
+  }
 
   // No event sink means no way to show a card, so an answer can never arrive.
   // Refuse rather than let a sink-less dispatch confirm its own delete.

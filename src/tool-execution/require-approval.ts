@@ -94,7 +94,7 @@ export const requireApprovalPhase: Phase = async (ctx) => {
     const result: ToolResult = {
       content: declined
         ? UNNAMED_DELETE_DECLINED_TEXT
-        : `NOT RUN: ${ctx.tc.name} targets a file the user did not name, and the confirmation was not answered. Do not assume consent; ask the user which files they want deleted.`,
+        : `NOT RUN: this ${ctx.tc.name} call needs the user's confirmation, and none was given — nobody could be asked, or the question went unanswered. Do not assume consent; ask the user which files or folders they want deleted.`,
       isError: true,
       status: declined ? "declined" : "blocked",
       metadata: { layer: "approval", userHint: declined ? USER_HINTS.declined : USER_HINTS.policy },

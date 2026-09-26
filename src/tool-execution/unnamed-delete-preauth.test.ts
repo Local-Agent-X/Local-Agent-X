@@ -6,7 +6,7 @@
  * answers the same question five times. Also pinned: every way this floor is
  * supposed to stay OUT of the way.
  */
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -31,6 +31,37 @@ const wipe = ["originals/signed-contract-2026.md", "originals/invoice-0042.md", 
 const base = { toolCalls: wipe, priorMessages: VAGUE, modelId: "qwen3.6:27b", callContext: "local", sessionId: "s", onEvent: () => {} };
 
 beforeEach(() => { requests.length = 0; answer = { approved: false, reason: "declined" }; });
+
+// A folder delete_file removes goes to the trash whole (Peter, 2026-09-25) — and
+// always asks, even when the user named it, because "clean up client-data"
+// names the very folder it must not remove. Unattended, it is refused.
+describe("folder deletes", () => {
+  const dir = mkdtempSync(join(tmpdir(), "lax-preauth-folder-"));
+  mkdirSync(join(dir, "build-cache", "chunks"), { recursive: true });
+  writeFileSync(join(dir, "build-cache", "chunks", "a.js"), "");
+  writeFileSync(join(dir, "build-cache", "manifest.json"), "");
+  const folder = join(dir, "build-cache");
+  const call = [{ id: "f1", name: "delete_file", arguments: JSON.stringify({ path: folder }) }];
+  const named: ChatCompletionMessageParam[] = [{ role: "user", content: `Remove the ${folder} folder, all of it.` }];
+
+  it("a folder the user NAMED still gets one card, listing it as a folder with its file count", async () => {
+    await preauthorizeUnnamedDeletes({ ...base, toolCalls: call, priorMessages: named });
+    expect(requests).toHaveLength(1);
+    expect(requests[0].context).toContain("(folder, 2 files)");
+    expect(requests[0].context).toContain("even when you named it");
+    expect(takeUnnamedDeleteDecision("f1")).toEqual({ approved: false, reason: "declined" });
+  });
+
+  it("with no one to answer (unattended, or no model id), a folder delete is refused and a file delete is left as before", async () => {
+    const file = { id: "x1", name: "delete_file", arguments: JSON.stringify({ path: "workspace/client-data/tmp/export-scratch.tmp" }) };
+    await preauthorizeUnnamedDeletes({ ...base, toolCalls: [...call, file], callContext: "cron" });
+    expect(requests).toHaveLength(0);
+    expect(takeUnnamedDeleteDecision("f1")).toEqual({ approved: false, reason: undefined });
+    expect(takeUnnamedDeleteDecision("x1")).toBeUndefined();
+    await preauthorizeUnnamedDeletes({ ...base, toolCalls: call, modelId: undefined });
+    expect(takeUnnamedDeleteDecision("f1")).toEqual({ approved: false, reason: undefined });
+  });
+});
 
 describe("the un-named delete pre-pass", () => {
   it("a shell command deleting five un-named files gets ONE card listing all five, and a decline stops the call", async () => {

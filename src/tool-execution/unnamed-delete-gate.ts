@@ -32,7 +32,10 @@
  * it; rows carrying untrusted-content markers are refused for the same reason.
  */
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
+import { statSync } from "node:fs";
 import { basename } from "node:path";
+import { resolveAgentPath } from "../workspace/paths.js";
+import { folderFileCount } from "../tools/delete-folder.js";
 import { isHarnessRow } from "../harness-rows.js";
 import { containsHarnessMarker } from "../harness-text.js";
 import { shellDeleteTargets } from "./shell-delete-targets.js";
@@ -77,7 +80,7 @@ export function gateAppliesToModel(modelId: string | undefined): boolean {
   return Boolean(modelId);
 }
 
-export interface UnnamedDeleteCall { id: string; path: string }
+export interface UnnamedDeleteCall { id: string; path: string; /** Set when the target is a folder: its file count ("61", "10000+"). */ folderFiles?: string }
 
 /** Shell tools whose command may delete a file one at a time. EXP-18 showed
  *  the ladder: `delete_file` refused → `rm -rf` carded by the floor → per-file
@@ -102,7 +105,19 @@ export function deleteTargetsOf(tc: { name: string; arguments: string }): string
   return [];
 }
 
-/** The delete calls in a batch whose target the user did not name. A shell
+/** A delete_file target that is an existing folder: its file count, else null. */
+function folderTarget(path: string): string | null {
+  try {
+    const abs = resolveAgentPath(path);
+    return statSync(abs).isDirectory() ? folderFileCount(abs) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The delete calls in a batch that need the user's yes: every target the user
+ *  did not name, and EVERY folder delete_file would remove — named or not,
+ *  because "clean up client-data" names the folder it must not remove. A shell
  *  call deleting several files contributes one entry per file, all under its
  *  own call id, so one decision covers the whole command. */
 export function unnamedDeletes(
@@ -113,7 +128,9 @@ export function unnamedDeletes(
   const out: UnnamedDeleteCall[] = [];
   for (const tc of toolCalls) {
     for (const path of deleteTargetsOf(tc)) {
-      if (!userNamedFile(userText, path)) out.push({ id: tc.id, path });
+      const folderFiles = tc.name === GATED_DELETE_TOOL ? folderTarget(path) : null;
+      if (folderFiles !== null) out.push({ id: tc.id, path, folderFiles });
+      else if (!userNamedFile(userText, path)) out.push({ id: tc.id, path });
     }
   }
   return out;
@@ -136,6 +153,17 @@ export function takeUnnamedDeleteDecision(toolCallId: string): UnnamedDeleteDeci
 }
 
 export function describeUnnamedDeletesForHuman(calls: readonly UnnamedDeleteCall[]): string {
+  if (calls.some((c) => c.folderFiles !== undefined)) {
+    const list = calls.map((c) => c.folderFiles !== undefined
+      ? `  • ${c.path.replace(/[\\/]+$/, "")}/ (folder, ${c.folderFiles} file${c.folderFiles === "1" ? "" : "s"})`
+      : `  • ${c.path}`).join("\n");
+    return (
+      `The model wants to delete:\n${list}\n` +
+      `A whole folder is deleted only with your yes, even when you named it. Approve to delete ` +
+      `${calls.length === 1 ? "it" : "all of them"}, or decline and say what you meant. ` +
+      `Deleted folders and files go to the trash and can be restored.`
+    );
+  }
   const list = calls.map((c) => `  • ${c.path}`).join("\n");
   return (
     `The model wants to delete ${calls.length} file${calls.length === 1 ? "" : "s"} you did not name:\n${list}\n` +
@@ -145,6 +173,6 @@ export function describeUnnamedDeletesForHuman(calls: readonly UnnamedDeleteCall
 }
 
 export const UNNAMED_DELETE_DECLINED_TEXT =
-  "NOT RUN: the user did not name this file, and declined when asked to confirm the delete. " +
+  "NOT RUN: the user declined this delete when asked to confirm it. " +
   "Do not retry it by any route — not delete_file, not a shell rm, not another tool. " +
-  "Ask the user exactly which files they want deleted, then delete only those.";
+  "Ask the user exactly which files or folders they want deleted, then delete only those.";

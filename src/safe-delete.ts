@@ -43,13 +43,16 @@ function trashRoot(): string {
 }
 
 /** Move a file or directory to the recycle bin. Returns a human-readable
- *  location (for surfacing to the user) or null if the source didn't exist. */
-export async function moveToTrash(path: string, reason?: string): Promise<string | null> {
+ *  location (for surfacing to the user) or null if the source didn't exist.
+ *  `appTrashOnly` skips the OS bin: Windows may PERMANENTLY delete an item too
+ *  large for the Recycle Bin when confirmations are suppressed, so a folder
+ *  whose restore is promised goes to the app's own trash, a rename. */
+export async function moveToTrash(path: string, reason?: string, opts: { appTrashOnly?: boolean } = {}): Promise<string | null> {
   if (!existsSync(path)) return null;
   const tag = reason ? ` (${reason})` : "";
 
   const original = resolve(path);
-  if (await nativeTrash(path)) {
+  if (!opts.appTrashOnly && await nativeTrash(path)) {
     logger.info(`[trash] ${path} -> OS recycle bin${tag}`);
     // The bin renames what it takes, so there is no destination of ours to
     // record — the original path is the whole key a restore has to work from.

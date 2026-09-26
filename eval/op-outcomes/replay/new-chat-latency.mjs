@@ -9,7 +9,7 @@
 // chat's first round from its op record: time to first token, prompt tokens
 // served from cache.
 //
-//   node eval/op-outcomes/replay/new-chat-latency.mjs [--model qwen3.6:27b] [--trials 3] [--typing-ms 15000]
+//   node eval/op-outcomes/replay/new-chat-latency.mjs [--model qwen3.6:27b] [--trials 3] [--typing-ms 15000] [--paste-lines 250] [--extra-turns 0]
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -20,6 +20,13 @@ const arg = (name, dflt) => { const i = process.argv.indexOf(`--${name}`); retur
 const model = arg("model", "qwen3.6:27b");
 const trials = Number(arg("trials", "3"));
 const typingMs = Number(arg("typing-ms", "15000"));
+// The old chat must end far past the head, as a real one does: a hybrid model restores
+// its cache only near the end of the last prefill, so a two-line chat hides the cost.
+const pasteLines = Number(arg("paste-lines", "250"));
+// Ollama keeps several restore points from recent requests; a chat with many rounds pushes out
+// the early ones near the head. Extra short turns after the paste stand in for a long chat.
+const extraTurns = Number(arg("extra-turns", "0"));
+const paste = Array.from({ length: pasteLines }, (_, i) => `Line ${i}: the ${["north", "south", "east", "west"][i % 4]} depot shipped ${(i * 37) % 500} crates on day ${i % 30}.`).join(String.fromCharCode(10));
 
 async function turn(server, sessionId, message) {
   const res = await fetch(`${server.baseUrl}/api/chat`, {
@@ -47,7 +54,8 @@ try {
     for (const prewarm of [false, true]) {
       const tag = `t${t}-${prewarm ? "warm" : "cold"}`;
       await turn(server, `lat-${tag}-old`, "Reply with one short sentence: what is a haiku?");
-      await turn(server, `lat-${tag}-old`, "Now reply with one short sentence about rain.");
+      await turn(server, `lat-${tag}-old`, `Here is a shipping log. Reply with one short sentence: which depot appears first?${String.fromCharCode(10)}${paste}`);
+      for (let k = 0; k < extraTurns; k++) await turn(server, `lat-${tag}-old`, `Reply with one word: the name of color number ${k + 1} in a rainbow.`);
       let prewarmStatus = "";
       if (prewarm) prewarmStatus = (await server.api("POST", "/api/chat/prewarm", {})).outcome;
       await new Promise((r) => setTimeout(r, typingMs));

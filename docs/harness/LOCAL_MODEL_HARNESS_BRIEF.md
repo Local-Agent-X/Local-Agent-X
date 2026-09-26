@@ -246,6 +246,11 @@ All of this trades wall time for success rate. Report both; let profiles choose 
 
 ## 8. Phase 6 — Capability profiles and auto-probe
 
+> **Superseded 2026-09-26 by [`MODEL_AUTO_ADAPT_BRIEF.md`](MODEL_AUTO_ADAPT_BRIEF.md).** Settings are
+> derived by rule from what the runtime reports and a first-use self-check measures, not hand-written per
+> model; the profiles below become test references and an escape hatch. The schema remains the shape a
+> derived or learned profile fills in.
+
 Everything above is driven by one per-model profile so the harness adapts instead of assuming. The schema and loader are built in Phase 1 (3.6); this phase adds auto-probe and tier assignment. Suggested shape (adjust field names to the codebase's conventions):
 
 ```json

@@ -20,7 +20,7 @@ over 400 LOC (the source-hygiene ceiling).
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 131 | 26 | XL |  |
 | `src/security/` | 87 | 36 | XL |  |
-| `src/tools/` | 76 | 196 | XL |  |
+| `src/tools/` | 77 | 196 | XL |  |
 | `src/providers/` | 64 | 22 | XL |  |
 | `src/canonical-loop/` | 63 | 246 | XL |  |
 | `src/memory/` | 46 | 130 | XL |  |
@@ -31,8 +31,8 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/browser/` | 33 | 83 | XL |  |
 | `src/local-runtimes/` | 32 | 19 | XL |  |
 | `src/threat/` | 32 | 12 | L |  |
+| `src/data-lineage/` | 31 | 8 | L |  |
 | `src/tool-policy/` | 30 | 20 | L |  |
-| `src/data-lineage/` | 29 | 8 | L |  |
 | `src/agency/` | 28 | 19 | L |  |
 | `src/agent-store/` | 26 | 7 | L |  |
 | `src/classifiers/` | 24 | 16 | L |  |
@@ -137,6 +137,7 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/index.ts` | M |
 | `src/injection-patterns.ts` | S |
 | `src/injection-views.ts` | S |
+| `src/irreversible-tools.ts` | S |
 | `src/keychain.ts` | M |
 | `src/lax-data-dir.ts` | S |
 | `src/lifecycle.ts` | S |

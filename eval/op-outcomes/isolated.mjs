@@ -139,7 +139,7 @@ function freePort() {
  */
 export async function startIsolatedServer({ repoRoot, provider, model, fixturePort, logLines = 200,
   seedWorkspace = join(repoRoot, "eval", "op-outcomes", "fixtures", "workspace"), toolPolicyRules = [],
-  maxLifetimeMs = 45 * 60_000 }) {
+  maxLifetimeMs = 45 * 60_000, disabledSkillPacks = [] }) {
   // Per-case, not just at startup: a run boots one server per case, so this is
   // the only place that sees every build a run actually measured.
   assertDistMatchesSource(repoRoot);
@@ -203,6 +203,8 @@ export async function startIsolatedServer({ repoRoot, provider, model, fixturePo
       // The parent-death watchdog, not this backstop, reaps an orphan when the
       // runner dies.
       LAX_PROBE_MAX_LIFETIME_MS: String(maxLifetimeMs),
+      // A case's no-skill arm leaves the shipped vendor pack out (vendor-packs.ts).
+      ...(disabledSkillPacks.length > 0 ? { LAX_DISABLED_SKILL_PACKS: disabledSkillPacks.join(",") } : {}),
       LAX_DATA_DIR: dataDir,
       LAX_WORKSPACE: workspace,
       LAX_PORT: String(port),

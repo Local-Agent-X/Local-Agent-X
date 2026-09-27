@@ -279,7 +279,7 @@ async function bootServer(provider, fixture, caseDef) {
   // Every turn and the idle wait can each take the case timeout.
   const turns = (caseDef.sessions ?? []).reduce((n, s) => n + (s.turns?.length ?? 0), 0);
   const maxLifetimeMs = (turns + 1) * (caseDef.timeoutMs ?? TURN_TIMEOUT_MS) + 15 * 60_000;
-  const opts = { repoRoot: REPO_ROOT, provider: provider.provider, model: provider.model, fixturePort: fixture.port, maxLifetimeMs };
+  const opts = { repoRoot: REPO_ROOT, provider: provider.provider, model: provider.model, fixturePort: fixture.port, maxLifetimeMs, disabledSkillPacks: caseDef.disabledSkillPacks ?? [] };
   try {
     return await startIsolatedServer(opts);
   } catch (first) {

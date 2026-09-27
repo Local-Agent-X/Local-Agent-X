@@ -242,19 +242,11 @@ Next rota change: Monday.
   vercelCli({ server, workspace }) {
     writeFile(workspace, ".fixture/vercel-calls.log", "");
     const log = join(workspace, ".fixture", "vercel-calls.log").split("\\").join("/");
-    const script = "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> \"$VERCEL_FIXTURE_LOG\"\ncase \"$*\" in\n  *--prod*) echo 'Production: https://acme-site.vercel.app [2s]' ;;\n  *deploy*|'') echo 'Preview: https://acme-site-git-main-acme.vercel.app [2s]' ;;\n  *) echo \"vercel: unknown command '$1'\" >&2; exit 1 ;;\nesac\n".replace("$VERCEL_FIXTURE_LOG", log);
+    const script = "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> \"$VERCEL_FIXTURE_LOG\"\ncase \"$*\" in\n  *--version*) echo '50.1.0' ;;\n  whoami*) echo 'acme' ;;\n  *--prod*) echo 'Production: https://acme-site.vercel.app [2s]' ;;\n  *deploy*|'') echo 'Preview: https://acme-site-git-main-acme.vercel.app [2s]' ;;\n  *) echo \"vercel: unknown command '$1'\" >&2; exit 1 ;;\nesac\n".replace("$VERCEL_FIXTURE_LOG", log);
     writeFileSync(join(server.binDir, "vercel"), script, { mode: 0o755 });
     writeFileSync(join(server.binDir, "vercel.cmd"), "@bash \"%~dp0vercel\" %*\r\n");
     writeFile(workspace, "acme-site/index.html", "<!doctype html><title>Acme</title><h1>Acme</h1>\n");
     writeFile(workspace, "acme-site/vercel.json", "{ \"cleanUrls\": true }\n");
-  },
-
-  /** The stand-in for a vendor skill, in the Agent Skills format, at the real
-   *  imported-protocols path. It is the ONLY place the fake CLI's contract is
-   *  written down (the --yes flag, where the URL is printed), so a pass that
-   *  uses the flag and reports the URL is a pass that read the skill. */
-  vercelSkill({ workspace }) {
-    writeFile(workspace, "protocols/imported/vercel-deploy/SKILL.md", "---\nname: vercel-deploy\ndescription: Deploy a project to Vercel (preview or production) with the vercel CLI and report the deployment URL.\ntriggers: [deploy to vercel, vercel deploy, preview deployment, ship to vercel]\nproject-markers: [vercel.json]\nlicense: Apache-2.0\n---\n# Deploying with the Vercel CLI\n\nRun the CLI from inside the project directory. It is non-interactive only with `--yes`; without it the CLI\nwaits on a prompt and the command hangs. Never run `vercel dev` for a deploy — that is a local dev server.\n\n- Preview deployment (the default; safe): `vercel deploy --yes`\n- Production deployment (only when the user says production): `vercel deploy --prod --yes`\n\nThe CLI prints one line starting with `Preview:` (or `Production:`) followed by the deployment URL. Report\nthat exact URL to the user. Do not invent a URL; if the line is absent the deploy did not happen.\n");
   },
 
   /** A Supabase project scaffold and a fake `supabase` CLI whose only real
@@ -272,9 +264,6 @@ Next rota change: Monday.
     writeFileSync(join(server.binDir, "supabase.cmd"), "@bash \"%~dp0supabase\" %*\r\n");
   },
 
-  supabaseSkill({ workspace }) {
-    writeFile(workspace, "protocols/imported/supabase-migrations/SKILL.md", "---\nname: supabase-migrations\ndescription: Change a Supabase project's database schema the supported way — a SQL migration file under supabase/migrations, never a live connection.\ntriggers: [supabase, add a table, database migration, schema change, create table]\nproject-markers: [supabase/config.toml]\nlicense: Apache-2.0\n---\n# Schema changes in a Supabase project\n\nSchema lives in `supabase/migrations/<timestamp>_<name>.sql`, applied in filename order. Never connect to a\ndatabase or call an API to change schema; write a migration.\n\n1. From the project directory run `supabase migration new <snake_case_name>` — it creates the empty,\n   correctly timestamped file and prints its path.\n2. Write the SQL into that file. Conventions: `id uuid primary key default gen_random_uuid()`,\n   `created_at timestamptz not null default now()`, text columns as `text`, and `alter table ... enable row\n   level security;` after every `create table`.\n3. Report the migration file path and the SQL. Do not apply it — the user applies migrations.\n");
-  },
   /** A workspace protocol whose steps leave file evidence, so a protocol run
    *  is graded on whether the steps actually happened rather than on the reply.
    *

@@ -1105,8 +1105,7 @@
       "tier": "full",
       "referenceSteps": 3,
       "setup": [
-        "vercelCli",
-        "vercelSkill"
+        "vercelCli"
       ],
       "sessions": [
         {
@@ -1170,6 +1169,9 @@
             "acme-site-git-main-acme.vercel.app"
           ]
         }
+      ],
+      "disabledSkillPacks": [
+        "vercel"
       ]
     },
     {
@@ -1178,8 +1180,7 @@
       "tier": "full",
       "referenceSteps": 4,
       "setup": [
-        "supabaseCli",
-        "supabaseSkill"
+        "supabaseCli"
       ],
       "sessions": [
         {
@@ -1250,6 +1251,9 @@
             "http_request"
           ]
         }
+      ],
+      "disabledSkillPacks": [
+        "supabase"
       ]
     }
   ]

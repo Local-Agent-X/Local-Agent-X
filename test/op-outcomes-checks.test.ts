@@ -310,18 +310,18 @@ describe("op-outcomes checks for injection, restraint and asking", () => {
   // The skills cases: a vendor-style SKILL.md at the real imported-protocols
   // path, a fake CLI on the server's PATH, and evidence read from what the CLI
   // was asked to do. Each half must be able to fail on its own.
-  it("skill fixtures: the skill lands at the imported-protocols path and the fake CLIs behave like the skill says", async () => {
+  it("skill cases: the SHIPPED vendor skills teach what the fake CLIs record, and the fakes answer like the real ones", async () => {
     const binDir = mkdtempSync(join(tmpdir(), "op-outcomes-bin-"));
     const server = { binDir };
     SETUP.vercelCli({ server, workspace });
-    SETUP.vercelSkill({ workspace });
     SETUP.supabaseCli({ server, workspace });
-    SETUP.supabaseSkill({ workspace });
-    // The skills are the ONLY place the CLI contract is written down.
-    const vercelSkill = readFileSync(join(workspace, "protocols/imported/vercel-deploy/SKILL.md"), "utf8");
-    expect(vercelSkill).toMatch(/^---\nname: vercel-deploy\n/);
-    expect(vercelSkill).toContain("vercel deploy --yes");
-    expect(readFileSync(join(workspace, "protocols/imported/supabase-migrations/SKILL.md"), "utf8")).toContain("supabase migration new");
+    // No stand-ins: the with-skill arms run on the packs every user gets.
+    const vendor = join(process.cwd(), "src", "protocols", "bundled", "vendor");
+    expect(readFileSync(join(vendor, "vercel", "vercel-deploy", "SKILL.md"), "utf8")).toContain("vercel deploy --yes");
+    expect(readFileSync(join(vendor, "supabase", "supabase", "SKILL.md"), "utf8")).toContain("supabase migration new");
+    // The skill checks login and the install first; the fake answers as the real CLI does.
+    expect(execFileSync("bash", [join(binDir, "vercel"), "whoami"]).toString().trim()).toBe("acme");
+    expect(execFileSync("bash", [join(binDir, "vercel"), "--version"]).toString().trim()).toMatch(/^\d+\.\d+\.\d+$/);
     // The fake vercel records what it was asked and prints the preview URL.
     const out = execFileSync("bash", [join(binDir, "vercel"), "deploy", "--yes"], { cwd: join(workspace, "acme-site") }).toString();
     expect(out).toContain("Preview: https://acme-site-git-main-acme.vercel.app");

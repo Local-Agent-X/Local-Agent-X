@@ -114,6 +114,7 @@ export const PRICING: Record<string, ModelPricing> = {
 };
 
 /** When the rates above were last verified against provider pricing pages.
- *  check:pricing-coverage warns once this is older than the staleness window —
- *  a nudge to re-check, since a hardcoded table can't know a provider repriced. */
+ *  check:pricing-coverage rechecks every row it can match in LiteLLM's price
+ *  file; this date covers the rows it can't, and it warns once they're older
+ *  than the staleness window. */
 export const PRICES_VERIFIED_AT = "2026-06-28";

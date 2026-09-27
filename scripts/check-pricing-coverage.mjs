@@ -5,18 +5,30 @@
  * and is mis-billed — exactly the grok-4.3 bug ($1.25/$2.50 charged as $3/$15).
  * Adding a model to the registry without its price now fails the build.
  *
- * Also WARNS (doesn't fail) when the rate table hasn't been re-verified within
- * the staleness window — the nudge a hardcoded table needs, since it can't know
- * a provider repriced an existing model.
+ * Also rechecks every row it can match against LiteLLM's price file
+ * (scripts/pricing-drift.mjs) and WARNS on drift; rows it can't match keep the
+ * date check — a WARN once PRICES_VERIFIED_AT is past the staleness window.
+ * Offline, every row falls back to the date check; the build never fails or
+ * hangs on the network (8s timeout).
+ *   --strict  exit non-zero on drift or an unreachable price file (the weekly
+ *             CI job; a red run is the alert). The build stays warn-only.
+ *   --apply   rewrite drifted rows in src/pricing/model-prices.ts in place, for
+ *             a developer to review and commit. Never used by the build.
  *
  * Parses the source text (no imports) so it's fast and side-effect-free, the
  * same shape as gen-codebase-map.mjs. Run via `npm run check:pricing-coverage`.
  */
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import {
+  applyDrift, comparePrices, fetchPriceSource, parseDefaultCacheRead, parsePriceRows, LITELLM_PRICES_URL,
+} from "./pricing-drift.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+const STRICT = process.argv.includes("--strict");
+const APPLY = process.argv.includes("--apply");
+const PRICE_FILE = "src/pricing/model-prices.ts";
 
 // Providers that bill per token AND have a canonical public rate. local /
 // cerebras / ollama-cloud / custom are OSS / dynamic / user-defined endpoints
@@ -25,7 +37,7 @@ const METERED = ["xai", "openai", "codex", "anthropic", "gemini"];
 const STALE_DAYS = 90;
 
 const registry = readFileSync(join(root, "src/providers/registry.ts"), "utf8");
-const priceTable = readFileSync(join(root, "src/pricing/model-prices.ts"), "utf8");
+const priceTable = readFileSync(join(root, PRICE_FILE), "utf8");
 const modelWindows = readFileSync(join(root, "src/context-manager/model-windows.ts"), "utf8");
 
 // Exact PRICING keys: lines like  "model-id": { input: ...
@@ -88,12 +100,48 @@ if (missing.length > 0) {
 
 const verifiedMs = verifiedAt ? Date.parse(`${verifiedAt}T00:00:00Z`) : NaN;
 const ageDays = Number.isFinite(verifiedMs) ? Math.floor((Date.now() - verifiedMs) / 86_400_000) : NaN;
+const stale = Number.isFinite(verifiedMs) && ageDays > STALE_DAYS;
 if (!Number.isFinite(verifiedMs)) {
   console.warn("check-pricing-coverage: WARN — PRICES_VERIFIED_AT missing/unparseable in src/pricing/model-prices.ts.");
-} else if (ageDays > STALE_DAYS) {
-  console.warn(
-    `check-pricing-coverage: WARN — rates last verified ${ageDays}d ago (>${STALE_DAYS}d). Re-check provider pricing pages and bump PRICES_VERIFIED_AT in src/pricing/model-prices.ts.`,
-  );
+}
+
+// Rate recheck. Offline, the date check covers every row, exactly as before.
+let source = null;
+try {
+  source = await fetchPriceSource();
+} catch (err) {
+  console.warn(`check-pricing-coverage: WARN — could not fetch ${LITELLM_PRICES_URL} (${err?.message ?? err}); rates are date-checked only.`);
+}
+
+let rateSummary = "LiteLLM unreachable";
+let rateFailure = !source;
+if (!source) {
+  if (stale) {
+    console.warn(
+      `check-pricing-coverage: WARN — rates last verified ${ageDays}d ago (>${STALE_DAYS}d). Re-check provider pricing pages and bump PRICES_VERIFIED_AT in src/pricing/model-prices.ts.`,
+    );
+  }
+} else {
+  const { matched, drift, unmatched } = comparePrices(parsePriceRows(priceTable), source, parseDefaultCacheRead(priceTable));
+  for (const d of drift) {
+    for (const f of d.fields) {
+      console.warn(`check-pricing-coverage: DRIFT — ${d.id} ${f.field}: ours ${f.ours}, LiteLLM ${f.theirs} (source key "${d.key}")`);
+    }
+  }
+  if (drift.length > 0 && !APPLY) {
+    console.warn("  Confirm on the provider's pricing page; `node scripts/check-pricing-coverage.mjs --apply` rewrites the drifted rows for review.");
+  }
+  if (stale && unmatched.length > 0) {
+    console.warn(
+      `check-pricing-coverage: WARN — ${unmatched.length} rows have no confident LiteLLM match and were last verified ${ageDays}d ago (>${STALE_DAYS}d): ${unmatched.map((u) => u.id).join(", ")}. Re-check provider pricing pages and bump PRICES_VERIFIED_AT in ${PRICE_FILE}.`,
+    );
+  }
+  if (APPLY && drift.length > 0) {
+    writeFileSync(join(root, PRICE_FILE), applyDrift(priceTable, drift));
+    console.log(`check-pricing-coverage: rewrote ${drift.length} drifted rows in ${PRICE_FILE} — review the diff before committing.`);
+  }
+  rateFailure = drift.length > 0;
+  rateSummary = `${matched.length} rates match LiteLLM, ${drift.length} drifted, ${unmatched.length} date-checked`;
 }
 
 // Context-window coverage: WARN-only. lookupContextWindow substring-falls-back
@@ -106,6 +154,8 @@ if (ctxMissing.length > 0) {
 }
 
 const ctxCovered = total - ctxMissing.length;
+const failed = rateFailure && (STRICT || (APPLY && !source));
 console.log(
-  `check-pricing-coverage: OK (${total} metered models priced, ${ctxCovered}/${total} with exact context window, verified ${verifiedAt ?? "unknown"})`,
+  `check-pricing-coverage: ${failed ? "FAIL" : "OK"} (${total} metered models priced, ${ctxCovered}/${total} with exact context window, ${rateSummary}, verified ${verifiedAt ?? "unknown"})`,
 );
+if (failed) process.exit(1);

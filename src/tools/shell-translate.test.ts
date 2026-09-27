@@ -60,6 +60,15 @@ describe("quotedGlobHint — a quoted glob rm never expands", () => {
     expect(quotedGlobHint('grep -r "TODO*" src')).toBeNull();
     expect(quotedGlobHint('find . -name "*.tmp"')).toBeNull();
   });
+
+  // Live 2026-09-26: a working `rm` drew "nothing was deleted" from an echo's
+  // `$?` elsewhere in the command, and the model re-deleted a file already gone.
+  it("reads only the rm step's arguments, and a quoted $? or $* is not a glob", () => {
+    expect(quotedGlobHint('node check.mjs; echo "exit=$?"; rm apps/web/src/__loc_probe.ts; echo "exit=$?"')).toBeNull();
+    expect(quotedGlobHint('rm -f "$*"')).toBeNull();
+    expect(quotedGlobHint('echo "*.tmp" && rm -f "tmp/*.tmp"')).toContain("literally named `*.tmp`");
+    expect(quotedGlobHint('sudo rm -f "tmp/*.log"')).toContain("`rm tmp/*.log`");
+  });
 });
 
 describe("windowsPathHint — a Windows path whose backslashes bash ate", () => {

@@ -18,7 +18,7 @@
 
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { shellWords } from "../tool-execution/shell-delete-targets.js";
+import { segments, shellWords } from "../tool-execution/shell-delete-targets.js";
 
 export type TargetShell = "powershell-51" | "pwsh-7" | "bash";
 
@@ -124,8 +124,13 @@ export function workspacePrefixHint(stderr: string, cwd: string, exists: (p: str
  * harm; a quoted glob elsewhere is usually deliberate.
  */
 export function quotedGlobHint(command: string): string | null {
-  if (!/(^|[\s;&|(])rm\s/.test(command)) return null;
-  const m = /(["'])([^"']*[*?][^"']*)\1/.exec(command);
+  // Only the rm step's own arguments, and `$?` / `$*` are parameters, not
+  // globs: `rm probe.ts; echo "exit=$?"` once drew "nothing was deleted" for a
+  // delete that worked, and the model re-deleted a file that was already gone.
+  const m = segments(command)
+    .filter((step) => /^(sudo\s+)?rm\s/.test(step))
+    .map((step) => /(["'])((?:[^"'$]|\$(?![?*]))*?(?<!\$)[*?][^"']*)\1/.exec(step))
+    .find((hit) => hit !== null);
   if (!m) return null;
   return `\`${m[0]}\` is quoted, so the shell did not expand the \`${m[2].match(/[*?]/)![0]}\` — rm looked for a file ` +
     `literally named \`${m[2].split(/[\\/]/).pop()}\`, and with -f a missing file is silent. Nothing was deleted. ` +

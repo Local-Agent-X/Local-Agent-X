@@ -166,6 +166,23 @@ describe("scanForSecrets — negatives (no new false positives)", () => {
   it("ordinary prose with no encoded runs stays clean", () => {
     expect(scanForSecrets("Meet me at 3pm to review the design doc, thanks.").clean).toBe(true);
   });
+
+  // `gh auth status` prints its token masked; the model must be able to read
+  // whether gh is logged in (2026-09-27: the whole output was withheld).
+  it("a masked credential display stays clean, a real or partly masked one does not", () => {
+    const ghStatus = [
+      "github.com",
+      "  ✓ Logged in to github.com account someone (keyring)",
+      "  - Active account: true",
+      "  - Git operations protocol: https",
+      `  - Token: gho_${"*".repeat(36)}`,
+      "  - Token scopes: 'gist', 'read:org', 'repo', 'workflow'",
+    ].join("\n");
+    expect(scanForSecrets(ghStatus).clean).toBe(true);
+    expect(scanForSecrets(`password: ${"•".repeat(16)}`).clean).toBe(true);
+    expect(scanForSecrets("token: 9f3kQ2mZ8xLp4Rv7Tw").clean).toBe(false);
+    expect(scanForSecrets("secret=ab12cd34ef56****").clean).toBe(false);
+  });
 });
 
 describe("scanForSecrets — round-3 encoding/normalization evasions (C3-6..19)", () => {

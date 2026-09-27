@@ -139,7 +139,10 @@ export const CREDENTIAL_PATTERNS: readonly CredentialPattern[] = [
   { type: "generic", name: "Password in URL", regex: /\b[a-z][a-z0-9+.-]{0,31}:\/\/[^\s:@/"']+:[^\s@/"']+@[^\s/"']+/gi },
   // Key list from CREDENTIAL_KEY_NAMES so this and the threat-scoring classifier
   // can never recognise different keys again (see that constant's doc comment).
-  { type: "generic", name: "Key-Value Secret", regex: new RegExp(`(?:${CREDENTIAL_KEY_NAMES})\\s*[:=]\\s*["']?([^\\s"',]{12,})`, "gi") },
+  // The value needs 8 characters that aren't mask characters: a masked display
+  // (`gh auth status` prints `Token: gho_****…`) carries only its public prefix,
+  // and withholding it hid the whole command's output from the model.
+  { type: "generic", name: "Key-Value Secret", regex: new RegExp(`(?:${CREDENTIAL_KEY_NAMES})\\s*[:=]\\s*["']?(?=(?:[*•]*[^\\s"',*•]){8})([^\\s"',]{12,})`, "gi") },
   { type: "generic", name: "Base64 Secret Assignment", regex: /(?:private[_-]?key|client[_-]?secret|signing[_-]?key)\s*[:=]\s*["']?([A-Za-z0-9+/=]{40,})/gi },
 ];
 

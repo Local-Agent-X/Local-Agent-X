@@ -274,6 +274,21 @@ describe("isResponseFormatRejection", () => {
   });
 });
 
+// Ollama's /v1 forces top_p 1.0 when a request omits it; a request that
+// carries a profile's top_p / presence_penalty puts them on the wire, and one
+// that does not (every cloud call) sends neither.
+describe("sampling on the wire", () => {
+  it("sends top_p and presence_penalty when the request carries them, and nothing otherwise", async () => {
+    createMock.mockResolvedValueOnce(fakeStream());
+    await collect(baseReq({ baseURL: "http://127.0.0.1:11434/v1", model: "qwen3.6:27b", temperature: 0.6, topP: 0.95, presencePenalty: 0 }));
+    expect(createMock.mock.calls[0][0]).toMatchObject({ temperature: 0.6, top_p: 0.95, presence_penalty: 0 });
+    createMock.mockResolvedValueOnce(fakeStream());
+    await collect(baseReq({ baseURL: "http://127.0.0.1:11434/v1", model: "qwen3.6:27b" }));
+    expect("top_p" in createMock.mock.calls[1][0]).toBe(false);
+    expect("presence_penalty" in createMock.mock.calls[1][0]).toBe(false);
+  });
+});
+
 // Usage reporting is requested from EVERY endpoint, not only known cloud
 // ones: local runs recorded zero tokens for months because the param was
 // withheld from Ollama, which honours it. A strict server that 400s on it

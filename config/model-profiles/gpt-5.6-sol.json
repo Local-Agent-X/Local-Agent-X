@@ -24,8 +24,8 @@
     "budgetMechanism": "native"
   },
   "sampling": {
-    "toolStep": { "temperature": null, "topP": null, "topK": null, "minP": null, "repeatPenalty": null },
-    "diverse": { "temperature": null, "topP": null, "topK": null, "minP": null, "repeatPenalty": null },
+    "toolStep": { "temperature": null, "topP": null, "topK": null, "minP": null, "repeatPenalty": null, "presencePenalty": null },
+    "diverse": { "temperature": null, "topP": null, "topK": null, "minP": null, "repeatPenalty": null, "presencePenalty": null },
     "source": "Codex subscription route; LAX sends no sampling overrides to it. Recorded, not tuned."
   },
   "maxTokens": {

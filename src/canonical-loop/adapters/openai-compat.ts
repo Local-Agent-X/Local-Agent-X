@@ -51,7 +51,7 @@ import { streamOnce, applyToolCallTextFallback } from "./openai-compat/stream-on
 import { assessOpenAiCompatPreflight, promptExceedsMeasuredWindow } from "./openai-compat/request-preflight.js";
 import { buildTurnTrace } from "./openai-compat/turn-trace.js";
 import { resolveStepReasoningEffort, type ThinkingMode } from "../step-effort.js";
-import { modelThinking } from "../../local-runtimes/model-profile.js";
+import { modelThinking, modelToolStepSampling } from "../../local-runtimes/model-profile.js";
 import { classifyModelStop } from "./model-stop.js";
 
 export { OPENAI_COMPAT_ADAPTER_NAME, OPENAI_COMPAT_ADAPTER_VERSION } from "./openai-compat/types.js";
@@ -119,6 +119,10 @@ export class OpenAICompatAdapter implements Adapter {
       input.tools.length > 0;
 
     const thinking = profileThinking(model, input);
+    // The model card's sampling, from the profile. Omitted fields go unsent,
+    // and a runtime default applies — which on Ollama's /v1 is top_p 1.0,
+    // not the Modelfile's 0.95, so a profile states it.
+    const sampling = model ? modelToolStepSampling(model) : null;
     const req: ProviderRequest = {
       apiKey,
       baseURL,
@@ -134,7 +138,9 @@ export class OpenAICompatAdapter implements Adapter {
         description: t.description ?? "",
         parameters: (t.inputSchema as Record<string, unknown>) ?? {},
       })) as ProviderRequest["tools"],
-      temperature: this.opts.temperature ?? 0.7,
+      temperature: sampling?.temperature ?? this.opts.temperature ?? 0.7,
+      ...(sampling?.topP != null ? { topP: sampling.topP } : {}),
+      ...(sampling?.presencePenalty != null ? { presencePenalty: sampling.presencePenalty } : {}),
       maxTokens: this.opts.maxTokens,
       reasoningEffort: resolveStepReasoningEffort(
         input.stepEffortHint,

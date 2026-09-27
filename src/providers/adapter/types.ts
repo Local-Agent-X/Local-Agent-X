@@ -40,6 +40,10 @@ export interface ProviderRequest {
   messages: ChatCompletionMessageParam[];
   tools: ToolDefinition[];
   temperature?: number;
+  /** Nucleus sampling. Sent only when set: Ollama's /v1 forces 1.0 when a
+   *  request omits it, overriding the Modelfile — a model profile supplies it. */
+  topP?: number;
+  presencePenalty?: number;
   maxTokens?: number;
   /** Suppress LOCAL_DEFAULT_MAX_TOKENS for this request: the caller measured
    *  the loaded window and found no completion budget left (see

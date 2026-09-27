@@ -38,11 +38,16 @@ describe("bundled profiles", () => {
   it("describe today's behaviour, so adopting them changes nothing", () => {
     expect(resolveModelProfile("qwen3.6:27b")!.maxToolsExposed).toBe(30);
     expect(resolveModelProfile("qwen3:8b")!.maxToolsExposed).toBe(8);
-    expect(resolveModelProfile("qwen3.6:27b")!.sampling.toolStep.temperature).toBe(0.7);
-    // thinking.mode is the ONE field that no longer describes today's
-    // behaviour: Phase 1 recorded the observed "all", and the Phase 2
-    // thinking-off experiment sets it deliberately. Pinned in its own test
-    // below, with the measurement that justifies the value.
+    // thinking.mode and sampling no longer describe the Phase 1 behaviour:
+    // both are set deliberately, each pinned in its own test with its reason.
+  });
+
+  it("sampling is the model card's thinking-mode values, which the runtime would not apply on its own", () => {
+    // Ollama's /v1 forces top_p 1.0 when a request omits it (openai/openai.go),
+    // so the Modelfile's 0.95 never reached the model; the 27B's Modelfile
+    // presence_penalty 1.5 is the card's value for thinking OFF.
+    expect(resolveModelProfile("qwen3.6:27b")!.sampling.toolStep).toMatchObject({ temperature: 0.6, topP: 0.95, presencePenalty: 0 });
+    expect(resolveModelProfile("qwen3:8b")!.sampling.toolStep).toMatchObject({ temperature: 0.6, topP: 0.95 });
   });
 
   it("is null for a model with no profile", () => {

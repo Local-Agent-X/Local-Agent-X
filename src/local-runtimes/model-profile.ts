@@ -38,6 +38,8 @@ const SamplingSchema = z.object({
   topK: z.number().int().nullable(),
   minP: z.number().nullable(),
   repeatPenalty: z.number().nullable(),
+  // Optional so a user profile written before the field existed still loads.
+  presencePenalty: z.number().nullable().optional(),
 }).strict();
 
 export const ModelProfileSchema = z.object({
@@ -280,6 +282,12 @@ export function modelStablePrefix(modelId: string, ctx: ModelDefaultsContext = {
  *  a profile that cannot be read costs a warning, never the turn. */
 export function modelThinking(modelId: string): ModelProfile["thinking"] | null {
   return profileOrNull(modelId, "no declared thinking settings")?.thinking ?? null;
+}
+
+/** The sampling a tool-loop step sends, or null without a profile. A null
+ *  field is left out of the request (the runtime's own default applies). */
+export function modelToolStepSampling(modelId: string): ModelProfile["sampling"]["toolStep"] | null {
+  return profileOrNull(modelId, "no declared sampling")?.sampling.toolStep ?? null;
 }
 
 /** The window the declared profile measured, or null without a profile. Used

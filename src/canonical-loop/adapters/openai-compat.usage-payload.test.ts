@@ -108,7 +108,8 @@ describe("openai-compat turn trace", () => {
     expect(trace.baseURL).toBe("http://127.0.0.1:11434/v1");
     expect(trace.request.systemPrompt).toBe("You are LAX.");
     expect(trace.request.tools.map((t) => t.name)).toEqual(["read_file"]);
-    expect(trace.request.temperature).toBe(0.2);
+    // The model profile's card value outranks the generic setting (0.2 here).
+    expect(trace.request.temperature).toBe(0.6);
     expect(trace.request.sent).toEqual({ model: "qwen3:8b", temperature: 0.2, max_tokens: 16384, tools: ["read_file"] });
     expect((trace.request.messages[0] as { role: string }).role).toBe("user");
     expect(trace.response.rawText).toBe(tagged);
@@ -121,5 +122,36 @@ describe("openai-compat turn trace", () => {
     expect(trace.response.error).toBeNull();
     expect(trace.timing.modelMs).toBeGreaterThanOrEqual(0);
     expect(Date.parse(trace.timing.endedAt)).toBeGreaterThanOrEqual(Date.parse(trace.timing.startedAt));
+  });
+});
+
+describe("openai-compat sampling from the model profile", () => {
+  // Ollama's /v1 forces top_p 1.0 when a request omits it, overriding the
+  // Modelfile's 0.95; the profile carries the model card's values instead.
+  const run = async (model: string) => {
+    streamMock.mockImplementation(async function* () {
+      yield { type: "text" as const, delta: "ok" };
+      yield { type: "done" as const, stopReason: "stop" };
+    });
+    const adapter = createOpenAICompatAdapter({ model, baseURL: "http://127.0.0.1:11434/v1", apiKey: "k", temperature: 0.2 });
+    await adapter.runTurn({ opId: "op-sampling", turnIdx: 0, messages: [{ messageId: "m1", role: "user", content: { text: "hi" } }], tools: [] }, () => {});
+    return streamMock.mock.calls.at(-1)![0] as { temperature?: number; topP?: number; presencePenalty?: number };
+  };
+
+  it("the 27B sends its card's thinking-mode values: temperature 0.6, top_p 0.95, presence_penalty 0", async () => {
+    expect(await run("qwen3.6:27b")).toMatchObject({ temperature: 0.6, topP: 0.95, presencePenalty: 0 });
+  });
+
+  it("the 8B sends temperature 0.6 and top_p 0.95, and leaves presence_penalty to the runtime", async () => {
+    const req = await run("qwen3:8b");
+    expect(req).toMatchObject({ temperature: 0.6, topP: 0.95 });
+    expect(req.presencePenalty).toBeUndefined();
+  });
+
+  it("a model with no profile sends exactly what it did before", async () => {
+    const req = await run("nobody:1b");
+    expect(req.temperature).toBe(0.2);
+    expect(req.topP).toBeUndefined();
+    expect(req.presencePenalty).toBeUndefined();
   });
 });

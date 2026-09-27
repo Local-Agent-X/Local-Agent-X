@@ -25,20 +25,22 @@
   },
   "sampling": {
     "toolStep": {
-      "temperature": 0.7,
-      "topP": null,
+      "temperature": 0.6,
+      "topP": 0.95,
       "topK": null,
       "minP": null,
-      "repeatPenalty": null
+      "repeatPenalty": null,
+      "presencePenalty": null
     },
     "diverse": {
       "temperature": 0.7,
       "topP": null,
       "topK": null,
       "minP": null,
-      "repeatPenalty": null
+      "repeatPenalty": null,
+      "presencePenalty": null
     },
-    "source": "LAX default temperature 0.7 (config.temperature) on every turn as of 2026-09-19; Modelfile ships temperature 0.6, top_k 20, top_p 0.95, repeat_penalty 1. Sampling per turn type is a Phase 2 experiment."
+    "source": "Qwen3-8B card, thinking mode: temperature 0.6, top_p 0.95, top_k 20, min_p 0; do not use greedy decoding. top_p is sent on the wire because Ollama /v1 forces 1.0 when omitted; top_k and min_p come from the Modelfile. https://huggingface.co/Qwen/Qwen3-8B (2026-09-27)"
   },
   "maxTokens": {
     "toolCall": 16384,

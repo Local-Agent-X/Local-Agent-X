@@ -113,6 +113,8 @@ export class OpenAIHttpAdapter extends BaseAdapter {
       ...(opts.includeTools ? { tools: toOpenAITools(req.tools) } : {}),
       ...(opts.includeTools && openaiToolChoice ? { tool_choice: openaiToolChoice } : {}),
       ...(opts.includeTemperature ? { temperature: req.temperature ?? 0.7 } : {}),
+      ...(opts.includeTemperature && req.topP !== undefined ? { top_p: req.topP } : {}),
+      ...(req.presencePenalty !== undefined ? { presence_penalty: req.presencePenalty } : {}),
       ...(opts.includeMaxTokens && resolvedMaxTokens !== undefined
         ? { max_tokens: resolvedMaxTokens }
         : {}),

@@ -1,6 +1,6 @@
 /**
  * Build gate: every selectable model on a metered cloud provider must have an
- * EXACT rate in src/cost-tracker.ts PRICING. Without this, a real model that
+ * EXACT rate in src/pricing/model-prices.ts PRICING. Without this, a real model that
  * isn't in the table silently prefix-matches the wrong tier (or the $3 default)
  * and is mis-billed — exactly the grok-4.3 bug ($1.25/$2.50 charged as $3/$15).
  * Adding a model to the registry without its price now fails the build.
@@ -25,14 +25,14 @@ const METERED = ["xai", "openai", "codex", "anthropic", "gemini"];
 const STALE_DAYS = 90;
 
 const registry = readFileSync(join(root, "src/providers/registry.ts"), "utf8");
-const costTracker = readFileSync(join(root, "src/cost-tracker.ts"), "utf8");
+const priceTable = readFileSync(join(root, "src/pricing/model-prices.ts"), "utf8");
 const modelWindows = readFileSync(join(root, "src/context-manager/model-windows.ts"), "utf8");
 
 // Exact PRICING keys: lines like  "model-id": { input: ...
 const priced = new Set();
-for (const m of costTracker.matchAll(/^\s*["']([^"']+)["']:\s*\{\s*input:/gm)) priced.add(m[1]);
+for (const m of priceTable.matchAll(/^\s*["']([^"']+)["']:\s*\{\s*input:/gm)) priced.add(m[1]);
 
-const verifiedAt = (costTracker.match(/PRICES_VERIFIED_AT\s*=\s*["']([^"']+)["']/) || [])[1];
+const verifiedAt = (priceTable.match(/PRICES_VERIFIED_AT\s*=\s*["']([^"']+)["']/) || [])[1];
 
 // Exact MODEL_CONTEXTS keys from src/context-manager/model-windows.ts. A missing
 // key isn't fatal (lookupContextWindow substring-falls-back to a safe default),
@@ -80,7 +80,7 @@ if (total === 0) {
 }
 
 if (missing.length > 0) {
-  console.error("check-pricing-coverage: FAIL — metered models with no exact price in src/cost-tracker.ts PRICING:");
+  console.error("check-pricing-coverage: FAIL — metered models with no exact price in src/pricing/model-prices.ts PRICING:");
   for (const m of missing) console.error(`  - ${m}`);
   console.error("\nAdd each model's real rate to PRICING (verify against the provider's pricing page), then bump PRICES_VERIFIED_AT.");
   process.exit(1);
@@ -89,10 +89,10 @@ if (missing.length > 0) {
 const verifiedMs = verifiedAt ? Date.parse(`${verifiedAt}T00:00:00Z`) : NaN;
 const ageDays = Number.isFinite(verifiedMs) ? Math.floor((Date.now() - verifiedMs) / 86_400_000) : NaN;
 if (!Number.isFinite(verifiedMs)) {
-  console.warn("check-pricing-coverage: WARN — PRICES_VERIFIED_AT missing/unparseable in src/cost-tracker.ts.");
+  console.warn("check-pricing-coverage: WARN — PRICES_VERIFIED_AT missing/unparseable in src/pricing/model-prices.ts.");
 } else if (ageDays > STALE_DAYS) {
   console.warn(
-    `check-pricing-coverage: WARN — rates last verified ${ageDays}d ago (>${STALE_DAYS}d). Re-check provider pricing pages and bump PRICES_VERIFIED_AT in src/cost-tracker.ts.`,
+    `check-pricing-coverage: WARN — rates last verified ${ageDays}d ago (>${STALE_DAYS}d). Re-check provider pricing pages and bump PRICES_VERIFIED_AT in src/pricing/model-prices.ts.`,
   );
 }
 

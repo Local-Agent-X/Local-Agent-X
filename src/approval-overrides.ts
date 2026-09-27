@@ -46,6 +46,11 @@ export const ALWAYS_ASK_SITES: readonly AlwaysAskSite[] = [
     what: "releasing a quarantined browser download into the workspace",
     why: "The quarantine is the user's own boundary between 'the agent fetched a file' and 'that file is loose in my workspace'. One explicit yes per file, per release.",
   },
+  {
+    file: "tool-execution/unnamed-delete-preauth.ts",
+    what: "deleting a file the user's request never named, or a folder, while the user is present",
+    why: "The request is the user's mandate: it names what they asked to be removed, and a file outside it was never part of their instruction. A permissive profile governs how the agent carries out the request, not what the request covers. Only the attended path asks; with no one to answer, the profile governs file deletes and folders are refused.",
+  },
 ];
 
 /** The one site that is NOT here on purpose: the sensitive-page ACTION gate in

@@ -35,7 +35,7 @@ export function isScreenExemptAgentCode(filePath: string): boolean {
 
 export const readTool: ToolDefinition = {
   name: "read",
-  compactDescription: "Read a file with line numbers. It comes back whole when it fits; if the result says it continues, read again with the offset it names. Don't chunk a short file with limit.",
+  compactDescription: "Read a file with line numbers. It comes back whole when it fits; if the result says it continues, read again with the offset it names; do NOT chunk a short file with limit.",
   description:
     "Read a file from the filesystem, with line numbers. A file comes back whole when it fits in one result; when it does not, the result shows the lines that fit and names the offset to continue from — read again with that offset. Do not chunk a short file with offset/limit yourself.",
   readOnly: true,

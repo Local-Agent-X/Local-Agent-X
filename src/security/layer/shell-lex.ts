@@ -67,9 +67,22 @@ export function tokenizeCommand(segment: string): string[] {
 // Best-effort like the rest of this module: no operator-precedence parsing,
 // subshell/backslash-escape handling — enough to isolate each command position.
 export function splitShellSegments(command: string): string[] {
-  const segments: string[] = [];
+  return shellSegments(command).map((s) => s.text);
+}
+
+/** The separator that PRECEDED a segment (null for the first). `|&` is bash's
+ *  pipe-with-stderr, so it is a pipe, not a pipe followed by a background `&`. */
+export type SegmentJoin = "|" | "|&" | "||" | "&&" | ";" | "&" | "\n";
+export interface ShellSegment { text: string; after: SegmentJoin | null }
+
+/** splitShellSegments, keeping which separator started each segment — a rule
+ *  about what a command is PIPED into needs to know it was a pipe. */
+export function shellSegments(command: string): ShellSegment[] {
+  const segments: ShellSegment[] = [];
   let cur = "";
+  let after: SegmentJoin | null = null;
   let quote: string | null = null;
+  const cut = (join: SegmentJoin) => { segments.push({ text: cur, after }); cur = ""; after = join; };
   for (let i = 0; i < command.length; i++) {
     const c = command[i];
     if (quote) {
@@ -83,20 +96,18 @@ export function splitShellSegments(command: string): string[] {
       continue;
     }
     const next = command[i + 1];
-    if ((c === "&" && next === "&") || (c === "|" && next === "|")) {
-      segments.push(cur);
-      cur = "";
+    if ((c === "&" && next === "&") || (c === "|" && (next === "|" || next === "&"))) {
+      cut((c + next) as SegmentJoin);
       i++; // consume the second operator char
       continue;
     }
     if (c === "|" || c === ";" || c === "&" || c === "\n") {
-      segments.push(cur);
-      cur = "";
+      cut(c as SegmentJoin);
       continue;
     }
     cur += c;
   }
-  segments.push(cur);
+  segments.push({ text: cur, after });
   return segments;
 }
 

@@ -207,9 +207,13 @@ describe("shell task-artifact delete guard — re-parse depth bound (MAX_REPARSE
 		expectArtifactBlock(`bash -c "bash -c 'rm ${REGISTERED}'"`);
 	});
 
-	it("ALLOWS a TRIPLE-nested body — pass-through at the documented two-level re-lex bound", () => {
+	// The path guard still stops re-lexing at two levels; a third level used to
+	// pass through unseen. The command walk (shell-command-rules.ts) now refuses
+	// any shell nested past what it walks, so the body never runs unchecked.
+	it("REFUSES a TRIPLE-nested body — past the command walk's nesting bound", () => {
 		const levelA = `bash -c ${oneToken(`bash -c 'rm ${REGISTERED}'`)}`;
 		const d = evaluateShellCommandAndPaths(`bash -c ${oneToken(levelA)}`, ctx);
-		expect(d.allowed, d.reason).toBe(true);
+		expect(d.allowed).toBe(false);
+		expect(d.reason).toMatch(/nested more than 2 deep/);
 	});
 });

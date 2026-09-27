@@ -34,7 +34,7 @@
  * it; rows carrying untrusted-content markers are refused for the same reason.
  */
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
-import { statSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { basename } from "node:path";
 import { resolveAgentPath } from "../workspace/paths.js";
 import { folderFileCount } from "../tools/delete-folder.js";
@@ -149,6 +149,14 @@ function agentCreated(sessionId: string, path: string): boolean {
   try { return isTaskArtifact(sessionId, resolveAgentPath(path)); } catch { return false; /* unresolvable path: not provably the agent's */ }
 }
 
+/** A delete_file target with nothing on disk deletes nothing: the tool answers
+ *  "not found", so there is nothing to ask about. Live 2026-09-26: a card asked
+ *  the user to approve deleting a probe file the agent's own `rm` had already
+ *  removed. An unresolvable path is not provably absent and still asks. */
+function absent(path: string): boolean {
+  try { return !existsSync(resolveAgentPath(path)); } catch { return false; }
+}
+
 /** Was the file created after `since`? Linux is excluded: where a filesystem has
  *  no birth time, Node may report the change time instead, which would make an
  *  old file edited this request look new. */
@@ -185,6 +193,7 @@ export function unnamedDeletes(
   const trusted = !!scope.sessionId && !scope.untrustedSession;
   for (const tc of toolCalls) {
     for (const path of deleteTargetsOf(tc)) {
+      if (tc.name === GATED_DELETE_TOOL && absent(path)) continue;
       const folderFiles = tc.name === GATED_DELETE_TOOL ? folderTarget(path) : null;
       if (folderFiles !== null) out.push({ id: tc.id, path, folderFiles });
       else if (userNamedFile(userText, path)) continue;

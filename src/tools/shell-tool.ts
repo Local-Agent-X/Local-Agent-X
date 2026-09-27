@@ -7,6 +7,7 @@ import { resolveWindowsShell, recordAvSuspectKill, isLikelyAvKill, buildSanitize
 import { shellProxyEnv } from "./shell-proxy-env.js";
 import { killProcessGroup } from "../process-tree-kill.js";
 import { workspaceRoot } from "../config.js";
+import { resolveSecretEnv, secretEnvOf } from "./shell-secret-env.js";
 
 export const bashTool: ToolDefinition = {
   name: "bash",
@@ -33,6 +34,11 @@ export const bashTool: ToolDefinition = {
     type: "object",
     properties: {
       command: { type: "string", description: "The shell command to execute" },
+      secret_env: {
+        type: "object",
+        description: "Vault secrets for this command as environment variables: { ENV_VAR: SECRET_NAME }, e.g. { \"SUPABASE_ACCESS_TOKEN\": \"SUPABASE_TOKEN\" }. The value goes into the process environment only — reference it as $ENV_VAR or let the CLI read it — and is scrubbed from the output. Never put {{SECRET_NAME}} in the command text.",
+        additionalProperties: { type: "string" },
+      },
       timeout: {
         type: "number",
         description: "Timeout in milliseconds (default 120000 = 2 min)",
@@ -52,6 +58,13 @@ export const bashTool: ToolDefinition = {
     // Guarded sandbox gets the egress-proxy env (the sanctioned route);
     // every other mode gets {} — see shell-proxy-env.ts for the rationale.
     const sanitizedEnv = buildSanitizedEnv(await shellProxyEnv());
+    let secretEnv;
+    try { secretEnv = secretEnvOf(args); } catch (e) { return err((e as Error).message); }
+    const secrets = secretEnv ? resolveSecretEnv(secretEnv) : null;
+    if (secrets && "missing" in secrets) {
+      return err(`secret_env: not in the vault: ${secrets.missing.join(", ")}. Ask the user for it with request_secrets, then retry.`);
+    }
+    const scrub = secrets ? secrets.scrub : (text: string) => text;
 
     const isWin = process.platform === "win32";
     // Resolve the Windows shell ONCE so translation and spawn agree on it. A
@@ -73,6 +86,7 @@ export const bashTool: ToolDefinition = {
 
     const sandboxMode = getSandboxMode();
     if (sandboxMode === "docker") {
+      if (secrets) return err("secret_env is not available in the Docker sandbox: the container gets no host secrets.");
       const sandboxStart = Date.now();
       const result = execInSandbox(cmd);
       const sandboxDuration = Date.now() - sandboxStart;
@@ -131,7 +145,7 @@ export const bashTool: ToolDefinition = {
         // operate on the wrapped process exactly as before.
         const spawned = wrapSpawnForSandbox(shell, shellArgs);
         const child = spawn(spawned.cmd, spawned.args, {
-          env: sanitizedEnv,
+          env: secrets ? { ...sanitizedEnv, ...secrets.env } : sanitizedEnv,
           cwd,
           windowsHide: true,
           stdio: ["ignore", "pipe", "pipe"],
@@ -150,7 +164,7 @@ export const bashTool: ToolDefinition = {
 
         const killTimer = setTimeout(() => {
           killTree();
-          settle(resolveP, { kind: "timeout", durationMs: Date.now() - startMs, stdout, stderr });
+          settle(resolveP, { kind: "timeout", durationMs: Date.now() - startMs, stdout: scrub(stdout), stderr: scrub(stderr) });
         }, timeout);
 
         const MAX_OUTPUT = 10 * 1024 * 1024;
@@ -197,7 +211,7 @@ export const bashTool: ToolDefinition = {
           // the latest line, not a glob of overwrites.
           const combined = (stdout + stderr).slice(-PROGRESS_TAIL_CHARS * 4);
           const lastLine = combined.split(/\r|\n/).filter(s => s.trim()).slice(-1)[0] || combined.trim();
-          const message = lastLine.slice(-PROGRESS_TAIL_CHARS);
+          const message = scrub(lastLine).slice(-PROGRESS_TAIL_CHARS);
           if (!message) return;
           try { onEvent({ type: "tool_progress", toolName: "bash", toolCallId, message }); } catch { /* best-effort */ }
         };
@@ -233,7 +247,7 @@ export const bashTool: ToolDefinition = {
           if (looksLikeAvKill) {
             recordAvSuspectKill(onEvent);
           }
-          settle(resolveP, { kind: "exit", code, stdout, stderr, durationMs: elapsed, avSuspect: looksLikeAvKill });
+          settle(resolveP, { kind: "exit", code, stdout: scrub(stdout), stderr: scrub(stderr), durationMs: elapsed, avSuspect: looksLikeAvKill });
         });
       });
 

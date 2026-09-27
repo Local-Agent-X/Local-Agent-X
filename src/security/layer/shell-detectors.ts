@@ -89,7 +89,7 @@ export function detectObfuscation(command: string): string | null {
 export function detectSecretPlaceholder(command: string): string | null {
   const m = command.match(/\{\{([A-Z][A-Z0-9_]*)\}\}/);
   if (!m) return null;
-  return `Blocked: {{${m[1]}}} secret placeholders are not resolved in shell commands (that would leak the secret into argv / process listings). Use http_request — it injects {{SECRET_NAME}} into headers off-argv. For git over HTTPS the token is supplied via the credential helper, never the URL.`;
+  return `Blocked: {{${m[1]}}} secret placeholders are not resolved in shell commands (that would leak the secret into argv / process listings). For a CLI, pass it as an environment variable instead: bash secret_env: { "ENV_VAR": "${m[1]}" } and reference $ENV_VAR (the value never enters the command text or your context). For an API, use http_request with {{SECRET_NAME}} in a header. For git over HTTPS the token is supplied via the credential helper, never the URL.`;
 }
 
 // Hard-block heredoc + inline-script writes targeting the repo. Workers were

@@ -162,6 +162,13 @@ export function computeArgsFingerprint(
     return typeof args.action === "string" ? args.action : "";
   }
 
+  // A vault secret handed to a command: "always allow" covers this program
+  // with these secrets, never every secret (secret-env-approval.ts).
+  if (tool === "use_secret") {
+    const secrets = Array.isArray(args.secrets) ? args.secrets.map(String).sort().join(",") : "";
+    return `${String(args.program ?? "")}::${secrets}`;
+  }
+
   return "*";
 }
 

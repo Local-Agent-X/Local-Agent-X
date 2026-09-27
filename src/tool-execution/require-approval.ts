@@ -34,6 +34,7 @@ import { hasExternalIngestion } from "../data-lineage/external.js";
 import { classifyShellTier, isShellTierTool } from "./shell-approval-tier.js";
 import { getSandboxStatus } from "../sandbox/index.js";
 import { currentHumanText, takeUnnamedDeleteDecision, UNNAMED_DELETE_DECLINED_TEXT, UNNAMED_DELETE_USE_TRASH_TEXT } from "./unnamed-delete-gate.js";
+import { secretEnvGate } from "./secret-env-approval.js";
 
 export const requireApprovalPhase: Phase = async (ctx) => {
   const promotion = describeMemoryPromotionRequest(
@@ -102,6 +103,14 @@ export const requireApprovalPhase: Phase = async (ctx) => {
       metadata: { layer: "approval", userHint: declined ? USER_HINTS.declined : USER_HINTS.policy },
     };
     return terminate(ctx, { rendered: "model", result, allowed: false });
+  }
+
+  // A vault secret handed to a command (bash secret_env) is the profile's
+  // `secrets` rule, decided before any fast path (secret-env-approval.ts).
+  const secretUse = await secretEnvGate(ctx);
+  if (secretUse.kind === "blocked") return terminate(ctx, { rendered: "model", result: secretUse.result, allowed: false });
+  if (secretUse.kind === "denied") {
+    return terminate(ctx, { rendered: "model", result: buildDenialResult(ctx.tc.name, secretUse.reason), allowed: false });
   }
 
   // Tier-0 shell fast-path — the biggest autonomy win. A genuinely-safe shell

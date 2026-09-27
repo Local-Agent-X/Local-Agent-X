@@ -15,7 +15,9 @@ let root: string;
 let ws: string;
 
 beforeAll(() => {
-  root = realpathSync(mkdtempSync(join(tmpdir(), "lax-rm-inside-")));
+  // .native expands a Windows 8.3 short name: the windows-latest runner's TEMP
+  // is C:\Users\RUNNER~1\…, and a `~` anywhere makes an operand unprovable.
+  root = realpathSync.native(mkdtempSync(join(tmpdir(), "lax-rm-inside-")));
   ws = join(root, "workspace");
   mkdirSync(join(ws, "client-data", "build-cache", "chunks"), { recursive: true });
   writeFileSync(join(ws, "client-data", "build-cache", "chunks", "a.js"), "");

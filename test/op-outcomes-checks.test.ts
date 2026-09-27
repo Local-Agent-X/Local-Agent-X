@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 // @ts-expect-error — plain ESM eval module without type declarations
 import { SETUP, runCheck, snapshotBefore, closeChecks } from "../eval/op-outcomes/checks.mjs";
+import { browserAvailable } from "../src/browser/test-browser-available.js";
 
 const cases = JSON.parse(readFileSync(join("eval", "op-outcomes", "cases.json"), "utf8")).cases as Array<{
   id: string; setup?: string[]; checks: Array<Record<string, unknown>>;
@@ -45,7 +46,8 @@ async function grade(id: string, overrides: Record<string, unknown> = {}, before
 afterAll(async () => { await closeChecks(); });
 
 describe("op-outcomes evidence checks", () => {
-  it("match-original-site: fails on the planted footer, passes once centered", async () => {
+  // renderedCss drives a real headless page; CI has no browser binaries (see test-browser-available.ts).
+  it.skipIf(!browserAvailable())("match-original-site: fails on the planted footer, passes once centered", async () => {
     expect((await grade("match-original-site")).every((r: { ok: boolean }) => r.ok)).toBe(false);
     const css = join(workspace, "bellavista-clone", "styles.css");
     writeFileSync(css, readFileSync(css, "utf8").replace("justify-content: flex-start", "justify-content: center"));
@@ -93,7 +95,7 @@ describe("op-outcomes evidence checks", () => {
     expect((await grade("setup-account-not-build", { fixture: { since: () => [submit] }, toolsUsed: ["build_app"] }))[1].ok).toBe(false);
   });
 
-  it("multi-page-site-match: every one of the five differences must be fixed", async () => {
+  it.skipIf(!browserAvailable())("multi-page-site-match: every one of the five differences must be fixed", async () => {
     expect((await grade("multi-page-site-match")).some((r: { ok: boolean }) => r.ok)).toBe(false);
     const css = join(workspace, "vistawell-clone", "styles.css");
     writeFileSync(css, readFileSync(css, "utf8")

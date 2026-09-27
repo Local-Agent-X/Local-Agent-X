@@ -43,7 +43,7 @@ describe("cost-tracker: getPricing", () => {
   it("returns exact pricing for a known model", async () => {
     const { getPricing } = await load();
     expect(getPricing("claude-opus-4-8")).toEqual({ input: 5, output: 25 });
-    expect(getPricing("gpt-4o-mini")).toEqual({ input: 0.15, output: 0.6 });
+    expect(getPricing("gpt-4o-mini")).toEqual({ input: 0.15, output: 0.6, cacheRead: 0.5 });
   });
 
   it("fuzzy-matches a known prefix", async () => {

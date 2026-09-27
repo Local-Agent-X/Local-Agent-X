@@ -21,7 +21,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { Audience, ToolDefinition } from "../src/types.js";
 import { unifiedRegistry } from "../src/tools/registry.js";
-import { augmentFromToolSearch } from "../src/canonical-loop/chat-tool-dispatcher.js";
+import { augmentFromToolSearch } from "../src/canonical-loop/tool-augmentation.js";
 import { getToolsForOp, unregisterToolsForOp } from "../src/canonical-loop/runtime.js";
 
 const registered: string[] = [];

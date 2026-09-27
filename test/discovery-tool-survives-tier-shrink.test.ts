@@ -13,7 +13,8 @@
 // not exist, was told to call tool_search, and did not have that either. The
 // deck shipped with no images and the user read it as the model lying.
 import { describe, it, expect } from "vitest";
-import { shrinkToolsForTier, maxToolsForTier, ESSENTIAL_TOOLS_ORDER, DISCOVERY_TOOL, type ModelTier } from "../src/model-tiers.js";
+import type { ModelTier } from "../src/model-tiers.js";
+import { shrinkToolsForTier, maxToolsForTier, ESSENTIAL_TOOLS_ORDER, DISCOVERY_TOOL } from "../src/tools/tier-tool-set.js";
 
 interface FakeTool { name: string; description: string; parameters?: Record<string, unknown> }
 const tool = (name: string): FakeTool => ({ name, description: `${name} does a thing.` });

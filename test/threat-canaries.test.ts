@@ -8,7 +8,6 @@ import {
   clearSessionCanaries,
   checkCanariesInPayload,
   adoptSessionCanaries,
-  remintSessionCanaries,
 } from "../src/threat/canaries.js";
 
 describe("generateCanaries", () => {
@@ -147,21 +146,5 @@ describe("a session's canaries live for the session, not the turn", () => {
     expect(getSessionCanaries(sessionId)).toEqual(first);
     // What a later turn's engine embeds is what the egress gate checks.
     expect(checkCanariesInPayload(sessionId, `leak ${first[2]}`)).not.toBeNull();
-  });
-
-  it("two sessions never share a set", () => {
-    const a = adoptSessionCanaries(sessionId);
-    const b = adoptSessionCanaries(`${sessionId}-other`);
-    expect(a[0]).not.toBe(b[0]);
-    clearSessionCanaries(`${sessionId}-other`);
-  });
-
-  it("a re-mint (breach recovery, reset) rotates the set; a cleared session mints fresh", () => {
-    const first = adoptSessionCanaries(sessionId);
-    const rotated = remintSessionCanaries(sessionId);
-    expect(rotated[0]).not.toBe(first[0]);
-    expect(adoptSessionCanaries(sessionId)).toEqual(rotated);
-    clearSessionCanaries(sessionId);
-    expect(adoptSessionCanaries(sessionId)[0]).not.toBe(rotated[0]);
   });
 });

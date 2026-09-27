@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { ToolDefinition } from "../src/types.js";
-import { augmentFromToolSearch } from "../src/canonical-loop/chat-tool-dispatcher.js";
+import { augmentFromToolSearch } from "../src/canonical-loop/tool-augmentation.js";
 
 // Mock the runtime so registerToolsForOp is a spy we can assert on.
 vi.mock("../src/canonical-loop/runtime.js", () => ({

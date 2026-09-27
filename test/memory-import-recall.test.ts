@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import Database from "better-sqlite3";
 import { recallImportsByDate, listNearbyImportDates } from "../src/memory/import-recall.js";
 import { getSchemaVersion, migrateSchema } from "../src/memory/index-schema.js";
+import { CURRENT_SCHEMA_VERSION } from "../src/memory/index-schema-migrations.js";
 import { postProcess } from "../src/memory/index-search/post-process.js";
 import { DEFAULT_MEMORY_CONFIG, type MemorySearchResult } from "../src/memory/types.js";
 
@@ -185,7 +186,7 @@ describe("import provenance migration", () => {
       expect(JSON.parse(rows[2].metadata)).toMatchObject({
         source_type: "import", session_id: "import-id", trust_status: "untrusted",
       });
-      expect(getSchemaVersion(legacyDb)).toBe(13);
+      expect(getSchemaVersion(legacyDb)).toBe(CURRENT_SCHEMA_VERSION);
 
       const snapshot = JSON.stringify(rows);
       migrateSchema(legacyDb, getSchemaVersion(legacyDb));

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { toolCapTierForProvider, GEMINI_STRONG_TOOL_CAP, classifyModel } from "../src/model-tiers.js";
+import { classifyModel } from "../src/model-tiers.js";
+import { toolCapTierForProvider, GEMINI_STRONG_TOOL_CAP } from "../src/tools/tier-tool-set.js";
 
 // Regression guard (live 2026-06-11): Gemini 2.5/3.x classify as "strong" tier,
 // which has no tool cap — so LAX sent its OpenAI-compat endpoint all ~98 tools.

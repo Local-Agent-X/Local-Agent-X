@@ -13,7 +13,7 @@
 
 import { describe, it, expect } from "vitest";
 import { filterToolsForMessage } from "../src/agent-request/tool-filter.js";
-import { ESSENTIAL_TOOLS_ORDER, shrinkToolsForTier } from "../src/model-tiers.js";
+import { ESSENTIAL_TOOLS_ORDER, shrinkToolsForTier } from "../src/tools/tier-tool-set.js";
 import type { Audience, ToolDefinition } from "../src/types.js";
 
 // Stub tool list mirroring real tools, with audiences pre-set the same

@@ -13,7 +13,7 @@ type OpenHandlerResult = { action: "allow" | "deny"; overrideBrowserWindowOption
 interface FakeContents {
 	wc: WebContents;
 	/** Invoke the installed window-open handler as Electron would. */
-	open(): OpenHandlerResult;
+	open(url?: string): OpenHandlerResult;
 	/** Fire did-create-window for a child, as Electron does after an allow. */
 	createWindow(child: FakeWindow): void;
 }
@@ -26,17 +26,17 @@ interface FakeWindow {
 }
 
 function fakeContents(): FakeContents {
-	let openHandler: (() => OpenHandlerResult) | null = null;
+	let openHandler: ((details: { url: string }) => OpenHandlerResult) | null = null;
 	const listeners = new Map<string, (...args: unknown[]) => void>();
 	const wc = {
-		setWindowOpenHandler: (fn: () => OpenHandlerResult) => { openHandler = fn; },
+		setWindowOpenHandler: (fn: (details: { url: string }) => OpenHandlerResult) => { openHandler = fn; },
 		on: (event: string, fn: (...args: unknown[]) => void) => { listeners.set(event, fn); },
 	} as unknown as WebContents;
 	return {
 		wc,
-		open: () => {
+		open: (url = "https://accounts.google.com/o/oauth2/v2/auth") => {
 			if (!openHandler) throw new Error("no window-open handler installed");
-			return openHandler();
+			return openHandler({ url });
 		},
 		createWindow: (child) => {
 			const fn = listeners.get("did-create-window");

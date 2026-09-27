@@ -1,0 +1,32 @@
+name: Pricing recheck
+
+# Weekly recheck of src/pricing/model-prices.ts against LiteLLM's price file.
+# A red run IS the alert: it means a provider repriced a model we bill (or the
+# price file became unreachable). Fix by confirming on the provider's pricing
+# page, then `node scripts/check-pricing-coverage.mjs --apply` locally, review
+# the diff and commit. This job never commits or opens PRs.
+
+on:
+  schedule:
+    # Mondays 10:00 UTC — an hour after the weekly security run.
+    - cron: '0 10 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pricing:
+    name: Pricing drift
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      # Dependency-free script: no npm ci needed.
+      - name: Recheck model prices (strict)
+        run: node scripts/check-pricing-coverage.mjs --strict

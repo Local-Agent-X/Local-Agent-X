@@ -17,15 +17,14 @@
  *     coupling two-way, or that let one pass block on the other, is starvation.
  *     This was the one done-list item with no coverage.
  *
- * (b) The write→read loop closes. A protocol authored through the fork's own
- *     narrowed `protocol` tool → authorProtocol() → custom.json is subsequently
- *     SURFACED by getLearnedProtocolSuggestion for a matching request. That is
- *     the campaign's entire premise, and chunk D tests only the write half
- *     while chunk F tests only the read half against hand-built fixtures.
+ * (b) The write→read loop closes through the user. A procedure the fork
+ *     proposes through its narrowed `protocol` tool becomes a learned DRAFT —
+ *     never a custom.json entry — and is not served until the user keeps it;
+ *     then getLearnedProtocolSuggestion surfaces it for a matching request.
+ *     The review itself waits until the user's next turn in that chat.
  *
- * (c) Provenance survives the whole path — authored agent → persisted → loaded
- *     → surfaced → archived → unarchived → surfaced again, still "agent".
- *     protocols-archive.test.ts covers store→store; the retrieval hops are new.
+ * (c) Discard sticks: a rejected proposal is not served and cannot be proposed
+ *     again during its cooldown.
  *
  * (d) The trigger's guards hold AT THE SEAM: a refused trigger schedules
  *     NEITHER pass, and an accepted one schedules exactly one review under the
@@ -93,33 +92,27 @@ vi.mock("../src/canonical-loop/store.js", () => ({
   readOpMessages: () => store.messages,
 }));
 
-// Deterministic and off disk. The learned tier is not what this file is about;
-// an empty candidate list makes every suggestion below attributable to the
-// custom tier the fork actually writes.
-vi.mock("../src/cognition/cross-session-learning/index.js", () => ({
-  default: { recordOutcome: vi.fn(), getCandidates: () => [] },
-}));
 
 const { requestSkillReviewForOp } = await import("../src/canonical-loop/turn-loop/record-outcome.js");
 const {
-  requestSkillReview, runSkillReviewPass, registerSkillReviewRunner,
-  peekSkillReviewQueue, buildReviewTools, _resetSkillReviewQueue,
+  runSkillReviewPass, registerSkillReviewRunner, buildReviewTools, _resetSkillReviewQueue,
 } = await import("../src/server/background-jobs/skill-review.js");
+const { requestSkillReview, peekSkillReviewQueue, noteSessionTurn, SKILL_REVIEW_SETTLE_MS } =
+  await import("../src/server/background-jobs/skill-review-queue.js");
+const { default: learningService } = await import("../src/cognition/cross-session-learning/service.js");
+const { default: crossSessionLearner } = await import("../src/cognition/cross-session-learning/index.js");
 const { requestEndOfTurnExtraction, drainPendingExtractions, _internals: coalescer } =
   await import("../src/memory/extraction-coalescer.js");
 const { hasCurateSignal, resetSession, _internals: nudge } =
   await import("../src/memory/curate-nudge.js");
 const { getLastWriteTick } = await import("../src/memory/write-safely.js");
-const { createProtocol, loadCustomProtocols, saveCustomProtocols, editProtocol } =
-  await import("../src/protocols/builder.js");
+const { loadCustomProtocols, saveCustomProtocols } = await import("../src/protocols/builder.js");
 const { getAllProtocols } = await import("../src/protocols/index.js");
-const { archiveProtocol, unarchiveProtocol } = await import("../src/protocols/archive.js");
 const { getLearnedProtocolSuggestion } = await import("../src/protocols/learned-suggestion.js");
 import type { Op } from "../src/ops/types.js";
 import type { SkillReviewDeps } from "../src/server/background-jobs/skill-review.js";
 import type { EndOfTurnContext } from "../src/memory/end-of-turn-write.js";
 import type { MemoryIndex } from "../src/memory/index-core.js";
-import type { Protocol } from "../src/protocols/types.js";
 
 // ── Session ids used across the file ──
 const CHAT = "sess-xseam-chat";
@@ -201,27 +194,6 @@ function stubTool(name: string): ToolDefinition {
   return { name, description: `stub ${name}`, parameters: { type: "object", properties: {} }, execute: async () => ({ content: "" }) };
 }
 
-/**
- * A `protocol` base tool wired to the REAL edit primitive.
- *
- * The fork's create path never reaches the base tool (it goes straight to
- * authorProtocol), but its EDIT path delegates, so the base has to actually
- * persist or the patch half of the loop cannot be observed end to end. This
- * mirrors what the collapsed `protocol` family's edit action does; assembling
- * the real family would drag in the whole tool registry for no added coverage
- * of the seam under test.
- */
-const writingProtocolBase: ToolDefinition = {
-  name: "protocol",
-  description: "base",
-  parameters: { type: "object", properties: {} },
-  execute: async (args) => {
-    const p = args.params as { name: string; updates: Partial<Protocol> };
-    editProtocol(p.name, p.updates);
-    return { content: "edited" };
-  },
-};
-
 function fakeDeps(over: Partial<SkillReviewDeps> = {}): SkillReviewDeps {
   return {
     config: getRuntimeConfig(),
@@ -229,7 +201,7 @@ function fakeDeps(over: Partial<SkillReviewDeps> = {}): SkillReviewDeps {
     secretsStore: {},
     security: {},
     toolPolicy: {},
-    allAgentTools: [writingProtocolBase, stubTool("bash")],
+    allAgentTools: [stubTool("protocol"), stubTool("bash")],
     ...over,
   } as unknown as SkillReviewDeps;
 }
@@ -243,16 +215,22 @@ function forkCalls(...calls: Array<Record<string, unknown>>): void {
   });
 }
 
-/** The protocol the fork writes in the write→read tests. */
-const PO_CREATE = {
-  action: "create",
+/** The procedure the fork proposes in the write→read tests. */
+const PO_PROPOSE = {
+  action: "propose",
   params: {
     name: "thriveventory_purchase_order",
     description: "Create a purchase order in Thriveventory from a supplier invoice",
     triggers: ["thriveventory purchase order", "thrive po from invoice"],
     body: "## Preconditions\n- Logged into Thriveventory\n\n## Steps\n1. External > Create PO — never the AI import.",
+    outcome: "verified",
   },
 };
+
+/** The user sent a newer message in the chat — what releases a queued review. */
+function userRepliedInChat(): void {
+  noteSessionTurn(CHAT, "op-xseam-next");
+}
 /** A request phrased the way the user actually phrases it. Distinctive terms:
  *  file / thriveventory / purchase / order / vendor / invoice. */
 const PO_REQUEST = "file the thriveventory purchase order from this vendor invoice";
@@ -266,6 +244,9 @@ beforeAll(() => {
 beforeEach(() => {
   store.turns = [];
   store.messages = [];
+  rmSync(join(TEMP_LAX, "cross-session-data.json"), { force: true });
+  rmSync(join(TEMP_LAX, "protocols", "learned"), { recursive: true, force: true });
+  crossSessionLearner.refresh();
   _resetSkillReviewQueue();
   coalescer.reset();
   resetSession(CHAT);
@@ -345,8 +326,9 @@ describe("(a) the memory pass and the skill-review pass cannot starve each other
     await flushTrigger();
     expect(hasCurateSignal(CHAT)).toBe(true);
 
-    forkCalls(PO_CREATE);
-    registerSkillReviewRunner(fakeDeps());
+    forkCalls(PO_PROPOSE);
+    userRepliedInChat();
+    registerSkillReviewRunner(fakeDeps({ notify: vi.fn() }));
     await expect(runSkillReviewPass()).resolves.toMatchObject({ reviewed: 1, failed: 0 });
 
     expect(hasCurateSignal(CHAT)).toBe(true);
@@ -359,7 +341,7 @@ describe("(a) the memory pass and the skill-review pass cannot starve each other
     commitPurchaseOrderOp();
     requestSkillReviewForOp(chatOp(), CHAT, TERMINAL_TURN);
     await flushTrigger();
-    const queuedTranscript = peekSkillReviewQueue()[0].transcript;
+    const queuedOp = peekSkillReviewQueue()[0].opId;
 
     // Model the memory pass's only observable side effect on shared state:
     // end-of-turn-write.ts resets curate-nudge when it runs.
@@ -373,9 +355,10 @@ describe("(a) the memory pass and the skill-review pass cannot starve each other
 
     // The review is still there, unchanged, and still runnable.
     expect(peekSkillReviewQueue()).toHaveLength(1);
-    expect(peekSkillReviewQueue()[0].transcript).toBe(queuedTranscript);
-    forkCalls(PO_CREATE);
-    registerSkillReviewRunner(fakeDeps());
+    expect(peekSkillReviewQueue()[0].opId).toBe(queuedOp);
+    forkCalls(PO_PROPOSE);
+    userRepliedInChat();
+    registerSkillReviewRunner(fakeDeps({ notify: vi.fn() }));
     await expect(runSkillReviewPass()).resolves.toMatchObject({ reviewed: 1, failed: 0 });
   });
 
@@ -392,7 +375,8 @@ describe("(a) the memory pass and the skill-review pass cannot starve each other
 
     const hung = deferred<{ messages: unknown[] }>();
     mocks.runAgent.mockImplementation(() => hung.promise);
-    registerSkillReviewRunner(fakeDeps());
+    userRepliedInChat();
+    registerSkillReviewRunner(fakeDeps({ notify: vi.fn() }));
     const review = runSkillReviewPass();
     await vi.waitFor(() => expect(mocks.runAgent).toHaveBeenCalledTimes(1));
 
@@ -416,10 +400,11 @@ describe("(a) the memory pass and the skill-review pass cannot starve each other
     // Still in flight — and holding the coalescer's single per-session slot.
     expect(coalescer.states.get(CHAT)?.inProgress).toBe(true);
 
-    forkCalls(PO_CREATE);
-    registerSkillReviewRunner(fakeDeps());
+    forkCalls(PO_PROPOSE);
+    userRepliedInChat();
+    registerSkillReviewRunner(fakeDeps({ notify: vi.fn() }));
     await expect(runSkillReviewPass()).resolves.toMatchObject({ reviewed: 1, failed: 0 });
-    expect(loadCustomProtocols().map((p) => p.name)).toEqual(["thriveventory_purchase_order"]);
+    expect(learningService.list().map((item) => item.name)).toEqual(["thriveventory_purchase_order"]);
 
     hung.resolve("completed");
     await drainPendingExtractions();
@@ -434,17 +419,18 @@ describe("(a) the memory pass and the skill-review pass cannot starve each other
     // cannot: the allowlist is `protocol` and nothing else.
     const registry = ["remember", "memory_save", "memory_update_profile", "memory_set_user_field",
       "memory_consolidate", "memory_search", "write", "edit", "bash"].map(stubTool);
-    expect(buildReviewTools([...registry, writingProtocolBase], CHAT).map((t) => t.name)).toEqual(["protocol"]);
+    expect(buildReviewTools([...registry, stubTool("protocol")], { reviewedSessionId: CHAT, toolSequence: PO_TOOLS }).map((t) => t.name)).toEqual(["protocol"]);
 
     const tickBefore = getLastWriteTick("tool");
     commitPurchaseOrderOp();
     requestSkillReviewForOp(chatOp(), CHAT, TERMINAL_TURN);
     await flushTrigger();
-    forkCalls(PO_CREATE);
-    registerSkillReviewRunner(fakeDeps());
+    forkCalls(PO_PROPOSE);
+    userRepliedInChat();
+    registerSkillReviewRunner(fakeDeps({ notify: vi.fn() }));
     await expect(runSkillReviewPass()).resolves.toMatchObject({ reviewed: 1, failed: 0 });
 
-    // A whole review, including a protocol write, moved the memory write clock
+    // A whole review, including a proposal, moved the memory write clock
     // by nothing at all.
     expect(getLastWriteTick("tool")).toBe(tickBefore);
     requestEndOfTurnExtraction(eotCtx());
@@ -457,11 +443,10 @@ describe("(a) the memory pass and the skill-review pass cannot starve each other
 // (b) the write→read loop closes
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("(b) a protocol the fork authors is surfaced on a later matching request", () => {
-  it("closes the loop end to end: trigger → queue → fork → authorProtocol → suggestion", async () => {
+describe("(b) a procedure the fork proposes is served only once the user keeps it", () => {
+  it("closes the loop end to end: trigger → deferred queue → later turn → fork → draft → Keep → suggestion", async () => {
     // Before: the shipped catalog has nothing for this request. Asserting this
-    // first is what makes the assertion after the review attributable to the
-    // write — without it the test would pass on a coincidental built-in match.
+    // first is what makes the assertion after Keep attributable to the draft.
     expect(getLearnedProtocolSuggestion(PO_REQUEST)).toBeNull();
 
     commitPurchaseOrderOp();
@@ -469,94 +454,64 @@ describe("(b) a protocol the fork authors is surfaced on a later matching reques
     await flushTrigger();
     expect(peekSkillReviewQueue()).toHaveLength(1);
 
-    forkCalls(PO_CREATE);
-    registerSkillReviewRunner(fakeDeps());
+    // The outcome is not known yet: no model runs.
+    forkCalls(PO_PROPOSE);
+    const notify = vi.fn();
+    registerSkillReviewRunner(fakeDeps({ notify }));
+    await expect(runSkillReviewPass()).resolves.toMatchObject({ reason: "waiting" });
+    expect(mocks.runAgent).not.toHaveBeenCalled();
+
+    // The user comes back to the same chat; that turn releases the review.
+    const reviewedTurns = store.turns;
+    store.turns = [{ turnIdx: 0, toolCallSummary: [], terminalReason: "done" }];
+    requestSkillReviewForOp(chatOp({ id: "op-xseam-later" }), CHAT, 0);
+    await flushTrigger();
+    store.turns = reviewedTurns;
     await expect(runSkillReviewPass()).resolves.toMatchObject({ reviewed: 1, failed: 0 });
 
-    // Write half landed, in the only tier that can carry provenance (F14).
-    const [saved] = loadCustomProtocols();
-    expect(saved.name).toBe("thriveventory_purchase_order");
-    expect(saved.source?.type).toBe("custom");
-    expect(saved.source?.authoredBy).toBe("agent");
-    expect(saved.source?.authoredFromSession).toBe(CHAT);
-
-    // Read half: the same request now resolves to it, unprompted.
-    const suggestion = getLearnedProtocolSuggestion(PO_REQUEST);
-    expect(suggestion?.name).toBe("thriveventory_purchase_order");
-    expect(suggestion?.nudge).toContain('protocol(action:"get"');
-    expect(suggestion?.nudge).toContain("thriveventory_purchase_order");
-  });
-
-  it("closes the loop for the PATCH path too, which the prompt prefers over create", async () => {
-    // "Patch the protocol that was actually used" is step 1 of the fork's
-    // instructions, so an in-place edit that retrieval cannot see would make
-    // the preferred path the dead one. (F1: nothing invalidated the search
-    // index on an in-place edit, and the count backstop cannot notice an edit.)
-    createProtocol({
-      name: "po_intake", description: "Placeholder", triggers: [],
-      steps: [], rules: [], learnablePreferences: [],
-      source: { type: "custom", authoredBy: "agent", authoredAt: 1000, authoredFromSession: CHAT },
-    });
+    // A draft, not a catalog entry: custom.json untouched, nothing served.
+    expect(loadCustomProtocols()).toEqual([]);
     expect(getLearnedProtocolSuggestion(PO_REQUEST)).toBeNull();
+    const [item] = learningService.list();
+    expect(item).toMatchObject({ name: "thriveventory_purchase_order", source: "reviewed", state: "candidate", activeVersionId: null });
+    expect(getAllProtocols().some((p) => p.name === item.id)).toBe(false);
 
-    forkCalls({
-      action: "edit",
-      params: {
-        name: "po_intake",
-        updates: {
-          description: "Create a purchase order in Thriveventory from a supplier invoice",
-          triggers: ["thriveventory purchase order", "thrive po from invoice"],
-        },
-      },
-    });
-    registerSkillReviewRunner(fakeDeps());
-    requestSkillReview({ sessionId: CHAT, toolSequence: PO_TOOLS, transcript: "t" });
-    await expect(runSkillReviewPass()).resolves.toMatchObject({ reviewed: 1, failed: 0 });
+    // The chat was told, with what Keep needs.
+    expect(notify).toHaveBeenCalledTimes(1);
+    const [sessionId, event] = notify.mock.calls[0];
+    expect(sessionId).toBe(CHAT);
+    expect(event).toMatchObject({ type: "learning_notice", id: item.id, name: "thriveventory_purchase_order", canReject: true, expectedActiveVersionId: null });
 
-    expect(getLearnedProtocolSuggestion(PO_REQUEST)?.name).toBe("po_intake");
-    // The patch left its trace without rewriting who authored the record.
-    const [patched] = loadCustomProtocols();
-    expect(patched.source?.authoredBy).toBe("agent");
-    expect(patched.source?.lastEditedBy).toBe("agent");
+    // Keep → activate. Now the learned tier serves it for the same request.
+    learningService.action(item.id, { action: "activate", versionId: event.versionId, expectedActiveVersionId: null });
+    expect(getLearnedProtocolSuggestion(PO_REQUEST)?.name).toBe(item.id);
+    const served = getAllProtocols().find((p) => p.name === item.id);
+    expect(served?.body).toContain("External > Create PO");
+    expect(served?.allowedTools).toEqual(["browser", "remember"]);
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// (c) provenance survives the whole path
-// ─────────────────────────────────────────────────────────────────────────────
+describe("(c) Discard sticks", () => {
+  it("a discarded proposal is never served, and the fork cannot propose it again during the cooldown", async () => {
+    forkCalls(PO_PROPOSE);
+    registerSkillReviewRunner(fakeDeps({ notify: vi.fn() }));
+    requestSkillReview({ sessionId: CHAT, opId: "op-xseam", toolSequence: PO_TOOLS, now: Date.now() - SKILL_REVIEW_SETTLE_MS });
+    commitPurchaseOrderOp();
+    await expect(runSkillReviewPass()).resolves.toMatchObject({ reviewed: 1 });
+    const [item] = learningService.list();
+    learningService.action(item.id, { action: "reject" });
 
-describe("(c) agent provenance survives author → surface → archive → unarchive", () => {
-  it("stays 'agent' across every hop, and the archive really does silence retrieval", async () => {
-    forkCalls(PO_CREATE);
-    registerSkillReviewRunner(fakeDeps());
-    requestSkillReview({ sessionId: CHAT, toolSequence: PO_TOOLS, transcript: "t" });
-    await expect(runSkillReviewPass()).resolves.toMatchObject({ reviewed: 1, failed: 0 });
-    const NAME = "thriveventory_purchase_order";
+    const results: string[] = [];
+    mocks.runAgent.mockImplementation(async (_m: string, _h: unknown, opts: { tools: ToolDefinition[] }) => {
+      results.push((await opts.tools[0].execute(PO_PROPOSE)).content);
+      return { messages: [] };
+    });
+    requestSkillReview({ sessionId: OTHER, opId: "op-xseam-other", toolSequence: PO_TOOLS, now: Date.now() - SKILL_REVIEW_SETTLE_MS });
+    await expect(runSkillReviewPass()).resolves.toMatchObject({ reviewed: 1 });
 
-    // 1. Authored + persisted.
-    expect(loadCustomProtocols().find((p) => p.name === NAME)?.source?.authoredBy).toBe("agent");
-    // 2. Loaded through the real read path (stampCustomSource must not clobber
-    //    an existing source; mergeByName must not rebuild the record).
-    expect(getAllProtocols().find((p) => p.name === NAME)?.source?.authoredBy).toBe("agent");
-    // 3. Surfaced.
-    expect(getLearnedProtocolSuggestion(PO_REQUEST)?.name).toBe(NAME);
-
-    // 4. Archived — this is the user's undo for autonomous authoring, so it has
-    //    to actually stop the protocol being pushed at the model. Nothing else
-    //    tests the archive↔retrieval seam.
-    expect(archiveProtocol(NAME, "user rejected the agent's work")!.protocol.source?.authoredBy).toBe("agent");
-    expect(getAllProtocols().find((p) => p.name === NAME)).toBeUndefined();
+    expect(results[0]).toContain("discarded");
+    expect(learningService.list()[0]).toMatchObject({ id: item.id, state: "rejected" });
     expect(getLearnedProtocolSuggestion(PO_REQUEST)).toBeNull();
-
-    // 5. Unarchived — recoverable, still legible as agent work, and suggestible
-    //    again. If provenance were rebuilt anywhere on this path the user would
-    //    lose the ability to tell agent work from their own after one restore.
-    const restored = unarchiveProtocol(NAME);
-    expect(restored.error).toBeUndefined();
-    expect(restored.restored?.source?.authoredBy).toBe("agent");
-    expect(restored.restored?.source?.authoredFromSession).toBe(CHAT);
-    expect(getAllProtocols().find((p) => p.name === NAME)?.source?.authoredBy).toBe("agent");
-    expect(getLearnedProtocolSuggestion(PO_REQUEST)?.name).toBe(NAME);
   });
 });
 
@@ -574,7 +529,7 @@ describe("(d) the trigger schedules both passes, or neither", () => {
     expect(queued).toHaveLength(1);
     expect(queued[0].sessionId).toBe(CHAT);
     expect([...queued[0].toolSequence]).toEqual(PO_TOOLS);
-    expect(queued[0].transcript).toContain("external-create-po");
+    expect(queued[0].opId).toBe("op-xseam");
     expect(hasCurateSignal(CHAT)).toBe(true);
   });
 

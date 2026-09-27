@@ -23,7 +23,10 @@
  *      session id, and the queue coalesces per session, so an unfiltered
  *      trigger lets a machine transcript overwrite the user's real
  *      conversation under the same key.
- *   6. A transcript render failure never reaches the user's turn.
+ *   6. A transcript render failure never reaches the user's turn — the
+ *      trigger renders nothing; the drain renders, after the outcome is known.
+ *   7. A later user turn in the same session releases the queued review, and
+ *      its user messages are rendered after the reviewed turn.
  *   7. The dead `long-task-completed` nudge slot actually fires.
  *   8. Secrets do not survive the per-entry clip.
  *
@@ -58,17 +61,17 @@ setRuntimeConfig({ ...ORIGINAL_CFG, workspace: TEMP_WORKSPACE } as LAXConfig);
 interface FixtureRow { turnIdx: number; seqInTurn: number; role: string; content: unknown; messageId: string }
 interface FixtureTurn { turnIdx: number; toolCallSummary?: Array<{ tool: string }>; observedTools?: string[]; terminalReason: string | null }
 
-const store: { turns: FixtureTurn[]; messages: FixtureRow[]; messagesThrow: boolean } = {
-  turns: [], messages: [], messagesThrow: false,
+const store: { turns: FixtureTurn[]; messages: FixtureRow[]; messagesThrow: boolean; byOp: Record<string, FixtureRow[]> } = {
+  turns: [], messages: [], messagesThrow: false, byOp: {},
 };
 /** Staged (pre-commit) op state — invisible to readers until commit(). */
 const staged: { turns: FixtureTurn[]; messages: FixtureRow[] } = { turns: [], messages: [] };
 
 vi.mock("../src/canonical-loop/store.js", () => ({
   readOpTurns: () => store.turns,
-  readOpMessages: () => {
+  readOpMessages: (opId: string) => {
     if (store.messagesThrow) throw new Error("simulated turn-artifact read failure");
-    return store.messages;
+    return store.byOp[opId] ?? store.messages;
   },
 }));
 
@@ -97,8 +100,8 @@ vi.mock("../src/cognition/cross-session-learning/index.js", () => ({
 const { requestSkillReviewForOp } =
   await import("../src/canonical-loop/turn-loop/record-outcome.js");
 const { renderOpTranscript } = await import("../src/canonical-loop/turn-loop/op-transcript.js");
-const { peekSkillReviewQueue, _resetSkillReviewQueue } =
-  await import("../src/server/background-jobs/skill-review.js");
+const { peekSkillReviewQueue, _clearSkillReviewQueue: _resetSkillReviewQueue } =
+  await import("../src/server/background-jobs/skill-review-queue.js");
 const { hasCurateSignal, resetSession } = await import("../src/memory/curate-nudge.js");
 const { recordExternalIngestion, clearExternalIngestion } =
   await import("../src/data-lineage/external.js");
@@ -195,6 +198,7 @@ beforeEach(() => {
   store.turns = [];
   store.messages = [];
   store.messagesThrow = false;
+  store.byOp = {};
   staged.turns = [];
   staged.messages = [];
   sessionForOp.value = "";
@@ -224,7 +228,8 @@ describe("skill-review trigger — enqueue decision", () => {
     expect(queued).toHaveLength(1);
     expect(queued[0].sessionId).toBe("sess-chat");
     expect([...queued[0].toolSequence]).toEqual(PO_SEQUENCE);
-    expect(queued[0].transcript).toContain("external-create-po");
+    expect(queued[0].opId).toBe("op-trigger-test");
+    expect(renderOpTranscript(queued[0].opId)).toContain("external-create-po");
   });
 
   it("a trivial op queues nothing", async () => {
@@ -318,7 +323,7 @@ describe("skill-review trigger — durability (never review an uncommitted turn)
     const queued = peekSkillReviewQueue();
     expect(queued).toHaveLength(1);
     expect([...queued[0].toolSequence]).toEqual(PO_SEQUENCE);
-    expect(queued[0].transcript).toContain("[TOOL] browser");
+    expect(renderOpTranscript(queued[0].opId)).toContain("[TOOL] browser");
   });
 
   it("an op with nothing committed at all queues nothing (triviality gate refuses first)", async () => {
@@ -379,7 +384,7 @@ describe("skill-review trigger — user-facing ops only", () => {
   it("a delegated op cannot overwrite the chat op's queued review", async () => {
     requestSkillReviewForOp(chatOp(), "sess-chat", TERMINAL_TURN);
     await flushTrigger();
-    expect(peekSkillReviewQueue()[0].transcript).toContain("external-create-po");
+    expect(peekSkillReviewQueue()[0].opId).toBe("op-trigger-test");
 
     // The worker terminates later, under the SAME session id.
     store.messages = [
@@ -391,8 +396,8 @@ describe("skill-review trigger — user-facing ops only", () => {
 
     const queued = peekSkillReviewQueue();
     expect(queued).toHaveLength(1);
-    expect(queued[0].transcript).toContain("external-create-po");
-    expect(queued[0].transcript).not.toContain("WORKER TASK");
+    expect(queued[0].opId).toBe("op-trigger-test");
+    expect(queued[0].followUpOpIds, "a worker turn is not the user's reply").toEqual([]);
   });
 });
 
@@ -416,14 +421,16 @@ describe("skill-review trigger — non-fatal", () => {
     expect(seen.map((e) => (e as Error)?.message ?? String(e))).toEqual([]);
   }
 
-  it("a transcript render failure neither throws, crashes, nor queues", async () => {
+  it("renders nothing at trigger time, so an unreadable transcript neither throws nor crashes the turn", async () => {
     await withNoUnhandledRejection(async () => {
       stagePurchaseOrder();
       commit();
       store.messagesThrow = true;
       expect(() => requestSkillReviewForOp(chatOp(), "sess-chat", TERMINAL_TURN)).not.toThrow();
       await flushTrigger();
-      expect(peekSkillReviewQueue()).toHaveLength(0);
+      // Queued on the durable turn rows alone; the drain renders, and a render
+      // that fails there fails that review (skill-review-fork.test.ts).
+      expect(peekSkillReviewQueue()).toHaveLength(1);
     });
   });
 
@@ -467,6 +474,49 @@ describe("skill-review trigger — long-task-completed nudge (F5)", () => {
     requestSkillReviewForOp(chatOp({ type: "research", lane: "background" }), "sess-chat", TERMINAL_TURN);
     await flushTrigger();
     expect(hasCurateSignal("sess-chat")).toBe(false);
+  });
+});
+
+describe("skill-review trigger — deferral until the outcome is known", () => {
+  it("a later chat turn in the same session is recorded as the queued review's follow-up", async () => {
+    stagePurchaseOrder();
+    commit();
+    requestSkillReviewForOp(chatOp(), "sess-chat", TERMINAL_TURN);
+    await flushTrigger();
+    expect(peekSkillReviewQueue()[0].followUpOpIds).toEqual([]);
+
+    // The user's next message is a trivial turn — not review-worthy itself,
+    // but it is the outcome evidence for the one waiting.
+    store.turns = [{ turnIdx: 0, toolCallSummary: [], observedTools: [], terminalReason: "done" }];
+    requestSkillReviewForOp(chatOp({ id: "op-later" }), "sess-chat", 0);
+    await flushTrigger();
+    const [queued] = peekSkillReviewQueue();
+    expect(queued.opId).toBe("op-trigger-test");
+    expect(queued.followUpOpIds).toEqual(["op-later"]);
+  });
+
+  it("a later turn in a DIFFERENT session releases nothing", async () => {
+    stagePurchaseOrder();
+    commit();
+    requestSkillReviewForOp(chatOp(), "sess-chat", TERMINAL_TURN);
+    await flushTrigger();
+    requestSkillReviewForOp(chatOp({ id: "op-elsewhere" }), "sess-browser", TERMINAL_TURN);
+    await flushTrigger();
+    expect(peekSkillReviewQueue().find((r) => r.sessionId === "sess-chat")?.followUpOpIds).toEqual([]);
+  });
+
+  it("the rendered transcript includes what the user said afterwards, and not the later op's replayed history", () => {
+    store.byOp["op-trigger-test"] = purchaseOrderMessages();
+    store.byOp["op-later"] = [
+      msg({ messageId: "hist-op-later-0-0-aaaaaa", role: "user", seqInTurn: 0, content: { text: "HISTORY-REPLAY create the PO" } }),
+      msg({ messageId: "um-op-later-0-1-bbbbbb", role: "user", seqInTurn: 1, content: { text: "that PO went through, thanks — do the next invoice the same way" } }),
+      msg({ role: "assistant", seqInTurn: 2, content: { text: "On it." } }),
+    ];
+    const text = renderOpTranscript("op-trigger-test", 12_000, ["op-later"]);
+    expect(text).toContain("external-create-po");
+    expect(text).toContain("[USER, LATER] that PO went through");
+    expect(text.indexOf("[USER, LATER]")).toBeGreaterThan(text.indexOf("external-create-po"));
+    expect(text).not.toContain("HISTORY-REPLAY");
   });
 });
 

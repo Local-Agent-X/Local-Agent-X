@@ -15,16 +15,20 @@ import {
   listCommittedLearnedOutcomes,
 } from "../../protocols/learned-effectiveness.js";
 import {
+  hasIndependentReviewedEvidence,
   isSafeRefinementVersion,
   isStrongerRefinement,
   selectSafetyRecovery,
 } from "../../protocols/learned-refinement.js";
 import { CrossSessionLearner, LearningPersistenceUnavailableError } from "./learner.js";
-import type { LearnedCandidate, LearnedCandidateState } from "./types.js";
+import { isReviewedProcedureCandidate, type LearnedCandidate, type LearnedCandidateState } from "./types.js";
 
 export interface LearningSummary {
   id: string;
   name: string;
+  /** "reviewed": proposed by the post-turn review fork; activates only on the
+   *  user's OK or independent evidence, never automatically. */
+  source: "observed" | "reviewed";
   state: LearnedCandidateState;
   confidence: number;
   updatedAt: string;
@@ -92,6 +96,9 @@ export class CrossSessionLearningService {
     const record = this.requireRecord(id);
     if (input.action === "activate") {
       const versionId = input.versionId ?? this.newestVersion(record).id;
+      if (isReviewedProcedureCandidate(candidate) && !this.hasToolEvidence(record, versionId)) {
+        throw new Error(`Learned procedure has no tool evidence yet: ${id}`);
+      }
       const active = activateLearnedProtocol({
         slug: id, versionId, expectedActiveVersionId: input.expectedActiveVersionId,
         reason: "Activated by user", timestamp: now,
@@ -131,7 +138,9 @@ export class CrossSessionLearningService {
 
     for (let candidate of this.learner.getCandidates()) {
       let record = this.recordFor(candidate.id);
+      const reviewed = isReviewedProcedureCandidate(candidate);
       if (["rejected", "rolled-back"].includes(candidate.state) && record?.state !== "active") continue;
+      if (!record && reviewed) continue;
       if (!record) {
         const rebuilt = this.learner.draftCandidate(candidate.id);
         record = loadLearnedProtocol(rebuilt.slug);
@@ -190,6 +199,22 @@ export class CrossSessionLearningService {
         changed = true;
       }
       changed = this.projectState(candidate.id, record, now, "Recovered cross-store state") || changed;
+      if (reviewed) {
+        if (record.state === "draft" && candidate.state === "candidate" && hasIndependentReviewedEvidence(candidate)
+          && this.hasToolEvidence(record, this.newestVersion(record).id)) {
+          record = activateLearnedProtocol({
+            slug: candidate.id,
+            versionId: this.newestVersion(record).id,
+            expectedActiveVersionId: record.activeVersionId,
+            reason: "Activated on independent evidence",
+            timestamp: now,
+          });
+          changed = this.projectState(candidate.id, record, now, "Activated on independent evidence") || changed;
+          signals.push(formatLearningCandidateNudge(this.requireCandidate(candidate.id), "autonomous"));
+          changed = true;
+        }
+        continue;
+      }
       if (mode === "autonomous" && record.state === "active" && !safetyRecoveredIds.has(candidate.id)) {
         const target = this.newestVersion(record);
         const activeVersionId = record.activeVersionId;
@@ -292,6 +317,7 @@ export class CrossSessionLearningService {
     return {
       id: candidate.id,
       name: candidate.suggestion.name,
+      source: isReviewedProcedureCandidate(candidate) ? "reviewed" : "observed",
       state: effectiveState,
       confidence: candidate.confidence,
       updatedAt: latest && Date.parse(latest) > candidate.updatedAt ? latest : new Date(candidate.updatedAt).toISOString(),
@@ -348,6 +374,13 @@ export class CrossSessionLearningService {
       .filter((version) => version.id !== activeId)
       .map((version) => [version.id, getVersionEffectiveness(record.slug, version.id)]));
     return selectSafetyRecovery(record, outcomes, priorMetrics);
+  }
+
+  /** A learned version confines the op that loads it to its recorded tools, so
+   *  a reviewed version with none recorded would block every call. */
+  private hasToolEvidence(record: LearnedProtocolRecord, versionId: string): boolean {
+    const tools = record.versions.find((version) => version.id === versionId)?.metadata.allowedTools;
+    return Array.isArray(tools) && tools.length > 0;
   }
 
   private wasSafetyRejected(record: LearnedProtocolRecord, versionId: string): boolean {

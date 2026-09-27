@@ -2,51 +2,32 @@ import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { isProxy } from "node:util/types";
 import { getLaxDir } from "../../lax-data-dir.js";
+import {
+  INVALID_PROPERTY, MISSING_PROPERTY, denseArray, exactKeys, hasEvidenceIdentity,
+  optional, ownDataValue, plainRecord, safeJson, stringArray,
+} from "./safe-shape.js";
 
-export type LearnedEvidenceClass = "workflow-tactic" | "terminal-telemetry";
-export type LearnedEvidenceAuthority = "cross-session-learning" | "canonical-operation";
+export { hasEvidenceIdentity, isSafeLearnedStringArray, readOwnEnumerableData } from "./safe-shape.js";
+
+export type LearnedEvidenceClass = "workflow-tactic" | "terminal-telemetry" | "reviewed-procedure";
+export type LearnedEvidenceAuthority = "cross-session-learning" | "canonical-operation" | "skill-review";
 
 export interface LearnedEvidenceIdentity { evidenceClass: LearnedEvidenceClass; authority: LearnedEvidenceAuthority; }
 interface PersistedLearnedEvidenceIdentity { evidenceClass?: LearnedEvidenceClass; authority?: LearnedEvidenceAuthority; }
 
 export const WORKFLOW_TACTIC_IDENTITY = { evidenceClass: "workflow-tactic", authority: "cross-session-learning" } as const satisfies LearnedEvidenceIdentity;
 export const TERMINAL_TELEMETRY_IDENTITY = { evidenceClass: "terminal-telemetry", authority: "canonical-operation" } as const satisfies LearnedEvidenceIdentity;
+/** A procedure the post-turn review fork proposed after reading a finished
+ *  turn and what the user said afterwards. Its evidence is the set of sessions
+ *  that proposed it, not terminal telemetry. */
+export const REVIEWED_PROCEDURE_IDENTITY = { evidenceClass: "reviewed-procedure", authority: "skill-review" } as const satisfies LearnedEvidenceIdentity;
 
-const MISSING_PROPERTY = Symbol("missing-property");
-const INVALID_PROPERTY = Symbol("invalid-property");
-
-function ownDataValue(value: unknown, key: PropertyKey): unknown {
-  if (!value || typeof value !== "object" || isProxy(value)) return INVALID_PROPERTY;
-  try {
-    const descriptor = Object.getOwnPropertyDescriptor(value, key);
-    if (!descriptor) return MISSING_PROPERTY;
-    return descriptor.enumerable && Object.hasOwn(descriptor, "value")
-      ? descriptor.value
-      : INVALID_PROPERTY;
-  } catch {
-    return INVALID_PROPERTY;
-  }
-}
-
-export function readOwnEnumerableData(value: unknown, key: PropertyKey): { ok: true; value: unknown } | { ok: false } {
-  const result = ownDataValue(value, key);
-  return result === MISSING_PROPERTY || result === INVALID_PROPERTY ? { ok: false } : { ok: true, value: result };
-}
-
-export function hasEvidenceIdentity(value: unknown, expected: LearnedEvidenceIdentity): boolean {
-  if (!value || typeof value !== "object" || isProxy(value)) return false;
-  try {
-    if (Array.isArray(value)) return false;
-    const expectedClass = ownDataValue(expected, "evidenceClass");
-    const expectedAuthority = ownDataValue(expected, "authority");
-    if (typeof expectedClass !== "string" || typeof expectedAuthority !== "string") return false;
-    const evidenceClass = Object.getOwnPropertyDescriptor(value, "evidenceClass");
-    const authority = Object.getOwnPropertyDescriptor(value, "authority");
-    return !!evidenceClass && !!authority && evidenceClass.enumerable === true && authority.enumerable === true
-      && Object.hasOwn(evidenceClass, "value") && Object.hasOwn(authority, "value")
-      && evidenceClass.value === expectedClass && authority.value === expectedAuthority;
-  } catch { return false; }
-}
+/** "unverified" marks a proposal carried over from the pre-draft catalog: it
+ *  keeps the procedure reviewable but never counts as independent evidence. */
+export type ReviewedProposalOutcome = "verified" | "corrected" | "unverified";
+export interface ReviewedProposal { sessionId: string; timestamp: number; outcome: ReviewedProposalOutcome; }
+export const MAX_REVIEWED_PROPOSALS = 50;
+export const REVIEWED_PROCEDURE_NAME = /^[a-z0-9][a-z0-9_]{1,47}$/;
 
 export interface ActionEntry extends PersistedLearnedEvidenceIdentity {
   opId?: string;
@@ -104,7 +85,9 @@ export const CANDIDATE_TRANSITIONS: Record<LearnedCandidateState, LearnedCandida
   archived: ["candidate"], "rolled-back": ["archived", "candidate"],
 };
 
-export function deriveCandidateId(type: DetectedPattern["type"], description: string, examples: string[]): string {
+export type CandidatePatternType = DetectedPattern["type"] | "procedure";
+
+export function deriveCandidateId(type: CandidatePatternType, description: string, examples: string[]): string {
   const normalized = description.trim().toLowerCase();
   const anchor = type === "time" ? normalized.replace(/ \(\d+ times\)$/, "")
     : normalized.match(/"([^"]+)"/)?.[1] ?? examples[0]?.trim().toLowerCase() ?? normalized;
@@ -112,12 +95,13 @@ export function deriveCandidateId(type: DetectedPattern["type"], description: st
 }
 
 export interface CandidateEvidenceSnapshot extends PersistedLearnedEvidenceIdentity {
-  patternType: DetectedPattern["type"];
+  patternType: CandidatePatternType;
   description: string;
   occurrences: number;
   lastSeen: number;
   examples: string[];
   outcomeStats?: NonNullable<DetectedPattern["outcomeStats"]>;
+  proposals?: ReviewedProposal[];
 }
 
 export interface CandidateTransition {
@@ -156,67 +140,6 @@ const STATES = new Set<LearnedCandidateState>(["candidate", "approved", "active"
 const PATTERNS = new Set<DetectedPattern["type"]>(["question", "task", "topic", "time", "workflow"]);
 const ACTION_KEYS = new Set(["evidenceClass", "authority", "opId", "sessionId", "type", "details", "timestamp", "outcome", "category", "tools", "model"]);
 const CANDIDATE_KEYS = new Set(["evidenceClass", "authority", "id", "state", "confidence", "suggestion", "evidence", "createdAt", "updatedAt", "rejectionCooldownUntil", "lastSurfacedAt", "lastSurfacedOccurrences", "surfaceCooldownUntil", "transitions"]);
-
-function plainRecord(value: unknown): value is Record<string, unknown> {
-  if (!value || typeof value !== "object" || isProxy(value)) return false;
-  try { return !Array.isArray(value) && [Object.prototype, null].includes(Object.getPrototypeOf(value)); }
-  catch { return false; }
-}
-
-function exactKeys(value: object, allowed: ReadonlySet<string>, required: readonly string[] = []): boolean {
-  try {
-    const keys = Reflect.ownKeys(value);
-    if (keys.some((key) => typeof key !== "string" || !allowed.has(key))) return false;
-    if (required.some((key) => !keys.includes(key))) return false;
-    return keys.every((key) => key === "length" || ownDataValue(value, key) !== INVALID_PROPERTY);
-  } catch { return false; }
-}
-
-function denseArray(value: unknown, maxLength = 5000): unknown[] | null {
-  if (!value || typeof value !== "object" || isProxy(value)) return null;
-  try {
-    if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) return null;
-    const length = Object.getOwnPropertyDescriptor(value, "length");
-    if (!length || !Object.hasOwn(length, "value") || !Number.isSafeInteger(length.value)
-      || length.value < 0 || length.value > maxLength) return null;
-    const keys = Reflect.ownKeys(value);
-    if (keys.length !== length.value + 1 || keys.some((key) => typeof key !== "string")) return null;
-    const copy: unknown[] = [];
-    for (let index = 0; index < length.value; index++) {
-      const entry = ownDataValue(value, String(index));
-      if (entry === MISSING_PROPERTY || entry === INVALID_PROPERTY) return null;
-      copy.push(entry);
-    }
-    return copy;
-  } catch { return null; }
-}
-
-function stringArray(value: unknown, maxLength = 1000): value is string[] {
-  const items = denseArray(value, maxLength);
-  return items !== null && items.every((item) => typeof item === "string");
-}
-
-export function isSafeLearnedStringArray(value: unknown): value is string[] { return stringArray(value); }
-
-function optional(value: object, key: string, valid: (entry: unknown) => boolean): boolean {
-  const entry = ownDataValue(value, key);
-  return entry === MISSING_PROPERTY || (entry !== INVALID_PROPERTY && entry !== undefined && valid(entry));
-}
-
-function safeJson(value: unknown, seen = new WeakSet<object>()): boolean {
-  if (value === null || typeof value === "string" || typeof value === "boolean") return true;
-  if (typeof value === "number") return Number.isFinite(value);
-  if (!value || typeof value !== "object" || isProxy(value) || seen.has(value)) return false;
-  seen.add(value);
-  const array = denseArray(value);
-  if (array) return array.every((entry) => safeJson(entry, seen));
-  if (!plainRecord(value)) return false;
-  try {
-    const keys = Reflect.ownKeys(value);
-    return keys.every((key) => typeof key === "string" && ownDataValue(value, key) !== INVALID_PROPERTY
-      && safeJson(ownDataValue(value, key), seen));
-  } catch { return false; }
-}
 
 function statsShape(value: unknown, occurrences: number): boolean {
   if (!plainRecord(value) || !exactKeys(value, new Set(["clean", "partial", "aborted", "successRate", "weightedSuccessRate", "distinctSessions"]), ["clean", "partial", "aborted", "successRate", "weightedSuccessRate", "distinctSessions"])) return false;
@@ -284,6 +207,51 @@ function transitionHistoryShape(entries: unknown[], state: LearnedCandidateState
 }
 
 function candidateShape(value: unknown): value is LearnedCandidate {
+  return candidateEnvelopeShape(value, evidenceShape);
+}
+
+function proposalShape(value: unknown): boolean {
+  const keys = ["sessionId", "timestamp", "outcome"];
+  if (!plainRecord(value) || !exactKeys(value, new Set(keys), keys)) return false;
+  const sessionId = ownDataValue(value, "sessionId"), timestamp = ownDataValue(value, "timestamp"), outcome = ownDataValue(value, "outcome");
+  return typeof sessionId === "string" && sessionId.length > 0 && sessionId.length <= 200
+    && typeof timestamp === "number" && Number.isFinite(timestamp)
+    && typeof outcome === "string" && ["verified", "corrected", "unverified"].includes(outcome);
+}
+
+export function reviewedProcedureDescription(name: string): string {
+  return `Reviewed procedure "${name}"`;
+}
+
+function reviewedEvidenceShape(value: unknown): boolean {
+  const keys = ["evidenceClass", "authority", "patternType", "description", "occurrences", "lastSeen", "examples", "proposals"];
+  if (!plainRecord(value) || !exactKeys(value, new Set(keys), keys)) return false;
+  const examples = denseArray(ownDataValue(value, "examples"), 1), proposals = denseArray(ownDataValue(value, "proposals"), MAX_REVIEWED_PROPOSALS);
+  const name = examples?.[0], occurrences = ownDataValue(value, "occurrences"), lastSeen = ownDataValue(value, "lastSeen");
+  return hasEvidenceIdentity(value, REVIEWED_PROCEDURE_IDENTITY)
+    && ownDataValue(value, "patternType") === "procedure"
+    && typeof name === "string" && REVIEWED_PROCEDURE_NAME.test(name)
+    && ownDataValue(value, "description") === reviewedProcedureDescription(name)
+    && proposals !== null && proposals.length >= 1 && proposals.every(proposalShape)
+    && occurrences === proposals.length
+    && typeof lastSeen === "number" && Number.isFinite(lastSeen);
+}
+
+function reviewedCandidateShape(value: unknown): value is LearnedCandidate {
+  if (!candidateEnvelopeShape(value, reviewedEvidenceShape)) return false;
+  const suggestion = ownDataValue(value, "suggestion"), config = ownDataValue(suggestion, "config");
+  const description = ownDataValue(suggestion, "description"), examples = ownDataValue(ownDataValue(value, "evidence"), "examples");
+  return ownDataValue(suggestion, "type") === "mission"
+    && ownDataValue(suggestion, "name") === (examples as string[])[0]
+    && typeof description === "string" && description.length <= 300 && !/[\r\n]/.test(description)
+    && plainRecord(config) && exactKeys(config, new Set(["patternType", "occurrences"]), ["patternType", "occurrences"]);
+}
+
+export function isReviewedProcedureCandidate(value: unknown): value is LearnedCandidate {
+  return hasEvidenceIdentity(value, REVIEWED_PROCEDURE_IDENTITY) && reviewedCandidateShape(value);
+}
+
+function candidateEnvelopeShape(value: unknown, evidenceValid: (evidence: unknown) => boolean): value is LearnedCandidate {
   if (!plainRecord(value) || !exactKeys(value, CANDIDATE_KEYS, ["id", "state", "confidence", "suggestion", "evidence", "createdAt", "updatedAt", "transitions"])) return false;
   const id = ownDataValue(value, "id"), state = ownDataValue(value, "state"), confidence = ownDataValue(value, "confidence");
   const suggestion = ownDataValue(value, "suggestion"), evidence = ownDataValue(value, "evidence"), transitions = denseArray(ownDataValue(value, "transitions"), 1000);
@@ -301,7 +269,7 @@ function candidateShape(value: unknown): value is LearnedCandidate {
     && plainRecord(config) && safeJson(config) && ownDataValue(config, "patternType") === pattern
     && typeof configOccurrences === "number" && Number.isInteger(configOccurrences) && configOccurrences === evidenceOccurrences
     && (pattern !== "workflow" || stringArray(ownDataValue(config, "sequence")))
-    && evidenceShape(evidence) && id === deriveCandidateId(pattern as DetectedPattern["type"], ownDataValue(evidence, "description") as string, ownDataValue(evidence, "examples") as string[])
+    && evidenceValid(evidence) && id === deriveCandidateId(pattern as CandidatePatternType, ownDataValue(evidence, "description") as string, ownDataValue(evidence, "examples") as string[])
     && typeof createdAt === "number" && Number.isFinite(createdAt)
     && typeof updatedAt === "number" && Number.isFinite(updatedAt) && updatedAt >= createdAt
     && numeric.every((key) => optional(value, key, (entry) => typeof entry === "number" && Number.isFinite(entry)))
@@ -343,6 +311,7 @@ export function hasPatternEvidenceIdentity(value: unknown): value is DetectedPat
 }
 
 export function hasCandidateEvidenceIdentity(value: unknown): value is LearnedCandidate {
+  if (hasEvidenceIdentity(value, REVIEWED_PROCEDURE_IDENTITY)) return isReviewedProcedureCandidate(value);
   if (!hasEvidenceIdentity(value, WORKFLOW_TACTIC_IDENTITY) || !candidateShape(value)) return false;
   const evidence = ownDataValue(value, "evidence"), stats = ownDataValue(evidence, "outcomeStats");
   return hasEvidenceIdentity(evidence, stats === MISSING_PROPERTY ? WORKFLOW_TACTIC_IDENTITY : TERMINAL_TELEMETRY_IDENTITY);

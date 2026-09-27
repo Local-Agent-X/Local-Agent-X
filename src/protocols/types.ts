@@ -64,13 +64,11 @@ export interface ProtocolSource {
   /** Session the authoring happened in, so a review can be traced back. */
   authoredFromSession?: string;
   /** Who last CHANGED this protocol, which is not the same question as who
-   *  wrote it. The background review fork patches existing protocols in place —
-   *  that is its preferred move over creating near-duplicates — so a protocol
-   *  the user authored can end up with a body the agent wrote while
-   *  `authoredBy` still reads "user". Without this field that edit is
-   *  invisible, and the provenance story (tell agent work from your own, then
-   *  archive it) only covers protocols the agent created outright. Absent means
-   *  "never edited by the review fork", not "edited by the user". */
+   *  wrote it. The review fork used to patch catalog protocols in place, so a
+   *  protocol the user authored can carry a body the agent wrote while
+   *  `authoredBy` still reads "user"; this field is that trace. The fork now
+   *  only proposes learned drafts and no longer sets it. Absent means "never
+   *  edited by the review fork", not "edited by the user". */
   lastEditedBy?: "agent" | "user";
   /** When that edit happened — ms since epoch, matching authoredAt. */
   lastEditedAt?: number;

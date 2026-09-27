@@ -39,6 +39,10 @@ import { fuzzyMatch } from "./text-utils.js";
 import type { ModuleSignal } from "../../orchestrator/types.js";
 import { formatLearningCandidateNudge } from "../../memory/curate-nudge.js";
 import { draftLearnedCandidate, type LearnedCandidateDraftResult } from "../../protocols/learned-drafting.js";
+import {
+  candidateProjectionPath, sameCandidateRevision, transitionTimestampAtCommit, type CandidateRevision,
+} from "./candidate-revision.js";
+import { applyReviewedProposal, type ReviewedProposalInput, type ReviewedProposalResult } from "./reviewed-procedures.js";
 
 export class CrossSessionLearner {
   private static instance: CrossSessionLearner;
@@ -260,6 +264,13 @@ export class CrossSessionLearner {
     return draftLearnedCandidate(safeOpportunity);
   }
 
+  /** Record a post-turn review proposal (see reviewed-procedures.ts). */
+  recordReviewedProposal(input: ReviewedProposalInput): ReviewedProposalResult {
+    const committed = this.commit((data) => applyReviewedProposal(data, input));
+    if (!committed) throw new LearningPersistenceUnavailableError();
+    return committed.value;
+  }
+
   getInsights(): SessionInsight[] {
     return getInsights(this.data.actions);
   }
@@ -357,41 +368,3 @@ export class LearningPersistenceUnavailableError extends Error {
   }
 }
 
-interface CandidateRevision {
-  state: LearnedCandidateState;
-  updatedAt: number;
-  transitionCount: number;
-}
-
-function transitionTimestampAtCommit(
-  current: LearnedCandidate,
-  requestedAt: number,
-  observed: CandidateRevision | undefined,
-): number {
-  if (!observed || requestedAt < observed.updatedAt) return requestedAt;
-  return Math.max(requestedAt, current.updatedAt);
-}
-
-function sameCandidateRevision(candidate: LearnedCandidate, observed: CandidateRevision | undefined): boolean {
-  return !!observed && candidate.state === observed.state
-    && candidate.updatedAt === observed.updatedAt
-    && candidate.transitions.length === observed.transitionCount;
-}
-
-function candidateProjectionPath(
-  from: LearnedCandidateState,
-  target: "candidate" | "active" | "archived",
-  recordRollback: boolean,
-): LearnedCandidateState[] {
-  if (target === "active") {
-    if (recordRollback && from === "active") return ["rolled-back", "candidate", "approved", "active"];
-    if (from === "active") return [];
-    if (from === "approved") return ["active"];
-    if (from === "candidate") return ["approved", "active"];
-    return ["candidate", "approved", "active"];
-  }
-  if (target === "archived") return from === "archived" ? [] : ["archived"];
-  if (from === "active") return ["rolled-back", "candidate"];
-  if (from === "approved") throw new Error("Approved learned workflow requires activation recovery");
-  return from === "candidate" ? [] : ["candidate"];
-}

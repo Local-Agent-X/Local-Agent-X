@@ -24,7 +24,7 @@ import { isInteractiveHostOpType } from "../../ops/op-store.js";
 import crossSessionLearner from "../../cognition/cross-session-learning/index.js";
 import { hasExternalIngestion, isExternalIngestingTool } from "../../data-lineage/external.js";
 import { getTaintSummary } from "../../data-lineage/taint.js";
-import { renderOpTranscript } from "./op-transcript.js";
+import { isReviewWorthy, noteSessionTurn, requestSkillReview } from "../../server/background-jobs/skill-review-queue.js";
 import { boostNudgePriority } from "../../memory/curate-nudge.js";
 import { createLogger } from "../../logger.js";
 
@@ -115,8 +115,12 @@ export function recordCommittedLearningOutcome(
  * instead of silently authoring from a truncated transcript. A user who pressed
  * Stop has not consented to anything being learned from that op.
  *
- * Deferred to the next check-phase tick purely for COST: the render re-reads
- * every turn artifact and the turn loop is the hottest path in the app.
+ * Every call also tells the queue that this session committed a newer turn —
+ * that is what makes an earlier queued review eligible (its outcome is now in
+ * the conversation). The transcript itself is rendered at drain time, not here.
+ *
+ * Deferred to the next check-phase tick purely for COST: the turn reads re-parse
+ * turn artifacts and the turn loop is the hottest path in the app.
  * Foreground cost of calling this is one type check plus one setImmediate.
  */
 export function requestSkillReviewForOp(op: Op, sessionId: string, turnIdx: number): void {
@@ -133,7 +137,7 @@ export function requestSkillReviewForOp(op: Op, sessionId: string, turnIdx: numb
   // spawned op that named itself chat_turn.
   if (!isInteractiveHostOpType(op.type) || op.parentOpId) return;
   const opId = op.id;
-  setImmediate(() => { void runSkillReviewTrigger(opId, sessionId, turnIdx); });
+  setImmediate(() => runSkillReviewTrigger(opId, sessionId, turnIdx));
 }
 
 /**
@@ -159,14 +163,9 @@ function durableTerminalTurn(opId: string, turnIdx: number): boolean {
     t.turnIdx === turnIdx && (t.terminalReason === "done" || t.terminalReason === "error"));
 }
 
-async function runSkillReviewTrigger(opId: string, sessionId: string, turnIdx: number): Promise<void> {
+function runSkillReviewTrigger(opId: string, sessionId: string, turnIdx: number): void {
   try {
-    // Dynamic import (grep note: this is the only edge from the turn loop into
-    // the skill-review job). skill-review.ts imports canonical-loop/index.js, so
-    // a static import here would close an ESM cycle through the turn loop's own
-    // terminal path — a module-init hazard on the hottest path in the app.
-    const { requestSkillReview, isReviewWorthy } =
-      await import("../../server/background-jobs/skill-review.js");
+    noteSessionTurn(sessionId, opId);
     if (!durableTerminalTurn(opId, turnIdx)) {
       logger.debug(`[skill-review] ${opId}#${turnIdx} did not commit terminally — not reviewing`);
       return;
@@ -193,15 +192,14 @@ async function runSkillReviewTrigger(opId: string, sessionId: string, turnIdx: n
     // essentially every user message doing >=4 calls / >=2 distinct tools, where
     // before it needed a regex or classifier hit on the user's own text —
     // roughly +5-8 classifier calls per 10 tool-heavy messages, on top of one
-    // main-model review fork per such message. Fired BEFORE rendering so a
-    // transcript failure cannot also cost the memory pass its nudge.
+    // main-model review fork per such message.
     boostNudgePriority(sessionId, "long-task-completed");
 
-    const result = requestSkillReview({ sessionId, toolSequence, transcript: renderOpTranscript(opId) });
+    const result = requestSkillReview({ sessionId, opId, toolSequence });
     if (!result.queued) logger.debug(`[skill-review] not queued for ${opId}: ${result.reason}`);
   } catch (e) {
     // Non-fatal by construction. This already runs off the turn's critical
-    // path, but a throw here is an unhandled rejection inside a setImmediate
+    // path, but a throw here is an uncaught exception inside a setImmediate
     // callback — fatal to the process under Node's default policy, i.e. the
     // server dies mid-conversation. Logged loudly: never hidden, never
     // surfaced into the user's turn.

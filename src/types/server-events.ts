@@ -138,6 +138,12 @@ export type ServerEvent =
   // them and the user did not name them (tool-execution/unnamed-delete-gate.ts).
   // The chat shows them with an Undo; `files` are absolute original paths.
   | { type: "delete_notice"; files: string[]; toolCallIds: string[] }
+  // The post-turn review fork proposed a learned procedure from this session
+  // (protocols/learned-review-drafting.ts). The chat shows "Learned a
+  // workflow" with Keep (activate versionId) and Discard (reject when
+  // canReject, otherwise dismiss) against POST /api/memory/learning/:id/action.
+  // Arrives after the turn it concerns, never inside one.
+  | { type: "learning_notice"; id: string; versionId: string; name: string; description: string; refinement: boolean; canReject: boolean; expectedActiveVersionId: string | null }
   // `reason` (optional, additive) says WHY an approved:false settle happened —
   // "declined" = the user clicked Deny; "timeout" = nobody answered;
   // "superseded" = the user replied in chat instead of clicking, so the card

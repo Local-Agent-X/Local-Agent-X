@@ -282,11 +282,9 @@ function verifiedActiveProtocol(
  *    record). Reached only through `verifiedActiveProtocol`, whose integrity
  *    checks stay exactly as they were — a draft, archived, orphaned, or
  *    tampered learned record must never be suggested.
- * 2. CUSTOM (`source.type === "custom"`). This is where agent-authored
- *    protocols live and can only live: provenance stamping is structurally
- *    impossible for the bundled/imported/learned tiers (F14), so the
- *    background review fork writes custom.json. Before this, `custom` records
- *    could never be suggested at all and the write half was unreachable.
+ * 2. CUSTOM (`source.type === "custom"`). User-authored protocols, plus any
+ *    agent-authored ones the review fork wrote here before its proposals
+ *    became learned drafts (migrate-agent-protocols.ts moves those out).
  *
  * 3. WORKSPACE IMPORTS (`source.type === "imported"` + `source.origin ===
  *    "workspace"`). A SKILL.md the user put in workspace/protocols/imported/
@@ -362,8 +360,8 @@ export function selectLearnedProtocolSuggestion(
   const best = ranked[0];
   if (!best) return null;
   const name = best.protocol.name;
-  // Tier-1 (custom) records the review fork authored on its own initiative
-  // carry zero evidence gate (unlike tier-0 managed learned records, which
+  // Tier-1 (custom) records the review fork authored before its proposals
+  // became drafts carry zero evidence gate (unlike tier-0 managed learned records, which
   // only reach `verifiedActiveProtocol` after a cross-session success-rate
   // threshold) — a single shallow run can mint one. Surfacing that here, not
   // just in `source.authoredBy` bookkeeping, is what makes it possible for

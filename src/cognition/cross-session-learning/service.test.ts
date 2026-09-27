@@ -80,12 +80,12 @@ describe("cross-session learning management service", () => {
     expect(first).toMatchObject({ changed: true, signals: [{ category: "learning-candidate", priority: 3 }] });
     expect(repeated).toEqual({ signals: [], changed: false });
     expect(Object.keys(item).sort()).toEqual([
-      "activeVersionId", "confidence", "id", "name", "state", "updatedAt", "versionCount",
+      "activeVersionId", "confidence", "id", "name", "source", "state", "updatedAt", "versionCount",
     ]);
-    expect(item).toMatchObject({ state: "candidate", activeVersionId: null, versionCount: 1 });
+    expect(item).toMatchObject({ state: "candidate", source: "observed", activeVersionId: null, versionCount: 1 });
     expect(item.updatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     expect(Object.keys(detail).sort()).toEqual([
-      "activeVersionId", "confidence", "evidence", "history", "id", "name", "state", "updatedAt", "versionCount", "versions",
+      "activeVersionId", "confidence", "evidence", "history", "id", "name", "source", "state", "updatedAt", "versionCount", "versions",
     ]);
     expect(detail.versions[0]).toMatchObject({ name: "Version 1", active: false });
   });

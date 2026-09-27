@@ -34,6 +34,7 @@ const ALL_SERVER_EVENT_TYPES: Record<ServerEvent["type"], true> = {
   approval_requested: true,
   approval_timeout: true,
   delete_notice: true,
+  learning_notice: true,
   approval_resolved: true,
   context_status: true,
   visual: true,

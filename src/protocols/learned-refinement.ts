@@ -1,7 +1,8 @@
-import type { LearnedCandidate } from "../cognition/cross-session-learning/types.js";
+import type { LearnedCandidate, ReviewedProposal } from "../cognition/cross-session-learning/types.js";
 import {
   hasCandidateEvidenceIdentity,
   hasEvidenceIdentity,
+  isReviewedProcedureCandidate,
   isSafeLearnedStringArray,
   readOwnEnumerableData,
   TERMINAL_TELEMETRY_IDENTITY,
@@ -11,6 +12,29 @@ import type { LearnedOutcomeReceipt, VersionEffectiveness } from "./learned-effe
 import type { LearnedProtocolRecord, LearnedProtocolVersion } from "./learned-lifecycle.js";
 
 const PROMOTION_RATE = 0.85;
+
+/** A reviewed procedure activates without the user's OK once this many
+ *  distinct sessions independently proposed it from runs that held up. */
+export const REVIEWED_PROCEDURE_MIN_SESSIONS = 3;
+
+/** Sessions that count as independent evidence for a reviewed procedure: each
+ *  proposed it from a verified run, and none of its proposals reported the
+ *  user reverting or correcting the work. */
+export function qualifyingReviewedSessions(proposals: readonly ReviewedProposal[]): number {
+  const corrected = new Set(proposals.filter((p) => p.outcome === "corrected").map((p) => p.sessionId));
+  return new Set(proposals
+    .filter((p) => p.outcome === "verified" && !corrected.has(p.sessionId))
+    .map((p) => p.sessionId)).size;
+}
+
+export function reviewedProcedureConfidence(proposals: readonly ReviewedProposal[]): number {
+  return Math.round(Math.min(1, qualifyingReviewedSessions(proposals) / REVIEWED_PROCEDURE_MIN_SESSIONS) * 1000) / 1000;
+}
+
+export function hasIndependentReviewedEvidence(candidate: LearnedCandidate): boolean {
+  if (!isReviewedProcedureCandidate(candidate)) return false;
+  return qualifyingReviewedSessions(candidate.evidence.proposals ?? []) >= REVIEWED_PROCEDURE_MIN_SESSIONS;
+}
 
 export type SafetyRecovery =
   | { kind: "rollback"; targetVersionId: string; reason: string }

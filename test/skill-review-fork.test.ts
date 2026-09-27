@@ -5,9 +5,11 @@
  *   1. The tool allowlist contains no agent-spawn tool. There is no depth cap
  *      or recursion guard anywhere in the codebase, so the allowlist IS the
  *      recursion guard.
- *   2. Protocols the fork writes are stamped agent-authored, protocols it
- *      PATCHES are stamped agent-edited, and the model can forge neither.
- *   3. A turn that did trivial or no tool work never queues a review.
+ *   2. The fork cannot write the live catalog. Its only write is `propose`,
+ *      which drafts a learned procedure; provenance (the reviewed session and
+ *      its tool evidence) comes from execution context, never model args.
+ *   3. A turn that did trivial or no tool work never queues a review, and a
+ *      queued review waits until its outcome can be known.
  *   4. A review is actually bounded — canonical's own wall clock and iteration
  *      cap are inert on the background lane, so the bound has to be ours.
  *   5. A transcript cannot break out of its fence.
@@ -23,10 +25,7 @@ import { setRuntimeConfig, getRuntimeConfig } from "../src/config.js";
 import type { AgentTurn, LAXConfig, ToolDefinition } from "../src/types.js";
 import { mapStopReason } from "../src/canonical-loop/agent-runner/collect-result.js";
 import type { TerminalState } from "../src/canonical-loop/terminal-states.js";
-import {
-  createProtocol, editProtocol, loadCustomProtocols, saveCustomProtocols,
-} from "../src/protocols/builder.js";
-import type { Protocol } from "../src/protocols/types.js";
+import { loadCustomProtocols, saveCustomProtocols } from "../src/protocols/builder.js";
 import {
   SKILL_REVIEW_TOOL_NAMES,
   REVIEW_PROTOCOL_ACTIONS,
@@ -35,17 +34,22 @@ import {
 } from "../src/server/background-jobs/skill-review-prompt.js";
 import {
   buildReviewTools,
-  requestSkillReview,
   runSkillReviewPass,
   registerSkillReviewRunner,
-  peekSkillReviewQueue,
-  isReviewWorthy,
   _resetSkillReviewQueue,
-  SKILL_REVIEW_SESSION_PREFIX,
   type SkillReviewDeps,
 } from "../src/server/background-jobs/skill-review.js";
+import {
+  requestSkillReview,
+  peekSkillReviewQueue,
+  isReviewWorthy,
+  noteSessionTurn,
+  SKILL_REVIEW_SESSION_PREFIX,
+  SKILL_REVIEW_SETTLE_MS,
+} from "../src/server/background-jobs/skill-review-queue.js";
+import type { ReviewProtocolToolContext } from "../src/server/background-jobs/skill-review-tool.js";
 
-const mocks = vi.hoisted(() => ({ runAgent: vi.fn(), resolveProvider: vi.fn() }));
+const mocks = vi.hoisted(() => ({ runAgent: vi.fn(), resolveProvider: vi.fn(), propose: vi.fn() }));
 
 vi.mock("../src/canonical-loop/index.js", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -54,6 +58,10 @@ vi.mock("../src/canonical-loop/index.js", async (importOriginal) => ({
 vi.mock("../src/agent-request/index.js", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   resolveProvider: mocks.resolveProvider,
+}));
+vi.mock("../src/protocols/learned-review-drafting.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  proposeReviewedProcedure: mocks.propose,
 }));
 
 let TEMP: string;
@@ -66,8 +74,8 @@ beforeAll(() => {
   ORIGINAL_CFG = getRuntimeConfig();
   setRuntimeConfig({ ...ORIGINAL_CFG, workspace: TEMP } as LAXConfig);
 
-  // MANDATORY (campaign F16): the authoring path reaches getAllProtocols(),
-  // which runs the protocol migrations — those renameSync the contents of
+  // MANDATORY (campaign F16): catalog reads reach getAllProtocols(), which
+  // runs the protocol migrations — those renameSync the contents of
   // ~/.lax/skills and ~/.lax/protocols/imported INTO the workspace, here a temp
   // dir afterAll deletes. Unpinned, this suite would destroy the user's real
   // imported protocols on any machine that still has those legacy dirs.
@@ -81,6 +89,7 @@ beforeEach(() => {
   _resetSkillReviewQueue();
   mocks.runAgent.mockReset();
   mocks.resolveProvider.mockReset();
+  mocks.propose.mockReset();
   mocks.resolveProvider.mockResolvedValue({ provider: "anthropic", apiKey: "k", model: "main-model" });
 });
 
@@ -117,6 +126,7 @@ function fakeDeps(over: Partial<SkillReviewDeps> = {}): SkillReviewDeps {
     security: {},
     toolPolicy: {},
     allAgentTools: [stubTool("protocol"), stubTool("agent_spawn"), stubTool("bash")],
+    renderTranscript: () => "user: file a PO\nassistant: done",
     ...over,
   } as unknown as SkillReviewDeps;
 }
@@ -157,6 +167,10 @@ async function captureStderr<T>(fn: () => Promise<T>): Promise<{ result: T; line
   }
 }
 
+function reviewCtx(reviewedSessionId = "chat-session-42", over: Partial<ReviewProtocolToolContext> = {}): ReviewProtocolToolContext {
+  return { reviewedSessionId, toolSequence: HEAVY_TURN, ...over };
+}
+
 describe("skill-review tool allowlist (the recursion guard)", () => {
   it("resolves nothing that can spawn another agent, even when spawn tools are on offer", () => {
     const registry = [
@@ -167,7 +181,7 @@ describe("skill-review tool allowlist (the recursion guard)", () => {
       stubTool("bash"),
       stubTool("write"),
     ];
-    const resolved = buildReviewTools(registry, "sess-1").map((t) => t.name);
+    const resolved = buildReviewTools(registry, reviewCtx("sess-1")).map((t) => t.name);
 
     for (const spawn of SPAWN_TOOLS) {
       expect(resolved, `fork must not be able to call ${spawn}`).not.toContain(spawn);
@@ -179,17 +193,17 @@ describe("skill-review tool allowlist (the recursion guard)", () => {
     const registry = ["browser", "web_fetch", "web_search", "http_request", "write", "edit", "bash", "read", "glob", "grep", "memory_search"]
       .map(stubTool)
       .concat(stubTool("protocol"));
-    expect(buildReviewTools(registry, "s").map((t) => t.name)).toEqual(["protocol"]);
+    expect(buildReviewTools(registry, reviewCtx("s")).map((t) => t.name)).toEqual(["protocol"]);
   });
 
   it("hands the fork only tools that exist in the live registry", () => {
     // A name in the allowlist that the registry does not carry must resolve to
     // nothing rather than a synthesized stand-in.
-    expect(buildReviewTools([stubTool("bash")], "s")).toEqual([]);
+    expect(buildReviewTools([stubTool("bash")], reviewCtx("s"))).toEqual([]);
   });
 });
 
-describe("skill-review authorship (D20 — authorship comes from execution context)", () => {
+describe("skill-review proposals (drafts only — D20 provenance from execution context)", () => {
   /** Base `protocol` tool that records what the wrapper delegated to it. */
   function recordingBase(calls: Array<Record<string, unknown>>): ToolDefinition {
     return {
@@ -200,191 +214,147 @@ describe("skill-review authorship (D20 — authorship comes from execution conte
     };
   }
 
-  /** Base `protocol` tool wired to the REAL write path, so edit assertions land
-   *  on what actually gets persisted rather than on delegated arguments. */
-  const writingBase: ToolDefinition = {
-    name: "protocol",
-    description: "base",
-    parameters: { type: "object", properties: {} },
-    execute: async (args) => {
-      const p = args.params as { name: string; updates: Partial<Protocol> };
-      editProtocol(p.name, p.updates);
-      return { content: "edited" };
-    },
-  };
-
-  function narrowed(reviewedSessionId = "chat-session-42", base = stubTool("protocol")): ToolDefinition {
-    const [tool] = buildReviewTools([base], reviewedSessionId);
+  function narrowed(ctx = reviewCtx(), base = stubTool("protocol")): ToolDefinition {
+    const [tool] = buildReviewTools([base], ctx);
     return tool;
   }
 
-  function seedUserProtocol(name: string): void {
-    createProtocol({
-      name, description: "the user wrote this", triggers: ["t"],
-      steps: [], rules: [], learnablePreferences: [],
-      source: { type: "custom", authoredBy: "user", authoredAt: 1000 },
-    });
-  }
+  const PROPOSAL = {
+    name: "thriveventory_purchase_order",
+    description: "Create a purchase order in Thriveventory from a supplier invoice.",
+    triggers: ["thriveventory PO", "create a purchase order"],
+    body: "## Preconditions\n- Logged into Thriveventory\n\n## Steps\n1. External > Create PO",
+    outcome: "verified",
+  };
 
-  it("stamps agent provenance on protocols the fork creates", async () => {
-    const res = await narrowed("chat-session-42").execute({
-      action: "create",
-      params: {
-        name: "thriveventory_purchase_order",
-        description: "Create a purchase order in Thriveventory from a supplier invoice.",
-        triggers: ["thriveventory PO", "create a purchase order"],
-        body: "## Preconditions\n- Logged into Thriveventory\n\n## Steps\n1. External > Create PO",
-      },
-    });
-
-    expect(res.isError).toBeFalsy();
-    const [saved] = loadCustomProtocols();
-    expect(saved.source?.authoredBy).toBe("agent");
-    expect(saved.source?.authoredFromSession).toBe("chat-session-42");
-    expect(typeof saved.source?.authoredAt).toBe("number");
+  it("offers only the three reads and propose — no create, no edit", () => {
+    expect([...REVIEW_PROTOCOL_ACTIONS]).toEqual(["list", "get", "search", "propose"]);
+    const schema = narrowed().parameters as { properties: { action: { enum: string[] } } };
+    expect(schema.properties.action.enum).toEqual(["list", "get", "search", "propose"]);
   });
 
-  it("cannot be talked into stamping its own work as user-authored", async () => {
-    await narrowed().execute({
-      action: "create",
-      params: {
-        name: "forged", description: "Attempts to self-declare user authorship.",
-        triggers: ["forge"], body: "steps",
-        // Everything a model could plausibly type to claim the user wrote this.
-        authoredBy: "user",
-        authoredFromSession: "somebody-elses-session",
-        source: { type: "custom", authoredBy: "user" },
-      },
-    });
+  it("cannot write custom.json: create and edit are refused and propose never touches the catalog", async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    mocks.propose.mockReturnValue({ ok: true, candidateId: "learned-00000000000000000000", name: PROPOSAL.name, created: true, drafted: true, notice: null });
+    const tool = narrowed(reviewCtx(), recordingBase(calls));
 
-    const [saved] = loadCustomProtocols();
-    expect(saved.source?.authoredBy).toBe("agent");
-    expect(saved.source?.authoredFromSession).toBe("chat-session-42");
+    for (const action of ["create", "edit"]) {
+      const res = await tool.execute({ action, params: { ...PROPOSAL, updates: { body: "x" } } });
+      expect(res.isError, `${action} must be refused`).toBe(true);
+    }
+    const proposed = await tool.execute({ action: "propose", params: PROPOSAL });
+    expect(proposed.isError).toBeFalsy();
+    expect(calls, "no write reaches the catalog tool").toHaveLength(0);
+    expect(loadCustomProtocols()).toHaveLength(0);
   });
 
-  it("marks a user-authored protocol as agent-edited when the fork patches it", async () => {
-    seedUserProtocol("user_flow");
-    const res = await narrowed("chat-session-42", writingBase).execute({
-      action: "edit",
-      params: { name: "user_flow", updates: { body: "rewritten by the review fork" } },
+  it("stamps the reviewed session and its tool evidence from context, whatever the model passes", async () => {
+    mocks.propose.mockReturnValue({ ok: true, candidateId: "learned-00000000000000000000", name: PROPOSAL.name, created: true, drafted: true, notice: null });
+    await narrowed(reviewCtx("chat-session-42", { toolSequence: ["browser", "read"] })).execute({
+      action: "propose",
+      params: { ...PROPOSAL, sessionId: "somebody-elses-session", toolSequence: ["bash"], authoredBy: "user" },
     });
-
-    expect(res.isError).toBeFalsy();
-    const [saved] = loadCustomProtocols();
-    expect(saved.body).toBe("rewritten by the review fork");
-    // The user DID author it — that is not rewritten. But the patch must leave
-    // a trace, or an agent rewrite reads as the user's own work forever.
-    expect(saved.source?.authoredBy).toBe("user");
-    expect(saved.source?.authoredAt).toBe(1000);
-    expect(saved.source?.lastEditedBy).toBe("agent");
-    expect(typeof saved.source?.lastEditedAt).toBe("number");
+    expect(mocks.propose).toHaveBeenCalledTimes(1);
+    const input = mocks.propose.mock.calls[0][0];
+    expect(input.sessionId).toBe("chat-session-42");
+    expect(input.toolSequence).toEqual(["browser", "read"]);
+    expect(input.outcome).toBe("verified");
   });
 
-  it("cannot forge lastEditedBy or authoredBy through an edit", async () => {
-    seedUserProtocol("user_flow");
-    await narrowed("chat-session-42", writingBase).execute({
-      action: "edit",
-      params: {
-        name: "user_flow",
-        updates: {
-          body: "rewritten",
-          source: { type: "custom", authoredBy: "user", lastEditedBy: "user" },
-          lastEditedBy: "user",
-          authoredBy: "user",
-        },
-      },
-    });
-
-    const [saved] = loadCustomProtocols();
-    expect(saved.source?.lastEditedBy).toBe("agent");
+  it("refuses a proposal with no outcome — an unchecked run is not proposed", async () => {
+    const res = await narrowed().execute({ action: "propose", params: { ...PROPOSAL, outcome: undefined } });
+    expect(res.isError).toBe(true);
+    expect(mocks.propose).not.toHaveBeenCalled();
   });
 
-  it("cannot rename a protocol out from under its usage rows and embeddings", async () => {
-    seedUserProtocol("user_flow");
-    await narrowed("chat-session-42", writingBase).execute({
-      action: "edit",
-      params: { name: "user_flow", updates: { name: "renamed_by_agent", body: "b" } },
-    });
-
-    expect(loadCustomProtocols().map((p) => p.name)).toEqual(["user_flow"]);
+  it("tells the reviewed session when a draft is waiting on the user", async () => {
+    const notice = { id: "learned-00000000000000000000", versionId: "v", name: PROPOSAL.name, description: "d", refinement: false, canReject: true, expectedActiveVersionId: null };
+    mocks.propose.mockReturnValue({ ok: true, candidateId: notice.id, name: PROPOSAL.name, created: true, drafted: true, notice });
+    const onProposed = vi.fn();
+    await narrowed(reviewCtx("chat-9", { onProposed })).execute({ action: "propose", params: PROPOSAL });
+    expect(onProposed).toHaveBeenCalledWith("chat-9", notice);
   });
 
-  it("does not delete an existing protocol via supersedes", async () => {
-    seedUserProtocol("existing_flow");
-    await narrowed().execute({
-      action: "create",
-      params: {
-        name: "replacement_flow", description: "tries to replace it", triggers: ["replace"],
-        body: "body", supersedes: "existing_flow",
-      },
-    });
-
-    expect(loadCustomProtocols().map((p) => p.name)).toContain("existing_flow");
+  it("passes a refusal back to the fork as an error it can read", async () => {
+    mocks.propose.mockReturnValue({ ok: false, message: "The user discarded it." });
+    const res = await narrowed().execute({ action: "propose", params: PROPOSAL });
+    expect(res).toMatchObject({ isError: true, content: "The user discarded it." });
   });
 
   it("refuses every catalog-destroying action", async () => {
     const calls: Array<Record<string, unknown>> = [];
-    const tool = narrowed("s", recordingBase(calls));
-    for (const action of ["delete", "prune", "archive_bulk", "rollback_undo", "curate", "from_template", "CREATE", ""]) {
+    const tool = narrowed(reviewCtx("s"), recordingBase(calls));
+    for (const action of ["delete", "prune", "archive_bulk", "rollback_undo", "curate", "from_template", "PROPOSE", ""]) {
       const res = await tool.execute({ action, params: { name: "existing_flow" } });
       expect(res.isError, `${action} must be refused`).toBe(true);
     }
     expect(calls, "no refused action may reach the underlying tool").toHaveLength(0);
-    expect([...REVIEW_PROTOCOL_ACTIONS]).toEqual(["list", "get", "search", "create", "edit"]);
   });
 
-  it("refuses a create with neither a body nor steps, and an edit with nothing to change", async () => {
-    const tool = narrowed();
-    expect((await tool.execute({ action: "create", params: { name: "empty", description: "d", triggers: [] } })).isError).toBe(true);
-    expect((await tool.execute({ action: "edit", params: { name: "x", updates: { source: { type: "custom" } } } })).isError).toBe(true);
-    expect(loadCustomProtocols()).toHaveLength(0);
+  it("routes list/search through the catalog tool and get of an ordinary protocol too", async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const tool = narrowed(reviewCtx("s"), recordingBase(calls));
+    await tool.execute({ action: "list", params: {} });
+    await tool.execute({ action: "search", params: { query: "purchase order" } });
+    await tool.execute({ action: "get", params: { name: "some_builtin" } });
+    expect(calls.map((c) => c.action)).toEqual(["list", "search", "get"]);
+  });
+});
+
+describe("skill-review prompt", () => {
+  it("no longer pushes the fork to write something every pass", () => {
+    expect(SKILL_REVIEW_SYSTEM_PROMPT).not.toContain("produce at least one protocol update");
+    expect(SKILL_REVIEW_SYSTEM_PROMPT).not.toContain("missed learning opportunity");
+    expect(SKILL_REVIEW_SYSTEM_PROMPT).toContain("Doing nothing is the default");
+  });
+
+  it("proposes only work that held up, and never a new procedure from a reverted run", () => {
+    expect(SKILL_REVIEW_SYSTEM_PROMPT).toContain("a check, test, or build passed");
+    expect(SKILL_REVIEW_SYSTEM_PROMPT).toContain("never propose a new procedure from that run");
+    expect(SKILL_REVIEW_SYSTEM_PROMPT).not.toMatch(/action:"(create|edit)"/);
   });
 });
 
 describe("skill-review trigger gate", () => {
-  const transcript = "user: do the thing\nassistant: done";
-
   it("does not queue a turn that did no or trivial tool work", () => {
-    expect(requestSkillReview({ sessionId: "s", toolSequence: [], transcript })).toEqual({ queued: false, reason: "trivial" });
-    expect(requestSkillReview({ sessionId: "s", toolSequence: ["read", "read"], transcript })).toEqual({ queued: false, reason: "trivial" });
+    expect(requestSkillReview({ sessionId: "s", opId: "op", toolSequence: [] })).toEqual({ queued: false, reason: "trivial" });
+    expect(requestSkillReview({ sessionId: "s", opId: "op", toolSequence: ["read", "read"] })).toEqual({ queued: false, reason: "trivial" });
     // Enough calls, but all the same tool — a search, not a procedure.
-    expect(requestSkillReview({ sessionId: "s", toolSequence: ["read", "read", "read", "read", "read"], transcript }))
+    expect(requestSkillReview({ sessionId: "s", opId: "op", toolSequence: ["read", "read", "read", "read", "read"] }))
       .toEqual({ queued: false, reason: "trivial" });
     expect(peekSkillReviewQueue()).toHaveLength(0);
   });
 
   it("queues a tool-heavy multi-tool turn", () => {
-    expect(requestSkillReview({ sessionId: "s", toolSequence: HEAVY_TURN, transcript })).toEqual({ queued: true });
-    expect(peekSkillReviewQueue().map((r) => r.sessionId)).toEqual(["s"]);
+    expect(requestSkillReview({ sessionId: "s", opId: "op-1", toolSequence: HEAVY_TURN })).toEqual({ queued: true });
+    expect(peekSkillReviewQueue().map((r) => [r.sessionId, r.opId])).toEqual([["s", "op-1"]]);
   });
 
   it("coalesces per session so one conversation cannot flood the queue", () => {
-    requestSkillReview({ sessionId: "s", toolSequence: HEAVY_TURN, transcript: "first" });
-    requestSkillReview({ sessionId: "s", toolSequence: HEAVY_TURN, transcript: "second" });
-    requestSkillReview({ sessionId: "other", toolSequence: HEAVY_TURN, transcript: "third" });
+    requestSkillReview({ sessionId: "s", opId: "op-first", toolSequence: HEAVY_TURN });
+    requestSkillReview({ sessionId: "s", opId: "op-second", toolSequence: HEAVY_TURN });
+    requestSkillReview({ sessionId: "other", opId: "op-third", toolSequence: HEAVY_TURN });
     const queued = peekSkillReviewQueue();
     expect(queued).toHaveLength(2);
-    expect(queued.find((r) => r.sessionId === "s")?.transcript).toBe("second");
+    expect(queued.find((r) => r.sessionId === "s")?.opId).toBe("op-second");
   });
 
   it("refuses to queue a review of a review", () => {
     expect(requestSkillReview({
       sessionId: `${SKILL_REVIEW_SESSION_PREFIX}123-0`,
+      opId: "op",
       toolSequence: ["protocol", "protocol", "read", "write"],
-      transcript,
     })).toEqual({ queued: false, reason: "self-review" });
     expect(peekSkillReviewQueue()).toHaveLength(0);
   });
 
   it("never throws on malformed input from the turn loop", () => {
-    // Chunk E calls this inline in the turn loop; a throw there breaks the
-    // user's turn, so every bad shape must return a refusal instead.
     const bad = [
-      { sessionId: "s", toolSequence: undefined, transcript },
-      { sessionId: "s", toolSequence: "read,write", transcript },
-      { sessionId: undefined, toolSequence: HEAVY_TURN, transcript },
-      { sessionId: "s", toolSequence: HEAVY_TURN, transcript: undefined },
-      { sessionId: "s", toolSequence: HEAVY_TURN, transcript: "  " },
+      { sessionId: "s", opId: "op", toolSequence: undefined },
+      { sessionId: "s", opId: "op", toolSequence: "read,write" },
+      { sessionId: undefined, opId: "op", toolSequence: HEAVY_TURN },
+      { sessionId: "s", opId: undefined, toolSequence: HEAVY_TURN },
+      { sessionId: "s", opId: "  ", toolSequence: HEAVY_TURN },
     ];
     for (const input of bad) {
       const call = () => requestSkillReview(input as unknown as Parameters<typeof requestSkillReview>[0]);
@@ -396,7 +366,7 @@ describe("skill-review trigger gate", () => {
 
   it("copies the tool sequence so a caller mutating its array cannot rewrite the queue", () => {
     const seq = [...HEAVY_TURN];
-    requestSkillReview({ sessionId: "s", toolSequence: seq, transcript });
+    requestSkillReview({ sessionId: "s", opId: "op", toolSequence: seq });
     seq.length = 0;
     expect(peekSkillReviewQueue()[0].toolSequence).toEqual(HEAVY_TURN);
   });
@@ -409,11 +379,59 @@ describe("skill-review trigger gate", () => {
   });
 });
 
-describe("skill-review run", () => {
-  function queueOne(transcript = "user: file a PO\nassistant: done"): void {
-    requestSkillReview({ sessionId: "chat-7", toolSequence: HEAVY_TURN, transcript });
-  }
+describe("skill-review deferral (wait until the outcome can be known)", () => {
+  it("holds a fresh review: no model runs while the turn's outcome is unknown", async () => {
+    registerSkillReviewRunner(fakeDeps());
+    requestSkillReview({ sessionId: "chat-1", opId: "op-1", toolSequence: HEAVY_TURN });
+    await expect(runSkillReviewPass()).resolves.toEqual({ reviewed: 0, failed: 0, skipped: false, reason: "waiting" });
+    expect(mocks.runAgent).not.toHaveBeenCalled();
+    expect(peekSkillReviewQueue()).toHaveLength(1);
+  });
 
+  it("releases it once the same session sends a newer message, and renders that later turn with it", async () => {
+    mocks.runAgent.mockResolvedValue(runnerResult("succeeded"));
+    const renderTranscript = vi.fn((opId: string, followUps: readonly string[]) => `[USER] do it (${opId})\n[USER, LATER] that worked (${followUps.join(",")})`);
+    registerSkillReviewRunner(fakeDeps({ renderTranscript }));
+    requestSkillReview({ sessionId: "chat-1", opId: "op-1", toolSequence: HEAVY_TURN });
+    noteSessionTurn("other-session", "op-x");
+    noteSessionTurn("chat-1", "op-1");
+    await expect(runSkillReviewPass()).resolves.toMatchObject({ reason: "waiting" });
+
+    noteSessionTurn("chat-1", "op-2");
+    await expect(runSkillReviewPass()).resolves.toMatchObject({ reviewed: 1, failed: 0 });
+    expect(renderTranscript).toHaveBeenCalledWith("op-1", ["op-2"]);
+    expect(mocks.runAgent.mock.calls[0][0]).toContain("[USER, LATER] that worked (op-2)");
+  });
+
+  it("releases it after the settle period with nothing newer", async () => {
+    mocks.runAgent.mockResolvedValue(runnerResult("succeeded"));
+    const renderTranscript = vi.fn(() => "[USER] do it");
+    registerSkillReviewRunner(fakeDeps({ renderTranscript }));
+    const now = Date.now();
+    requestSkillReview({ sessionId: "chat-1", opId: "op-1", toolSequence: HEAVY_TURN, now: now - SKILL_REVIEW_SETTLE_MS + 60_000 });
+    await expect(runSkillReviewPass()).resolves.toMatchObject({ reason: "waiting" });
+
+    _resetSkillReviewQueue();
+    registerSkillReviewRunner(fakeDeps({ renderTranscript }));
+    requestSkillReview({ sessionId: "chat-1", opId: "op-1", toolSequence: HEAVY_TURN, now: now - SKILL_REVIEW_SETTLE_MS });
+    await expect(runSkillReviewPass()).resolves.toMatchObject({ reviewed: 1 });
+    expect(renderTranscript).toHaveBeenCalledWith("op-1", []);
+  });
+
+  it("fails the review, without running a model, when no transcript can be rendered", async () => {
+    registerSkillReviewRunner(fakeDeps({ renderTranscript: () => "" }));
+    queueOne();
+    await expect(runSkillReviewPass()).resolves.toMatchObject({ reviewed: 0, failed: 1 });
+    expect(mocks.runAgent).not.toHaveBeenCalled();
+  });
+});
+
+/** Queue a review that is already eligible (its settle period has passed). */
+function queueOne(): void {
+  requestSkillReview({ sessionId: "chat-7", opId: "op-7", toolSequence: HEAVY_TURN, now: Date.now() - SKILL_REVIEW_SETTLE_MS });
+}
+
+describe("skill-review run", () => {
   it("runs no model when the queue is empty, even with a runner registered", async () => {
     registerSkillReviewRunner(fakeDeps());
     await expect(runSkillReviewPass()).resolves.toEqual({ reviewed: 0, failed: 0, skipped: false, reason: "empty" });
@@ -422,8 +440,8 @@ describe("skill-review run", () => {
 
   it("sends the fenced transcript as the user turn with the static prompt and the narrowed tools", async () => {
     mocks.runAgent.mockResolvedValue(runnerResult("succeeded"));
-    registerSkillReviewRunner(fakeDeps());
-    queueOne("user: file a PO\nassistant: opened External > Create PO");
+    registerSkillReviewRunner(fakeDeps({ renderTranscript: () => "user: file a PO\nassistant: opened External > Create PO" }));
+    queueOne();
 
     await expect(runSkillReviewPass()).resolves.toMatchObject({ reviewed: 1, failed: 0 });
     expect(mocks.runAgent).toHaveBeenCalledTimes(1);
@@ -439,6 +457,22 @@ describe("skill-review run", () => {
     expect(opts.sessionId.startsWith(SKILL_REVIEW_SESSION_PREFIX)).toBe(true);
     expect(opts.signal).toBeInstanceOf(AbortSignal);
     expect(opts.harnessAuthoredTask).toBe(true);
+  });
+
+  it("delivers a proposal's notice to the reviewed session as a learning_notice event", async () => {
+    const notice = { id: "learned-00000000000000000000", versionId: "v", name: "po_flow", description: "d", refinement: false, canReject: true, expectedActiveVersionId: null };
+    mocks.propose.mockReturnValue({ ok: true, candidateId: notice.id, name: "po_flow", created: true, drafted: true, notice });
+    mocks.runAgent.mockImplementation(async (_m: string, _h: unknown, opts: { tools: ToolDefinition[] }) => {
+      await opts.tools[0].execute({ action: "propose", params: { name: "po_flow", description: "d", body: "b", outcome: "verified" } });
+      return runnerResult("succeeded");
+    });
+    const notify = vi.fn();
+    registerSkillReviewRunner(fakeDeps({ notify }));
+    queueOne();
+
+    await expect(runSkillReviewPass()).resolves.toMatchObject({ reviewed: 1 });
+    expect(notify).toHaveBeenCalledWith("chat-7", { type: "learning_notice", ...notice });
+    expect(mocks.propose.mock.calls[0][0]).toMatchObject({ sessionId: "chat-7", toolSequence: HEAVY_TURN });
   });
 
   // Scope note: this proves the abort SIGNAL fires and the pass resolves. The
@@ -474,7 +508,7 @@ describe("skill-review run", () => {
     const first = runSkillReviewPass();
     await vi.waitFor(() => expect(release).toBeTypeOf("function"));
 
-    requestSkillReview({ sessionId: "chat-other", toolSequence: HEAVY_TURN, transcript: "t" });
+    requestSkillReview({ sessionId: "chat-other", opId: "op-other", toolSequence: HEAVY_TURN, now: Date.now() - SKILL_REVIEW_SETTLE_MS });
     await expect(runSkillReviewPass()).resolves.toEqual({ reviewed: 0, failed: 0, skipped: true, reason: "in-flight" });
     expect(mocks.runAgent).toHaveBeenCalledTimes(1);
 

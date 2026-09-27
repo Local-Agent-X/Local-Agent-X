@@ -48,8 +48,7 @@ const MAX_RESULT_CHARS = 300;
  *
  * Clipping first and redacting after is a leak: the catalog matches complete
  * tokens, so the head of a key cut by the clip matches nothing and survives —
- * into the transcript, and from there into a protocol body written to
- * git-synced custom.json.
+ * into the transcript, and from there into a learned protocol body.
  *
  * This window is DELIBERATELY not what protects registered vault values. It is
  * positional, and whitespace collapse moves a secret relative to it, so any
@@ -156,15 +155,43 @@ function collectTranscriptEntries(opId: string): TranscriptEntry[] {
 }
 
 /**
- * Render one op's conversation to plain text for the review fork.
+ * What the user said AFTER the reviewed turn: the rows a later op in the same
+ * session added of its own (seeded history is the reviewed conversation again
+ * and is skipped). User messages are procedural — they are the outcome the
+ * review judges by; agent prose around them is droppable context. Tool calls
+ * are left out: the later turn is evidence about the reviewed one, not a
+ * procedure under review itself.
+ */
+function collectFollowUpEntries(opId: string): TranscriptEntry[] {
+  const entries: TranscriptEntry[] = [];
+  for (const row of readOpMessages(opId)) {
+    if (row.messageId.startsWith("hist-")) continue;
+    const msg = opMessageRowToChatParam(row);
+    if (!msg || (msg.role !== "user" && msg.role !== "assistant")) continue;
+    const text = extractTextContent(msg.content).trim();
+    if (!text) continue;
+    entries.push(msg.role === "user"
+      ? makeEntry(true, "[USER, LATER] ", text, MAX_USER_CHARS)
+      : makeEntry(false, "[AGENT, LATER] ", text, MAX_PROSE_CHARS));
+  }
+  return entries;
+}
+
+/**
+ * Render one op's conversation to plain text for the review fork, followed by
+ * the user's messages from any later ops in the same session.
  *
  * Reads through `opMessageRowToChatParam`, the canonical row→message adapter
  * (see the SEAL in store.ts); this module is inside canonical-loop, which is
  * where that read is sanctioned. Returns "" when nothing usable can be
  * produced — callers treat that as "skip the review".
  */
-export function renderOpTranscript(opId: string, cap = TRANSCRIPT_CHAR_CAP): string {
-  const entries = collectTranscriptEntries(opId);
+export function renderOpTranscript(
+  opId: string,
+  cap = TRANSCRIPT_CHAR_CAP,
+  followUpOpIds: readonly string[] = [],
+): string {
+  const entries = [...collectTranscriptEntries(opId), ...followUpOpIds.flatMap(collectFollowUpEntries)];
   const redact = (s: string): string => redactString(redactKnownSecrets(s)).redacted;
 
   // Converge on the cap rather than slicing the tail off: redaction can GROW

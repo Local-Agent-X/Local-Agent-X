@@ -2,11 +2,9 @@
  * Skill review — the post-turn procedural-learning fork.
  *
  * After a turn does non-trivial tool work, the conversation is replayed to a
- * background fork that asks itself one question: did a reusable procedure
- * emerge here, and should a protocol be written or patched? It then does it,
- * autonomously, with no user confirmation. Protocols it writes are stamped with
- * agent provenance so the user can tell them from their own and archive them —
- * that stamp, plus one-action archive, replaces the consent gate.
+ * background fork that asks itself one question: did this turn prove a
+ * reusable procedure? If it did, the fork proposes it as a learned procedure
+ * for the user to keep or discard.
  *
  * Why this exists: the same workflow was run 3+ times and captured 3+ times —
  * every time into the DECLARATIVE store (158 facts, several of them the
@@ -14,21 +12,27 @@
  * PROCEDURAL one. It came back as loose prose ranked by similarity instead of
  * an ordered playbook. This job closes that gap.
  *
+ * Queued reviews are deferred until the turn's outcome can be read and drained
+ * with the user's later messages (skill-review-queue.ts). The fork proposes
+ * learned-procedure DRAFTS only (skill-review-tool.ts); nothing it does reaches
+ * the live catalog until the user keeps it or independent evidence promotes it.
+ *
  * Shape follows dream-check.ts: runAgentViaCanonical on lane "background", a
  * hand-filtered tool list, its own static prompt, a synthetic sessionId. No
- * FieldAgent, no WS broadcast, no AgentRunStore row — a review must be
- * invisible to the AGENTS panel. Deliberately NOT agents/invoke.ts, which
+ * FieldAgent, no AgentRunStore row — a review must be invisible to the AGENTS
+ * panel. Its one broadcast is the learning notice, to the reviewed session only. Deliberately NOT agents/invoke.ts, which
  * broadcasts spawn/token/complete events to every client unconditionally and
  * silently discards a tool override when a templateId resolves.
  *
- * This file owns the queue and the run. The prompt and tool surface live in
- * skill-review-prompt.ts; the failure breaker in skill-review-breaker.ts.
+ * This file owns the run. The queue lives in skill-review-queue.ts, the prompt
+ * in skill-review-prompt.ts, the narrowed tool in skill-review-tool.ts, and the
+ * failure breaker in skill-review-breaker.ts.
  */
 import { type AgentOptions } from "../../providers/types.js";
 import { runAgentViaCanonical } from "../../canonical-loop/index.js";
 import { renderPromptSection } from "../../context/system-prompt-builder.js";
 import { SecurityLayer } from "../../security/index.js";
-import type { AgentTurn, LAXConfig, ToolDefinition } from "../../types.js";
+import type { AgentTurn, LAXConfig, ServerEvent, ToolDefinition } from "../../types.js";
 import type { SecretsStore } from "../../secrets.js";
 import type { ToolPolicy } from "../../tool-policy/index.js";
 import { createLogger } from "../../logger.js";
@@ -38,24 +42,19 @@ import {
   SKILL_REVIEW_SYSTEM_PROMPT,
   SKILL_REVIEW_TOOL_NAMES,
   buildSkillReviewMessage,
-  narrowProtocolToolForReview,
 } from "./skill-review-prompt.js";
+import { narrowProtocolToolForReview, type ReviewProtocolToolContext } from "./skill-review-tool.js";
+import {
+  SKILL_REVIEW_SESSION_PREFIX,
+  _clearSkillReviewQueue,
+  pendingReviewCount,
+  takeEligibleReviews,
+  type SkillReviewRequest,
+} from "./skill-review-queue.js";
+import { renderOpTranscript, TRANSCRIPT_CHAR_CAP } from "../../canonical-loop/turn-loop/op-transcript.js";
+import { broadcastToSession } from "../../ops/session-bridge.js";
 
 const logger = createLogger("server.background-jobs.skill-review");
-
-/** Synthetic session ids the fork runs under. Also the self-review guard: a
- *  request naming a session with this prefix is refused, so a review can never
- *  queue a review of itself. */
-export const SKILL_REVIEW_SESSION_PREFIX = "skill-review-";
-
-/**
- * Triviality gate (campaign D4: trigger on tool-iteration count, not on the
- * memory pass's curate signal — that measures memory-worthiness, a different
- * axis). Distinct-tool count is the cheap precision half: six `read` calls in a
- * row is a search, not a procedure.
- */
-export const MIN_TOOL_CALLS_FOR_REVIEW = 4;
-export const MIN_DISTINCT_TOOLS_FOR_REVIEW = 2;
 
 /** Scheduler poll cadence — one value for the ./index.ts registration and
  *  the breaker's backoff base, so the two cannot drift. */
@@ -63,8 +62,6 @@ export const SKILL_REVIEW_POLL_INTERVAL_MS = 5 * 60 * 1000; // 5min
 
 /** Reviews drained per scheduler tick. Bounds the cost of a burst. */
 const MAX_REVIEWS_PER_PASS = 3;
-/** Ceiling on queued reviews. Oldest is dropped past this. */
-const MAX_PENDING = 20;
 
 /**
  * Wall-clock ceiling per review, enforced HERE because canonical's is not
@@ -90,60 +87,6 @@ const MAX_PENDING = 20;
  */
 export const DEFAULT_REVIEW_TIMEOUT_MS = 5 * 60 * 1000;
 
-export interface SkillReviewRequest {
-  /** Session whose turn is under review. Becomes the protocol's
-   *  `authoredFromSession` provenance. */
-  sessionId: string;
-  /** Ordered tool names for the whole op (collectToolSequence output). */
-  toolSequence: readonly string[];
-  /** The conversation to review, already rendered to plain text. */
-  transcript: string;
-}
-
-export type SkillReviewQueueResult =
-  | { queued: true }
-  | { queued: false; reason: "trivial" | "no-transcript" | "self-review" | "no-session" };
-
-/**
- * Own coalescer state, keyed by session (campaign D3). The memory end-of-turn
- * pass keeps its own; a single shared pending slot would let whichever fired
- * last starve the other.
- */
-const pending = new Map<string, SkillReviewRequest>();
-
-/** True when the turn did enough tool work to plausibly contain a procedure.
- *  Total-tolerant: chunk E calls this from the turn loop, where a throw would
- *  break the user's turn, so a malformed sequence is "not worthy", not a crash. */
-export function isReviewWorthy(toolSequence: readonly string[] | undefined): boolean {
-  if (!Array.isArray(toolSequence)) return false;
-  if (toolSequence.length < MIN_TOOL_CALLS_FOR_REVIEW) return false;
-  return new Set(toolSequence).size >= MIN_DISTINCT_TOOLS_FOR_REVIEW;
-}
-
-/**
- * Entry point for the turn-loop trigger (chunk E). Cheap and synchronous: it
- * gates and enqueues, it never runs a model. The scheduler drains the queue
- * once the foreground has gone idle, so a turn never pays for its own review.
- */
-export function requestSkillReview(request: SkillReviewRequest): SkillReviewQueueResult {
-  const sessionId = typeof request?.sessionId === "string" ? request.sessionId.trim() : "";
-  if (!sessionId) return { queued: false, reason: "no-session" };
-  if (sessionId.startsWith(SKILL_REVIEW_SESSION_PREFIX)) return { queued: false, reason: "self-review" };
-  if (typeof request.transcript !== "string" || !request.transcript.trim()) return { queued: false, reason: "no-transcript" };
-  if (!isReviewWorthy(request.toolSequence)) return { queued: false, reason: "trivial" };
-
-  // Latest turn wins for a given session — reviewing the newest state of a
-  // conversation subsumes reviewing an earlier slice of it.
-  pending.delete(sessionId);
-  pending.set(sessionId, { ...request, sessionId, toolSequence: [...request.toolSequence] });
-  while (pending.size > MAX_PENDING) {
-    const oldest = pending.keys().next();
-    if (oldest.done) break;
-    pending.delete(oldest.value);
-  }
-  return { queued: true };
-}
-
 export interface SkillReviewDeps {
   config: LAXConfig;
   dataDir: string;
@@ -153,6 +96,12 @@ export interface SkillReviewDeps {
   allAgentTools: ToolDefinition[];
   /** Per-review wall-clock ceiling. Defaults to DEFAULT_REVIEW_TIMEOUT_MS. */
   timeoutMs?: number;
+  /** Renders the reviewed op plus its follow-up turns. Defaults to the
+   *  canonical op-transcript renderer. */
+  renderTranscript?: (opId: string, followUpOpIds: readonly string[]) => string;
+  /** Delivers a learning notice to the reviewed session. Defaults to the
+   *  session bridge. */
+  notify?: (sessionId: string, event: ServerEvent) => void;
 }
 
 let deps: SkillReviewDeps | null = null;
@@ -185,7 +134,7 @@ export interface SkillReviewPassResult {
   reviewed: number;
   failed: number;
   skipped: boolean;
-  reason?: "no-runner" | "empty" | "in-flight" | "breaker-backoff" | "parked";
+  reason?: "no-runner" | "empty" | "waiting" | "in-flight" | "breaker-backoff" | "parked";
 }
 
 /**
@@ -208,14 +157,9 @@ export async function runSkillReviewPass(options: { force?: boolean } = {}): Pro
   let reviewed = 0;
   let failed = 0;
   try {
-    if (pending.size === 0) return { reviewed: 0, failed: 0, skipped: false, reason: "empty" };
-
-    const batch: SkillReviewRequest[] = [];
-    for (const [key, request] of pending) {
-      if (batch.length >= MAX_REVIEWS_PER_PASS) break;
-      pending.delete(key);
-      batch.push(request);
-    }
+    if (pendingReviewCount() === 0) return { reviewed: 0, failed: 0, skipped: false, reason: "empty" };
+    const batch = takeEligibleReviews(MAX_REVIEWS_PER_PASS);
+    if (batch.length === 0) return { reviewed: 0, failed: 0, skipped: false, reason: "waiting" };
 
     for (const request of batch) {
       try {
@@ -254,10 +198,19 @@ async function runSingleReview(request: SkillReviewRequest, d: SkillReviewDeps):
   // batch cap, and a static prompt + static tool list that shares the
   // provider's 5-minute prefix cache across forks.
   const forkSessionId = `${SKILL_REVIEW_SESSION_PREFIX}${Date.now()}-${reviewSeq++}`;
-  const tools = buildReviewTools(d.allAgentTools, request.sessionId);
+  const notify = d.notify ?? broadcastToSession;
+  const tools = buildReviewTools(d.allAgentTools, {
+    reviewedSessionId: request.sessionId,
+    toolSequence: request.toolSequence,
+    onProposed: (sessionId, notice) => notify(sessionId, { type: "learning_notice", ...notice }),
+  });
   if (tools.length === 0) {
     throw new Error(`no review tools resolved (expected ${SKILL_REVIEW_TOOL_NAMES.join(", ")})`);
   }
+
+  const render = d.renderTranscript ?? ((opId, followUps) => renderOpTranscript(opId, TRANSCRIPT_CHAR_CAP, followUps));
+  const transcript = render(request.opId, request.followUpOpIds);
+  if (!transcript.trim()) throw new Error(`no transcript could be rendered for op ${request.opId}`);
 
   // The only real ceiling this job has — see DEFAULT_REVIEW_TIMEOUT_MS. Abort
   // fires opCancel through canonical so the op genuinely stops; the race
@@ -270,12 +223,12 @@ async function runSingleReview(request: SkillReviewRequest, d: SkillReviewDeps):
     timer = setTimeout(() => { timedOut = true; abort.abort(); resolve("timeout"); }, timeoutMs);
   });
 
-  logger.info(`[skill-review] Reviewing session ${request.sessionId} (${request.toolSequence.length} tool calls)`);
+  logger.info(`[skill-review] Reviewing session ${request.sessionId} (${request.toolSequence.length} tool calls, ${request.followUpOpIds.length} later turns)`);
   const run = runAgentViaCanonical(
     buildSkillReviewMessage({
       sessionId: request.sessionId,
       toolSequence: request.toolSequence,
-      transcript: request.transcript,
+      transcript,
     }),
     [],
     {
@@ -377,24 +330,19 @@ function reviewFailure(outcome: AgentTurn): string | null {
  */
 export function buildReviewTools(
   allAgentTools: readonly ToolDefinition[],
-  reviewedSessionId: string,
+  ctx: ReviewProtocolToolContext,
 ): ToolDefinition[] {
   const wanted = new Set<string>(SKILL_REVIEW_TOOL_NAMES);
   return allAgentTools
     .filter((t) => wanted.has(t.name))
-    .map((t) => (t.name === "protocol" ? narrowProtocolToolForReview(t, { reviewedSessionId }) : t));
+    .map((t) => (t.name === "protocol" ? narrowProtocolToolForReview(t, ctx) : t));
 }
 
 /** Test-only: drop queued reviews AND the registered deps, so fixtures can't
  *  bleed between cases and no test can accidentally drive a real model call. */
 export function _resetSkillReviewQueue(): void {
-  pending.clear();
+  _clearSkillReviewQueue();
   deps = null;
   passGuard.release();
   breaker.reset();
-}
-
-/** Test/debug: what is currently queued. */
-export function peekSkillReviewQueue(): SkillReviewRequest[] {
-  return [...pending.values()];
 }

@@ -136,7 +136,7 @@ export function getAllProtocols(): Protocol[] {
   return mergeByName(builtins, bundled, imported, custom);
 }
 
-function findProtocol(query: string): Protocol | undefined {
+export function findProtocol(query: string): Protocol | undefined {
   const q = query.toLowerCase();
   const all = getAllProtocols();
   const exact = all.find(pb => pb.name.toLowerCase() === q);
@@ -205,8 +205,8 @@ export function createCoreProtocolTools(): ToolDefinition[] {
           ? "\n\nUser Preferences:\n" + Object.entries(prefs).map(([k, v]) => `  ${k}: ${v}`).join("\n")
           : "\n\nNo user preferences saved yet.";
 
-        // Tier-1 custom records the review fork writes on its own initiative
-        // carry no evidence gate (unlike an imported/managed learned record,
+        // Tier-1 custom records the review fork wrote before its proposals
+        // became drafts carry no evidence gate (unlike an imported/managed learned record,
         // which only ships after a cross-session success-rate threshold — see
         // verifiedActiveProtocol in learned-suggestion.ts). The suggestion
         // nudge flags this too, but a direct protocol(action:"get") call

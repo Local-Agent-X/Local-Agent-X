@@ -17,15 +17,18 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { AgentTurn, ToolDefinition } from "../src/types.js";
 import {
-  requestSkillReview,
   runSkillReviewPass,
   registerSkillReviewRunner,
   getSkillReviewBreakerState,
-  peekSkillReviewQueue,
   _resetSkillReviewQueue,
   SKILL_REVIEW_POLL_INTERVAL_MS,
   type SkillReviewDeps,
 } from "../src/server/background-jobs/skill-review.js";
+import {
+  requestSkillReview,
+  peekSkillReviewQueue,
+  SKILL_REVIEW_SETTLE_MS,
+} from "../src/server/background-jobs/skill-review-queue.js";
 import {
   BREAKER_BACKOFF_AFTER,
   BREAKER_PARK_AFTER,
@@ -52,11 +55,13 @@ function stubTool(name: string): ToolDefinition {
 }
 
 /** Deps only ever reach resolveProvider and runAgentViaCanonical, both mocked
- *  here — same one-cast pattern as skill-review-fork.test.ts. */
+ *  here, plus a canned transcript — same one-cast pattern as
+ *  skill-review-fork.test.ts. */
 function fakeDeps(): SkillReviewDeps {
   return {
     config: {}, dataDir: "/tmp/unused", secretsStore: {}, security: {}, toolPolicy: {},
     allAgentTools: [stubTool("protocol")],
+    renderTranscript: () => "user: do\nassistant: done",
   } as unknown as SkillReviewDeps;
 }
 
@@ -72,8 +77,9 @@ function turn(stopReason: AgentTurn["stopReason"], errorMessage?: string): Agent
 }
 
 let seq = 0;
+/** Queue a review whose settle period has already passed, so it is eligible. */
 function queueOne(sessionId = `chat-${seq++}`): void {
-  requestSkillReview({ sessionId, toolSequence: HEAVY_TURN, transcript: "user: do\nassistant: done" });
+  requestSkillReview({ sessionId, opId: `op-${sessionId}`, toolSequence: HEAVY_TURN, now: Date.now() - SKILL_REVIEW_SETTLE_MS });
 }
 
 /** Capture logger.warn output (createLogger routes warn through console.error). */

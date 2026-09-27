@@ -30,7 +30,7 @@ function protocolsDir(): string {
   return dir;
 }
 
-function customProtocolsPath(): string {
+export function customProtocolsPath(): string {
   return join(protocolsDir(), "custom.json");
 }
 
@@ -89,9 +89,8 @@ export function loadCustomProtocols(): Protocol[] {
  * The single write choke point for custom.json — every create/edit/delete, the
  * archive/unarchive moves, and the marketplace installer land here.
  *
- * Atomic (tmp + rename) because this file now has more than one writer: a
- * background review fork authors protocols while a foreground tool or the user
- * may be writing too. A torn write is worse than a lost one here —
+ * Atomic (tmp + rename) because this file has more than one writer: a
+ * foreground tool, the user, and the marketplace installer. A torn write is worse than a lost one here —
  * loadCustomProtocols() swallows a parse failure as `[]`, so a half-written
  * file reads back as "the user has no custom protocols" and the very next save
  * persists that emptiness.

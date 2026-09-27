@@ -61,17 +61,19 @@ export async function emitContextStatus(
   emitSse: (ev: ServerEvent) => void,
 ): Promise<void> {
   try {
-    const { getContextStatus, resolveAnthropicTransport, estimateTokens, isAnthropicModel } = await import("../../../context-manager/index.js");
+    const { getContextStatus, resolveAnthropicTransport, estimateTokens } = await import("../../../context-manager/index.js");
     // Size the reported window against the transport the turn will actually run
     // on — the Anthropic CLI/OAuth path serves a smaller effective window, so
     // the % the UI shows must reflect that or it reads far below reality. Add
     // the baseline the request carries outside the conversation (system prompt +
     // tools + the CLI subprocess's own wrapping) so the % isn't far short of the
-    // real request. Anthropic-scoped to match the compaction gate. Uses the
-    // session's REAL observed baseline (O(1) cache, seeded from clean turns);
-    // string estimate as first-message fallback.
+    // real request. Uses the session's REAL observed baseline where one exists
+    // (O(1) cache, Anthropic only, seeded from clean turns); the string
+    // estimate otherwise — without it a local model's first reading showed
+    // 0K of a 29k-token request. The meter then follows each round's real
+    // prompt (chat-runner/event-pump.ts).
     let baselineTokens = 0;
-    if (process.env.LAX_CONTEXT_BASELINE !== "0" && isAnthropicModel(prepared.model)) {
+    if (process.env.LAX_CONTEXT_BASELINE !== "0") {
       const { getSessionBaselineTokens } = await import("../../../canonical-loop/index.js");
       baselineTokens = getSessionBaselineTokens(sessionId, prepared.model)
         ?? (estimateTokens(prepared.systemPrompt) + estimateTokens(JSON.stringify(prepared.tools)));

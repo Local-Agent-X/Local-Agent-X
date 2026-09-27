@@ -143,3 +143,26 @@ describe("event pump — held `aborted` error", () => {
     pump.dispose();
   });
 });
+
+describe("event pump — the context meter follows each round", () => {
+  it("turns a committed round's prompt count into a context_status", async () => {
+    const pump = createEventPump("op-ctx-1");
+    eventListeners.get("op-ctx-1")!({
+      type: "turn_committed",
+      body: { turnIdx: 12, context: { promptTokens: 58_686, model: "qwen3.6:27b", compacted: true } },
+    });
+    const { events } = await pump.pull();
+    expect(events).toHaveLength(1);
+    const ev = events[0] as Extract<(typeof events)[number], { type: "context_status" }>;
+    expect(ev).toMatchObject({ type: "context_status", usedTokens: 58_686, compacted: true });
+    expect(ev.percentage).toBe(Math.round((58_686 / ev.maxTokens) * 100));
+    pump.dispose();
+  });
+
+  it("emits nothing for a round with no usable prompt count", async () => {
+    const pump = createEventPump("op-ctx-2");
+    eventListeners.get("op-ctx-2")!({ type: "turn_committed", body: { turnIdx: 0 } });
+    expect(await orHung(pump.pull())).toBe("hung");
+    pump.dispose();
+  });
+});

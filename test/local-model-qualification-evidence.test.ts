@@ -176,6 +176,21 @@ describe("local qualification workspace-read evidence", () => {
     expect(chatEvidence(events).readNonceSeen).toBe(false);
   });
 
+  it("accepts the meter's per-round updates after the read and a non-zero first reading", () => {
+    const events = readEvents();
+    events[0] = { ...events[0], percentage: 42, usedTokens: 13_800 };
+    const round = { type: "context_status", percentage: 44, level: "ok", usedTokens: 14_400, maxTokens: 32768, compacted: false };
+    insertFrame(events, "before-done", round);
+    events.splice(5, 0, { ...round, usedTokens: 14_100 });
+    expect(chatEvidence(events).readNonceSeen).toBe(true);
+  });
+
+  it("rejects the nonce in a per-round context status", () => {
+    const events = readEvents();
+    insertFrame(events, "before-done", { type: "context_status", percentage: 44, level: READ_NONCE, usedTokens: 1, maxTokens: 32768, compacted: false });
+    expect(chatEvidence(events).readNonceSeen).toBe(false);
+  });
+
   it("rejects the nonce in the chat operation id", () => {
     const events = readEvents();
     events[1] = { ...events[1], opId: READ_NONCE };

@@ -9,6 +9,8 @@ import type { ServerEvent } from "../../types.js";
 import type { CanonicalEvent, StateChangedBody } from "../types.js";
 import { subscribeOpStream, subscribeOpEvents } from "../control-api.js";
 import { isTerminalState, type TerminalState } from "../terminal-states.js";
+import { contextStatusForTokens } from "../../context-manager/status.js";
+import { resolveAnthropicTransport } from "../../context-manager/resolve-transport.js";
 
 export interface PumpedEvents {
   events: ServerEvent[];
@@ -284,7 +286,21 @@ export function createEventPump(opId: string): EventPump {
       return;
     }
     if (event.type === "turn_committed") {
-      // No user-visible event today; reserved hook for future "round N" UI.
+      // The context meter follows the prompt the provider counted for each
+      // round. Sized once at send time, it read 0% while a local model's
+      // tool rounds ran up to 90% of its window and compacted twice.
+      const ctx = (event.body as { context?: { promptTokens: number; model: string; compacted: boolean } }).context;
+      if (!ctx) return;
+      const status = contextStatusForTokens(ctx.promptTokens, ctx.model, resolveAnthropicTransport());
+      eventQueue.push({
+        type: "context_status",
+        percentage: status.percentage,
+        level: status.level,
+        usedTokens: status.usedTokens,
+        maxTokens: status.maxTokens,
+        compacted: ctx.compacted,
+      });
+      wake();
       return;
     }
   });

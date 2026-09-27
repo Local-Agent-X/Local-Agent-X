@@ -18,6 +18,7 @@ const KNOWN_EVENT_TYPES = new Set([
   "prepare_progress", "turn_provider",
 ]);
 const INVALID_SSE_MESSAGE = "qualification received invalid SSE data";
+const CONTEXT_LEVELS: ReadonlySet<unknown> = new Set(["ok", "warning", "compact", "critical", "emergency"]);
 
 export type QualificationChatKind = "baseline" | "workspace-read" | "history" | "continuity";
 
@@ -51,7 +52,9 @@ export function chatEvidence(events: Array<Record<string, unknown>>): ChatResult
       || (prelude.length === 3 && isTurnProvider(prelude[1]) && isChatOperationStarted(prelude[2]))
     )
     && !containsNonce(events.slice(0, endIndex));
-  const continuation = events.slice(endIndex + 1, doneIndex);
+  // The context meter updates after each committed round; a well-formed
+  // status carries only numbers and a level, so it cannot carry the nonce.
+  const continuation = events.slice(endIndex + 1, doneIndex).filter((event) => !isContextStatus(event));
   const validContinuation = continuation.length > 0
     && continuation.every(isAppendStream);
   const readContinuation = validContinuation
@@ -78,11 +81,11 @@ export function chatEvidence(events: Array<Record<string, unknown>>): ChatResult
 function isContextStatus(event: Record<string, unknown>): boolean {
   return hasExactOwnKeys(event, ["type", "percentage", "level", "usedTokens", "maxTokens", "compacted"])
     && event.type === "context_status"
-    && event.percentage === 0
-    && event.level === "ok"
+    && isNonnegativeInteger(event.percentage)
+    && CONTEXT_LEVELS.has(event.level)
     && isNonnegativeInteger(event.usedTokens)
     && isPositiveInteger(event.maxTokens)
-    && event.compacted === false;
+    && typeof event.compacted === "boolean";
 }
 
 function isChatOperationStarted(event: Record<string, unknown>): boolean {

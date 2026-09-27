@@ -15,6 +15,7 @@
  */
 import { readOp } from "../ops/op-store.js";
 import { readLatestOpTurn, readOpTurns } from "./store.js";
+import type { OpTurnRow } from "./types.js";
 import { ANTHROPIC_ADAPTER_NAME } from "./adapters/anthropic/types.js";
 import { effectiveContextWindow } from "../context-manager/effective-window.js";
 import { resolveAnthropicTransport } from "../context-manager/resolve-transport.js";
@@ -190,4 +191,27 @@ export function lastTurnUsage(opId: string): LastTurnUsage | null {
 	} catch {
 		return null;
 	}
+}
+
+/**
+ * The prompt the provider counted for ONE round — what the context meter
+ * shows after each tool round. Unlike lastTurnUsage (a compaction anchor), a
+ * compacted view is exactly what the model saw, so it counts. Anthropic's
+ * input_tokens excludes the cached prefix, so the cache fields are added
+ * back; OpenAI-style prompt_tokens already includes it. Null when the round
+ * recorded no prompt count, when the provider ran tools in-stream (the CLI
+ * path reports usage summed across those requests), or when the count is
+ * larger than one request can be.
+ */
+export function roundPromptTokens(turn: OpTurnRow): number | null {
+	const payload = turn.providerState?.providerPayload as Record<string, unknown> | undefined;
+	const input = payload?.usageInputTokens;
+	if (typeof input !== "number" || (turn.observedTools?.length ?? 0) > 0) return null;
+	const cached = turn.providerState.adapterName === ANTHROPIC_ADAPTER_NAME
+		? [payload?.cacheReadTokens, payload?.cacheCreateTokens].reduce<number>((sum, t) => sum + (typeof t === "number" ? t : 0), 0)
+		: 0;
+	const model = payload?.model;
+	const tokens = input + cached;
+	if (typeof model === "string" && tokens > effectiveContextWindow(model, resolveAnthropicTransport())) return null;
+	return tokens;
 }

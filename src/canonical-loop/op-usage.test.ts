@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { rmSync } from "node:fs";
 
-import { lastTurnUsage } from "./op-usage.js";
+import { lastTurnUsage, roundPromptTokens } from "./op-usage.js";
 import { insertOpTurn } from "./store.js";
 import { opDir } from "../ops/event-log.js";
 import type { OpTurnRow } from "./types.js";
@@ -219,5 +219,28 @@ describe("lastTurnUsage — transport-aware plausibility clamp", () => {
 		// total = 150k, well under the 200k CLI ceiling.
 		insertOpTurn(turn(opId, 0, { model: "claude-opus-4-8", usageInputTokens: 1_000, usageOutputTokens: 1_000, cacheReadTokens: 147_500, cacheCreateTokens: 500 }, stamped));
 		expect(lastTurnUsage(opId)).toEqual({ turnIdx: 0, contextTokens: 150_000 });
+	});
+});
+
+describe("roundPromptTokens — the prompt one round sent, for the context meter", () => {
+	it("counts an OpenAI-style prompt as reported: prompt_tokens already includes the cached prefix", () => {
+		const t = turn("op-rpt-1", 0, { usageInputTokens: 58_686, promptCachedTokens: 40_000, model: "qwen3.6:27b" }, { adapterName: "openai-compat", viewCompacted: true });
+		expect(roundPromptTokens(t)).toBe(58_686);
+	});
+
+	it("adds the cache fields back for Anthropic, whose input_tokens excludes them", () => {
+		const t = turn("op-rpt-2", 0, { usageInputTokens: 1_000, cacheReadTokens: 30_000, cacheCreateTokens: 2_000, model: "claude-sonnet-5" }, { viewCompacted: false });
+		expect(roundPromptTokens(t)).toBe(33_000);
+	});
+
+	it("counts a compacted round: that view is what the model saw", () => {
+		const t = turn("op-rpt-3", 0, { usageInputTokens: 39_000, model: "qwen3.6:27b" }, { adapterName: "openai-compat", viewCompacted: true });
+		expect(roundPromptTokens(t)).toBe(39_000);
+	});
+
+	it("is null with no prompt count, with in-stream provider tools, or above what one request can hold", () => {
+		expect(roundPromptTokens(turn("op-rpt-4", 0, { usageOutputTokens: 5, model: "qwen3.6:27b" }, { adapterName: "openai-compat" }))).toBeNull();
+		expect(roundPromptTokens(turn("op-rpt-5", 0, { usageInputTokens: 900, model: "claude-sonnet-5" }, { observedTools: ["read"] }))).toBeNull();
+		expect(roundPromptTokens(turn("op-rpt-6", 0, { usageInputTokens: 50_000_000, model: "claude-sonnet-5" }))).toBeNull();
 	});
 });

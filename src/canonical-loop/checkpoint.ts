@@ -1,6 +1,6 @@
 /** Failure-atomic, lease-fenced post-turn commit. */
 import { randomUUID } from "node:crypto";
-import { aggregateOpUsage } from "./op-usage.js";
+import { aggregateOpUsage, roundPromptTokens } from "./op-usage.js";
 import { emitStrict } from "./event-emitter.js";
 import { isLeaseExpired, withCurrentLeaseClaim, type LeaseClaim } from "./lease.js";
 import { persistOpKeepingSignalsStrict, StrictOpPersistenceError } from "./op-persist.js";
@@ -262,6 +262,8 @@ function projectTurnCommit(
   }
   projectionHook?.("after_message_events");
   const usage = aggregateOpUsage(op.id);
+  const promptTokens = roundPromptTokens(turn);
+  const roundModel = (turn.providerState.providerPayload as { model?: unknown } | null)?.model;
   emitOnce(op.id, "turn_committed", (body) => body.turnIdx === turn.turnIdx, {
     turnIdx: turn.turnIdx,
     messageCount: messages.length,
@@ -272,6 +274,9 @@ function projectTurnCommit(
       outputTokens: usage.usageOutputTokens,
       totalTokens: usage.usageInputTokens + usage.usageOutputTokens,
     },
+    ...(promptTokens !== null && typeof roundModel === "string"
+      ? { context: { promptTokens, model: roundModel, compacted: turn.providerState.viewCompacted === true } }
+      : {}),
   });
   projectionHook?.("after_turn_event");
   appendActionLedgerOnce({

@@ -32,10 +32,21 @@ export function getContextStatus(
   // Omitted/0 → historical behavior.
   baselineTokens = 0
 ): ContextStatus {
-  const maxTokens = effectiveContextWindow(model, transport);
   const usedTokens = anchor
     ? anchoredTotalTokens(messages, anchor)
     : totalTokens(messages) + baselineTokens;
+  return contextStatusForTokens(usedTokens, model, transport);
+}
+
+/** The status of a context already measured in tokens — the prompt a provider
+ *  reported for the round it just served. Same window and bands as the
+ *  message-based estimate above. */
+export function contextStatusForTokens(
+  usedTokens: number,
+  model: string,
+  transport?: AnthropicTransport,
+): ContextStatus {
+  const maxTokens = effectiveContextWindow(model, transport);
   const percentage = Math.round((usedTokens / maxTokens) * 100);
 
   let level: ContextStatus["level"] = "ok";

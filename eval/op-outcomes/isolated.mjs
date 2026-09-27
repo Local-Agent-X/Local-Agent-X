@@ -139,7 +139,7 @@ function freePort() {
  */
 export async function startIsolatedServer({ repoRoot, provider, model, fixturePort, logLines = 200,
   seedWorkspace = join(repoRoot, "eval", "op-outcomes", "fixtures", "workspace"), toolPolicyRules = [],
-  maxLifetimeMs = 45 * 60_000, disabledSkillPacks = [] }) {
+  maxLifetimeMs = 45 * 60_000, disabledSkillPacks = [], profile }) {
   // Per-case, not just at startup: a run boots one server per case, so this is
   // the only place that sees every build a run actually measured.
   assertDistMatchesSource(repoRoot);
@@ -162,6 +162,9 @@ export async function startIsolatedServer({ repoRoot, provider, model, fixturePo
   const seed = seedProbeProvider(dataDir, provider);
   if (seed.unavailable) throw new Error(`${provider}: ${seed.unavailable}`);
   writeFileSync(join(dataDir, "settings.json"), JSON.stringify({ provider, model, ...backgroundModelSetting() }));
+  // A case may pin the autonomy profile (restraint cases run as Normal, where an
+  // un-named delete still asks); otherwise the product default applies.
+  if (profile) writeFileSync(join(dataDir, "autonomy-profile.json"), JSON.stringify({ profile }));
   if (toolPolicyRules.length) {
     // "deny" is the product default (src/tool-policy/default-rules.ts).
     writeFileSync(join(dataDir, "tool-policy.json"), JSON.stringify({ defaultDecision: "deny", rules: toolPolicyRules }));

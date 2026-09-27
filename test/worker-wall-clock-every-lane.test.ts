@@ -81,6 +81,13 @@ const ORIGINAL_CONFIG = getRuntimeConfig();
 const WALL_CLOCK_MS = 1_500;
 /** See HARNESS NOTE. The op must never reach the end of this script. */
 const SCRIPT_TURNS = 60;
+/** Each dispatch holds its turn this long, so SCRIPT_TURNS × TURN_FLOOR_MS is
+ *  twice the budget on any machine. Without it the script's length was only a
+ *  guess at runner speed: once the budget widened to 1.5s (9d25b89d) the
+ *  ubuntu runner finished all 60 turns inside it and failed on "the script ran
+ *  out", never reaching the brake. A busy-wait, not a timer — a timer would
+ *  yield to the macrotask phase this file exists to starve. */
+const TURN_FLOOR_MS = 50;
 
 beforeEach(() => {
   process.env.LAX_CANONICAL_LOOP_INTERACTIVE = "1";
@@ -163,6 +170,8 @@ describe("wall clock on every lane — a period-9 livelock ends partial, reason 
     setToolDispatcher({
       async dispatch(call) {
         const args = call.args as { step: number; lap: number };
+        const until = Date.now() + TURN_FLOOR_MS;
+        while (Date.now() < until) { /* hold the turn; see TURN_FLOOR_MS */ }
         const text = args.step === 0 ? `lap ${args.lap} started` : "nothing changed";
         return { toolCallId: call.toolCallId, status: "ok", result: { text }, durationMs: 0 };
       },

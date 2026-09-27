@@ -41,6 +41,13 @@ const ctx = {
   allowedPathCheck: () => false,
 };
 
+// Another user's folder in the host's own spelling. On POSIX `C:\Users\…` is a
+// legal RELATIVE filename that bash creates inside its cwd — the workspace since
+// a62535ac — so only the host's absolute form is outside the boundary there.
+const OTHER_USER = process.platform === "win32" ? "C:\\Users\\other user" : "/home/other user";
+const OTHER_PREFIX = OTHER_USER.split(" ")[0];
+const other = (file: string) => join(OTHER_USER, file);
+
 describe("shell path guard — quoted paths with spaces stay one token", () => {
   it("ALLOWS `cd \"<workspace app>\" && npm run build` (the live false-block)", () => {
     const d = evaluateShellCommandAndPaths(`cd "${APP}" && npm run build`, ctx);
@@ -89,9 +96,13 @@ describe("shell path guard — separators glued to a path split cleanly", () => 
   });
 
   it("still BLOCKS an out-of-workspace read chained behind `&&`", () => {
-    const d = evaluateShellPaths(`npm run build && cat "C:\\Users\\other user\\notes.txt"`, ctx);
+    const d = evaluateShellPaths(`npm run build && cat "${other("notes.txt")}"`, ctx);
     expect(d.allowed).toBe(false);
-    expect(d.reason).toContain("C:\\Users\\other user\\notes.txt");
+    expect(d.reason).toContain(other("notes.txt"));
+  });
+
+  it.runIf(process.platform !== "win32")("POSIX: a `C:\\…` spelling is a relative filename inside the workspace", () => {
+    expect(evaluateShellPaths(`npm run build && type>C:\\Users\\other user\\pwn.txt`, ctx).allowed).toBe(true);
   });
 });
 
@@ -123,11 +134,11 @@ describe("shell path guard — segment-initial glued redirect", () => {
   it("BLOCKS a glued Windows write target behind `&&`", () => {
     // Unquoted, so the space splits the token — the guard still sees the
     // absolute `C:\Users\other` prefix land outside the boundary and blocks.
-    blocks(`npm run build && type>C:\\Users\\other user\\pwn.txt`, "C:\\Users\\other");
+    blocks(`npm run build && type>${other("pwn.txt")}`, OTHER_PREFIX);
   });
 
   it("BLOCKS a glued Windows read behind `;`", () => {
-    blocks(`npm run build; cat<C:\\Users\\other user\\secret.txt`, "C:\\Users\\other");
+    blocks(`npm run build; cat<${other("secret.txt")}`, OTHER_PREFIX);
   });
 
   it("BLOCKS `cat</etc/shadow` on a NEWLINE-separated line", () => {
@@ -135,7 +146,7 @@ describe("shell path guard — segment-initial glued redirect", () => {
   });
 
   it("control: the spaced form `echo x>C:\\…` still BLOCKS (never regressed)", () => {
-    blocks(`npm run build && echo x>C:\\Users\\other user\\pwn.txt`, "C:\\Users\\other");
+    blocks(`npm run build && echo x>${other("pwn.txt")}`, OTHER_PREFIX);
   });
 
   it("ALLOWS an argv[0] that is itself an out-of-workspace binary path", () => {
@@ -173,14 +184,14 @@ describe("shell path guard — re-parsed shell -c bodies", () => {
   });
 
   it("BLOCKS `powershell -Command \"type C:\\…\"` (flag match is case-insensitive)", () => {
-    const cmd = `powershell -Command "type C:\\Users\\other user\\secret.txt"`;
+    const cmd = `powershell -Command "type ${other("secret.txt")}"`;
     const d = evaluateShellPaths(cmd, ctx);
     expect(d.allowed).toBe(false);
-    expect(d.reason).toContain("C:\\Users\\other");
+    expect(d.reason).toContain(OTHER_PREFIX);
   });
 
   it("BLOCKS `cmd /c` and a DOUBLY nested `bash -c \"sh -c '…'\"`", () => {
-    expect(evaluateShellPaths(`cmd /c "type C:\\Users\\other user\\secret.txt"`, ctx).allowed).toBe(false);
+    expect(evaluateShellPaths(`cmd /c "type ${other("secret.txt")}"`, ctx).allowed).toBe(false);
     expect(evaluateShellPaths(`bash -c "sh -c 'cat /etc/shadow'"`, ctx).allowed).toBe(false);
   });
 
@@ -313,9 +324,9 @@ describe("shell path guard — re-parse survives command-modifier wrappers", () 
   });
 
   it("BLOCKS one WRAPPED form per shell family (powershell / pwsh / cmd)", () => {
-    blocks(`timeout 5 powershell -Command "type C:\\Users\\other user\\secret.txt"`, "C:\\Users\\other");
-    blocks(`env pwsh -c "type C:\\Users\\other user\\x.txt"`, "C:\\Users\\other");
-    blocks(`env cmd /c "type C:\\Users\\other user\\secret.txt"`, "C:\\Users\\other");
+    blocks(`timeout 5 powershell -Command "type ${other("secret.txt")}"`, OTHER_PREFIX);
+    blocks(`env pwsh -c "type ${other("x.txt")}"`, OTHER_PREFIX);
+    blocks(`env cmd /c "type ${other("secret.txt")}"`, OTHER_PREFIX);
   });
 
   it("MUST KEEP BLOCKING the wrapper-FREE forms (already correct — do not break)", () => {
@@ -376,7 +387,7 @@ describe("shell path guard — bare DOS switches (win32)", () => {
   });
 
   it("BLOCKS other real path operands inside a cmd body", () => {
-    blocks(`cmd /c "type C:\\Users\\other user\\secret.txt"`);
+    blocks(`cmd /c "type ${other("secret.txt")}"`);
     blocks(`cmd /c "del /q /etc/passwd"`);
     blocks(`cmd /c "bash -c 'cat /etc/shadow'"`); // the flag never leaks into a POSIX body
   });

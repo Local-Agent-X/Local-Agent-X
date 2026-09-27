@@ -32,7 +32,9 @@ describe("bash obeys the file-access mode (shell path guard)", () => {
     expect(bash(sec, "cat /etc/passwd").allowed).toBe(false);
   });
 
-  it("workspace mode: reading a Windows path outside the project is blocked", () => {
+  // win32 only: on POSIX `C:\…` is a legal relative filename that bash opens
+  // inside its cwd, the workspace (a62535ac), so it is not outside anything there.
+  it.runIf(process.platform === "win32")("workspace mode: reading a Windows path outside the project is blocked", () => {
     const sec = new SecurityLayer(WORKSPACE, "workspace");
     expect(bash(sec, 'type "C:\\Users\\alice\\Documents\\2024 May order.xlsx"').allowed).toBe(false);
   });

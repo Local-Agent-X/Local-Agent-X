@@ -78,6 +78,7 @@ function buildOps(opts: {
       return opts.outcome;
     },
     pressEnter: async () => undefined,
+    visibleValues: async () => [],
   };
 }
 

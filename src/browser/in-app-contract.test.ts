@@ -250,7 +250,7 @@ describe("in-app cross-seam contract — tool → backend → real bridge → fa
 
 	it("screenshot (via handleScreenshot) captures over the bridge and returns the CDP-shaped saved report", async () => {
 		await handleNavigate(backend, { url: PAGE_URL }, undefined);
-		const result = await handleScreenshot(backend);
+		const result = await handleScreenshot(backend, backend.secretOps());
 		expect(result.isError).toBeFalsy();
 		const content = String(result.content);
 		expect(content).toMatch(/^Screenshot captured\n/);
@@ -270,7 +270,7 @@ describe("in-app cross-seam contract — tool → backend → real bridge → fa
 		const nav = await handleNavigate(backend, { url: PAGE_URL }, undefined);
 		const obs = await handleObserve(backend);
 		const click = await handleClick(backend, { ref: 1 });
-		const shot = await handleScreenshot(backend);
+		const shot = await handleScreenshot(backend, backend.secretOps());
 		for (const r of [nav, obs, click, shot]) expect(r.isError).toBeFalsy();
 
 		// One view served the whole sequence: exactly one create, and every op
@@ -299,7 +299,7 @@ describe("in-app cross-seam contract — tool → backend → real bridge → fa
 		const switched = await backend.switchTab(2);
 		expect(switched).toBe("Switched to tab [2]: User Inbox — https://user.example/inbox");
 		// Ops now drive the USER's view over the real bridge.
-		const shot = await handleScreenshot(backend);
+		const shot = await handleScreenshot(backend, backend.secretOps());
 		expect(shot.isError).toBeFalsy();
 		expect(sent.some((m) => m.type === "lax:browser-capture" && m.viewId === "view-user-main")).toBe(true);
 

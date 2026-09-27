@@ -32,6 +32,7 @@ function buildOps(): SecretBrowserOps {
     readValue: async () => pageValue,
     fillValue: async () => ({ kind: "landed" }),
     pressEnter: async () => undefined,
+    visibleValues: async () => [],
   };
 }
 

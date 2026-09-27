@@ -59,6 +59,48 @@ export interface SecretBrowserOps {
 	readValue(target: SecretReadTarget): Promise<string | null>;
 	fillValue(selector: string, value: string): Promise<SecretFillOutcome>;
 	pressEnter(selector: string): Promise<void>;
+	/** Plaintext the user can SEE: visible field values and code-like text, each
+	 *  with a selector that reads it back. Host-side only — for the
+	 *  secret-on-screen check; a value never goes into a result. */
+	visibleValues(): Promise<VisibleValue[]>;
+}
+
+export interface VisibleValue {
+	value: string;
+	/** Reads this value back through readValue: `selector` for a field (.value),
+	 *  `textSelector` for an element's text. */
+	selector: string;
+	field: boolean;
+}
+
+/** Visible, non-password field values and code-like text, capped. A password
+ *  field paints as dots, so it cannot leak through a screenshot. */
+export function visibleValuesScript(): string {
+	return `(function(){
+	var out = [];
+	var seen = function(el){ var r = el.getBoundingClientRect(); var s = getComputedStyle(el); return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none'; };
+	var path = function(el){
+		if (el.id && document.querySelectorAll('#' + CSS.escape(el.id)).length === 1) return '#' + CSS.escape(el.id);
+		var parts = [];
+		for (var n = el; n && n.nodeType === 1 && n !== document.body; n = n.parentElement) {
+			var i = 1; for (var s = n.previousElementSibling; s; s = s.previousElementSibling) if (s.tagName === n.tagName) i++;
+			parts.unshift(n.tagName.toLowerCase() + ':nth-of-type(' + i + ')');
+		}
+		return 'body > ' + parts.join(' > ');
+	};
+	var fields = document.querySelectorAll('input:not([type=password]):not([type=hidden]), textarea');
+	for (var i = 0; i < fields.length && out.length < 200; i++) { var f = fields[i]; if (f.value && seen(f)) out.push({ value: String(f.value).slice(0, 4096), selector: path(f), field: true }); }
+	var code = document.querySelectorAll('code, pre, kbd, samp, [role=dialog] span, [role=dialog] p');
+	for (var j = 0; j < code.length && out.length < 400; j++) { var c = code[j]; var t = (c.textContent || '').trim(); if (t && seen(c)) out.push({ value: t.slice(0, 4096), selector: path(c), field: false }); }
+	return out;
+})()`;
+}
+
+function asVisibleValues(raw: unknown): VisibleValue[] {
+	if (!Array.isArray(raw)) return [];
+	return raw.filter((v): v is VisibleValue => !!v && typeof v === "object"
+		&& typeof (v as VisibleValue).value === "string" && typeof (v as VisibleValue).selector === "string"
+		&& typeof (v as VisibleValue).field === "boolean");
 }
 
 // ── Page scripts, shared by both backends ──
@@ -177,6 +219,9 @@ export function createCdpSecretOps(getPage: () => Promise<Page>): SecretBrowserO
 		async pressEnter(selector) {
 			await (await getPage()).locator(selector).press("Enter");
 		},
+		async visibleValues() {
+			return asVisibleValues(await (await getPage()).evaluate(visibleValuesScript()));
+		},
 	};
 }
 
@@ -224,6 +269,9 @@ export function createInAppSecretOps(deps: InAppSecretDeps): SecretBrowserOps {
 			await browserInput(viewId, { type: "keyDown", keyCode: "Enter" });
 			await browserInput(viewId, { type: "char", keyCode: "Enter" });
 			await browserInput(viewId, { type: "keyUp", keyCode: "Enter" });
+		},
+		async visibleValues() {
+			return asVisibleValues(await exec(visibleValuesScript()));
 		},
 	};
 }

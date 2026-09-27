@@ -5,7 +5,8 @@
  */
 
 import type { ToolResult } from "../../types.js";
-import type { BrowserBackend, ScreenshotImage } from "../../browser/index.js";
+import type { BrowserBackend, ScreenshotImage, SecretBrowserOps } from "../../browser/index.js";
+import { findSecretOnScreen, secretOnScreenMessage } from "../../browser/secret-on-screen.js";
 import { closeBrowser } from "../../browser/index.js";
 import { evaluateBlockMessage, scanEvaluateScript, sensitivePageStub } from "../../browser/guards.js";
 import { wrapExternalContent } from "../../sanitize.js";
@@ -32,9 +33,11 @@ export async function handleExtract(
   return ok(await manager.extractText(selector, find));
 }
 
-export async function handleScreenshot(manager: BrowserBackend): Promise<ToolResult> {
+export async function handleScreenshot(manager: BrowserBackend, secretOps: SecretBrowserOps): Promise<ToolResult> {
   const sensitive = sensitivePageStub(manager.getCurrentUrl());
   if (sensitive) return { content: sensitive, status: "blocked", isError: true, metadata: { browserStatus: "sensitive-content-withheld" } };
+  const onScreen = await findSecretOnScreen(secretOps);
+  if (onScreen) return { content: secretOnScreenMessage(onScreen), status: "blocked", isError: true, metadata: { browserStatus: "secret-on-screen" } };
   const shot = await manager.screenshot();
   if (!shot.image) return ok(shot.text);
   // Inline vision rides `_image` ONLY (audit-tool-call.ts turns it into a

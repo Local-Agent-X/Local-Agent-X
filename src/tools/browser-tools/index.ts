@@ -21,7 +21,7 @@
  */
 
 import type { ToolDefinition, ToolResult } from "../../types.js";
-import { getBrowserManager, closeBrowser, withBrowserLock, resetWedgedBrowser, BrowserWedgeError } from "../../browser/index.js";
+import { getBrowserManager, getSecretBrowserOps, closeBrowser, withBrowserLock, resetWedgedBrowser, BrowserWedgeError } from "../../browser/index.js";
 import type { BrowserEngine, WedgeRecoveryOutcome } from "../../browser/index.js";
 import { getToolTimeout } from "../../tool-execution/tool-timeout.js";
 import { withBridgeDeadline } from "../../browser/bridge-deadline.js";
@@ -172,7 +172,7 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
             case "fill": return await handleFill(manager, args);
             case "select": return await handleSelect(manager, args);
             case "extract": return await handleExtract(manager, args);
-            case "screenshot": return await handleScreenshot(manager);
+            case "screenshot": return await handleScreenshot(manager, getSecretBrowserOps(sessionId));
             case "evaluate": return await handleEvaluate(manager, args);
             case "scroll": return await handleScroll(manager, args);
             case "tabs": return await handleTabs(manager);

@@ -15,14 +15,13 @@
 
 import { describe, expect, it } from "vitest";
 
+import { classifyModel, loopGuardTier } from "../src/model-tiers.js";
 import {
-  classifyModel,
-  loopGuardTier,
   toolCapTierForProvider,
   shrinkToolsForTier,
   maxToolsForTier,
   ESSENTIAL_TOOLS_ORDER,
-} from "../src/model-tiers.js";
+} from "../src/tools/tier-tool-set.js";
 
 describe("classifyModel — tier heuristic", () => {
   it("classifies claude-haiku-4-5-* as strong (the -4-5 lookahead keeps it out of weak)", () => {

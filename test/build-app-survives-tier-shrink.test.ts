@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
+import { classifyModel } from "../src/model-tiers.js";
 import {
-  classifyModel,
   shrinkToolsForTier,
   maxToolsForTier,
   toolCapTierForProvider,
   ESSENTIAL_TOOLS_ORDER,
   MEDIUM_INTENT_SLOTS,
   GEMINI_STRONG_TOOL_CAP,
-} from "../src/model-tiers.js";
+} from "../src/tools/tier-tool-set.js";
 
 /**
  * Regression guard (live 2026-07-15, local qwen3.6:27b, "build me a side

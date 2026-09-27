@@ -12,23 +12,23 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 65 top-level dirs · 65 live · 0 with no live importer · 1623 non-test source files · 0 god files (>400 LOC).
+**Totals:** 65 top-level dirs · 65 live · 0 with no live importer · 1635 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | God files |
 |---|--:|--:|:--:|--:|
-| `src/ops/` | 131 | 26 | XL |  |
-| `src/security/` | 87 | 36 | XL |  |
-| `src/tools/` | 78 | 196 | XL |  |
-| `src/canonical-loop/` | 64 | 246 | XL |  |
+| `src/ops/` | 133 | 26 | XL |  |
+| `src/security/` | 89 | 36 | XL |  |
+| `src/tools/` | 79 | 197 | XL |  |
+| `src/canonical-loop/` | 65 | 247 | XL |  |
 | `src/providers/` | 64 | 22 | XL |  |
 | `src/workspace/` | 48 | 2 | M |  |
 | `src/memory/` | 46 | 130 | XL |  |
 | `src/util/` | 37 | 3 | S |  |
 | `src/session/` | 36 | 7 | L |  |
 | `src/auth/` | 35 | 11 | L |  |
-| `src/browser/` | 33 | 83 | XL |  |
+| `src/browser/` | 33 | 84 | XL |  |
 | `src/local-runtimes/` | 32 | 19 | XL |  |
 | `src/threat/` | 32 | 12 | L |  |
 | `src/data-lineage/` | 31 | 8 | L |  |
@@ -42,15 +42,15 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/context-manager/` | 22 | 12 | L |  |
 | `src/chat-ws/` | 21 | 20 | L |  |
 | `src/orchestrator/` | 20 | 24 | L |  |
+| `src/protocols/` | 18 | 47 | XL |  |
 | `src/agents/` | 17 | 13 | L |  |
-| `src/protocols/` | 17 | 44 | XL |  |
 | `src/sandbox/` | 16 | 9 | L |  |
 | `src/anthropic-client/` | 15 | 21 | XL |  |
-| `src/tool-execution/` | 15 | 49 | XL |  |
+| `src/tool-execution/` | 15 | 50 | XL |  |
+| `src/cognition/` | 13 | 33 | XL |  |
 | `src/voice/` | 13 | 74 | XL |  |
 | `src/autonomy/` | 12 | 4 | M |  |
-| `src/cognition/` | 12 | 30 | XL |  |
-| `src/server/` *(entrypoint)* | 12 | 51 | XL |  |
+| `src/server/` *(entrypoint)* | 12 | 53 | XL |  |
 | `src/whatsapp-bridge/` | 12 | 8 | L |  |
 | `src/agent-guards/` | 11 | 11 | L |  |
 | `src/self-edit/` | 11 | 20 | L |  |

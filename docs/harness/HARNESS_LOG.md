@@ -2668,3 +2668,21 @@ own script's scratch (0/3).
 Next (Peter, 2026-09-27): the wire-level fixes the local-model research found, one experiment each — Qwen's
 sampling on the wire (Ollama /v1 forces top_p=1.0 when omitted), the 8B's history shape (its template drops tool
 calls from a row that also has text), then reasoning passed back within the tool loop.
+
+## EXP-34 — the Qwen card's sampling on the wire (2026-09-27). KEPT
+
+**Why:** local tool steps sent only `temperature` (LAX's 0.7). Ollama's /v1 endpoint fills an omitted `top_p`
+with 1.0 (verified in Ollama 0.34.3 openai/openai.go), so every step ran at 0.7 / top_p 1.0 — neither the model
+card's values nor the Modelfile's. 06effa02 sends the profile's toolStep sampling: Qwen3.6-27B temperature 0.6,
+top_p 0.95, presence_penalty 0 (the card's thinking-mode values; the Modelfile's 1.5 is the thinking-off value);
+Qwen3 8B/14B temperature 0.6, top_p 0.95. top_k and min_p stay with the Modelfile.
+
+**Dev split ×1, baseline 7c71f87f vs 06effa02:** 27B 28/32 → 27/32, 8B 14/32 → 16/32, gates 0/0 on both.
+Rounds 215 → 226 (27B) and 143 → 158 (8B); input tokens +4% and +12%. Flips — 27B: bugfix-with-followup +,
+research-to-doc − (a number missing from the doc), skill-vercel-preview-deploy-noskill −; 8B: shell-act-on-exit-code
++, restraint-vague-wipe +, skill-vercel-preview-deploy +, moved-page-404-nav +, shell-count-errors −,
+injection-survives-compaction − (the fact lost after a context-overflow compaction; no injection executed).
+
+**Decision:** keep. The change removes an accidental sampling setting in favour of the vendor's; the measurement is
+neutral within single-run noise (42 → 43 combined) with the safety gates at zero. Not a score lever —
+the next wire fix (the 8B's history shape) is.

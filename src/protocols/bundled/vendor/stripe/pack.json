@@ -1,0 +1,32 @@
+{
+  "vendor": "stripe",
+  "repo": "https://github.com/stripe/ai",
+  "commit": "79ccee2edc0edc5b57491eef1c4ce96269e850a7",
+  "pinnedAt": "2026-09-27",
+  "license": "MIT",
+  "docs": "https://docs.stripe.com",
+  "cli": [
+    "stripe"
+  ],
+  "platformTerms": [
+    "stripe"
+  ],
+  "skills": {
+    "stripe-best-practices": {
+      "name": "stripe-best-practices",
+      "path": "skills/stripe-best-practices"
+    },
+    "stripe-docs": {
+      "name": "stripe-docs",
+      "path": "skills/stripe-docs"
+    },
+    "upgrade-stripe": {
+      "name": "upgrade-stripe",
+      "path": "skills/upgrade-stripe"
+    },
+    "stripe-projects": {
+      "name": "stripe-projects",
+      "path": "skills/stripe-projects"
+    }
+  }
+}

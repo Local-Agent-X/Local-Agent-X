@@ -118,3 +118,7 @@ file is the binding text.
 Local Agent X is built on a lot of open-source work — Whisper, Kokoro,
 Chatterbox, PyTorch, Playwright, Electron, and many more. See
 [docs/CREDITS.md](docs/CREDITS.md) for the full acknowledgments.
+
+It also ships official agent skills from Supabase, Stripe, Firebase, Cloudflare,
+Neon, Google Cloud, AWS and Vercel, unmodified and under their own licenses — see
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

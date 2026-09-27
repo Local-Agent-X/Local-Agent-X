@@ -1,0 +1,29 @@
+{
+  "vendor": "neon",
+  "repo": "https://github.com/neondatabase/agent-skills",
+  "commit": "80164a28443aca7c82ac1a70aed836950d6c29ea",
+  "pinnedAt": "2026-09-27",
+  "license": "Apache-2.0",
+  "docs": "https://neon.com/docs",
+  "cli": [
+    "neonctl",
+    "neon"
+  ],
+  "platformTerms": [
+    "neon"
+  ],
+  "skills": {
+    "neon-postgres": {
+      "name": "neon-postgres",
+      "path": "skills/neon-postgres"
+    },
+    "neon-auth": {
+      "name": "neon-auth",
+      "path": "skills/neon-auth"
+    },
+    "neon-postgres-branches": {
+      "name": "neon-postgres-branches",
+      "path": "skills/neon-postgres-branches"
+    }
+  }
+}

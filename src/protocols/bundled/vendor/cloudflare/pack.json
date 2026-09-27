@@ -1,0 +1,58 @@
+{
+  "vendor": "cloudflare",
+  "repo": "https://github.com/cloudflare/skills",
+  "commit": "626547c06881a20b3322bdc2ed6e6451b33a4fb6",
+  "pinnedAt": "2026-09-27",
+  "license": "Apache-2.0",
+  "docs": "https://developers.cloudflare.com",
+  "cli": [
+    "wrangler"
+  ],
+  "platformTerms": [
+    "cloudflare",
+    "wrangler",
+    "workers",
+    "durable",
+    "turnstile"
+  ],
+  "skills": {
+    "cloudflare": {
+      "name": "cloudflare",
+      "path": "skills/cloudflare"
+    },
+    "wrangler": {
+      "name": "wrangler",
+      "path": "skills/wrangler",
+      "projectMarkers": [
+        "wrangler.toml",
+        "wrangler.jsonc",
+        "wrangler.json"
+      ]
+    },
+    "workers-best-practices": {
+      "name": "workers-best-practices",
+      "path": "skills/workers-best-practices",
+      "projectMarkers": [
+        "wrangler.toml",
+        "wrangler.jsonc",
+        "wrangler.json"
+      ]
+    },
+    "durable-objects": {
+      "name": "durable-objects",
+      "path": "skills/durable-objects"
+    },
+    "agents-sdk": {
+      "name": "agents-sdk",
+      "path": "skills/agents-sdk"
+    },
+    "nextjs-on-cloudflare": {
+      "name": "nextjs-on-cloudflare",
+      "path": "skills/nextjs-on-cloudflare"
+    },
+    "cloudflare-email-service": {
+      "name": "cloudflare-email-service",
+      "path": "skills/cloudflare-email-service"
+    }
+  }
+}

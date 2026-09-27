@@ -1,0 +1,52 @@
+{
+  "vendor": "firebase",
+  "repo": "https://github.com/firebase/agent-skills",
+  "commit": "cad501960f600a0f5ed9c5b80bdf349559d927b5",
+  "pinnedAt": "2026-09-27",
+  "license": "Apache-2.0",
+  "docs": "https://firebase.google.com/docs",
+  "cli": [
+    "firebase"
+  ],
+  "platformTerms": [
+    "firebase",
+    "firestore"
+  ],
+  "skills": {
+    "firebase-basics": {
+      "name": "firebase-basics",
+      "path": "skills/firebase-basics",
+      "projectMarkers": [
+        "firebase.json",
+        ".firebaserc"
+      ]
+    },
+    "firebase-auth-basics": {
+      "name": "firebase-auth-basics",
+      "path": "skills/firebase-auth-basics"
+    },
+    "firebase-firestore": {
+      "name": "firebase-firestore",
+      "path": "skills/firebase-firestore"
+    },
+    "firebase-hosting-basics": {
+      "name": "firebase-hosting-basics",
+      "path": "skills/firebase-hosting-basics",
+      "projectMarkers": [
+        "firebase.json"
+      ]
+    },
+    "firebase-app-hosting-basics": {
+      "name": "firebase-app-hosting-basics",
+      "path": "skills/firebase-app-hosting-basics"
+    },
+    "firebase-ai-logic-basics": {
+      "name": "firebase-ai-logic-basics",
+      "path": "skills/firebase-ai-logic-basics"
+    },
+    "firebase-security-rules-auditor": {
+      "name": "firebase-security-rules-auditor",
+      "path": "skills/firebase-security-rules-auditor"
+    }
+  }
+}

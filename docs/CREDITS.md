@@ -101,6 +101,23 @@ project's own LICENSE is authoritative.
 | [Avalonia UI](https://github.com/AvaloniaUI/Avalonia) | Avalonia | MIT | Cross-platform installer GUI |
 | [CommunityToolkit.Mvvm](https://github.com/CommunityToolkit/dotnet) | .NET Foundation | MIT | Installer view-model binding |
 
+## Agent skills (vendor packs)
+
+Official Agent Skills (SKILL.md packs) from the platforms people build on, shipped unmodified at a
+pinned commit under `src/protocols/bundled/vendor/`. Exact commits, license files and the AWS NOTICE are in
+[THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md).
+
+| Project | Author / Org | License | Powers |
+|---|---|---|---|
+| [supabase/agent-skills](https://github.com/supabase/agent-skills) | Supabase | MIT | Supabase and Postgres guidance |
+| [stripe/ai](https://github.com/stripe/ai) | Stripe | MIT | Stripe integration best practices, docs lookup, upgrades |
+| [firebase/agent-skills](https://github.com/firebase/agent-skills) | Google (Firebase) | Apache-2.0 | Firebase setup, Auth, Firestore, Hosting, AI Logic |
+| [cloudflare/skills](https://github.com/cloudflare/skills) | Cloudflare | Apache-2.0 | Workers, Wrangler, Durable Objects, Agents SDK |
+| [neondatabase/agent-skills](https://github.com/neondatabase/agent-skills) | Neon | Apache-2.0 | Neon Postgres, branching, Neon Auth |
+| [google/skills](https://github.com/google/skills) | Google | Apache-2.0 | gcloud, Cloud Run, Cloud SQL, Cloud Storage, Gemini API |
+| [aws/agent-toolkit-for-aws](https://github.com/aws/agent-toolkit-for-aws) | Amazon Web Services | Apache-2.0 | AWS sign-in, serverless, CDK, Secrets Manager |
+| [vercel-labs/agent-skills](https://github.com/vercel-labs/agent-skills) | Vercel | MIT (per skill) | React and composition guidance; LAX's own `vercel-deploy` skill is written from Vercel's public CLI docs |
+
 ---
 
 *Missing or miscredited? Open an issue. Licenses noted here are a convenience

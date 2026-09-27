@@ -1,0 +1,49 @@
+{
+  "vendor": "google",
+  "repo": "https://github.com/google/skills",
+  "commit": "f566651a2f60aecbc4654f8868fb239f85a783f6",
+  "pinnedAt": "2026-09-27",
+  "license": "Apache-2.0",
+  "docs": "https://cloud.google.com/docs",
+  "cli": [
+    "gcloud",
+    "gsutil"
+  ],
+  "platformTerms": [
+    "google",
+    "gcloud",
+    "gemini",
+    "gcp",
+    "bigquery"
+  ],
+  "skills": {
+    "gcloud": {
+      "name": "gcloud",
+      "path": "skills/cloud/gcloud"
+    },
+    "cloud-run-basics": {
+      "name": "cloud-run-basics",
+      "path": "skills/cloud/cloud-run-basics",
+      "projectMarkers": [
+        "cloudbuild.yaml",
+        "service.yaml"
+      ]
+    },
+    "cloud-sql-basics": {
+      "name": "cloud-sql-basics",
+      "path": "skills/cloud/cloud-sql-basics"
+    },
+    "google-cloud-storage-basics": {
+      "name": "google-cloud-storage-basics",
+      "path": "skills/cloud/google-cloud-storage-basics"
+    },
+    "gemini-api": {
+      "name": "gemini-api",
+      "path": "skills/cloud/gemini-api"
+    },
+    "cloud-build-basics": {
+      "name": "cloud-build-basics",
+      "path": "skills/cloud/cloud-build-basics"
+    }
+  }
+}

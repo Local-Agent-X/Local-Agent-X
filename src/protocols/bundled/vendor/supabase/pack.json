@@ -1,0 +1,27 @@
+{
+  "vendor": "supabase",
+  "repo": "https://github.com/supabase/agent-skills",
+  "commit": "551274ed2fe97c8fea1325f7ceb05803a542f8df",
+  "pinnedAt": "2026-09-27",
+  "license": "MIT",
+  "docs": "https://supabase.com/docs",
+  "cli": [
+    "supabase"
+  ],
+  "platformTerms": [
+    "supabase"
+  ],
+  "skills": {
+    "supabase": {
+      "name": "supabase",
+      "path": "skills/supabase",
+      "projectMarkers": [
+        "supabase/config.toml"
+      ]
+    },
+    "supabase-postgres-best-practices": {
+      "name": "supabase-postgres-best-practices",
+      "path": "skills/supabase-postgres-best-practices"
+    }
+  }
+}

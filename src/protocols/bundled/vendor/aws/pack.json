@@ -1,0 +1,49 @@
+{
+  "vendor": "aws",
+  "repo": "https://github.com/aws/agent-toolkit-for-aws",
+  "commit": "dda61487cb4fa8b6dbc75ad4e27c2181adc9d058",
+  "pinnedAt": "2026-09-27",
+  "license": "Apache-2.0",
+  "docs": "https://docs.aws.amazon.com",
+  "cli": [
+    "aws",
+    "cdk",
+    "sam"
+  ],
+  "platformTerms": [
+    "aws",
+    "amazon",
+    "lambda",
+    "cdk",
+    "cognito"
+  ],
+  "skills": {
+    "signing-in-to-aws": {
+      "name": "signing-in-to-aws",
+      "path": "plugins/aws-core/skills/signing-in-to-aws"
+    },
+    "aws-serverless": {
+      "name": "aws-serverless",
+      "path": "plugins/aws-core/skills/aws-serverless",
+      "projectMarkers": [
+        "samconfig.toml",
+        "template.yaml"
+      ]
+    },
+    "aws-cdk": {
+      "name": "aws-cdk",
+      "path": "plugins/aws-core/skills/aws-cdk",
+      "projectMarkers": [
+        "cdk.json"
+      ]
+    },
+    "aws-secrets-manager": {
+      "name": "aws-secrets-manager",
+      "path": "plugins/aws-core/skills/aws-secrets-manager"
+    },
+    "launch-with-aws": {
+      "name": "launch-with-aws",
+      "path": "plugins/aws-core/skills/launch-with-aws"
+    }
+  }
+}

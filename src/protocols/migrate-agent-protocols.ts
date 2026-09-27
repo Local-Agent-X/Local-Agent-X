@@ -70,7 +70,7 @@ export function planAgentProtocolMigration(protocols: Protocol[] = loadCustomPro
  *  called, from the durable op store. Empty when those ops were pruned. */
 async function sessionToolEvidence(sessionId: string): Promise<string[]> {
   const { listOps, isInteractiveHostOpType } = await import("../ops/op-store.js");
-  const { readOpTurns } = await import("../canonical-loop/store.js");
+  const { readOpTurns } = await import("../canonical-loop/index.js");
   const tools: string[] = [];
   for (const op of listOps()) {
     if (op.sessionId !== sessionId || !isInteractiveHostOpType(op.type) || op.parentOpId) continue;

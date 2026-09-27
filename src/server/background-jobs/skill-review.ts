@@ -51,7 +51,7 @@ import {
   takeEligibleReviews,
   type SkillReviewRequest,
 } from "./skill-review-queue.js";
-import { renderOpTranscript, TRANSCRIPT_CHAR_CAP } from "../../canonical-loop/turn-loop/op-transcript.js";
+import { renderOpTranscript, TRANSCRIPT_CHAR_CAP } from "../../canonical-loop/public/op-transcript.js";
 import { broadcastToSession } from "../../ops/session-bridge.js";
 
 const logger = createLogger("server.background-jobs.skill-review");

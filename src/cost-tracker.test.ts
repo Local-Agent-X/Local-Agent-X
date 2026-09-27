@@ -25,7 +25,7 @@ beforeEach(() => {
 
 describe("getPricing — real rates", () => {
   it("prices grok-4.3 at its real $1.25/$2.50, not the grok-4 fuzzy default", () => {
-    expect(getPricing("grok-4.3")).toEqual({ input: 1.25, output: 2.50 });
+    expect(getPricing("grok-4.3")).toEqual({ input: 1.25, output: 2.5, cacheRead: 0.16 });
   });
 
   it("keeps the verified flagship rates", () => {
@@ -35,10 +35,10 @@ describe("getPricing — real rates", () => {
   });
 
   it("prices the gpt-5.6 tiers at their per-tier rates, not a family default", () => {
-    expect(getPricing("gpt-5.6-sol")).toEqual({ input: 5, output: 30 });
-    expect(getPricing("gpt-5.6-terra")).toEqual({ input: 2.50, output: 15 });
-    expect(getPricing("gpt-5.6-luna")).toEqual({ input: 1, output: 6 });
-    expect(getPricing("gpt-5.6")).toEqual({ input: 5, output: 30 });
+    expect(getPricing("gpt-5.6-sol")).toEqual({ input: 4, output: 20 });
+    expect(getPricing("gpt-5.6-terra")).toEqual({ input: 2, output: 12 });
+    expect(getPricing("gpt-5.6-luna")).toEqual({ input: 0.2, output: 1.2 });
+    expect(getPricing("gpt-5.6")).toEqual({ input: 4, output: 20 });
   });
 
   it("still prefix-matches alias suffixes to their base model", () => {

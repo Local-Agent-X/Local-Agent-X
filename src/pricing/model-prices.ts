@@ -62,31 +62,31 @@ export const PRICING: Record<string, ModelPricing> = {
   // by inflating the base rate — that over-charges the common case; it needs a
   // tiered shape, tracked separately.
   "gpt-6-astra": { input: 10, output: 50 },
-  "gpt-5.6": { input: 5, output: 30 }, // bare alias routes to Sol
-  "gpt-5.6-sol": { input: 5, output: 30 },
-  "gpt-5.6-terra": { input: 2.50, output: 15 },
-  "gpt-5.6-luna": { input: 1, output: 6 },
+  "gpt-5.6": { input: 4, output: 20 }, // bare alias routes to Sol
+  "gpt-5.6-sol": { input: 4, output: 20 },
+  "gpt-5.6-terra": { input: 2, output: 12 },
+  "gpt-5.6-luna": { input: 0.2, output: 1.2 },
   "gpt-5.5": { input: 5, output: 30 },
   "gpt-5.5-pro": { input: 30, output: 180 },
   "gpt-5.4": { input: 2.50, output: 15 },
   "gpt-5.4-mini": { input: 0.75, output: 4.50 },
-  "gpt-4o": { input: 2.50, output: 10 },
-  "gpt-4o-mini": { input: 0.15, output: 0.60 },
-  "gpt-4.1": { input: 2, output: 8 },
-  "gpt-4.1-mini": { input: 0.40, output: 1.60 },
-  "gpt-4.1-nano": { input: 0.10, output: 0.40 },
-  "o3": { input: 2, output: 8 },
+  "gpt-4o": { input: 2.5, output: 10, cacheRead: 0.5 },
+  "gpt-4o-mini": { input: 0.15, output: 0.6, cacheRead: 0.5 },
+  "gpt-4.1": { input: 2, output: 8, cacheRead: 0.25 },
+  "gpt-4.1-mini": { input: 0.4, output: 1.6, cacheRead: 0.25 },
+  "gpt-4.1-nano": { input: 0.1, output: 0.4, cacheRead: 0.25 },
+  "o3": { input: 2, output: 8, cacheRead: 0.25 },
   "o3-pro": { input: 20, output: 80 },
-  "o4-mini": { input: 1.10, output: 4.40 },
+  "o4-mini": { input: 1.1, output: 4.4, cacheRead: 0.25 },
   // xAI (grok-4.3 + 4.20 family all $1.25/$2.50, cached $0.20 — x.ai/api)
-  "grok-4.6": { input: 2.00, output: 6.00 }, // x.ai/api — released 2026-08-12, frontier model, 500k ctx, supersedes 4.5
-  "grok-4.5": { input: 2.00, output: 6.00 }, // x.ai/api — smartest model, 500k ctx
-  "grok-4.3": { input: 1.25, output: 2.50 },
-  "grok-4.20-0309-reasoning": { input: 1.25, output: 2.50 },
-  "grok-4.20-0309-non-reasoning": { input: 1.25, output: 2.50 },
-  "grok-4.20-multi-agent-0309": { input: 1.25, output: 2.50 },
-  "grok-code-fast-1": { input: 0.20, output: 1.50 },
-  "grok-build-0.1": { input: 0.20, output: 1.50 }, // est — coding model, priced as grok-code-fast-1
+  "grok-4.6": { input: 2, output: 6, cacheRead: 0.25 }, // x.ai/api — released 2026-08-12, frontier model, 500k ctx, supersedes 4.5
+  "grok-4.5": { input: 2, output: 6, cacheRead: 0.15 }, // x.ai/api — smartest model, 500k ctx
+  "grok-4.3": { input: 1.25, output: 2.5, cacheRead: 0.16 },
+  "grok-4.20-0309-reasoning": { input: 1.25, output: 2.5, cacheRead: 0.16 },
+  "grok-4.20-0309-non-reasoning": { input: 1.25, output: 2.5, cacheRead: 0.16 },
+  "grok-4.20-multi-agent-0309": { input: 1.25, output: 2.5, cacheRead: 0.16 },
+  "grok-code-fast-1": { input: 1, output: 2, cacheRead: 0.2 },
+  "grok-build-0.1": { input: 1, output: 2, cacheRead: 0.2 }, // x.ai/api, verified 2026-09-27
   "grok-4": { input: 3, output: 15 },
   "grok-4-fast": { input: 0.20, output: 0.50 },
   "grok-4-heavy": { input: 5, output: 25 },
@@ -98,7 +98,7 @@ export const PRICING: Record<string, ModelPricing> = {
   "gemini-3-pro-preview": { input: 2, output: 12 },
   "gemini-2.5-pro": { input: 1.25, output: 10 },
   "gemini-2.5-pro-preview": { input: 1.25, output: 10 },
-  "gemini-2.5-flash": { input: 0.15, output: 0.60 },
+  "gemini-2.5-flash": { input: 0.3, output: 2.5 },
   "gemini-2.5-flash-preview": { input: 0.15, output: 0.60 },
   "gemini-2.0-flash": { input: 0.10, output: 0.40 },
   // Cerebras (OSS inference — est, not gate-required)

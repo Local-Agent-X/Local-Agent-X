@@ -32,14 +32,30 @@ function parseFrontmatter(content: string): Frontmatter {
 
   const meta: Record<string, string | string[]> = {};
   let currentKey = "";
-  for (const line of match[1].split("\n")) {
+  const lines = match[1].split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
     const kvMatch = line.match(/^(\w[\w-]*):\s*(.*)$/);
     if (kvMatch) {
       currentKey = kvMatch[1];
       const val = kvMatch[2].trim();
-      if (val.startsWith("[") && val.endsWith("]")) {
+      // A block scalar (`>-`, `|`) or a plain value continued on indented
+      // lines — how most vendor packs (Stripe, Firebase, Neon, AWS) write
+      // `description`. Read as a one-line value, these became the literal ">-",
+      // and the suggestion nudge, which matches on description words, never
+      // fired for them. A nested map (`metadata:` over `author: x`) is skipped.
+      const block = val === "" || /^[>|][+-]?$/.test(val);
+      const next = lines[i + 1] ?? "";
+      if (block && /^\s+\S/.test(next) && !/^\s+-\s/.test(next) && !/^\s+[\w-]+:(\s|$)/.test(next)) {
+        const collected: string[] = [];
+        while (i + 1 < lines.length && (/^\s+\S/.test(lines[i + 1]) || lines[i + 1].trim() === "")) collected.push(lines[++i].trim());
+        const text = val.startsWith("|")
+          ? collected.join("\n")
+          : collected.join("\n").split(/\n{2,}/).map((p) => p.replace(/\n/g, " ")).join("\n");
+        meta[currentKey] = text.trim();
+      } else if (val.startsWith("[") && val.endsWith("]")) {
         meta[currentKey] = val.slice(1, -1).split(",").map((s) => s.trim()).filter(Boolean);
-      } else if (val) {
+      } else if (val && !block) {
         meta[currentKey] = val.replace(/^["']|["']$/g, "");
       }
     } else if (currentKey && line.match(/^\s+-\s+(.+)/)) {

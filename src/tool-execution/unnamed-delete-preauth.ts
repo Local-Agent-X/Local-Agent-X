@@ -10,7 +10,7 @@
  */
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { ServerEvent } from "../types.js";
-import { getApprovalManager } from "../approval-manager.js";
+import { decisionDenies, decisionRequiresPrompt, getApprovalManager, getRiskDecision } from "../approval-manager.js";
 import { hasExternalIngestion } from "../data-lineage/external.js";
 import { readOpMessages } from "../canonical-loop/index.js";
 import { parseStatusHeader } from "../tools/result-helpers.js";
@@ -56,6 +56,25 @@ export async function preauthorizeUnnamedDeletes(opts: {
   const noticed = classified.filter((c) => c.notice).map(({ id, path }) => ({ id, path }));
   const gated = classified.filter((c) => !c.notice);
   if (gated.length === 0) return noticed;
+
+  // The profile decides whether a delete is asked about (Peter, 2026-09-26:
+  // "never see them in autonomous, just delete — power should stop as well").
+  // A profile that denies destructive refuses each call in the approval phase.
+  // One that allows it runs every delete_file — to the trash, announced with
+  // Undo — and turns a shell delete of a file the user did not name back to
+  // delete_file, the only delete that can be undone; no card either way.
+  const rule = getRiskDecision("destructive", opts.sessionId);
+  if (decisionDenies(rule)) return noticed;
+  if (!decisionRequiresPrompt(rule)) {
+    const trashed: NoticedDelete[] = [];
+    for (const c of gated) {
+      const shell = !opts.toolCalls.some((tc) => tc.id === c.id && tc.name === GATED_DELETE_TOOL);
+      if (shell) recordUnnamedDeleteDecision(c.id, { approved: false, reason: "use-delete-file" });
+      else if (c.folderFiles !== undefined && !canNotice) recordUnnamedDeleteDecision(c.id, { approved: false, reason: undefined });
+      else trashed.push({ id: c.id, path: c.path });
+    }
+    return canNotice ? [...noticed, ...trashed] : noticed;
+  }
   // Interactive dispatch only, like the irreversible floor: an unattended run
   // is governed by its autonomy profile, which already blocks an unanswerable ask.
   if (opts.callContext !== "local" || !gateAppliesToModel(opts.modelId)) {
@@ -82,6 +101,8 @@ export async function preauthorizeUnnamedDeletes(opts: {
     sessionId: opts.sessionId || "default",
     context: describeUnnamedDeletesForHuman(gated),
     args: { paths: gated.map((c) => c.path) },
+    // Reached only when the profile asks; a remembered grant must not cover
+    // the next, different set of files.
     alwaysAsk: true,
     opId: opts.operationId,
     emit: opts.onEvent,

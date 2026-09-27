@@ -33,7 +33,7 @@ import {
 import { hasExternalIngestion } from "../data-lineage/external.js";
 import { classifyShellTier, isShellTierTool } from "./shell-approval-tier.js";
 import { getSandboxStatus } from "../sandbox/index.js";
-import { currentHumanText, takeUnnamedDeleteDecision, UNNAMED_DELETE_DECLINED_TEXT } from "./unnamed-delete-gate.js";
+import { currentHumanText, takeUnnamedDeleteDecision, UNNAMED_DELETE_DECLINED_TEXT, UNNAMED_DELETE_USE_TRASH_TEXT } from "./unnamed-delete-gate.js";
 
 export const requireApprovalPhase: Phase = async (ctx) => {
   const promotion = describeMemoryPromotionRequest(
@@ -94,6 +94,8 @@ export const requireApprovalPhase: Phase = async (ctx) => {
     const result: ToolResult = {
       content: declined
         ? UNNAMED_DELETE_DECLINED_TEXT
+        : unnamedDelete.reason === "use-delete-file"
+        ? UNNAMED_DELETE_USE_TRASH_TEXT
         : `NOT RUN: this ${ctx.tc.name} call needs the user's confirmation, and none was given — nobody could be asked, or the question went unanswered. Do not assume consent; ask the user which files or folders they want deleted.`,
       isError: true,
       status: declined ? "declined" : "blocked",

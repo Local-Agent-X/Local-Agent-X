@@ -16,10 +16,16 @@ process.env.LAX_DATA_DIR = mkdtempSync(join(tmpdir(), "lax-unnamed-preauth-"));
 
 const requests: Array<{ context: string; args: unknown; alwaysAsk?: boolean }> = [];
 let answer: { approved: boolean; reason?: string } = { approved: false, reason: "declined" };
+// The profile's rule for destructive actions: Normal asks (the default here),
+// Power allows, Autonomous allows with rollback, Safe denies.
+const profile: { destructive: "ask" | "allow" | "allow-with-rollback" | "deny" } = { destructive: "ask" };
 vi.mock("../approval-manager.js", () => ({
   getApprovalManager: () => ({
     requestApprovalDetailed: async (o: { context: string; args: unknown; alwaysAsk?: boolean }) => { requests.push(o); return answer; },
   }),
+  getRiskDecision: () => profile.destructive,
+  decisionDenies: (d: string) => d === "deny",
+  decisionRequiresPrompt: (d: string) => d === "ask",
 }));
 
 // When the current request began, as the pre-pass reads it from the operation's
@@ -45,7 +51,10 @@ const wipe = ["originals/signed-contract-2026.md", "originals/invoice-0042.md", 
   .map((p, i) => ({ id: `t${i}`, name: "delete_file", arguments: JSON.stringify({ path: `workspace/client-data/${p}` }) }));
 const base = { toolCalls: wipe, priorMessages: VAGUE, modelId: "qwen3.6:27b", callContext: "local", sessionId: "s", onEvent: () => {} };
 
-beforeEach(() => { requests.length = 0; answer = { approved: false, reason: "declined" }; });
+beforeEach(() => {
+  requests.length = 0; answer = { approved: false, reason: "declined" }; profile.destructive = "ask";
+  for (const c of wipe) takeUnnamedDeleteDecision(c.id); // decisions are one-shot and shared across tests
+});
 
 // A folder delete_file removes goes to the trash whole (Peter, 2026-09-25) — and
 // always asks, even when the user named it, because "clean up client-data"
@@ -233,6 +242,52 @@ describe.skipIf(process.platform === "linux")("files this request created", asyn
   it("a shell rm of it asks — a shell delete has no trash to undo from", async () => {
     const p = made("scratch.log");
     await preauthorizeUnnamedDeletes({ ...scope, toolCalls: [{ id: "r5", name: "bash", arguments: JSON.stringify({ command: `rm "${p}"` }) }] });
+    expect(requests).toHaveLength(1);
+  });
+});
+
+// Peter, 2026-09-26: "never see them in autonomous, just delete — power should
+// stop as well". The profile decides whether an un-named delete asks.
+describe("the profile decides whether an un-named delete asks", () => {
+  const shellWipe = [{ id: "sh2", name: "bash", arguments: JSON.stringify({ command: "rm workspace/client-data/originals/invoice-0042.md" }) }];
+
+  it.each(["allow", "allow-with-rollback"] as const)("%s (Power, Autonomous): no card — every delete_file goes to the trash and is announced with Undo", async (rule) => {
+    profile.destructive = rule;
+    const noticed = await preauthorizeUnnamedDeletes(base);
+    expect(requests).toHaveLength(0);
+    expect(noticed.map((n) => n.id)).toEqual(wipe.map((c) => c.id));
+    for (const c of wipe) expect(takeUnnamedDeleteDecision(c.id)).toBeUndefined();
+  });
+
+  it("allow: a shell delete of a file the user did not name is sent back to delete_file, not carded", async () => {
+    profile.destructive = "allow";
+    await preauthorizeUnnamedDeletes({ ...base, toolCalls: shellWipe });
+    expect(requests).toHaveLength(0);
+    expect(takeUnnamedDeleteDecision("sh2")).toEqual({ approved: false, reason: "use-delete-file" });
+  });
+
+  it("allow, unattended: a file delete follows the profile and a folder is still refused", async () => {
+    profile.destructive = "allow";
+    const dir = mkdtempSync(join(tmpdir(), "lax-preauth-power-folder-"));
+    mkdirSync(join(dir, "cache"));
+    writeFileSync(join(dir, "cache", "a.js"), "");
+    const folder = { id: "pf", name: "delete_file", arguments: JSON.stringify({ path: join(dir, "cache") }) };
+    const noticed = await preauthorizeUnnamedDeletes({ ...base, toolCalls: [folder, wipe[0]], callContext: "cron" });
+    expect(noticed).toEqual([]);
+    expect(requests).toHaveLength(0);
+    expect(takeUnnamedDeleteDecision("pf")).toEqual({ approved: false, reason: undefined });
+    expect(takeUnnamedDeleteDecision(wipe[0].id)).toBeUndefined();
+  });
+
+  it("deny (Safe): no card and no decision — the approval phase refuses each call by profile", async () => {
+    profile.destructive = "deny";
+    expect(await preauthorizeUnnamedDeletes(base)).toEqual([]);
+    expect(requests).toHaveLength(0);
+    for (const c of wipe) expect(takeUnnamedDeleteDecision(c.id)).toBeUndefined();
+  });
+
+  it("ask (Normal): the one card, as before", async () => {
+    await preauthorizeUnnamedDeletes(base);
     expect(requests).toHaveLength(1);
   });
 });

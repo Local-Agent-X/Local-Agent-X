@@ -48,8 +48,8 @@ export const ALWAYS_ASK_SITES: readonly AlwaysAskSite[] = [
   },
   {
     file: "tool-execution/unnamed-delete-preauth.ts",
-    what: "deleting a file the user's request never named, or a folder, while the user is present",
-    why: "The request is the user's mandate: it names what they asked to be removed, and a file outside it was never part of their instruction. A permissive profile governs how the agent carries out the request, not what the request covers. Only the attended path asks; with no one to answer, the profile governs file deletes and folders are refused.",
+    what: "deleting files the user's request never named, when their profile asks about destructive actions (Normal)",
+    why: "The profile already decides whether this card appears — Power and Autonomous never see it. When it does appear, the question is about THIS set of files: a remembered grant would silently cover the next, different set the user never saw.",
   },
 ];
 

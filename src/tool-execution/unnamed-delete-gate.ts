@@ -212,7 +212,7 @@ export function unnamedDeletes(
 
 // ── Per-call decisions, written by the batch pre-pass, read by the approval phase ──
 
-export type UnnamedDeleteDecision = { approved: true } | { approved: false; reason: "declined" | "timeout" | "superseded" | undefined };
+export type UnnamedDeleteDecision = { approved: true } | { approved: false; reason: "declined" | "timeout" | "superseded" | "use-delete-file" | undefined };
 const decisions = new Map<string, UnnamedDeleteDecision>();
 
 export function recordUnnamedDeleteDecision(toolCallId: string, d: UnnamedDeleteDecision): void {
@@ -250,3 +250,7 @@ export const UNNAMED_DELETE_DECLINED_TEXT =
   "NOT RUN: the user declined this delete when asked to confirm it. " +
   "Do not retry it by any route — not delete_file, not a shell rm, not another tool. " +
   "Ask the user exactly which files or folders they want deleted, then delete only those.";
+
+export const UNNAMED_DELETE_USE_TRASH_TEXT =
+  "NOT RUN: a shell delete cannot be undone, and the user did not name these files. " +
+  "Delete them with delete_file instead — they go to the trash, the user is shown an Undo, and no confirmation is needed.";

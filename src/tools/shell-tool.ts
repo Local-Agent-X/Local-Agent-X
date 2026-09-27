@@ -8,6 +8,7 @@ import { shellProxyEnv } from "./shell-proxy-env.js";
 import { killProcessGroup } from "../process-tree-kill.js";
 import { workspaceRoot } from "../config.js";
 import { resolveSecretEnv, secretEnvOf } from "./shell-secret-env.js";
+import { vendorDriftHint } from "../protocols/vendor-drift.js";
 
 export const bashTool: ToolDefinition = {
   name: "bash",
@@ -320,7 +321,10 @@ export const bashTool: ToolDefinition = {
       // `workspace/x` in a command is `<workspace>/workspace/x` — the file tools
       // forgive that prefix, bash cannot; say so instead of "No such file".
       const prefixNotice = workspacePrefixHint(stderr, cwd, undefined, command) ?? quotedGlobHint(command);
-      const notices = [cmdletNotice, pathNotice, prefixNotice, cageNotice, netNotice].filter(Boolean).join("\n");
+      // A vendor CLI that fails may have moved past the pinned skill that
+      // told the agent to run it (protocols/vendor-drift.ts).
+      const driftNotice = vendorDriftHint(command, code, stderr);
+      const notices = [cmdletNotice, pathNotice, prefixNotice, cageNotice, netNotice, driftNotice].filter(Boolean).join("\n");
       return err((notices ? notices + "\n" : "") + (out || `Exit code: ${code}`), {
         exit_code: code,
         duration_ms: durationMs,

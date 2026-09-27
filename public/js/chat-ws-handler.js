@@ -55,6 +55,12 @@ function dispatchChatWsEvent(msg, checked) {
       try { if (typeof updateStatusBar === 'function') updateStatusBar(true); } catch {}
       return true;
     }
+    // A learned-workflow proposal from the post-turn review. It concerns an
+    // earlier turn, so it attaches to the saved row, never the stream store.
+    if (msg.event.type === 'learning_notice') {
+      attachLearningNotices(msg.sessionId, [msg.event]);
+      return true;
+    }
     // A frame from a turn that was already taken over (its op was named in a
     // later chat_op_started's `supersedes`). Drop it ahead of the store, the
     // live-bubble swap and feedTTS — the dead op's provider stream keeps
@@ -266,6 +272,10 @@ function reconcileSessionSnapshot(msg) {
       window._laxPlanMode = window._laxPlanMode || {};
       window._laxPlanMode[sessionId] = msg.planMode;
       try { if (typeof updateStatusBar === 'function') updateStatusBar(true); } catch {}
+    }
+
+    if (Array.isArray(msg.learningNotices) && msg.learningNotices.length) {
+      attachLearningNotices(sessionId, msg.learningNotices);
     }
 
     if (typeof agentFeedsData !== 'undefined') {

@@ -55,7 +55,8 @@
   }
 
   function rowActions(item) {
-    if (mode === 'assisted' && item.state === 'candidate') return ['activate', 'reject'];
+    // Reviewed procedures never activate on their own, in either mode.
+    if (item.state === 'candidate' && (mode === 'assisted' || item.source === 'reviewed')) return ['activate', 'reject'];
     if (item.state === 'archived') return ['restore'];
     if (item.state === 'active' || item.state === 'versioned') return ['archive'];
     return [];
@@ -76,8 +77,9 @@
     const confidence = Number.isFinite(item.confidence) ? Math.round(item.confidence * 100) + '% confidence' : '';
     const versions = item.versionCount > 1 ? item.versionCount + ' versions' : '';
     const updated = typeof item.updatedAt === 'string' ? 'updated ' + item.updatedAt.slice(0, 10) : '';
-    const quiet = mode === 'autonomous' && item.state === 'candidate' ? 'qualifying quietly' : '';
-    return [confidence, versions, updated, quiet].filter(Boolean).join(' · ');
+    const quiet = mode === 'autonomous' && item.state === 'candidate' && item.source !== 'reviewed' ? 'qualifying quietly' : '';
+    const origin = item.source === 'reviewed' ? 'proposed from a reviewed chat' : '';
+    return [origin, confidence, versions, updated, quiet].filter(Boolean).join(' · ');
   }
 
   async function refresh() {

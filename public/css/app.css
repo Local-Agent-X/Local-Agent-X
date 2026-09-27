@@ -406,6 +406,15 @@ body.platform-darwin #sidebar-agents-controls{top:3px;right:14px}
 .delete-notice-undo:hover:not(:disabled){border-color:var(--ok);color:var(--ok)}
 .delete-notice-undo:disabled{opacity:.5;cursor:default}
 .delete-notice-error{flex-basis:100%;color:var(--danger);font-size:.75rem}
+.learning-notice{display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;margin:8px 0;padding:8px 12px;border-radius:8px;border:1px solid var(--accent);background:color-mix(in srgb, var(--accent) 8%, var(--surface));color:var(--text);font-size:.82rem}
+.learning-notice.settled{border-color:var(--border);background:var(--surface)}
+.learning-notice-text{flex:1 1 240px}
+.learning-notice-name{font-weight:600}
+.learning-notice-keep,.learning-notice-discard{padding:4px 12px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer;font-size:.8rem;font-weight:600}
+.learning-notice-keep:hover:not(:disabled){border-color:var(--ok);color:var(--ok)}
+.learning-notice-discard:hover:not(:disabled){border-color:var(--danger);color:var(--danger)}
+.learning-notice-keep:disabled,.learning-notice-discard:disabled{opacity:.5;cursor:default}
+.learning-notice-error{flex-basis:100%;color:var(--danger);font-size:.75rem}
 /* Approval cards are fully token-driven: the semantic hue (warn pending / ok
    approved / danger denied) is mixed into the theme's own --surface so the
    faint wash + border track every palette and both themes with no separate

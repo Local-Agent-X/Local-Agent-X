@@ -14,7 +14,7 @@ import type { WebSocket } from "ws";
 import { createLogger } from "../logger.js";
 import { getApprovalManager } from "../approval-manager.js";
 import { getChatHandler } from "./chat-handler.js";
-import { getMessageCountForSession } from "./state.js";
+import { getLearningNoticesForSession, getMessageCountForSession } from "./state.js";
 import { broadcastToSession, terminateChat } from "./broadcast.js";
 import { replayBufferedEvents } from "./replay.js";
 import { handleReconnectOp } from "./reconnect-op.js";
@@ -95,12 +95,14 @@ export function attachMessageRouter(ctx: RouterContext): void {
         const liveOpIds = listOpsForSession(sessionId);
         const countFn = getMessageCountForSession();
         const messageCount = countFn ? countFn(sessionId) : 0;
+        const noticesFn = getLearningNoticesForSession();
         ws.send(JSON.stringify({
           type: "session_snapshot",
           sessionId,
           liveOpIds,
           messageCount,
           planMode: isEnforcedPlanMode(sessionId),
+          learningNotices: noticesFn ? noticesFn(sessionId) : [],
         }));
       } catch (e) {
         logger.warn(`[ws-chat] session_snapshot failed for ${sessionId}: ${(e as Error).message}`);

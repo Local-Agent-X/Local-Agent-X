@@ -53,6 +53,21 @@ describe("learned workflows Memory UI", () => {
     expect(document.body.textContent).not.toContain("Reject");
   });
 
+  it("still asks about a reviewed procedure in autonomous mode — it never activates on its own", async () => {
+    window.apiJson = vi.fn(async () => ({
+      mode: "autonomous",
+      items: [{ id: "candidate-3", name: "po_flow", state: "candidate", source: "reviewed", confidence: 0.33, versionCount: 1 }],
+    })) as never;
+    new Function(source)();
+    document.dispatchEvent(new Event("DOMContentLoaded"));
+    await flush();
+
+    expect(document.body.textContent).toContain("proposed from a reviewed chat");
+    expect(document.body.textContent).not.toContain("qualifying quietly");
+    expect(document.body.textContent).toContain("Activate");
+    expect(document.body.textContent).toContain("Reject");
+  });
+
   it("restores the previous row when an optimistic action fails", async () => {
     window.apiJson = vi.fn(async (_path: string, options?: { method?: string }) => {
       if (options?.method === "POST") throw new Error("save failed");

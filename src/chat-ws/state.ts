@@ -179,3 +179,14 @@ export function setMessageCountForSession(fn: (sessionId: string) => number): vo
 export function getMessageCountForSession(): ((sessionId: string) => number) | null {
   return messageCountForSession;
 }
+
+// Learned-procedure notices still waiting on the user, for the same snapshot:
+// a notice broadcast while no client was subscribed is re-delivered here.
+// Wired from src/server/index.ts for the same layering reason as above.
+let learningNoticesForSession: ((sessionId: string) => unknown[]) | null = null;
+export function setLearningNoticesForSession(fn: (sessionId: string) => unknown[]): void {
+  learningNoticesForSession = fn;
+}
+export function getLearningNoticesForSession(): ((sessionId: string) => unknown[]) | null {
+  return learningNoticesForSession;
+}

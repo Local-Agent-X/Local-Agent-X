@@ -24,6 +24,8 @@ import {
   SKILL_REVIEW_POLL_INTERVAL_MS,
 } from "./skill-review.js";
 import { attemptBackfill, BACKFILL_BOOT_SETTLE_MS } from "./backfill-gate.js";
+import { setLearningNoticesForSession } from "../../chat-ws/state.js";
+import { pendingLearningNotices } from "../../protocols/learned-review-drafting.js";
 import { isLocalOnlyMode, registerLocalOnlyTeardown } from "../../local-only-policy.js";
 
 const logger = createLogger("server.background-jobs");
@@ -215,6 +217,9 @@ export function startBackgroundJobs(deps: {
   registerSkillReviewRunner({
     config, dataDir, secretsStore, security, toolPolicy, allAgentTools,
   });
+  // A review's "Learned a workflow" notice can fire while nobody is
+  // connected; the chat session snapshot re-delivers the ones still pending.
+  setLearningNoticesForSession(pendingLearningNotices);
 
   // Generic (in-loop) self_edit surgeon — last resort for providers with no
   // coding CLI. Builds its own per-worktree SecurityLayer, so no `security` dep.

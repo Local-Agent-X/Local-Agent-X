@@ -26,6 +26,8 @@ import {
   loadBundledProtocols, loadImportedProtocols,
   stampBuiltinSource, stampCustomSource, mergeByName,
 } from "./loader.js";
+import { loadVendorProtocols } from "./vendor-packs.js";
+import { readSkillFile, skillFiles } from "./skill-files.js";
 export { bundledProtocolsDir } from "./loader.js";
 import { loadPrefs, savePrefs } from "./preferences.js";
 import { createMarketplaceTools } from "./marketplace.js";
@@ -122,6 +124,9 @@ export function createAllProtocolTools(): ToolDefinition[] {
  * shipped with the app by writing into ~/.lax/protocols/imported/<name>/
  * or ~/.lax/custom-protocols.json.
  */
+/** Ops whose protocol reads are LAX maintenance, not use (see protocol_get). */
+const MAINTENANCE_OP_TYPES = new Set(["skill_review", "memory_consolidation"]);
+
 export function getAllProtocols(): Protocol[] {
   const builtins = stampBuiltinSource([
     instagramPost,
@@ -131,9 +136,10 @@ export function getAllProtocols(): Protocol[] {
     ...communicationProtocols,
   ]);
   const bundled = loadBundledProtocols();
+  const vendor = loadVendorProtocols();
   const imported = loadImportedProtocols();
   const custom = stampCustomSource(loadCustomProtocols());
-  return mergeByName(builtins, bundled, imported, custom);
+  return mergeByName(builtins, bundled, vendor, imported, custom);
 }
 
 export function findProtocol(query: string): Protocol | undefined {
@@ -171,6 +177,7 @@ export function createCoreProtocolTools(): ToolDefinition[] {
         type: "object",
         properties: {
           name: { type: "string", description: "Protocol name or trigger phrase (e.g., 'instagram_post' or 'post on instagram')" },
+          file: { type: "string", description: "Optional: a file the skill ships and refers to, e.g. 'references/config.md' — returns that file instead of the skill." },
         },
         required: ["name"],
       },
@@ -178,6 +185,12 @@ export function createCoreProtocolTools(): ToolDefinition[] {
         const pb = findProtocol(String(args.name || ""));
         if (!pb) {
           return { content: `No protocol found for "${args.name}". Use protocol(action:'list') to see all available protocols.` };
+        }
+        const skillPath = pb.body !== undefined ? pb.source?.sourcePath : undefined;
+        if (typeof args.file === "string" && args.file) {
+          if (!skillPath) return { content: `"${pb.name}" has no files besides its instructions.`, isError: true };
+          const read = readSkillFile(skillPath, args.file);
+          return "error" in read ? { content: read.error, isError: true } : { content: `# ${pb.name} — ${args.file}\n\n${read.text}` };
         }
         if (pb.source?.type === "imported" && pb.source.sourcePath) {
           const provenance = resolveActiveLearnedProtocolProvenance(pb.source.sourcePath, pb.name);
@@ -191,13 +204,21 @@ export function createCoreProtocolTools(): ToolDefinition[] {
         }
         // Record the invocation — strongest signal of actual use. Drives the
         // never-used / least-used reports that protocol(action:'prune') consumes.
+        // LAX's own maintenance passes read skills too (the review fork deciding
+        // what to draft, memory consolidation); counted as use, they made 176
+        // of 266 logged "invocations" and ranked agent-written notes as popular.
         try {
-          const { recordUsage } = await import("./usage.js");
-          recordUsage({
-            action: "invoked",
-            name: pb.name,
-            sessionId: typeof (args as { _sessionId?: string })._sessionId === "string" ? (args as { _sessionId: string })._sessionId : undefined,
-          });
+          const opId = (args as { _operationId?: unknown })._operationId;
+          const { readOp } = await import("../ops/op-store.js");
+          const maintenance = typeof opId === "string" && opId !== "" && MAINTENANCE_OP_TYPES.has(String(readOp(opId)?.type));
+          if (!maintenance) {
+            const { recordUsage } = await import("./usage.js");
+            recordUsage({
+              action: "invoked",
+              name: pb.name,
+              sessionId: typeof (args as { _sessionId?: string })._sessionId === "string" ? (args as { _sessionId: string })._sessionId : undefined,
+            });
+          }
         } catch { /* telemetry never fails the call */ }
 
         const prefs = loadPrefs()[pb.name] || {};
@@ -217,8 +238,12 @@ export function createCoreProtocolTools(): ToolDefinition[] {
           : "";
 
         if (pb.body !== undefined) {
+          const files = skillPath ? skillFiles(skillPath) : [];
+          const filesText = files.length > 0
+            ? `\n\nFiles this skill refers to — read one with protocol(action:"get", params:{name:"${pb.name}", file:"<path>"}):\n${files.map((f) => `  ${f}`).join("\n")}`
+            : "";
           return {
-            content: `# Protocol: ${pb.name}\n${pb.description}${unverifiedNotice}\n\n${pb.body}${prefsText}`,
+            content: `# Protocol: ${pb.name}\n${pb.description}${unverifiedNotice}\n\n${pb.body}${filesText}${prefsText}`,
           };
         }
 

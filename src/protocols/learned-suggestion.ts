@@ -6,6 +6,7 @@ import { STOP_TERMS, GENERIC_TERMS } from "./generic-terms.js";
 import { projectDirsNamedIn, projectMarkerHitIn } from "./project-markers.js";
 import { workspaceRoot } from "../config.js";
 import type { Protocol } from "./types.js";
+import { pickBestSuggestion, type RankedSuggestion } from "./suggestion-ranking.js";
 
 /**
  * Precision model (F18). Admission and ranking answer different questions and
@@ -52,6 +53,9 @@ const EXACT_PHRASE_BONUS = 3;
  *  without the term gates and ranks with this bonus — the wording gate exists
  *  because a message-only selector has nothing else to go on; a marker is. */
 const PROJECT_MARKER_BONUS = 3;
+/** Words that name the project itself, which the marker already stands for —
+ *  not evidence the request is about the skill ("in the acme-site project"). */
+const PROJECT_WORDS = new Set(["project", "projects", "repo", "repository", "app", "apps", "site", "folder", "codebase"]);
 /**
  * Names that may be interpolated into the first-party harness notice.
  *
@@ -242,11 +246,12 @@ function evaluateProtocol(
 
   // ── ADMISSION: corpus-independent, so authoring more protocols about a
   //    topic can never make that topic harder to retrieve. A project marker
-  //    on disk admits on its own (EXP-17); the wording gates apply otherwise. ──
+  //    on disk lowers the bar to one shared term (EXP-17); none at all let a
+  //    Vercel project nudge vercel-deploy for "add a customers table". ──
   if (!markerHit) {
     if (matched.length < 2) return null;
     if (matched.length / messageTerms.size < MIN_COVERAGE) return null;
-  }
+  } else if (!matched.some((term) => !PROJECT_WORDS.has(term))) return null;
 
   // ── RANKING: corpus-sensitive on purpose. ──
   const normalizedMessage = ` ${normalize(message)} `;
@@ -322,12 +327,17 @@ export function selectLearnedProtocolSuggestion(
   // unverified" — a higher-scoring custom record does displace a verified
   // learned one, which is intended, since score reflects how well the request
   // matches.
-  const ranked: Array<{ protocol: Protocol; score: number; name: NameMatch; tier: number }> = [];
+  const ranked: RankedSuggestion[] = [];
   const consider = (protocol: Protocol, tier: number): void => {
     if (!SUGGESTIBLE_NAME.test(protocol.name)) return;
     const markerHit = !!(protocol.projectMarkers?.length && opts.projectMarkerHit?.(protocol));
+    // A vendor skill's long description shares common words with almost any
+    // request ("read write bash release files" drew neon-postgres); it needs
+    // the platform named, or the platform's project on disk.
+    const terms = protocol.source?.platformTerms;
+    if (terms && !markerHit && ![...distinctiveTerms(terms.join(" "))].some((t) => messageTerms.has(t))) return;
     const match = evaluateProtocol(message, messageTerms, protocol, weights, markerHit);
-    if (match) ranked.push({ protocol, score: match.score, name: match.name, tier });
+    if (match) ranked.push({ protocol, score: match.score, name: match.name, tier, markerHit });
   };
   for (const candidate of candidates) {
     try {
@@ -341,23 +351,9 @@ export function selectLearnedProtocolSuggestion(
     if (LEARNED_SLUG.test(protocol.name)) continue;
     if (protocol.source?.type === "custom") consider(protocol, 1);
     else if (protocol.source?.type === "imported" && protocol.source.origin === "workspace") consider(protocol, 2);
+    else if (protocol.source?.type === "bundled" && protocol.source.origin === "vendor") consider(protocol, 2);
   }
-  // A tie is a RANKING problem, not a reason to say nothing. Suppressing on a
-  // tie meant the more protocols the authoring fork wrote, the less retrieval
-  // worked — near-duplicates (`po_intake` / `po_intake_v2`) silenced each other
-  // permanently, and any custom record could silence a verified learned one.
-  // Resolve deterministically instead: score, tier, name hits, name misses,
-  // then alphabetical. The two name keys sit ahead of the alphabetical
-  // fallback so a tie does not systematically go to whichever name sorts
-  // first, and they are absolute rather than normalized so it does not go to
-  // whichever name is shortest either.
-  ranked.sort((a, b) =>
-    b.score - a.score
-    || a.tier - b.tier
-    || b.name.hits - a.name.hits
-    || a.name.misses - b.name.misses
-    || a.protocol.name.localeCompare(b.protocol.name));
-  const best = ranked[0];
+  const best = pickBestSuggestion(ranked, messageTerms);
   if (!best) return null;
   const name = best.protocol.name;
   // Tier-1 (custom) records the review fork authored before its proposals

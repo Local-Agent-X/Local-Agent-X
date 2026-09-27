@@ -40,9 +40,10 @@ export interface ProtocolSource {
    *  workspace/protocols/imported/ (hand-dropped or repo-installed, and the
    *  user chose it, so the suggestion nudge may name it); "managed" is the
    *  system-written ~/.lax/protocols/learned/ tier, which is only ever
-   *  suggested through a verified learned record. Stamped by the loader,
-   *  never read from disk. */
-  origin?: "workspace" | "managed";
+   *  suggested through a verified learned record. "vendor" is a shipped
+   *  vendor skill pack (vendor-packs.ts), bundled but nudged like an install.
+   *  Stamped by the loader, never read from disk. */
+  origin?: "workspace" | "managed" | "vendor";
   /** Upstream repo URL/slug for bundled or imported protocols */
   repo?: string;
   /** Source commit SHA at import time */
@@ -51,6 +52,10 @@ export interface ProtocolSource {
   license?: string;
   /** Attribution string preserved per source license */
   attribution?: string;
+  /** Vendor packs: words that name the platform (pack.json platformTerms). A
+   *  vendor skill is suggested only when the message says one, or when the
+   *  project carries its marker file. */
+  platformTerms?: string[];
   /** Path on disk to the source file (for hot-reload + edit-in-place) */
   sourcePath?: string;
   /** Who wrote this protocol. Agent-authored protocols are written on the

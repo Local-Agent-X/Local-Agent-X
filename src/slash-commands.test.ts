@@ -12,7 +12,8 @@
  * so a new bundled protocol is covered the moment it lands.
  */
 import { describe, it, expect } from "vitest";
-import { readdirSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 import { bundledProtocolsDir } from "./protocols/loader.js";
 import {
   expandSlashCommand,
@@ -21,7 +22,8 @@ import {
 } from "./slash-commands.js";
 
 const BUNDLED = readdirSync(bundledProtocolsDir(), { withFileTypes: true })
-  .filter((d) => d.isDirectory())
+  // A bundled methodology is a folder with a SKILL.md; vendor/ holds the packs.
+  .filter((d) => d.isDirectory() && existsSync(join(bundledProtocolsDir(), d.name, "SKILL.md")))
   .map((d) => d.name)
   .sort();
 

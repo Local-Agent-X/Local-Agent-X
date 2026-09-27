@@ -46,6 +46,7 @@ import type { TurnInput } from "../adapter-contract.js";
 import type { TransportMessage } from "./anthropic.js";
 import { sanitizeAssistantTextForRebuild } from "../../anthropic-client/parse.js";
 import { createLogger } from "../../logger.js";
+import { toolResultPayload } from "../turn-loop/content-extract.js";
 
 const sanitizerLogger = createLogger("canonical-loop.rebuild-sanitizer");
 
@@ -110,8 +111,8 @@ export function canonicalToTransport(
       continue;
     }
     if (m.role === "tool_result") {
-      const obj = (c ?? {}) as { toolCallId?: string; result?: unknown };
-      const r = obj.result;
+      const obj = (c ?? {}) as { toolCallId?: string };
+      const r = toolResultPayload(c);
       // Vision-emitting tools (browser screenshot, image_read, etc.)
       // produce a `{ text, images: [{mime, b64}, ...] }` envelope so the
       // image bytes survive across the canonical seam. Detect the shape
@@ -129,7 +130,7 @@ export function canonicalToTransport(
           !!x && typeof x === "object" && typeof (x as { mime?: unknown }).mime === "string" && typeof (x as { b64?: unknown }).b64 === "string",
         );
       } else {
-        resultText = typeof r === "string" ? r : JSON.stringify(r ?? null);
+        resultText = typeof r === "string" ? r : r === undefined ? "(no output was recorded for this call)" : JSON.stringify(r);
       }
       out.push({
         role: "tool",

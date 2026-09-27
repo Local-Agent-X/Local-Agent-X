@@ -20,6 +20,7 @@ import {
 } from "./seed-messages.js";
 import { buildTurnInput } from "../turn-loop/build-input.js";
 import { canonicalToTransport } from "../adapters/canonical-to-transport.js";
+import { canonicalToChatParam } from "../adapters/openai-compat/canonical-to-chat-param.js";
 import { imagesToOpenAIParts } from "../adapters/images-to-openai-parts.js";
 import { toGeminiContents } from "../adapters/gemini-native-transport.js";
 import type { TransportMessage } from "../adapters/anthropic.js";
@@ -216,5 +217,27 @@ describe("seedOpMessages — caption-less photo rows in seeded history", () => {
     );
     const transport = await pipeline();
     expect(transport.map(m => m.role)).toEqual(["assistant", "user"]);
+  });
+});
+
+describe("seedOpMessages — a tool result from an earlier message reaches the model", () => {
+  // Live 2026-09-26: the seed stores a history tool result as { text, toolCallId };
+  // both request converters read `result` alone, so the model got the string
+  // "null" and told the user its bash call had returned nothing.
+  const OUTPUT = "[ok, exit_code=0]\n## main...origin/main\n4cd0974 Mark Nutrishop supplements migration as applied";
+  const history: ChatCompletionMessageParam[] = [
+    { role: "user", content: "how is scan progress looking" },
+    { role: "assistant", content: "", tool_calls: [{ id: "toolu_1", type: "function", function: { name: "bash", arguments: "{\"command\":\"git log\"}" } }] },
+    { role: "tool", tool_call_id: "toolu_1", content: OUTPUT },
+    { role: "assistant", content: "Scan Progress looks healthy." },
+  ];
+
+  it("carries the output on the Anthropic/Codex/Gemini transport and on the local-model wire", async () => {
+    seedOpMessages(opId, prepared(history), "can you build a guard for the 400 loc");
+    const input = await buildTurnInput(op(), 1, null);
+    const transportTool = canonicalToTransport(input.messages, input.pendingRedirect).find(m => m.role === "tool");
+    expect(transportTool).toMatchObject({ toolCallId: "toolu_1", content: OUTPUT });
+    const wireTool = canonicalToChatParam(input.messages, input.pendingRedirect).find(m => m.role === "tool");
+    expect(wireTool).toMatchObject({ tool_call_id: "toolu_1", content: OUTPUT });
   });
 });

@@ -8,6 +8,17 @@ import type { CommitTurnMessage } from "../checkpoint.js";
 import type { ToolCallSummary } from "../types.js";
 import type { CanonicalToolResultView } from "../middlewares/types.js";
 
+/** The payload of a tool_result row, in either stored shape: `{ toolCallId,
+ *  result, status }` from the turn loop, or `{ text, toolCallId }` re-seeded
+ *  from session history. The request converters read `result` alone, so every
+ *  tool result from an earlier message reached the model as the string "null"
+ *  and it told the user its tool had returned nothing (live 2026-09-26). */
+export function toolResultPayload(content: unknown): unknown {
+  if (!content || typeof content !== "object") return content;
+  const c = content as { text?: unknown; result?: unknown };
+  return c.result !== undefined ? c.result : c.text;
+}
+
 export function extractText(content: unknown): string {
   if (typeof content === "string") return content;
   if (content && typeof content === "object") {

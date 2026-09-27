@@ -44,6 +44,9 @@ Thumbs.db
 # symlink-file behaviour for the real workspace and stops the collateral match.
 /workspace
 index.html
+# The op-outcomes site fixtures need their pages; ignored, they existed only on
+# the machine that wrote them and the renderedCss checks failed everywhere else.
+!eval/op-outcomes/fixtures/workspace/**/index.html
 desktop/release/
 
 # Protocol importer cache (npx scripts/import-protocols.mjs)

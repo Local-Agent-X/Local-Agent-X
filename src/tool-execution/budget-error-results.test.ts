@@ -12,7 +12,7 @@ import type { ToolResult } from "../types.js";
 const OVERSIZED = "x".repeat(60_000); // > DEFAULT_MAX_RESULT_SIZE (50_000)
 
 function ctxWith(result: ToolResult): ToolCallContext {
-  return { result } as unknown as ToolCallContext;
+  return { tc: { id: "call-1", name: "exec", arguments: "{}" }, result } as unknown as ToolCallContext;
 }
 
 describe("applyBudget — TD-8 error results are budgeted too", () => {

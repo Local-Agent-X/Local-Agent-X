@@ -35,9 +35,9 @@ export function isScreenExemptAgentCode(filePath: string): boolean {
 
 export const readTool: ToolDefinition = {
   name: "read",
-  compactDescription: "Read a file from the filesystem; returns the full contents with line numbers. Files under 1000 lines come back whole — do NOT chunk with offset/limit unless the file is 1000+ lines.",
+  compactDescription: "Read a file with line numbers. It comes back whole when it fits; if the result says it continues, read again with the offset it names. Don't chunk a short file with limit.",
   description:
-    "Read a file from the filesystem. Returns the full file contents with line numbers. Files under 1000 lines are returned in full — do NOT chunk with offset/limit unless the file is very large (1000+ lines).",
+    "Read a file from the filesystem, with line numbers. A file comes back whole when it fits in one result; when it does not, the result shows the lines that fit and names the offset to continue from — read again with that offset. Do not chunk a short file with offset/limit yourself.",
   readOnly: true,
   concurrencySafe: true,
   parameters: {
@@ -112,9 +112,14 @@ export const readTool: ToolDefinition = {
     try {
       const content = probe.toString("utf-8");
       const lines = content.split("\n");
+      // A file under 1000 lines ignores `limit` (weak models chunked small files
+      // into dozens of tiny reads), but honors `offset`: a result too big for the
+      // budget is cut at a whole line and names the offset that continues
+      // (tool-execution/read-budget.ts). Ignoring that offset returned the whole
+      // file, cut again at the same line — a loop that overflowed the window.
       const forceFullRead = lines.length < 1000;
-      const offset = forceFullRead ? 0 : Math.max(0, ((args.offset as number) || 1) - 1);
-      const limit = forceFullRead ? lines.length : ((args.limit as number) || lines.length);
+      const offset = Math.min(Math.max(0, ((args.offset as number) || 1) - 1), Math.max(0, lines.length - 1));
+      const limit = forceFullRead ? lines.length - offset : ((args.limit as number) || lines.length);
       const slice = lines.slice(offset, offset + limit);
       const numbered = slice.map((line, i) => `${offset + i + 1}\t${line}`).join("\n");
       const total = lines.length;

@@ -37,8 +37,9 @@ function tool(name: string): ToolDefinition {
   };
 }
 
-function ctxWith(result: ToolResult, operationId?: string, tools: ToolDefinition[] = []): ToolCallContext {
+function ctxWith(result: ToolResult, operationId?: string, tools: ToolDefinition[] = [], name = "web_fetch"): ToolCallContext {
   return {
+    tc: { id: "call-1", name, arguments: "{}" },
     result,
     operationId,
     toolMap: new Map(tools.map(t => [t.name, t])),
@@ -119,5 +120,18 @@ describe("applyBudget — the cap follows the op's model window", () => {
     expect(ctx.result!.status).toBe("error");
     expect(ctx.result!.metadata).toEqual({ layer: "tool" });
     expect(ctx.result!.content).toMatch(/truncated/);
+  });
+
+  it("an oversize read is cut at a whole line with its continuation offset, not spilled", () => {
+    opModels.set("op-read", "qwen3.6:27b");
+    windows.set("qwen3.6:27b", { tokens: 65_536, provenance: "probed" });
+    const lines = Array.from({ length: 632 }, (_, i) => `${i + 1}\tconst line${i + 1} = "${"x".repeat(60)}";`);
+    const ctx = ctxWith({ content: lines.join("\n"), metadata: { total_lines: 632, lines_shown: 632 } }, "op-read", [], "read");
+    applyBudget(ctx);
+    const shown = ctx.result!.metadata?.lines_shown as number;
+    expect(shown).toBeLessThan(632);
+    expect(ctx.result!.metadata?.next_offset).toBe(shown + 1);
+    expect(ctx.result!.content).toContain(`Continue with read offset=${shown + 1}`);
+    expect(ctx.result!.content).not.toMatch(/lax-results/);
   });
 });

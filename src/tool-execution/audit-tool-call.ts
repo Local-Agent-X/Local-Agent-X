@@ -12,6 +12,7 @@ import { logToolUsage } from "./tool-usage-telemetry.js";
 import { appendProvenance, type ProvenanceSource } from "../data-lineage/provenance.js";
 import { createTargetPath } from "./create-target-path.js";
 import { spillFullResult } from "../tools/result-spill.js";
+import { budgetReadResult } from "./read-budget.js";
 import type { Phase, ToolCallContext } from "./context.js";
 import { CONTINUE } from "./context.js";
 import { buildDenyReason } from "../tool-policy/packs/threat-engine-pack.js";
@@ -137,7 +138,11 @@ function evaluateThreat(ctx: ToolCallContext): void {
 // truncated-with-disk-preview.
 export function applyBudget(ctx: ToolCallContext): void {
   const result = ctx.result!;
-  ctx.result = { ...result, content: budgetResult(result.content, resultCapChars(ctx)) };
+  const cap = resultCapChars(ctx);
+  // A file read is cut at a whole line with the offset that continues — its
+  // file is the source, so a spill copy only invited reading the copy in a loop.
+  const read = ctx.tc.name === "read" && !result.isError ? budgetReadResult(result, cap) : null;
+  ctx.result = read ?? { ...result, content: budgetResult(result.content, cap) };
 }
 
 // The cap is a function of the TARGET WINDOW (context-manager/tool-result-cap.ts),

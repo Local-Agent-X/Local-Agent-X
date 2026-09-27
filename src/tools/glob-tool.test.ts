@@ -113,9 +113,11 @@ describe("glob tool — zero matches says what would have matched", () => {
 	it("a name-anchored pattern with a substring match: names the * on both sides form", async () => {
 		const dir = join(root, "projects");
 		file("projects/clients/2025/jobs-crm-app/README.md");
-		const res = await run("**/CRM*", dir);
+		// Same case as the folder: on linux glob matches case-sensitively (see
+		// "matches case the way the filesystem does"), so `*CRM*` finds nothing there.
+		const res = await run("**/crm*", dir);
 		expect(res.content).toContain("No files matched.");
-		expect(res.content).toContain("`**/*CRM*` matches");
+		expect(res.content).toContain("`**/*crm*` matches");
 	});
 
 	it("an anchored MIDDLE segment (`**/crm*/**`) names the substring form for that segment", async () => {

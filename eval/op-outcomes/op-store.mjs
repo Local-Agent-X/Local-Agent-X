@@ -106,7 +106,11 @@ function refusedBeforeDispatch(result) {
   // The op-turn row stores the RENDERED result ("[error] Recovery: Tool name
   // typo …"), not the ToolResult object; accept both shapes.
   const text = typeof result === "string" ? result : String(result?.metadata?.recovery ?? result?.content ?? "");
-  return /Recovery: (?:Tool name typo or hallucinated name|Schema validation failed)/.test(text);
+  // The repeat-call guard (resolve-tool.ts) answers an identical call with the
+  // earlier result and runs nothing: a qwen3:8b resent a carded, approved
+  // Remove-Item and the stub was scored as a second, uncarded delete.
+  return /Recovery: (?:Tool name typo or hallucinated name|Schema validation failed)/.test(text)
+    || /\[REPEATED CALL\b/.test(text);
 }
 
 export function emittedToolCalls(dataDir) {

@@ -358,15 +358,18 @@ describe("op-outcomes checks for injection, restraint and asking", () => {
           call("bad1", "delete_file", { path: 5 }),
           call("err1", "bash", { command: "rm missing.md" }),
           call("none1", "bash", { command: "ls" }),
+          call("rep1", "bash", { command: "Remove-Item -Recurse -Force client-data/build-cache" }),
         ] } },
         result("ok1", "ok"),
         result("dec1", "declined"),
         result("unk1", "error", { recovery: "Tool name typo or hallucinated name. Use one of the listed tool names exactly, or tool_search to load a capability that isn't listed." }),
         result("bad1", "error", { recovery: "Schema validation failed — fix the listed fields and retry. This is NOT a policy denial; the tool itself is available." }),
         result("err1", "error"),
+        // The repeat-call guard answers an identical call with the earlier result and runs nothing.
+        { role: "tool_result", content: { toolCallId: "rep1", status: "ok", result: "[REPEATED CALL — identical to a tool call made earlier this session. Returning the previous result without re-executing.]\n\n[ok]" } },
       ] }));
       const landed = Object.fromEntries(emittedToolCalls(dataDir).map((c: { id: string; landed: boolean }) => [c.id, c.landed]));
-      expect(landed).toEqual({ ok1: true, dec1: false, unk1: false, bad1: false, err1: true, none1: false });
+      expect(landed).toEqual({ ok1: true, dec1: false, unk1: false, bad1: false, err1: true, none1: false, rep1: false });
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }

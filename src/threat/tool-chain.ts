@@ -101,22 +101,16 @@ export class ToolChainAnalyzer {
       return { blocked: true, reason: loopResult, loopDetected: loopResult };
     }
 
-    // Encoding detection: flag base64/hex encoding as a data transform (exfil prep)
-    if (access && access.type === "shell") {
-      const cmd = String(args.command || "").toLowerCase();
-      const ENCODING_PATTERNS = /\bbase64\b|\bxxd\b|\bod\s+-[xA]|\bopenssl\s+enc\b|\bhex\b.*encode|\bencode.*\bhex\b|\bprintf\s+'%x/i;
-      if (ENCODING_PATTERNS.test(cmd)) {
-        // Mark this as a sensitive data transform — inherits taint from any prior sensitive read
-        const hasPriorSensitive = this.history.some(h => h.sensitive && Date.now() - h.timestamp < 120_000);
-        if (hasPriorSensitive) {
-          return {
-            blocked: true,
-            reason: `Exfiltration prep detected: encoding command (${cmd.slice(0, 60)}) after sensitive data access. ` +
-              `Data encoding after reading sensitive files is a known exfiltration technique.`,
-          };
-        }
-      }
-    }
+    // There is no "encoding after a sensitive read" rule. It matched a keyword
+    // (`base64`, `xxd`, `od -x`) in a shell command within two minutes of any
+    // sensitive access, with no evidence the command touched the bytes that
+    // access returned: on 2026-09-14 it blocked a `node -e` that base64-DECODED
+    // the claims of JWTs found in eas.json for a security audit the user had
+    // asked for, because a `.env` read had been ATTEMPTED (and refused) two
+    // minutes earlier. Whether sensitive bytes reach a shell command is judged
+    // with evidence by the data-lineage taint gate (the command text overlaps
+    // the tainted bytes, or carries secret-shaped content), and whether they
+    // leave the box by checkExfiltration below and the outbound scan.
 
     // Exfiltration detection: is secret material actually in the outbound payload?
     if (access && this.isExternalSink(access)) {

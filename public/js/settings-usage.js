@@ -51,26 +51,32 @@ async function loadUsage() {
 
   _modelBudgets = { ...(data.budgets?.modelDailyBudgetsUsd || {}) };
 
+  // Two honest dollar figures, never one that switches meaning with the
+  // active provider: real per-call API spend, and what the subscription (and
+  // local) usage in the period WOULD have cost at API rates — shown whenever
+  // there is any, clearly marked as not billed. The old single "cost" tile
+  // showed one or the other depending on which credential resolved last, so
+  // a user on the subscription with an API key saved never saw both.
+  const billable = Number(data.billableUsd) || 0;
+  const shadow = Number(data.shadowUsd) || 0;
   const subscription = data.authMode === 'subscription';
   const note = document.getElementById('usage-mode-note');
   if (note) {
-    note.textContent = subscription
-      ? 'On a flat-rate subscription, dollars are an estimate of API-equivalent cost, not what you pay.'
-      : data.authMode === 'api-key'
-        ? 'On a per-call API key — these are real costs.'
-        : data.authMode === 'local'
-          ? 'Running a local model — usage is free; token counts are shown for reference.'
-          : '';
+    const parts = [];
+    if (billable > 0 || data.authMode === 'api-key') parts.push('Real spend is per-call API-key usage.');
+    if (shadow > 0 || subscription) parts.push('Subscription usage is flat-rate: the dollar figure is what it would have cost at API rates, not what you pay.');
+    if (data.authMode === 'local' && parts.length === 0) parts.push('Running a local model — usage is free; token counts are shown for reference.');
+    note.textContent = parts.join(' ');
   }
 
   // Headline stats.
-  const costLabel = subscription ? 'Est. API-equivalent' : data.authMode === 'local' ? 'Cost' : 'Real spend';
-  const costValue = subscription ? data.shadowUsd : data.billableUsd;
   const stats = [
     ['Input tokens', fmtTokens(data.inputTokens)],
     ['Output tokens', fmtTokens(data.outputTokens)],
-    [costLabel, data.authMode === 'local' && (data.billableUsd + data.shadowUsd) === 0 ? 'Free' : `${subscription ? '≈ ' : ''}${fmtUsd(costValue)}`],
   ];
+  if (billable > 0 || data.authMode === 'api-key') stats.push(['Real spend', fmtUsd(billable)]);
+  if (shadow > 0 || subscription) stats.push(['Subscription usage — at API rates, not billed', `≈ ${fmtUsd(shadow)}`]);
+  if (stats.length === 2) stats.push(['Cost', 'Free']);
   const statsEl = document.getElementById('usage-stats');
   if (statsEl) {
     statsEl.innerHTML = stats.map(([label, val]) =>

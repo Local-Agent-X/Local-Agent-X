@@ -38,7 +38,8 @@ export type ToolRisk =
   | "destructive"      // irreversible delete / overwrite / cancel / uninstall
   | "money"            // bills a real-world account (payments, paid APIs)
   | "external-comms"   // sends a message a third party will see
-  | "secrets";         // touches the credential vault — read, write, or fill-from
+  | "secrets"          // touches the credential vault — read, write, or fill-from
+  | "publish";         // ships code or artifacts others consume — git push, deploy, package publish, release
 
 export interface ToolEntry {
   kernel: KernelClass;

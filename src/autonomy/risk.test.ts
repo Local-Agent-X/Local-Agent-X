@@ -16,6 +16,7 @@ const VALID_RISKS: ReadonlySet<ToolRisk> = new Set<ToolRisk>([
   "money",
   "external-comms",
   "secrets",
+  "publish",
 ]);
 
 describe("TOOL_RISK", () => {

@@ -879,13 +879,14 @@
           <div class="field">
             <label class="field-label">Profile</label>
             <select class="field-select" id="cfg-autonomy-profile" onchange="setAutonomyProfile(this.value)">
-              <option value="Safe">Safe — ask before edits, shell, or network calls</option>
-              <option value="Normal" selected>Normal — autonomous in workspace, ask for money, deletes, external messages</option>
-              <option value="Developer">Developer — like Normal, but reversible shell/destructive run with rollback</option>
-              <option value="Power">Power — autonomous for everything except money and secrets</option>
+              <option value="Safe">Safe — ask before edits, shell, network calls, or publishing</option>
+              <option value="Normal" selected>Normal — autonomous in workspace, ask for money, deletes, external messages, publishing</option>
+              <option value="Developer">Developer — like Normal, but reversible shell/destructive run with rollback; publishing still asks</option>
+              <option value="Power">Power — autonomous for everything except money and secrets (reviewed publishes run)</option>
               <option value="Autonomous">Autonomous — fully unattended; reversible actions wrap in rollback</option>
             </select>
             <div class="field-hint">"Always for this session" on an approval card remembers your choice until the server restarts.</div>
+            <div class="field-hint">Publishing (git push, deploys, package publishes, releases) is always reviewed first by a fresh model that sees exactly what would ship. A red finding blocks it under every profile unless you override it on the card ("Push anyway"); otherwise the profile decides whether you are asked.</div>
           </div>
           <div class="toggle-row"><div><div class="toggle-label">Verify deliverables</div><div class="toggle-desc">When a deliverable is built from external data (a report, spreadsheet, chart) — in a chat turn or a delegated task — run an independent verification pass that re-checks it against its sources. It waits until you have stopped editing, then runs once over everything that changed since the last check, so iterating on a file costs one background model run, not one per save.</div></div><div id="tp-toggle-verify-deliverables" class="toggle on" onclick="toolPolicyToggle('verifyDeliverables', this)"></div></div>
           <div class="field-row">

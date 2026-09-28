@@ -27,6 +27,22 @@ export type ProfileName = (typeof PROFILE_NAMES)[number];
 export const DEFAULT_PROFILE: ProfileName = "Power";
 
 // ── Profile tables ──────────────────────────────────────────
+//
+// "publish" — a git push, deploy, package publish or release. No tool carries
+// it statically: a shell call that publishes is RECLASSIFIED to it
+// (publish-operation.ts), after a fresh-context review of exactly what would
+// ship (tool-execution/publish-review-gate.ts). The row decides every review
+// outcome except RED — a red finding blocks under every profile unless the user
+// overrides it on the card. So this row is "what happens to a reviewed publish
+// that came back GREEN, AMBER, FAILED, or with an unknown change set":
+//   Safe, Normal  ask — they already ask before anything leaves the machine
+//                 (network-write, external-comms).
+//   Developer     ask — its loosening is for reversible work, and rollback
+//                 cannot un-push or un-deploy.
+//   Power         allow — "autonomous for everything except money and
+//                 secrets"; the review, not a prompt, is what makes that safe,
+//                 and the model still reads every finding in the tool result.
+//   Autonomous    allow — unattended by definition; RED still blocks.
 
 const Safe: Profile = {
   name: "Safe",
@@ -40,6 +56,7 @@ const Safe: Profile = {
     "destructive": "deny",
     "money": "deny",
     "secrets": "deny",
+    "publish": "ask",
   },
 };
 
@@ -55,6 +72,7 @@ const Normal: Profile = {
     "destructive": "ask",
     "money": "ask",
     "secrets": "ask",
+    "publish": "ask",
   },
 };
 
@@ -70,6 +88,7 @@ const Developer: Profile = {
     "destructive": "allow-with-rollback",
     "money": "ask",
     "secrets": "ask",
+    "publish": "ask",
   },
 };
 
@@ -85,6 +104,7 @@ const Power: Profile = {
     "destructive": "allow",
     "money": "ask",
     "secrets": "ask",
+    "publish": "allow",
   },
 };
 
@@ -103,6 +123,7 @@ const Autonomous: Profile = {
     "destructive": "allow-with-rollback",
     "money": "allow",
     "secrets": "allow",
+    "publish": "allow",
   },
 };
 

@@ -21,6 +21,7 @@ const ALL_RISKS: ToolRisk[] = [
   "destructive",
   "money",
   "secrets",
+  "publish",
 ];
 
 // Source of truth for the test matrix. Mirrors the rule tables in
@@ -38,6 +39,7 @@ const EXPECTED: Record<ProfileName, Record<ToolRisk, Decision>> = {
     "destructive": "deny",
     "money": "deny",
     "secrets": "deny",
+    "publish": "ask",
   },
   Normal: {
     "safe": "allow",
@@ -49,6 +51,7 @@ const EXPECTED: Record<ProfileName, Record<ToolRisk, Decision>> = {
     "destructive": "ask",
     "money": "ask",
     "secrets": "ask",
+    "publish": "ask",
   },
   Developer: {
     "safe": "allow",
@@ -60,6 +63,7 @@ const EXPECTED: Record<ProfileName, Record<ToolRisk, Decision>> = {
     "destructive": "allow-with-rollback",
     "money": "ask",
     "secrets": "ask",
+    "publish": "ask",
   },
   Power: {
     "safe": "allow",
@@ -71,6 +75,7 @@ const EXPECTED: Record<ProfileName, Record<ToolRisk, Decision>> = {
     "destructive": "allow",
     "money": "ask",
     "secrets": "ask",
+    "publish": "allow",
   },
   Autonomous: {
     "safe": "allow",
@@ -82,6 +87,7 @@ const EXPECTED: Record<ProfileName, Record<ToolRisk, Decision>> = {
     "destructive": "allow-with-rollback",
     "money": "allow",
     "secrets": "allow",
+    "publish": "allow",
   },
 };
 

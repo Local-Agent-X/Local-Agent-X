@@ -39,6 +39,7 @@ const MUTATION_RISKS: ReadonlySet<ToolRisk> = new Set<ToolRisk>([
   "money",
   "external-comms",
   "secrets",
+  "publish",
 ]);
 
 // Local "I did work" tiers (discovery-loop reset). Includes `shell` (bash is

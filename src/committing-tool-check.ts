@@ -41,6 +41,7 @@ const COMMITTING_RISKS: ReadonlySet<ToolRisk> = new Set<ToolRisk>([
   "money",
   "external-comms",
   "secrets",
+  "publish",
 ]);
 
 /** Tools whose risk classification is too coarse — they need arg-aware

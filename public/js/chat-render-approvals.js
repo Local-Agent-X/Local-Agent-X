@@ -19,6 +19,7 @@
 // External deps (resolved at call time, runtime-only):
 //   - makeApprovalCard   (chat-tool-cards.js) — canonical approval card DOM
 //   - formatMsgTime      (chat-render.js)     — optional record timestamp
+//   - applyPublishReview (chat-render-publish-review.js) — review block on a publish ask
 
 // Terminal wording. Every state except 'approved' means the tool did NOT run —
 // say so, because a bare "Denied" / "Timed out" left users re-clicking a dead
@@ -184,6 +185,8 @@ function renderApproval(ap) {
   if (!live) return makeApprovalRecord(ap);
   const card = makeApprovalCard(ap.id, ap.toolName, ap.context, ap.argsPreview, ap.rememberable !== false);
   card.classList.add('live');
+  // A publish ask carries its pre-publish review (chat-render-publish-review.js).
+  if (ap.preview && typeof applyPublishReview === 'function') applyPublishReview(card, ap.preview);
   // Above the buttons — the consequence has to be read before the decision.
   // A null second argument appends, which is the right place anyway. The clock
   // is OPTIONAL: an ask that reaches us without the server's deadline (an

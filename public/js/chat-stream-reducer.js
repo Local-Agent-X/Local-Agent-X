@@ -251,6 +251,8 @@
             // false = the server will not remember an answer to this ask, so the
             // card offers no "Always for this session"; absent = older emitter.
             rememberable: event.rememberable !== false,
+            // Typed preview (a publish ask's pre-publish review); null = none.
+            preview: event.preview || null,
             status: 'pending',
             resolvedAt: null,
             // Stamped by whoever settles the card definitively — see

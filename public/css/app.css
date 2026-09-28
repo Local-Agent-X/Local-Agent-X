@@ -454,6 +454,33 @@ body.platform-darwin #sidebar-agents-controls{top:3px;right:14px}
    and goes danger-colored for the last minute. */
 .approval-countdown{margin-top:8px;font-family:var(--mono);font-size:.75rem;font-weight:600;color:var(--warn)}
 .approval-countdown.urgent{color:var(--danger)}
+/* Pre-publish review on a publish ask (chat-render-publish-review.js): the
+   verdict chip, what was reviewed, and each finding — read before deciding. */
+.publish-review{margin-top:8px;padding:8px 10px;border:1px solid var(--border);border-left:3px solid var(--muted);border-radius:6px;font-size:.8rem}
+.publish-review.status-red{border-left-color:var(--danger)}
+.publish-review.status-amber,.publish-review.status-failed,.publish-review.status-unknown{border-left-color:var(--warn)}
+.publish-review.status-green{border-left-color:var(--ok)}
+.publish-review-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.publish-review-chip{font-family:var(--mono);font-size:.72rem;font-weight:700;padding:1px 7px;border-radius:9px;color:var(--bg);background:var(--muted)}
+.status-red .publish-review-chip{background:var(--danger)}
+.status-amber .publish-review-chip,.status-failed .publish-review-chip,.status-unknown .publish-review-chip{background:var(--warn)}
+.status-green .publish-review-chip{background:var(--ok)}
+.publish-review-label{color:var(--muted);font-size:.72rem}
+.publish-review-command{margin-top:6px;font-family:var(--mono);font-size:.75rem;overflow-wrap:anywhere}
+.publish-review-summary,.publish-review-reason{margin-top:4px;color:var(--muted);overflow-wrap:anywhere}
+.publish-review-reason{color:var(--warn)}
+.publish-review-findings{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-direction:column;gap:6px}
+.publish-review-finding{padding-left:8px;border-left:2px solid var(--muted)}
+.publish-review-finding.sev-red{border-left-color:var(--danger)}
+.publish-review-finding.sev-amber{border-left-color:var(--warn)}
+.publish-review-finding-top{display:flex;gap:6px;align-items:baseline;flex-wrap:wrap}
+.publish-review-sev{font-family:var(--mono);font-size:.7rem;font-weight:700;text-transform:uppercase}
+.sev-red .publish-review-sev{color:var(--danger)}
+.sev-amber .publish-review-sev{color:var(--warn)}
+.publish-review-loc{font-family:var(--mono);font-size:.72rem;color:var(--muted);overflow-wrap:anywhere}
+.publish-review-why{color:var(--muted)}
+.publish-review-fix{font-style:italic}
+.approval-actions .btn-approve.override{background:var(--danger);border-color:var(--danger);color:#fff}
 /* A SETTLED ask is a one-line audit record, never an action: there is no
    <button> in this DOM at all. Disabling the buttons was not enough — at
    opacity .5 they still read as clickable, which is what left users clicking a

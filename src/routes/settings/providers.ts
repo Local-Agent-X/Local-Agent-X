@@ -82,6 +82,10 @@ export const handleProvidersRoutes: RouteHandler = async (method, url, req, res,
     // the latter, and the chat subprocess authenticates from it. Without the CLI
     // check a CLI-signed user is "Connected" in Settings but missing here.
     const hasAnthropicOAuth = !localOnly && hasCreds("anthropic");
+    // A pay-as-you-go Anthropic key saved in LAX is its own picker entry: the
+    // subscription entry never runs on it (auth-provider.ts), so a user who
+    // saved a key must be able to pick the key.
+    const hasAnthropicKey = !localOnly && hasCreds("anthropic-api");
     const hasXaiKey = hasCreds("xai");
     const hasCerebrasKey = hasCreds("cerebras");
     const hasOpenAIKey = hasCreds("openai");
@@ -118,6 +122,7 @@ export const handleProvidersRoutes: RouteHandler = async (method, url, req, res,
       // branches — fixed at the root.
       if (hasXaiKey) currentProvider = "xai";
       else if (hasAnthropicOAuth) currentProvider = "anthropic";
+      else if (hasAnthropicKey) currentProvider = "anthropic-api";
       else if (hasOpenAIOAuth) currentProvider = "codex";
       // No `else` — leave empty so the renderer knows the user needs to
       // pick + connect a provider before they're considered onboarded.
@@ -137,6 +142,7 @@ export const handleProvidersRoutes: RouteHandler = async (method, url, req, res,
     if (hasCerebrasKey && !localOnly) pushFromRegistry("cerebras");
     if (hasOpenAIOAuth && !localOnly) pushFromRegistry("codex");
     if (hasAnthropicOAuth && !localOnly) pushFromRegistry("anthropic");
+    if (hasAnthropicKey) pushFromRegistry("anthropic-api");
     if (hasOpenAIKey && !localOnly) pushFromRegistry("openai");
     // Local runtimes (Ollama, LM Studio, vLLM, llama.cpp, manual adds) —
     // ONE picker entry whose models are the union across discovered

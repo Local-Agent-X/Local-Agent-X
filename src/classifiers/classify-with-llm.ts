@@ -114,6 +114,7 @@ export interface ClassifyOptions<T> {
  */
 const MODEL_FALLBACKS: Record<string, string> = {
   anthropic: "claude-sonnet-4-6",
+  "anthropic-api": "claude-sonnet-4-6",
   codex: "gpt-5.5",
   openai: "gpt-4o-mini",
   ollama: "llama3:8b",

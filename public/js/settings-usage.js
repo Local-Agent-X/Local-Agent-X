@@ -24,7 +24,7 @@ function fmtTokens(n) {
 function connectionLabel(provider, billable) {
   if (provider === 'local') return 'Local';
   if (billable) {
-    return ({ anthropic: 'Anthropic', openai: 'OpenAI', xai: 'xAI', gemini: 'Google', cerebras: 'Cerebras', 'ollama-cloud': 'Ollama Cloud' })[provider] || provider;
+    return ({ anthropic: 'Anthropic', 'anthropic-api': 'Anthropic', openai: 'OpenAI', xai: 'xAI', gemini: 'Google', cerebras: 'Cerebras', 'ollama-cloud': 'Ollama Cloud' })[provider] || provider;
   }
   return ({ anthropic: 'Claude', xai: 'Grok', codex: 'ChatGPT' })[provider] || provider;
 }

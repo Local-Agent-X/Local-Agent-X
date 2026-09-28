@@ -9,7 +9,7 @@ describe("provider backgroundModel", () => {
   // see the gemini entry in providers/registry.ts. Anything else landing here
   // needs the same kind of documented justification.
   const OUT_OF_LIST_BACKGROUND: Record<string, string> = {
-    gemini: "gemini-2.0-flash",
+    gemini: "gemini-2.5-flash",
   };
 
   it("every configured backgroundModel is a model the provider lists (or a documented background-only pick)", () => {

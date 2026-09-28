@@ -1,6 +1,6 @@
 // Provider → adapter dispatch. Picks the right canonical adapter based on
 // prepared.provider and registers it for the op. Three branches:
-//   - anthropic   → AnthropicAdapter (CLI transport)
+//   - anthropic / anthropic-api → AnthropicAdapter (native Messages API)
 //   - codex       → CodexAdapter
 //   - everything else → OpenAICompatAdapter (one wire shape, swapped
 //     baseURL+apiKey per provider). For "local" we additionally check the
@@ -11,7 +11,9 @@ import type { PreparedAgentRequest } from "../../agent-request/types.js";
 import { stableSystemPrefixLength } from "../../agent-request/prepare-request/build-system-prompt.js";
 import { registerAdapterForOp } from "../runtime.js";
 import { createAnthropicAdapter } from "../adapters/anthropic.js";
+import { defaultAnthropicTransport } from "../adapters/anthropic-transport.js";
 import type { OpenAICompatTarget } from "../adapters/openai-compat.js";
+import { isAnthropicProvider } from "../../providers/provider-ids.js";
 import { splitPromptForStablePrefix } from "./local-prompt-split.js";
 import { modelStablePrefix } from "../../local-runtimes/model-profile.js";
 
@@ -23,13 +25,22 @@ export async function registerAdapterForChat(
 ): Promise<void> {
   const forcedToolChoice = prepared.toolChoice;
 
-  if (prepared.provider === "anthropic") {
+  if (isAnthropicProvider(prepared.provider)) {
+    // The subscription entry lets the transport resolve the sign-in itself
+    // (direct-HTTP OAuth first, the CLI proxy as fallback). The API-key entry
+    // pins the credential the turn was admitted with: its transport must
+    // carry THAT key — never a subscription token the box also happens to
+    // hold — so what the user picked is what runs and what is billed.
+    const transport = prepared.provider === "anthropic-api" && prepared.authSource
+      ? defaultAnthropicTransport({ credential: prepared.apiKey, source: prepared.authSource })
+      : undefined;
     registerAdapterForOp(opId, () =>
       createAnthropicAdapter({
         systemPrompt: prepared.systemPrompt,
         model: prepared.model,
         sessionId,
         forcedToolChoice,
+        transport,
         // Chat streams real "Thinking" via the direct-HTTP OAuth path when a
         // subscription token is resolvable; auto-falls back to the CLI proxy
         // otherwise. Sub-agents/builds omit this and stay on the CLI loop.

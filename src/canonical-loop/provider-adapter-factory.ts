@@ -5,7 +5,7 @@ import type {
   DelegatedRuntimeTarget,
   ExactDelegatedRuntimeDescriptor,
 } from "../ops/types.js";
-import { type ProviderId } from "../providers/provider-ids.js";
+import { isAnthropicProvider, type ProviderId } from "../providers/provider-ids.js";
 import {
   assertSurface, isCredentialSource, isFingerprint, isProviderId, isRuntime,
   isTarget, sameTargetKind,
@@ -94,7 +94,7 @@ export async function resolveProviderRuntime(
   options: ProviderRuntimeOptions,
 ): Promise<ResolvedProviderRuntime> {
   if (!model.trim()) throw new Error(`provider ${provider} resolved an empty model`);
-  if (provider === "anthropic") return directIdentity(provider, model, "anthropic", options);
+  if (isAnthropicProvider(provider)) return directIdentity(provider, model, "anthropic", options);
   if (provider === "codex") return directIdentity(provider, model, "codex", options);
   if (provider === "gemini") return directIdentity(provider, model, "gemini-native", options);
 
@@ -340,7 +340,7 @@ async function resolveOpenAITarget(
 }
 
 function assertRuntimeMatchesProvider(provider: ProviderId, runtime: DelegatedProviderRuntime, target: unknown): void {
-  const expected: DelegatedProviderRuntime = provider === "anthropic" ? "anthropic"
+  const expected: DelegatedProviderRuntime = isAnthropicProvider(provider) ? "anthropic"
     : provider === "codex" ? "codex"
       : provider === "gemini" ? "gemini-native" : "openai-compat";
   if (runtime !== expected) identityMismatch("provider_runtime_changed");
@@ -369,7 +369,7 @@ function assertFingerprint(raw: string, expected: string): void {
 }
 
 function providerRegistryEndpoint(provider: ProviderId): string {
-  if (provider === "anthropic") return ANTHROPIC_API_BASE;
+  if (isAnthropicProvider(provider)) return ANTHROPIC_API_BASE;
   if (provider === "codex") return CODEX_URL;
   if (provider === "gemini") return GEMINI_BASE;
   throw new Error(`provider ${provider} has no direct endpoint identity`);

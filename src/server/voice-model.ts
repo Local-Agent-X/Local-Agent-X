@@ -9,7 +9,7 @@ import type { ProviderId } from "../providers/provider-ids.js";
  * on gpt-5.6-sol). Lowering its reasoning effort isn't enough: gpt-5.6's floor
  * is "low" and even that is slow + unreliable. So the spoken hop routes to the
  * SELECTED provider's own fast tier — its declared `backgroundModel`
- * (codex → gpt-5.4-mini, openai → gpt-4o-mini, gemini → gemini-2.0-flash,
+ * (codex → gpt-5.4-mini, openai → gpt-4o-mini, gemini → gemini-2.5-flash,
  * xai → non-reasoning grok, anthropic → claude-haiku-4-5) — keeping whatever
  * provider the user chose. The provider does NOT change; only the model does.
  * Heavy/long work still delegates to full-power workers, which run the chat

@@ -33,7 +33,7 @@ const PRICE_FILE = "src/pricing/model-prices.ts";
 // Providers that bill per token AND have a canonical public rate. local /
 // cerebras / ollama-cloud / custom are OSS / dynamic / user-defined endpoints
 // with no single authoritative rate, so they're exempt (priced best-effort).
-const METERED = ["xai", "openai", "codex", "anthropic", "gemini"];
+const METERED = ["xai", "openai", "codex", "anthropic", "anthropic-api", "gemini"];
 const STALE_DAYS = 90;
 
 const registry = readFileSync(join(root, "src/providers/registry.ts"), "utf8");
@@ -57,17 +57,28 @@ if (ctxBlockMatch) {
   for (const m of ctxBlock.matchAll(/^\s*["']([^"']+)["']\s*:/gm)) ctxKeys.add(m[1]);
 }
 
+// Shared model arrays declared above PROVIDERS (`const NAME_MODELS = [...]`)
+// and spread into entries as `models: [...NAME_MODELS]`.
+const sharedModelLists = new Map();
+for (const m of registry.matchAll(/const (\w+_MODELS)\s*=\s*\[([\s\S]*?)\];/g)) {
+  sharedModelLists.set(m[1], [...m[2].replace(/\/\/[^\n]*/g, "").matchAll(/"([^"]+)"/g)].map((s) => s[1]));
+}
+
 // Per metered provider, pull models[] + defaultModel + backgroundModel. Provider
 // blocks sit at 2-space indent and close with "\n  },"; inner objects are inline
-// or deeper-indented, so that boundary isolates one provider.
+// or deeper-indented, so that boundary isolates one provider. Hyphenated ids
+// are quoted keys ("anthropic-api": {).
 function modelsFor(id) {
-  let block = (registry.match(new RegExp(`\\n  ${id}:\\s*\\{([\\s\\S]*?)\\n  \\},`)) || [])[1] || "";
+  let block = (registry.match(new RegExp(`\\n  "?${id}"?:\\s*\\{([\\s\\S]*?)\\n  \\},`)) || [])[1] || "";
   // Strip line comments first — apostrophes in prose ("whatever's") otherwise
   // read as quoted strings. Model IDs are always double-quoted.
   block = block.replace(/\/\/[^\n]*/g, "");
   const out = new Set();
   const arr = block.match(/models:\s*\[([\s\S]*?)\]/);
-  if (arr) for (const s of arr[1].matchAll(/"([^"]+)"/g)) out.add(s[1]);
+  if (arr) {
+    for (const s of arr[1].matchAll(/"([^"]+)"/g)) out.add(s[1]);
+    for (const spread of arr[1].matchAll(/\.\.\.(\w+_MODELS)/g)) for (const s of sharedModelLists.get(spread[1]) ?? []) out.add(s);
+  }
   for (const key of ["defaultModel", "backgroundModel"]) {
     const m = block.match(new RegExp(`${key}:\\s*"([^"]+)"`));
     if (m && m[1]) out.add(m[1]);

@@ -31,7 +31,7 @@ import { verifyWriteLanded } from "../../tools/verify.js";
 import type { AppTier } from "../../tools/app-tier.js";
 import { finalizeFrameworkBuild, type FinalizeFrameworkDeps } from "./app-build-finalize.js";
 import { AppBuildVerifyAdapter, type AppSmokeGateRunner, type AppVisionJudge, type DevServerUrlResolver } from "./app-build-verify-adapter.js";
-import { createAnthropicAdapter } from "./anthropic.js";
+import { createAnthropicAdapter, type AnthropicTransport } from "./anthropic.js";
 
 export const APP_BUILD_ADAPTER_NAME = "app_build";
 export const APP_BUILD_ADAPTER_VERSION = "1.0.0";
@@ -342,11 +342,22 @@ async function defaultProviderAdapterFactory(
   provider: string,
   opts: ProviderAdapterFactoryOptions,
 ): Promise<Adapter> {
-  if (provider === "anthropic") {
+  if (provider === "anthropic" || provider === "anthropic-api") {
+    // The API-key entry pins the key the user saved in LAX; the transport
+    // must never substitute a subscription token the box also holds.
+    let transport: AnthropicTransport | undefined;
+    if (provider === "anthropic-api") {
+      const { resolveCredential } = await import("../../auth/resolve.js");
+      const { defaultAnthropicTransport } = await import("./anthropic-transport.js");
+      const credential = await resolveCredential("anthropic-api");
+      if (!credential) throw new Error("provider anthropic-api has no saved ANTHROPIC_API_KEY — add it in Settings");
+      transport = defaultAnthropicTransport({ credential: credential.credential, source: credential.source });
+    }
     return createAnthropicAdapter({
       systemPrompt: opts.systemPrompt,
       model: opts.model,
       sessionId: opts.sessionId,
+      transport,
       // In-canonical builds run tool-by-tool through LAX's loop; route Claude
       // inference over the direct-HTTP OAuth path so a build never spawns the
       // `claude` CLI per turn (that's the whole point of the no-CLI strategy).

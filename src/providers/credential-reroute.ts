@@ -32,10 +32,11 @@ export interface CredentialReroute {
  *
  *   xAI (OAuth or API key) takes priority — Grok is the default on fresh
  *   installs and stays the default when the user has multiple providers
- *   configured but hasn't explicitly picked one in settings.json. Then
- *   Anthropic, then Codex (unless `allowCodexFallback` is false — the chat
- *   path disables it when a config-level OpenAI key is present). With no
- *   credentials anywhere, "xai" is returned so the picker shows Grok.
+ *   configured but hasn't explicitly picked one in settings.json. Then the
+ *   Anthropic subscription, then an Anthropic key saved in LAX, then Codex
+ *   (unless `allowCodexFallback` is false — the chat path disables it when a
+ *   config-level OpenAI key is present). With no credentials anywhere, "xai"
+ *   is returned so the picker shows Grok.
  */
 export function rerouteToCredentialedProvider(
   requested: ProviderId | "",
@@ -48,6 +49,7 @@ export function rerouteToCredentialedProvider(
   let provider: ProviderId;
   if (hasCredsFor("xai")) provider = "xai";
   else if (hasCredsFor("anthropic")) provider = "anthropic";
+  else if (hasCredsFor("anthropic-api")) provider = "anthropic-api";
   else if (hasCredsFor("codex") && (opts.allowCodexFallback ?? true)) provider = "codex";
   else provider = "xai"; // no creds anywhere → xai fallback so the picker shows Grok
   return { provider, rerouted: true };

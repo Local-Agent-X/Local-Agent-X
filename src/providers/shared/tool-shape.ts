@@ -158,6 +158,7 @@ export function toolSchemaFormatForProvider(
   if (provider === "anthropic") {
     return authSource === "oauth" ? "anthropic-dynamic" : "anthropic-api";
   }
+  if (provider === "anthropic-api") return "anthropic-api";
   if (provider === "codex") return "codex-responses";
   if (provider === "gemini") return "gemini-native";
   return "openai-chat";

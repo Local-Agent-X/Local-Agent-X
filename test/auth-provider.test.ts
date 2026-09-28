@@ -159,6 +159,28 @@ describe("anthropic — subscription sign-in only", () => {
   });
 });
 
+// The picker's "Anthropic API (direct key)": the key the user saved in LAX and
+// nothing else. A key in the environment may belong to another program on the
+// box; a subscription sign-in belongs to the other entry.
+describe("anthropic-api — secrets store ONLY", () => {
+  it("resolves the saved key, booked as secrets-store (billable)", async () => {
+    const r = await AUTH_PROVIDERS["anthropic-api"].resolve({}, store({ ANTHROPIC_API_KEY: "sk-ant-api03-saved" }));
+    expect(r).toEqual({ provider: "anthropic-api", credential: "sk-ant-api03-saved", source: "secrets-store" });
+  });
+  it("never uses the environment, and never a subscription sign-in", async () => {
+    vi.mocked(getAnthropicApiKey).mockResolvedValue("oauth:tok");
+    vi.mocked(loadAnthropicTokens).mockReturnValue({ accessToken: "a", provider: "anthropic" } as never);
+    process.env.ANTHROPIC_API_KEY = "sk-ant-api03-env";
+    expect(await AUTH_PROVIDERS["anthropic-api"].resolve({}, EMPTY)).toBeNull();
+    expect(AUTH_PROVIDERS["anthropic-api"].hasCredential({ secretsStore: EMPTY })).toBe(false);
+    expect(getAnthropicApiKey).not.toHaveBeenCalled();
+  });
+  it("hasCredential is the store entry, and only a usable one", () => {
+    expect(AUTH_PROVIDERS["anthropic-api"].hasCredential({ secretsStore: store({ ANTHROPIC_API_KEY: "k" }) })).toBe(true);
+    expect(AUTH_PROVIDERS["anthropic-api"].hasCredential({ secretsStore: store({ ANTHROPIC_API_KEY: "" }) })).toBe(false);
+  });
+});
+
 describe("codex — ChatGPT OAuth", () => {
   it("resolves the OAuth access token", async () => {
     vi.mocked(getApiKey).mockResolvedValue("codex-tok");

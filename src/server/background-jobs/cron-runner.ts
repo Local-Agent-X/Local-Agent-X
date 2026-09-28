@@ -92,7 +92,7 @@ export function registerCronRunner(deps: CronRunnerDeps): void {
     // a model for this job.
     const cronModel = jobMeta?.model
       ? prepared.model
-      : (prepared.provider === "anthropic" ? "claude-sonnet-4-6" : prepared.model);
+      : (prepared.provider === "anthropic" || prepared.provider === "anthropic-api" ? "claude-sonnet-4-6" : prepared.model);
     const providerName = String(prepared.provider);
     const wrappedPrompt = `<scheduled_task>\n${cleanedPrompt}\n</scheduled_task>`;
     // no recursive scheduling, no file writes — agent's returned text IS the report

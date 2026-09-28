@@ -203,6 +203,8 @@ describe("delegated provider runtime identity", () => {
 
   it.each([
     ["anthropic", "anthropic", "env", fixture.defaultAnthropicTransport, fixture.createAnthropicAdapter, fixture.anthropicTransport],
+    // The API-key entry shares the runtime and pins its own (store-held) key.
+    ["anthropic-api", "anthropic", "secrets-store", fixture.defaultAnthropicTransport, fixture.createAnthropicAdapter, fixture.anthropicTransport],
     ["codex", "codex", "oauth", fixture.defaultCodexTransport, fixture.createCodexAdapter, fixture.codexTransport],
   ] as const)("pins the admitted credential and source into the %s transport", async (
     provider,

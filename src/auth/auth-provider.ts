@@ -14,8 +14,9 @@
  *   - `resolve()` falls back to process.env; `hasCredential()` never does. A
  *     user with only GEMINI_API_KEY in the environment (not the secrets store)
  *     resolves fine but won't be auto-detected — same as before this refactor.
- *   - `custom` resolves from the secrets store ONLY (no env fallback).
- *   - anthropic OAuth XOR api-key, with rejectOAuth honored; xai OAuth XOR env.
+ *   - `custom` and `anthropic-api` resolve from the secrets store ONLY (no env
+ *     fallback): an Anthropic key must be entered in LAX to be billed by LAX.
+ *   - `anthropic` is the subscription sign-in only; xai OAuth XOR env.
  */
 import type { ProviderId } from "../providers/provider-ids.js";
 import type { SecretsStore } from "../secrets.js";
@@ -76,7 +77,8 @@ function warnMissing(provider: ProviderId): null {
 
 /** Anthropic: the picker's "subscription auth" entry — a Claude subscription
  *  sign-in only. An ANTHROPIC_API_KEY (environment or secrets store) is never
- *  used for it; see getAnthropicApiKey. */
+ *  used for it; see getAnthropicApiKey. The key has its own picker entry,
+ *  `anthropic-api` (secretsOnlyAuth below). */
 function anthropicAuth(): AuthProvider {
   const id: ProviderId = "anthropic";
   return {
@@ -178,7 +180,11 @@ function envKeyAuth(id: ProviderId, envKey: string): AuthProvider {
   };
 }
 
-/** Custom provider: secrets store ONLY — no env fallback. */
+/** Secrets store ONLY — no env fallback. `custom`, and `anthropic-api`: the
+ *  picker's "Anthropic API (direct key)". A key in the environment may belong
+ *  to another program on the box; only a key the user saved in LAX is one
+ *  they picked, and one LAX may bill (source "secrets-store" is billable —
+ *  cost-tracker isBillableSource — and sizes on the api lane). */
 function secretsOnlyAuth(id: ProviderId, envKey: string): AuthProvider {
   return {
     async resolve(opts, store) {
@@ -212,6 +218,7 @@ function sentinelAuth(id: ProviderId, value: string): AuthProvider {
  */
 export const AUTH_PROVIDERS: Record<ProviderId, AuthProvider> = {
   anthropic: anthropicAuth(),
+  "anthropic-api": secretsOnlyAuth("anthropic-api", "ANTHROPIC_API_KEY"),
   codex: codexAuth(),
   xai: xaiAuth("XAI_API_KEY"),
   openai: openaiAuth("OPENAI_API_KEY"),

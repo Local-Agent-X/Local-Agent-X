@@ -91,7 +91,7 @@ function showOnboarding() {
             <button class="onboarding-option" onclick="selectOnboardProvider('xai')"><strong>xAI Grok</strong><br><span style="color:var(--muted);font-size:.72rem">SuperGrok / X Premium+ or API key</span></button>
             <button class="onboarding-option" onclick="selectOnboardProvider('gemini')"><strong>Google Gemini</strong><br><span style="color:var(--muted);font-size:.72rem">API key from ai.google.dev</span></button>
             <button class="onboarding-option" onclick="selectOnboardProvider('codex')"><strong>OpenAI Codex</strong><br><span style="color:var(--muted);font-size:.72rem">Free with ChatGPT</span></button>
-            <button class="onboarding-option" onclick="selectOnboardProvider('anthropic')"><strong>Anthropic Claude</strong><br><span style="color:var(--muted);font-size:.72rem">Subscription auth</span></button>
+            <button class="onboarding-option" onclick="selectOnboardProvider('anthropic')"><strong>Anthropic Claude</strong><br><span style="color:var(--muted);font-size:.72rem">Subscription sign-in or API key</span></button>
             <button class="onboarding-option" onclick="selectOnboardProvider('local')"><strong>Local (Ollama)</strong><br><span style="color:var(--muted);font-size:.72rem">Runs on your GPU</span></button>
             <button class="onboarding-option" onclick="selectOnboardProvider('ollama-cloud')"><strong>Ollama Cloud</strong><br><span style="color:var(--muted);font-size:.72rem">Hosted models — just an API key</span></button>
             <button class="onboarding-option" onclick="selectOnboardProvider('custom')" style="opacity:.7"><strong>Custom Provider</strong><br><span style="color:var(--muted);font-size:.72rem">Any OpenAI-compatible API</span></button>
@@ -183,7 +183,7 @@ function populateConnectStep() {
     container.innerHTML = `
       <button class="action-btn primary" onclick="onboardOAuth('anthropic')" style="padding:10px 32px;font-size:1rem">Sign In with Claude</button>
       <span style="color:var(--muted);font-size:.75rem">Max / Pro subscription — approve in the browser, nothing to install</span>
-      ${obApiKeyBlock('anthropic', 'ANTHROPIC_API_KEY', 'sk-ant-...', 'Get one at console.anthropic.com')}
+      ${obApiKeyBlock('anthropic-api', 'ANTHROPIC_API_KEY', 'sk-ant-api03-...', 'Get one at console.anthropic.com — pay-as-you-go, billed to your Anthropic account')}
     `;
   } else if (_onboardProvider === 'xai') {
     desc.textContent = 'Sign in with SuperGrok / X Premium+, or paste an xAI API key.';
@@ -352,7 +352,7 @@ function finishOnboarding() {
   // Also save server-side so it survives port changes.
   apiFetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ onboarded: true }) }).catch(() => {});
   if (_onboardProvider) {
-    const defaults = { codex: 'gpt-5.5', anthropic: 'claude-opus-4-8', xai: 'grok-4.5', gemini: 'gemini-2.0-flash', local: '', custom: '', 'ollama-cloud': '' };
+    const defaults = { codex: 'gpt-5.5', anthropic: 'claude-opus-5-5', 'anthropic-api': 'claude-opus-5-5', xai: 'grok-4.5', gemini: 'gemini-2.5-pro', local: '', custom: '', 'ollama-cloud': '' };
     const s = JSON.parse(localStorage.getItem('lax_settings') || '{}');
     s.provider = _onboardProvider;
     if (defaults[_onboardProvider]) s.model = defaults[_onboardProvider];

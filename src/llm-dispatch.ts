@@ -37,7 +37,7 @@ import { callAnthropic, callCodex, callOpenAI, callOpenAICompatible, callXai } f
 
 const logger = createLogger("llm-dispatch");
 
-export type LLMProvider = "ollama" | "local" | "anthropic" | "openai" | "xai" | "codex";
+export type LLMProvider = "ollama" | "local" | "anthropic" | "anthropic-api" | "openai" | "xai" | "codex";
 
 type RegistryDispatchProvider = Exclude<LLMProvider, "ollama" | "local">;
 
@@ -106,13 +106,13 @@ const DEFAULTS = {
   timeoutMs: 30_000,
 } as const;
 
-// The four non-ollama dispatch providers map 1:1 onto registry ProviderIds.
+// The non-ollama dispatch providers map 1:1 onto registry ProviderIds.
 // ollama isn't a separate registry provider, so its model stays a local default.
 const DISPATCH_REGISTRY_ID: Record<RegistryDispatchProvider, ProviderId> = {
-  anthropic: "anthropic", openai: "openai", xai: "xai", codex: "codex",
+  anthropic: "anthropic", "anthropic-api": "anthropic-api", openai: "openai", xai: "xai", codex: "codex",
 };
 const DISPATCH_MODEL_FALLBACK: Record<RegistryDispatchProvider, string> = {
-  anthropic: "claude-haiku-4-5", openai: "gpt-4o-mini",
+  anthropic: "claude-haiku-4-5", "anthropic-api": "claude-haiku-4-5", openai: "gpt-4o-mini",
   xai: "grok-4.20-0309-non-reasoning", codex: "gpt-5.4-mini",
 };
 /** Background (cheap/fast) model for a dispatch provider, read from the registry
@@ -141,7 +141,7 @@ export function dispatchStructuredOutputEnabled(provider: RegistryDispatchProvid
   return PROVIDERS[DISPATCH_REGISTRY_ID[provider]]?.capabilities.structuredOutput === true;
 }
 
-const DISPATCHABLE = new Set<LLMProvider>(["ollama", "local", "anthropic", "openai", "xai", "codex"]);
+const DISPATCHABLE = new Set<LLMProvider>(["ollama", "local", "anthropic", "anthropic-api", "openai", "xai", "codex"]);
 
 /**
  * Resolve which provider to call. Defers to the canonical store-aware resolver
@@ -213,12 +213,14 @@ export async function dispatch(opts: DispatchOptions): Promise<string | null> {
     // vision-capable (xAI's is a non-reasoning text model), so grade with the
     // user's ACTIVE model when the resolved provider matches this one (the vision
     // judge dispatches "auto", so it does), else the provider's default.
-    if (p === "anthropic") return dispatchBackgroundModel(p);
+    if (p === "anthropic" || p === "anthropic-api") return dispatchBackgroundModel(p);
     const ctx = await resolveProviderContext().catch(() => null);
     const active = ctx && ctx.provider === p ? (ctx as { model?: string }).model : undefined;
     return active || dispatchDefaultModel(p);
   };
-  if (provider === "anthropic") return callAnthropic(opts.prompt, await modelFor("anthropic", opts.anthropicModel), temp, maxTokens, timeout, opts.rejectOAuth ?? false, opts.images);
+  if (provider === "anthropic" || provider === "anthropic-api") {
+    return callAnthropic(provider, opts.prompt, await modelFor(provider, opts.anthropicModel), temp, maxTokens, timeout, opts.rejectOAuth ?? false, opts.images);
+  }
   if (provider === "openai") return callOpenAI(opts.prompt, await modelFor("openai", opts.openaiModel), temp, maxTokens, timeout, opts.images, dispatchStructuredOutputEnabled("openai") ? opts.responseFormat : undefined);
   if (provider === "xai") return callXai(opts.prompt, await modelFor("xai", opts.xaiModel), temp, maxTokens, timeout, opts.images, dispatchStructuredOutputEnabled("xai") ? opts.responseFormat : undefined);
   if (provider === "codex") return callCodex(opts.prompt, await modelFor("codex", opts.codexModel), temp, timeout, opts.images);

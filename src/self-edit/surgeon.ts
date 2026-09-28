@@ -93,7 +93,7 @@ export function readActiveProvider(): string {
 }
 
 function providerToCliKey(provider: string): SurgeonProviderKey | null {
-  if (provider === "anthropic") return "anthropic";
+  if (provider === "anthropic" || provider === "anthropic-api") return "anthropic";
   if (provider === "codex" || provider === "openai") return "codex";
   if (provider === "xai") return "xai";
   return null;

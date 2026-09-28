@@ -3,6 +3,7 @@ export const PROVIDER_IDS = [
   "xai",
   "openai",
   "anthropic",
+  "anthropic-api",
   "local",
   "ollama-cloud",
   "gemini",
@@ -11,6 +12,18 @@ export const PROVIDER_IDS = [
 ] as const;
 
 export type ProviderId = typeof PROVIDER_IDS[number];
+
+/**
+ * The two Anthropic picker entries share one runtime (the native Messages
+ * API adapter) and differ only in the credential: "anthropic" is the Claude
+ * subscription sign-in, "anthropic-api" a pay-as-you-go key saved in LAX's
+ * secrets store. Every routing decision keyed on the runtime uses this; every
+ * decision keyed on the credential (billing, window sizing, which token the
+ * transport carries) must NOT — the two ids are distinct there on purpose.
+ */
+export function isAnthropicProvider(p: string): p is "anthropic" | "anthropic-api" {
+  return p === "anthropic" || p === "anthropic-api";
+}
 
 // Providers whose models support function-calling but chronically UNDER-call
 // tools — they answer from their own knowledge instead of reaching for a tool

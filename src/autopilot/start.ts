@@ -43,7 +43,7 @@ function pickAutopilotProvider(deps: StartAutopilotDeps): {
   model: string;
   pinned: boolean;
 } {
-  if (deps.provider === "anthropic") {
+  if (deps.provider === "anthropic" || deps.provider === "anthropic-api") {
     return { provider: deps.provider, apiKey: deps.apiKey, model: deps.model, pinned: false };
   }
   const tokens = loadAnthropicTokens();

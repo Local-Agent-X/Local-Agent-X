@@ -48,7 +48,7 @@ vi.mock("../secrets.js", () => ({
 
 vi.mock("./registry.js", () => {
   const ids = [
-    "anthropic", "codex", "xai", "openai", "gemini",
+    "anthropic", "anthropic-api", "codex", "xai", "openai", "gemini",
     "cerebras", "ollama-cloud", "custom", "local",
   ];
   const PROVIDERS: Record<string, { auth: { hasCredential: () => boolean } }> = {};

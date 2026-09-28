@@ -49,13 +49,20 @@ describe("callAnthropic raw leg normalizes the model id (fetch stubbed — no ne
     ["claude-sonnet-4-5-20250929", "claude-sonnet-4-5"],
   ];
   it.each(ALIASES)("alias %s goes on the wire as runtime id %s", async (alias, runtime) => {
-    const out = await callAnthropic("ping", alias, 0, 200, 1000, false);
+    const out = await callAnthropic("anthropic-api", "ping", alias, 0, 200, 1000, false);
     expect(out).toBe("reply");
     expect(sentBody().model).toBe(runtime);
   });
 
+  it("resolves the credential of the picker entry it was called for, never the other one", async () => {
+    await callAnthropic("anthropic-api", "ping", "claude-haiku-4-5", 0, 200, 1000, false);
+    expect(mocks.resolveCredential).toHaveBeenCalledWith("anthropic-api", { rejectOAuth: false });
+    await callAnthropic("anthropic", "ping", "claude-haiku-4-5", 0, 200, 1000, false);
+    expect(mocks.resolveCredential).toHaveBeenLastCalledWith("anthropic", { rejectOAuth: false });
+  });
+
   it("runtime ids pass through byte-identical (legacy model keeps temperature on the wire)", async () => {
-    await callAnthropic("ping", "claude-haiku-4-5", 0, 200, 1000, false);
+    await callAnthropic("anthropic-api", "ping", "claude-haiku-4-5", 0, 200, 1000, false);
     expect(sentBody()).toEqual({
       model: "claude-haiku-4-5",
       max_tokens: 200,
@@ -65,19 +72,19 @@ describe("callAnthropic raw leg normalizes the model id (fetch stubbed — no ne
   });
 
   it("unknown ids are left alone — normalization never invents a model", async () => {
-    await callAnthropic("ping", "claude-experimental-9", 0, 200, 1000, false);
+    await callAnthropic("anthropic-api", "ping", "claude-experimental-9", 0, 200, 1000, false);
     expect(sentBody().model).toBe("claude-experimental-9");
   });
 
   it("adaptive gate keys off the NORMALIZED id: an alias of an adaptive model sends NO temperature", async () => {
-    await callAnthropic("ping", "anthropic/claude-fable-5[1m]", 0, 200, 1000, false);
+    await callAnthropic("anthropic-api", "ping", "anthropic/claude-fable-5[1m]", 0, 200, 1000, false);
     const body = sentBody();
     expect(body.model).toBe("claude-fable-5");
     expect("temperature" in body).toBe(false);
   });
 
   it("legacy alias keeps temperature: dated Haiku snapshot normalizes AND still sends temperature 0", async () => {
-    await callAnthropic("ping", "claude-haiku-4-5-20251001", 0, 200, 1000, false);
+    await callAnthropic("anthropic-api", "ping", "claude-haiku-4-5-20251001", 0, 200, 1000, false);
     const body = sentBody();
     expect(body.model).toBe("claude-haiku-4-5");
     expect(body.temperature).toBe(0);
@@ -103,7 +110,7 @@ describe("callAnthropic subscription leg forwards maxTokens (client stubbed — 
   });
 
   it("passes the caller's cap through to streamAnthropicResponse, token unstripped", async () => {
-    const out = await callAnthropic("ping", "claude-haiku-4-5", 0, 200, 1000, false);
+    const out = await callAnthropic("anthropic", "ping", "claude-haiku-4-5", 0, 200, 1000, false);
     expect(out).toBe("sub-reply");
     expect(mocks.streamAnthropicResponse).toHaveBeenCalledTimes(1);
     const opts = mocks.streamAnthropicResponse.mock.calls[0][0] as Record<string, unknown>;

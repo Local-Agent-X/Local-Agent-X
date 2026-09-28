@@ -69,14 +69,16 @@ export async function resolveProviderCall(input: ProviderCallInput): Promise<Pro
   // subscription bearer for Codex, API key for standard OpenAI, localhost
   // for Ollama). xAI/Gemini fall through — caller treats null as "no
   // classifier available" and proceeds with the regex fallback.
-  if (provider === "anthropic") {
+  if (provider === "anthropic" || provider === "anthropic-api") {
     return callResult((async () => {
       const { streamAnthropicResponse } = await import("../anthropic-client/index.js");
       const { resolveWrappedDirectToken } = await import("../anthropic-client/oauth-direct.js");
       // Classifier calls take the direct-HTTP path when a subscription token
       // resolves — the shared-CLI warm pool serialized ~8 classifiers/turn and
       // nulled the intent verdict. disableThinking + no tools keep it cheap.
-      const token = (await resolveWrappedDirectToken()) ?? apiKey;
+      // The API-key entry carries its own key and nothing else: a subscription
+      // token the box also holds must not run (and be billed as) its work.
+      const token = provider === "anthropic" ? (await resolveWrappedDirectToken()) ?? apiKey : apiKey;
       const stream = streamAnthropicResponse({
         token, model,
         messages: [{ role: "user", content: userPrompt } as never],

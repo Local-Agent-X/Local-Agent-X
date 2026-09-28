@@ -16,6 +16,7 @@ import { buildSelfEditChildEnv } from "../src/self-edit/child-env.js";
 
 describe("cliSpecForProvider (pure mapping)", () => {
   it("maps anthropic → claude", () => expect(cliSpecForProvider("anthropic")?.bin).toBe("claude"));
+  it("maps anthropic-api → claude (same runtime, the CLI takes the key from its own env)", () => expect(cliSpecForProvider("anthropic-api")?.bin).toBe("claude"));
   it("maps codex AND openai → codex", () => {
     expect(cliSpecForProvider("codex")?.bin).toBe("codex");
     expect(cliSpecForProvider("openai")?.bin).toBe("codex");

@@ -37,6 +37,7 @@ const PROVIDER_KEY_CONFIG = {
   gemini: { label: 'Google API Key', placeholder: 'AIza...', hint: 'Get your key at ai.google.dev', secretName: 'GEMINI_API_KEY' },
   cerebras: { label: 'Cerebras API Key', placeholder: 'csk-...', hint: 'Get your key at cloud.cerebras.ai — free tier includes 1M tokens/day', secretName: 'CEREBRAS_API_KEY' },
   openai: { label: 'OpenAI API Key', placeholder: 'sk-...', hint: 'Get your key at platform.openai.com/api-keys', secretName: 'OPENAI_API_KEY' },
+  'anthropic-api': { label: 'Anthropic API Key', placeholder: 'sk-ant-api03-...', hint: 'Get your key at console.anthropic.com — pay-as-you-go, billed to your Anthropic account (the subscription sign-in is the separate "Anthropic Claude" entry)', secretName: 'ANTHROPIC_API_KEY' },
   custom: { label: 'API Key', placeholder: 'Enter API key...', hint: 'Key for your custom OpenAI-compatible provider', secretName: 'CUSTOM_API_KEY' },
   'ollama-cloud': { label: 'Ollama Cloud API Key', placeholder: 'ollama-...', hint: 'Get your key at ollama.com — Turbo grants access to large hosted models', secretName: 'OLLAMA_CLOUD_API_KEY' },
 };

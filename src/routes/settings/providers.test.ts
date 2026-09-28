@@ -79,7 +79,7 @@ import { PROVIDERS } from "../../providers/registry.js";
 /** Entries the route gates on a credential. `local` is gated on runtime
  *  discovery and `ollama-cloud` is listed keyless as a connect affordance —
  *  both are documented divergences in providers.ts, so neither belongs here. */
-const CREDENTIAL_GATED: ProviderId[] = ["xai", "gemini", "cerebras", "codex", "anthropic", "openai", "custom"];
+const CREDENTIAL_GATED: ProviderId[] = ["xai", "gemini", "cerebras", "codex", "anthropic", "anthropic-api", "openai", "custom"];
 
 /** A SecretsStore with the real `has`/`get` split: `has` is entry presence,
  *  `get` is the stored value. An entry holding "" is present but unusable. */
@@ -165,6 +165,8 @@ describe("GET /api/providers — availability comes from the canonical probe", (
       { GEMINI_API_KEY: "gem-key", XAI_API_KEY: "" },
       { XAI_API_KEY: "xai-key", CEREBRAS_API_KEY: "", CUSTOM_API_KEY: "custom-key" },
       { OPENAI_API_KEY: "", CEREBRAS_API_KEY: "cb-key" },
+      { ANTHROPIC_API_KEY: "sk-ant-api03-saved" },
+      { ANTHROPIC_API_KEY: "" },
     ];
     for (const entries of states) {
       const store = makeStore(entries);
@@ -189,6 +191,21 @@ describe("GET /api/providers — availability comes from the canonical probe", (
     expect(listed.has("codex")).toBe(true);
     expect(listed.has("anthropic")).toBe(true);
     expect(listed.has("xai")).toBe(true);
+  });
+
+  // The picker decides the credential: a saved Anthropic key is the
+  // "Anthropic API" entry, and the subscription entry never appears for it.
+  it("lists the Anthropic API entry for a saved key, and only that entry", async () => {
+    const listed = await listedProviders(makeStore({ ANTHROPIC_API_KEY: "sk-ant-api03-saved" }));
+    expect(listed.has("anthropic-api")).toBe(true);
+    expect(listed.has("anthropic")).toBe(false);
+  });
+
+  it("lists the subscription entry for a sign-in, and not the API entry", async () => {
+    authMocks.isAnthropicCliAuthenticated.mockReturnValue(true);
+    const listed = await listedProviders(makeStore({}));
+    expect(listed.has("anthropic")).toBe(true);
+    expect(listed.has("anthropic-api")).toBe(false);
   });
 
   it("honors the config OpenAI key through the probe's configOpenAIKey input", async () => {

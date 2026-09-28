@@ -36,9 +36,12 @@ type AnthropicUserContent =
       | { type: "text"; text: string }
     >;
 
-export async function callAnthropic(prompt: string, model: string, temperature: number, maxTokens: number, timeoutMs: number, rejectOAuth: boolean, images?: string[]): Promise<string | null> {
+/** `provider` is the picker entry the credential comes from: "anthropic" (the
+ *  subscription sign-in) or "anthropic-api" (a key saved in LAX). Never
+ *  cross-resolved — the entry the user picked is the one that is billed. */
+export async function callAnthropic(provider: "anthropic" | "anthropic-api", prompt: string, model: string, temperature: number, maxTokens: number, timeoutMs: number, rejectOAuth: boolean, images?: string[]): Promise<string | null> {
   try {
-    const resolved = await resolveCredential("anthropic", { rejectOAuth });
+    const resolved = await resolveCredential(provider, { rejectOAuth });
     if (!resolved) return null;
     const apiKey = resolved.credential;
     if (usesAnthropicSubscriptionAuth(apiKey)) {

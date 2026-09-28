@@ -5,11 +5,14 @@
  * backend. resolve-provider, settings/providers, openai-compat, and the
  * UI registry endpoint all read from PROVIDERS.
  *
- * Anthropic is special: OAuth on the Max plan only works through the
- * Claude CLI subprocess — direct HTTP fails for Sonnet/Opus. That's not
- * drift to refactor away. The discriminated union on `transport`
- * encodes the split as a first-class shape so it can't be accidentally
- * collapsed back into an `if (provider === "anthropic")` branch.
+ * Anthropic is special: it speaks its own Messages API, not the OpenAI
+ * Chat Completions shape every other cloud provider does. The discriminated
+ * union on `transport` encodes the split as a first-class shape so it can't
+ * be accidentally collapsed back into an `if (provider === "anthropic")`
+ * branch. Two entries share that runtime — `anthropic` (the subscription
+ * sign-in) and `anthropic-api` (a key saved in LAX) — because the picker
+ * decides the credential, and what the user picked is what runs, is billed
+ * and is sized.
  */
 import type { ProviderId } from "./provider-ids.js";
 import { AUTH_PROVIDERS, type AuthProvider } from "../auth/auth-provider.js";
@@ -84,9 +87,10 @@ export interface ProviderMetaHttp {
   auth: AuthProvider;
 }
 
-/** CLI transport — anthropic via the claude subprocess. */
-export interface ProviderMetaCli {
-  transport: "cli";
+/** Anthropic transport — the native Messages API (anthropic-client/), not the
+ *  OpenAI-compat shape; resolveBaseURL is null for it by design. */
+export interface ProviderMetaAnthropic {
+  transport: "anthropic";
   id: ProviderId;
   label: string;
   models: string[];
@@ -95,13 +99,30 @@ export interface ProviderMetaCli {
   defaultModel: string;
   /** Cheap/fast background model — see ProviderMetaHttp.backgroundModel. */
   backgroundModel?: string;
-  cliBinary: string;
+  /** Secret name in SecretsStore; empty for the subscription entry. */
+  envKey: string;
   capabilities: ProviderCapabilities;
   /** Credential resolution adapter — the auth seam. */
   auth: AuthProvider;
 }
 
-export type ProviderMeta = ProviderMetaHttp | ProviderMetaCli;
+export type ProviderMeta = ProviderMetaHttp | ProviderMetaAnthropic;
+
+const ANTHROPIC_MODELS = [
+  "claude-opus-5-5",
+  "claude-opus-5",
+  "claude-fable-5-1",
+  "claude-fable-5",
+  "claude-sonnet-5",
+  "claude-opus-4-8",
+  "claude-opus-4-7",
+  "claude-sonnet-4-6",
+  "claude-opus-4-6",
+  "claude-haiku-4-5",
+  "claude-sonnet-4-5",
+  "claude-opus-4-5",
+];
+const ANTHROPIC_CAPABILITIES: ProviderCapabilities = { tools: true, vision: true, streaming: true, localFiles: true, reasoning: false };
 
 /** Runtime context passed to baseURL resolvers. */
 export interface BaseURLContext {
@@ -188,28 +209,30 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     auth: AUTH_PROVIDERS.codex,
   },
   anthropic: {
-    transport: "cli",
+    transport: "anthropic",
     id: "anthropic",
     label: "Anthropic Claude",
-    models: [
-      "claude-opus-5-5",
-      "claude-opus-5",
-      "claude-fable-5-1",
-      "claude-fable-5",
-      "claude-sonnet-5",
-      "claude-opus-4-8",
-      "claude-opus-4-7",
-      "claude-sonnet-4-6",
-      "claude-opus-4-6",
-      "claude-haiku-4-5",
-      "claude-sonnet-4-5",
-      "claude-opus-4-5",
-    ],
+    models: [...ANTHROPIC_MODELS],
     defaultModel: "claude-opus-5-5",
     backgroundModel: "claude-haiku-4-5",
-    cliBinary: "claude",
-    capabilities: { tools: true, vision: true, streaming: true, localFiles: true, reasoning: false },
+    envKey: "",
+    capabilities: ANTHROPIC_CAPABILITIES,
     auth: AUTH_PROVIDERS.anthropic,
+  },
+  // The same models over a pay-as-you-go key the user saved in LAX. Its own
+  // entry, not a fallback of the one above: the picker decides the credential,
+  // and this one is billed (secrets-store → billable) and sized at the nominal
+  // window (the api lane) where the subscription is neither.
+  "anthropic-api": {
+    transport: "anthropic",
+    id: "anthropic-api",
+    label: "Anthropic API",
+    models: [...ANTHROPIC_MODELS],
+    defaultModel: "claude-opus-5-5",
+    backgroundModel: "claude-haiku-4-5",
+    envKey: "ANTHROPIC_API_KEY",
+    capabilities: ANTHROPIC_CAPABILITIES,
+    auth: AUTH_PROVIDERS["anthropic-api"],
   },
   gemini: {
     transport: "http",
@@ -220,15 +243,16 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     // an empty STOP) when sent LAX's full ~55KB system prompt + tools via the
     // native generateContent API — verified 2026-06-11 (flash works on a tiny
     // prompt, empties on the real one; pro handles it reliably). So flash is not
-    // offered for chat. backgroundModel stays 2.0-flash — background agents use
-    // compact prompts, not the big chat prompt.
+    // offered for chat. backgroundModel is a flash model — background agents use
+    // compact prompts, not the big chat prompt. 2.5-flash, not 2.0-flash:
+    // ai.google.dev lists gemini-2.0-flash as shut down (read 2026-09-27).
     models: [
       "gemini-2.5-pro",
       "gemini-3.1-pro-preview",
       "gemini-3-pro-preview",
     ],
     defaultModel: "gemini-2.5-pro",
-    backgroundModel: "gemini-2.0-flash",
+    backgroundModel: "gemini-2.5-flash",
     baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/",
     envKey: "GEMINI_API_KEY",
     capabilities: { tools: true, vision: true, streaming: true, localFiles: false, reasoning: REASONING_GEMINI },
@@ -329,7 +353,7 @@ export function isHttpProvider(
 
 /**
  * Resolve the OpenAI-compat baseURL for a provider at runtime.
- * Returns null when the provider is CLI-transport (anthropic) or when
+ * Returns null when the provider speaks the Anthropic Messages API or when
  * required runtime config is missing (e.g., custom with no baseURL set).
  */
 export function resolveBaseURL(

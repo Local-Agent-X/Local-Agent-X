@@ -229,3 +229,41 @@ describe("local-runtime settings verification UI", () => {
     expect(String(list.innerHTML)).toContain(">Verify<");
   });
 });
+
+describe("local-runtime settings context display", () => {
+  const gpu = { name: "NVIDIA GeForce RTX 5090", totalBytes: 32_607 * 1024 * 1024, source: "measured" };
+  async function render(contextSizing: unknown): Promise<string> {
+    const { ui, list } = loadUi({
+      apiJson: async (path: string) => path === "/api/local-runtimes" ? {
+        manual: [],
+        runtimes: [{
+          id: "ollama@127.0.0.1:11434", kind: "ollama", label: "Ollama",
+          endpoint: { baseUrl: "http://127.0.0.1:11434" },
+          models: [{ id: "qwen3.6:27b", contextWindow: 65_536, tools: true, certification: { status: "unverified" }, contextSizing }],
+        }],
+      } : { hardwareProfile: null },
+    });
+    await ui.loadLocalRuntimesEditor();
+    return String(list.innerHTML);
+  }
+
+  it("shows the size LAX chose and the GPU it fits, with no control to change it", async () => {
+    const html = await render({ tokens: 172_032, decidedTokens: 172_032, reason: "fits_gpu", verification: "verified", gpu });
+    expect(html).toContain("168k context, fits your NVIDIA GeForce RTX 5090 (32 GB)");
+    expect(html).not.toMatch(/<input|<select|num_ctx/);
+  });
+
+  it("says when contention has it running smaller for now", async () => {
+    const html = await render({ tokens: 139_264, decidedTokens: 172_032, reason: "fits_gpu", verification: "verified", gpu });
+    expect(html).toContain("136k context, fits your NVIDIA GeForce RTX 5090 (32 GB), reduced while other models use the GPU");
+  });
+
+  it("says why it stayed at the runtime default", async () => {
+    expect(await render({ tokens: null, decidedTokens: null, reason: "gpu_unknown", verification: "pending", gpu: null }))
+      .toContain("runtime default context: this machine&#39;s GPU memory is unknown");
+  });
+
+  it("falls back to the discovered window before any decision", async () => {
+    expect(await render(null)).toContain("65,536 ctx");
+  });
+});

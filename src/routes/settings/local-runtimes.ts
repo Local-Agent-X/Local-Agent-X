@@ -19,18 +19,41 @@ import {
   lmStudioAutoStartedAt,
   certifyLocalModel,
   hasPublishedCertification,
+  appliedContext,
+  contextSizingRecord,
   type LocalModelCertification,
   type LocalRuntimeInfo,
 } from "../../local-runtimes/index.js";
 import { isLocalOnlyMode, LOCAL_ONLY_BLOCK_MESSAGE } from "../../local-only-policy.js";
 
+/** What LAX decided about a model's context, for display only — there is no
+ *  user setting behind it (local-runtimes/context-sizing.ts decides). */
+function contextSizingView(runtime: LocalRuntimeInfo, modelId: string) {
+  if (runtime.kind !== "ollama") return null;
+  const record = contextSizingRecord(runtime.endpoint.baseUrl, modelId);
+  if (!record) return null;
+  return {
+    tokens: appliedContext(runtime.endpoint.baseUrl, modelId) ?? null,
+    decidedTokens: record.numCtx,
+    reason: record.reason,
+    verification: record.verification,
+    gpu: record.gpu ? { name: record.gpu.name, totalBytes: record.gpu.totalBytes, source: record.gpu.source } : null,
+  };
+}
+
 export function modelsWithCertification(runtime: LocalRuntimeInfo) {
-  return runtime.models.map((model) => ({
-    ...model,
-    certification: {
-      status: hasPublishedCertification(runtime, model) ? "verified" as const : "unverified" as const,
-    },
-  }));
+  return runtime.models.map((model) => {
+    const contextSizing = contextSizingView(runtime, model.id);
+    return {
+      ...model,
+      // The window chat runs at, not whatever /api/ps showed at sweep time.
+      contextWindow: contextSizing?.tokens ?? model.contextWindow,
+      certification: {
+        status: hasPublishedCertification(runtime, model) ? "verified" as const : "unverified" as const,
+      },
+      contextSizing,
+    };
+  });
 }
 
 function certificationResponse(runtime: LocalRuntimeInfo, modelId: string, result: LocalModelCertification) {

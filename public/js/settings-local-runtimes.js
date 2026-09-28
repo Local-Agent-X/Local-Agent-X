@@ -18,11 +18,33 @@ function localCertificationBadge(status) {
   return '<span class="status-badge" data-lr-cert-badge><span class="status-dot"></span> Not verified</span>';
 }
 
+// Why LAX left a model at the runtime's own default context (read-only:
+// the size is decided from the model and this machine's VRAM, never set here).
+const LOCAL_CONTEXT_DEFAULT_REASONS = {
+  remote_runtime: 'runtime runs on another machine',
+  gpu_unknown: "this machine's GPU memory is unknown",
+  model_info_incomplete: 'the runtime did not describe the model fully',
+  native_below_floor: 'the model window is under 32k',
+  gpu_too_small: 'not enough GPU memory for 32k',
+  spilled_at_floor: 'it spilled out of GPU memory even at 32k',
+};
+
+function localContextText(model) {
+  const sizing = model.contextSizing;
+  if (!sizing) return model.contextWindow ? `${Number(model.contextWindow).toLocaleString()} ctx` : 'context unknown';
+  if (!sizing.tokens) return `runtime default context: ${LOCAL_CONTEXT_DEFAULT_REASONS[sizing.reason] || sizing.reason}`;
+  const gpu = sizing.gpu
+    ? `${sizing.gpu.name} (${Math.round(sizing.gpu.totalBytes / (1024 ** 3))} GB${sizing.gpu.source === 'estimated' ? ', estimated' : ''})`
+    : 'GPU';
+  const reduced = sizing.decidedTokens && sizing.tokens < sizing.decidedTokens ? ', reduced while other models use the GPU' : '';
+  return `${Math.round(sizing.tokens / 1024)}k context, fits your ${gpu}${reduced}`;
+}
+
 function localRuntimeModelRow(runtime, model, advisories) {
   const runtimeKey = esc(encodeURIComponent(runtime.id));
   const modelKey = esc(encodeURIComponent(model.id));
   const verified = model.certification?.status === 'verified';
-  const context = model.contextWindow ? `${Number(model.contextWindow).toLocaleString()} ctx` : 'context unknown';
+  const context = localContextText(model);
   const tools = model.tools === true ? 'tools' : model.tools === false ? 'no tools' : 'tools unknown';
   const advisory = advisories.get(model.id);
   const fit = advisory

@@ -66,17 +66,18 @@ const SHINGLE_STEP = 8;
 // "complete"), so a large key/credential/kubeconfig stays UNCLEARABLE and its
 // tail can never egress by evading the head window.
 const MAX_FINGERPRINT_CHARS = 1024;
-// Max fingerprints kept per entry, derived from the coverage budget: enough
-// sparse (step-SHINGLE_STEP) windows to span MAX_FINGERPRINT_CHARS, +1 for the
-// tail window. Memory bound: ~129 * 16 hex chars ≈ 2KB per entry — still small.
-// This count is the REAL completeness limiter: hitting it before content end
-// means the content was too large to fully cover → incomplete.
-const MAX_FINGERPRINTS = Math.ceil(MAX_FINGERPRINT_CHARS / SHINGLE_STEP) + 1;
+// The per-entry fingerprint cap is derived from the coverage budget inside
+// computeFingerprints: enough sparse (step-SHINGLE_STEP) windows to span the
+// budget, +1 for the tail window. At the default budget that is ~129 * 16 hex
+// chars ≈ 2KB per entry. This count is the REAL completeness limiter: hitting
+// it before content end means the content was too large to fully cover →
+// incomplete.
+//
 // Hard cap on raw content bytes normalized/hashed at all — a second bound so a
 // pathologically repetitive multi-MB read (whose distinct-shingle count stays
-// tiny, never tripping MAX_FINGERPRINTS) still can't run unbounded. Content
+// tiny, never tripping the per-entry cap) still can't run unbounded. Content
 // longer than this is truncated, and a truncated content can NEVER be complete.
-const MAX_FINGERPRINT_CONTENT = 64 * 1024;
+export const MAX_FINGERPRINT_CONTENT = 64 * 1024;
 // Truncated digest length (hex chars). 16 hex = 64 bits — collision-safe for the
 // handful of shingles we store while halving memory vs a full digest.
 const FP_DIGEST_HEX = 16;
@@ -122,12 +123,18 @@ function shingleHashes(norm: string, step: number, max: number): { hashes: Set<s
  * just records provenance, not a fingerprint that could over-match — and, being
  * incomplete, it keeps the presence floor rather than clearing egress.
  *
+ * `coverageChars` widens the completeness budget for a registry whose entries
+ * are worth more memory than a secret read's: the external-content registry
+ * (external.ts) must fully cover a delivered page for a memory fact to be
+ * provably free of it, and a page is far longer than a config line. The raw
+ * content cap (MAX_FINGERPRINT_CONTENT) still bounds every caller.
+ *
  * Alignment note: the RECORDED side is sparse (bounded memory); the PAYLOAD side
  * is shingled DENSE (step 1, see findTaintInPayload) so any recorded window that
  * is actually present in a payload is found regardless of where the chunk sits —
  * only one side needs step-1 to guarantee detection of a substring overlap.
  */
-export function computeFingerprints(content: string): FingerprintResult {
+export function computeFingerprints(content: string, coverageChars = MAX_FINGERPRINT_CHARS): FingerprintResult {
   if (!content) return { fingerprints: [], complete: false };
   const truncatedByContentCap = content.length > MAX_FINGERPRINT_CONTENT;
   const sliced = truncatedByContentCap ? content.slice(0, MAX_FINGERPRINT_CONTENT) : content;
@@ -136,7 +143,8 @@ export function computeFingerprints(content: string): FingerprintResult {
   // evidence AND can never prove itself absent from a payload → NOT complete
   // (unclearable, keeps the presence floor). Conservative by construction.
   if (norm.length < SHINGLE_WIDTH) return { fingerprints: [], complete: false };
-  const { hashes, complete } = shingleHashes(norm, SHINGLE_STEP, MAX_FINGERPRINTS);
+  const maxFingerprints = Math.ceil(Math.min(coverageChars, MAX_FINGERPRINT_CONTENT) / SHINGLE_STEP) + 1;
+  const { hashes, complete } = shingleHashes(norm, SHINGLE_STEP, maxFingerprints);
   // A content truncated by the raw-byte cap can never be complete, regardless of
   // whether the (truncated) shingling happened to reach its own end.
   return { fingerprints: [...hashes], complete: complete && !truncatedByContentCap };

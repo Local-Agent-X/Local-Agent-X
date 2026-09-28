@@ -5,15 +5,15 @@
  * for the OTHER trust axis. That registry answers "did this session touch OUR
  * secrets?" and gates EGRESS. This one answers "did this session ingest
  * UNTRUSTED off-box content (web fetch / http / browser / search / MCP)?" and
- * gates DURABLE MEMORY PROMOTION: a turn that saw external content must not
- * auto-promote to USER.md / the Facts DB, because an LLM paraphrase of
- * injected material erases every content-based taint marker checkMemoryTaint
- * could catch (decision D6 — enforcement only; explicit remember/memory_save
- * tool calls stay allowed, they are already gated + provenance-marked).
+ * gates DURABLE MEMORY PROMOTION (decision D6): an LLM paraphrase of injected
+ * material erases every content-based taint marker checkMemoryTaint could
+ * catch, so the session mark is what a promotion path has to reason from.
  * It is a COMPLEMENTARY signal UNDER the capability-based promotion gate
- * (promotion-gate.ts), which stays primary: consumers are the auto-extract
- * pre-flight skip and the approval phase's downgrade of trusted-user-evidence
- * promotions to require interactive approval.
+ * (promotion-gate.ts), which stays primary. Consumers: the auto-extract gate
+ * (per-fact, see externalContentVerdict), the end-of-turn profile pass's
+ * decline, and the approval phase's downgrade of trusted-user-evidence
+ * promotions to interactive approval. Explicit remember/memory_save tool calls
+ * stay allowed — gated + provenance-marked.
  *
  * Detection is TOOL-CLASS based (D8), not content-sniffing: a SUCCESSFUL
  * result from an off-box-ingesting tool marks the session (hook in
@@ -22,6 +22,16 @@
  * evaluate / post-action snapshots return raw page text) and false-positived
  * when a session merely READ a file containing the boundary literal (this
  * repo's own sanitize.ts), permanently self-tainting dev sessions.
+ *
+ * The mark also carries CONTENT FINGERPRINTS of what was delivered (the same
+ * shingle hashes the sensitive-read registry keeps; no plaintext is stored) so
+ * a promotion path can ask the narrower question the boolean cannot: do THESE
+ * bytes come from the external content? Blocking every fact from a session
+ * that touched the web was measured as unusable — an evening of browsing-led
+ * setup work left no durable memory at all — so the gate is now per fact:
+ * a fact that overlaps the delivered content is refused, one that provably
+ * does not is saved with a provenance mark, and one we cannot adjudicate
+ * (content never captured, or too long to fully cover) is skipped as before.
  *
  * Deliberately NOT recordSensitiveRead(source:"web"): inbound web bytes are
  * untrusted, not secret — tainting them for egress would brick outbound tools
@@ -34,7 +44,39 @@
  * propagated parent←child alongside propagateTaint (handler-completion.ts).
  */
 
-const externalIngestSessions = new Set<string>();
+import { createHash } from "node:crypto";
+import { type TaintEntry, MAX_FINGERPRINT_CONTENT, computeFingerprints, payloadFingerprints } from "./fingerprint.js";
+import { adjudicatePayload, type PayloadVerdict } from "./payload-overlap.js";
+
+interface ExternalIngestState {
+	entries: TaintEntry[];
+	/** sha256 of each recorded content — a re-read of the same page adds nothing. */
+	seen: Set<string>;
+	/** Fingerprints held so far, against EXTERNAL_HASH_BUDGET. */
+	hashes: number;
+}
+
+// Per-session ceiling on stored fingerprints (~50 bytes each in V8 → ≤ ~26MB
+// for a session that reads hundreds of full-size pages). Past it, further
+// content is recorded content-LESS: the session stays marked and every later
+// verdict is "unknowable" — the pre-fingerprint behavior — rather than an
+// unbounded map.
+const EXTERNAL_HASH_BUDGET = 1 << 19;
+
+const externalIngestSessions = new Map<string, ExternalIngestState>();
+
+function stateFor(sessionId: string): ExternalIngestState {
+	let state = externalIngestSessions.get(sessionId);
+	if (!state) {
+		state = { entries: [], seen: new Set(), hashes: 0 };
+		externalIngestSessions.set(sessionId, state);
+	}
+	return state;
+}
+
+function contentlessEntry(sessionId: string, target: string): TaintEntry {
+	return { source: "web", target, timestamp: Date.now(), runId: sessionId, fingerprints: [], complete: false };
+}
 
 /**
  * Tools whose SUCCESSFUL results place off-box (untrusted external) content
@@ -120,15 +162,67 @@ export function isExternalIngestingTool(toolName: string): boolean {
 	return EXTERNAL_INGESTING_TOOLS.has(toolName) || toolName.startsWith("mcp_");
 }
 
-/** Mark the session as having ingested external (untrusted) content. */
-export function recordExternalIngestion(sessionId: string): void {
+/**
+ * Mark the session as having ingested external (untrusted) content, and
+ * fingerprint what was DELIVERED so a later verdict can prove a fact free of
+ * it. `content` is the delivered result text; `target` names the read for the
+ * skip log. Without `content` the mark is content-less: the session is marked
+ * and stays unknowable (the caller could not say what came in).
+ *
+ * A result too short to hold a single shingle window records only the mark:
+ * nothing a fact could overlap exists in it, so it neither blocks nor makes
+ * the session unknowable.
+ */
+export function recordExternalIngestion(sessionId: string, content?: string, target = "external"): void {
 	if (!sessionId) return;
-	externalIngestSessions.add(sessionId);
+	const state = stateFor(sessionId);
+	if (content === undefined) {
+		state.entries.push(contentlessEntry(sessionId, target));
+		return;
+	}
+	const fp = computeFingerprints(content, MAX_FINGERPRINT_CONTENT);
+	if (fp.fingerprints.length === 0) return;
+	const digest = createHash("sha256").update(content).digest("hex");
+	if (state.seen.has(digest)) return;
+	state.seen.add(digest);
+	if (state.hashes + fp.fingerprints.length > EXTERNAL_HASH_BUDGET) {
+		state.entries.push(contentlessEntry(sessionId, target));
+		return;
+	}
+	state.hashes += fp.fingerprints.length;
+	state.entries.push({
+		source: "web",
+		target,
+		timestamp: Date.now(),
+		runId: sessionId,
+		fingerprints: fp.fingerprints,
+		complete: fp.complete,
+	});
 }
 
 /** Has this session ingested external content? STICKY for the session's life. */
 export function hasExternalIngestion(sessionId: string): boolean {
 	return externalIngestSessions.has(sessionId);
+}
+
+/**
+ * Does `text` carry bytes from the external content this session ingested?
+ * The memory-promotion twin of the browser/http write adjudicators
+ * (tool-execution/taint-scope.ts) — the same verdict core over this
+ * registry's entries:
+ *  - a session that ingested nothing → "clean" (nothing to overlap);
+ *  - text too short to hold a shingle window → "unknowable" (absence of
+ *    evidence is not evidence of absence at that size);
+ *  - otherwise adjudicatePayload: "overlap" names the reads whose bytes are
+ *    in the text; "unknowable" means some ingested content was never captured
+ *    or not fully covered; "clean" means every read is fully fingerprinted
+ *    and none overlaps.
+ */
+export function externalContentVerdict(sessionId: string, text: string): PayloadVerdict {
+	const state = externalIngestSessions.get(sessionId);
+	if (!state) return { verdict: "clean", evidence: [] };
+	if (payloadFingerprints(text).size === 0) return { verdict: "unknowable", evidence: [] };
+	return adjudicatePayload(state.entries, text);
 }
 
 /** Clear the mark — test hook, the silent counterpart of clearSessionTaint.
@@ -140,12 +234,20 @@ export function clearExternalIngestion(sessionId: string): void {
 /**
  * Propagate the mark from a child (sub-agent) session to its parent, mirroring
  * propagateTaint: a sub-agent's fetched content flows back in its result, so
- * the parent's persist path must see the same block. Returns true when a mark
- * was propagated (for logging / tests). No-op when the child is clean.
+ * the parent's persist path must see the same block. The child's entries are
+ * carried whole (fingerprints and completeness included) so the parent's
+ * verdicts adjudicate the same bytes. Returns true when a mark was propagated
+ * (for logging / tests). No-op when the child is clean.
  */
 export function propagateExternalIngestion(fromSessionId: string, toSessionId: string): boolean {
 	if (!fromSessionId || !toSessionId || fromSessionId === toSessionId) return false;
-	if (!externalIngestSessions.has(fromSessionId)) return false;
-	externalIngestSessions.add(toSessionId);
+	const from = externalIngestSessions.get(fromSessionId);
+	if (!from) return false;
+	const to = stateFor(toSessionId);
+	for (const entry of from.entries) {
+		to.entries.push({ ...entry, timestamp: Date.now(), runId: toSessionId });
+		to.hashes += entry.fingerprints.length;
+	}
+	for (const digest of from.seen) to.seen.add(digest);
 	return true;
 }

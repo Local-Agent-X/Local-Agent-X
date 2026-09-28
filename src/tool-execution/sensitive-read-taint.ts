@@ -30,6 +30,7 @@ import {
 } from "../data-lineage/index.js";
 import type { TaintSource } from "../data-lineage/index.js";
 import { recordExternalIngestion, isExternalIngestingTool } from "../data-lineage/external.js";
+import { DEFAULT_MAX_RESULT_CHARS } from "../context-manager/tool-result-cap.js";
 import { hasCapability } from "../tool-registry.js";
 import { resolveAgentPath } from "../workspace/paths.js";
 import { realpathDeep, isSanctionedWorkRootEnvFile } from "../security/layer/index.js";
@@ -235,13 +236,19 @@ export function applyResultTaintPolicy(
   // TOOL-CLASS keyed (D8): a successful result from an off-box-ingesting tool
   // (web_fetch/http_request/browser/search/mcp_*) means the model is about to
   // SEE external content this turn — mark the session so the memory
-  // auto-promotion paths refuse durable writes: an LLM paraphrase of injected
-  // material erases the content markers checkMemoryTaint keys on (D6).
-  // Deliberately NOT content-sniffing the wrapExternalContent boundary — that
-  // missed unwrapped browser reads and self-tainted any session that merely
-  // read a source file containing the boundary literal.
+  // auto-promotion paths can refuse a durable write that carries its bytes: an
+  // LLM paraphrase of injected material erases the content markers
+  // checkMemoryTaint keys on (D6). Deliberately NOT content-sniffing the
+  // wrapExternalContent boundary — that missed unwrapped browser reads and
+  // self-tainted any session that merely read a source file containing the
+  // boundary literal. The bytes fingerprinted are what the model can see: the
+  // audit phase's budgetResult caps every delivered result at
+  // DEFAULT_MAX_RESULT_CHARS, so the head up to that ceiling is the whole
+  // delivered content (the spilled tail is reachable only through a later
+  // local `read`, which this tool-class axis does not cover).
   if (result && !result.isError && isExternalIngestingTool(toolName)) {
-    recordExternalIngestion(sid);
+    const url = typeof args.url === "string" ? ` ${args.url}` : "";
+    recordExternalIngestion(sid, result.content.slice(0, DEFAULT_MAX_RESULT_CHARS), `${toolName}${url}`);
   }
 
   if (redactReason && result && !result.isError) {

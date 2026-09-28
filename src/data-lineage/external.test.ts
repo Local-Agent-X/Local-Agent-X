@@ -22,7 +22,10 @@ import {
 	clearExternalIngestion,
 	propagateExternalIngestion,
 	isExternalIngestingTool,
+	externalContentVerdict,
 } from "./external.js";
+import { adjudicatePayload } from "./payload-overlap.js";
+import { computeFingerprints, type TaintEntry } from "./fingerprint.js";
 import { runSandboxedPhase } from "../tool-execution/run-sandboxed.js";
 import type { ToolCallContext } from "../tool-execution/context.js";
 import type { ToolDefinition } from "../types.js";
@@ -78,6 +81,102 @@ describe("external-ingestion registry", () => {
 	});
 });
 
+// ── content fingerprints + the memory-promotion verdict ─────────────────────
+
+const PAGE =
+	"Account recovery\n\nYour recovery phrase is velvet-harbor-ninety. Store it somewhere safe; " +
+	"support will never ask you for it. Two-factor codes rotate every thirty seconds.";
+
+describe("externalContentVerdict — do THESE bytes come from the ingested content?", () => {
+	it("a session that ingested nothing is clean for any text", () => {
+		expect(externalContentVerdict(freshSession(), "User prefers concise responses").verdict).toBe("clean");
+	});
+
+	it("names the read whose bytes the text carries — raw, reflowed, or re-cased", () => {
+		const s = freshSession();
+		recordExternalIngestion(s, PAGE, "browser https://vault.example/recovery");
+		for (const text of [
+			"User's recovery phrase is velvet-harbor-ninety",
+			"USER'S RECOVERY   PHRASE IS\nVELVET-HARBOR-NINETY",
+		]) {
+			const outcome = externalContentVerdict(s, text);
+			expect(outcome.verdict, text).toBe("overlap");
+			expect(outcome.evidence.map((e) => e.target)).toEqual(["browser https://vault.example/recovery"]);
+		}
+		clearExternalIngestion(s);
+	});
+
+	it("clears text that shares no window with a fully fingerprinted read", () => {
+		const s = freshSession();
+		recordExternalIngestion(s, PAGE, "browser https://vault.example/recovery");
+		expect(externalContentVerdict(s, "User prefers concise responses").verdict).toBe("clean");
+		clearExternalIngestion(s);
+	});
+
+	it("text too short to hold a shingle window is unknowable, not clean", () => {
+		const s = freshSession();
+		recordExternalIngestion(s, PAGE, "web_fetch");
+		expect(externalContentVerdict(s, "User is Eve").verdict).toBe("unknowable");
+		clearExternalIngestion(s);
+	});
+
+	it("a content-less mark (what came in was never captured) is unknowable for every text", () => {
+		const s = freshSession();
+		recordExternalIngestion(s);
+		expect(externalContentVerdict(s, "User prefers concise responses").verdict).toBe("unknowable");
+		clearExternalIngestion(s);
+	});
+
+	it("content too long to fully fingerprint keeps the session unknowable (completeness guard)", () => {
+		const s = freshSession();
+		let huge = "";
+		for (let i = 0; huge.length < 70 * 1024; i++) huge += `line ${i} of a very long page with distinct text ${i * 7919}\n`;
+		recordExternalIngestion(s, huge, "web_fetch https://big.example");
+		expect(externalContentVerdict(s, "User prefers concise responses").verdict).toBe("unknowable");
+		clearExternalIngestion(s);
+	});
+
+	it("a result too short to hold a window marks the session but cannot make it unknowable", () => {
+		const s = freshSession();
+		recordExternalIngestion(s, "clicked", "browser");
+		expect(hasExternalIngestion(s)).toBe(true);
+		expect(externalContentVerdict(s, "User prefers concise responses").verdict).toBe("clean");
+		clearExternalIngestion(s);
+	});
+
+	it("propagation carries the child's fingerprints, so the parent adjudicates the same bytes", () => {
+		const parent = freshSession();
+		const child = freshSession();
+		recordExternalIngestion(child, PAGE, "web_fetch https://vault.example/recovery");
+		propagateExternalIngestion(child, parent);
+		expect(externalContentVerdict(parent, "User's recovery phrase is velvet-harbor-ninety").verdict).toBe("overlap");
+		expect(externalContentVerdict(parent, "User prefers concise responses").verdict).toBe("clean");
+		clearExternalIngestion(parent);
+		clearExternalIngestion(child);
+	});
+});
+
+describe("adjudicatePayload — the verdict core shared with checkEgressTaintWithPayload", () => {
+	const entry = (content: string, target: string, complete?: boolean): TaintEntry => {
+		const fp = computeFingerprints(content);
+		return { source: "web", target, timestamp: 0, runId: "r", fingerprints: fp.fingerprints, complete: complete ?? fp.complete };
+	};
+
+	it("no entries → clean; overlap beats everything; one unprovable entry → unknowable", () => {
+		expect(adjudicatePayload([], PAGE).verdict).toBe("clean");
+		const full = entry(PAGE, "page");
+		expect(adjudicatePayload([full], "User prefers concise responses").verdict).toBe("clean");
+		expect(adjudicatePayload([full], "the recovery phrase is velvet-harbor-ninety").verdict).toBe("overlap");
+		const headOnly = entry(PAGE, "head-only", false);
+		expect(adjudicatePayload([full, headOnly], "User prefers concise responses").verdict).toBe("unknowable");
+		// An overlap with the fully covered entry still names it even when a
+		// sibling entry is unprovable.
+		const outcome = adjudicatePayload([headOnly, full], "the recovery phrase is velvet-harbor-ninety");
+		expect(outcome.verdict).toBe("overlap");
+		expect(outcome.evidence.map((e) => e.target)).toEqual(["head-only", "page"]);
+	});
+});
+
 describe("isExternalIngestingTool — tool-class membership (D8)", () => {
 	it("covers the off-box ingestion class incl. ALL browser actions, inbound email, and mcp_*", () => {
 		for (const name of ["web_fetch", "http_request", "ari_http", "browser", "web_search", "image_search", "extract_site_assets", "youtube_analyze", "email_read", "email_search", "mcp_github_search_issues", "WebSearch", "WebFetch"]) {
@@ -126,9 +225,15 @@ describe("runSandboxedPhase — external-content ingestion hook (tool-class, D8)
 		// Mimics browser observe/snapshot paths that return raw page text with
 		// no wrapExternalContent boundary (observe.ts, page-ops evaluate,
 		// post-action snapshots) — the miss that sank content-sniffing.
-		const tool = fakeTool("browser", async () => ok("heading: Welcome\nlink: Sign in"));
-		await runSandboxedPhase(ctxFor(tool, { action: "observe" }, s));
+		const tool = fakeTool("browser", async () => ok("heading: Welcome to the vault\nlink: Sign in"));
+		await runSandboxedPhase(ctxFor(tool, { action: "observe", url: "https://vault.example" }, s));
 		expect(hasExternalIngestion(s)).toBe(true);
+		// The delivered page text is what got fingerprinted: a fact carrying it
+		// is refused and the skip names the read.
+		const outcome = externalContentVerdict(s, "The site heading: Welcome to the vault greets users");
+		expect(outcome.verdict).toBe("overlap");
+		expect(outcome.evidence.map((e) => e.target)).toEqual(["browser https://vault.example"]);
+		expect(externalContentVerdict(s, "User prefers concise responses").verdict).toBe("clean");
 		clearExternalIngestion(s);
 	});
 

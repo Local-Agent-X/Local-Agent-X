@@ -238,10 +238,15 @@ async function extractFactsFromSession(
   const transcript = chunks.map(c => c.text).join("\n---\n").slice(0, 8000); // cap context
   const prompt = buildExtractionPrompt(sessionPath, transcript);
 
-  // Bulk extraction rejects Anthropic OAuth (a CLI subscription can't serve
-  // sequential bulk calls); otherwise it runs on the user's configured
-  // provider, resolved store-aware by dispatch, with a cheap non-reasoning
-  // model floor per provider.
+  // Runs on the user's configured provider, resolved store-aware by dispatch,
+  // with a cheap non-reasoning model floor per provider. It used to reject
+  // Anthropic OAuth ("a CLI subscription can't serve sequential bulk calls"),
+  // which stopped being true when subscription auth moved to direct HTTP — and
+  // since the subscription entry stopped falling back to an API key
+  // (24b28575) the rejection made this a silent no-op for every subscription
+  // user: no session facts were ever extracted, so a new chat did not know
+  // what the last one built (2026-09-27). The batch is small (a handful of
+  // Haiku calls a day) and the subscription serves it fine.
   //
   // guardedRewrite screens the output for degenerate/looping generations
   // before they reach retainSmart (durable fact writes). The default
@@ -270,7 +275,7 @@ async function extractFactsFromSession(
         temperature: 0,
         maxTokens: 500,
         timeoutMs: 60_000,
-        rejectOAuth: true,
+        rejectOAuth: false,
       }),
     { maxAttempts: 2 },
   );

@@ -87,9 +87,9 @@ describe("refreshProviderCatalog", () => {
     expect(state.models).toEqual(["claude-opus-5-5", "claude-mythos-5", "claude-haiku-4-5"]);
     expect(state.complete).toBe(true);
     expect(catalogStale("anthropic-api")).toBe(false);
-    // The picker: the shipped models the account can call, in shipped order,
-    // then the new release.
-    expect(pickerModelsFor("anthropic-api")).toEqual(["claude-opus-5-5", "claude-haiku-4-5", "claude-mythos-5"]);
+    // The picker: the shipped models the account can call, in shipped order
+    // (claude-mythos-5 ships, so it sits in its shipped place, not at the end).
+    expect(pickerModelsFor("anthropic-api")).toEqual(["claude-opus-5-5", "claude-mythos-5", "claude-haiku-4-5"]);
   });
 
   it("reads OpenAI's /v1/models as a Bearer call and keeps chat ids", async () => {

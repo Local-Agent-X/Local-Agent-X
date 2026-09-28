@@ -109,18 +109,9 @@ export interface ProviderMetaAnthropic {
 export type ProviderMeta = ProviderMetaHttp | ProviderMetaAnthropic;
 
 const ANTHROPIC_MODELS = [
-  "claude-opus-5-5",
-  "claude-opus-5",
-  "claude-fable-5-1",
-  "claude-fable-5",
-  "claude-sonnet-5",
-  "claude-opus-4-8",
-  "claude-opus-4-7",
-  "claude-sonnet-4-6",
-  "claude-opus-4-6",
-  "claude-haiku-4-5",
-  "claude-sonnet-4-5",
-  "claude-opus-4-5",
+  "claude-opus-5-5", "claude-opus-5", "claude-mythos-5-1", "claude-mythos-5", "claude-fable-5-1", "claude-fable-5",
+  "claude-sonnet-5", "claude-opus-4-8", "claude-opus-4-7", "claude-sonnet-4-6", "claude-opus-4-6", "claude-haiku-4-5",
+  "claude-sonnet-4-5", "claude-opus-4-5",
 ];
 const ANTHROPIC_CAPABILITIES: ProviderCapabilities = { tools: true, vision: true, streaming: true, localFiles: true, reasoning: false };
 
@@ -169,7 +160,8 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     // not the streaming /chat/completions path the chat adapter drives, so it
     // errors if picked for chat. Stays in `models` for background/routing.
     chatExcludedModels: ["grok-4.20-multi-agent-0309"],
-    defaultModel: "grok-4.5",
+    // docs.x.ai (read 2026-09-27) calls grok-4.7 the flagship.
+    defaultModel: "grok-4.7",
     // Non-reasoning variant: no chain-of-thought to burn time on, and it
     // sidesteps the reasoning-stream watchdog interaction entirely.
     backgroundModel: "grok-4.20-0309-non-reasoning",
@@ -189,8 +181,9 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
       "gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna",
       "gpt-5.4-nano", "gpt-5.2", "gpt-5.1", "gpt-5", "gpt-5-mini", "gpt-5-nano", "gpt-4o", "gpt-4o-mini", "o3-pro", "o3-mini",
     ],
-    defaultModel: "o3-pro",
-    // Non-reasoning: the default o3-pro hides reasoning server-side, so a
+    // o3-pro shuts down 2026-12-11; OpenAI names gpt-5.6-sol its replacement.
+    defaultModel: "gpt-5.6-sol",
+    // Non-reasoning: the reasoning defaults hide their think server-side, so a
     // long think streams nothing and the idle watchdog can't tell it from a
     // hang. gpt-4o-mini has no hidden think to stall on.
     backgroundModel: "gpt-4o-mini",
@@ -266,8 +259,9 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
       "gemini-2.5-flash",
       "gemini-2.5-flash-lite",
     ],
-    defaultModel: "gemini-2.5-pro",
-    backgroundModel: "gemini-2.5-flash",
+    // The 2.5 line is "not for new projects": the current Pro and cheapest Flash.
+    defaultModel: "gemini-3.1-pro-preview",
+    backgroundModel: "gemini-3.5-flash-lite",
     baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/",
     envKey: "GEMINI_API_KEY",
     capabilities: { tools: true, vision: true, streaming: true, localFiles: false, reasoning: REASONING_GEMINI },

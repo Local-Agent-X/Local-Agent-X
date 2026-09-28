@@ -156,11 +156,9 @@ describe("documented defaults: sensitive path patterns (regression)", () => {
 		"/app/.env",
 		"/home/user/.aws/credentials",
 		"/etc/credentials.json",
-		"/app/password.txt",
 		"/vault/secret.key",
 		"/home/user/.gnupg/secring.gpg",
 		"/home/user/.kube/config",
-		"/app/token.json",
 	];
 
 	for (const p of sensitivePaths) {
@@ -169,11 +167,17 @@ describe("documented defaults: sensitive path patterns (regression)", () => {
 		});
 	}
 
+	// A file NAMED for its subject is not a credential file: the matcher is
+	// anchored on the file's shape, never a substring of its name.
 	const nonSensitivePaths = [
 		"/app/data/report.csv",
 		"/app/src/index.ts",
 		"/app/README.md",
 		"/app/package.json",
+		"/app/password.txt",
+		"/app/token.json",
+		"/app/src/tokenStore.ts",
+		"/app/src/passwordReset.ts",
 	];
 
 	for (const p of nonSensitivePaths) {

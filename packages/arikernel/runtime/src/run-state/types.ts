@@ -9,6 +9,14 @@ export interface RunStatePolicy {
 	behavioralRules?: boolean;
 	/** Hostnames exempted from post-sensitive-read egress tightening. */
 	egressAllowHosts?: string[];
+	/**
+	 * The host's own credential-file classifier. When given it replaces the
+	 * built-in catalog for every sensitive-path decision (rule 3, the sticky
+	 * read flag, the post-read GET header check), so the kernel and the host
+	 * can never disagree on what a credential file is. The path is NFKC-
+	 * normalized before it is handed over.
+	 */
+	sensitivePath?: (path: string) => boolean;
 }
 
 export interface RunStateCounters {

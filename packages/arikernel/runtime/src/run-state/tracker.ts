@@ -11,6 +11,7 @@ import { type TaintLabel, type TaintState } from "@arikernel/core";
 import * as egress from "./egress-accounting.js";
 import { isSafeReadOnlyAction, isEgressAction, MAX_EVENT_WINDOW, TOOL_CLASS_RISK_MAP } from "./safe-actions.js";
 import { isSensitivePath } from "./sensitive-paths.js";
+import { normalizeInput } from "../unicode-safety.js";
 import type {
 	HostnameEgressRecord,
 	QuarantineInfo,
@@ -340,9 +341,12 @@ export class RunStateTracker {
 		this._secretAccessObserved = true;
 	}
 
-	/** Check if a file path targets a sensitive location. NFKC-normalized to prevent homoglyph bypass. */
+	/** Check if a file path targets a sensitive location. NFKC-normalized to
+	 *  prevent homoglyph bypass; the host's classifier, when configured, is the
+	 *  one answer (RunStatePolicy.sensitivePath). */
 	isSensitivePath(path: string): boolean {
-		return isSensitivePath(path);
+		const host = this.policy?.sensitivePath;
+		return host ? host(normalizeInput(path)) : isSensitivePath(path);
 	}
 
 	/**

@@ -22,6 +22,8 @@ import {
 } from "./state.js";
 import { HOST_CAPABILITY_MANIFEST, buildPrincipalCapabilities } from "./manifest.js";
 import { mintHostGrants } from "./grants.js";
+import { isSensitivePath } from "../data-lineage/index.js";
+import { resolveAgentPath } from "../workspace/paths.js";
 
 const logger = createLogger("ari-kernel");
 
@@ -57,6 +59,11 @@ function buildAriFirewall(
     mode: "embedded",
     tokenStore,
     hooks,
+    // The kernel's sensitive-read signals (rule 3, the sticky read flag, the
+    // post-read GET header check) judge paths with LAX's own anchored
+    // credential-file classifier, so the two can never disagree on what a
+    // credential file is. Its built-in catalog is the standalone default only.
+    runStatePolicy: { sensitivePath: (p) => isSensitivePath(resolveAgentPath(p)) },
   });
 
   // Manifest-driven grant issuance — the per-call rule engine still evaluates

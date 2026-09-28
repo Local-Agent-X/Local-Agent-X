@@ -11,8 +11,6 @@
 
 import type { KernelQuarantine } from "../types.js";
 import { getFirewall } from "./state.js";
-import { isSensitivePath } from "../data-lineage/index.js";
-import { resolveAgentPath } from "../workspace/paths.js";
 
 /** Rules whose match REQUIRES the web/rag/email taint labels LAX hands the
  *  kernel from its session taint registry. A declassify clears that registry,
@@ -25,8 +23,6 @@ export const TAINT_KEYED_KERNEL_RULES: ReadonlySet<string> = new Set([
   "tainted_database_write",
   "tainted_shell_with_data",
 ]);
-
-export const SENSITIVE_READ_RULE = "sensitive_read_then_egress";
 
 /** The quarantine behind the scope's restricted mode, or null when the run is
  *  not restricted. `trigger` is "restricted" when the quarantine predates THIS
@@ -56,19 +52,4 @@ export function readKernelQuarantine(scopeId: string | undefined, justRaised: bo
     deniedActions: fw.runStateCounters?.deniedActions ?? 0,
     ...(matchedPath ? { matchedPath } : {}),
   };
-}
-
-/**
- * Did sensitive_read_then_egress fire on a path that is NOT a secret? The
- * kernel's sensitive-path matcher is an unanchored substring (/secret|token|
- * password|.../) over EVERY file action, reads and writes alike, so writing
- * `scripts/set-unsub-secret.mjs` counted as a sensitive read and the next
- * outbound POST quarantined the whole turn (2026-09-28 02:51). LAX's anchored
- * detector is the canonical answer, exactly as it already is for the kernel's
- * own sensitive-file deny (isKernelSensitiveFileFalsePositive). A genuine
- * secret path (~/.ssh/id_rsa, .env) returns false and the quarantine stands.
- */
-export function isSensitiveReadQuarantineFalsePositive(q: KernelQuarantine | null): boolean {
-  if (!q || q.rule !== SENSITIVE_READ_RULE || !q.matchedPath) return false;
-  return !isSensitivePath(resolveAgentPath(q.matchedPath));
 }

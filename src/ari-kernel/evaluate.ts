@@ -7,10 +7,8 @@ import { isAriRequired } from "./state.js";
 import { kernelClassForTool, isMcpToolName } from "./tool-class-map.js";
 import { lookupHostGrantId } from "./grants.js";
 import { ensureAriKernelScope, refreshAriKernelScope } from "./lifecycle.js";
-import { isSensitivePath } from "../data-lineage/index.js";
-import { resolveAgentPath } from "../workspace/paths.js";
 import type { KernelQuarantine } from "../types.js";
-import { isSensitiveReadQuarantineFalsePositive, readKernelQuarantine } from "./quarantine.js";
+import { readKernelQuarantine } from "./quarantine.js";
 
 const logger = createLogger("ari-kernel");
 
@@ -23,38 +21,7 @@ export interface AriVerdict {
   quarantine?: KernelQuarantine;
 }
 
-// The kernel's sensitive-file TRIGGER reason: THIS file action was flagged
-// sensitive by a behavioral rule (and quarantined the run). Deliberately does
-// NOT match the cascade ("entered restricted mode … N denied sensitive actions")
-// — the cascade means a PRIOR action already quarantined, and overriding on it
-// would let a benign write CLEAR a genuine quarantine.
-const KERNEL_SENSITIVE_FILE_TRIGGER = /sensitive file|behavioral rule/i;
 const KERNEL_FOREIGN_TAINT_TRIGGER = /shell execution with untrusted input is forbidden/i;
-
-function filePathFromParams(params: Record<string, unknown>): string | null {
-  const p = params.path ?? params.file_path ?? params.filePath ?? params.target;
-  return typeof p === "string" && p.length > 0 ? p : null;
-}
-
-/**
- * Is a kernel file-denial a FALSE POSITIVE of its unanchored sensitive-file
- * substring rule? The ARI runtime flags a path as a "sensitive file" by
- * substring (/password|credential|token|secret|.env|id_rsa/) — the crude match
- * LAX's own detector abandoned for anchored basename/extension/cred-dir shapes.
- * True only when (a) the reason is the sensitive-file TRIGGER (not the
- * restricted-mode cascade) AND (b) LAX's canonical, anchored isSensitivePath
- * says the path is NOT a genuine secret. Genuine secret files (~/.ssh/id_rsa,
- * .env, ~/.aws/credentials) return false here → the kernel's denial stands.
- */
-export function isKernelSensitiveFileFalsePositive(
-  reason: string,
-  params: Record<string, unknown>,
-): boolean {
-  if (!KERNEL_SENSITIVE_FILE_TRIGGER.test(reason)) return false;
-  const path = filePathFromParams(params);
-  if (!path) return false;
-  return !isSensitivePath(resolveAgentPath(path));
-}
 
 // Per-tool action override: secret-vault tools have a fixed action mapping
 // (capture / fill / clipboard) regardless of what the executor passes in.
@@ -129,27 +96,6 @@ export async function ariEvaluate(
 
     if (!result.success) {
       const reason = result.error || "Denied by kernel policy";
-      // Sensitive-file false-positive rescue. Writing a normally-named source
-      // file (passwordReset.ts, tokenStore.ts, authGuard.ts) trips the kernel's
-      // unanchored substring rule, gets DENIED, and QUARANTINES the whole run
-      // into read-only — bricking every later edit + the build verify for the
-      // rest of the op. Honor the kernel's sensitive-file verdict only when LAX's
-      // canonical (anchored) detector AGREES the path is a real secret; when it
-      // disagrees, allow the write and refresh the run so the bogus quarantine
-      // doesn't cascade. A genuine secret read still quarantines (see the
-      // TRIGGER-not-cascade scoping in isKernelSensitiveFileFalsePositive).
-      if (toolClass === "file" && isKernelSensitiveFileFalsePositive(reason, params)) {
-        logger.warn(
-          `[ari] sensitive-file FALSE POSITIVE — kernel flagged benign source path ` +
-          `"${filePathFromParams(params)}" (LAX isSensitivePath=false); overriding deny ` +
-          `+ refreshing run to clear the bogus quarantine`,
-        );
-        refreshAriKernelScope(scopeId);
-        return {
-          allowed: true,
-          reason: "ARI sensitive-file false positive on a benign source path — overridden by LAX canonical detector",
-        };
-      }
       return withQuarantine({
         allowed: false,
         reason: `[ARI kernel] ${reason}`,
@@ -162,21 +108,7 @@ export async function ariEvaluate(
     const rawDetail = (e as Error).message || String(e);
     // A behavioral-rule quarantine is thrown, not returned (denyQuarantinedAction),
     // so it lands here — and read literally as "evaluation error" it sent two
-    // live turns chasing an engine fault. The sensitive-read rule has the same
-    // substring false positive as the sensitive-file deny rescued above: judge
-    // the matched path with LAX's anchored detector, and when it is not a
-    // secret, refresh the scope (the only way to lift a quarantine) and judge
-    // this call once more on a clean run. A genuine secret path stays denied.
-    if (!retriedAfterForeignTaint) {
-      const q = readKernelQuarantine(scopeId, !restrictedBefore);
-      if (isSensitiveReadQuarantineFalsePositive(q) && refreshAriKernelScope(scopeId)) {
-        logger.warn(
-          `[ari] sensitive-read quarantine FALSE POSITIVE — kernel matched "${q!.matchedPath}" by substring ` +
-          `(LAX isSensitivePath=false); refreshed the run and re-evaluating ${toolName}.${action} once`,
-        );
-        return ariEvaluate(toolName, action, params, taintLabels, scopeId, true);
-      }
-    }
+    // live turns chasing an engine fault; the quarantine is named below.
     // Compatibility rescue for the default/ad-hoc scope, where unrelated calls
     // can still share one firewall. Canonical operations pass an operation scope
     // and are isolated before reaching this branch.

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { detectTargetShell, translateForShell, countTopLevelPipes } from "../src/tools/shell-translate.js";
+import { detectTargetShell, translateForShell } from "../src/tools/shell-translate.js";
 
 describe("detectTargetShell — cross-platform", () => {
   it("classifies Windows pwsh 7+ as pwsh-7", () => {
@@ -98,40 +98,6 @@ describe("translateForShell — PS 5.1 /dev/null translation", () => {
   it("composes redirects + chains in one pass", () => {
     expect(translateForShell("git pull 2>/dev/null && npm install", "powershell-51"))
       .toBe("git pull 2>$null; if ($?) { npm install }");
-  });
-});
-
-describe("countTopLevelPipes — quote-aware pipe counting", () => {
-  it("counts top-level pipes in a simple command", () => {
-    expect(countTopLevelPipes("ls | grep foo | sort | uniq | head")).toBe(4);
-  });
-
-  it("returns 0 for a command with no pipes", () => {
-    expect(countTopLevelPipes("git status")).toBe(0);
-  });
-
-  it("does not count pipes inside double-quoted strings", () => {
-    expect(countTopLevelPipes('echo "a|b|c|d|e|f|g|h"')).toBe(0);
-  });
-
-  it("does not count pipes inside single-quoted strings", () => {
-    expect(countTopLevelPipes("echo 'a|b|c|d|e|f'")).toBe(0);
-  });
-
-  it("counts top-level pipes correctly when quotes contain pipes", () => {
-    expect(countTopLevelPipes('echo "a|b" | grep foo | sort')).toBe(2);
-  });
-
-  it("does not count `||` (logical OR) as a pipe", () => {
-    expect(countTopLevelPipes("git pull || echo failed")).toBe(0);
-  });
-
-  it("counts a single `|` next to `||` correctly", () => {
-    expect(countTopLevelPipes("ls | grep foo || echo none")).toBe(1);
-  });
-
-  it("handles nested quotes correctly", () => {
-    expect(countTopLevelPipes(`grep "a 'b|c' d" file | sort`)).toBe(1);
   });
 });
 

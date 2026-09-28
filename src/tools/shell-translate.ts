@@ -182,30 +182,6 @@ function translateAndOrChain(cmd: string): string {
   return result;
 }
 
-// Count `|` chars that act as actual shell pipes — outside single- and
-// double-quoted strings. Naive `command.match(/\|/g)` over-counts when the
-// command contains a quoted string with a literal `|`, which trips the
-// 5-pipe security cap on benign commands like `echo "a|b|c|d|e|f|g"`.
-// Used by the shell-policy gate; the quote-tracking logic mirrors
-// splitChains() below.
-export function countTopLevelPipes(cmd: string): number {
-  let count = 0;
-  let inSingle = false;
-  let inDouble = false;
-  for (let i = 0; i < cmd.length; i++) {
-    const c = cmd[i];
-    if (c === "'" && !inDouble) { inSingle = !inSingle; continue; }
-    if (c === '"' && !inSingle) { inDouble = !inDouble; continue; }
-    if (inSingle || inDouble) continue;
-    if (c === "|") {
-      // Don't count `||` as a pipe — it's a logical-OR chain operator.
-      if (cmd[i + 1] === "|") { i++; continue; }
-      count++;
-    }
-  }
-  return count;
-}
-
 type ChainPart = { text: string; sep: "&&" | "||" | null };
 
 function splitChains(cmd: string): ChainPart[] {

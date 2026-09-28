@@ -48,7 +48,7 @@ export interface ShellPathGuardCtx {
   // EFFECTIVE OS-level confinement of the spawn being vetted — callers derive it
   // from getSandboxStatus().confined (false when a guarded selection FELL BACK to
   // host). Gates ONLY evaluateShellCommand's structural string heuristics
-  // (substitution/separators/pipe-cap/script-write/interpreter-escape/inline-eval
+  // (substitution/separators/script-write/interpreter-escape/inline-eval
   // -form); egress, rm, denylist, and file-access rules ignore it. Optional so
   // callers that omit it fail SAFE (treated as unconfined → every rule applies).
   sandboxConfined?: boolean;

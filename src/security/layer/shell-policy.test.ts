@@ -178,7 +178,7 @@ describe("evaluateShellCommand (win32) — PowerShell semantics", () => {
 
 // ── Effective-confinement matrix ──
 // The STRUCTURAL string heuristics (arithmetic $((…))/param ${…} expansion,
-// separators, pipe cap, script-write, interpreter-escape, inline-eval form)
+// separators, script-write, interpreter-escape, inline-eval form)
 // are regex approximations of a process boundary. When the EFFECTIVE sandbox
 // backend for the spawn is confined (sandboxConfined=true — callers derive it
 // from getSandboxStatus().confined, which is FALSE for a guarded selection
@@ -197,6 +197,8 @@ describe("evaluateShellCommand — structural rules conditional on effective con
   // caller didn't thread confinement → fail SAFE, rules apply
   const F = (cmd: string) => evaluateShellCommand(cmd, undefined, undefined, undefined, POSIX);
 
+  // Pipeline length is not a rule in any posture: every stage is a command
+  // position the argv scans read.
   const SIX_PIPES = "cat notes.txt | grep a | sort | uniq | head -5 | tail -2 | wc -l";
 
   it("confined: arithmetic/param expansion, ;/&& chaining, pipes, ${} are ALLOWED", () => {
@@ -208,11 +210,11 @@ describe("evaluateShellCommand — structural rules conditional on effective con
     expect(C("${HOME}").allowed).toBe(true);
   });
 
-  it("host-fallback (false) and unthreaded (undefined) DENY arithmetic/;/pipes", () => {
+  it("host-fallback (false) and unthreaded (undefined) DENY arithmetic and ; but not a long pipeline", () => {
     for (const ev of [H, F]) {
       expect(ev("echo $((17+3))").allowed).toBe(false);
       expect(ev("a; b").allowed).toBe(false);
-      expect(ev(SIX_PIPES).allowed).toBe(false);
+      expect(ev(SIX_PIPES).allowed).toBe(true);
     }
   });
 

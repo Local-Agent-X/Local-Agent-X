@@ -5,15 +5,22 @@
  * and is mis-billed — exactly the grok-4.3 bug ($1.25/$2.50 charged as $3/$15).
  * Adding a model to the registry without its price now fails the build.
  *
- * Also rechecks every row it can match against LiteLLM's price file
- * (scripts/pricing-drift.mjs) and WARNS on drift; rows it can't match keep the
- * date check — a WARN once PRICES_VERIFIED_AT is past the staleness window.
+ * Also rechecks every row it can match against LiteLLM's model file —
+ * prices (scripts/pricing-drift.mjs) AND context windows
+ * (scripts/model-windows-drift.mjs) — and WARNS on drift; price rows it can't
+ * match keep the date check — a WARN once PRICES_VERIFIED_AT is past the
+ * staleness window. The same file lists what the providers serve, so the check
+ * also reports first-party chat models upstream that LAX's registry, window
+ * table and price table all lack (WARN only: a human reviews a new release).
  * Offline, every row falls back to the date check; the build never fails or
  * hangs on the network (8s timeout).
- *   --strict  exit non-zero on drift or an unreachable price file (the weekly
- *             CI job; a red run is the alert). The build stays warn-only.
- *   --apply   rewrite drifted rows in src/pricing/model-prices.ts in place, for
- *             a developer to review and commit. Never used by the build.
+ *   --strict  exit non-zero on price or window drift, or an unreachable model
+ *             file (the weekly CI job; a red run is the alert). The build stays
+ *             warn-only.
+ *   --apply   rewrite drifted price rows in src/pricing/model-prices.ts and
+ *             drifted window rows in src/context-manager/model-windows.ts in
+ *             place, for a developer to review and commit. Never used by the
+ *             build. Pinned window rows (`// pin: …`) are never rewritten.
  *
  * Parses the source text (no imports) so it's fast and side-effect-free, the
  * same shape as gen-codebase-map.mjs. Run via `npm run check:pricing-coverage`.
@@ -24,11 +31,13 @@ import { dirname, join } from "node:path";
 import {
   applyDrift, comparePrices, fetchPriceSource, parseDefaultCacheRead, parsePriceRows, LITELLM_PRICES_URL,
 } from "./pricing-drift.mjs";
+import { applyWindowDrift, compareWindows, parseWindowRows, upstreamModelsMissing } from "./model-windows-drift.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const STRICT = process.argv.includes("--strict");
 const APPLY = process.argv.includes("--apply");
 const PRICE_FILE = "src/pricing/model-prices.ts";
+const WINDOW_FILE = "src/context-manager/model-windows.ts";
 
 // Providers that bill per token AND have a canonical public rate. local /
 // cerebras / ollama-cloud / custom are OSS / dynamic / user-defined endpoints
@@ -38,7 +47,7 @@ const STALE_DAYS = 90;
 
 const registry = readFileSync(join(root, "src/providers/registry.ts"), "utf8");
 const priceTable = readFileSync(join(root, PRICE_FILE), "utf8");
-const modelWindows = readFileSync(join(root, "src/context-manager/model-windows.ts"), "utf8");
+const modelWindows = readFileSync(join(root, WINDOW_FILE), "utf8");
 
 // Exact PRICING keys: lines like  "model-id": { input: ...
 const priced = new Set();
@@ -88,10 +97,12 @@ function modelsFor(id) {
 
 const missing = [];
 const ctxMissing = [];
+const registryModels = new Set();
 let total = 0;
 for (const id of METERED) {
   for (const model of modelsFor(id)) {
     total++;
+    registryModels.add(model);
     if (!priced.has(model)) missing.push(`${id}: ${model}`);
     if (!ctxKeys.has(model)) ctxMissing.push(`${id}: ${model}`);
   }
@@ -155,6 +166,43 @@ if (!source) {
   rateSummary = `${matched.length} rates match LiteLLM, ${drift.length} drifted, ${unmatched.length} date-checked`;
 }
 
+// Context-window recheck against the same file (max_input_tokens). Same
+// policy as prices: DRIFT is red under --strict, --apply rewrites for review,
+// a `// pin:` row (the provider's own documented figure) is reported, never
+// rewritten. Rows LiteLLM has no first-party entry for are counted only.
+let windowSummary = "windows unchecked";
+let windowFailure = false;
+if (source) {
+  const windows = compareWindows(parseWindowRows(modelWindows), source);
+  for (const d of windows.drift) {
+    console.warn(`check-pricing-coverage: DRIFT — ${d.id} context window: ours ${d.ours}, LiteLLM ${d.theirs} (source key "${d.key}")`);
+  }
+  if (windows.drift.length > 0 && !APPLY) {
+    console.warn(`  Confirm on the provider's model page; \`node scripts/check-pricing-coverage.mjs --apply\` rewrites the drifted rows for review, or add \`// pin: <provider figure, date>\` to keep ours.`);
+  }
+  for (const p of windows.pinned) {
+    console.log(`check-pricing-coverage: pinned — ${p.id} context window ${p.ours} kept over LiteLLM's ${p.theirs} (source key "${p.key}")`);
+  }
+  if (APPLY && windows.drift.length > 0) {
+    writeFileSync(join(root, WINDOW_FILE), applyWindowDrift(modelWindows, windows.drift));
+    console.log(`check-pricing-coverage: rewrote ${windows.drift.length} drifted window rows in ${WINDOW_FILE} — review the diff before committing.`);
+  }
+  windowFailure = windows.drift.length > 0;
+  windowSummary = `${windows.matched.length} windows match LiteLLM, ${windows.drift.length} drifted, ${windows.pinned.length} pinned, ${windows.unmatched.length} unmatched`;
+
+  // New releases: first-party chat models the providers serve that LAX lists
+  // nowhere. WARN only — a registry entry needs a price, a window and a human.
+  const known = new Set([...registryModels, ...ctxKeys, ...priced]);
+  const fresh = upstreamModelsMissing(source, known, {
+    providers: ["anthropic", "openai", "gemini", "xai"],
+    today: new Date().toISOString().slice(0, 10),
+  });
+  if (fresh.length > 0) {
+    console.warn(`check-pricing-coverage: WARN — ${fresh.length} upstream models LAX does not list (review for src/providers/registry.ts, with a price and a window):`);
+    for (const m of fresh) console.warn(`  - ${m.provider}: ${m.id}${m.maxInput ? ` (max_input_tokens ${m.maxInput})` : ""}`);
+  }
+}
+
 // Context-window coverage: WARN-only. lookupContextWindow substring-falls-back
 // to a safe default for an unknown model, so a missing key is a nudge to add an
 // exact entry, not a build-breaker.
@@ -165,8 +213,8 @@ if (ctxMissing.length > 0) {
 }
 
 const ctxCovered = total - ctxMissing.length;
-const failed = rateFailure && (STRICT || (APPLY && !source));
+const failed = (rateFailure || windowFailure) && (STRICT || (APPLY && !source));
 console.log(
-  `check-pricing-coverage: ${failed ? "FAIL" : "OK"} (${total} metered models priced, ${ctxCovered}/${total} with exact context window, ${rateSummary}, verified ${verifiedAt ?? "unknown"})`,
+  `check-pricing-coverage: ${failed ? "FAIL" : "OK"} (${total} metered models priced, ${ctxCovered}/${total} with exact context window, ${rateSummary}, ${windowSummary}, verified ${verifiedAt ?? "unknown"})`,
 );
 if (failed) process.exit(1);

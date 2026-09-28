@@ -1,10 +1,14 @@
 name: Pricing recheck
 
-# Weekly recheck of src/pricing/model-prices.ts against LiteLLM's price file.
-# A red run IS the alert: it means a provider repriced a model we bill (or the
-# price file became unreachable). Fix by confirming on the provider's pricing
-# page, then `node scripts/check-pricing-coverage.mjs --apply` locally, review
-# the diff and commit. This job never commits or opens PRs.
+# Weekly recheck of src/pricing/model-prices.ts (rates) and
+# src/context-manager/model-windows.ts (context windows) against LiteLLM's
+# model file. A red run IS the alert: it means a provider repriced or resized
+# a model we list (or the file became unreachable). Fix by confirming on the
+# provider's pricing/model page, then `node scripts/check-pricing-coverage.mjs
+# --apply` locally, review the diff and commit — or `// pin:` a window row the
+# provider's docs contradict LiteLLM on. The run also lists first-party chat
+# models the providers serve that LAX does not (a WARN, never red): review
+# them for the registry. This job never commits or opens PRs.
 
 on:
   schedule:

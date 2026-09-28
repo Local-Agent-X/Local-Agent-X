@@ -10,13 +10,8 @@
  * source is tainted for the rest of the run. The LLM can't "un-see" it.
  */
 
-import { decodedPayloadViews } from "../security/secrets/index.js";
-import {
-  type TaintSource,
-  type TaintEntry,
-  computeFingerprints,
-  payloadFingerprints,
-} from "./fingerprint.js";
+import { type TaintSource, type TaintEntry, computeFingerprints } from "./fingerprint.js";
+import { adjudicatePayload, findTaintInEntries } from "./payload-overlap.js";
 
 export type { TaintSource, TaintEntry } from "./fingerprint.js";
 
@@ -109,51 +104,13 @@ export function checkEgressTaint(sessionId: string): { blocked: boolean; reason?
 }
 
 /**
- * Payload-overlap primitive: which tainted sources have CONTENT present in
- * `payload`. Fingerprints the payload — its raw form AND the secret-scanner's
- * decoded/normalized views (so a base64/hex/percent-encoded or homoglyph copy of
- * the tainted bytes still matches) — and intersects against each entry's
- * recorded shingle hashes. An overlap counts only on a real shingle-hash match,
- * so unrelated text never false-matches (near-zero FP). Entries recorded without
- * content (no fingerprints) can't produce evidence here and are skipped — they
- * still gate egress via checkEgressTaint's presence floor.
- *
- * Returns the matching {source, target} pairs (deduped); [] when no tainted
- * bytes are found in the payload.
+ * Payload-overlap primitive over the session's taint map: which tainted sources
+ * have CONTENT present in `payload`. The matching itself is findTaintInEntries
+ * (payload-overlap.ts) — the egress worker thread runs that same core against
+ * its mirrored entries, since its module instance's map is always empty.
  */
 export function findTaintInPayload(sessionId: string, payload: string): Array<{ source: TaintSource; target: string }> {
   return findTaintInEntries(sessionTaint.get(sessionId) ?? [], payload);
-}
-
-/**
- * The pure core of findTaintInPayload, over an EXPLICIT entry list instead of
- * the module-level session map. The egress worker thread runs this against its
- * mirrored entries (its module instance's map is always empty); in-process
- * callers keep using findTaintInPayload. ONE matching implementation.
- */
-export function findTaintInEntries(taints: readonly TaintEntry[], payload: string): Array<{ source: TaintSource; target: string }> {
-  if (taints.length === 0 || !payload) return [];
-
-  // Hash the payload across every evasion view, REUSING the scanner's decoders
-  // (no duplicate decode/normalize logic), then shingle each view the same way
-  // recorded content was shingled so the hashes are comparable.
-  const payloadHashes = new Set<string>();
-  for (const view of decodedPayloadViews(payload)) {
-    for (const h of payloadFingerprints(view)) payloadHashes.add(h);
-  }
-  if (payloadHashes.size === 0) return [];
-
-  const seen = new Set<string>();
-  const out: Array<{ source: TaintSource; target: string }> = [];
-  for (const t of taints) {
-    if (t.fingerprints.length === 0) continue;
-    if (!t.fingerprints.some(fp => payloadHashes.has(fp))) continue;
-    const key = `${t.source}:${t.target}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push({ source: t.source, target: t.target });
-  }
-  return out;
 }
 
 /**
@@ -192,25 +149,20 @@ export function checkEgressTaintWithPayload(
   // Clean session: nothing tainted, nothing to prove.
   if (!base.blocked) return { ...base, evidence: [] };
 
-  // Direct content-overlap evidence: tainted bytes actually present in the
-  // payload (raw OR any decoded/normalized evasion view). Always blocks.
-  const evidence = findTaintInPayload(sessionId, payload);
-  if (evidence.length > 0) {
-    const named = [...new Set(evidence.map(e => `${e.source}:${e.target.slice(0, 40)}`))];
+  // The verdict core (payload-overlap.ts): direct overlap always blocks and
+  // names the source; the completeness guard clears the egress ONLY when EVERY
+  // active entry is fully fingerprinted and none overlaps; anything else keeps
+  // the presence floor.
+  const outcome = adjudicatePayload(sessionTaint.get(sessionId)!, payload); // non-empty: base.blocked is true
+  if (outcome.verdict === "overlap") {
+    const named = [...new Set(outcome.evidence.map(e => `${e.source}:${e.target.slice(0, 40)}`))];
     return {
       blocked: true,
       reason: `${base.reason} Outbound payload contains bytes from tainted source(s): ${named.join(", ")}.`,
-      evidence,
+      evidence: outcome.evidence,
     };
   }
-
-  // No overlap. COMPLETENESS GUARD: clear the egress ONLY if EVERY active entry
-  // is fully fingerprinted (proving the payload is free of its WHOLE content).
-  // Any content-less or incompletely-fingerprinted entry keeps the presence
-  // floor — its tail could be in this payload and we couldn't have detected it.
-  const taints = sessionTaint.get(sessionId)!; // non-empty: base.blocked is true
-  const everyEntryClearable = taints.every(t => t.fingerprints.length > 0 && t.complete);
-  if (everyEntryClearable) return { blocked: false, evidence: [] };
+  if (outcome.verdict === "clean") return { blocked: false, evidence: [] };
   return { ...base, evidence: [] };
 }
 

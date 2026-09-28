@@ -14,6 +14,7 @@
  *
  * This module is a re-export barrel. The implementation lives in:
  *  - fingerprint.ts    — privacy-preserving content fingerprints
+ *  - payload-overlap.ts — the stateless overlap / unknowable / clean verdict
  *  - taint.ts          — the stateful per-session taint registry
  *  - paths.ts          — stateless sensitive-path & secret detection
  *  - secret-values.ts  — mask secret values in output + register them as known secrets
@@ -26,7 +27,6 @@ export {
   retractProvisionalTaint,
   checkEgressTaint,
   findTaintInPayload,
-  findTaintInEntries,
   subscribeTaintChanges,
   checkEgressTaintWithPayload,
   setForwardedSessionTaint,
@@ -35,6 +35,9 @@ export {
   propagateTaint,
   getTaintSummary,
 } from "./taint.js";
+
+export { findTaintInEntries, adjudicatePayload } from "./payload-overlap.js";
+export type { PayloadVerdict, OverlapEvidence } from "./payload-overlap.js";
 
 export {
   _setDeclassifyAuditTrail,

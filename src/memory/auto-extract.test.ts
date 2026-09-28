@@ -60,6 +60,8 @@ vi.mock("./resolver.js", () => ({
 
 const { MemoryIndex } = await import("../memory/index.js");
 const { autoExtractAndSave } = await import("./auto-extract.js");
+const { recordExternalIngestion, clearExternalIngestion } = await import("../data-lineage/external.js");
+const { TAINTED_FACT_SOURCE_PREFIX } = await import("./fact-provenance-label.js");
 
 let tempDir: string;
 let memory: InstanceType<typeof MemoryIndex>;
@@ -382,38 +384,75 @@ describe("autoExtractAndSave — Phase 2 write paths", () => {
   });
 });
 
-describe("autoExtractAndSave — session external-content taint gate (D6)", () => {
-  it("hasExternalTaint=true → nothing persists even when classifier would return facts", async () => {
-    // Clean-looking text (the paraphrase case the content-based pre-flight
-    // can't catch) + a classifier that WOULD write. The session-level flag
-    // alone must block everything durable.
-    __nextReturn = {
-      user_name: "Eve",
-      preference_rule: "User prefers concise responses",
-      biographical_event: "User visited the widget factory",
-    };
+// Session external-content gate (D6), decided per fact against the ingested
+// content's fingerprints (data-lineage/external.ts). The whole-turn block it
+// replaces skipped 162 turns on one box and left an evening's browsing-led
+// setup work with no durable memory at all.
+describe("autoExtractAndSave — session external-content taint gate (D6), per fact", () => {
+  // A page the session read, long enough to be fully fingerprinted.
+  const PAGE =
+    "Account recovery\n\nYour recovery phrase is velvet-harbor-ninety. Store it somewhere safe; " +
+    "support will never ask you for it. Two-factor codes rotate every thirty seconds.";
+  let sess: string;
+  let seq = 0;
+
+  function liveFactSourceFile(content: string): string | undefined {
+    const db = (memory as unknown as { db: { prepare: (s: string) => { get: (...args: unknown[]) => { source_file: string } | undefined } } }).db;
+    return db.prepare("SELECT source_file FROM facts WHERE valid_to IS NULL AND content = ?").get(content)?.source_file;
+  }
+
+  beforeEach(() => { sess = `sess-ext-${seq++}`; });
+  afterEach(() => { clearExternalIngestion(sess); });
+
+  it("(a) a fact that overlaps the ingested content is skipped, and the skip names the read", async () => {
+    recordExternalIngestion(sess, PAGE, "browser https://vault.example/recovery");
+    // The classifier's fact carries a verbatim chunk of the page (the user
+    // repeated it) — exactly the bytes D6 must keep out of durable memory.
+    __nextReturn = { ongoing_state: ["User's recovery phrase is velvet-harbor-ninety"] };
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    let logged = "";
+    try {
+      await autoExtractAndSave(memory, "my recovery phrase is velvet-harbor-ninety", "noted", sess, true);
+      logged = errors.mock.calls.map((c) => String(c[0])).join("\n");
+    } finally {
+      errors.mockRestore();
+    }
+    expect(liveFactsCount()).toBe(0);
+    expect(resolveFactSpy).not.toHaveBeenCalled();
+    expect(logged).toContain("Auto-extract skipped ongoing_state");
+    expect(logged).toContain("browser https://vault.example/recovery");
+  });
+
+  it("(b) a fact free of the ingested content is saved under the tainted-external label; profile files stay untouched", async () => {
+    recordExternalIngestion(sess, PAGE, "browser https://vault.example/recovery");
+    __nextReturn = { user_name: "Eve", preference_rule: "User prefers concise responses" };
     writeFileSync(join(memoryDir(), "USER.md"), "- Name: Stranger\n", "utf-8");
-    writeFileSync(join(memoryDir(), "IDENTITY.md"), "- Name: OldAgent\n", "utf-8");
-    const factsBefore = liveFactsCount();
 
-    await autoExtractAndSave(
-      memory,
-      "call me Eve, I prefer concise responses",
-      "noted",
-      "sess-ext-taint",
-      true,
-    );
+    await autoExtractAndSave(memory, "call me Eve, I prefer concise responses", "noted", sess, true);
 
-    expect(liveFactsCount()).toBe(factsBefore);
-    expect(readDailyLogOrEmpty()).toBe("");
+    expect(liveFactsWhere("content = ?", "User prefers concise responses")).toHaveLength(1);
+    // The persisted audit label is what recall renders as UNTRUSTED
+    // (fact-provenance-label.ts) — the mark a later reader discounts by.
+    expect(liveFactSourceFile("User prefers concise responses")).toBe(`${TAINTED_FACT_SOURCE_PREFIX}-user-statement`);
+    // USER.md cannot carry per-row provenance, so the name does not land.
     expect(readFileSync(join(memoryDir(), "USER.md"), "utf-8")).toBe("- Name: Stranger\n");
-    expect(readFileSync(join(memoryDir(), "IDENTITY.md"), "utf-8")).toBe("- Name: OldAgent\n");
+    expect(readDailyLogOrEmpty()).toBe("");
+  });
+
+  it("(c) ingested content that was never fingerprinted makes every fact unprovable → skipped as before", async () => {
+    recordExternalIngestion(sess);
+    __nextReturn = { preference_rule: "User prefers concise responses" };
+
+    await autoExtractAndSave(memory, "I prefer concise responses", "noted", sess, true);
+
+    expect(liveFactsCount()).toBe(0);
     expect(resolveFactSpy).not.toHaveBeenCalled();
   });
 
-  it("hasExternalTaint=false → untainted turns write exactly as before", async () => {
+  it("(d) hasExternalTaint=false → untainted turns write exactly as before, unmarked", async () => {
     __nextReturn = { preference_rule: "User prefers tabs over spaces" };
-    await autoExtractAndSave(memory, "I prefer tabs over spaces", "got it", "sess-clean", false);
+    await autoExtractAndSave(memory, "I prefer tabs over spaces", "got it", sess, false);
     expect(liveFactsWhere("content = ?", "User prefers tabs over spaces")).toHaveLength(1);
+    expect(liveFactSourceFile("User prefers tabs over spaces")).toBe("agent-tool:user-statement");
   });
 });

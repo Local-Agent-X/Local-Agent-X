@@ -12,7 +12,9 @@ import {
 } from "./write-safely.js";
 import { compactProfileIfOverCap } from "./personality-confirmed.js";
 import { stripHarnessScaffolding } from "../sanitize.js";
-import { createUserEvidenceCapability, type MemoryPromotionContext } from "./promotion-gate.js";
+import { createUserEvidenceCapability, TAINTED_SOURCE_SUFFIX, type MemoryPromotionContext } from "./promotion-gate.js";
+import { TAINTED_FACT_SOURCE_PREFIX } from "./fact-provenance-label.js";
+import { externalContentVerdict } from "../data-lineage/external.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("memory.auto-extract");
@@ -35,19 +37,39 @@ export async function autoExtractAndSave(
   sessionId?: string,
   hasExternalTaint?: boolean,
 ): Promise<void> {
-  // Session-level external-content gate (D6). The content-based pre-flight
-  // below can't catch taint an LLM paraphrase erased — when the SESSION
-  // ingested external content (web/http/browser/MCP; see
-  // data-lineage/external.ts), no fact from this turn may auto-promote to
-  // durable memory, regardless of how clean the text now looks. Explicit
-  // remember/memory_save tool calls stay allowed (gated + provenance-marked).
-  if (hasExternalTaint) {
-    logger.warn(
-      `[memory] Auto-extract skipped: session ingested external content this run — ` +
-      `durable auto-promotion blocked (session-taint gate D6)${sessionId ? ` sess=${sessionId}` : ""}`,
-    );
-    return;
-  }
+  // Session-level external-content gate (D6), decided PER FACT. When the
+  // SESSION ingested external content (web/http/browser/MCP; see
+  // data-lineage/external.ts), a fact whose text carries bytes of that content
+  // is refused — that is the injection-into-memory risk D6 exists for — and a
+  // fact we cannot adjudicate (content never captured, or too long to fully
+  // fingerprint) is skipped as the whole turn used to be. A fact proven free
+  // of the external bytes is saved, marked `:tainted-external` so recall
+  // renders it untrusted (fact-provenance-label.ts). The residual risk is
+  // accepted knowingly: an LLM paraphrase of injected text shares no shingle
+  // with its source, so the overlap check cannot see it. The alternative —
+  // no durable memory for any session that touched the web — skipped 162
+  // turns on one box and left an evening's setup work unremembered; the
+  // provenance mark is what lets a later reader discount such a fact. Explicit
+  // remember/memory_save tool calls are unchanged (gated + provenance-marked).
+  const sid = sessionId ?? "default";
+  const promotionSource = hasExternalTaint ? `auto-extract${TAINTED_SOURCE_SUFFIX}` : "auto-extract";
+  const factSourceFile = hasExternalTaint ? `${TAINTED_FACT_SOURCE_PREFIX}-user-statement` : "agent-tool:user-statement";
+  const clearsExternalContent = (content: string, target: string, key: string): boolean => {
+    // Only the Facts DB carries per-row provenance to recall time (the rule
+    // isFactDbPromotion encodes for explicit saves): a profile file or the
+    // daily log would render a tainted line under a trusted label.
+    if (target !== "memory:retain") {
+      logger.info(`[memory] Auto-extract skipped ${key}: session ingested external content and ${target} cannot carry per-row provenance (D6) sess=${sid}`);
+      return false;
+    }
+    const outcome = externalContentVerdict(sid, content);
+    if (outcome.verdict === "clean") return true;
+    const why = outcome.verdict === "overlap"
+      ? `overlaps external content read this session (${outcome.evidence.map((e) => e.target.slice(0, 80)).join(", ")})`
+      : "external content this session is not fully fingerprinted, so the fact cannot be proven clean";
+    logger.warn(`[memory] Auto-extract skipped ${key}: ${why} (session-taint gate D6) sess=${sid}`);
+    return false;
+  };
   // Strip harness scaffolding (system-reminder blocks, anti-loop / self-check
   // nudges) BEFORE the taint check and classifier — it's injected by the
   // harness, not user-authored, and must never become a durable fact.
@@ -99,14 +121,15 @@ export async function autoExtractAndSave(
       logger.warn(`[memory] Auto-extract rejected ${key}: missing exact supporting span`);
       return null;
     }
+    if (hasExternalTaint && !clearsExternalContent(content, target, key)) return null;
     try {
       const capability = createUserEvidenceCapability({
-        content, target, source: "auto-extract", sessionId: sessionId ?? "default",
+        content, target, source: promotionSource, sessionId: sid,
         provenance: "user_statement", confidence, userMessage, evidenceSpan: span,
       });
       return {
         origin: "user_statement", capability, evidenceContent: content, target,
-        source: "auto-extract", sessionId: sessionId ?? "default",
+        source: promotionSource, sessionId: sid,
         provenance: "user_statement", confidence,
       };
     } catch (e) {
@@ -239,13 +262,13 @@ export async function autoExtractAndSave(
   // no near-duplicate candidate).
   if (facts.preference_rule) {
     const promotion = promotionFor(facts.preference_rule, "memory:retain", "preference_rule", 0.85);
-    if (promotion && await saveFactSmart(memory, facts.preference_rule, "opinion", 0.85, promotion)) {
+    if (promotion && await saveFactSmart(memory, facts.preference_rule, "opinion", 0.85, promotion, factSourceFile)) {
       logger.info(`[memory] Auto-saved preference: ${facts.preference_rule}`);
     }
   }
   if (facts.biographical_event) {
     const promotion = promotionFor(facts.biographical_event, "memory:retain", "biographical_event", 0.9);
-    if (promotion && await saveFactSmart(memory, facts.biographical_event, "experience", 0.9, promotion)) {
+    if (promotion && await saveFactSmart(memory, facts.biographical_event, "experience", 0.9, promotion, factSourceFile)) {
       logger.info(`[memory] Auto-saved biographical event: ${facts.biographical_event}`);
     }
   }
@@ -259,7 +282,7 @@ export async function autoExtractAndSave(
     for (const [index, rel] of facts.relationships.entries()) {
       const content = `@${rel.name} is the user's ${rel.relation}`;
       const promotion = promotionFor(content, "memory:retain", "relationships", 0.95, index);
-      if (promotion && await saveFactSmart(memory, content, "world", 0.95, promotion)) {
+      if (promotion && await saveFactSmart(memory, content, "world", 0.95, promotion, factSourceFile)) {
         logger.info(`[memory] Auto-saved relationship: ${rel.relation} = ${rel.name}`);
       }
     }
@@ -276,7 +299,7 @@ export async function autoExtractAndSave(
   if (facts.personal_affinity) {
     for (const [index, affinity] of facts.personal_affinity.entries()) {
       const promotion = promotionFor(affinity, "memory:retain", "personal_affinity", 0.85, index);
-      if (promotion && await saveFactSmart(memory, affinity, "opinion", 0.85, promotion)) {
+      if (promotion && await saveFactSmart(memory, affinity, "opinion", 0.85, promotion, factSourceFile)) {
         logger.info(`[memory] Auto-saved affinity: ${affinity}`);
       }
     }
@@ -294,7 +317,7 @@ export async function autoExtractAndSave(
   if (facts.ongoing_state) {
     for (const [index, state] of facts.ongoing_state.entries()) {
       const promotion = promotionFor(state, "memory:retain", "ongoing_state", 0.9, index);
-      if (promotion && await saveFactSmart(memory, state, "observation", 0.9, promotion)) {
+      if (promotion && await saveFactSmart(memory, state, "observation", 0.9, promotion, factSourceFile)) {
         logger.info(`[memory] Auto-saved ongoing state: ${state}`);
       }
     }
@@ -329,12 +352,17 @@ const KIND_LETTER: Record<FactKind, string> = {
 // Returns true when the fact was written or merged (caller logs + daily-log),
 // false on failure so the caller skips its bookkeeping. Errors are logged, not
 // thrown — one bad fact must not abort the rest of the extraction pass.
+//
+// `sourceFile` is the persisted audit label recall keys its trust rendering
+// off: the plain user-statement label, or the tainted-external one for a fact
+// saved while the session held external content.
 async function saveFactSmart(
   memory: MemoryIndex,
   content: string,
   kind: FactKind,
   confidence: number,
   promotion: MemoryPromotionContext,
+  sourceFile: string,
 ): Promise<boolean> {
   const bullet = `- ${KIND_LETTER[kind]}(c=${confidence.toFixed(2)}) ${content.trim()}`;
   try {
@@ -344,7 +372,7 @@ async function saveFactSmart(
       target: "memory:retain",
       promotion,
     });
-    await memory.retainSmart(gated, "agent-tool:user-statement", 0, { promotion });
+    await memory.retainSmart(gated, sourceFile, 0, { promotion });
     return true;
   } catch (e) {
     logger.warn(`[memory] ${kind} write failed: ${(e as Error).message}`);

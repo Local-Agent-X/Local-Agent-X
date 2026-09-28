@@ -328,11 +328,11 @@ export async function persistTurnState(input: PersistInput): Promise<void> {
       /^(ls|dir|cat|echo|Write-Output|Get-ChildItem|pwd|whoami|git\s)/i.test(message.trim());
     try {
       // Session-level external-content taint (data-lineage/external.ts): a
-      // turn that ingested web/http/browser/MCP content must not auto-promote
-      // to durable memory — an LLM paraphrase would launder injected
-      // instructions past the content-based taint gate. Computed HERE at
-      // persist time so the background end-of-turn pass sees the state of the
-      // turn that spawned it.
+      // turn that ingested web/http/browser/MCP content auto-promotes only
+      // facts proven free of that content, and marks them — an LLM paraphrase
+      // would launder injected instructions past the content-based taint
+      // gate. Computed HERE at persist time so the background end-of-turn
+      // pass sees the state of the turn that spawned it.
       const { hasExternalIngestion } = await import("../../../data-lineage/external.js");
       await ctx.memoryManager.persistTurn({
         userMessage: message,

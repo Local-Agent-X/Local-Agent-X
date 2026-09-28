@@ -7,7 +7,14 @@
  * equivalent" is the reasoning that already cost two wrong claims in this
  * campaign. So the equivalence is pinned here.
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+
+// Profiles decide replay; pin one opted-in id so the mechanism is tested
+// independently of what the shipped profiles currently declare.
+vi.mock("../../local-runtimes/model-profile.js", () => ({
+  modelReplaysReasoning: (model: string) => model === "replayer:8b",
+}));
+
 import { resolveReasoningParam, isReasoningCapable } from "./openai-param-support.js";
 
 const OLLAMA = "http://127.0.0.1:11434/v1";
@@ -60,11 +67,11 @@ describe("thinking-off, if a profile ever asks for it again", () => {
 describe("resolveReasoningParam — a profile that replays its reasoning", () => {
   // Ollama /v1 sets its think switch from reasoning_effort, and the Qwen
   // templates render a prior <think> only when it is set; a replaying
-  // profile (qwen3:8b) therefore gets the param on a loopback endpoint even
-  // though its name is not in the reasoning-capable list.
-  it("sends reasoning_effort on a local endpoint for qwen3:8b, not for an unprofiled local model", async () => {
-    const { resolveReasoningParam } = await import("./openai-param-support.js");
-    expect(resolveReasoningParam({ baseURL: "http://127.0.0.1:11434/v1", model: "qwen3:8b", effort: undefined }).send).toBe(true);
-    expect(resolveReasoningParam({ baseURL: "http://127.0.0.1:11434/v1", model: "nobody:99b", effort: undefined }).send).toBe(false);
+  // profile therefore gets the param on a loopback endpoint even though its
+  // name is not in the reasoning-capable list — and only on a loopback one.
+  it("sends reasoning_effort locally for a replaying profile, not for any other local model or in the cloud", () => {
+    expect(resolveReasoningParam({ baseURL: OLLAMA, model: "replayer:8b", effort: undefined }).send).toBe(true);
+    expect(resolveReasoningParam({ baseURL: OLLAMA, model: "qwen3:8b", effort: undefined }).send).toBe(false);
+    expect(resolveReasoningParam({ baseURL: CLOUD, model: "replayer:8b", effort: undefined }).send).toBe(false);
   });
 });

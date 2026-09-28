@@ -2708,3 +2708,23 @@ LAX was open during this run (the rig's servers are isolated; the app was on the
 sentence is the small model's memory of the plan) did not hold up under the rerun, but the preamble still has a
 home: step 3 carries it, with the round's thinking, as the row's `reasoning`, which the template renders as the
 model's prior `<think>` for rows in the current loop.
+
+## EXP-36 — the model's reasoning rides back within the tool loop (2026-09-28). MEASURED OFF
+
+**Why:** both Qwen templates keep `<think>` for assistant rows after the last user message; LAX rebuilt those rows
+without it, so each step started without the plan the previous one had reasoned out (research report §0.2).
+4a25c2c3 kept the round's thinking on the row and sent it back as `reasoning` for rows after the last user row,
+plus `reasoning_effort` so Ollama sets its think switch, for profiles declaring `replayReasoning`.
+
+**Dev split ×1, EXP-35 vs EXP-36:** 8B 14/32 → 14/32, 27B 30/32 → 28/32, gates 0/0. Input tokens +23% (8B) and
++18% (27B); mean TTFT +19% (8B) and +5% (27B). The two long-session 8B cases carry the mechanism:
+`constraint-survives-long-session` hit a context overflow (re-prefill per message 16k → 29k), and
+`injection-survives-compaction` lost its fact (re-prefill 16k → 24k). Replayed reasoning breaks Ollama's prompt
+cache: when a new user message arrives the template re-renders the previous turn's assistant rows WITHOUT their
+think blocks, so the rendered prefix changes and everything after it re-prefills (the research's §0.2 warning,
+now measured). It also spends window the compaction estimator does not see.
+
+**Decision:** off — `replayReasoning: false` in the three Qwen profiles, which restores the EXP-35 wire exactly (no
+row reasoning, no reasoning_effort). The mechanism stays, profile-gated, for one retry once the 27B runs at the
+auto-sized window (131k) with the replayed text counted by the compaction estimator and capped per row; a retry
+must show a pass-rate gain that pays for the cache cost, or the mechanism is deleted.

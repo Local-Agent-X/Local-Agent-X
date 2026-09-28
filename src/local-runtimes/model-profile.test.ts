@@ -199,9 +199,14 @@ describe("assistant row shape", () => {
 });
 
 describe("reasoning replay", () => {
-  it("is declared by the three Qwen profiles and off elsewhere", async () => {
+  // EXP-36 measured it on (2026-09-28) and turned it off: replayed reasoning
+  // busts Ollama's prompt cache once a new user message arrives (re-prefill
+  // per message 16k → 29k on the 8B), overflowed the 8B's 40k window, and
+  // moved neither pass rate. The profiles keep the field at false so the
+  // retry at a larger window is a one-line, logged change.
+  it("is off for the three Qwen profiles and for unprofiled models", async () => {
     const { modelReplaysReasoning } = await import("./model-profile.js");
-    for (const id of ["qwen3:8b", "qwen3:14b", "qwen3.6:27b"]) expect(modelReplaysReasoning(id), id).toBe(true);
+    for (const id of ["qwen3:8b", "qwen3:14b", "qwen3.6:27b"]) expect(modelReplaysReasoning(id), id).toBe(false);
     expect(modelReplaysReasoning("nobody:99b")).toBe(false);
   });
 });

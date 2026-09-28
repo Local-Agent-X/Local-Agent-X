@@ -17,7 +17,7 @@
     "toolsAndThinking": true
   },
   "parallelToolCalls": true,
-  "replayReasoning": true,
+  "replayReasoning": false,
   "assistantRowShape": "text-or-tool-calls",
   "thinking": {
     "supported": true,

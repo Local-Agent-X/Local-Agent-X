@@ -183,3 +183,17 @@ describe("shipped profiles declare when the model should think", () => {
     }
   });
 });
+
+describe("assistant row shape", () => {
+  // Ollama's legacy Qwen3 template renders an assistant row's text OR its tool
+  // calls, never both, so the Qwen3 family declares text-or-tool-calls; the
+  // 27B (native renderer) and any unprofiled model keep both. Ollama's /v1
+  // ignores parallel_tool_calls, so parallelToolCalls stays a description.
+  it("is text-or-tool-calls for Qwen3 8B/14B and the default elsewhere", async () => {
+    const { modelAssistantRowShape } = await import("./model-profile.js");
+    expect(modelAssistantRowShape("qwen3:8b")).toBe("text-or-tool-calls");
+    expect(modelAssistantRowShape("qwen3:14b")).toBe("text-or-tool-calls");
+    expect(modelAssistantRowShape("qwen3.6:27b")).toBe("text-and-tool-calls");
+    expect(modelAssistantRowShape("nobody:99b")).toBe("text-and-tool-calls");
+  });
+});

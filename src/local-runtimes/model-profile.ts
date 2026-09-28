@@ -61,6 +61,12 @@ export const ModelProfileSchema = z.object({
     toolsAndThinking: z.boolean(),
   }).strict(),
   parallelToolCalls: z.boolean(),
+  /** How the history rebuild shapes an assistant row that carries tool calls.
+   *  "text-or-tool-calls": the runtime's template renders the text OR the
+   *  calls, never both (Ollama's legacy Qwen3 template: `{{ if .Content }}…
+   *  {{ else if .ToolCalls }}`), so the preamble text is left out of the wire
+   *  row and the calls survive. Absent = both are sent. */
+  assistantRowShape: z.enum(["text-and-tool-calls", "text-or-tool-calls"]).optional(),
   thinking: z.object({
     supported: z.boolean(),
     mode: z.enum(["planning_only", "all", "off"]),
@@ -288,6 +294,12 @@ export function modelThinking(modelId: string): ModelProfile["thinking"] | null 
  *  field is left out of the request (the runtime's own default applies). */
 export function modelToolStepSampling(modelId: string): ModelProfile["sampling"]["toolStep"] | null {
   return profileOrNull(modelId, "no declared sampling")?.sampling.toolStep ?? null;
+}
+
+/** Whether an assistant row with tool calls is sent with its text too. Only a
+ *  profile that declares otherwise drops the text (see assistantRowShape). */
+export function modelAssistantRowShape(modelId: string): "text-and-tool-calls" | "text-or-tool-calls" {
+  return profileOrNull(modelId, "assistant rows carry text and tool calls")?.assistantRowShape ?? "text-and-tool-calls";
 }
 
 /** The window the declared profile measured, or null without a profile. Used

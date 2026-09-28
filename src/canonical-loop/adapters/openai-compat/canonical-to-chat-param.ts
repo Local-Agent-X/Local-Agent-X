@@ -22,6 +22,10 @@ export function canonicalToChatParam(
   messages: CanonicalMessage[],
   pendingRedirect: TurnInput["pendingRedirect"],
   validToolNames?: ReadonlySet<string>,
+  // A runtime whose template renders an assistant row's text OR its tool
+  // calls (never both) gets the calls: the preamble text is left out of the
+  // wire row. Declared per model (model-profile assistantRowShape).
+  assistantRowShape: "text-and-tool-calls" | "text-or-tool-calls" = "text-and-tool-calls",
 ): ChatCompletionMessageParam[] {
   const out: ChatCompletionMessageParam[] = [];
   for (const m of messages) {
@@ -64,7 +68,7 @@ export function canonicalToChatParam(
       if (tc && tc.length > 0) {
         out.push({
           role: "assistant",
-          content: text,
+          content: assistantRowShape === "text-or-tool-calls" ? "" : text,
           tool_calls: tc.map(t => ({
             id: t.id,
             type: "function",

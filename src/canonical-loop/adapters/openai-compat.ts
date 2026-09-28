@@ -51,7 +51,7 @@ import { streamOnce, applyToolCallTextFallback } from "./openai-compat/stream-on
 import { assessOpenAiCompatPreflight, promptExceedsMeasuredWindow } from "./openai-compat/request-preflight.js";
 import { buildTurnTrace } from "./openai-compat/turn-trace.js";
 import { resolveStepReasoningEffort, type ThinkingMode } from "../step-effort.js";
-import { modelThinking, modelToolStepSampling } from "../../local-runtimes/model-profile.js";
+import { modelAssistantRowShape, modelThinking, modelToolStepSampling } from "../../local-runtimes/model-profile.js";
 import { classifyModelStop } from "./model-stop.js";
 
 export { OPENAI_COMPAT_ADAPTER_NAME, OPENAI_COMPAT_ADAPTER_VERSION } from "./openai-compat/types.js";
@@ -129,7 +129,7 @@ export class OpenAICompatAdapter implements Adapter {
       model,
       systemPrompt: this.opts.systemPrompt ?? "You are a helpful assistant.",
       messages: appendTrailingContext(
-        canonicalToChatParam(input.messages, input.pendingRedirect, new Set(input.tools.map(t => t.name))),
+        canonicalToChatParam(input.messages, input.pendingRedirect, new Set(input.tools.map(t => t.name)), model ? modelAssistantRowShape(model) : "text-and-tool-calls"),
         this.opts.trailingContext,
         input.ephemeralTailMessages ?? 0,
       ),

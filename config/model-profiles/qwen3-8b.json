@@ -17,6 +17,7 @@
     "toolsAndThinking": true
   },
   "parallelToolCalls": true,
+  "assistantRowShape": "text-or-tool-calls",
   "thinking": {
     "supported": true,
     "mode": "all",

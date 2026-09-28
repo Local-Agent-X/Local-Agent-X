@@ -4,8 +4,10 @@
 // internals (only hasCapability). Pinned by ari-taint-shell-contract.test.ts (the
 // tainted-shell pre-gate against the live kernel) and blocked-self-verify.test.ts.
 
+import { USER_HINTS, type ToolResult } from "../types.js";
 import { hasCapability } from "../tool-registry.js";
 import { findTaintInPayload, detectSecretsInOutput } from "../data-lineage/index.js";
+import { scanForSecrets } from "../security/secrets/index.js";
 
 // Kernel taint sources that @arikernel/core's deny-tainted-shell rule treats as
 // untrusted content (its `match.taintSources`). Mirrored here so LAX can PRE-EMPT
@@ -85,6 +87,50 @@ export function taintedShellBlockReason(
       ? `the command text carries bytes from a tainted source (${[...new Set(overlap.map((o) => o.source))].join(", ")})`
       : `the command carries secret-shaped content (${secret.kinds.join(", ")})`;
   return `Shell is blocked for this command: ${evidence}, and running it while the session is tainted (${hit.join(", ")}) is an exfiltration risk, so THIS command stays denied. This does NOT block your file edits (read/write/edit), the build/verify typecheck, or benign shell commands that don't carry the tainted/secret data — keep using those to make progress. If this was intended and safe, ask the user to clear it in Settings (declassify). The lock resets on your next turn.`;
+}
+
+/**
+ * A shell command carrying a REGISTERED known secret value is refused whatever
+ * the session's taint. The registry holds the user's actual stored secrets and
+ * every value the output masker hid from the model (data-lineage/secret-values.ts);
+ * such a value in a command line can only have arrived through a leak, and the
+ * command line is an egress channel the outbound scan did not cover (bash is
+ * sensitive-read class, not egress class, so egressGuardGate never sees it).
+ * Known values only — a secret SHAPE the model typed from a key the user pasted
+ * in chat is the tainted-shell gate's business, and only under taint. Pure.
+ */
+export function knownSecretShellBlockReason(toolName: string, args: unknown): string | null {
+  if (!hasCapability(toolName, "shell")) return null;
+  const payload = shellCommandPayload(args);
+  if (!payload) return null;
+  const hits = scanForSecrets(payload).matches.filter((m) => m.type === "known-secret-value").length;
+  if (hits === 0) return null;
+  return (
+    `Shell is blocked for this command: it carries a stored secret value (${hits} occurrence${hits === 1 ? "" : "s"}, plain or encoded) — ` +
+    `a value the vault holds or one that was masked out of an earlier tool result. Credentials never go on a command line: ` +
+    `pass the stored secret to the process with the secret_env argument, or use a {{SECRET_NAME}} placeholder in http_request. ` +
+    `Other commands are not affected.`
+  );
+}
+
+/** The blocked envelope for knownSecretShellBlockReason — the outbound scan's
+ *  own layer and blocked_by, so the chat renders a content block, never a
+ *  connectivity failure. Null when the command carries no known value. */
+export function knownSecretShellBlock(toolName: string, args: unknown): ToolResult | null {
+  const reason = knownSecretShellBlockReason(toolName, args);
+  if (!reason) return null;
+  return {
+    content: `BLOCKED by egress guard: ${reason}`,
+    isError: true,
+    status: "blocked",
+    metadata: {
+      layer: "egress-guard",
+      blocked_by: "outbound-secret-scan",
+      secret_kinds: "Known Secret Value",
+      recovery: "Remove the secret value from the command. Expose a stored secret to the process with secret_env, or use a {{SECRET_NAME}} placeholder in http_request.",
+      userHint: USER_HINTS.outboundContent,
+    },
+  };
 }
 
 // A verify-shaped shell command = a delegated agent running the project's own

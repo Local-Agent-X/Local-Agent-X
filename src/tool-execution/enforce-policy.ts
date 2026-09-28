@@ -10,7 +10,7 @@ import { ariEvaluate, ariObserve, isAriActive, shouldGateInKernel, shouldObserve
 import { checkSessionPolicy } from "../session/policy.js";
 import { getKernelTaintSources } from "../data-lineage/index.js";
 import { WORKTREE_PATH_TOOLS, hasCapability } from "../tool-registry.js";
-import { taintedShellBlockReason, blockedSelfVerifyGuidance, SHELL_TAINT_DENY_SOURCES } from "./shell-block-guidance.js";
+import { taintedShellBlockReason, knownSecretShellBlock, blockedSelfVerifyGuidance, SHELL_TAINT_DENY_SOURCES } from "./shell-block-guidance.js";
 import { getHookEngine } from "../hooks/hook-engine.js";
 import { checkCircuit, circuitArgsSig } from "../circuit-breaker.js";
 import { checkToolRateLimit } from "./rate-limiter.js";
@@ -85,6 +85,11 @@ async function ariKernelGate(ctx: ToolCallContext): Promise<PhaseOutcome> {
     // dead code. The MODEL can't supply taint — it comes from the trusted
     // runtime tracker keyed off the session id.
     const taintLabels = getKernelTaintSources(sessionId || "default");
+    // A registered known secret value on a shell command line is refused
+    // regardless of taint (shell-block-guidance.ts): the command line is the
+    // one egress channel the outbound scan does not cover.
+    const knownSecretBlock = knownSecretShellBlock(tc.name, args);
+    if (knownSecretBlock) return terminate(ctx, { rendered: "model", result: knownSecretBlock, allowed: false });
     // Tainted-shell PAYLOAD-EVIDENCE pre-gate (chunk L). LAX owns the tainted-shell
     // decision — it front-runs the kernel's PURELY-TEMPORAL deny-tainted-shell. The
     // gate now denies a shell command ONLY when the command text carries the

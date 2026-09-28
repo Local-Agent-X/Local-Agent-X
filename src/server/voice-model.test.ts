@@ -15,7 +15,7 @@ describe("resolveVoiceModel", () => {
 		const none = settings(undefined);
 		expect(resolveVoiceModel("codex", "gpt-5.6-sol", none)).toBe("gpt-5.4-mini");
 		expect(resolveVoiceModel("openai", "gpt-5.6", none)).toBe("gpt-4o-mini");
-		expect(resolveVoiceModel("gemini", "gemini-2.5-pro", none)).toBe("gemini-2.5-flash");
+		expect(resolveVoiceModel("gemini", "gemini-3.1-pro-preview", none)).toBe("gemini-3.5-flash-lite");
 		expect(resolveVoiceModel("anthropic", "claude-opus-5", none)).toBe("claude-haiku-4-5");
 	});
 

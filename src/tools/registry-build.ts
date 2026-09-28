@@ -38,6 +38,7 @@ import { telegramTools } from "./telegram-tools.js";
 import { whatsappTools } from "./whatsapp-tools.js";
 import { restartTools } from "./restart-tool.js";
 import { updateTools } from "./update-tools.js";
+import { showUnblockControlTool } from "./unblock-control-tool.js";
 import { clipboardTools } from "./clipboard-tools.js";
 import { sqlTools } from "./sql-tools.js";
 import { taskTools } from "./task-tools.js";
@@ -68,7 +69,7 @@ export const allTools: ToolDefinition[] = applyPrompts([
   ...spreadsheetTools, ...documentTools, ...presentationTools, ...pdfTools, ...chartTools, ...previewTools,
   ...emailTools, ...calendarTools, ...telegramTools, ...whatsappTools, ...clipboardTools, ...sqlTools,
   ...taskTools, ...planTools, ...autopilotTools, ...opTools,
-  ...restartTools, ...updateTools,
+  ...restartTools, ...updateTools, showUnblockControlTool,
   {
     name: "memory_dream",
     description: "Run a memory dream now: tidy stored facts (algorithmic merge/promote) AND launch the agentic reflection that reviews raw transcripts and rewrites memory files. The deep reflection runs as background worker agents. For LLM fact-extraction from recent chunks, use memory_consolidate.",

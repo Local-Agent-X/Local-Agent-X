@@ -73,6 +73,10 @@ const TOOL_KEYWORD_MAP: Array<{ keywords: RegExp; exclude?: RegExp; toolPrefixes
   { keywords: /protocol/i, toolPrefixes: ["protocol"] },
   { keywords: /\bvideo\b/i, toolPrefixes: ["send_video", "generate_video"] },
   { keywords: /secret|api.?key|credential|\btoken\b/i, toolPrefixes: ["request_secret", "list_secrets"] },
+  // Deferred tier: the block notice / declassify control lives on a card that
+  // a collapsed group or a reload can hide; these are the words a user reaches
+  // for when they want it back.
+  { keywords: /unblock|declassif|quarantin|blocked (card|button|call)|security (block|lock|kernel)/i, toolPrefixes: ["show_unblock_control"] },
   { keywords: /create.*agent|new agent/i, toolPrefixes: ["agent_create"] },
   { keywords: /your logs|read.*logs/i, toolPrefixes: ["read_my_logs"] },
   // Raw-transcript paging (deferred tier — no audience entry): surfaces when

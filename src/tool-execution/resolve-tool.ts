@@ -29,6 +29,9 @@ const SESSION_SCOPED_TOOLS = new Set([
   "browser",
   "agent_spawn", "browser_capture_to_secret", "browser_fill_from_secret",
   "session_status", "request_secret", "request_secrets",
+  // show_unblock_control reads THIS session's taint registry; the trusted
+  // stamp is what keeps it from being pointed at another session's state.
+  "show_unblock_control",
   "voice_visual",
   // task_create/task_update stamp the session onto the task so the open-steps
   // completion gate can scope "unfinished work" to this conversation, and an
@@ -67,7 +70,9 @@ const SESSION_SCOPED_TOOLS = new Set([
 
 // `protocol` is the model-facing collapsed family. Keep the inner name for
 // direct/core callers, but never trust either a flat or nested model value.
-const OPERATION_SCOPED_TOOLS = new Set(["protocol", "protocol_get"]);
+// show_unblock_control reads the kernel scope of the op it runs in, which is
+// keyed by the trusted operation id, never a model-supplied one.
+const OPERATION_SCOPED_TOOLS = new Set(["protocol", "protocol_get", "show_unblock_control"]);
 
 const SESSION_REPEAT_SKIP_TOOLS = new Set([
   "request_secret", "request_secrets",

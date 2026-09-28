@@ -12,7 +12,7 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 66 top-level dirs · 66 live · 0 with no live importer · 1643 non-test source files · 0 god files (>400 LOC).
+**Totals:** 66 top-level dirs · 66 live · 0 with no live importer · 1648 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -20,18 +20,18 @@ over 400 LOC (the source-hygiene ceiling).
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 134 | 26 | XL |  |
 | `src/security/` | 90 | 39 | XL |  |
-| `src/tools/` | 79 | 197 | XL |  |
+| `src/tools/` | 80 | 198 | XL |  |
 | `src/canonical-loop/` | 65 | 247 | XL |  |
 | `src/providers/` | 64 | 22 | XL |  |
-| `src/workspace/` | 48 | 2 | M |  |
+| `src/workspace/` | 49 | 2 | M |  |
 | `src/memory/` | 46 | 130 | XL |  |
 | `src/util/` | 37 | 3 | S |  |
 | `src/session/` | 36 | 7 | L |  |
 | `src/auth/` | 34 | 11 | L |  |
 | `src/browser/` | 33 | 84 | XL |  |
+| `src/data-lineage/` | 33 | 8 | L |  |
+| `src/threat/` | 33 | 12 | L |  |
 | `src/local-runtimes/` | 32 | 19 | XL |  |
-| `src/threat/` | 32 | 12 | L |  |
-| `src/data-lineage/` | 31 | 8 | L |  |
 | `src/tool-policy/` | 30 | 20 | L |  |
 | `src/agency/` | 28 | 19 | L |  |
 | `src/agent-store/` | 26 | 7 | L |  |
@@ -46,7 +46,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/agents/` | 17 | 13 | L |  |
 | `src/sandbox/` | 16 | 9 | L |  |
 | `src/anthropic-client/` | 15 | 21 | XL |  |
-| `src/tool-execution/` | 15 | 50 | XL |  |
+| `src/tool-execution/` | 15 | 52 | XL |  |
 | `src/cognition/` | 13 | 33 | XL |  |
 | `src/voice/` | 13 | 74 | XL |  |
 | `src/autonomy/` | 12 | 4 | M |  |
@@ -55,11 +55,11 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/agent-guards/` | 11 | 11 | L |  |
 | `src/self-edit/` | 11 | 20 | L |  |
 | `src/agent-loop/` | 10 | 1 | S |  |
+| `src/ari-kernel/` | 10 | 12 | L |  |
 | `src/cron/` | 10 | 8 | L |  |
 | `src/persistence/` | 10 | 2 | S |  |
 | `src/integrations/` | 9 | 15 | M |  |
 | `src/screen-stream/` | 9 | 8 | L |  |
-| `src/ari-kernel/` | 8 | 11 | L |  |
 | `src/bridge-voice/` | 8 | 5 | M |  |
 | `src/routes/` | 8 | 88 | XL |  |
 | `src/sync/` | 8 | 20 | L |  |
@@ -82,7 +82,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/llm-dispatch/` | 2 | 2 | M |  |
 | `src/manifest-generator/` | 2 | 8 | M |  |
 | `src/net/` | 2 | 2 | M |  |
-| `src/types/` | 2 | 2 | M |  |
+| `src/types/` | 2 | 3 | M |  |
 | `src/pricing/` | 1 | 1 | S |  |
 
 ## No live importer (dead / superseded candidates)

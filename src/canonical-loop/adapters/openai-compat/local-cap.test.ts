@@ -79,6 +79,7 @@ describe("resolveLocalCap (seam wrapper)", () => {
     systemTokens: 2_000,
     toolTokens: 900,
     messageTokens: 100,
+    outputReserveTokens: OUTPUT_RESERVE_TOKENS,
     ...over,
   });
 

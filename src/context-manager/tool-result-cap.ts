@@ -65,10 +65,11 @@ const CHARS_PER_TOKEN = 3.5;
 export function toolResultCapChars(
   windowTokens: number,
   toolTokens: number = DEFAULT_TOOL_MANIFEST_TOKENS,
+  outputReserveTokens: number = OUTPUT_RESERVE_TOKENS,
 ): number {
   if (!Number.isFinite(windowTokens) || windowTokens <= 0) return DEFAULT_MAX_RESULT_CHARS;
   const promptTokens = Math.floor(windowTokens * PROMPT_WINDOW_SHARE);
-  const messageTokens = windowTokens - promptTokens - toolTokens - OUTPUT_RESERVE_TOKENS;
+  const messageTokens = windowTokens - promptTokens - toolTokens - outputReserveTokens;
   const resultTokens = Math.floor(messageTokens * RESULT_SHARE_OF_MESSAGES);
   const chars = Math.floor(resultTokens * CHARS_PER_TOKEN);
   return Math.min(DEFAULT_MAX_RESULT_CHARS, Math.max(MIN_RESULT_CAP_CHARS, chars));

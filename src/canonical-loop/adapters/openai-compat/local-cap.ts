@@ -65,6 +65,10 @@ export function clampLocalMaxTokens(args: {
   if (!args.isLocalEndpoint) return passthrough;
   if (args.windowProvenance !== "probed" && args.windowProvenance !== "exact") return passthrough;
 
+  // The flat reserve on purpose, even for a thinking model: here it is slack
+  // for the prompt estimate, and the cap itself IS the reply's budget —
+  // subtracting output-reserve.ts's larger thinking reserve would shrink the
+  // very budget that reserve exists to protect.
   const available = args.windowTokens - args.promptTokensEstimate - OUTPUT_RESERVE_TOKENS;
   if (available < MIN_USEFUL_COMPLETION_TOKENS) return { maxTokens: undefined, omitDefault: true };
   return { maxTokens: Math.min(args.explicitMaxTokens ?? LOCAL_DEFAULT_MAX_TOKENS, available), omitDefault: false };

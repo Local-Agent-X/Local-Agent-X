@@ -40,6 +40,17 @@ describe("resolveOperationRequirements", () => {
     });
   });
 
+  it("keeps the flat 1,024 output reserve in every op's context floor, cloud included", () => {
+    // output-reserve.ts widens the reserve for LOCAL thinking models inside
+    // their own window; the op requirement matched against every provider
+    // must not move with it.
+    const op = makeOp({
+      surfaceTools: ["read"],
+      telemetry: { estimatedTokens: 200, toolSchemaEstimatedTokens: 40, loadedToolCount: 1 },
+    });
+    expect(resolveOperationRequirements(op, []).requirements.minimumContextTokens).toBe(200 + 40 + 1_024);
+  });
+
   it("makes a persisted rejection authoritative over contradictory certification", () => {
     const target = localTarget();
     const op = makeOp({

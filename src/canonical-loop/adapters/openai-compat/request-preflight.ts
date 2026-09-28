@@ -26,6 +26,7 @@ import {
   type ToolDefLike,
 } from "../../../context-manager/request-fit.js";
 import { resolveContextWindow, type ContextWindowResolution } from "../../../context-manager/model-windows.js";
+import { resolveOutputReserve } from "../../../context-manager/output-reserve.js";
 import { createLogger } from "../../../logger.js";
 
 const logger = createLogger("canonical-loop.adapters.openai-compat.preflight");
@@ -56,6 +57,7 @@ export function assessOpenAiCompatPreflight(args: {
     systemPrompt: req.systemPrompt,
     tools: req.tools,
     messages: req.messages,
+    outputReserveTokens: resolveOutputReserve(model, window.tokens),
   });
   // Only ACT on a window we actually measured. A "floor" window is the
   // placeholder for a local model that hasn't loaded yet (no /api/ps entry,

@@ -87,6 +87,8 @@ export interface RequestFit {
   systemTokens: number;
   toolTokens: number;
   messageTokens: number;
+  /** Tokens held back for the reply (output-reserve.ts chooses it). */
+  outputReserveTokens: number;
 }
 
 /** Estimated tokens the serialized tool manifest adds to the request. */
@@ -108,11 +110,14 @@ export function assessRequestFit(args: {
   systemPrompt: string;
   tools: ReadonlyArray<ToolDefLike>;
   messages: ChatCompletionMessageParam[];
+  /** Default OUTPUT_RESERVE_TOKENS; see output-reserve.ts for local thinkers. */
+  outputReserveTokens?: number;
 }): RequestFit {
   const systemTokens = estimateTokens(args.systemPrompt);
   const toolTokens = toolManifestTokens(args.tools);
   const messageTokens = totalTokens(args.messages);
-  const budget = args.windowTokens - OUTPUT_RESERVE_TOKENS;
+  const outputReserveTokens = args.outputReserveTokens ?? OUTPUT_RESERVE_TOKENS;
+  const budget = args.windowTokens - outputReserveTokens;
   const requestTokens = systemTokens + toolTokens + messageTokens;
   const verdict: RequestFitVerdict = requestTokens <= budget ? "fits" : "too_big";
 
@@ -123,6 +128,7 @@ export function assessRequestFit(args: {
     systemTokens,
     toolTokens,
     messageTokens,
+    outputReserveTokens,
   };
 }
 
@@ -136,7 +142,7 @@ export function describeUnfittableRequest(model: string, fit: RequestFit): strin
   const n = (v: number) => v.toLocaleString("en-US");
   return (
     `Request needs ~${n(fit.requestTokens)} tokens but ${model} is running with a ${n(fit.windowTokens)}-token context window ` +
-    `(${n(OUTPUT_RESERVE_TOKENS)} reserved for the response). ` +
+    `(${n(fit.outputReserveTokens)} reserved for the response). ` +
     `Breakdown: system prompt ~${n(fit.systemTokens)}, tools ~${n(fit.toolTokens)}, messages ~${n(fit.messageTokens)}. ` +
     `Raise the model's context length in its runtime (e.g. the LM Studio context slider, Ollama num_ctx), ` +
     `switch to a larger-window model, or shrink the tool set.`

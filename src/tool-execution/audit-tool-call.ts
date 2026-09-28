@@ -20,6 +20,7 @@ import { buildDenyReason } from "../tool-policy/packs/threat-engine-pack.js";
 import { resolveContextWindow } from "../context-manager/model-windows.js";
 import { toolManifestTokens } from "../context-manager/request-fit.js";
 import { DEFAULT_MAX_RESULT_CHARS, toolResultCapChars } from "../context-manager/tool-result-cap.js";
+import { resolveOutputReserve } from "../context-manager/output-reserve.js";
 import { readOp } from "../ops/op-store.js";
 import { resolveOpModel } from "../canonical-loop/public/op-facts.js";
 
@@ -174,9 +175,10 @@ function resultCapChars(ctx: ToolCallContext): number {
     const tools = [...ctx.toolMap.values()].map(t => ({
       name: t.name, description: t.description, parameters: t.parameters,
     }));
+    const reserve = resolveOutputReserve(model, window.tokens);
     return tools.length > 0
-      ? toolResultCapChars(window.tokens, toolManifestTokens(tools))
-      : toolResultCapChars(window.tokens);
+      ? toolResultCapChars(window.tokens, toolManifestTokens(tools), reserve)
+      : toolResultCapChars(window.tokens, undefined, reserve);
   } catch {
     return DEFAULT_MAX_RESULT_SIZE; // sizing is best-effort; never break the call
   }

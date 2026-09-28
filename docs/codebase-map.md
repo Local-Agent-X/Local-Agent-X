@@ -12,7 +12,7 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 66 top-level dirs · 66 live · 0 with no live importer · 1648 non-test source files · 0 god files (>400 LOC).
+**Totals:** 66 top-level dirs · 66 live · 0 with no live importer · 1651 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -21,17 +21,17 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/ops/` | 134 | 26 | XL |  |
 | `src/security/` | 90 | 39 | XL |  |
 | `src/tools/` | 80 | 198 | XL |  |
-| `src/canonical-loop/` | 65 | 247 | XL |  |
-| `src/providers/` | 64 | 22 | XL |  |
+| `src/canonical-loop/` | 66 | 248 | XL |  |
+| `src/providers/` | 66 | 23 | XL |  |
 | `src/workspace/` | 49 | 2 | M |  |
 | `src/memory/` | 46 | 130 | XL |  |
+| `src/auth/` | 37 | 11 | L |  |
 | `src/util/` | 37 | 3 | S |  |
 | `src/session/` | 36 | 7 | L |  |
-| `src/auth/` | 34 | 11 | L |  |
 | `src/browser/` | 33 | 84 | XL |  |
 | `src/data-lineage/` | 33 | 8 | L |  |
+| `src/local-runtimes/` | 33 | 19 | XL |  |
 | `src/threat/` | 33 | 12 | L |  |
-| `src/local-runtimes/` | 32 | 19 | XL |  |
 | `src/tool-policy/` | 30 | 20 | L |  |
 | `src/agency/` | 28 | 19 | L |  |
 | `src/agent-store/` | 26 | 7 | L |  |
@@ -39,13 +39,13 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/agent-request/` | 23 | 14 | L |  |
 | `src/app-runtime/` | 23 | 12 | L |  |
 | `src/context/` | 23 | 8 | L |  |
-| `src/context-manager/` | 22 | 12 | L |  |
+| `src/context-manager/` | 23 | 12 | L |  |
 | `src/chat-ws/` | 21 | 20 | L |  |
 | `src/orchestrator/` | 20 | 24 | L |  |
 | `src/protocols/` | 19 | 51 | XL |  |
 | `src/agents/` | 17 | 13 | L |  |
+| `src/anthropic-client/` | 16 | 21 | XL |  |
 | `src/sandbox/` | 16 | 9 | L |  |
-| `src/anthropic-client/` | 15 | 21 | XL |  |
 | `src/tool-execution/` | 15 | 52 | XL |  |
 | `src/cognition/` | 13 | 33 | XL |  |
 | `src/voice/` | 13 | 74 | XL |  |
@@ -61,7 +61,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/integrations/` | 9 | 15 | M |  |
 | `src/screen-stream/` | 9 | 8 | L |  |
 | `src/bridge-voice/` | 8 | 5 | M |  |
-| `src/routes/` | 8 | 88 | XL |  |
+| `src/routes/` | 8 | 89 | XL |  |
 | `src/sync/` | 8 | 20 | L |  |
 | `src/telegram-bridge/` | 8 | 6 | M |  |
 | `src/auto-build/` | 7 | 52 | XL |  |

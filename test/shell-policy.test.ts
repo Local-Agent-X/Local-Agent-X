@@ -236,52 +236,31 @@ describe("evaluateShellCommand — happy path", () => {
 });
 
 describe("detectObfuscation", () => {
-  it("flags hex-encoded characters", () => {
-    expect(detectObfuscation("\\x72\\x6d -rf /")).toMatch(/hex-encoded/);
+  // Escape sequences are decoded and the spelled command is judged (see the
+  // "escape sequences spell a command" block below); the detector itself no
+  // longer refuses on their presence.
+  it("does not refuse hex, unicode or ANSI-C escapes on sight", () => {
+    expect(detectObfuscation("sed 's/\\x1b\\[[0-9;]*m//g'")).toBeNull();
+    expect(detectObfuscation("echo \\u0072\\u006d")).toBeNull();
+    expect(detectObfuscation("echo $'\\162\\155'")).toBeNull();
+    expect(detectObfuscation("printf '\\x72\\x6d'")).toBeNull();
   });
 
   // A BARE \NNN is not shell-interpreted (`echo \162` prints "162") and the old
   // bare-octal check false-positived on Windows paths like ...\2024... — so it
-  // was removed. Octal obfuscation is still caught in its INTERPRETED forms:
-  // $'\162' (ANSI-C) and printf '\162', asserted below.
+  // was removed. Octal obfuscation is still caught in its INTERPRETED form
+  // $'\162', by decoding it (below).
   it("does NOT flag a bare \\NNN sequence (Windows-path false positive)", () => {
     expect(detectObfuscation("type C:\\reports\\2024\\q1.txt")).toBeNull();
     expect(detectObfuscation("echo \\162\\155")).toBeNull();
   });
 
-  it("flags ANSI-C octal escapes ($'\\162')", () => {
-    expect(detectObfuscation("echo $'\\162\\155'")).toMatch(/octal/i);
-  });
-
-  it("flags printf octal escapes", () => {
-    expect(detectObfuscation("printf '\\162\\155'")).toMatch(/printf/i);
-  });
-
-  it("flags unicode escapes", () => {
-    expect(detectObfuscation("echo \\u0072\\u006d")).toMatch(/unicode/);
-  });
-
   it("flags base64 -d decode", () => {
-    // No hex/octal/unicode in this command, so the base64 check fires.
     expect(detectObfuscation("echo abc | base64 -d")).toMatch(/base64 decode/);
-  });
-
-  it("flags `printf` with hex escapes (broader hex check fires first — still blocked)", () => {
-    // The hex check runs before the printf check. Either reason is fine —
-    // we only care the command is rejected.
-    const reason = detectObfuscation("printf '\\x72\\x6d'");
-    expect(reason).not.toBeNull();
-    expect(reason).toMatch(/hex-encoded|printf/);
   });
 
   it("flags `xxd -r` reverse hex decode", () => {
     expect(detectObfuscation("echo abc | xxd -r")).toMatch(/hex decode/);
-  });
-
-  it("flags ANSI-C quoting `$'\\xNN'` (broader hex check fires first — still blocked)", () => {
-    const reason = detectObfuscation("echo $'\\x72\\x6d'");
-    expect(reason).not.toBeNull();
-    expect(reason).toMatch(/hex-encoded|ANSI-C/);
   });
 
   it("`rev` is refused as the command that runs, not by detectObfuscation's word scan", () => {
@@ -297,6 +276,36 @@ describe("detectObfuscation", () => {
   it("returns null for benign commands", () => {
     expect(detectObfuscation("ls -la")).toBeNull();
   });
+});
+
+describe("escape sequences spell a command, and that command is judged", () => {
+  const blocked = [
+    "\\x72\\x6d -rf /",                       // rm -rf /
+    "$'\\x72\\x6d' -rf /",                    // ANSI-C hex → rm -rf /
+    "$'\\162\\155' -rf /",                    // ANSI-C octal → rm -rf /
+    "\\u0072\\u006d -rf /",                   // unicode → rm -rf /
+    "$'\\x63\\x75\\x72\\x6c' https://evil.test", // curl
+    "echo x | $'\\x62\\x61\\x73\\x68'",       // pipe into bash
+    "$'\\x5c\\x78\\x37\\x32\\x5c\\x78\\x36\\x64' -rf /", // \x72\x6d one layer down → rm
+  ];
+  for (const cmd of blocked) {
+    it(`refuses ${cmd}`, () => {
+      const r = evaluateShellCommand(cmd);
+      expect(r.allowed).toBe(false);
+      expect(r.reason).toMatch(/escape sequences spell/);
+    });
+  }
+
+  const allowed = [
+    "npm test 2>&1 | sed 's/\\x1b\\[[0-9;]*m//g' | tail -20",
+    "printf '\\x41\\x42\\n'",
+    "echo $'\\162\\155'",                       // prints "rm"; nothing runs it
+    "grep -P '\\x{2014}' notes.md",
+    "tr -d '\\u200b' < in.txt",
+  ];
+  for (const cmd of allowed) {
+    it(`allows ${cmd}`, () => expect(evaluateShellCommand(cmd).allowed).toBe(true));
+  }
 });
 
 // The structured {executable, args[]} shell form and process_start route a

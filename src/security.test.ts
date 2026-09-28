@@ -210,15 +210,21 @@ describe("SecurityLayer", () => {
       expect(d.allowed).toBe(true);
     });
 
-    // Obfuscation
-    it("blocks hex-encoded commands", () => {
-      const d = sec.evaluate({ toolName: "bash", args: { command: "echo \\x72\\x6d" }, sessionId: "t" });
+    // Obfuscation: an escape sequence is decoded and the command it spells is
+    // judged — `echo rm` is fine, `rm -rf /` is not, however it is spelled.
+    // (The allowed side — `echo \x72\x6d` is just `echo rm` — is pinned on
+    // evaluateShellCommand in test/shell-policy.test.ts; through the layer the
+    // path guard reads a bare backslash token as a Windows path first.)
+    it("judges the command hex escapes spell", () => {
+      const d = sec.evaluate({ toolName: "bash", args: { command: "\\x72\\x6d -rf /" }, sessionId: "t" });
       expect(d.allowed).toBe(false);
+      expect(d.reason).toMatch(/escape sequences spell/);
     });
 
-    it("blocks unicode escapes", () => {
-      const d = sec.evaluate({ toolName: "bash", args: { command: "echo \\u0072\\u006d" }, sessionId: "t" });
+    it("judges the command unicode escapes spell", () => {
+      const d = sec.evaluate({ toolName: "bash", args: { command: "\\u0072\\u006d -rf /" }, sessionId: "t" });
       expect(d.allowed).toBe(false);
+      expect(d.reason).toMatch(/escape sequences spell/);
     });
 
     // Octal false-positive regression: a Windows path with a year-numbered
@@ -233,15 +239,11 @@ describe("SecurityLayer", () => {
       expect(d.allowed).toBe(true);
     });
 
-    // The REAL octal-escape vectors — the shell-INTERPRETED forms — stay blocked.
-    it("still blocks ANSI-C octal escapes ($'\\162\\155')", () => {
-      const d = sec.evaluate({ toolName: "bash", args: { command: "echo $'\\162\\155'" }, sessionId: "t" });
+    // The shell-INTERPRETED octal form is decoded and judged as what it spells.
+    it("still blocks a command hidden in ANSI-C octal escapes ($'\\162\\155' -rf /)", () => {
+      const d = sec.evaluate({ toolName: "bash", args: { command: "$'\\162\\155' -rf /" }, sessionId: "t" });
       expect(d.allowed).toBe(false);
-    });
-
-    it("still blocks printf octal escapes", () => {
-      const d = sec.evaluate({ toolName: "bash", args: { command: "printf '\\162\\155'" }, sessionId: "t" });
-      expect(d.allowed).toBe(false);
+      expect(sec.evaluate({ toolName: "bash", args: { command: "echo $'\\162\\155'" }, sessionId: "t" }).allowed).toBe(true);
     });
 
     it("blocks very long commands (encoded payloads)", () => {

@@ -77,9 +77,9 @@ describe("bash obeys the file-access mode (shell path guard)", () => {
     expect(bash(sec, "cat /etc/hosts").allowed).toBe(true);
   });
 
-  it("the command-shape vetting still runs first (obfuscation blocked regardless of mode)", () => {
+  it("the command-shape vetting still runs first (a command hidden in escapes is judged regardless of mode)", () => {
     const sec = new SecurityLayer(WORKSPACE, "unrestricted");
-    expect(bash(sec, "echo $'\\162\\155'").allowed).toBe(false);
+    expect(bash(sec, "$'\\162\\155' -rf /").allowed).toBe(false);
   });
 });
 

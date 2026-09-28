@@ -22,31 +22,14 @@ import type { InlineEvalPolicy } from "./types.js";
 // changes no downstream import path.
 export { splitShellSegments, stripQuotedSpans, tokenizeCommand } from "./shell-lex.js";
 
+// Escape sequences (\xHH, \uHHHH, $'…' ANSI-C quoting) are not refused here:
+// shell-policy decodes them (shell-escape-decode.ts) and judges the command
+// they spell with every rule, so a hidden `rm` is refused as `rm` while a
+// `sed 's/\x1b…'` that strips color codes is not refused at all.
 export function detectObfuscation(command: string): string | null {
-  // Hex-encoded sequences (e.g., \x72\x6d = "rm")
-  if (/\\x[0-9a-f]{2}/i.test(command)) {
-    return "Blocked: hex-encoded characters detected (possible obfuscation)";
-  }
-  // Octal escapes (e.g. \162\155 = "rm") are handled by the two ANSI-C / printf
-  // checks below — there is deliberately NO bare-\NNN test here. bash does not
-  // interpret a bare \NNN (`echo \162` prints "162", not "r"); the only real
-  // octal attack vectors are the interpreted forms $'\162' and printf '\162',
-  // caught by the "ANSI-C quoting with octal escapes" and "printf with escape
-  // sequences" rules below. A bare-\NNN test added nothing over those and
-  // false-positived on ordinary Windows paths, where the backslash is a path
-  // separator: C:\Users\...\2024 May order.xlsx contains "\202" and was blocked
-  // in every file-access mode.
-  // Unicode escape sequences (e.g., rm = "rm")
-  if (/\\u[0-9a-f]{4}/i.test(command)) {
-    return "Blocked: unicode escape sequences detected (possible obfuscation)";
-  }
   // Base64 inline decoding (echo BASE64 | base64 -d)
   if (/base64\s+(-d|--decode)/i.test(command)) {
     return "Blocked: base64 decode in command (possible obfuscation)";
-  }
-  // printf with escape sequences (printf '\x72\x6d')
-  if (/\bprintf\b.*\\(x|u|[0-7])/i.test(command)) {
-    return "Blocked: printf with escape sequences (possible obfuscation)";
   }
   // xxd / od reverse (decode hex to binary)
   if (/\bxxd\s+-r\b/i.test(command) || /\bod\b.*-A\s*x/i.test(command)) {
@@ -56,14 +39,6 @@ export function detectObfuscation(command: string): string | null {
   // We already block $ metacharacter, but check for quoted var assignment patterns
   if (/\b[a-z]=['"][a-z]{1,3}['"]/i.test(command) && command.split("=").length > 3) {
     return "Blocked: suspicious variable assignment pattern (possible string concatenation obfuscation)";
-  }
-  // ANSI-C quoting with hex escapes (e.g., $'\x72\x6d')
-  if (/\$'[^']*\\x[0-9a-fA-F]{2}/.test(command)) {
-    return "Blocked: ANSI-C quoting with hex escapes detected";
-  }
-  // ANSI-C quoting with octal escapes (e.g., $'\162\155')
-  if (/\$'[^']*\\[0-7]{3}/.test(command)) {
-    return "Blocked: ANSI-C quoting with octal escapes detected";
   }
   // Very long commands are suspicious (likely encoded payloads)
   if (command.length > 2000) {

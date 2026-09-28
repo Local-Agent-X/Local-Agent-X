@@ -12,26 +12,26 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 66 top-level dirs · 66 live · 0 with no live importer · 1664 non-test source files · 0 god files (>400 LOC).
+**Totals:** 67 top-level dirs · 67 live · 0 with no live importer · 1676 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | God files |
 |---|--:|--:|:--:|--:|
-| `src/ops/` | 134 | 26 | XL |  |
-| `src/security/` | 92 | 39 | XL |  |
+| `src/ops/` | 136 | 26 | XL |  |
+| `src/security/` | 95 | 39 | XL |  |
 | `src/tools/` | 80 | 198 | XL |  |
+| `src/canonical-loop/` | 69 | 254 | XL |  |
 | `src/providers/` | 67 | 26 | XL |  |
-| `src/canonical-loop/` | 66 | 249 | XL |  |
-| `src/workspace/` | 49 | 2 | M |  |
+| `src/workspace/` | 50 | 2 | M |  |
 | `src/memory/` | 46 | 130 | XL |  |
 | `src/local-runtimes/` | 38 | 25 | XL |  |
 | `src/auth/` | 37 | 11 | L |  |
 | `src/util/` | 37 | 3 | S |  |
 | `src/data-lineage/` | 36 | 10 | L |  |
 | `src/session/` | 36 | 7 | L |  |
+| `src/threat/` | 34 | 12 | L |  |
 | `src/browser/` | 33 | 84 | XL |  |
-| `src/threat/` | 33 | 12 | L |  |
 | `src/tool-policy/` | 30 | 20 | L |  |
 | `src/agency/` | 28 | 19 | L |  |
 | `src/agent-store/` | 26 | 7 | L |  |
@@ -46,10 +46,10 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/agents/` | 17 | 13 | L |  |
 | `src/anthropic-client/` | 16 | 21 | XL |  |
 | `src/sandbox/` | 16 | 9 | L |  |
-| `src/tool-execution/` | 15 | 52 | XL |  |
+| `src/tool-execution/` | 15 | 54 | XL |  |
+| `src/autonomy/` | 13 | 4 | M |  |
 | `src/cognition/` | 13 | 33 | XL |  |
 | `src/voice/` | 13 | 74 | XL |  |
-| `src/autonomy/` | 12 | 4 | M |  |
 | `src/server/` *(entrypoint)* | 12 | 53 | XL |  |
 | `src/whatsapp-bridge/` | 12 | 8 | L |  |
 | `src/agent-guards/` | 11 | 11 | L |  |
@@ -78,6 +78,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/routing/` | 4 | 6 | M |  |
 | `src/errors/` | 3 | 2 | S |  |
 | `src/language-intel/` | 3 | 4 | M |  |
+| `src/publish-review/` | 3 | 5 | M |  |
 | `src/conversation/` | 2 | 3 | M |  |
 | `src/llm-dispatch/` | 2 | 2 | M |  |
 | `src/manifest-generator/` | 2 | 8 | M |  |
@@ -163,6 +164,8 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/progressive-loader.ts` | S |
 | `src/project-rosters.ts` | M |
 | `src/prompt-telemetry.ts` | S |
+| `src/publish-operation-table.ts` | S |
+| `src/publish-operation.ts` | S |
 | `src/qualification-boot.ts` | S |
 | `src/rbac.ts` | M |
 | `src/reap-stale-procs.ts` | S |

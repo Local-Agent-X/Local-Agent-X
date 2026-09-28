@@ -74,33 +74,22 @@ function warnMissing(provider: ProviderId): null {
   return null;
 }
 
-/** Anthropic: OAuth (Claude CLI / subscription) XOR ANTHROPIC_API_KEY. */
+/** Anthropic: the picker's "subscription auth" entry — a Claude subscription
+ *  sign-in only. An ANTHROPIC_API_KEY (environment or secrets store) is never
+ *  used for it; see getAnthropicApiKey. */
 function anthropicAuth(): AuthProvider {
   const id: ProviderId = "anthropic";
-  const ENV_KEY = "ANTHROPIC_API_KEY";
   return {
-    async resolve(opts, store) {
-      const required = opts.requiredSource;
-      const rejectOAuth = opts.rejectOAuth === true;
-      if (!required || required === "oauth") try {
-        const oauth = await getAnthropicApiKey();
-        if (oauth) {
-          const isOAuth = oauth.startsWith("oauth:");
-          const source = isOAuth || oauth === "cli" ? "oauth" : "env";
-          if (source === (required ?? source) && !(rejectOAuth && isOAuth)) {
-            return {
-              provider: id,
-              credential: oauth,
-              source,
-            };
-          }
-        }
-      } catch { /* fall through to secrets/env */ }
-      const fromStore = store?.get(ENV_KEY);
-      if ((!required || required === "secrets-store") && fromStore) return { provider: id, credential: fromStore, source: "secrets-store" };
-      const fromEnv = process.env[ENV_KEY];
-      if ((!required || required === "env") && fromEnv) return { provider: id, credential: fromEnv, source: "env" };
-      return warnMissing(id);
+    async resolve(opts) {
+      if (opts.requiredSource && opts.requiredSource !== "oauth") return warnMissing(id);
+      // A bulk caller that must not draw on the subscription gets nothing —
+      // there is no other Anthropic credential to give it.
+      if (opts.rejectOAuth) return null;
+      try {
+        return { provider: id, credential: await getAnthropicApiKey(), source: "oauth" };
+      } catch {
+        return warnMissing(id);
+      }
     },
     hasCredential() {
       return !!loadAnthropicTokens() || isAnthropicCliAuthenticated();

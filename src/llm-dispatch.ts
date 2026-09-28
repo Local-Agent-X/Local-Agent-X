@@ -151,24 +151,22 @@ const DISPATCHABLE = new Set<LLMProvider>(["ollama", "local", "anthropic", "open
  * (xAI, Codex) through to a dead-ollama last-ditch that 404-spammed. Returns
  * null when no provider this module can call is usable; callers degrade.
  */
-export async function detectProvider(opts: { rejectOAuth?: boolean } = {}): Promise<LLMProvider | null> {
+export async function detectProvider(): Promise<LLMProvider | null> {
   const ctx = await resolveProviderContext();
   if (ctx) {
     const p = (ctx.provider === "local" ? "ollama" : ctx.provider) as LLMProvider;
     if (DISPATCHABLE.has(p)) return p;
   }
-  // No usable configured provider — fall back to a raw env key if one is set.
-  const ak = process.env.ANTHROPIC_API_KEY || "";
-  if (ak && (!opts.rejectOAuth || ak.startsWith("sk-ant-api"))) return "anthropic";
-  if (process.env.OPENAI_API_KEY) return "openai";
-  if (process.env.XAI_API_KEY) return "xai";
+  // No usable configured provider: nothing runs. A raw key in the environment
+  // was never picked in LAX — it may belong to another project — so background
+  // work does not quietly bill it.
   return null;
 }
 
 /** Single-shot text completion. Returns null on any failure. */
 export async function dispatch(opts: DispatchOptions): Promise<string | null> {
   const provider = opts.provider === "auto" || !opts.provider
-    ? await detectProvider({ rejectOAuth: opts.rejectOAuth })
+    ? await detectProvider()
     : opts.provider;
   if (!provider) return null;
 

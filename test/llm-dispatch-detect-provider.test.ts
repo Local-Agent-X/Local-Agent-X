@@ -46,10 +46,14 @@ describe("detectProvider — store-aware", () => {
     expect(await detectProvider()).toBeNull();
   });
 
-  it("falls back to a raw env key when no provider is configured", async () => {
+  // A raw key in the environment was never picked in LAX (it may belong to
+  // another project), so background work does not quietly bill it.
+  it("uses no raw env key when no provider is configured", async () => {
     noEnv();
     resolveProviderContext.mockResolvedValue(null);
     process.env.XAI_API_KEY = "x";
-    expect(await detectProvider()).toBe("xai");
+    process.env.ANTHROPIC_API_KEY = "sk-ant-api03-x";
+    process.env.OPENAI_API_KEY = "sk-x";
+    expect(await detectProvider()).toBeNull();
   });
 });

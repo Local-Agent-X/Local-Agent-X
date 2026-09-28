@@ -1,5 +1,9 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { rmSync } from "node:fs";
+
+// The billing lane the clamp sizes against, pinned per test (see forceTransport).
+let transport: "api" | "cli" = "cli";
+vi.mock("../context-manager/resolve-transport.js", () => ({ resolveAnthropicTransport: () => transport }));
 
 import { lastTurnUsage, roundPromptTokens } from "./op-usage.js";
 import { insertOpTurn } from "./store.js";
@@ -173,24 +177,13 @@ describe("lastTurnUsage — era marker and plausibility clamp", () => {
 // The clamp sizes against the EFFECTIVE window for the CURRENT transport. On a
 // 1M-rated model (opus-4-8) a 300k total is a valid single request on the API
 // but physically impossible on the CLI/OAuth path (~200k ceiling), so the same
-// row anchors on api and is refused on cli. Transport is driven purely by env
-// here (mirrors resolveAnthropicTransport / getAnthropicApiKey precedence) so
-// the test never depends on the box's saved credentials.
+// row anchors on api and is refused on cli. The lane is pinned through the
+// mocked resolveAnthropicTransport so the test never depends on the box's
+// credentials.
 describe("lastTurnUsage — transport-aware plausibility clamp", () => {
-	const ENV_KEYS = ["ANTHROPIC_API_KEY", "ANTHROPIC_OAUTH_TOKEN"] as const;
-	const savedEnv: Record<string, string | undefined> = {};
-	afterEach(() => {
-		for (const k of ENV_KEYS) {
-			if (savedEnv[k] === undefined) delete process.env[k];
-			else process.env[k] = savedEnv[k];
-		}
-	});
+	afterEach(() => { transport = "cli"; });
 	function forceTransport(kind: "api" | "cli") {
-		for (const k of ENV_KEYS) savedEnv[k] = process.env[k];
-		delete process.env.ANTHROPIC_OAUTH_TOKEN;
-		// A real key → api; a subscription-style key → cli. env wins over any
-		// saved token, so this pins the transport regardless of the box's auth.
-		process.env.ANTHROPIC_API_KEY = kind === "api" ? "sk-ant-api03-test" : "oauth:test";
+		transport = kind;
 	}
 
 	// opus-4-8 total = 300k: 297_500 + 1_000 + 500 + 1_000.

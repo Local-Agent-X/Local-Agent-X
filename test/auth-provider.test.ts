@@ -133,28 +133,23 @@ describe("openai — config key → store → env", () => {
   });
 });
 
-describe("anthropic — OAuth XOR api-key, rejectOAuth honored", () => {
-  it("returns the OAuth sentinel when available", async () => {
+// The picker's "Anthropic Claude (subscription auth)": a subscription sign-in or
+// nothing. An ANTHROPIC_API_KEY — environment or secrets store — is never used.
+describe("anthropic — subscription sign-in only", () => {
+  it("returns the subscription credential, booked as oauth", async () => {
     vi.mocked(getAnthropicApiKey).mockResolvedValue("cli");
     const r = await AUTH_PROVIDERS.anthropic.resolve({}, EMPTY);
     expect(r).toEqual({ provider: "anthropic", credential: "cli", source: "oauth" });
   });
-  it("classifies a raw API key returned by the Anthropic loader as billable env auth", async () => {
-    vi.mocked(getAnthropicApiKey).mockResolvedValue("sk-ant-api03-test");
-    const r = await AUTH_PROVIDERS.anthropic.resolve({}, EMPTY);
-    expect(r).toEqual({ provider: "anthropic", credential: "sk-ant-api03-test", source: "env" });
+  it("never falls back to an API key in the store or the environment", async () => {
+    vi.mocked(getAnthropicApiKey).mockRejectedValue(new Error("not signed in"));
+    process.env.ANTHROPIC_API_KEY = "sk-ant-env";
+    expect(await AUTH_PROVIDERS.anthropic.resolve({}, store({ ANTHROPIC_API_KEY: "sk-ant-store" }))).toBeNull();
   });
-  it("with rejectOAuth, an oauth: credential falls through to store/env", async () => {
+  it("with rejectOAuth, resolves nothing even when signed in", async () => {
     vi.mocked(getAnthropicApiKey).mockResolvedValue("oauth:tok");
     process.env.ANTHROPIC_API_KEY = "sk-ant-env";
-    const r = await AUTH_PROVIDERS.anthropic.resolve({ rejectOAuth: true }, EMPTY);
-    expect(r).toEqual({ provider: "anthropic", credential: "sk-ant-env", source: "env" });
-  });
-  it("store beats env", async () => {
-    vi.mocked(getAnthropicApiKey).mockRejectedValue(new Error("no oauth"));
-    process.env.ANTHROPIC_API_KEY = "sk-ant-env";
-    const r = await AUTH_PROVIDERS.anthropic.resolve({}, store({ ANTHROPIC_API_KEY: "sk-ant-store" }));
-    expect(r).toEqual({ provider: "anthropic", credential: "sk-ant-store", source: "secrets-store" });
+    expect(await AUTH_PROVIDERS.anthropic.resolve({ rejectOAuth: true }, store({ ANTHROPIC_API_KEY: "sk-ant-store" }))).toBeNull();
   });
   it("hasCredential trusts saved anthropic tokens", () => {
     vi.mocked(loadAnthropicTokens).mockReturnValue({ accessToken: "a", provider: "anthropic" } as never);

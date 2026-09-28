@@ -118,15 +118,13 @@ export async function refreshAnthropicTokens(tokens: AnthropicTokens): Promise<A
 
 // ── Get Valid Anthropic API Key ──
 
-// A subscription sign-in wins over a pay-as-you-go ANTHROPIC_API_KEY in the
-// environment; the key is used only when no subscription credential resolves.
-// The environment is shared with every other program — a key exported for some
-// other project (2026-09-24: `setx ANTHROPIC_API_KEY` for a LangGraph repo)
-// must not silently move LAX off the user's plan. It is also the order the chat
-// transport already uses (getAnthropicDirectToken first), so the credential an
-// op is BOOKED under matches the one its requests actually carry: with the key
-// first, chats ran on the subscription while the ledger and the spend cap
-// counted them as API spend and stopped the session at its $15 budget.
+// The "anthropic" provider is the picker's "Anthropic Claude (subscription
+// auth)", so this resolves SUBSCRIPTION credentials only. A pay-as-you-go
+// ANTHROPIC_API_KEY — in the environment or the secrets store — is never used
+// for it: what the user picked is what runs, and what it is billed as. With the
+// environment key checked first (2026-09-24, a key `setx`-exported for another
+// project), chats ran on the subscription while the op was booked as API spend
+// and the $15 session budget stopped a session that cost nothing.
 export async function getAnthropicApiKey(): Promise<string> {
   if (process.env.ANTHROPIC_OAUTH_TOKEN) return `oauth:${process.env.ANTHROPIC_OAUTH_TOKEN.trim()}`;
 
@@ -155,9 +153,7 @@ export async function getAnthropicApiKey(): Promise<string> {
   const direct = await getAnthropicDirectToken();
   if (direct) return `oauth:${direct}`;
 
-  if (process.env.ANTHROPIC_API_KEY) return process.env.ANTHROPIC_API_KEY;
-
-  throw new Error("No Anthropic API key or OAuth tokens. Sign in via Settings → Account.");
+  throw new Error("Not signed in to a Claude subscription. Sign in via Settings → Account.");
 }
 
 /**

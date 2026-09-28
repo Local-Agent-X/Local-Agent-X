@@ -131,8 +131,8 @@ export interface BaseURLContext {
 }
 
 const REASONING_OPENAI_FAMILY = /^o[134]|gpt-[56]/i;
-// xAI models that accept the `reasoning_effort` request param: grok-4 family
-// (grok-4.5, grok-4.3, grok-4.20-*reasoning, grok-4.20-multi-agent) + grok-3-mini. The
+// xAI models that accept the `reasoning_effort` request param: the grok-4
+// family (grok-4.7 … 4.3, grok-4.20-*reasoning, grok-4.20-multi-agent). The
 // explicit `-non-reasoning` variant (grok-4.20-0309-non-reasoning) is excluded —
 // sending reasoning_effort to it is ignored or rejected. grok-code-fast is also
 // excluded: it reasons internally but does NOT accept the param, and sending it
@@ -141,9 +141,9 @@ const REASONING_OPENAI_FAMILY = /^o[134]|gpt-[56]/i;
 // `delta.content` instead of the separate `delta.reasoning_content` field, so we
 // keep it set for them; grok-code-fast streams reasoning in the separate field
 // regardless, handled by the adapter's thinking-delta path.
-const REASONING_GROK = /^grok-(?:4|3-mini)(?!.*-non-reasoning)/i;
+const REASONING_GROK = /^grok-4(?!.*-non-reasoning)/i;
 const REASONING_GEMINI = /gemini-(2\.5|3)/i;
-const REASONING_OSS = /deepseek-r1|qwen.*reasoning|gpt-oss|glm-4\.7/i;
+const REASONING_OSS = /deepseek-r1|qwen.*reasoning|gpt-oss/i;
 
 export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
   xai: {
@@ -151,6 +151,7 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     id: "xai",
     label: "xAI Grok",
     models: [
+      "grok-4.7",
       "grok-4.6",
       "grok-4.5",
       "grok-4.3",
@@ -181,7 +182,13 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     transport: "http",
     id: "openai",
     label: "OpenAI API",
-    models: ["gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-4o", "gpt-4o-mini", "o3-pro"],
+    // Chat Completions models only: the `-pro` tiers (gpt-5.4-pro, gpt-5.2-pro,
+    // gpt-5-pro, gpt-5.5-pro) are Responses-API-only per their model pages, so
+    // they are priced but not offered — the chat adapter cannot drive them.
+    models: [
+      "gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna",
+      "gpt-5.4-nano", "gpt-5.2", "gpt-5.1", "gpt-5", "gpt-5-mini", "gpt-5-nano", "gpt-4o", "gpt-4o-mini", "o3-pro", "o3-mini",
+    ],
     defaultModel: "o3-pro",
     // Non-reasoning: the default o3-pro hides reasoning server-side, so a
     // long think streams nothing and the idle watchdog can't tell it from a
@@ -196,7 +203,7 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     transport: "http",
     id: "codex",
     label: "OpenAI Codex",
-    models: ["gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini"],
+    models: ["gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini"],
     defaultModel: "gpt-5.5",
     backgroundModel: "gpt-5.4-mini",
     // Codex uses ChatGPT OAuth via getApiKey(); chat-runner routes it
@@ -239,17 +246,25 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     id: "gemini",
     label: "Google Gemini",
     // GA aliases, not dated -preview-MM-DD snapshots (those get retired → 404).
-    // PRO-class only for interactive use: the *flash* models empty out (return
-    // an empty STOP) when sent LAX's full ~55KB system prompt + tools via the
-    // native generateContent API — verified 2026-06-11 (flash works on a tiny
-    // prompt, empties on the real one; pro handles it reliably). So flash is not
-    // offered for chat. backgroundModel is a flash model — background agents use
-    // compact prompts, not the big chat prompt. 2.5-flash, not 2.0-flash:
-    // ai.google.dev lists gemini-2.0-flash as shut down (read 2026-09-27).
+    // Flash models are offered: the 2026-06-11 empty-STOP failure (2.5-flash on
+    // LAX's full prompt) was the endpoint's active-tool ceiling, now capped for
+    // every Gemini model in tools/tier-tool-set.ts, and the provider's own
+    // catalog was already surfacing the 3.x flash line in the picker.
+    // ai.google.dev (read 2026-09-27): 3.8 Flash is the current recommendation,
+    // 3.1 Pro the only Pro; the 2.5 line is "limited access, not for new
+    // projects"; gemini-3-pro-preview and gemini-2.0-flash are shut down.
     models: [
-      "gemini-2.5-pro",
       "gemini-3.1-pro-preview",
-      "gemini-3-pro-preview",
+      "gemini-2.5-pro",
+      "gemini-3.8-flash",
+      "gemini-3.7-flash",
+      "gemini-3.6-flash",
+      "gemini-3.5-flash",
+      "gemini-3.5-flash-lite",
+      "gemini-3.1-flash-lite",
+      "gemini-3-flash-preview",
+      "gemini-2.5-flash",
+      "gemini-2.5-flash-lite",
     ],
     defaultModel: "gemini-2.5-pro",
     backgroundModel: "gemini-2.5-flash",
@@ -262,7 +277,9 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     transport: "http",
     id: "cerebras",
     label: "Cerebras",
-    models: ["gpt-oss-120b", "zai-glm-4.7"],
+    // inference-docs.cerebras.ai/models/overview, read 2026-09-27: the shared
+    // catalog is these two; zai-glm-4.7 is no longer served.
+    models: ["gpt-oss-120b", "qwen-3.8-27b"],
     defaultModel: "gpt-oss-120b",
     baseURL: "https://api.cerebras.ai/v1",
     envKey: "CEREBRAS_API_KEY",

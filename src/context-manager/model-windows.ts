@@ -14,28 +14,48 @@ import { getLocalModel, getRuntimeForModel } from "../local-runtimes/index.js";
 const MODEL_CONTEXTS: Record<string, number> = {
   // OpenAI — developers.openai.com/api/docs/models, read 2026-09-27: the
   // gpt-6 / gpt-5.6 / gpt-5.4 pages all say "1,050,000 context window,
-  // 128,000 max output tokens"; o3-pro "200,000 / 100,000".
+  // 128,000 max output tokens"; the gpt-5.2 / 5.1 / 5 / 5.4-nano pages
+  // "400,000 / 128,000"; o3-pro and o3-mini "200,000 / 100,000".
   "gpt-6-astra": 1_050_000,
+  "gpt-6-sol": 1_050_000,
+  "gpt-6-luna": 1_050_000,
   "gpt-5.6": 1_050_000,      // bare alias routes to Sol
   "gpt-5.6-sol": 1_050_000,
   "gpt-5.6-terra": 1_050_000,
   "gpt-5.6-luna": 1_050_000,
-  "gpt-5.4": 1_050_000,
-  "gpt-5.4-mini": 272_000,
   "gpt-5.5": 1_050_000,
+  "gpt-5.4": 1_050_000,
+  "gpt-5.4-pro": 1_050_000,
+  "gpt-5.4-mini": 272_000,
+  "gpt-5.4-nano": 400_000,
+  "gpt-5.2": 400_000,
+  "gpt-5.2-pro": 400_000,
+  "gpt-5.1": 400_000,
+  "gpt-5": 400_000,
+  "gpt-5-mini": 400_000,
+  "gpt-5-nano": 400_000,
+  "gpt-5-pro": 400_000,
   "gpt-4o": 128_000,
   "gpt-4o-mini": 128_000,
   "o3-pro": 200_000,
-  // xAI — docs.x.ai/docs/models, read 2026-09-27: grok-4.6 500k;
+  "o3-mini": 200_000,
+  // xAI — docs.x.ai/docs/models, read 2026-09-27: grok-4.7 / 4.6 500k;
   // grok-4.5 / 4.3 / 4.20 1M; grok-build-0.1 256k (grok-code-fast-1 is its
-  // alias, 256k on its own page).
+  // alias, 256k on its own page). The undated grok-4.20 ids and
+  // grok-code-fast are LiteLLM-only aliases of the dated rows.
+  "grok-4.7": 500_000,
   "grok-4.6": 500_000,
   "grok-4.5": 1_000_000, // pin: x.ai docs 2026-09-27 say 1M; LiteLLM carries 500k
   "grok-4.3": 1_000_000,
   "grok-4.20-0309-reasoning": 1_000_000,
   "grok-4.20-0309-non-reasoning": 1_000_000,
   "grok-4.20-multi-agent-0309": 1_000_000,
+  "grok-4.20-reasoning": 1_000_000,
+  "grok-4.20-non-reasoning": 1_000_000,
+  "grok-4.20-multi-agent": 1_000_000,
+  "grok-4.20": 1_000_000,
   "grok-code-fast-1": 256_000,
+  "grok-code-fast": 256_000,
   "grok-build-0.1": 256_000,
   // Anthropic — the Models API / model catalog rates every model from Opus 4.6
   // and Sonnet 4.6 on at 1M (LiteLLM agrees). Opus 4.5, Sonnet 4.5 and Haiku
@@ -44,6 +64,7 @@ const MODEL_CONTEXTS: Record<string, number> = {
   "claude-fable-5": 1_000_000,
   "claude-fable-5-1": 1_000_000,
   "claude-mythos-5-1": 1_000_000,
+  "claude-mythos-5": 1_000_000,
   "claude-sonnet-5": 1_000_000,
   "claude-opus-5": 1_000_000,
   "claude-opus-4-8": 1_000_000,
@@ -60,11 +81,18 @@ const MODEL_CONTEXTS: Record<string, number> = {
   "claude-opus-5[1m]": 1_000_000,
   "claude-opus-5-5[1m]": 1_000_000,
   // Gemini — ai.google.dev model pages, read 2026-09-27: "Input token limit
-  // 1,048,576" for 2.5 Pro and 3.1 Pro Preview (LiteLLM: the same figure).
-  "gemini-2.5-pro": 1_048_576,
-  "gemini-2.5-flash": 1_048_576,
-  "gemini-3-pro-preview": 1_048_576,
+  // 1,048,576" for every listed Pro and Flash model (LiteLLM: the same figure).
   "gemini-3.1-pro-preview": 1_048_576,
+  "gemini-2.5-pro": 1_048_576,
+  "gemini-3.8-flash": 1_048_576,
+  "gemini-3.7-flash": 1_048_576,
+  "gemini-3.6-flash": 1_048_576,
+  "gemini-3.5-flash-lite": 1_048_576,
+  "gemini-3.5-flash": 1_048_576,
+  "gemini-3.1-flash-lite": 1_048_576,
+  "gemini-3-flash-preview": 1_048_576,
+  "gemini-2.5-flash-lite": 1_048_576,
+  "gemini-2.5-flash": 1_048_576,
 };
 
 export const DEFAULT_CONTEXT = 128_000;

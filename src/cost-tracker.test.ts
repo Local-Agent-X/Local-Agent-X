@@ -31,7 +31,7 @@ describe("getPricing — real rates", () => {
   it("keeps the verified flagship rates", () => {
     expect(getPricing("claude-opus-4-8")).toEqual({ input: 5, output: 25 });
     expect(getPricing("gpt-5.4")).toEqual({ input: 2.50, output: 15 });
-    expect(getPricing("gemini-3-pro-preview")).toEqual({ input: 2, output: 12 });
+    expect(getPricing("gemini-3.1-pro-preview")).toEqual({ input: 2, output: 12 });
   });
 
   it("prices the gpt-5.6 tiers at their per-tier rates, not a family default", () => {

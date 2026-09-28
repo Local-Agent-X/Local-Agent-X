@@ -101,13 +101,13 @@ describe("cost-tracker: getUsageSummary accumulation", () => {
 
   it("does not drift on typical token counts (exact dollar total)", async () => {
     const { trackUsage, getUsageSummary } = await load();
-    // grok-4: input 3, output 15 per 1M. Use 1M-multiples so per-record cost
+    // grok-4.6: input 2, output 6 per 1M. Use 1M-multiples so per-record cost
     // lands on clean values and the summed total is exact.
-    trackUsage("s1", "grok-4", "xai", 1_000_000, 0); // cost 3
-    trackUsage("s1", "grok-4", "xai", 1_000_000, 0); // cost 3
-    trackUsage("s1", "grok-4", "xai", 0, 1_000_000); // cost 15
+    trackUsage("s1", "grok-4.6", "xai", 1_000_000, 0); // cost 2
+    trackUsage("s1", "grok-4.6", "xai", 1_000_000, 0); // cost 2
+    trackUsage("s1", "grok-4.6", "xai", 0, 1_000_000); // cost 6
     const sum = getUsageSummary();
-    expect(sum.totalCostUsd).toBe(21); // 3 + 3 + 15
+    expect(sum.totalCostUsd).toBe(10); // 2 + 2 + 6
   });
 
   it("totalCostUsd is rounded to 2 decimal places", async () => {
@@ -203,14 +203,14 @@ describe("cost-tracker: filters", () => {
 describe("cost-tracker: getSessionCost / getTodayCost", () => {
   it("getSessionCost sums only the requested session", async () => {
     const { trackUsage, getSessionCost } = await load();
-    trackUsage("s1", "grok-4", "xai", 1_000_000, 0); // cost 3
-    trackUsage("s1", "grok-4", "xai", 1_000_000, 0); // cost 3
-    trackUsage("s2", "grok-4", "xai", 1_000_000, 0); // cost 3, other session
+    trackUsage("s1", "grok-4.6", "xai", 1_000_000, 0); // cost 2
+    trackUsage("s1", "grok-4.6", "xai", 1_000_000, 0); // cost 2
+    trackUsage("s2", "grok-4.6", "xai", 1_000_000, 0); // cost 2, other session
 
     const c = getSessionCost("s1");
     expect(c.inputTokens).toBe(2_000_000);
     expect(c.outputTokens).toBe(0);
-    expect(c.costUsd).toBe(6);
+    expect(c.costUsd).toBe(4);
   });
 
   it("getTodayCost includes only records since local start-of-day", async () => {

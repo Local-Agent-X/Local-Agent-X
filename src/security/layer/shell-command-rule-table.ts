@@ -145,6 +145,9 @@ export const COMMAND_RULES: readonly CommandRule[] = [
     (a) => a.some((x) => x === "--decode" || /^-[a-zA-Z]*[dD]/.test(x))),
   binWith("encoded-powershell", "obfuscation", "runs a base64-encoded PowerShell command the checks cannot read",
     ["powershell", "pwsh"], (a) => a.some(isEncodedCommandFlag)),
+  // The command word only: `git rev-parse`, `git rev-list` and a `rev` inside
+  // a commit message or grep pattern are not it.
+  bins("reverse-text", "obfuscation", "reverses its input, a common way to hide a command", ["rev"]),
 
   // ── Servers reachable from outside ──
   binWith("local-server", "local-server", "starts a server other machines could reach", ["python"],

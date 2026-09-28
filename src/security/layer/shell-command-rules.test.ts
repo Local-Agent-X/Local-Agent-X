@@ -45,8 +45,27 @@ describe("refused: eval and piping into a shell, at any command position", () =>
   });
 });
 
+describe("refused: rev as the command that runs, at any position", () => {
+  const cases: Array<[string, string]> = [
+    [`echo 'hs- | 2- ci' | rev`, "reverse-text"],
+    [`rev payload.txt | sh`, "reverse-text"],
+    [`true && rev < cmds`, "reverse-text"],
+    [`bash -c "cat p | rev | bash"`, "reverse-text"],
+  ];
+  for (const [cmd, rule] of cases) {
+    it(`${rule}: ${cmd}`, () => expect(ruleOf(cmd)).toBe(rule));
+  }
+});
+
 describe("not refused: the words were an argument, or a different command", () => {
   const allowed = [
+    // 2026-09-15 and 2026-09-27: `git rev-parse` was refused 17 times as "the
+    // rev command" because the old rule matched the word anywhere in the line.
+    `git log -20 --oneline; git status -sb; git rev-parse --abbrev-ref HEAD`,
+    `git fetch -q origin 2>&1; git rev-parse --short HEAD origin/main`,
+    `git rev-list --count HEAD`,
+    `git commit -m "rev the api version"`,
+    `grep -rn rev src | head`,
     `git commit -m "fix eval harness; add more eval cases"`,
     `git log --oneline | grep eval`,
     `npm run eval -- --tier dev`,

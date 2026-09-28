@@ -57,10 +57,6 @@ export function detectObfuscation(command: string): string | null {
   if (/\b[a-z]=['"][a-z]{1,3}['"]/i.test(command) && command.split("=").length > 3) {
     return "Blocked: suspicious variable assignment pattern (possible string concatenation obfuscation)";
   }
-  // rev (reverse string to hide commands)
-  if (/\brev\b/i.test(command)) {
-    return "Blocked: 'rev' command (commonly used for obfuscation)";
-  }
   // ANSI-C quoting with hex escapes (e.g., $'\x72\x6d')
   if (/\$'[^']*\\x[0-9a-fA-F]{2}/.test(command)) {
     return "Blocked: ANSI-C quoting with hex escapes detected";

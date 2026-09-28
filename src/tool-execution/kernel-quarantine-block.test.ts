@@ -19,12 +19,11 @@ import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { dispatchTools } from "../canonical-loop/turn-loop/dispatch-tools.js";
-import { makeChatToolDispatcher } from "../canonical-loop/chat-tool-dispatcher.js";
-import { registerToolDispatcherForOp, unregisterToolDispatcherForOp, unregisterToolsForOp } from "../canonical-loop/runtime.js";
-import { getBus, eventsChannel } from "../canonical-loop/bus.js";
-import { readOpMessages } from "../canonical-loop/store.js";
-import type { CanonicalEvent } from "../canonical-loop/types.js";
+import { dispatchTools } from "../canonical-loop/public/test-surface.js";
+import {
+  makeChatToolDispatcher, registerToolDispatcherForOp, unregisterToolDispatcherForOp, unregisterToolsForOp,
+  getBus, eventsChannel, readOpMessages, type CanonicalEvent,
+} from "../canonical-loop/index.js";
 import { startAriKernel, stopAriKernel } from "../ari-kernel/lifecycle.js";
 import { readKernelQuarantine } from "../ari-kernel/quarantine.js";
 import { clearSessionTaint, isSensitivePath } from "../data-lineage/index.js";

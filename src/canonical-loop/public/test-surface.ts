@@ -13,5 +13,7 @@
  * caller reaching for a reset helper fails CI the same way a deep import does.
  */
 export { _resetOpLedgers } from "../instruction-ledger/ledger.js";
+// A replay test drives a tool call through the same dispatch the chat lane uses.
+export { dispatchTools } from "../turn-loop/dispatch-tools.js";
 export { _resetMiddlewareStates } from "../middlewares/state.js";
 export { makeCanonicalLoopContext } from "../middlewares/ctx.test-helper.js";

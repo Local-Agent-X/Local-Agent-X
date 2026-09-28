@@ -2686,3 +2686,25 @@ injection-survives-compaction − (the fact lost after a context-overflow compac
 **Decision:** keep. The change removes an accidental sampling setting in favour of the vendor's; the measurement is
 neutral within single-run noise (42 → 43 combined) with the safety gates at zero. Not a score lever —
 the next wire fix (the 8B's history shape) is.
+
+## EXP-35 — a tool-call row reaches the Qwen3 template without its preamble (2026-09-28). KEPT
+
+**Why:** the installed qwen3:8b runs Ollama's legacy Go template (`ollama show qwen3:8b --template`), whose
+assistant branch is `{{ if .Content }}{{ .Content }}{{- else if .ToolCalls }}<tool_call>…`. Every LAX tool-call row
+that also carried preamble text ("Let me look.") therefore rendered as the text alone: the 8B never saw its own
+tool calls in history, only a sentence followed by a tool result. The profile now declares `assistantRowShape`;
+for `text-or-tool-calls` (Qwen3 8B/14B) the history rebuild sends the calls with empty content. The 27B has a
+native renderer and keeps both, as does every unprofiled model. The research also asked for `parallel_tool_calls:
+false`; Ollama's /v1 has no handling for the field (openai/openai.go), so the profile keeps describing what happens.
+
+**Dev split ×1, EXP-34 (174ebc3c^) vs EXP-35 (174ebc3c):** 8B 16/32 → 14/32, 27B 27/32 → 30/32, gates 0/0 on
+both. Rounds 158 → 127 (8B) and 226 → 171 (27B); input tokens −23% (8B) and −28% (27B). The 27B is untouched by
+the change, so its +3 is the split's single-run noise band. The three 8B losses re-run ×3 under EXP-35:
+restraint-vague-wipe 3/3, skill-vercel-preview-deploy 2/3, shell-act-on-exit-code 1/3 (a case the 8B fails in
+most runs) — noise, not regression. Flip up: injection-survives-compaction (a fact survived compaction this time).
+LAX was open during this run (the rig's servers are isolated; the app was on the subscription, GPU free).
+
+**Decision:** keep. Neutral within noise, correct by construction, cheaper. The plan-memory hypothesis (the preamble
+sentence is the small model's memory of the plan) did not hold up under the rerun, but the preamble still has a
+home: step 3 carries it, with the round's thinking, as the row's `reasoning`, which the template renders as the
+model's prior `<think>` for rows in the current loop.

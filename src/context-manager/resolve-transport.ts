@@ -1,5 +1,5 @@
 import { usesAnthropicSubscriptionAuth } from "../anthropic-models.js";
-import { loadAnthropicTokens } from "../auth/anthropic.js";
+import { isAnthropicCliAuthenticated, loadAnthropicTokens } from "../auth/anthropic.js";
 import type { AnthropicTransport } from "./effective-window.js";
 
 /**
@@ -33,8 +33,6 @@ import type { AnthropicTransport } from "./effective-window.js";
  * or a store-only API key would be mis-sized as "cli" and compact early.
  */
 export function resolveAnthropicTransport(): AnthropicTransport {
-  const envKey = process.env.ANTHROPIC_API_KEY;
-  if (envKey) return usesAnthropicSubscriptionAuth(envKey) ? "cli" : "api";
   if (process.env.ANTHROPIC_OAUTH_TOKEN) return "cli";
 
   try {
@@ -46,11 +44,17 @@ export function resolveAnthropicTransport(): AnthropicTransport {
     // so a transient fs error can never throw out of a sizing call.
   }
 
-  // No env key and no saved token: getAnthropicApiKey falls back to the Claude
-  // credential FILE, which also holds a subscription grant. Default to
-  // "cli" — the subscription window is the safe (smaller) assumption:
-  // over-compacting is recoverable, under-compacting kills the op on a raw
-  // "prompt is too long". If nothing is authenticated no request is made and
-  // the value is moot.
+  // A subscription sign-in wins over an environment ANTHROPIC_API_KEY
+  // (getAnthropicApiKey), and the Claude credential FILE is one: when it holds
+  // a grant, that is what the request uses.
+  if (isAnthropicCliAuthenticated()) return "cli";
+
+  const envKey = process.env.ANTHROPIC_API_KEY;
+  if (envKey) return usesAnthropicSubscriptionAuth(envKey) ? "cli" : "api";
+
+  // Nothing resolvable: the subscription window is the safe (smaller)
+  // assumption — over-compacting is recoverable, under-compacting kills the op
+  // on a raw "prompt is too long". If nothing is authenticated no request is
+  // made and the value is moot.
   return "cli";
 }

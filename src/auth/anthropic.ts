@@ -118,9 +118,16 @@ export async function refreshAnthropicTokens(tokens: AnthropicTokens): Promise<A
 
 // ── Get Valid Anthropic API Key ──
 
+// A subscription sign-in wins over a pay-as-you-go ANTHROPIC_API_KEY in the
+// environment; the key is used only when no subscription credential resolves.
+// The environment is shared with every other program — a key exported for some
+// other project (2026-09-24: `setx ANTHROPIC_API_KEY` for a LangGraph repo)
+// must not silently move LAX off the user's plan. It is also the order the chat
+// transport already uses (getAnthropicDirectToken first), so the credential an
+// op is BOOKED under matches the one its requests actually carry: with the key
+// first, chats ran on the subscription while the ledger and the spend cap
+// counted them as API spend and stopped the session at its $15 budget.
 export async function getAnthropicApiKey(): Promise<string> {
-  // Check for direct API key in env (console API keys use direct HTTP)
-  if (process.env.ANTHROPIC_API_KEY) return process.env.ANTHROPIC_API_KEY;
   if (process.env.ANTHROPIC_OAUTH_TOKEN) return `oauth:${process.env.ANTHROPIC_OAUTH_TOKEN.trim()}`;
 
   // Saved setup-token → direct bearer auth.
@@ -147,6 +154,8 @@ export async function getAnthropicApiKey(): Promise<string> {
   // `claude` subprocess and hung forever when the binary was missing.
   const direct = await getAnthropicDirectToken();
   if (direct) return `oauth:${direct}`;
+
+  if (process.env.ANTHROPIC_API_KEY) return process.env.ANTHROPIC_API_KEY;
 
   throw new Error("No Anthropic API key or OAuth tokens. Sign in via Settings → Account.");
 }

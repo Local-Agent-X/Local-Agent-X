@@ -10,10 +10,16 @@
  *             the findings and a "Push anyway" override (alwaysAsk, registered
  *             in approval-overrides.ts); approving runs the original call and
  *             records the override in the audit trail. Unattended: no override.
- *   AMBER / GREEN / FAILED / UNKNOWN / EMPTY
+ *   FAILED / UNKNOWN
+ *             nothing was reviewed, and nothing ships unreviewed in ANY profile
+ *             without the user's explicit yes (the owner's rule, 2026-09-28,
+ *             after a live UNKNOWN under Power let a push out): the same
+ *             always-ask card, worded "Push unreviewed", audited the same way;
+ *             unattended: blocked.
+ *   AMBER / GREEN / EMPTY
  *             the profile's "publish" row decides (requireApprovalPhase); a
  *             card, if one is raised, carries the review, and the tool result
- *             carries it either way. FAILED and UNKNOWN are said as such.
+ *             carries it either way.
  *
  * Verdicts are cached per (session, change-set fingerprint): a retry of the
  * same push, or the same push after an override, reuses the verdict; any
@@ -35,7 +41,7 @@ import type { PublishOperation } from "../publish-operation.js";
 import { changeSetIsEmpty, type ChangeSet } from "../publish-review/change-set-types.js";
 import type { PublishReview, PublishReviewRequest, PublishReviewRun } from "../canonical-loop/public/publish-review.js";
 import type { ToolCallContext } from "./context.js";
-import { redBlockText, reviewCardContext, reviewNoteForModel, reviewPreview } from "./publish-review-text.js";
+import { needsOverride, reviewCardContext, reviewNoteForModel, reviewPreview, stopText } from "./publish-review-text.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("tool-execution.publish-review-gate");
@@ -139,8 +145,8 @@ export async function publishReviewGate(ctx: ToolCallContext, ops: PublishOperat
   if (ctx.signal?.aborted) {
     return { kind: "block", result: { content: `NOT RUN: the turn was stopped while ${op.label} was being reviewed.`, isError: true, status: "blocked", metadata: { layer: "approval", userHint: USER_HINTS.policy } } };
   }
-  if (review.status !== "RED") return { kind: "proceed", review, overridden: false };
-  return redOutcome(ctx, op, review);
+  if (!needsOverride(review)) return { kind: "proceed", review, overridden: false };
+  return overrideOutcome(ctx, op, review);
 }
 
 function blocked(content: string, declined = false): PublishGateOutcome {
@@ -155,9 +161,11 @@ function blocked(content: string, declined = false): PublishGateOutcome {
   };
 }
 
-async function redOutcome(ctx: ToolCallContext, op: PublishOperation, review: PublishReview): Promise<PublishGateOutcome> {
-  if (ctx.callContext !== "local") return blocked(redBlockText(op, review, "unattended"));
-  if (!ctx.onEvent) return blocked(redBlockText(op, review, "no-channel"));
+// A RED verdict, or no verdict at all: only the user's explicit yes on THIS
+// publish lets it run.
+async function overrideOutcome(ctx: ToolCallContext, op: PublishOperation, review: PublishReview): Promise<PublishGateOutcome> {
+  if (ctx.callContext !== "local") return blocked(stopText(op, review, "unattended"));
+  if (!ctx.onEvent) return blocked(stopText(op, review, "no-channel"));
   const outcome = await getApprovalManager().requestApprovalDetailed({
     toolName: ctx.tc.name,
     toolCallId: ctx.tc.id,
@@ -166,27 +174,31 @@ async function redOutcome(ctx: ToolCallContext, op: PublishOperation, review: Pu
     args: ctx.args,
     preview: reviewPreview(op, review),
     // The owner's standing instruction: nothing ships over a red review
-    // finding without their explicit, per-publish override (see
-    // approval-overrides.ts). No profile and no remembered grant waives it.
+    // finding, or with no review at all, without their explicit, per-publish
+    // override (see approval-overrides.ts). No profile and no remembered
+    // grant waives it.
     alwaysAsk: true,
     opId: ctx.operationId,
     emit: ctx.onEvent,
   });
-  if (!outcome.approved) return blocked(redBlockText(op, review, outcome.reason === "declined" ? "declined" : "unanswered"), outcome.reason === "declined");
+  if (!outcome.approved) return blocked(stopText(op, review, outcome.reason === "declined" ? "declined" : "unanswered"), outcome.reason === "declined");
   recordOverride(ctx, op, review, outcome.grantId);
   return { kind: "proceed", review, overridden: true };
 }
 
 function recordOverride(ctx: ToolCallContext, op: PublishOperation, review: PublishReview, grantId?: string): void {
   const red = review.findings.filter((f) => f.severity === "red").map((f) => `${f.location}: ${f.problem}`);
-  logger.warn(`[publish-gate] user overrode a RED review for ${op.label} (${review.fingerprint.slice(0, 12)}): ${red.join("; ")}`);
+  const over = review.status === "RED"
+    ? `over a RED pre-publish review`
+    : `although the pre-publish review could not run (${review.status}: ${review.reason ?? (review.unknown.map((u) => u.reason).join("; ") || "no reason recorded")})`;
+  logger.warn(`[publish-gate] user approved ${op.label} ${over} (${review.fingerprint.slice(0, 12)})${red.length ? `: ${red.join("; ")}` : ""}`);
   try {
     getSharedAuditTrail(getLaxDir()).record({
       sessionId: ctx.sessionId || "default",
       event: "publish_review_overridden",
       toolName: ctx.tc.name,
       decision: "warn",
-      reason: `User approved "${op.label}" over a RED pre-publish review (approval ${grantId ?? "?"}, review ${review.opId ?? "?"}, change set ${review.fingerprint.slice(0, 16)}). Red findings: ${red.join("; ") || "(none listed)"}`,
+      reason: `User approved "${op.label}" ${over} (approval ${grantId ?? "?"}, review ${review.opId ?? "?"}, change set ${review.fingerprint.slice(0, 16)}).${review.status === "RED" ? ` Red findings: ${red.join("; ") || "(none listed)"}` : ""}`,
       role: "user",
       controlsApplied: ["PublishReview"],
     });

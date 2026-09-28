@@ -82,11 +82,11 @@ describe("publish review on the approval card", () => {
 		expect(card.querySelectorAll(".publish-review-problem")[1].textContent).toContain("<img src=x");
 	});
 
-	it("FAILED says it was not reviewed and keeps the plain Approve wording", () => {
-		const card = renderApproval(live({ kind: "publish-review", status: "FAILED", command: "vercel --prod", summary: "", findings: [], reason: "the review ran past its 4-minute deadline" }));
+	it("FAILED says it was not reviewed and the approve button says what approving means", () => {
+		const card = renderApproval(live({ kind: "publish-review", status: "FAILED", command: "vercel --prod", summary: "", findings: [], reason: "the review ran past its 4-minute deadline", overrideLabel: "Deploy unreviewed" }));
 		expect(card.querySelector(".publish-review-chip")?.textContent).toBe("FAILED — not reviewed");
 		expect(card.querySelector(".publish-review-reason")?.textContent).toContain("deadline");
-		expect(card.querySelector(".btn-approve")?.textContent).toBe("Approve");
+		expect(card.querySelector(".btn-approve")?.textContent).toBe("Deploy unreviewed");
 	});
 
 	it("an ask without a publish review is the ordinary card", () => {

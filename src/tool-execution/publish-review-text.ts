@@ -49,15 +49,31 @@ export function reviewNoteForModel(review: PublishReview): string {
   return lines.join("\n") + unknownTail(review);
 }
 
-/** What the model reads when a RED review stopped the publish. */
-export function redBlockText(op: PublishOperation, review: PublishReview, how: "unattended" | "declined" | "unanswered" | "no-channel"): string {
+/** A verdict the user must answer for in every profile: a red finding, or no
+ *  review at all. Nothing ships over either without their explicit yes. */
+export function needsOverride(review: PublishReview): boolean {
+  return review.status === "RED" || review.status === "FAILED" || review.status === "UNKNOWN";
+}
+
+export type StopReason = "unattended" | "declined" | "unanswered" | "no-channel";
+
+/** What the model reads when the review stopped the publish: a RED verdict,
+ *  or a review that could not run, and the user did not override it. */
+export function stopText(op: PublishOperation, review: PublishReview, how: StopReason): string {
+  const anyway = review.status === "RED" ? "publish anyway" : "publish unreviewed";
   const why = how === "declined"
-    ? "The user saw the findings and chose not to publish anyway."
+    ? `The user saw this and chose not to ${anyway}.`
     : how === "unanswered"
-      ? "The user was asked whether to publish anyway and did not answer."
+      ? `The user was asked whether to ${anyway} and did not answer.`
       : how === "no-channel"
         ? "Nobody can be asked to override it on this dispatch."
         : "This is an unattended run, so nobody can override it.";
+  if (review.status !== "RED") {
+    return [
+      `NOT RUN: ${op.label} was stopped because the pre-publish review could not run (${reviewHeadline(review)}). ${why}`,
+      "Nothing ships unreviewed without the user's explicit approval. Fix what stopped the review (a repository or remote git cannot reach, a review that timed out) and publish again, or tell the user what happened and let them decide. Do not publish by another route.",
+    ].join("\n");
+  }
   return [
     `NOT RUN: ${op.label} was stopped by the pre-publish review (verdict RED). ${why}`,
     `Reviewed: ${review.summary}`,
@@ -67,20 +83,25 @@ export function redBlockText(op: PublishOperation, review: PublishReview, how: "
   ].join("\n") + unknownTail(review);
 }
 
-/** The word on the override button: what the user is overriding. */
-export function overrideLabel(op: PublishOperation): string {
+/** The word on the override button: what the user is overriding — a red
+ *  finding ("Push anyway") or the absence of a review ("Push unreviewed"). */
+export function overrideLabel(op: PublishOperation, review: PublishReview): string {
+  const how = review.status === "RED" ? "anyway" : "unreviewed";
   switch (op.kind) {
-    case "git-push": return "Push anyway";
-    case "deploy": return "Deploy anyway";
-    case "package-publish": return "Publish anyway";
-    case "release": return op.label.startsWith("gh pr merge") ? "Merge anyway" : "Release anyway";
+    case "git-push": return `Push ${how}`;
+    case "deploy": return `Deploy ${how}`;
+    case "package-publish": return `Publish ${how}`;
+    case "release": return op.label.startsWith("gh pr merge") ? `Merge ${how}` : `Release ${how}`;
   }
 }
 
 /** The card's context line. */
 export function reviewCardContext(op: PublishOperation, review: PublishReview, base: string): string {
   if (review.status === "RED") {
-    return `⛔ The pre-publish review found problems that should block ${op.label}. "${overrideLabel(op)}" overrides it and is recorded. ${review.summary}`;
+    return `⛔ The pre-publish review found problems that should block ${op.label}. "${overrideLabel(op, review)}" overrides it and is recorded. ${review.summary}`;
+  }
+  if (needsOverride(review)) {
+    return `⚠ Nothing was reviewed: ${reviewHeadline(review)}. "${overrideLabel(op, review)}" sends ${op.label} without a review and is recorded.`;
   }
   return `Pre-publish review: ${reviewHeadline(review)}. ${base}`.trim();
 }
@@ -95,6 +116,6 @@ export function reviewPreview(op: PublishOperation, review: PublishReview): Acti
     findings: review.findings,
     ...(review.reason ? { reason: review.reason } : {}),
     ...(review.unknown.length ? { unknown: review.unknown } : {}),
-    ...(review.status === "RED" ? { overrideLabel: overrideLabel(op) } : {}),
+    ...(needsOverride(review) ? { overrideLabel: overrideLabel(op, review) } : {}),
   };
 }

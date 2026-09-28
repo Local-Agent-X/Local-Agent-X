@@ -48,8 +48,8 @@ export const ALWAYS_ASK_SITES: readonly AlwaysAskSite[] = [
   },
   {
     file: "tool-execution/publish-review-gate.ts",
-    what: "publishing (git push, deploy, package publish, release) over a RED pre-publish review finding",
-    why: "The owner's standing instruction: nothing ships over a red finding from the fresh-context review unless they explicitly override it for THAT publish. A permissive profile or a remembered grant waiving it would be exactly the unreviewed ship the instruction exists to stop; the card is per change set, so the next push is asked about on its own findings.",
+    what: "publishing (git push, deploy, package publish, release) over a RED pre-publish review finding, or with no review at all (FAILED / UNKNOWN)",
+    why: "The owner's standing instruction: nothing ships over a red finding from the fresh-context review, and nothing ships unreviewed, unless they explicitly override it for THAT publish — 'even autonomous users don't want unreviewed pushes' (2026-09-28, after a live UNKNOWN under Power let one out). A permissive profile or a remembered grant waiving it would be exactly the unreviewed ship the instruction exists to stop; the card is per change set, so the next push is asked about on its own findings.",
   },
   {
     file: "tool-execution/unnamed-delete-preauth.ts",

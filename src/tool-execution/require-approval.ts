@@ -124,10 +124,12 @@ export const requireApprovalPhase: Phase = async (ctx) => {
   }
 
   // Pre-publish review (publish-review-gate.ts): a fresh-context model reviews
-  // exactly what this call would ship. RED stops it here — with the findings
-  // as the result, and in an interactive run a "Push anyway" card whose yes
-  // stands in for every prompt below about running THIS call (the unnamed-
-  // delete precedent above). Every other verdict falls through to the profile.
+  // exactly what this call would ship. RED, and a review that could not run
+  // (FAILED / UNKNOWN), stop it here — with the review as the result, and in
+  // an interactive run an always-ask card ("Push anyway" / "Push unreviewed")
+  // whose yes stands in for every prompt below about running THIS call (the
+  // unnamed-delete precedent above). AMBER, GREEN and EMPTY fall through to
+  // the profile.
   let publishOverridden = false;
   if (publishOps.length > 0) {
     const gate = await publishReviewGate(ctx, publishOps);

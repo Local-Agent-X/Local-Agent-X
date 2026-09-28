@@ -138,10 +138,10 @@ describe("calls that do not publish pay one cheap check", () => {
   });
 });
 
-describe("AMBER / GREEN / FAILED / UNKNOWN — the profile's publish row decides", () => {
+describe("AMBER / GREEN — the profile's publish row decides", () => {
   const ASKS = ["Safe", "Normal", "Developer"] as const;
   const RUNS = ["Power", "Autonomous"] as const;
-  for (const [what, run] of [["GREEN", GREEN], ["AMBER", AMBER], ["FAILED", FAILED]] as const) {
+  for (const [what, run] of [["GREEN", GREEN], ["AMBER", AMBER]] as const) {
     for (const profile of ASKS) {
       it(`${what} under ${profile}: asks, and the card carries the review`, async () => {
         fake(run);
@@ -151,7 +151,7 @@ describe("AMBER / GREEN / FAILED / UNKNOWN — the profile's publish row decides
         const [card] = cards(events);
         expect(card.context).toContain(`Pre-publish review: ${what}`);
         expect(card.preview).toMatchObject({ kind: "publish-review", status: what });
-        if (what === "FAILED") expect(card.context).toContain("NOT reviewed");
+        expect(card.preview).not.toHaveProperty("overrideLabel");
         expect(c.publishReview?.status).toBe(what);
       });
     }
@@ -165,21 +165,10 @@ describe("AMBER / GREEN / FAILED / UNKNOWN — the profile's publish row decides
         c.result = { content: "To github.com:acme/app.git\n * [new branch] feature -> feature" };
         attachPublishReviewNote(c);
         expect(lastText(c)).toMatch(new RegExp(`^\\[pre-publish review: ${what}`));
-        if (what === "FAILED") expect(lastText(c)).toContain("This publish was NOT reviewed");
         if (what === "AMBER") expect(lastText(c)).toContain("src/dedupe.ts:40");
       });
     }
   }
-
-  it("an unknown change set runs no review and is never reported as passed", async () => {
-    const f = fake(GREEN);
-    f.set = changeSet("fp-unknown", { parts: [], unknown: [{ label: "vercel --prod", cwd: "/site", reason: "/site is not inside a git repository" }] });
-    const events: ServerEvent[] = [];
-    const c = ctx({ sessionId: session("Normal"), command: "vercel --prod", answer: true, events });
-    expect((await requireApprovalPhase(c)).kind).toBe("continue");
-    expect(f.reviews).toBe(0);
-    expect(cards(events)[0].context).toContain("UNKNOWN — what would ship could not be determined, so NOTHING was reviewed");
-  });
 
   it("unattended + ask: blocked, and the block names the review", async () => {
     fake(AMBER);
@@ -202,6 +191,57 @@ describe("AMBER / GREEN / FAILED / UNKNOWN — the profile's publish row decides
     const [card] = cards(events);
     expect(card.context).toMatch(/Irreversible operation \(git force-push\).*Pre-publish review: GREEN/);
   });
+});
+
+// The owner's rule (2026-09-28, after a live UNKNOWN under Power let a push
+// out unreviewed): "even autonomous users don't want unreviewed pushes."
+describe("FAILED / UNKNOWN — nothing ships unreviewed without the user's yes, in any profile", () => {
+  it("FAILED under Autonomous: an always-ask 'Push unreviewed' card; yes runs it and is audited as unreviewed", async () => {
+    fake(FAILED);
+    const events: ServerEvent[] = [];
+    const s = session("Autonomous");
+    const c = ctx({ sessionId: s, answer: true, events });
+    expect((await requireApprovalPhase(c)).kind).toBe("continue");
+    const [card] = cards(events);
+    expect(card.rememberable).toBe(false);
+    expect(card.context).toContain("Nothing was reviewed");
+    expect(card.context).toContain("Push unreviewed");
+    expect(card.preview).toMatchObject({ kind: "publish-review", status: "FAILED", overrideLabel: "Push unreviewed" });
+    const audit = getSharedAuditTrail(laxDir).getRecent(5).find((e) => e.event === "publish_review_overridden" && e.sessionId === s);
+    expect(audit?.reason).toContain("could not run (FAILED: the review ran past its 4-minute deadline");
+    c.result = { content: "pushed" };
+    attachPublishReviewNote(c);
+    expect(lastText(c)).toContain("This publish was NOT reviewed");
+  });
+
+  it("an unknown change set under Power: no review runs, the card says so, and no means NOT RUN", async () => {
+    const f = fake(GREEN);
+    f.set = changeSet("fp-unknown", { parts: [], unknown: [{ label: "vercel --prod", cwd: "/site", reason: "/site is not inside a git repository" }] });
+    const events: ServerEvent[] = [];
+    const c = ctx({ sessionId: session("Power"), command: "vercel --prod", answer: false, events });
+    expect((await requireApprovalPhase(c)).kind).toBe("halt");
+    expect(f.reviews).toBe(0);
+    const [card] = cards(events);
+    expect(card.context).toContain("UNKNOWN — what would ship could not be determined, so NOTHING was reviewed");
+    expect(card.preview).toMatchObject({ status: "UNKNOWN", overrideLabel: "Deploy unreviewed" });
+    expect(c.result?.status).toBe("declined");
+    expect(lastText(c)).toContain("NOT RUN: vercel --prod was stopped because the pre-publish review could not run");
+    expect(lastText(c)).toContain("/site is not inside a git repository");
+    expect(lastText(c)).toContain("Do not publish by another route");
+  });
+
+  for (const lane of ["cron", "delegated", "api"] as const) {
+    it(`${lane} + Autonomous + FAILED: blocked, no card, no override`, async () => {
+      fake(FAILED);
+      const events: ServerEvent[] = [];
+      const c = ctx({ sessionId: session("Autonomous"), callContext: lane, events });
+      expect((await requireApprovalPhase(c)).kind).toBe("halt");
+      expect(cards(events)).toEqual([]);
+      expect(c.result?.status).toBe("blocked");
+      expect(lastText(c)).toContain("could not run");
+      expect(lastText(c)).toContain("unattended run, so nobody can override it");
+    });
+  }
 });
 
 describe("RED — blocked unless the user overrides", () => {
@@ -281,7 +321,7 @@ describe("verdict cache — per (session, fingerprint)", () => {
   it("a FAILED review is not a verdict: the next attempt reviews again", async () => {
     const f = fake(FAILED, "fp-failed");
     const s = session("Power");
-    await requireApprovalPhase(ctx({ sessionId: s }));
+    await requireApprovalPhase(ctx({ sessionId: s, answer: false }));
     f.next = GREEN;
     const c = ctx({ sessionId: s });
     await requireApprovalPhase(c);

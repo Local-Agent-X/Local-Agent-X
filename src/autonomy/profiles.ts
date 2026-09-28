@@ -31,10 +31,11 @@ export const DEFAULT_PROFILE: ProfileName = "Power";
 // "publish" — a git push, deploy, package publish or release. No tool carries
 // it statically: a shell call that publishes is RECLASSIFIED to it
 // (publish-operation.ts), after a fresh-context review of exactly what would
-// ship (tool-execution/publish-review-gate.ts). The row decides every review
-// outcome except RED — a red finding blocks under every profile unless the user
-// overrides it on the card. So this row is "what happens to a reviewed publish
-// that came back GREEN, AMBER, FAILED, or with an unknown change set":
+// ship (tool-execution/publish-review-gate.ts). The row decides a REVIEWED
+// publish only — a red finding, and a review that could not run (FAILED /
+// UNKNOWN), block under every profile unless the user overrides it on the
+// card. So this row is "what happens to a reviewed publish that came back
+// GREEN or AMBER":
 //   Safe, Normal  ask — they already ask before anything leaves the machine
 //                 (network-write, external-comms).
 //   Developer     ask — its loosening is for reversible work, and rollback

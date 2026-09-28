@@ -6,9 +6,9 @@
 // src/types/server-events.ts); this module turns it into a read-only block on
 // the card: a verdict chip, what was reviewed, and the findings (severity,
 // path:line, problem, why, fix). The only controls stay the card's own
-// approve/deny — on a RED card the approve button is relabeled with the
-// override wording the server sends ("Push anyway"), because that is what
-// clicking it does.
+// approve/deny — on a RED card, and on one whose review could not run, the
+// approve button is relabeled with the override wording the server sends
+// ("Push anyway" / "Push unreviewed"), because that is what clicking it does.
 //
 // Everything in a finding was written by a model reading the diff, so it is
 // set with textContent, never parsed as HTML.

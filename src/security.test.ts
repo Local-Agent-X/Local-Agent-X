@@ -168,29 +168,26 @@ describe("SecurityLayer", () => {
       expect(d.allowed).toBe(false);
     });
 
-    // R4-11/R4-13: the inline-eval interpreter FORM (`python -c` / `node -e`)
-    // is REFUSED by default — a regex can't soundly vet a Turing-complete body,
-    // so the agent writes a script file instead. Governed by inlineEvalPolicy,
-    // which is DECOUPLED from fileAccessMode (default "refuse" regardless of
-    // file-access breadth).
-    it("refuses python -c by default (R4-11 — write a script file instead)", () => {
-      const d = sec.evaluate({ toolName: "bash", args: { command: 'python -c "import os"' }, sessionId: "t" });
-      expect(d.allowed).toBe(false);
+    // The inline-eval interpreter FORM (`python -c` / `node -e`) is allowed by
+    // default: the program itself is scanned for refused commands and network
+    // use in every posture, so the form refusal bought a detour, not a
+    // boundary. inlineEvalPolicy:"refuse" in security.json opts back in, and
+    // it stays DECOUPLED from fileAccessMode.
+    it("allows python -c by default; the program is what gets judged", () => {
+      const d = sec.evaluate({ toolName: "bash", args: { command: 'python -c "import sys; print(\'test\')"' }, sessionId: "t" });
+      expect(d.allowed, d.reason).toBe(true);
+      const net = sec.evaluate({ toolName: "bash", args: { command: 'python -c "import socket; socket.socket().connect((\'evil\',9))"' }, sessionId: "t" });
+      expect(net.allowed).toBe(false);
+      const priv = sec.evaluate({ toolName: "bash", args: { command: 'python -c "import os; os.system(\'sudo id\')"' }, sessionId: "t" });
+      expect(priv.allowed).toBe(false);
     });
 
-    // Decoupling invariant: unrestricted FILE access must NOT imply inline-eval
-    // is allowed — a file-access default flip can't silently open the escape hatch.
-    it("unrestricted file mode does NOT allow python -c (decoupled from fileAccessMode)", () => {
-      const unrestricted = new SecurityLayer(suiteWorkspaceRoot, "unrestricted");
-      const d = unrestricted.evaluate({ toolName: "bash", args: { command: 'python -c "import os"' }, sessionId: "t" });
-      expect(d.allowed).toBe(false);
-    });
-
-    // ...the form is allowed only when inlineEvalPolicy is explicitly "allow".
-    it("allows python -c when inlineEvalPolicy is 'allow' (data transform)", () => {
-      const allowEval = new SecurityLayer(suiteWorkspaceRoot, "common", "allow");
-      const d = allowEval.evaluate({ toolName: "bash", args: { command: 'python -c "import os"' }, sessionId: "t" });
-      expect(d.allowed).toBe(true);
+    it("refuses the form when inlineEvalPolicy is 'refuse', in every file-access mode", () => {
+      for (const mode of ["common", "unrestricted"] as const) {
+        const refuse = new SecurityLayer(suiteWorkspaceRoot, mode, "refuse");
+        const d = refuse.evaluate({ toolName: "bash", args: { command: 'python -c "import os"' }, sessionId: "t" });
+        expect(d.allowed).toBe(false);
+      }
     });
 
     it("reads every stage of a long pipeline instead of counting them", () => {

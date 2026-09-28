@@ -25,8 +25,8 @@
  *                      inlineEvalPolicy. Every field here is a leash: flipping
  *                      egressMode to "permissive" opens outbound to any host,
  *                      adding a localServicePorts entry opens a loopback port,
- *                      and inlineEvalPolicy:"allow" switches OFF the inline-eval
- *                      interpreter-escape refusal. Added 2026-07-29 — it was the
+ *                      and inlineEvalPolicy:"refuse" switches ON the inline-eval
+ *                      interpreter-form refusal. Added 2026-07-29 — it was the
  *                      one file of this kind missing from the set, and its
  *                      absence was load-bearing in the wrong direction: the
  *                      argument that a forged ~/.lax/dev-servers record grants

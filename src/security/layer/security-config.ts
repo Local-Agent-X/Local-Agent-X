@@ -281,11 +281,18 @@ export function loadFileAccessModeAtLeast(floor: FileAccessMode): FileAccessMode
   return MODE_RANK[mode] >= MODE_RANK[floor] ? mode : floor;
 }
 
-// Inline-eval interpreter-escape policy (R4-11/R4-13). Loaded SEPARATELY from
-// loadFileAccessMode on purpose: the inline-interpreter escape hatch (a regex
-// can't soundly vet a Turing-complete `python -c` body) must stay closed
-// regardless of how broad file access is. Decoupling means a permissive file
-// default can never silently re-open it. Opt in with "allow" via security.json.
+// Inline-eval interpreter FORM policy (`python -c "…"`, `node -e "…"`). Loaded
+// SEPARATELY from loadFileAccessMode on purpose, so the two never imply each
+// other. The default is "allow": the form refusal was the only rule that
+// refused `python -c "print('test')"`, and everything it stood for is judged
+// on the program itself in every posture — the inline program is scanned for
+// the refused command words (shell-command-rule-table inline-code), for
+// network use (detectInlineNetwork), and for file writes under a write ban
+// (shell-write-detector, which refuses the form outright there); the kernel
+// sees the spawn either way. A script file the model writes and runs is vetted
+// no more deeply than an inline body, so refusing the form bought a detour,
+// not a boundary. "refuse" stays available in security.json for a deployment
+// that wants the detour.
 export function loadInlineEvalPolicy(): InlineEvalPolicy {
   try {
     const cfgPath = join(getLaxDir(), "security.json");
@@ -296,5 +303,5 @@ export function loadInlineEvalPolicy(): InlineEvalPolicy {
       }
     }
   } catch {}
-  return "refuse";
+  return "allow";
 }

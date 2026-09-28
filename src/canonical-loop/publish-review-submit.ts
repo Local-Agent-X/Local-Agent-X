@@ -38,6 +38,7 @@ import { listRecentOps, newOpId } from "../ops/op-store.js";
 import { delegatedToolsetForOp } from "../ops/tools/delegated-toolset.js";
 import type { Op, OpBudget, OpVisibility } from "../ops/types.js";
 import { SecurityLayer } from "../security/index.js";
+import { installSessionWorkRoot } from "../workspace/paths.js";
 import type { ChangeSet } from "../publish-review/change-set-types.js";
 import { buildPublishReviewBrief, PUBLISH_REVIEWER_SYSTEM_PROMPT } from "./publish-review-brief.js";
 import { parseReviewAnswer, REVIEW_PUBLISH_OP_TYPE, type ParsedReview } from "./publish-review-verdict.js";
@@ -152,16 +153,22 @@ function reviewerBelt() {
  */
 export async function runPublishReview(req: PublishReviewRequest): Promise<PublishReviewRun> {
   let op: Op;
+  // The reviewer's relative paths (and grep/glob's default search base) anchor
+  // at the repository under review, the same folder its file boundary allows.
+  let disposeWorkRoot = () => {};
   try {
     op = await buildPublishReviewOp(req);
+    const root = reviewRoot(req.changeSet);
+    disposeWorkRoot = installSessionWorkRoot(publishReviewRuntimeSessionId(op.id), root);
     // Runtime before visibility: an unresolvable provider leaves no ghost op.
     await configureWorkerOpRuntime(op, publishReviewRuntimeSessionId(op.id), {
       tools: reviewerBelt(),
       systemPrompt: PUBLISH_REVIEWER_SYSTEM_PROMPT,
-      security: new SecurityLayer(reviewRoot(req.changeSet), "workspace"),
+      security: new SecurityLayer(root, "workspace"),
     });
     canonicalLoopEntry(op, { sessionId: req.sessionId, confirmRunning: false });
   } catch (e) {
+    disposeWorkRoot();
     logger.warn(`[publish-review] could not start a review: ${(e as Error).message}`);
     return { parsed: { ok: false, reason: `the review could not start: ${(e as Error).message}` } };
   }
@@ -185,6 +192,7 @@ export async function runPublishReview(req: PublishReviewRequest): Promise<Publi
     return { opId, parsed };
   } finally {
     req.signal?.removeEventListener("abort", onAbort);
+    disposeWorkRoot();
   }
 }
 

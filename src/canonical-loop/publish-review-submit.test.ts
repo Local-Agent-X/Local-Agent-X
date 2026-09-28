@@ -56,6 +56,7 @@ const { REVIEW_PUBLISH_OP_TYPE } = await import("./publish-review-verdict.js");
 const { resetCanonicalRuntime, resetScheduler } = await import("./index.js");
 const { readOp } = await import("../ops/op-store.js");
 const { listOpsForSession } = await import("../ops/session-bridge.js");
+const { sessionWorkRootOf } = await import("../workspace/paths.js");
 // The reviewer's belt resolves from the live registry, as it does at boot.
 (await import("../tools/registry-build.js")).buildToolRegistry();
 
@@ -150,10 +151,13 @@ describe("runPublishReview — each answer becomes what the gate acts on", () =>
       expect(run.parsed).toMatchObject(expected as object);
       const op = readOp(run.opId!);
       // Own worker-scoped runtime session; the reviewer's belt is read-only.
-      const descriptor = op?.runtimeDescriptor as { sessionId?: string; surface?: { tools: Array<{ name: string }>; security: { workspace: string } } };
+      const descriptor = op?.runtimeDescriptor as { sessionId?: string; surface?: { tools: Array<{ name: string }>; security: { workspace: string; sessionWorkRoot?: string } } };
       expect(descriptor.sessionId).toBe(publishReviewRuntimeSessionId(run.opId!));
       expect(descriptor.surface?.tools.map((t) => t.name).sort()).toEqual(["glob", "grep", "read"]);
       expect(descriptor.surface?.security.workspace).toBe(REPO);
+      // Relative paths anchored at the repository while it ran; released after.
+      expect(descriptor.surface?.security.sessionWorkRoot).toBe(REPO);
+      expect(sessionWorkRootOf(publishReviewRuntimeSessionId(run.opId!))).toBeUndefined();
       // Not tracked to the chat: no AGENTS card, no pending notification.
       expect(listOpsForSession(`sess-pr-${what}`)).toEqual([]);
     });

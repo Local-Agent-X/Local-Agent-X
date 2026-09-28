@@ -3,10 +3,12 @@
  *
  * The registry's static `models` list is what LAX ships; the provider's own
  * list-models endpoint is what the provider serves TODAY. When the user has a
- * key, the picker shows both: the curated list first, then anything the
- * provider added since this build (a new release appears in the picker without
- * a LAX release). The static list is the fallback — no key, no network, or an
- * endpoint that fails leaves the picker exactly as it was.
+ * key, the picker shows what the provider serves: the curated list first (minus
+ * anything a complete catalog no longer lists — a retired model disappears
+ * from the picker without a LAX release), then anything the provider added
+ * since this build. The static list is the fallback — no key, no network, an
+ * endpoint that fails or a page that could not be read to the end leaves the
+ * picker exactly as it was, nothing hidden.
  *
  * Same shape as the Ollama Turbo catalog (ollama-cloud.ts): a per-provider
  * cache warmed at boot and on a key save (bootstrap-services.ts), re-read by
@@ -41,11 +43,17 @@ const MAX_PAGES = 5;
 export interface CatalogState {
   models: string[];
   refreshedAt: number;
+  /** The fetch succeeded, every page was read and at least one chat model came
+   *  back: `models` is the provider's whole lineup, so a shipped model absent
+   *  from it is hidden. False on a failure or a page cap — nothing is hidden
+   *  on a list that might be short. */
+  complete: boolean;
   error?: string;
 }
 
 const cache = new Map<ProviderId, CatalogState>();
 const inflight = new Map<ProviderId, Promise<CatalogState>>();
+const hiddenLogged = new Map<ProviderId, string>();
 
 // ── What counts as a chat model, per provider ──────────────────────────────
 // The endpoints list everything the account can call — embeddings, TTS,
@@ -68,14 +76,19 @@ export function isCatalogChatModel(provider: ProviderId, id: string): boolean {
 }
 
 /** The curated list first (its order is deliberate), then what the provider
- *  serves beyond it, sorted. Nothing curated is ever dropped by a catalog. */
-export function mergeCatalog(curated: readonly string[], catalog: readonly string[]): string[] {
+ *  serves beyond it, sorted. A complete catalog also drops the curated ids it
+ *  no longer lists; an incomplete one drops nothing. */
+export function mergeCatalog(curated: readonly string[], catalog: readonly string[], complete = false): string[] {
   const have = new Set(curated);
-  const extra = [...new Set(catalog.filter((id) => !have.has(id)))].sort();
-  return [...curated, ...extra];
+  const listed = new Set(catalog);
+  const kept = complete ? curated.filter((id) => listed.has(id)) : [...curated];
+  const extra = [...listed].filter((id) => !have.has(id)).sort();
+  return [...kept, ...extra];
 }
 
 // ── Endpoint readers: each returns raw ids; filtering happens once, above ──
+
+interface Listing { ids: string[]; complete: boolean }
 
 async function getJson(url: string, headers: Record<string, string>): Promise<unknown> {
   const res = await fetch(url, { headers, redirect: "manual", signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
@@ -87,7 +100,7 @@ const ids = (list: unknown): string[] =>
   Array.isArray(list) ? list.map((m) => (m && typeof m === "object" ? (m as { id?: unknown }).id : undefined)).filter((id): id is string => typeof id === "string" && id.length > 0) : [];
 
 /** GET /v1/models, paginated (default page is 20). */
-async function listAnthropic(key: string): Promise<string[]> {
+async function listAnthropic(key: string): Promise<Listing> {
   const out: string[] = [];
   let after = "";
   for (let page = 0; page < MAX_PAGES; page++) {
@@ -96,25 +109,25 @@ async function listAnthropic(key: string): Promise<string[]> {
       { "x-api-key": key, "anthropic-version": "2023-06-01" },
     ) as { data?: unknown; has_more?: boolean; last_id?: string };
     out.push(...ids(data.data));
-    if (!data.has_more || !data.last_id) break;
+    if (!data.has_more || !data.last_id) return { ids: out, complete: true };
     after = data.last_id;
   }
-  return out;
+  return { ids: out, complete: false };
 }
 
 /** GET {base}/models — the OpenAI wire shape (OpenAI, Cerebras, custom, xAI). */
-async function listOpenAIShape(baseURL: string, key: string): Promise<string[]> {
+async function listOpenAIShape(baseURL: string, key: string): Promise<Listing> {
   const data = await getJson(`${baseURL.replace(/\/+$/, "")}/models`, { Authorization: `Bearer ${key}` }) as { data?: unknown };
-  return ids(data.data);
+  return { ids: ids(data.data), complete: true };
 }
 
 /** xAI lists language models on their own endpoint; the OpenAI-shape list is
  *  the fallback (both under api.x.ai/v1). */
-async function listXai(baseURL: string, key: string): Promise<string[]> {
+async function listXai(baseURL: string, key: string): Promise<Listing> {
   try {
     const data = await getJson(`${baseURL.replace(/\/+$/, "")}/language-models`, { Authorization: `Bearer ${key}` }) as { models?: unknown };
     const found = ids(data.models);
-    if (found.length > 0) return found;
+    if (found.length > 0) return { ids: found, complete: true };
   } catch (e) {
     logger.debug(`xai /language-models unavailable (${(e as Error).message}); falling back to /models`);
   }
@@ -122,7 +135,7 @@ async function listXai(baseURL: string, key: string): Promise<string[]> {
 }
 
 /** models.list, paginated; only models that can generateContent are chat. */
-async function listGemini(key: string): Promise<string[]> {
+async function listGemini(key: string): Promise<Listing> {
   const out: string[] = [];
   let token = "";
   for (let page = 0; page < MAX_PAGES; page++) {
@@ -134,13 +147,13 @@ async function listGemini(key: string): Promise<string[]> {
       if (typeof m.name !== "string" || !m.supportedGenerationMethods?.includes("generateContent")) continue;
       out.push(m.name.replace(/^models\//, ""));
     }
-    if (!data.nextPageToken) break;
+    if (!data.nextPageToken) return { ids: out, complete: true };
     token = data.nextPageToken;
   }
-  return out;
+  return { ids: out, complete: false };
 }
 
-async function listFor(provider: ProviderId, key: string): Promise<string[]> {
+async function listFor(provider: ProviderId, key: string): Promise<Listing> {
   if (provider === "anthropic-api") return listAnthropic(key);
   if (provider === "gemini") return listGemini(key);
   const meta = PROVIDERS[provider];
@@ -163,10 +176,37 @@ export function cachedCatalogModels(provider: ProviderId): string[] {
   return cache.get(provider)?.models ?? [];
 }
 
-/** The picker's models for a provider: the curated chat list plus what the
- *  provider's catalog adds. */
+/** The picker's models for a provider: the curated chat list, minus what a
+ *  complete catalog no longer lists, plus what it adds. */
 export function pickerModelsFor(provider: ProviderId): string[] {
-  return mergeCatalog(chatModelsFor(provider), cachedCatalogModels(provider));
+  const state = cache.get(provider);
+  return mergeCatalog(chatModelsFor(provider), state?.models ?? [], state?.complete ?? false);
+}
+
+/** Shipped chat models a complete catalog no longer lists — hidden from the
+ *  picker, still in the registry. Empty without a complete catalog. */
+export function hiddenShippedModels(provider: ProviderId): string[] {
+  const state = cache.get(provider);
+  if (!state?.complete) return [];
+  const listed = new Set(state.models);
+  return chatModelsFor(provider).filter((id) => !listed.has(id));
+}
+
+/**
+ * Whether a model id can run on a provider — the request path's check for a
+ * saved or pinned model. Shipped ids always can, hidden or not: a chat that
+ * was running on a model the catalog dropped since finishes on it. Beyond the
+ * shipped list, a complete catalog is the authority; without one (no key, a
+ * failed fetch, a provider with no list API) the id is trusted, because the
+ * only alternative is refusing a model that may well work. `custom` lists a
+ * placeholder id and the user types the real one, so it always resolves.
+ */
+export function providerServesModel(provider: ProviderId, model: string): boolean {
+  const shipped = PROVIDERS[provider].models;
+  if (provider === "custom" || shipped.length === 0 || shipped.includes(model)) return true;
+  const state = cache.get(provider);
+  if (state?.complete) return state.models.includes(model);
+  return CATALOG_PROVIDERS.includes(provider);
 }
 
 export function invalidateProviderCatalog(provider: ProviderId): void {
@@ -183,7 +223,7 @@ export function refreshProviderCatalog(provider: ProviderId): Promise<CatalogSta
   if (running) return running;
   const p = (async (): Promise<CatalogState> => {
     const failed = (error: string): CatalogState => {
-      const state = { models: [], refreshedAt: Date.now(), error };
+      const state = { models: [], refreshedAt: Date.now(), complete: false, error };
       cache.set(provider, state);
       return state;
     };
@@ -193,12 +233,17 @@ export function refreshProviderCatalog(provider: ProviderId): Promise<CatalogSta
         configOpenAIKey: provider === "openai" ? getRuntimeConfig().openaiApiKey : undefined,
       });
       if (!credential) return failed("no credential");
-      const raw = await listFor(provider, credential.credential);
-      const models = raw.filter((id) => isCatalogChatModel(provider, id));
-      const state = { models, refreshedAt: Date.now() };
+      const listing = await listFor(provider, credential.credential);
+      const models = listing.ids.filter((id) => isCatalogChatModel(provider, id));
+      const state = { models, refreshedAt: Date.now(), complete: listing.complete && models.length > 0 };
       cache.set(provider, state);
       const extra = models.filter((id) => !PROVIDERS[provider].models.includes(id));
       logger.info(`${provider}: ${models.length} chat models listed by the provider, ${extra.length} beyond the shipped list${extra.length ? ` (${extra.join(", ")})` : ""}`);
+      const hidden = hiddenShippedModels(provider);
+      if (hidden.length > 0 && hiddenLogged.get(provider) !== hidden.join(",")) {
+        hiddenLogged.set(provider, hidden.join(","));
+        logger.info(`${provider}: ${hidden.length} shipped models the provider no longer lists are hidden from the picker (${hidden.join(", ")})`);
+      }
       return state;
     } catch (e) {
       const message = (e as Error).message;
@@ -236,4 +281,5 @@ export function warmProviderCatalogs(secretsStore: SecretsStore): () => void {
 export function resetProviderCatalogs(): void {
   cache.clear();
   inflight.clear();
+  hiddenLogged.clear();
 }

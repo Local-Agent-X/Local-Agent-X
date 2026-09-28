@@ -2,6 +2,7 @@ import { MIN_MAX_ITERATIONS, type LAXConfig } from "../types.js";
 import type { SecretsStore } from "../secrets.js";
 import { PROVIDER_IDS, type ProviderId } from "../providers/provider-ids.js";
 import { PROVIDERS, isHttpProvider } from "../providers/registry.js";
+import { providerServesModel } from "../providers/model-catalog.js";
 import { rerouteToCredentialedProvider } from "../providers/credential-reroute.js";
 import { loadSettings, getSetting } from "../settings.js";
 import { normalizeReasoningEffort, type ReasoningEffort } from "../providers/reasoning-effort.js";
@@ -203,10 +204,18 @@ export async function resolveProvider(
   // the registry leaves defaultModel empty (e.g., ollama-cloud where
   // the user picks from the cloud catalog). Caller-supplied modelOverride
   // wins when non-empty (per-job cron model selection).
-  const model = (effectiveModelOverride && effectiveModelOverride.trim())
+  let model = (effectiveModelOverride && effectiveModelOverride.trim())
     || String(saved.model || "")
     || meta.defaultModel
     || config.model;
+  // A saved or pinned id the provider no longer serves (a model retired since
+  // it was picked) would 404 every turn; the provider default runs instead.
+  // Shipped ids always pass, so a chat already on a model the provider's
+  // catalog dropped keeps running on it (model-catalog.ts).
+  if (meta.defaultModel && model !== meta.defaultModel && !providerServesModel(provider, model)) {
+    logger.warn(`model '${model}' is not served by '${provider}' — running its default '${meta.defaultModel}' instead`);
+    model = meta.defaultModel;
+  }
 
   if (isLocalOnlyMode(config) && provider === "local") {
     const { fetchLocalOllamaTags } = await import("../ollama-cloud.js");

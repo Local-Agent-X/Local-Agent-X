@@ -28,6 +28,12 @@ const credsResolvable = new Set<string>();
 // Mutable saved-settings map returned by loadSettings().
 let savedSettings: Record<string, unknown> = {};
 let localModels: Array<{ name: string }> = [];
+// What the provider serves (model-catalog.ts); every model by default.
+let servedModels: ((provider: string, model: string) => boolean) = () => true;
+
+vi.mock("../providers/model-catalog.js", () => ({
+  providerServesModel: (provider: string, model: string) => servedModels(provider, model),
+}));
 
 vi.mock("../settings.js", () => ({
   loadSettings: () => savedSettings,
@@ -315,6 +321,39 @@ describe("resolveProvider — strict local model validation", () => {
   it("rejects a stale cloud-only model name instead of substituting it locally", async () => {
     savedSettings.model = "cloud-only:70b";
     await expect(resolveProvider(strictConfig, SECRETS, "/tmp")).rejects.toThrow(/requires model .* to exist/i);
+  });
+});
+
+describe("resolveProvider — a model the provider no longer serves", () => {
+  beforeEach(() => {
+    credsPresent.clear();
+    credsResolvable.clear();
+    savedSettings = {};
+    credsPresent.add("xai");
+    servedModels = () => true;
+  });
+  afterEach(() => { servedModels = () => true; vi.restoreAllMocks(); });
+
+  it("runs the provider default instead of a retired saved model", async () => {
+    // settings.json still names a model the picker offered months ago and
+    // the provider has since retired; a turn on it would 404.
+    savedSettings = { provider: "xai", model: "grok-4" };
+    servedModels = (_p, m) => m !== "grok-4";
+    const res = await resolveProvider(CONFIG, SECRETS, "/tmp");
+    expect(res.model).toBe("grok-4.3");
+  });
+
+  it("runs the provider default instead of a retired pinned override", async () => {
+    savedSettings = { provider: "xai" };
+    servedModels = (_p, m) => m !== "grok-2";
+    const res = await resolveProvider(CONFIG, SECRETS, "/tmp", undefined, "grok-2");
+    expect(res.model).toBe("grok-4.3");
+  });
+
+  it("keeps a saved model the provider serves", async () => {
+    savedSettings = { provider: "xai", model: "grok-4.5" };
+    const res = await resolveProvider(CONFIG, SECRETS, "/tmp");
+    expect(res.model).toBe("grok-4.5");
   });
 });
 

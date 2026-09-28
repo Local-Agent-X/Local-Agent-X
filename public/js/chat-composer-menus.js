@@ -125,7 +125,15 @@ function _mmShowModels(provRow, provider) {
 
   const current = (_providersCache || {}).current || {};
   const models = Array.isArray(provider.models) ? provider.models : [];
-  const modelRows = models.length ? models.map(m => {
+  // The saved model can be one the provider no longer lists (the server hides
+  // a retired id from the picker but keeps running the session on it). Show
+  // it where the check mark would be, unpickable, so the chip and the menu
+  // agree on what is running.
+  const orphan = provider.active && current.model && !models.includes(current.model) ? current.model : '';
+  const orphanRow = orphan
+    ? `<div class="mm-row active" aria-disabled="true">${esc(orphan)}<span class="mm-tag">unavailable</span></div>`
+    : '';
+  const modelRows = models.length ? orphanRow + models.map(m => {
     const tier = classifyModelTier(m);
     const isCurrent = provider.active && m === current.model;
     const tag = isCurrent ? `<span class="mm-tag mm-check">&#10003;</span>`

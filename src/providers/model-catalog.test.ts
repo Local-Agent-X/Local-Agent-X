@@ -6,15 +6,17 @@ import type { SecretsStore } from "../secrets.js";
 const mocks = vi.hoisted(() => ({
   resolveCredential: vi.fn(),
   localOnly: false,
+  info: vi.fn(),
 }));
 vi.mock("../auth/resolve.js", () => ({ resolveCredential: mocks.resolveCredential }));
 vi.mock("../config.js", () => ({ getRuntimeConfig: () => ({ ollamaUrl: "http://127.0.0.1:11434", openaiApiKey: undefined }) }));
 vi.mock("../settings.js", () => ({ getSetting: () => undefined }));
 vi.mock("../local-only-policy.js", () => ({ isLocalOnlyMode: () => mocks.localOnly }));
+vi.mock("../logger.js", () => ({ createLogger: () => ({ info: mocks.info, warn: vi.fn(), debug: vi.fn(), error: vi.fn() }) }));
 
 import {
-  CATALOG_PROVIDERS, cachedCatalogModels, catalogStale, isCatalogChatModel, mergeCatalog, pickerModelsFor,
-  refreshProviderCatalog, resetProviderCatalogs, warmProviderCatalogs,
+  CATALOG_PROVIDERS, cachedCatalogModels, catalogStale, hiddenShippedModels, isCatalogChatModel, mergeCatalog, pickerModelsFor,
+  providerServesModel, refreshProviderCatalog, resetProviderCatalogs, warmProviderCatalogs,
 } from "./model-catalog.js";
 import { chatModelsFor, PROVIDERS } from "./registry.js";
 
@@ -27,6 +29,7 @@ beforeEach(() => {
   routes = [];
   mocks.localOnly = false;
   mocks.resolveCredential.mockReset();
+  mocks.info.mockReset();
   fetchSpy = vi.fn(async (url: string, init: { headers: Record<string, string> }) => {
     const hit = routes.find(([re]) => re.test(url));
     if (!hit) return new Response("not found", { status: 404 });
@@ -59,12 +62,16 @@ describe("isCatalogChatModel — the endpoints list everything, the picker wants
   });
 });
 
-describe("mergeCatalog — curated first, additions after, nothing dropped", () => {
+describe("mergeCatalog — curated first, additions after", () => {
   it("keeps the curated order and appends sorted extras once", () => {
     expect(mergeCatalog(["b-model", "a-model"], ["z", "a-model", "c", "z"])).toEqual(["b-model", "a-model", "c", "z"]);
   });
   it("is the curated list when the catalog is empty", () => {
     expect(mergeCatalog(["x"], [])).toEqual(["x"]);
+  });
+  it("drops curated ids a complete catalog no longer lists, and nothing from an incomplete one", () => {
+    expect(mergeCatalog(["b-model", "a-model"], ["a-model", "c"], true)).toEqual(["a-model", "c"]);
+    expect(mergeCatalog(["b-model", "a-model"], ["a-model", "c"], false)).toEqual(["b-model", "a-model", "c"]);
   });
 });
 
@@ -78,11 +85,11 @@ describe("refreshProviderCatalog", () => {
     routes.push([/after_id=claude-mythos-5/, () => ({ data: [{ id: "claude-haiku-4-5" }], has_more: false })]);
     const state = await refreshProviderCatalog("anthropic-api");
     expect(state.models).toEqual(["claude-opus-5-5", "claude-mythos-5", "claude-haiku-4-5"]);
+    expect(state.complete).toBe(true);
     expect(catalogStale("anthropic-api")).toBe(false);
-    // The picker: the shipped list first, the new release after it.
-    const picker = pickerModelsFor("anthropic-api");
-    expect(picker.slice(0, chatModelsFor("anthropic-api").length)).toEqual(chatModelsFor("anthropic-api"));
-    expect(picker).toContain("claude-mythos-5");
+    // The picker: the shipped models the account can call, in shipped order,
+    // then the new release.
+    expect(pickerModelsFor("anthropic-api")).toEqual(["claude-opus-5-5", "claude-haiku-4-5", "claude-mythos-5"]);
   });
 
   it("reads OpenAI's /v1/models as a Bearer call and keeps chat ids", async () => {
@@ -127,7 +134,9 @@ describe("refreshProviderCatalog", () => {
     const state = await refreshProviderCatalog("openai");
     expect(state.models).toEqual([]);
     expect(state.error).toBe("HTTP 401");
+    expect(state.complete).toBe(false);
     expect(pickerModelsFor("openai")).toEqual(chatModelsFor("openai"));
+    expect(hiddenShippedModels("openai")).toEqual([]);
     expect(catalogStale("openai")).toBe(false); // retried after the TTL, not on every request
   });
 
@@ -142,11 +151,71 @@ describe("refreshProviderCatalog", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("never lets a catalog drop a shipped model", async () => {
+});
+
+describe("a complete catalog hides shipped models the provider no longer lists", () => {
+  const hiddenLogs = () => mocks.info.mock.calls.map((c) => String(c[0])).filter((m) => m.includes("hidden from the picker"));
+
+  it("hides them from the picker, keeps them in the registry, and logs them once", async () => {
+    key("openai", "sk-openai");
+    routes.push([/api\.openai\.com\/v1\/models$/, () => ({ data: [{ id: "gpt-6-sol" }, { id: "gpt-4o" }] })]);
+    await refreshProviderCatalog("openai");
+    expect(pickerModelsFor("openai")).toEqual(["gpt-6-sol", "gpt-4o"]);
+    expect(hiddenShippedModels("openai")).toEqual(chatModelsFor("openai").filter((m) => m !== "gpt-6-sol" && m !== "gpt-4o"));
+    expect(PROVIDERS.openai.models).toContain("gpt-6-astra");
+    expect(hiddenLogs()).toHaveLength(1);
+    expect(hiddenLogs()[0]).toContain("gpt-6-astra");
+    // The same lineup on the next refresh is not news.
+    await refreshProviderCatalog("openai");
+    expect(hiddenLogs()).toHaveLength(1);
+  });
+
+  it("hides nothing for a provider without a catalog", async () => {
+    expect((await refreshProviderCatalog("anthropic")).complete).toBe(false);
+    expect(pickerModelsFor("anthropic")).toEqual(chatModelsFor("anthropic"));
+    expect(hiddenShippedModels("anthropic")).toEqual([]);
+  });
+
+  it("hides nothing when the page cap cut the list short", async () => {
+    key("anthropic-api", "sk-ant");
+    routes.push([/api\.anthropic\.com\/v1\/models/, () => ({ data: [{ id: "claude-opus-5-5" }], has_more: true, last_id: "claude-opus-5-5" })]);
+    const state = await refreshProviderCatalog("anthropic-api");
+    expect(state.complete).toBe(false);
+    expect(pickerModelsFor("anthropic-api")).toEqual(chatModelsFor("anthropic-api"));
+    expect(hiddenLogs()).toEqual([]);
+  });
+
+  it("hides nothing on a successful but empty list", async () => {
+    key("xai", "xai-key");
+    routes.push([/api\.x\.ai\/v1\/models$/, () => ({ data: [{ id: "grok-2-image-1212" }] })]);
+    const state = await refreshProviderCatalog("xai");
+    expect(state.models).toEqual([]);
+    expect(state.complete).toBe(false);
+    expect(pickerModelsFor("xai")).toEqual(chatModelsFor("xai"));
+  });
+});
+
+describe("providerServesModel — what the request path may run", () => {
+  it("always runs a shipped id, hidden or not, and a catalog extra", async () => {
     key("openai", "sk-openai");
     routes.push([/api\.openai\.com\/v1\/models$/, () => ({ data: [{ id: "gpt-6-sol" }] })]);
     await refreshProviderCatalog("openai");
-    for (const m of chatModelsFor("openai")) expect(pickerModelsFor("openai")).toContain(m);
+    expect(hiddenShippedModels("openai")).toContain("gpt-6-astra");
+    expect(providerServesModel("openai", "gpt-6-astra")).toBe(true); // a chat already on it finishes on it
+    expect(providerServesModel("openai", "gpt-6-sol")).toBe(true);
+    expect(providerServesModel("openai", "gpt-4-turbo")).toBe(false); // retired: the catalog is complete and lacks it
+  });
+
+  it("trusts an unlisted id while the catalog is cold or failed, and never for a provider without one", async () => {
+    expect(providerServesModel("openai", "gpt-4-turbo")).toBe(true); // cold
+    key("openai", "sk-openai");
+    fetchSpy.mockImplementation(async () => new Response("nope", { status: 401 }));
+    await refreshProviderCatalog("openai");
+    expect(providerServesModel("openai", "gpt-4-turbo")).toBe(true); // failed
+    expect(providerServesModel("anthropic", "claude-sonnet-4")).toBe(false); // no catalog: the shipped list is the lineup
+    expect(providerServesModel("anthropic", "claude-opus-5-5")).toBe(true);
+    expect(providerServesModel("custom", "anything")).toBe(true);
+    expect(providerServesModel("local", "qwen3:8b")).toBe(true);
   });
 });
 

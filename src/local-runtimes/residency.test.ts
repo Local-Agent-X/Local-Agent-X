@@ -1,5 +1,13 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 
+// These tests pin the warm and hold mechanics on an unsized model. Context
+// sizing has its own tests (context-sizing*.test.ts, residency.context-
+// invariant.test.ts); here it decides nothing, so a warm is one request.
+vi.mock("./context-sizing.js", () => ({
+  appliedContext: () => undefined,
+  ensureContextDecision: async () => null,
+}));
+
 import {
   isModelResident,
   warmModel,
@@ -21,6 +29,9 @@ function psFetch(payload: unknown, status = 200) {
 }
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
+// An unsized warm asks context sizing (stubbed to "nothing") before it fires:
+// its request lands a few microtasks after the call. Fake-timer safe.
+const settled = async () => { for (let i = 0; i < 4; i++) await Promise.resolve(); };
 
 afterEach(() => vi.unstubAllGlobals());
 // Probes are cached for ~1s so one dispatch doesn't ask /api/ps twice; these
@@ -152,12 +163,15 @@ describe("warmModel", () => {
     warmModel(BASE, "llama3.2:3b");
     warmModel(BASE, "llama3.2:3b");        // same key, still in flight — no second fetch
     warmModel(`${BASE}/`, "llama3.2:3b");  // trailing slash normalizes to the same key
+    await settled();
     expect(spy).toHaveBeenCalledTimes(1);
     warmModel(BASE, "other:7b");           // a different model gets its own warm
+    await settled();
     expect(spy).toHaveBeenCalledTimes(2);
     release(new Response("{}", { status: 200 }));
     await tick();
     warmModel(BASE, "llama3.2:3b");        // settled — allowed to warm again
+    await settled();
     expect(spy).toHaveBeenCalledTimes(3);
     await tick(); // drain the last in-flight entry so nothing leaks across tests
   });
@@ -197,6 +211,7 @@ describe("holdChatModelResidency", () => {
     vi.useFakeTimers();
     const spy = okFetch();
     holdChatModelResidency(BASE, "qwen3.6:27b");
+    await settled();
     expect(spy).toHaveBeenCalledTimes(1);
     const body = JSON.parse(String(spy.mock.calls[0][1]?.body));
     expect(body).toEqual({ model: "qwen3.6:27b", prompt: "", stream: false, keep_alive: MODEL_KEEP_ALIVE });
@@ -212,6 +227,7 @@ describe("holdChatModelResidency", () => {
     holdChatModelResidency(BASE, "qwen3.6:27b");
     holdChatModelResidency(BASE, "qwen3.6:27b");
     holdChatModelResidency(`${BASE}/`, "qwen3.6:27b"); // trailing slash, same target
+    await settled();
     expect(spy).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(5 * 60_000);
     // One re-up cycle, not three stacked ones.

@@ -2728,3 +2728,18 @@ now measured). It also spends window the compaction estimator does not see.
 row reasoning, no reasoning_effort). The mechanism stays, profile-gated, for one retry once the 27B runs at the
 auto-sized window (131k) with the replayed text counted by the compaction estimator and capped per row; a retry
 must show a pass-rate gain that pays for the cache cost, or the mechanism is deleted.
+
+## Automatic local context sizing — verified live (2026-09-28)
+
+LAX now decides each local Ollama model's context from its architecture and the GPU, applies it on every request
+over native `/api/chat`, and checks after loading that the model stayed fully on the GPU (cf6b04c7..5b0964e8).
+Live on the RTX 5090 (32 GB), LAX closed, isolated data dir: qwen3.6:27b decided 172,032 (`fits_gpu`: weights
+17.4 GB, KV 65,536 B/token, estimate 30.3 of 30.8 GB), Ollama loaded it at n_ctx 172032, 100% GPU, size_vram ==
+size (27.5 GB), decision persisted and marked verified; the chat went over `/api/chat` with num_ctx=172032; decode
+74 tok/s; a second turn and the background classifier calls after it reused the loaded runner (no reload).
+qwen3:8b decided 40,960 (its native max), loaded 100% GPU; Ollama evicted the idle 27B to make room.
+
+Two things the live run exposed, fixed the same day: a classifier warm fired six seconds before the chat preflight
+decided the size and loaded the 27B at the runtime default, so chat reloaded it — an unsized warm now decides
+before it fires (residency.ts); and the first cold round's context meter read "395% critical" against the 8,192
+unloaded-model placeholder — the meter says nothing until a round has a real window (event-pump.ts).

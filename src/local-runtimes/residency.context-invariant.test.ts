@@ -17,6 +17,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
+// A cold unsized warm decides through the default deps, whose GPU reader
+// runs nvidia-smi; pin the card so the decision is the same on a CI runner.
+vi.mock("./gpu-memory.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./gpu-memory.js")>()),
+  machineGpuMemory: async () => ({ name: "NVIDIA GeForce RTX 5090", totalBytes: 32_607 * 1024 * 1024, source: "measured" }),
+}));
+
 // Every URL in this file is a stub target; the global fetch below answers all
 // of them, so nothing leaves the process. "localhost" is how config.ollamaUrl
 // spells what discovery calls 127.0.0.1.
@@ -54,9 +61,15 @@ beforeAll(async () => {
     },
   });
   applied = appliedContext(ROOT, MODEL)!;
+  // The sizing probes an unsized warm fires before it warms; answered with the
+  // reference runtime so a cold warm can decide like the chat preflight does.
+  const probes = fakeFetchJson(referenceRuntime());
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
     const path = new URL(url).pathname;
     if (path === "/api/ps") return new Response(JSON.stringify({ models: [] })); // cold: nothing loaded
+    if (path === "/api/version" || path === "/api/tags" || path === "/api/show") {
+      return new Response(JSON.stringify(await probes(url, init)));
+    }
     if (path.endsWith("/chat/completions")) { v1Calls.push(url); return new Response("{}"); }
     const body = JSON.parse(String(init?.body ?? "{}")) as { options?: { num_ctx?: number } };
     sizes.push({ path, numCtx: body.options?.num_ctx });
@@ -129,5 +142,16 @@ describe("every path to the sized chat model asks for its applied size", () => {
     warmModel(ROOT, "unsized:7b");
     await expect.poll(() => sizes.length).toBe(1);
     expect(sizes[0].numCtx).toBeUndefined();
+  });
+
+  // A classifier warm fired six seconds before the chat preflight decided the
+  // size, loaded the 27B at the runtime default, and chat reloaded it (live,
+  // 2026-09-28). A warm with no size on record now decides before it fires.
+  it("a cold unsized warm for a model with no decision decides first, then warms at that size", async () => {
+    expect(appliedContext(ROOT, "qwen3:8b")).toBeUndefined();
+    warmModel(ROOT, "qwen3:8b");
+    await expect.poll(() => sizes.length).toBe(1);
+    expect(sizes[0]).toEqual({ path: "/api/generate", numCtx: 40_960 });
+    expect(appliedContext(ROOT, "qwen3:8b")).toBe(40_960);
   });
 });

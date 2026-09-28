@@ -22,6 +22,17 @@ vi.mock("../control-api.js", () => ({
   }),
 }));
 
+// One model whose window is still the unloaded placeholder; every other id
+// resolves as it really does.
+vi.mock("../../context-manager/model-windows.js", async (importOriginal) => {
+  const mod = await importOriginal<typeof import("../../context-manager/model-windows.js")>();
+  return {
+    ...mod,
+    resolveContextWindow: (model: string) =>
+      model === "cold-floor:1b" ? { tokens: 8_192, provenance: "floor" } : mod.resolveContextWindow(model),
+  };
+});
+
 import { createEventPump } from "./event-pump.js";
 
 beforeEach(() => { listeners.clear(); eventListeners.clear(); });
@@ -162,6 +173,19 @@ describe("event pump — the context meter follows each round", () => {
   it("emits nothing for a round with no usable prompt count", async () => {
     const pump = createEventPump("op-ctx-2");
     eventListeners.get("op-ctx-2")!({ type: "turn_committed", body: { turnIdx: 0 } });
+    expect(await orHung(pump.pull())).toBe("hung");
+    pump.dispose();
+  });
+
+  // The unloaded-model placeholder (8,192) is not a window: a first cold
+  // round sized against it read "395% critical" for a model that then ran at
+  // 40,960 (live, 2026-09-28). No meter until a round has a real window.
+  it("emits nothing while the model's window is still the unloaded floor", async () => {
+    const pump = createEventPump("op-ctx-3");
+    eventListeners.get("op-ctx-3")!({
+      type: "turn_committed",
+      body: { turnIdx: 0, context: { promptTokens: 32_391, model: "cold-floor:1b", compacted: false } },
+    });
     expect(await orHung(pump.pull())).toBe("hung");
     pump.dispose();
   });

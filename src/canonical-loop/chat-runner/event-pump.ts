@@ -10,6 +10,7 @@ import type { CanonicalEvent, StateChangedBody } from "../types.js";
 import { subscribeOpStream, subscribeOpEvents } from "../control-api.js";
 import { isTerminalState, type TerminalState } from "../terminal-states.js";
 import { contextStatusForTokens } from "../../context-manager/status.js";
+import { resolveContextWindow } from "../../context-manager/model-windows.js";
 import type { AnthropicTransport } from "../../context-manager/effective-window.js";
 
 export interface PumpedEvents {
@@ -293,6 +294,11 @@ export function createEventPump(opId: string): EventPump {
       // (checkpoint.ts); a pre-stamp event sizes on the subscription lane.
       const ctx = (event.body as { context?: { promptTokens: number; model: string; transport?: AnthropicTransport; compacted: boolean } }).context;
       if (!ctx) return;
+      // A window nobody has measured yet is the unloaded-model placeholder
+      // (8,192): a first cold round sized against it read "395% critical"
+      // (live, 2026-09-28) for a model that then ran at 40,960. Say nothing
+      // until a round has a real window; the next one does.
+      if (resolveContextWindow(ctx.model).provenance === "floor") return;
       const status = contextStatusForTokens(ctx.promptTokens, ctx.model, ctx.transport ?? "cli");
       eventQueue.push({
         type: "context_status",

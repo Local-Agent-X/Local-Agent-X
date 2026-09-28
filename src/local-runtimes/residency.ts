@@ -17,7 +17,7 @@
  */
 import { createLogger } from "../logger.js";
 import { ollamaModelKey } from "./context-sizing-core.js";
-import { appliedContext } from "./context-sizing.js";
+import { appliedContext, ensureContextDecision } from "./context-sizing.js";
 
 const logger = createLogger("local-runtimes");
 
@@ -27,6 +27,9 @@ const PS_TIMEOUT_MS = 2_000;
 // cancelling the very load we asked for, and the promise is detached — a
 // pending warm costs the caller nothing. This cap only bounds a hung socket.
 const WARM_TIMEOUT_MS = 60_000;
+// How long an unsized warm waits for the context decision before it fires at
+// the runtime default anyway; a decision reads /api/show and nvidia-smi once.
+const WARM_DECISION_WAIT_MS = 5_000;
 
 /** How long the runtime holds a model in memory after a call. One knob,
  *  shared with callOllama's keep_alive, so warmed and real calls extend the
@@ -244,17 +247,26 @@ export function warmModel(
   redirect?: "follow" | "error" | "manual",
   requestedNumCtx?: number,
 ): void {
-  // Unsized warms (the chat hold, voice) load at the size chat will ask for.
-  // A warm at any other size is a reload now and another at the next turn.
-  const numCtx = requestedNumCtx ?? appliedContext(baseUrl, model);
+  // Unsized warms (the chat hold, voice, a classifier's cold-skip) load at
+  // the size chat will ask for. A warm at any other size is a reload now and
+  // another at the next turn: on the first cold turn of a session (live,
+  // 2026-09-28) a classifier warm fired six seconds before the chat preflight
+  // decided the size, loaded the 27B at the runtime default, and chat then
+  // reloaded it — so a warm with no size on record decides before it fires.
   const base = baseUrl.replace(/\/+$/, "");
-  const key = `${base}|${model}|${redirect ?? "follow"}|${numCtx ?? "default"}`;
+  // Concurrent unsized warms collapse into one decision; a warm that names a
+  // size is its own request and is never swallowed by one still deciding.
+  const key = `${base}|${model}|${redirect ?? "follow"}|${requestedNumCtx ?? appliedContext(baseUrl, model) ?? "deciding"}`;
   if (inflightWarms.has(key)) return;
   // A warm changes what is loaded and at what context — the one event that
   // makes a cached /api/ps answer a lie.
   invalidateResidencyCache(base);
+  const known = requestedNumCtx ?? appliedContext(baseUrl, model);
   const run = (async () => {
     try {
+      // Only a warm with no size on record waits for a decision; one that
+      // knows its size fires on this tick.
+      const numCtx = known ?? (await ensureContextDecision(baseUrl, model, { waitMs: WARM_DECISION_WAIT_MS }))?.numCtx;
       const res = await fetch(`${base}/api/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },

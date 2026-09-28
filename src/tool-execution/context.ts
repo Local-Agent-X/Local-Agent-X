@@ -5,6 +5,7 @@ import type { ToolPolicy } from "../tool-policy/index.js";
 import type { ThreatEngine } from "../threat/threat-engine.js";
 import type { RBACManager, Role } from "../rbac.js";
 import { renderToolResultForModel, statusOf } from "../tools/result-helpers.js";
+import { carryBlockRecord } from "./block-record.js";
 
 export type CallContext = "local" | "api" | "delegated" | "cron";
 
@@ -135,7 +136,9 @@ export function terminate(
     ctx.allowed = payload.allowed;
     ctx.result = payload.result;
     ctx.onEvent?.({ type: "tool_end", toolName: ctx.tc.name, toolCallId: ctx.tc.id, result: payload.result.content, allowed: payload.allowed, status: statusOf(payload.result), metadata: payload.result.metadata });
-    ctx.msgs.push({ role: "tool", tool_call_id: ctx.tc.id, content: renderToolResultForModel(payload.result) } as ChatCompletionMessageParam);
+    const msg = { role: "tool", tool_call_id: ctx.tc.id, content: renderToolResultForModel(payload.result) } as ChatCompletionMessageParam;
+    carryBlockRecord(msg, payload.result);
+    ctx.msgs.push(msg);
   }
   return HALT;
 }

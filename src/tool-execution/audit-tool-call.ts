@@ -15,6 +15,7 @@ import { spillFullResult } from "../tools/result-spill.js";
 import { budgetReadResult } from "./read-budget.js";
 import type { Phase, ToolCallContext } from "./context.js";
 import { CONTINUE } from "./context.js";
+import { carryBlockRecord } from "./block-record.js";
 import { buildDenyReason } from "../tool-policy/packs/threat-engine-pack.js";
 import { resolveContextWindow } from "../context-manager/model-windows.js";
 import { toolManifestTokens } from "../context-manager/request-fit.js";
@@ -226,6 +227,7 @@ export function shapeMsg(ctx: ToolCallContext): void {
   // the model; just carried so the canonical dispatcher puts it on the result
   // envelope. Look tools omit _media, so they stay vision-only.
   if (result._media) (toolMessage as unknown as Record<string, unknown>)._media = result._media;
+  carryBlockRecord(toolMessage, result);
   ctx.msgs.push(toolMessage);
   // _image additionally feeds the model the bytes as a user-vision message.
   if (imageData) {

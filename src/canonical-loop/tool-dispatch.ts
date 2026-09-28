@@ -14,13 +14,16 @@
 import { internalToolFailureText } from "./internal-tool-failure.js";
 import type { ToolCall } from "./contract-types.js";
 import type { ToolDispatchStatus } from "./types.js";
-import type { ToolResultStatus } from "../types.js";
+import type { ToolBlockRecord, ToolResultStatus } from "../types.js";
 
 export interface ToolDispatchResult {
   toolCallId: string;
   status: ToolDispatchStatus;
   result: unknown;
   durationMs: number;
+  /** Present iff status is "blocked": the durable, secret-free record of the
+   *  block (types.ts ToolBlockRecord), lifted off the tool message. */
+  block?: ToolBlockRecord;
 }
 
 /**

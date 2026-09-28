@@ -7,9 +7,27 @@
  * fragments collapse into one bubble.
  */
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
-import type { Session, ToolResultStatus } from "../types.js";
+import type { Session, ToolBlockRecord, ToolResultStatus } from "../types.js";
 import { isHarnessRow } from "../harness-rows.js";
-import { parseStatusHeader } from "../tools/result-helpers.js";
+import { parseResultHeader, parseStatusHeader } from "../tools/result-helpers.js";
+
+/**
+ * The metadata a reloaded blocked card renders from. The persisted `_block`
+ * record (message-convert.ts) is the full answer; a row without one — written
+ * before the record existed, or by a path that rendered only the envelope —
+ * still carries the header's scalars (layer / clearable / rule / scope), which
+ * are exactly what the notice keys on. Absent both, the block is invisible on
+ * reload, which is how the 2026-09-27 quarantine lost its control.
+ */
+function blockMetadataOf(block: ToolBlockRecord | undefined, rendered: string): Record<string, unknown> | undefined {
+  if (block) {
+    const { reason: _reason, notice: _notice, ...md } = block;
+    return md;
+  }
+  const header = parseResultHeader(rendered);
+  if (!header || header.status !== "blocked") return undefined;
+  return header.meta;
+}
 
 /**
  * UI projection of a Session. Same model state, different shape: drops
@@ -32,15 +50,15 @@ export function projectSessionForUI(session: Session): Session {
   // Index tool rows by tool_call_id so we can attach results to the
   // assistant that triggered them. JSONL preserves order, so the latest
   // result for a given id is authoritative.
-  const toolResults = new Map<string, string>();
+  const toolResults = new Map<string, { content: string; block?: ToolBlockRecord }>();
   for (const m of session.messages) {
     if (m.role !== "tool") continue;
-    const id = (m as unknown as { tool_call_id?: string }).tool_call_id;
+    const { tool_call_id: id, _block: block } = m as unknown as { tool_call_id?: string; _block?: ToolBlockRecord };
     const content = typeof m.content === "string" ? m.content : "";
-    if (id) toolResults.set(id, content);
+    if (id) toolResults.set(id, { content, block });
   }
 
-  type ToolEvent = { type: "start" | "end"; name: string; args?: Record<string, unknown>; result?: string; allowed?: boolean; status?: ToolResultStatus };
+  type ToolEvent = { type: "start" | "end"; name: string; args?: Record<string, unknown>; result?: string; allowed?: boolean; status?: ToolResultStatus; metadata?: Record<string, unknown> };
   type UIAssistant = ChatCompletionMessageParam & { _tools?: ToolEvent[] };
 
   const messages: ChatCompletionMessageParam[] = [];
@@ -85,8 +103,9 @@ export function projectSessionForUI(session: Session): Session {
           let args: Record<string, unknown> = {};
           try { args = JSON.parse(tc.function?.arguments || "{}"); } catch {}
           pendingTools.push({ type: "start", name, args });
-          const result = toolResults.get(tc.id) || "";
-          pendingTools.push({ type: "end", name, allowed: true, result: result.slice(0, 500), status: parseStatusHeader(result) });
+          const { content: result, block } = toolResults.get(tc.id) ?? { content: "" };
+          const metadata = blockMetadataOf(block, result);
+          pendingTools.push({ type: "end", name, allowed: true, result: result.slice(0, 500), status: parseStatusHeader(result), ...(metadata ? { metadata } : {}) });
         }
       }
       const text = typeof m.content === "string" ? m.content : "";

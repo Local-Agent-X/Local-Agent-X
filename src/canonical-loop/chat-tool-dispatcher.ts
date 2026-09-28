@@ -17,7 +17,7 @@ import { internalToolFailureText } from "./internal-tool-failure.js";
 import { envelopeStatusToDispatchStatus, type ToolDispatcher, type ToolDispatchResult } from "./tool-dispatch.js";
 import { parseStatusHeader } from "../tools/result-helpers.js";
 import type { ToolCall } from "./contract-types.js";
-import type { ToolDefinition, ServerEvent } from "../types.js";
+import type { ToolBlockRecord, ToolDefinition, ServerEvent } from "../types.js";
 import type { SecurityLayer } from "../security/index.js";
 import type { ToolPolicy } from "../tool-policy/index.js";
 import type { ThreatEngine } from "../threat/threat-engine.js";
@@ -327,10 +327,15 @@ function shapeCallResult(
     }
   }
 
+  // The block record rides the tool message the same way _media does
+  // (block-record.ts); lifting it here is what lets the turn loop write it to
+  // the op's event log and tool_result row instead of only the model text.
+  const block = (toolMsg as { _block?: ToolBlockRecord })._block;
   return {
     toolCallId: call.toolCallId,
     status: canonicalStatus,
     result,
     durationMs,
+    ...(block ? { block } : {}),
   };
 }

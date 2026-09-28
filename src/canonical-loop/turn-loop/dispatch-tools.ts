@@ -159,6 +159,7 @@ export async function dispatchTools(
         tool: call.tool,
         status: out.status,
         durationMs: out.durationMs,
+        ...(out.block ? { block: out.block } : {}),
       });
       toolSummary.push({
         tool: call.tool,
@@ -169,7 +170,7 @@ export async function dispatchTools(
       });
       toolMessages.push({
         role: "tool_result",
-        content: { toolCallId: call.toolCallId, result: out.result, status: out.status },
+        content: { toolCallId: call.toolCallId, result: out.result, status: out.status, ...(out.block ? { block: out.block } : {}) },
       });
     });
     return { toolMessages, toolSummary };
@@ -204,6 +205,7 @@ export async function dispatchTools(
       tool: call.tool,
       status: out.status,
       durationMs: out.durationMs,
+      ...(out.block ? { block: out.block } : {}),
     });
     toolSummary.push({
       tool: call.tool,
@@ -215,7 +217,7 @@ export async function dispatchTools(
     const role: CanonicalMessageRole = "tool_result";
     toolMessages.push({
       role,
-      content: { toolCallId: call.toolCallId, result: out.result, status: out.status },
+      content: { toolCallId: call.toolCallId, result: out.result, status: out.status, ...(out.block ? { block: out.block } : {}) },
     });
   }
   return { toolMessages, toolSummary };

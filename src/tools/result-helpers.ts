@@ -76,6 +76,31 @@ export function parseStatusHeader(rendered: string): ToolResultStatus {
 }
 
 /**
+ * Parse the whole leading header — status AND the scalar `k=v` metadata the
+ * renderer put there — back out of a rendered result. The header is the one
+ * envelope form every store keeps (op-messages, the session log, the model
+ * text), so a consumer rebuilding a card from history reads the block's
+ * layer / clearable / rule from here when no richer record was persisted.
+ * Values render as JSON strings, numbers or booleans; a truncated string
+ * ("...") comes back truncated. Returns null when no header is present.
+ */
+export function parseResultHeader(rendered: string): { status: ToolResultStatus; meta: Record<string, string | number | boolean> } | null {
+  if (typeof rendered !== "string") return null;
+  const line = rendered.split("\n", 1)[0];
+  const m = /^\[(ok|error|blocked|declined|timeout|running)((?:, [^\]]*)?)\]$/.exec(line);
+  if (!m) return null;
+  const meta: Record<string, string | number | boolean> = {};
+  for (const part of m[2].matchAll(/([A-Za-z_][\w.-]*)=("(?:[^"\\]|\\.)*"|[^,\]]+)/g)) {
+    const raw = part[2];
+    if (raw.startsWith("\"")) {
+      try { meta[part[1]] = JSON.parse(raw) as string; } catch { meta[part[1]] = raw.slice(1, -1); }
+    } else if (raw === "true" || raw === "false") meta[part[1]] = raw === "true";
+    else meta[part[1]] = Number.isFinite(Number(raw)) ? Number(raw) : raw;
+  }
+  return { status: m[1] as ToolResultStatus, meta };
+}
+
+/**
  * Render an envelope into the string the model sees inside its tool_result
  * block. Goals:
  *   - Zero behaviour change for the ~60 legacy tools that only set

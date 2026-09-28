@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { setupChatWebSocket } from "../chat-ws/index.js";
 import { runSecurityAudit, printAuditReport } from "../security/layer/index.js";
 import { startAriKernel } from "../ari-kernel/index.js";
+import { getSharedAuditTrail } from "../threat/audit-trail.js";
 import { EventBus } from "../event-bus.js";
 import { ConfigWatcher } from "../config-hot-reload.js";
 import { getRuntimeConfig, loadConfig, setRuntimeConfig } from "../config.js";
@@ -180,6 +181,16 @@ export async function startSecurityKernel(deps: { config: LAXConfig; dataDir: st
   const active = await startAriKernel(join(dataDir, "ari-audit.db"), undefined, config.ariRequired);
   if (active) {
     logger.info(`  [ari] Audit active`);
+    // Session taint (data-lineage) and kernel run state are process memory:
+    // a restart clears every quarantine raised before it. Say so in the same
+    // tamper-evident chain a declassify writes to, so a block recorded in a
+    // session's history can be read against the restart that ended it.
+    getSharedAuditTrail(dataDir).record({
+      sessionId: "system",
+      event: "quarantine_state_reset",
+      decision: "warn",
+      reason: "Server start: session taint and kernel run state live in process memory. Every quarantine raised before this restart is cleared by it; a block recorded in session history from before this point no longer holds.",
+    });
     return;
   }
   if (config.ariRequired) {

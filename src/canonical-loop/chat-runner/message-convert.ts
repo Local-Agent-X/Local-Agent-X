@@ -177,11 +177,16 @@ export function opMessageRowToChatParam(row: OpMessageRow): ChatCompletionMessag
         resultText = JSON.stringify(r);
       }
     }
-    return {
+    const param = {
       role: "tool",
       tool_call_id: content.toolCallId ?? "",
       content: resultText,
-    } as ChatCompletionMessageParam;
+    } as ChatCompletionMessageParam & { _block?: unknown };
+    // The block record (dispatch-tools.ts writes it beside `result`) persists
+    // into session history, so a reloaded chat can rebuild the block notice.
+    const block = (content as { block?: unknown }).block;
+    if (block && typeof block === "object") param._block = block;
+    return param;
   }
   return null;
 }

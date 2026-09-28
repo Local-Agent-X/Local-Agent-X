@@ -93,6 +93,13 @@ describe("maskSecretValues — values masked in place, names and structure kept"
     expect(once.masked).toBe(2);
     expect(scanForSecrets(once.text).clean).toBe(true);
     expect(maskSecretValues(once.text).masked).toBe(0);
+    // The endpoint pass too: a `"value": "corr****"` it rendered is not a value
+    // to mask again (the tool masks before `find`, the taint seam re-runs the pass).
+    const endpoint = maskSecretValues(JSON.stringify([{ name: "DB_PASSWORD", value: "correct horse battery staple 42" }], null, 2), { endpoint: true });
+    expect(endpoint.text).toContain('"value": "corr****"');
+    const again = maskSecretValues(endpoint.text, { endpoint: true });
+    expect(again.masked).toBe(0);
+    expect(again.text).toBe(endpoint.text);
   });
 
   it("leaves a response with no secrets byte-identical", () => {

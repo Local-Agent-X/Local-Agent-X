@@ -28,6 +28,7 @@ import {
   registerRedactedSecretValue,
   isSecretShaped,
   maskForDisplay,
+  isMaskedDisplay,
 } from "../security/secrets/index.js";
 import { SECRET_SCAN_CAP } from "./paths.js";
 import { createLogger } from "../logger.js";
@@ -94,7 +95,10 @@ function jsonValueSpans(head: string): Span[] {
     if (!raw) continue;
     let value: string;
     try { value = JSON.parse(`"${raw}"`); } catch { continue; }
-    if (!isSecretShaped(value)) continue;
+    // A value this masker already rendered (`corr****`) is shaped enough to
+    // pass isSecretShaped; masking it again to `****` would throw the prefix
+    // away on the seam's second pass and make the pass non-idempotent.
+    if (isMaskedDisplay(value) || !isSecretShaped(value)) continue;
     const start = (m.index ?? 0) + m[0].length - 1 - raw.length;
     spans.push({
       start, end: start + raw.length, replacement: maskForDisplay(value),

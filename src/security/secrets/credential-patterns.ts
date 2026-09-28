@@ -179,6 +179,11 @@ export function maskForDisplay(value: string): string {
   return (value.length >= 16 ? value.slice(0, 4) : "") + "****";
 }
 
+/** Whether `value` is already a maskForDisplay rendering (`gho_****`, `****`). */
+export function isMaskedDisplay(value: string): boolean {
+  return /^[^*]{0,4}\*{4}$/.test(value);
+}
+
 /**
  * Replace inline credentials in `text` with masked placeholders.
  * Use for tool output / log lines before they reach the model or persistent storage.

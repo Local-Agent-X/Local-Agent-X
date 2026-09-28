@@ -11,7 +11,7 @@ export {
 	isAppAtRestSecretBasename,
 	APP_AT_REST_SECRET_BASENAMES,
 } from "./known-secrets.js";
-export { CREDENTIAL_ENV_PREFIXES, CREDENTIAL_KEY_PATTERNS, redact, maskForDisplay } from "./credential-patterns.js";
+export { CREDENTIAL_ENV_PREFIXES, CREDENTIAL_KEY_PATTERNS, redact, maskForDisplay, isMaskedDisplay } from "./credential-patterns.js";
 export type { SecretMatch } from "./secret-scanner.js";
 export { redactCredentials } from "./credentials.js";
 export { outboundPayloadParts } from "./outbound-payload.js";

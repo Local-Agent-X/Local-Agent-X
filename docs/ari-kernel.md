@@ -37,10 +37,13 @@ runtime by [`src/ari-kernel/`](../src/ari-kernel/). No tool execution path bypas
   de-leeted view, so digit-substituted directives are caught) — before the model sees it.
 - **Memory protection.** Writes to memory are gated: secrets are redacted and durable
   prompt-injection is blocked (`writeMemorySafely`).
-- **Escalation / quarantine (restricted mode).** Repeated denied sensitive actions
-  (default threshold 5), or a single behavioral-rule match on a sensitive access, put
-  the run into *restricted mode* — only read-only safe actions pass, and even safe GETs
-  are blocked if they look like exfil. The run's state lives on the `Firewall` with no
+- **Behavioral rules refuse one call.** A sequence rule (a credential read followed by
+  an outbound write, untrusted input followed by a database write, …) refuses the call
+  that completes its pattern and names the rule; the run goes on and the refusal is
+  counted like any other denial.
+- **Escalation / quarantine (restricted mode).** Repeated denied actions (default
+  threshold 5) put the run into *restricted mode* — only read-only safe actions pass,
+  and even safe GETs are blocked if they look like exfil. The run's state lives on the `Firewall` with no
   in-place reset, so each op refreshes a stuck run fresh at start
   (`refreshAriKernelScopeIfStuck`) — a prior op's escalation doesn't brick the next one.
 - **Tamper-evident audit trail.** Every decision is logged to a SHA-256/HMAC hash chain.

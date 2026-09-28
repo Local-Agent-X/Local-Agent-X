@@ -28,15 +28,13 @@ describe("Behavioral Rule 1: web_taint_sensitive_probe", () => {
 		expect(match?.ruleId).toBe("web_taint_sensitive_probe");
 	});
 
-	it("triggers when web taint is followed by shell exec", () => {
+	it("does not trigger on a bare shell exec after web taint (a shell event carries no payload to judge)", () => {
 		const state = new RunStateTracker();
 		pushEvents(state, [
 			{ timestamp: ts(), type: "taint_observed", taintSources: ["web"] },
 			{ timestamp: ts(), type: "tool_call_allowed", toolClass: "shell", action: "exec" },
 		]);
-		const match = evaluateBehavioralRules(state);
-		expect(match).not.toBeNull();
-		expect(match?.ruleId).toBe("web_taint_sensitive_probe");
+		expect(evaluateBehavioralRules(state)).toBeNull();
 	});
 
 	it("triggers when web taint is followed by egress attempt", () => {
@@ -183,7 +181,7 @@ describe("Behavioral Rule 3: sensitive_read_then_egress", () => {
 });
 
 describe("Behavioral rule application", () => {
-	it("quarantines the run and records QuarantineInfo", () => {
+	it("refuses the call, counts it, and leaves the run unrestricted", () => {
 		const state = new RunStateTracker();
 		pushEvents(state, [
 			{ timestamp: ts(), type: "taint_observed", taintSources: ["web"] },
@@ -192,15 +190,45 @@ describe("Behavioral rule application", () => {
 		const match = evaluateBehavioralRules(state)!;
 		expect(match).not.toBeNull();
 
-		const quarantine = applyBehavioralRule(state, match);
-		expect(quarantine).not.toBeNull();
-		expect(quarantine?.triggerType).toBe("behavioral_rule");
-		expect(quarantine?.ruleId).toBe("web_taint_sensitive_probe");
-		expect(state.restricted).toBe(true);
-		expect(state.quarantineInfo).toBe(quarantine);
+		const denial = applyBehavioralRule(state, match);
+		expect(denial.ruleId).toBe("web_taint_sensitive_probe");
+		expect(denial.deniedActions).toBe(1);
+		expect(denial.threshold).toBe(5);
+		expect(denial.restricted).toBe(false);
+		expect(state.restricted).toBe(false);
+		expect(state.quarantineInfo).toBeNull();
+		expect(state.lastRuleDenial).toBe(denial);
 	});
 
-	it("does not double-quarantine if already restricted", () => {
+	it("judges only the call that completes the pattern: a later benign call is not refused", () => {
+		const state = new RunStateTracker();
+		pushEvents(state, [
+			{ timestamp: ts(), type: "sensitive_read_attempt", toolClass: "file", action: "read", metadata: { path: ".env" } },
+			{ timestamp: ts(), type: "egress_attempt", toolClass: "http", action: "post" },
+		]);
+		expect(evaluateBehavioralRules(state)?.ruleId).toBe("sensitive_read_then_egress");
+		state.pushEvent({ timestamp: ts(), type: "tool_call_allowed", toolClass: "http", action: "get" });
+		expect(evaluateBehavioralRules(state)).toBeNull();
+	});
+
+	it("a run that keeps being refused is restricted at the threshold, naming the rule", () => {
+		const state = new RunStateTracker({ maxDeniedSensitiveActions: 3 });
+		state.pushEvent({ timestamp: ts(), type: "sensitive_read_attempt", toolClass: "file", action: "read", metadata: { path: ".env" } });
+		let denial;
+		for (let i = 0; i < 3; i++) {
+			state.pushEvent({ timestamp: ts(), type: "egress_attempt", toolClass: "http", action: "post" });
+			const match = evaluateBehavioralRules(state)!;
+			expect(match.ruleId).toBe("sensitive_read_then_egress");
+			denial = applyBehavioralRule(state, match);
+		}
+		expect(denial!.deniedActions).toBe(3);
+		expect(denial!.restricted).toBe(true);
+		expect(state.restricted).toBe(true);
+		expect(state.quarantineInfo?.triggerType).toBe("threshold");
+		expect(state.quarantineInfo?.ruleId).toBe("sensitive_read_then_egress");
+	});
+
+	it("does not evaluate rules once the run is restricted", () => {
 		const state = new RunStateTracker({ maxDeniedSensitiveActions: 1 });
 		state.recordDeniedAction(); // threshold triggered
 		expect(state.restricted).toBe(true);
@@ -221,7 +249,7 @@ describe("Behavioral rule application", () => {
 		expect(state.restricted).toBe(true);
 		expect(state.quarantineInfo).not.toBeNull();
 		expect(state.quarantineInfo?.triggerType).toBe("threshold");
-		expect(state.quarantineInfo?.reason).toContain("exceeded threshold");
+		expect(state.quarantineInfo?.reason).toContain("reached the threshold");
 	});
 
 	it("behavioral rules can be disabled via policy", () => {
@@ -253,7 +281,7 @@ describe("Event window management", () => {
 		expect(state.recentEvents.length).toBe(20);
 	});
 
-	it("quarantine_entered event is pushed when quarantined", () => {
+	it("rule_denied event is pushed when a rule refuses a call", () => {
 		const state = new RunStateTracker();
 		pushEvents(state, [
 			{ timestamp: ts(), type: "taint_observed", taintSources: ["web"] },
@@ -262,7 +290,7 @@ describe("Event window management", () => {
 		const match = evaluateBehavioralRules(state)!;
 		applyBehavioralRule(state, match);
 		const lastEvent = state.recentEvents[state.recentEvents.length - 1];
-		expect(lastEvent.type).toBe("quarantine_entered");
+		expect(lastEvent.type).toBe("rule_denied");
 	});
 
 	it("rule priority: rule 1 matches before rule 3 when both could match", () => {
@@ -330,7 +358,7 @@ describe("Behavioral Rule 4: tainted_database_write", () => {
 });
 
 describe("Behavioral Rule 5: tainted_shell_with_data", () => {
-	it("rule 1 has priority over rule 5 when web taint + shell matches both", () => {
+	it("a data-carrying shell after web taint is rule 5's (rule 1 no longer sees shell events)", () => {
 		const state = new RunStateTracker();
 		pushEvents(state, [
 			{ timestamp: ts(), type: "taint_observed", taintSources: ["web"] },
@@ -342,10 +370,9 @@ describe("Behavioral Rule 5: tainted_shell_with_data", () => {
 				metadata: { commandLength: 150 },
 			},
 		]);
-		// Rule 1 catches taint→shell before rule 5 can fire
 		const match = evaluateBehavioralRules(state);
 		expect(match).not.toBeNull();
-		expect(match?.ruleId).toBe("web_taint_sensitive_probe");
+		expect(match?.ruleId).toBe("tainted_shell_with_data");
 	});
 
 	it("does NOT trigger for non-web taint sources", () => {

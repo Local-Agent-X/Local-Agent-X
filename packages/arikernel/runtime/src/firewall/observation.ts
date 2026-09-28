@@ -2,7 +2,6 @@ import type { AuditStore } from "@arikernel/audit-log";
 import type { Principal, TaintLabel } from "@arikernel/core";
 import { generateId, now } from "@arikernel/core";
 import type { TaintTracker } from "@arikernel/taint-tracker";
-import { applyBehavioralRule, evaluateBehavioralRules } from "../behavioral-rules.js";
 import type { RunStateTracker } from "../run-state.js";
 
 export interface ObservationContext {
@@ -49,26 +48,6 @@ export function observeToolOutput(ctx: ObservationContext, observation: Observat
 				taintSources: newSources,
 			});
 
-			if (ctx.runState.behavioralRulesEnabled) {
-				const match = evaluateBehavioralRules(ctx.runState);
-				if (match) {
-					const quarantine = applyBehavioralRule(ctx.runState, match);
-					if (quarantine) {
-						ctx.auditStore.appendSystemEvent(
-							ctx.runId,
-							ctx.principal.id,
-							"quarantine",
-							quarantine.reason,
-							{
-								triggerType: quarantine.triggerType,
-								ruleId: quarantine.ruleId,
-								counters: quarantine.countersSnapshot,
-								matchedEvents: quarantine.matchedEvents,
-							},
-						);
-					}
-				}
-			}
 		}
 	}
 

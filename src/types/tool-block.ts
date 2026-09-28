@@ -9,16 +9,19 @@
  * nothing here outlives the turn.
  */
 export interface KernelQuarantine {
-  /** "behavioral_rule" (a sequence rule fired on THIS call), "threshold" (the
-   *  denied-action counter tripped), or "restricted" (a later call refused
-   *  because the run was already restricted by one of the first two). */
-  trigger: "behavioral_rule" | "threshold" | "restricted";
+  /** "behavioral_rule": a sequence rule refused THIS call and the run goes on.
+   *  "threshold": this call's denial reached the denied-action limit and the
+   *  run is now restricted. "external": a host-side alert restricted it.
+   *  "restricted": a later call refused because the run was already restricted. */
+  trigger: "behavioral_rule" | "threshold" | "external" | "restricted";
   rule?: string;
   reason: string;
-  /** When the run entered restricted mode. */
-  restrictedAt: string;
+  /** When the run entered restricted mode; absent while it has not. */
+  restrictedAt?: string;
   /** The kernel's denied-action counter at the time of this call. */
   deniedActions: number;
+  /** Denials that restrict the run; with deniedActions, where the run stands. */
+  threshold?: number;
   /** The file path the matched sensitive-read event named, when the rule was
    *  sensitive_read_then_egress. */
   matchedPath?: string;

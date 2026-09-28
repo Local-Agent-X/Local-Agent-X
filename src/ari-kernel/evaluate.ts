@@ -16,8 +16,9 @@ export interface AriVerdict {
   allowed: boolean;
   reason: string;
   userHint?: string;
-  /** The run state behind a deny, when the scope is restricted — the rule
-   *  that fired and whether this call raised it or merely ran into it. */
+  /** The run state behind a deny, when a run rule refused this call or the
+   *  scope is restricted — the rule that fired and whether this call raised
+   *  it or merely ran into it. */
   quarantine?: KernelQuarantine;
 }
 
@@ -142,7 +143,9 @@ export async function ariEvaluate(
         const q = verdict.quarantine;
         const what = q.trigger === "restricted"
           ? `run restricted since ${q.restrictedAt} by ${q.rule ?? q.trigger} (${q.reason}); ${detail}`
-          : `${q.rule ?? q.trigger} fired: ${q.reason}. ${detail}`;
+          : q.trigger === "behavioral_rule"
+            ? `run rule ${q.rule} refused this call: ${q.reason}. The run continues: ${q.deniedActions} of ${q.threshold} denials before it is restricted to read-only actions.`
+            : `${q.rule ?? q.trigger} fired: ${q.reason}. ${detail}`;
         verdict.reason = `[ARI kernel] ${what}`;
       }
       return verdict;
@@ -152,6 +155,6 @@ export async function ariEvaluate(
 }
 
 function withQuarantine(verdict: AriVerdict, scopeId: string | undefined, restrictedBefore: boolean): AriVerdict {
-  const quarantine = readKernelQuarantine(scopeId, !restrictedBefore);
+  const quarantine = readKernelQuarantine(scopeId, !restrictedBefore, verdict.reason);
   return quarantine ? { ...verdict, quarantine } : verdict;
 }

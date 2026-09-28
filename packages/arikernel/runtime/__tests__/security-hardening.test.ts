@@ -11,7 +11,7 @@ describe("quarantine allows GET/HEAD ingress but blocks egress", () => {
 
 	beforeEach(() => {
 		state = new RunStateTracker({ behavioralRules: true });
-		state.quarantineByRule("test", "test reason", []);
+		state.quarantineExternal("test", "test reason");
 	});
 
 	it("allows http.get in restricted mode (ingress)", () => {
@@ -268,7 +268,7 @@ describe("demo regression: page fetch ingress vs egress", () => {
 
 	it("GET is allowed in quarantine mode", () => {
 		const state = new RunStateTracker();
-		state.quarantineByRule("test", "test", []);
+		state.quarantineExternal("test", "test");
 		expect(state.isAllowedInRestrictedMode("http", "get")).toBe(true);
 	});
 

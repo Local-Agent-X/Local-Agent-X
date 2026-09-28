@@ -3,7 +3,7 @@ import type { Principal, TaintLabel, ToolClass } from "@arikernel/core";
 import { generateId, now } from "@arikernel/core";
 import { applyBehavioralRule, evaluateBehavioralRules } from "../behavioral-rules.js";
 import type { FirewallHooks } from "../hooks.js";
-import type { QuarantineInfo, RunStateTracker } from "../run-state.js";
+import type { RuleDenial, RunStateTracker } from "../run-state.js";
 
 export interface AuditContext {
 	principal: Principal;
@@ -33,13 +33,12 @@ export interface AuditOptions {
  * carries `reason: "audit-only"` so downstream replay/analysis can
  * filter it out from gated decisions if needed.
  *
- * Returns the QuarantineInfo when behavioral rules just triggered a new
- * quarantine for this run (so the caller can surface it), or null
- * otherwise. Never throws — DB failures are swallowed and logged via
- * onAudit hook absence; the caller must not depend on audit success
- * for tool execution.
+ * Returns the refusal when a behavioral rule matched on this call (so the
+ * caller can surface it), or null otherwise. Never throws — DB failures are
+ * swallowed and logged via onAudit hook absence; the caller must not depend
+ * on audit success for tool execution.
  */
-export function audit(ctx: AuditContext, opts: AuditOptions): QuarantineInfo | null {
+export function audit(ctx: AuditContext, opts: AuditOptions): RuleDenial | null {
 	const timestamp = now();
 	const toolCall = {
 		id: generateId(),
@@ -85,10 +84,7 @@ export function audit(ctx: AuditContext, opts: AuditOptions): QuarantineInfo | n
 	});
 	if (ctx.runState.behavioralRulesEnabled) {
 		const match = evaluateBehavioralRules(ctx.runState);
-		if (match) {
-			const qi = applyBehavioralRule(ctx.runState, match);
-			if (qi) return qi;
-		}
+		if (match) return applyBehavioralRule(ctx.runState, match);
 	}
 	return null;
 }

@@ -11,11 +11,11 @@ import { ToolCallDeniedError, now } from "@arikernel/core";
 import type { PolicyEngine } from "@arikernel/policy-engine";
 import type { TaintTracker } from "@arikernel/taint-tracker";
 import type { ExecutorRegistry } from "@arikernel/tool-executors";
-import { applyBehavioralRule, evaluateBehavioralRules } from "../behavioral-rules.js";
+import { applyBehavioralRule, evaluateBehavioralRules, ruleDenialText } from "../behavioral-rules.js";
 import type { SecurityMode } from "../config.js";
 import type { FirewallHooks } from "../hooks.js";
 import type { PersistentTaintRegistry } from "../persistent-taint-registry.js";
-import type { RunStateTracker } from "../run-state.js";
+import type { RuleDenial, RunStateTracker } from "../run-state.js";
 import type { ITokenStore } from "../token-store.js";
 
 export interface PipelineContext {
@@ -44,48 +44,35 @@ export function logEvent(
 	return event;
 }
 
-// Evaluate behavioral rules and apply quarantine if matched.
-// Returns true if quarantine was newly triggered — callers should deny the
-// current action to prevent first-hit exfiltration.
-export function checkBehavioralRules(ctx: PipelineContext, toolCall: ToolCall): boolean {
-	if (!ctx.runState?.behavioralRulesEnabled) return false;
+// Evaluate the behavioral rules against the call whose event was just pushed.
+// A match refuses that call: the refusal is counted and recorded, and the
+// caller throws it with denyByRule. Null when no rule matched.
+export function checkBehavioralRules(ctx: PipelineContext, toolCall: ToolCall): RuleDenial | null {
+	if (!ctx.runState?.behavioralRulesEnabled) return null;
 	const match = evaluateBehavioralRules(ctx.runState);
-	if (!match) return false;
-	const quarantine = applyBehavioralRule(ctx.runState, match);
-	if (quarantine) {
-		ctx.auditStore.appendSystemEvent(
-			toolCall.runId,
-			toolCall.principalId,
-			"quarantine",
-			quarantine.reason,
-			{
-				triggerType: quarantine.triggerType,
-				ruleId: quarantine.ruleId,
-				counters: quarantine.countersSnapshot,
-				matchedEvents: quarantine.matchedEvents,
-			},
-		);
-		return true;
-	}
-	return false;
+	if (!match) return null;
+	const denial = applyBehavioralRule(ctx.runState, match);
+	ctx.auditStore.appendSystemEvent(toolCall.runId, toolCall.principalId, "rule_denied", denial.reason, {
+		ruleId: denial.ruleId,
+		deniedActions: denial.deniedActions,
+		threshold: denial.threshold,
+		restricted: denial.restricted,
+		matchedEvents: denial.matchedEvents,
+	});
+	return denial;
 }
 
-// Deny the current action because a behavioral rule just triggered quarantine.
-// This prevents first-hit exfiltration where the triggering action itself would
-// otherwise proceed despite causing quarantine.
-export function denyQuarantinedAction(
-	ctx: PipelineContext,
-	toolCall: ToolCall,
-	context: string,
-): never {
+// Throw the refusal a behavioral rule produced for this call. The denial was
+// counted when it was produced (RunStateTracker.denyByRule), so this only
+// records and throws it.
+export function denyByRule(ctx: PipelineContext, toolCall: ToolCall, denial: RuleDenial): never {
 	const decision: Decision = {
 		verdict: "deny",
 		matchedRule: null,
-		reason: `Action '${toolCall.toolClass}.${toolCall.action}' denied: ${context}. Run has been quarantined.`,
+		reason: `Action '${toolCall.toolClass}.${toolCall.action}' ${ruleDenialText(denial)}`,
 		taintLabels: toolCall.taintLabels,
 		timestamp: now(),
 	};
-	ctx.runState?.recordDeniedAction();
 	logEvent(ctx, toolCall, decision);
 	throw new ToolCallDeniedError(toolCall, decision);
 }

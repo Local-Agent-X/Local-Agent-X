@@ -1,9 +1,16 @@
 /**
  * Behavioral sequence rules for run-state enforcement.
  *
- * Five explicit rules that detect suspicious multi-step patterns
- * in the recent-event window and trigger immediate quarantine.
- * No DSL, no graph engine — just direct pattern matching.
+ * Five explicit rules that detect suspicious multi-step patterns in the
+ * recent-event window. No DSL, no graph engine — just direct pattern matching.
+ *
+ * A rule judges the call under evaluation: the event that call pushed is the
+ * last in the window, and only that event can be the pattern's follow-up. A
+ * match refuses that one call (RunStateTracker.denyByRule); the run goes on,
+ * the refusal is counted, and the denied-action threshold restricts a run
+ * that keeps being refused. Until 2026-09-28 a single match restricted the
+ * whole run, so one false positive cascaded into every later write and shell
+ * call of the turn.
  *
  * There is no longer a sixth rule ("secret_access_then_any_egress": a GET to
  * a vault/secrets/credentials-shaped URL, or a query against a secrets-like
@@ -18,11 +25,12 @@
  */
 
 import { isWriteAction } from "@arikernel/core";
-import type { QuarantineInfo, RunStateTracker, SecurityEvent } from "./run-state.js";
+import type { RuleDenial, RunStateTracker, SecurityEvent } from "./run-state.js";
 
 export interface BehavioralRuleMatch {
 	ruleId: string;
 	reason: string;
+	/** Ends with the event of the call being judged. */
 	matchedEvents: SecurityEvent[];
 }
 
@@ -58,15 +66,17 @@ export function evaluateBehavioralRules(state: RunStateTracker): BehavioralRuleM
 	);
 }
 
-/**
- * Apply a behavioral rule match to quarantine the run.
- * Returns QuarantineInfo if newly quarantined, null if already restricted.
- */
-export function applyBehavioralRule(
-	state: RunStateTracker,
-	match: BehavioralRuleMatch,
-): QuarantineInfo | null {
-	return state.quarantineByRule(match.ruleId, match.reason, match.matchedEvents);
+/** Refuse the call a rule matched and count the refusal. */
+export function applyBehavioralRule(state: RunStateTracker, match: BehavioralRuleMatch): RuleDenial {
+	return state.denyByRule(match.ruleId, match.reason, match.matchedEvents);
+}
+
+/** The refusal as the caller reads it: the rule, its reason, where the run stands. */
+export function ruleDenialText(denial: RuleDenial): string {
+	const standing = denial.restricted
+		? `This was denial ${denial.deniedActions} of ${denial.threshold}: the run is now restricted to read-only actions.`
+		: `The run continues: ${denial.deniedActions} of ${denial.threshold} denials before it is restricted to read-only actions.`;
+	return `refused by run rule ${denial.ruleId}: ${denial.reason}. ${standing}`;
 }
 
 // ── Rule 1: web_taint_sensitive_probe ──────────────────────────────
@@ -113,7 +123,7 @@ function checkWebTaintSensitiveProbe(
 	// NOTE: shell tool_call (allowed/denied) is DELIBERATELY excluded — see the
 	// payload-evidence relaxation note above. A shell event here carries no payload,
 	// so it cannot be evidence-checked; blocking on it was the temporal-only FP.
-	const dangerousFollowup = findAfter(
+	const dangerousFollowup = judged(
 		events,
 		searchFromIdx,
 		(e) =>
@@ -154,7 +164,7 @@ function checkDeniedCapabilityThenEscalation(
 
 		const deniedRisk = TOOL_CLASS_RISK[event.toolClass ?? ""] ?? 0;
 
-		const escalation = findAfter(events, i, (e) => {
+		const escalation = judged(events, i, (e) => {
 			if (e.type !== "capability_requested" && e.type !== "capability_granted") return false;
 			const requestedRisk = TOOL_CLASS_RISK[e.toolClass ?? ""] ?? 0;
 
@@ -182,7 +192,7 @@ function checkDeniedCapabilityThenEscalation(
 	const hasDenialInWindow = events.some((e) => e.type === "capability_denied");
 	if (state.escalationDeniedObserved && !hasDenialInWindow) {
 		const deniedClasses = state.escalationDeniedClasses;
-		const escalation = findRecent(events, (e) => {
+		const escalation = judged(events, -1, (e) => {
 			if (e.type !== "capability_requested" && e.type !== "capability_granted") return false;
 			const requestedRisk = TOOL_CLASS_RISK[e.toolClass ?? ""] ?? 0;
 			// Fire if riskier than ANY previously denied class
@@ -225,7 +235,7 @@ function checkSensitiveReadThenEgress(
 	// If sensitive read was evicted but sticky flag is set, any egress in window triggers
 	if (sensitiveRead) {
 		const readIdx = events.indexOf(sensitiveRead);
-		const egress = findAfter(events, readIdx, (e) => e.type === "egress_attempt");
+		const egress = judged(events, readIdx, (e) => e.type === "egress_attempt");
 		if (!egress) return null;
 
 		const path = (sensitiveRead.metadata?.path as string) ?? "sensitive file";
@@ -238,7 +248,7 @@ function checkSensitiveReadThenEgress(
 
 	// Sticky flag: sensitive read happened earlier but was evicted from window
 	if (state.sensitiveReadObserved) {
-		const egress = findRecent(events, (e) => e.type === "egress_attempt");
+		const egress = judged(events, -1, (e) => e.type === "egress_attempt");
 		if (!egress) return null;
 
 		return {
@@ -278,7 +288,7 @@ function checkTaintedDatabaseWrite(
 
 	const searchFromIdx = taintEvent ? events.indexOf(taintEvent) : -1;
 
-	const dbWrite = findAfter(
+	const dbWrite = judged(
 		events,
 		searchFromIdx,
 		(e) => e.toolClass === "database" && isWriteAction("database", e.action ?? ""),
@@ -317,7 +327,7 @@ function checkTaintedShellWithData(
 
 	const searchFromIdx = taintEvent ? events.indexOf(taintEvent) : -1;
 
-	const shellWithData = findAfter(events, searchFromIdx, (e) => {
+	const shellWithData = judged(events, searchFromIdx, (e) => {
 		if (e.toolClass !== "shell") return false;
 		const cmdLen = (e.metadata?.commandLength as number) ?? 0;
 		return cmdLen > SHELL_DATA_CMD_LENGTH;
@@ -344,13 +354,16 @@ function findRecent(
 	return null;
 }
 
-function findAfter(
+/**
+ * The event of the call being judged — the last in the window — when it
+ * satisfies the predicate and comes after `afterIndex`. Earlier events that
+ * would satisfy it were judged when they were pushed.
+ */
+function judged(
 	events: readonly SecurityEvent[],
 	afterIndex: number,
 	predicate: (e: SecurityEvent) => boolean,
 ): SecurityEvent | null {
-	for (let i = afterIndex + 1; i < events.length; i++) {
-		if (predicate(events[i])) return events[i];
-	}
-	return null;
+	const last = events.length - 1;
+	return last > afterIndex && predicate(events[last]) ? events[last] : null;
 }

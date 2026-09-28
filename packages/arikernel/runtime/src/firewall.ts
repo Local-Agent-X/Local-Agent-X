@@ -42,6 +42,7 @@ import { PersistentTaintRegistry } from "./persistent-taint-registry.js";
 import { Pipeline } from "./pipeline.js";
 import {
 	type QuarantineInfo,
+	type RuleDenial,
 	type RunStateCounters,
 	RunStateTracker,
 } from "./run-state.js";
@@ -207,6 +208,11 @@ export class Firewall {
 		return this._runState.quarantineInfo;
 	}
 
+	/** The most recent call a behavioral rule refused in this run, or null. */
+	get lastRuleDenial(): RuleDenial | null {
+		return this._runState.lastRuleDenial;
+	}
+
 	/** Kernel-maintained taint state for this run. */
 	get taintState(): import("@arikernel/core").TaintState {
 		return this._runState.taintState;
@@ -221,21 +227,20 @@ export class Firewall {
 	 * Audit-only path for tool calls with no agent-controlled I/O sink
 	 * (toolClass: "internal"). Writes the call into the hash-chained audit
 	 * store as if it were a gated call AND feeds it through the behavioral-
-	 * rules pipeline — so a session that calls `app_delete` 50 times in 30s
-	 * trips the same quarantine logic that a session abusing `bash` would.
+	 * rules pipeline, so the kernel sees the full call shape, not just the
+	 * I/O half.
 	 *
 	 * Distinct from execute(): no policy evaluation, no capability check,
 	 * no taint propagation. The decision is always allow; the audit entry
 	 * carries `reason: "audit-only"` so downstream replay/analysis can
 	 * filter it out from gated decisions if needed.
 	 *
-	 * Returns the QuarantineInfo when behavioral rules just triggered a new
-	 * quarantine for this run (so the caller can surface it), or null
-	 * otherwise. Never throws — DB failures are swallowed and logged via
-	 * onAudit hook absence; the caller must not depend on audit success
-	 * for tool execution.
+	 * Returns the refusal when a behavioral rule matched on this call (so
+	 * the caller can surface it), or null otherwise. Never throws — DB
+	 * failures are swallowed and logged via onAudit hook absence; the caller
+	 * must not depend on audit success for tool execution.
 	 */
-	audit(opts: AuditOptions): QuarantineInfo | null {
+	audit(opts: AuditOptions): RuleDenial | null {
 		return auditCall(
 			{
 				principal: this.principal,
@@ -352,6 +357,7 @@ export class Firewall {
 			issuer: this.issuer,
 			runState: this._runState,
 			auditStore: this.auditStore,
+			tokenStore: this.tokenStore,
 			runId: this.runId,
 			hooks: this._hooks,
 			sidecarClient: this._sidecarClient,

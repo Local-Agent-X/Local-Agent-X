@@ -2,9 +2,10 @@
  * Run-level state tracker for stateful enforcement.
  *
  * Tracks cumulative behavior counters and a recent-event window
- * across an entire agent run. When thresholds are exceeded or
- * behavioral sequence rules match, the run enters "restricted mode"
- * which limits the agent to read-only safe actions.
+ * across an entire agent run. A behavioral sequence rule refuses the one
+ * call that completes its pattern (denyByRule); each refusal is counted,
+ * and when the denied-action counter reaches its threshold the run enters
+ * "restricted mode", which limits the agent to read-only safe actions.
  */
 
 import { type TaintLabel, type TaintState } from "@arikernel/core";
@@ -15,6 +16,7 @@ import { normalizeInput } from "../unicode-safety.js";
 import type {
 	HostnameEgressRecord,
 	QuarantineInfo,
+	RuleDenial,
 	RunStateCounters,
 	RunStatePolicy,
 	SecurityEvent,
@@ -33,6 +35,7 @@ export class RunStateTracker {
 	private _restricted = false;
 	private _restrictedAt: string | null = null;
 	private _quarantineInfo: QuarantineInfo | null = null;
+	private _lastRuleDenial: RuleDenial | null = null;
 	private _tainted = false;
 	private _taintSources: Set<string> = new Set();
 	private _accumulatedTaintLabels: TaintLabel[] = [];
@@ -71,6 +74,11 @@ export class RunStateTracker {
 
 	get quarantineInfo(): QuarantineInfo | null {
 		return this._quarantineInfo;
+	}
+
+	/** The most recent call a behavioral rule refused, or null. */
+	get lastRuleDenial(): RuleDenial | null {
+		return this._lastRuleDenial;
 	}
 
 	/**
@@ -266,19 +274,39 @@ export class RunStateTracker {
 		}
 	}
 
-	/** Enter quarantine via behavioral rule. Returns QuarantineInfo if newly quarantined. */
-	quarantineByRule(
-		ruleId: string,
-		reason: string,
-		matchedEvents: SecurityEvent[],
-	): QuarantineInfo | null {
+	/**
+	 * Refuse the call a behavioral rule matched. The match restricts nothing
+	 * by itself: the refusal is counted like any other denial, and the
+	 * threshold restricts a run that keeps being refused.
+	 */
+	denyByRule(ruleId: string, reason: string, matchedEvents: SecurityEvent[]): RuleDenial {
+		const timestamp = new Date().toISOString();
+		this.pushEvent({ timestamp, type: "rule_denied", metadata: { ruleId, reason } });
+		this.counters.deniedActions++;
+		this.checkThreshold(ruleId);
+		const denial: RuleDenial = {
+			ruleId,
+			reason,
+			matchedEvents,
+			deniedActions: this.counters.deniedActions,
+			threshold: this.threshold,
+			restricted: this._restricted,
+			timestamp,
+		};
+		this._lastRuleDenial = denial;
+		return denial;
+	}
+
+	/** Restrict the run on a host-side alert (a cross-principal correlator).
+	 *  Returns the QuarantineInfo when newly restricted, null when already. */
+	quarantineExternal(ruleId: string, reason: string): QuarantineInfo | null {
 		if (this._restricted) return null;
 		const info: QuarantineInfo = {
-			triggerType: "behavioral_rule",
+			triggerType: "external",
 			ruleId,
 			reason,
 			countersSnapshot: { ...this.counters },
-			matchedEvents,
+			matchedEvents: [],
 			timestamp: new Date().toISOString(),
 		};
 		this._restricted = true;
@@ -358,7 +386,8 @@ export class RunStateTracker {
 		return isEgressAction(action);
 	}
 
-	private checkThreshold(): void {
+	/** `ruleId` names the rule behind the denial being counted, when it was one. */
+	private checkThreshold(ruleId?: string): void {
 		if (this._restricted) return;
 		if (this.counters.deniedActions >= this.threshold) {
 			const ts = new Date().toISOString();
@@ -366,7 +395,10 @@ export class RunStateTracker {
 			this._restrictedAt = ts;
 			this._quarantineInfo = {
 				triggerType: "threshold",
-				reason: `Denied actions (${this.counters.deniedActions}) exceeded threshold (${this.threshold})`,
+				...(ruleId ? { ruleId } : {}),
+				reason:
+					`Denied actions (${this.counters.deniedActions}) reached the threshold (${this.threshold})` +
+					(ruleId ? `; the last was refused by run rule ${ruleId}` : ""),
 				countersSnapshot: { ...this.counters },
 				timestamp: ts,
 			};

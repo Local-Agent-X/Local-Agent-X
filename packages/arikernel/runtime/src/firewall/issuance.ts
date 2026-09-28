@@ -8,17 +8,19 @@ import type {
 	TaintLabel,
 } from "@arikernel/core";
 import { CAPABILITY_CLASS_MAP, generateId, now } from "@arikernel/core";
-import { applyBehavioralRule, evaluateBehavioralRules } from "../behavioral-rules.js";
+import { applyBehavioralRule, evaluateBehavioralRules, ruleDenialText } from "../behavioral-rules.js";
 import type { FirewallHooks } from "../hooks.js";
 import type { CapabilityIssuer } from "../issuer.js";
 import type { RunStateTracker } from "../run-state.js";
 import type { SidecarHttpClient } from "../sidecar-proxy.js";
+import type { ITokenStore } from "../token-store.js";
 
 export interface IssuanceContext {
 	principal: Principal;
 	issuer: CapabilityIssuer;
 	runState: RunStateTracker;
 	auditStore: AuditStore;
+	tokenStore: ITokenStore;
 	runId: string;
 	hooks: FirewallHooks;
 	sidecarClient?: SidecarHttpClient;
@@ -192,34 +194,48 @@ export function requestCapabilityLocal(
 		metadata: { capabilityClass },
 	});
 
-	const decision = ctx.issuer.evaluate(request, ctx.principal);
-	ctx.runState.recordCapabilityRequest(decision.granted);
+	const issued = ctx.issuer.evaluate(request, ctx.principal);
+	ctx.runState.recordCapabilityRequest(issued.granted);
 
 	ctx.runState.pushEvent({
-		timestamp: decision.timestamp,
-		type: decision.granted ? "capability_granted" : "capability_denied",
+		timestamp: issued.timestamp,
+		type: issued.granted ? "capability_granted" : "capability_denied",
 		toolClass: mapping.toolClass,
 		metadata: { capabilityClass },
 	});
 
-	checkBehavioralRulesFromCapability(ctx);
+	const decision = refusedByRule(ctx, request, issued) ?? issued;
 
 	ctx.hooks.onIssuance?.(request, decision);
 
 	return decision;
 }
 
-export function checkBehavioralRulesFromCapability(ctx: IssuanceContext): void {
-	if (!ctx.runState.behavioralRulesEnabled) return;
+// A behavioral rule that matches on this request (a riskier capability after
+// a denied one) refuses it: the grant just issued is revoked and the decision
+// returned is a denial naming the rule. The run goes on; the refusal counts.
+function refusedByRule(
+	ctx: IssuanceContext,
+	request: CapabilityRequest,
+	issued: IssuanceDecision,
+): IssuanceDecision | null {
+	if (!ctx.runState.behavioralRulesEnabled) return null;
 	const match = evaluateBehavioralRules(ctx.runState);
-	if (!match) return;
-	const quarantine = applyBehavioralRule(ctx.runState, match);
-	if (quarantine) {
-		ctx.auditStore.appendSystemEvent(ctx.runId, ctx.principal.id, "quarantine", quarantine.reason, {
-			triggerType: quarantine.triggerType,
-			ruleId: quarantine.ruleId,
-			counters: quarantine.countersSnapshot,
-			matchedEvents: quarantine.matchedEvents,
-		});
-	}
+	if (!match) return null;
+	const denial = applyBehavioralRule(ctx.runState, match);
+	ctx.auditStore.appendSystemEvent(ctx.runId, ctx.principal.id, "rule_denied", denial.reason, {
+		ruleId: denial.ruleId,
+		deniedActions: denial.deniedActions,
+		threshold: denial.threshold,
+		restricted: denial.restricted,
+		matchedEvents: denial.matchedEvents,
+	});
+	if (issued.grant) ctx.tokenStore.revoke(issued.grant.id);
+	return {
+		requestId: request.id,
+		granted: false,
+		reason: `Capability '${request.capabilityClass}' ${ruleDenialText(denial)}`,
+		taintLabels: request.taintLabels,
+		timestamp: now(),
+	};
 }

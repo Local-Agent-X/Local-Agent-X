@@ -123,11 +123,11 @@ describe("a kernel quarantine, through the chat lane's dispatcher", () => {
     } finally { stop(); }
   });
 
-  it("a genuine quarantine names the rule, offers no declassify (no taint to clear), and is traced end to end", async () => {
+  it("a rule refusal names the rule, offers no declassify (no taint to clear), refuses only that call, and is traced end to end", async () => {
     const opId = freshOpId();
     clearSessionTaint(`s-${opId}`);
     const env = join(tmpdir(), "lax-kblock-ws", "proj", ".env");
-    const { ui, log, stop } = wire(opId, ["write", "http_request"]);
+    const { ui, log, stop } = wire(opId, ["write", "http_request", "bash"]);
     try {
       await dispatchTools(opId, 6, [{ toolCallId: "w", tool: "write", args: { path: env, content: "X=1" } }]);
       const out = await dispatchTools(opId, 6, [{ toolCallId: "post-query", tool: "http_request", args: { url: QUERY_URL, method: "POST", headers: AUTH, body: "{}" } }]);
@@ -145,7 +145,8 @@ describe("a kernel quarantine, through the chat lane's dispatcher", () => {
       // control is NOT offered and the model is not told to send the user to it.
       expect(md.clearable).toBeUndefined();
       expect(String(md.recovery)).not.toMatch(/Declassif/i);
-      expect(String(md.recovery)).toMatch(/next user message starts clean/);
+      expect(String(md.recovery)).toMatch(/Only this call was refused; the turn continues/);
+      expect(String(md.recovery)).toMatch(/refusal 1 of 5/);
       expect(end?.result).toMatch(/sensitive_read_then_egress/);
       expect(end?.result).not.toMatch(/evaluation error/);
 
@@ -154,7 +155,8 @@ describe("a kernel quarantine, through the chat lane's dispatcher", () => {
       expect(fin.status).toBe("blocked");
       expect(fin.block?.notice).toBe("kernel-notice");
       expect(fin.block?.quarantine?.rule).toBe("sensitive_read_then_egress");
-      expect(fin.block?.quarantine?.deniedActions).toBeGreaterThanOrEqual(1);
+      expect(fin.block?.quarantine?.deniedActions).toBe(1);
+      expect(fin.block?.quarantine?.threshold).toBe(5);
       expect(fin.block?.scope).toBe("operation");
       expect(fin.block?.clearable).toBeUndefined();
       // … and the tool_result row does too, without the request's header values.
@@ -162,21 +164,32 @@ describe("a kernel quarantine, through the chat lane's dispatcher", () => {
       expect(row.block?.quarantine?.rule).toBe("sensitive_read_then_egress");
       expect(JSON.stringify(row.block)).not.toContain("SUPABASE_FULL_ACCOUNT_TOKEN");
 
-      // The quarantine is the op's: another op's scope is clean.
-      expect(readKernelQuarantine(opId, false)).not.toBeNull();
-      expect(readKernelQuarantine(freshOpId(), false)).toBeNull();
+      // Only that call was refused: the run is not restricted, and the next
+      // call in the same op runs.
+      expect(readKernelQuarantine(opId, false)).toBeNull();
+      const after = await dispatchTools(opId, 7, [{ toolCallId: "sh", tool: "bash", args: { command: "echo ok" } }]);
+      expect(after.toolSummary.map((s) => s.resultStatus)).toEqual(["ok"]);
     } finally { stop(); }
   });
 
-  it("the restricted-mode cascade is a blocked call with the same record, not an 'ok'", async () => {
+  it("a run that keeps being refused is restricted at the threshold; the cascade is a blocked call with the same record, not an 'ok'", async () => {
     const opId = freshOpId();
     clearSessionTaint(`s-${opId}`);
     const env = join(tmpdir(), "lax-kblock-ws", "proj", ".env");
     const { ui, log, stop } = wire(opId, ["write", "http_request", "bash"]);
     try {
       await dispatchTools(opId, 1, [{ toolCallId: "w", tool: "write", args: { path: env, content: "X=1" } }]);
-      await dispatchTools(opId, 1, [{ toolCallId: "p", tool: "http_request", args: { url: QUERY_URL, method: "POST", headers: AUTH, body: "{}" } }]);
-      const out = await dispatchTools(opId, 2, [{ toolCallId: "sh", tool: "bash", args: { command: "echo ok" } }]);
+      // Five refusals of the same POST reach the kernel's default threshold.
+      for (let i = 1; i <= 5; i++) {
+        const out = await dispatchTools(opId, 1 + i, [{ toolCallId: `p${i}`, tool: "http_request", args: { url: QUERY_URL, method: "POST", headers: AUTH, body: "{}" } }]);
+        expect(out.toolSummary[0].resultStatus).toBe("blocked");
+        const row = out.toolMessages[0].content as { block?: ToolBlockRecord };
+        expect(row.block?.quarantine?.rule).toBe("sensitive_read_then_egress");
+        expect(row.block?.quarantine?.deniedActions).toBe(i);
+        expect(row.block?.quarantine?.trigger).toBe(i < 5 ? "behavioral_rule" : "threshold");
+      }
+      expect(readKernelQuarantine(opId, false)?.trigger).toBe("restricted");
+      const out = await dispatchTools(opId, 8, [{ toolCallId: "sh", tool: "bash", args: { command: "echo ok" } }]);
 
       // Before: raw two-line text, no header → parsed as "ok" everywhere downstream.
       expect(out.toolSummary[0].resultStatus).toBe("blocked");
@@ -190,6 +203,8 @@ describe("a kernel quarantine, through the chat lane's dispatcher", () => {
       expect(end?.metadata?.trigger).toBe("restricted");
       expect(end?.metadata?.clearable).toBeUndefined();
       expect(String(end?.metadata?.recovery)).toMatch(/restricted mode since/);
+      // The restriction is the op's: another op's scope is clean.
+      expect(readKernelQuarantine(freshOpId(), false)).toBeNull();
     } finally { stop(); }
   });
 
@@ -209,7 +224,7 @@ describe("a kernel quarantine, through the chat lane's dispatcher", () => {
     } finally { stop(); }
   });
 
-  it("… but a genuine secret path keeps the quarantine", async () => {
+  it("… but a genuine secret path keeps the refusal", async () => {
     const opId = freshOpId();
     clearSessionTaint(`s-${opId}`);
     const env = join(tmpdir(), "lax-kblock-ws", "proj", ".env");

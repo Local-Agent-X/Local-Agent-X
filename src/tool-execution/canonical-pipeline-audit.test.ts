@@ -180,10 +180,12 @@ describe("canonical tool pipeline audit contract", () => {
       },
       decision: { verdict: "allow" },
     });
+    // The rule's refusal of THIS call is a system event of its own; the run
+    // is not quarantined by it.
     expect(auditEvents[1]).toMatchObject({
       toolCall: {
         toolClass: "_system",
-        action: "quarantine",
+        action: "rule_denied",
       },
       decision: {
         verdict: "deny",
@@ -198,7 +200,7 @@ describe("canonical tool pipeline audit contract", () => {
       },
       decision: {
         verdict: "deny",
-        reason: expect.stringMatching(/behavioral rule.*quarantined/i),
+        reason: expect.stringMatching(/refused by run rule web_taint_sensitive_probe.*run continues/i),
       },
     });
     expect(auditEvents[0].hash).toBeTruthy();

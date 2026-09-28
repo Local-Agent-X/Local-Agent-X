@@ -53,23 +53,24 @@ function render(toolEvents: ToolEvent[]): HTMLElement {
   return body;
 }
 
-// The 02:32:44 block as the policy layer now emits it: a run-rule quarantine.
+// A block as the policy layer now emits it: a run rule refused ONE call, and
+// the turn goes on.
 const RUN_RULE_BLOCK: ToolEvent[] = [
-  { type: "start", name: "http_request", toolCallId: "a", args: { url: "https://api.supabase.com/v1/projects/x/secrets" } },
-  { type: "end", name: "http_request", toolCallId: "a", status: "ok", result: "[ok, status=200]" },
+  { type: "start", name: "write", toolCallId: "a", args: { path: "proj/.env" } },
+  { type: "end", name: "write", toolCallId: "a", status: "ok", result: "[ok]" },
   { type: "start", name: "http_request", toolCallId: "b", args: { url: "https://api.supabase.com/v1/projects/x/database/query", method: "POST" } },
   {
     type: "end", name: "http_request", toolCallId: "b", status: "blocked",
-    result: "[blocked, layer=\"arikernel\", rule=\"secret_access_then_any_egress\"]\nBLOCKED by ARI kernel: ...",
+    result: "[blocked, layer=\"arikernel\", rule=\"sensitive_read_then_egress\"]\nBLOCKED by ARI kernel: ...",
     metadata: {
-      layer: "arikernel", rule: "secret_access_then_any_egress", trigger: "behavioral_rule", scope: "operation",
-      quarantine: { trigger: "behavioral_rule", rule: "secret_access_then_any_egress", reason: "HTTP get to https://api.supabase.com/v1/projects/x/secrets accessing secrets was followed by post attempt", restrictedAt: "2026-09-28T02:32:44.841Z", deniedActions: 1 },
+      layer: "arikernel", rule: "sensitive_read_then_egress", trigger: "behavioral_rule", scope: "operation",
+      quarantine: { trigger: "behavioral_rule", rule: "sensitive_read_then_egress", reason: "Read of proj/.env was followed by outbound post attempt", deniedActions: 1, threshold: 5 },
     },
   },
 ];
 
 describe("the security-block notice is on the row, not in the collapsed group", () => {
-  it("a run-rule quarantine renders a notice outside .activity-group, naming the rule, with no button", () => {
+  it("a run-rule refusal renders a notice outside .activity-group, naming the rule and the call, with no button", () => {
     const body = render(RUN_RULE_BLOCK);
     const notice = body.querySelector(".kernel-block-notice") as HTMLElement | null;
     expect(notice).not.toBeNull();
@@ -79,11 +80,30 @@ describe("the security-block notice is on the row, not in the collapsed group", 
     // The group it would have been buried in is collapsed by default.
     const group = body.querySelector(".activity-group")!;
     expect(group.classList.contains("open")).toBe(false);
-    expect(notice!.textContent).toContain("secret_access_then_any_egress");
-    expect(notice!.textContent).toMatch(/next message starts clean/);
+    expect(notice!.textContent).toContain("sensitive_read_then_egress");
+    expect(notice!.textContent).toContain("refused http_request");
+    expect(notice!.textContent).toMatch(/Only that call was refused; the turn continues/);
+    expect(notice!.textContent).toContain("Refusal 1 of 5");
     expect(notice!.querySelector("button")).toBeNull();
     // The activity header counts it.
     expect(group.querySelector(".activity-label")!.textContent).toContain("1 blocked");
+  });
+
+  it("a restricted-mode cascade says the turn is paused and ends with it", () => {
+    const body = render([
+      { type: "start", name: "bash", toolCallId: "c", args: { command: "echo ok" } },
+      {
+        type: "end", name: "bash", toolCallId: "c", status: "blocked", result: "[blocked, layer=\"arikernel\", trigger=\"restricted\"]\n...",
+        metadata: {
+          layer: "arikernel", rule: "sensitive_read_then_egress", trigger: "restricted", scope: "operation",
+          quarantine: { trigger: "restricted", rule: "sensitive_read_then_egress", reason: "Denied actions (5) reached the threshold (5); the last was refused by run rule sensitive_read_then_egress", restrictedAt: "2026-09-28T02:51:15.277Z", deniedActions: 5 },
+        },
+      },
+    ]);
+    const notice = body.querySelector(".kernel-block-notice")!;
+    expect(notice.textContent).toMatch(/paused this turn/);
+    expect(notice.textContent).toMatch(/next message starts clean/);
+    expect(notice.querySelector("button")).toBeNull();
   });
 
   it("a clearable (taint) block renders the notice WITH the Declassify & retry button", () => {

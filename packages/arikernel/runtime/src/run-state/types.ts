@@ -39,6 +39,7 @@ export type SecurityEventType =
 	| "sensitive_read_attempt"
 	| "sensitive_read_allowed"
 	| "egress_attempt"
+	| "rule_denied"
 	| "quarantine_entered";
 
 export interface SecurityEvent {
@@ -51,12 +52,33 @@ export interface SecurityEvent {
 	metadata?: Record<string, unknown>;
 }
 
-// ── Quarantine metadata ────────────────────────────────────────────
+// ── Rule denials and quarantine metadata ───────────────────────────
 
-export type QuarantineTrigger = "threshold" | "behavioral_rule";
+/**
+ * One call refused by a behavioral sequence rule. The match refuses that
+ * call only; the run goes on. The refusal is counted, and a run that keeps
+ * being refused is restricted by the denied-action threshold.
+ */
+export interface RuleDenial {
+	ruleId: string;
+	reason: string;
+	matchedEvents: SecurityEvent[];
+	/** The denied-action counter after this refusal was counted. */
+	deniedActions: number;
+	/** Refusals that restrict the run to read-only for the rest of it. */
+	threshold: number;
+	/** True when this refusal was the one that restricted the run. */
+	restricted: boolean;
+	timestamp: string;
+}
+
+/** "threshold": the denied-action counter reached its limit. "external": a
+ *  host-side correlator restricted the run outright (quarantineExternal). */
+export type QuarantineTrigger = "threshold" | "external";
 
 export interface QuarantineInfo {
 	triggerType: QuarantineTrigger;
+	/** threshold: the rule behind the refusal that reached it, when it was one. */
 	ruleId?: string;
 	reason: string;
 	countersSnapshot: RunStateCounters;

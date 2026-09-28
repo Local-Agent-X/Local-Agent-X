@@ -79,7 +79,7 @@ export function quarantineExternal(
 	ruleId: string,
 	reason: string,
 ): QuarantineInfo | null {
-	const result = ctx.runState.quarantineByRule(ruleId, reason, []);
+	const result = ctx.runState.quarantineExternal(ruleId, reason);
 	if (result) {
 		ctx.auditStore.appendSystemEvent(ctx.runId, ctx.principal.id, "quarantine", reason, {
 			triggerType: "cross_principal_alert",

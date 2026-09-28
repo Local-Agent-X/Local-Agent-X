@@ -15,6 +15,7 @@ export type {
 	HostnameEgressRecord,
 	QuarantineInfo,
 	QuarantineTrigger,
+	RuleDenial,
 	RunStateCounters,
 	RunStatePolicy,
 	SecurityEvent,

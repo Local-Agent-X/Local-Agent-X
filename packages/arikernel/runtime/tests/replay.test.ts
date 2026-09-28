@@ -43,7 +43,9 @@ async function recordQuarantineTrace(): Promise<ReplayTrace> {
 		},
 		policies: policyPath,
 		auditLog: ":memory:",
-		runStatePolicy: { maxDeniedSensitiveActions: 10, behavioralRules: true },
+		// The replay firewall's threshold is 5 (replay-engine.ts); match it so the
+		// recorded run and its replay restrict on the same denial.
+		runStatePolicy: { maxDeniedSensitiveActions: 5, behavioralRules: true },
 		hooks: recorder.hooks,
 	});
 
@@ -67,19 +69,26 @@ async function recordQuarantineTrace(): Promise<ReplayTrace> {
 	} catch {}
 	recorder.updateCounters(firewall.runStateCounters);
 
-	// Step 2: Sensitive file read (should trigger behavioral rule)
-	const fileGrant = firewall.requestCapability("file.read");
-	try {
-		await firewall.execute({
-			toolClass: "file",
-			action: "read",
-			parameters: { path: "~/.ssh/id_rsa" },
-			grantId: fileGrant.grant?.id,
-		});
-	} catch {}
-	recorder.updateCounters(firewall.runStateCounters);
+	// Step 2: Sensitive file reads. Each is refused by a behavioral rule (that
+	// call only); the refusals count, and the fifth restricts the run. The
+	// reads have to be what reaches the threshold: the exfil POST below runs
+	// on a capability the issuer refuses for taint, and a replay skips
+	// execution on a refused grant, so a POST refusal would count here but
+	// not there.
+	for (let i = 0; i < 5; i++) {
+		const fileGrant = firewall.requestCapability("file.read");
+		try {
+			await firewall.execute({
+				toolClass: "file",
+				action: "read",
+				parameters: { path: "~/.ssh/id_rsa" },
+				grantId: fileGrant.grant?.id,
+			});
+		} catch {}
+		recorder.updateCounters(firewall.runStateCounters);
+	}
 
-	// Step 3: Exfiltration attempt (quarantine should block)
+	// Step 3: Exfiltration attempt (the run is restricted; the POST is blocked)
 	const writeGrant = firewall.requestCapability("http.write");
 	try {
 		await firewall.execute({

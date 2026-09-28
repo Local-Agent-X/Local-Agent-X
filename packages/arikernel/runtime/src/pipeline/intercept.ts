@@ -24,7 +24,7 @@ import type { PersistentTaintRegistry } from "../persistent-taint-registry.js";
 import type { RunStateTracker } from "../run-state.js";
 import type { ITokenStore } from "../token-store.js";
 import { enforceCapabilityToken } from "./capability-tokens.js";
-import { type PipelineContext, checkBehavioralRules, logEvent } from "./context.js";
+import { type PipelineContext, logEvent } from "./context.js";
 import { enforceRestrictedMode } from "./restricted-gate.js";
 import { emitPostPolicySignals, trackPreExecutionSignals } from "./run-state-signals.js";
 import {
@@ -145,9 +145,6 @@ export class Pipeline {
 				action: toolCall.action,
 				verdict: "deny",
 			});
-			// Behavioral rules may trigger quarantine here, but the action is
-			// already being denied by policy — no extra denial needed.
-			checkBehavioralRules(this.ctx, toolCall);
 		}
 		logEvent(this.ctx, toolCall, decision);
 		throw new ToolCallDeniedError(toolCall, decision);

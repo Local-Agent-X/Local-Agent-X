@@ -148,13 +148,13 @@ describe("rule 3 and the post-read header check judge the path by shape", () => 
 		fw.close();
 	});
 
-	it("a read of .env followed by a POST still quarantines the run", async () => {
+	it("a read of .env followed by a POST is still refused by rule 3 — that call, not the run", async () => {
 		const fw = makeFirewall("env-then-post");
 		await file(fw, "read", ENV);
 		expect(fw.sensitiveReadObserved).toBe(true);
-		expect(await denied(http(fw, "post", POST))).toMatch(/behavioral rule/);
-		expect(fw.isRestricted).toBe(true);
-		expect(fw.quarantineInfo?.ruleId).toBe("sensitive_read_then_egress");
+		expect(await denied(http(fw, "post", POST))).toMatch(/run rule sensitive_read_then_egress/);
+		expect(fw.lastRuleDenial?.ruleId).toBe("sensitive_read_then_egress");
+		expect(fw.isRestricted).toBe(false);
 		fw.close();
 	});
 
@@ -171,7 +171,7 @@ describe("rule 3 and the post-read header check judge the path by shape", () => 
 		expect(fw.sensitiveReadObserved).toBe(false);
 		await file(fw, "read", "./data/vault.bin");
 		expect(fw.sensitiveReadObserved).toBe(true);
-		expect(await denied(http(fw, "post", POST))).toMatch(/behavioral rule/);
+		expect(await denied(http(fw, "post", POST))).toMatch(/run rule sensitive_read_then_egress/);
 		fw.close();
 	});
 });

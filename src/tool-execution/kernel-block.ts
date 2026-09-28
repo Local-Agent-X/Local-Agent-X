@@ -20,6 +20,14 @@ const UNTRUSTED_TAINT: ReadonlySet<string> = new Set(["web", "rag", "email"]);
 export const KERNEL_TAINT_RECOVERY =
   "The kernel policy denies this outbound action because the session carries untrusted-input taint from an earlier web/email/file read. To clear the taint, ask the user to click \"Declassify & retry\" on this blocked card in the chat — that button is the only declassify control. Do not just retry the same call.";
 
+/** A run rule refused this one call; the turn goes on. */
+function ruleRefusalRecovery(q: KernelQuarantine): string {
+  const limit = q.threshold ?? "the limit";
+  return `The security kernel's run rule ${q.rule} refused this call: ${q.reason}. Only this call was refused; the turn continues and other calls still run. ` +
+    `This was refusal ${q.deniedActions} of ${limit}: at ${limit} the kernel restricts the rest of the turn to read-only. ` +
+    "No session taint is involved, so there is nothing the user can click or clear. Do not retry the same call: report exactly which step was refused and why, then continue with the rest of the task or ask the user how to proceed.";
+}
+
 function quarantineRecovery(q: KernelQuarantine): string {
   const fired = q.rule ? `run rule ${q.rule}` : `denied-action threshold (${q.deniedActions} denials this turn)`;
   const lead = q.trigger === "restricted"
@@ -56,11 +64,10 @@ export function kernelDeny(verdict: AriVerdict, kernelTaintLabels: readonly stri
     meta.scope = clearable ? "session-memory" : "operation";
     meta.quarantine = q;
   }
-  return {
-    clearable,
-    recovery: clearable || !q ? KERNEL_TAINT_RECOVERY : quarantineRecovery(q),
-    meta,
-  };
+  const recovery = clearable || !q
+    ? KERNEL_TAINT_RECOVERY
+    : q.trigger === "behavioral_rule" ? ruleRefusalRecovery(q) : quarantineRecovery(q);
+  return { clearable, recovery, meta };
 }
 
 /** The kernel's line in the egress aggregate (SC-10). */
@@ -79,7 +86,7 @@ export function kernelDenyBlocker(verdict: AriVerdict, kernelTaintLabels: readon
 
 /**
  * The envelope for a kernel deny of a NON-egress tool (shell, file, database —
- * typically the restricted-mode cascade after a quarantine). It used to be a
+ * a rule refusal, or the restricted-mode cascade). It used to be a
  * raw two-line string with no status header, so the canonical event log and
  * the reloaded chat both recorded the refused call as "ok" (2026-09-28: seven
  * refused shell calls, all logged ok, none with a notice).

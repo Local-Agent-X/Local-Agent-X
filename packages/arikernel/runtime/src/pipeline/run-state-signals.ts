@@ -2,7 +2,12 @@ import type { ToolCall } from "@arikernel/core";
 import { SAFE_GET_HEADERS, VALUE_INSPECTED_HEADERS } from "@arikernel/tool-executors";
 import type { RunStateTracker } from "../run-state.js";
 import { isSuspiciousGetExfil, pathDripEncodedBytes, suspiciousHeaderValue } from "../run-state.js";
-import { type PipelineContext, checkBehavioralRules, denyQuarantinedAction } from "./context.js";
+import { type PipelineContext, checkBehavioralRules, denyAndThrow, denyByRule } from "./context.js";
+
+/** Refuse this call for a reason of the signal tracking's own (not a rule). */
+function denied(ctx: PipelineContext, toolCall: ToolCall, why: string): never {
+	denyAndThrow(ctx, toolCall, `Action '${toolCall.toolClass}.${toolCall.action}' denied: ${why}`);
+}
 
 /** Taint sources that, like a sensitive read, warrant treating GETs as egress. */
 const EGRESS_TAINT_SOURCES: ReadonlySet<string> = new Set(["web", "rag", "email"]);
@@ -27,8 +32,8 @@ function isNonAllowlistedHost(runState: RunStateTracker, url: string): boolean {
 }
 
 // Step 1.5b: Pre-execution run-state signals. Track taint, egress, sensitive
-// reads and emit security events before policy evaluation. Returning here may
-// short-circuit via denyQuarantinedAction when behavioral rules trigger.
+// reads and emit security events before policy evaluation. A call that
+// completes a behavioral rule's pattern is refused here (denyByRule).
 export function trackPreExecutionSignals(ctx: PipelineContext, toolCall: ToolCall): void {
 	const runState = ctx.runState;
 	if (!runState) return;
@@ -45,9 +50,6 @@ export function trackPreExecutionSignals(ctx: PipelineContext, toolCall: ToolCal
 			action: toolCall.action,
 			taintSources: toolCall.taintLabels.map((t) => t.source),
 		});
-		if (checkBehavioralRules(ctx, toolCall)) {
-			denyQuarantinedAction(ctx, toolCall, "behavioral rule triggered by tainted input");
-		}
 	}
 
 	if (toolCall.toolClass === "http") {
@@ -131,27 +133,15 @@ function trackHttpSignals(ctx: PipelineContext, toolCall: ToolCall): void {
 				pathDrip: isPathDripExfil || undefined,
 			},
 		});
-		const quarantined = checkBehavioralRules(ctx, toolCall);
-		if (quarantined) {
-			denyQuarantinedAction(
-				ctx,
-				toolCall,
-				isGetExfil
-					? "behavioral rule triggered by suspicious GET exfiltration"
-					: "behavioral rule triggered by egress attempt",
-			);
-		}
+		const denial = checkBehavioralRules(ctx, toolCall);
+		if (denial) denyByRule(ctx, toolCall, denial);
 		// The path-drip budget is a standalone backstop: once a tainted/
 		// sensitive-read run has dripped more than the per-request or per-run
 		// encoded-path budget to a non-allowlisted host, deny even if no
 		// behavioral sequence rule matched this step. This is the slow-drip
 		// defense that the per-host accounting now actually enforces.
 		if (isPathDripExfil) {
-			denyQuarantinedAction(
-				ctx,
-				toolCall,
-				"encoded-path drip budget exceeded to non-allowlisted host after sensitive read",
-			);
+			denied(ctx, toolCall, "encoded-path drip budget exceeded to non-allowlisted host after sensitive read.");
 		}
 	}
 
@@ -187,7 +177,7 @@ function inspectGetHeaders(ctx: PipelineContext, toolCall: ToolCall): void {
 				reason: "custom headers on GET/HEAD after sensitive read",
 			},
 		});
-		denyQuarantinedAction(
+		denied(
 			ctx,
 			toolCall,
 			`Custom headers on HTTP ${toolCall.action.toUpperCase()} blocked in security-sensitive context. Non-standard headers [${customHeaders.join(", ")}] can exfiltrate data. Only standard headers are allowed after sensitive reads.`,
@@ -214,7 +204,7 @@ function inspectGetHeaders(ctx: PipelineContext, toolCall: ToolCall): void {
 					reason,
 				},
 			});
-			denyQuarantinedAction(
+			denied(
 				ctx,
 				toolCall,
 				`Suspicious encoded payload in HTTP header value blocked in security-sensitive context. ${reason}`,
@@ -237,9 +227,8 @@ function trackFileSignals(ctx: PipelineContext, toolCall: ToolCall): void {
 		action: toolCall.action,
 		metadata: { path },
 	});
-	if (checkBehavioralRules(ctx, toolCall)) {
-		denyQuarantinedAction(ctx, toolCall, "behavioral rule triggered by sensitive file access");
-	}
+	const denial = checkBehavioralRules(ctx, toolCall);
+	if (denial) denyByRule(ctx, toolCall, denial);
 }
 
 // Step 4.5: Emit metadata for behavioral rules AFTER policy allowed the action.
@@ -257,9 +246,8 @@ export function emitPostPolicySignals(ctx: PipelineContext, toolCall: ToolCall):
 			action: toolCall.action,
 			metadata: { commandLength: command.length },
 		});
-		if (checkBehavioralRules(ctx, toolCall)) {
-			denyQuarantinedAction(ctx, toolCall, "behavioral rule triggered by shell command");
-		}
+		const denial = checkBehavioralRules(ctx, toolCall);
+		if (denial) denyByRule(ctx, toolCall, denial);
 	}
 	if (toolCall.toolClass === "database") {
 		const table = String(toolCall.parameters.table ?? "");
@@ -271,9 +259,8 @@ export function emitPostPolicySignals(ctx: PipelineContext, toolCall: ToolCall):
 			action: toolCall.action,
 			metadata: { table, query },
 		});
-		if (checkBehavioralRules(ctx, toolCall)) {
-			denyQuarantinedAction(ctx, toolCall, "behavioral rule triggered by database operation");
-		}
+		const denial = checkBehavioralRules(ctx, toolCall);
+		if (denial) denyByRule(ctx, toolCall, denial);
 	}
 	if (toolCall.toolClass === "http") {
 		const url = String(toolCall.parameters.url ?? "");
@@ -284,8 +271,7 @@ export function emitPostPolicySignals(ctx: PipelineContext, toolCall: ToolCall):
 			action: toolCall.action,
 			metadata: { url },
 		});
-		if (checkBehavioralRules(ctx, toolCall)) {
-			denyQuarantinedAction(ctx, toolCall, "behavioral rule triggered by HTTP operation");
-		}
+		const denial = checkBehavioralRules(ctx, toolCall);
+		if (denial) denyByRule(ctx, toolCall, denial);
 	}
 }

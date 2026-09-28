@@ -21,6 +21,7 @@ export type {
 	HostnameEgressRecord,
 	QuarantineInfo,
 	QuarantineTrigger,
+	RuleDenial,
 	SecurityEvent,
 	SecurityEventType,
 } from "./run-state.js";

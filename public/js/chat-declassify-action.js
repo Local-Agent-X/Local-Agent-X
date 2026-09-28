@@ -66,6 +66,13 @@ function renderKernelBlockNotice(endEvt, sessionId) {
   if (isDeclassifiable(md)) {
     text = 'Security block: this session is quarantined by a sensitive read, so outbound calls that could carry that data are refused'
       + (rule ? ' (kernel rule ' + rule + ')' : '') + '. Clearing it is your call.';
+  } else if (q && q.trigger === 'behavioral_rule') {
+    // One call refused by a run rule; the turn goes on.
+    const call = endEvt && endEvt.name && md.layer !== 'quarantine-notice' ? ' refused ' + endEvt.name : ' refused a call';
+    const standing = typeof q.threshold === 'number'
+      ? ' Refusal ' + q.deniedActions + ' of ' + q.threshold + ' before the kernel pauses the turn.' : '';
+    text = 'Security block: kernel rule ' + rule + call + (q.reason ? ' (' + q.reason + ')' : '')
+      + '. Only that call was refused; the turn continues.' + standing;
   } else {
     const why = rule ? ' — rule ' + rule + (q && q.reason ? ': ' + q.reason : '') : '';
     // A re-surfaced notice (show_unblock_control) describes the state; a

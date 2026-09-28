@@ -67,6 +67,10 @@ export const ModelProfileSchema = z.object({
    *  {{ else if .ToolCalls }}`), so the preamble text is left out of the wire
    *  row and the calls survive. Absent = both are sent. */
   assistantRowShape: z.enum(["text-and-tool-calls", "text-or-tool-calls"]).optional(),
+  /** Send the model's own reasoning back on the assistant rows of the current
+   *  tool loop (rows after the last user message), the way the Qwen templates
+   *  keep `<think>` for exactly those rows. Absent = reasoning is not replayed. */
+  replayReasoning: z.boolean().optional(),
   thinking: z.object({
     supported: z.boolean(),
     mode: z.enum(["planning_only", "all", "off"]),
@@ -300,6 +304,12 @@ export function modelToolStepSampling(modelId: string): ModelProfile["sampling"]
  *  profile that declares otherwise drops the text (see assistantRowShape). */
 export function modelAssistantRowShape(modelId: string): "text-and-tool-calls" | "text-or-tool-calls" {
   return profileOrNull(modelId, "assistant rows carry text and tool calls")?.assistantRowShape ?? "text-and-tool-calls";
+}
+
+/** Whether the model's reasoning rides back on the current loop's assistant
+ *  rows (see replayReasoning). Off without a profile that says so. */
+export function modelReplaysReasoning(modelId: string): boolean {
+  return profileOrNull(modelId, "reasoning is not replayed")?.replayReasoning ?? false;
 }
 
 /** The window the declared profile measured, or null without a profile. Used

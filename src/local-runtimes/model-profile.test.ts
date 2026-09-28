@@ -197,3 +197,11 @@ describe("assistant row shape", () => {
     expect(modelAssistantRowShape("nobody:99b")).toBe("text-and-tool-calls");
   });
 });
+
+describe("reasoning replay", () => {
+  it("is declared by the three Qwen profiles and off elsewhere", async () => {
+    const { modelReplaysReasoning } = await import("./model-profile.js");
+    for (const id of ["qwen3:8b", "qwen3:14b", "qwen3.6:27b"]) expect(modelReplaysReasoning(id), id).toBe(true);
+    expect(modelReplaysReasoning("nobody:99b")).toBe(false);
+  });
+});

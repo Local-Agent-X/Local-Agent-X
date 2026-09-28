@@ -26,9 +26,15 @@ export function canonicalToChatParam(
   // calls (never both) gets the calls: the preamble text is left out of the
   // wire row. Declared per model (model-profile assistantRowShape).
   assistantRowShape: "text-and-tool-calls" | "text-or-tool-calls" = "text-and-tool-calls",
+  // Send each assistant row's own reasoning back on the rows of the current
+  // tool loop — those after the last user row, which is where the Qwen
+  // templates render a prior `<think>`. A preamble dropped from the content
+  // by text-or-tool-calls rides along there too, so the model keeps its plan.
+  replayReasoning = false,
 ): ChatCompletionMessageParam[] {
   const out: ChatCompletionMessageParam[] = [];
-  for (const m of messages) {
+  const lastUserIdx = messages.reduce((last, m, i) => (m.role === "user" ? i : last), -1);
+  for (const [i, m] of messages.entries()) {
     const c = m.content as Record<string, unknown> | string | null | undefined;
     if (m.role === "system") {
       out.push({ role: "system", content: extractText(c) });
@@ -65,18 +71,25 @@ export function canonicalToChatParam(
           leaks.map(l => `${l.shape}${l.toolName ? `(${l.toolName})` : ""}`).join(", "),
         );
       }
+      const dropText = assistantRowShape === "text-or-tool-calls" && tc !== undefined && tc.length > 0;
+      const reasoning = replayReasoning && i > lastUserIdx
+        ? [typeof (c as { reasoning?: unknown })?.reasoning === "string" ? (c as { reasoning: string }).reasoning : "", dropText ? text : ""]
+            .filter((s) => s.trim().length > 0).join("\n\n")
+        : "";
+      const withReasoning = (row: ChatCompletionMessageParam): ChatCompletionMessageParam =>
+        reasoning ? ({ ...row, reasoning } as unknown as ChatCompletionMessageParam) : row;
       if (tc && tc.length > 0) {
-        out.push({
+        out.push(withReasoning({
           role: "assistant",
-          content: assistantRowShape === "text-or-tool-calls" ? "" : text,
+          content: dropText ? "" : text,
           tool_calls: tc.map(t => ({
             id: t.id,
             type: "function",
             function: { name: t.name, arguments: t.arguments },
           })),
-        });
+        }));
       } else {
-        out.push({ role: "assistant", content: text });
+        out.push(withReasoning({ role: "assistant", content: text }));
       }
       continue;
     }

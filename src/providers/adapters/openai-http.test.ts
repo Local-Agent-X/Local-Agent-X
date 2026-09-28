@@ -307,14 +307,16 @@ describe("stream usage plumbing", () => {
   it("requests stream_options.include_usage from a local endpoint, and reports the body it sent", async () => {
     createMock.mockResolvedValueOnce(fakeStream());
     const tools = [{ name: "read_file", description: "r", parameters: { type: "object" } }] as unknown as ProviderRequest["tools"];
-    const chunks = await collect(baseReq({ baseURL: "http://127.0.0.1:11434/v1", model: "qwen3:8b", tools }));
+    const chunks = await collect(baseReq({ baseURL: "http://127.0.0.1:11434/v1", model: "llama3:8b", tools }));
     expect(createMock.mock.calls[0][0].stream_options).toEqual({ include_usage: true });
     const sent = chunks.find((c) => c.type === "request_sent") as { type: "request_sent"; params: Record<string, unknown> };
-    expect(sent.params).toMatchObject({ model: "qwen3:8b", stream_options: { include_usage: true }, temperature: 0.7, max_tokens: LOCAL_DEFAULT_MAX_TOKENS, tools: ["read_file"] });
+    expect(sent.params).toMatchObject({ model: "llama3:8b", stream_options: { include_usage: true }, temperature: 0.7, max_tokens: LOCAL_DEFAULT_MAX_TOKENS, tools: ["read_file"] });
     expect("messages" in sent.params).toBe(false);
-    // qwen3:8b is not in the reasoning-family regex, so nothing about
-    // reasoning went on the wire — the runtime's own default (thinking on)
-    // applies, and the trace must show that absence, not the composed intent.
+    // An unprofiled local model is not in the reasoning-family regex and has
+    // no profile asking for replay, so nothing about reasoning went on the
+    // wire — the runtime's own default (thinking on) applies, and the trace
+    // must show that absence, not the composed intent. (qwen3:8b now sends
+    // reasoning_effort by profile — EXP-36.)
     expect("reasoning_effort" in sent.params).toBe(false);
   });
 

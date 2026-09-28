@@ -11,6 +11,7 @@ import { hasParamUnsupported } from "../types.js";
 import { PROVIDERS, isHttpProvider } from "../registry.js";
 import { PROVIDER_IDS, type ProviderId } from "../provider-ids.js";
 import { isLoopbackOrPrivateUrl } from "../../local-only-policy.js";
+import { modelReplaysReasoning } from "../../local-runtimes/model-profile.js";
 import {
   clampNoneForCloud,
   effortForChatCompletions,
@@ -64,8 +65,12 @@ export function resolveReasoningParam(args: {
   const wantsOff = args.effort === THINKING_OFF;
   const local = !!args.baseURL && isLoopbackOrPrivateUrl(args.baseURL);
   const offHere = wantsOff && local;
+  // A local model whose profile replays its reasoning needs the runtime's
+  // think switch set: Ollama /v1 derives it from reasoning_effort, and its
+  // Qwen templates render a prior `<think>` only when it is.
+  const replayHere = local && modelReplaysReasoning(args.model);
   const send =
-    (isReasoningCapable(args.baseURL, args.model) || offHere) &&
+    (isReasoningCapable(args.baseURL, args.model) || offHere || replayHere) &&
     !hasParamUnsupported(args.baseURL, args.model, "reasoning_effort");
   const value = effortForChatCompletions(
     offHere ? THINKING_OFF : clampNoneForCloud(args.effort ?? DEFAULT_REASONING_EFFORT),

@@ -14,13 +14,13 @@ const OLLAMA = "http://127.0.0.1:11434/v1";
 const CLOUD = "https://api.openai.com/v1";
 
 describe("with thinking-off unused, nothing changed", () => {
-  it("a local non-reasoning model is sent NO reasoning_effort, exactly as before", () => {
-    // qwen3:8b does not match the OSS reasoning-model fallback, so the param
-    // was never sent for it and still is not. This is the path every local
-    // turn takes today.
+  it("an unprofiled local model is sent NO reasoning_effort, exactly as before", () => {
+    // The name-based capability check does not match qwen3:8b; since EXP-36
+    // its profile (replayReasoning) sends the param anyway, so the "nothing
+    // on the wire" path is pinned on a local model with no profile.
     expect(isReasoningCapable(OLLAMA, "qwen3:8b")).toBe(false);
-    expect(resolveReasoningParam({ baseURL: OLLAMA, model: "qwen3:8b", effort: "medium" }).send).toBe(false);
-    expect(resolveReasoningParam({ baseURL: OLLAMA, model: "qwen3:8b", effort: undefined }).send).toBe(false);
+    expect(resolveReasoningParam({ baseURL: OLLAMA, model: "llama3:8b", effort: "medium" }).send).toBe(false);
+    expect(resolveReasoningParam({ baseURL: OLLAMA, model: "llama3:8b", effort: undefined }).send).toBe(false);
   });
 
   it("a reasoning-capable model still gets its session depth verbatim", () => {
@@ -54,5 +54,17 @@ describe("thinking-off, if a profile ever asks for it again", () => {
     const { markParamUnsupported } = await import("../types.js");
     markParamUnsupported(OLLAMA, "sulky:1b", "reasoning_effort");
     expect(resolveReasoningParam({ baseURL: OLLAMA, model: "sulky:1b", effort: "none" }).send).toBe(false);
+  });
+});
+
+describe("resolveReasoningParam — a profile that replays its reasoning", () => {
+  // Ollama /v1 sets its think switch from reasoning_effort, and the Qwen
+  // templates render a prior <think> only when it is set; a replaying
+  // profile (qwen3:8b) therefore gets the param on a loopback endpoint even
+  // though its name is not in the reasoning-capable list.
+  it("sends reasoning_effort on a local endpoint for qwen3:8b, not for an unprofiled local model", async () => {
+    const { resolveReasoningParam } = await import("./openai-param-support.js");
+    expect(resolveReasoningParam({ baseURL: "http://127.0.0.1:11434/v1", model: "qwen3:8b", effort: undefined }).send).toBe(true);
+    expect(resolveReasoningParam({ baseURL: "http://127.0.0.1:11434/v1", model: "nobody:99b", effort: undefined }).send).toBe(false);
   });
 });

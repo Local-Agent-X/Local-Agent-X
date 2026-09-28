@@ -9,7 +9,7 @@ const { appendOpMessage, buildContextPack, writeOp } = vi.hoisted(() => ({
 }));
 
 vi.mock("../../config.js", () => ({
-  getRuntimeConfig: () => ({ ollamaUrl: "http://127.0.0.1:11434" }),
+  getRuntimeConfig: () => ({ ollamaUrl: "http://127.0.0.1:9" }),
 }));
 // Spread the real barrel rather than enumerating its exports: this mock listed
 // them, resolve-target.ts later destructured one more (reprobeLocalModelWindow),
@@ -22,8 +22,8 @@ const TEST_RUNTIME: LocalRuntimeInfo = {
   kind: "ollama",
   id: "ollama@test",
   label: "Ollama",
-  endpoint: { baseUrl: "http://127.0.0.1:11434", origin: "auto" },
-  chatBaseUrl: "http://127.0.0.1:11434/v1",
+  endpoint: { baseUrl: "http://127.0.0.1:9", origin: "auto" },
+  chatBaseUrl: "http://127.0.0.1:9/v1",
   models: [{ id: "local-small", contextWindow: 8_192, tools: true }],
   refreshedAt: 0,
 };

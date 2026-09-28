@@ -17,3 +17,7 @@ export { _resetOpLedgers } from "../instruction-ledger/ledger.js";
 export { dispatchTools } from "../turn-loop/dispatch-tools.js";
 export { _resetMiddlewareStates } from "../middlewares/state.js";
 export { makeCanonicalLoopContext } from "../middlewares/ctx.test-helper.js";
+// The native Ollama transport's test drives the same history rebuild the chat
+// lane uses, so the mapping is checked on what the transport really receives.
+export { canonicalToChatParam } from "../adapters/openai-compat/canonical-to-chat-param.js";
+export type { CanonicalMessage } from "../contract-types.js";

@@ -2,8 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { ProviderRequest } from "../adapter/types.js";
 import { buildOllamaChatBody, toOllamaMessages } from "./ollama-native-request.js";
-import { canonicalToChatParam } from "../../canonical-loop/adapters/openai-compat/canonical-to-chat-param.js";
-import type { CanonicalMessage } from "../../canonical-loop/contract-types.js";
+import { canonicalToChatParam, type CanonicalMessage } from "../../canonical-loop/public/test-surface.js";
 
 const PNG = "iVBORw0KGgo=";
 

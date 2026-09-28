@@ -386,8 +386,13 @@ describe("local model qualification workflow", () => {
       expect(scorecard.stages.map((stage) => stage.name)).toEqual(STAGES);
       expect(scorecard.model.tag).toBe(service.model);
       expect(scorecard.cleanup.ok).toBe(true);
-      expect(driver.workspaceEvents.map((event) => event.type), JSON.stringify(driver.workspaceEvents)).toEqual([
-        "context_status", "turn_provider", "chat_op_started", "tool_start", "tool_end", "stream", "done",
+      // The meter reports before the turn and again after each committed round
+      // whose usage the runtime reported (native /api/chat does), so its
+      // updates interleave; the turn's own events keep their order.
+      const types = driver.workspaceEvents.map((event) => event.type);
+      expect(types[0], JSON.stringify(driver.workspaceEvents)).toBe("context_status");
+      expect(types.filter((t) => t !== "context_status"), JSON.stringify(driver.workspaceEvents)).toEqual([
+        "turn_provider", "chat_op_started", "tool_start", "tool_end", "stream", "done",
       ]);
       expect(existsSync(ownedRoot)).toBe(false);
       expect(service.counts.forbidden).toBe(0);

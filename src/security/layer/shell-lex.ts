@@ -101,6 +101,13 @@ export function shellSegments(command: string): ShellSegment[] {
       i++; // consume the second operator char
       continue;
     }
+    // `2>&1`, `<&0`, `&>log`: the `&` belongs to a redirection, not a
+    // background operator — `git push origin main 2>&1` is ONE command.
+    const prev = command[i - 1];
+    if (c === "&" && (prev === ">" || prev === "<" || next === ">")) {
+      cur += c;
+      continue;
+    }
     if (c === "|" || c === ";" || c === "&" || c === "\n") {
       cut(c as SegmentJoin);
       continue;

@@ -57,6 +57,11 @@ describe("publishOperation — shell commands that publish", () => {
     ["bash -c \"git push origin main\"", "git-push", "git push origin main"],
     ["powershell -Command \"vercel --prod\"", "deploy", "vercel --prod"],
     ["C:\\tools\\vercel.cmd deploy", "deploy", "vercel deploy"],
+    // Redirections are not arguments: the dry run must get `origin main`, not `2>`.
+    ["git push origin main 2>&1", "git-push", "git push origin main"],
+    ["cd proj && git push origin main > push.log 2>&1", "git-push", "git push origin main"],
+    ["git push 2>/dev/null origin main", "git-push", "git push origin main"],
+    ["vercel --prod >deploy.log 2>&1", "deploy", "vercel --prod"],
   ];
   for (const [command, kind, label] of PUBLISHES) {
     it(`${command} → ${kind}`, () => {
@@ -160,6 +165,10 @@ describe("publishOperation — the directory the command publishes from", () => 
 
   it("keeps git push's arguments verbatim for the dry run", () => {
     expect(bash("git push -u origin HEAD:refs/heads/x")!.pushArgs).toEqual(["-u", "origin", "HEAD:refs/heads/x"]);
+    // … minus the shell's own redirections, which git would read as refspecs.
+    expect(bash("git push origin main 2>&1")!.pushArgs).toEqual(["origin", "main"]);
+    expect(bash("git push origin main > push.log 2> err.log")!.pushArgs).toEqual(["origin", "main"]);
+    expect(bash("git push --force-with-lease origin main &>/dev/null")!.pushArgs).toEqual(["--force-with-lease", "origin", "main"]);
   });
 
   it("gh pr merge records an explicit PR selector", () => {

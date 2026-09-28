@@ -274,19 +274,13 @@ export function sensitivePathsReadByCommand(command: string): string[] {
     matches.push(bare);
   };
   for (const p of commandPositions(command).positions) {
-    const reads = readsOperands(p);
-    let nextIsStdin = false;
-    for (const word of p.words.slice(p.at + 1)) {
-      if (nextIsStdin) { consider(word); nextIsStdin = false; continue; }
-      const redirect = /^(\d*)(<+|>+)&?(.*)$/.exec(word);
-      if (redirect) {
-        if (redirect[2].startsWith("<") && !redirect[3].startsWith("&")) {
-          if (redirect[3]) consider(redirect[3]);
-          else nextIsStdin = true;
-        }
-        continue; // a `>` target is written, never read; `2>&1` names no file
-      }
-      if (reads) consider(word);
+    // An input redirection reads its file whatever the command is; a `>`
+    // target is written, never read; `<<`/`<<<` name no file; `2>&1` an fd.
+    for (const r of p.redirections) {
+      if (r.op === "<" || r.op === "<>") consider(r.target);
+    }
+    if (readsOperands(p)) {
+      for (const word of p.words.slice(p.at + 1)) consider(word);
     }
   }
   return matches;

@@ -7,9 +7,19 @@
 
 import { execBasename, isShellReparseFlag, resolveRealArgv0Index, shellSegments, tokenizeCommand } from "./shell-lex.js";
 
+/** One shell redirection of a command: the operator without its fd digits
+ *  (`>`, `>>`, `>|`, `>&`, `<`, `<>`, `<<`, `<<<`, `<&`, `&>`, `&>>`) and its
+ *  target — a file, an fd for `>&`/`<&`, a delimiter for `<<`, "" when none. */
+export interface Redirection {
+  op: string;
+  target: string;
+}
+
 export interface CommandPosition {
-  /** The segment's words, quotes removed. */
+  /** The segment's words, quotes removed, redirections taken out (`redirections`). */
   words: string[];
+  /** The shell's redirections for this command, in order. */
+  redirections: Redirection[];
   /** Index of the real command word in `words` (after keywords/wrappers). */
   at: number;
   /** Basename of the real command word, lowercased (`/usr/bin/Bash.exe` → "bash"). */
@@ -39,14 +49,41 @@ export function commandPositions(command: string): CommandWalk {
   return walk;
 }
 
+// A redirection operator word: an optional fd (`2>`) then `>`, `>>`, `>|`,
+// `>&`, `<`, `<>`, `<<`, `<<<`, `<&`; or `&>` / `&>>`. Group 2 is the operator,
+// group 3 a target attached to it (`2>/dev/null`, `>&2`).
+const REDIRECTION = /^(?:(\d*)(>>|>\||>&|>|<<<|<<|<&|<>|<)|()(&>>|&>))(.*)$/;
+
+/**
+ * Split a command's words into its arguments and its redirections: `git push
+ * origin main 2>&1` pushes `origin main`, and `2>` is not a refspec (a live
+ * push on 2026-09-28 was reviewed as UNKNOWN for exactly that). An operator
+ * with no attached target takes the next word (`> log`, `2> /dev/null`).
+ * Quotes are gone by the time words exist, so a quoted operator (`echo ">"`)
+ * is read as one too — an argument fewer for the rules to see, never one more.
+ */
+function splitRedirections(tokens: string[]): { words: string[]; redirections: Redirection[] } {
+  const words: string[] = [];
+  const redirections: Redirection[] = [];
+  for (let i = 0; i < tokens.length; i++) {
+    const m = REDIRECTION.exec(tokens[i]);
+    if (!m) { words.push(tokens[i]); continue; }
+    const op = m[2] ?? m[4];
+    let target = m[5];
+    if (target === "") target = tokens[++i] ?? "";
+    redirections.push({ op, target });
+  }
+  return { words, redirections };
+}
+
 function visit(command: string, depth: number, walk: CommandWalk): void {
   for (const seg of shellSegments(command)) {
-    const words = tokenizeCommand(seg.text);
+    const { words, redirections } = splitRedirections(tokenizeCommand(seg.text));
     if (!words.length) continue;
     // Only wrappers and their flags (`sudo -i`, `env`): the first word is what runs.
     const at = resolveRealArgv0Index(words) ?? 0;
     const bin = execBasename(words[at]);
-    walk.positions.push({ words, at, bin, piped: seg.after === "|" || seg.after === "|&", depth });
+    walk.positions.push({ words, redirections, at, bin, piped: seg.after === "|" || seg.after === "|&", depth });
     for (let i = at + 1; i < words.length - 1; i++) {
       if (!isShellReparseFlag(bin, words[i])) continue;
       if (depth + 1 >= MAX_SHELL_NESTING) {

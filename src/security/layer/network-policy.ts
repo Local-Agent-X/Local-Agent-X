@@ -18,7 +18,7 @@ import {
 // every existing `from "./network-policy.js"` import site keeps working.
 import { resolveAndPinHost } from "./network-dns.js";
 export { resolveAndPinHost } from "./network-dns.js";
-import { ollamaLoopbackPort, localRuntimeLoopbackPorts, manualRuntimeHostPorts, devServerLoopbackPorts } from "./security-config.js";
+import { ollamaLoopbackPort, localRuntimeLoopbackPorts, manualRuntimeHostPorts, devServerLoopbackPorts, ownedLoopbackPorts } from "./security-config.js";
 import { endpointHostPort } from "../../local-runtimes/admission.js";
 import { isLocalOnlyMode, isLoopbackUrl, LOCAL_ONLY_BLOCK_MESSAGE } from "../../local-only-policy.js";
 
@@ -269,6 +269,7 @@ export function loadEgressConfig(): EgressConfig {
   if (ollama) localServicePorts.add(ollama);
   for (const p of localRuntimeLoopbackPorts()) localServicePorts.add(p);
   for (const p of devServerLoopbackPorts()) localServicePorts.add(p);
+  for (const p of ownedLoopbackPorts()) localServicePorts.add(p);
 
   return { allowlist, configured, mode, localServicePorts, manualHostPorts: manualRuntimeHostPorts() };
 }

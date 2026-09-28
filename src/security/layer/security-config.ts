@@ -192,6 +192,10 @@ export function localRuntimeLoopbackPorts(): Set<string> {
 /** Re-exported so network-policy's standalone loadEgressConfig folds in the SAME
  *  derivation loadLocalServicePorts uses — one source, both readers. */
 export { devServerLoopbackPorts } from "../../tools/dev-server-records.js";
+/** The ports live process_start sessions listen on (tools/owned-listeners.ts,
+ *  a leaf for the same cycle reason). Read per decision, never cached here:
+ *  the evidence is a running process, and it ends with the process. */
+export { ownedLoopbackPorts } from "../../tools/owned-listeners.js";
 
 export function manualRuntimeHostPorts(): Set<string> {
   try {

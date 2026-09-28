@@ -1,11 +1,16 @@
 // Right-time recovery for a LEGITIMATE local-service health-check that hits the
-// loopback/private-IP block. Ties the model to the localServicePorts allowlist
-// added for operator-trusted bridges/dev servers. NOT used for SSRF-attack
-// shapes (cloud metadata, hex/decimal-encoded IPs) — those should never be
-// allowlisted.
+// loopback/private-IP block. A loopback port is reachable when a process the
+// agent started through process_start (or a dev server it served) listens on
+// it, or when the operator lists it in localServicePorts. The recovery names
+// those paths — never "edit security.json", which the model may not do and
+// which sent one session retrying the same denied call seventeen times. NOT
+// used for SSRF-attack shapes (cloud metadata, hex/decimal-encoded IPs) — those
+// should never be allowlisted.
 export const LOCAL_SERVICE_RECOVERY =
-  'If this is your own local service (a dev server / bridge you started), add its port to ' +
-  '"localServicePorts" in ~/.lax/security.json to allow loopback health-checks. ' +
+  "A loopback port is reachable while a process you started with process_start (or a dev server you served with " +
+  "app_serve_*) is listening on it: if this server is yours, start it through process_start and retry once it " +
+  "reports listening. If the USER started it in their own terminal, ask them to either restart it through you or add " +
+  'the port to "localServicePorts" in their security settings (~/.lax/security.json) — you cannot edit that file. ' +
   "Otherwise verify the service via process_status/process_list or the filesystem instead of HTTP.";
 
 /**

@@ -19,6 +19,7 @@ import { killProcessGroup } from "../process-tree-kill.js";
 import { evaluateShellCommand } from "../security/layer/index.js";
 import { getSandboxMode, getSandboxStatus, wrapSpawnForSandbox } from "../sandbox/index.js";
 import { shellProxyEnvSync } from "./shell-proxy-env.js";
+import { registerOwnedProcess, unregisterOwnedProcess } from "./owned-listeners.js";
 import { workspaceRoot } from "../config.js";
 
 import { createLogger } from "../logger.js";
@@ -195,6 +196,9 @@ export function startSession(
     totalBytes: 0,
   };
   SESSIONS.set(sessionId, session);
+  // A port this session (or a child it forks) listens on is reachable to the
+  // agent's HTTP tools for as long as it runs — see owned-listeners.ts.
+  registerOwnedProcess(child.pid);
 
   child.stdout?.setEncoding("utf-8");
   child.stderr?.setEncoding("utf-8");
@@ -223,12 +227,14 @@ export function startSession(
     session.exitCode = -1;
     session.exitedAt = Date.now();
     session.stderr += `\n[spawn error] ${e.message}`;
+    unregisterOwnedProcess(child.pid);
   });
   child.on("exit", (code, signal) => {
     session.exitCode = code;
     session.exitSignal = signal;
     session.exitedAt = Date.now();
     session.child = null;
+    unregisterOwnedProcess(child.pid);
     // A signal death (code null) is the dev-server "code null" gremlin: log the
     // signal + age so a SIGKILL (our killProcessGroup) is distinguishable from an
     // external SIGTERM/SIGSEGV at the source, not just in the persisted failure.

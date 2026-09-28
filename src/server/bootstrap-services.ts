@@ -329,6 +329,16 @@ export async function bootstrapServices(config: LAXConfig): Promise<Bootstrapped
     setInterval(warm, 60_000).unref();
   }).catch(() => {});
 
+  // Warm the key-based providers' own model lists (Anthropic / OpenAI / Gemini
+  // / xAI / Cerebras / custom list-models endpoints) so the picker shows a
+  // model the provider released after this build. Refreshed on a key save via
+  // the secrets listener and on the catalog TTL; never fetched on the
+  // provider-list path. See src/providers/model-catalog.ts.
+  import("../providers/model-catalog.js").then(({ warmProviderCatalogs, CATALOG_TTL_MS }) => {
+    warmProviderCatalogs(secretsStore);
+    setInterval(() => warmProviderCatalogs(secretsStore), CATALOG_TTL_MS).unref();
+  }).catch(() => {});
+
   // Warm the local-runtime sweep (Ollama + LM Studio/vLLM/llama.cpp on
   // their known loopback ports + manual adds) on the same cadence, so the
   // picker and per-turn context-window lookups read a warm cache. Cache

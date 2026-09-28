@@ -72,6 +72,12 @@ vi.mock("../../auth/xai.js", () => ({
   getXaiApiKey: async () => "",
 }));
 vi.mock("../../chat-ws/index.js", () => ({ broadcastAll: () => {} }));
+// The route kicks a background catalog refresh for a stale key-based provider;
+// these tests are about the credential gate, so the refresh is a no-op here.
+vi.mock("../../providers/model-catalog.js", async (orig) => ({
+  ...(await orig<typeof import("../../providers/model-catalog.js")>()),
+  refreshProviderCatalog: async () => ({ models: [], refreshedAt: Date.now() }),
+}));
 
 import { handleProvidersRoutes } from "./providers.js";
 import { PROVIDERS } from "../../providers/registry.js";

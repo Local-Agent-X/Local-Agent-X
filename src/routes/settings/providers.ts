@@ -24,6 +24,7 @@ import {
   type LocalRuntimeInfo,
 } from "../../local-runtimes/index.js";
 import { isLocalOnlyMode, localProviderDecision, LOCAL_ONLY_BLOCK_MESSAGE } from "../../local-only-policy.js";
+import { CATALOG_PROVIDERS, catalogStale, pickerModelsFor, refreshProviderCatalog } from "../../providers/model-catalog.js";
 
 function modelsWithCertification(runtime: LocalRuntimeInfo) {
   return runtime.models.map((model) => ({
@@ -134,9 +135,14 @@ export const handleProvidersRoutes: RouteHandler = async (method, url, req, res,
     const hasGeminiKey = hasCreds("gemini");
     const hasCustomKey = hasCreds("custom");
     // Provider list, labels, and model arrays derived from PROVIDERS so
-    // adding a provider only requires editing registry.ts.
-    const pushFromRegistry = (id: ProviderId) =>
-      providers.push({ id, name: PROVIDERS[id].label, models: [...PROVIDERS[id].models], active: currentProvider === id });
+    // adding a provider only requires editing registry.ts. The models are the
+    // chat picker's: the shipped chat list plus whatever the provider's own
+    // list-models endpoint adds (model-catalog.ts) — read from cache, and a
+    // stale cache kicks a background refresh; never a round-trip on this path.
+    const pushFromRegistry = (id: ProviderId) => {
+      if (CATALOG_PROVIDERS.includes(id) && catalogStale(id)) void refreshProviderCatalog(id);
+      providers.push({ id, name: PROVIDERS[id].label, models: pickerModelsFor(id), active: currentProvider === id });
+    };
     if (hasXaiKey && !localOnly) pushFromRegistry("xai");
     if (hasGeminiKey && !localOnly) pushFromRegistry("gemini");
     if (hasCerebrasKey && !localOnly) pushFromRegistry("cerebras");
@@ -249,14 +255,19 @@ export const handleProvidersRoutes: RouteHandler = async (method, url, req, res,
     json(200, { ok: true, provider, model: model || settings.model }); return true;
   }
 
-  // Static provider registry — labels + model lists, no creds gating.
-  // Lets the Apps gallery dropdown render every provider without
-  // re-hardcoding the metadata client-side.
+  // Provider registry — labels + model lists, no creds gating. Lets the Apps
+  // gallery dropdown and the Settings model picker render every provider
+  // without re-hardcoding the metadata client-side. Model lists carry the
+  // provider's catalog additions (cache only) so the two pickers agree.
   if (method === "GET" && url.pathname === "/api/providers/registry") {
     const customBaseUrl = String(loadSettings().customBaseUrl || "");
     const out = (Object.keys(PROVIDERS) as ProviderId[])
       .filter(id => localProviderDecision(id, getRuntimeConfig(), customBaseUrl).allowed)
-      .map(providerRegistryView);
+      .map(id => {
+        const view = providerRegistryView(id);
+        const chatModels = pickerModelsFor(id);
+        return { ...view, chatModels, models: [...new Set([...view.models, ...chatModels])] };
+      });
     json(200, { providers: out, localOnlyMode: isLocalOnlyMode() });
     return true;
   }

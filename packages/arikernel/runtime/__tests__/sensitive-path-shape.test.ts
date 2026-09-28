@@ -60,7 +60,7 @@ function makeFirewall(name: string, sensitivePath?: (p: string) => boolean): Fir
 	return fw;
 }
 
-const SCRIPT = "./workspace/scripts/set-unsub-secret.mjs";
+const SCRIPT = "./proj/scripts/set-unsub-secret.mjs";
 const ENV = "./proj/.env";
 const AUTH_GET = {
 	url: "https://api.resend.com/domains",

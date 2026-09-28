@@ -41,6 +41,13 @@ process.env.USERPROFILE = home;
 // Never route a test's safe-delete into the developer's real OS Trash — force
 // the ~/.lax fallback so trash assertions are deterministic and self-contained.
 process.env.LAX_NO_NATIVE_TRASH = "1";
+// No test's git may reach a network remote. The pre-publish review runs `git
+// push --dry-run` in whatever repository a publishing command's directory is
+// in — for a test that is often this checkout, whose origin is GitHub. Git
+// itself honors GIT_ALLOW_PROTOCOL for every transport, in this process and
+// every child it spawns: only local-path remotes work, and a test that needs a
+// remote builds a bare one on disk.
+process.env.GIT_ALLOW_PROTOCOL = "file";
 
 // A unit test never reaches a real local model server. Two tests sent warms
 // to the developer's running Ollama on every run (2026-09-28) because their

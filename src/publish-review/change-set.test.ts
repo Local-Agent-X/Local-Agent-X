@@ -107,6 +107,11 @@ describe("computeChangeSet — git push", () => {
     expect(cs.unknown[0].reason).toMatch(/receive-pack/);
   });
 
+  it("no test's dry run reaches a network remote (test-env.ts GIT_ALLOW_PROTOCOL)", async () => {
+    const cs = await computeChangeSet([push(["https://example.invalid/acme/app.git", "main"])]);
+    expect(cs.unknown[0].reason).toMatch(/transport 'https' not allowed/);
+  });
+
   it("a push git cannot dry-run is unknown, with git's reason", async () => {
     const cs = await computeChangeSet([push(["no-such-remote", "main"])]);
     expect(cs.parts).toEqual([]);

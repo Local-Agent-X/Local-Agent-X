@@ -42,7 +42,20 @@ export type ActionPreview =
   | { kind: "file"; path: string; diff: string; lineCount: { added: number; removed: number }; truncated: boolean }
   | { kind: "shell"; cmd: string; cwd: string; explanation?: string }
   | { kind: "network"; method: string; url: string; bodyPreview: string; bodyTruncated: boolean; domain: string }
-  | { kind: "money"; amount: number; currency: string; recipient: string; source: string; formatted: string };
+  | { kind: "money"; amount: number; currency: string; recipient: string; source: string; formatted: string }
+  /** A git push / deploy / package publish / release and the fresh-context
+   *  review of exactly what it would ship (tool-execution/publish-review-gate.ts).
+   *  `overrideLabel` is present on a RED card: the approve button's wording. */
+  | {
+      kind: "publish-review";
+      status: "RED" | "AMBER" | "GREEN" | "FAILED" | "UNKNOWN" | "EMPTY";
+      command: string;
+      summary: string;
+      findings: Array<{ severity: "red" | "amber" | "yellow"; location: string; problem: string; why: string; fix: string }>;
+      reason?: string;
+      unknown?: Array<{ label: string; reason: string }>;
+      overrideLabel?: string;
+    };
 
 /**
  * Op attribution on live envelopes. The variants below that a client must be

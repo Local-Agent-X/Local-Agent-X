@@ -42,6 +42,10 @@ export interface ToolCallContext {
    * re-runs the security + validation gates on the rewritten call. */
   hookRewrittenArgs?: Record<string, unknown>;
 
+  /** Set by the approval phase when this call publishes (publish-review-gate.ts):
+   * the pre-publish review, noted onto the tool result after it runs. */
+  publishReview?: import("../canonical-loop/public/publish-review.js").PublishReview;
+
   startedAt?: number;
   result?: ToolResult;
   /** Set when ctx.result was satisfied WITHOUT the tool executing in THIS

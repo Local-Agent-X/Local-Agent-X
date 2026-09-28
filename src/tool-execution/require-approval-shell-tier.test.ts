@@ -16,6 +16,7 @@ import { requireApprovalPhase } from "./require-approval.js";
 import type { ToolCallContext, CallContext } from "./context.js";
 import { setSessionProfile, clearSessionProfile } from "../autonomy/profile-store.js";
 import { getApprovalManager } from "../approval-manager.js";
+import { _setPublishGateDepsForTests } from "./publish-review-gate.js";
 import type { ServerEvent } from "../types.js";
 
 let _sid = 0;
@@ -25,6 +26,7 @@ function sid(): string {
 
 const sessions: string[] = [];
 afterEach(() => {
+  _setPublishGateDepsForTests(null);
   sandboxState.confined = true;
   for (const s of sessions.splice(0)) clearSessionProfile(s);
   vi.restoreAllMocks();
@@ -111,6 +113,14 @@ describe("requireApprovalPhase — tier-0 shell fast-path (Safe profile: shell=a
   });
 
   it("(g) `git push` is NOT tier-0 → PROMPT", async () => {
+    // The push is reviewed first; fake the review (publish-review-gate.test.ts
+    // pins the gate) so this stays about the tier-0 fast path.
+    _setPublishGateDepsForTests({
+      computeChangeSet: async () => ({ parts: [], unknown: [{ label: "git push", cwd: "/repo", reason: "fake" }], fingerprint: "fp-tier-g" }),
+      runReview: async () => ({ parsed: { ok: false, reason: "fake" } }),
+      recall: () => [],
+      summarize: () => "",
+    });
     const s = pinned("Safe");
     const events: ServerEvent[] = [];
     const ctx = makeCtx({

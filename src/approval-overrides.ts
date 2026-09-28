@@ -47,6 +47,11 @@ export const ALWAYS_ASK_SITES: readonly AlwaysAskSite[] = [
     why: "The quarantine is the user's own boundary between 'the agent fetched a file' and 'that file is loose in my workspace'. One explicit yes per file, per release.",
   },
   {
+    file: "tool-execution/publish-review-gate.ts",
+    what: "publishing (git push, deploy, package publish, release) over a RED pre-publish review finding",
+    why: "The owner's standing instruction: nothing ships over a red finding from the fresh-context review unless they explicitly override it for THAT publish. A permissive profile or a remembered grant waiving it would be exactly the unreviewed ship the instruction exists to stop; the card is per change set, so the next push is asked about on its own findings.",
+  },
+  {
     file: "tool-execution/unnamed-delete-preauth.ts",
     what: "deleting files the user's request never named, when their profile asks about destructive actions (Normal)",
     why: "The profile already decides whether this card appears — Power and Autonomous never see it. When it does appear, the question is about THIS set of files: a remembered grant would silently cover the next, different set the user never saw.",

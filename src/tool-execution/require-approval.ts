@@ -35,6 +35,15 @@ import { classifyShellTier, isShellTierTool } from "./shell-approval-tier.js";
 import { getSandboxStatus } from "../sandbox/index.js";
 import { currentHumanText, takeUnnamedDeleteDecision, UNNAMED_DELETE_DECLINED_TEXT, UNNAMED_DELETE_USE_TRASH_TEXT } from "./unnamed-delete-gate.js";
 import { secretEnvGate } from "./secret-env-approval.js";
+import { publishOperations } from "../publish-operation.js";
+import { publishReviewGate } from "./publish-review-gate.js";
+import { reviewCardContext, reviewNoteForModel, reviewPreview } from "./publish-review-text.js";
+import type { Decision } from "../autonomy/profiles.js";
+
+const STRICTNESS: Record<Decision, number> = { allow: 0, "allow-with-rollback": 1, ask: 2, deny: 3 };
+function stricterDecision(a: Decision, b: Decision): Decision {
+  return STRICTNESS[a] >= STRICTNESS[b] ? a : b;
+}
 
 export const requireApprovalPhase: Phase = async (ctx) => {
   const promotion = describeMemoryPromotionRequest(
@@ -63,6 +72,15 @@ export const requireApprovalPhase: Phase = async (ctx) => {
   let decision = destructive
     ? getRiskDecision("destructive", ctx.sessionId)
     : getToolDecision(ctx.tc.name, ctx.sessionId);
+  // A call that PUBLISHES (git push, deploy, package publish, release) is
+  // reclassified to the profile's "publish" row the same way; a force-push is
+  // both, and the stricter row wins. One lex of the command for shell calls,
+  // one Set lookup for everything else.
+  const publishOps = publishOperations(ctx.tc.name, ctx.args);
+  if (publishOps.length > 0) {
+    const publishDecision = getRiskDecision("publish", ctx.sessionId);
+    decision = destructive ? stricterDecision(decision, publishDecision) : publishDecision;
+  }
 
   // Irreversible-action floor: in an interactive run, force one confirm before a
   // truly-unrecoverable shell op (rm -rf, dd, force-push, …) even if the profile
@@ -105,6 +123,19 @@ export const requireApprovalPhase: Phase = async (ctx) => {
     return terminate(ctx, { rendered: "model", result, allowed: false });
   }
 
+  // Pre-publish review (publish-review-gate.ts): a fresh-context model reviews
+  // exactly what this call would ship. RED stops it here — with the findings
+  // as the result, and in an interactive run a "Push anyway" card whose yes
+  // stands in for every prompt below about running THIS call (the unnamed-
+  // delete precedent above). Every other verdict falls through to the profile.
+  let publishOverridden = false;
+  if (publishOps.length > 0) {
+    const gate = await publishReviewGate(ctx, publishOps);
+    if (gate.kind === "block") return terminate(ctx, { rendered: "model", result: gate.result, allowed: false });
+    ctx.publishReview = gate.review;
+    publishOverridden = gate.overridden;
+  }
+
   // A vault secret handed to a command (bash secret_env) is the profile's
   // `secrets` rule, decided before any fast path (secret-env-approval.ts).
   const secretUse = await secretEnvGate(ctx);
@@ -112,6 +143,7 @@ export const requireApprovalPhase: Phase = async (ctx) => {
   if (secretUse.kind === "denied") {
     return terminate(ctx, { rendered: "model", result: buildDenialResult(ctx.tc.name, secretUse.reason), allowed: false });
   }
+  if (publishOverridden) return CONTINUE;
 
   // Tier-0 shell fast-path — the biggest autonomy win. A genuinely-safe shell
   // command (effectively-confined sandbox, in scope, EVERY chain segment's
@@ -137,6 +169,7 @@ export const requireApprovalPhase: Phase = async (ctx) => {
   if (
     ctx.callContext === "local" &&
     !destructive &&
+    publishOps.length === 0 &&
     !ctx.policyApprovalReason &&
     !promotion &&
     isShellTierTool(ctx.tc.name) &&
@@ -202,7 +235,8 @@ export const requireApprovalPhase: Phase = async (ctx) => {
         `BLOCKED (unattended): ${ctx.tc.name} needs human approval` +
         `${promotion ? " because risky content cannot become durable memory without explicit user approval" : ctx.policyApprovalReason ? ` because ${ctx.policyApprovalReason}` : " under the active autonomy profile"}, ` +
         `but no one is watching this ${ctx.callContext} run. ` +
-        `Run this under the Autonomous profile (or pin a per-job profile) to allow it.`,
+        `Run this under the Autonomous profile (or pin a per-job profile) to allow it.` +
+        (ctx.publishReview ? `\n\n${reviewNoteForModel(ctx.publishReview)}` : ""),
       isError: true,
       status: "blocked",
       metadata: { layer: "approval", userHint: USER_HINTS.policy },
@@ -239,6 +273,7 @@ export const requireApprovalPhase: Phase = async (ctx) => {
     return terminate(ctx, { rendered: "model", result, allowed: false });
   }
 
+  const review = ctx.publishReview;
   const outcome = await getApprovalManager().requestApprovalDetailed({
     toolName: ctx.tc.name,
     toolCallId: ctx.tc.id,
@@ -246,10 +281,13 @@ export const requireApprovalPhase: Phase = async (ctx) => {
     context: promotion
       ? describePromotionForHuman(promotion)
       : destructive
-      ? `⚠ Irreversible operation (${destructive}) — confirm before running. ${ctx.approvalContext}`
+      ? `⚠ Irreversible operation (${destructive}) — confirm before running. ${review ? reviewCardContext(publishOps[0], review, ctx.approvalContext) : ctx.approvalContext}`
       : ctx.policyApprovalReason
         ? `Policy approval required: ${ctx.policyApprovalReason}. ${ctx.approvalContext}`
-        : ctx.approvalContext,
+        : review
+          ? reviewCardContext(publishOps[0], review, ctx.approvalContext)
+          : ctx.approvalContext,
+    ...(review ? { preview: reviewPreview(publishOps[0], review) } : {}),
     args: promotion ? { ...promotion } : ctx.args,
     alwaysAsk: !!destructive || policyRequiresPrompt,
     // Canonical op id (chat-tool-dispatcher threads opts.opId through
@@ -275,6 +313,7 @@ export const requireApprovalPhase: Phase = async (ctx) => {
   // a neutral blocked result (no producer emits undefined today; this guards
   // the next resolution path someone adds).
   const result: ToolResult = buildDenialResult(ctx.tc.name, outcome.reason);
+  if (review) result.content += `\n\n${reviewNoteForModel(review)}`;
   return terminate(ctx, { rendered: "model", result, allowed: false });
 };
 

@@ -9,6 +9,8 @@ export { auditKernelCoverage, printKernelCoverageReport } from "./coverage.js";
 export type { KernelCoverageReport } from "./coverage.js";
 export { ariObserve } from "./observe.js";
 export { ariEvaluate } from "./evaluate.js";
+export type { AriVerdict } from "./evaluate.js";
+export { readKernelQuarantine, TAINT_KEYED_KERNEL_RULES } from "./quarantine.js";
 export {
   startAriKernel,
   stopAriKernel,

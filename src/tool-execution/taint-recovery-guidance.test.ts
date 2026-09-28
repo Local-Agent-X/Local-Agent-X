@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DATA_LINEAGE_RECOVERY } from "./egress-gates.js";
+import { KERNEL_TAINT_RECOVERY } from "./kernel-block.js";
 
 // CLASS LOCK for taint-recovery guidance.
 //
@@ -20,7 +21,7 @@ import { DATA_LINEAGE_RECOVERY } from "./egress-gates.js";
 
 const HERE = resolve(fileURLToPath(new URL(".", import.meta.url)));
 
-const SITES = ["egress-gates.ts", "enforce-policy.ts"];
+const SITES = ["egress-gates.ts", "enforce-policy.ts", "kernel-block.ts"];
 
 /** The recovery guidance strings a source file emits, one per `recovery:` key. */
 function recoveryStrings(file: string): string[] {
@@ -38,7 +39,9 @@ function recoveryStrings(file: string): string[] {
  */
 function declassifyGuidance(file: string): string[] {
   const inline = recoveryStrings(file);
-  const named = file === "egress-gates.ts" ? [DATA_LINEAGE_RECOVERY] : [];
+  const named = file === "egress-gates.ts" ? [DATA_LINEAGE_RECOVERY]
+    : file === "kernel-block.ts" ? [KERNEL_TAINT_RECOVERY]
+    : [];
   return [...inline, ...named].filter(s => /declassif/i.test(s));
 }
 

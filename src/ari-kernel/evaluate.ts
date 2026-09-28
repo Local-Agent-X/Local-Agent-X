@@ -9,8 +9,19 @@ import { lookupHostGrantId } from "./grants.js";
 import { ensureAriKernelScope, refreshAriKernelScope } from "./lifecycle.js";
 import { isSensitivePath } from "../data-lineage/index.js";
 import { resolveAgentPath } from "../workspace/paths.js";
+import type { KernelQuarantine } from "../types.js";
+import { isSensitiveReadQuarantineFalsePositive, readKernelQuarantine } from "./quarantine.js";
 
 const logger = createLogger("ari-kernel");
+
+export interface AriVerdict {
+  allowed: boolean;
+  reason: string;
+  userHint?: string;
+  /** The run state behind a deny, when the scope is restricted — the rule
+   *  that fired and whether this call raised it or merely ran into it. */
+  quarantine?: KernelQuarantine;
+}
 
 // The kernel's sensitive-file TRIGGER reason: THIS file action was flagged
 // sensitive by a behavioral rule (and quarantined the run). Deliberately does
@@ -61,8 +72,11 @@ export async function ariEvaluate(
   taintLabels?: string[],
   scopeId?: string,
   retriedAfterForeignTaint = false,
-): Promise<{ allowed: boolean; reason: string; quarantined?: boolean; userHint?: string }> {
+): Promise<AriVerdict> {
   const firewall = ensureAriKernelScope(scopeId);
+  // Restricted BEFORE this call ran → any deny below is a cascade, not a rule
+  // this call tripped; readKernelQuarantine stamps the trigger accordingly.
+  const restrictedBefore = readKernelQuarantine(scopeId, false) !== null;
   if (!firewall) {
     if (isAriRequired()) {
       return { allowed: false, reason: "[ARI kernel] required but not active — tool call blocked", userHint: USER_HINTS.kernel };
@@ -136,16 +150,33 @@ export async function ariEvaluate(
           reason: "ARI sensitive-file false positive on a benign source path — overridden by LAX canonical detector",
         };
       }
-      return {
+      return withQuarantine({
         allowed: false,
         reason: `[ARI kernel] ${reason}`,
         userHint: USER_HINTS.kernel,
-      };
+      }, scopeId, restrictedBefore);
     }
 
     return { allowed: true, reason: "ARI allowed" };
   } catch (e) {
     const rawDetail = (e as Error).message || String(e);
+    // A behavioral-rule quarantine is thrown, not returned (denyQuarantinedAction),
+    // so it lands here — and read literally as "evaluation error" it sent two
+    // live turns chasing an engine fault. The sensitive-read rule has the same
+    // substring false positive as the sensitive-file deny rescued above: judge
+    // the matched path with LAX's anchored detector, and when it is not a
+    // secret, refresh the scope (the only way to lift a quarantine) and judge
+    // this call once more on a clean run. A genuine secret path stays denied.
+    if (!retriedAfterForeignTaint) {
+      const q = readKernelQuarantine(scopeId, !restrictedBefore);
+      if (isSensitiveReadQuarantineFalsePositive(q) && refreshAriKernelScope(scopeId)) {
+        logger.warn(
+          `[ari] sensitive-read quarantine FALSE POSITIVE — kernel matched "${q!.matchedPath}" by substring ` +
+          `(LAX isSensitivePath=false); refreshed the run and re-evaluating ${toolName}.${action} once`,
+        );
+        return ariEvaluate(toolName, action, params, taintLabels, scopeId, true);
+      }
+    }
     // Compatibility rescue for the default/ad-hoc scope, where unrelated calls
     // can still share one firewall. Canonical operations pass an operation scope
     // and are isolated before reaching this branch.
@@ -168,12 +199,27 @@ export async function ariEvaluate(
       // 'http'" — a missing ARI_ACTION_MAP entry) sat only in this log.
       // Single-line + capped: zod errors arrive as multi-line JSON arrays.
       const detail = rawDetail.replace(/\s+/g, " ").slice(0, 300);
-      return {
+      const verdict = withQuarantine({
         allowed: false,
         reason: `[ARI kernel] evaluation error, blocked in ariRequired mode: ${detail}`,
         userHint: USER_HINTS.kernel,
-      };
+      }, scopeId, restrictedBefore);
+      // A quarantine is a verdict, not an error: name the rule and its reason
+      // instead of the generic "evaluation error" the thrown deny arrives as.
+      if (verdict.quarantine) {
+        const q = verdict.quarantine;
+        const what = q.trigger === "restricted"
+          ? `run restricted since ${q.restrictedAt} by ${q.rule ?? q.trigger} (${q.reason}); ${detail}`
+          : `${q.rule ?? q.trigger} fired: ${q.reason}. ${detail}`;
+        verdict.reason = `[ARI kernel] ${what}`;
+      }
+      return verdict;
     }
     return { allowed: true, reason: "ARI error (fail-open, built-in security active)" };
   }
+}
+
+function withQuarantine(verdict: AriVerdict, scopeId: string | undefined, restrictedBefore: boolean): AriVerdict {
+  const quarantine = readKernelQuarantine(scopeId, !restrictedBefore);
+  return quarantine ? { ...verdict, quarantine } : verdict;
 }

@@ -15,7 +15,7 @@
 
 import { checkEgressTaintWithPayload, detectSecretsInOutput } from "../data-lineage/index.js";
 import { payloadFingerprints } from "../data-lineage/fingerprint.js";
-import { BROWSER_WRITE_ACTIONS } from "./ari-action-map.js";
+import { BROWSER_WRITE_ACTIONS, deriveAriAction } from "./ari-action-map.js";
 import { egressPayload } from "./egress-gates.js";
 
 /**
@@ -82,7 +82,33 @@ export function browserWriteIsTaintFree(
   return !checkEgressTaintWithPayload(sessionId, text).blocked;
 }
 
-/** The labels to hand the kernel once a browser write has proven itself clean. */
+/**
+ * The http_request twin of browserWriteIsTaintFree, and the other half of the
+ * asymmetry docs/proposals/taint-scoped-to-data-flow.md names: an http POST
+ * after a web read was still judged on session state alone while a browser
+ * fill was judged on its bytes. Same predicate, one channel more — the URL is
+ * an outbound channel for an http write and joins the scanned payload, so a
+ * tainted byte in the path or query keeps the labels exactly as one in the
+ * body does. Write verbs only: a GET carries no body and the kernel's own
+ * query/path drip accounting judges it. Pure + exported for the contract test.
+ */
+export function httpWriteIsTaintFree(
+  sessionId: string,
+  toolName: string,
+  args: Record<string, unknown>,
+  taintLabels: readonly string[],
+): boolean {
+  if (toolName !== "http_request") return false;
+  if (!taintLabels.some((s) => UNTRUSTED_CONTENT_SOURCES.has(s))) return false;
+  if (deriveAriAction(toolName, args) === "get") return false;
+  const { text } = egressPayload(toolName, args);
+  const payload = `${String(args.url ?? "")}\n${text}`.trim();
+  if (payloadFingerprints(payload).size === 0) return false;
+  if (detectSecretsInOutput(payload).structured) return false;
+  return !checkEgressTaintWithPayload(sessionId, payload).blocked;
+}
+
+/** The labels to hand the kernel once a write has proven itself clean. */
 export function withoutUntrustedContent(taintLabels: readonly string[]): string[] {
   return taintLabels.filter((s) => !UNTRUSTED_CONTENT_SOURCES.has(s));
 }

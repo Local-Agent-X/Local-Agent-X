@@ -105,6 +105,10 @@ export interface ToolDefinition {
  */
 export type ToolResultStatus = "ok" | "error" | "blocked" | "declined" | "timeout" | "running";
 
+// The block record + kernel quarantine shapes live in ./types/tool-block.ts
+// (400-LOC cap); re-exported so consumers keep importing from here.
+export type { KernelQuarantine, ToolBlockRecord } from "./types/tool-block.js";
+
 export interface ToolResult {
   /**
    * Output payload. May be "" when the call ran but produced no captured

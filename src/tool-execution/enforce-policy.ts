@@ -21,7 +21,8 @@ import { ToolBlocked } from "./errors.js";
 import type { Phase, PhaseOutcome, ToolCallContext } from "./context.js";
 import { terminate, CONTINUE, BLOCK } from "./context.js";
 import { egressAggregateGate, type EgressBlocker } from "./egress-gates.js";
-import { browserWriteIsTaintFree, withoutUntrustedContent } from "./taint-scope.js";
+import { browserWriteIsTaintFree, httpWriteIsTaintFree, withoutUntrustedContent } from "./taint-scope.js";
+import { kernelDenyBlocker, kernelDenyResult } from "./kernel-block.js";
 import { rewritePathForWorktree } from "./worktree-paths.js";
 
 export { egressGuardGate, dataLineageGate, canaryEgressGate } from "./egress-gates.js";
@@ -133,12 +134,12 @@ async function ariKernelGate(ctx: ToolCallContext): Promise<PhaseOutcome> {
     // — and only a payload proven clean (and fully fingerprinted) clears. A
     // write that does carry tainted bytes keeps its labels and is denied below,
     // then reported by the egress aggregate with the declassify card.
-    if (browserWriteIsTaintFree(sessionId || "default", tc.name, args, kernelTaintLabels)) {
+    const sid = sessionId || "default";
+    if (browserWriteIsTaintFree(sid, tc.name, args, kernelTaintLabels) || httpWriteIsTaintFree(sid, tc.name, args, kernelTaintLabels)) {
       kernelTaintLabels = withoutUntrustedContent(kernelTaintLabels);
     }
     const ariResult = await ariEvaluate(tc.name, deriveAriAction(tc.name, args), args, kernelTaintLabels, ariScopeId);
     if (!ariResult.allowed) {
-      const hint = ariResult.userHint ?? USER_HINTS.policy;
       // SC-10: an egress-class tool denied at the KERNEL (e.g. TD-11 derives a
       // tainted POST → action="post" → deny-tainted-http-write) must not
       // short-circuit with ONLY the kernel reason and leave the model chasing
@@ -147,22 +148,13 @@ async function ariKernelGate(ctx: ToolCallContext): Promise<PhaseOutcome> {
       // would ALSO hit — security layer + data-lineage + canary + egress-guard —
       // probed side-effect-free, into ONE response tagged per authoritative
       // layer. Enforcement is unchanged (still blocks); only the reported reason
-      // becomes the aggregate. Non-egress kernel denials keep the raw message.
+      // becomes the aggregate. The blocker's shape — whether it is clearable,
+      // which rule fired — is decided in kernel-block.ts from the verdict and
+      // the labels the kernel was actually handed.
       if (hasCapability(tc.name, "egress")) {
-        const kernelBlocker: EgressBlocker = {
-          layer: "arikernel",
-          label: "ARI kernel",
-          // Its recovery below tells the user to click "Declassify & retry";
-          // saying so here is what makes that card render.
-          clearable: "declassify",
-          reason: ariResult.reason,
-          recovery:
-            "The kernel policy denies this outbound action (typically an untrusted-input taint on an http/browser write). To clear the taint, ask the user to click \"Declassify & retry\" on this blocked card in the chat — that button is the only declassify control. Do not just retry the same call.",
-          userHint: hint,
-        };
-        return egressAggregateGate(ctx, [kernelBlocker, ...probeUpstreamEgressBlockers(ctx)]);
+        return egressAggregateGate(ctx, [kernelDenyBlocker(ariResult, kernelTaintLabels), ...probeUpstreamEgressBlockers(ctx)]);
       }
-      return terminate(ctx, { rendered: "raw", content: `User hint: ${hint}\n${ariResult.reason}`, allowed: false });
+      return terminate(ctx, { rendered: "model", result: kernelDenyResult(ariResult, kernelTaintLabels), allowed: false });
     }
   } else if (isAriActive() && shouldObserveInKernel(tc.name)) {
     // Audit-only path for internal-class tools — never blocks.

@@ -19,7 +19,11 @@
  *       knows its credential before it builds the pack;
  *   (b) the same file stamps `.contextPack.routing.authSource = ` after the
  *       pack is built — the site resolves the credential later (the delegated
- *       op_submit* path and the verification runtime both do).
+ *       op_submit* path does);
+ *   (c) the file hands the op to configureWorkerOpRuntime
+ *       (canonical-loop/worker-op-runtime.ts), which stamps it — the
+ *       verification pass and the pre-publish review do. That module is
+ *       pinned below to keep stamping.
  *
  * A NEW call site fails this test until it does one of the two. The expected
  * list is pinned too, so a site that vanishes (or moves) is noticed rather
@@ -35,6 +39,7 @@ const SRC_ROOT = fileURLToPath(new URL("..", import.meta.url));
 const EXPECTED_SITES = [
   "canonical-loop/agent-runner/run.ts",
   "canonical-loop/chat-runner/create-op.ts",
+  "canonical-loop/publish-review-submit.ts",
   "canonical-loop/verification-submit.ts",
   "ops/tools/shared.ts",
   "routes/chat/delegation-handoff.ts",
@@ -92,6 +97,12 @@ describe("every buildContextPack call site carries routing.authSource", () => {
     expect(calls.length).toBeGreaterThan(0);
     const passesAtCall = calls.every((args) => /\bauthSource\s*:/.test(args));
     const stampsAfter = /\.contextPack\.routing\.authSource\s*=/.test(site.source);
-    expect(passesAtCall || stampsAfter).toBe(true);
+    const sharedRuntimeStamps = /\bconfigureWorkerOpRuntime\(/.test(site.source);
+    expect(passesAtCall || stampsAfter || sharedRuntimeStamps).toBe(true);
+  });
+
+  it("configureWorkerOpRuntime stamps authSource for the sites that delegate to it", () => {
+    const shared = readFileSync(join(SRC_ROOT, "canonical-loop", "worker-op-runtime.ts"), "utf8");
+    expect(shared).toMatch(/\.contextPack\.routing\.authSource\s*=/);
   });
 });

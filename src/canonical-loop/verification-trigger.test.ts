@@ -56,6 +56,7 @@ const {
 	VERIFICATION_DEBOUNCE_MS,
 } = await import("./verification-trigger.js");
 type SubmitInput = import("./verification-trigger.js").VerificationSubmitInput;
+const { REVIEW_PUBLISH_OP_TYPE } = await import("./publish-review-verdict.js");
 const { projectCanonicalEvent } = await import("./event-emitter.js");
 const { writeOp } = await import("../ops/op-store.js");
 const { trackOpForSession, releaseOpFromSession } = await import("../ops/session-bridge.js");
@@ -280,6 +281,19 @@ describe("verification trigger — each condition individually falsified", () =>
 		recordVerificationTrigger(succeededEvent(opId));
 		await flushDebounce();
 		expect(calls).toHaveLength(0);
+	});
+
+	it("skips a pre-publish review op's completion (recursion guard)", async () => {
+		const sessionId = makeSession();
+		armSession(sessionId);
+		// Positive control: the same armed session DOES verify for an ordinary op,
+		// so the review's zero below is the guard and not an unarmed session.
+		recordVerificationTrigger(succeededEvent(makeTrackedOp(REVIEW_PUBLISH_OP_TYPE, sessionId)));
+		await flushDebounce();
+		expect(calls).toHaveLength(0);
+		recordVerificationTrigger(succeededEvent(makeTrackedOp("freeform", sessionId)));
+		await flushDebounce();
+		expect(calls).toHaveLength(1);
 	});
 
 	it("skips when the session has no external ingestion", async () => {

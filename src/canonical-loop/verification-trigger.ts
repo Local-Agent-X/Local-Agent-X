@@ -57,8 +57,9 @@
  *   1. event type: only `state_changed`, and only `to: "succeeded"`.
  *   2. op type: not VERIFICATION_OP_TYPE itself — the recursion guard (belted
  *      by the verifier's own worker-scoped session and the hard budget the
- *      submit stamps). NOT filtered on interactive host turns any more: see
- *      CHAT TURNS.
+ *      submit stamps) — and not REVIEW_PUBLISH_OP_TYPE, the pipeline's other
+ *      fresh-context pass. NOT filtered on interactive host turns any more:
+ *      see CHAT TURNS.
  *   3. session facts, all in-memory: binding resolvable (Map), external
  *      ingestion recorded (Set), at least one deliverable-extension artifact
  *      (Set spread + extname filter).
@@ -94,6 +95,7 @@ import {
 	hasPendingSubmission,
 	isDeliverablePath,
 } from "./verification-spend.js";
+import { REVIEW_PUBLISH_OP_TYPE } from "./publish-review-verdict.js";
 import type { CanonicalEvent } from "./types.js";
 
 import { createLogger } from "../logger.js";
@@ -130,6 +132,13 @@ export function recordVerificationTrigger(event: CanonicalEvent, sessionOverride
 		// own type is the only op type this observer skips.
 		if (op.type === VERIFICATION_OP_TYPE) {
 			logger.debug(`[verify] skip ${op.id}: verification op itself (recursion guard)`);
+			return;
+		}
+		// The pre-publish review is the pipeline's other fresh-context pass. It
+		// produces a verdict, never a deliverable, and a review of a push must
+		// not buy a deliverable verification of the session it ran for.
+		if (op.type === REVIEW_PUBLISH_OP_TYPE) {
+			logger.debug(`[verify] skip ${op.id}: pre-publish review op (recursion guard)`);
 			return;
 		}
 

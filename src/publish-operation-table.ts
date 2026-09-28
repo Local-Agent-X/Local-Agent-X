@@ -20,7 +20,7 @@ export interface PublishMatch {
   pushArgs?: string[];
   /** A directory the command itself selects (`git -C dir`, `vercel --cwd dir`). */
   dirArg?: string;
-  /** gh pr merge naming a PR other than the current branch's. */
+  /** gh pr merge: the PR it names; gh release create: the tag. */
   explicitTarget?: string;
 }
 
@@ -154,7 +154,8 @@ function matchSubcommandTable(bin: string, words: string[], at: number): Publish
     if (!row.sub.every((w, i) => args[i] === w)) continue;
     if (row.kind === "package-publish" && bin === "cargo" && isDryRun(words, at + 1)) return null;
     const label = [bin, ...row.sub].join(" ");
-    if (bin === "gh" && row.sub[0] === "pr") {
+    // gh pr merge <pr> / gh release create <tag>: the object it acts on.
+    if (bin === "gh") {
       const target = args[row.sub.length];
       return { kind: row.kind, label, ...(target ? { explicitTarget: target } : {}) };
     }

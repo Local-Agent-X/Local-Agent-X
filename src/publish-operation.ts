@@ -40,7 +40,7 @@ export interface PublishOperation {
   cwdUncertain?: boolean;
   /** git-push: the arguments after `push`, verbatim. */
   pushArgs?: string[];
-  /** gh pr merge naming a PR other than the current branch's. */
+  /** gh pr merge: the PR it names; gh release create: the tag. */
   explicitTarget?: string;
 }
 

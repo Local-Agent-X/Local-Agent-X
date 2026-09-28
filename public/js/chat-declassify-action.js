@@ -1,14 +1,18 @@
-// ── Chat: one-click "Declassify & retry" on a taint-blocked tool card ──
+// ── Chat: the security-block notice, and its "Declassify & retry" button ──
 //
-// Rendered by chat-render-artifacts.js only when a blocked tool result's
-// authoritative layer is session taint (data-lineage / tainted-shell) — the
-// one user-clearable block class; egress-allowlist and canary blocks are not.
-// The CLICK is the deliberate, attributed authorization: the server writes the
+// A blocked tool result whose block is the security kernel's or the session
+// taint's gets a NOTICE on the assistant row itself — outside the collapsible
+// "Agent activity" group, beside the approvals — because a control inside a
+// collapsed group is a control nobody sees (2026-09-27: the model told the
+// user to click a card that was folded away, then lost on reload). The notice
+// says which rule fired and what ends the block; the button appears only when
+// the block is a session taint the user can clear (metadata.clearable). The
+// CLICK is the deliberate, attributed authorization: the server writes the
 // tamper-evident declassify audit event (routes/security.ts), and on success a
 // retry message is auto-sent so the agent resumes without the user
 // hand-typing anything.
 //
-// External deps (runtime globals): apiPost (shared-api.js),
+// External deps (runtime globals): esc (shared.js), apiPost (shared-api.js),
 // window.sendMessage (chat-send.js).
 
 /**
@@ -31,6 +35,51 @@ function isDeclassifiable(metadata) {
   return Array.isArray(md.layers) && md.layers.some(l => LEGACY_TAINT_LAYERS.includes(l));
 }
 
+/**
+ * Does this tool result warrant the notice at all? Every kernel block does —
+ * clearable or not — and so does the re-surfaced control show_unblock_control
+ * emits (layer "quarantine-notice"). A host-allowlist or canary block is a
+ * plain blocked card: the model's own recovery text covers it.
+ */
+function isKernelBlockNotice(metadata) {
+  const md = metadata || {};
+  if (isDeclassifiable(md)) return true;
+  if (md.layer === 'arikernel' || md.layer === 'quarantine-notice') return true;
+  if (Array.isArray(md.layers) && md.layers.includes('arikernel')) return true;
+  return !!md.quarantine;
+}
+
+/**
+ * The notice element for one blocked (or re-surfaced) tool end event. Placed
+ * by chat-render-artifacts.js on the assistant row, never inside the activity
+ * group. The button is appended only for a clearable block; a run-rule
+ * quarantine says so and that it ends with the turn.
+ */
+function renderKernelBlockNotice(endEvt, sessionId) {
+  const md = (endEvt && endEvt.metadata) || {};
+  const q = md.quarantine || null;
+  const rule = md.rule || (q && q.rule) || '';
+  const el = document.createElement('div');
+  el.className = 'kernel-block-notice';
+  if (rule) el.setAttribute('data-rule', String(rule));
+  let text;
+  if (isDeclassifiable(md)) {
+    text = 'Security block: this session is quarantined by a sensitive read, so outbound calls that could carry that data are refused'
+      + (rule ? ' (kernel rule ' + rule + ')' : '') + '. Clearing it is your call.';
+  } else {
+    const why = rule ? ' — rule ' + rule + (q && q.reason ? ': ' + q.reason : '') : '';
+    // A re-surfaced notice (show_unblock_control) describes the state; a
+    // block names the call it refused.
+    const refused = md.layer === 'quarantine-notice' || !(endEvt && endEvt.name)
+      ? '' : ' It refused ' + endEvt.name + ';';
+    text = 'Security block: the kernel paused this turn' + why + '.' + refused
+      + ' there is nothing to click. The block ends with this turn — your next message starts clean.';
+  }
+  el.innerHTML = '<span class="kernel-block-text">' + esc(text) + '</span>';
+  if (isDeclassifiable(md)) appendDeclassifyAction(el, sessionId);
+  return el;
+}
+
 function appendDeclassifyAction(card, sessionId) {
   if (!card || !sessionId || card.querySelector('.declassify-action')) return;
   const el = document.createElement('div');
@@ -45,10 +94,16 @@ function appendDeclassifyAction(card, sessionId) {
     btn.disabled = true; btn.textContent = '…';
     apiPost('/api/security/declassify', { sessionId, reason: 'User clicked Declassify & retry on a taint-blocked tool card' }).then(j => {
       if (!j || j.ok !== true) throw new Error(j && j.error ? j.error : 'declassify failed');
-      btn.textContent = '✓ Declassified';
+      // cleared === 0: the taint this card was drawn for is already gone (a
+      // server restart drops it, or it was declassified once already). Say so
+      // rather than claim a release that did not happen; the retry still goes.
+      const stale = j.cleared === 0;
+      btn.textContent = stale ? '✓ Already clear' : '✓ Declassified';
       const input = document.getElementById('msg-input');
       if (input && typeof window.sendMessage === 'function') {
-        input.value = 'I cleared the session quarantine (declassified). Retry the step that was blocked.';
+        input.value = stale
+          ? 'The session quarantine is already clear. Retry the step that was blocked.'
+          : 'I cleared the session quarantine (declassified). Retry the step that was blocked.';
         window.sendMessage();
       }
     }).catch(() => { btn.textContent = '✗ Failed — restart the session'; btn.disabled = false; });

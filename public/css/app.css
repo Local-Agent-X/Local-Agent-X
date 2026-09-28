@@ -406,6 +406,9 @@ body.platform-darwin #sidebar-agents-controls{top:3px;right:14px}
 .delete-notice-undo:hover:not(:disabled){border-color:var(--ok);color:var(--ok)}
 .delete-notice-undo:disabled{opacity:.5;cursor:default}
 .delete-notice-error{flex-basis:100%;color:var(--danger);font-size:.75rem}
+.kernel-block-notice{display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;margin:8px 0;padding:8px 12px;border-radius:8px;border:1px solid var(--danger);background:color-mix(in srgb, var(--danger) 8%, var(--surface));color:var(--text);font-size:.82rem}
+.kernel-block-text{flex:1 1 240px}
+.kernel-block-notice .declassify-action{flex-basis:100%;margin-top:0}
 .learning-notice{display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;margin:8px 0;padding:8px 12px;border-radius:8px;border:1px solid var(--accent);background:color-mix(in srgb, var(--accent) 8%, var(--surface));color:var(--text);font-size:.82rem}
 .learning-notice.settled{border-color:var(--border);background:var(--surface)}
 .learning-notice-text{flex:1 1 240px}

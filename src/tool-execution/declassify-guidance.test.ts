@@ -15,6 +15,7 @@ const read = (rel: string) => readFileSync(join(root, rel), "utf-8");
 const RECOVERY_SOURCES = [
   "src/tool-execution/egress-gates.ts",
   "src/tool-execution/enforce-policy.ts",
+  "src/tool-execution/kernel-block.ts",
 ];
 
 describe("taint recovery guidance", () => {
@@ -61,7 +62,11 @@ describe("taint recovery guidance", () => {
     // and real DOM in test/declassify-card-render.test.ts — this only pins that
     // the seam stays wired, since source text alone cannot show a card.
     expect(read("public/js/chat-declassify-action.js")).toMatch(/clearable\s*===\s*'declassify'/);
-    expect(read("public/js/chat-render-artifacts.js")).toMatch(/isDeclassifiable\(/);
+    // The row renderer asks the rule module which block warrants the notice
+    // and hands it the element to build; it keeps no copy of either rule.
+    expect(read("public/js/chat-render-artifacts.js")).toMatch(/isKernelBlockNotice\(/);
+    expect(read("public/js/chat-render-artifacts.js")).toMatch(/renderKernelBlockNotice\(/);
+    expect(read("public/js/chat-render-artifacts.js")).not.toMatch(/appendDeclassifyAction\(/);
   });
 
   it("still tells the model the block is clearable, not terminal", () => {

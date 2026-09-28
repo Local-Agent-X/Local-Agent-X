@@ -190,11 +190,13 @@ function _updateActivityOutcome(bodyEl, toolEvents, stopNote) {
   if (!group) return;
   const ends = toolEvents.filter(t => t.type === 'end');
   const failed = ends.filter(t => t.status === 'error' || t.status === 'timeout').length;
+  const blocked = ends.filter(t => t.status === 'blocked').length;
   const label = group.querySelector('.activity-label');
   if (label) {
     const total = ends.length;
     let txt = total >= 5 ? `Agent activity — ${total} actions` : 'Agent activity';
     if (failed > 0) txt += ` · ${failed} failed`;
+    if (blocked > 0) txt += ` · ${blocked} blocked`;
     label.textContent = txt;
   }
   // Badge color tracks the LATEST outcome, not failures-ever: red while the
@@ -330,22 +332,20 @@ function _renderAssistantToolArtifacts(bodyEl, data) {
             : (endEvt.status === 'declined' ? '✋ Declined'
               : (endEvt.status === 'blocked' || endEvt.allowed === false ? '⚠ Blocked' : '✓ Done'));
           card.querySelector('.tool-detail').textContent = detailText || fallback;
-          // Session-taint blocks are the one user-clearable block class:
-          // offer the one-click declassify-and-retry action instead of
-          // sending the user hunting through Settings, where no such control exists. Keyed on the block's
-          // authoritative layer (single-gate `layer` or aggregate `layers`).
-          if (endEvt.status === 'blocked') {
-            // isDeclassifiable (chat-declassify-action.js) owns the rule: the
-            // policy layer's own `clearable` flag, with layer names as a legacy
-            // fallback for cards rebuilt from older stored events.
-            if (isDeclassifiable(endEvt.metadata) && window.activeChat && activeChat.id) {
-              try { appendDeclassifyAction(card, activeChat.id); } catch (e) { console.error('[chat] declassify action render error:', e); }
-            }
-          }
           attachMediaPreview(card, te.name, rawResult);
         }
       }
       _updateActivityOutcome(bodyEl, toolEvents, data.stopNote);
+      // The security-block notice sits on the row, AFTER the group and outside
+      // it: a kernel quarantine's only control used to be a chip inside the
+      // collapsed group, on the card of the blocked call. One notice per row,
+      // for the latest block; chat-declassify-action.js owns the predicate and
+      // the markup (the button only when the block is clearable).
+      const blockEnd = toolEvents.filter(t => t.type === 'end' && isKernelBlockNotice(t.metadata)).pop();
+      if (blockEnd) {
+        try { bodyEl.appendChild(renderKernelBlockNotice(blockEnd, (window.activeChat && activeChat.id) || '')); }
+        catch (e) { console.error('[chat] block notice render error:', e); }
+      }
     } catch (toolRenderErr) { console.error('[chat] tool card render error:', toolRenderErr); }
   }
   // Chips attach to the last tool card matching the chip's emit time. The

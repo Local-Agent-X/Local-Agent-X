@@ -69,6 +69,9 @@ beforeEach(() => {
   // Script order in app.html: chat-tool-cards.js loads first and its helpers are
   // plain globals by the time chat-render-artifacts.js calls them.
   Object.assign(g, load<object>("chat-tool-cards.js", "{ appendToolCardGrouped, attachMediaPreview, toolSummary }"));
+  // chat-declassify-action.js also precedes it in app.html: the row renderer
+  // asks it which ended calls warrant the security-block notice.
+  Object.assign(g, load<object>("chat-declassify-action.js", "{ isKernelBlockNotice, renderKernelBlockNotice }"));
   artifacts = load<Artifacts>("chat-render-artifacts.js", "{ _renderAssistantToolArtifacts }");
   openState = load<OpenState>("chat-render-open-state.js", "{ captureActivityScroll, restoreActivityScroll }");
 });

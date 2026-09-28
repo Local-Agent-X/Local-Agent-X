@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
-  applyWindowDrift, compareWindows, findSourceWindow, formatTokens, parseWindowRows, sameWindow, upstreamModelsMissing,
+  applyWindowDrift, compareWindows, findSourceWindow, formatTokens, parseWindowRows, sameWindow, upstreamModelsMissing, upstreamRetired,
 } from "../scripts/model-windows-drift.mjs";
 
 // A slice of LiteLLM's model_prices_and_context_window.json shape, as of the
@@ -130,6 +130,21 @@ describe("upstream models LAX does not list", () => {
     expect(upstreamModelsMissing(SOURCE, known, { providers: ["xai"], today: "2026-09-27" })).toEqual([
       { provider: "xai", id: "grok-4.7", maxInput: 500_000 },
     ]);
+  });
+});
+
+describe("models LAX lists that the provider has retired", () => {
+  const ids = ["claude-opus-4-1", "claude-opus-5-5", "grok-4.5", "gemini-2.5-pro"];
+
+  it("names a listed id whose first-party deprecation date has passed", () => {
+    expect(upstreamRetired(SOURCE, ids, "2026-09-27")).toEqual([
+      { id: "claude-opus-4-1", key: "claude-opus-4-1", deprecationDate: "2026-06-09" },
+    ]);
+  });
+
+  it("is quiet before the date, and for ids with no first-party entry", () => {
+    expect(upstreamRetired(SOURCE, ids, "2026-06-01")).toEqual([]);
+    expect(upstreamRetired(SOURCE, ["gemini-3-pro-preview"], "2026-09-27")).toEqual([]);
   });
 });
 

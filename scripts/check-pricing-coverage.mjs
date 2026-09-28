@@ -31,7 +31,7 @@ import { dirname, join } from "node:path";
 import {
   applyDrift, comparePrices, fetchPriceSource, parseDefaultCacheRead, parsePriceRows, LITELLM_PRICES_URL,
 } from "./pricing-drift.mjs";
-import { applyWindowDrift, compareWindows, parseWindowRows, upstreamModelsMissing } from "./model-windows-drift.mjs";
+import { applyWindowDrift, compareWindows, parseWindowRows, upstreamModelsMissing, upstreamRetired } from "./model-windows-drift.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const STRICT = process.argv.includes("--strict");
@@ -172,6 +172,7 @@ if (!source) {
 // rewritten. Rows LiteLLM has no first-party entry for are counted only.
 let windowSummary = "windows unchecked";
 let windowFailure = false;
+let retiredFailure = false;
 if (source) {
   const windows = compareWindows(parseWindowRows(modelWindows), source);
   for (const d of windows.drift) {
@@ -193,14 +194,20 @@ if (source) {
   // New releases: first-party chat models the providers serve that LAX lists
   // nowhere. WARN only — a registry entry needs a price, a window and a human.
   const known = new Set([...registryModels, ...ctxKeys, ...priced]);
-  const fresh = upstreamModelsMissing(source, known, {
-    providers: ["anthropic", "openai", "gemini", "xai"],
-    today: new Date().toISOString().slice(0, 10),
-  });
+  const today = new Date().toISOString().slice(0, 10);
+  const fresh = upstreamModelsMissing(source, known, { providers: ["anthropic", "openai", "gemini", "xai"], today });
   if (fresh.length > 0) {
     console.warn(`check-pricing-coverage: WARN — ${fresh.length} upstream models LAX does not list (review for src/providers/registry.ts, with a price and a window):`);
     for (const m of fresh) console.warn(`  - ${m.provider}: ${m.id}${m.maxInput ? ` (max_input_tokens ${m.maxInput})` : ""}`);
   }
+  // Retirements: a row whose provider has retired the model (LiteLLM's
+  // deprecation_date has passed). Red under --strict, like drift.
+  const retired = upstreamRetired(source, known, today);
+  if (retired.length > 0) {
+    console.warn(`check-pricing-coverage: WARN — ${retired.length} models LAX lists that the provider has retired (remove the registry entry, window and price together):`);
+    for (const m of retired) console.warn(`  - ${m.id} (deprecated ${m.deprecationDate}, source key "${m.key}")`);
+  }
+  retiredFailure = retired.length > 0;
 }
 
 // Context-window coverage: WARN-only. lookupContextWindow substring-falls-back
@@ -213,7 +220,7 @@ if (ctxMissing.length > 0) {
 }
 
 const ctxCovered = total - ctxMissing.length;
-const failed = (rateFailure || windowFailure) && (STRICT || (APPLY && !source));
+const failed = (rateFailure || windowFailure || retiredFailure) && (STRICT || (APPLY && !source));
 console.log(
   `check-pricing-coverage: ${failed ? "FAIL" : "OK"} (${total} metered models priced, ${ctxCovered}/${total} with exact context window, ${rateSummary}, ${windowSummary}, verified ${verifiedAt ?? "unknown"})`,
 );

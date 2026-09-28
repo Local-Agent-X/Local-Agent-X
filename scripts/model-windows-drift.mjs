@@ -147,3 +147,21 @@ export function upstreamModelsMissing(source, known, { providers = Object.keys(C
   }
   return out.sort((a, b) => a.provider.localeCompare(b.provider) || a.id.localeCompare(b.id));
 }
+
+/**
+ * Ids LAX lists whose first-party LiteLLM entry carries a deprecation_date on
+ * or before `today` (ISO date): the provider has retired them, and the row
+ * should go — the registry entry, the window and the price together. Returns
+ * [{ id, key, deprecationDate }].
+ */
+export function upstreamRetired(source, ids, today) {
+  const out = [];
+  for (const id of new Set(ids)) {
+    const key = [id, ...FIRST_PARTY_PROVIDERS.map((p) => `${p}/${id}`)].find((k) => {
+      const entry = source[k];
+      return !!entry && FIRST_PARTY_PROVIDERS.includes(entry.litellm_provider) && typeof entry.deprecation_date === "string";
+    });
+    if (key && source[key].deprecation_date <= today) out.push({ id, key, deprecationDate: source[key].deprecation_date });
+  }
+  return out.sort((a, b) => a.id.localeCompare(b.id));
+}

@@ -191,27 +191,26 @@ export function applyResultTaintPolicy(
 
   // Owned-source DATA reads (sql_query, email_read, memory_search, ari_file
   // read, ari_retrieval, ari_database, ari_sqlite) return row/record content
-  // from a LOCAL or account-owned source. A secret stored there is OUR secret,
-  // so a hit gets the full owned-source treatment. Keyed on the sensitive-read
-  // CLASS (excluding bash — handled above — and the path-listing
-  // read/glob/grep, whose behavior is path-gated only).
+  // from a LOCAL or account-owned source. A secret VALUE in it is masked in
+  // place and registered as a known secret (secret-values.ts), exactly as
+  // shell output is: the model keeps the message, the rows, the sender and
+  // every other line, and loses only the value; the registry stops the value
+  // leaving at every egress sink. Withholding the whole result because one
+  // span matched cost the model the inbox it was asked to set up (2026-09-18,
+  // two email_read calls stubbed on message-id-shaped strings). Only a
+  // STRUCTURED shape or a registered value is masked: the high-entropy pass
+  // fires on message ids, tracking ids and transcript hashes in ordinary
+  // records, and exfil of such a token is caught at send time.
   if (isSensitiveRead && !PATH_GATED_READS.has(toolName) && toolName !== "bash") {
     const body = typeof result?.content === "string" ? result.content : "";
-    if (body.length > 0) {
-      const det = detectSecretsInOutput(body);
-      // Memory results routinely contain UUIDs, hashes, and tool-call ids from
-      // old transcripts — an entropy-only hit there is not evidence of a
-      // credential. Other owned sources keep the stricter historical behavior
-      // because arbitrary high-entropy database/email values may be account
-      // secrets.
-      const shouldRedact = det.structured || (det.matched && toolName !== "memory_search");
-      if (shouldRedact) {
-        pending.push({ source: "secret", target: `${toolName}:${det.kinds.join(",")}`, content: body });
-        redactReason = `${toolName} output contained secret-shaped content (${det.kinds.join(", ")})`;
-      } else if (det.matched) {
-        logger.debug(
-          `${toolName} output had a high-entropy-only match (kinds: ${det.kinds.join(", ")}) — not redacting (common transcript id/hash false positive)`,
-        );
+    if (body.length > 0 && result) {
+      const masked = withholdSecretValues(body, { structuredOnly: true });
+      if (masked.masked > 0) {
+        result = {
+          ...result,
+          content: `${masked.text}\n\n${secretsMaskedNote(masked.masked, masked.kinds)}`,
+          metadata: { ...(result.metadata ?? {}), secrets_masked: masked.masked },
+        };
       }
     }
   }

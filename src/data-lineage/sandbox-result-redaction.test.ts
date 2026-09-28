@@ -8,6 +8,7 @@ import {
   detectSecretsInOutput,
 } from "./index.js";
 import { runSandboxedPhase } from "../tool-execution/run-sandboxed.js";
+import { unregisterRedactedSecretValue } from "../security/secrets/index.js";
 import type { ToolCallContext } from "../tool-execution/context.js";
 import type { ToolDefinition } from "../types.js";
 
@@ -111,7 +112,7 @@ describe("run-sandboxed redacts sensitive results before delivery (no taint on s
   // SQLite row must still be redacted like web_fetch/http_request output — not
   // pass through to the model. The stub delivery means no taint (delivery-point
   // invariant). Guards keeping sql_query in the output scan.
-  it("sql_query output containing a secret: result redacted, session NOT tainted", async () => {
+  it("sql_query output containing a secret: the value is masked, the table is kept, session NOT tainted", async () => {
     const secret = "AKIA0000000000000000"; // aws-access-key shape
     const sqlStub: ToolDefinition = {
       name: "sql_query",
@@ -135,9 +136,11 @@ describe("run-sandboxed redacts sensitive results before delivery (no taint on s
 
     expect(ctx.result).toBeDefined();
     expect(ctx.result!.content).not.toContain(secret);
-    expect(ctx.result!.status).toBe("blocked");
-    expect(ctx.result!.metadata?.redacted).toBe(true);
+    expect(ctx.result!.content).toContain("| api_key |");
+    expect(ctx.result!.status).not.toBe("blocked");
+    expect(ctx.result!.metadata?.secrets_masked).toBe(1);
     expect(checkEgressTaint(sessionId).blocked).toBe(false);
+    unregisterRedactedSecretValue(secret);
   });
 
   // The run-killer fix: a secret-shaped span in UNTRUSTED INBOUND web content
@@ -254,7 +257,10 @@ describe("run-sandboxed redacts sensitive results before delivery (no taint on s
     }
   });
 
-  it("email_read output containing a secret: redacts, session NOT tainted", async () => {
+  // An owned-source record with a secret VALUE in it keeps the record and
+  // loses the value: masked in place, registered so the outbound scan refuses
+  // it, session not tainted (the bytes never entered context).
+  it("email_read output containing a secret: the value is masked, the message is kept, session NOT tainted", async () => {
     const secret = "AKIA0000000000000000";
     const stub: ToolDefinition = {
       name: "email_read",
@@ -267,11 +273,36 @@ describe("run-sandboxed redacts sensitive results before delivery (no taint on s
     const ctx = makeCtx({ name: "email_read", args: { folder: "INBOX" }, tool: stub, sessionId });
     await runSandboxedPhase(ctx);
     expect(ctx.result!.content).not.toContain(secret);
-    expect(ctx.result!.status).toBe("blocked");
+    expect(ctx.result!.content).toContain("From: ops");
+    expect(ctx.result!.content).toMatch(/1 secret value masked/);
+    expect(ctx.result!.status).not.toBe("blocked");
+    expect(checkEgressTaint(sessionId).blocked).toBe(false);
+    unregisterRedactedSecretValue(secret);
+  });
+
+  // 2026-09-18: two email_read calls were stubbed whole on message-id-shaped
+  // strings (an entropy-only hit) and the model could not read the inbox it
+  // was asked to set up.
+  it("email_read output with only high-entropy ids is delivered untouched", async () => {
+    const body = "From: no-reply@example.test\nMessage-ID: <CAKx9wL7Qm2ZpT4vR8hN3bF6dY1sX0eU5kJ2oG7iM9nA3cQ8tW@mail.example.test>\nBody: your order shipped";
+    expect(detectSecretsInOutput(body).matched).toBe(true);
+    expect(detectSecretsInOutput(body).structured).toBe(false);
+    const stub: ToolDefinition = {
+      name: "email_read",
+      description: "test stub",
+      parameters: { type: "object", properties: {}, required: [] },
+      async execute() { return { content: body, isError: false }; },
+    };
+    const sessionId = "emailread-entropy-only-test";
+    clearSessionTaint(sessionId);
+    const ctx = makeCtx({ name: "email_read", args: { limit: 5 }, tool: stub, sessionId });
+    await runSandboxedPhase(ctx);
+    expect(ctx.result!.content).toBe(body);
+    expect(ctx.result!.status).not.toBe("blocked");
     expect(checkEgressTaint(sessionId).blocked).toBe(false);
   });
 
-  it("memory_search output containing a secret: redacts, session NOT tainted", async () => {
+  it("memory_search output containing a secret: the value is masked, the recall is kept, session NOT tainted", async () => {
     const secret = "AKIA0000000000000000";
     const stub: ToolDefinition = {
       name: "memory_search",
@@ -284,8 +315,10 @@ describe("run-sandboxed redacts sensitive results before delivery (no taint on s
     const ctx = makeCtx({ name: "memory_search", args: { query: "token" }, tool: stub, sessionId });
     await runSandboxedPhase(ctx);
     expect(ctx.result!.content).not.toContain(secret);
-    expect(ctx.result!.status).toBe("blocked");
+    expect(ctx.result!.content).toContain("recalled: stored token");
+    expect(ctx.result!.status).not.toBe("blocked");
     expect(checkEgressTaint(sessionId).blocked).toBe(false);
+    unregisterRedactedSecretValue(secret);
   });
 
   it("memory_search output containing only a high-entropy identifier does not taint", async () => {

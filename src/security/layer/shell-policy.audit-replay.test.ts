@@ -44,6 +44,17 @@ describe("S4 — a pipeline's length is not evidence; every stage is read", () =
   });
 });
 
+describe("S6 — an installed tool under home is not a renamed interpreter", () => {
+  it("allows adb.exe from the Android SDK with its -p package flag", () => {
+    const cmd = `ADB="/c/Users/peter/AppData/Local/Android/Sdk/platform-tools/adb.exe"; "$ADB" -s emulator-5554 shell am start -a android.intent.action.VIEW -d "https://scanprogress.com" -p com.android.chrome`;
+    expect(box(cmd).reason).toBe("Shell command allowed");
+  });
+  it("still refuses a renamed interpreter inside the workspace", () => {
+    expect(box(`./py -c "import os"`).reason).toMatch(/renamed interpreter/);
+    expect(box(`X=1 ./py -c "import os"`).reason).toMatch(/renamed interpreter/);
+  });
+});
+
 describe("S10 — an escape sequence is read, and the command it spells is judged", () => {
   // The refused command did not survive in any op row; the session was
   // grepping test output, where `\x1b` is the ANSI color code being stripped.

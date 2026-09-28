@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { detectInlineInterpreterEval } from "./shell-detectors.js";
 import { evaluateShellCommandAndPaths, evaluateShellPaths } from "./shell-path-guard.js";
@@ -143,6 +143,19 @@ afterAll(() => rmSync(WORKSPACE_ROOT, { recursive: true, force: true }));
     it("refuses an absolute in-workspace renamed interpreter with -e", () => {
       const renamed = join(WORKSPACE, "py");
       expect(evaluateShellCommandAndPaths(`${renamed} -e 'x'`, commonCtx).allowed).toBe(false);
+    });
+
+    // An installed tool under the user's home is not a renamed interpreter:
+    // the rename-escape needs the argv[0] to sit in the tree the model writes.
+    it("ALLOWS an installed tool under home invoked with a -p/-c flag of its own", () => {
+      const adb = join(homedir(), "AppData", "Local", "Android", "Sdk", "platform-tools", "adb.exe");
+      expect(detectInlineInterpreterEval([adb, "-s", "emulator-5554", "shell", "am", "start", "-p", "com.android.chrome"], "refuse", WORKSPACE)).toBeNull();
+      expect(detectInlineInterpreterEval(["~/.cargo/bin/cargo", "build", "-p", "core"], "refuse", WORKSPACE)).toBeNull();
+    });
+
+    it("a leading NAME=value word is the environment, not the command", () => {
+      expect(detectInlineInterpreterEval(["ADB=/c/Users/u/AppData/Local/Android/Sdk/platform-tools/adb.exe", "$ADB", "-p", "x"], "refuse", WORKSPACE)).toBeNull();
+      expect(detectInlineInterpreterEval(["X=1", "./py", "-c", "x"], "refuse", WORKSPACE)).not.toBeNull();
     });
 
     // ── allow-set: normal shell + dev forms must stay ALLOWED ──

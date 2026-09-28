@@ -276,17 +276,17 @@ function isPathForm(token: string): boolean {
   );
 }
 
-// Does a path-form argv[0] resolve into a model-writable tree? A renamed
-// interpreter the model dropped to escape the basename denylist lives in
-// exactly these trees — the workspace, the surrounding project root, or the
-// user's home; a real system binary invoked by absolute path (e.g.
-// /usr/bin/perl — already caught by the basename set) does not. A relative
-// `./myperl` is anchored at the WORKSPACE (the agent's effective cwd when it
-// runs a shell command), `~` expands to home, and both the target and the roots
-// are realpath'd so a symlinked workspace/home still compares. The project root
-// (workspace parent) is included because a relocated workspace bridges back
-// there and the agent's checkout-relative tools can also write it. Best-effort:
-// on a resolution failure, fall back to the lexical path.
+// Does a path-form argv[0] resolve into the tree the model writes? A renamed
+// interpreter the model dropped to escape the basename denylist lives in the
+// workspace or the surrounding project root (a relocated workspace bridges
+// back there and the checkout-relative tools write it too). The user's home is
+// NOT that tree: on Windows every installed tool lives under it (AppData), and
+// counting it made `…/Android/Sdk/platform-tools/adb.exe … -p <package>` a
+// "renamed interpreter". A relative `./myperl` is anchored at the WORKSPACE
+// (the agent's effective cwd when it runs a shell command), `~` expands to
+// home, and both the target and the roots are realpath'd so a symlinked
+// workspace still compares. Best-effort: on a resolution failure, fall back to
+// the lexical path.
 function resolvesIntoWritableTree(token: string, workspace: string): boolean {
   let raw = token;
   if (raw === "~") raw = homedir();
@@ -297,23 +297,29 @@ function resolvesIntoWritableTree(token: string, workspace: string): boolean {
 
   let realWorkspace: string;
   let realProjectRoot: string;
-  let realHome: string;
   let realTarget: string;
   try {
     realWorkspace = realpathDeep(rawWorkspace);
     realProjectRoot = realpathDeep(resolve(rawWorkspace, ".."));
-    realHome = realpathDeep(resolve(homedir()));
     realTarget = realpathDeep(resolved);
   } catch {
     realWorkspace = rawWorkspace;
     realProjectRoot = resolve(rawWorkspace, "..");
-    realHome = resolve(homedir());
     realTarget = resolved;
   }
   const inWorkspace = !relative(realWorkspace, realTarget).startsWith("..");
   const inProjectRoot = !relative(realProjectRoot, realTarget).startsWith("..");
-  const inHome = !relative(realHome, realTarget).startsWith("..");
-  return inWorkspace || inProjectRoot || inHome;
+  return inWorkspace || inProjectRoot;
+}
+
+// Leading `NAME=value` words are the command's environment, not the command:
+// `ADB="/c/…/adb.exe"; "$ADB" -s …` starts with an assignment whose VALUE is
+// a path, and reading it as argv[0] made the assignment a "workspace
+// executable" (a relative resolve of `ADB=/c/…` lands inside the workspace).
+function skipLeadingAssignments(tokens: string[]): string[] {
+  let i = 0;
+  while (i < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i])) i++;
+  return tokens.slice(i);
 }
 
 // ── R4-11/R4-13: refuse the inline-eval interpreter FORM (non-unrestricted) ──
@@ -332,11 +338,12 @@ function resolvesIntoWritableTree(token: string, workspace: string): boolean {
 // rename-escape flag for them: a bare `sh`/`bash` argv[0] is not a path form,
 // and a path-form `./myshell -c` IS the rename-escape this targets).
 export function detectInlineInterpreterEval(
-  tokens: string[],
+  words: string[],
   policy: InlineEvalPolicy,
   workspace: string,
 ): string | null {
   if (policy === "allow") return null; // inline-eval permitted by policy
+  const tokens = skipLeadingAssignments(words);
   if (tokens.length === 0) return null;
   const argv0 = tokens[0];
   const bin = execBasename(argv0);

@@ -59,13 +59,17 @@ describe("ToolChainAnalyzer — exfiltration detection (layered: temporal scores
   });
 });
 
-describe("ToolChainAnalyzer — encoding-after-sensitive prep detection", () => {
-  it("blocks a base64 shell command immediately after a sensitive read", () => {
+// The "encoding after a sensitive read" rule is gone (2026-09-28): a keyword
+// (base64/xxd/od) inside a two-minute window was the whole verdict, and its
+// one real trip was a JWT-claim decode. What leaves the machine is judged on
+// the outbound payload: the taint gate's byte overlap and the outbound secret
+// scan, which the exfiltration cases above pin.
+describe("ToolChainAnalyzer — encoding after a sensitive read is not a block by itself", () => {
+  it("lets a base64 command run after a sensitive read", () => {
     const a = new ToolChainAnalyzer();
     a.recordAndAnalyze("read", { path: "/.ssh/id_rsa" }, CLEAN);
     const r = a.recordAndAnalyze("bash", { command: "cat /tmp/x | base64" }, CLEAN);
-    expect(r.blocked).toBe(true);
-    expect(r.reason).toContain("Exfiltration prep");
+    expect(r.blocked).toBe(false);
   });
 
   it("does NOT block base64 by itself when no prior sensitive access", () => {

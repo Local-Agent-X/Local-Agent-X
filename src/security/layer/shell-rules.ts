@@ -11,48 +11,14 @@
 // re-block it regardless of mode, which is exactly the bug this splits out.
 export const RM_DESTRUCTIVE_FLAGS = /\brm\s+.*(-[a-zA-Z]*f|-[a-zA-Z]*r)\b/i;
 
-// Commands that should never be executed, even without metacharacters
+// Raw-text patterns over the whole command line: network egress, and the
+// shapes that are not a command word (redirects, continuations, phrases).
+// Everything that IS a command word is an argv rule in
+// shell-command-rule-table.ts, which reads the command being run.
 export const BLOCKED_COMMANDS = [
-  /\bsudo\b/i,
-  /\bchmod\s+777\b/i,
-  /\bmkfs\b/i,
-  /\bdd\s+.*of=/i,
-  // Windows disk-format invocation only: `format C:`, `format /FS:NTFS X:`,
-  // `format \\.\PhysicalDrive1`. Previously `/\bformat\b.*[/\\]/i` matched the
-  // word "format" ANYWHERE followed by a slash ANYWHERE later in the string —
-  // so a curl body like `-d 'format: json' https://api.example.com/x` (the
-  // format: TOKEN comes from the payload, the slash from the URL) was denied
-  // as if it were a disk format. The lookbehind excludes `--format`/`-format`
-  // CLI flags; the required drive-letter-or-switch right after "format" scopes
-  // this to the actual destructive command.
-  /(?<!-)\bformat\b\s+(\/|\\|[A-Za-z]:)/i,
-  // Shell `eval` builtin as a COMMAND (eval "$(curl …)"). Anchored so it does
-  // NOT fire on "eval" inside a PATH or filename (/…/lais-eval/…, config.eval.ts,
-  // this repo's own eval/ dir) — the unanchored /\beval\b/ blocked every verify
-  // command whose cwd contained the substring. The lookbehind excludes the
-  // path/identifier chars (word, . / \ -) that precede a substring occurrence;
-  // a real command `eval` is preceded by start / whitespace / a separator.
-  /(?<![\w./\\-])eval\b/i,
-  // Bare interpreter-escape forms. These catch `perl -e`, `ruby -e`, `php -r`
-  // with the flag IMMEDIATELY after the binary. Intervening flags (`perl -w
-  // -e`, `ruby -rsocket -e`) slip past these word-boundary patterns, so the
-  // argv-aware detectInterpreterEscape() below is the real wall (C3-13). These
-  // remain as cheap, regex-level backstops.
-  /\bperl\s+-e\b/i,
-  /\bruby\s+-e\b/i,
-  /\bphp\s+-r\b/i,
-  // Encoding / obfuscation
-  /\bbase64\s+(-[a-zA-Z]*d|--decode)\b/i,  // catches -d, -di, -id, --decode
-  /\bpowershell\b.*-enc/i,
-  // Windows-specific
-  /\bnet\s+user\b/i,
-  /\breg\s+(add|delete|query|export|import|save|restore|load|unload)\b/i,
-  /\bwmic\b/i,
-  /\bschtasks\b/i,
   // Network exfil via pipe
   /\bcurl\b.*\|/i,
   /\bwget\b.*\|/i,
-  /\|.*\b(bash|sh|cmd|powershell)\b/i,
   // ── Shell-as-exfiltration: best-effort denylist of network clients ──
   // These can send data to arbitrary hosts, bypassing all HTTP/SSRF controls.
   // The agent should use http_request (which has SSRF checks, DNS pinning,
@@ -96,22 +62,12 @@ export const BLOCKED_COMMANDS = [
   // browser-launch-as-exfil, AppleScript-wrapped shell). `\bword\s` requires
   // the binary be immediately followed by whitespace, so `open ` matches but
   // `openssl `/`/usr/bin/openfoo` do not.
-  /\bosascript\s/i,                         // macOS AppleScript (wraps `do shell script`)
-  /\bxdg-open\s/i,                          // Linux opener (launches browser/app w/ URL)
   // NOTE: dig/host/nslookup/getent/ping/traceroute/open moved to
   // DANGEROUS_INVOKE_BINS (argv[0] check). As bare `\bword\s` substrings they
   // false-positived on benign arguments (`grep host /etc/hosts`, `… | grep
   // open`, `echo "ping the box"`). The danger is INVOKING them, which the
   // argv[0]-basename scan captures precisely without the false blocks.
-  // ── macOS persistence / automation primitives (C3-12/C3-14) ──
-  // These install background jobs or run script-as-shell, an RCE/persistence
-  // path that needs no metacharacters. `launchctl submit -l x -- /bin/sh -c
-  // '…'` is metachar-free argv-RCE, so block on the `launchctl` binary name.
-  /\blaunchctl\b/i,                         // launchd control (submit/load → persistence + argv-RCE)
-  /\bautomator\b/i,                         // macOS Automator (runs workflows)
-  /\bshortcuts\s/i,                         // macOS Shortcuts CLI (runs shortcuts)
-  /\bosacompile\b/i,                        // compiles AppleScript (wraps shell)
-  /\bdefaults\s+write\b.*Launch(Agents|Daemons)/i, // persistence via LaunchAgents/Daemons plist
+  // ── Network use spelled inside a script body (PowerShell / .NET / Python) ──
   /Invoke-WebRequest\b/i,                   // PowerShell web
   /Invoke-RestMethod\b/i,                   // PowerShell REST
   /\bIwr\b/i,                               // PowerShell alias
@@ -124,8 +80,6 @@ export const BLOCKED_COMMANDS = [
   /\bhttpx?\./i,                            // Python httpx
   /\baiohttp\b/i,                           // Python aiohttp
   // ── Shell escape / injection edge cases ──
-  /^\.\s+\//,                               // dot-sourcing: ". /path" (source command)
-  /\bsource\s+\//i,                         // source /path
   // fd-redirect onto a NON-standard descriptor (>=3): the io-duplication a
   // reverse shell uses to wire stdio onto a pre-opened socket fd (`>&5`, `<&3`,
   // `2>&7`). The socket OPEN itself is caught by the /dev/tcp + `exec N<>` rules
@@ -135,36 +89,15 @@ export const BLOCKED_COMMANDS = [
   // starved every verify command that captured stderr).
   /[<>]&(?:[3-9]|\d{2,})/,                  // fd redirect to fd>=3 (<&3, >&5, 2>&10)
   /\\\n/,                                   // backslash-newline continuation (multi-line escape)
-  // ── Interactive shell / reverse shell escapes ──
-  /\bbash\s+-i\b/i,                         // interactive bash
-  /\bsh\s+-i\b/i,                           // interactive sh
-  /\bzsh\s+-i\b/i,                          // interactive zsh
-  /\bpython[23]?\s+-i\b/i,                  // interactive Python
-  /\bnode\s+--inspect/i,                     // Node debugger (can execute arbitrary code)
+  // ── Reverse-shell plumbing ──
   /(^|[\s<>&|=])\/dev\/(tcp|udp)\//i,        // bash /dev/tcp|/dev/udp socket (reverse shell / exfil); boundary-char guard hits spaced AND glued redirects without false-firing on path/dev/tcpdump
-  /\bmkfifo\b/i,                             // named pipe (reverse shell building block)
   /\bexec\s+\d+<>/i,                        // fd exec redirect (reverse shell)
   /\bnohup\b.*&$/i,                          // background persistent process
-  /\bscreen\s+-[dD]/i,                       // detached screen session
-  /\btmux\s+new/i,                           // tmux session (persistence)
-  /\bxterm\b.*-e/i,                          // xterm reverse shell
   // ── Additional network exfiltration vectors ──
-  /\bpython[23]?\s+-m\s+http\.server\b/i,    // Python HTTP server
-  /\bpython[23]?\s+-m\s+smtpd\b/i,           // Python SMTP server
-  /\bphp\s+-S\b/i,                           // PHP built-in server
-  /\bnpx\s+serve\b/i,                        // npx serve
   /\bdnscat\b/i,                             // DNS tunnel
   /\bchisel\b/i,                             // TCP tunnel
   // ── Credential access ──
-  /\bmimikatz\b/i,                           // Windows credential dumper
-  /\bhashdump\b/i,                           // Hash dumper
   /\bcredential\s+manager/i,                 // Windows credential manager
-  /\bsecurity\s+find-generic-password/i,     // macOS keychain access
-  // ── Disk/partition manipulation ──
-  /\bfdisk\b/i,                              // Partition table editor
-  /\bparted\b/i,                             // Partition editor
-  // mount/umount moved to DANGEROUS_INVOKE_BINS (argv[0]) — `\bmount\s`
-  // false-positived on `… | grep mount` and `echo mounting`.
 ];
 
 // The command-line forms of these are argv rules now (shell-command-rule-table.ts),

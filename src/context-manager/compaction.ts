@@ -13,7 +13,7 @@ Output a tight summary covering exactly these sections (skip a section if empty)
 DECISIONS: bullet list of choices the user explicitly made or approved (technologies, file locations, model choices, etc).
 CONSTRAINTS: bullet list of "must do" / "must not do" rules the user stated. Preserve every "do NOT use X", "always Y", "must support Z". This is the highest-priority section — never drop a constraint.
 FACTS_ABOUT_USER: bullet list of durable user facts mentioned (preferences, projects they own, tools they use). Skip transient mood.
-OUTSTANDING_ASKS: bullet list of work the user requested that wasn't yet completed.
+OUTSTANDING_ASKS: bullet list of work the user requested that wasn't yet completed. An ask marked "[assistant's reply omitted — it was given at the time]" was answered; list it only if a later message shows it still open.
 CURRENT_TASK_STATE: one paragraph — what is the agent in the middle of doing right now?
 
 Rules:
@@ -141,8 +141,17 @@ export function buildSummaryTranscript(messages: ChatCompletionMessageParam[]): 
       total -= row.line.length + 2;
     }
   }
+  // A kept user row whose reply was dropped reads as an unanswered ask, and the
+  // summarizer listed such asks as OUTSTANDING (2026-09-27: a resume question
+  // answered hours earlier came back as the current task). Say the reply
+  // existed.
   const omitted = rows.filter((r) => r.dropped).length;
-  const kept = rows.filter((r) => !r.dropped).map((r) => r.line);
+  const kept: string[] = [];
+  rows.forEach((r, i) => {
+    if (r.dropped) return;
+    const next = rows[i + 1];
+    kept.push(r.isUser && next && next.dropped && !next.isUser ? `${r.line}\n[assistant's reply omitted — it was given at the time]` : r.line);
+  });
   if (omitted > 0) kept.unshift(`[${omitted} older messages omitted to fit the summarizer's context]`);
   return kept.join("\n\n");
 }

@@ -191,6 +191,23 @@ describe("summarizeOldMessages — bounded transcript (local 16k dispatch window
     expect(transcript).toContain("constraint B");
   });
 
+  // Keeping a user row but dropping its reply made an answered ask look
+  // outstanding; the summarizer then listed it, and a later short reply got
+  // answered with it (2026-09-27, a resume question from hours earlier).
+  it("marks a kept ask whose reply was dropped as answered at the time", () => {
+    const rows: ChatCompletionMessageParam[] = [
+      { role: "user", content: "do you have my resume" },
+      { role: "assistant", content: "x".repeat(800) },
+      ...Array.from({ length: 200 }, () => ({ role: "assistant", content: "y".repeat(800) }) as ChatCompletionMessageParam),
+      { role: "user", content: "latest ask" },
+      { role: "assistant", content: "kept reply" },
+    ];
+    const transcript = buildSummaryTranscript(rows);
+    expect(transcript).toContain("[user]: do you have my resume\n[assistant's reply omitted — it was given at the time]");
+    expect(transcript).toContain("[user]: latest ask\n\n[assistant]: kept reply");
+    expect(transcript).not.toContain("latest ask\n[assistant's reply omitted");
+  });
+
   it("rejects a reply that continues the conversation instead of summarizing", async () => {
     const continuation = "I've selected the matching promotion messages. Now I'll archive them.\n\n[called browser({\"action\":\"click\",\"ref\":867})]";
     transportCalls = [

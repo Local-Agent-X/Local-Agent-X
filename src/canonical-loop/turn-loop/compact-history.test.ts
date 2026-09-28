@@ -436,3 +436,45 @@ describe("compactHistory — replaced-range citation for recall", () => {
 // The circuit-breaker suite (trip, reset, cool-down probes) lives in
 // compact-history.breaker.test.ts — split out to keep both files under the
 // repo's file-size limit.
+
+// A compacted history begins with the summary in a USER row. Unless that row
+// says the summary is the model's own memory, a one-word reply after
+// compaction ("yes") gets answered with the summary's asks — a question from
+// hours earlier came back as the current task (2026-09-27).
+describe("the summary row tells the model it is memory, not a live request", () => {
+  const FRAMING = "Respond only to the user's latest message, the last one below.";
+
+  it("on the standalone summary row", async () => {
+    mockStatus.mockReturnValue(status(96, true)); // keepLast = 4
+    mockSummarize.mockResolvedValue("OUTSTANDING_ASKS: - the user asked for their resume");
+    const msgs = [
+      u("u1", "do you have my resume"), a("a1", "", [{ id: "t1", name: "read", arguments: "{}" }]), tr("r1", "t1", "res1"),
+      u("u2", "second ask"), a("a2", "", [{ id: "t2", name: "read", arguments: "{}" }]), tr("r2", "t2", "res2"),
+      u("u3", "yes"), a("a3", "working"),
+    ];
+    const { messages: out } = await compactHistory(msgs, "claude-sonnet-4-6");
+    const text = (out[0].content as { text: string }).text;
+    expect(text).toContain("your own memory of that stretch, not a message from the user");
+    expect(text).toContain(FRAMING);
+    // the latest user message is still the last user row, after the summary
+    const users = out.filter((m) => m.role === "user");
+    expect((users[users.length - 1].content as { text: string }).text).toBe("yes");
+  });
+
+  it("on the merged anchor row too", async () => {
+    mockStatus.mockReturnValue(status(96, true)); // keepLast = 4
+    mockSummarize.mockResolvedValue("OUTSTANDING_ASKS: - the user asked for their resume");
+    const msgs = [
+      u("u1", "do you have my resume"), a("a1", "found it"),
+      u("u2", "second ask"), a("a2", "done"),
+      u("u3", "third ask"), a("a3", "done"),
+      u("u4", "yes"), a("a4", "working"),
+    ];
+    const { messages: out, compacted } = await compactHistory(msgs, "claude-sonnet-4-6");
+    expect(compacted).toBe(true);
+    expect(out[0].role).toBe("user");
+    const text = (out[0].content as { text: string }).text;
+    expect(text).toContain(FRAMING);
+    expect(text.indexOf(FRAMING)).toBeLessThan(text.indexOf("third ask"));
+  });
+});

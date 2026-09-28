@@ -293,11 +293,18 @@ export async function compactHistory(
   const hint = range && sessionBacked
     ? `[Full original messages retrievable via the recall tool with cursor="${range.firstId}:${range.lastId}"]\n`
     : "";
+  // The summary is the model's memory, not a request: a summarized ask was
+  // handled when it was made (or is on the task list), and the only live
+  // message is the user's latest. Without saying so, a short reply ("yes")
+  // after compaction got answered with the summary's asks — the model
+  // re-answered a question from hours earlier (2026-09-27).
   const block = summary
     ? `[Earlier conversation auto-summarized to save context — ${head.length} messages${rangeTag}]\n` +
       `${summary}\n` +
       hint +
-      `[End of summary. Your most recent messages follow.]`
+      `[End of summary. It is your own memory of that stretch, not a message from the user: ` +
+      `the asks in it were answered when they were made, or are on your task list. ` +
+      `Respond only to the user's latest message, the last one below.]`
     : `[Earlier conversation OMITTED to fit the context window — ${head.length} messages${rangeTag}. ` +
       `No summary was available; do not assume what the omitted messages said.]\n` +
       originalRequestLine(head) +

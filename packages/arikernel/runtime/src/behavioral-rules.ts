@@ -1,9 +1,20 @@
 /**
  * Behavioral sequence rules for run-state enforcement.
  *
- * Six explicit rules that detect suspicious multi-step patterns
+ * Five explicit rules that detect suspicious multi-step patterns
  * in the recent-event window and trigger immediate quarantine.
  * No DSL, no graph engine — just direct pattern matching.
+ *
+ * There is no longer a sixth rule ("secret_access_then_any_egress": a GET to
+ * a vault/secrets/credentials-shaped URL, or a query against a secrets-like
+ * table, followed by ANY later POST → quarantine the run). It matched on the
+ * sequence alone, with no evidence that the POST carried anything the GET
+ * returned, and quarantined a run that fetched a project's secrets listing and
+ * then posted a migration it had written itself. Whether secret bytes leave the
+ * box is a data-flow question the host answers at the source (every value the
+ * endpoint returned is masked before the model sees it and registered as a
+ * known secret) and at every sink (the outbound scan refuses a registered
+ * value, plain or encoded). Nothing here re-derives that from event order.
  */
 
 import { isWriteAction } from "@arikernel/core";
@@ -43,8 +54,7 @@ export function evaluateBehavioralRules(state: RunStateTracker): BehavioralRuleM
 		checkDeniedCapabilityThenEscalation(events, state) ??
 		checkSensitiveReadThenEgress(events, state) ??
 		checkTaintedDatabaseWrite(events, state) ??
-		checkTaintedShellWithData(events, state) ??
-		checkSecretAccessThenAnyEgress(events, state)
+		checkTaintedShellWithData(events, state)
 	);
 }
 
@@ -319,67 +329,6 @@ function checkTaintedShellWithData(
 		reason: `Untrusted input was followed by shell exec with long command (${(shellWithData.metadata?.commandLength as number) ?? "?"} chars)`,
 		matchedEvents: taintEvent ? [taintEvent, shellWithData] : [shellWithData],
 	};
-}
-
-// ── Rule 6: secret_access_then_any_egress ──────────────────────────
-//
-// If the run accessed credentials/vault-like resources (via database
-// query to secrets tables or HTTP to vault endpoints), and then
-// attempts any egress → quarantine.
-
-const SECRETS_DB_PATTERNS = /secret|credential|password|token|vault|key_store/i;
-const SECRETS_URL_PATTERNS = /vault|secrets|credentials|\.well-known\/keys/i;
-
-function checkSecretAccessThenAnyEgress(
-	events: readonly SecurityEvent[],
-	state: RunStateTracker,
-): BehavioralRuleMatch | null {
-	// Look for database queries or HTTP GETs that touched secrets-like resources
-	const secretAccess = findRecent(events, (e) => {
-		if (e.toolClass === "database" && e.action?.toLowerCase() === "query") {
-			const table = (e.metadata?.table as string) ?? "";
-			const query = (e.metadata?.query as string) ?? "";
-			return SECRETS_DB_PATTERNS.test(table) || SECRETS_DB_PATTERNS.test(query);
-		}
-		if (e.toolClass === "http" && (e.action?.toLowerCase() === "get" || e.action?.toLowerCase() === "head")) {
-			const url = (e.metadata?.url as string) ?? "";
-			return SECRETS_URL_PATTERNS.test(url);
-		}
-		return false;
-	});
-
-	// Set sticky flag whenever we detect secret access, even if no egress follows yet
-	if (secretAccess) {
-		state.markSecretAccess();
-		const accessIdx = events.indexOf(secretAccess);
-		const egress = findAfter(events, accessIdx, (e) => e.type === "egress_attempt");
-		if (!egress) return null;
-
-		const resource =
-			secretAccess.toolClass === "database"
-				? "database query"
-				: `HTTP ${secretAccess.action} to ${(secretAccess.metadata?.url as string) ?? "unknown"}`;
-
-		return {
-			ruleId: "secret_access_then_any_egress",
-			reason: `${resource} accessing secrets was followed by ${egress.action ?? "egress"} attempt`,
-			matchedEvents: [secretAccess, egress],
-		};
-	}
-
-	// Sticky flag: secret access happened earlier but was evicted from window
-	if (state.secretAccessObserved) {
-		const egress = findRecent(events, (e) => e.type === "egress_attempt");
-		if (!egress) return null;
-
-		return {
-			ruleId: "secret_access_then_any_egress",
-			reason: `Previous secret access was followed by ${egress.action ?? "egress"} attempt`,
-			matchedEvents: [egress],
-		};
-	}
-
-	return null;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────

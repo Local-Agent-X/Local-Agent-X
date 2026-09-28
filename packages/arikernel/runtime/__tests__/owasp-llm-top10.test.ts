@@ -242,7 +242,12 @@ describe("LLM06 — Sensitive Information Disclosure", () => {
 		expect(match?.ruleId).toBe("sensitive_read_then_egress");
 	});
 
-	it("vault query then egress triggers quarantine", () => {
+	it("vault query then egress is NOT a sequence-only quarantine (former rule 6 removed)", () => {
+		// The rule matched "secrets-shaped read, then any POST" with no evidence the
+		// POST carried anything the read returned. LLM02 (sensitive information
+		// disclosure) is met by data flow instead: the host masks every value the
+		// read returned before the model sees it and registers it, and refuses a
+		// registered value at every egress sink. Event order alone must not deny.
 		const state = new RunStateTracker();
 		pushEvents(state, [
 			{
@@ -254,9 +259,7 @@ describe("LLM06 — Sensitive Information Disclosure", () => {
 			},
 			{ timestamp: ts(), type: "egress_attempt", toolClass: "http", action: "post" },
 		]);
-		const match = evaluateBehavioralRules(state);
-		expect(match).not.toBeNull();
-		expect(match?.ruleId).toBe("secret_access_then_any_egress");
+		expect(evaluateBehavioralRules(state)).toBeNull();
 	});
 });
 

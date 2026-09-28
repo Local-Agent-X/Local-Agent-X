@@ -69,13 +69,14 @@ describe("H1: sticky state flags survive window eviction", () => {
 		expect(match?.ruleId).toBe("web_taint_sensitive_probe");
 	});
 
-	it("secret_access_then_any_egress triggers even after secret access is evicted", () => {
+	it("a secrets-table query followed by egress does not quarantine, in or out of the window (former rule 6 removed)", () => {
+		// The rule this pinned matched on sequence alone and was removed; the host
+		// masks the values at the source and refuses registered values at every
+		// sink. Eviction hardening for that rule is therefore moot — the window and
+		// the sticky path must BOTH stay quiet.
 		const state = new RunStateTracker({ behavioralRules: true });
 
-		// Need at least 2 events for evaluateBehavioralRules to proceed
 		state.pushEvent(makeEvent({ type: "tool_call_allowed", toolClass: "file", action: "read" }));
-
-		// Access secrets (this sets sticky flag via the rule)
 		state.pushEvent(
 			makeEvent({
 				type: "tool_call_allowed",
@@ -84,19 +85,13 @@ describe("H1: sticky state flags survive window eviction", () => {
 				metadata: { query: "SELECT * FROM secrets" },
 			}),
 		);
+		expect(evaluateBehavioralRules(state)).toBeNull();
 
-		// Evaluate once to set the sticky flag (no egress yet, returns null)
-		evaluateBehavioralRules(state);
-
-		// Evict the secret access event
 		pushFillerEvents(state, 25);
-
-		// Now push an egress attempt
 		state.pushEvent(makeEvent({ type: "egress_attempt", toolClass: "http", action: "post" }));
 
-		const match = evaluateBehavioralRules(state);
-		expect(match).not.toBeNull();
-		expect(match?.ruleId).toBe("secret_access_then_any_egress");
+		expect(evaluateBehavioralRules(state)).toBeNull();
+		expect(state.restricted).toBe(false);
 	});
 
 	it("tainted_database_write triggers even after taint event is evicted", () => {

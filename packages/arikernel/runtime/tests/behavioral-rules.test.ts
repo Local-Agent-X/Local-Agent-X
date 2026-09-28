@@ -366,8 +366,15 @@ describe("Behavioral Rule 5: tainted_shell_with_data", () => {
 	});
 });
 
-describe("Behavioral Rule 6: secret_access_then_any_egress", () => {
-	it("triggers when database query on secrets table is followed by egress", () => {
+// The former Rule 6 (secret_access_then_any_egress) is gone: it quarantined on
+// the SEQUENCE "secrets-shaped read, then any POST" with no evidence the POST
+// carried anything the read returned, and bricked a run that listed a project's
+// secrets and then posted a migration it had authored. Data flow is judged by
+// the host — values masked at the source and registered, registered values
+// refused at every sink — not by event order here. These pin that the sequence
+// alone no longer quarantines, and that no other rule picks it up by accident.
+describe("secret-shaped read followed by egress — no sequence-only quarantine", () => {
+	it("a database query on a secrets table followed by egress does NOT quarantine", () => {
 		const state = new RunStateTracker();
 		pushEvents(state, [
 			{
@@ -379,12 +386,10 @@ describe("Behavioral Rule 6: secret_access_then_any_egress", () => {
 			},
 			{ timestamp: ts(), type: "egress_attempt", toolClass: "http", action: "post" },
 		]);
-		const match = evaluateBehavioralRules(state);
-		expect(match).not.toBeNull();
-		expect(match?.ruleId).toBe("secret_access_then_any_egress");
+		expect(evaluateBehavioralRules(state)).toBeNull();
 	});
 
-	it("triggers when vault URL access is followed by egress", () => {
+	it("a GET to a vault URL followed by egress does NOT quarantine", () => {
 		const state = new RunStateTracker();
 		pushEvents(state, [
 			{
@@ -396,9 +401,16 @@ describe("Behavioral Rule 6: secret_access_then_any_egress", () => {
 			},
 			{ timestamp: ts(), type: "egress_attempt", toolClass: "http", action: "post" },
 		]);
-		const match = evaluateBehavioralRules(state);
-		expect(match).not.toBeNull();
-		expect(match?.ruleId).toBe("secret_access_then_any_egress");
+		expect(evaluateBehavioralRules(state)).toBeNull();
+	});
+
+	it("a real sensitive FILE read followed by egress still quarantines (Rule 3 is untouched)", () => {
+		const state = new RunStateTracker();
+		pushEvents(state, [
+			{ timestamp: ts(), type: "sensitive_read_attempt", toolClass: "file", action: "read", metadata: { path: "~/.aws/credentials" } },
+			{ timestamp: ts(), type: "egress_attempt", toolClass: "http", action: "post" },
+		]);
+		expect(evaluateBehavioralRules(state)?.ruleId).toBe("sensitive_read_then_egress");
 	});
 
 	it("does NOT trigger for normal database queries", () => {

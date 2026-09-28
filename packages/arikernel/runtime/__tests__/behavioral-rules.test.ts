@@ -90,10 +90,13 @@ describe("behavioral rules — window eviction + sticky flags", () => {
 		expect(match!.ruleId).toBe("sensitive_read_then_egress");
 	});
 
-	it("rule 6 fires when secret access is evicted but sticky persists", () => {
+	it("the secret-access sticky flag no longer quarantines a later egress (former rule 6 removed)", () => {
+		// Rule 6 matched on sequence alone — a secrets-shaped read, then any POST —
+		// with no evidence the POST carried anything the read returned. The host
+		// judges data flow (values masked at the source and registered, registered
+		// values refused at every sink), so the flag is audit state, not a trigger.
 		const state = new RunStateTracker({ behavioralRules: true });
 
-		// Secret access via database
 		state.pushEvent(
 			makeEvent("tool_call_allowed", {
 				toolClass: "database",
@@ -103,17 +106,14 @@ describe("behavioral rules — window eviction + sticky flags", () => {
 		);
 		state.markSecretAccess();
 
-		// Evict it
 		for (let i = 0; i < 20; i++) {
 			state.pushEvent(makeEvent("tool_call_allowed", { toolClass: "http", action: "get" }));
 		}
 
-		// Egress
 		state.pushEvent(makeEvent("egress_attempt", { toolClass: "http", action: "post" }));
 
-		const match = evaluateBehavioralRules(state);
-		expect(match).not.toBeNull();
-		expect(match!.ruleId).toBe("secret_access_then_any_egress");
+		expect(state.secretAccessObserved).toBe(true);
+		expect(evaluateBehavioralRules(state)).toBeNull();
 	});
 });
 

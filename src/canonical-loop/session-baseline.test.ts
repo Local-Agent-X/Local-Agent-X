@@ -56,6 +56,14 @@ describe("session baseline — observe at commit, read O(1)", () => {
 		expect(getSessionBaselineTokens("sess_over", MODEL)).toBeNull();
 	});
 
+	it("sizes 'above the window' by the op's billing lane", () => {
+		// 300k on sonnet-4-6: over the subscription lane's ceiling, a real prefix on an API key.
+		recordSessionBaselineObservation("sess_lane_api", "chat_turn", ps({ ...cleanPayload, cacheReadTokens: 300_000 }, { viewCompacted: false }), [], [userMsg(1004)], "api");
+		expect(getSessionBaselineTokens("sess_lane_api", MODEL)).toBe(2 + 300_000 + 47_000 - 1004);
+		recordSessionBaselineObservation("sess_lane_cli", "chat_turn", ps({ ...cleanPayload, cacheReadTokens: 300_000 }, { viewCompacted: false }), [], [userMsg(1004)], "cli");
+		expect(getSessionBaselineTokens("sess_lane_cli", MODEL)).toBeNull();
+	});
+
 	it("does NOT record when cache fields are missing (absent ≠ 0)", () => {
 		recordSessionBaselineObservation("sess_nc", "chat_turn", ps({ usageInputTokens: 5000, usageOutputTokens: 100 }, { viewCompacted: false }), [], [userMsg(1004)]);
 		expect(getSessionBaselineTokens("sess_nc", MODEL)).toBeNull();

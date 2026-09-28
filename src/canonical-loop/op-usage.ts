@@ -17,8 +17,7 @@ import { readOp } from "../ops/op-store.js";
 import { readLatestOpTurn, readOpTurns } from "./store.js";
 import type { OpTurnRow } from "./types.js";
 import { ANTHROPIC_ADAPTER_NAME } from "./adapters/anthropic/types.js";
-import { effectiveContextWindow } from "../context-manager/effective-window.js";
-import { resolveAnthropicTransport } from "../context-manager/resolve-transport.js";
+import { effectiveContextWindow, type AnthropicTransport } from "../context-manager/effective-window.js";
 
 export interface OpUsageAggregate {
 	usageInputTokens: number;
@@ -131,15 +130,17 @@ export interface LastTurnUsage {
  *  - cache fields missing: "absent" is not "0". Old rows and the pre-cache-
  *    capture HTTP path omit them; treating that as zero would silently drop
  *    the cached prefix (the bulk of the context) from the anchor.
- *  - contextTokens above the EFFECTIVE context window for the current
- *    transport (or model unresolvable): physically impossible for one request
- *    — some upstream call multiplied the count. The window is the transport-
- *    aware effective one (effective-window.ts), so on the Anthropic CLI/OAuth
- *    path a 1M-rated model still clamps at ~200k — a larger sum there is a
- *    cumulative overcount, not a valid single request. Backstop for any future
- *    cumulative row that slips past the era marker (CLI-internal retries/auto-
- *    compaction making unnamed calls). Exactly-at-window is plausible and
- *    anchors.
+ *  - contextTokens above the EFFECTIVE context window for the op's billing
+ *    lane (or model unresolvable): physically impossible for one request
+ *    — some upstream call multiplied the count. The window is the lane-
+ *    aware effective one (effective-window.ts), so on the Anthropic
+ *    subscription lane a 1M-rated model still clamps at the lane's measured
+ *    ceiling — a larger sum there is a cumulative overcount, not a valid
+ *    single request. Backstop for any future cumulative row that slips past
+ *    the era marker (CLI-internal retries/auto-compaction making unnamed
+ *    calls). Exactly-at-window is plausible and anchors. `transport` is the
+ *    op's lane (resolve-transport.ts opAnthropicTransport); omitted → the
+ *    subscription lane, the smaller window.
  *
  * Residual (accepted): a post-marker tool-less turn whose transport made
  * hidden extra requests summing BELOW the window would still anchor and
@@ -147,7 +148,7 @@ export interface LastTurnUsage {
  * stamped, and the next turn falls back to the pure estimate. Bounded, and
  * strictly better than the always-pure-estimate status quo.
  */
-export function lastTurnUsage(opId: string): LastTurnUsage | null {
+export function lastTurnUsage(opId: string, transport: AnthropicTransport = "cli"): LastTurnUsage | null {
 	try {
 		const turns = readOpTurns(opId);
 		for (let i = turns.length - 1; i >= 0; i--) {
@@ -178,13 +179,11 @@ export function lastTurnUsage(opId: string): LastTurnUsage | null {
 			// Plausibility clamp: the turn's own recorded model, no defaulting.
 			const model = payload.model;
 			if (typeof model !== "string" || model.length === 0) return null;
-			// Size against the EFFECTIVE window for the current transport, not the
-			// API-rated one: on the Anthropic CLI/OAuth path a single request
-			// can't exceed ~200k even for a 1M-rated model, so a larger sum is a
-			// cumulative overcount and must not anchor. Resolving the CURRENT
-			// transport is correct — an anchor implausible for how the op runs
-			// now should fall back to the pure estimate.
-			if (contextTokens > effectiveContextWindow(model, resolveAnthropicTransport())) return null;
+			// Size against the EFFECTIVE window for the op's billing lane, not the
+			// API-rated one: on the Anthropic subscription lane a single request
+			// can't exceed the lane's measured ceiling even for a 1M-rated model,
+			// so a larger sum is a cumulative overcount and must not anchor.
+			if (contextTokens > effectiveContextWindow(model, transport)) return null;
 			return { turnIdx: turn.turnIdx, contextTokens };
 		}
 		return null;
@@ -201,9 +200,10 @@ export function lastTurnUsage(opId: string): LastTurnUsage | null {
  * back; OpenAI-style prompt_tokens already includes it. Null when the round
  * recorded no prompt count, when the provider ran tools in-stream (the CLI
  * path reports usage summed across those requests), or when the count is
- * larger than one request can be.
+ * larger than one request can be on the op's billing lane (`transport`,
+ * omitted → the subscription lane).
  */
-export function roundPromptTokens(turn: OpTurnRow): number | null {
+export function roundPromptTokens(turn: OpTurnRow, transport: AnthropicTransport = "cli"): number | null {
 	const payload = turn.providerState?.providerPayload as Record<string, unknown> | undefined;
 	const input = payload?.usageInputTokens;
 	if (typeof input !== "number" || (turn.observedTools?.length ?? 0) > 0) return null;
@@ -212,6 +212,6 @@ export function roundPromptTokens(turn: OpTurnRow): number | null {
 		: 0;
 	const model = payload?.model;
 	const tokens = input + cached;
-	if (typeof model === "string" && tokens > effectiveContextWindow(model, resolveAnthropicTransport())) return null;
+	if (typeof model === "string" && tokens > effectiveContextWindow(model, transport)) return null;
 	return tokens;
 }

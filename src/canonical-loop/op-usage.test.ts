@@ -1,10 +1,6 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { rmSync } from "node:fs";
 
-// The billing lane the clamp sizes against, pinned per test (see forceTransport).
-let transport: "api" | "cli" = "cli";
-vi.mock("../context-manager/resolve-transport.js", () => ({ resolveAnthropicTransport: () => transport }));
-
 import { lastTurnUsage, roundPromptTokens } from "./op-usage.js";
 import { insertOpTurn } from "./store.js";
 import { opDir } from "../ops/event-log.js";
@@ -174,44 +170,52 @@ describe("lastTurnUsage — era marker and plausibility clamp", () => {
 	});
 });
 
-// The clamp sizes against the EFFECTIVE window for the CURRENT transport. On a
-// 1M-rated model (opus-4-8) a 300k total is a valid single request on the API
-// but physically impossible on the CLI/OAuth path (~200k ceiling), so the same
-// row anchors on api and is refused on cli. The lane is pinned through the
-// mocked resolveAnthropicTransport so the test never depends on the box's
-// credentials.
-describe("lastTurnUsage — transport-aware plausibility clamp", () => {
-	afterEach(() => { transport = "cli"; });
-	function forceTransport(kind: "api" | "cli") {
-		transport = kind;
-	}
-
+// The clamp sizes against the EFFECTIVE window for the op's billing lane,
+// passed by the caller. On a 1M-rated model (opus-4-8) a 300k total is a valid
+// single request on the API but physically impossible on the subscription lane
+// (measured ceiling 276k for opus-4-8), so the same row anchors on api and is
+// refused on cli; a model the lane was never measured on keeps the 200k
+// fallback. Omitting the lane is the subscription lane.
+describe("lastTurnUsage — lane-aware plausibility clamp", () => {
 	// opus-4-8 total = 300k: 297_500 + 1_000 + 500 + 1_000.
 	const opus300k = { model: "claude-opus-4-8", usageInputTokens: 1_000, usageOutputTokens: 1_000, cacheReadTokens: 297_500, cacheCreateTokens: 500 };
 
-	it("anchors a 300k opus-4-8 turn on the api transport (nominal 1M window)", () => {
+	it("anchors a 300k opus-4-8 turn on the api lane (nominal 1M window)", () => {
 		const opId = "op_ltu_test_tp_api";
 		cleanup.push(opId);
-		forceTransport("api");
 		insertOpTurn(turn(opId, 0, opus300k, stamped));
-		expect(lastTurnUsage(opId)).toEqual({ turnIdx: 0, contextTokens: 300_000 });
+		expect(lastTurnUsage(opId, "api")).toEqual({ turnIdx: 0, contextTokens: 300_000 });
 	});
 
-	it("refuses the same 300k opus-4-8 turn on the cli transport (~200k ceiling)", () => {
+	it("refuses the same 300k opus-4-8 turn on the subscription lane (276k measured ceiling)", () => {
 		const opId = "op_ltu_test_tp_cli";
 		cleanup.push(opId);
-		forceTransport("cli");
 		insertOpTurn(turn(opId, 0, opus300k, stamped));
+		expect(lastTurnUsage(opId, "cli")).toBeNull();
 		expect(lastTurnUsage(opId)).toBeNull();
 	});
 
-	it("still anchors a plausible sub-ceiling opus-4-8 turn on the cli transport", () => {
+	it("anchors a 250k opus-4-8 turn on the subscription lane: under what the lane has served", () => {
+		const opId = "op_ltu_test_tp_cli_proven";
+		cleanup.push(opId);
+		insertOpTurn(turn(opId, 0, { model: "claude-opus-4-8", usageInputTokens: 1_000, usageOutputTokens: 1_000, cacheReadTokens: 247_500, cacheCreateTokens: 500 }, stamped));
+		expect(lastTurnUsage(opId, "cli")).toEqual({ turnIdx: 0, contextTokens: 250_000 });
+	});
+
+	it("refuses a 250k turn on the subscription lane for a model the lane was never measured on", () => {
+		const opId = "op_ltu_test_tp_cli_unmeasured";
+		cleanup.push(opId);
+		insertOpTurn(turn(opId, 0, { model: "claude-sonnet-5", usageInputTokens: 1_000, usageOutputTokens: 1_000, cacheReadTokens: 247_500, cacheCreateTokens: 500 }, stamped));
+		expect(lastTurnUsage(opId, "cli")).toBeNull();
+		expect(lastTurnUsage(opId, "api")).toEqual({ turnIdx: 0, contextTokens: 250_000 });
+	});
+
+	it("still anchors a plausible sub-ceiling opus-4-8 turn on the subscription lane", () => {
 		const opId = "op_ltu_test_tp_cli_ok";
 		cleanup.push(opId);
-		forceTransport("cli");
-		// total = 150k, well under the 200k CLI ceiling.
+		// total = 150k, well under every ceiling.
 		insertOpTurn(turn(opId, 0, { model: "claude-opus-4-8", usageInputTokens: 1_000, usageOutputTokens: 1_000, cacheReadTokens: 147_500, cacheCreateTokens: 500 }, stamped));
-		expect(lastTurnUsage(opId)).toEqual({ turnIdx: 0, contextTokens: 150_000 });
+		expect(lastTurnUsage(opId, "cli")).toEqual({ turnIdx: 0, contextTokens: 150_000 });
 	});
 });
 
@@ -235,5 +239,13 @@ describe("roundPromptTokens — the prompt one round sent, for the context meter
 		expect(roundPromptTokens(turn("op-rpt-4", 0, { usageOutputTokens: 5, model: "qwen3.6:27b" }, { adapterName: "openai-compat" }))).toBeNull();
 		expect(roundPromptTokens(turn("op-rpt-5", 0, { usageInputTokens: 900, model: "claude-sonnet-5" }, { observedTools: ["read"] }))).toBeNull();
 		expect(roundPromptTokens(turn("op-rpt-6", 0, { usageInputTokens: 50_000_000, model: "claude-sonnet-5" }))).toBeNull();
+	});
+
+	it("sizes 'what one request can hold' by the op's billing lane", () => {
+		// 300k on sonnet-5: a real prompt on an API key, impossible on the subscription lane.
+		const t = turn("op-rpt-7", 0, { usageInputTokens: 300_000, model: "claude-sonnet-5" }, { viewCompacted: false });
+		expect(roundPromptTokens(t, "api")).toBe(300_000);
+		expect(roundPromptTokens(t, "cli")).toBeNull();
+		expect(roundPromptTokens(t)).toBeNull();
 	});
 });

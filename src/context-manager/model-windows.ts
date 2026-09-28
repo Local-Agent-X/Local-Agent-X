@@ -1,58 +1,70 @@
 import { getLocalModel, getRuntimeForModel } from "../local-runtimes/index.js";
 
+// Nominal context window per model id — the number the provider rates the
+// model at. Every row is rechecked against LiteLLM's model file by
+// `npm run check:pricing-coverage` (scripts/model-windows-drift.mjs): a row
+// that differs is DRIFT (red in the weekly CI job) unless its line comment
+// carries `pin:` with the provider's own documented figure and the date it was
+// read — LiteLLM is a mirror, the provider's docs are the truth. The app never
+// fetches windows at runtime; a row changes only through a reviewed commit.
+//
+// One convention note: LiteLLM's max_input_tokens is sometimes the total
+// window and sometimes the total minus the output cap (gpt-5.6: 922,000 =
+// 1,050,000 − 128,000; gpt-5.4: 1,050,000). The checker accepts either.
 const MODEL_CONTEXTS: Record<string, number> = {
-  // GPT-5.6 family (Sol/Terra/Luna) — 1.05M native, 128k max output
-  "gpt-6-astra": 1_050_000,  // 128k max output, cutoff 2026-04-30
-  "gpt-5.6": 1_000_000,      // bare alias routes to Sol
-  "gpt-5.6-sol": 1_000_000,
-  "gpt-5.6-terra": 1_000_000,
-  "gpt-5.6-luna": 1_000_000,
-  "gpt-5.4": 272_000,        // Native 1.05M, default working 272k
+  // OpenAI — developers.openai.com/api/docs/models, read 2026-09-27: the
+  // gpt-6 / gpt-5.6 / gpt-5.4 pages all say "1,050,000 context window,
+  // 128,000 max output tokens"; o3-pro "200,000 / 100,000".
+  "gpt-6-astra": 1_050_000,
+  "gpt-5.6": 1_050_000,      // bare alias routes to Sol
+  "gpt-5.6-sol": 1_050_000,
+  "gpt-5.6-terra": 1_050_000,
+  "gpt-5.6-luna": 1_050_000,
+  "gpt-5.4": 1_050_000,
   "gpt-5.4-mini": 272_000,
-  "gpt-5.5": 1_000_000,
+  "gpt-5.5": 1_050_000,
   "gpt-4o": 128_000,
   "gpt-4o-mini": 128_000,
-  "o3-pro": 128_000,
-  // xAI Grok 4.x — 131k window (grok-4.5/4.6 ship a 500k window)
+  "o3-pro": 200_000,
+  // xAI — docs.x.ai/docs/models, read 2026-09-27: grok-4.6 500k;
+  // grok-4.5 / 4.3 / 4.20 1M; grok-build-0.1 256k (grok-code-fast-1 is its
+  // alias, 256k on its own page).
   "grok-4.6": 500_000,
-  "grok-4.5": 500_000,
-  "grok-4.3": 131_072,
-  "grok-4.20-0309-reasoning": 131_072,
-  "grok-4.20-0309-non-reasoning": 131_072,
-  "grok-4.20-multi-agent-0309": 131_072,
-  "grok-code-fast-1": 131_072,
-  "grok-build-0.1": 131_072,
-  // Opus 5.5 — current Opus tier; 1M context, 128K output
+  "grok-4.5": 1_000_000, // pin: x.ai docs 2026-09-27 say 1M; LiteLLM carries 500k
+  "grok-4.3": 1_000_000,
+  "grok-4.20-0309-reasoning": 1_000_000,
+  "grok-4.20-0309-non-reasoning": 1_000_000,
+  "grok-4.20-multi-agent-0309": 1_000_000,
+  "grok-code-fast-1": 256_000,
+  "grok-build-0.1": 256_000,
+  // Anthropic — the Models API / model catalog rates every model from Opus 4.6
+  // and Sonnet 4.6 on at 1M (LiteLLM agrees). Opus 4.5, Sonnet 4.5 and Haiku
+  // 4.5 are 200k: Sonnet 4.5's 1M was a beta-header feature LAX never sends.
   "claude-opus-5-5": 1_000_000,
-  // Fable 5 / 5.1 — 1M context (native; the maximum is also the default)
   "claude-fable-5": 1_000_000,
   "claude-fable-5-1": 1_000_000,
   "claude-mythos-5-1": 1_000_000,
-  // Sonnet 5 — Claude 5 balanced tier, 1M context
   "claude-sonnet-5": 1_000_000,
-  // Opus 5 — Claude 5 Opus tier; 1M is both the default and the maximum
   "claude-opus-5": 1_000_000,
-  // Anthropic Claude 4.x family — 200k base window
-  "claude-sonnet-4-5": 200_000,
-  "claude-sonnet-4-6": 200_000,
+  "claude-opus-4-8": 1_000_000,
+  "claude-opus-4-7": 1_000_000,
+  "claude-opus-4-6": 1_000_000,
+  "claude-sonnet-4-6": 1_000_000,
+  "claude-sonnet-4-5": 200_000, // pin: 1M on Sonnet 4.5 needs the context-1m beta header, which LAX does not send
   "claude-opus-4-5": 200_000,
-  "claude-opus-4-6": 200_000,
-  "claude-opus-4-7": 1_000_000, // 4.7 ships with 1M context natively
-  "claude-opus-4-8": 1_000_000, // 4.8 ships with 1M context natively
   "claude-haiku-4-5": 200_000,
-  // Anthropic Opus 4.6 with 1M context beta
+  // `[1m]` aliases predate the 1M default and resolve to the same ids.
   "claude-opus-4-6[1m]": 1_000_000,
   "claude-opus-4-7[1m]": 1_000_000,
   "claude-opus-4-8[1m]": 1_000_000,
   "claude-opus-5[1m]": 1_000_000,
   "claude-opus-5-5[1m]": 1_000_000,
-  // Gemini 2.x family (GA aliases)
-  "gemini-2.0-flash": 1_000_000,
-  "gemini-2.5-pro": 1_000_000,
-  "gemini-2.5-flash": 1_000_000,
-  // Gemini 3.x previews — 1M context
-  "gemini-3-pro-preview": 1_000_000,
-  "gemini-3.1-pro-preview": 1_000_000,
+  // Gemini — ai.google.dev model pages, read 2026-09-27: "Input token limit
+  // 1,048,576" for 2.5 Pro and 3.1 Pro Preview (LiteLLM: the same figure).
+  "gemini-2.5-pro": 1_048_576,
+  "gemini-2.5-flash": 1_048_576,
+  "gemini-3-pro-preview": 1_048_576,
+  "gemini-3.1-pro-preview": 1_048_576,
 };
 
 export const DEFAULT_CONTEXT = 128_000;
@@ -111,12 +123,15 @@ export function resolveContextWindow(model: string): ContextWindowResolution {
   }
   const lower = model.toLowerCase();
   const heuristic = (tokens: number): ContextWindowResolution => ({ tokens, provenance: "heuristic" });
+  // Family guesses for an id the table lacks (a model newer than this file).
+  // Each is the SMALLEST current member of its family, so an unknown model
+  // compacts early rather than overflowing.
   if (lower.includes("claude")) return heuristic(200_000);
-  if (lower.includes("gemini")) return heuristic(1_000_000);
-  if (lower.includes("gpt-5.6") || lower.includes("gpt-5.5")) return heuristic(1_000_000);
+  if (lower.includes("gemini")) return heuristic(1_048_576);
+  if (lower.includes("gpt-6") || lower.includes("gpt-5.6") || lower.includes("gpt-5.5")) return heuristic(1_050_000);
   if (lower.includes("gpt-5.4")) return heuristic(272_000);
   if (lower.includes("gpt-4") || lower.includes("gpt-5") || lower.includes("o3")) return heuristic(128_000);
-  if (lower.includes("grok")) return heuristic(131_072);
+  if (lower.includes("grok")) return heuristic(256_000);
   return heuristic(DEFAULT_CONTEXT);
 }
 

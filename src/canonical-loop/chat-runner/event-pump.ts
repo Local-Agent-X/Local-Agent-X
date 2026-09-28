@@ -10,7 +10,7 @@ import type { CanonicalEvent, StateChangedBody } from "../types.js";
 import { subscribeOpStream, subscribeOpEvents } from "../control-api.js";
 import { isTerminalState, type TerminalState } from "../terminal-states.js";
 import { contextStatusForTokens } from "../../context-manager/status.js";
-import { resolveAnthropicTransport } from "../../context-manager/resolve-transport.js";
+import type { AnthropicTransport } from "../../context-manager/effective-window.js";
 
 export interface PumpedEvents {
   events: ServerEvent[];
@@ -289,9 +289,11 @@ export function createEventPump(opId: string): EventPump {
       // The context meter follows the prompt the provider counted for each
       // round. Sized once at send time, it read 0% while a local model's
       // tool rounds ran up to 90% of its window and compacted twice.
-      const ctx = (event.body as { context?: { promptTokens: number; model: string; compacted: boolean } }).context;
+      // `transport` is the op's billing lane, stamped by the commit
+      // (checkpoint.ts); a pre-stamp event sizes on the subscription lane.
+      const ctx = (event.body as { context?: { promptTokens: number; model: string; transport?: AnthropicTransport; compacted: boolean } }).context;
       if (!ctx) return;
-      const status = contextStatusForTokens(ctx.promptTokens, ctx.model, resolveAnthropicTransport());
+      const status = contextStatusForTokens(ctx.promptTokens, ctx.model, ctx.transport ?? "cli");
       eventQueue.push({
         type: "context_status",
         percentage: status.percentage,

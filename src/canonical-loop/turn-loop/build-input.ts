@@ -18,6 +18,7 @@ import { opMessageRowToChatParam } from "../chat-runner/message-convert.js";
 import { setModelView } from "../../tool-execution/model-view.js";
 import { getSessionBaselineTokens } from "../session-baseline.js";
 import { resolveContextWindow } from "../../context-manager/model-windows.js";
+import { opAnthropicTransport } from "../../context-manager/resolve-transport.js";
 import { isRuntimeFailoverBoundary } from "../../ops/target-identity.js";
 import { dropStrandedToolResults } from "./orphan-tool-results.js";
 
@@ -88,9 +89,12 @@ export async function buildTurnInput(
       : 0;
     // sessionBacked gates only the summary's recall-HINT line: recall confines
     // reads to the caller's session, so a session-less op would get a refusal.
+    // The window is the op's billing lane's: an API key sizes at the nominal
+    // window, the subscription at what that lane has been seen to serve.
+    const transport = opAnthropicTransport(op);
     const compacted = await compactHistory(
-      messages, model, lastTurnUsage(op.id), op.id, baselineTokens,
-      Boolean(op.canonical?.sessionId),
+      messages, model, lastTurnUsage(op.id, transport), op.id, baselineTokens,
+      Boolean(op.canonical?.sessionId), transport,
     );
     messages = compacted.messages;
     viewCompacted = compacted.compacted;

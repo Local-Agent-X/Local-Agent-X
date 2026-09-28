@@ -17,7 +17,6 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../../context-manager/status.js", () => ({ getContextStatus: vi.fn() }));
 vi.mock("../../context-manager/compaction.js", () => ({ summarizeOldMessages: vi.fn() }));
-vi.mock("../../context-manager/resolve-transport.js", () => ({ resolveAnthropicTransport: () => "cli" }));
 
 const loggerMock = vi.hoisted(() => ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }));
 vi.mock("../../logger.js", () => ({ createLogger: () => loggerMock }));

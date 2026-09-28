@@ -78,7 +78,7 @@ export async function emitContextStatus(
       baselineTokens = getSessionBaselineTokens(sessionId, prepared.model)
         ?? (estimateTokens(prepared.systemPrompt) + estimateTokens(JSON.stringify(prepared.tools)));
     }
-    const status = getContextStatus(prepared.cleanHistory, prepared.model, undefined, resolveAnthropicTransport(), baselineTokens);
+    const status = getContextStatus(prepared.cleanHistory, prepared.model, undefined, resolveAnthropicTransport(prepared.authSource), baselineTokens);
     const ev = {
       type: "context_status" as const,
       percentage: status.percentage,

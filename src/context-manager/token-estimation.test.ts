@@ -26,8 +26,8 @@ describe("anchoredTotalTokens", () => {
 });
 
 describe("getContextStatus with/without anchor", () => {
-  // claude-sonnet-4-6: 200k window, anthropic-class thresholds (60/75/90).
-  const model = "claude-sonnet-4-6";
+  // claude-haiku-4-5: 200k window, anthropic-class thresholds (60/75/90).
+  const model = "claude-haiku-4-5";
 
   it("without an anchor sizes by pure estimate (historical behavior)", () => {
     const msgs = [u("short question"), a("short answer")];

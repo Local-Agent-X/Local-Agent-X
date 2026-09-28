@@ -54,16 +54,16 @@ describe("lookupContextWindow — local runtime truth beats the 128k default", (
 
   it("undiscovered models keep the historical fallback chain", () => {
     expect(lookupContextWindow("claude-mystery")).toBe(200_000);
-    expect(lookupContextWindow("grok-mystery")).toBe(131_072);
+    expect(lookupContextWindow("grok-mystery")).toBe(256_000);
     expect(lookupContextWindow("total-mystery")).toBe(DEFAULT_CONTEXT);
   });
 
   // claude-sonnet-4-7 never existed (Sonnet went 4.5 → 4.6 → 5); the pinned
   // table briefly claimed it as an "exact" fact. It must resolve like any other
-  // unknown claude-* name — same 200k number, but as a heuristic guess.
+  // unknown claude-* name — the conservative 200k guess, as a heuristic.
   it("phantom claude-sonnet-4-7 is not a pinned table fact — it falls to the name heuristic", () => {
     expect(resolveContextWindow("claude-sonnet-4-7")).toEqual({ tokens: 200_000, provenance: "heuristic" });
-    expect(resolveContextWindow("claude-sonnet-4-6")).toEqual({ tokens: 200_000, provenance: "exact" });
+    expect(resolveContextWindow("claude-sonnet-4-6")).toEqual({ tokens: 1_000_000, provenance: "exact" });
   });
 });
 

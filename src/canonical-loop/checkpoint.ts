@@ -30,6 +30,7 @@ import type {
   ToolCallSummary,
 } from "./types.js";
 import { createRuntimeRoutingFeedback } from "./runtime-routing-feedback.js";
+import { opAnthropicTransport } from "../context-manager/resolve-transport.js";
 
 export interface CommitTurnMessage {
   messageId?: string;
@@ -228,6 +229,7 @@ function commitOwnedTurn(input: CommitTurnInput & { leaseClaim: LeaseClaim }): C
       input.providerState,
       input.observedTools,
       promptMessages,
+      opAnthropicTransport(input.op),
     );
   } catch { /* non-authoritative sizing hint */ }
   projectTurnCommit(input.op, envelope);
@@ -262,7 +264,10 @@ function projectTurnCommit(
   }
   projectionHook?.("after_message_events");
   const usage = aggregateOpUsage(op.id);
-  const promptTokens = roundPromptTokens(turn);
+  // The context meter sizes the round against the op's billing lane, so it is
+  // carried on the event: the chat pump has the op id, not the op.
+  const transport = opAnthropicTransport(op);
+  const promptTokens = roundPromptTokens(turn, transport);
   const roundModel = (turn.providerState.providerPayload as { model?: unknown } | null)?.model;
   emitOnce(op.id, "turn_committed", (body) => body.turnIdx === turn.turnIdx, {
     turnIdx: turn.turnIdx,
@@ -275,7 +280,7 @@ function projectTurnCommit(
       totalTokens: usage.usageInputTokens + usage.usageOutputTokens,
     },
     ...(promptTokens !== null && typeof roundModel === "string"
-      ? { context: { promptTokens, model: roundModel, compacted: turn.providerState.viewCompacted === true } }
+      ? { context: { promptTokens, model: roundModel, transport, compacted: turn.providerState.viewCompacted === true } }
       : {}),
   });
   projectionHook?.("after_turn_event");

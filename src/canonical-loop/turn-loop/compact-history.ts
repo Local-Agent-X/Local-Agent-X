@@ -14,7 +14,7 @@ import type { CanonicalMessage } from "../contract-types.js";
 import type { LastTurnUsage } from "../op-usage.js";
 import { getContextStatus } from "../../context-manager/status.js";
 import { turnCompactionKeepLast } from "../../context-manager/compaction-policy.js";
-import { resolveAnthropicTransport } from "../../context-manager/resolve-transport.js";
+import type { AnthropicTransport } from "../../context-manager/effective-window.js";
 import type { TokenAnchor } from "../../context-manager/token-estimation.js";
 import { summarizeOldMessages } from "../../context-manager/compaction.js";
 import { clearSummaryCache, reusableSummary, storeSummary } from "./compact-summary-cache.js";
@@ -149,9 +149,9 @@ export { forceCompactNext, compactionBreakerState } from "./compact-breaker.js";
  * right, so the fit is monotone and a binary search over keep counts finds it.
  * Never keeps less than the last turn.
  */
-function largestFittingSplit(messages: CanonicalMessage[], model: string, baselineTokens: number): number {
+function largestFittingSplit(messages: CanonicalMessage[], model: string, baselineTokens: number, transport: AnthropicTransport): number {
   const fits = (split: number) =>
-    !getContextStatus(toChatParams(messages.slice(split)), model, undefined, resolveAnthropicTransport(), baselineTokens).shouldCompact;
+    !getContextStatus(toChatParams(messages.slice(split)), model, undefined, transport, baselineTokens).shouldCompact;
   // At least one row is elided: a split of 0 would keep the view that must shrink.
   const splitFor = (keep: number) => Math.max(1, safeSplitIndexUnbounded(messages, keep));
   let lo = 1;
@@ -198,6 +198,10 @@ export async function compactHistory(
   // recall confines reads to the caller's session; on a session-less op the
   // recall HINT line is suppressed (the range citation itself still lands).
   sessionBacked = true,
+  // The op's Anthropic billing lane (resolve-transport.ts opAnthropicTransport)
+  // — sizes the window the view must fit. Omitted → the subscription lane,
+  // the smaller window.
+  transport: AnthropicTransport = "cli",
 ): Promise<CompactHistoryResult> {
   // Consume the overflow-recovery marker (set once per provider overflow), then
   // the breaker gate: while tripped it short-circuits, except on every
@@ -208,7 +212,7 @@ export async function compactHistory(
   if (usage && !usageAnchor) {
     logger.debug(`anchor at turn ${usage.turnIdx} not mappable onto the current view; sizing by pure estimate`);
   }
-  const status = getContextStatus(toChatParams(messages), model, usageAnchor ?? undefined, resolveAnthropicTransport(), baselineTokens);
+  const status = getContextStatus(toChatParams(messages), model, usageAnchor ?? undefined, transport, baselineTokens);
   if (!forced && !status.shouldCompact) return { messages, compacted: false };
   // A tripped breaker skips the SUMMARIZER, never the fit. Past the critical
   // band the view must shrink with or without a summary; returning it whole
@@ -271,7 +275,7 @@ export async function compactHistory(
     // summary; alone it left muse seeing its last two tool calls each turn, so
     // it re-read the same files every turn until loop detection ended the op
     // (wordy, 2026-09-17). Measured by tokens, the tail also never overflows.
-    const split = largestFittingSplit(messages, model, baselineTokens);
+    const split = largestFittingSplit(messages, model, baselineTokens, transport);
     head = messages.slice(0, split);
     recent = messages.slice(split);
     logger.warn(`summarizer unavailable at ${status.percentage}% of the window — eliding ${head.length} older messages so the op can continue`);

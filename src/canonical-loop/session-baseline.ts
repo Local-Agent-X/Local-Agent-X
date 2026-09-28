@@ -40,8 +40,7 @@
 import type { ProviderStateEnvelope } from "./types.js";
 import type { CanonicalMessage } from "./contract-types.js";
 import { ANTHROPIC_ADAPTER_NAME } from "./adapters/anthropic/types.js";
-import { effectiveContextWindow, isAnthropicModel } from "../context-manager/effective-window.js";
-import { resolveAnthropicTransport } from "../context-manager/resolve-transport.js";
+import { effectiveContextWindow, isAnthropicModel, type AnthropicTransport } from "../context-manager/effective-window.js";
 import { totalTokens } from "../context-manager/token-estimation.js";
 import { toChatParams } from "./turn-loop/compact-history.js";
 
@@ -76,6 +75,10 @@ export function recordSessionBaselineObservation(
   providerState: ProviderStateEnvelope | undefined,
   observedTools: string[] | undefined,
   promptMessages: CanonicalMessage[],
+  // The op's Anthropic billing lane (resolve-transport.ts opAnthropicTransport):
+  // the plausibility clamp sizes against that lane's window. Omitted → the
+  // subscription lane, the smaller window.
+  transport: AnthropicTransport = "cli",
 ): void {
   if (!sessionId) return;
   // Scope to genuine chat ops. Delegated/submitted ops inherit the parent chat
@@ -85,7 +88,7 @@ export function recordSessionBaselineObservation(
   // baseline is constant only WITHIN one op class's tool surface, and
   // "chat_turn" is the full interactive-chat surface the death occurs on.
   if (opType !== "chat_turn") return;
-  const obs = observe(providerState, observedTools, promptMessages);
+  const obs = observe(providerState, observedTools, promptMessages, transport);
   if (!obs) return;
   const existing = sessions.get(sessionId);
   if (existing && existing.convTokens <= obs.convTokens) return; // keep the tighter (smaller-conv) one
@@ -133,6 +136,7 @@ function observe(
   ps: ProviderStateEnvelope | undefined,
   observedTools: string[] | undefined,
   promptMessages: CanonicalMessage[],
+  transport: AnthropicTransport,
 ): Observation | null {
   if (!ps) return null;
   if (ps.adapterName !== ANTHROPIC_ADAPTER_NAME) return null;       // OpenAI-style usage differs
@@ -148,7 +152,7 @@ function observe(
   if (prefix <= 0) return null;
   const model = payload.model;
   if (typeof model !== "string" || model.length === 0) return null;
-  if (prefix > effectiveContextWindow(model, resolveAnthropicTransport())) return null; // implausible → refuse
+  if (prefix > effectiveContextWindow(model, transport)) return null; // implausible → refuse
   const convTokens = totalTokens(toChatParams(promptMessages));
   return { baseline: Math.max(0, prefix - convTokens), convTokens, adapterName: ps.adapterName, model };
 }

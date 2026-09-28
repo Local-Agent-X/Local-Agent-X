@@ -9,7 +9,10 @@
 // "evaluation error ... Run has been quarantined" with a recovery telling the
 // user to click "Declassify & retry" — a control that clears session taint,
 // of which there was none. The event log recorded status "blocked" and
-// nothing else; no notice reached the user.
+// nothing else; no notice reached the user. That rule has since been deleted
+// (a secrets response is masked and its values registered instead), so the
+// sequence is pinned as allowed and a genuine rule-3 quarantine (a .env write
+// then a POST) carries the naming and tracing assertions.
 //
 // 02:51:15 — a WRITE to scripts/set-unsub-secret.mjs counted as a sensitive
 // read to the kernel's substring matcher; the next POST quarantined the turn
@@ -180,7 +183,7 @@ describe("a kernel quarantine, through the chat lane's dispatcher", () => {
       const [fin] = finished(log, "bash");
       expect(fin.status).toBe("blocked");
       expect(fin.block?.quarantine?.trigger).toBe("restricted");
-      expect(fin.block?.quarantine?.rule).toBe("secret_access_then_any_egress");
+      expect(fin.block?.quarantine?.rule).toBe("sensitive_read_then_egress");
       expect(fin.block?.quarantine?.restrictedAt).toMatch(/^\d{4}-/);
       const end = toolEnd(ui, "sh");
       expect(end?.status).toBe("blocked");

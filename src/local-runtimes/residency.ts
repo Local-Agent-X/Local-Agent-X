@@ -16,6 +16,8 @@
  * chat-side pre-warm rides the same helpers.
  */
 import { createLogger } from "../logger.js";
+import { ollamaModelKey } from "./context-sizing-core.js";
+import { appliedContext } from "./context-sizing.js";
 
 const logger = createLogger("local-runtimes");
 
@@ -30,14 +32,6 @@ const WARM_TIMEOUT_MS = 60_000;
  *  shared with callOllama's keep_alive, so warmed and real calls extend the
  *  same residency window instead of drifting. */
 export const MODEL_KEEP_ALIVE = "30m";
-
-/** Ollama aliases an untagged name to ":latest" ("llama3" and "llama3:latest"
- *  are the same model). Only that default-tag alias is normalized — real tag
- *  variants stay distinct: "llama3.2:3b" vs "llama3.2:3b-instruct" are
- *  different models and must never cross-match. */
-function withDefaultTag(id: string): string {
-  return id.includes(":") ? id : `${id}:latest`;
-}
 
 /**
  * Is `model` loaded in memory on the runtime at `baseUrl`?
@@ -117,12 +111,12 @@ async function loadedModel(
   try {
     const models = await psRows(baseUrl, timeoutMs, redirect);
     if (models === null) return null;
-    const wanted = withDefaultTag(model);
+    const wanted = ollamaModelKey(model);
     for (const m of models) {
       if (!m || typeof m !== "object") continue;
       const row = m as { name?: unknown; model?: unknown; context_length?: unknown };
-      const matches = (typeof row.name === "string" && withDefaultTag(row.name) === wanted)
-        || (typeof row.model === "string" && withDefaultTag(row.model) === wanted);
+      const matches = (typeof row.name === "string" && ollamaModelKey(row.name) === wanted)
+        || (typeof row.model === "string" && ollamaModelKey(row.model) === wanted);
       if (!matches) continue;
       const ctx = row.context_length;
       return { contextLength: typeof ctx === "number" && Number.isInteger(ctx) && ctx > 0 ? ctx : null };
@@ -158,9 +152,12 @@ export const DISPATCH_MODEL_MAX_BYTES = 6e9;
  * reloads in four minutes, three failed runs).
  *
  *   loaded                         → its current context: the runner is reused
+ *   sized by context-sizing.ts      → that applied size: the size its chat
+ *                                     requests carry, so this load is the one
+ *                                     chat reuses
  *   the held chat model, or a model
  *   larger than dispatch-sized      → undefined: Ollama's default, the same
- *                                     shape a /v1 chat request loads
+ *                                     shape an unsized chat request loads
  *   dispatch-sized, not loaded      → DISPATCH_NUM_CTX
  *
  * `sizeBytes` comes from the caller's discovery cache (unknown → not
@@ -175,6 +172,8 @@ export async function dispatchNumCtx(
 ): Promise<number | undefined> {
   const loaded = await loadedModel(baseUrl, model, timeoutMs, redirect);
   if (loaded) return loaded.contextLength ?? undefined;
+  const applied = appliedContext(baseUrl, model);
+  if (applied !== undefined) return applied;
   const base = baseUrl.replace(/\/+$/, "");
   if (heldChat?.key === `${base}|${model}`) return undefined;
   return typeof sizeBytes === "number" && sizeBytes > 0 && sizeBytes <= DISPATCH_MODEL_MAX_BYTES
@@ -199,10 +198,11 @@ const inflightWarms = new Map<string, Promise<void>>();
  * Re-up cadence for the held chat model. Must beat Ollama's 5-minute default
  * keep_alive: the OpenAI-compat /v1 endpoint IGNORES a keep_alive body field
  * (verified against live Ollama 2026-08-25 — UNTIL stayed at the default),
- * so every real chat request resets the model's expiry to that 5m default no
- * matter what an earlier warm asked for. A one-shot post-turn warm therefore
- * still idles out 5m after the last turn; only a re-up that lands inside
- * every possible 5m window keeps the model hot. 4m does.
+ * so a /v1 chat request resets the model's expiry to that 5m default no
+ * matter what an earlier warm asked for. Chat with a discovered Ollama now
+ * rides native /api/chat carrying MODEL_KEEP_ALIVE, but the hold still
+ * serves the undiscovered config.ollamaUrl path (still /v1) and keeps the
+ * model loaded past 30 idle minutes. 4m lands inside every 5m window.
  */
 const CHAT_RESIDENCY_REUP_MS = 4 * 60_000;
 
@@ -242,8 +242,11 @@ export function warmModel(
   baseUrl: string,
   model: string,
   redirect?: "follow" | "error" | "manual",
-  numCtx?: number,
+  requestedNumCtx?: number,
 ): void {
+  // Unsized warms (the chat hold, voice) load at the size chat will ask for.
+  // A warm at any other size is a reload now and another at the next turn.
+  const numCtx = requestedNumCtx ?? appliedContext(baseUrl, model);
   const base = baseUrl.replace(/\/+$/, "");
   const key = `${base}|${model}|${redirect ?? "follow"}|${numCtx ?? "default"}`;
   if (inflightWarms.has(key)) return;
@@ -260,7 +263,7 @@ export function warmModel(
         // it loads Ollama's auto default (131k on this generation), whose KV
         // cache can be 8x the weights. Classifier warms pass the dispatch
         // window so the warmed shape matches the real call; the chat-residency
-        // hold omits it on purpose (chat wants the full window).
+        // hold passes none and gets the size context-sizing applied to chat.
         body: JSON.stringify({
           model, prompt: "", stream: false, keep_alive: MODEL_KEEP_ALIVE,
           ...(numCtx !== undefined ? { options: { num_ctx: numCtx } } : {}),

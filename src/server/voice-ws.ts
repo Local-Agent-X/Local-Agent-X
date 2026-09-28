@@ -139,6 +139,9 @@ export async function setupVoiceWs(deps: {
       // pay a cold load, and the current turn's own request keeps it warm. The
       // very first turn of a cold session can still load-wait; a connect-time
       // prewarm is a follow-up. No-op / harmless 404 for non-Ollama runtimes.
+      // Passing no size is deliberate: warmModel loads at the context the
+      // turn's own request applies (context-sizing.ts), so the warm never
+      // reloads the model this turn is about to use.
       if (prepared.provider === "local") warmModel(config.ollamaUrl, voiceModel);
 
       // Voice has the SAME tools as text chat (full parity). The old "tools

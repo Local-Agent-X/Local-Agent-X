@@ -1,7 +1,8 @@
-// One round-trip through the OpenAI-compat HTTP transport. Streams events
-// from openaiHttpAdapter (the OpenAI Chat Completions client used by every
-// HTTP provider in this family), accumulates text + tool calls, and
-// reports each event back through the canonical contract.
+// One round-trip through the openai-compat family's HTTP transport. Streams
+// events from the transport chat-transport.ts picks (Chat Completions, or
+// Ollama's native /api/chat for a discovered local Ollama), accumulates
+// text + tool calls, and reports each event back through the canonical
+// contract.
 //
 // Mid-stream interrupt: if the user types while the model is generating,
 // we break out of the loop and signal `interruptedByInject: true`. The
@@ -22,6 +23,7 @@ import { extractToolCallsFromText } from "../tool-call-text-extractor.js";
 import { createDegenerateStreamGuard, DEGENERATE_STREAM_STOP_REASON } from "../stream-guards.js";
 import { withTransportRetry } from "../transport-retry.js";
 import { parseArgs } from "./helpers.js";
+import { chatTransportFor } from "./chat-transport.js";
 import type { StreamOnceResult } from "./types.js";
 
 const logger = createLogger("canonical-loop.adapters.openai-compat.stream");
@@ -55,11 +57,11 @@ export async function streamOnce(
   const guard =
     req.baseURL && isLoopbackOrPrivateUrl(req.baseURL) ? createDegenerateStreamGuard() : null;
   try {
-    // The OpenAI Chat Completions client every provider in this family
-    // shares — OpenAI, xAI, Gemini compat, and local + cloud Ollama. They
-    // differ only by baseURL/apiKey, which ride on `req`.
-    const { openaiHttpAdapter } = await import("../../../providers/adapters/openai-http.js");
-    for await (const ev of withTransportRetry(() => openaiHttpAdapter.stream(req), {
+    // Chat Completions for every provider in this family, except a
+    // discovered local Ollama runtime, which rides native /api/chat
+    // (chat-transport.ts). Same StreamChunk contract either way.
+    const transport = await chatTransportFor(req.baseURL);
+    for await (const ev of withTransportRetry(() => transport.stream(req), {
       label: "openai-compat",
       signal: req.signal,
       isAborted: deps.isAborted,

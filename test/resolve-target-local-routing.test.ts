@@ -66,6 +66,13 @@ vi.mock("../src/local-runtimes/index.js", () => ({
   }),
   reprobeLocalModelWindow: vi.fn().mockResolvedValue(null),
 }));
+// The config.ollamaUrl fallback holds the chat model resident, and the hold's
+// warm is a real POST /api/generate to 127.0.0.1:11434 — this file must never
+// reach the developer's live Ollama.
+vi.mock("../src/local-runtimes/residency.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/local-runtimes/residency.js")>()),
+  holdChatModelResidency: vi.fn(),
+}));
 vi.mock("../src/ollama-cloud.js", () => ({
   isCloudModel: (m: string) => cloudModels.has(m),
   getCloudOllamaCallTarget: () => ({ baseURL: "https://cloud.example/v1", apiKey: "ck" }),

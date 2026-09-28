@@ -44,6 +44,11 @@ export interface ProviderRequest {
    *  request omits it, overriding the Modelfile — a model profile supplies it. */
   topP?: number;
   presencePenalty?: number;
+  /** Sampling the Chat Completions wire has no field for; only the Ollama
+   *  native transport sends them (options.top_k / min_p / repeat_penalty). */
+  topK?: number;
+  minP?: number;
+  repeatPenalty?: number;
   maxTokens?: number;
   /** Suppress LOCAL_DEFAULT_MAX_TOKENS for this request: the caller measured
    *  the loaded window and found no completion budget left (see

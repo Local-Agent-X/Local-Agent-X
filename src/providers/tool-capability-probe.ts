@@ -43,6 +43,7 @@
 
 import { hasNoToolSupport, getToolsVerified, markToolsVerified, clearNoToolSupport } from "./types.js";
 import { isLoopbackUrl } from "../local-only-policy.js";
+import { appliedContext } from "../local-runtimes/context-sizing.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("providers.tool-probe");
@@ -238,6 +239,11 @@ export async function maybeVerifyToolSupport(
     if (!isLoopbackUrl(baseURL)) return;
     if (hasNoToolSupport(baseURL, model)) return; // a real latch already answers
     if (getToolsVerified(baseURL, model)) return; // evidence already on file
+    // A sized Ollama model runs at a num_ctx this /v1 probe cannot carry, so
+    // the probe would reload it at the runtime default and the next turn
+    // would reload it back (sched.go needsReload). Its real turns are the
+    // evidence instead (noteLiveToolCallEvidence).
+    if (appliedContext(baseURL, model) !== undefined) return;
     attempted.add(key);
     await verifyToolSupport(baseURL, model, { apiKey });
   } catch {

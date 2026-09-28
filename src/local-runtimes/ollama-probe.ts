@@ -1,7 +1,8 @@
 /**
  * Ollama adapter for the local-runtime seam — the FIRST adapter, not a
- * base class. Speaks Ollama's native API for discovery only; chat stays
- * on the canonical OpenAI-compat adapter.
+ * base class. Speaks Ollama's native API for discovery. Chat rides the
+ * canonical OpenAI-compat adapter, whose transport for a discovered Ollama
+ * runtime is native /api/chat (providers/adapters/ollama-native.ts).
  *
  * Wire facts (verified live against Ollama 0.32, 2026-07-15):
  *   /api/version → {"version":"..."} — Ollama-specific, used for detect.
@@ -17,10 +18,9 @@
  *   2026-07-17, Ollama 0.32.0: options.num_ctx 512 then 1024, and
  *   top-level num_ctx 2048, all left /api/ps context_length at the box
  *   default 131072; the sensitivity control — options.num_ctx 512 via
- *   native /api/chat — resized the runner to 512). So chatExtraBody is
- *   {}: LAX reports the real window, it can't resize it on this path.
- *   Deliberate either way: LAX does not SET num_ctx anywhere yet —
- *   per-request ctx sizing is a parked policy decision.
+ *   native /api/chat — resized the runner to 512). That is why chat moved
+ *   to /api/chat: chatExtraBody carries the num_ctx that
+ *   context-sizing.ts chose, and only the native endpoint honours it.
  */
 import type {
   LocalModel,
@@ -174,7 +174,9 @@ export const ollamaProbe: LocalRuntimeProbe = {
     };
   },
 
-  chatExtraBody() {
-    return {};
+  // LAX chats with Ollama over native /api/chat (providers/adapters/
+  // ollama-native.ts), where options.num_ctx sizes the runner.
+  chatExtraBody(_modelId, tokens) {
+    return { options: { num_ctx: tokens } };
   },
 };

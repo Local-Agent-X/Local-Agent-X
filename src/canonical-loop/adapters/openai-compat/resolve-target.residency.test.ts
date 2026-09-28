@@ -10,10 +10,16 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 import { resolveOpenAICompatTarget } from "./resolve-target.js";
 
-const holdChatModelResidency = vi.fn();
+const calls: string[] = [];
+const holdChatModelResidency = vi.fn((..._args: unknown[]) => { calls.push("hold"); });
+const ensureContextDecision = vi.fn(async (..._args: unknown[]) => { calls.push("size"); return null; });
 
 vi.mock("../../../local-runtimes/residency.js", () => ({
   holdChatModelResidency: (...args: unknown[]) => holdChatModelResidency(...args),
+}));
+
+vi.mock("../../../local-runtimes/context-sizing.js", () => ({
+  ensureContextDecision: (...args: unknown[]) => ensureContextDecision(...args),
 }));
 
 const runtimeForModel: { value: unknown } = { value: null };
@@ -38,6 +44,8 @@ vi.mock("../../../config.js", () => ({
 
 beforeEach(() => {
   holdChatModelResidency.mockClear();
+  ensureContextDecision.mockClear();
+  calls.length = 0;
   runtimeForModel.value = null;
 });
 
@@ -53,6 +61,17 @@ describe("resolve-target chat residency", () => {
     expect(holdChatModelResidency).toHaveBeenCalledWith("http://127.0.0.1:11434", "qwen3.6:27b");
   });
 
+  it("decides the model's context before the hold's warm can load it", async () => {
+    runtimeForModel.value = {
+      kind: "ollama",
+      endpoint: { baseUrl: "http://127.0.0.1:11434", origin: "auto" },
+      chatBaseUrl: "http://127.0.0.1:11434/v1",
+    };
+    await resolveOpenAICompatTarget("local", { apiKey: "" }, "qwen3.6:27b");
+    expect(ensureContextDecision).toHaveBeenCalledWith("http://127.0.0.1:11434", "qwen3.6:27b", { waitMs: 3_000 });
+    expect(calls).toEqual(["size", "hold"]);
+  });
+
   it("never holds an openai-compat runtime — no /api/generate to warm through", async () => {
     runtimeForModel.value = {
       kind: "openai-compat",
@@ -62,6 +81,7 @@ describe("resolve-target chat residency", () => {
     const target = await resolveOpenAICompatTarget("local", { apiKey: "" }, "some-lmstudio-model");
     expect(target?.baseURL).toBe("http://127.0.0.1:1234/v1");
     expect(holdChatModelResidency).not.toHaveBeenCalled();
+    expect(ensureContextDecision).not.toHaveBeenCalled();
   });
 
   it("holds via config.ollamaUrl on the pre-seam fallback path", async () => {

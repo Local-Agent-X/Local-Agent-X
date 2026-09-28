@@ -9,6 +9,11 @@
 import type { OpenAICompatTarget } from "./types.js";
 import type { LocalModelCapabilityProfile } from "../../../local-runtimes/index.js";
 
+/** Longest a turn waits on a context decision (/api/version, /api/tags,
+ *  nvidia-smi, and /api/show when nothing is on file). A decision checked in
+ *  the last five minutes answers without any request. */
+const CONTEXT_DECISION_WAIT_MS = 3_000;
+
 export function localModelEvidenceForResolvedTarget(
   provider: string,
   target: OpenAICompatTarget,
@@ -68,12 +73,18 @@ export async function resolveOpenAICompatTarget(
       rt = getRuntimeForModel(model);
     }
     if (rt) {
-      // Chat rides /v1, which ignores keep_alive — without a held residency
-      // the chat model idles out on Ollama's 5m default and every post-idle
-      // turn pays the full cold load (30-60s observed 2026-08-25). Hold is
-      // Ollama-native only: it re-ups via /api/generate, which OpenAI-compat
-      // runtimes (LM Studio, vLLM) don't serve.
       if (rt.kind === "ollama") {
+        // The context this model runs at, decided from its architecture and
+        // this machine's VRAM (context-sizing.ts) BEFORE anything loads it:
+        // the hold's warm below, the chat request, and the window reported to
+        // preflight and compaction all read the same applied size. Bounded
+        // wait — a slow runtime is sized for the next turn, not this one.
+        const { ensureContextDecision } = await import("../../../local-runtimes/context-sizing.js");
+        await ensureContextDecision(rt.endpoint.baseUrl, model, { waitMs: CONTEXT_DECISION_WAIT_MS });
+        // Keeps the chat model loaded past Ollama's keep_alive between turns
+        // (a post-idle cold load is 30-60s, observed 2026-08-25). Hold is
+        // Ollama-native only: it re-ups via /api/generate, which OpenAI-compat
+        // runtimes (LM Studio, vLLM) don't serve.
         const { holdChatModelResidency } = await import("../../../local-runtimes/residency.js");
         holdChatModelResidency(rt.endpoint.baseUrl, model);
       }

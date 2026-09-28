@@ -7,6 +7,9 @@ const ALLOWED = new Set([
   "GET /api/ps",
   "POST /api/show",
   "POST /api/generate",
+  // Chat with a discovered Ollama rides native /api/chat (num_ctx, keep_alive);
+  // certification and the tool probe still use /v1.
+  "POST /api/chat",
   "POST /v1/chat/completions",
 ]);
 const HOP_BY_HOP_HEADERS = new Set([

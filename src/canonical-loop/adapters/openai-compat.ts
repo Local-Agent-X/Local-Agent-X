@@ -141,6 +141,9 @@ export class OpenAICompatAdapter implements Adapter {
       temperature: sampling?.temperature ?? this.opts.temperature ?? 0.7,
       ...(sampling?.topP != null ? { topP: sampling.topP } : {}),
       ...(sampling?.presencePenalty != null ? { presencePenalty: sampling.presencePenalty } : {}),
+      ...(sampling?.topK != null ? { topK: sampling.topK } : {}),
+      ...(sampling?.minP != null ? { minP: sampling.minP } : {}),
+      ...(sampling?.repeatPenalty != null ? { repeatPenalty: sampling.repeatPenalty } : {}),
       maxTokens: this.opts.maxTokens,
       reasoningEffort: resolveStepReasoningEffort(
         input.stepEffortHint,

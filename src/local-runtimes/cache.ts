@@ -13,6 +13,7 @@ import { restorePublishedCertifications } from "./certification-runner.js";
 import type { LocalModel, LocalRuntimeInfo } from "./types.js";
 import { classifyModel, type ModelTier } from "../model-tiers.js";
 import { modelDeclaredContextWindow } from "./model-profile.js";
+import { appliedContext } from "./context-sizing.js";
 import { maxToolsForTier } from "../tools/tier-tool-set.js";
 import { getToolsVerified, hasNoTools } from "../providers/model-capabilities-store.js";
 import { isLocalModelQualificationBoot } from "../qualification-boot.js";
@@ -129,9 +130,29 @@ export function getRuntimeForModel(model: string): LocalRuntimeInfo | null {
   return cache?.find((r) => r.models.some((m) => m.id === model)) ?? null;
 }
 
+/**
+ * The model as discovered, with contextWindow replaced by the size LAX
+ * applies to its chat requests when context-sizing.ts has decided one. That
+ * is the window the model RUNS at from the next request on, whatever /api/ps
+ * showed at sweep time, so preflight, compaction, the meter and failover all
+ * size against it (resolveContextWindow reads this).
+ */
 export function getLocalModel(chatBaseUrl: string, model: string): LocalModel | null {
   const rt = cache?.find((r) => r.chatBaseUrl === chatBaseUrl);
-  return rt?.models.find((m) => m.id === model) ?? null;
+  const found = rt?.models.find((m) => m.id === model) ?? null;
+  if (!rt || !found || rt.kind !== "ollama") return found;
+  const applied = appliedContext(rt.endpoint.baseUrl, model);
+  return applied === undefined ? found : { ...found, contextWindow: applied };
+}
+
+/** The endpoint ROOT of the discovered Ollama runtime whose OpenAI-compat chat
+ *  base is `chatBaseUrl`, or null when that base is anything else (LM Studio,
+ *  vLLM, Ollama Cloud, an undiscovered config URL). The chat transport rides
+ *  Ollama's native /api/chat only for a runtime positively identified here. */
+export function ollamaNativeRootForChatBase(chatBaseUrl: string | undefined): string | null {
+  if (!chatBaseUrl) return null;
+  const rt = cache?.find((r) => r.chatBaseUrl === chatBaseUrl);
+  return rt?.kind === "ollama" ? rt.endpoint.baseUrl.replace(/\/+$/, "") : null;
 }
 
 /**
@@ -153,7 +174,7 @@ export function getLocalModelCapabilityProfile(
   model: string,
 ): LocalModelCapabilityProfile {
   const runtime = cache?.find((r) => r.chatBaseUrl === chatBaseUrl) ?? null;
-  const localModel = runtime?.models.find((candidate) => candidate.id === model) ?? null;
+  const localModel = getLocalModel(chatBaseUrl, model);
   const tier = classifyModel(model);
   return {
     runtimeId: runtime?.id ?? null,

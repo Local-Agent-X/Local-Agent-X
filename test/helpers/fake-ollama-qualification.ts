@@ -14,6 +14,7 @@ interface CompletionBody {
   tools?: Array<{ function?: { name?: string } }>;
   stream?: boolean;
   prompt?: string;
+  options?: { num_ctx?: number };
 }
 
 function json(res: ServerResponse, status: number, body: unknown): void {
@@ -48,7 +49,25 @@ function toolCall(id: string, name: string, args: Record<string, unknown>): unkn
   return { id, type: "function", function: { name, arguments: JSON.stringify(args) } };
 }
 
-function stream(res: ServerResponse, content: string, call?: { id: string; name: string; args: Record<string, unknown> }): void {
+type FakeCall = { id: string; name: string; args: Record<string, unknown> };
+
+/** Native /api/chat NDJSON (api/types.go ChatResponse): the message line, then
+ *  the done line with done_reason and counts. Tool-call arguments are an
+ *  object, and the id is left off as older runtimes do. */
+function streamNative(res: ServerResponse, content: string, call?: FakeCall): void {
+  res.writeHead(200, { "Content-Type": "application/x-ndjson" });
+  const message = call
+    ? { role: "assistant", content: "", tool_calls: [{ function: { name: call.name, arguments: call.args } }] }
+    : { role: "assistant", content };
+  res.write(`${JSON.stringify({ model: "qualification-fake:1b", created_at: "2026-01-01T00:00:00Z", message, done: false })}\n`);
+  res.end(`${JSON.stringify({
+    model: "qualification-fake:1b", created_at: "2026-01-01T00:00:00Z", message: { role: "assistant", content: "" },
+    done: true, done_reason: "stop", prompt_eval_count: 1, eval_count: 1,
+  })}\n`);
+}
+
+function stream(res: ServerResponse, content: string, call?: FakeCall, native = false): void {
+  if (native) return streamNative(res, content, call);
   res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" });
   const delta = call
     ? { role: "assistant", tool_calls: [{ index: 0, ...toolCall(call.id, call.name, call.args) }] }
@@ -70,6 +89,8 @@ function stream(res: ServerResponse, content: string, call?: { id: string; name:
   res.end("data: [DONE]\n\n");
 }
 
+const streamReply = stream;
+
 function contentText(message: WireMessage): string {
   return typeof message.content === "string" ? message.content : "";
 }
@@ -81,7 +102,9 @@ const NAVIGATION_CSS_DEFINITION = /[^\s"'`]*bellavida-medical-massage-clone[\\/]
 export class FakeOllamaQualificationService {
   readonly model = "qualification-fake:1b";
   readonly digest = "sha256:qualification-fake";
-  readonly counts = { version: 0, tags: 0, ps: 0, show: 0, generate: 0, completion: 0, forbidden: 0 };
+  readonly counts = { version: 0, tags: 0, ps: 0, show: 0, generate: 0, completion: 0, chat: 0, forbidden: 0 };
+  /** num_ctx of every native chat request, in order (undefined = none sent). */
+  readonly chatNumCtx: Array<number | undefined> = [];
   readonly received: string[] = [];
   /** "answer" grounds every navigation reply in a tool result; "wander" never stops calling tools. */
   navigation: "answer" | "wander" = "answer";
@@ -148,11 +171,18 @@ export class FakeOllamaQualificationService {
       const body = await bodyOf(req);
       return this.completion(body, res);
     }
+    if (req.method === "POST" && path === "/api/chat") {
+      this.counts.chat += 1;
+      const body = await bodyOf(req);
+      this.chatNumCtx.push(body.options?.num_ctx);
+      return this.completion(body, res, true);
+    }
     this.counts.forbidden += 1;
     json(res, 418, { error: "proxy_forwarded_forbidden_route" });
   }
 
-  private completion(body: CompletionBody, res: ServerResponse): void {
+  private completion(body: CompletionBody, res: ServerResponse, native = false): void {
+    const stream = (r: ServerResponse, content: string, call?: FakeCall) => streamReply(r, content, call, native);
     const messages = body.messages ?? [];
     const allText = messages.map(contentText).join("\n");
     const toolNames = (body.tools ?? []).map((tool) => tool.function?.name ?? "");
@@ -184,7 +214,7 @@ export class FakeOllamaQualificationService {
     // message from the continuation request, and a latest-message-only route
     // then fell through to the generic reply.
     if (allText.includes("bellavidamassage clone") || allText.includes("defines the CSS class")) {
-      return this.navigationReply(allText, messages, res);
+      return this.navigationReply(allText, messages, res, native);
     }
     // The ask is found anywhere, not only as the latest user row: the product
     // appends its per-turn situational digest as a trailing user row after the
@@ -203,7 +233,8 @@ export class FakeOllamaQualificationService {
     stream(res, "OK");
   }
 
-  private navigationReply(transcript: string, messages: WireMessage[], res: ServerResponse): void {
+  private navigationReply(transcript: string, messages: WireMessage[], res: ServerResponse, native: boolean): void {
+    const stream = (r: ServerResponse, content: string, call?: FakeCall) => streamReply(r, content, call, native);
     const toolText = messages.filter((entry) => entry.role === "tool").map(contentText).join("\n");
     if (this.navigation === "wander") {
       this.wanderCalls += 1;

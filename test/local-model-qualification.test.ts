@@ -336,6 +336,40 @@ describe("local model qualification workflow", () => {
     }
   });
 
+  it("speaks native /api/chat NDJSON the way the product's Ollama transport reads it", async () => {
+    const { OllamaNativeAdapter } = await import("../src/providers/adapters/ollama-native.js");
+    const service = new FakeOllamaQualificationService();
+    const endpoint = await service.start();
+    try {
+      const drain = async (messages: unknown[]) => {
+        const chunks: Array<{ type: string; [k: string]: unknown }> = [];
+        for await (const chunk of new OllamaNativeAdapter().stream({
+          apiKey: "ollama", model: service.model, baseURL: `${endpoint}/v1`, systemPrompt: "s",
+          messages: messages as never, tools: [{ name: "read", description: "r", parameters: { type: "object" } }],
+        })) chunks.push(chunk as never);
+        return chunks;
+      };
+      const ask = { role: "user", content: "Use the read tool on workspace/qualification-note.txt, then say LAX_QUALIFICATION_READ_8C42." };
+      const first = await drain([ask]);
+      const call = first.find((c) => c.type === "tool_call") as { id: string; name: string; arguments: string };
+      expect(call).toMatchObject({ name: "read" });
+      expect(JSON.parse(call.arguments)).toEqual({ path: "workspace/qualification-note.txt" });
+      expect(call.id).toMatch(/^call_[0-9a-f]+$/); // the fake sends no id, like older runtimes
+      expect(first.at(-1)).toMatchObject({ type: "done", stopReason: "tool_calls" });
+
+      const second = await drain([
+        ask,
+        { role: "assistant", content: "", tool_calls: [{ id: call.id, type: "function", function: { name: "read", arguments: call.arguments } }] },
+        { role: "tool", tool_call_id: call.id, content: "LAX_QUALIFICATION_READ_8C42" },
+      ]);
+      expect(second.filter((c) => c.type === "text").map((c) => c.delta).join("")).toBe("LAX_QUALIFICATION_READ_8C42");
+      expect(service.counts).toMatchObject({ chat: 2, completion: 0, forbidden: 0 });
+      expect(service.chatNumCtx).toEqual([undefined, undefined]); // the fake is never sized: no model_info
+    } finally {
+      await service.close();
+    }
+  });
+
   it("qualifies the actual product routes against a deterministic fake Ollama service", async () => {
     const surface = repoSurface();
     const service = new FakeOllamaQualificationService();

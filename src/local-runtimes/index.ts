@@ -50,6 +50,7 @@ export {
   getRuntimeForModel,
   invalidateLocalRuntimes,
   localRuntimesStale,
+  ollamaNativeRootForChatBase,
   refreshLocalRuntimes,
   reprobeLocalModelWindow,
   restoreProjectedLocalRuntime,
@@ -63,6 +64,14 @@ export {
   isEligibleClassifierModel,
   type CertifiedLocalClassifierTarget,
 } from "./classifier-model.js";
+export {
+  appliedContext,
+  contextSizingRecord,
+  ensureContextDecision,
+  sizingRoot,
+} from "./context-sizing.js";
+export { observeChatResidency } from "./context-sizing-adapt.js";
+export type { SizingRecord } from "./context-sizing-store.js";
 export {
   ModelProfileSchema,
   KERNEL_POLICY_STRICTNESS,

@@ -106,11 +106,10 @@ export interface LocalRuntimeProbe {
 
   /**
    * Runtime-specific extra request body to ask for `tokens` of context on
-   * the OpenAI-compat chat path. Return {} when the runtime cannot be told
-   * per-request. (Measured 2026-07-15: Ollama's /v1 endpoint silently DROPS
-   * options.num_ctx — only its native /api/chat honors it — so the Ollama
-   * probe returns {} and LAX reports the real window instead of pretending
-   * to resize it.)
+   * the chat path LAX uses for this runtime. Return {} when the runtime
+   * cannot be told per-request. (Measured 2026-07-15: Ollama's /v1 endpoint
+   * silently DROPS options.num_ctx — only its native /api/chat honors it —
+   * which is why LAX chats with Ollama over /api/chat.)
    */
   chatExtraBody(modelId: string, tokens: number): Record<string, unknown>;
 }

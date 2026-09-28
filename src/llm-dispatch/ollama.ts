@@ -7,7 +7,8 @@
  * "which model?" question is real work here and a one-liner everywhere else.
  *
  * Single-shot /api/generate only. Chat traffic does NOT come through here —
- * it rides the canonical OpenAI-compat adapter against /v1.
+ * it rides the canonical OpenAI-compat adapter (native /api/chat for a
+ * discovered Ollama, providers/adapters/ollama-native.ts).
  */
 import { createLogger } from "../logger.js";
 import { getRuntimeConfig } from "../config.js";

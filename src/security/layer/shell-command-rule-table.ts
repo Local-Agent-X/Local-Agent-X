@@ -6,6 +6,17 @@
 
 import { type CommandPosition } from "./shell-command-positions.js";
 import { execBasename, isShellReparseFlag } from "./shell-lex.js";
+import { INLINE_CODE_PATTERNS, INTERP_EVAL_FLAGS } from "./shell-rules.js";
+
+// The inline program an interpreter was handed (`python -c "<code>"`, `node -e
+// "<code>"`, an awk program): the word after an eval flag, or for awk, its words.
+function inlineCode(p: CommandPosition): string[] {
+  const args = argsOf(p);
+  if (AWK_BINS.has(p.bin)) return args;
+  const flags = INTERP_EVAL_FLAGS[p.bin];
+  if (!flags) return [];
+  return args.filter((_, i) => i > 0 && flags.has(args[i - 1]));
+}
 
 export type CommandRuleCategory =
   | "shell-escape" | "privilege" | "disk" | "system-config"
@@ -79,6 +90,8 @@ export const COMMAND_RULES: readonly CommandRule[] = [
     matches: (p) => p.piped && readsScriptFromStdin(p) },
   { id: "awk-pipe-into-shell", category: "shell-escape", why: "pipes its output into a shell from inside the awk program",
     matches: (p) => AWK_BINS.has(p.bin) && argsOf(p).some((a) => /\|\s*"\s*(?:\S*\/)?(?:ba|z|da|k|a)?sh\b/.test(a)) },
+  { id: "inline-code", category: "shell-escape", why: "runs inline code that calls a refused command",
+    matches: (p) => inlineCode(p).some((code) => INLINE_CODE_PATTERNS.some((re) => re.test(code))) },
   binWith("inline-interpreter", "shell-escape", "runs an inline program the shell checks cannot read",
     ["perl", "ruby", "php"], (a) => (a[0] === "-e" || a[0] === "-E") || lower(a[0]) === "-r"),
   binWith("source-absolute", "shell-escape", "runs a script from an absolute path inside this shell",

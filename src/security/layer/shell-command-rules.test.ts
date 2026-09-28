@@ -160,3 +160,22 @@ describe("the converted denylist: the words alone are not the command", () => {
     it(cmd, () => expect(ruleOf(cmd)).toBeNull());
   }
 });
+
+// Inside an inline program the text is code, so the refused commands are matched
+// by their words there, exactly as the raw command-line list used to.
+describe("inline program code is still scanned for refused commands", () => {
+  const blocked = [
+    `python3 -c "import os; os.system('sudo id')"`,
+    `node -e "require('child_process').execSync('wmic os get caption')"`,
+    `awk 'BEGIN { system("sudo id") }'`,
+    `bash -c "python -c 'import os; os.system(\\"mkfifo /tmp/f\\")'"`,
+  ];
+  for (const cmd of blocked) it(cmd, () => expect(ruleOf(cmd)).toBe("inline-code"));
+
+  const allowed = [
+    `python -c "print('hello')"`,
+    `node -e "console.log(require('./package.json').version)"`,
+    `awk '{ print $2 }' data.txt`,
+  ];
+  for (const cmd of allowed) it(cmd, () => expect(ruleOf(cmd)).toBeNull());
+});

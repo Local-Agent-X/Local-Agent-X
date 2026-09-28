@@ -167,6 +167,57 @@ export const BLOCKED_COMMANDS = [
   // false-positived on `… | grep mount` and `echo mounting`.
 ];
 
+// The command-line forms of these are argv rules now (shell-command-rule-table.ts),
+// which read the command being run instead of matching its words anywhere. Inside
+// an inline PROGRAM (`python -c "…"`, `node -e "…"`, an awk program) the text is
+// code, not a command line, so matching the words is the only check there is, and
+// these patterns keep that coverage exactly as the command-line list gave it.
+export const INLINE_CODE_PATTERNS: readonly RegExp[] = [
+  /\bsudo\b/i,
+  /\bchmod\s+777\b/i,
+  /\bmkfs\b/i,
+  /\bdd\s+.*of=/i,
+  /(?<!-)\bformat\b\s+(\/|\\|[A-Za-z]:)/i,
+  /(?<![\w./\\-])eval\b/i,
+  /\bperl\s+-e\b/i,
+  /\bruby\s+-e\b/i,
+  /\bphp\s+-r\b/i,
+  /\bbase64\s+(-[a-zA-Z]*d|--decode)\b/i,
+  /\bpowershell\b.*-enc/i,
+  /\bnet\s+user\b/i,
+  /\breg\s+(add|delete|query|export|import|save|restore|load|unload)\b/i,
+  /\bwmic\b/i,
+  /\bschtasks\b/i,
+  /\|.*\b(bash|sh|cmd|powershell)\b/i,
+  /\bosascript\s/i,
+  /\bxdg-open\s/i,
+  /\blaunchctl\b/i,
+  /\bautomator\b/i,
+  /\bshortcuts\s/i,
+  /\bosacompile\b/i,
+  /\bdefaults\s+write\b.*Launch(Agents|Daemons)/i,
+  /^\.\s+\//,
+  /\bsource\s+\//i,
+  /\bbash\s+-i\b/i,
+  /\bsh\s+-i\b/i,
+  /\bzsh\s+-i\b/i,
+  /\bpython[23]?\s+-i\b/i,
+  /\bnode\s+--inspect/i,
+  /\bmkfifo\b/i,
+  /\bscreen\s+-[dD]/i,
+  /\btmux\s+new/i,
+  /\bxterm\b.*-e/i,
+  /\bpython[23]?\s+-m\s+http\.server\b/i,
+  /\bpython[23]?\s+-m\s+smtpd\b/i,
+  /\bphp\s+-S\b/i,
+  /\bnpx\s+serve\b/i,
+  /\bmimikatz\b/i,
+  /\bhashdump\b/i,
+  /\bsecurity\s+find-generic-password/i,
+  /\bfdisk\b/i,
+  /\bparted\b/i,
+];
+
 // ── argv[0] dangerous-command basenames ──
 // Network/DNS/opener/disk binaries that are dangerous when INVOKED, but whose
 // bare names are common English/argument words. Matching them as substrings

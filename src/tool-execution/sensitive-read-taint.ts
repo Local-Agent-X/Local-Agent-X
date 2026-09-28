@@ -166,25 +166,24 @@ export function applyResultTaintPolicy(
       // content to fingerprint.
       redactReason = `bash command referenced sensitive path(s): ${matches.join(", ")}`;
     }
+    // Shell OUTPUT: a secret value in it is masked in place and registered as a
+    // known secret (secret-values.ts) — the model keeps the listing (names,
+    // digests, every other line) and loses only the values. Withholding the
+    // whole output because one line matched cost the model its `supabase`
+    // listing and left it telling the user "security is blocking it". Only a
+    // STRUCTURED shape or a registered value is masked: the high-entropy pass
+    // fires on build hashes and camelCase identifiers in ordinary output, and
+    // exfil of such a token is still caught at send time by the outbound scan.
+    // A command that names a secrets FILE keeps the whole-result stub above.
     const stdout = typeof result?.content === "string" ? result.content : "";
-    // Only a SUCCESSFUL command's output is data the agent actually read; a
-    // FAILED command's output is a diagnostic/error message. A benign
-    // nonzero-exit bash whose stderr carried a coincidental token must not
-    // trip the scanner.
-    if (stdout.length > 0 && result && !result.isError) {
-      const det = detectSecretsInOutput(stdout);
-      // Redact only on a STRUCTURED credential — a real API-key/PEM/JWT shape
-      // that genuinely surfaced a secret to stdout. A high-entropy-ONLY match
-      // fires on long camelCase identifiers and hashes in ordinary source;
-      // real exfil of such a token is still caught at send time by the egress
-      // guard AND the threat tool-chain's outbound scan (both key on `matched`).
-      if (det.structured) {
-        pending.push({ source: "secret", target: `bash:${det.kinds.join(",")}`, content: stdout });
-        redactReason = `bash output contained secret-shaped content (${det.kinds.join(", ")})`;
-      } else if (det.matched) {
-        logger.debug(
-          `bash output had a high-entropy-only match (kinds: ${det.kinds.join(", ")}) — not redacting (coincidental identifier/hash in source; egress + tool-chain still scan any outbound send)`,
-        );
+    if (!redactReason && stdout.length > 0 && result) {
+      const masked = withholdSecretValues(stdout, { structuredOnly: true });
+      if (masked.masked > 0) {
+        result = {
+          ...result,
+          content: `${masked.text}\n\n${secretsMaskedNote(masked.masked, masked.kinds)}`,
+          metadata: { ...(result.metadata ?? {}), secrets_masked: masked.masked },
+        };
       }
     }
   }
@@ -257,6 +256,7 @@ export function applyResultTaintPolicy(
     return {
       content:
         `[redacted by data-lineage gate — ${redactReason}. ` +
+        `This read did NOT complete: none of this source's content is available to you, so whatever you meant to check with it is unverified — report it as not checked, never as done. ` +
         `The raw bytes were withheld from the model context, so nothing sensitive entered this session and no tools are blocked. ` +
         `Do not re-read this source; if a credential is needed, use a {{SECRET_NAME}} placeholder or ask the user.]`,
       isError: false,

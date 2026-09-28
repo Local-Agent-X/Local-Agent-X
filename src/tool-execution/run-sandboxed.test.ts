@@ -17,6 +17,7 @@ import type { ChatCompletionMessageParam } from "openai/resources/chat/completio
 import { renderToolResultForModel } from "../tools/result-helpers.js";
 import { setModelView } from "./model-view.js";
 import { checkEgressTaint, clearSessionTaint, detectSecretsInOutput, getKernelTaintSources } from "../data-lineage/index.js";
+import { unregisterRedactedSecretValue } from "../security/secrets/index.js";
 import { setUnconfinedHostAcknowledgement } from "../sandbox/index.js";
 
 const dirs = new Set<string>();
@@ -352,32 +353,87 @@ describe("unattended shell effective-sandbox gate", () => {
 });
 
 // Delivery-point invariant: a session is tainted iff sensitive bytes actually
-// entered the model context. A SUCCESSFUL bash whose stdout holds a structured
-// secret gets the whole-result redaction stub — the model never sees the bytes
-// — so the session must NOT be tainted (the live brick: an env/path probe that
-// surfaced one real key quarantined the shell for the rest of the session even
-// though the model only ever received the stub).
+// entered the model context. A bash whose stdout holds a structured secret has
+// that VALUE masked in place — the model keeps the output and never sees the
+// bytes — so the session must NOT be tainted (the live brick: an env/path probe
+// that surfaced one real key quarantined the shell for the rest of the session;
+// then the whole-output stub that replaced it hid a `supabase` listing because
+// one row matched, 2026-09-28).
 describe("bash-output secret handling (delivery-point invariant)", () => {
   // Secret-shaped output (canonical AWS example key). The first test pins that
   // the scanner really matches it, so the assertions below are meaningful.
   const SECRET = "config dump: AKIAIOSFODNN7EXAMPLE region=us-east-1";
+  afterEach(() => unregisterRedactedSecretValue("AKIAIOSFODNN7EXAMPLE"));
 
   it("sanity: the sample is detected as secret-shaped", () => {
     expect(detectSecretsInOutput(SECRET).matched).toBe(true);
   });
 
-  it("a SUCCESSFUL bash with secret-shaped output is stubbed and does NOT taint", async () => {
+  it("a SUCCESSFUL bash with a secret in its output keeps the output, masks the value, does NOT taint", async () => {
     const s = freshSession();
     clearSessionTaint(s);
     const res = await run(fakeBash(SECRET, false), { command: "printenv" }, s);
-    // The model's view is the stub, never the key…
-    expect(res.metadata?.redacted).toBe(true);
+    // The model's view is the output with the value masked, never the key…
+    expect(String(res.content)).toContain("config dump: AKIA**** region=us-east-1");
+    expect(String(res.content)).toContain("1 secret value masked (AWS Access Key)");
     expect(String(res.content)).not.toContain("AKIAIOSFODNN7EXAMPLE");
+    expect(res.status).not.toBe("blocked");
+    expect(res.metadata?.secrets_masked).toBe(1);
     // …so nothing entered context and the session stays clean: egress is open
     // and the kernel sees no taint labels (shell is NOT denied next turn).
     expect(checkEgressTaint(s).blocked).toBe(false);
     expect(getKernelTaintSources(s)).toEqual([]);
     clearSessionTaint(s);
+  });
+
+  it("a `supabase secrets list`-style listing reaches the model whole: names and digests intact, the one real value masked", async () => {
+    const s = freshSession();
+    clearSessionTaint(s);
+    const digest = "3f2a9c1e7b4d6a8f0c2e4b6d8a0f1c3e5b7d9f1a3c5e7b9d1f3a5c7e9b1d3f5a";
+    const listing = [
+      "         NAME          |                              DIGEST",
+      "-----------------------|------------------------------------------------------------------",
+      "  SUPABASE_URL         | " + digest,
+      "  SUPABASE_ANON_KEY    | " + digest.split("").reverse().join(""),
+      "  STRIPE_WEBHOOK_SECRET| " + digest,
+      "",
+      "Access rules: 3 policies; functions: hello, cron",
+      `GITHUB_TOKEN=ghp_${"Ab12".repeat(9)}`,
+    ].join("\n");
+    const res = await run(fakeBash(listing, false), { command: "supabase secrets list; supabase functions list" }, s);
+    const out = String(res.content);
+    for (const name of ["SUPABASE_URL", "SUPABASE_ANON_KEY", "STRIPE_WEBHOOK_SECRET", "Access rules: 3 policies"]) expect(out).toContain(name);
+    expect(out).toContain(digest);
+    expect(out).toContain("GITHUB_TOKEN=ghp_****");
+    expect(out).not.toContain("Ab12Ab12");
+    expect(res.status).not.toBe("blocked");
+    expect(res.metadata?.redacted).toBeUndefined();
+    expect(checkEgressTaint(s).blocked).toBe(false);
+    // The masked value is registered: the model cannot send it anywhere.
+    const { checkOutboundPayload } = await import("../tools/http-egress-guard.js");
+    expect(checkOutboundPayload("clipboard_write", `ghp_${"Ab12".repeat(9)}`)?.meta.blocked_by).toBe("outbound-secret-scan");
+    unregisterRedactedSecretValue(`ghp_${"Ab12".repeat(9)}`);
+    clearSessionTaint(s);
+  });
+
+  it("a benign shell output is byte-identical, with no note", async () => {
+    const s = freshSession();
+    const listing = "total 3\n-rw-r--r-- 1 peter staff  120 Sep 28 04:04 README.md\nsrc  test  package.json";
+    const res = await run(fakeBash(listing, false), { command: "ls -la" }, s);
+    expect(res.content).toBe(listing);
+    expect(res.metadata?.secrets_masked).toBeUndefined();
+  });
+
+  it("a command that names a secrets FILE still gets the whole-result stub, and the stub says the check did not happen", async () => {
+    const s = freshSession();
+    clearSessionTaint(s);
+    const res = await run(fakeBash("DB_PASSWORD=hunter22-long-enough-value", false), { command: "cat ~/.aws/credentials" }, s);
+    expect(res.status).toBe("blocked");
+    expect(res.metadata?.redacted).toBe(true);
+    expect(String(res.content)).not.toContain("hunter22");
+    expect(String(res.content)).toMatch(/did NOT complete/);
+    expect(String(res.content)).toMatch(/report it as not checked, never as done/);
+    expect(checkEgressTaint(s).blocked).toBe(false);
   });
 
   it("a FAILED bash with secret-shaped error output does NOT taint", async () => {
@@ -423,13 +479,21 @@ describe("bash-output taint requires a STRUCTURED secret (high-entropy-only FP f
     clearSessionTaint(s);
   });
 
-  it("a SUCCESSFUL bash whose output carries a STRUCTURED credential is stubbed (delivery-point: no taint)", async () => {
+  it("a SUCCESSFUL bash whose output is high-entropy-ONLY is delivered untouched (no `****` over a build hash)", async () => {
+    const s = freshSession();
+    const res = await run(fakeBash(HIGH_ENTROPY, false), { command: 'grep -rn "as any" src' }, s);
+    expect(res.content).toBe(HIGH_ENTROPY);
+  });
+
+  it("a SUCCESSFUL bash whose output carries a STRUCTURED credential has the value masked (delivery-point: no taint)", async () => {
     const s = freshSession();
     clearSessionTaint(s);
     const res = await run(fakeBash(STRUCTURED, false), { command: "cat config" }, s);
-    expect(res.metadata?.redacted).toBe(true);
+    expect(res.metadata?.secrets_masked).toBe(1);
+    expect(String(res.content)).toContain("AKIA****");
     expect(String(res.content)).not.toContain("AKIAIOSFODNN7EXAMPLE");
     expect(checkEgressTaint(s).blocked).toBe(false);
+    unregisterRedactedSecretValue("AKIAIOSFODNN7EXAMPLE");
     clearSessionTaint(s);
   });
 });

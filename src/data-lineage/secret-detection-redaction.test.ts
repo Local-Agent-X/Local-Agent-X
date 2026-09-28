@@ -5,7 +5,7 @@ import {
   checkEgressTaint,
   clearSessionTaint,
   detectSecretsInOutput,
-  redactSecretSpans,
+  maskSecretValues,
 } from "./index.js";
 
 describe("detectSecretsInOutput — positive cases", () => {
@@ -149,30 +149,30 @@ describe("openai-key pattern precision (false-positive that bricked agent runs)"
   });
 });
 
-describe("redactSecretSpans — surgical inline redaction for untrusted inbound content", () => {
-  it("replaces the secret span with a marker and keeps surrounding text", () => {
+describe("maskSecretValues — in-place value masking for inbound content", () => {
+  it("masks the secret value to its prefix and keeps surrounding text", () => {
     const body = "Trends report. Contact AKIAIOSFODNN7EXAMPLE for access. The end.";
-    const red = redactSecretSpans(body);
-    expect(red.matched).toBe(true);
+    const red = maskSecretValues(body);
+    expect(red.masked).toBe(1);
     expect(red.kinds).toContain("AWS Access Key");
     expect(red.text).not.toContain("AKIAIOSFODNN7EXAMPLE");
-    expect(red.text).toContain("[redacted-secret:AWS Access Key]");
+    expect(red.text).toContain("Contact AKIA**** for access");
     // The non-secret content survives — the whole page isn't discarded.
     expect(red.text).toContain("Trends report.");
     expect(red.text).toContain("The end.");
   });
 
-  it("redacts every occurrence, not just the first", () => {
+  it("masks every occurrence, not just the first", () => {
     const body = `a AKIA0000000000000000 b AKIA1111111111111111 c`;
-    const red = redactSecretSpans(body);
+    const red = maskSecretValues(body);
     expect(red.text).not.toMatch(/AKIA\d/);
-    expect(red.text.match(/\[redacted-secret:AWS Access Key\]/g)?.length).toBe(2);
+    expect(red.text).toBe("a AKIA**** b AKIA**** c");
   });
 
   it("passes benign content through unchanged", () => {
     const body = "Creatine and collagen demand rose in Q2 2026.";
-    const red = redactSecretSpans(body);
-    expect(red.matched).toBe(false);
+    const red = maskSecretValues(body);
+    expect(red.masked).toBe(0);
     expect(red.text).toBe(body);
   });
 });

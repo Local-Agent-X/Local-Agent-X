@@ -141,10 +141,10 @@ describe("run-sandboxed redacts sensitive results before delivery (no taint on s
   });
 
   // The run-killer fix: a secret-shaped span in UNTRUSTED INBOUND web content
-  // must be redacted from the model's view but must NOT discard the whole page
+  // must be masked in the model's view but must NOT discard the whole page
   // or taint the session's egress (a coincidental `sk-…`/AKIA on a trade page
   // previously bricked every downstream tool call for the run).
-  it("web_fetch with a secret-shaped span: span redacted inline, page kept, NO taint", async () => {
+  it("web_fetch with a secret-shaped span: value masked in place, page kept, NO taint", async () => {
     const secret = "AKIA0000000000000000";
     const fetchStub: ToolDefinition = {
       name: "web_fetch",
@@ -166,9 +166,10 @@ describe("run-sandboxed redacts sensitive results before delivery (no taint on s
     await runSandboxedPhase(ctx);
 
     expect(ctx.result).toBeDefined();
-    // Secret stripped from the model's view...
+    // Secret stripped from the model's view (prefix kept so it stays nameable)...
     expect(ctx.result!.content).not.toContain(secret);
-    expect(ctx.result!.content).toContain("[redacted-secret:AWS Access Key]");
+    expect(ctx.result!.content).toContain("Ref AKIA****.");
+    expect(ctx.result!.content).toContain("1 secret value masked (AWS Access Key)");
     // ...but the rest of the page survives (not blanket-redacted to a stub)...
     expect(ctx.result!.content).toContain("Collagen up 12%");
     expect(ctx.result!.status).not.toBe("blocked");

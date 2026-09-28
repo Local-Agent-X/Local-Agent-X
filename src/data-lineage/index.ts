@@ -13,9 +13,10 @@
  * source is tainted for the rest of the run. The LLM can't "un-see" it.
  *
  * This module is a re-export barrel. The implementation lives in:
- *  - fingerprint.ts — privacy-preserving content fingerprints
- *  - taint.ts       — the stateful per-session taint registry
- *  - paths.ts       — stateless sensitive-path & secret detection
+ *  - fingerprint.ts    — privacy-preserving content fingerprints
+ *  - taint.ts          — the stateful per-session taint registry
+ *  - paths.ts          — stateless sensitive-path & secret detection
+ *  - secret-values.ts  — mask secret values in output + register them as known secrets
  */
 
 export type { TaintSource } from "./fingerprint.js";
@@ -46,6 +47,13 @@ export {
   isSensitivePath,
   isSensitiveAttachmentPath,
   detectSecretsInOutput,
-  redactSecretSpans,
   extractSensitivePathsFromCommand,
 } from "./paths.js";
+
+export {
+  isSecretEndpointUrl,
+  maskSecretValues,
+  withholdSecretValues,
+  secretsMaskedNote,
+} from "./secret-values.js";
+export type { MaskOptions, MaskedSecrets } from "./secret-values.js";

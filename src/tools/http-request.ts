@@ -8,6 +8,7 @@ import { ok, err } from "./result-helpers.js";
 import { capWithSpill } from "./result-spill.js";
 import { checkOutboundRequest } from "./http-egress-guard.js";
 import { formatMissingPageLeads, gatherMissingPageLeads, isMissingPageStatus } from "./missing-page-leads.js";
+import { withholdSecretValues, secretsMaskedNote, isSecretEndpointUrl } from "../data-lineage/index.js";
 import {
   EgressRedirectBlocked,
   assertRedirectEgressAllowed,
@@ -238,6 +239,17 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
           }
         }
 
+        // Secret values are masked BEFORE `find` runs over the body, so the
+        // filter can only ever select masked lines — the model cannot grep a
+        // value out of a response it is not allowed to see. Every value the
+        // masker hid is registered as a known secret at the same time.
+        const secrets = withholdSecretValues(body, {
+          endpoint: isSecretEndpointUrl(url) || isSecretEndpointUrl(currentUrl),
+        });
+        body = secrets.text;
+        const maskedNote = secrets.masked > 0 ? `\n\n${secretsMaskedNote(secrets.masked, secrets.kinds)}` : "";
+        const maskedMeta = secrets.masked > 0 ? { secrets_masked: secrets.masked } : {};
+
         const fullBytes = body.length;
         const find = typeof args.find === "string" ? args.find.trim() : "";
         if (find) {
@@ -247,7 +259,7 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
             method,
             status: statusLine,
           });
-          const output = `HTTP ${statusLine}\n\n${wrapped}${leadsNote}`;
+          const output = `HTTP ${statusLine}\n\n${wrapped}${leadsNote}${maskedNote}`;
           const meta = {
             url: currentUrl,
             method,
@@ -257,6 +269,7 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
             find,
             match_count: found.matchCount,
             content_type: contentType || undefined,
+            ...maskedMeta,
           };
           return res.ok ? ok(output, meta) : err(output, meta);
         }
@@ -273,7 +286,7 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
           method,
           status: statusLine,
         });
-        const output = `HTTP ${statusLine}\n\n${wrapped}${leadsNote}`;
+        const output = `HTTP ${statusLine}\n\n${wrapped}${leadsNote}${maskedNote}`;
         const meta = {
           url: currentUrl,
           method,
@@ -282,6 +295,7 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
           bytes: fullBytes,
           truncated: truncated || undefined,
           content_type: contentType || undefined,
+          ...maskedMeta,
         };
         return res.ok ? ok(output, meta) : err(output, meta);
       } catch (e) {

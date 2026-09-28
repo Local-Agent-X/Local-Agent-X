@@ -31,6 +31,12 @@ export interface CredentialPattern {
   type: string;
   name: string;
   regex: RegExp;
+  /** The match signals that a credential is PRESENT but carries none of its
+   *  bytes (a PEM BEGIN line, a service-account type tag). Detection counts
+   *  it; the value masker neither hides nor registers it, since blocking the
+   *  literal `-----BEGIN CERTIFICATE-----` from ever leaving the box would
+   *  protect nothing and break every certificate upload. */
+  marker?: true;
 }
 
 /**
@@ -83,7 +89,7 @@ export const CREDENTIAL_PATTERNS: readonly CredentialPattern[] = [
   // ── Cloud provider ──
   { type: "cloud", name: "AWS Access Key", regex: /\b(AKIA[A-Z0-9]{16})/g },
   { type: "cloud", name: "AWS Secret Key", regex: /(?:aws_secret_access_key|secret_key)\s*[:=]\s*["']?([A-Za-z0-9/+=]{40})["']?/gi },
-  { type: "cloud", name: "GCP Service Account", regex: /"type"\s*:\s*"service_account"/g },
+  { type: "cloud", name: "GCP Service Account", regex: /"type"\s*:\s*"service_account"/g, marker: true },
 
   // ── Version control ──
   { type: "vcs", name: "GitHub PAT", regex: /\b(ghp_[a-zA-Z0-9]{36,})/g },
@@ -112,8 +118,8 @@ export const CREDENTIAL_PATTERNS: readonly CredentialPattern[] = [
   // Bare PEM BEGIN marker. "Private Key (PEM)" above requires a matching END
   // block; a truncated/streamed key that shows only the header must still trip
   // (taint + egress). A bare BEGIN-PRIVATE-KEY line is never benign content.
-  { type: "crypto", name: "Private Key Marker (PEM)", regex: /-----BEGIN\s+(?:RSA\s+|EC\s+|OPENSSH\s+|ENCRYPTED\s+|PGP\s+|DSA\s+)?PRIVATE\s+KEY(?:\s+BLOCK)?-----/g },
-  { type: "crypto", name: "Certificate", regex: /-----BEGIN\s+CERTIFICATE-----/g },
+  { type: "crypto", name: "Private Key Marker (PEM)", regex: /-----BEGIN\s+(?:RSA\s+|EC\s+|OPENSSH\s+|ENCRYPTED\s+|PGP\s+|DSA\s+)?PRIVATE\s+KEY(?:\s+BLOCK)?-----/g, marker: true },
+  { type: "crypto", name: "Certificate", regex: /-----BEGIN\s+CERTIFICATE-----/g, marker: true },
   // JWT: three base64url segments. The leading `eyJ` is base64url of `{"`, so a
   // JWT header/payload always starts there — a strong, low-FP anchor. Gates
   // egress now too: a model-emitted JWT in an outbound body is a token leak.
@@ -157,6 +163,20 @@ export const CREDENTIAL_KEY_PATTERNS: readonly RegExp[] = CREDENTIAL_PATTERNS.ma
 function maskValue(value: string): string {
   if (value.length <= 12) return "[REDACTED]";
   return value.slice(0, 4) + "...[REDACTED]";
+}
+
+/**
+ * The display form of a value the model is shown INSTEAD of a secret: its
+ * public prefix and a run of `*` (`gho_****`), the same shape `gh auth status`
+ * prints. The prefix keeps the value identifiable (which key, which vendor);
+ * the `*` run is the mask alphabet the Key-Value shape above excludes, and the
+ * result is too short for every prefix shape, so a masked display never scans
+ * as a secret again — masking is idempotent and the masked text can leave the
+ * box. Prefix only, never a suffix: four trailing characters of a key are
+ * still four characters of the key.
+ */
+export function maskForDisplay(value: string): string {
+  return (value.length >= 16 ? value.slice(0, 4) : "") + "****";
 }
 
 /**

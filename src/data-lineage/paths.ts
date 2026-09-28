@@ -193,8 +193,9 @@ function expandTilde(p: string): string {
 
 // Max bytes scanned for secrets. Larger inputs are sliced; missed taint on a
 // >256KB response is acceptable (rare) and bounded scan keeps the regex pass
-// cheap on huge stdout dumps.
-const SECRET_SCAN_CAP = 256 * 1024;
+// cheap on huge stdout dumps. Shared with the value masker (secret-values.ts)
+// so detection and masking cover the same head of a large output.
+export const SECRET_SCAN_CAP = 256 * 1024;
 
 /**
  * Scan text (bash stdout, http response body, web fetch body) for secret-shaped
@@ -230,57 +231,6 @@ export function detectSecretsInOutput(text: string): { matched: boolean; kinds: 
   }
 
   return { matched: kinds.size > 0, kinds: [...kinds], structured };
-}
-
-/**
- * Redact secret-shaped substrings IN PLACE, returning the cleaned text + kinds.
- *
- * Unlike {@link detectSecretsInOutput} (report-only, caller taints the session),
- * this surgically replaces each matched span with `[redacted-secret:<kind>]` so
- * the surrounding content survives. Used for UNTRUSTED INBOUND content
- * (web_fetch / http_request bodies): a secret-shaped span there is coincidental
- * or an injection attempt, not a secret this system owns — so we strip it from
- * the model's view (no echo/exfil) WITHOUT discarding the whole page or tainting
- * egress. Owned-secret reads (local fs / bash / sql) keep the heavier
- * detect→taint→full-redact path.
- */
-export function redactSecretSpans(text: string): { text: string; matched: boolean; kinds: string[] } {
-  if (!text || typeof text !== "string") return { text: text ?? "", matched: false, kinds: [] };
-  // Bounded scan, mirroring detectSecretsInOutput: redact within the cap, pass
-  // the tail through unchanged (a missed secret past 256KB is the accepted edge).
-  const head = text.length > SECRET_SCAN_CAP ? text.slice(0, SECRET_SCAN_CAP) : text;
-  const tail = text.length > SECRET_SCAN_CAP ? text.slice(SECRET_SCAN_CAP) : "";
-  const kinds = new Set<string>();
-
-  // Collect every span to redact from the canonical scanner (one catalog).
-  // Replace end-to-start so earlier replacements don't invalidate later indices.
-  const spans: Array<{ start: number; end: number; kind: string }> = [];
-  for (const m of scanForSecrets(head).matches) {
-    spans.push({ start: m.startIndex, end: m.endIndex, kind: m.pattern });
-  }
-
-  // Drop spans fully contained in an earlier (kept) span so overlapping
-  // catalog matches don't double-redact the same bytes.
-  spans.sort((a, b) => a.start - b.start || b.end - a.end);
-  const kept: typeof spans = [];
-  let coveredTo = -1;
-  for (const s of spans) {
-    if (s.start >= coveredTo) {
-      kept.push(s);
-      coveredTo = s.end;
-    } else if (s.end > coveredTo) {
-      // Partial overlap (different pattern extends further): keep, advance cover.
-      kept.push(s);
-      coveredTo = s.end;
-    }
-  }
-
-  let out = head;
-  for (const s of [...kept].sort((a, b) => b.start - a.start)) {
-    kinds.add(s.kind);
-    out = out.slice(0, s.start) + `[redacted-secret:${s.kind}]` + out.slice(s.end);
-  }
-  return { text: out + tail, matched: kinds.size > 0, kinds: [...kinds] };
 }
 
 /**

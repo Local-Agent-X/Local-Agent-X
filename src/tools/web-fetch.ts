@@ -6,6 +6,7 @@ import { ok, err } from "./result-helpers.js";
 import { capWithSpill } from "./result-spill.js";
 import { extractFromHtml } from "./html-extract.js";
 import { formatMissingPageLeads, gatherMissingPageLeads, isMissingPageStatus } from "./missing-page-leads.js";
+import { withholdSecretValues, secretsMaskedNote, isSecretEndpointUrl } from "../data-lineage/index.js";
 import {
   EgressRedirectBlocked,
   assertRedirectEgressAllowed,
@@ -159,17 +160,28 @@ export const webFetchTool: ToolDefinition = {
           : extracted.content;
       }
 
+      // Secret values are masked BEFORE `find` runs (same seam as http_request):
+      // the filter can only select masked lines, and each hidden value is
+      // registered as a known secret so it cannot be sent back out.
+      const secrets = withholdSecretValues(body, {
+        endpoint: isSecretEndpointUrl(url) || isSecretEndpointUrl(currentUrl),
+      });
+      body = secrets.text;
+      const maskedNote = secrets.masked > 0 ? `\n\n${secretsMaskedNote(secrets.masked, secrets.kinds)}` : "";
+      const maskedMeta = secrets.masked > 0 ? { secrets_masked: secrets.masked } : {};
+
       const fullBytes = body.length;
       const find = typeof args.find === "string" ? args.find.trim() : "";
       if (find) {
         const found = findInBody(body, find);
-        return ok(wrapExternalContent(found.text, "web_fetch", { url, status: String(res.status) }), {
+        return ok(wrapExternalContent(found.text, "web_fetch", { url, status: String(res.status) }) + maskedNote, {
           url: currentUrl,
           status: res.status,
           duration_ms: durationMs,
           bytes: fullBytes,
           find,
           match_count: found.matchCount,
+          ...maskedMeta,
         });
       }
 
@@ -180,12 +192,13 @@ export const webFetchTool: ToolDefinition = {
       const truncated = capped.truncated;
       body = capped.body;
 
-      return ok(wrapExternalContent(body, "web_fetch", { url, status: String(res.status) }), {
+      return ok(wrapExternalContent(body, "web_fetch", { url, status: String(res.status) }) + maskedNote, {
         url: currentUrl,
         status: res.status,
         duration_ms: durationMs,
         bytes: fullBytes,
         truncated: truncated || undefined,
+        ...maskedMeta,
       });
     } catch (e) {
       if (e instanceof EgressRedirectBlocked) {

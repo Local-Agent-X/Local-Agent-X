@@ -49,6 +49,9 @@ export function scanForSecrets(text: string): ScanResult {
     let match: RegExpExecArray | null;
     while ((match = pattern.regex.exec(text)) !== null) {
       const value = match[1] || match[0];
+      // The captured value is the tail of every capturing catalog shape
+      // (label, then value), so its last occurrence in the match is its span.
+      const valueStart = match.index + match[0].lastIndexOf(value);
       matches.push({
         type: pattern.type,
         pattern: pattern.name,
@@ -56,6 +59,8 @@ export function scanForSecrets(text: string): ScanResult {
         masked: maskSecret(value),
         startIndex: match.index,
         endIndex: match.index + match[0].length,
+        ...(match[1] ? { valueStart, valueEnd: valueStart + value.length } : {}),
+        ...(pattern.marker ? { marker: true as const } : {}),
       });
     }
   }
@@ -89,6 +94,8 @@ export function scanForSecrets(text: string): ScanResult {
       masked: maskSecret(e.value),
       startIndex: e.startIndex,
       endIndex: e.endIndex,
+      valueStart: e.startIndex,
+      valueEnd: e.endIndex,
     });
   }
 

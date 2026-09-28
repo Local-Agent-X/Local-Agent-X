@@ -24,7 +24,9 @@ import {
   isSensitivePath,
   extractSensitivePathsFromCommand,
   detectSecretsInOutput,
-  redactSecretSpans,
+  withholdSecretValues,
+  secretsMaskedNote,
+  isSecretEndpointUrl,
 } from "../data-lineage/index.js";
 import type { TaintSource } from "../data-lineage/index.js";
 import { recordExternalIngestion, isExternalIngestingTool } from "../data-lineage/external.js";
@@ -214,22 +216,18 @@ export function applyResultTaintPolicy(
     }
   }
 
-  // web_fetch / http_request bodies are UNTRUSTED INBOUND content from the
-  // public internet — NOT a secret this system owns. A secret-shaped span is
-  // coincidental (a slug, a sample key in docs) or a prompt-injection payload.
-  // Strip those spans from the model's view (so it can't echo/exfil them) but
-  // KEEP the rest of the page and DON'T taint the session. Exfil of OUR
-  // secrets is guarded by the owned-source branches above + the egress
-  // allowlist — not by bytes arriving from a trade site.
+  // web_fetch / http_request bodies: a secret value in them is masked in place
+  // and registered as a known secret (secret-values.ts) — the tools already do
+  // this BEFORE their `find` filter so the model cannot grep a value out; this
+  // pass is the seam's own guarantee for any result that reached here another
+  // way (idempotent on already-masked text). The session is NOT tainted: the
+  // bytes never entered context, and the registry is what stops them leaving.
   if (toolName === "http_request" || toolName === "web_fetch") {
     const body = typeof result?.content === "string" ? result.content : "";
-    if (body.length > 0 && result && !result.isError) {
-      const red = redactSecretSpans(body);
-      if (red.matched) {
-        result = { ...result, content: red.text };
-        logger.warn(
-          `${toolName} response had secret-shaped span(s) redacted inline (kinds: ${red.kinds.join(", ")}) — not tainting (untrusted inbound source)`,
-        );
+    if (body.length > 0 && result) {
+      const masked = withholdSecretValues(body, { endpoint: isSecretEndpointUrl(args.url) });
+      if (masked.masked > 0) {
+        result = { ...result, content: `${masked.text}\n\n${secretsMaskedNote(masked.masked, masked.kinds)}` };
       }
     }
   }

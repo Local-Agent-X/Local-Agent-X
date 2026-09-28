@@ -18,6 +18,13 @@ export interface SecretMatch {
   masked: string;
   startIndex: number;
   endIndex: number;
+  /** Span of the secret VALUE itself within the text, when the match can name
+   *  it (a catalog capture group, an entropy run). Absent for whole-span
+   *  matches — a PEM block, a decoded/normalized view, a known value. */
+  valueStart?: number;
+  valueEnd?: number;
+  /** Presence-only match carrying none of the secret's bytes (CredentialPattern.marker). */
+  marker?: true;
 }
 
 export function maskSecret(value: string): string {

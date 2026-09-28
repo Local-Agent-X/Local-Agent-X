@@ -11,6 +11,7 @@ import { homedir } from "node:os";
 import { scanForSecrets } from "../security/secrets/index.js";
 import { isAppAtRestSecretBasename } from "../security/secrets/index.js";
 import { classifySensitivePath } from "../security/layer/index.js";
+import { commandPositions, type CommandPosition } from "../security/layer/shell-command-positions.js";
 import { getLaxDir } from "../lax-data-dir.js";
 
 function pathSegments(p: string): string[] {
@@ -156,11 +157,6 @@ export function isSensitiveAttachmentPath(filePath: string): boolean {
   return false;
 }
 
-// Shell metacharacters that separate tokens we care about. We intentionally
-// keep this conservative — false positives here mean a legitimate http call
-// gets blocked, which is worse than missing an exotic obfuscation.
-const SHELL_SPLIT_RE = /[\s|<>;()&]+/;
-
 function looksLikePathToken(token: string): boolean {
   if (!token) return false;
   if (token.startsWith("/")) return true;
@@ -172,17 +168,6 @@ function looksLikePathToken(token: string): boolean {
   // pattern when the substring happens to appear.
   if ((token.includes("/") || token.includes("\\")) && /\./.test(token)) return true;
   return false;
-}
-
-function stripQuotes(token: string): string {
-  if (token.length >= 2) {
-    const first = token[0];
-    const last = token[token.length - 1];
-    if ((first === '"' && last === '"') || (first === "'" && last === "'")) {
-      return token.slice(1, -1);
-    }
-  }
-  return token;
 }
 
 function expandTilde(p: string): string {
@@ -233,30 +218,76 @@ export function detectSecretsInOutput(text: string): { matched: boolean; kinds: 
   return { matched: kinds.size > 0, kinds: [...kinds], structured };
 }
 
+// Commands whose output never carries a byte of their path operands' CONTENTS:
+// they answer about the name (exists, ignored, size, type, tracked) or move,
+// create, remove or re-permission the file. Every other command word — cat,
+// head, sed, awk, openssl, an interpreter, an unknown binary — is taken to
+// read the operand. `git check-ignore -v .env` names the file; it does not
+// read it, and on 2026-09-28 naming it withheld the whole of a three-command
+// output that held no credential byte.
+const NAME_ONLY_BINS: ReadonlySet<string> = new Set([
+  "ls", "dir", "test", "[", "stat", "file", "du", "find", "realpath", "readlink", "dirname", "basename",
+  "touch", "chmod", "chown", "chgrp", "mkdir", "rmdir", "rm", "unlink", "echo", "printf", "wc",
+  "which", "where", "whereis",
+]);
+const GIT_NAME_ONLY: ReadonlySet<string> = new Set([
+  "check-ignore", "ls-files", "add", "rm", "mv", "status", "restore", "checkout", "update-index", "check-attr",
+]);
+// A shell's operands are the body it re-parses (walked as its own positions)
+// or a script to run; the shell itself prints nothing of them.
+const SHELL_BINS: ReadonlySet<string> = new Set(["bash", "sh", "zsh", "dash", "ksh", "ash", "cmd", "powershell", "pwsh"]);
+const GREP_BINS: ReadonlySet<string> = new Set(["grep", "egrep", "fgrep", "rg", "ag", "ack"]);
+// grep prints matching LINES unless one of these makes it print names or counts.
+const GREP_NAME_ONLY_FLAGS = /^(?:-[a-zA-Z]*[lLcq][a-zA-Z]*|--files-with(?:out)?-match(?:es)?|--count|--quiet|--silent)$/;
+
+function readsOperands(p: CommandPosition): boolean {
+  const args = p.words.slice(p.at + 1);
+  if (NAME_ONLY_BINS.has(p.bin) || SHELL_BINS.has(p.bin)) return false;
+  if (p.bin === "git") {
+    const sub = args.find((a) => !a.startsWith("-"));
+    return !(sub !== undefined && GIT_NAME_ONLY.has(sub));
+  }
+  if (GREP_BINS.has(p.bin)) return !args.some((a) => GREP_NAME_ONLY_FLAGS.test(a));
+  return true;
+}
+
 /**
- * Scan a shell command for path-like tokens that match isSensitivePath.
- * Returns matched paths (deduped, original token form post-quote-strip
- * pre-tilde-expansion — callers should re-check with isSensitivePath if
- * they care about the resolved form).
- *
- * Conservative by design: only fires on tokens that clearly look like
- * filesystem paths (leading `/`, `~`, drive letter, or separator+dot).
+ * The sensitive paths a shell command READS: path-shaped operands (leading
+ * `/`, `~`, drive letter, or separator+dot) of a command position whose output
+ * can carry the file's bytes, plus any `< path` stdin redirect. A path that is
+ * only NAMED — the operand of a query command like `git check-ignore`, `ls`,
+ * `test -f`, `grep -l`, or a `> path` write target — is not a read. Walks the
+ * same command positions the shell rules read, so a `bash -c "cat …"` body is
+ * seen too. Returns the operands as written (quotes removed, `~` unexpanded),
+ * deduped.
  */
-export function extractSensitivePathsFromCommand(command: string): string[] {
+export function sensitivePathsReadByCommand(command: string): string[] {
   if (!command) return [];
   const seen = new Set<string>();
   const matches: string[] = [];
-  for (const raw of command.split(SHELL_SPLIT_RE)) {
-    if (!raw) continue;
-    // Strip a trailing `>` or `,` that some shells leave attached; we already
-    // split on most metachars but redirects like `2>file` split to `file`.
-    const token = stripQuotes(raw);
-    if (!looksLikePathToken(token)) continue;
-    const expanded = expandTilde(token);
-    if (!isSensitivePath(expanded)) continue;
-    if (seen.has(token)) continue;
-    seen.add(token);
-    matches.push(token);
+  const consider = (token: string) => {
+    const bare = token.replace(/^\(+/, "").replace(/\)+$/, "");
+    if (!looksLikePathToken(bare)) return;
+    if (!isSensitivePath(expandTilde(bare))) return;
+    if (seen.has(bare)) return;
+    seen.add(bare);
+    matches.push(bare);
+  };
+  for (const p of commandPositions(command).positions) {
+    const reads = readsOperands(p);
+    let nextIsStdin = false;
+    for (const word of p.words.slice(p.at + 1)) {
+      if (nextIsStdin) { consider(word); nextIsStdin = false; continue; }
+      const redirect = /^(\d*)(<+|>+)&?(.*)$/.exec(word);
+      if (redirect) {
+        if (redirect[2].startsWith("<") && !redirect[3].startsWith("&")) {
+          if (redirect[3]) consider(redirect[3]);
+          else nextIsStdin = true;
+        }
+        continue; // a `>` target is written, never read; `2>&1` names no file
+      }
+      if (reads) consider(word);
+    }
   }
   return matches;
 }

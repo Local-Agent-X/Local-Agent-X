@@ -50,7 +50,7 @@ export {
   isSensitivePath,
   isSensitiveAttachmentPath,
   detectSecretsInOutput,
-  extractSensitivePathsFromCommand,
+  sensitivePathsReadByCommand,
 } from "./paths.js";
 
 export {

@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 
 import type { DataClassification } from "./classification.js";
 import { fingerprintOf, isLearned } from "./trust-ledger.js";
-import { isSensitivePath, extractSensitivePathsFromCommand, detectSecretsInOutput } from "../data-lineage/index.js";
+import { isSensitivePath, sensitivePathsReadByCommand, detectSecretsInOutput } from "../data-lineage/index.js";
 import { outboundPayloadParts } from "../security/secrets/index.js";
 import { STATEFUL_LIVE_STATE_TOOLS } from "../tool-execution/stateful-tools.js";
 
@@ -216,11 +216,13 @@ export class ToolChainAnalyzer {
     this.lastBlockedAt = state.lastBlockedAt;
   }
 
-  /** Check if a shell command accesses sensitive resources */
+  /** Does a shell command READ sensitive data? A credential-file operand of a
+   *  command whose output can carry its bytes (the same argv walk the taint
+   *  policy uses), or a read verb over /etc or the registry. */
   private isCommandSensitive(command: string): boolean {
     const c = command.toLowerCase();
-    return /\b(cat|type|more|less|head|tail|get-content)\b/.test(c) &&
-      (extractSensitivePathsFromCommand(command).length > 0 || /\/etc\//.test(c) || /registry/.test(c));
+    if (sensitivePathsReadByCommand(command).length > 0) return true;
+    return /\b(cat|type|more|less|head|tail|get-content)\b/.test(c) && (/\/etc\//.test(c) || /registry/.test(c));
   }
 
   private classifyAccess(

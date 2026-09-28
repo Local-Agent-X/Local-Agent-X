@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
-  extractSensitivePathsFromCommand,
+  sensitivePathsReadByCommand,
   recordSensitiveRead,
   checkEgressTaint,
   clearSessionTaint,
@@ -156,14 +156,14 @@ describe("isSensitiveAttachmentPath — egress-attachment sink (stricter)", () =
     }
   });
 });
-describe("extractSensitivePathsFromCommand", () => {
+describe("sensitivePathsReadByCommand", () => {
   it("matches POSIX absolute paths to ssh keys", () => {
-    const matches = extractSensitivePathsFromCommand("cat /home/user/.ssh/id_rsa");
+    const matches = sensitivePathsReadByCommand("cat /home/user/.ssh/id_rsa");
     expect(matches).toContain("/home/user/.ssh/id_rsa");
   });
 
   it("matches tilde-expanded paths", () => {
-    const matches = extractSensitivePathsFromCommand("cat ~/.ssh/id_rsa");
+    const matches = sensitivePathsReadByCommand("cat ~/.ssh/id_rsa");
     // We return the raw token (post-quote-strip, pre-tilde-expansion),
     // but the resolved form must be what isSensitivePath flagged.
     expect(matches.length).toBeGreaterThan(0);
@@ -174,7 +174,7 @@ describe("extractSensitivePathsFromCommand", () => {
   });
 
   it("matches Windows absolute paths", () => {
-    const matches = extractSensitivePathsFromCommand("type C:\\Users\\me\\.aws\\credentials");
+    const matches = sensitivePathsReadByCommand("type C:\\Users\\me\\.aws\\credentials");
     expect(matches).toContain("C:\\Users\\me\\.aws\\credentials");
   });
 
@@ -182,54 +182,93 @@ describe("extractSensitivePathsFromCommand", () => {
     // `cat ~/.lax/audit-key` was previously read-untainted because audit-key
     // wasn't in the sensitivity enumeration. It must now be extracted as a
     // sensitive path so the read taints the session.
-    const matches = extractSensitivePathsFromCommand("cat ~/.lax/audit-key");
+    const matches = sensitivePathsReadByCommand("cat ~/.lax/audit-key");
     expect(matches.length).toBeGreaterThan(0);
     expect(matches[0]).toMatch(/audit-key/);
     expect(isSensitivePath(matches[0].replace(/^~/, homedir()))).toBe(true);
   });
 
   it("strips surrounding quotes", () => {
-    const matches = extractSensitivePathsFromCommand(`cat "/Users/x/.aws/credentials"`);
+    const matches = sensitivePathsReadByCommand(`cat "/Users/x/.aws/credentials"`);
     expect(matches).toContain("/Users/x/.aws/credentials");
   });
 
   it("matches single-quoted paths", () => {
-    const matches = extractSensitivePathsFromCommand(`cat '/Users/x/.aws/credentials'`);
+    const matches = sensitivePathsReadByCommand(`cat '/Users/x/.aws/credentials'`);
     expect(matches).toContain("/Users/x/.aws/credentials");
   });
 
   it("returns multiple matches", () => {
-    const matches = extractSensitivePathsFromCommand("cat ~/.ssh/id_rsa ~/.aws/credentials");
+    const matches = sensitivePathsReadByCommand("cat ~/.ssh/id_rsa ~/.aws/credentials");
     expect(matches.length).toBe(2);
     expect(matches.some(p => p.includes(".ssh"))).toBe(true);
     expect(matches.some(p => p.includes(".aws"))).toBe(true);
   });
 
   it("does not false-positive on benign commands", () => {
-    expect(extractSensitivePathsFromCommand("ls -la")).toEqual([]);
-    expect(extractSensitivePathsFromCommand("git status")).toEqual([]);
-    expect(extractSensitivePathsFromCommand("echo /something/regular.txt")).toEqual([]);
+    expect(sensitivePathsReadByCommand("ls -la")).toEqual([]);
+    expect(sensitivePathsReadByCommand("git status")).toEqual([]);
+    expect(sensitivePathsReadByCommand("echo /something/regular.txt")).toEqual([]);
   });
 
   it("dedupes repeated paths", () => {
-    const matches = extractSensitivePathsFromCommand("cat ~/.ssh/id_rsa && cp ~/.ssh/id_rsa /tmp/x");
+    const matches = sensitivePathsReadByCommand("cat ~/.ssh/id_rsa && cp ~/.ssh/id_rsa /tmp/x");
     const tildeHits = matches.filter(p => p === "~/.ssh/id_rsa");
     expect(tildeHits.length).toBe(1);
   });
 
   it("handles empty and whitespace input", () => {
-    expect(extractSensitivePathsFromCommand("")).toEqual([]);
-    expect(extractSensitivePathsFromCommand("   ")).toEqual([]);
+    expect(sensitivePathsReadByCommand("")).toEqual([]);
+    expect(sensitivePathsReadByCommand("   ")).toEqual([]);
   });
 
   it("splits on pipes and redirects", () => {
-    const matches = extractSensitivePathsFromCommand("cat ~/.ssh/id_rsa | base64");
+    const matches = sensitivePathsReadByCommand("cat ~/.ssh/id_rsa | base64");
     expect(matches.some(p => p.includes(".ssh"))).toBe(true);
   });
 
   it("flags .pem and .key suffixes", () => {
-    const matches = extractSensitivePathsFromCommand("openssl rsa -in /etc/ssl/private/server.key");
+    const matches = sensitivePathsReadByCommand("openssl rsa -in /etc/ssl/private/server.key");
     expect(matches).toContain("/etc/ssl/private/server.key");
+  });
+
+  // A path that is only NAMED is not read: the operand of a query command,
+  // or a redirect's write target. 2026-09-28: `git check-ignore -v .env
+  // supabase/.env apps/web/.env` withheld a whole three-command output.
+  it("does not count a named path as a read", () => {
+    const real = `cd "/c/Users/peter/Scan Progress" && sed -n '105p' apps/web/src/components/customers/MealPlanBuilder.test.tsx | sed -E 's/[A-Za-z0-9+\\/_-]{20,}/<LONG>/g'; sed -n '8,9p' deno.lock | sed -E 's/[A-Za-z0-9+\\/_-]{20,}/<LONG>/g'; git check-ignore -v .env .env.local supabase/.env apps/web/.env 2>&1 | head`;
+    expect(sensitivePathsReadByCommand(real)).toEqual([]);
+    for (const cmd of [
+      "git ls-files supabase/.env apps/web/.env",
+      "git add apps/web/.env.example supabase/.env",
+      "ls -la ~/.ssh/id_rsa ~/.aws/credentials",
+      "test -f ~/.aws/credentials && echo present",
+      "stat /home/u/.env",
+      "grep -l SECRET /home/u/.env /home/u/.env.local",
+      "grep -c = ~/.aws/credentials",
+      "wc -l /home/u/.env",
+      "echo 'wrote' > /home/u/.env",
+      "printf 'X=1\\n' >> ~/.aws/credentials",
+      "rm /home/u/.env",
+    ]) {
+      expect(sensitivePathsReadByCommand(cmd), cmd).toEqual([]);
+    }
+  });
+
+  it("counts a read wherever the command actually consumes the bytes", () => {
+    for (const [cmd, path] of [
+      ["grep SECRET /home/u/.env", "/home/u/.env"],
+      ["git diff -- /home/u/.env", "/home/u/.env"],
+      ["git show HEAD:/home/u/.env", "HEAD:/home/u/.env"],
+      ["sort < /home/u/.env", "/home/u/.env"],
+      ["sort </home/u/.env", "/home/u/.env"],
+      ["bash -c 'cat ~/.ssh/id_rsa'", "~/.ssh/id_rsa"],
+      ["(cat ~/.ssh/id_rsa)", "~/.ssh/id_rsa"],
+      ["python3 leak.py /home/u/.env", "/home/u/.env"],
+      ["cp ~/.aws/credentials /tmp/x", "~/.aws/credentials"],
+    ] as const) {
+      expect(sensitivePathsReadByCommand(cmd), cmd).toEqual([path]);
+    }
   });
 });
 
@@ -241,7 +280,7 @@ describe("bash taint integration", () => {
 
     // Mirror what run-sandboxed.ts now does for the bash branch.
     const cmd = "cat ~/.ssh/id_rsa";
-    const matches = extractSensitivePathsFromCommand(cmd);
+    const matches = sensitivePathsReadByCommand(cmd);
     expect(matches.length).toBeGreaterThan(0);
     for (const p of matches) {
       recordSensitiveRead("test-session", "sensitive_file", p);
@@ -253,7 +292,7 @@ describe("bash taint integration", () => {
   });
 
   it("does not taint on benign bash commands", () => {
-    const matches = extractSensitivePathsFromCommand("ls -la && git status");
+    const matches = sensitivePathsReadByCommand("ls -la && git status");
     expect(matches).toEqual([]);
     // No recordSensitiveRead calls — session stays clean.
     expect(checkEgressTaint("test-session").blocked).toBe(false);

@@ -22,7 +22,7 @@ import {
   recordSensitiveRead,
   retractProvisionalTaint,
   isSensitivePath,
-  extractSensitivePathsFromCommand,
+  sensitivePathsReadByCommand,
   detectSecretsInOutput,
   withholdSecretValues,
   secretsMaskedNote,
@@ -102,7 +102,7 @@ export function setPreExecuteTaintFloor(
       floor.preTaintedPath = taintPath;
     }
   } else if (toolName === "bash") {
-    for (const p of extractSensitivePathsFromCommand(String(args.command || ""))) {
+    for (const p of sensitivePathsReadByCommand(String(args.command || ""))) {
       recordSensitiveRead(sid, "sensitive_file", p);
       floor.pairs.push({ source: "sensitive_file", target: p });
     }
@@ -159,7 +159,7 @@ export function applyResultTaintPolicy(
   }
 
   if (toolName === "bash") {
-    const matches = extractSensitivePathsFromCommand(String(args.command || ""));
+    const matches = sensitivePathsReadByCommand(String(args.command || ""));
     if (matches.length > 0) {
       // The floor for these paths was set pre-execute; whether it stands is
       // decided by the stub branch below (stubbed → retracted, delivered →

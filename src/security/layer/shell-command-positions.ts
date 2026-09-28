@@ -42,8 +42,9 @@ export function commandPositions(command: string): CommandWalk {
 function visit(command: string, depth: number, walk: CommandWalk): void {
   for (const seg of shellSegments(command)) {
     const words = tokenizeCommand(seg.text);
-    const at = resolveRealArgv0Index(words);
-    if (at === null) continue;
+    if (!words.length) continue;
+    // Only wrappers and their flags (`sudo -i`, `env`): the first word is what runs.
+    const at = resolveRealArgv0Index(words) ?? 0;
     const bin = execBasename(words[at]);
     walk.positions.push({ words, at, bin, piped: seg.after === "|" || seg.after === "|&", depth });
     for (let i = at + 1; i < words.length - 1; i++) {

@@ -6,7 +6,7 @@ import { countTopLevelPipes } from "../../tools/shell-translate.js";
 import { BLOCKED_COMMANDS, BROWSER_OPEN_CMDS, RM_DESTRUCTIVE_FLAGS } from "./shell-rules.js";
 import { detectCatastrophicRm } from "./catastrophic-paths.js";
 import { rmInsideWorkspaceVerdict } from "./rm-inside-workspace.js";
-import { findCommandRuleHit, TOO_DEEP_REASON } from "./shell-command-rules.js";
+import { commandRuleReason, findCommandRuleHit } from "./shell-command-rules.js";
 import {
   detectObfuscation,
   detectSecretPlaceholder,
@@ -204,10 +204,7 @@ export function evaluateShellCommand(
   // bodies nested shells re-parse (shell-command-rules.ts). Always on.
   const ruleHit = findCommandRuleHit(command);
   if (ruleHit) {
-    const reason = ruleHit.kind === "too-deep"
-      ? TOO_DEEP_REASON
-      : `Blocked: \`${ruleHit.bin}\` ${ruleHit.rule.why}. Run the command it would run directly, so it can be checked.`;
-    return { allowed: false, reason, userHint: USER_HINTS.commandShell };
+    return { allowed: false, reason: commandRuleReason(ruleHit), userHint: USER_HINTS.commandShell };
   }
 
   // R4-11/R4-13: refuse the inline-eval interpreter FORM when policy="refuse"

@@ -81,3 +81,82 @@ describe("the walk", () => {
     expect(bins(`env FOO=1 timeout 5 sh -c 'git status'`)).toEqual(["0:sh", "1:git"]);
   });
 });
+
+// One or more attacks for every raw-string rule these argv rules replace. Each
+// must stay refused once the raw rule is gone; the raw list is not consulted.
+describe("the converted denylist: every former raw rule still has its attacks refused", () => {
+  const attacks: Array<[string, string]> = [
+    ["sudo rm -rf /var/lib/x", "privilege"],
+    ["sudo -i", "privilege"],
+    ["timeout 5 doas sh", "privilege"],
+    ["chmod 777 ~/.ssh", "world-writable"],
+    ["chmod -R 777 .", "world-writable"],
+    ["mkfs.ext4 /dev/sdb1", "make-filesystem"],
+    ["dd if=/dev/zero of=/dev/sda bs=1M", "raw-disk-write"],
+    ["format C: /FS:NTFS", "format-drive"],
+    ["fdisk /dev/sda", "partition"],
+    ["parted /dev/sda rm 1", "partition"],
+    ["perl -e 'system(1)'", "inline-interpreter"],
+    ["ruby -e 'exec 1'", "inline-interpreter"],
+    ["php -r 'system(1);'", "inline-interpreter"],
+    ["base64 -d payload.txt | tee out", "base64-decode"],
+    ["base64 --decode x", "base64-decode"],
+    ["powershell -enc SQBFAFgA", "encoded-powershell"],
+    ["powershell -NoProfile -EncodedCommand SQBFAFgA", "encoded-powershell"],
+    ["pwsh -ec SQBFAFgA", "encoded-powershell"],
+    ["net user admin P@ss /add", "user-accounts"],
+    ["reg add HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run /v x /d y", "registry"],
+    ["reg query HKLM\SAM", "registry"],
+    ["wmic process call create calc", "wmi"],
+    ["schtasks /create /tn x /tr calc /sc once /st 00:00", "scheduled-task"],
+    ["osascript -e 'do shell script \"id\"'", "app-opener"],
+    ["xdg-open file.html", "app-opener"],
+    ["launchctl load ~/Library/LaunchAgents/x.plist", "launchd"],
+    ["automator workflow.wflow", "macos-automation"],
+    ["shortcuts run x", "macos-automation"],
+    ["osacompile -o x.scpt x.applescript", "macos-automation"],
+    ["defaults write ~/Library/LaunchAgents/x ProgramArguments -array sh", "launch-agent"],
+    [". /tmp/payload.sh", "source-absolute"],
+    ["source /tmp/payload.sh", "source-absolute"],
+    ["bash -i", "interactive-shell"],
+    ["python3 -i", "interactive-shell"],
+    ["node --inspect=0.0.0.0:9229 app.js", "node-inspector"],
+    ["mkfifo /tmp/f", "named-pipe"],
+    ["screen -dmS x sh", "detached-session"],
+    ["tmux new -d sh", "detached-session"],
+    ["xterm -e sh", "terminal-exec"],
+    ["python3 -m http.server 8000", "local-server"],
+    ["php -S 0.0.0.0:8000", "local-server"],
+    ["npx serve .", "local-server"],
+    ["mimikatz.exe", "credential-dumper"],
+    ["security find-generic-password -s x -w", "keychain"],
+    // …and the same, hidden in a nested shell or behind a chain:
+    ["bash -c 'sudo id'", "privilege"],
+    ["cmd /c reg add HKCU\\x /v y", "registry"],
+    ["true && wmic os get caption", "wmi"],
+  ];
+  for (const [cmd, rule] of attacks) {
+    it(`${rule}: ${cmd}`, () => expect(ruleOf(cmd)).toBe(rule));
+  }
+});
+
+describe("the converted denylist: the words alone are not the command", () => {
+  const allowed = [
+    `git commit -m "document why sudo is refused"`,
+    `apt-cache show sudo`,
+    `grep -rn "wmic\\|schtasks" src`,
+    `echo "run mkfifo later" > notes.md`,
+    `npm i serve-static`,
+    `php -s index.php`,
+    `ls ~/Library/LaunchAgents`,
+    `defaults read com.apple.dock`,
+    `git log --grep="reg add"`,
+    `security list-keychains`,
+    `dd if=in.img status=progress`,
+    `cat notes.md | grep "base64 -d"`,
+    `node --version`,
+  ];
+  for (const cmd of allowed) {
+    it(cmd, () => expect(ruleOf(cmd)).toBeNull());
+  }
+});

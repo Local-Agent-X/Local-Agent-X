@@ -430,7 +430,7 @@ describe("evaluateShellCommand — denylist denials name the binary and the way 
   ];
 
   for (const [cmd, bin] of realCases) {
-    it(`names "${bin}" and points at http_request: ${cmd.slice(0, 48)}`, () => {
+    it(`names "${bin}" and says a retry is denied: ${cmd.slice(0, 48)}`, () => {
       const r = posixEval(cmd);
       expect(r.allowed).toBe(false);
       // The binary is named — the model can tell WHAT to replace.

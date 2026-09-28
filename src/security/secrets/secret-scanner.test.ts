@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { randomBytes, createHash } from "node:crypto";
+import { randomBytes, createHash, generateKeyPairSync } from "node:crypto";
 import { scanForSecrets, redactSecrets } from "./secret-scanner.js";
+import { checkOutboundPayload } from "../../tools/http-egress-guard.js";
 import { buildNormalizedView } from "./secret-normalize.js";
 import {
   registerRedactedSecretValue,
@@ -558,6 +559,51 @@ describe("scanForSecrets — high-entropy detector (false-positive traps stay cl
       expect(scanForSecrets(text).clean).toBe(true);
     });
   }
+});
+
+// ── Public keys are made to be published; private keys are not ──────────────
+describe("scanForSecrets — public keys are exempt from the entropy pass, private keys are not", () => {
+  // 2026-09-28: the browser fill of a DKIM TXT record (Resend domain setup)
+  // was refused six times as "High-Entropy Token". The value is an RSA
+  // SubjectPublicKeyInfo — the one thing a DKIM record exists to publish.
+  const DKIM = "p=MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDPH49nAsZZOJqc7gD+d/jvOrVRrITR7rpferghQHMnnBd8f+VAVi/97aAX+K8ur7Wk27okU9iQ5iu5HuKoI6bvRbnVOIvsjNdD52ob2zuiF3clRSjUSOM6hJ8H72BtdnPzb38IycDBOebSb7J3osdpCmGVwq4LUMfEVaUDrTlD6wIDAQAB";
+
+  it("the real DKIM record value is clean, at the scanner and at the browser sink", () => {
+    expect(scanForSecrets(DKIM).clean).toBe(true);
+    expect(checkOutboundPayload("browser", DKIM)).toBeNull();
+    expect(scanForSecrets(`v=DKIM1; k=rsa; ${DKIM}`).clean).toBe(true);
+  });
+
+  it("RSA, EC and Ed25519 SubjectPublicKeyInfo blobs are clean, bare and as PEM", () => {
+    const keys = [
+      generateKeyPairSync("rsa", { modulusLength: 2048 }),
+      generateKeyPairSync("ec", { namedCurve: "P-256" }),
+      generateKeyPairSync("ed25519"),
+    ];
+    for (const { publicKey } of keys) {
+      const der = publicKey.export({ type: "spki", format: "der" }).toString("base64");
+      expect(scanForSecrets(`value: ${der}`).clean, der.slice(0, 20)).toBe(true);
+      const pem = publicKey.export({ type: "spki", format: "pem" }) as string;
+      expect(scanForSecrets(`key:\n${pem}`).clean).toBe(true);
+    }
+  });
+
+  it("a private key stays refused: PEM by the catalog, bare PKCS#8 / PKCS#1 DER by the entropy pass", () => {
+    const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+    const pem = privateKey.export({ type: "pkcs8", format: "pem" }) as string;
+    expect(scanForSecrets(pem).matches.some(m => m.pattern === "Private Key (PEM)")).toBe(true);
+    for (const type of ["pkcs8", "pkcs1"] as const) {
+      const der = privateKey.export({ type, format: "der" }).toString("base64");
+      const r = scanForSecrets(`value: ${der}`);
+      expect(r.clean, type).toBe(false);
+      expect(r.matches.some(m => m.type === "high-entropy-token"), type).toBe(true);
+    }
+  });
+
+  it("a random blob that merely starts like an SPKI is still flagged", () => {
+    const fake = "MIGfMA0G" + randomBytes(96).toString("base64");
+    expect(scanForSecrets(`value: ${fake}`).clean).toBe(false);
+  });
 });
 
 // ── Known-secret-value detection (the user's ACTUAL stored secrets) ──────────

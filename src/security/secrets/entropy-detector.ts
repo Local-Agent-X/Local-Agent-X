@@ -145,6 +145,55 @@ function isExcludedBase64(run: string): boolean {
   return false;
 }
 
+// ── Public keys are not secrets ──────────────────────────────────────────────
+// A public key is key material by every entropy measure — random-looking
+// bytes, mixed case, decodes to binary — and it is made to be published: a
+// DKIM record's `p=` value is an RSA public key that MUST go into a DNS TXT
+// field. The outbound scan refused exactly that fill on 2026-09-28 ("High-
+// Entropy Token", six retries). The distinction is the key's DER shape:
+// a SubjectPublicKeyInfo is SEQUENCE { SEQUENCE { OID algorithm, … }, BIT
+// STRING key } — every X.509 public key (RSA, EC, Ed25519) has that outer
+// shape, and no private-key encoding does: PKCS#8 PrivateKeyInfo and PKCS#1
+// RSAPrivateKey both open SEQUENCE { INTEGER version, … }. Spans that decode to
+// an SPKI, and PEM "PUBLIC KEY" blocks, are exempt from the entropy passes;
+// private keys stay caught by the catalog (PEM) and by these passes (bare DER).
+
+const BASE64_BLOB_RE = /[A-Za-z0-9+/]{40,}={0,2}/g;
+const PEM_PUBLIC_KEY_RE = /-----BEGIN (?:RSA |EC )?PUBLIC KEY-----[\s\S]*?-----END (?:RSA |EC )?PUBLIC KEY-----/g;
+
+function derLength(buf: Buffer, at: number): { len: number; next: number } | null {
+  const first = buf[at];
+  if (first === undefined) return null;
+  if (first < 0x80) return { len: first, next: at + 1 };
+  const octets = first & 0x7f;
+  if (octets === 0 || octets > 4 || at + 1 + octets > buf.length) return null;
+  let len = 0;
+  for (let i = 0; i < octets; i++) len = len * 256 + buf[at + 1 + i];
+  return { len, next: at + 1 + octets };
+}
+
+function isSubjectPublicKeyInfo(buf: Buffer): boolean {
+  if (buf[0] !== 0x30) return false;
+  const outer = derLength(buf, 1);
+  if (!outer || outer.next + outer.len !== buf.length) return false;
+  if (buf[outer.next] !== 0x30) return false;
+  const alg = derLength(buf, outer.next + 1);
+  if (!alg || buf[alg.next] !== 0x06) return false;
+  return buf[alg.next + alg.len] === 0x03;
+}
+
+function publicKeySpans(text: string): Array<[number, number]> {
+  const spans: Array<[number, number]> = [];
+  PEM_PUBLIC_KEY_RE.lastIndex = 0;
+  for (const m of text.matchAll(PEM_PUBLIC_KEY_RE)) spans.push([m.index ?? 0, (m.index ?? 0) + m[0].length]);
+  BASE64_BLOB_RE.lastIndex = 0;
+  for (const m of text.matchAll(BASE64_BLOB_RE)) {
+    const blob = m[0];
+    if (isSubjectPublicKeyInfo(Buffer.from(blob, "base64"))) spans.push([m.index ?? 0, (m.index ?? 0) + blob.length]);
+  }
+  return spans;
+}
+
 /**
  * Find high-entropy runs that look like raw key material and aren't a known
  * benign shape. Additive and conservative — see the file header for the
@@ -152,6 +201,8 @@ function isExcludedBase64(run: string): boolean {
  */
 export function detectHighEntropyTokens(text: string): EntropyMatch[] {
   const out: EntropyMatch[] = [];
+  const exempt = publicKeySpans(text);
+  const isPublicKey = (start: number, end: number) => exempt.some(([s, e]) => start < e && s < end);
 
   HEX_RUN_RE.lastIndex = 0;
   for (const m of text.matchAll(HEX_RUN_RE)) {
@@ -160,6 +211,7 @@ export function detectHighEntropyTokens(text: string): EntropyMatch[] {
     if (run.length < MIN_HEX_LEN) continue;
     if (isExcludedHex(run)) continue;
     if (shannonEntropy(run) < MIN_HEX_ENTROPY) continue;
+    if (isPublicKey(index, index + run.length)) continue;
     out.push({ startIndex: index, endIndex: index + run.length, value: run });
   }
 
@@ -173,6 +225,7 @@ export function detectHighEntropyTokens(text: string): EntropyMatch[] {
     if (/^[0-9a-fA-F]+$/.test(run)) continue;
     if (isExcludedBase64(run)) continue;
     if (shannonEntropy(run) < MIN_BASE64_ENTROPY) continue;
+    if (isPublicKey(index, index + run.length)) continue;
     out.push({ startIndex: index, endIndex: index + run.length, value: run });
   }
 

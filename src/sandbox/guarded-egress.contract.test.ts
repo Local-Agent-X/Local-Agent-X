@@ -199,6 +199,28 @@ describe.skipIf(!liveGate)("guarded egress contract: sanctioned route (cage + en
     expect(r.out).not.toContain("DIRECT-REACHED");
   });
 
+  it.skipIf(!onLinux)("Linux: a registered local service is dialled directly from the cage (raw TCP, no proxy), an unregistered one is not", async () => {
+    await ensureShellEgressProxy();
+    const registered = await startListener("DEV-OK");
+    const stray = await startListener("STRAY");
+    // Registration is the one union http_request is judged by: security.json's
+    // localServicePorts under this test's data dir.
+    const { mkdirSync, writeFileSync } = await import("node:fs");
+    const laxDir = join(home, ".lax");
+    mkdirSync(laxDir, { recursive: true });
+    writeFileSync(join(laxDir, "security.json"), JSON.stringify({ localServicePorts: [registered.port] }));
+    process.env.LAX_PORT = "7007";
+    const overlay = await shellProxyEnv();
+    const r = await cagedRun(
+      `(exec 3<>/dev/tcp/127.0.0.1/${registered.port} && printf 'GET / HTTP/1.0\\r\\n\\r\\n' >&3 && cat <&3 | tail -c 6) 2>&1; echo; ` +
+      `(exec 4<>/dev/tcp/127.0.0.1/${stray.port}) 2>&1 && echo STRAY-REACHED || echo STRAY-BLOCKED`,
+      overlay,
+    );
+    expect(r.out).toContain("DEV-OK");
+    expect(r.out).toContain("STRAY-BLOCKED");
+    expect(r.out).not.toContain("STRAY-REACHED");
+  });
+
   it("a caged curl EXPLICITLY through the proxy reaches a sanctioned loopback target (cage→proxy→dial seam)", async () => {
     const proxy = await ensureShellEgressProxy();
     const overlay = await shellProxyEnv();

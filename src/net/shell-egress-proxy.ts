@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { startEgressProxy, type EgressProxy } from "./egress-proxy-core.js";
 import { bridgeSocketPath, startShellEgressBridge, sweepStaleBridgeSockets, type ShellEgressBridge } from "./shell-egress-bridge.js";
+import { loadEgressConfig } from "../security/layer/network-policy.js";
 import { getRuntimeConfig } from "../config.js";
 import { getLaxDir } from "../lax-data-dir.js";
 import { getSharedAuditTrail } from "../threat/audit-trail.js";
@@ -69,9 +70,22 @@ export function currentShellEgressProxyUrl(): string | null {
   return liveProxyUrl;
 }
 
-/** The unix socket a Linux cage reaches the live proxy through, or null. */
-export function currentShellEgressBridge(): { socketPath: string; port: number } | null {
-  return liveBridge ? { socketPath: liveBridge.socketPath, port: liveBridge.port } : null;
+/**
+ * The loopback ports a caged shell may reach through the bridge besides the
+ * proxy's: this server's own port and the registered local services — the
+ * one union http_request is judged by (loadEgressConfig), read at call time
+ * so a dev server registered mid-session counts for the next spawn.
+ */
+export function cageLoopbackPorts(): number[] {
+  const ports = new Set<number>([Number(selfPort())]);
+  for (const p of loadEgressConfig().localServicePorts) ports.add(Number(p));
+  return [...ports].filter((p) => Number.isInteger(p) && p > 0 && p <= 65535);
+}
+
+/** The unix socket a Linux cage reaches the host through, or null: the live
+ *  proxy's port plus the loopback ports the forwarder should listen on now. */
+export function currentShellEgressBridge(): { socketPath: string; port: number; loopbackPorts: number[] } | null {
+  return liveBridge ? { socketPath: liveBridge.socketPath, port: liveBridge.port, loopbackPorts: cageLoopbackPorts() } : null;
 }
 
 /** Where a Linux cage's bridge socket lives: a 0700 dir under the data dir. */
@@ -87,7 +101,9 @@ async function startBridge(proxy: ShellEgressProxy): Promise<ShellEgressBridge |
   if (process.platform !== "linux") return null;
   try {
     sweepStaleBridgeSockets(runDir());
-    return await startShellEgressBridge(proxy.port, bridgeSocketPath(runDir()));
+    // Admission is decided per connection, at connect time: a port that was
+    // registered when the shell spawned but is not any more is refused.
+    return await startShellEgressBridge(proxy.port, bridgeSocketPath(runDir()), (port) => cageLoopbackPorts().includes(port));
   } catch (e) {
     logger.warn(`shell egress bridge failed to start; Linux guarded shells have no route out until it does: ${(e as Error).message}`);
     return null;

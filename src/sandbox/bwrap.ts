@@ -52,16 +52,18 @@ export interface BwrapNetwork {
   network: "namespace" | "host";
   /** With "namespace": the shell egress proxy's unix socket (bind-mounted into
    *  the cage) and its loopback port, which the in-cage forwarder listens on
-   *  so the proxy URL in the shell's env is the same on both sides. Absent or
-   *  missing on disk: the cage has no route out, which fails closed. */
-  bridge?: { socketPath: string; port: number };
+   *  so the proxy URL in the shell's env is the same on both sides, plus the
+   *  registered local-service ports the forwarder also listens on (the host
+   *  side admits each connection by the same policy). Absent or missing on
+   *  disk: the cage has no route out, which fails closed. */
+  bridge?: { socketPath: string; port: number; loopbackPorts?: number[] };
 }
 
 function isolatesNetwork(scope: SandboxScope, net: BwrapNetwork | undefined): boolean {
   return scope === "shell" || (scope === "guarded" && net?.network === "namespace");
 }
 
-function bridgeMounted(scope: SandboxScope, net: BwrapNetwork | undefined): { socketPath: string; port: number } | null {
+function bridgeMounted(scope: SandboxScope, net: BwrapNetwork | undefined): NonNullable<BwrapNetwork["bridge"]> | null {
   if (!isolatesNetwork(scope, net) || scope === "shell" || !net?.bridge) return null;
   return existsSync(net.bridge.socketPath) ? net.bridge : null;
 }
@@ -182,7 +184,8 @@ export function wrapForBwrap(
   // warnings are not the shell's output: NODE_USE_ENV_PROXY in the overlay
   // makes node announce the experimental proxy agent on every start.
   const target = bridge
-    ? [process.execPath, "--no-warnings", "-e", NS_FORWARDER_SOURCE, "--", bridge.socketPath, String(bridge.port), "--", shell, ...shellArgs]
+    ? [process.execPath, "--no-warnings", "-e", NS_FORWARDER_SOURCE, "--", bridge.socketPath,
+      [bridge.port, ...(bridge.loopbackPorts ?? []).filter((p) => p !== bridge.port)].join(","), "--", shell, ...shellArgs]
     : [shell, ...shellArgs];
   return { cmd: executable, args: [...generateBwrapArgs(home, scope, net), ...target] };
 }

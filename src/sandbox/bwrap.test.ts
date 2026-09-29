@@ -157,6 +157,10 @@ describe("bwrap guarded network (BwrapNetwork)", () => {
       expect(at).toBeGreaterThan(0);
       expect(args.slice(at + 1, at + 3)[0]).toBe("-e");
       expect(args.slice(at + 3)).toEqual(["--", sock, "60090", "--", "/bin/bash", "-c", "true"]);
+      // Registered local-service ports ride along, the proxy's first and never twice.
+      const withPorts = wrapForBwrap("/bin/bash", ["-c", "true"], home, "guarded",
+        { network: "namespace", bridge: { socketPath: sock, port: 60090, loopbackPorts: [7007, 60090, 3000] } }).args;
+      expect(withPorts.slice(withPorts.indexOf(sock) + 1, withPorts.indexOf(sock) + 2)).toEqual(["60090,7007,3000"]);
     } finally { rmSync(home, { recursive: true, force: true }); }
   });
 });
@@ -181,7 +185,8 @@ describe.skipIf(!bwrapHere)("bwrap guarded namespace (live)", () => {
     const { execFile } = await import("node:child_process");
     const home = makeHome();
     const sock = join(home, "b.sock");
-    const echo = createServer((c) => c.on("data", (d) => c.write(`HOST:${d.toString().trim()}\n`)));
+    // Answers every line, including the forwarder's port preamble, as HOST:<line>.
+    const echo = createServer((c) => c.on("data", (d) => { for (const l of d.toString().split("\n")) if (l.trim()) c.write(`HOST:${l.trim()}\n`); }));
     await new Promise<void>((r) => echo.listen(sock, r));
     // A second host listener on loopback, NOT bridged: unreachable from the cage.
     const stray = createServer((c) => c.end("STRAY\n"));
@@ -189,11 +194,11 @@ describe.skipIf(!bwrapHere)("bwrap guarded namespace (live)", () => {
     try {
       const port = 60095;
       const { cmd, args } = wrapForBwrap("/bin/bash", ["-c",
-        `exec 3<>/dev/tcp/127.0.0.1/${port}; echo ping >&3; read -t 3 line <&3; echo "GOT:$line"; ` +
+        `exec 3<>/dev/tcp/127.0.0.1/${port}; echo ping >&3; read -t 3 pre <&3; read -t 3 line <&3; echo "PRE:$pre GOT:$line"; ` +
         `(exec 4<>/dev/tcp/127.0.0.1/${strayPort}) 2>&1 && echo STRAY-REACHED || echo STRAY-BLOCKED`],
         home, "guarded", { network: "namespace", bridge: { socketPath: sock, port } });
       const out = await new Promise<string>((resolve) => execFile(cmd, args, { encoding: "utf-8", timeout: 15_000 }, (_e, so, se) => resolve(so + se)));
-      expect(out).toContain("GOT:HOST:ping");
+      expect(out).toContain(`PRE:HOST:${port} GOT:HOST:ping`);
       expect(out).toContain("STRAY-BLOCKED");
       expect(out).not.toContain("STRAY-REACHED");
     } finally {

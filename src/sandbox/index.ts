@@ -12,8 +12,9 @@ import { validateSandboxConfig } from "./validate.js";
 import { isSeatbeltAvailable, seatbeltProfileLoads, wrapForSeatbelt } from "./seatbelt.js";
 import { isBwrapAvailable, bwrapEnforces, bwrapGuardedRuns, wrapForBwrap } from "./bwrap.js";
 import { currentShellEgressBridge } from "../net/shell-egress-proxy.js";
-import { ensureWinCageGrantsSync, resolveWinCageHelper, winCageEnforcesSync, winCageProbePending, winCageUnusableReason, wrapForWinCage } from "./win-cage.js";
-export { ensureWinCageGrants } from "./win-cage.js";
+import { resolveWinCageHelper, winCageEnforcesSync, winCageProbePending, winCageUnusableReason, wrapForWinCage } from "./win-cage.js";
+import { ensureWinCageGrantsSync } from "./win-cage-grants.js";
+export { ensureWinCageGrants } from "./win-cage-grants.js";
 const logger = createLogger("sandbox");
 
 export type { SandboxMode } from "./types.js";

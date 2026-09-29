@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { installExitDetail, parseHelperStatus, underUserProfile, winCageEnvOverlay, winCageHelperDir, winCageLoopbackPermit, winCageReadGrants, wrapForWinCage, WIN_CAGE_HELPER_MAX_PERMIT_WIDTH } from "./win-cage.js";
+import { installExitDetail, parseHelperStatus, underUserProfile, winCageEnvOverlay, winCageHelperDir, winCageLoopbackPermit, wrapForWinCage, WIN_CAGE_HELPER_MAX_PERMIT_WIDTH } from "./win-cage.js";
+import { winCageReadGrants } from "./win-cage-grants.js";
 
 describe("win-cage — what the caged shell is granted to read", () => {
   it("the shell's install root, the node folder and the app's code when they sit under the profile, deduplicated", () => {

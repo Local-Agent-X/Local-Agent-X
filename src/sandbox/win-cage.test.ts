@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { installExitDetail, parseHelperStatus, winCageEnvOverlay, winCageLoopbackPermit, wrapForWinCage, WIN_CAGE_HELPER_MAX_PERMIT_WIDTH } from "./win-cage.js";
+import { installExitDetail, parseHelperStatus, underUserProfile, winCageEnvOverlay, winCageHelperDir, winCageLoopbackPermit, wrapForWinCage, WIN_CAGE_HELPER_MAX_PERMIT_WIDTH } from "./win-cage.js";
+
+describe("win-cage — where the helper may live", () => {
+  it("the expected folder is machine-wide, and a profile path is recognised as one the sandbox user cannot read", () => {
+    expect(winCageHelperDir().toLowerCase()).not.toContain("\\users\\");
+    expect(underUserProfile("C:\\Users\\peter\\.lax\\bin\\srt-win.exe", "C:\\Users\\peter")).toBe(true);
+    expect(underUserProfile("C:\\Users\\peter", "C:\\Users\\peter")).toBe(true);
+    expect(underUserProfile("C:\\Users\\peterson\\srt-win.exe", "C:\\Users\\peter")).toBe(false);
+    expect(underUserProfile("C:\\ProgramData\\Local Agent X\\bin\\srt-win.exe", "C:\\Users\\peter")).toBe(false);
+  });
+});
 import { SHELL_PROXY_PORTS_DEFAULT } from "../net/shell-egress-proxy.js";
 
 describe("win-cage — the loopback permit", () => {

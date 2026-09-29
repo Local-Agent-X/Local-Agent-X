@@ -28,13 +28,17 @@
 //
 // The helper binary is not shipped by LAX yet (unsigned upstream; the plan
 // builds and signs it from source for the installer). Until then its path
-// comes from LAX_WIN_CAGE_HELPER or <data>/bin/srt-win.exe.
+// comes from LAX_WIN_CAGE_HELPER or %ProgramData%\Local Agent X\bin. It must
+// live where the SANDBOX USER can read it: the helper re-launches itself as
+// that user, and a copy under the real user's profile fails that launch with
+// "access denied" (2026-09-28, an evening lost to it). A profile path is
+// therefore refused here with the reason, never tried.
 
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { createServer, type Server } from "node:net";
-import { join } from "node:path";
-import { getLaxDir } from "../lax-data-dir.js";
+import { homedir } from "node:os";
+import { join, resolve, sep } from "node:path";
 import { shellProxyPortRange } from "../net/shell-egress-proxy.js";
 import { workspaceRoot } from "../config.js";
 import { createLogger } from "../logger.js";
@@ -58,11 +62,23 @@ export const WIN_CAGE_HELPER_MAX_PERMIT_WIDTH = 50;
  *  fails at once as forbidden; an unfenced one has no route and times out. */
 const OFF_BOX_PROBE_TARGET = "192.0.2.1:80";
 
+/** Where the helper is expected: a machine-wide folder every local user can read. */
+export function winCageHelperDir(): string {
+  return join(process.env.ProgramData ?? "C:\\ProgramData", "Local Agent X", "bin");
+}
+
+/** True when the path is under the real user's profile, which the sandbox user cannot read. */
+export function underUserProfile(path: string, home: string = homedir()): boolean {
+  const p = resolve(path).toLowerCase();
+  const h = resolve(home).toLowerCase();
+  return p === h || p.startsWith(h.endsWith(sep) ? h : h + sep);
+}
+
 export function resolveWinCageHelper(): string | null {
   const fromEnv = process.env[WIN_CAGE_HELPER_ENV];
   if (fromEnv && existsSync(fromEnv)) return fromEnv;
-  const bundled = join(getLaxDir(), "bin", "srt-win.exe");
-  return existsSync(bundled) ? bundled : null;
+  const shared = join(winCageHelperDir(), "srt-win.exe");
+  return existsSync(shared) ? shared : null;
 }
 
 export interface WinCageStatus {
@@ -105,7 +121,10 @@ function runHelper(helper: string, args: string[], opts: { input?: string; timeo
 export function winCageStatus(): WinCageStatus {
   if (process.platform !== "win32") return { helper: null, installed: false, detail: "The Windows network cage only applies on Windows." };
   const helper = resolveWinCageHelper();
-  if (!helper) return { helper: null, installed: false, detail: `The cage helper is not present (set ${WIN_CAGE_HELPER_ENV} or place srt-win.exe under the data dir's bin folder).` };
+  if (!helper) return { helper: null, installed: false, detail: `The cage helper is not present (place srt-win.exe in ${winCageHelperDir()} or set ${WIN_CAGE_HELPER_ENV}).` };
+  if (underUserProfile(helper)) {
+    return { helper, installed: false, detail: `The cage helper is under your user profile (${helper}), which the sandbox user cannot read, so it cannot start the cage; move it to ${winCageHelperDir()}.` };
+  }
   const r = runHelper(helper, ["status"]);
   if (r.code !== 0) return { helper, installed: false, detail: `The cage helper could not report its status (exit ${r.code}).` };
   try {

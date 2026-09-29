@@ -10,7 +10,7 @@ import { resolveConflicts } from "./conflict-resolver.js";
 import { copyFromSync } from "./pull-files.js";
 import { copyToSync } from "./push-files.js";
 import { ABORT_THRESHOLD, findUnauthorizedAppDeletions, massDeleteAbortMessage } from "./mass-delete-guard.js";
-import { formatGitError } from "./git-error.js";
+import { AUTH_REJECTION_MESSAGE, formatGitError, isAuthRejection, pushFailureMessage } from "./git-error.js";
 import { isLocalOnlyMode, LOCAL_ONLY_BLOCK_MESSAGE } from "../local-only-policy.js";
 
 export type { SyncConfig } from "./constants.js";
@@ -236,14 +236,14 @@ export class AgentSync {
       try {
         await this.git("push", "-u", "origin", "HEAD:main");
       } catch (pushErr) {
-        // Push failed — almost always non-fast-forward when the rebase
-        // and merge fallback above also failed. Build a single message
-        // that names the real cause, not the downstream symptom.
-        const reasons: string[] = [];
-        if (rebaseErr) reasons.push(`rebase failed: ${rebaseErr.message.split("\n")[0].slice(0, 200)}`);
-        if (mergeErr) reasons.push(`merge fallback failed: ${mergeErr.message.split("\n")[0].slice(0, 200)}`);
-        const detail = reasons.length > 0 ? ` (root cause: ${reasons.join("; ")})` : "";
-        const finalMsg = `[sync] push rejected — remote has commits this machine doesn't have${detail}. Hit Force Pull to integrate the remote state, then sync again. Original git error: ${(pushErr as Error).message.split("\n")[0]}`;
+        // Push failed — non-fast-forward when the rebase and merge fallback
+        // above also failed, but a rejected credential produces the same
+        // three failures and needs the opposite advice. pushFailureMessage
+        // owns that choice; it names the real cause, not the downstream
+        // symptom.
+        const finalMsg = pushFailureMessage(
+          (pushErr as Error).message, rebaseErr?.message, mergeErr?.message,
+        );
         logger.error(finalMsg);
         this.isSyncing = false;
         return { success: false, message: finalMsg };
@@ -266,7 +266,12 @@ export class AgentSync {
       // into one opaque string, with git's stderr — already attached by the
       // git() helper — thrown away at the one place it was needed.
       try { await this.git("fetch", "origin", "main"); } catch (e) {
-        const msg = `Could not reach remote: ${(e as Error).message.split("\n")[0].slice(0, 300)}`;
+        // A refused credential is not an unreachable remote: the network was
+        // fine and the answer was "no". Saying "could not reach" sends the
+        // user to look at connectivity for a problem only a new token fixes.
+        const msg = isAuthRejection((e as Error).message)
+          ? AUTH_REJECTION_MESSAGE
+          : `Could not reach remote: ${(e as Error).message.split("\n")[0].slice(0, 300)}`;
         logger.error(`[sync] ${msg}`);
         this.isSyncing = false;
         return { success: false, message: msg };

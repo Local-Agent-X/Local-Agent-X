@@ -27,7 +27,12 @@ function shellInstallRoot(shell: string): string {
  *  profile, deduplicated (a root covers its subpaths). Elsewhere is readable. */
 export function winCageReadGrants(shell: string, execPath = process.execPath, projectRoot = process.cwd(), home = homedir()): string[] {
   const out: string[] = [];
-  for (const candidate of [shellInstallRoot(shell), dirname(resolve(execPath)), resolve(projectRoot)]) {
+  // Not the app's own code: NODE_PATH points at it for the agent's scripts,
+  // but its node_modules is the largest tree on the machine and the ACE
+  // propagation over it took 12 seconds on the first live run. A script that
+  // needs a package installs it in the workspace.
+  void projectRoot;
+  for (const candidate of [shellInstallRoot(shell), dirname(resolve(execPath))]) {
     if (!underUserProfile(candidate, home)) continue;
     const c = candidate.toLowerCase();
     if (out.some((o) => c === o.toLowerCase() || c.startsWith(o.toLowerCase() + sep))) continue;
@@ -39,6 +44,10 @@ export function winCageReadGrants(shell: string, execPath = process.execPath, pr
 const granted = { read: new Set<string>(), write: new Set<string>() };
 let revokeRegistered = false;
 let sandboxSid: string | null = null;
+// A grant that already failed in this process is not retried on the spawn
+// path: the synchronous fallback blocked the server for 20 seconds after
+// the asynchronous attempt had already failed. The shell then fails loudly.
+let grantFailed = false;
 
 function grantsNeeded(shell: string): { read: string[]; write: string[] } | null {
   const read = winCageReadGrants(shell).filter((p) => !granted.read.has(p));
@@ -74,11 +83,14 @@ export async function ensureWinCageGrants(shell: string): Promise<void> {
   const target = grantTarget();
   if (!target) return;
   const outcome = await new Promise<{ code: number; stderr: string }>((resolve) => {
-    const child = execFile(target.helper, ["acl", "grant", "--holder-pid", String(process.pid), "--sandbox-user-sid", target.sid], { windowsHide: true, timeout: 30_000, encoding: "utf-8" },
-      (error, _stdout, stderr) => resolve({ code: error ? ((error as { code?: number }).code ?? -1) : 0, stderr: String(stderr ?? "") }));
+    // The helper rescans its holder ledger on every call (about 8 seconds
+    // here even when nothing is new), so the timeout is generous.
+    const child = execFile(target.helper, ["acl", "grant", "--holder-pid", String(process.pid), "--sandbox-user-sid", target.sid], { windowsHide: true, timeout: 120_000, encoding: "utf-8" },
+      (error, _stdout, stderr) => resolve({ code: error ? ((error as { code?: number }).code ?? -1) : 0, stderr: String(stderr ?? "") || (error ? String((error as Error).message) : "") }));
     child.stdin?.end(JSON.stringify(req));
   });
   if (outcome.code !== 0) {
+    grantFailed = true;
     logger.warn(`[win-cage] grant failed (exit ${outcome.code}): ${outcome.stderr.trim().split("\n")[0]}`);
     return;
   }
@@ -88,12 +100,14 @@ export async function ensureWinCageGrants(shell: string): Promise<void> {
 /** The same, blocking — for the one spawn path that cannot await
  *  (process_start). A no-op once the bash tool has warmed the grants. */
 export function ensureWinCageGrantsSync(shell: string): void {
+  if (grantFailed) return;
   const req = grantsNeeded(shell);
   if (!req) return;
   const target = grantTarget();
   if (!target) return;
-  const r = runHelper(target.helper, ["acl", "grant", "--holder-pid", String(process.pid), "--sandbox-user-sid", target.sid], { input: JSON.stringify(req), timeoutMs: 30_000 });
+  const r = runHelper(target.helper, ["acl", "grant", "--holder-pid", String(process.pid), "--sandbox-user-sid", target.sid], { input: JSON.stringify(req), timeoutMs: 120_000 });
   if (r.code !== 0) {
+    grantFailed = true;
     logger.warn(`[win-cage] grant failed (exit ${r.code}): ${r.stderr.trim().split("\n")[0]}`);
     return;
   }

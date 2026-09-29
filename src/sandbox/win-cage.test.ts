@@ -11,18 +11,19 @@ describe("win-cage — what the caged shell is granted to read", () => {
       "C:\\Users\\peter\\local-agent-x",
       home,
     );
+    // The app's own code is deliberately not granted (its node_modules is the
+    // slowest tree to stamp and the cage does not need it).
     expect(grants).toEqual([
       "C:\\Users\\peter\\AppData\\Local\\LocalAgentX\\PortableGit",
       "C:\\Users\\peter\\AppData\\Local\\LocalAgentX\\node-v24.16.0-win-x64",
-      "C:\\Users\\peter\\local-agent-x",
     ]);
   });
 
   it("grants nothing for machine-wide tools, and a root covers its subpaths", () => {
     const home = "C:\\Users\\peter";
     expect(winCageReadGrants("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", "C:\\Program Files\\nodejs\\node.exe", "C:\\ProgramData\\Local Agent X", home)).toEqual([]);
-    expect(winCageReadGrants("C:\\Users\\peter\\app\\git\\bin\\bash.exe", "C:\\Users\\peter\\app\\node\\node.exe", "C:\\Users\\peter\\app", home)).toEqual([
-      "C:\\Users\\peter\\app\\git", "C:\\Users\\peter\\app\\node", "C:\\Users\\peter\\app",
+    expect(winCageReadGrants("C:\\Users\\peter\\app\\git\\bin\\bash.exe", "C:\\Users\\peter\\app\\git\\node\\node.exe", "C:\\Users\\peter\\app", home)).toEqual([
+      "C:\\Users\\peter\\app\\git",
     ]);
   });
 });

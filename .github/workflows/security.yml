@@ -124,6 +124,25 @@ jobs:
       # TODO(peter): confirm the skip-list. If the first blocking run reveals
       # file-level reds that are genuinely POSIX-only (not real Windows
       # regressions), add each to the forwarded --exclude args above.
+      # Linux cage lane. The bwrap live tests (src/sandbox/bwrap.test.ts
+      # "bwrap enforcement (live)", the guarded probes) self-skip without
+      # bubblewrap, and no developer box runs Linux, so until this step the
+      # Linux cage was tested nowhere. Ubuntu 24.04 restricts unprivileged
+      # user namespaces through AppArmor; the bubblewrap package ships a
+      # profile for its own binary and the sysctl is the fallback. The probe
+      # says which it got — a skip must be visible in the log, never silent.
+      - name: Install bubblewrap (Linux cage lane)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          if bwrap --ro-bind / / --dev /dev --unshare-all -- /bin/true; then
+            echo "bwrap: unprivileged user namespaces available; the live cage tests run"
+          else
+            echo "::warning::bwrap cannot create an unprivileged user namespace on this runner; the live cage tests will skip"
+          fi
+
       - name: Unit tests (vitest, blocking)
         if: matrix.os == 'windows-latest'
         run: npm run test:unit

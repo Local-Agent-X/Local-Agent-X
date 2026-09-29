@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import type { ServerEvent, ToolDefinition } from "../types.js";
-import { getSandboxMode, execInSandbox, wrapSpawnForSandbox, sandboxDenialHint, networkDenialHint } from "../sandbox/index.js";
+import { getSandboxMode, execInSandbox, wrapSpawnForSandbox, sandboxDenialHint, networkDenialHint, ensureWinCageGrants } from "../sandbox/index.js";
 import { ok, err, blocked, timeout as timeoutResult } from "./result-helpers.js";
 import { detectTargetShell, translateForShell, powershellCmdletHint, quotedGlobHint, windowsPathHint, workspacePrefixHint } from "./shell-translate.js";
 import { resolveWindowsShell, recordAvSuspectKill, isLikelyAvKill, buildSanitizedEnv } from "./shell-env.js";
@@ -59,6 +59,9 @@ export const bashTool: ToolDefinition = {
     // Guarded sandbox gets the egress-proxy env (the sanctioned route);
     // every other mode gets {} — see shell-proxy-env.ts for the rationale.
     const sanitizedEnv = buildSanitizedEnv(await shellProxyEnv());
+    // The Windows cage runs the shell as another user: grant it what the
+    // shell needs (off the event loop) before the spawn below wraps it.
+    if (process.platform === "win32" && getSandboxMode() === "guarded") await ensureWinCageGrants(resolveWindowsShell().path);
     let secretEnv;
     try { secretEnv = secretEnvOf(args); } catch (e) { return err((e as Error).message); }
     const secrets = secretEnv ? resolveSecretEnv(secretEnv) : null;

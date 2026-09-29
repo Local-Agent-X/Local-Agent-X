@@ -1,5 +1,30 @@
 import { describe, expect, it } from "vitest";
-import { installExitDetail, parseHelperStatus, underUserProfile, winCageEnvOverlay, winCageHelperDir, winCageLoopbackPermit, wrapForWinCage, WIN_CAGE_HELPER_MAX_PERMIT_WIDTH } from "./win-cage.js";
+import { installExitDetail, parseHelperStatus, underUserProfile, winCageEnvOverlay, winCageHelperDir, winCageLoopbackPermit, winCageReadGrants, wrapForWinCage, WIN_CAGE_HELPER_MAX_PERMIT_WIDTH } from "./win-cage.js";
+
+describe("win-cage — what the caged shell is granted to read", () => {
+  it("the shell's install root, the node folder and the app's code when they sit under the profile, deduplicated", () => {
+    const home = "C:\\Users\\peter";
+    const grants = winCageReadGrants(
+      "C:\\Users\\peter\\AppData\\Local\\LocalAgentX\\PortableGit\\bin\\bash.exe",
+      "C:\\Users\\peter\\AppData\\Local\\LocalAgentX\\node-v24.16.0-win-x64\\node.exe",
+      "C:\\Users\\peter\\local-agent-x",
+      home,
+    );
+    expect(grants).toEqual([
+      "C:\\Users\\peter\\AppData\\Local\\LocalAgentX\\PortableGit",
+      "C:\\Users\\peter\\AppData\\Local\\LocalAgentX\\node-v24.16.0-win-x64",
+      "C:\\Users\\peter\\local-agent-x",
+    ]);
+  });
+
+  it("grants nothing for machine-wide tools, and a root covers its subpaths", () => {
+    const home = "C:\\Users\\peter";
+    expect(winCageReadGrants("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", "C:\\Program Files\\nodejs\\node.exe", "C:\\ProgramData\\Local Agent X", home)).toEqual([]);
+    expect(winCageReadGrants("C:\\Users\\peter\\app\\git\\bin\\bash.exe", "C:\\Users\\peter\\app\\node\\node.exe", "C:\\Users\\peter\\app", home)).toEqual([
+      "C:\\Users\\peter\\app\\git", "C:\\Users\\peter\\app\\node", "C:\\Users\\peter\\app",
+    ]);
+  });
+});
 
 describe("win-cage — where the helper may live", () => {
   it("the expected folder is machine-wide, and a profile path is recognised as one the sandbox user cannot read", () => {

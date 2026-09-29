@@ -34,11 +34,11 @@
 // "access denied" (2026-09-28, an evening lost to it). A profile path is
 // therefore refused here with the reason, never tried.
 
-import { execFileSync, spawn } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { createServer, type Server } from "node:net";
 import { homedir } from "node:os";
-import { join, resolve, sep } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { shellProxyPortRange } from "../net/shell-egress-proxy.js";
 import { workspaceRoot } from "../config.js";
 import { createLogger } from "../logger.js";
@@ -175,30 +175,56 @@ function probeCwd(): string {
 }
 
 let enforces: { ok: boolean; reason: string } | null = null;
+let probeInFlight: Promise<void> | null = null;
+
+/** True while the first proof is still running (a few seconds after start). */
+export function winCageProbePending(): boolean {
+  return enforces === null && probeInFlight !== null;
+}
 
 /** Why guarded is unusable on this Windows host, or null when the fence is proven. */
 export function winCageUnusableReason(): string | null {
-  return winCageEnforcesSync() ? null : enforces?.reason ?? "The Windows network cage is not proven on this host.";
+  if (winCageEnforcesSync()) return null;
+  return enforces?.reason ?? "the fence proof is still running; it takes a few seconds after start";
 }
 
 /**
- * Whether the fence holds, proven at first use and memoized: a connect from
- * inside the cage to an off-machine address must be blocked (the helper's
- * own behavioral probe; "unreachable" is a timeout, which is what an unfenced
- * connect to TEST-NET-1 does, so it counts as no fence), and a connect to a
- * loopback listener in the proxy's range must succeed (a PowerShell
- * one-liner run as the sandbox user, since the app's own node binary lives
- * under the real user's profile, which the sandbox user cannot read). Both,
- * or the cage is not a cage.
+ * Whether the fence holds, proven once per process and memoized: a connect
+ * from inside the cage to an off-machine address must be blocked (the
+ * helper's own behavioral probe; "unreachable" is a timeout, which is what an
+ * unfenced connect to TEST-NET-1 does, so it counts as no fence), and a
+ * connect to a loopback listener in the proxy's range must succeed (a
+ * PowerShell one-liner run as the sandbox user). Both, or the cage is not a
+ * cage. The proof takes seconds, so it runs off the event loop: the first
+ * call starts it and answers "not yet" (the mode resolver does not cache that
+ * answer — winCageProbePending), later calls read the result.
  */
 export function winCageEnforcesSync(): boolean {
   if (enforces) return enforces.ok;
-  enforces = probe();
-  if (!enforces.ok) logger.warn(`[win-cage] guarded unavailable: ${enforces.reason}`);
-  return enforces.ok;
+  if (!probeInFlight) {
+    probeInFlight = probe()
+      .then((r) => { enforces = r; if (!r.ok) logger.warn(`[win-cage] guarded unavailable: ${r.reason}`); })
+      .catch((e) => { enforces = { ok: false, reason: `the fence proof failed to run: ${(e as Error).message}` }; })
+      .finally(() => { probeInFlight = null; });
+  }
+  return false;
 }
 
-function probe(): { ok: boolean; reason: string } {
+/** The proof, awaited (settings, tests). */
+export async function winCageEnforces(): Promise<boolean> {
+  if (enforces) return enforces.ok;
+  winCageEnforcesSync();
+  await probeInFlight;
+  // Read through a call: the narrowing above does not see the assignment made
+  // inside the probe's continuation.
+  return currentProof()?.ok ?? false;
+}
+
+function currentProof(): { ok: boolean; reason: string } | null {
+  return enforces;
+}
+
+async function probe(): Promise<{ ok: boolean; reason: string }> {
   if (process.platform !== "win32") return { ok: false, reason: "not Windows" };
   const status = winCageStatus();
   if (!status.helper) return { ok: false, reason: status.detail };
@@ -233,7 +259,10 @@ function probe(): { ok: boolean; reason: string } {
   `;
   let result: { offBox?: string; loopback?: string };
   try {
-    result = JSON.parse(execFileSync(process.execPath, ["-e", script], { encoding: "utf-8", timeout: 90_000, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] }));
+    const stdout = await new Promise<string>((resolve, reject) => {
+      execFile(process.execPath, ["-e", script], { encoding: "utf-8", timeout: 90_000, windowsHide: true }, (error, out) => error ? reject(error) : resolve(out));
+    });
+    result = JSON.parse(stdout);
   } catch (e) {
     return { ok: false, reason: `the fence probe could not run: ${(e as Error).message.split("\n")[0]}` };
   }
@@ -242,9 +271,10 @@ function probe(): { ok: boolean; reason: string } {
   return { ok: true, reason: "" };
 }
 
-/** Test-only / after install: forget the memoized proof. */
+/** After install/uninstall, and in tests: forget the memoized proof. */
 export function _resetWinCageProbe(): void {
   enforces = null;
+  probeInFlight = null;
 }
 
 // ── Spawning ─────────────────────────────────────────────────────────────
@@ -272,27 +302,97 @@ export function wrapForWinCage(shell: string, shellArgs: string[], env: Record<s
   return { cmd: helper, args: ["exec", "--quiet", ...overlay, "--", shell, ...shellArgs] };
 }
 
-let workspaceGranted = false;
+// ── Grants: what the caged shell may touch ───────────────────────────────
+//
+// The sandbox user sees nothing under the real user's profile, and LAX's
+// own tooling lives there: the portable Git it ships as the shell, the node
+// it runs on, its own code (NODE_PATH points at it). Without read access to
+// those, the cage refuses to start bash at all (2026-09-28, the first live
+// run). So, once per process: read grants on those roots when they are under
+// the profile, a write grant on the workspace, refcounted by the helper under
+// this pid and revoked at exit.
 
-/** Grant the sandbox user write access to the workspace once per process
- *  (refcounted by the helper under this pid; revoked at exit). */
-export function ensureWinCageWorkspaceGrant(): void {
-  if (workspaceGranted) return;
+/** The install root a shell lives in: `…/PortableGit/bin/bash.exe` → `…/PortableGit`. */
+function shellInstallRoot(shell: string): string {
+  const dir = dirname(resolve(shell));
+  return basename(dir).toLowerCase() === "bin" ? dirname(dir) : dir;
+}
+
+/** Directories the caged shell must read that sit under the real user's
+ *  profile, deduplicated (a root covers its subpaths). Elsewhere is readable. */
+export function winCageReadGrants(shell: string, execPath = process.execPath, projectRoot = process.cwd(), home = homedir()): string[] {
+  const out: string[] = [];
+  for (const candidate of [shellInstallRoot(shell), dirname(resolve(execPath)), resolve(projectRoot)]) {
+    if (!underUserProfile(candidate, home)) continue;
+    const c = candidate.toLowerCase();
+    if (out.some((o) => c === o.toLowerCase() || c.startsWith(o.toLowerCase() + sep))) continue;
+    out.push(candidate);
+  }
+  return out;
+}
+
+const granted = { read: new Set<string>(), write: new Set<string>() };
+let revokeRegistered = false;
+let sandboxSid: string | null = null;
+
+function grantsNeeded(shell: string): { read: string[]; write: string[] } | null {
+  const read = winCageReadGrants(shell).filter((p) => !granted.read.has(p));
+  const write = [workspaceRoot()].filter((p) => !granted.write.has(p));
+  return read.length === 0 && write.length === 0 ? null : { read, write };
+}
+
+function grantTarget(): { helper: string; sid: string } | null {
+  if (sandboxSid) {
+    const helper = resolveWinCageHelper();
+    return helper ? { helper, sid: sandboxSid } : null;
+  }
   const status = winCageStatus();
-  if (!status.helper || !status.userSid) return;
-  const root = workspaceRoot();
-  const r = runHelper(status.helper, ["acl", "grant", "--holder-pid", String(process.pid), "--sandbox-user-sid", status.userSid], {
-    input: JSON.stringify({ read: [], write: [root] }),
+  if (!status.helper || !status.userSid) return null;
+  sandboxSid = status.userSid;
+  return { helper: status.helper, sid: status.userSid };
+}
+
+function recordGranted(req: { read: string[]; write: string[] }, helper: string, sid: string): void {
+  for (const p of req.read) granted.read.add(p);
+  for (const p of req.write) granted.write.add(p);
+  if (revokeRegistered) return;
+  revokeRegistered = true;
+  process.once("exit", () => {
+    try { execFileSync(helper, ["acl", "revoke", "--holder-pid", String(process.pid), "--sandbox-user-sid", sid], { windowsHide: true, timeout: 10_000, stdio: "ignore" }); } catch { /* the helper prunes dead holders on its next acl op */ }
   });
-  if (r.code !== 0) {
-    logger.warn(`[win-cage] workspace grant failed (exit ${r.code}): ${r.stderr.trim().split("\n")[0]}`);
+}
+
+/** Grant what `shell` needs, off the event loop. Called before the bash tool spawns. */
+export async function ensureWinCageGrants(shell: string): Promise<void> {
+  const req = grantsNeeded(shell);
+  if (!req) return;
+  const target = grantTarget();
+  if (!target) return;
+  const outcome = await new Promise<{ code: number; stderr: string }>((resolve) => {
+    const child = execFile(target.helper, ["acl", "grant", "--holder-pid", String(process.pid), "--sandbox-user-sid", target.sid], { windowsHide: true, timeout: 30_000, encoding: "utf-8" },
+      (error, _stdout, stderr) => resolve({ code: error ? ((error as { code?: number }).code ?? -1) : 0, stderr: String(stderr ?? "") }));
+    child.stdin?.end(JSON.stringify(req));
+  });
+  if (outcome.code !== 0) {
+    logger.warn(`[win-cage] grant failed (exit ${outcome.code}): ${outcome.stderr.trim().split("\n")[0]}`);
     return;
   }
-  workspaceGranted = true;
-  const helper = status.helper;
-  process.once("exit", () => {
-    try { execFileSync(helper, ["acl", "revoke", "--holder-pid", String(process.pid)], { windowsHide: true, timeout: 10_000, stdio: "ignore" }); } catch { /* the helper prunes dead holders on its next acl op */ }
-  });
+  recordGranted(req, target.helper, target.sid);
+}
+
+/** The same, blocking — for the one spawn path that cannot await
+ *  (process_start). A no-op once the bash tool has warmed the grants. */
+export function ensureWinCageGrantsSync(shell: string): void {
+  const req = grantsNeeded(shell);
+  if (!req) return;
+  const target = grantTarget();
+  if (!target) return;
+  const r = runHelper(target.helper, ["acl", "grant", "--holder-pid", String(process.pid), "--sandbox-user-sid", target.sid], { input: JSON.stringify(req), timeoutMs: 30_000 });
+  if (r.code !== 0) {
+    logger.warn(`[win-cage] grant failed (exit ${r.code}): ${r.stderr.trim().split("\n")[0]}`);
+    return;
+  }
+  recordGranted(req, target.helper, target.sid);
 }
 
 // ── Install / uninstall (one UAC prompt each) ────────────────────────────

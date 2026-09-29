@@ -12,7 +12,8 @@ import { validateSandboxConfig } from "./validate.js";
 import { isSeatbeltAvailable, seatbeltProfileLoads, wrapForSeatbelt } from "./seatbelt.js";
 import { isBwrapAvailable, bwrapEnforces, bwrapGuardedRuns, wrapForBwrap } from "./bwrap.js";
 import { currentShellEgressBridge } from "../net/shell-egress-proxy.js";
-import { ensureWinCageWorkspaceGrant, resolveWinCageHelper, winCageEnforcesSync, winCageUnusableReason, wrapForWinCage } from "./win-cage.js";
+import { ensureWinCageGrantsSync, resolveWinCageHelper, winCageEnforcesSync, winCageProbePending, winCageUnusableReason, wrapForWinCage } from "./win-cage.js";
+export { ensureWinCageGrants } from "./win-cage.js";
 const logger = createLogger("sandbox");
 
 export type { SandboxMode } from "./types.js";
@@ -54,7 +55,13 @@ export function isGuardedUsable(): boolean {
     if (process.platform === "darwin") guardedUsable = isSeatbeltAvailable() && seatbeltProfileLoads(undefined, "guarded");
     else if (process.platform === "linux") guardedUsable = isBwrapAvailable() && bwrapGuardedRuns();
     // Windows: the opt-in user+WFP cage, usable only once its fence is proven.
-    else if (process.platform === "win32") guardedUsable = resolveWinCageHelper() !== null && winCageEnforcesSync();
+    // The proof runs off the event loop after the first ask; until it lands
+    // the answer is "not yet" and is not cached.
+    else if (process.platform === "win32") {
+      const usable = resolveWinCageHelper() !== null && winCageEnforcesSync();
+      if (winCageProbePending()) return false;
+      guardedUsable = usable;
+    }
     else guardedUsable = false;
   }
   return guardedUsable;
@@ -316,7 +323,9 @@ export function wrapSpawnForSandbox(shell: string, shellArgs: string[], childEnv
       return wrapForBwrap(shell, shellArgs, undefined, "guarded", { network: "namespace", ...(bridge ? { bridge } : {}) });
     }
     if (process.platform === "win32" && resolveWinCageHelper()) {
-      ensureWinCageWorkspaceGrant();
+      // A no-op when the bash tool already warmed the grants asynchronously;
+      // the sync path (process_start) pays once otherwise.
+      ensureWinCageGrantsSync(shell);
       return wrapForWinCage(shell, shellArgs, childEnv);
     }
     return { cmd: shell, args: shellArgs };

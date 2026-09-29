@@ -24,6 +24,26 @@
  */
 export type ModelStop = "ended" | "continue";
 
+export const MODEL_REFUSAL_CODE = "model_refusal";
+
+/**
+ * A stop the provider uses to say it declined to answer: Anthropic `refusal`,
+ * OpenAI-compat `content_filter`. The stream carries no text for it, so
+ * without this the turn ended "clean" with nothing to show — the user saw a
+ * thinking step and then silence (2026-09-28, four times in one evening).
+ * Reported as a non-retryable error, it reaches the chat as the same error
+ * boundary any other terminal failure uses.
+ */
+export function refusalError(stop: string | undefined | null): { code: string; message: string } | null {
+  if (!stop) return null;
+  const s = stop.toLowerCase();
+  if (s !== "refusal" && s !== "content_filter") return null;
+  return {
+    code: MODEL_REFUSAL_CODE,
+    message: `The model declined this request under its content policy (stop reason "${stop}"); nothing ran. Rephrase the request, or pick another model.`,
+  };
+}
+
 export function classifyModelStop(stop: string | undefined | null): ModelStop | undefined {
   if (!stop) return undefined;
   switch (stop.toLowerCase()) {

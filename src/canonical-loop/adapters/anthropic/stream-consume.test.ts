@@ -41,3 +41,28 @@ describe("streamConsume tool_observed handling", () => {
     expect(result.toolCallIds).toHaveLength(0);
   });
 });
+
+describe("streamConsume refusal handling", () => {
+  it("a `refusal` stop with no text is a non-retryable error the chat can show, not a clean empty turn", async () => {
+    const transport = transportYielding([
+      { type: "thinking", delta: "considering" },
+      { type: "done", stopReason: "refusal" },
+    ] as TransportEvent[]);
+    const reports: AdapterReport[] = [];
+    const result = await streamConsume(transport, makeReq(), (r) => reports.push(r), {
+      isAborted: () => false,
+    });
+
+    expect(result.firstError?.code).toBe("model_refusal");
+    expect(result.firstError?.message).toMatch(/content policy/);
+    expect(reports).toContainEqual({ kind: "error", code: "model_refusal", message: result.firstError?.message, retryable: false });
+  });
+
+  it("an ordinary end_turn stays clean", async () => {
+    const transport = transportYielding([{ type: "text", delta: "hi" }, { type: "done", stopReason: "end_turn" }] as TransportEvent[]);
+    const reports: AdapterReport[] = [];
+    const result = await streamConsume(transport, makeReq(), (r) => reports.push(r), { isAborted: () => false });
+    expect(result.firstError).toBeNull();
+    expect(reports.some((r) => r.kind === "error")).toBe(false);
+  });
+});

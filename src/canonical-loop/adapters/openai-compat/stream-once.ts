@@ -19,6 +19,7 @@ import type { ProviderRequest } from "../../../providers/adapter/types.js";
 import { hasInjects } from "../../../agent-loop/inject-queue.js";
 import { isLoopbackOrPrivateUrl } from "../../../local-only-policy.js";
 import { createLogger } from "../../../logger.js";
+import { refusalError } from "../model-stop.js";
 import { extractToolCallsFromText } from "../tool-call-text-extractor.js";
 import { createDegenerateStreamGuard, DEGENERATE_STREAM_STOP_REASON } from "../stream-guards.js";
 import { withTransportRetry } from "../transport-retry.js";
@@ -147,6 +148,11 @@ export async function streamOnce(
       if (ev.type === "done") {
         out.providerStop = ev.stopReason;
         if (ev.firstTokenMs !== undefined) out.firstTokenMs = ev.firstTokenMs;
+        const refusal = refusalError(ev.stopReason);
+        if (refusal) {
+          if (!out.firstError) out.firstError = refusal;
+          report({ kind: "error", ...refusal, retryable: false });
+        }
         continue;
       }
     }

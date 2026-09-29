@@ -14,6 +14,7 @@
 
 import type { AdapterReport } from "../../adapter-contract.js";
 import { hasInjects } from "../../../agent-loop/inject-queue.js";
+import { refusalError } from "../model-stop.js";
 import { withTransportRetry } from "../transport-retry.js";
 import { parseArgs, redactSecrets } from "./helpers.js";
 import type {
@@ -127,6 +128,11 @@ export async function streamConsume(
           out.usageOutputTokens = ev.usage.outputTokens;
           out.cacheReadTokens = ev.usage.cacheReadTokens;
           out.cacheCreateTokens = ev.usage.cacheCreateTokens;
+        }
+        const refusal = refusalError(ev.stopReason);
+        if (refusal) {
+          if (!out.firstError) out.firstError = refusal;
+          report({ kind: "error", ...refusal, retryable: false });
         }
         continue;
       }

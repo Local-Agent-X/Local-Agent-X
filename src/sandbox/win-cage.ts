@@ -158,6 +158,22 @@ async function firstFreeInRange(from: number, to: number): Promise<Server | null
 const CONNECT_PROBE = (port: number) =>
   `$c = New-Object Net.Sockets.TcpClient; try { $c.Connect('127.0.0.1', ${port}); 'CONNECT-OK' } catch { 'CONNECT-BLOCKED' } finally { $c.Dispose() }`;
 
+// The helper starts the target by path, not by PATH search, and the child's
+// env is the sandbox user's: everything a caged probe runs is spelled out.
+function systemRoot(): string {
+  return process.env.SystemRoot ?? "C:\\Windows";
+}
+function powershellPath(): string {
+  return join(systemRoot(), "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+}
+function probePathEnv(): string {
+  return `PATH=${join(systemRoot(), "System32")};${systemRoot()};${join(systemRoot(), "System32", "WindowsPowerShell", "v1.0")}`;
+}
+/** A working directory the sandbox user can read (its profile may not exist yet). */
+function probeCwd(): string {
+  return join(systemRoot(), "Temp");
+}
+
 let enforces: { ok: boolean; reason: string } | null = null;
 
 /** Why guarded is unusable on this Windows host, or null when the fence is proven. */
@@ -207,7 +223,7 @@ function probe(): { ok: boolean; reason: string } {
       } catch (e) { out.offBox = e.status === 3 ? "connected" : e.status === 2 ? "unreachable" : "error:" + (e.status ?? e.message); }
       if (inside) {
         try {
-          const r = execFileSync(helper, ["exec", "--quiet", "--", "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", ${JSON.stringify(CONNECT_PROBE(0)).replace("0)", "\" + inside.address().port + \")")}], { encoding: "utf8", timeout: 30000, windowsHide: true, cwd: "C:\\\\", stdio: ["ignore", "pipe", "pipe"] });
+          const r = execFileSync(helper, ["exec", "--quiet", "--env", ${JSON.stringify(probePathEnv())}, "--", ${JSON.stringify(powershellPath())}, "-NoProfile", "-NonInteractive", "-Command", ${JSON.stringify(CONNECT_PROBE(0)).replace("0)", "\" + inside.address().port + \")")}], { encoding: "utf8", timeout: 30000, windowsHide: true, cwd: ${JSON.stringify(probeCwd())}, stdio: ["ignore", "pipe", "pipe"] });
           out.loopback = r.includes("CONNECT-OK") ? "reached" : "blocked";
         } catch (e) { out.loopback = "error:" + (e.status ?? e.message); }
       } else out.loopback = "no-free-port";

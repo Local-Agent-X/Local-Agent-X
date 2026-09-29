@@ -163,8 +163,9 @@ describe("guarded sandbox mode (default)", () => {
       expect(blob).toContain("(deny network*)");
       expect(blob).toContain(`(allow network-outbound (remote ip "localhost:*"))`);
     } else {
-      // ...Linux guarded stays network-open (no netns unshare) this campaign.
-      expect(blob).not.toContain("--unshare-net"); // bwrap
+      // ...Linux guarded is an empty network namespace; the egress proxy's
+      // bridge is the only way out, and it is mounted only when one is live.
+      expect(blob).toContain("--unshare-net"); // bwrap
     }
   });
 

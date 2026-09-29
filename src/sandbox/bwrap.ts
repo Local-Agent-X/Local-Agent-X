@@ -130,8 +130,6 @@ export function generateBwrapArgs(home: string = homedir(), scope: SandboxScope 
     "--dev", "/dev",
     "--proc", "/proc",
     ...(isolatesNetwork(scope, net) ? ["--unshare-net"] : []), // empty network namespace
-    // The proxy's unix socket is the one thing that crosses the namespace wall.
-    ...(bridge ? ["--bind", bridge.socketPath, bridge.socketPath] : []),
     "--die-with-parent",       // caller's kill/timeout reaches the confined child
   ];
 
@@ -150,6 +148,13 @@ export function generateBwrapArgs(home: string = homedir(), scope: SandboxScope 
     const p = canonical(join(realHome, file));
     if (existsSync(p)) args.push("--ro-bind", "/dev/null", p);
   }
+
+  // The proxy's unix socket is the one thing that crosses the namespace wall.
+  // Mounted LAST: bwrap applies mounts in order, and the socket lives under
+  // the data dir (~/.lax), which the tmpfs above has just shadowed — an
+  // earlier bind would be hidden, and the forwarder would reset every
+  // connection (the CI Linux lane, 2026-09-28).
+  if (bridge) args.push("--bind", bridge.socketPath, bridge.socketPath);
 
   return args;
 }
@@ -173,9 +178,11 @@ export function wrapForBwrap(
   const bridge = bridgeMounted(scope, net);
   // With a bridge the first process in the cage is the forwarder, which
   // listens on the proxy's port inside the namespace and then runs the shell
-  // with stdio and signals passed through (ns-forwarder-source.ts).
+  // with stdio and signals passed through (ns-forwarder-source.ts). Its own
+  // warnings are not the shell's output: NODE_USE_ENV_PROXY in the overlay
+  // makes node announce the experimental proxy agent on every start.
   const target = bridge
-    ? [process.execPath, "-e", NS_FORWARDER_SOURCE, "--", bridge.socketPath, String(bridge.port), "--", shell, ...shellArgs]
+    ? [process.execPath, "--no-warnings", "-e", NS_FORWARDER_SOURCE, "--", bridge.socketPath, String(bridge.port), "--", shell, ...shellArgs]
     : [shell, ...shellArgs];
   return { cmd: executable, args: [...generateBwrapArgs(home, scope, net), ...target] };
 }

@@ -134,6 +134,19 @@ describe("bwrap guarded network (BwrapNetwork)", () => {
     } finally { rmSync(home, { recursive: true, force: true }); }
   });
 
+  it("the bridge socket under the data dir is mounted after the tmpfs that shadows ~/.lax", () => {
+    const home = makeHome();
+    try {
+      mkdirSync(join(home, ".lax", "run"), { recursive: true });
+      const sock = join(home, ".lax", "run", "shell-egress-1.sock");
+      writeFileSync(sock, "");
+      const args = generateBwrapArgs(home, "guarded", { network: "namespace", bridge: { socketPath: sock, port: 60090 } });
+      const shadow = args.indexOf(join(home, ".lax"));
+      expect(args[shadow - 1]).toBe("--tmpfs");
+      expect(args.indexOf(sock)).toBeGreaterThan(shadow);
+    } finally { rmSync(home, { recursive: true, force: true }); }
+  });
+
   it.skipIf(!bwrapHere)("with a bridge the cage's first process is the forwarder, then the shell", () => {
     const home = makeHome();
     try {

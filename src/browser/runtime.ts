@@ -9,12 +9,11 @@
  * context (advanced-shared).
  */
 import type { Browser, BrowserContext, BrowserContextOptions, CDPSession } from "playwright";
-import type { ChildProcess } from "node:child_process";
 import { chmodSync, existsSync, renameSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import {
   browserProxyConfig,
-  launchViaCDP,
+  launchAgentChrome,
   STEALTH_ARGS,
   USER_AGENTS,
   type BrowserEngine,
@@ -30,7 +29,6 @@ import { getBrowserNativeDownloadDir, resetBrowserNativeDownloadDir } from "./do
 const log = createLogger("browser.runtime");
 
 let browser: Browser | null = null;
-let chromeProcess: ChildProcess | null = null;
 let browserLaunchCleanup: (() => Promise<void>) | null = null;
 let currentEngine: BrowserEngine = "chromium";
 let sharedContext: BrowserContext | null = null;
@@ -97,11 +95,10 @@ async function launch(engine: BrowserEngine, userDataDir?: string, preferHeadles
       // userDataDir carries the shared persistent browser identity. The
       // launcher keeps its own legacy default when this is undefined, so a
       // direct/legacy call is unchanged.
-      const { browser: b, chromeProcess: proc, cleanup } = await launchViaCDP(pw, proxy.url, {
+      const { browser: b, cleanup } = await launchAgentChrome(pw, proxy.url, {
         userDataDir,
         ...(preferHeadless ? { headless: true } : {}),
       });
-      chromeProcess = proc;
       browserLaunchCleanup = cleanup ?? null;
       launchedHeadless = preferHeadless;
       return b;
@@ -356,10 +353,7 @@ export async function closeSharedBrowser(): Promise<void> {
   if (browserLaunchCleanup) {
     await browserLaunchCleanup();
     browserLaunchCleanup = null;
-  } else if (chromeProcess) {
-    try { chromeProcess.kill(); } catch { /* already exited */ }
   }
-  chromeProcess = null;
   proxyServer = null;
   launchedHeadless = null;
   await closeBrowserEgressProxy();
@@ -377,10 +371,8 @@ export async function closeSharedBrowser(): Promise<void> {
  * dedicated Chrome — never the user's.
  */
 export function forceKillSharedBrowser(): void {
-  const proc = chromeProcess;
   const b = browser;
   const cleanup = browserLaunchCleanup;
-  chromeProcess = null;
   browserLaunchCleanup = null;
   browser = null;
   launchedHeadless = null;
@@ -390,7 +382,6 @@ export function forceKillSharedBrowser(): void {
   continuityOwner = null;
   proxyServer = null;
   if (cleanup) void cleanup().catch(() => { /* best-effort wedge recovery */ });
-  else if (proc) { try { proc.kill("SIGKILL"); } catch { /* already exited */ } }
   if (b) { void b.close().catch(() => { /* connection already dead */ }); }
   void closeBrowserEgressProxy().catch((error) => {
     log.warn(`[browser-runtime] browser proxy close failed: ${(error as Error).message}`);

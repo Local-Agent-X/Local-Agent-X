@@ -4,7 +4,7 @@ import { createServer as createPortProbe } from "node:net";
 import { createServer as createProxyServer } from "node:http";
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { launchViaCDP } from "../../src/browser/launcher.ts";
+import { launchAgentChrome } from "../../src/browser/launcher.ts";
 import { killProcessTree } from "../../src/process-tree-kill.ts";
 
 const [, , executablePath, downloadsPath, userDataDir, mode] = process.argv;
@@ -95,7 +95,7 @@ await new Promise((resolve) => proxy.listen(0, "127.0.0.1", resolve));
 const proxyAddress = proxy.address();
 if (!proxyAddress || typeof proxyAddress === "string") throw new Error("test proxy did not bind");
 
-const launched = await launchViaCDP(playwright, `http://127.0.0.1:${proxyAddress.port}`, {
+const launched = await launchAgentChrome(playwright, `http://127.0.0.1:${proxyAddress.port}`, {
   executablePath,
   cdpPort,
   userDataDir,

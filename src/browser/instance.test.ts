@@ -47,7 +47,7 @@ vi.mock("./launcher.js", async (importOriginal) => {
   const original = await importOriginal<typeof import("./launcher.js")>();
   return {
     ...original,
-    launchViaCDP: vi.fn(async () => ({ browser: mocks.browser, chromeProcess: null })),
+    launchAgentChrome: vi.fn(async () => ({ browser: mocks.browser, chromeProcess: null })),
   };
 });
 

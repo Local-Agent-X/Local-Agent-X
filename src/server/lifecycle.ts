@@ -231,7 +231,7 @@ export function logStartup(deps: { config: LAXConfig; dataDir: string }): void {
 
   // Kill orphan Chrome processes from a previous server lifetime that still
   // hold the agent's user-data-dir (~/.lax/chrome-profile). Without this,
-  // the next launchViaCDP call silently joins the dead process and the user
+  // the next launchAgentChrome call silently joins the dead process and the user
   // sees no browser window — observed today during the sample-app session
   // (14 Chrome processes with no MainWindowTitle). Fire-and-forget; only
   // kills processes whose --user-data-dir matches the agent profile

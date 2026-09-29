@@ -1,11 +1,10 @@
 import { createHash } from "node:crypto";
-import { createServer } from "node:net";
 import { join } from "node:path";
 import type { Browser, BrowserContext } from "playwright";
 import { getLaxDir } from "../lax-data-dir.js";
 import type { BrowserMode } from "../types.js";
 import { startBrowserEgressProxy, type BrowserEgressProxy } from "./egress-proxy.js";
-import { launchViaCDP, type BrowserEngine, type LaunchResult } from "./launcher.js";
+import { launchAgentChrome, type BrowserEngine, type LaunchResult } from "./launcher.js";
 import type { BrowserContextRuntime } from "./manager.js";
 
 export function windowsChatChromeProfileDir(sessionId: string): string {
@@ -13,33 +12,16 @@ export function windowsChatChromeProfileDir(sessionId: string): string {
   return join(getLaxDir(), "chrome-chat-profiles", digest);
 }
 
-export async function reserveLoopbackPort(): Promise<number> {
-  const server = createServer();
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", resolve);
-  });
-  const address = server.address();
-  if (!address || typeof address === "string") {
-    server.close();
-    throw new Error("Could not reserve a Chrome debugging port");
-  }
-  await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
-  return address.port;
-}
-
 interface RuntimeDependencies {
   startProxy: () => Promise<BrowserEgressProxy>;
-  allocatePort: () => Promise<number>;
   loadPlaywright: () => Promise<typeof import("playwright")>;
-  launch: typeof launchViaCDP;
+  launch: typeof launchAgentChrome;
 }
 
 const defaultDependencies: RuntimeDependencies = {
   startProxy: () => startBrowserEgressProxy(),
-  allocatePort: reserveLoopbackPort,
   loadPlaywright: () => import("playwright"),
-  launch: launchViaCDP,
+  launch: launchAgentChrome,
 };
 
 export class WindowsChatChromeRuntime implements BrowserContextRuntime {
@@ -72,12 +54,8 @@ export class WindowsChatChromeRuntime implements BrowserContextRuntime {
   private async launchChrome(): Promise<BrowserContext> {
     this.proxy = await this.dependencies.startProxy();
     try {
-      const [pw, cdpPort] = await Promise.all([
-        this.dependencies.loadPlaywright(),
-        this.dependencies.allocatePort(),
-      ]);
+      const pw = await this.dependencies.loadPlaywright();
       const result: LaunchResult = await this.dependencies.launch(pw, this.proxy.url, {
-        cdpPort,
         userDataDir: this.profileDir,
         persistentDataDir: this.profileDir,
         forceProfileLaunch: true,

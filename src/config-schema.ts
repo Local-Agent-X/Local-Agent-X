@@ -101,7 +101,6 @@ export const configSchema = z.object({
   browserMode: z.enum(["isolated", "continuity", "advanced-shared", "in-app"]).default("in-app"),
 
   // Limits & timeouts
-  browserCdpPort: z.number().int().min(1).max(65535).default(9800),
   browserIdleTimeoutMs: z.number().int().min(60000).default(600000),
   rateLimitMax: z.number().int().min(1).default(120),
   rateLimitRefillPerSec: z.number().int().min(1).default(10),

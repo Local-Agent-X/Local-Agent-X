@@ -156,7 +156,7 @@ function ensureInAppBackend(key: string): ElectronInAppBackend {
 export function getBrowserManager(sessionId: string = "default"): BrowserBackend {
 	const key = resolveBrowserSessionId(sessionId || "default");
 	// The CDP manager is bound to the chat-scoped browser session, while its
-	// userDataDir is threaded into launchViaCDP at first getPage() — so every
+	// userDataDir is threaded into launchAgentChrome at first getPage() — so every
 	// arms share the same persistent login identity.
 	const route = routeForSession(key);
 	reportBrowserRoute(key, route);

@@ -15,7 +15,7 @@ const logger = createLogger("browser.cleanup-stale");
  * the previous run sometimes survive (especially if SIGINT shutdown
  * timed out, or PowerShell Stop-Process didn't cascade to all helper
  * processes). They keep the SingletonLock file held, and the next
- * `launchViaCDP` call either silently joins the dead instance (no
+ * `launchAgentChrome` call either silently joins the dead instance (no
  * visible window — the bug the user hit) or fails to launch.
  *
  * SAFETY: only kills processes whose `--user-data-dir` matches the

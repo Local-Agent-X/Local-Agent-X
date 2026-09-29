@@ -73,10 +73,10 @@ const mocks = vi.hoisted(() => {
 		newBrowserCDPSession: vi.fn(async () => ({ send: cdpSend, detach: vi.fn(async () => undefined) })),
 		close: vi.fn(async () => undefined),
 	} as unknown as Browser;
-	const launchViaCDP = vi.fn(
+	const launchAgentChrome = vi.fn(
 		async (_pw: unknown, _proxyUrl: string, _options?: Record<string, unknown>) => ({ browser, chromeProcess: null }),
 	);
-	return { browser, contextIds, newContext, launchViaCDP };
+	return { browser, contextIds, newContext, launchAgentChrome };
 });
 
 vi.mock("./egress-proxy.js", () => ({
@@ -86,7 +86,7 @@ vi.mock("./egress-proxy.js", () => ({
 
 vi.mock("./launcher.js", async (importOriginal) => {
 	const original = await importOriginal<typeof import("./launcher.js")>();
-	return { ...original, launchViaCDP: mocks.launchViaCDP };
+	return { ...original, launchAgentChrome: mocks.launchAgentChrome };
 });
 
 import { USER_AGENTS } from "./launcher.js";
@@ -157,8 +157,8 @@ describe("emulate on the in-app route — the read sees the phone", () => {
 
 		await getBrowserManager(SESSION).evaluate("1");
 
-		expect(mocks.launchViaCDP).toHaveBeenCalledOnce();
-		expect(mocks.launchViaCDP.mock.calls[0][2]).toMatchObject({ headless: true });
+		expect(mocks.launchAgentChrome).toHaveBeenCalledOnce();
+		expect(mocks.launchAgentChrome.mock.calls[0][2]).toMatchObject({ headless: true });
 	});
 
 	it("never drives or closes the in-app view, and hands the same one back on the way out", async () => {

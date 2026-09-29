@@ -3,7 +3,7 @@ import {
   browserProxyArgs,
   browserProxyConfig,
   buildPersistentContextOptions,
-  buildChromeLaunchArgs,
+  chromeLaunchArgs,
   configureCdpDownloadBehavior,
   DISABLE_FEATURES,
   STEALTH_ARGS,
@@ -49,7 +49,7 @@ describe("browser launch args — single --disable-features flag", () => {
     // --dns-prefetch-disable kills prefetching; NetworkPrediction disables the
     // predictor that acts on preconnect/prefetch/prerender hints.
     expect(DISABLE_FEATURES).toContain("NetworkPrediction");
-    const args = buildChromeLaunchArgs(9222, "/tmp/ud", "/tmp/dl", "http://127.0.0.1:43123", false);
+    const args = chromeLaunchArgs("/tmp/dl", "http://127.0.0.1:43123");
     expect(args).toContain("--dns-prefetch-disable");
     // NetworkPrediction rides the single consolidated --disable-features flag —
     // pre-existing disables must still be present (no clobber).
@@ -85,7 +85,7 @@ describe("browser launch args — single --disable-features flag", () => {
       const quarantine = getBrowserNativeDownloadDir(dataDir);
       const workspaceDownloads = resolve(dataDir, "workspace", "downloads");
       const options = buildPersistentContextOptions(quarantine, "http://127.0.0.1:43123");
-      const args = buildChromeLaunchArgs(9222, join(dataDir, "profile"), quarantine, "http://127.0.0.1:43123");
+      const args = chromeLaunchArgs(quarantine, "http://127.0.0.1:43123");
       expect(options.downloadsPath).toBe(quarantine);
       expect(args).toContain(`--download.default_directory=${quarantine}`);
       expect(isInsideDirectory(quarantine, dataDir)).toBe(true);

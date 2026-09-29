@@ -91,7 +91,6 @@ export interface LAXConfig {
   browserNativeDriving?: boolean;
 
   // ── Externalized limits & timeouts ──
-  browserCdpPort: number;
   browserIdleTimeoutMs: number;
   rateLimitMax: number;
   rateLimitRefillPerSec: number;

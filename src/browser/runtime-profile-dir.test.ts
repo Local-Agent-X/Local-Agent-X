@@ -1,5 +1,5 @@
 // F1: the runtime threads the session's profile userDataDir all the way into
-// launchViaCDP({ userDataDir }). Because there is ONE shared Chrome process, the
+// launchAgentChrome({ userDataDir }). Because there is ONE shared Chrome process, the
 // first session to launch fixes the dir for concurrent CDP sessions — asserted
 // here too (a later acquire with a different dir reuses the first browser).
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -24,10 +24,10 @@ const mocks = vi.hoisted(() => {
 		newBrowserCDPSession: vi.fn(async () => ({ send: cdpSend, detach: vi.fn(async () => undefined) })),
 		close: vi.fn(async () => undefined),
 	} as unknown as Browser;
-	const launchViaCDP = vi.fn(async () => ({ browser, chromeProcess: null }));
+	const launchAgentChrome = vi.fn(async () => ({ browser, chromeProcess: null }));
 	const startProxy = vi.fn(async () => ({ url: "http://127.0.0.1:41999" }));
 	const closeProxy = vi.fn(async () => undefined);
-	return { browser, contextIds, cdpSend, launchViaCDP, startProxy, closeProxy };
+	return { browser, contextIds, cdpSend, launchAgentChrome, startProxy, closeProxy };
 });
 
 vi.mock("./egress-proxy.js", () => ({
@@ -37,7 +37,7 @@ vi.mock("./egress-proxy.js", () => ({
 
 vi.mock("./launcher.js", async (importOriginal) => {
 	const original = await importOriginal<typeof import("./launcher.js")>();
-	return { ...original, launchViaCDP: mocks.launchViaCDP };
+	return { ...original, launchAgentChrome: mocks.launchAgentChrome };
 });
 
 import { acquireSessionContext, closeSharedBrowser } from "./runtime.js";
@@ -49,11 +49,11 @@ beforeEach(() => {
 
 afterEach(async () => { await closeSharedBrowser(); });
 
-describe("runtime — profile userDataDir reaches launchViaCDP", () => {
+describe("runtime — profile userDataDir reaches launchAgentChrome", () => {
 	it("passes the session's profile dir as options.userDataDir", async () => {
 		await acquireSessionContext("chromium", "isolated", "sess", "/lax/browser-data/shared");
-		expect(mocks.launchViaCDP).toHaveBeenCalledTimes(1);
-		expect(mocks.launchViaCDP).toHaveBeenCalledWith(
+		expect(mocks.launchAgentChrome).toHaveBeenCalledTimes(1);
+		expect(mocks.launchAgentChrome).toHaveBeenCalledWith(
 			expect.anything(),
 			"http://127.0.0.1:41999",
 			{ userDataDir: "/lax/browser-data/shared" },
@@ -62,7 +62,7 @@ describe("runtime — profile userDataDir reaches launchViaCDP", () => {
 
 	it("forwards undefined when no dir is supplied (launcher keeps its legacy default)", async () => {
 		await acquireSessionContext("chromium", "isolated", "sess");
-		expect(mocks.launchViaCDP).toHaveBeenCalledWith(
+		expect(mocks.launchAgentChrome).toHaveBeenCalledWith(
 			expect.anything(),
 			expect.any(String),
 			{ userDataDir: undefined },
@@ -73,8 +73,8 @@ describe("runtime — profile userDataDir reaches launchViaCDP", () => {
 		await acquireSessionContext("chromium", "isolated", "first", "/lax/chrome-profile");
 		await acquireSessionContext("chromium", "isolated", "second", "/lax/browser-data/shared");
 		// One shared Chrome, one launch — the second dir is ignored by design.
-		expect(mocks.launchViaCDP).toHaveBeenCalledTimes(1);
-		expect(mocks.launchViaCDP).toHaveBeenCalledWith(
+		expect(mocks.launchAgentChrome).toHaveBeenCalledTimes(1);
+		expect(mocks.launchAgentChrome).toHaveBeenCalledWith(
 			expect.anything(),
 			expect.any(String),
 			{ userDataDir: "/lax/chrome-profile" },

@@ -32,7 +32,6 @@ function runtimeFixture(sessionId: string, port: number) {
   });
   const runtime = new WindowsChatChromeRuntime(sessionId, undefined, {
     startProxy: vi.fn(async () => ({ url: `http://127.0.0.1:${port + 1000}`, port: port + 1000, close: closeProxy })),
-    allocatePort: vi.fn(async () => port),
     loadPlaywright: vi.fn(async () => ({} as typeof import("playwright"))),
     launch,
   });
@@ -49,7 +48,7 @@ describe("WindowsChatChromeRuntime", () => {
     expect(first).toContain("chrome-chat-profiles");
   });
 
-  it("launches each chat on its own port, process, and user-data-dir", async () => {
+  it("launches each chat on its own process and user-data-dir", async () => {
     const one = runtimeFixture("chat-one", 18001);
     const two = runtimeFixture("chat-two", 18002);
     await Promise.all([
@@ -58,8 +57,6 @@ describe("WindowsChatChromeRuntime", () => {
     ]);
     const oneOptions = one.launches[0];
     const twoOptions = two.launches[0];
-    expect(oneOptions.cdpPort).toBe(18001);
-    expect(twoOptions.cdpPort).toBe(18002);
     expect(oneOptions.userDataDir).not.toBe(twoOptions.userDataDir);
     expect(oneOptions.persistentDataDir).toBe(oneOptions.userDataDir);
     expect(twoOptions.persistentDataDir).toBe(twoOptions.userDataDir);

@@ -2,7 +2,7 @@
 // handler with browser/instance.js and browser/index.js mocked wholesale, so the
 // REAL profile → context-creation → release → teardown chain was exercised by
 // nothing. These tests run the real runtime.ts + instance.ts seams and stub
-// only the Playwright/chromium boundary (launchViaCDP + the egress proxy), the
+// only the Playwright/chromium boundary (launchAgentChrome + the egress proxy), the
 // same way runtime-in-app-fallback.test.ts and runtime-profile-dir.test.ts do.
 //
 // Three invariants the commit message lists as "Verified", each of which a
@@ -38,10 +38,10 @@ const mocks = vi.hoisted(() => {
 		newBrowserCDPSession: vi.fn(async () => ({ send: cdpSend, detach: vi.fn(async () => undefined) })),
 		close: vi.fn(async () => undefined),
 	} as unknown as Browser;
-	const launchViaCDP = vi.fn(async () => ({ browser, chromeProcess: null }));
+	const launchAgentChrome = vi.fn(async () => ({ browser, chromeProcess: null }));
 	const startProxy = vi.fn(async () => ({ url: "http://127.0.0.1:41999" }));
 	const closeProxy = vi.fn(async () => undefined);
-	return { browser, contextIds, newContext, cdpSend, launchViaCDP, startProxy, closeProxy };
+	return { browser, contextIds, newContext, cdpSend, launchAgentChrome, startProxy, closeProxy };
 });
 
 vi.mock("./egress-proxy.js", () => ({
@@ -51,7 +51,7 @@ vi.mock("./egress-proxy.js", () => ({
 
 vi.mock("./launcher.js", async (importOriginal) => {
 	const original = await importOriginal<typeof import("./launcher.js")>();
-	return { ...original, launchViaCDP: mocks.launchViaCDP };
+	return { ...original, launchAgentChrome: mocks.launchAgentChrome };
 });
 
 import { USER_AGENTS } from "./launcher.js";

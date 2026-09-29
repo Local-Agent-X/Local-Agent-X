@@ -36,7 +36,7 @@ registerBuiltinMigration({
       const defaults: Record<string, unknown> = {
         maxIterations: 160, temperature: 0.7, profile: "home",
         toolApproval: "confirm-risky", retentionDays: 90,
-        logLevel: "basic", browserCdpPort: 9800,
+        logLevel: "basic",
         browserMode: "in-app",
         browserIdleTimeoutMs: 600000, agentTimeoutMs: 300000,
       };

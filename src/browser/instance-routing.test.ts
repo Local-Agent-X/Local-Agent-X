@@ -163,7 +163,7 @@ describe("getBrowserManager routing", () => {
 // The explicit fallback matrix (F1): resolveBrowserBackendKind() is "in-app"
 // ONLY when mode=in-app AND not headless AND the bridge is up; ANY other cell
 // falls to CDP. The CDP arm then binds the manager to the session's profile
-// (whose userDataDir is threaded into launchViaCDP — proven in
+// (whose userDataDir is threaded into launchAgentChrome — proven in
 // runtime-profile-dir / manager-profile-dir tests), so every fallback path
 // carries the right profile identity.
 describe("resolveBrowserBackendKind — fallback matrix", () => {

@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { chromium, type Page } from "playwright";
 import { configSchema } from "../config-schema.js";
 import { setRuntimeConfig } from "../config.js";
-import { CHROME_PROFILE_LOCKS, launchViaCDP } from "./launcher.js";
+import { CHROME_PROFILE_LOCKS, launchAgentChrome } from "./launcher.js";
 import { startBrowserEgressProxy } from "./egress-proxy.js";
 import { closeAllBrowsers, closeBrowser, getCdpBrowserManager } from "./instance.js";
 import { browserAvailable } from "./test-browser-available.js";
@@ -147,14 +147,12 @@ beforeAll(async () => {
   dataDir = mkdtempSync(join(tmpdir(), "lax-browser-whole-system-"));
   mkdirSync(join(dataDir, "workspace"), { recursive: true });
   const fixturePort = await startFixture();
-  const cdpPort = await unusedPort();
   fixtureOrigin = `http://127.0.0.1:${fixturePort}`;
   process.env.LAX_PORT = String(fixturePort);
   process.env.LAX_DATA_DIR = dataDir;
   process.env.LAX_BROWSER_HEADLESS = "1";
   runtimeConfigInput = {
     port: fixturePort,
-    browserCdpPort: cdpPort,
     browserIdleTimeoutMs: 60_000,
     workspace: join(dataDir, "workspace"),
   };
@@ -174,27 +172,21 @@ afterAll(async () => {
 });
 
 describe.skipIf(!browserAvailable()).sequential("whole-system browser identity isolation", () => {
-  it("runs the production CDP profile path and reaps its process, locks, and disposable profile", async () => {
+  it("runs the production profile path over Playwright's pipe and reaps its locks and disposable profile", async () => {
     const profileDir = join(dataDir, "cdp-profile-test");
     mkdirSync(profileDir, { recursive: true });
     writeFileSync(join(profileDir, "profile-seed.txt"), "persistent-profile");
     for (const lock of CHROME_PROFILE_LOCKS) writeFileSync(join(profileDir, lock), "stale-lock");
     const proxy = await startBrowserEgressProxy();
-    const cdpPort = await unusedPort();
-    let launch: Awaited<ReturnType<typeof launchViaCDP>> | undefined;
-    let pid: number | undefined;
+    let launch: Awaited<ReturnType<typeof launchAgentChrome>> | undefined;
     try {
-      launch = await launchViaCDP(await import("playwright"), proxy.url, {
+      launch = await launchAgentChrome(await import("playwright"), proxy.url, {
         executablePath: chromium.executablePath(),
         userDataDir: profileDir,
-        cdpPort,
         headless: true,
         forceProfileLaunch: true,
         removeProfileOnCleanup: true,
-        readyAttempts: 50,
       });
-      pid = launch.chromeProcess?.pid;
-      expect(pid).toBeTypeOf("number");
       expect(existsSync(join(profileDir, "profile-seed.txt"))).toBe(true);
       expect(CHROME_PROFILE_LOCKS.some((lock) => {
         try { return readFileSync(join(profileDir, lock), "utf8") === "stale-lock"; }
@@ -213,7 +205,7 @@ describe.skipIf(!browserAvailable()).sequential("whole-system browser identity i
       await proxy.close();
     }
 
-    expect(() => process.kill(pid!, 0)).toThrow();
+    expect(launch?.browser.isConnected()).toBe(false);
     expect(existsSync(profileDir)).toBe(false);
   }, 45_000);
 

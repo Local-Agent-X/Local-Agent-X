@@ -130,6 +130,13 @@ Order of work, each step shippable on its own:
 - Step 4's helper spike on this workstation needs `srt windows-install`
   (one UAC prompt; it creates a local user and machine-wide WFP filters, both
   removable with `windows-uninstall`). Not run without an explicit yes.
-- The loopback policy for caged Windows spawns: route registered local
-  services through the proxy, or permit an explicit port list. `NO_PROXY=
-  localhost` cannot survive a fence that blocks non-proxy loopback.
+- ~~The loopback policy for caged Windows spawns.~~ Decided 2026-09-28: loopback
+  is OPEN inside the fence on Windows, as on macOS (the permit covers every
+  loopback port; the proxy is protected by its token). The fence's job is
+  off-machine egress; closing loopback breaks every non-HTTP dev tool, and a
+  narrower permit still could not be scoped to the caged shell. Linux is
+  closed by its mechanism (a namespace's loopback is its own): host services
+  are reachable through the proxy, and raw TCP to a registered local service
+  needs a per-port forwarder into the namespace — a follow-up. The one
+  loopback egress channel LAX creates itself, the agent browser's debugging
+  port, is to be closed at its source (a pipe, not a port).

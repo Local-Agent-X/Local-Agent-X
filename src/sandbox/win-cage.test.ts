@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { installExitDetail, parseHelperStatus, winCageEnvOverlay, wrapForWinCage } from "./win-cage.js";
+import { installExitDetail, parseHelperStatus, winCageEnvOverlay, wrapForWinCage, WIN_CAGE_LOOPBACK_PERMIT } from "./win-cage.js";
+import { SHELL_PROXY_PORTS_DEFAULT } from "../net/shell-egress-proxy.js";
+
+describe("win-cage — loopback is open inside the fence", () => {
+  it("the permit covers every loopback port, the proxy's range included", () => {
+    expect(WIN_CAGE_LOOPBACK_PERMIT).toEqual({ from: 1, to: 65535 });
+    expect(SHELL_PROXY_PORTS_DEFAULT.from).toBeGreaterThanOrEqual(WIN_CAGE_LOOPBACK_PERMIT.from);
+    expect(SHELL_PROXY_PORTS_DEFAULT.to).toBeLessThanOrEqual(WIN_CAGE_LOOPBACK_PERMIT.to);
+  });
+});
 
 describe("win-cage — the helper's status, read the way the settings page needs it", () => {
   it("is installed only when the user exists, the credential is stored, and the marker names a SID", () => {

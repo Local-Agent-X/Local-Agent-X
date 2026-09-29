@@ -11,9 +11,17 @@
 // sandbox user under a restricted token in a kill-on-close job, with the env
 // overlay this module passes. Nothing here is default-on: `guarded` on Windows
 // is usable only when the helper is present, installed, and the fence is
-// PROVEN by two probes at first use — a direct loopback connect outside the
-// permit range is blocked, and one inside it succeeds. Anything short of that
-// is the truthful `host` fallback the rest of the app already knows.
+// PROVEN by two probes at first use — a connect from inside the cage to an
+// off-machine address is blocked, and one to loopback succeeds. Anything short
+// of that is the truthful `host` fallback the rest of the app already knows.
+//
+// Loopback is OPEN inside the fence (the owner's call, 2026-09-28, matching
+// macOS guarded): the permit covers every loopback port, not only the proxy's.
+// The fence's job is off-machine egress; a local listener that relays traffic
+// out is the user's own program, the same exposure every terminal has, and
+// closing loopback would break every non-HTTP dev tool (a database driver
+// cannot cross an HTTP proxy) while a narrower permit still could not be
+// scoped to the caged shell. The proxy itself is protected by its token.
 //
 // The helper binary is not shipped by LAX yet (unsigned upstream; the plan
 // builds and signs it from source for the installer). Until then its path
@@ -31,6 +39,13 @@ import { createLogger } from "../logger.js";
 const logger = createLogger("sandbox.win-cage");
 
 export const WIN_CAGE_HELPER_ENV = "LAX_WIN_CAGE_HELPER";
+
+/** The loopback ports the fence permits: all of them (see the header). */
+export const WIN_CAGE_LOOPBACK_PERMIT = { from: 1, to: 65535 } as const;
+
+/** An unroutable off-machine address (TEST-NET-1, RFC 5737): a fenced connect
+ *  fails at once as forbidden; an unfenced one has no route and times out. */
+const OFF_BOX_PROBE_TARGET = "192.0.2.1:80";
 
 export function resolveWinCageHelper(): string | null {
   const fromEnv = process.env[WIN_CAGE_HELPER_ENV];
@@ -122,11 +137,13 @@ export function winCageUnusableReason(): string | null {
 
 /**
  * Whether the fence holds, proven at first use and memoized: a connect from
- * inside the cage to a loopback listener OUTSIDE the permit range must be
- * blocked (the helper's own behavioral probe), and one INSIDE the range must
- * succeed (a PowerShell one-liner run as the sandbox user, since the app's
- * own node binary lives under the real user's profile, which the sandbox
- * user cannot read). Both, or the cage is not a cage.
+ * inside the cage to an off-machine address must be blocked (the helper's
+ * own behavioral probe; "unreachable" is a timeout, which is what an unfenced
+ * connect to TEST-NET-1 does, so it counts as no fence), and a connect to a
+ * loopback listener in the proxy's range must succeed (a PowerShell
+ * one-liner run as the sandbox user, since the app's own node binary lives
+ * under the real user's profile, which the sandbox user cannot read). Both,
+ * or the cage is not a cage.
  */
 export function winCageEnforcesSync(): boolean {
   if (enforces) return enforces.ok;
@@ -141,41 +158,41 @@ function probe(): { ok: boolean; reason: string } {
   if (!status.helper) return { ok: false, reason: status.detail };
   if (!status.installed) return { ok: false, reason: status.detail };
   const helper = status.helper;
-  // The probes need listeners; run them synchronously via a child node so
-  // the mode resolver (sync) can call this. The outside-range listener is
-  // an ephemeral port; the inside-range one is the first free proxy port.
+  // The loopback probe needs a listener; run both probes in a child node so
+  // the mode resolver (sync) can call this. The listener takes the first
+  // free port of the proxy's range — the one loopback destination the cage
+  // exists to reach.
   const range = shellProxyPortRange();
   const script = `
     const net = require("node:net"); const { execFileSync } = require("node:child_process");
     const helper = ${JSON.stringify(helper)};
     function listen(port) { return new Promise((res, rej) => { const s = net.createServer((c) => c.end("L")); s.once("error", rej); s.listen(port, "127.0.0.1", () => res(s)); }); }
     (async () => {
-      const outside = await listen(0);
       let inside = null;
       for (let p = ${range.from}; p <= ${range.to} && !inside; p++) { try { inside = await listen(p); } catch {} }
       const out = {};
       try {
-        execFileSync(helper, ["wfp", "verify", "--target", "127.0.0.1:" + outside.address().port], { encoding: "utf8", timeout: 20000, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
-        out.outside = "blocked";
-      } catch (e) { out.outside = e.status === 3 ? "connected" : "error:" + (e.status ?? e.message); }
+        execFileSync(helper, ["wfp", "verify", "--target", ${JSON.stringify(OFF_BOX_PROBE_TARGET)}], { encoding: "utf8", timeout: 40000, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+        out.offBox = "blocked";
+      } catch (e) { out.offBox = e.status === 3 ? "connected" : e.status === 2 ? "unreachable" : "error:" + (e.status ?? e.message); }
       if (inside) {
         try {
           const r = execFileSync(helper, ["exec", "--quiet", "--", "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", ${JSON.stringify(CONNECT_PROBE(0)).replace("0)", "\" + inside.address().port + \")")}], { encoding: "utf8", timeout: 30000, windowsHide: true, cwd: "C:\\\\", stdio: ["ignore", "pipe", "pipe"] });
-          out.inside = r.includes("CONNECT-OK") ? "reached" : "blocked";
-        } catch (e) { out.inside = "error:" + (e.status ?? e.message); }
-      } else out.inside = "no-free-port";
-      outside.close(); if (inside) inside.close();
+          out.loopback = r.includes("CONNECT-OK") ? "reached" : "blocked";
+        } catch (e) { out.loopback = "error:" + (e.status ?? e.message); }
+      } else out.loopback = "no-free-port";
+      if (inside) inside.close();
       process.stdout.write(JSON.stringify(out));
     })();
   `;
-  let result: { outside?: string; inside?: string };
+  let result: { offBox?: string; loopback?: string };
   try {
-    result = JSON.parse(execFileSync(process.execPath, ["-e", script], { encoding: "utf-8", timeout: 70_000, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] }));
+    result = JSON.parse(execFileSync(process.execPath, ["-e", script], { encoding: "utf-8", timeout: 90_000, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] }));
   } catch (e) {
     return { ok: false, reason: `the fence probe could not run: ${(e as Error).message.split("\n")[0]}` };
   }
-  if (result.outside !== "blocked") return { ok: false, reason: `the fence is not active: a connect from the cage to a loopback port outside the permit range was ${result.outside}` };
-  if (result.inside !== "reached") return { ok: false, reason: `the proxy route is not reachable from the cage: a connect inside the permit range was ${result.inside}` };
+  if (result.offBox !== "blocked") return { ok: false, reason: `the fence is not active: a connect from the cage to an off-machine address was ${result.offBox}` };
+  if (result.loopback !== "reached") return { ok: false, reason: `loopback is not reachable from the cage: a connect to a proxy-range port was ${result.loopback}` };
   return { ok: true, reason: "" };
 }
 
@@ -262,9 +279,9 @@ function runElevated(args: string[]): Promise<{ ok: boolean; code: number; detai
   });
 }
 
-/** Provision the sandbox user and the fence for LAX's proxy range. UAC prompt. */
+/** Provision the sandbox user and the fence with loopback open. UAC prompt. */
 export function installWinCage(): Promise<{ ok: boolean; code: number; detail: string }> {
-  const { from, to } = shellProxyPortRange();
+  const { from, to } = WIN_CAGE_LOOPBACK_PERMIT;
   return runElevated(["install", "--proxy-port-range", `${from}-${to}`]);
 }
 

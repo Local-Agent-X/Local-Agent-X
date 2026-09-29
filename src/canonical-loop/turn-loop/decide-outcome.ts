@@ -52,6 +52,9 @@ export interface DecideOutcomeInput {
   observedTools: string[];
   assistantText: string;
   adapterTerminalReason: "done" | "error" | null;
+  /** The provider's raw stop reason for this turn, when it carried one — named
+   *  in the honest terminal of a turn that produced nothing. */
+  providerStop?: string;
   /**
    * The model's REAL stop signal: true when the provider reported an
    * end-of-turn (Anthropic end_turn, OpenAI stop) for this turn. Distinct
@@ -131,9 +134,17 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
   // breaks the drive loop.
   const middlewareAborted = middlewareDirective?.kind === "abort";
   const middlewareSuspended = middlewareDirective?.kind === "suspend";
+  // An adapter's "done" on an interactive turn with no text and no tool call
+  // is an inference from shape, not the model's decision (the HTTP adapters
+  // say "done" whenever nothing is outstanding). Taken at face value it
+  // skipped the empty-turn terminator below, and the user saw a thinking
+  // step and then nothing (2026-09-28). The terminator owns that decision.
+  const doneOnNothing =
+    adapterTerminalReason === "done" && !adapterError && op.lane === "interactive" &&
+    assistantText.trim().length === 0 && toolCalls.length === 0;
   let terminalReason: "done" | "error" | null = middlewareAborted
     ? "error"
-    : middlewareSuspended
+    : middlewareSuspended || doneOnNothing
       ? null
       : (adapterTerminalReason ?? (adapterError ? "error" : null));
 
@@ -237,6 +248,7 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
   const emptyEval = evaluateEmptyInteractiveTurn({
     op, turnIdx, assistantText, toolCalls, hasReasoning,
     terminalReason, middlewareAborted, middlewareSuspended, modelSignaledDone,
+    providerStop: in_.providerStop,
   });
   terminalReason = emptyEval.terminalReason;
   const emptyInteractiveTerminal = emptyEval.emptyInteractiveTerminal;
@@ -340,7 +352,7 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
   // re-driven instead of committing a stale "I appear to be blocked". Before the
   // epilogue, matching appendQuestionAsAnswer's placement.
   if (emptyInteractiveTerminal && terminalReason === "done") {
-    appendEmptyTurnTerminal(op.id, turnIdx, allMessages, emptyInteractiveTerminal.signaledDone);
+    appendEmptyTurnTerminal(op.id, turnIdx, allMessages, emptyInteractiveTerminal.signaledDone, emptyInteractiveTerminal.stopReason);
   }
   // A gate's honest terminal (unresolved-tool-intent's second fire) — same
   // deferral and same re-check: a later gate's reopen discards it. The append

@@ -303,6 +303,7 @@ export async function driveTurn(
     viewCompacted: input.viewCompacted === true,
   };
   const middlewareAborted = middlewareDirective?.kind === "abort";
+  const payloadStop = (providerState.providerPayload as Record<string, unknown> | undefined)?.stopReason;
 
   // Decide terminal reason + assemble the commit-message list, running the
   // retract / failure-nudge / continuation-guard / render-verify side
@@ -329,6 +330,7 @@ export async function driveTurn(
     // reasoning-only turn. Same local the post-turn-detector reads (HE-5).
     hasReasoning: sawReasoning,
     adapterError,
+    providerStop: typeof payloadStop === "string" ? payloadStop : undefined,
   });
 
   // Cancel-aware bail AFTER decideTurnOutcome, BEFORE commit: a Stop during its

@@ -1474,6 +1474,33 @@ describe("decideTurnOutcome — interactive fully-empty turns terminate (no maxT
     expect(r.terminalReason).toBe("done");
   });
 
+  // The HTTP adapters say "done" whenever nothing is outstanding, so an empty
+  // turn arrived here already terminal and skipped every branch above: the
+  // user saw a thinking step and then nothing (Windows and Mac, 2026-09-28).
+  it("(d) an adapter-declared done on a fully-empty turn does not bypass the honest terminal, which names the stop reason", async () => {
+    const r = await decideTurnOutcome(empty({ adapterTerminalReason: "done", modelSignaledDone: true, providerStop: "end_turn" }));
+    expect(r.terminalReason).toBe("done");
+    expect(assistantTexts(r).join(" ")).toMatch(/I don't have anything to add here \(the model ended the turn with stop reason "end_turn"\)/);
+  });
+
+  it("(d) an adapter-declared done on a reasoning-only turn is nudged once, then ends honestly with the stop reason", async () => {
+    const r1 = await decideTurnOutcome(empty({ adapterTerminalReason: "done", hasReasoning: true, modelSignaledDone: true, providerStop: "end_turn" }));
+    expect(r1.terminalReason).toBeNull();
+    expect(appendNudgeAsUserMessage).toHaveBeenCalledWith(
+      iop.id, 1, REASONING_ONLY_NUDGE, { name: "reasoning-only", reason: "reasoning-only", outcome: "nudge" },
+    );
+    const r2 = await decideTurnOutcome(empty({ adapterTerminalReason: "done", hasReasoning: true, modelSignaledDone: true, providerStop: "end_turn" }));
+    expect(r2.terminalReason).toBe("done");
+    expect(assistantTexts(r2).join(" ")).toMatch(/no reply and no tool call \(the model ended the turn with stop reason "end_turn"\)/);
+  });
+
+  it("(d) a WORKER turn keeps the adapter's done as-is", async () => {
+    const wop = { id: "op-worker-done", type: "self_edit", ownerId: "local-user", lane: "agent" } as unknown as Op;
+    const r = await decideTurnOutcome(empty({ op: wop, adapterTerminalReason: "done", modelSignaledDone: true }));
+    expect(r.terminalReason).toBe("done");
+    expect(assistantTexts(r)).toEqual([]);
+  });
+
   /**
    * H-033. The done gate reads a tool-less turn carrying text as a finished
    * informational turn — which is how muse ended op-outcomes find-project on

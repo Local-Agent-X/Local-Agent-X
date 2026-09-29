@@ -138,11 +138,12 @@ export interface EmptyInteractiveTurnInput {
   middlewareAborted: boolean;
   middlewareSuspended: boolean;
   modelSignaledDone: boolean;
+  providerStop?: string;
 }
 
 export interface EmptyInteractiveTurnResult {
   terminalReason: "done" | "error" | null;
-  emptyInteractiveTerminal: { signaledDone: boolean } | null;
+  emptyInteractiveTerminal: { signaledDone: boolean; stopReason?: string } | null;
 }
 
 /**
@@ -178,7 +179,8 @@ export function evaluateEmptyInteractiveTurn(
     middlewareAborted, middlewareSuspended, modelSignaledDone,
   } = in_;
   let terminalReason = in_.terminalReason;
-  let emptyInteractiveTerminal: { signaledDone: boolean } | null = null;
+  let emptyInteractiveTerminal: { signaledDone: boolean; stopReason?: string } | null = null;
+  const stopReason = in_.providerStop;
   if (op.lane === "interactive" && !middlewareAborted && !middlewareSuspended) {
     const noOutput = assistantText.trim().length === 0 && toolCalls.length === 0;
     const fullyEmpty = noOutput && !hasReasoning;
@@ -197,7 +199,7 @@ export function evaluateEmptyInteractiveTurn(
       if (!nudged) {
         terminalReason = "done";
         thinkingState.consecutive = 0;
-        emptyInteractiveTerminal = { signaledDone: false };
+        emptyInteractiveTerminal = { signaledDone: false, stopReason };
       }
     }
     if (!fullyEmpty) {
@@ -207,7 +209,7 @@ export function evaluateEmptyInteractiveTurn(
       if (modelSignaledDone || emptyState.consecutive >= 2) {
         terminalReason = "done";
         emptyState.consecutive = 0;
-        emptyInteractiveTerminal = { signaledDone: modelSignaledDone };
+        emptyInteractiveTerminal = { signaledDone: modelSignaledDone, stopReason };
       }
       // First empty non-done turn: leave terminalReason=null → the loop
       // re-drives ONCE. The counter above bounds it to that single retry.
@@ -227,10 +229,12 @@ export function appendEmptyTurnTerminal(
   turnIdx: number,
   allMessages: CommitTurnMessage[],
   signaledDone: boolean,
+  stopReason?: string,
 ): void {
+  const named = stopReason ? ` (the model ended the turn with stop reason "${stopReason}")` : "";
   const text = signaledDone
-    ? "I don't have anything to add here."
-    : "I wasn't able to produce a response — I appear to be blocked. Please try rephrasing or asking again.";
+    ? `I don't have anything to add here${named}.`
+    : `I wasn't able to produce a response — I appear to be blocked; the model ended the turn with no reply and no tool call${named}. Please try rephrasing or asking again.`;
   appendHonestTerminal(opId, turnIdx, allMessages, text, "empty-turn");
 }
 

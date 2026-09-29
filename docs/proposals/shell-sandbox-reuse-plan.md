@@ -144,3 +144,38 @@ Order of work, each step shippable on its own:
   needs a per-port forwarder into the namespace — a follow-up. The one
   loopback egress channel LAX creates itself, the agent browser's debugging
   port, is to be closed at its source (a pipe, not a port).
+
+## Step 5 — Windows escape matrix (run 2026-09-29, helper 0.0.1, as the sandbox user)
+
+| Probe | Result | Verdict |
+|---|---|---|
+| Direct HTTP to 127.0.0.1:7007 (outside the permit) | "Unable to connect" | held |
+| DNS through the resolver service (Resolve-DnsName, .NET GetHostAddresses) | resolves, real answers | **leak**: the DNS client service answers for any user, so a DNS tunnel exfiltrates. Direct UDP/53 from the process is fenced (nslookup times out). |
+| BITS transfer, off-box and to 7007 | "the user has not logged on to the network" | held (the sandbox logon carries no network credential) |
+| ShellExecute on a URL (Start-Process) | "Access is denied" | held |
+| COM Shell.Application.Open(url) | hangs; nothing reaches 7007 | held |
+| SMB loopback (IPC share) | not reachable | held |
+| schtasks /create as the sandbox user | SUCCESS | **persistence**: a task outlives the shell (still fenced by SID when it runs); the shell policy refuses schtasks by command, the Win32 API path does not |
+
+What default-on needs, in order (owner's call on each):
+
+1. **DNS.** The cage cannot fence the resolver service. Closing it means the
+   helper denies the sandbox user the DNS client's RPC endpoint (or applies a
+   per-user DNS policy) — a change to srt-win's source, worth an upstream
+   issue. Interim, the shell policy refuses Resolve-DnsName, dig and nslookup
+   by command (9a023d1b); a script body can still call the resolver.
+2. **schtasks.** The helper removes "Log on as a batch job" from the sandbox
+   user at install, so a created task never runs.
+3. **Signed helper.** The Rust source is in Anthropic's sandbox-runtime GitHub
+   repository, not the npm package. Build it with cargo on the windows-latest
+   runner in installer-release.yml, sign it in the same Azure Artifact Signing
+   step as the installer, ship it under resources and copy it to
+   ProgramData/Local Agent X/bin at install.
+4. **Installer.** The NSIS target is oneClick and per-user, with no UAC.
+   Default-on needs a customInstall macro running the helper's install
+   elevated (one UAC prompt during install) and customUnInstall running its
+   uninstall.
+
+Recommendation: keep the cage opt-in (the Settings toggle) until 1 and 2 are
+closed in the helper; ship 3 and 4 behind that toggle so opting in no longer
+needs a hand-copied binary.

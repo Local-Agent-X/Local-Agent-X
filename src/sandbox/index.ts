@@ -12,6 +12,7 @@ import { validateSandboxConfig } from "./validate.js";
 import { isSeatbeltAvailable, seatbeltProfileLoads, wrapForSeatbelt } from "./seatbelt.js";
 import { isBwrapAvailable, bwrapEnforces, bwrapGuardedRuns, wrapForBwrap } from "./bwrap.js";
 import { currentShellEgressBridge } from "../net/shell-egress-proxy.js";
+import { ensureWinCageWorkspaceGrant, resolveWinCageHelper, winCageEnforcesSync, winCageUnusableReason, wrapForWinCage } from "./win-cage.js";
 const logger = createLogger("sandbox");
 
 export type { SandboxMode } from "./types.js";
@@ -52,6 +53,8 @@ export function isGuardedUsable(): boolean {
   if (guardedUsable === null) {
     if (process.platform === "darwin") guardedUsable = isSeatbeltAvailable() && seatbeltProfileLoads(undefined, "guarded");
     else if (process.platform === "linux") guardedUsable = isBwrapAvailable() && bwrapGuardedRuns();
+    // Windows: the opt-in user+WFP cage, usable only once its fence is proven.
+    else if (process.platform === "win32") guardedUsable = resolveWinCageHelper() !== null && winCageEnforcesSync();
     else guardedUsable = false;
   }
   return guardedUsable;
@@ -250,7 +253,9 @@ export function getSandboxStatus(): SandboxStatus {
     fallbackReason = "Docker is unavailable, so bash fell back to the unconfined host.";
   } else if (selectedMode === "guarded" && !isGuardedUsable()) {
     effectiveMode = "host";
-    fallbackReason = "The guarded kernel cage is unavailable on this host, so bash is unconfined.";
+    fallbackReason = process.platform === "win32"
+      ? `The Windows network cage is not active (${winCageUnusableReason() ?? "not proven"}), so bash is unconfined.`
+      : "The guarded kernel cage is unavailable on this host, so bash is unconfined.";
   } else if (selectedMode === "seatbelt" && !isSeatbeltUsable()) {
     effectiveMode = "host";
     fallbackReason = "sandbox-exec is unavailable, so bash fell back to the unconfined host.";
@@ -287,8 +292,10 @@ export function getSandboxMode(): SandboxMode {
  * In "seatbelt" mode it returns the sandbox-exec invocation; in every other
  * mode it returns the pair unchanged. Callers (bash, process_start) wrap
  * unconditionally and spawn the result — the host/docker paths are untouched.
+ * `childEnv` is the env the caller will spawn with; the Windows cage passes it
+ * to the sandboxed child explicitly (the child does not inherit the broker's).
  */
-export function wrapSpawnForSandbox(shell: string, shellArgs: string[]): { cmd: string; args: string[] } {
+export function wrapSpawnForSandbox(shell: string, shellArgs: string[], childEnv: Record<string, string> = {}): { cmd: string; args: string[] } {
   const mode = getSandboxMode();
   if (mode === "seatbelt") {
     return wrapForSeatbelt(shell, shellArgs);
@@ -308,6 +315,10 @@ export function wrapSpawnForSandbox(shell: string, shellArgs: string[]): { cmd: 
       const bridge = currentShellEgressBridge();
       return wrapForBwrap(shell, shellArgs, undefined, "guarded", { network: "namespace", ...(bridge ? { bridge } : {}) });
     }
+    if (process.platform === "win32" && resolveWinCageHelper()) {
+      ensureWinCageWorkspaceGrant();
+      return wrapForWinCage(shell, shellArgs, childEnv);
+    }
     return { cmd: shell, args: shellArgs };
   }
   return { cmd: shell, args: shellArgs };
@@ -325,7 +336,10 @@ export function setSandboxMode(mode: SandboxMode): { ok: boolean; actual: Sandbo
     return { ok: false, actual: "host", error: "Namespace sandbox (bwrap) is not usable on this machine — it requires Linux with bubblewrap installed and unprivileged user namespaces enabled." };
   }
   if (mode === "guarded" && !isGuardedUsable()) {
-    return { ok: false, actual: "host", error: "The kernel cage is not available on this machine (needs macOS, or Linux with unprivileged user namespaces) — bash runs unconfined here." };
+    const error = process.platform === "win32"
+      ? `The Windows network cage is not active (${winCageUnusableReason() ?? "not proven"}) — install it from Settings → Security first; bash runs unconfined until then.`
+      : "The kernel cage is not available on this machine (needs macOS, or Linux with unprivileged user namespaces) — bash runs unconfined here.";
+    return { ok: false, actual: "host", error };
   }
   runtimeMode = mode;
   try {

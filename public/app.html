@@ -947,6 +947,13 @@
             </select>
             <div class="field-hint" id="sandbox-hint">Bash runs under the guarded kernel cage where supported.</div>
           </div>
+          <div id="sandbox-windows-cage" style="display:none">
+            <div class="field-hint" id="sandbox-windows-cage-detail" style="margin:0 0 8px"></div>
+            <div class="btn-row">
+              <button class="action-btn" id="sandbox-windows-cage-install" onclick="installWindowsCage()">Install the Windows network cage (one administrator prompt)</button>
+              <button class="action-btn secondary" id="sandbox-windows-cage-uninstall" onclick="uninstallWindowsCage()">Remove the Windows network cage</button>
+            </div>
+          </div>
           <div class="btn-row" id="sandbox-host-ack-actions" style="display:none">
             <button class="action-btn danger" id="sandbox-ack-btn" onclick="acknowledgeUnconfinedHost()">Acknowledge delegated/API host shell</button>
             <button class="action-btn secondary" id="sandbox-revoke-btn" onclick="revokeUnconfinedHostAcknowledgement()">Revoke host-shell acknowledgement</button>

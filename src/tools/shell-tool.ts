@@ -144,9 +144,10 @@ export const bashTool: ToolDefinition = {
         // sandbox-exec/bwrap; host/docker modes pass through unchanged. The wrapper
         // is transparent — child.pid, stdio pipes, and the kill path below all
         // operate on the wrapped process exactly as before.
-        const spawned = wrapSpawnForSandbox(shell, shellArgs);
+        const childEnv = secrets ? { ...sanitizedEnv, ...secrets.env } : sanitizedEnv;
+        const spawned = wrapSpawnForSandbox(shell, shellArgs, childEnv);
         const child = spawn(spawned.cmd, spawned.args, {
-          env: secrets ? { ...sanitizedEnv, ...secrets.env } : sanitizedEnv,
+          env: childEnv,
           cwd,
           windowsHide: true,
           stdio: ["ignore", "pipe", "pipe"],

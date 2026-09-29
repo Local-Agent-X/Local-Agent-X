@@ -148,7 +148,13 @@ export function startSession(
   // seatbelt and bwrap are transparent: sandbox-exec/bwrap exec the shell in
   // place, so the tracked ChildProcess, the process group (detached), and the
   // kill path are unchanged. Host/docker modes pass through unwrapped.
-  const spawned = wrapSpawnForSandbox(shell, shellArgs);
+  // Proxy env is the BASE and caller-provided env overrides it: the cage is
+  // the wall, the proxy env is only a default route — a caller that
+  // explicitly sets HTTP_PROXY etc. wins. Sync accessor because startSession
+  // is sync (DevServerDeps.start types it sync); a cold-start miss fails
+  // closed at the cage, see shell-proxy-env.ts.
+  const childEnv = sanitizeEnv({ ...shellProxyEnvSync(), ...env });
+  const spawned = wrapSpawnForSandbox(shell, shellArgs, childEnv);
 
   // An explicit caller cwd (build/dev flows) wins; otherwise default to the
   // workspace rather than inheriting the server cwd — same anchor as bash and
@@ -163,12 +169,7 @@ export function startSession(
     // (e.g. a node server holding a port). On Windows taskkill /T handles the
     // tree, and detached would risk a stray console. Pipes are unaffected.
     child = spawn(spawned.cmd, spawned.args, {
-      // Proxy env is the BASE and caller-provided env overrides it: the cage
-      // is the wall, the proxy env is only a default route — a caller that
-      // explicitly sets HTTP_PROXY etc. wins. Sync accessor because
-      // startSession is sync (DevServerDeps.start types it sync); a cold-start
-      // miss fails closed at the cage, see shell-proxy-env.ts.
-      env: sanitizeEnv({ ...shellProxyEnvSync(), ...env }),
+      env: childEnv,
       cwd: effectiveCwd,
       windowsHide: true,
       detached: !isWin,

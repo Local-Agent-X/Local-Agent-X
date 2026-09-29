@@ -83,8 +83,27 @@ export const handleSystemRoutes: RouteHandler = async (method, url, req, res, ct
   // Sandbox
   if (method === "GET" && url.pathname === "/api/sandbox") {
     const { getSandboxStatus, isDockerAvailable, isGuardedUsable } = await import("../../sandbox/index.js");
+    const { winCageStatus } = await import("../../sandbox/win-cage.js");
     const status = getSandboxStatus();
-    json(200, { mode: status.effectiveMode, ...status, dockerAvailable: isDockerAvailable(), guardedAvailable: isGuardedUsable(), dockerDownloadUrl: "https://www.docker.com/products/docker-desktop/" }); return true;
+    json(200, {
+      mode: status.effectiveMode, ...status, dockerAvailable: isDockerAvailable(), guardedAvailable: isGuardedUsable(),
+      dockerDownloadUrl: "https://www.docker.com/products/docker-desktop/",
+      ...(process.platform === "win32" ? { windowsCage: winCageStatus() } : {}),
+    }); return true;
+  }
+  // The Windows network cage: one administrator prompt to install or remove
+  // the sandbox user and its fence. The prompt appears on the user's desktop.
+  if (method === "POST" && url.pathname === "/api/sandbox/windows-cage") {
+    if (process.platform !== "win32") { json(400, { error: "The Windows network cage only applies on Windows." }); return true; }
+    const body = await readBody(req);
+    const { action } = JSON.parse(body);
+    if (action !== "install" && action !== "uninstall") { json(400, { error: "action must be install or uninstall" }); return true; }
+    const cage = await import("../../sandbox/win-cage.js");
+    const result = action === "install" ? await cage.installWinCage() : await cage.uninstallWinCage();
+    const { getSandboxStatus } = await import("../../sandbox/index.js");
+    const status = getSandboxStatus();
+    ctx.broadcastAll({ type: "settings_changed", settings: { sandbox: status } });
+    json(result.ok ? 200 : 409, { ...result, mode: status.effectiveMode, ...status, windowsCage: cage.winCageStatus() }); return true;
   }
   if (method === "POST" && url.pathname === "/api/sandbox") {
     const body = await readBody(req);

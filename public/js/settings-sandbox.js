@@ -31,6 +31,44 @@ function renderSandboxStatus(d) {
   if (revoke) revoke.style.display = !confined && d.unconfinedHostAcknowledged ? '' : 'none';
 }
 
+// The Windows network cage (src/sandbox/win-cage.ts): shown only when the
+// server reports it, i.e. on Windows. Installing or removing it takes one
+// administrator prompt, which appears on the desktop, not in this page.
+function renderWindowsCage(cage) {
+  const box = document.getElementById('sandbox-windows-cage');
+  if (!box) return;
+  if (!cage) { box.style.display = 'none'; return; }
+  box.style.display = '';
+  const detail = document.getElementById('sandbox-windows-cage-detail');
+  const install = document.getElementById('sandbox-windows-cage-install');
+  const uninstall = document.getElementById('sandbox-windows-cage-uninstall');
+  if (detail) detail.textContent = 'Windows network cage: ' + (cage.detail || '');
+  const helperMissing = !cage.helper;
+  if (install) { install.style.display = cage.installed || helperMissing ? 'none' : ''; install.disabled = false; install.textContent = 'Install the Windows network cage (one administrator prompt)'; }
+  if (uninstall) { uninstall.style.display = cage.installed ? '' : 'none'; uninstall.disabled = false; }
+}
+
+async function windowsCageAction(action) {
+  const btn = document.getElementById(action === 'install' ? 'sandbox-windows-cage-install' : 'sandbox-windows-cage-uninstall');
+  const detail = document.getElementById('sandbox-windows-cage-detail');
+  if (btn) { btn.disabled = true; btn.textContent = 'Waiting for the administrator prompt…'; }
+  try {
+    const r = await apiFetch('/api/sandbox/windows-cage', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action })
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok && detail) detail.textContent = 'Windows network cage: ' + (d.detail || d.error || 'the action failed.');
+    renderSandboxStatus(d);
+    if (d.windowsCage) renderWindowsCage(d.windowsCage);
+    else await loadSandboxMode();
+  } catch (e) {
+    console.warn('[sandbox] windows cage ' + action + ' failed', e);
+    if (btn) btn.disabled = false;
+  }
+}
+function installWindowsCage() { return windowsCageAction('install'); }
+function uninstallWindowsCage() { return windowsCageAction('uninstall'); }
+
 async function loadSandboxMode() {
   try {
     const r = await apiFetch('/api/sandbox');
@@ -39,6 +77,7 @@ async function loadSandboxMode() {
     const sel = document.getElementById('cfg-sandbox-mode');
     if (sel) sel.value = d.selectedMode || d.mode || 'guarded';
     renderSandboxStatus(d);
+    renderWindowsCage(d.windowsCage || null);
     const hint = document.getElementById('sandbox-hint');
     if (hint) hint.textContent = SANDBOX_HINTS[d.mode] || SANDBOX_HINTS.guarded;
     if (sel && !d.dockerAvailable) {
@@ -52,7 +91,9 @@ async function loadSandboxMode() {
       const guardedOpt = sel.querySelector('option[value="guarded"]');
       if (guardedOpt) {
         guardedOpt.disabled = true;
-        guardedOpt.textContent = 'Protected — not available on this OS (needs macOS or Linux)';
+        guardedOpt.textContent = d.windowsCage
+          ? 'Protected — install the Windows network cage below to enable'
+          : 'Protected — not available on this OS (needs macOS or Linux)';
       }
     }
   } catch (e) { console.warn('[sandbox] load failed', e); }

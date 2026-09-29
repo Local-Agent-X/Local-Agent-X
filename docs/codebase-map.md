@@ -12,7 +12,7 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 67 top-level dirs · 67 live · 0 with no live importer · 1678 non-test source files · 0 god files (>400 LOC).
+**Totals:** 67 top-level dirs · 67 live · 0 with no live importer · 1681 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -45,7 +45,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/protocols/` | 19 | 51 | XL |  |
 | `src/agents/` | 17 | 13 | L |  |
 | `src/anthropic-client/` | 16 | 21 | XL |  |
-| `src/sandbox/` | 16 | 9 | L |  |
+| `src/sandbox/` | 16 | 11 | L |  |
 | `src/tool-execution/` | 15 | 54 | XL |  |
 | `src/autonomy/` | 13 | 4 | M |  |
 | `src/cognition/` | 13 | 33 | XL |  |
@@ -75,6 +75,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/codex-client/` | 4 | 5 | M |  |
 | `src/embedding-providers/` | 4 | 8 | M |  |
 | `src/hooks/` | 4 | 3 | M |  |
+| `src/net/` | 4 | 3 | M |  |
 | `src/routing/` | 4 | 6 | M |  |
 | `src/errors/` | 3 | 2 | S |  |
 | `src/language-intel/` | 3 | 4 | M |  |
@@ -82,7 +83,6 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/conversation/` | 2 | 3 | M |  |
 | `src/llm-dispatch/` | 2 | 2 | M |  |
 | `src/manifest-generator/` | 2 | 8 | M |  |
-| `src/net/` | 2 | 2 | M |  |
 | `src/types/` | 2 | 3 | M |  |
 | `src/pricing/` | 1 | 1 | S |  |
 

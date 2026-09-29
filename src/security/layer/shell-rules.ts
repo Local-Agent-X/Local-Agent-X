@@ -115,6 +115,9 @@ export const INLINE_CODE_PATTERNS: readonly RegExp[] = [
 export const DANGEROUS_INVOKE_BINS = new Set([
   "open", "host", "ping", "mount", "umount",
   "mail", "mailx", "dig", "nslookup", "getent", "traceroute",
+  // PowerShell's resolver cmdlet: the Windows cage cannot fence DNS, which the
+  // resolver service answers on any user's behalf (escape matrix, 2026-09-29).
+  "resolve-dnsname",
 ]);
 
 // Commands that hand a URL to the system browser / an external app. Rejected

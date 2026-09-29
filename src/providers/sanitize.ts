@@ -1,6 +1,7 @@
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import { isHarnessRow } from "../harness-rows.js";
 import { stripSystemInjectionTags } from "../sanitize.js";
+import { MODEL_REFUSAL_CODE } from "../canonical-loop/adapters/model-stop.js";
 import {
   INTERRUPTED_TURN_BOUNDARY,
   TURN_ERROR_BOUNDARY_HEAD,
@@ -254,8 +255,36 @@ function hasImagesProp(m: ChatCompletionMessageParam): boolean {
   return Array.isArray(imgs) && imgs.length > 0;
 }
 
-export function sanitizeHistory(messages: ChatCompletionMessageParam[]): ChatCompletionMessageParam[] {
+/**
+ * The rows of every refused turn: from the request the provider declined
+ * through its model_refusal boundary, tool rows between included. The
+ * provider's classifier judges the whole conversation, so a refused request
+ * left in history makes every later turn a refusal too (`echo hello` was
+ * declined after a declined key read, 2026-09-28). The transcript keeps the
+ * exchange for the user; the model is never shown it again.
+ */
+function refusedTurnRows(messages: ChatCompletionMessageParam[]): Set<number> {
+  const drop = new Set<number>();
+  const refusalHead = `${TURN_ERROR_BOUNDARY_HEAD}${MODEL_REFUSAL_CODE}: `;
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i];
+    if (m.role !== "assistant") continue;
+    const err = asTurnError((m as unknown as Record<string, unknown>)._error);
+    const refused = err
+      ? err.code === MODEL_REFUSAL_CODE
+      : typeof m.content === "string" && m.content.trim().startsWith(refusalHead) && isStandaloneTurnErrorBoundary(m.content.trim());
+    if (!refused) continue;
+    let start = i - 1;
+    while (start > 0 && messages[start].role !== "user") start--;
+    for (let k = Math.max(start, 0); k <= i; k++) drop.add(k);
+  }
+  return drop;
+}
+
+export function sanitizeHistory(history: ChatCompletionMessageParam[]): ChatCompletionMessageParam[] {
   type MsgRecord = Record<string, unknown>;
+  const refused = refusedTurnRows(history);
+  const messages = refused.size ? history.filter((_, i) => !refused.has(i)) : history;
   const callIds = new Set<string>();
   const resultIds = new Set<string>();
   for (const m of messages) {

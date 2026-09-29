@@ -44,6 +44,37 @@ const summaryOf = (msgs: ChatCompletionMessageParam[]): string => {
 // how the deleted window explained what it had cut; the checkpoint summarises
 // the old part in prose instead (context-manager/checkpoint-history.ts).
 
+describe("a refused turn is not replayed to the model", () => {
+	const REFUSED = { code: "model_refusal", message: "The model declined this request under its content policy (stop reason \"refusal\"); nothing ran." };
+	const boundary = (): ChatCompletionMessageParam =>
+		({ role: "assistant", content: renderTurnErrorBoundary(REFUSED), _error: REFUSED }) as ChatCompletionMessageParam;
+
+	it("drops the declined request and its boundary, keeps everything around them", () => {
+		const out = sanitizeHistory([u("ask 0"), a("reply 1"), u("read the key"), boundary(), u("echo hello")]);
+		expect(out).toEqual([u("ask 0"), a("reply 1"), u("echo hello")]);
+	});
+
+	it("drops the tool rows of a turn refused after its tool ran", () => {
+		const call = { role: "assistant", content: "", tool_calls: [{ id: "t1", type: "function", function: { name: "bash", arguments: "{}" } }] } as ChatCompletionMessageParam;
+		const result = { role: "tool", tool_call_id: "t1", content: "listing" } as ChatCompletionMessageParam;
+		const out = sanitizeHistory([u("ask 0"), a("reply 1"), u("list it"), call, result, boundary(), u("next")]);
+		expect(out).toEqual([u("ask 0"), a("reply 1"), u("next")]);
+	});
+
+	it("a flag-dropped copy of the refusal boundary is recognised by its content", () => {
+		const flagless = a(renderTurnErrorBoundary(REFUSED));
+		expect(sanitizeHistory([u("ask 0"), a("reply 1"), u("read the key"), flagless, u("next")])).toEqual([u("ask 0"), a("reply 1"), u("next")]);
+	});
+
+	it("any other terminal error stays narrated", () => {
+		const other = { code: "transport_error", message: "socket hang up" };
+		const row = ({ role: "assistant", content: renderTurnErrorBoundary(other), _error: other }) as ChatCompletionMessageParam;
+		const out = sanitizeHistory([u("ask 0"), row, u("next")]);
+		expect(out).toHaveLength(3);
+		expect(out[1].content).toContain("transport_error");
+	});
+});
+
 // GOLDEN for the `_error` boundary row canonical-run.ts writes after a
 // terminal stream error: the provider copy carries the canonical sentence
 // exactly once, the structural flag never leaks, recovered errors (no row)

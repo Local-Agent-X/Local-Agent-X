@@ -132,7 +132,11 @@ Order of work, each step shippable on its own:
   removable with `windows-uninstall`). Not run without an explicit yes.
 - ~~The loopback policy for caged Windows spawns.~~ Decided 2026-09-28: loopback
   is OPEN inside the fence on Windows, as on macOS (the permit covers every
-  loopback port; the proxy is protected by its token). The fence's job is
+  loopback port; the proxy is protected by its token). Not yet delivered:
+  the upstream helper's install refuses a permit wider than 50 ports
+  (measured on 0.0.1), so the installed fence permits only the proxy's range
+  and Windows behaves like Linux (loopback through the proxy, no NO_PROXY)
+  until LAX builds the helper from source with the wide permit. The fence's job is
   off-machine egress; closing loopback breaks every non-HTTP dev tool, and a
   narrower permit still could not be scoped to the caged shell. Linux is
   closed by its mechanism (a namespace's loopback is its own): host services

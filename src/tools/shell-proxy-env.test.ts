@@ -67,8 +67,9 @@ beforeEach(() => {
 });
 
 // Whether THIS host's cage lets a guarded shell reach loopback directly (see
-// proxyEnvFor): true everywhere but Linux, whose cage is a network namespace.
-const loopbackDirect = process.platform !== "linux";
+// proxyEnvFor): only macOS; Linux is a namespace and the Windows fence permits
+// only the proxy's ports.
+const loopbackDirect = process.platform === "darwin";
 const KEY_COUNT = loopbackDirect ? 9 : 7;
 function expectLoopbackRule(env: Record<string, string>): void {
   if (loopbackDirect) {
@@ -81,17 +82,17 @@ function expectLoopbackRule(env: Record<string, string>): void {
 }
 
 describe("proxyEnvFor — the loopback rule is the platform's cage", () => {
-  it("macOS and Windows bypass the proxy for loopback; Linux routes everything through it", () => {
-    for (const platform of ["darwin", "win32"] as const) {
+  it("macOS bypasses the proxy for loopback; Linux and Windows route everything through it", () => {
+    const mac = proxyEnvFor("http://lax:t@127.0.0.1:60090", "darwin");
+    expect(mac.NO_PROXY).toBe(NO_PROXY_HOSTS);
+    expect(Object.keys(mac)).toHaveLength(9);
+    for (const platform of ["linux", "win32"] as const) {
       const env = proxyEnvFor("http://lax:t@127.0.0.1:60090", platform);
-      expect(env.NO_PROXY).toBe(NO_PROXY_HOSTS);
-      expect(Object.keys(env)).toHaveLength(9);
+      expect(env).not.toHaveProperty("NO_PROXY");
+      expect(env).not.toHaveProperty("no_proxy");
+      expect(env.HTTPS_PROXY).toBe("http://lax:t@127.0.0.1:60090");
+      expect(Object.keys(env)).toHaveLength(7);
     }
-    const linux = proxyEnvFor("http://lax:t@127.0.0.1:60090", "linux");
-    expect(linux).not.toHaveProperty("NO_PROXY");
-    expect(linux).not.toHaveProperty("no_proxy");
-    expect(linux.HTTPS_PROXY).toBe("http://lax:t@127.0.0.1:60090");
-    expect(Object.keys(linux)).toHaveLength(7);
   });
 });
 
@@ -142,7 +143,7 @@ describe("shellProxyEnv", () => {
     // is cleared and the full 8-key env comes back unchanged.
     const env = await shellProxyEnv();
     for (const key of ALL_PROXY_KEYS) expect(env[key]).toBe(proxyState.url);
-    expect(Object.keys(env)).toHaveLength(9);
+    expect(Object.keys(env)).toHaveLength(KEY_COUNT);
   });
 
   // REGRESSION: after a timeout we stop awaiting the start but it keeps warming

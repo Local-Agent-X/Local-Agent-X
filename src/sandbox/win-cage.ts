@@ -15,13 +15,16 @@
 // off-machine address is blocked, and one to loopback succeeds. Anything short
 // of that is the truthful `host` fallback the rest of the app already knows.
 //
-// Loopback is OPEN inside the fence (the owner's call, 2026-09-28, matching
-// macOS guarded): the permit covers every loopback port, not only the proxy's.
-// The fence's job is off-machine egress; a local listener that relays traffic
-// out is the user's own program, the same exposure every terminal has, and
-// closing loopback would break every non-HTTP dev tool (a database driver
-// cannot cross an HTTP proxy) while a narrower permit still could not be
-// scoped to the caged shell. The proxy itself is protected by its token.
+// Loopback policy (the owner's call, 2026-09-28): OPEN inside the fence,
+// matching macOS guarded — the fence's job is off-machine egress; a local
+// listener that relays traffic out is the user's own program, the same
+// exposure every terminal has, and closing loopback breaks every non-HTTP dev
+// tool (a database driver cannot cross an HTTP proxy). The upstream helper
+// cannot express that yet: its install validates the permit range and refuses
+// anything wider than 50 ports (measured on 0.0.1: 60090-60139 accepted,
+// 60090-60189 refused), so until LAX builds the helper from source the permit
+// is the proxy's own range and loopback is reachable only through the proxy,
+// as on Linux. shell-proxy-env.ts sets no NO_PROXY on Windows for that reason.
 //
 // The helper binary is not shipped by LAX yet (unsigned upstream; the plan
 // builds and signs it from source for the installer). Until then its path
@@ -40,8 +43,16 @@ const logger = createLogger("sandbox.win-cage");
 
 export const WIN_CAGE_HELPER_ENV = "LAX_WIN_CAGE_HELPER";
 
-/** The loopback ports the fence permits: all of them (see the header). */
-export const WIN_CAGE_LOOPBACK_PERMIT = { from: 1, to: 65535 } as const;
+/** The loopback ports the fence permits. The decision is "all of them"; the
+ *  upstream helper caps a permit at 50 ports (see the header), so for now it
+ *  is the proxy's range, and the wide permit waits for LAX's own helper build.
+ *  A function, not a constant: the range is read from the environment, and
+ *  this module loads inside the sandbox facade's import graph. */
+export function winCageLoopbackPermit(): { from: number; to: number } {
+  return shellProxyPortRange();
+}
+/** The widest permit the upstream helper (0.0.1) accepts. */
+export const WIN_CAGE_HELPER_MAX_PERMIT_WIDTH = 50;
 
 /** An unroutable off-machine address (TEST-NET-1, RFC 5737): a fenced connect
  *  fails at once as forbidden; an unfenced one has no route and times out. */
@@ -281,7 +292,7 @@ function runElevated(args: string[]): Promise<{ ok: boolean; code: number; detai
 
 /** Provision the sandbox user and the fence with loopback open. UAC prompt. */
 export function installWinCage(): Promise<{ ok: boolean; code: number; detail: string }> {
-  const { from, to } = WIN_CAGE_LOOPBACK_PERMIT;
+  const { from, to } = winCageLoopbackPermit();
   return runElevated(["install", "--proxy-port-range", `${from}-${to}`]);
 }
 

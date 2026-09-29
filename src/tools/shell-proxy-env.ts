@@ -55,10 +55,12 @@ export function proxyEnvFor(url: string, platform: NodeJS.Platform = process.pla
     all_proxy: url,
     NODE_USE_ENV_PROXY: "1",
   };
-  // On Linux the cage is a network namespace whose loopback is its own: the
-  // host's services are reachable only through the proxy, whose policy allows
-  // the app's port and the registered local services. Nothing bypasses it.
-  if (platform !== "linux") {
+  // On Linux the cage is a network namespace whose loopback is its own, and
+  // on Windows the fence permits loopback only on the proxy's ports (the
+  // upstream helper's limit — win-cage.ts): the host's services are reachable
+  // only through the proxy, whose policy allows the app's port and the
+  // registered local services. Nothing bypasses it there.
+  if (platform === "darwin") {
     env.NO_PROXY = NO_PROXY_HOSTS;
     env.no_proxy = NO_PROXY_HOSTS;
   }

@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { installExitDetail, parseHelperStatus, winCageEnvOverlay, wrapForWinCage, WIN_CAGE_LOOPBACK_PERMIT } from "./win-cage.js";
+import { installExitDetail, parseHelperStatus, winCageEnvOverlay, winCageLoopbackPermit, wrapForWinCage, WIN_CAGE_HELPER_MAX_PERMIT_WIDTH } from "./win-cage.js";
 import { SHELL_PROXY_PORTS_DEFAULT } from "../net/shell-egress-proxy.js";
 
-describe("win-cage — loopback is open inside the fence", () => {
-  it("the permit covers every loopback port, the proxy's range included", () => {
-    expect(WIN_CAGE_LOOPBACK_PERMIT).toEqual({ from: 1, to: 65535 });
-    expect(SHELL_PROXY_PORTS_DEFAULT.from).toBeGreaterThanOrEqual(WIN_CAGE_LOOPBACK_PERMIT.from);
-    expect(SHELL_PROXY_PORTS_DEFAULT.to).toBeLessThanOrEqual(WIN_CAGE_LOOPBACK_PERMIT.to);
+describe("win-cage — the loopback permit", () => {
+  it("covers the proxy's range and fits the upstream helper's 50-port cap (open loopback waits for LAX's own helper build)", () => {
+    const permit = winCageLoopbackPermit();
+    expect(permit.from).toBeLessThanOrEqual(SHELL_PROXY_PORTS_DEFAULT.from);
+    expect(permit.to).toBeGreaterThanOrEqual(SHELL_PROXY_PORTS_DEFAULT.to);
+    expect(permit.to - permit.from + 1).toBeLessThanOrEqual(WIN_CAGE_HELPER_MAX_PERMIT_WIDTH);
   });
 });
 

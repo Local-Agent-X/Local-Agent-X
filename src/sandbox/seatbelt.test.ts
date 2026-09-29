@@ -6,7 +6,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { generateSeatbeltProfile, isSeatbeltAvailable, seatbeltProfileLoads, wrapForSeatbelt, SANDBOX_EXEC } from "./seatbelt.js";
+import { generateSeatbeltProfile, isSeatbeltAvailable, seatbeltProfileLoads, wrapForSeatbelt, SANDBOX_EXEC, GUARDED_UNIX_SOCKET_ALLOW, GUARDED_UNIX_SOCKET_DENY } from "./seatbelt.js";
 import { HOME_RELATIVE_DENY_DIRS, HOME_RELATIVE_DENY_FILES, SERVER_SCOPE_EXEMPT_DIRS, GUARDED_SCOPE_EXEMPT_DIRS } from "./validate.js";
 
 const onDarwin = process.platform === "darwin";
@@ -74,8 +74,7 @@ describe("seatbelt profile generation", () => {
     expect(profile).toContain(`(allow network-outbound (remote ip "localhost:*"))`);
     expect(profile).toContain(`(allow network-bind (local ip "*:*"))`);
     expect(profile).toContain(`(allow network-inbound (local ip "*:*"))`);
-    expect(profile).toContain("(allow network* (remote unix-socket))");
-    expect(profile).toContain("(allow network* (local unix-socket))");
+    expect(profile).not.toContain("(allow network* (remote unix-socket))");
     for (const dir of HOME_RELATIVE_DENY_DIRS) {
       const entry = `(subpath "${sb(join(home, dir))}")`;
       if (GUARDED_SCOPE_EXEMPT_DIRS.has(dir)) {
@@ -89,6 +88,46 @@ describe("seatbelt profile generation", () => {
       expect(profile).toContain(`(literal "${sb(join(home, file))}")`);
     }
     expect(profile).toContain(`(literal "${sb(join(home, ".zshrc"))}")`);
+  });
+
+  // Unix sockets are on the machine, and some of them ARE the machine:
+  // docker.sock is root, the agents sign with the user's keys. Guarded binds
+  // its own anywhere, connects only to the allowlist, and refuses the
+  // host-control sockets even inside an allowed directory (later rule wins).
+  it("guarded scope: unix sockets are bind-anywhere, connect-by-allowlist, host-control sockets refused", () => {
+    const profile = generateSeatbeltProfile(home, "guarded");
+    expect(profile).toContain(`(allow network-bind (local unix-socket (path-regex #"^/")))`);
+    for (const s of GUARDED_UNIX_SOCKET_ALLOW) {
+      expect(profile).toContain(`(allow network-outbound (remote unix-socket (subpath "${s.path}")))`);
+    }
+    for (const s of GUARDED_UNIX_SOCKET_DENY) {
+      expect(profile).toContain(`(deny network-outbound (remote unix-socket (path-regex #"${s.regex}")))`);
+    }
+    // The denies come AFTER the allows they carve out of.
+    const lastAllow = Math.max(...GUARDED_UNIX_SOCKET_ALLOW.map((s) => profile.indexOf(`(subpath "${s.path}")`)));
+    const firstDeny = Math.min(...GUARDED_UNIX_SOCKET_DENY.map((s) => profile.indexOf(`#"${s.regex}"`)));
+    expect(firstDeny).toBeGreaterThan(lastAllow);
+    // No blanket unix-socket allow survives in any scope.
+    for (const scope of ["shell", "guarded", "server"] as const) {
+      expect(generateSeatbeltProfile(home, scope)).not.toMatch(/\(allow network\* \((?:remote|local) unix-socket\)\)/);
+    }
+  });
+
+  it("the allowlist names only service and temp sockets, never a home directory or a host-control socket", () => {
+    const denied = GUARDED_UNIX_SOCKET_DENY.map((s) => new RegExp(s.regex));
+    for (const s of GUARDED_UNIX_SOCKET_ALLOW) {
+      expect(s.path.startsWith("/private/")).toBe(true);
+      expect(s.path).not.toMatch(/\/Users\//);
+      expect(denied.some((re) => re.test(s.path))).toBe(false);
+      expect(s.why.length).toBeGreaterThan(10);
+    }
+    // The shapes the denies exist for actually match them.
+    expect(denied.some((re) => re.test("/private/tmp/com.apple.launchd.AbC123/Listeners"))).toBe(true);
+    expect(denied.some((re) => re.test("/private/var/run/docker.sock"))).toBe(true);
+    expect(denied.some((re) => re.test("/private/tmp/dbus-XyZ"))).toBe(true);
+    // …and not the sockets dev tools legitimately use.
+    expect(denied.some((re) => re.test("/private/tmp/.s.PGSQL.5432"))).toBe(false);
+    expect(denied.some((re) => re.test("/private/var/folders/ab/T/watchman-peter/sock"))).toBe(false);
   });
 });
 
@@ -337,10 +376,10 @@ describe.skipIf(!onDarwin)("seatbelt guarded-scope enforcement (live sandbox-exe
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 
-  it("ALLOWS unix-domain sockets (on-machine IPC: docker.sock, ssh-agent, postgres)", () => {
+  it("ALLOWS a tool's own unix-domain socket under the temp tree (bind + connect inside the cage)", () => {
     const dir = mkdtempSync(join(tmpdir(), "lax-sb-grd-"));
-    // Bind + connect a UDS entirely inside the cage; short path (tmpdir) to
-    // stay under the sun_path length limit.
+    // Bind + connect a UDS entirely inside the cage; short path (tmpdir, under
+    // /private/var/folders) to stay under the sun_path length limit.
     const sockDir = mkdtempSync(join(tmpdir(), "lax-sb-uds-"));
     try {
       const sock = join(sockDir, "s");
@@ -351,5 +390,48 @@ describe.skipIf(!onDarwin)("seatbelt guarded-scope enforcement (live sandbox-exe
       rmSync(dir, { recursive: true, force: true });
       rmSync(sockDir, { recursive: true, force: true });
     }
+  });
+
+  // A listener OUTSIDE the cage at a host-control path; the caged shell must
+  // not reach it. Both shapes live inside directories the allowlist covers,
+  // which is exactly why they need their own deny.
+  async function withUdsListener(sock: string, fn: () => Promise<void>): Promise<void> {
+    const { createServer: udsServer } = await import("node:net");
+    const s = udsServer((c) => c.end("HOST-SOCKET-REACHED"));
+    await new Promise<void>((resolve) => s.listen(sock, resolve));
+    try { await fn(); } finally { s.close(); }
+  }
+
+  for (const [what, relDir, name] of [
+    ["the launchd Listeners socket (ssh-agent)", "com.apple.launchd.lax-test", "Listeners"],
+    ["docker.sock", "lax-sb-dock", "docker.sock"],
+  ] as const) {
+    it(`DENIES connecting to ${what} even though it sits in an allowed directory`, async () => {
+      const dir = mkdtempSync(join(tmpdir(), "lax-sb-grd-"));
+      const sockDir = join("/private/tmp", `${relDir}-${process.pid}`);
+      mkdirSync(sockDir, { recursive: true });
+      const sock = join(sockDir, name);
+      try {
+        await withUdsListener(sock, async () => {
+          const script = `const n=require("net");const c=n.connect(${JSON.stringify(sock)});c.on("data",d=>console.log(d.toString()));c.on("error",e=>console.log("UDS-BLOCKED "+e.code))`;
+          const r = await runGuardedAsync(dir, `"${process.execPath}" -e '${script}'`);
+          expect(r.out).toContain("UDS-BLOCKED EPERM");
+          expect(r.out).not.toContain("HOST-SOCKET-REACHED");
+        });
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+        rmSync(sockDir, { recursive: true, force: true });
+      }
+    });
+  }
+
+  it("ALLOWS the resolver daemon's socket (name resolution survives the socket allowlist)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lax-sb-grd-"));
+    try {
+      await withLoopbackListener(async (port) => {
+        const r = await runGuardedAsync(dir, `/usr/bin/curl -sS --max-time 3 http://localhost:${port}/`);
+        expect(r.out).toContain("LOOPBACK-OK");
+      });
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 });

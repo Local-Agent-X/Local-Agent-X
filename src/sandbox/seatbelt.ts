@@ -22,12 +22,18 @@
 //
 // The "guarded" scope is the DEFAULT posture: items 2 and 3 (credential +
 // persistence denies) plus a LOOPBACK-CONFINED version of item 1 — network is
-// denied except loopback and unix-domain sockets, so a guarded shell can talk
-// to anything ON the machine (dev servers, Ollama, the self server, a local
-// egress proxy) and nothing OFF it — and it exempts ~/.config so the kernel
-// backstops the command parser's $VAR/$(...) blind spot on credentials while
-// local dev tools keep working. The "shell" scope is the strict opt-in with a
-// blanket network deny (no loopback either) that denies ~/.config too.
+// denied except loopback, so a guarded shell can talk to anything ON the
+// machine (dev servers, Ollama, the self server, a local egress proxy) and
+// nothing OFF it — and it exempts ~/.config so the kernel backstops the
+// command parser's $VAR/$(...) blind spot on credentials while local dev tools
+// keep working. Unix-domain sockets are on-machine too, but some of them ARE
+// the host: docker.sock is root on the machine, the ssh and gpg agents sign
+// with the user's keys, D-Bus drives the session. So a guarded shell may bind
+// its own sockets anywhere and connect only to the allowlist below
+// (GUARDED_UNIX_SOCKET_ALLOW); the host-control sockets are refused even
+// where they live inside an allowed directory. The "shell" scope is the strict
+// opt-in with a blanket network deny (no loopback either) that denies
+// ~/.config too.
 //
 // Subpaths MUST be realpath'd: the kernel matches the canonical path, so a deny
 // of "/tmp/x" never fires (it resolves to /private/tmp/x), and a deny of the
@@ -43,6 +49,32 @@ import { HOME_RELATIVE_DENY_DIRS, HOME_RELATIVE_DENY_FILES, SERVER_SCOPE_EXEMPT_
 import type { SandboxScope } from "./types.js";
 
 export const SANDBOX_EXEC = "/usr/bin/sandbox-exec";
+
+/**
+ * Unix-domain sockets a guarded shell may CONNECT to (SBPL subpath: the path
+ * itself and anything beneath it). Everything else is refused: a socket is
+ * allowed here because a dev shell cannot work without it, never because it is
+ * "on the machine". Adding a host-control socket (docker, an agent, a bus) here
+ * would hand the caged shell the host.
+ */
+export const GUARDED_UNIX_SOCKET_ALLOW: ReadonlyArray<{ path: string; why: string }> = [
+  { path: "/private/var/run/mDNSResponder", why: "name resolution (getaddrinfo talks to the resolver daemon here)" },
+  { path: "/private/var/run/syslog", why: "system logging" },
+  { path: "/private/tmp", why: "sockets dev tools create for themselves (postgres .s.PGSQL.*, build daemons)" },
+  { path: "/private/var/folders", why: "the per-user temp tree (watchman, editor helpers, test sockets)" },
+];
+
+/**
+ * Host-control sockets refused even inside an allowed directory (SBPL
+ * path-regex; a later rule wins). launchd puts the ssh-agent listener under
+ * /private/tmp/com.apple.launchd.<random>/Listeners, which the /private/tmp
+ * allow would otherwise cover.
+ */
+export const GUARDED_UNIX_SOCKET_DENY: ReadonlyArray<{ regex: string; why: string }> = [
+  { regex: "^/private/tmp/com\\.apple\\.launchd\\.", why: "launchd listeners: the ssh-agent and other per-session agents" },
+  { regex: "/docker\\.sock$", why: "the Docker daemon is root on the machine" },
+  { regex: "^/private/tmp/dbus-", why: "the D-Bus session bus drives the session" },
+];
 
 /** macOS with sandbox-exec present. Seatbelt mode is a no-op everywhere else. */
 export function isSeatbeltAvailable(): boolean {
@@ -120,12 +152,13 @@ export function generateSeatbeltProfile(home: string = homedir(), scope: Sandbox
     //    ::1) — dev servers, Ollama, the self server, and the future egress
     //    proxy all live on loopback;
     //  - bind + inbound on any local address, so dev servers can listen;
-    //  - unix-domain sockets, which are on-machine IPC by definition
-    //    (docker.sock, ssh-agent, postgres, mDNSResponder's socket). DNS
-    //    stays available in guarded — resolution rides the system resolver
-    //    daemon, not this process's own remote sockets — and the residual
-    //    DNS-exfil channel is an accepted trade for the friendly default
-    //    (decision D8).
+    //  - unix-domain sockets: bind its own anywhere (a listener is not an
+    //    escape), connect only to GUARDED_UNIX_SOCKET_ALLOW, and never to a
+    //    host-control socket (GUARDED_UNIX_SOCKET_DENY — later rules win).
+    //    DNS stays available in guarded — resolution rides the resolver
+    //    daemon's socket, not this process's own remote sockets — and the
+    //    residual DNS-exfil channel is an accepted trade for the friendly
+    //    default (decision D8).
     // "server" scope gets no network rules at all: its egress is governed
     // in-process by the canonicalFetch chokepoint (see docstring above).
     ...(scope === "guarded" ? [
@@ -133,8 +166,9 @@ export function generateSeatbeltProfile(home: string = homedir(), scope: Sandbox
       `(allow network-outbound (remote ip "localhost:*"))`,
       `(allow network-bind (local ip "*:*"))`,
       `(allow network-inbound (local ip "*:*"))`,
-      "(allow network* (remote unix-socket))",
-      "(allow network* (local unix-socket))",
+      `(allow network-bind (local unix-socket (path-regex #"^/")))`,
+      ...GUARDED_UNIX_SOCKET_ALLOW.map((s) => `(allow network-outbound (remote unix-socket (subpath ${sb(s.path)})))`),
+      ...GUARDED_UNIX_SOCKET_DENY.map((s) => `(deny network-outbound (remote unix-socket (path-regex #"${s.regex}")))`),
     ] : []),
     // Crown jewels: deny every file op (read, write, exec, …) on the sensitive
     // home dirs. file* is the umbrella operation.

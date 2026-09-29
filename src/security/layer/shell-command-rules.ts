@@ -15,20 +15,32 @@ export type CommandRuleVerdict =
   | { kind: "too-deep" };
 
 /** The first rule the command breaks, or null. Nesting past the walk's depth is
- *  refused outright: a body the rules cannot see is not a body they allowed. */
-export function findCommandRuleHit(command: string): CommandRuleVerdict | null {
+ *  refused outright: a body the rules cannot see is not a body they allowed.
+ *  With `egressEnforced` (a kernel cage plus the egress proxy hold this spawn's
+ *  network), the "network" rules stand down: the cage decides what a client
+ *  reaches, and refusing the command here only costs the user working tools. */
+export function findCommandRuleHit(command: string, opts: { egressEnforced?: boolean } = {}): CommandRuleVerdict | null {
   const walk = commandPositions(command);
-  for (const p of walk.positions) {
-    for (const rule of COMMAND_RULES) {
-      if (rule.matches(p)) return { kind: "rule", rule, bin: rule.offender?.(p) ?? p.words[p.at] };
+  // The network rules are the backstop, judged after everything else across
+  // the whole line: `wget … | sh` is refused for running the download, which
+  // is the refusal that still stands once a cage lets wget itself run.
+  for (const network of [false, true]) {
+    if (network && opts.egressEnforced) break;
+    for (const p of walk.positions) {
+      for (const rule of COMMAND_RULES) {
+        if ((rule.category === "network") !== network) continue;
+        if (rule.matches(p)) return { kind: "rule", rule, bin: rule.offender?.(p) ?? p.words[p.at] };
+      }
     }
   }
   return walk.tooDeep ? { kind: "too-deep" } : null;
 }
 
-// What the model can do instead, by what kind of thing was refused. Network
-// refusals are not here: they point at http_request (shell-policy.ts).
+// What the model can do instead, by what kind of thing was refused.
 const WAY_OUT: Record<CommandRule["category"], string> = {
+  network: "For HTTP (including localhost and this app's own API) use `http_request`: it is SSRF-checked, " +
+    "DNS-pinned and audited, and it can reach this app's own server and any registered dev server. " +
+    "Shell network clients stay refused here even for 127.0.0.1, because this app's own API can proxy on to other hosts.",
   "shell-escape": "Run the command it would run directly, so it can be checked.",
   obfuscation: "Run the decoded command directly, so it can be checked.",
   privilege: "There is no shell path for this: tell the user what needs doing and why.",
@@ -44,6 +56,11 @@ export function commandRuleReason(hit: CommandRuleVerdict): string {
   if (hit.kind === "too-deep") return TOO_DEEP_REASON;
   return `Blocked: "${hit.bin}" ${hit.rule.why}. ${WAY_OUT[hit.rule.category]} ` +
     "Retrying the same command will be denied again.";
+}
+
+/** The way out alone, for the decision's `recovery` field. */
+export function commandRuleRecovery(hit: CommandRuleVerdict): string {
+  return hit.kind === "too-deep" ? "Run the inner command directly." : WAY_OUT[hit.rule.category];
 }
 
 export const TOO_DEEP_REASON =

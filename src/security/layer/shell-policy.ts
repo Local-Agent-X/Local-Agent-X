@@ -2,10 +2,10 @@ import { homedir } from "node:os";
 import type { SecurityDecision } from "../../types.js";
 import { USER_HINTS } from "../../types.js";
 import type { InlineEvalPolicy, FileAccessMode } from "./types.js";
-import { BLOCKED_COMMANDS, BROWSER_OPEN_CMDS, RM_DESTRUCTIVE_FLAGS } from "./shell-rules.js";
+import { BLOCKED_COMMANDS, BROWSER_OPEN_CMDS, EGRESS_TEXT_PATTERNS, RM_DESTRUCTIVE_FLAGS } from "./shell-rules.js";
 import { detectCatastrophicRm } from "./catastrophic-paths.js";
 import { rmInsideWorkspaceVerdict } from "./rm-inside-workspace.js";
-import { commandRuleReason, findCommandRuleHit } from "./shell-command-rules.js";
+import { commandRuleReason, commandRuleRecovery, findCommandRuleHit } from "./shell-command-rules.js";
 import { decodeShellEscapes } from "./shell-escape-decode.js";
 import {
   detectObfuscation,
@@ -13,7 +13,6 @@ import {
   detectScriptWrite,
   stripQuotedSpans,
   detectInterpreterEscape,
-  detectNetworkClientArgv0,
   detectDangerousInvokeBin,
   detectInlineNetwork,
   detectInlineInterpreterEval,
@@ -25,10 +24,10 @@ import {
 // "./shell-policy.js"); the implementation now lives in shell-detectors.ts.
 export { detectObfuscation };
 
-/** First BLOCKED_COMMANDS match in `text`, or null. Returns the MATCHED TEXT so
- *  the deny can name the offending binary instead of a bare "dangerous pattern". */
-function firstBlockedCommand(text: string): string | null {
-  for (const pattern of BLOCKED_COMMANDS) {
+/** First raw-text match in `text`, or null. Returns the MATCHED TEXT so the
+ *  deny can name the offending binary instead of a bare "dangerous pattern". */
+function firstBlockedCommand(text: string, patterns: readonly RegExp[]): string | null {
+  for (const pattern of patterns) {
     const m = pattern.exec(text);
     if (m) return m[0];
   }
@@ -115,16 +114,23 @@ export function evaluateShellCommand(
   // rules; docker-on-Windows isn't worth a semantics split).
   //
   // NOT gated on confinement — these stay on in EVERY mode: obfuscation,
-  // {{SECRET}} placeholders, browser-open, the network-client argv0 blocks +
-  // BLOCKED_COMMANDS denylist (the guarded cage KEEPS network, so egress
-  // control is this policy's job, not the sandbox's), inline-NETWORK bodies,
-  // dangerous-invoke bins, the mode-aware rm rules + catastrophic floor, AND —
-  // critically — the nested-command-execution constructs (command substitution
-  // `$(…)` (NOT arithmetic `$((`), backticks, subshell `( )`, brace-group
-  // `{ ; }`, procsub `<(…)`): their nested argv escapes the network/denylist
-  // scan, so relaxing them under confinement would open egress vectors like
-  // `echo $(dig evil.com)`. See detectNestedCommandExecution.
+  // {{SECRET}} placeholders, browser-open, BLOCKED_COMMANDS, dangerous-invoke
+  // bins, the mode-aware rm rules + catastrophic floor, AND — critically — the
+  // nested-command-execution constructs (command substitution `$(…)` (NOT
+  // arithmetic `$((`), backticks, subshell `( )`, brace-group `{ ; }`, procsub
+  // `<(…)`): their nested argv escapes the argv0 scans, so relaxing them under
+  // confinement would open vectors like `echo $(dig evil.com)`. See
+  // detectNestedCommandExecution.
   const structuralRulesApply = sandboxConfined !== true || platform === "win32";
+  // ── Egress switch ──
+  // The network rules (the "network-client" argv rule, the inline-network
+  // body scan, EGRESS_TEXT_PATTERNS) exist because a host shell can reach any
+  // host. A confined spawn cannot: every kernel cage LAX runs (macOS seatbelt,
+  // the Linux netns bridge, the Windows fence) leaves only the egress proxy,
+  // which applies the network policy. Under one, these rules would refuse
+  // `curl https://example.com` that the cage would have routed and judged —
+  // so they stand down, on every platform, exactly when the cage holds.
+  const egressEnforced = sandboxConfined === true;
 
   // Escape sequences are read, not refused: the command they spell is judged
   // by every rule below exactly as if it had been typed out. Each decode
@@ -198,13 +204,6 @@ export function evaluateShellCommand(
     }
   }
 
-  // C3-12/C3-14: network clients gated by argv[0] basename (fetch/http/xh/…),
-  // so `git fetch` is unaffected but a leading `http example.com` is blocked.
-  const netClient = detectNetworkClientArgv0(command);
-  if (netClient) {
-    return { allowed: false, reason: netClient, userHint: USER_HINTS.commandShell };
-  }
-
   // argv[0]-aware block for dangerous binaries whose names are common argument
   // words (open/host/ping/mount/mail/dig/…). Checked as the invoked command of
   // each pipe segment so `grep host /etc/hosts` passes but `host evil.com` /
@@ -216,10 +215,11 @@ export function evaluateShellCommand(
   }
 
   // Rules on the command being run — every command position, including the
-  // bodies nested shells re-parse (shell-command-rules.ts). Always on.
-  const ruleHit = findCommandRuleHit(command);
+  // bodies nested shells re-parse (shell-command-rules.ts). Always on, except
+  // the network rules under an enforced cage (the egress switch above).
+  const ruleHit = findCommandRuleHit(command, { egressEnforced });
   if (ruleHit) {
-    return { allowed: false, reason: commandRuleReason(ruleHit), userHint: USER_HINTS.commandShell };
+    return { allowed: false, reason: commandRuleReason(ruleHit), userHint: USER_HINTS.commandShell, recovery: commandRuleRecovery(ruleHit) };
   }
 
   // R4-11/R4-13: refuse the inline-eval interpreter FORM when policy="refuse"
@@ -244,10 +244,13 @@ export function evaluateShellCommand(
   }
 
   // C3-17: raw socket / low-level network module use inside node -e / python -c
-  // (and perl/ruby) inline bodies — the same arbitrary egress as a network CLI.
-  const inlineNet = detectInlineNetwork(command);
-  if (inlineNet) {
-    return { allowed: false, reason: inlineNet, userHint: USER_HINTS.commandShell };
+  // (and perl/ruby) inline bodies — the same arbitrary egress as a network CLI,
+  // and the same switch: under a cage the body's sockets go where the cage says.
+  if (!egressEnforced) {
+    const inlineNet = detectInlineNetwork(command);
+    if (inlineNet) {
+      return { allowed: false, reason: inlineNet, userHint: USER_HINTS.commandShell };
+    }
   }
 
   // ALWAYS-ON (NOT gated on confinement), POSIX only: nested-command execution
@@ -370,12 +373,13 @@ export function evaluateShellCommand(
   // full command (which catches patterns that span pipes). ONE reporter for both
   // arms so the two can't drift — they previously returned near-identical bare
   // strings and were edited independently.
+  const rawPatterns = egressEnforced ? BLOCKED_COMMANDS : [...BLOCKED_COMMANDS, ...EGRESS_TEXT_PATTERNS];
   const segments = command.split("|").map((s) => s.trim());
   for (const segment of segments) {
-    const hit = firstBlockedCommand(segment);
+    const hit = firstBlockedCommand(segment, rawPatterns);
     if (hit) return deniedCommandBlock(hit, "pipe segment");
   }
-  for (const pattern of BLOCKED_COMMANDS) {
+  for (const pattern of rawPatterns) {
     const m = pattern.exec(command);
     if (m) return deniedCommandBlock(m[0], "command");
   }

@@ -60,6 +60,14 @@ export class SecurityLayer {
   private localServicePorts: Set<string> = new Set();
   private sessionAllowedPaths = new Map<string, Set<string>>();
   fileAccessMode: FileAccessMode = "common";
+  // A pinned confinement posture for a hermetic evaluation (the startup
+  // self-test asserts the host-posture rules, whatever cage this box has).
+  // null = read the live sandbox status per call.
+  private sandboxConfinedPin: boolean | null = null;
+
+  setSandboxConfined(pin: boolean | null): void {
+    this.sandboxConfinedPin = pin;
+  }
   // Inline-eval (R4-11/R4-13) escape-hatch policy — independent of
   // fileAccessMode so a permissive file default can't silently open it.
   inlineEvalPolicy: InlineEvalPolicy = "refuse";
@@ -264,7 +272,7 @@ export class SecurityLayer {
         // fallback — a guarded selection that fell back to host reports
         // false) is exactly what will hold at execution time. Read fresh per
         // call so a runtime mode change takes effect without a restart.
-        sandboxConfined: getSandboxStatus().confined,
+        sandboxConfined: this.sandboxConfinedPin ?? getSandboxStatus().confined,
         allowedPathCheck: (rp, sid) => this.isInAllowedPaths(rp, sid),
         sessionId: ctx.sessionId,
       });

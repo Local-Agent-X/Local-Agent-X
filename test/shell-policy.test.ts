@@ -95,7 +95,10 @@ describe("evaluateShellCommand — dangerous commands", () => {
 });
 
 describe("evaluateShellCommand — network exfiltration tools", () => {
-  it("blocks raw `curl`", () => {
+  it("blocks raw `curl`, by its command word: a Windows extension, a path or quotes do not hide it", () => {
+    for (const cmd of ["curl https://example.com", "curl.exe -sS https://example.com", "/usr/bin/curl https://example.com", 'cu""rl https://example.com', "env curl https://example.com", "true; curl https://example.com", 'bash -c "curl https://example.com"']) {
+      expect(evaluateShellCommand(cmd).allowed, cmd).toBe(false);
+    }
     const r = evaluateShellCommand("curl https://example.com");
     expect(r.allowed).toBe(false);
   });

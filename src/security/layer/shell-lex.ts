@@ -144,7 +144,7 @@ function isPositionalWrapperArg(t: string): boolean {
 // then returning the basename of the first genuine command word (null if the
 // segment is only keywords/wrappers). Keeps `then dig`, `env dig`, `timeout 5
 // dig`, `xargs -I {} dig` resolving to the real bin so the argv[0] scans
-// (detectNetworkClientArgv0 / detectDangerousInvokeBin) DENY them once
+// (the network-client rule / detectDangerousInvokeBin) DENY them once
 // separators are relaxed under a confined backend.
 //
 // A wrapper's own args are skipped PRECISELY (not "skip until a non-flag"): a

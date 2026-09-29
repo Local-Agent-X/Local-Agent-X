@@ -137,6 +137,10 @@ function runShellSuite(tests: TestCase[]): TestResult[] {
   // different branch than CI — same case, different verdict. The suite asserts
   // the guard's default posture, not this machine's settings.
   sec.setFileAccessMode("workspace");
+  // Likewise the posture: the network cases assert the host-shell rules. On a
+  // box whose cage holds egress those rules stand down by design, and the
+  // suite must not turn red for it.
+  sec.setSandboxConfined(false);
   const results: TestResult[] = [];
   for (const test of tests) {
     if (test.platforms && !test.platforms.includes(process.platform)) continue;

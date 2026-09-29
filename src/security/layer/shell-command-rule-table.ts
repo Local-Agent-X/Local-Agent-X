@@ -6,7 +6,7 @@
 
 import { type CommandPosition } from "./shell-command-positions.js";
 import { execBasename, isShellReparseFlag } from "./shell-lex.js";
-import { INLINE_CODE_PATTERNS, INTERP_EVAL_FLAGS } from "./shell-rules.js";
+import { INLINE_CODE_PATTERNS, INTERP_EVAL_FLAGS, NETWORK_CLIENT_BINS } from "./shell-rules.js";
 
 // The inline program an interpreter was handed (`python -c "<code>"`, `node -e
 // "<code>"`, an awk program): the word after an eval flag, or for awk, its words.
@@ -20,7 +20,7 @@ function inlineCode(p: CommandPosition): string[] {
 
 export type CommandRuleCategory =
   | "shell-escape" | "privilege" | "disk" | "system-config"
-  | "persistence" | "credential" | "obfuscation" | "local-server" | "opener";
+  | "persistence" | "credential" | "obfuscation" | "local-server" | "opener" | "network";
 
 export interface CommandRule {
   id: string;
@@ -148,6 +148,12 @@ export const COMMAND_RULES: readonly CommandRule[] = [
   // The command word only: `git rev-parse`, `git rev-list` and a `rev` inside
   // a commit message or grep pattern are not it.
   bins("reverse-text", "obfuscation", "reverses its input, a common way to hide a command", ["rev"]),
+
+  // ── Network egress (skipped where a kernel cage holds egress: findCommandRuleHit) ──
+  { id: "network-client", category: "network", why: "reaches the network directly, outside the checked HTTP path",
+    matches: (p) => NETWORK_CLIENT_BINS.has(p.bin) },
+  binWith("raw-tls", "network", "opens a raw TLS connection to any host", ["openssl"],
+    (a) => lower(a[0]) === "s_client" || lower(a[0]) === "s_server"),
 
   // ── Servers reachable from outside ──
   binWith("local-server", "local-server", "starts a server other machines could reach", ["python"],

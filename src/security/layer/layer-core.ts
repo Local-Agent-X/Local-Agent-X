@@ -60,14 +60,9 @@ export class SecurityLayer {
   private localServicePorts: Set<string> = new Set();
   private sessionAllowedPaths = new Map<string, Set<string>>();
   fileAccessMode: FileAccessMode = "common";
-  // A pinned confinement posture for a hermetic evaluation (the startup
-  // self-test asserts the host-posture rules, whatever cage this box has).
-  // null = read the live sandbox status per call.
+  /** Pinned confinement for a hermetic evaluation (the startup self-test asserts host rules on any box); null = live. */
   private sandboxConfinedPin: boolean | null = null;
-
-  setSandboxConfined(pin: boolean | null): void {
-    this.sandboxConfinedPin = pin;
-  }
+  setSandboxConfined(pin: boolean | null): void { this.sandboxConfinedPin = pin; }
   // Inline-eval (R4-11/R4-13) escape-hatch policy — independent of
   // fileAccessMode so a permissive file default can't silently open it.
   inlineEvalPolicy: InlineEvalPolicy = "refuse";
@@ -353,22 +348,22 @@ export class SecurityLayer {
   // Browser navigate/new_tab egress pre-flight (incl. the urls[] deny-wins
   // batch) — pure logic in ./browser-egress-eval.ts; layer supplies egress state.
   private evaluateBrowser(args: Record<string, unknown>): SecurityDecision {
-    return evaluateBrowserAction(args, {
-      egressAllowlist: this.egressAllowlist,
-      egressAllowlistConfigured: this.egressAllowlistConfigured,
-      selfPort: String(SecurityLayer._selfPort || "7007"),
-      egressMode: this.egressMode,
-      localServicePorts: this.effectiveLocalServicePorts(),
-      manualHostPorts: manualRuntimeHostPorts(),
-    });
+    return evaluateBrowserAction(args, this.egressCtx());
   }
 
-  /**
-   * Class-based dispatch for tools that aren't routed by their explicit
-   * named case above. Delegates to the pure evaluateByKernelClass policy
-   * function in ./kernel-class-policy.ts, supplying the layer's runtime
-   * state as a policy context.
-   */
+  /** The layer's egress state as the pure policy functions read it. */
+  private egressCtx() {
+    return {
+      egressAllowlist: this.egressAllowlist,
+      egressAllowlistConfigured: this.egressAllowlistConfigured,
+      egressMode: this.egressMode,
+      selfPort: String(SecurityLayer._selfPort || "7007"),
+      localServicePorts: this.effectiveLocalServicePorts(),
+      manualHostPorts: manualRuntimeHostPorts(),
+    };
+  }
+
+  // Class-based dispatch for tools without a named case above (./kernel-class-policy.ts).
   private evaluateByKernelClass(
     toolName: string,
     kernelClass: KernelClass | undefined,
@@ -376,12 +371,7 @@ export class SecurityLayer {
     ctx: ToolCallContext,
   ): SecurityDecision {
     return evaluateKernelClassPolicy(toolName, kernelClass, args, ctx, {
-      egressAllowlist: this.egressAllowlist,
-      egressAllowlistConfigured: this.egressAllowlistConfigured,
-      egressMode: this.egressMode,
-      selfPort: String(SecurityLayer._selfPort || "7007"),
-      localServicePorts: this.effectiveLocalServicePorts(),
-      manualHostPorts: manualRuntimeHostPorts(),
+      ...this.egressCtx(),
       workspace: this.workspace,
       fileAccessMode: this.fileAccessMode,
       inlineEvalPolicy: this.inlineEvalPolicy,

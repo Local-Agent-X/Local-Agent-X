@@ -108,6 +108,15 @@ describe("evaluateShellCommand — network exfiltration tools", () => {
   it("blocks `ssh` outbound", () => {
     const r = evaluateShellCommand("ssh user@host");
     expect(r.allowed).toBe(false);
+    expect(evaluateShellCommand("cat notes | ssh user@host").allowed).toBe(false);
+    expect(evaluateShellCommand("/usr/bin/ssh user@host").allowed).toBe(false);
+  });
+
+  it("a dotfile named like a client is not the client (`~/.ssh` listed with a trailing argument)", () => {
+    for (const cmd of ["ls -la ~/.ssh 2>&1", "ls -la ~/Documents ~/.ssh 2>&1; echo EXIT=$?", "stat ~/.curl ."]) {
+      const r = evaluateShellCommand(cmd);
+      expect(r.reason, cmd).not.toMatch(/shell denylist/);
+    }
   });
 
   it("blocks `nc` netcat", () => {

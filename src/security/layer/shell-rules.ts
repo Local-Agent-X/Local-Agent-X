@@ -26,29 +26,31 @@ export const BLOCKED_COMMANDS = [
   // This is a BEST-EFFORT denylist, not an exhaustive wall — the structural
   // answer is the argv[0] allowlist; this chunk hardens the denylist with the
   // common clients. New/renamed binaries can still slip a denylist.
-  /\bcurl\s/i,                              // curl (any use)
-  /\bwget\s/i,                              // wget (any use)
-  /\bnc\s/i,                                // netcat
-  /\bncat\s/i,                              // nmap netcat
-  /\bsocat\s/i,                             // socat
-  /\btelnet\s/i,                            // telnet
-  /\bssh\s/i,                               // ssh (outbound)
-  /\bscp\s/i,                               // scp
-  /\bsftp\s/i,                              // sftp
-  /\brsync\s/i,                             // rsync
-  /\bftp\s/i,                               // ftp
-  /\baria2c\s/i,                            // aria2c download utility
-  /\btftp\s/i,                              // trivial FTP client
+  // `(?<!\.)` keeps a dotfile out of it: `ls -la ~/.ssh 2>&1` names a
+  // directory, not the client (blocked live on 2026-09-28 as "uses ssh").
+  /(?<!\.)\bcurl\s/i,                       // curl (any use)
+  /(?<!\.)\bwget\s/i,                       // wget (any use)
+  /(?<!\.)\bnc\s/i,                         // netcat
+  /(?<!\.)\bncat\s/i,                       // nmap netcat
+  /(?<!\.)\bsocat\s/i,                      // socat
+  /(?<!\.)\btelnet\s/i,                     // telnet
+  /(?<!\.)\bssh\s/i,                        // ssh (outbound)
+  /(?<!\.)\bscp\s/i,                        // scp
+  /(?<!\.)\bsftp\s/i,                       // sftp
+  /(?<!\.)\brsync\s/i,                      // rsync
+  /(?<!\.)\bftp\s/i,                        // ftp
+  /(?<!\.)\baria2c\s/i,                     // aria2c download utility
+  /(?<!\.)\btftp\s/i,                       // trivial FTP client
   // ── R4-12: additional network / dual-use binaries (denylist STOPGAP) ──
   // openssl present on every dev box gives a clean raw-TLS pipe
   // (`openssl s_client -connect h:443 < secrets`), websocat is a pure network
   // tool, and the mail senders relay to arbitrary destinations. This is a
   // userland denylist, NOT a sound wall — the durable fix is the planned
   // OS-level sandbox (Landlock / sandbox-exec). New/renamed binaries still slip.
-  /\bwebsocat\s/i,                          // websocat (network-only WebSocket client)
-  /\bnc\.traditional\s/i,                   // Debian netcat-traditional (the bare `\bnc\s` misses the dotted name)
-  /\bsendmail\s/i,                          // sendmail (relay mail to arbitrary dest)
-  /\bssmtp\s/i,                             // ssmtp (relay mail to arbitrary dest)
+  /(?<!\.)\bwebsocat\s/i,                   // websocat (network-only WebSocket client)
+  /(?<!\.)\bnc\.traditional\s/i,            // Debian netcat-traditional (the bare `\bnc\s` misses the dotted name)
+  /(?<!\.)\bsendmail\s/i,                   // sendmail (relay mail to arbitrary dest)
+  /(?<!\.)\bssmtp\s/i,                      // ssmtp (relay mail to arbitrary dest)
   // NOTE: `mail`/`mailx` moved to DANGEROUS_INVOKE_BINS (argv[0] check) — the
   // bare `\bword\s` form false-positived on arguments (`send mail to …`).
   /\bopenssl\s+s_(client|server)\b/i,       // openssl s_client/s_server ONLY (raw TLS pipe); bare openssl dgst/x509/enc/genrsa stay allowed

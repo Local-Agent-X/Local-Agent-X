@@ -31,27 +31,38 @@ const logger = createLogger("tools.shell-proxy-env");
 const PROXY_START_TIMEOUT_MS = 3000;
 const PROXY_START_TIMED_OUT = Symbol("shell-egress-proxy-start-timeout");
 
-// Loopback must bypass the proxy: dev servers, ollama, and the app's own API
-// live there, and the proxy's policy would only see hairpin traffic.
+// Where the cage lets a shell reach the machine's own loopback directly (macOS
+// seatbelt guarded), loopback bypasses the proxy: dev servers, ollama and the
+// app's own API live there, and the proxy would only see hairpin traffic.
 const NO_PROXY_HOSTS = "localhost,127.0.0.1,::1";
 
-function proxyEnvFor(url: string): Record<string, string> {
+/**
+ * The proxy env for a guarded shell. Exported for the tests that pin the
+ * per-platform loopback rule; production callers go through shellProxyEnv.
+ */
+export function proxyEnvFor(url: string, platform: NodeJS.Platform = process.platform): Record<string, string> {
   // Lowercase variants are load-bearing: many unix tools (curl honors both,
   // wget/git/python-requests read the lowercase forms) ignore the uppercase.
   // Node ignores all of them unless told: NODE_USE_ENV_PROXY=1 makes `fetch`
   // (22.21+/24.0+) and `http`/`https` (22.21+/24.5+) honor the proxy env, so
   // a node script in the caged shell takes the sanctioned route too.
-  return {
+  const env: Record<string, string> = {
     HTTP_PROXY: url,
     HTTPS_PROXY: url,
     ALL_PROXY: url,
     http_proxy: url,
     https_proxy: url,
     all_proxy: url,
-    NO_PROXY: NO_PROXY_HOSTS,
-    no_proxy: NO_PROXY_HOSTS,
     NODE_USE_ENV_PROXY: "1",
   };
+  // On Linux the cage is a network namespace whose loopback is its own: the
+  // host's services are reachable only through the proxy, whose policy allows
+  // the app's port and the registered local services. Nothing bypasses it.
+  if (platform !== "linux") {
+    env.NO_PROXY = NO_PROXY_HOSTS;
+    env.no_proxy = NO_PROXY_HOSTS;
+  }
+  return env;
 }
 
 // No env is stored here — deliberately. The proxy singleton's live URL mirror

@@ -109,6 +109,88 @@ describe("bwrap arg generation", () => {
   });
 });
 
+describe("bwrap guarded network (BwrapNetwork)", () => {
+  it("guarded keeps the host network unless the caller asks for a namespace", () => {
+    const home = makeHome();
+    try {
+      expect(generateBwrapArgs(home, "guarded")).not.toContain("--unshare-net");
+      expect(generateBwrapArgs(home, "guarded", { network: "host" })).not.toContain("--unshare-net");
+      expect(generateBwrapArgs(home, "guarded", { network: "namespace" })).toContain("--unshare-net");
+      // Strict is always a namespace, whatever the caller says.
+      expect(generateBwrapArgs(home, "shell", { network: "host" })).toContain("--unshare-net");
+    } finally { rmSync(home, { recursive: true, force: true }); }
+  });
+
+  it("bind-mounts the bridge socket only when it exists, and never for strict", () => {
+    const home = makeHome();
+    try {
+      const sock = join(home, "bridge.sock");
+      const missing = generateBwrapArgs(home, "guarded", { network: "namespace", bridge: { socketPath: sock, port: 60090 } });
+      expect(missing).not.toContain(sock);
+      writeFileSync(sock, "");
+      const present = generateBwrapArgs(home, "guarded", { network: "namespace", bridge: { socketPath: sock, port: 60090 } });
+      expect(present.join(" ")).toContain(`--bind ${sock} ${sock}`);
+      expect(generateBwrapArgs(home, "shell", { network: "namespace", bridge: { socketPath: sock, port: 60090 } })).not.toContain(sock);
+    } finally { rmSync(home, { recursive: true, force: true }); }
+  });
+
+  it.skipIf(!bwrapHere)("with a bridge the cage's first process is the forwarder, then the shell", () => {
+    const home = makeHome();
+    try {
+      const sock = join(home, "bridge.sock");
+      writeFileSync(sock, "");
+      const { args } = wrapForBwrap("/bin/bash", ["-c", "true"], home, "guarded", { network: "namespace", bridge: { socketPath: sock, port: 60090 } });
+      const at = args.indexOf(process.execPath);
+      expect(at).toBeGreaterThan(0);
+      expect(args.slice(at + 1, at + 3)[0]).toBe("-e");
+      expect(args.slice(at + 3)).toEqual(["--", sock, "60090", "--", "/bin/bash", "-c", "true"]);
+    } finally { rmSync(home, { recursive: true, force: true }); }
+  });
+});
+
+describe.skipIf(!bwrapHere)("bwrap guarded namespace (live)", () => {
+  it("guarded in a namespace blocks external network and reports no route (the hint's anchor)", () => {
+    const home = makeHome();
+    try {
+      const out = execFileSync(
+        resolveBwrapPath()!,
+        [...generateBwrapArgs(home, "guarded", { network: "namespace" }), "/bin/bash", "-c",
+          "exec 3<>/dev/tcp/192.0.2.1/80 && echo NET-OK || echo NET-BLOCKED"],
+        { encoding: "utf-8", timeout: 10_000, stdio: ["ignore", "pipe", "pipe"] },
+      );
+      expect(out).toContain("NET-BLOCKED");
+      expect(out).not.toContain("NET-OK");
+    } finally { rmSync(home, { recursive: true, force: true }); }
+  });
+
+  it("a bridged guarded shell reaches the host through the socket and nothing else on loopback", async () => {
+    const { createServer } = await import("node:net");
+    const { execFile } = await import("node:child_process");
+    const home = makeHome();
+    const sock = join(home, "b.sock");
+    const echo = createServer((c) => c.on("data", (d) => c.write(`HOST:${d.toString().trim()}\n`)));
+    await new Promise<void>((r) => echo.listen(sock, r));
+    // A second host listener on loopback, NOT bridged: unreachable from the cage.
+    const stray = createServer((c) => c.end("STRAY\n"));
+    const strayPort = await new Promise<number>((r) => stray.listen(0, "127.0.0.1", () => { const a = stray.address(); r(typeof a === "object" && a ? a.port : 0); }));
+    try {
+      const port = 60095;
+      const { cmd, args } = wrapForBwrap("/bin/bash", ["-c",
+        `exec 3<>/dev/tcp/127.0.0.1/${port}; echo ping >&3; read -t 3 line <&3; echo "GOT:$line"; ` +
+        `(exec 4<>/dev/tcp/127.0.0.1/${strayPort}) 2>&1 && echo STRAY-REACHED || echo STRAY-BLOCKED`],
+        home, "guarded", { network: "namespace", bridge: { socketPath: sock, port } });
+      const out = await new Promise<string>((resolve) => execFile(cmd, args, { encoding: "utf-8", timeout: 15_000 }, (_e, so, se) => resolve(so + se)));
+      expect(out).toContain("GOT:HOST:ping");
+      expect(out).toContain("STRAY-BLOCKED");
+      expect(out).not.toContain("STRAY-REACHED");
+    } finally {
+      await new Promise<void>((r) => echo.close(() => r()));
+      await new Promise<void>((r) => stray.close(() => r()));
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("wrapForBwrap", () => {
   it.skipIf(process.platform !== "linux")("resolves an absolute executable from the host PATH", () => {
     const dir = mkdtempSync(join(tmpdir(), "lax-fake-bwrap-"));

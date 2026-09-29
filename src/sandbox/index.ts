@@ -11,6 +11,7 @@ import type { SandboxConfig, SandboxMode } from "./types.js";
 import { validateSandboxConfig } from "./validate.js";
 import { isSeatbeltAvailable, seatbeltProfileLoads, wrapForSeatbelt } from "./seatbelt.js";
 import { isBwrapAvailable, bwrapEnforces, bwrapGuardedRuns, wrapForBwrap } from "./bwrap.js";
+import { currentShellEgressBridge } from "../net/shell-egress-proxy.js";
 const logger = createLogger("sandbox");
 
 export type { SandboxMode } from "./types.js";
@@ -296,11 +297,17 @@ export function wrapSpawnForSandbox(shell: string, shellArgs: string[]): { cmd: 
     return wrapForBwrap(shell, shellArgs);
   }
   if (mode === "guarded") {
-    // Default cage: credential deny, network kept. getSandboxMode only returns
-    // "guarded" when a backend is usable, so pick the platform's; passthrough is
-    // a belt-and-suspenders no-op if neither is somehow available.
+    // Default cage: credential deny, network only through the egress proxy.
+    // getSandboxMode only returns "guarded" when a backend is usable, so pick
+    // the platform's; passthrough is a belt-and-suspenders no-op if neither is
+    // somehow available. On Linux the shell gets its own network namespace and
+    // the proxy's unix socket as its one way out; no socket yet (the proxy is
+    // still warming) means no route, which is the fail-closed side.
     if (isSeatbeltAvailable()) return wrapForSeatbelt(shell, shellArgs, undefined, "guarded");
-    if (isBwrapAvailable()) return wrapForBwrap(shell, shellArgs, undefined, "guarded");
+    if (isBwrapAvailable()) {
+      const bridge = currentShellEgressBridge();
+      return wrapForBwrap(shell, shellArgs, undefined, "guarded", { network: "namespace", ...(bridge ? { bridge } : {}) });
+    }
     return { cmd: shell, args: shellArgs };
   }
   return { cmd: shell, args: shellArgs };

@@ -46,7 +46,7 @@ vi.mock("../net/shell-egress-proxy.js", () => ({
 }));
 
 import { ensureShellEgressProxy } from "../net/shell-egress-proxy.js";
-import { shellProxyEnv, shellProxyEnvSync } from "./shell-proxy-env.js";
+import { proxyEnvFor, shellProxyEnv, shellProxyEnvSync } from "./shell-proxy-env.js";
 import { buildSanitizedEnv } from "./shell-env.js";
 
 const ensureProxy = vi.mocked(ensureShellEgressProxy);
@@ -66,15 +66,43 @@ beforeEach(() => {
   ensureProxy.mockClear();
 });
 
-describe("shellProxyEnv", () => {
-  it("guarded → all proxy keys point at the proxy URL, NO_PROXY covers loopback", async () => {
-    const env = await shellProxyEnv();
-    for (const key of ALL_PROXY_KEYS) expect(env[key]).toBe(proxyState.url);
+// Whether THIS host's cage lets a guarded shell reach loopback directly (see
+// proxyEnvFor): true everywhere but Linux, whose cage is a network namespace.
+const loopbackDirect = process.platform !== "linux";
+const KEY_COUNT = loopbackDirect ? 9 : 7;
+function expectLoopbackRule(env: Record<string, string>): void {
+  if (loopbackDirect) {
     expect(env.NO_PROXY).toBe(NO_PROXY_HOSTS);
     expect(env.no_proxy).toBe(NO_PROXY_HOSTS);
+  } else {
+    expect(env).not.toHaveProperty("NO_PROXY");
+    expect(env).not.toHaveProperty("no_proxy");
+  }
+}
+
+describe("proxyEnvFor — the loopback rule is the platform's cage", () => {
+  it("macOS and Windows bypass the proxy for loopback; Linux routes everything through it", () => {
+    for (const platform of ["darwin", "win32"] as const) {
+      const env = proxyEnvFor("http://lax:t@127.0.0.1:60090", platform);
+      expect(env.NO_PROXY).toBe(NO_PROXY_HOSTS);
+      expect(Object.keys(env)).toHaveLength(9);
+    }
+    const linux = proxyEnvFor("http://lax:t@127.0.0.1:60090", "linux");
+    expect(linux).not.toHaveProperty("NO_PROXY");
+    expect(linux).not.toHaveProperty("no_proxy");
+    expect(linux.HTTPS_PROXY).toBe("http://lax:t@127.0.0.1:60090");
+    expect(Object.keys(linux)).toHaveLength(7);
+  });
+});
+
+describe("shellProxyEnv", () => {
+  it("guarded → all proxy keys point at the proxy URL, loopback per the platform's cage", async () => {
+    const env = await shellProxyEnv();
+    for (const key of ALL_PROXY_KEYS) expect(env[key]).toBe(proxyState.url);
+    expectLoopbackRule(env);
     // Node ignores the proxy env unless told; a caged node script must take the route too.
     expect(env.NODE_USE_ENV_PROXY).toBe("1");
-    expect(Object.keys(env)).toHaveLength(9);
+    expect(Object.keys(env)).toHaveLength(KEY_COUNT);
   });
 
   it.each(["host", "seatbelt", "bwrap", "docker"] as const)(
@@ -149,7 +177,7 @@ describe("shellProxyEnv", () => {
     expect(env.HTTP_PROXY).toBe(proxyState.url);
     expect(env.https_proxy).toBe(proxyState.url);
     expect(env.all_proxy).toBe(proxyState.url);
-    expect(env.NO_PROXY).toBe(NO_PROXY_HOSTS);
+    expectLoopbackRule(env as Record<string, string>);
   });
 
   it("caller-explicit values win over the proxy base (merge order semantics)", async () => {
@@ -173,8 +201,8 @@ describe("shellProxyEnvSync", () => {
     await shellProxyEnv(); // warm the proxy
     const env = shellProxyEnvSync();
     for (const key of ALL_PROXY_KEYS) expect(env[key]).toBe(proxyState.url);
-    expect(env.no_proxy).toBe(NO_PROXY_HOSTS);
-    expect(Object.keys(env)).toHaveLength(9);
+    expectLoopbackRule(env);
+    expect(Object.keys(env)).toHaveLength(KEY_COUNT);
   });
 
   it("cold miss → {} for that spawn, then warms the proxy in the background", async () => {

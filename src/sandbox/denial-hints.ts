@@ -96,14 +96,15 @@ const CONNECT_UNREACH_RE = /\bconnect\b[^\n]{0,80}network is unreachable/i;
  * append mechanics in shell-tool.ts.
  *
  * Truthfulness gates:
- *  - Fires only under a cage mode, and only on connect-context EPERM (or, for
- *    bwrap, netns-unreachable) — never on generic network failure.
- *  - Guarded network confinement currently ships only via seatbelt (darwin).
- *    Linux guarded keeps the host network namespace (no --unshare-net — see
- *    bwrap.ts guarded scope), so on non-darwin platforms guarded must stay
- *    silent: a connect failure there is real and the cage must not take credit.
- *  - The guarded message claims loopback works + proxy route exists (true on
- *    darwin guarded); the strict messages claim neither.
+ *  - Fires only under a cage mode, and only on connect-context EPERM (or, in a
+ *    network namespace — strict bwrap and Linux guarded — netns-unreachable)
+ *    — never on generic network failure.
+ *  - Guarded network confinement ships on darwin (seatbelt: loopback direct,
+ *    off-machine denied) and linux (bwrap namespace: only the proxy's bridge
+ *    crosses the wall). Windows has no guarded cage yet, so guarded stays
+ *    silent there: a connect failure is real and the cage must not take credit.
+ *  - Each guarded message claims exactly what its platform's cage allows; the
+ *    strict messages claim no route at all.
  */
 export function networkDenialHint(
   mode: SandboxMode,
@@ -111,17 +112,21 @@ export function networkDenialHint(
   platform: NodeJS.Platform = process.platform,
 ): string | null {
   if (mode !== "guarded" && mode !== "seatbelt" && mode !== "bwrap") return null;
-  if (mode === "guarded" && platform !== "darwin") return null;
+  if (mode === "guarded" && platform !== "darwin" && platform !== "linux") return null;
   const epermHit =
     SHELL_CONNECT_EPERM_RE.test(output) ||
     SSH_CONNECT_EPERM_RE.test(output) ||
     NODE_CONNECT_EPERM_RE.test(output) ||
     C_CONNECT_EPERM_RE.test(output) ||
     PY_CONNECT_EPERM_RE.test(output);
-  const unreachHit = mode === "bwrap" && CONNECT_UNREACH_RE.test(output);
+  const namespaced = mode === "bwrap" || (mode === "guarded" && platform === "linux");
+  const unreachHit = namespaced && CONNECT_UNREACH_RE.test(output);
   if (!epermHit && !unreachHit) return null;
   if (mode === "guarded") {
-    return `[sandbox: connection blocked by the bash network cage (mode "guarded") — guarded shells reach loopback directly, but anything off-machine must go through the injected HTTP_PROXY/HTTPS_PROXY egress proxy, which applies the app's egress policy; this is the sandbox, not the remote host being down. Retry with a tool that honors the proxy env (curl/git/npm do), or use the native http_request tool. If the user needs direct shell network, they can change the sandbox mode in Settings → Security (or LAX_SANDBOX=host); offer that rather than disabling it yourself.]`;
+    const reach = platform === "linux"
+      ? "the guarded shell runs in its own network namespace, so the host's loopback services and anything off-machine are reachable only through the injected HTTP_PROXY/HTTPS_PROXY egress proxy (the app's own port and registered local services are allowed)"
+      : "guarded shells reach loopback directly, but anything off-machine must go through the injected HTTP_PROXY/HTTPS_PROXY egress proxy";
+    return `[sandbox: connection blocked by the bash network cage (mode "guarded") — ${reach}, which applies the app's egress policy; this is the sandbox, not the remote host being down. Retry with a tool that honors the proxy env (curl/git/npm do), or use the native http_request tool. If the user needs direct shell network, they can change the sandbox mode in Settings → Security (or LAX_SANDBOX=host); offer that rather than disabling it yourself.]`;
   }
   const confinement = mode === "seatbelt"
     ? "it denies ALL shell network at the OS level, loopback included"

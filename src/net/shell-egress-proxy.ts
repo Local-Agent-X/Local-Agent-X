@@ -1,9 +1,14 @@
 import { randomBytes } from "node:crypto";
+import { join } from "node:path";
 import { startEgressProxy, type EgressProxy } from "./egress-proxy-core.js";
+import { bridgeSocketPath, startShellEgressBridge, sweepStaleBridgeSockets, type ShellEgressBridge } from "./shell-egress-bridge.js";
 import { getRuntimeConfig } from "../config.js";
 import { getLaxDir } from "../lax-data-dir.js";
 import { getSharedAuditTrail } from "../threat/audit-trail.js";
 import { registerLocalOnlyTeardown } from "../local-only-policy.js";
+import { createLogger } from "../logger.js";
+
+const logger = createLogger("net.shell-egress-proxy");
 
 export type ShellEgressProxy = EgressProxy;
 
@@ -56,10 +61,37 @@ let teardownRegistered = false;
 // singleton is up. Set on successful start, cleared on close AND failed start,
 // so nothing downstream can hold a URL that outlives the listener.
 let liveProxyUrl: string | null = null;
+// The Linux bridge (shell-egress-bridge.ts), same currency rule as the URL.
+let liveBridge: ShellEgressBridge | null = null;
 
 /** URL of the live shell egress proxy, or null when no proxy is running. */
 export function currentShellEgressProxyUrl(): string | null {
   return liveProxyUrl;
+}
+
+/** The unix socket a Linux cage reaches the live proxy through, or null. */
+export function currentShellEgressBridge(): { socketPath: string; port: number } | null {
+  return liveBridge ? { socketPath: liveBridge.socketPath, port: liveBridge.port } : null;
+}
+
+/** Where a Linux cage's bridge socket lives: a 0700 dir under the data dir. */
+function runDir(): string {
+  return join(getLaxDir(), "run");
+}
+
+// The bridge is Linux-only: macOS guarded reaches loopback directly and the
+// Windows cage permits the proxy port. A bridge that fails to start leaves the
+// proxy up for what can reach it and the cage without a route — fail closed,
+// said in the log.
+async function startBridge(proxy: ShellEgressProxy): Promise<ShellEgressBridge | null> {
+  if (process.platform !== "linux") return null;
+  try {
+    sweepStaleBridgeSockets(runDir());
+    return await startShellEgressBridge(proxy.port, bridgeSocketPath(runDir()));
+  } catch (e) {
+    logger.warn(`shell egress bridge failed to start; Linux guarded shells have no route out until it does: ${(e as Error).message}`);
+    return null;
+  }
 }
 
 export function ensureShellEgressProxy(): Promise<ShellEgressProxy> {
@@ -72,15 +104,21 @@ export function ensureShellEgressProxy(): Promise<ShellEgressProxy> {
       selfPort,
       viaTag: "1.1 lax-shell-egress",
       onPolicyDeny: recordPolicyDeny,
-    }).then((proxy) => {
+    }).then(async (proxy) => {
       if (!teardownRegistered) {
         teardownRegistered = true;
         registerLocalOnlyTeardown("shell-egress-proxy", closeShellEgressProxy);
       }
+      const bridge = await startBridge(proxy);
       // Mirror only while this start is still the live singleton: a close()
       // that raced the startup (local-only toggled mid-warm) must not leave
       // a dead port's URL behind.
-      if (sharedProxy === starting) liveProxyUrl = proxy.url;
+      if (sharedProxy === starting) {
+        liveProxyUrl = proxy.url;
+        liveBridge = bridge;
+      } else {
+        await bridge?.close();
+      }
       return proxy;
     }).catch((error) => {
       // Same currency guard as the .then: if a close()+re-ensure raced this
@@ -99,7 +137,10 @@ export function ensureShellEgressProxy(): Promise<ShellEgressProxy> {
 
 export async function closeShellEgressProxy(): Promise<void> {
   const active = sharedProxy;
+  const bridge = liveBridge;
   sharedProxy = null;
   liveProxyUrl = null;
+  liveBridge = null;
+  await bridge?.close();
   if (active) await (await active).close();
 }

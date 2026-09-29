@@ -117,9 +117,19 @@ describe("networkDenialHint — null cases (never lie)", () => {
     expect(networkDenialHint("docker", BASH_DEV_TCP_EPERM, "linux")).toBeNull();
   });
 
-  it("returns null for guarded on non-darwin — Linux guarded has NO network cage this campaign", () => {
-    expect(networkDenialHint("guarded", BASH_DEV_TCP_EPERM, "linux")).toBeNull();
+  it("returns null for guarded on Windows — no guarded cage there yet, so a connect failure is real", () => {
     expect(networkDenialHint("guarded", BASH_DEV_TCP_EPERM, "win32")).toBeNull();
+    expect(networkDenialHint("guarded", BWRAP_NETNS_UNREACH, "win32")).toBeNull();
+  });
+
+  it("guarded on linux: the namespace's 'Network is unreachable' fires, and the message claims only the proxy route", () => {
+    const hint = networkDenialHint("guarded", BWRAP_NETNS_UNREACH, "linux");
+    expect(hint).toContain('mode "guarded"');
+    expect(hint).toMatch(/own network namespace/);
+    expect(hint).toMatch(/HTTP_PROXY/);
+    expect(hint).toMatch(/registered local services/);
+    // The Linux cage does not let loopback through directly; the message must not say it does.
+    expect(hint).not.toMatch(/reach loopback directly/);
   });
 
   it("does NOT blame the cage for 'Connection refused' — that's a live-but-refusing listener", () => {

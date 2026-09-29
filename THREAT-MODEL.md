@@ -91,7 +91,7 @@ Layer 4:  ToolPolicy         — Configurable allow/deny (default-deny), per-too
 Layer 5:  ThreatEngine       — Canary tokens, chain analysis (exfil patterns: read-sensitive → send-external), loop detection (generic repeat, ping-pong, circuit breaker), data classification (auto-tags credentials / PII / secrets / financial), encoding detection, adaptive scoring
 Layer 6:  Content Sanitizer  — 41 injection patterns, Unicode homoglyph normalization, external-content wrapping with unique boundary markers
 Layer 7:  Memory Taint       — Blocks untrusted content from persisting to memory
-Layer 8:  Shell/Server Sandbox — Guarded by default: macOS `seatbelt` or Linux `bwrap` denies credential paths while retaining network access. Stricter native modes also deny external network; Docker provides hermetic isolation. Unsupported guarded backends visibly fall back to host and unattended shell paths require explicit acknowledgement. Whole-server confinement is available via boot re-exec on macOS/Linux. Windows has no native equivalent — Docker is the confinement answer there (see "Windows shell confinement" below)
+Layer 8:  Shell/Server Sandbox — Guarded by default: macOS `seatbelt` or Linux `bwrap` denies credential paths and lets the shell off the machine only through the loopback egress proxy (macOS: loopback direct, off-machine denied at the kernel; Linux: an empty network namespace whose one way out is the proxy's bind-mounted socket). Stricter native modes deny all network with no proxy route; Docker provides hermetic isolation. Unsupported guarded backends visibly fall back to host and unattended shell paths require explicit acknowledgement. Whole-server confinement is available via boot re-exec on macOS/Linux. Windows has no native equivalent — Docker is the confinement answer there (see "Windows shell confinement" below)
 Layer 9:  Crypto Audit Trail — Tamper-evident SHA-256 hash chain + ARI Kernel audit DB, per-session threat scoring, daily JSONL files at `~/.lax/audit/`
 Layer 10: Output Redaction   — Credential masking before AI sees tool results
 ```
@@ -99,7 +99,7 @@ Layer 10: Output Redaction   — Credential masking before AI sees tool results
 ## Known Limitations
 
 1. **Single-user model** — RBAC adds roles (operator / user / readonly) but not full enterprise IAM (OIDC/SAML planned). Don't share a single instance between mutually untrusted users.
-2. **Shell sandbox coverage is platform-dependent** — The selected default is `guarded`; macOS and Linux apply a credential-denying native cage while keeping network access. Stricter `seatbelt`/`bwrap` modes deny network, and Docker mode works across platforms. **Windows has no native mode — use Docker** (see "Windows shell confinement"). An unavailable selected backend produces a visible effective-`host` fallback; unattended delegated/API shell paths remain blocked until the user acknowledges that posture.
+2. **Shell sandbox coverage is platform-dependent** — The selected default is `guarded`; macOS and Linux apply a credential-denying native cage whose only route off the machine is the egress proxy (see Layer 8). Stricter `seatbelt`/`bwrap` modes deny network outright, and Docker mode works across platforms. **Windows has no native mode — use Docker** (see "Windows shell confinement"). An unavailable selected backend produces a visible effective-`host` fallback; unattended delegated/API shell paths remain blocked until the user acknowledges that posture.
 3. **Secrets and LAX-owned provider auth encryption** — AES-256-GCM data is protected by a master key in DPAPI, macOS Keychain, or Linux libsecret when available; the weaker fallback derives the key from machine identity plus a local scrypt salt. CLI-native stores are outside this boundary; see [docs/provider-auth.md](docs/provider-auth.md).
 4. **Memory taint is heuristic** — Pattern-based detection + Unicode normalization can be evaded by sufficiently creative injection. ARI Kernel taint tracking adds formal enforcement.
 5. **No formal verification** — Security properties are tested empirically, not formally proven.
@@ -108,7 +108,8 @@ Layer 10: Output Redaction   — Credential masking before AI sees tool results
 ## Windows shell confinement
 
 On macOS and Linux, the default `guarded` profile uses seatbelt/bwrap to shadow
-credential paths while retaining external network and common development paths.
+credential paths and route external network through the egress proxy while
+keeping common development paths.
 The explicit strict `seatbelt`/`bwrap` modes additionally deny external network
 and more configuration paths. **Windows has no equivalent native mode**: guarded
 falls back visibly to unconfined host, unattended shell paths require explicit

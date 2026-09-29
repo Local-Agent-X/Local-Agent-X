@@ -35,17 +35,20 @@ delete process.env.LAX_DATA_DIR;
 process.env.LAX_PORT = "7007";
 process.env.LAX_SANDBOX = "guarded";
 
-const { closeShellEgressProxy, currentShellEgressProxyUrl, ensureShellEgressProxy } =
+const { closeShellEgressProxy, currentShellEgressProxyUrl, currentShellEgressBridge, ensureShellEgressProxy } =
   await import("../net/shell-egress-proxy.js");
 const { startEgressProxy } = await import("../net/egress-proxy-core.js");
 const { shellProxyEnv, shellProxyEnvSync } = await import("../tools/shell-proxy-env.js");
 const { wrapForSeatbelt } = await import("./seatbelt.js");
+const { wrapForBwrap } = await import("./bwrap.js");
 const { networkDenialHint } = await import("./denial-hints.js");
 const { isGuardedUsable } = await import("./index.js");
 
 const onDarwin = process.platform === "darwin";
-// Live cage probes only run where the guarded kernel backend actually loads.
-const liveGate = onDarwin && isGuardedUsable();
+const onLinux = process.platform === "linux";
+// Live cage probes only run where the guarded kernel backend actually loads:
+// seatbelt on macOS, a bwrap network namespace with the bridge on Linux.
+const liveGate = (onDarwin || onLinux) && isGuardedUsable();
 
 // ── shared plumbing ─────────────────────────────────────────────────
 
@@ -76,7 +79,10 @@ function startListener(body: string): Promise<Listener> {
  * runGuardedAsync note in seatbelt.test.ts.
  */
 function cagedRun(command: string, extraEnv: Record<string, string>): Promise<{ out: string }> {
-  const { cmd, args } = wrapForSeatbelt("/bin/bash", ["-c", command], home, "guarded");
+  const bridge = currentShellEgressBridge();
+  const { cmd, args } = onDarwin
+    ? wrapForSeatbelt("/bin/bash", ["-c", command], home, "guarded")
+    : wrapForBwrap("/bin/bash", ["-c", command], home, "guarded", { network: "namespace", ...(bridge ? { bridge } : {}) });
   return new Promise((resolve) => {
     execFile(cmd, args, { encoding: "utf-8", timeout: 10_000, env: { ...process.env, ...extraEnv } },
       (_error, stdout, stderr) => resolve({ out: stdout + stderr }));
@@ -157,12 +163,12 @@ afterAll(() => {
 // ── C1: the sanctioned route works end-to-end ───────────────────────
 
 describe.skipIf(!liveGate)("guarded egress contract: sanctioned route (cage + env + proxy)", () => {
-  it("a caged curl with the real guarded env reaches a loopback listener directly (NO_PROXY seam)", async () => {
+  it.skipIf(!onDarwin)("macOS: a caged curl with the real guarded env reaches a loopback listener directly (NO_PROXY seam)", async () => {
     const proxy = await ensureShellEgressProxy();
     const overlay = await shellProxyEnv();
-    // The full 8-key overlay, derived from the live proxy — cross-module equality.
+    // The full overlay, derived from the live proxy — cross-module equality.
     expect(Object.keys(overlay).sort()).toEqual([
-      "ALL_PROXY", "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY",
+      "ALL_PROXY", "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY", "NODE_USE_ENV_PROXY",
       "all_proxy", "http_proxy", "https_proxy", "no_proxy",
     ].sort());
     expect(overlay.HTTP_PROXY).toBe(proxy.url);
@@ -171,6 +177,26 @@ describe.skipIf(!liveGate)("guarded egress contract: sanctioned route (cage + en
     const listener = await startListener("CONTRACT-OK");
     const r = await cagedRun(`/usr/bin/curl -sS --max-time 3 http://127.0.0.1:${listener.port}/ok`, overlay);
     expect(r.out).toContain("CONTRACT-OK");
+  });
+
+  it.skipIf(!onLinux)("Linux: the overlay has no NO_PROXY, a caged curl to a sanctioned loopback listener transits the bridge and proxy, and a direct dial to it has no route", async () => {
+    const proxy = await ensureShellEgressProxy();
+    expect(currentShellEgressBridge()).not.toBeNull();
+    const overlay = await shellProxyEnv();
+    expect(overlay).not.toHaveProperty("NO_PROXY");
+    expect(overlay.HTTP_PROXY).toBe(proxy.url);
+
+    const listener = await startListener("CONTRACT-OK");
+    // The listener plays the self server (LAX_PORT), which the policy sanctions.
+    process.env.LAX_PORT = String(listener.port);
+    const r = await cagedRun(
+      `/usr/bin/curl -sS --max-time 5 http://127.0.0.1:${listener.port}/ok; ` +
+      `(exec 3<>/dev/tcp/127.0.0.1/${listener.port}) 2>&1 && echo DIRECT-REACHED || echo DIRECT-BLOCKED`,
+      overlay,
+    );
+    expect(r.out).toContain("CONTRACT-OK");
+    expect(r.out).toContain("DIRECT-BLOCKED");
+    expect(r.out).not.toContain("DIRECT-REACHED");
   });
 
   it("a caged curl EXPLICITLY through the proxy reaches a sanctioned loopback target (cage→proxy→dial seam)", async () => {
@@ -219,11 +245,12 @@ describe.skipIf(!liveGate)("guarded egress contract: denied egress at both layer
   it("direct route: the cage's raw /dev/tcp output still matches the guarded hint's anchor", async () => {
     const r = await cagedRun("exec 3<>/dev/tcp/198.51.100.7/80 && echo NET-OK", {});
     expect(r.out).not.toContain("NET-OK");
-    expect(r.out.toLowerCase()).toContain("connect: operation not permitted");
+    // seatbelt denies the connect (EPERM); a namespace has no route to it.
+    expect(r.out.toLowerCase()).toMatch(onDarwin ? /connect: operation not permitted/ : /network is unreachable/);
     // The seam most likely to drift: the LIVE cage's denial text must keep
     // matching the hint's syscall-context anchor, and the hint must name the
     // sanctioned route the env overlay actually injects.
-    const hint = networkDenialHint("guarded", r.out, "darwin");
+    const hint = networkDenialHint("guarded", r.out, process.platform);
     expect(hint).not.toBeNull();
     expect(hint).toContain('mode "guarded"');
     expect(hint).toContain("HTTP_PROXY");

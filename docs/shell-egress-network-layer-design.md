@@ -62,12 +62,16 @@ Consequences that fall out for free:
   outbound TCP to `127.0.0.1:<proxyPort>` (and the self server port, which the
   proxy's policy already sanctions). seatbelt expresses this directly.
 - **bwrap (Linux)** — `--unshare-net` creates an empty netns (already full
-  deny). Reaching the loopback proxy from inside needs a bridge; options, in
-  preference order: (1) pasta/slirp4netns forwarding only `<proxyPort>`,
-  (2) a unix socket bind-mounted into the cage with a tiny in-repo forwarder to
-  the proxy. Decide during implementation by what's installable/vendorable —
-  start with plain `--unshare-net` (strict no-network, docker parity) so Linux
-  ships the invariant first and gains sanctioned egress second.
+  deny). The bridge is option (2), built 2026-09-28: the proxy's unix socket
+  (`src/net/shell-egress-bridge.ts`, `<data>/run/shell-egress-<pid>.sock`) is
+  bind-mounted into the cage, and the cage's first process is a forwarder
+  (`src/sandbox/ns-forwarder-source.ts`, run with `node -e`) that listens on
+  the proxy's own port inside the namespace and then starts the shell. The
+  guarded shell therefore carries the same proxy URL on both sides of the
+  wall, has no `NO_PROXY` (the host's loopback is reachable only through the
+  proxy, which sanctions the self port and registered local services), and a
+  sandboxed MCP server keeps the host network (`BwrapNetwork`), since nothing
+  routes its traffic through the proxy yet.
 - **guarded** — inherits whichever backend it selected (seatbelt or bwrap
   behavior above). Guarded stays the friendly default: network available, but
   only through policy.

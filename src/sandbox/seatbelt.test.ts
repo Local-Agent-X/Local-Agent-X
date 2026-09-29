@@ -123,6 +123,8 @@ describe("seatbelt profile generation", () => {
     }
     // The shapes the denies exist for actually match them.
     expect(denied.some((re) => re.test("/private/tmp/com.apple.launchd.AbC123/Listeners"))).toBe(true);
+    // Current macOS (Darwin 25, seen live) keeps the same listener under /private/var/run.
+    expect(denied.some((re) => re.test("/private/var/run/com.apple.launchd.AbC123/Listeners"))).toBe(true);
     expect(denied.some((re) => re.test("/private/var/run/docker.sock"))).toBe(true);
     expect(denied.some((re) => re.test("/private/tmp/dbus-XyZ"))).toBe(true);
     // …and not the sockets dev tools legitimately use.
@@ -424,6 +426,20 @@ describe.skipIf(!onDarwin)("seatbelt guarded-scope enforcement (live sandbox-exe
       }
     });
   }
+
+  // The real thing, wherever this macOS release put it: the fixture above
+  // only proves the /private/tmp shape, and a Mac with the listener under
+  // /private/var/run passed it while the regex matched nothing there.
+  const realAgentSock = process.env.SSH_AUTH_SOCK ?? "";
+  it.skipIf(!realAgentSock.includes("com.apple.launchd."))("DENIES the real ssh-agent socket at $SSH_AUTH_SOCK", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lax-sb-grd-"));
+    try {
+      const script = `const n=require("net");const c=n.connect(${JSON.stringify(realAgentSock)});c.on("connect",()=>{console.log("AGENT-REACHED");c.end()});c.on("error",e=>console.log("UDS-BLOCKED "+e.code))`;
+      const r = await runGuardedAsync(dir, `"${process.execPath}" -e '${script}'`);
+      expect(r.out).toContain("UDS-BLOCKED EPERM");
+      expect(r.out).not.toContain("AGENT-REACHED");
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
 
   it("ALLOWS the resolver daemon's socket (name resolution survives the socket allowlist)", async () => {
     const dir = mkdtempSync(join(tmpdir(), "lax-sb-grd-"));

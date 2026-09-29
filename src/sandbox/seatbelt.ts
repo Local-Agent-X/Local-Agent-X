@@ -66,12 +66,14 @@ export const GUARDED_UNIX_SOCKET_ALLOW: ReadonlyArray<{ path: string; why: strin
 
 /**
  * Host-control sockets refused even inside an allowed directory (SBPL
- * path-regex; a later rule wins). launchd puts the ssh-agent listener under
- * /private/tmp/com.apple.launchd.<random>/Listeners, which the /private/tmp
- * allow would otherwise cover.
+ * path-regex; a later rule wins). launchd puts the ssh-agent listener at
+ * com.apple.launchd.<random>/Listeners under /private/tmp on older macOS and
+ * under /private/var/run on current releases (seen live on Darwin 25). The
+ * /private/tmp allow would otherwise cover the first; the second stays
+ * refused even if /private/var/run is ever widened.
  */
 export const GUARDED_UNIX_SOCKET_DENY: ReadonlyArray<{ regex: string; why: string }> = [
-  { regex: "^/private/tmp/com\\.apple\\.launchd\\.", why: "launchd listeners: the ssh-agent and other per-session agents" },
+  { regex: "^/private/(tmp|var/run)/com\\.apple\\.launchd\\.", why: "launchd listeners: the ssh-agent and other per-session agents" },
   { regex: "/docker\\.sock$", why: "the Docker daemon is root on the machine" },
   { regex: "^/private/tmp/dbus-", why: "the D-Bus session bus drives the session" },
 ];

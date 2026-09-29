@@ -72,7 +72,9 @@ describe("shellProxyEnv", () => {
     for (const key of ALL_PROXY_KEYS) expect(env[key]).toBe(proxyState.url);
     expect(env.NO_PROXY).toBe(NO_PROXY_HOSTS);
     expect(env.no_proxy).toBe(NO_PROXY_HOSTS);
-    expect(Object.keys(env)).toHaveLength(8);
+    // Node ignores the proxy env unless told; a caged node script must take the route too.
+    expect(env.NODE_USE_ENV_PROXY).toBe("1");
+    expect(Object.keys(env)).toHaveLength(9);
   });
 
   it.each(["host", "seatbelt", "bwrap", "docker"] as const)(
@@ -112,7 +114,7 @@ describe("shellProxyEnv", () => {
     // is cleared and the full 8-key env comes back unchanged.
     const env = await shellProxyEnv();
     for (const key of ALL_PROXY_KEYS) expect(env[key]).toBe(proxyState.url);
-    expect(Object.keys(env)).toHaveLength(8);
+    expect(Object.keys(env)).toHaveLength(9);
   });
 
   // REGRESSION: after a timeout we stop awaiting the start but it keeps warming
@@ -172,7 +174,7 @@ describe("shellProxyEnvSync", () => {
     const env = shellProxyEnvSync();
     for (const key of ALL_PROXY_KEYS) expect(env[key]).toBe(proxyState.url);
     expect(env.no_proxy).toBe(NO_PROXY_HOSTS);
-    expect(Object.keys(env)).toHaveLength(8);
+    expect(Object.keys(env)).toHaveLength(9);
   });
 
   it("cold miss → {} for that spawn, then warms the proxy in the background", async () => {

@@ -38,6 +38,9 @@ const NO_PROXY_HOSTS = "localhost,127.0.0.1,::1";
 function proxyEnvFor(url: string): Record<string, string> {
   // Lowercase variants are load-bearing: many unix tools (curl honors both,
   // wget/git/python-requests read the lowercase forms) ignore the uppercase.
+  // Node ignores all of them unless told: NODE_USE_ENV_PROXY=1 makes `fetch`
+  // (22.21+/24.0+) and `http`/`https` (22.21+/24.5+) honor the proxy env, so
+  // a node script in the caged shell takes the sanctioned route too.
   return {
     HTTP_PROXY: url,
     HTTPS_PROXY: url,
@@ -47,6 +50,7 @@ function proxyEnvFor(url: string): Record<string, string> {
     all_proxy: url,
     NO_PROXY: NO_PROXY_HOSTS,
     no_proxy: NO_PROXY_HOSTS,
+    NODE_USE_ENV_PROXY: "1",
   };
 }
 

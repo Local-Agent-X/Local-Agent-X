@@ -53,19 +53,51 @@ import {
   closeShellEgressProxy,
   currentShellEgressProxyUrl,
   ensureShellEgressProxy,
+  shellProxyPortRange,
+  SHELL_PROXY_PORTS_DEFAULT,
   type ShellEgressProxy,
 } from "./shell-egress-proxy.js";
 
 const originalPort = process.env.LAX_PORT;
 
+describe("shellProxyPortRange", () => {
+  const original = process.env.LAX_SHELL_PROXY_PORTS;
+  afterEach(() => {
+    if (original === undefined) delete process.env.LAX_SHELL_PROXY_PORTS;
+    else process.env.LAX_SHELL_PROXY_PORTS = original;
+  });
+
+  it("defaults to the LAX range, above the one Anthropic's runtime uses", () => {
+    delete process.env.LAX_SHELL_PROXY_PORTS;
+    expect(shellProxyPortRange()).toEqual(SHELL_PROXY_PORTS_DEFAULT);
+    expect(SHELL_PROXY_PORTS_DEFAULT.from).toBeGreaterThan(60089);
+  });
+
+  it("honors LAX_SHELL_PROXY_PORTS=from-to and refuses a malformed or unprivileged-hostile value", () => {
+    process.env.LAX_SHELL_PROXY_PORTS = "61000-61003";
+    expect(shellProxyPortRange()).toEqual({ from: 61000, to: 61003 });
+    process.env.LAX_SHELL_PROXY_PORTS = "80-90";
+    expect(() => shellProxyPortRange()).toThrow(/1024/);
+    process.env.LAX_SHELL_PROXY_PORTS = "61010-61000";
+    expect(() => shellProxyPortRange()).toThrow(/from-to/);
+    process.env.LAX_SHELL_PROXY_PORTS = "nonsense";
+    expect(shellProxyPortRange()).toEqual(SHELL_PROXY_PORTS_DEFAULT);
+  });
+});
+
 function requestThroughProxy(proxy: ShellEgressProxy, target: string): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
+    const url = new URL(proxy.url);
     const request = httpRequest({
       hostname: "127.0.0.1",
-      port: Number(new URL(proxy.url).port),
+      port: Number(url.port),
       method: "GET",
       path: target,
-      headers: { host: new URL(target).host },
+      headers: {
+        host: new URL(target).host,
+        // The token rides in the URL's credentials, as a caged shell's tools send it.
+        "proxy-authorization": `Basic ${Buffer.from(`${decodeURIComponent(url.username)}:${decodeURIComponent(url.password)}`).toString("base64")}`,
+      },
     }, (response) => {
       const chunks: Buffer[] = [];
       response.on("data", (chunk: Buffer) => chunks.push(chunk));
@@ -108,7 +140,30 @@ describe("shell egress proxy", () => {
 
     const restarted = await ensureShellEgressProxy();
     expect(restarted).not.toBe(proxy);
-    expect(restarted.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+    expect(restarted.url).toMatch(/^http:\/\/lax:[0-9a-f]{32}@127\.0\.0\.1:\d+$/);
+  });
+
+  it("binds inside the fixed port range with a fresh token per start", async () => {
+    const proxy = await ensureShellEgressProxy();
+    const range = shellProxyPortRange();
+    expect(proxy.port).toBeGreaterThanOrEqual(range.from);
+    expect(proxy.port).toBeLessThanOrEqual(range.to);
+    const token = new URL(proxy.url).password;
+    await closeShellEgressProxy();
+    const again = await ensureShellEgressProxy();
+    expect(new URL(again.url).password).not.toBe(token);
+  });
+
+  it("a request without the token is refused before policy, and is not an audit row", async () => {
+    resolve4.mockResolvedValue(["10.0.0.7"]);
+    const proxy = await ensureShellEgressProxy();
+    const status = await new Promise<number>((resolve, reject) => {
+      const request = httpRequest({ hostname: "127.0.0.1", port: proxy.port, method: "GET", path: "http://rebind.example/secret", headers: { host: "rebind.example" } }, (response) => { response.resume(); resolve(response.statusCode ?? 0); });
+      request.once("error", reject);
+      request.end();
+    });
+    expect(status).toBe(407);
+    expect(auditRecord).not.toHaveBeenCalled();
   });
 
   it("audits exactly one shell_egress_denied block record for a policy-denied dial", async () => {

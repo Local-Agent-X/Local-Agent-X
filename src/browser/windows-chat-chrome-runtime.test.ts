@@ -31,7 +31,7 @@ function runtimeFixture(sessionId: string, port: number) {
     return { browser, chromeProcess: null, cleanup };
   });
   const runtime = new WindowsChatChromeRuntime(sessionId, undefined, {
-    startProxy: vi.fn(async () => ({ url: `http://127.0.0.1:${port + 1000}`, close: closeProxy })),
+    startProxy: vi.fn(async () => ({ url: `http://127.0.0.1:${port + 1000}`, port: port + 1000, close: closeProxy })),
     allocatePort: vi.fn(async () => port),
     loadPlaywright: vi.fn(async () => ({} as typeof import("playwright"))),
     launch,

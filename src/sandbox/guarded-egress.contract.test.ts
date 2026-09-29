@@ -86,12 +86,16 @@ function cagedRun(command: string, extraEnv: Record<string, string>): Promise<{ 
 /** Plain (uncaged) absolute-URI GET through a proxy, as curl would send it. */
 function rawProxyRequest(proxyUrl: string, target: string): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
+    const url = new URL(proxyUrl);
     const request = httpRequest({
       hostname: "127.0.0.1",
-      port: Number(new URL(proxyUrl).port),
+      port: Number(url.port),
       method: "GET",
       path: target,
-      headers: { host: new URL(target).host },
+      headers: {
+        host: new URL(target).host,
+        "proxy-authorization": `Basic ${Buffer.from(`${decodeURIComponent(url.username)}:${decodeURIComponent(url.password)}`).toString("base64")}`,
+      },
     }, (response) => {
       const chunks: Buffer[] = [];
       response.on("data", (chunk: Buffer) => chunks.push(chunk));

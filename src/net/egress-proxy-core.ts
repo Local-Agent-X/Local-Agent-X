@@ -1,5 +1,6 @@
 import { createServer, request as httpRequest, type IncomingMessage, type ServerResponse } from "node:http";
-import { connect as netConnect, isIP } from "node:net";
+import { connect as netConnect, isIP, type Server } from "node:net";
+import { timingSafeEqual } from "node:crypto";
 import type { Duplex } from "node:stream";
 import {
   evaluateEgressForUrl,
@@ -19,6 +20,23 @@ type PolicyDenyListener = (info: { target: string; reason: string }) => void;
 
 export interface EgressProxyOptions {
   port?: number;
+  /**
+   * Bind the first free loopback port in this inclusive range instead of an
+   * ephemeral one, and fail when none is free. A cage that permits loopback
+   * to a port range (the Windows fence, a future Linux bridge) has to know
+   * where the proxy is before the shell runs; an ephemeral port cannot be
+   * permitted ahead of time, and a proxy that silently landed elsewhere would
+   * leave caged shells with no route while reporting one.
+   */
+  ports?: { from: number; to: number };
+  /**
+   * When set, every request and CONNECT must carry `Proxy-Authorization:
+   * Basic base64("lax:<token>")`; anything else gets 407. A loopback permit
+   * cannot be scoped to the caged shell alone, so the token is what keeps
+   * another local process from riding the sanctioned route. The returned URL
+   * carries the credentials for the proxy env vars.
+   */
+  authToken?: string;
   dial?: DialTarget;
   /** Port of the self server the canonical egress policy carves out. */
   selfPort: () => string;
@@ -29,8 +47,47 @@ export interface EgressProxyOptions {
 }
 
 export interface EgressProxy {
+  /** `http://127.0.0.1:<port>`, with `lax:<token>@` when a token is required. */
   url: string;
+  port: number;
   close: () => Promise<void>;
+}
+
+/** The user name in the proxy URL's credentials; the token is the password. */
+export const PROXY_AUTH_USER = "lax";
+
+export function proxyAuthorizationHeader(token: string): string {
+  return `Basic ${Buffer.from(`${PROXY_AUTH_USER}:${token}`).toString("base64")}`;
+}
+
+function authorized(request: IncomingMessage, token: string | undefined): boolean {
+  if (token === undefined) return true;
+  const header = request.headers["proxy-authorization"];
+  const value = Array.isArray(header) ? header[0] : header;
+  if (!value) return false;
+  const expected = proxyAuthorizationHeader(token);
+  return value.length === expected.length && timingSafeEqual(Buffer.from(value), Buffer.from(expected));
+}
+
+const PROXY_AUTH_REQUIRED = "Proxy authentication required: this route is for the sandboxed shell, which carries the token in its proxy environment.";
+
+function writeAuthRequired(response: ServerResponse): void {
+  response.writeHead(407, {
+    "proxy-authenticate": 'Basic realm="lax-egress"',
+    "content-type": "text/plain; charset=utf-8",
+    "content-length": Buffer.byteLength(PROXY_AUTH_REQUIRED),
+    connection: "close",
+  });
+  response.end(PROXY_AUTH_REQUIRED);
+}
+
+function writeSocketAuthRequired(socket: Duplex): void {
+  socket.end(
+    "HTTP/1.1 407 Proxy Authentication Required\r\n" +
+    'Proxy-Authenticate: Basic realm="lax-egress"\r\n' +
+    `Content-Type: text/plain; charset=utf-8\r\nContent-Length: ${Buffer.byteLength(PROXY_AUTH_REQUIRED)}\r\n` +
+    `Connection: close\r\n\r\n${PROXY_AUTH_REQUIRED}`,
+  );
 }
 
 class ProxyPolicyError extends Error {}
@@ -258,10 +315,43 @@ async function openTunnel(
   client.pipe(upstream).pipe(client);
 }
 
+function listenOn(server: Server, port: number): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const onError = (error: Error) => reject(error);
+    server.once("error", onError);
+    server.listen(port, "127.0.0.1", () => {
+      server.off("error", onError);
+      resolve();
+    });
+  });
+}
+
+/** Bind an ephemeral port, the given port, or the first free port of the range. */
+async function bind(server: Server, options: EgressProxyOptions): Promise<void> {
+  if (!options.ports) {
+    await listenOn(server, options.port ?? 0);
+    return;
+  }
+  const { from, to } = options.ports;
+  for (let port = from; port <= to; port++) {
+    try {
+      await listenOn(server, port);
+      return;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EADDRINUSE") throw error;
+    }
+  }
+  throw new Error(`egress proxy could not own a port in 127.0.0.1:${from}-${to}; every port is taken`);
+}
+
 export async function startEgressProxy(options: EgressProxyOptions): Promise<EgressProxy> {
-  const { selfPort, viaTag, onPolicyDeny } = options;
+  const { selfPort, viaTag, onPolicyDeny, authToken } = options;
   const dial = options.dial ?? dialPinnedTarget;
   const server = createServer((request, response) => {
+    if (!authorized(request, authToken)) {
+      writeAuthRequired(response);
+      return;
+    }
     void forwardHttp(request, response, dial, selfPort, viaTag, onPolicyDeny)
       .catch((error) => writeHttpError(response, error));
   });
@@ -279,17 +369,14 @@ export async function startEgressProxy(options: EgressProxyOptions): Promise<Egr
     socket.on("error", () => socket.destroy());
   });
   server.on("connect", (request, socket, head) => {
+    if (!authorized(request, authToken)) {
+      writeSocketAuthRequired(socket);
+      return;
+    }
     void openTunnel(request, socket, head, dial, selfPort, onPolicyDeny).catch((error) => writeSocketError(socket, error));
   });
 
-  await new Promise<void>((resolve, reject) => {
-    const onError = (error: Error) => reject(error);
-    server.once("error", onError);
-    server.listen(options.port ?? 0, "127.0.0.1", () => {
-      server.off("error", onError);
-      resolve();
-    });
-  }).catch((error) => {
+  await bind(server, options).catch((error) => {
     server.close();
     throw error;
   });
@@ -297,11 +384,13 @@ export async function startEgressProxy(options: EgressProxyOptions): Promise<Egr
   const address = server.address();
   if (!address || typeof address === "string") {
     await new Promise<void>((resolve) => server.close(() => resolve()));
-    throw new Error("Browser egress proxy did not bind a TCP address");
+    throw new Error("Egress proxy did not bind a TCP address");
   }
 
+  const credentials = authToken === undefined ? "" : `${PROXY_AUTH_USER}:${authToken}@`;
   return {
-    url: `http://127.0.0.1:${address.port}`,
+    url: `http://${credentials}127.0.0.1:${address.port}`,
+    port: address.port,
     close: () => new Promise<void>((resolve, reject) => {
       for (const socket of clientSockets) socket.destroy();
       server.close((error) => error ? reject(error) : resolve());

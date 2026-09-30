@@ -18,13 +18,20 @@
  *     sent a live session into a connectivity-debugging flail (2026-07-23).
  */
 import { externalSinkDomain, type ThreatEngine } from "../../threat/threat-engine.js";
+import { CAPABILITY_CLASS_MEMBERS, hasCapability } from "../../tool-registry.js";
 import { USER_HINTS } from "../../types.js";
 import type { PolicyCall, PolicyEvalCtx, PackDecision, RulePack, RulePackRule } from "../evaluator.js";
 
 const PACK_ID = "threat-engine";
 const PACK_PRIORITY = 30;
 
-const RESTRICTED_EXTERNAL_TOOLS = new Set(["http_request", "web_fetch", "browser"]);
+// The restriction covers the whole egress capability class — every tool that
+// can carry data off the machine (http_request, web_fetch, browser and its
+// sub-actions, the messaging senders, image generation, …) — read from the
+// registry so a new egress tool is restricted the day it is registered. The
+// hand-written {http_request, web_fetch, browser} set this replaces let a
+// restricted session keep sending through email_send / telegram_send.
+const restrictedExternalTool = (name: string): boolean => hasCapability(name, "egress");
 
 const RULE_REASON =
   "Session security restriction active (deterministic evidence recorded). External calls to implicated sinks denied; all external calls denied when the evidence has no attributable sink.";
@@ -36,7 +43,7 @@ function isOwnAppBrowserCall(args: Record<string, unknown>): boolean {
 }
 
 function describeRules(): RulePackRule[] {
-  return Array.from(RESTRICTED_EXTERNAL_TOOLS).map((tool) => ({
+  return CAPABILITY_CLASS_MEMBERS.egress.map((tool) => ({
     id: `threat.restricted.${tool}`,
     kind: "threat",
     match: { tool, when: "session-restricted" },
@@ -70,7 +77,7 @@ export function makeThreatEnginePack(threatEngine: ThreatEngine | undefined): Ru
     evaluate(call: PolicyCall, _ctx: PolicyEvalCtx): PackDecision {
       if (!threatEngine) return { allowed: true };
       if (!threatEngine.isRestricted()) return { allowed: true };
-      if (!RESTRICTED_EXTERNAL_TOOLS.has(call.name)) return { allowed: true };
+      if (!restrictedExternalTool(call.name)) return { allowed: true };
       if (call.name === "browser" && isOwnAppBrowserCall(call.args)) return { allowed: true };
 
       const evidence = threatEngine.getRestrictionEvidence();

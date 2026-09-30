@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { makeThreatEnginePack } from "./threat-engine-pack.js";
+import { CAPABILITY_CLASS_MEMBERS, hasCapability } from "../../tool-registry.js";
 import { ThreatEngine, THREAT_SCORES } from "../../threat/threat-engine.js";
 import { USER_HINTS } from "../../types.js";
 import type { PolicyEvalCtx } from "../evaluator.js";
@@ -51,6 +52,20 @@ function restrictedCanaryOnly(): ThreatEngine {
 }
 
 describe("threat-engine pack — unrestricted sessions", () => {
+  // The restriction covers the egress CAPABILITY CLASS from the registry: a
+  // restricted session used to keep email_send / telegram_send / image
+  // generation because the pack carried its own three-name list (2026-07-29).
+  it("denies every egress-class tool while restricted on unattributable evidence", async () => {
+    const pack = makeThreatEnginePack(restrictedCanaryOnly());
+    for (const tool of CAPABILITY_CLASS_MEMBERS.egress) {
+      if (!hasCapability(tool, "egress")) continue;
+      const d = await pack.evaluate(call(tool, { url: "https://anywhere.example/x" }), CTX);
+      expect(d.allowed, `${tool} must be denied while restricted`).toBe(false);
+    }
+    expect(CAPABILITY_CLASS_MEMBERS.egress.length).toBeGreaterThan(3);
+    expect(pack.rules.map((r) => r.match?.tool)).toEqual([...CAPABILITY_CLASS_MEMBERS.egress]);
+  });
+
   it("allows everything when the engine is not restricted", async () => {
     const pack = makeThreatEnginePack(freshEngine());
     expect((await pack.evaluate(call("browser", { url: "https://github.com" }), CTX)).allowed).toBe(true);

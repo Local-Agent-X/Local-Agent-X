@@ -14,6 +14,7 @@
  * kill-switch" setting in the schema has a matching gate here.
  */
 import type { LAXConfig } from "../types.js";
+import { hasCapability } from "../tool-registry.js";
 
 /** Config fields that act as category kill-switches over tool dispatch. */
 export type KillSwitchField =
@@ -42,7 +43,7 @@ export const KILL_SWITCH_GATES: ReadonlyArray<KillSwitchGate> = [
     // them on while Shell is off would silently bypass the user's toggle.
     field: "enableShell",
     label: "Shell Access",
-    matches: (t) => t === "bash" || t.startsWith("process_"),
+    matches: (t) => hasCapability(t, "shell"),
     extraRecovery: "Other tools (write/edit/http_request) still work.",
   },
   {

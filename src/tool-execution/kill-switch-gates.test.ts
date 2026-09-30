@@ -12,6 +12,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { computerRedirectBlock, KILL_SWITCH_GATES, killSwitchBlock, screenCaptureRedirectBlock } from "./kill-switch-gates.js";
+import { CAPABILITY_CLASS_MEMBERS } from "../tool-registry.js";
 import { FLIPPABLE_SETTINGS, PROTECTED_SETTINGS } from "../settings-schema.js";
 import { securitySettingsLine } from "../manifest-generator/summary.js";
 import { USER_HINTS } from "../types.js";
@@ -24,6 +25,18 @@ const ALL_ON = {
 } as const;
 
 describe("kill-switch gate registry contract", () => {
+  // The Shell Access switch covers the shell CAPABILITY CLASS, read from the
+  // registry: `shell`, `ari_shell`, `app_serve_*`, `app_rebuild` all spawn a
+  // subprocess and were left on by the old `bash || process_*` match
+  // (found 2026-07-29).
+  it("Shell Access covers every shell-class tool, not only bash and process_*", () => {
+    for (const tool of CAPABILITY_CLASS_MEMBERS.shell) {
+      expect(killSwitchBlock(tool, { ...ALL_ON, enableShell: false }), `${tool} must be off with Shell Access off`).not.toBeNull();
+      expect(killSwitchBlock(tool, ALL_ON), `${tool} must run with Shell Access on`).toBeNull();
+    }
+    expect(CAPABILITY_CLASS_MEMBERS.shell).toEqual(expect.arrayContaining(["bash", "ari_shell", "app_rebuild"]));
+  });
+
   it("every gate's recovery names the `setting` tool and the exact field", () => {
     for (const gate of KILL_SWITCH_GATES) {
       const block = killSwitchBlock(

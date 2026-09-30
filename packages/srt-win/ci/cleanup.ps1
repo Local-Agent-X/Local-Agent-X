@@ -1,4 +1,4 @@
-<#
+﻿<#
   Best-effort teardown of any state smoke.ps1/smoke-exec.ps1/
   smoke-aces.ps1 may have left behind. Intended for `if: always()`
   in CI; safe to run locally too.

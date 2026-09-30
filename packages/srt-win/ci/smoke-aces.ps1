@@ -1,4 +1,4 @@
-<#
+﻿<#
   Additive-DENY-ACE lifecycle smoke (the A-row equivalents from
   the deleted smoke-acl.ps1, re-expressed for the separate-user
   model: trustee = `srt-sandbox`'s SID, mechanism = additive

@@ -1,4 +1,4 @@
-<#
+﻿<#
   Smoke test for `srt-win exec` (the two-hop sandbox-user launch).
 
   Self-contained: provisions the `srt-sandbox` account + WFP filters

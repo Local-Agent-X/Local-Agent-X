@@ -221,12 +221,6 @@ jobs:
           Copy-Item -LiteralPath $exe -Destination installer/srt-win-bundle/srt-win.exe -Force
           Write-Host "Cage helper signed by $($sig.SignerCertificate.Subject)"
 
-      - uses: actions/upload-artifact@v7
-        with:
-          name: windows-cage-helper
-          path: installer/srt-win-bundle/srt-win.exe
-          if-no-files-found: error
-
       - name: Stage bundled Electron runtime
         # Download the pinned Electron archive into installer/electron-bundle/ so
         # the publish below embeds it (Installer.csproj). The installed app then
@@ -288,10 +282,15 @@ jobs:
           }
           Write-Host "Signing identity OK: $subj"
 
+      # One upload, after both signatures are verified: the installer and the
+      # cage helper it embeds (also attached to the release on its own, for a
+      # user provisioning the cage by hand). Nothing leaves this job unsigned.
       - uses: actions/upload-artifact@v7
         with:
           name: windows-installer
-          path: "Install Local Agent X Windows Installer.exe"
+          path: |
+            Install Local Agent X Windows Installer.exe
+            installer/srt-win-bundle/srt-win.exe
           if-no-files-found: error
 
   build-macos:
@@ -604,5 +603,5 @@ jobs:
           fail_on_unmatched_files: true
           files: |
             dist/windows-installer/Install Local Agent X Windows Installer.exe
-            dist/windows-cage-helper/srt-win.exe
+            dist/windows-installer/installer/srt-win-bundle/srt-win.exe
             dist/macos-installer/Install Local Agent X Mac Installer.dmg

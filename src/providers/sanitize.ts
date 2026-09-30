@@ -1,7 +1,7 @@
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import { isHarnessRow } from "../harness-rows.js";
 import { stripSystemInjectionTags } from "../sanitize.js";
-import { MODEL_REFUSAL_CODE } from "../canonical-loop/adapters/model-stop.js";
+import { MODEL_REFUSAL_CODE } from "../canonical-loop/public/model-stop.js";
 import {
   INTERRUPTED_TURN_BOUNDARY,
   TURN_ERROR_BOUNDARY_HEAD,

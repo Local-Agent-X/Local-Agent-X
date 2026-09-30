@@ -94,6 +94,8 @@ const NOT_A_MARKER: Record<string, string> = {
     "user-facing. It replaces the user's own transcription so they see why their speech was withheld — scrubbing it would hide a notice they are supposed to read.",
   EMPTY_USER_PLACEHOLDER:
     "wire filler, not an instruction. The Messages API rejects an empty text block, so a contentless user turn ships this instead. It is also short and generic enough that stripping it would eat a user's own words quoted back.",
+  AUTH_REJECTION_MESSAGE:
+    "user-facing. It is the message Settings → Sync shows (and the log records) when the sync token is refused; the [sync] prefix names the subsystem to the user. It is never written into a model turn.",
 };
 
 function sourceFiles(dir: string): string[] {

@@ -1,4 +1,4 @@
-<#
+﻿<#
   Kill-chain invariant smoke (K1/K2): NO sandbox process survives
   the broker. Pins the ground-truthed probe result that the
   broker→runner `AssignProcessToJobObject` succeeds and the

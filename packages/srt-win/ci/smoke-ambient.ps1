@@ -1,4 +1,4 @@
-<#
+﻿<#
   Install-time ambient write-deny lifecycle smoke (`ambient.rs`).
 
   Asserts the v2 install stamps Windows' stock world-writable system

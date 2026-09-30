@@ -1,4 +1,4 @@
-<#
+﻿<#
   Machine-wide state store lifecycle smoke (`%ProgramData%\sandbox-runtime`).
 
   Asserts the elevated install provisions the shared state — the

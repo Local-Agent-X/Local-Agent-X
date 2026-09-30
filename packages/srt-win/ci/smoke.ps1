@@ -1,4 +1,4 @@
-<#
+﻿<#
   srt-win install/uninstall lifecycle smoke test.
 
   Exercises `srt-win install` (provisions the `srt-sandbox` user +

@@ -7,6 +7,7 @@ import { loadToolPolicy } from "../tool-policy/index.js";
 import { SessionStore, MemoryIndex, MemoryManager, ensurePersonalityFiles } from "../memory/index.js";
 import { SecretsStore } from "../secrets.js";
 import { AgentSync } from "../sync/index.js";
+import { adoptPulledSessions } from "../sync/on-sessions-pulled.js";
 import { RBACManager, setInternalAgentToken } from "../rbac.js";
 import { setBrowserAuthContext } from "../browser/index.js";
 import { CronService } from "../cron/cron-service.js";
@@ -276,6 +277,7 @@ export async function bootstrapServices(config: LAXConfig): Promise<Bootstrapped
   _t();
   _t = _bsT("MemoryIndex");
   const memoryIndex = new MemoryIndex(dataDir);
+  agentSync.onSessionsPulled = (ids) => adoptPulledSessions(ids, { sessionStore, memoryIndex });
   _t();
   _t = _bsT("MemoryManager+personalityFiles");
   const memoryManager = new MemoryManager(memoryIndex);

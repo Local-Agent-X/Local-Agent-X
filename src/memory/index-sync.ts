@@ -15,10 +15,27 @@ import { listMemoryFiles, listSessionFiles, extractDateFromPath } from "./index-
 import { createLogger } from "../logger.js";
 const logger = createLogger("memory.index-sync");
 
+/**
+ * Message rows in a session log. `.jsonl` (one row per line, `kind:"msg"`)
+ * is the live format; the whole-file parse is the legacy `.json` shape. The
+ * count gates the small-delta shortcut in syncIndex: a count that is always 0
+ * made every grown session look "unchanged", so an appended turn (a synced
+ * session catching up, for one) was never re-indexed.
+ */
 export function countSessionMessages(path: string): number {
+  let raw: string;
+  try { raw = readFileSync(path, "utf-8"); } catch { return 0; }
+  if (path.endsWith(".jsonl")) {
+    let count = 0;
+    for (const line of raw.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      try { if ((JSON.parse(trimmed) as { kind?: string }).kind === "msg") count++; } catch { /* torn line */ }
+    }
+    return count;
+  }
   try {
-    const session = JSON.parse(readFileSync(path, "utf-8")) as Session;
-    return session.messages.length;
+    return (JSON.parse(raw) as Session).messages.length;
   } catch {
     return 0;
   }

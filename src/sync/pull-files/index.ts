@@ -21,11 +21,16 @@ const logger = createLogger("sync.pull-files");
 
 // ── Pull direction: sync repo → local (with deletion propagation) ──
 
-export async function copyFromSync(dataDir: string, syncDir: string, config: SyncConfig): Promise<void> {
+export interface PullReport {
+  /** Session ids whose local log was created or extended by this pull. */
+  pulledSessionIds: string[];
+}
+
+export async function copyFromSync(dataDir: string, syncDir: string, config: SyncConfig): Promise<PullReport> {
   pullMemoryDir(dataDir, syncDir);
   pullToolPolicy(dataDir, syncDir);
   await pullSidebarPins(dataDir, syncDir);
-  pullSessions(dataDir, syncDir, config);
+  const pulledSessionIds = pullSessions(dataDir, syncDir, config);
   pullWorkspaceOrProtocols(dataDir, syncDir, config);
   pullCronJobs(dataDir, syncDir, config);
   pullBrainJsonFiles(dataDir, syncDir, config);
@@ -51,4 +56,5 @@ export async function copyFromSync(dataDir: string, syncDir: string, config: Syn
   } catch (e) {
     logger.warn(`[sync] facts import skipped: ${(e as Error).message}`);
   }
+  return { pulledSessionIds };
 }

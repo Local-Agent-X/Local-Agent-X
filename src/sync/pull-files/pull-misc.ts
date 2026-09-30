@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { type SyncConfig } from "../constants.js";
@@ -6,20 +6,39 @@ import { workspaceRoot } from "../../config.js";
 import { pullDir } from "../mirror.js";
 import { applyTombstones, tombstonePaths } from "../tombstones.js";
 
-export function pullSessions(dataDir: string, syncDir: string, config: SyncConfig): void {
-  if (!config.syncSessions) return;
+/**
+ * Copy sessions from the mirror. Returns the ids whose local file changed, so
+ * the caller can index and adopt them.
+ *
+ * A session log is append-only and authored on one machine, so a remote copy
+ * that is LARGER than the local one carries turns the local one lacks. The
+ * earlier rule copied only missing files: a session pulled once was frozen at
+ * that moment, every later turn on the other machine never arrived, and this
+ * machine's push then wrote the stale copy back over the mirror's fresh one.
+ * The `.metadata.*` dotfiles are this machine's own cache and never travel.
+ * A session this machine has archived is not resurrected.
+ */
+export function pullSessions(dataDir: string, syncDir: string, config: SyncConfig): string[] {
+  if (!config.syncSessions) return [];
   const syncSessDir = join(syncDir, "sessions");
   const sessDir = join(dataDir, "sessions");
+  const archiveDir = join(dataDir, "sessions-archive");
   if (!existsSync(sessDir)) mkdirSync(sessDir, { recursive: true });
-  if (!existsSync(syncSessDir)) return;
+  if (!existsSync(syncSessDir)) return [];
+  const pulled: string[] = [];
   for (const f of readdirSync(syncSessDir)) {
     // Pull both .jsonl (current) and .json (legacy) so round-tripping
     // from an older machine still works; the SessionStore migration
     // on next boot converts any pulled .json to .jsonl.
-    if ((f.endsWith(".jsonl") || f.endsWith(".json")) && !existsSync(join(sessDir, f))) {
-      writeFileSync(join(sessDir, f), readFileSync(join(syncSessDir, f), "utf-8"));
-    }
+    if (f.startsWith(".") || !(f.endsWith(".jsonl") || f.endsWith(".json"))) continue;
+    if (existsSync(join(archiveDir, f))) continue;
+    const local = join(sessDir, f);
+    const remote = join(syncSessDir, f);
+    if (existsSync(local) && statSync(local).size >= statSync(remote).size) continue;
+    writeFileSync(local, readFileSync(remote, "utf-8"));
+    pulled.push(f.replace(/\.jsonl?$/, ""));
   }
+  return pulled;
 }
 
 export function pullWorkspaceOrProtocols(dataDir: string, syncDir: string, config: SyncConfig): void {

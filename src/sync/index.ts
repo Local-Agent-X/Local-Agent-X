@@ -47,6 +47,9 @@ export class AgentSync {
   private isSyncing = false;
   private lastSyncTime = 0;
   private getToken: () => string | undefined;
+  /** Runs after a pull that created or extended session logs, with their ids.
+   *  Set by the server, which owns the session store and the memory index. */
+  onSessionsPulled: ((sessionIds: string[]) => void) | null = null;
 
   constructor(dataDir: string, getToken: () => string | undefined) {
     this.dataDir = dataDir;
@@ -279,7 +282,8 @@ export class AgentSync {
       let hasChanges = true;
       try { if (!await this.git("diff", "HEAD", "origin/main", "--stat")) hasChanges = false; } catch {}
       if (hasChanges) { try { await this.git("pull", "--no-rebase", "origin", "main"); } catch { await resolveConflicts(this.syncDir, this.git); } }
-      await copyFromSync(this.dataDir, this.syncDir, this.config);
+      const report = await copyFromSync(this.dataDir, this.syncDir, this.config);
+      if (report.pulledSessionIds.length > 0) this.onSessionsPulled?.(report.pulledSessionIds);
       // Deliberately NOT stamping lastSyncTime here. "Last synced" must mean
       // "local state reached the remote" — only push() (success or genuinely
       // up-to-date) sets it. Stamping on every pull made the heartbeat's

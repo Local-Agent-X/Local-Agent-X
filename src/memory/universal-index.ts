@@ -273,8 +273,8 @@ export class UniversalIndex {
       }
       case "session": {
         if (!existsSync(this.sessionsDir)) return 0;
-        for (const f of readdirSync(this.sessionsDir).filter(f => f.endsWith(".json"))) {
-          const r = await this.indexSessionTranscript(basename(f, ".json"));
+        for (const f of readdirSync(this.sessionsDir).filter(f => f.endsWith(".jsonl") && !f.startsWith("."))) {
+          const r = await this.indexSessionTranscript(basename(f, ".jsonl"));
           added += r.added;
         }
         return added;

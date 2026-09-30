@@ -88,8 +88,9 @@ export async function copyToSync(dataDir: string, syncDir: string, config: SyncC
     if (existsSync(sessDir)) {
       for (const f of readdirSync(sessDir)) {
         // Sync both .jsonl (current) and .json (legacy/pre-migration) so
-        // round-tripping a sync from an older machine still works.
-        if (!f.endsWith(".jsonl") && !f.endsWith(".json")) continue;
+        // round-tripping a sync from an older machine still works. The
+        // `.metadata.*` dotfiles are this machine's list cache, not sessions.
+        if (f.startsWith(".") || (!f.endsWith(".jsonl") && !f.endsWith(".json"))) continue;
         const src = join(sessDir, f);
         // Hard size cap. A single runaway log (a 150 MB memory_dream session
         // was the real one) bloats the push pack past the git timeout, so

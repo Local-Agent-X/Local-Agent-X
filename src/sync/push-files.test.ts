@@ -90,3 +90,18 @@ describe("the workspace push refuses an engine checkout", () => {
     expect(existsSync(join(syncDir, "workspace", "notes.md"))).toBe(false);
   });
 });
+
+describe("copyToSync ships sessions, never the list cache", () => {
+  it("copies session logs and skips the .metadata dotfiles", async () => {
+    root = mkdtempSync(join(tmpdir(), "lax-push-sessions-"));
+    const dataDir = join(root, "data"); const syncDir = join(root, "sync");
+    mkdirSync(join(dataDir, "sessions"), { recursive: true }); mkdirSync(syncDir, { recursive: true });
+    writeFileSync(join(dataDir, "sessions", "s1.jsonl"), '{"kind":"meta","id":"s1"}\n');
+    writeFileSync(join(dataDir, "sessions", ".metadata.json"), "{}");
+    writeFileSync(join(dataDir, "sessions", ".metadata.jsonl"), "");
+    await copyToSync(dataDir, syncDir, config({ syncWorkspace: false, syncProtocols: false, syncSessions: true }));
+    expect(existsSync(join(syncDir, "sessions", "s1.jsonl"))).toBe(true);
+    expect(existsSync(join(syncDir, "sessions", ".metadata.json"))).toBe(false);
+    expect(existsSync(join(syncDir, "sessions", ".metadata.jsonl"))).toBe(false);
+  });
+});

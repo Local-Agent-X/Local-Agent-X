@@ -186,6 +186,12 @@ export function importFactsFromSync(dataDir: string, syncDir: string): { inserte
             );
             const newId = res.lastInsertRowid as number;
             idForKey.set(key, newId);
+            // facts_fts is external-content with no triggers: a row that is
+            // not written here is invisible to every fact search on this
+            // machine until a full rebuild. Same statement index-facts.ts
+            // runs for a locally learned fact.
+            try { db.prepare("INSERT INTO facts_fts (rowid, content) VALUES (?, ?)").run(newId, r.content); }
+            catch (e) { logger.warn(`[sync.facts] facts_fts insert failed for #${newId}: ${(e as Error).message}`); }
 
             try {
               const ents: string[] = JSON.parse(r.entities) || [];

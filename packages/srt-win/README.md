@@ -27,6 +27,8 @@ Changes against upstream, so the two products never share machine state:
   (upstream `HKLM\SOFTWARE\sandbox-runtime`).
 - `src/state_db.rs`: state and CA directory `%ProgramData%\Local Agent
   X\shell-cage` (upstream `%ProgramData%\sandbox-runtime`).
+- `src/cert_store.rs`: the unit test's CA fixture lives at
+  `tests/fixtures/tls-terminate/` (upstream keeps it at the repository root).
 - `src/wfp.rs`: default sublayer `{6f3b9c1e-4a7d-4e52-9c0b-2d8e5f1a7b34}`
   (upstream `{2c5d0ad6-...}`).
 

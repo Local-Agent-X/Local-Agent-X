@@ -289,7 +289,7 @@ mod tests {
     /// tls-terminate tests use). `from_pem_or_der` parses it to a
     /// real `CERT_CONTEXT`, so the canonicalization step is
     /// exercised end-to-end.
-    const CA_PEM: &[u8] = include_bytes!("../../../test/fixtures/tls-terminate/ca.crt");
+    const CA_PEM: &[u8] = include_bytes!("../tests/fixtures/tls-terminate/ca.crt");
 
     #[test]
     fn pem_roundtrip_is_canonical() {

@@ -6,7 +6,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { generateSeatbeltProfile, isSeatbeltAvailable, seatbeltProfileLoads, wrapForSeatbelt, SANDBOX_EXEC, GUARDED_UNIX_SOCKET_ALLOW, GUARDED_UNIX_SOCKET_DENY } from "./seatbelt.js";
+import { cagedLoopbackDenies, generateSeatbeltProfile, isSeatbeltAvailable, seatbeltProfileLoads, wrapForSeatbelt, SANDBOX_EXEC, GUARDED_UNIX_SOCKET_ALLOW, GUARDED_UNIX_SOCKET_DENY } from "./seatbelt.js";
 import { HOME_RELATIVE_DENY_DIRS, HOME_RELATIVE_DENY_FILES, SERVER_SCOPE_EXEMPT_DIRS, GUARDED_SCOPE_EXEMPT_DIRS } from "./validate.js";
 
 const onDarwin = process.platform === "darwin";
@@ -111,6 +111,20 @@ describe("seatbelt profile generation", () => {
     for (const scope of ["shell", "guarded", "server"] as const) {
       expect(generateSeatbeltProfile(home, scope)).not.toMatch(/\(allow network\* \((?:remote|local) unix-socket\)\)/);
     }
+  });
+
+  // Loopback is open in the guarded cage; the in-app browser's debugging port
+  // is the one loopback port a caged shell must not reach (it would drive the
+  // user's browser with no credentials). Denied after the allow, so it wins.
+  it("guarded scope: the in-app debugging port is denied on loopback when native driving is on, and nothing is denied otherwise", () => {
+    const withPort = generateSeatbeltProfile(home, "guarded", [49123]);
+    const allow = withPort.indexOf(`(allow network-outbound (remote ip "localhost:*"))`);
+    const deny = withPort.indexOf(`(deny network-outbound (remote ip "localhost:49123"))`);
+    expect(allow).toBeGreaterThan(-1);
+    expect(deny).toBeGreaterThan(allow);
+    expect(generateSeatbeltProfile(home, "guarded", [])).not.toContain('(deny network-outbound (remote ip "localhost:');
+    // The port comes from the desktop's env contract, and only when it is a port.
+    expect(cagedLoopbackDenies()).toEqual(process.env.LAX_ELECTRON_CDP_PORT ? [Number(process.env.LAX_ELECTRON_CDP_PORT)] : []);
   });
 
   it("the allowlist names only service and temp sockets, never a home directory or a host-control socket", () => {
@@ -438,6 +452,21 @@ describe.skipIf(!onDarwin)("seatbelt guarded-scope enforcement (live sandbox-exe
       const r = await runGuardedAsync(dir, `"${process.execPath}" -e '${script}'`);
       expect(r.out).toContain("UDS-BLOCKED EPERM");
       expect(r.out).not.toContain("AGENT-REACHED");
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it("DENIES a loopback port named as the in-app debugging port, while the rest of loopback stays open", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lax-sb-grd-"));
+    try {
+      await withLoopbackListener(async (port) => {
+        const { execFile } = await import("node:child_process");
+        const profile = generateSeatbeltProfile(dir, "guarded", [port]);
+        const out = await new Promise<string>((resolve) => execFile(SANDBOX_EXEC, ["-p", profile, "/bin/bash", "-c",
+          `/usr/bin/curl -sS --max-time 3 http://127.0.0.1:${port}/ ; echo "CURL-EXIT=$?"`],
+          { encoding: "utf-8", timeout: 10_000 }, (_e, so, se) => resolve(so + se)));
+        expect(out).not.toContain("LOOPBACK-OK");
+        expect(out).toContain("CURL-EXIT=7");
+      });
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 

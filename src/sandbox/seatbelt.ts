@@ -47,8 +47,16 @@ import { join } from "node:path";
 
 import { HOME_RELATIVE_DENY_DIRS, HOME_RELATIVE_DENY_FILES, SERVER_SCOPE_EXEMPT_DIRS, GUARDED_SCOPE_EXEMPT_DIRS } from "./validate.js";
 import type { SandboxScope } from "./types.js";
+import { electronCdpPort } from "../browser/electron-cdp.js";
 
 export const SANDBOX_EXEC = "/usr/bin/sandbox-exec";
+
+/** Loopback ports the guarded cage denies although loopback is open: the
+ *  in-app browser's debugging port, present only when native driving is on. */
+export function cagedLoopbackDenies(): number[] {
+  const cdp = electronCdpPort();
+  return cdp === null ? [] : [cdp];
+}
 
 /**
  * Unix-domain sockets a guarded shell may CONNECT to (SBPL subpath: the path
@@ -129,7 +137,7 @@ const ABSOLUTE_PERSISTENCE_DIRS = ["/Library/LaunchAgents", "/Library/LaunchDaem
  * the dirs the server itself owns (~/.lax, ~/.codex) are exempted.
  * Persistence write-denies apply to all scopes.
  */
-export function generateSeatbeltProfile(home: string = homedir(), scope: SandboxScope = "shell"): string {
+export function generateSeatbeltProfile(home: string = homedir(), scope: SandboxScope = "shell", denyLoopbackPorts: number[] = cagedLoopbackDenies()): string {
   const realHome = canonical(home);
 
   const exemptDirs =
@@ -170,6 +178,11 @@ export function generateSeatbeltProfile(home: string = homedir(), scope: Sandbox
     ...(scope === "guarded" ? [
       "(deny network*)",
       `(allow network-outbound (remote ip "localhost:*"))`,
+      // Loopback ports a caged shell must NOT reach even though loopback is
+      // open here: the in-app browser's debugging port, when native driving
+      // is on, would let a caged shell drive the user's browser with no
+      // credentials. A later rule wins, so the denies follow the allow.
+      ...denyLoopbackPorts.map((port) => `(deny network-outbound (remote ip "localhost:${port}"))`),
       `(allow network-bind (local ip "*:*"))`,
       `(allow network-inbound (local ip "*:*"))`,
       `(allow network-bind (local unix-socket (path-regex #"^/")))`,

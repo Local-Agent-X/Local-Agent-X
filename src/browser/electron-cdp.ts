@@ -26,6 +26,18 @@ const logger = createLogger("browser.electron-cdp");
  */
 export type CdpConnector = (cdpUrl: string) => Promise<Browser>;
 
+/** The desktop main process hands the in-app debugging port to this server
+ *  child in this variable (desktop/src/main.ts); the macOS cage reads it too,
+ *  to deny caged shells that one loopback port. */
+export const ELECTRON_CDP_PORT_ENV = "LAX_ELECTRON_CDP_PORT";
+
+/** The in-app debugging port, when native driving is on; null otherwise. */
+export function electronCdpPort(env: NodeJS.ProcessEnv = process.env): number | null {
+  const raw = env[ELECTRON_CDP_PORT_ENV];
+  const port = raw ? Number(raw) : NaN;
+  return raw && Number.isInteger(port) && port > 0 && port <= 65535 ? port : null;
+}
+
 // The endpoint is first-party loopback: a ready endpoint connects in well
 // under a second. Playwright's 30s default would instead pin the FIRST caller
 // (e.g. an agent navigate) for 30s whenever the endpoint isn't up yet before
@@ -56,9 +68,8 @@ export async function connectElectronCdp(): Promise<Browser | null> {
   }
   if (connecting) return connecting;
 
-  const portRaw = process.env.LAX_ELECTRON_CDP_PORT;
-  const port = portRaw ? Number(portRaw) : NaN;
-  if (!portRaw || !Number.isInteger(port) || port <= 0) {
+  const port = electronCdpPort();
+  if (port === null) {
     // No endpoint — the caller falls back to the legacy bridge. Not an error.
     return null;
   }

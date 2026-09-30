@@ -192,6 +192,14 @@ jobs:
           cargo build --release --manifest-path packages/srt-win/Cargo.toml
           cargo test --release --manifest-path packages/srt-win/Cargo.toml
 
+      # The unsigned build, for a developer to provision a box by hand; the
+      # signed one ships with the release installer.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: srt-win-unsigned
+          path: packages/srt-win/target/release/srt-win.exe
+          if-no-files-found: error
+
       - name: Provision the cage
         shell: pwsh
         run: pwsh scripts/win-cage/provision.ps1 -Helper packages/srt-win/target/release/srt-win.exe -PortRange 60090-60099

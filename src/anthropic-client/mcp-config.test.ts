@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, isAbsolute, basename, extname } from "node:path";
 
 import { writeMcpConfig, mcpBridgeBasePath } from "./mcp-config.js";
-import { buildMcpChildEnv, __resetMcpEnvLogState } from "../mcp-client/connection.js";
+import { buildMcpChildEnv, __resetMcpEnvLogState } from "../mcp-client/child-env.js";
 
 // Snapshot + restore process.env around every test. The strip-pass is
 // branchy on actual env keys, so leaking state across tests would mask

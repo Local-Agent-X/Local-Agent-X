@@ -16,7 +16,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
 import { createLogger } from "../logger.js";
-import { isCredentialKey } from "../mcp-client/connection.js";
+import { isCredentialKey } from "../mcp-client/child-env.js";
 
 const logger = createLogger("mcp-config");
 

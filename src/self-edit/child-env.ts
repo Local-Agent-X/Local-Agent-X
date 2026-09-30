@@ -30,7 +30,7 @@
 
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { isCredentialKey } from "../mcp-client/connection.js";
+import { isCredentialKey } from "../mcp-client/child-env.js";
 import { ENV_ALLOWLIST } from "../mcp-client/env-credential-patterns.js";
 import { getNpmGlobalBin } from "../anthropic-client/cli-path.js";
 

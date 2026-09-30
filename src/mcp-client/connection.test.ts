@@ -5,9 +5,8 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { buildMcpChildEnv, __resetMcpEnvLogState } from "./child-env.js";
 import {
-  buildMcpChildEnv,
-  __resetMcpEnvLogState,
   __setMcpSandboxBackendForTests,
   buildWindowsMcpSpawn,
   getMcpExecutionPosture,

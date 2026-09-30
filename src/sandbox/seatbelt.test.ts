@@ -441,12 +441,17 @@ describe.skipIf(!onDarwin)("seatbelt guarded-scope enforcement (live sandbox-exe
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 
-  it("ALLOWS the resolver daemon's socket (name resolution survives the socket allowlist)", async () => {
+  it("DENIES the resolver daemon's socket: a name does not resolve inside the cage (the proxy resolves it)", async () => {
     const dir = mkdtempSync(join(tmpdir(), "lax-sb-grd-"));
     try {
+      // curl exit 6 = could not resolve; a resolving cage would reach the
+      // network deny instead and exit 7.
+      const r = await runGuardedAsync(dir, `/usr/bin/curl -sS --noproxy '*' --max-time 3 http://example.com/ ; echo "CURL-EXIT=$?"`);
+      expect(r.out).toContain("CURL-EXIT=6");
+      // Loopback by address needs no resolver and still works.
       await withLoopbackListener(async (port) => {
-        const r = await runGuardedAsync(dir, `/usr/bin/curl -sS --max-time 3 http://localhost:${port}/`);
-        expect(r.out).toContain("LOOPBACK-OK");
+        const ok = await runGuardedAsync(dir, `/usr/bin/curl -sS --max-time 3 http://127.0.0.1:${port}/`);
+        expect(ok.out).toContain("LOOPBACK-OK");
       });
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });

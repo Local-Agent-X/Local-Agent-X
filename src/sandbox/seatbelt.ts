@@ -58,7 +58,11 @@ export const SANDBOX_EXEC = "/usr/bin/sandbox-exec";
  * would hand the caged shell the host.
  */
 export const GUARDED_UNIX_SOCKET_ALLOW: ReadonlyArray<{ path: string; why: string }> = [
-  { path: "/private/var/run/mDNSResponder", why: "name resolution (getaddrinfo talks to the resolver daemon here)" },
+  // Not the resolver (/private/var/run/mDNSResponder): a caged shell that can
+  // resolve names can exfiltrate through them (a label per query to a server
+  // the attacker controls), and the fence cannot see it. Names resolve at the
+  // egress proxy, which every proxy-aware client hands them to; a client that
+  // resolves for itself cannot reach the network from the cage anyway.
   { path: "/private/var/run/syslog", why: "system logging" },
   { path: "/private/tmp", why: "sockets dev tools create for themselves (postgres .s.PGSQL.*, build daemons)" },
   { path: "/private/var/folders", why: "the per-user temp tree (watchman, editor helpers, test sockets)" },

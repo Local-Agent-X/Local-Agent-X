@@ -48,6 +48,7 @@ export function scaffoldSettings(context, ollamaModelReady) {
   const settingsFile = join(laxDirectory, "settings.json");
   const securityFile = join(laxDirectory, "security.json");
   const allowlistFile = join(laxDirectory, "egress-allowlist.json");
+  const configFile = join(laxDirectory, "config.json");
   mutateInstallerDataRoot(context, ["settings.json", "security.json", "egress-allowlist.json"], () => {
     if (!existsSync(settingsFile)) {
       const defaults = ollamaModelReady
@@ -58,10 +59,12 @@ export function scaffoldSettings(context, ollamaModelReady) {
     } else reporter.ok("Settings already present");
     // Web access is strict on a fresh install: the agent's web tools reach only
     // hosts the user has allowed, one click at a time from the chat's block
-    // notice or in Settings → Security. The empty list is deliberate; an
-    // existing install keeps its own files, nothing here rewrites a policy the
-    // user already has.
-    if (!existsSync(securityFile) && !existsSync(allowlistFile)) {
+    // notice or in Settings → Security. The empty list is deliberate. An
+    // existing install is left alone even when it has neither policy file,
+    // which is the common case since both are optional: the install's own
+    // identity is config.json, which this installer writes after this step,
+    // so its presence means a policy the user already lives with.
+    if (!existsSync(configFile) && !existsSync(securityFile) && !existsSync(allowlistFile)) {
       writeDurableJson(securityFile, { egressMode: "strict" }, { fault: context.installerDataRootFault });
       writeDurableJson(allowlistFile, [], { fault: context.installerDataRootFault });
       reporter.ok("Web access set to strict; allow sites from the chat's block notice or Settings → Security");

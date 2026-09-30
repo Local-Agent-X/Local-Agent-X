@@ -47,6 +47,17 @@ describe("EgressPolicyState", () => {
     expect(() => state.allow("not a host")).toThrow(/not a host name/);
   });
 
+  it("a file written behind its back (installer, another process, a human) is seen by the next read", () => {
+    const state = new EgressPolicyState();
+    expect(state.mode).toBe("permissive");
+    writeFileSync(join(dir, "security.json"), JSON.stringify({ egressMode: "strict" }));
+    writeFileSync(join(dir, "egress-allowlist.json"), JSON.stringify(["docs.example.org"]));
+    // No new instance, no restart: the same object now answers from the files.
+    expect(state.snapshot()).toEqual({ mode: "strict", allowlist: ["docs.example.org"], configured: true });
+    rmSync(join(dir, "egress-allowlist.json"));
+    expect(state.configured).toBe(false);
+  });
+
   it("updateSecurityJson creates the file when absent", () => {
     updateSecurityJson({ egressMode: "strict" });
     expect(JSON.parse(readFileSync(join(dir, "security.json"), "utf-8"))).toEqual({ egressMode: "strict" });

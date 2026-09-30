@@ -34,6 +34,15 @@ describe("installer settings step: web access", () => {
     expect(read(join(directory, "egress-allowlist.json"))).toEqual([]);
   });
 
+  it("an existing install with NEITHER policy file (the common case) is left alone: config.json is the install's identity", () => {
+    const { directory, context } = freshContext();
+    writeFileSync(join(directory, "config.json"), JSON.stringify({ authToken: "abc", projectRoot: directory }));
+    writeFileSync(join(directory, "settings.json"), JSON.stringify({ temperature: 0.7 }));
+    scaffoldSettings(context, true);
+    expect(existsSync(join(directory, "security.json"))).toBe(false);
+    expect(existsSync(join(directory, "egress-allowlist.json"))).toBe(false);
+  });
+
   it("an install with its own security.json keeps it, and gets no allowlist written", () => {
     const { directory, context } = freshContext();
     writeFileSync(join(directory, "security.json"), JSON.stringify({ fileAccessMode: "workspace" }));

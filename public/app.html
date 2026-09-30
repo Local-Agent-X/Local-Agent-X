@@ -916,28 +916,6 @@
           </div>
         </div>
         <div class="section-card">
-          <div class="section-title">Rollback</div>
-          <div class="section-desc">Recent tool calls captured under "allow-with-rollback". Click Undo to restore the pre-state.</div>
-          <div id="rollback-list" style="margin-top:8px;font-size:.78rem"></div>
-          <button class="action-btn" id="rollback-refresh-btn" onclick="loadRollbackList()" style="margin-top:8px">Refresh</button>
-        </div>
-        <div class="section-card">
-          <div class="section-title">Run Traces</div>
-          <div class="section-desc">Step-by-step activity log for each agent run. Click a run to expand its tool-call timeline.</div>
-          <div id="run-traces-list" style="margin-top:8px;font-size:.78rem"></div>
-          <button class="action-btn" id="run-traces-refresh-btn" onclick="loadRunTracesList()" style="margin-top:8px">Refresh</button>
-        </div>
-        <div class="section-card">
-          <div class="section-title">Audit Log</div>
-          <div class="section-desc">Tamper-evident, hash-chained record of audited tool calls and policy decisions. Verify the chain to confirm no entry has been altered.</div>
-          <div id="audit-log-list" style="margin-top:8px;font-size:.78rem"></div>
-          <div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-            <button class="action-btn" id="audit-log-refresh-btn" onclick="loadAuditLog()">Refresh</button>
-            <button class="action-btn" id="audit-verify-btn" onclick="verifyAuditChain()">Verify chain</button>
-            <span id="audit-verify-result" style="font-size:.78rem"></span>
-          </div>
-        </div>
-        <div class="section-card">
           <div class="section-title">Bash Sandbox</div>
           <div class="section-desc">Shell confinement for interactive and unattended agent runs.</div>
           <div id="sandbox-effective-status" class="status-badge warn"><span class="status-dot"></span> Checking effective sandbox...</div>
@@ -982,6 +960,28 @@
               <button class="action-btn" id="egress-allow-btn" onclick="allowEgressHostUI()">Allow</button>
             </div>
             <div class="field-hint" id="egress-allow-error" style="margin-top:4px"></div>
+          </div>
+        </div>
+        <div class="section-card">
+          <div class="section-title">Rollback</div>
+          <div class="section-desc">Recent tool calls captured under "allow-with-rollback". Click Undo to restore the pre-state.</div>
+          <div id="rollback-list" style="margin-top:8px;font-size:.78rem"></div>
+          <button class="action-btn" id="rollback-refresh-btn" onclick="loadRollbackList()" style="margin-top:8px">Refresh</button>
+        </div>
+        <div class="section-card">
+          <div class="section-title">Run Traces</div>
+          <div class="section-desc">Step-by-step activity log for each agent run. Click a run to expand its tool-call timeline.</div>
+          <div id="run-traces-list" style="margin-top:8px;font-size:.78rem"></div>
+          <button class="action-btn" id="run-traces-refresh-btn" onclick="loadRunTracesList()" style="margin-top:8px">Refresh</button>
+        </div>
+        <div class="section-card">
+          <div class="section-title">Audit Log</div>
+          <div class="section-desc">Tamper-evident, hash-chained record of audited tool calls and policy decisions. Verify the chain to confirm no entry has been altered.</div>
+          <div id="audit-log-list" style="margin-top:8px;font-size:.78rem"></div>
+          <div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <button class="action-btn" id="audit-log-refresh-btn" onclick="loadAuditLog()">Refresh</button>
+            <button class="action-btn" id="audit-verify-btn" onclick="verifyAuditChain()">Verify chain</button>
+            <span id="audit-verify-result" style="font-size:.78rem"></span>
           </div>
         </div>
         <!-- Hidden unless the server reports a git checkout (selfEditAvailable):

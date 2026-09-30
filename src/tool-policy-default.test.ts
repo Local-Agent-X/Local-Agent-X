@@ -73,13 +73,6 @@ describe("behavior parity — representative decisions match the old table", () 
     { tool: "marketplace_install", args: {}, allowed: true, note: "via marketplace_* glob (destructive but allowed today)" },
     { tool: "mcp_github_create_issue", args: {}, allowed: true, note: "via mcp_* glob (dynamic external MCP tool, kernel+taint still gate)" },
     { tool: "browser", args: { action: "evaluate" }, allowed: true, note: "flag-browser-evaluate → allow (autonomous by default)" },
-    // The 15 formerly synthetic-only / uncovered tools, now explicit:
-    { tool: "swarm_create", args: {}, allowed: true, note: "was synthetic allow" },
-    { tool: "swarm_status", args: {}, allowed: true, note: "was synthetic allow" },
-    { tool: "swarm_cancel", args: {}, allowed: true, confirm: true, note: "destructive → approval-gated" },
-    { tool: "mission_list", args: {}, allowed: true, note: "was synthetic allow" },
-    { tool: "mission_build", args: {}, allowed: true, note: "was synthetic allow" },
-    { tool: "mission_delete", args: {}, allowed: true, confirm: true, note: "destructive → approval-gated" },
     { tool: "not_a_real_tool_xyz", args: {}, allowed: false, note: "deny by default policy" },
   ];
 

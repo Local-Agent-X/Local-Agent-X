@@ -16,8 +16,6 @@ import { IRREVERSIBLE } from "./tools/undo-pairs.js";
 export const IRREVERSIBLE_TOOLS_UNCARDED: Readonly<Record<string, string>> = {
   op_kill: "stops a run; nothing the user owns is destroyed, and the stop is usually the user's own",
   agent_cancel: "stops a spawned agent's run, the same way",
-  swarm_cancel: "already carded by its tool-policy rule (confirm-swarm-cancel)",
-  mission_delete: "already carded by its tool-policy rule (confirm-mission-delete)",
   self_edit: "the engine's own source under git (git is the undo); a card per self-repair is the friction it exists to remove",
   apply_update: "the update pipeline owns rollback",
 };

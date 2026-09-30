@@ -99,7 +99,7 @@ describe("name-drift guard — every capability-set member resolves to a real to
   // concrete tool the kernel/security pipeline knows about is a key there
   // (deriveTools → TOOLS); the ari_* kernel-bridge synonyms live there too.
   // (getAllTools() is only the statically-bundled core — agent_*/memory_*/
-  // mission_*/app_*/browser etc. are registered through runtime/bridge paths —
+  // mission_schedule_*/app_*/browser etc. are registered through runtime/bridge paths —
   // so it is NOT the right ground truth; the policy table is.)
   const POLICY_KEYS = new Set(Object.keys(TOOL_POLICIES));
 

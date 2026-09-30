@@ -30,8 +30,6 @@ export const IRREVERSIBLE: ReadonlySet<string> = new Set([
   "app_delete",            // an app's files; the workspace mirror is the recovery path
   "op_kill",               // a running operation
   "agent_cancel",          // a spawned agent's run
-  "swarm_cancel",
-  "mission_delete",        // no undelete; approval-gated
   "memory_forget",         // forgetting is the point
   "memory_forget_imports",
   "self_edit",             // the engine's own source; git is the undo

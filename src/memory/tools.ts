@@ -36,6 +36,7 @@ export function createMemoryTools(memory: MemoryIndex) {
 
   return [
     byName(search, "memory_search"),
+    byName(search, "search_past_sessions"),
     byName(search, "memory_reindex"),
     byName(search, "memory_get"),
     byName(save, "memory_save"),

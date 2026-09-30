@@ -49,7 +49,6 @@ export const TOOL_POLICIES_GLOBS: Record<string, ToolPolicyEntry> = {
   "mcp_*":               { rules: [{ id: "allow-mcp", decision: "allow", reason: "External MCP server tools (user-configured; kernel + taint gate each call)", priority: 40, constraints: { maxCallsPerSession: 100 } }] },
   "config_*":            { rules: [{ id: "allow-config", decision: "allow", reason: "Agent configuration read/write", priority: 50 }] },
   "skill_*":             { rules: [{ id: "allow-skills", decision: "allow", reason: "User-defined skill workflows", priority: 50 }] },
-  "playbook_*":          { rules: [{ id: "allow-playbook", decision: "allow", reason: "Legacy playbook tools", priority: 50 }] },
 
   // ── Global sliding-window rate cap (was DEFAULT_LIMITS "*") ──
   "*": { rateLimit: { maxCalls: 200, windowMs: 60_000, action: "warn" } },

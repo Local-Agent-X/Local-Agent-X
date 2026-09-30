@@ -563,3 +563,29 @@ describe("egress fold contract — a registered dev server ⇒ evaluateEgressFor
     expect(evaluateEgressForUrl("http://metadata.google.internal:80/").allowed).toBe(false);
   });
 });
+
+describe("evaluateWebFetch — strict mode names the way out", () => {
+  it("a host off the allowlist is refused with an allow-host action for that host", () => {
+    const d = evaluateWebFetch(new Set(["allowed.example"]), true, "7007", "https://Docs.Example.org:8443/p?q=1", "strict");
+    expect(d.allowed).toBe(false);
+    expect(d.action).toEqual({ kind: "allow-host", host: "docs.example.org" });
+    expect(d.reason).toMatch(/Settings → Security → Web access/);
+  });
+
+  it("strict with nothing allowed yet is the same refusal, not a config-file errand", () => {
+    const d = evaluateWebFetch(EMPTY_ALLOWLIST, false, "7007", "https://docs.example.org/", "strict");
+    expect(d.allowed).toBe(false);
+    expect(d.action).toEqual({ kind: "allow-host", host: "docs.example.org" });
+    expect(d.reason).not.toMatch(/egress-allowlist\.json/);
+  });
+
+  it("an SSRF refusal carries no action: there is nothing for the user to allow", () => {
+    const d = evaluateWebFetch(new Set(["*"]), true, "7007", "http://169.254.169.254/latest", "strict");
+    expect(d.allowed).toBe(false);
+    expect(d.action).toBeUndefined();
+  });
+
+  it("permissive mode never produces the action", () => {
+    expect(evaluateWebFetch(EMPTY_ALLOWLIST, false, "7007", "https://docs.example.org/", "permissive").allowed).toBe(true);
+  });
+});

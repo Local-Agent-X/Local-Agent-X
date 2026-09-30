@@ -19,6 +19,7 @@
 import { z } from "zod";
 
 import { createLogger } from "../logger.js";
+import type { BlockAction } from "../types.js";
 
 const logger = createLogger("policy.evaluator");
 
@@ -65,6 +66,8 @@ export interface PackDeny {
   recovery?: string;
   /** Plain-English user-facing summary; see SecurityDecision.userHint. */
   userHint?: string;
+  /** A user-clickable way out of this block; see SecurityDecision.action. */
+  action?: BlockAction;
 }
 
 export interface PackApprovalRequired {
@@ -104,6 +107,8 @@ export interface EvaluatorDeny {
   recovery?: string;
   /** Plain-English user-facing summary; see SecurityDecision.userHint. */
   userHint?: string;
+  /** A user-clickable way out of this block; see SecurityDecision.action. */
+  action?: BlockAction;
 }
 
 export interface EvaluatorAllow {
@@ -138,6 +143,7 @@ export async function evaluate(
         reason: decision.reason,
         recovery: decision.recovery,
         userHint: decision.userHint,
+        ...("action" in decision && decision.action ? { action: decision.action } : {}),
       };
     }
   }

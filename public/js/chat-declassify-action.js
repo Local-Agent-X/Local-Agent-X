@@ -28,6 +28,16 @@
  */
 const LEGACY_TAINT_LAYERS = ['data-lineage', 'tainted-shell'];
 
+/**
+ * Is this block a strict web-access refusal the USER can lift by allowing the
+ * site? The policy layer says so (`metadata.clearable === 'allow-host'`) and
+ * names the host; the button below posts that host to the allowlist.
+ */
+function isAllowHostBlock(metadata) {
+  const md = metadata || {};
+  return md.clearable === 'allow-host' && typeof md.host === 'string' && md.host !== '';
+}
+
 function isDeclassifiable(metadata) {
   const md = metadata || {};
   if (md.clearable === 'declassify') return true;
@@ -43,7 +53,7 @@ function isDeclassifiable(metadata) {
  */
 function isKernelBlockNotice(metadata) {
   const md = metadata || {};
-  if (isDeclassifiable(md)) return true;
+  if (isDeclassifiable(md) || isAllowHostBlock(md)) return true;
   if (md.layer === 'arikernel' || md.layer === 'quarantine-notice') return true;
   if (Array.isArray(md.layers) && md.layers.includes('arikernel')) return true;
   return !!md.quarantine;
@@ -63,7 +73,10 @@ function renderKernelBlockNotice(endEvt, sessionId) {
   el.className = 'kernel-block-notice';
   if (rule) el.setAttribute('data-rule', String(rule));
   let text;
-  if (isDeclassifiable(md)) {
+  if (isAllowHostBlock(md)) {
+    text = 'Web access: ' + md.host + ' is not on your allowed sites, so the call was refused. '
+      + 'Allowing it adds the site to Settings → Security → Web access and the agent retries.';
+  } else if (isDeclassifiable(md)) {
     text = 'Security block: this session is quarantined by a sensitive read, so outbound calls that could carry that data are refused'
       + (rule ? ' (kernel rule ' + rule + ')' : '') + '. Clearing it is your call.';
   } else if (q && q.trigger === 'behavioral_rule') {
@@ -83,7 +96,8 @@ function renderKernelBlockNotice(endEvt, sessionId) {
       + ' there is nothing to click. The block ends with this turn — your next message starts clean.';
   }
   el.innerHTML = '<span class="kernel-block-text">' + esc(text) + '</span>';
-  if (isDeclassifiable(md)) appendDeclassifyAction(el, sessionId);
+  if (isAllowHostBlock(md)) appendAllowHostAction(el, md.host);
+  else if (isDeclassifiable(md)) appendDeclassifyAction(el, sessionId);
   return el;
 }
 
@@ -115,6 +129,39 @@ function appendDeclassifyAction(card, sessionId) {
       }
     }).catch(() => { btn.textContent = '✗ Failed — restart the session'; btn.disabled = false; });
   });
+  el.appendChild(btn);
+  card.appendChild(el);
+}
+
+function appendAllowHostAction(card, host) {
+  if (!card || !host || card.querySelector('.allow-host-action')) return;
+  const el = document.createElement('div');
+  el.className = 'tool-chip allow-host-action';
+  el.style.cssText = 'display:flex;align-items:center;gap:.5rem;margin-top:.4rem;padding:.3rem .55rem;border:1px solid var(--border,#3a3a3a);border-radius:.4rem;background:rgba(255,255,255,.02);font-size:.72rem;color:var(--muted,#888)';
+  const label = document.createElement('span');
+  label.className = 'chip-label';
+  label.style.cssText = 'font-weight:600;color:var(--text,#ddd)';
+  label.textContent = 'Site not allowed: ' + host;
+  const spacer = document.createElement('span');
+  spacer.style.flex = '1';
+  const btn = document.createElement('button');
+  btn.className = 'chip-action';
+  btn.textContent = 'Allow ' + host + ' & retry';
+  btn.style.cssText = 'padding:.15rem .5rem;border:1px solid var(--border,#3a3a3a);border-radius:.3rem;background:transparent;color:inherit;font:inherit;cursor:pointer';
+  btn.addEventListener('click', () => {
+    btn.disabled = true; btn.textContent = '…';
+    apiPost('/api/security/egress', { allow: host }).then(j => {
+      if (!j || j.ok !== true) throw new Error(j && j.error ? j.error : 'allow failed');
+      btn.textContent = '✓ Allowed';
+      const input = document.getElementById('msg-input');
+      if (input && typeof window.sendMessage === 'function') {
+        input.value = 'I allowed ' + host + ' for web access. Retry the step that was blocked.';
+        window.sendMessage();
+      }
+    }).catch(() => { btn.textContent = '✗ Failed — allow it in Settings → Security → Web access'; btn.disabled = false; });
+  });
+  el.appendChild(label);
+  el.appendChild(spacer);
   el.appendChild(btn);
   card.appendChild(el);
 }

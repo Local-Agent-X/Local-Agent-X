@@ -40,9 +40,13 @@ export interface ToolBlockRecord {
   layers?: string[];
   /** First line of the block reason, capped; never the payload. */
   reason: string;
-  clearable?: "declassify";
+  /** "declassify": the user can lift a session taint; "allow-host": the user
+   *  can allow `host` for web access. The chat renders the control off this. */
+  clearable?: "declassify" | "allow-host";
+  /** The host to allow, with clearable "allow-host". */
+  host?: string;
   quarantine?: KernelQuarantine;
   /** Where the block state lives and what ends it. */
   scope?: "operation" | "session-memory";
-  notice: "declassify-card" | "kernel-notice" | "none";
+  notice: "declassify-card" | "allow-host-card" | "kernel-notice" | "none";
 }

@@ -17,18 +17,20 @@ export function blockRecordOf(result: ToolResult): ToolBlockRecord | undefined {
   const md = result.metadata ?? {};
   const layer = typeof md.layer === "string" ? md.layer : "unknown";
   const layers = Array.isArray(md.layers) ? md.layers.filter((s): s is string => typeof s === "string") : undefined;
-  const clearable = md.clearable === "declassify" ? ("declassify" as const) : undefined;
+  const host = md.clearable === "allow-host" && typeof md.host === "string" && md.host ? md.host : undefined;
+  const clearable = md.clearable === "declassify" ? ("declassify" as const) : host ? ("allow-host" as const) : undefined;
   const quarantine = md.quarantine && typeof md.quarantine === "object" ? (md.quarantine as KernelQuarantine) : undefined;
   const kernel = layer === "arikernel" || layers?.includes("arikernel") === true || quarantine !== undefined;
-  const scope = clearable ? ("session-memory" as const) : quarantine ? ("operation" as const) : undefined;
+  const scope = clearable === "declassify" ? ("session-memory" as const) : quarantine ? ("operation" as const) : undefined;
   return {
     layer,
     ...(layers ? { layers } : {}),
     reason: (result.content.split("\n")[0] ?? "").slice(0, REASON_MAX),
     ...(clearable ? { clearable } : {}),
+    ...(host ? { host } : {}),
     ...(quarantine ? { quarantine } : {}),
     ...(scope ? { scope } : {}),
-    notice: clearable ? "declassify-card" : kernel ? "kernel-notice" : "none",
+    notice: clearable === "declassify" ? "declassify-card" : clearable === "allow-host" ? "allow-host-card" : kernel ? "kernel-notice" : "none",
   };
 }
 

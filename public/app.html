@@ -959,6 +959,27 @@
             <button class="action-btn secondary" id="sandbox-revoke-btn" onclick="revokeUnconfinedHostAcknowledgement()">Revoke host-shell acknowledgement</button>
           </div>
         </div>
+        <div class="section-card">
+          <div class="section-title">Web access</div>
+          <div class="section-desc">Which sites the agent's web tools may reach: web_fetch, http_request, the browser, and the caged shell all follow this one policy. Private addresses, cloud metadata and loopback are guarded separately.</div>
+          <div class="field">
+            <label class="field-label">Mode</label>
+            <select class="field-select" id="cfg-egress-mode" onchange="setEgressModeUI(this.value)">
+              <option value="strict">Allowed sites only (default on new installs)</option>
+              <option value="permissive">Any public site</option>
+            </select>
+            <div class="field-hint" id="egress-mode-hint"></div>
+          </div>
+          <div class="field">
+            <label class="field-label">Allowed sites</label>
+            <div id="egress-allowlist" style="margin:0 0 8px"></div>
+            <div style="display:flex;gap:8px;align-items:center">
+              <input class="field-input" id="egress-allow-input" placeholder="example.com or *.example.com" onkeydown="if (event.key === 'Enter') allowEgressHostUI()"/>
+              <button class="action-btn" id="egress-allow-btn" onclick="allowEgressHostUI()">Allow</button>
+            </div>
+            <div class="field-hint" id="egress-allow-error" style="margin-top:4px"></div>
+          </div>
+        </div>
         <!-- Hidden unless the server reports a git checkout (selfEditAvailable):
              packaged installs can't run self_edit, so the switch never shows there. -->
         <div class="section-card" id="dev-mode-card" style="display:none">
@@ -1770,6 +1791,7 @@
 <script src="/js/settings-run-traces.js?v=v1"></script>
 <script src="/js/settings-audit-log.js?v=v1"></script>
 <script src="/js/settings-sandbox.js?v=v3"></script>
+<script src="/js/settings-web-access.js?v=v1"></script>
 <script src="/js/settings-tool-policy.js?v=v1"></script>
 <script src="/js/settings-browser-mode.js?v=v2"></script>
 <script src="/js/settings-usage.js?v=v1"></script>

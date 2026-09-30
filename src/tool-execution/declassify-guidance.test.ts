@@ -69,6 +69,24 @@ describe("taint recovery guidance", () => {
     expect(read("public/js/chat-render-artifacts.js")).not.toMatch(/appendDeclassifyAction\(/);
   });
 
+  it("a strict web-access block renders its own way out off the flag, and Settings owns the list", () => {
+    // enforce-policy stamps clearable:"allow-host" + host from the BlockAction;
+    // the notice module keys its "Allow <host> & retry" button off that, and
+    // posts to the same route the Settings → Security → Web access section
+    // uses, which the row broadcast then redraws.
+    const notice = read("public/js/chat-declassify-action.js");
+    expect(notice).toMatch(/clearable\s*===\s*'allow-host'/);
+    expect(notice).toMatch(/apiPost\('\/api\/security\/egress'/);
+    expect(read("src/tool-execution/enforce-policy.ts")).toMatch(/clearable: e\.action\.kind, host: e\.action\.host/);
+    const settings = read("public/js/settings-web-access.js");
+    expect(settings).toMatch(/\/api\/security\/egress/);
+    expect(settings).toMatch(/function renderWebAccess\(/);
+    expect(read("public/js/chat-ws-handler-misc.js")).toMatch(/renderWebAccess\(msg\.settings\.egress\)/);
+    const html = read("public/app.html");
+    expect(html).toMatch(/settings-web-access\.js/);
+    expect(html).toMatch(/id="cfg-egress-mode"/);
+  });
+
   it("still tells the model the block is clearable, not terminal", () => {
     // The egress message used to say "end the session", which reads as no
     // recovery at all — the button was right there on the same card.

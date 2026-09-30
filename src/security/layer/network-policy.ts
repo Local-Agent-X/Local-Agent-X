@@ -183,15 +183,18 @@ export function evaluateWebFetch(
     if (!egressAllowlistConfigured) {
       return {
         allowed: false,
-        reason:
-          `Blocked: egress mode is "strict" but no allowlist configured. ` +
-          `Create ~/.lax/egress-allowlist.json with a JSON array of allowed domains ` +
-          `(e.g. ["api.anthropic.com","github.com","*.npmjs.org"]) or set egressMode to "permissive" in ~/.lax/security.json.`,
+        reason: `Blocked: web access is strict and no site has been allowed yet, so ${host} was refused. The user can allow it from this block's notice or in Settings → Security → Web access (or switch the mode there).`,
         userHint: USER_HINTS.network,
+        action: { kind: "allow-host", host },
       };
     }
     if (!matchEgressList(host, egressAllowlist)) {
-      return { allowed: false, reason: `Blocked: ${host} is not in the egress allowlist (strict mode). Add it to ~/.lax/egress-allowlist.json to permit.`, userHint: USER_HINTS.network };
+      return {
+        allowed: false,
+        reason: `Blocked: ${host} is not on the web access allowlist (strict mode). The user can allow it from this block's notice or in Settings → Security → Web access.`,
+        userHint: USER_HINTS.network,
+        action: { kind: "allow-host", host },
+      };
     }
   }
 

@@ -44,6 +44,11 @@ function handleSettingsChanged(msg) {
   if ('learningMode' in msg.settings && typeof renderLearningMode === 'function') {
     renderLearningMode(msg.settings.learningMode);
   }
+  // Web access (mode + allowed sites) changed from the chat's "Allow & retry"
+  // notice or another tab: the Settings section redraws from the broadcast.
+  if (msg.settings.egress && typeof renderWebAccess === 'function') {
+    renderWebAccess(msg.settings.egress);
+  }
 }
 
 function handleSidebarPinsChanged(msg) {

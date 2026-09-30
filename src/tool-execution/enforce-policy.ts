@@ -63,6 +63,7 @@ export function probeUpstreamEgressBlockers(ctx: ToolCallContext): EgressBlocker
       reason: sec.reason,
       recovery: securityDenyRecovery(),
       userHint: sec.userHint ?? USER_HINTS.policy,
+      ...(sec.action ? { action: sec.action } : {}),
     });
   }
   return out;
@@ -252,6 +253,8 @@ async function runPreDispatch(ctx: ToolCallContext): Promise<PhaseOutcome> {
         layer: layerMap[e.stage],
         recovery: selfVerify?.recovery ?? e.recovery,
         userHint: selfVerify?.userHint ?? e.userHint,
+        // The chat renders the user's way out off these, never off the text.
+        ...(e.action ? { clearable: e.action.kind, host: e.action.host } : {}),
       },
     };
     return BLOCK;

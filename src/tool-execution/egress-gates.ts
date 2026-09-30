@@ -15,7 +15,7 @@
 // caller exactly once, never inside a probe, so no gate is double-run with a side
 // effect.
 
-import { USER_HINTS, type ToolResult } from "../types.js";
+import { USER_HINTS, type BlockAction, type ToolResult } from "../types.js";
 import { checkEgressTaintWithPayload } from "../data-lineage/index.js";
 import { checkCanariesInPayload, recordCanaryExfilAudit } from "../threat/canaries.js";
 import { hasCapability } from "../tool-registry.js";
@@ -47,6 +47,8 @@ export interface EgressBlocker {
    *  (a kernel taint quarantine reports layer "arikernel", which is how the
    *  card silently stopped rendering for the block that needed it most). */
   clearable?: "declassify";
+  /** A user-clickable way out (allow a host for web access); see SecurityDecision.action. */
+  action?: BlockAction;
 }
 
 // Extract the OUTBOUND payload an egress-class sink would emit, so the secret
@@ -129,7 +131,7 @@ function blockerResult(b: EgressBlocker): ToolResult {
     content: `BLOCKED by ${b.label}: ${b.reason}`,
     isError: true,
     status: "blocked",
-    metadata: { layer: b.layer, ...(b.meta ?? {}), recovery: b.recovery, userHint: b.userHint, ...(b.clearable ? { clearable: b.clearable } : {}) },
+    metadata: { layer: b.layer, ...(b.meta ?? {}), recovery: b.recovery, userHint: b.userHint, ...(b.clearable ? { clearable: b.clearable } : {}), ...(b.action ? { clearable: b.action.kind, host: b.action.host } : {}) },
   };
 }
 
@@ -295,6 +297,18 @@ export function probeEgressCohort(ctx: ToolCallContext): { blockers: EgressBlock
   return { blockers, canaryTripped: canary !== null };
 }
 
+// The one control the chat offers for a blocker set. Declassify is a necessary
+// step whenever a taint blocker is in the set, even if other layers (host
+// allowlist, canary) must be fixed too — the card says it clears the
+// quarantine, not that the call will then succeed. Otherwise the first host
+// blocker's "allow this site"; after a declassify-and-retry, a host block
+// surfaces alone with its own control.
+function userWayOut(blockers: EgressBlocker[]): { clearable: "declassify" } | { clearable: "allow-host"; host: string } | Record<string, never> {
+  if (blockers.some((b) => b.clearable === "declassify")) return { clearable: "declassify" };
+  const action = blockers.find((b) => b.action)?.action;
+  return action ? { clearable: action.kind, host: action.host } : {};
+}
+
 // Render ONE response for a list of blockers. A single blocker reproduces the
 // legacy single-gate result verbatim; multiple blockers become a numbered list,
 // each line tagged with its authoritative layer + its own fix, so the model
@@ -318,10 +332,7 @@ export function renderEgressAggregate(ctx: ToolCallContext, blockers: EgressBloc
     metadata: {
       layer: "egress-aggregate",
       layers: unique.map((b) => b.layer),
-      // Declassify is a necessary step whenever a taint blocker is in the set,
-      // even if other layers (host allowlist, canary) must be fixed too — the
-      // card says it clears the quarantine, not that the call will then succeed.
-      ...(unique.some((b) => b.clearable === "declassify") ? { clearable: "declassify" as const } : {}),
+      ...userWayOut(unique),
       blockers: unique.map((b) => ({ layer: b.layer, reason: b.reason, recovery: b.recovery, ...(b.meta ?? {}) })),
       recovery: unique.map((b) => `[${b.layer}] ${b.recovery}`).join("  "),
       userHint: unique[0].userHint,

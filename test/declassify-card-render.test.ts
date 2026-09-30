@@ -22,16 +22,19 @@ const here = dirname(fileURLToPath(import.meta.url));
 type Meta = Record<string, unknown>;
 let isDeclassifiable: (md: Meta | undefined) => boolean;
 let appendDeclassifyAction: (card: HTMLElement, sessionId: string) => void;
+let isKernelBlockNotice: (md: Meta | undefined) => boolean;
+let renderKernelBlockNotice: (endEvt: { name?: string; metadata?: Meta }, sessionId: string) => HTMLElement;
 
 beforeAll(() => {
   const src = readFileSync(join(here, "../public/js/chat-declassify-action.js"), "utf8");
   // eslint-disable-next-line no-new-func
-  const factory = new Function(`${src}\nreturn { isDeclassifiable, appendDeclassifyAction };`);
-  ({ isDeclassifiable, appendDeclassifyAction } = factory());
+  const factory = new Function(`${src}\nreturn { isDeclassifiable, appendDeclassifyAction, isKernelBlockNotice, renderKernelBlockNotice };`);
+  ({ isDeclassifiable, appendDeclassifyAction, isKernelBlockNotice, renderKernelBlockNotice } = factory());
 });
 
 beforeEach(() => {
   (globalThis as unknown as { apiPost: unknown }).apiPost = vi.fn(async () => ({ ok: true }));
+  (globalThis as unknown as { esc: unknown }).esc = (t: string) => t.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 });
 
 describe("isDeclassifiable — what the policy layer actually emits", () => {
@@ -107,5 +110,38 @@ describe("appendDeclassifyAction — the card the user clicks", () => {
     const el = card();
     appendDeclassifyAction(el, "");
     expect(el.querySelector("button")).toBeNull();
+  });
+});
+
+describe("the allow-host notice — a strict web-access block the user can lift", () => {
+  // enforce-policy.ts stamps these from the BlockAction; egress-gates.ts keeps
+  // them through the single-blocker and aggregate results.
+  const single = { layer: "security", clearable: "allow-host", host: "docs.example.org" };
+  const aggregate = { layer: "egress-aggregate", layers: ["arikernel", "security"], clearable: "allow-host", host: "docs.example.org" };
+
+  it("warrants the notice, but is not a declassify", () => {
+    expect(isKernelBlockNotice(single)).toBe(true);
+    expect(isKernelBlockNotice(aggregate)).toBe(true);
+    expect(isDeclassifiable(single)).toBe(false);
+    // The flag without a host is nothing to click.
+    expect(isKernelBlockNotice({ layer: "security", clearable: "allow-host" })).toBe(false);
+  });
+
+  it("renders the host and one button that allows it and retries", () => {
+    const el = renderKernelBlockNotice({ name: "web_fetch", metadata: single }, "s1");
+    expect(el.querySelector(".kernel-block-text")?.textContent).toContain("docs.example.org is not on your allowed sites");
+    expect(el.querySelectorAll(".allow-host-action")).toHaveLength(1);
+    expect(el.querySelector(".declassify-action")).toBeNull();
+    const btn = el.querySelector("button") as HTMLButtonElement;
+    expect(btn.textContent).toBe("Allow docs.example.org & retry");
+    btn.click();
+    expect((globalThis as unknown as { apiPost: ReturnType<typeof vi.fn> }).apiPost)
+      .toHaveBeenCalledWith("/api/security/egress", { allow: "docs.example.org" });
+  });
+
+  it("a declassify-and-host aggregate offers declassify first, never two buttons", () => {
+    const el = renderKernelBlockNotice({ name: "http_request", metadata: { ...aggregate, clearable: "declassify" } }, "s1");
+    expect(el.querySelectorAll("button")).toHaveLength(1);
+    expect(el.querySelector(".declassify-action")).not.toBeNull();
   });
 });

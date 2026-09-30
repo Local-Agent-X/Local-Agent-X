@@ -78,6 +78,32 @@ export const handleSecurityRoutes: RouteHandler = async (method, url, req, res, 
     json(200, { ok: true, mode }); return true;
   }
 
+  // Web access: the egress mode and allowlist. Operator-only (RBAC denies the
+  // agent every /api/security path); a change persists to ~/.lax and is
+  // broadcast so every open tab and the chat's block notices reflect it.
+  if (method === "GET" && url.pathname === "/api/security/egress") {
+    json(200, ctx.security.egress.snapshot()); return true;
+  }
+  if (method === "POST" && url.pathname === "/api/security/egress") {
+    if (role !== "operator" && role !== "user") { json(403, { error: "Changing web access requires operator or user role" }); return true; }
+    const body = await safeParseBody(req); if (body === null) { json(400, { error: "Invalid JSON" }); return true; }
+    try {
+      if (body.mode !== undefined) {
+        if (body.mode !== "strict" && body.mode !== "permissive") { json(400, { error: "mode must be: strict or permissive" }); return true; }
+        ctx.security.egress.setMode(body.mode);
+      }
+      if (typeof body.allow === "string") ctx.security.egress.allow(body.allow);
+      if (typeof body.remove === "string") ctx.security.egress.remove(body.remove);
+      if (Array.isArray(body.allowlist)) ctx.security.egress.setAllowlist(body.allowlist.map(String));
+    } catch (e) {
+      json(400, { error: (e as Error).message }); return true;
+    }
+    const egress = ctx.security.egress.snapshot();
+    logger.info(`[security] web access: mode=${egress.mode} allowlist=${egress.allowlist.length} hosts (${role})`);
+    ctx.broadcastAll({ type: "settings_changed", settings: { egress } });
+    json(200, { ok: true, ...egress }); return true;
+  }
+
   // Tool policy toggles
   if (method === "GET" && url.pathname === "/api/tool-policy/status") {
     const policyPath = join(ctx.dataDir, "tool-policy.json");

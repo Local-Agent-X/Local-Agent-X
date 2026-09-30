@@ -82,6 +82,7 @@ export function makeSecurityLayerPack(security: SecurityLayer | undefined): Rule
           // Same fallback the SC-10 probe uses — an undefined layer hint must
           // not drop the user-facing line on this path either.
           userHint: d.userHint ?? USER_HINTS.policy,
+          ...(d.action ? { action: d.action } : {}),
         };
       }
       return { allowed: true, reason: d.reason };

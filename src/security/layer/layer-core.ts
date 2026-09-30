@@ -1,7 +1,5 @@
-import { resolve, relative, join, isAbsolute } from "node:path";
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { resolve, relative, isAbsolute } from "node:path";
 import type { SecurityDecision } from "../../types.js";
-import { getLaxDir } from "../../lax-data-dir.js";
 import { getRuntimeConfig } from "../../config.js";
 import { USER_HINTS } from "../../types.js";
 import {
@@ -14,13 +12,14 @@ import {
 import { evaluateFileAccess, realpathDeep, pathIsWithin, canonicalAllowForms } from "./file-access.js";
 import { evaluateShellCommandAndPaths } from "./shell-path-guard.js";
 import { getSandboxStatus } from "../../sandbox/index.js";
-import { evaluateWebFetch, validateUrlWithDns, type EgressMode } from "./network-policy.js";
+import { evaluateWebFetch, validateUrlWithDns } from "./network-policy.js";
 import { evaluateBrowser as evaluateBrowserAction } from "./browser-egress-eval.js";
 import { kernelClassForTool } from "../../ari-kernel/tool-class-map.js";
 import { TOOL_PATH_ARGS, type KernelClass, type PathArgSpec } from "../../tool-registry.js";
 import { sessionWorkRootOf } from "../../workspace/paths.js";
 import { evaluateByKernelClass as evaluateKernelClassPolicy } from "./kernel-class-policy.js";
-import { loadEgressMode, loadEgressAllowlist, loadLocalServicePorts, loadFileAccessMode, loadInlineEvalPolicy, manualRuntimeHostPorts, devServerLoopbackPorts, ownedLoopbackPorts } from "./security-config.js";
+import { loadLocalServicePorts, loadFileAccessMode, loadInlineEvalPolicy, manualRuntimeHostPorts, devServerLoopbackPorts, ownedLoopbackPorts } from "./security-config.js";
+import { EgressPolicyState, updateSecurityJson } from "./egress-policy-state.js";
 import { fingerprintSecurityPolicy, parseJsonPathArray, restoreSecurityAllowedPaths, snapshotSecurityRuntime, type SecurityRuntimeIdentity } from "./runtime-state.js";
 import { evaluateDelegatedWorktreeGate } from "./delegated-worktree-gate.js";
 
@@ -44,16 +43,8 @@ export class SecurityLayer {
   static _selfPort: string = "7007";
 
   private workspace: string;
-  private egressAllowlist: Set<string> = new Set();
-  // true once we successfully loaded an egress-allowlist.json file from
-  // disk (even if its content is `[]`). false means no file existed —
-  // evaluateWebFetch uses this to distinguish "user has explicitly
-  // configured an empty allowlist (deny everything)" from "no config
-  // present (deny everything with a setup hint)". Previously a missing
-  // file silently allowed every public host, which made the advertised
-  // egress-allowlist feature fail-open on a default install.
-  private egressAllowlistConfigured: boolean = false;
-  private egressMode: EgressMode = "permissive";
+  /** The web-access policy (mode + allowlist); its setters persist and every reader shares it. */
+  readonly egress = new EgressPolicyState();
   // Loopback ports the operator trusts the agent to HTTP-health-check (e.g. a
   // bridge or dev server it started). Loaded from ~/.lax/security.json. Only
   // applies to literal loopback hosts — see evaluateWebFetch.
@@ -155,11 +146,7 @@ export class SecurityLayer {
     this.workspace = resolve(workspace);
     this.fileAccessMode = fileAccessMode || loadFileAccessMode();
     this.inlineEvalPolicy = inlineEvalPolicy || loadInlineEvalPolicy();
-    this.egressMode = loadEgressMode();
     this.localServicePorts = loadLocalServicePorts();
-    const egress = loadEgressAllowlist(this.egressMode);
-    this.egressAllowlist = egress.allowlist;
-    this.egressAllowlistConfigured = egress.configured;
     logger.info(`[security] File access mode: ${this.fileAccessMode}`);
   }
 
@@ -188,8 +175,8 @@ export class SecurityLayer {
     // a container reading different toggles (schema-default fallback or a tampered projected
     // config) recomputes a divergent fingerprint → fails CLOSED (see rehydrateAgentRuntimeSurface).
     const { enableShell, enableHttp, enableBrowser, localOnlyMode, supervisedBrowser } = getRuntimeConfig();
-    return fingerprintSecurityPolicy(this.fileAccessMode, this.inlineEvalPolicy, this.egressMode,
-      this.egressAllowlistConfigured, [...this.egressAllowlist], [...this.localServicePorts], String(SecurityLayer._selfPort || "7007"),
+    return fingerprintSecurityPolicy(this.fileAccessMode, this.inlineEvalPolicy, this.egress.mode,
+      this.egress.configured, [...this.egress.allowlist], [...this.localServicePorts], String(SecurityLayer._selfPort || "7007"),
       { enableShell, enableHttp, enableBrowser, localOnlyMode, supervisedBrowser });
   }
 
@@ -198,13 +185,7 @@ export class SecurityLayer {
 
   setFileAccessMode(mode: FileAccessMode): void {
     this.fileAccessMode = mode;
-    try {
-      const cfgPath = join(getLaxDir(), "security.json");
-      let cfg: Record<string, unknown> = {};
-      if (existsSync(cfgPath)) cfg = JSON.parse(readFileSync(cfgPath, "utf-8"));
-      cfg.fileAccessMode = mode;
-      writeFileSync(cfgPath, JSON.stringify(cfg, null, 2), "utf-8");
-    } catch {}
+    try { updateSecurityJson({ fileAccessMode: mode }); } catch { /* the runtime value stands; the file is retried on the next change */ }
     logger.info(`[security] File access mode changed to: ${mode}`);
   }
 
@@ -275,11 +256,11 @@ export class SecurityLayer {
       // manualRuntimeHostPorts() is read fresh per call (like the connect-time
       // re-check path) so a Settings add/remove takes effect without a restart.
       decision = evaluateWebFetch(
-        this.egressAllowlist,
-        this.egressAllowlistConfigured,
+        this.egress.allowlist,
+        this.egress.configured,
         String(SecurityLayer._selfPort || "7007"),
         String(args.url || ""),
-        this.egressMode,
+        this.egress.mode,
         this.effectiveLocalServicePorts(),
         manualRuntimeHostPorts(),
       );
@@ -354,9 +335,9 @@ export class SecurityLayer {
   /** The layer's egress state as the pure policy functions read it. */
   private egressCtx() {
     return {
-      egressAllowlist: this.egressAllowlist,
-      egressAllowlistConfigured: this.egressAllowlistConfigured,
-      egressMode: this.egressMode,
+      egressAllowlist: this.egress.allowlist,
+      egressAllowlistConfigured: this.egress.configured,
+      egressMode: this.egress.mode,
       selfPort: String(SecurityLayer._selfPort || "7007"),
       localServicePorts: this.effectiveLocalServicePorts(),
       manualHostPorts: manualRuntimeHostPorts(),
@@ -386,11 +367,11 @@ export class SecurityLayer {
    */
   async validateUrlWithDns(url: string): Promise<SecurityDecision> {
     return validateUrlWithDns(
-      this.egressAllowlist,
-      this.egressAllowlistConfigured,
+      this.egress.allowlist,
+      this.egress.configured,
       String(SecurityLayer._selfPort || "7007"),
       url,
-      this.egressMode,
+      this.egress.mode,
       this.effectiveLocalServicePorts(),
       manualRuntimeHostPorts(),
     );

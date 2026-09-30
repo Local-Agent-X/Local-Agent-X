@@ -199,6 +199,12 @@ export interface AgentTurn {
 
 // ── Security Types ──
 
+/** A control the user can click to end a class of block (see SecurityDecision.action). */
+export interface BlockAction {
+  kind: "allow-host";
+  host: string;
+}
+
 export interface SecurityDecision {
   allowed: boolean;
   /** Technical reason — for logs, audit, and developer debug. */
@@ -218,6 +224,12 @@ export interface SecurityDecision {
    * Right-time guidance so a denied call doesn't leave the model stuck.
    */
   recovery?: string;
+  /**
+   * A control the USER can click to end this class of block: rendered on the
+   * chat notice, never re-derived from reason text. "allow-host" adds `host`
+   * to the strict-mode egress allowlist (POST /api/security/egress).
+   */
+  action?: BlockAction;
   quarantined?: boolean;
   /**
    * Canonical (realpath-resolved, every symlink/junction segment followed)

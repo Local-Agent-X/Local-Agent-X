@@ -202,7 +202,7 @@ describe("cross-host redirect egress re-check", () => {
     const res = await webFetchTool.execute({ url: "https://allowed-a.example/page" });
 
     expect(res.isError).toBe(true);
-    expect(res.content).toMatch(/not in the egress allowlist/i);
+    expect(res.content).toMatch(/not on the web access allowlist/i);
     expect(seen).toEqual(["https://allowed-a.example/page"]);
     expect(seen).not.toContain("https://attacker-b.example/steal");
     expect(res.content).not.toContain("SECRET PAGE FROM B");
@@ -223,7 +223,7 @@ describe("cross-host redirect egress re-check", () => {
     const res = await tool.execute({ url: "https://allowed-a.example/page" });
 
     expect(res.isError).toBe(true);
-    expect(res.content).toMatch(/not in the egress allowlist/i);
+    expect(res.content).toMatch(/not on the web access allowlist/i);
     expect(seen).toEqual(["https://allowed-a.example/page"]);
     expect(seen).not.toContain("https://attacker-b.example/steal");
   });

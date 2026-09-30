@@ -41,12 +41,14 @@ async function installDependencies({ reporter, processes, platform = process.pla
   reporter.stepDone("npm");
 }
 
-function scaffoldSettings(context, ollamaModelReady) {
+export function scaffoldSettings(context, ollamaModelReady) {
   const { reporter, dataDirectory } = context;
   if (!reporter.step("settings")) return;
   const laxDirectory = dataDirectory;
   const settingsFile = join(laxDirectory, "settings.json");
-  mutateInstallerDataRoot(context, ["settings.json"], () => {
+  const securityFile = join(laxDirectory, "security.json");
+  const allowlistFile = join(laxDirectory, "egress-allowlist.json");
+  mutateInstallerDataRoot(context, ["settings.json", "security.json", "egress-allowlist.json"], () => {
     if (!existsSync(settingsFile)) {
       const defaults = ollamaModelReady
         ? { temperature: 0.7, maxIterations: 160, embeddingProvider: "ollama", embeddingModel: EMBED_MODEL }
@@ -54,6 +56,16 @@ function scaffoldSettings(context, ollamaModelReady) {
       writeDurableJson(settingsFile, defaults, { fault: context.installerDataRootFault });
       reporter.ok(`Seeded ${settingsFile}`);
     } else reporter.ok("Settings already present");
+    // Web access is strict on a fresh install: the agent's web tools reach only
+    // hosts the user has allowed, one click at a time from the chat's block
+    // notice or in Settings → Security. The empty list is deliberate; an
+    // existing install keeps its own files, nothing here rewrites a policy the
+    // user already has.
+    if (!existsSync(securityFile) && !existsSync(allowlistFile)) {
+      writeDurableJson(securityFile, { egressMode: "strict" }, { fault: context.installerDataRootFault });
+      writeDurableJson(allowlistFile, [], { fault: context.installerDataRootFault });
+      reporter.ok("Web access set to strict; allow sites from the chat's block notice or Settings → Security");
+    }
   });
   reporter.stepDone("settings");
 }

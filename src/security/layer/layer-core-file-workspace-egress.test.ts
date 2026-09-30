@@ -229,7 +229,8 @@ describe("egress mode semantics", () => {
           sessionId: "t",
         });
         expect(d.allowed).toBe(false);
-        expect(d.reason).toMatch(/strict.*no allowlist|egress-allowlist\.json/i);
+        expect(d.reason).toMatch(/strict and no site has been allowed yet/i);
+        expect(d.action).toEqual({ kind: "allow-host", host: "example.com" });
       },
     );
   });
@@ -262,7 +263,8 @@ describe("egress mode semantics", () => {
           sessionId: "t",
         });
         expect(denied.allowed).toBe(false);
-        expect(denied.reason).toMatch(/not in the egress allowlist/i);
+        expect(denied.reason).toMatch(/not on the web access allowlist/i);
+        expect(denied.action).toEqual({ kind: "allow-host", host: "example.com" });
       },
     );
   });
@@ -290,7 +292,7 @@ describe("egress mode semantics", () => {
   it("evaluateWebFetch strict + missing → deny with setup hint", () => {
     const d = evaluateWebFetch(new Set(), false, "7007", "https://example.com", "strict");
     expect(d.allowed).toBe(false);
-    expect(d.reason).toMatch(/strict.*no allowlist/i);
+    expect(d.reason).toMatch(/strict and no site has been allowed yet/i);
   });
 
   it("evaluateWebFetch: loopback host + allowlisted local service port → allowed", () => {

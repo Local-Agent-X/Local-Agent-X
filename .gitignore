@@ -156,3 +156,6 @@ CAMPAIGN-*.md
 
 # op-outcomes battery run output (eval/op-outcomes/run.mjs)
 eval/op-outcomes/results/
+
+# Internal working documents (competitive notes, drafts) — never shipped
+docs/internal/

@@ -24,7 +24,7 @@ import { shellCommandWritesFiles } from "../security/layer/index.js";
 import { enforceProtectedSettingGate, ProtectedSettingDenied } from "./protected-setting-gate.js";
 import { supervisedEvaluateBlock } from "./supervised-browser-gate.js";
 import { computerRedirectBlock, killSwitchBlock, screenCaptureRedirectBlock } from "./kill-switch-gates.js";
-import type { ServerEvent } from "../types.js";
+import type { BlockAction, ServerEvent } from "../types.js";
 import { USER_HINTS } from "../types.js";
 import { evaluate as evaluatePolicy, type RulePack } from "../tool-policy/evaluator.js";
 import { makeSecurityLayerPack } from "../tool-policy/packs/security-layer-pack.js";
@@ -51,7 +51,9 @@ export class ToolBlocked extends Error {
   readonly recovery?: string;
   /** Plain-English user-facing summary; see SecurityDecision.userHint. */
   readonly userHint?: string;
-  constructor(details: { stage: ToolBlockedStage; disposition?: "hard-deny" | "approval-required"; reason: string; recovery?: string; userHint?: string }) {
+  /** A user-clickable way out of this block; see SecurityDecision.action. */
+  readonly action?: BlockAction;
+  constructor(details: { stage: ToolBlockedStage; disposition?: "hard-deny" | "approval-required"; reason: string; recovery?: string; userHint?: string; action?: BlockAction }) {
     const disposition = details.disposition ?? "hard-deny";
     super(`${disposition === "approval-required" ? "APPROVAL REQUIRED by" : "BLOCKED by"} ${details.stage}: ${details.reason}`);
     this.name = "ToolBlocked";
@@ -60,6 +62,7 @@ export class ToolBlocked extends Error {
     this.reason = details.reason;
     this.recovery = details.recovery;
     this.userHint = details.userHint;
+    this.action = details.action;
   }
 }
 
@@ -291,6 +294,7 @@ export async function assertToolCallAllowed(
       reason: decision.reason,
       recovery: decision.recovery,
       userHint: decision.userHint,
+      ...(decision.action ? { action: decision.action } : {}),
     });
   }
 

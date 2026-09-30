@@ -12,7 +12,7 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 67 top-level dirs · 67 live · 0 with no live importer · 1682 non-test source files · 0 god files (>400 LOC).
+**Totals:** 67 top-level dirs · 67 live · 0 with no live importer · 1683 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -20,7 +20,7 @@ over 400 LOC (the source-hygiene ceiling).
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 136 | 26 | XL |  |
 | `src/security/` | 96 | 40 | XL |  |
-| `src/tools/` | 79 | 199 | XL |  |
+| `src/tools/` | 80 | 199 | XL |  |
 | `src/canonical-loop/` | 70 | 254 | XL |  |
 | `src/providers/` | 67 | 26 | XL |  |
 | `src/workspace/` | 50 | 2 | M |  |
@@ -30,8 +30,8 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/util/` | 37 | 3 | S |  |
 | `src/session/` | 36 | 7 | L |  |
 | `src/data-lineage/` | 35 | 10 | L |  |
+| `src/browser/` | 34 | 84 | XL |  |
 | `src/threat/` | 34 | 12 | L |  |
-| `src/browser/` | 33 | 84 | XL |  |
 | `src/tool-policy/` | 30 | 20 | L |  |
 | `src/agency/` | 28 | 19 | L |  |
 | `src/agent-store/` | 26 | 7 | L |  |
@@ -69,13 +69,13 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/plugin-system/` | 7 | 10 | L |  |
 | `src/android/` | 6 | 7 | M |  |
 | `src/app-renderer/` | 6 | 7 | M |  |
-| `src/mcp-client/` | 6 | 9 | L |  |
+| `src/mcp-client/` | 6 | 10 | L |  |
 | `src/credentials/` | 5 | 1 | S |  |
+| `src/net/` | 5 | 3 | M |  |
 | `src/broker-transport/` | 4 | 28 | XL |  |
 | `src/codex-client/` | 4 | 5 | M |  |
 | `src/embedding-providers/` | 4 | 8 | M |  |
 | `src/hooks/` | 4 | 3 | M |  |
-| `src/net/` | 4 | 3 | M |  |
 | `src/routing/` | 4 | 6 | M |  |
 | `src/errors/` | 3 | 2 | S |  |
 | `src/language-intel/` | 3 | 4 | M |  |

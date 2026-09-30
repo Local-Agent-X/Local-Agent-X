@@ -47,6 +47,12 @@ public class InstallProcess
         psi.Environment["LAX_INSTALL_OLLAMA"] = installOllama ? "1" : "0";
         psi.Environment["LAX_INSTALL_OLLAMA_MEMORY_MODEL"] = installOllamaMemoryModel ? "1" : "0";
 
+        // The shell network cage step installs a helper machine-wide; it must
+        // carry this installer's own publisher signature (provision.ps1
+        // -SignerLike), so the step is told where this executable is.
+        if (!string.IsNullOrEmpty(Environment.ProcessPath))
+            psi.Environment["LAX_INSTALLER_EXE"] = Environment.ProcessPath;
+
         _proc = new Process { StartInfo = psi, EnableRaisingEvents = true };
         _proc.OutputDataReceived += (_, e) =>
         {

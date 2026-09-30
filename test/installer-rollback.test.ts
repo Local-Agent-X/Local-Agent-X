@@ -396,7 +396,7 @@ describe("installer artifact rollback", () => {
         writeFileSync(join(f.installRoot, "dist", "index.js"), "bad");
         reporter.fail("build failed");
       },
-      posixShell: async () => {}, desktop: async () => ({}), persist: () => true,
+      posixShell: async () => {}, windowsCage: async () => {}, desktop: async () => ({}), persist: () => true,
     })).rejects.toThrow("exit:1");
     expect(readFileSync(join(f.installRoot, "dist", "index.js"), "utf-8")).toBe("verified-old");
     const recoveredJournal = JSON.parse(readFileSync(installTransactionPath(f.dataDirectory), "utf-8"));
@@ -412,7 +412,7 @@ describe("installer artifact rollback", () => {
         writeFileSync(join(f.installRoot, "dist", "index.js"), "verified-new");
         retryReporter.stepDone("build");
       },
-      posixShell: async () => {}, desktop: async () => ({}), persist: () => true,
+      posixShell: async () => {}, windowsCage: async () => {}, desktop: async () => ({}), persist: () => true,
     });
     expect(readFileSync(join(f.installRoot, "dist", "index.js"), "utf-8")).toBe("verified-new");
   });
@@ -432,7 +432,7 @@ describe("installer artifact rollback", () => {
     }, {
       prerequisites: async () => { expect(reporter.step("node")).toBe(false); },
       core: async () => { throw new Error("kill-after-migration"); },
-      posixShell: async () => {}, desktop: async () => ({}), persist: () => true,
+      posixShell: async () => {}, windowsCage: async () => {}, desktop: async () => ({}), persist: () => true,
     })).rejects.toThrow("kill-after-migration");
     expect(existsSync(join(f.dataDirectory, "install-checkpoint.json"))).toBe(false);
     const journal = JSON.parse(readFileSync(installTransactionPath(f.dataDirectory), "utf-8"));

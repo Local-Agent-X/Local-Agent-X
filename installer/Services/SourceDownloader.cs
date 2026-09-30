@@ -88,6 +88,7 @@ public class SourceDownloader
             // proxy CDN block, AV quarantine). No-op on a dev build with nothing
             // embedded: the install script then falls back to the network fetch.
             StageBundledElectron(installDir);
+            StageBundledCageHelper(installDir);
 
             return installDir;
         }
@@ -215,6 +216,25 @@ public class SourceDownloader
         Directory.CreateDirectory(vendorDir);
         OnStatus?.Invoke("Staging bundled Electron runtime…");
         using var fs = File.Create(Path.Combine(vendorDir, resName));
+        rs.CopyTo(fs);
+    }
+
+    // The Windows shell network cage helper (packages/srt-win), built and signed
+    // by CI and embedded here (Installer.csproj). Staged to
+    // <installDir>/vendor/srt-win/, where scripts/installer/windows-cage-step.mjs
+    // provisions it machine-wide after checking it carries this installer's
+    // publisher signature. A dev build embeds none and the step says so.
+    private void StageBundledCageHelper(string installDir)
+    {
+        var asm = Assembly.GetExecutingAssembly();
+        if (!asm.GetManifestResourceNames().Contains("srt-win.exe")) return;
+        using var rs = asm.GetManifestResourceStream("srt-win.exe");
+        if (rs is null) return;
+
+        var vendorDir = Path.Combine(installDir, "vendor", "srt-win");
+        Directory.CreateDirectory(vendorDir);
+        OnStatus?.Invoke("Staging the shell network cage helper…");
+        using var fs = File.Create(Path.Combine(vendorDir, "srt-win.exe"));
         rs.CopyTo(fs);
     }
 

@@ -272,6 +272,26 @@ if ($DeleteData) {
   }
 }
 
+# The shell network cage is machine-wide (a sandbox account and firewall
+# filters, see scripts/win-cage/provision.ps1). Its removal needs one
+# administrator prompt; the script elevates itself. Skipped when no helper is
+# installed, so a box that never had the cage sees no prompt.
+$cageHelper = Join-Path $env:ProgramData 'Local Agent X\bin\srt-win.exe'
+if (Test-Path -LiteralPath $cageHelper) {
+  if ($DryRun) { $script:Removed += "would remove the shell network cage ($cageHelper)" }
+  else {
+    $provision = Join-Path $PSScriptRoot '..\win-cage\provision.ps1'
+    if (-not (Test-Path -LiteralPath $provision)) { $provision = Join-Path (Get-ProjectRoot) 'scripts\win-cage\provision.ps1' }
+    if (Test-Path -LiteralPath $provision) {
+      & powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $provision -Uninstall | Out-Null
+      if ($LASTEXITCODE -eq 0) { $script:Removed += 'shell network cage (sandbox account + firewall fence)' }
+      else { $script:Skipped += "shell network cage (exit $LASTEXITCODE; run 'srt-win.exe uninstall' from $cageHelper as administrator)" }
+    } else {
+      $script:Skipped += "shell network cage (provision.ps1 not found; run 'srt-win.exe uninstall' from $cageHelper as administrator)"
+    }
+  }
+}
+
 # Registry entries last: if anything above failed we still want the entry gone,
 # because a key pointing at a half-removed install is exactly the state that
 # leaves users with an Add/Remove row that does nothing.

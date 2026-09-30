@@ -27,6 +27,7 @@ await runInstaller({
   prerequisites: async () => { execute("node"); execute("ollama"); },
   core: async () => { execute("npm"); },
   posixShell: async () => {},
+  windowsCage: async () => {},
   desktop: async () => ({ appInstalled: false, appBuildPath: null }),
   persist: () => true,
 });

@@ -19,7 +19,7 @@ const events = (stdout: string) => stdout.trim().split(/\r?\n/).filter(Boolean).
 describe("installer plan contract", () => {
   it("keeps platform step order and filtering canonical", () => {
     expect(stepsPlan("win32").map((step) => step.id)).toEqual([
-      "node", "vsbuildtools", "python", "ollama", "npm", "embedmodel", "settings", "build", "config", "posixshell", "desktop",
+      "node", "vsbuildtools", "python", "ollama", "npm", "embedmodel", "settings", "build", "config", "posixshell", "netcage", "desktop",
     ]);
     expect(stepsPlan("darwin").map((step) => step.id)).toEqual([
       "node", "xcode-clt", "python", "ollama", "npm", "embedmodel", "settings", "build", "config", "desktop",
@@ -289,7 +289,7 @@ describe("canonical orchestration durability and IPC ordering", () => {
       };
       await runInstaller(
         { reporter, platform: "linux", env: {}, dataDirectory: directory },
-        { prerequisites, core: noOp, posixShell: noOp, desktop, persist: persistInstallOutcome },
+        { prerequisites, core: noOp, posixShell: noOp, windowsCage: noOp, desktop, persist: persistInstallOutcome },
       );
       expect(reportPresentAtComplete).toBe(true);
       expect(readInstallReport(directory)?.degraded).toEqual([{ step: "ollama", message: "offline" }]);
@@ -312,7 +312,7 @@ describe("canonical orchestration durability and IPC ordering", () => {
       const prerequisites = async () => { reporter.step("node"); reporter.fail("unsupported"); };
       await expect(runInstaller(
         { reporter, platform: "linux", env: {}, dataDirectory: directory },
-        { prerequisites, core: noOp, posixShell: noOp, desktop, persist: persistInstallOutcome },
+        { prerequisites, core: noOp, posixShell: noOp, windowsCage: noOp, desktop, persist: persistInstallOutcome },
       )).rejects.toThrow("exit:1");
       expect(existsSync(join(directory, "install-report.json"))).toBe(false);
       const emitted = events(output.join(""));

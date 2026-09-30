@@ -27,6 +27,7 @@ export const ALL_STEPS = [
   { id: "build", label: "App build", platforms: ["win32", "darwin", "linux"], required: true },
   { id: "config", label: "Configuration", platforms: ["win32", "darwin", "linux"], required: true },
   { id: "posixshell", label: "POSIX shell", platforms: ["win32"], required: true },
+  { id: "netcage", label: "Shell network cage", platforms: ["win32"], required: false },
   { id: "desktop", label: "Desktop app", platforms: ["win32", "darwin", "linux"], required: true },
 ];
 

@@ -2,6 +2,7 @@ import { stepsPlan } from "./contract.mjs";
 import { runPrerequisiteSteps } from "./prerequisite-steps.mjs";
 import { runCoreSteps } from "./core-steps.mjs";
 import { runPosixShellStep } from "./posix-shell-step.mjs";
+import { runWindowsCageStep } from "./windows-cage-step.mjs";
 import { runDesktopStep } from "./desktop-step.mjs";
 import { persistInstallOutcome } from "./persistence.mjs";
 import { createInstallCheckpoint } from "./checkpoint.mjs";
@@ -16,6 +17,7 @@ const DEFAULT_STAGES = {
   prerequisites: runPrerequisiteSteps,
   core: runCoreSteps,
   posixShell: runPosixShellStep,
+  windowsCage: runWindowsCageStep,
   desktop: runDesktopStep,
   persist: persistInstallOutcome,
 };
@@ -53,6 +55,7 @@ export async function runInstaller(context, stages = DEFAULT_STAGES) {
     await stages.prerequisites(context);
     await stages.core(context);
     await stages.posixShell(context);
+    await stages.windowsCage(context);
     const desktop = await stages.desktop(context);
     const persisted = stages.persist(context, desktop);
     if (persisted !== false) {

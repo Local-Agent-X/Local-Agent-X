@@ -181,6 +181,52 @@ jobs:
         with:
           node-version: '22'
 
+      # The Windows shell network cage helper (packages/srt-win, vendored
+      # Rust). Built here, signed by the same publisher as the installer, then
+      # embedded in it (Installer.csproj) and provisioned at install time
+      # (scripts/installer/windows-cage-step.mjs). The runner image ships a
+      # stable Rust toolchain; the static CRT comes from packages/srt-win/.cargo.
+      - name: Build the shell network cage helper (srt-win)
+        shell: pwsh
+        run: |
+          rustc --version
+          cargo build --release --manifest-path packages/srt-win/Cargo.toml
+          $exe = "packages/srt-win/target/release/srt-win.exe"
+          if (-not (Test-Path $exe)) { Write-Error "srt-win.exe was not built"; exit 1 }
+          & $exe --help | Select-Object -First 3
+
+      - name: Sign the cage helper (Azure Artifact Signing)
+        uses: azure/artifact-signing-action@v2
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_SIGN_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_SIGN_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_SIGN_CLIENT_SECRET }}
+          endpoint: ${{ secrets.AZURE_SIGN_ENDPOINT }}
+          signing-account-name: ${{ secrets.AZURE_SIGN_ACCOUNT }}
+          certificate-profile-name: ${{ secrets.AZURE_SIGN_CERT_PROFILE }}
+          files: ${{ github.workspace }}\packages\srt-win\target\release\srt-win.exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Verify the cage helper's signature and stage it for embedding
+        shell: pwsh
+        run: |
+          $exe = "packages/srt-win/target/release/srt-win.exe"
+          $sig = Get-AuthenticodeSignature -LiteralPath $exe
+          if ($sig.Status -ne 'Valid') { Write-Error "Helper signature not Valid: $($sig.Status)"; exit 1 }
+          if ($null -eq $sig.TimeStamperCertificate) { Write-Error "Helper signature has no trusted timestamp"; exit 1 }
+          if ($sig.SignerCertificate.Subject -cne $env:WIN_SIGN_EXPECTED_SUBJECT) { Write-Error "Helper signing identity drift: $($sig.SignerCertificate.Subject)"; exit 1 }
+          New-Item -ItemType Directory -Force installer/srt-win-bundle | Out-Null
+          Copy-Item -LiteralPath $exe -Destination installer/srt-win-bundle/srt-win.exe -Force
+          Write-Host "Cage helper signed by $($sig.SignerCertificate.Subject)"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows-cage-helper
+          path: installer/srt-win-bundle/srt-win.exe
+          if-no-files-found: error
+
       - name: Stage bundled Electron runtime
         # Download the pinned Electron archive into installer/electron-bundle/ so
         # the publish below embeds it (Installer.csproj). The installed app then
@@ -558,4 +604,5 @@ jobs:
           fail_on_unmatched_files: true
           files: |
             dist/windows-installer/Install Local Agent X Windows Installer.exe
+            dist/windows-cage-helper/srt-win.exe
             dist/macos-installer/Install Local Agent X Mac Installer.dmg

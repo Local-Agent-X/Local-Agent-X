@@ -173,6 +173,38 @@ jobs:
       - name: Replay regression check
         run: npm run test:replay
 
+  # The Windows shell network cage, end to end on a real Windows kernel: build
+  # the helper from the vendored source, provision the cage the way the
+  # installer does (the runner is elevated, so no prompt), then run the escape
+  # matrix AS the sandbox account and assert the fence's contract, including
+  # the resolver-service leak it cannot close. Torn down whatever happens.
+  windows-cage:
+    name: Windows cage escape matrix
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Build and test the cage helper
+        shell: pwsh
+        run: |
+          rustc --version
+          cargo build --release --manifest-path packages/srt-win/Cargo.toml
+          cargo test --release --manifest-path packages/srt-win/Cargo.toml
+
+      - name: Provision the cage
+        shell: pwsh
+        run: pwsh scripts/win-cage/provision.ps1 -Helper packages/srt-win/target/release/srt-win.exe -PortRange 60090-60099
+
+      - name: Escape matrix as the sandbox account
+        shell: pwsh
+        run: pwsh scripts/win-cage/escape-matrix.ps1 -Helper "$env:ProgramData\Local Agent X\bin\srt-win.exe"
+
+      - name: Remove the cage
+        if: always()
+        shell: pwsh
+        run: pwsh scripts/win-cage/provision.ps1 -Uninstall
+
   integration:
     name: Integration (API harness)
     runs-on: ubuntu-latest

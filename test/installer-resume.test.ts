@@ -79,6 +79,7 @@ function harness(): Harness {
       prerequisites: stage("node", ...(includePython ? ["python"] : []), "ollama"),
       core: stage("npm", ...(includeModel ? ["embedmodel"] : [])),
       posixShell: stage(),
+      windowsCage: stage(),
       desktop: async () => {
         execute(reporter, "desktop", selections, killAt, degradeAt);
         return reporter.resumedStepResult("desktop") || { appInstalled: true, appBuildPath: null };

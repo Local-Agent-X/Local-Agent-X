@@ -64,6 +64,18 @@
     </EmbeddedResource>
   </ItemGroup>
 
+  <!-- The Windows shell network cage helper (packages/srt-win), built and
+       signed by CI and dropped into installer/srt-win-bundle/ before publish.
+       Staged to <installDir>/vendor/srt-win/ at install time
+       (SourceDownloader.StageBundledCageHelper); scripts/installer/
+       windows-cage-step.mjs then provisions it. Missing on a local dev build,
+       where the step reports that no helper is bundled. -->
+  <ItemGroup>
+    <EmbeddedResource Include="srt-win-bundle/*.exe">
+      <LogicalName>%(Filename)%(Extension)</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="Avalonia" Version="11.2.0" />
     <PackageReference Include="Avalonia.Desktop" Version="11.2.0" />

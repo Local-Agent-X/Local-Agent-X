@@ -71,20 +71,24 @@ export function currentShellEgressProxyUrl(): string | null {
 }
 
 /**
- * The loopback ports a caged shell may reach: this server's own port and the
+ * The loopback ports a caged shell may reach: this server's own port, the
  * registered local services — the one union http_request is judged by
- * (loadEgressConfig, which already withholds the reserved ports) — plus the
- * proxy's port range, so the sanctioned route out is admitted whichever port
- * of the range the proxy bound (or will bind: the macOS profile is generated
- * per spawn and may precede the proxy's warm-up). Read at call time so a dev
- * server registered mid-session counts for the next spawn. Linux bridges these
- * ports into the namespace; macOS allows them in the seatbelt profile.
+ * (loadEgressConfig, which already withholds the reserved ports) — and the
+ * port of THIS instance's live egress proxy, the one sanctioned route out.
+ * Never the proxy's whole range: another instance on the machine (an eval
+ * server, a second data dir) binds its proxy in the same range, and admitting
+ * the range would let a caged shell egress under that instance's policy. The
+ * shell overlay awaits the proxy before the spawn (shell-proxy-env.ts), so the
+ * live port is known when a profile is generated; if the proxy is not up the
+ * cage has no route out, which is the fail-closed posture. Read at call time
+ * so a dev server registered mid-session counts for the next spawn. Linux
+ * bridges these ports into the namespace; macOS allows them in the seatbelt
+ * profile.
  */
 export function cageLoopbackPorts(): number[] {
   const ports = new Set<number>([Number(selfPort())]);
   for (const p of loadEgressConfig().localServicePorts) ports.add(Number(p));
-  const range = shellProxyPortRange();
-  for (let p = range.from; p <= range.to; p++) ports.add(p);
+  if (liveProxyUrl) ports.add(Number(new URL(liveProxyUrl).port));
   return [...ports].filter((p) => Number.isInteger(p) && p > 0 && p <= 65535);
 }
 

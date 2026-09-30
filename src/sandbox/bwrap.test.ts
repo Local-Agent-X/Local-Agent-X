@@ -161,7 +161,9 @@ describe("bwrap guarded network (BwrapNetwork)", () => {
       // Registered local-service ports ride along, the proxy's first and never twice.
       const withPorts = wrapForBwrap("/bin/bash", ["-c", "true"], home, "guarded",
         { network: "namespace", bridge: { socketPath: sock, port: 60090, loopbackPorts: [7007, 60090, 3000] } }).args;
-      expect(withPorts.slice(withPorts.indexOf(sock) + 1, withPorts.indexOf(sock) + 2)).toEqual(["60090,7007,3000"]);
+      // The socket path also appears earlier as a bind mount, so index from
+      // the forwarder's argv: execPath, --no-warnings, -e, source, --, sock, ports.
+      expect(withPorts[withPorts.indexOf(process.execPath) + 6]).toBe("60090,7007,3000");
     } finally { rmSync(home, { recursive: true, force: true }); }
   });
 });

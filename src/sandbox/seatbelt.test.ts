@@ -8,7 +8,7 @@ import { join } from "node:path";
 
 import { generateSeatbeltProfile, isSeatbeltAvailable, seatbeltProfileLoads, wrapForSeatbelt, SANDBOX_EXEC, GUARDED_UNIX_SOCKET_ALLOW, GUARDED_UNIX_SOCKET_DENY } from "./seatbelt.js";
 import { HOME_RELATIVE_DENY_DIRS, HOME_RELATIVE_DENY_FILES, SERVER_SCOPE_EXEMPT_DIRS, GUARDED_SCOPE_EXEMPT_DIRS } from "./validate.js";
-import { shellProxyPortRange } from "../net/shell-egress-proxy.js";
+import { cageLoopbackPorts, shellProxyPortRange } from "../net/shell-egress-proxy.js";
 
 const onDarwin = process.platform === "darwin";
 
@@ -130,9 +130,11 @@ describe("seatbelt profile generation", () => {
     for (const scope of ["shell", "guarded", "server"] as const) {
       expect(generateSeatbeltProfile(home, scope, [7007])).not.toContain(`"localhost:*"`);
     }
-    // The default set is the cage union (proxy range + self port + registered
+    // The default set is the cage union (live proxy port + self port + registered
     // services), read per call so a service registered mid-session counts.
-    expect(generateSeatbeltProfile(home, "guarded")).toContain(`(allow network-outbound (remote ip "localhost:${shellProxyPortRange().from}"))`);
+    const byDefault = generateSeatbeltProfile(home, "guarded");
+    for (const p of cageLoopbackPorts()) expect(byDefault).toContain(`(allow network-outbound (remote ip "localhost:${p}"))`);
+    expect(byDefault).not.toContain(`"localhost:${shellProxyPortRange().to}"`);
   });
 
   it("the allowlist names only service and temp sockets, never a home directory or a host-control socket", () => {

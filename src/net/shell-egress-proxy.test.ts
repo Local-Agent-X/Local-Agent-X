@@ -256,10 +256,11 @@ describe("singleton race guards", () => {
   });
 });
 
-// What a caged shell may reach on loopback is ONE union, read per spawn: the
-// proxy's whole range (the route out, whichever port it bound or will bind),
-// this server's port and the registered local services — never the reserved
-// in-app debugging port, which the security layer withholds at the source.
+// What a caged shell may reach on loopback is ONE union, read per spawn: this
+// instance's live proxy port (the route out), this server's port and the
+// registered local services — never the reserved in-app debugging port, which
+// the security layer withholds at the source, and never the rest of the proxy
+// range, where another instance's proxy would answer under its own policy.
 // Linux bridges these ports into the namespace; macOS allows them in the
 // seatbelt profile; both read this function.
 describe("cageLoopbackPorts — the admitted loopback set every cage reads", () => {
@@ -281,11 +282,18 @@ describe("cageLoopbackPorts — the admitted loopback set every cage reads", () 
     rmSync(dataDir, { recursive: true, force: true });
   });
 
-  it("admits the proxy range, the self port and the registered services, and withholds the reserved debugging port", async () => {
-    const { cageLoopbackPorts, shellProxyPortRange } = await import("./shell-egress-proxy.js");
-    const ports = cageLoopbackPorts();
+  it("admits the live proxy's port, the self port and the registered services; withholds the reserved debugging port and the rest of the range", async () => {
+    const { cageLoopbackPorts, currentShellEgressProxyUrl, ensureShellEgressProxy, shellProxyPortRange } = await import("./shell-egress-proxy.js");
     const range = shellProxyPortRange();
-    for (let p = range.from; p <= range.to; p++) expect(ports, `proxy port ${p}`).toContain(p);
+    // No proxy yet: no route out is admitted (fail closed), the rest stands.
+    const before = cageLoopbackPorts();
+    for (let p = range.from; p <= range.to; p++) expect(before, `proxy port ${p} before start`).not.toContain(p);
+    const proxy = await ensureShellEgressProxy();
+    const live = Number(new URL(currentShellEgressProxyUrl()!).port);
+    expect(live).toBe(proxy.port);
+    const ports = cageLoopbackPorts();
+    expect(ports).toContain(live);
+    for (let p = range.from; p <= range.to; p++) if (p !== live) expect(ports, `sibling range port ${p}`).not.toContain(p);
     expect(ports).toContain(7007); // LAX_PORT, set by this file's beforeEach
     expect(ports).toContain(3000);
     expect(ports).not.toContain(49123);

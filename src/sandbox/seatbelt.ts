@@ -23,7 +23,7 @@
 // The "guarded" scope is the DEFAULT posture: items 2 and 3 (credential +
 // persistence denies) plus an ALLOWLISTED version of item 1 — network is
 // denied except outbound to the loopback ports the security layer admits
-// (this server, the egress proxy's range, Ollama, registered local services,
+// (this server, this instance's egress proxy, Ollama, registered local services,
 // dev servers this harness started), the same set Linux bridges and the
 // proxy judges — and it exempts ~/.config so the kernel backstops the
 // command parser's $VAR/$(...) blind spot on credentials while local dev tools
@@ -163,7 +163,7 @@ export function generateSeatbeltProfile(home: string = homedir(), scope: Sandbox
     // ports the security layer admits and nothing else. Deny all network,
     // then carve back:
     //  - outbound to each admitted loopback port (SBPL "localhost" matches
-    //    127.0.0.1 AND ::1): this server, the egress proxy, Ollama, registered
+    //    127.0.0.1 AND ::1): this server, this instance's egress proxy, Ollama, registered
     //    local services, dev servers — cageLoopbackPorts(), read per spawn so
     //    a service registered mid-session counts for the next shell call;
     //  - bind + inbound on any local address, so dev servers can listen;

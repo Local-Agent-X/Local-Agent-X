@@ -28,13 +28,12 @@
 // The "guarded" scope is the DEFAULT posture: the sensitive-dir/file shadowing
 // exempting ~/.config, so the namespace backstops the command parser's
 // $VAR/$(...) blind spot on credentials while npm/git/curl keep working. Its
-// network is the caller's choice (BwrapNetwork): the agent SHELL runs in an
-// empty network namespace with the egress bridge — nothing off the machine,
-// the host's loopback only through the proxy, which is the same invariant
-// macOS guarded enforces with seatbelt — while a sandboxed MCP server keeps the
-// host network, because nothing routes its traffic through the proxy yet. The
-// "shell" scope is the strict opt-in: --unshare-net with no bridge, and
-// ~/.config shadowed too.
+// network is the caller's choice (BwrapNetwork): the agent SHELL and a
+// sandboxed MCP server both run in an empty network namespace with the egress
+// bridge — nothing off the machine, the host's loopback only through the
+// proxy and the registered ports, which is the same invariant macOS guarded
+// enforces with seatbelt. The "shell" scope is the strict opt-in:
+// --unshare-net with no bridge, and ~/.config shadowed too.
 
 import { execFileSync } from "node:child_process";
 import { accessSync, constants, existsSync, realpathSync, statSync } from "node:fs";

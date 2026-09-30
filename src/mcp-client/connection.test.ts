@@ -33,6 +33,10 @@ vi.mock("../sandbox/seatbelt.js", async (importOriginal) => {
   return { ...actual, wrapForSeatbelt: seatbeltWrapMock };
 });
 vi.mock("../process-tree-kill.js", () => ({ killProcessTree: killTreeMock, killProcessGroup: killGroupMock }));
+// A sandboxed server gets the live proxy's env and bridge; the real modules
+// would start a proxy from a unit test.
+vi.mock("../tools/shell-proxy-env.js", () => ({ shellProxyEnv: async () => ({ HTTP_PROXY: "http://lax:t@127.0.0.1:60090", NODE_USE_ENV_PROXY: "1" }) }));
+vi.mock("../net/shell-egress-proxy.js", () => ({ currentShellEgressBridge: () => null }));
 
 // Snapshot + restore process.env around every test so a leaked variable
 // from one case (e.g. a planted ANTHROPIC_API_KEY) cannot influence
@@ -356,15 +360,20 @@ describe("MCPConnection.connect — integrity-resolved spawn path", () => {
     expect(firstArg).not.toBe(bareName);
   });
 
-  it("wraps the integrity-resolved command when sandboxed", async () => {
+  it("wraps the integrity-resolved command when sandboxed: an empty network namespace with the proxy as its only route", async () => {
     __setMcpSandboxBackendForTests("bwrap");
     const bareName = process.platform === "win32" ? "mock-mcp.exe" : "mock-mcp";
     const conn = new MCPConnection("mock-srv", { command: bareName, args: ["--foo"], env: { PATH: join(tempDir, "evil") }, executionMode: "sandboxed" });
 
     conn.connect().catch(() => { /* expected — stub stdin is non-writable */ });
+    // The proxy env is awaited before the spawn.
+    await new Promise((resolve) => setImmediate(resolve));
 
-    expect(bwrapMock).toHaveBeenCalledWith(binPath, ["--foo"], undefined, "guarded");
-    expect(spawnMock).toHaveBeenCalledWith("/trusted/bwrap", ["--guarded", binPath, "--foo"], expect.objectContaining({ shell: false, env: expect.objectContaining({ PATH: join(tempDir, "evil") }) }));
+    expect(bwrapMock).toHaveBeenCalledWith(binPath, ["--foo"], undefined, "guarded", expect.objectContaining({ network: "namespace" }));
+    expect(spawnMock).toHaveBeenCalledWith("/trusted/bwrap", ["--guarded", binPath, "--foo"], expect.objectContaining({
+      shell: false,
+      env: expect.objectContaining({ PATH: join(tempDir, "evil"), HTTP_PROXY: "http://lax:t@127.0.0.1:60090" }),
+    }));
   });
 
   it("refuses an unmarked server before integrity trust or spawn when no sandbox exists", async () => {

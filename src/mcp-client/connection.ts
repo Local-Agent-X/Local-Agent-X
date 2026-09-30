@@ -5,6 +5,8 @@ import { getLaxDir } from "../lax-data-dir.js";
 import { wrapExternalContent } from "../sanitize.js";
 import { isSeatbeltAvailable, seatbeltProfileLoads, wrapForSeatbelt } from "../sandbox/seatbelt.js";
 import { isBwrapAvailable, bwrapGuardedRuns, wrapForBwrap } from "../sandbox/bwrap.js";
+import { currentShellEgressBridge } from "../net/shell-egress-proxy.js";
+import { shellProxyEnv } from "../tools/shell-proxy-env.js";
 import { killProcessGroup, killProcessTree } from "../process-tree-kill.js";
 import type { ToolResult } from "../types.js";
 import { type MCPExecutionMode, type MCPServerConfig, type MCPTool, type PendingRequest, PROTOCOL_VERSION, REQUEST_TIMEOUT_MS } from "./types.js";
@@ -225,10 +227,18 @@ export class MCPConnection {
     let command = verdict.resolvedPath;
     let spawnArgs = this.config.args || [];
     let windowsVerbatimArguments = false;
+    // A sandboxed MCP server gets the same cage and the same way out as an
+    // agent shell: the egress proxy is its only route (the env below), and on
+    // Linux its network namespace is empty except for the proxy's bridge. It
+    // used to keep the host network on Linux, which made it the one caged
+    // process that could reach anything.
+    let proxyEnv: Record<string, string> = {};
     if (posture.effective === "sandboxed") {
+      proxyEnv = await shellProxyEnv();
+      const bridge = currentShellEgressBridge();
       const wrapped = posture.sandboxBackend === "seatbelt"
         ? wrapForSeatbelt(verdict.resolvedPath, this.config.args || [], undefined, "guarded", true)
-        : wrapForBwrap(verdict.resolvedPath, this.config.args || [], undefined, "guarded");
+        : wrapForBwrap(verdict.resolvedPath, this.config.args || [], undefined, "guarded", { network: "namespace", ...(bridge ? { bridge } : {}) });
       command = wrapped.cmd;
       spawnArgs = wrapped.args;
     } else if (isWin) {
@@ -237,7 +247,7 @@ export class MCPConnection {
       spawnArgs = wrapped.args;
       windowsVerbatimArguments = wrapped.windowsVerbatimArguments;
     }
-    const env = buildMcpChildEnv(this.config.env, this.exemptEnvKeys);
+    const env = { ...buildMcpChildEnv(this.config.env, this.exemptEnvKeys), ...proxyEnv };
     let rejectSpawnFailure!: (error: Error) => void;
     const spawnFailure = new Promise<never>((_resolve, reject) => { rejectSpawnFailure = reject; });
     try {

@@ -848,8 +848,8 @@ mod tests {
 
     #[test]
     fn parse_guid_accepts_both_forms() {
-        let g1 = parse_guid("2c5d0ad6-5f3b-4d4e-9b8f-1a3e7c9d0b21").unwrap();
-        let g2 = parse_guid("{2c5d0ad6-5f3b-4d4e-9b8f-1a3e7c9d0b21}").unwrap();
+        let g1 = parse_guid("6f3b9c1e-4a7d-4e52-9c0b-2d8e5f1a7b34").unwrap();
+        let g2 = parse_guid("{6f3b9c1e-4a7d-4e52-9c0b-2d8e5f1a7b34}").unwrap();
         assert_eq!(g1, g2);
         assert_eq!(g1, DEFAULT_SUBLAYER_GUID);
     }

@@ -78,6 +78,14 @@ export const FLIPPABLE_SETTINGS: ReadonlyArray<FlippableSetting> = [
     description: "How newly learned skills become active. assisted waits for user review; autonomous activates qualified skills within existing permissions",
   },
   {
+    field: "skillReviewEnabled",
+    validate: z.boolean(),
+    runtime: true,
+    broadcast: true,
+    protected: true,
+    description: "Whether finished chat turns are reviewed in the background for reusable procedures. Off stops new learned-workflow drafts; existing ones are untouched",
+  },
+  {
     field: "bridgeVoicePreference",
     // Keep the "sovits"→"auto" coercion in lockstep with config-schema.ts:
     // both parse the same persisted value, and only one accepting it means

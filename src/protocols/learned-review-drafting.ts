@@ -7,6 +7,11 @@
  * served to the catalog, and a reviewed draft becomes active only on the
  * user's OK (the chat notice / Settings panel) or on independent evidence
  * (learned-refinement.ts), never on its own.
+ *
+ * A review-origin proposal is judged before it is drafted
+ * (learned-proposal-gate.ts): it must name the non-derivable thing it
+ * captured and carry a class-level name. The chat notice waits for a second
+ * distinct session, so one coincidence never becomes a card.
  */
 import { createHash } from "node:crypto";
 import crossSessionLearner from "../cognition/cross-session-learning/index.js";
@@ -27,6 +32,13 @@ import {
   type LearnedProtocolRecord,
   type LearnedProtocolVersion,
 } from "./learned-lifecycle.js";
+import { reviewedProcedureNoticeReady } from "./learned-refinement.js";
+import {
+  classLevelNameProblem,
+  derivabilityProblem,
+  workspaceProjectNames,
+  type LearnedKnowledge,
+} from "./learned-proposal-gate.js";
 
 const LEARNED_SLUG = /^learned-[a-f0-9]{20}$/;
 const TOOL_NAME = /^[a-z][a-z0-9_]*$/;
@@ -42,6 +54,15 @@ export interface ReviewedProcedureProposal {
   triggers: readonly string[];
   body: string;
   outcome: "verified" | "corrected" | "unverified";
+  /** "review": the post-turn fork learned this from a run and must prove it
+   *  is worth learning. "migration": a protocol the user already had in the
+   *  catalog is being moved, and is not re-judged. */
+  origin: "review" | "migration";
+  /** The non-derivable thing the run captured. Required for review origin. */
+  learned?: LearnedKnowledge;
+  /** Projects the reviewed run worked in (from its own paths); a review-origin
+   *  name may not carry one, on top of the workspace's own project names. */
+  projectNames?: readonly string[];
   /** Execution context, never model arguments. */
   sessionId: string;
   toolSequence: readonly string[];
@@ -119,6 +140,7 @@ export function learningNoticeFor(
   version: LearnedProtocolVersion,
 ): LearningNotice | null {
   if (record.state === "active" && record.activeVersionId === version.id) return null;
+  if (record.state === "draft" && !reviewedProcedureNoticeReady(candidate)) return null;
   return {
     id: candidate.id,
     versionId: version.id,
@@ -144,6 +166,12 @@ export function proposeReviewedProcedure(input: ReviewedProcedureProposal): Prop
   const body = typeof input.body === "string" ? input.body.trim() : "";
   if (!body) return { ok: false, message: "propose needs a markdown `body` — the playbook itself." };
   if (body.length > MAX_BODY_CHARS) return { ok: false, message: `The body is too long (max ${MAX_BODY_CHARS} characters).` };
+  if (input.origin === "review") {
+    const projectNames = [...workspaceProjectNames(), ...(input.projectNames ?? [])];
+    const problem = derivabilityProblem(input.learned, body, input.toolSequence)
+      ?? (LEARNED_SLUG.test(input.name.trim()) ? null : classLevelNameProblem(name, projectNames));
+    if (problem) return { ok: false, message: problem };
+  }
   const triggers = [...new Set(input.triggers.map((t) => oneLine(String(t)).slice(0, MAX_TRIGGER_CHARS)).filter(Boolean))]
     .slice(0, MAX_TRIGGERS);
 
@@ -216,8 +244,6 @@ export function pendingLearningNotices(sessionId: string): LearningNotice[] {
       const record = loadLearnedProtocol(candidate.id);
       const newest = record.versions.at(-1);
       if (!newest || record.state === "archived") continue;
-      if (readOwnEnumerableData(newest.metadata, "reviewedSessionId").ok !== true
-        || newest.metadata.reviewedSessionId !== sessionId) continue;
       const notice = learningNoticeFor(candidate, record, newest);
       if (notice) notices.push(notice);
     } catch {

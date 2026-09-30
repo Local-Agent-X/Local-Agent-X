@@ -12,7 +12,7 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 67 top-level dirs · 67 live · 0 with no live importer · 1685 non-test source files · 0 god files (>400 LOC).
+**Totals:** 67 top-level dirs · 67 live · 0 with no live importer · 1688 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -21,7 +21,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/ops/` | 136 | 26 | XL |  |
 | `src/security/` | 96 | 41 | XL |  |
 | `src/tools/` | 80 | 199 | XL |  |
-| `src/canonical-loop/` | 70 | 255 | XL |  |
+| `src/canonical-loop/` | 71 | 255 | XL |  |
 | `src/providers/` | 67 | 26 | XL |  |
 | `src/workspace/` | 50 | 2 | M |  |
 | `src/memory/` | 46 | 130 | XL |  |
@@ -42,15 +42,15 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/context/` | 23 | 8 | L |  |
 | `src/chat-ws/` | 21 | 20 | L |  |
 | `src/orchestrator/` | 20 | 24 | L |  |
-| `src/protocols/` | 19 | 51 | XL |  |
+| `src/protocols/` | 19 | 52 | XL |  |
 | `src/agents/` | 17 | 13 | L |  |
 | `src/anthropic-client/` | 16 | 21 | XL |  |
 | `src/sandbox/` | 16 | 12 | L |  |
 | `src/tool-execution/` | 15 | 54 | XL |  |
+| `src/cognition/` | 14 | 34 | XL |  |
 | `src/autonomy/` | 13 | 4 | M |  |
-| `src/cognition/` | 13 | 33 | XL |  |
 | `src/voice/` | 13 | 74 | XL |  |
-| `src/server/` *(entrypoint)* | 12 | 53 | XL |  |
+| `src/server/` *(entrypoint)* | 12 | 54 | XL |  |
 | `src/whatsapp-bridge/` | 12 | 8 | L |  |
 | `src/agent-guards/` | 11 | 11 | L |  |
 | `src/self-edit/` | 11 | 20 | L |  |

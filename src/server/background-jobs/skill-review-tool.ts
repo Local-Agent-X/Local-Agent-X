@@ -13,6 +13,8 @@
 import type { ToolDefinition, ToolResult } from "../../types.js";
 import type { LearningNotice } from "../../protocols/learned-review-drafting.js";
 import { REVIEW_PROTOCOL_ACTIONS } from "./skill-review-prompt.js";
+import { LEARNED_KNOWLEDGE_KINDS, type LearnedKnowledge } from "../../protocols/learned-proposal-gate.js";
+import { MAX_GAP_SUMMARY_CHARS, MAX_GAP_TOOLS } from "../../cognition/cross-session-learning/capability-gaps.js";
 
 const LEARNED_SLUG = /^learned-[a-f0-9]{20}$/;
 
@@ -22,13 +24,16 @@ Actions:
 • search(query): find protocols, and learned procedures earlier reviews proposed, matching a query. Start here.
 • list(): every live protocol with its triggers, plus the pending learned procedures.
 • get(name): a protocol's or learned procedure's full body. Read one before proposing a new version of it.
-• propose(name, description, triggers, body, outcome): propose a learned procedure as a DRAFT the user reviews. Use an existing learned procedure's name (or learned-… id) to add evidence and a new version instead of a near-duplicate. outcome is "verified" (a check passed, or the user confirmed or kept building on it) or "corrected" (the user reverted or corrected the run — only allowed for an existing learned procedure).`;
+• propose(name, description, triggers, body, outcome, learned): propose a learned procedure as a DRAFT the user reviews. Use an existing learned procedure's name (or learned-… id) to add evidence and a new version instead of a near-duplicate. outcome is "verified" (a check passed, or the user confirmed or kept building on it) or "corrected" (the user reverted or corrected the run — only allowed for an existing learned procedure). learned is {kind, detail}: kind is one of ${LEARNED_KNOWLEDGE_KINDS.join(", ")}, and detail quotes, verbatim from the body, the one thing the agent could not have derived from its tools and the repo. No such thing means nothing to propose.
+• note_gap(summary, tools_tried, workaround): record that a native tool fell short and the run had to work around it. This is NOT a procedure — it goes to the maintainer's capability-gap log, never to the catalog. Use it instead of propose whenever the "procedure" is "call tool X, and when it misses, do Y".`;
 
 export interface ReviewProtocolToolContext {
   /** The session whose turn is under review — the proposal's provenance. */
   reviewedSessionId: string;
   /** Tools the reviewed op actually called — the draft's capability evidence. */
   toolSequence: readonly string[];
+  /** Projects the reviewed op worked in, from the paths its calls named. */
+  projectNames?: readonly string[];
   /** Tell the reviewed session a draft is waiting on the user. */
   onProposed?: (sessionId: string, notice: LearningNotice) => void;
 }
@@ -43,6 +48,31 @@ function mergeFamilyArgs(args: Record<string, unknown>): { action: string; inner
 
 function refuse(content: string): ToolResult {
   return { content, isError: true };
+}
+
+/** The model's `learned` argument as the gate's input shape; the gate itself
+ *  decides whether the kind and detail hold up. */
+function learnedFrom(value: unknown): LearnedKnowledge | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  return { kind: String(record.kind ?? "") as LearnedKnowledge["kind"], detail: String(record.detail ?? "") };
+}
+
+async function noteGapForReview(inner: Record<string, unknown>, ctx: ReviewProtocolToolContext): Promise<ToolResult> {
+  const summary = typeof inner.summary === "string" ? inner.summary.replace(/\s+/g, " ").trim().slice(0, MAX_GAP_SUMMARY_CHARS) : "";
+  if (!summary) return refuse("note_gap needs a one-line `summary` of what the agent needed and could not do natively.");
+  const toolsTried = (Array.isArray(inner.tools_tried) ? inner.tools_tried : [])
+    .map(String).filter((tool) => /^[a-z][a-z0-9_]*$/.test(tool)).slice(0, MAX_GAP_TOOLS);
+  const workaround = typeof inner.workaround === "string" ? inner.workaround.replace(/\s+/g, " ").trim().slice(0, MAX_GAP_SUMMARY_CHARS) : "";
+  const { appendCapabilityGap } = await import("../../cognition/cross-session-learning/capability-gaps.js");
+  appendCapabilityGap({
+    sessionId: ctx.reviewedSessionId,
+    timestamp: Date.now(),
+    summary,
+    toolsTried,
+    ...(workaround ? { workaround } : {}),
+  });
+  return { content: `Recorded a capability gap: ${summary}. It is logged for the maintainer and is not a procedure.` };
 }
 
 async function getForReview(base: ToolDefinition, inner: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult> {
@@ -82,6 +112,9 @@ async function proposeForReview(inner: Record<string, unknown>, ctx: ReviewProto
       triggers: Array.isArray(inner.triggers) ? (inner.triggers as unknown[]).map(String) : [],
       body: typeof inner.body === "string" ? inner.body : "",
       outcome,
+      origin: "review",
+      learned: learnedFrom(inner.learned),
+      projectNames: ctx.projectNames ?? [],
       sessionId: ctx.reviewedSessionId,
       toolSequence: ctx.toolSequence,
     });
@@ -114,6 +147,7 @@ export function narrowProtocolToolForReview(base: ToolDefinition, ctx: ReviewPro
         return refuse(`Action "${action}" is not available to the protocol review pass. Allowed: ${REVIEW_PROTOCOL_ACTIONS.join(", ")}.`);
       }
       if (action === "propose") return proposeForReview(inner, ctx);
+      if (action === "note_gap") return noteGapForReview(inner, ctx);
       if (action === "get") return getForReview(base, inner, signal);
       const query = action === "search" && typeof inner.query === "string" ? inner.query : undefined;
       return withPendingProcedures(await base.execute({ action, params: inner }, signal), query);

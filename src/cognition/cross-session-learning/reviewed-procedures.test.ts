@@ -43,10 +43,21 @@ describe("reviewed procedures in the learned lifecycle", () => {
       triggers: ["thriveventory purchase order"],
       body: PLAYBOOK,
       outcome: "verified",
+      origin: "review",
+      learned: { kind: "external_string", detail: "Open External > Create PO." },
       sessionId,
       toolSequence: ["browser", "browser", "read", "write"],
       ...over,
     });
+  }
+
+  /** A card needs a second session: the first proposal drafts silently. */
+  function proposeTwice(sys: System) {
+    const first = propose(sys, "session-a");
+    if (!first.ok) throw new Error(first.message);
+    const second = propose(sys, "session-b");
+    if (!second.ok) throw new Error(second.message);
+    return { first, second };
   }
 
   function servedNames(sys: System): string[] {
@@ -91,9 +102,9 @@ describe("reviewed procedures in the learned lifecycle", () => {
   describe("propose drafts, never publishes", () => {
     it("creates a draft that the catalog does not serve until it is activated", async () => {
       const sys = await system();
-      const result = propose(sys, "session-a");
-      if (!result.ok) throw new Error(result.message);
-      expect(result).toMatchObject({ created: true, drafted: true });
+      const { first, second: result } = proposeTwice(sys);
+      expect(first).toMatchObject({ created: true, drafted: true, notice: null });
+      expect(result).toMatchObject({ created: false, drafted: false });
       expect(result.notice).toMatchObject({ id: result.candidateId, refinement: false, canReject: true, expectedActiveVersionId: null });
       expect(servedNames(sys)).not.toContain(result.candidateId);
 
@@ -109,11 +120,10 @@ describe("reviewed procedures in the learned lifecycle", () => {
 
     it("refines an active procedure with a new draft version, never in place", async () => {
       const sys = await system();
-      const first = propose(sys, "session-a");
-      if (!first.ok) throw new Error(first.message);
+      const { second: first } = proposeTwice(sys);
       sys.service.action(first.candidateId, { action: "activate", versionId: first.notice!.versionId, expectedActiveVersionId: null });
 
-      const refined = propose(sys, "session-b", { body: `${PLAYBOOK}\n- Save before closing the modal.` });
+      const refined = propose(sys, "session-c", { body: `${PLAYBOOK}\n- Save before closing the modal.` });
       if (!refined.ok) throw new Error(refined.message);
       expect(refined).toMatchObject({ created: false, drafted: true });
       expect(refined.notice).toMatchObject({ refinement: true, canReject: false, expectedActiveVersionId: first.notice!.versionId });
@@ -146,22 +156,56 @@ describe("reviewed procedures in the learned lifecycle", () => {
       expect(propose(sys, "session-a", { name: observed!.id })).toMatchObject({ ok: false });
     });
 
-    it("re-delivers a pending notice to the session that proposed it, and to no other", async () => {
+    it("re-delivers a pending notice to the sessions that proposed it, and to no other", async () => {
       const sys = await system();
-      const result = propose(sys, "session-a");
+      const first = propose(sys, "session-a");
+      if (!first.ok) throw new Error(first.message);
+      expect(sys.drafting.pendingLearningNotices("session-a")).toEqual([]);
+      const result = propose(sys, "session-b");
       if (!result.ok) throw new Error(result.message);
       expect(sys.drafting.pendingLearningNotices("session-a")).toEqual([result.notice]);
+      expect(sys.drafting.pendingLearningNotices("session-b")).toEqual([result.notice]);
       expect(sys.drafting.pendingLearningNotices("session-z")).toEqual([]);
       sys.service.action(result.candidateId, { action: "reject" });
       expect(sys.drafting.pendingLearningNotices("session-a")).toEqual([]);
+    });
+
+    it("a card waits for a second distinct session; the same session or a corrected run does not count", async () => {
+      const sys = await system();
+      expect(propose(sys, "session-a")).toMatchObject({ ok: true, notice: null });
+      expect(propose(sys, "session-a")).toMatchObject({ ok: true, notice: null });
+      expect(propose(sys, "session-b", { outcome: "corrected" })).toMatchObject({ ok: true, notice: null });
+      const third = propose(sys, "session-c");
+      expect(third.ok && third.notice).toMatchObject({ canReject: true });
+    });
+
+    it("refuses a proposal that names nothing the agent could not have derived", async () => {
+      const sys = await system();
+      expect(propose(sys, "session-a", { learned: undefined })).toMatchObject({ ok: false, message: expect.stringContaining("could not have derived") });
+      expect(propose(sys, "session-a", { learned: { kind: "pitfall", detail: "Something the body never says at all" } }))
+        .toMatchObject({ ok: false, message: expect.stringContaining("verbatim") });
+      expect(propose(sys, "session-a", { learned: { kind: "fact", detail: "Open External > Create PO." } }))
+        .toMatchObject({ ok: false, message: expect.stringContaining("learned.kind") });
+      expect(sys.learner.getCandidates()).toHaveLength(0);
+    });
+
+    it("refuses a name that only makes sense for one run, but not a migration", async () => {
+      const sys = await system();
+      expect(propose(sys, "session-a", { name: "thriveventory_po_debrief" })).toMatchObject({ ok: false, message: expect.stringContaining("debrief") });
+      expect(propose(sys, "session-a", { name: "jobs_in_order_crm_master_push", projectNames: ["jobs_in_order"] }))
+        .toMatchObject({ ok: false, message: expect.stringContaining("workspace project \"jobs_in_order\"") });
+      expect(propose(sys, "session-a", { learned: { kind: "external_string", detail: "Open External > Create PO." }, toolSequence: ["bash", "read", "edit", "bash"] }))
+        .toMatchObject({ ok: false, message: expect.stringContaining("never called a tool that reaches one") });
+      expect(propose(sys, "session-a", { name: "acme_api_master_push", origin: "migration", outcome: "unverified", learned: undefined }))
+        .toMatchObject({ ok: true, created: true });
+      expect(sys.drafting.pendingLearningNotices("session-a")).toHaveLength(1);
     });
   });
 
   describe("the review fork reads learned procedures without opening their capability envelope", () => {
     it("get renders drafts and live versions directly; list and search show pending procedures", async () => {
       const sys = await system();
-      const result = propose(sys, "session-a");
-      if (!result.ok) throw new Error(result.message);
+      const { second: result } = proposeTwice(sys);
       const { narrowProtocolToolForReview } = await import("../../server/background-jobs/skill-review-tool.js");
       const calls: Array<Record<string, unknown>> = [];
       const tool = narrowProtocolToolForReview({
@@ -231,7 +275,7 @@ describe("reviewed procedures in the learned lifecycle", () => {
 
     it("refuses to activate a reviewed version that carries no tool evidence", async () => {
       const sys = await system();
-      const result = propose(sys, "session-a", { toolSequence: [], outcome: "unverified" });
+      const result = propose(sys, "session-a", { toolSequence: [], outcome: "unverified", learned: { kind: "pitfall", detail: "Never the AI import." } });
       if (!result.ok) throw new Error(result.message);
       expect(() => sys.service.action(result.candidateId, { action: "activate", expectedActiveVersionId: null }))
         .toThrow(/no tool evidence/);
@@ -284,8 +328,7 @@ describe("reviewed procedures in the learned lifecycle", () => {
 
     it("Keep posts activate for the proposed version and the procedure goes live", async () => {
       const sys = await system();
-      const result = propose(sys, "session-a");
-      if (!result.ok) throw new Error(result.message);
+      const { second: result } = proposeTwice(sys);
       const notice = result.notice!;
       const kept = await post(notice.id, { action: "activate", versionId: notice.versionId, expectedActiveVersionId: notice.expectedActiveVersionId });
       expect(kept.status).toBe(200);

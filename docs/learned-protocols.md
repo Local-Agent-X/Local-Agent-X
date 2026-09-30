@@ -97,6 +97,51 @@ description of current behavior. This doc is the source of truth for what runs.
    subsequent tool call passes through `learnedProtocolEnvelopeGate`
    (`src/tool-execution/learned-protocol-envelope.ts`).
 
+## Post-turn review (reviewed procedures)
+
+The second way a learned protocol comes to exist. After a user-facing chat turn
+that made ≥4 tool calls across ≥2 distinct tools, `requestSkillReviewForOp`
+(`record-outcome.ts`) queues the op; once the user sends another message (or 30
+minutes pass) an idle-time fork of the MAIN model reads the transcript
+(`src/server/background-jobs/skill-review*.ts`) with one tool, `protocol`,
+narrowed to `list`/`get`/`search`/`propose`/`note_gap`.
+
+What a proposal must carry (`src/protocols/learned-proposal-gate.ts`, enforced
+on the write path `proposeReviewedProcedure`, not only in the prompt):
+
+- **Derivability.** `learned: {kind, detail}` names the one thing the agent
+  could not have derived from its tools and the repo — an `external_string`,
+  a `pitfall`, a `user_correction`, or a `precondition` — and `detail` must
+  appear verbatim in the body. An `external_string` or `precondition` claim
+  also needs an egress-class tool (`hasCapability(tool, "egress")`) in the
+  reviewed run's own tool sequence: a run that never left the machine found
+  nothing about an external system. The fork's system prompt carries an
+  inventory of every registered tool (`buildSkillReviewSystemPrompt`) so "the
+  agent already has this" is a judgement it can make.
+- **Class-level name.** A name carrying a project the run worked in or a
+  session-artifact word (`…_audit`, `…_debrief`, `…_walkthrough`) is refused.
+  Project names come from two sources: directories under the workspace root
+  and `workspace/apps`, and the first path segment under the home dir or the
+  workspace in the reviewed op's own tool-call paths
+  (`skill-review-project-names.ts`), so `jobs_in_order_crm_master_push` is
+  refused wherever that repo lives. A recipe for the user's own repo is
+  derivable from the repo.
+- **Tool gaps are not skills.** "Call tool X, and when it misses, do Y" goes to
+  `note_gap`, which appends to `~/.lax/capability-gaps.jsonl`
+  (`src/cognition/cross-session-learning/capability-gaps.ts`) for the
+  maintainer. It never becomes a draft.
+
+A first proposal drafts silently. The chat's Keep/Discard card
+(`learning_notice`) appears only once `REVIEWED_PROCEDURE_NOTICE_SESSIONS` (2)
+distinct sessions proposed the same procedure from runs that held up;
+`REVIEWED_PROCEDURE_MIN_SESSIONS` (3) activates it without asking. Migrated
+catalog protocols (`origin: "migration"`, outcome `unverified`) skip the gate
+and are reviewable at once — they were already the user's.
+
+`skillReviewEnabled` (default `true`; runtime, broadcast, protected) turns the
+review off entirely. It is a separate field from `learningMode`, which governs
+how an already-learned procedure activates.
+
 ## `learningMode`
 
 | Mode | Behavior |

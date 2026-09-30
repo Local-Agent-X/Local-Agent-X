@@ -53,6 +53,8 @@ export interface LAXConfig {
   toolApproval: "auto" | "confirm-risky" | "confirm-all";
   /** Whether newly learned skills wait for review or may activate automatically. */
   learningMode: "assisted" | "autonomous";
+  /** Whether finished chat turns are reviewed in the background for reusable procedures. */
+  skillReviewEnabled: boolean;
   retentionDays: number;
   logLevel: "basic" | "detailed" | "full-audit";
   sandboxMode: SandboxMode;

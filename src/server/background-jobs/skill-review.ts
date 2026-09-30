@@ -39,11 +39,12 @@ import { createLogger } from "../../logger.js";
 import { createOverlapGuard } from "../scheduler.js";
 import { SkillReviewBreaker, type SkillReviewBreakerState } from "./skill-review-breaker.js";
 import {
-  SKILL_REVIEW_SYSTEM_PROMPT,
   SKILL_REVIEW_TOOL_NAMES,
   buildSkillReviewMessage,
+  buildSkillReviewSystemPrompt,
 } from "./skill-review-prompt.js";
 import { narrowProtocolToolForReview, type ReviewProtocolToolContext } from "./skill-review-tool.js";
+import { projectNamesTouchedBy } from "./skill-review-project-names.js";
 import {
   SKILL_REVIEW_SESSION_PREFIX,
   _clearSkillReviewQueue,
@@ -102,6 +103,9 @@ export interface SkillReviewDeps {
   /** Delivers a learning notice to the reviewed session. Defaults to the
    *  session bridge. */
   notify?: (sessionId: string, event: ServerEvent) => void;
+  /** Projects the reviewed op worked in. Defaults to reading the op's own
+   *  tool-call paths (skill-review-project-names.ts). */
+  projectNamesFor?: (opId: string) => string[];
 }
 
 let deps: SkillReviewDeps | null = null;
@@ -202,6 +206,7 @@ async function runSingleReview(request: SkillReviewRequest, d: SkillReviewDeps):
   const tools = buildReviewTools(d.allAgentTools, {
     reviewedSessionId: request.sessionId,
     toolSequence: request.toolSequence,
+    projectNames: (d.projectNamesFor ?? projectNamesTouchedBy)(request.opId),
     onProposed: (sessionId, notice) => notify(sessionId, { type: "learning_notice", ...notice }),
   });
   if (tools.length === 0) {
@@ -211,6 +216,10 @@ async function runSingleReview(request: SkillReviewRequest, d: SkillReviewDeps):
   const render = d.renderTranscript ?? ((opId, followUps) => renderOpTranscript(opId, TRANSCRIPT_CHAR_CAP, followUps));
   const transcript = render(request.opId, request.followUpOpIds);
   if (!transcript.trim()) throw new Error(`no transcript could be rendered for op ${request.opId}`);
+  // The inventory is what lets the fork tell "already native" from "had to be
+  // found". Rendered from the same registry the agent runs with, never a
+  // hand-kept list, and deterministic so forks share the cached prefix.
+  const systemPrompt = buildSkillReviewSystemPrompt(d.allAgentTools);
 
   // The only real ceiling this job has — see DEFAULT_REVIEW_TIMEOUT_MS. Abort
   // fires opCancel through canonical so the op genuinely stops; the race
@@ -235,13 +244,13 @@ async function runSingleReview(request: SkillReviewRequest, d: SkillReviewDeps):
       apiKey,
       model,
       provider: provider as AgentOptions["provider"],
-      systemPrompt: SKILL_REVIEW_SYSTEM_PROMPT,
+      systemPrompt,
       renderedPromptSections: [renderPromptSection({
         id: "skill-review",
         label: "Protocol Review",
         type: "static",
         policy: "required",
-        text: SKILL_REVIEW_SYSTEM_PROMPT,
+        text: systemPrompt,
       })],
       tools,
       security: d.security,

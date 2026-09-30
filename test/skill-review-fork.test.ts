@@ -31,6 +31,7 @@ import {
   REVIEW_PROTOCOL_ACTIONS,
   SKILL_REVIEW_SYSTEM_PROMPT,
   buildSkillReviewMessage,
+  buildSkillReviewSystemPrompt,
 } from "../src/server/background-jobs/skill-review-prompt.js";
 import {
   buildReviewTools,
@@ -225,12 +226,47 @@ describe("skill-review proposals (drafts only — D20 provenance from execution 
     triggers: ["thriveventory PO", "create a purchase order"],
     body: "## Preconditions\n- Logged into Thriveventory\n\n## Steps\n1. External > Create PO",
     outcome: "verified",
+    learned: { kind: "external_string", detail: "External > Create PO" },
   };
 
-  it("offers only the three reads and propose — no create, no edit", () => {
-    expect([...REVIEW_PROTOCOL_ACTIONS]).toEqual(["list", "get", "search", "propose"]);
+  it("offers only the three reads, propose, and note_gap — no create, no edit", () => {
+    expect([...REVIEW_PROTOCOL_ACTIONS]).toEqual(["list", "get", "search", "propose", "note_gap"]);
     const schema = narrowed().parameters as { properties: { action: { enum: string[] } } };
-    expect(schema.properties.action.enum).toEqual(["list", "get", "search", "propose"]);
+    expect(schema.properties.action.enum).toEqual(["list", "get", "search", "propose", "note_gap"]);
+  });
+
+  it("note_gap appends to the capability-gap log and never reaches the catalog or a draft", async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const tool = narrowed(reviewCtx("chat-gap"), recordingBase(calls));
+    const res = await tool.execute({ action: "note_gap", params: {
+      summary: "memory_search cannot see sessions synced from another machine",
+      tools_tried: ["memory_search", "search_past_sessions", "bad name!"],
+      workaround: "grep the raw session jsonl",
+    } });
+    expect(res.isError).toBeFalsy();
+    expect(calls).toHaveLength(0);
+    expect(mocks.propose).not.toHaveBeenCalled();
+    const { readCapabilityGaps } = await import("../src/cognition/cross-session-learning/capability-gaps.js");
+    expect(readCapabilityGaps()).toEqual([expect.objectContaining({
+      sessionId: "chat-gap",
+      summary: "memory_search cannot see sessions synced from another machine",
+      toolsTried: ["memory_search", "search_past_sessions"],
+      workaround: "grep the raw session jsonl",
+    })]);
+    expect((await tool.execute({ action: "note_gap", params: {} })).isError).toBe(true);
+  });
+
+  it("propose hands the model's learned claim to the write path with review origin", async () => {
+    mocks.propose.mockReturnValue({ ok: true, candidateId: "learned-00000000000000000000", name: PROPOSAL.name, created: true, drafted: true, notice: null });
+    await narrowed(reviewCtx("chat-session-42", { projectNames: ["jobs_in_order"] })).execute({ action: "propose", params: { ...PROPOSAL, projectNames: ["forged"] } });
+    expect(mocks.propose).toHaveBeenCalledWith(expect.objectContaining({
+      origin: "review",
+      learned: { kind: "external_string", detail: "External > Create PO" },
+      projectNames: ["jobs_in_order"],
+    }));
+    mocks.propose.mockClear();
+    await narrowed().execute({ action: "propose", params: { ...PROPOSAL, learned: "not an object" } });
+    expect(mocks.propose).toHaveBeenCalledWith(expect.objectContaining({ learned: undefined }));
   });
 
   it("cannot write custom.json: create and edit are refused and propose never touches the catalog", async () => {
@@ -450,7 +486,13 @@ describe("skill-review run", () => {
     expect(userMessage).toContain("External > Create PO");
     expect(userMessage).toContain("untrusted-recalled-data");
     expect(history).toEqual([]);
-    expect(opts.systemPrompt).toBe(SKILL_REVIEW_SYSTEM_PROMPT);
+    // The static prompt, then the inventory of what the agent already has —
+    // rendered from the same tool set the fork was built with, sorted, so every
+    // fork in a process shares one cached prefix.
+    expect(opts.systemPrompt.startsWith(SKILL_REVIEW_SYSTEM_PROMPT)).toBe(true);
+    expect(opts.systemPrompt).toBe(buildSkillReviewSystemPrompt(fakeDeps().allAgentTools));
+    expect(opts.systemPrompt).toContain("## What the agent already does natively");
+    expect(opts.systemPrompt.indexOf("- agent_spawn: stub agent_spawn")).toBeLessThan(opts.systemPrompt.indexOf("- bash: stub bash"));
     expect(opts.lane).toBe("background");
     expect(opts.model).toBe("main-model");
     expect(opts.tools.map((t: ToolDefinition) => t.name)).toEqual(["protocol"]);

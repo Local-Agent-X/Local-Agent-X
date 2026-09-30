@@ -44,6 +44,9 @@ function handleSettingsChanged(msg) {
   if ('learningMode' in msg.settings && typeof renderLearningMode === 'function') {
     renderLearningMode(msg.settings.learningMode);
   }
+  if ('skillReviewEnabled' in msg.settings && typeof renderSkillReviewEnabled === 'function') {
+    renderSkillReviewEnabled(msg.settings.skillReviewEnabled);
+  }
   // Web access (mode + allowed sites) changed from the chat's "Allow & retry"
   // notice or another tab: the Settings section redraws from the broadcast.
   if (msg.settings.egress && typeof renderWebAccess === 'function') {

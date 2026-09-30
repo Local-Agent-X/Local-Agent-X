@@ -111,6 +111,7 @@ export async function migrateAgentAuthoredProtocols(
       triggers: protocol.triggers ?? [],
       body: bodyOf(protocol),
       outcome: "unverified",
+      origin: "migration",
       sessionId,
       toolSequence: sessionId === MIGRATED_SESSION ? [] : await evidence(sessionId),
       timestamp: protocol.source?.authoredAt ?? now,

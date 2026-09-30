@@ -106,6 +106,8 @@ export function describeChange(field: string, value: unknown): string {
       return `Change the browser identity mode (browserMode → "${String(value)}")?`;
     case "learningMode":
       return `Change how newly learned skills activate (learningMode → "${String(value)}")?`;
+    case "skillReviewEnabled":
+      return on ? "Resume reviewing finished turns for reusable procedures (skillReviewEnabled)?" : "Stop reviewing finished turns for reusable procedures (skillReviewEnabled)?";
     case "enableUiEventBus":
       return on ? "Let your UI activity be summarized into the agent's context (enableUiEventBus)?" : "Stop feeding UI activity to the agent?";
     default:

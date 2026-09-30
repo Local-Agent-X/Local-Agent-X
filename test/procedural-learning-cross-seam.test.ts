@@ -224,6 +224,7 @@ const PO_PROPOSE = {
     triggers: ["thriveventory purchase order", "thrive po from invoice"],
     body: "## Preconditions\n- Logged into Thriveventory\n\n## Steps\n1. External > Create PO — never the AI import.",
     outcome: "verified",
+    learned: { kind: "external_string", detail: "External > Create PO — never the AI import." },
   },
 };
 
@@ -476,10 +477,15 @@ describe("(b) a procedure the fork proposes is served only once the user keeps i
     expect(item).toMatchObject({ name: "thriveventory_purchase_order", source: "reviewed", state: "candidate", activeVersionId: null });
     expect(getAllProtocols().some((p) => p.name === item.id)).toBe(false);
 
-    // The chat was told, with what Keep needs.
+    // One session is a coincidence: no card yet. A second, independent
+    // session proposing the same procedure is what earns the user's attention.
+    expect(notify).not.toHaveBeenCalled();
+    forkCalls(PO_PROPOSE);
+    requestSkillReview({ sessionId: OTHER, opId: "op-xseam-other", toolSequence: PO_TOOLS, now: Date.now() - SKILL_REVIEW_SETTLE_MS });
+    await expect(runSkillReviewPass()).resolves.toMatchObject({ reviewed: 1, failed: 0 });
     expect(notify).toHaveBeenCalledTimes(1);
     const [sessionId, event] = notify.mock.calls[0];
-    expect(sessionId).toBe(CHAT);
+    expect(sessionId).toBe(OTHER);
     expect(event).toMatchObject({ type: "learning_notice", id: item.id, name: "thriveventory_purchase_order", canReject: true, expectedActiveVersionId: null });
 
     // Keep → activate. Now the learned tier serves it for the same request.

@@ -15,3 +15,18 @@ describe("learning mode settings contract", () => {
     expect(setting?.validate.safeParse("silent").success).toBe(false);
   });
 });
+
+describe("skill review settings contract", () => {
+  it("is on by default and is its own field, not a learningMode value", () => {
+    expect(configSchema.parse({}).skillReviewEnabled).toBe(true);
+    expect(configSchema.parse({ learningMode: "autonomous", skillReviewEnabled: false })).toMatchObject({ learningMode: "autonomous", skillReviewEnabled: false });
+  });
+
+  it("is runtime-bound, broadcast, and user-protected", () => {
+    const setting = FLIPPABLE_SETTINGS.find((entry) => entry.field === "skillReviewEnabled");
+    expect(setting).toMatchObject({ runtime: true, broadcast: true, protected: true });
+    expect(isProtectedSetting("skillReviewEnabled")).toBe(true);
+    expect(setting?.validate.safeParse(false).success).toBe(true);
+    expect(setting?.validate.safeParse("off").success).toBe(false);
+  });
+});

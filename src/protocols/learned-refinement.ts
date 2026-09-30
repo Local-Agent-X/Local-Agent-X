@@ -17,6 +17,11 @@ const PROMOTION_RATE = 0.85;
  *  distinct sessions independently proposed it from runs that held up. */
 export const REVIEWED_PROCEDURE_MIN_SESSIONS = 3;
 
+/** The user is asked to keep a reviewed procedure only once this many distinct
+ *  sessions proposed it. One run is a coincidence; a card for every coincidence
+ *  produced 54 drafts and zero keeps on the first machine this shipped on. */
+export const REVIEWED_PROCEDURE_NOTICE_SESSIONS = 2;
+
 /** Sessions that count as independent evidence for a reviewed procedure: each
  *  proposed it from a verified run, and none of its proposals reported the
  *  user reverting or correcting the work. */
@@ -34,6 +39,16 @@ export function reviewedProcedureConfidence(proposals: readonly ReviewedProposal
 export function hasIndependentReviewedEvidence(candidate: LearnedCandidate): boolean {
   if (!isReviewedProcedureCandidate(candidate)) return false;
   return qualifyingReviewedSessions(candidate.evidence.proposals ?? []) >= REVIEWED_PROCEDURE_MIN_SESSIONS;
+}
+
+/** Whether a reviewed procedure has earned the user's attention. A migrated
+ *  procedure (an "unverified" proposal) was already in the user's catalog and
+ *  is reviewable at once; a review-proposed one waits for a second session. */
+export function reviewedProcedureNoticeReady(candidate: LearnedCandidate): boolean {
+  if (!isReviewedProcedureCandidate(candidate)) return false;
+  const proposals = candidate.evidence.proposals ?? [];
+  if (proposals.some((p) => p.outcome === "unverified")) return true;
+  return qualifyingReviewedSessions(proposals) >= REVIEWED_PROCEDURE_NOTICE_SESSIONS;
 }
 
 export type SafetyRecovery =

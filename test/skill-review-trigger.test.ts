@@ -232,6 +232,18 @@ describe("skill-review trigger — enqueue decision", () => {
     expect(renderOpTranscript(queued[0].opId)).toContain("external-create-po");
   });
 
+  it("queues nothing while skillReviewEnabled is off, whatever the turn did", async () => {
+    setRuntimeConfig({ ...getRuntimeConfig(), skillReviewEnabled: false });
+    try {
+      commit();
+      requestSkillReviewForOp(chatOp(), "sess-chat", TERMINAL_TURN);
+      await flushTrigger();
+      expect(peekSkillReviewQueue()).toHaveLength(0);
+    } finally {
+      setRuntimeConfig({ ...getRuntimeConfig(), skillReviewEnabled: true });
+    }
+  });
+
   it("a trivial op queues nothing", async () => {
     staged.turns = [{ turnIdx: 0, toolCallSummary: [{ tool: "read" }, { tool: "read" }], observedTools: [], terminalReason: "done" }];
     staged.messages = purchaseOrderMessages();

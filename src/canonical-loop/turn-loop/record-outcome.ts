@@ -26,6 +26,7 @@ import { hasExternalIngestion, isExternalIngestingTool } from "../../data-lineag
 import { getTaintSummary } from "../../data-lineage/taint.js";
 import { isReviewWorthy, noteSessionTurn, requestSkillReview } from "../../server/background-jobs/skill-review-queue.js";
 import { boostNudgePriority } from "../../memory/curate-nudge.js";
+import { getRuntimeConfig } from "../../config.js";
 import { createLogger } from "../../logger.js";
 
 const logger = createLogger("canonical-loop.turn-loop.record-outcome");
@@ -136,6 +137,7 @@ export function requestSkillReviewForOp(op: Op, sessionId: string, turnIdx: numb
   // "the op executing the user's turn" (op-store.ts); `parentOpId` rejects a
   // spawned op that named itself chat_turn.
   if (!isInteractiveHostOpType(op.type) || op.parentOpId) return;
+  if (!getRuntimeConfig().skillReviewEnabled) return;
   const opId = op.id;
   setImmediate(() => runSkillReviewTrigger(opId, sessionId, turnIdx));
 }

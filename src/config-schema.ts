@@ -42,6 +42,10 @@ export const configSchema = z.object({
   profile: z.enum(["home", "dev", "enterprise"]).default("home"),
   toolApproval: z.enum(["auto", "confirm-risky", "confirm-all"]).default("auto"),
   learningMode: z.enum(["assisted", "autonomous"]).default("assisted"),
+  /** Whether a finished chat turn is reviewed in the background for a
+   *  reusable procedure. Independent of learningMode, which governs how an
+   *  already-learned procedure activates. */
+  skillReviewEnabled: z.boolean().default(true),
   retentionDays: z.number().int().min(7).max(365).default(90),
   logLevel: z.enum(["basic", "detailed", "full-audit"]).default("basic"),
   /** Bash sandbox mode. "guarded" (default, macOS/Linux) runs bash under a

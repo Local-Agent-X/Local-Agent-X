@@ -107,8 +107,7 @@ describe("resolveAndPinHost", () => {
 
   // Pin resolver outcomes so host-machine DNS cannot change this security contract.
   it("blocks 'localhost' when DNS resolves it to loopback", async () => {
-    vi.spyOn(dns, "resolve4").mockResolvedValue(["127.0.0.1"]);
-    vi.spyOn(dns, "resolve6").mockResolvedValue([]);
+    vi.spyOn(dns, "lookup").mockResolvedValue([{ address: "127.0.0.1", family: 4 }] as never);
 
     const result = await resolveAndPinHost("localhost");
     expect(result.ok).toBe(false);
@@ -118,8 +117,7 @@ describe("resolveAndPinHost", () => {
   });
 
   it("fails closed for a host that never resolves (.invalid TLD)", async () => {
-    vi.spyOn(dns, "resolve4").mockRejectedValue(new Error("ENOTFOUND"));
-    vi.spyOn(dns, "resolve6").mockRejectedValue(new Error("ENOTFOUND"));
+    vi.spyOn(dns, "lookup").mockRejectedValue(Object.assign(new Error("ENOTFOUND"), { code: "ENOTFOUND" }));
 
     const result = await resolveAndPinHost("nonexistent-host-xyz.invalid");
     expect(result.ok).toBe(false);
@@ -450,8 +448,7 @@ describe("evaluateWebFetch — loopback alias names track the literal (C4)", () 
   // ATTACKER-controlled name that resolves to loopback/private is still
   // rejected; only the fixed alias list skips resolution.
   it("still blocks DNS rebinding of an attacker host onto a REGISTERED local port", async () => {
-    vi.spyOn(dns, "resolve4").mockResolvedValue(["127.0.0.1"]);
-    vi.spyOn(dns, "resolve6").mockResolvedValue([]);
+    vi.spyOn(dns, "lookup").mockResolvedValue([{ address: "127.0.0.1", family: 4 }] as never);
     try {
       const d = await validateUrlWithDns(
         EMPTY_ALLOWLIST, false, "7007", "http://rebind.attacker.example:5173/", "permissive", new Set(["5173"]),
@@ -464,8 +461,7 @@ describe("evaluateWebFetch — loopback alias names track the literal (C4)", () 
   });
 
   it("still blocks DNS rebinding onto a private LAN address", async () => {
-    vi.spyOn(dns, "resolve4").mockResolvedValue(["10.1.2.3"]);
-    vi.spyOn(dns, "resolve6").mockResolvedValue([]);
+    vi.spyOn(dns, "lookup").mockResolvedValue([{ address: "10.1.2.3", family: 4 }] as never);
     try {
       const d = await validateUrlWithDns(EMPTY_ALLOWLIST, false, "7007", "http://rebind.attacker.example/", "permissive");
       expect(d.allowed).toBe(false);
@@ -478,7 +474,7 @@ describe("evaluateWebFetch — loopback alias names track the literal (C4)", () 
   // The DNS pass must not undo the sync ALLOW for an alias (that would re-break
   // the false positive one layer down) — nor invent one for a denied port.
   it("validateUrlWithDns keeps the alias verdict without resolving it", async () => {
-    const spy4 = vi.spyOn(dns, "resolve4");
+    const spy4 = vi.spyOn(dns, "lookup");
     try {
       expect((await validateUrlWithDns(EMPTY_ALLOWLIST, false, "7007", "http://localhost:5173/", "permissive", new Set(["5173"]))).allowed).toBe(true);
       expect((await validateUrlWithDns(EMPTY_ALLOWLIST, false, "7007", "http://localhost:9999/", "permissive", new Set(["5173"]))).allowed).toBe(false);
@@ -491,8 +487,7 @@ describe("evaluateWebFetch — loopback alias names track the literal (C4)", () 
   // resolveAndPinHost is a separate chokepoint with no port context; it must keep
   // fail-closing on loopback so nothing depends on it for the carve-out.
   it("resolveAndPinHost still refuses a loopback resolve (unchanged boundary)", async () => {
-    vi.spyOn(dns, "resolve4").mockResolvedValue(["127.0.0.1"]);
-    vi.spyOn(dns, "resolve6").mockResolvedValue([]);
+    vi.spyOn(dns, "lookup").mockResolvedValue([{ address: "127.0.0.1", family: 4 }] as never);
     try {
       expect((await resolveAndPinHost("localhost")).ok).toBe(false);
     } finally {

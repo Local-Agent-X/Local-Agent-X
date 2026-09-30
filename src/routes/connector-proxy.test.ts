@@ -18,15 +18,14 @@ vi.mock("node:dns", async (importOriginal) => {
   return {
     ...actual,
     default: actual,
-    promises: { ...actual.promises, resolve4: vi.fn(), resolve6: vi.fn() },
+    promises: { ...actual.promises, lookup: vi.fn() },
   };
 });
 
 import { promises as dns } from "node:dns";
 import { parseManifest, matchAllow, forwardWithTimeout } from "./connector-proxy.js";
 
-const resolve4 = dns.resolve4 as unknown as ReturnType<typeof vi.fn>;
-const resolve6 = dns.resolve6 as unknown as ReturnType<typeof vi.fn>;
+const lookup = dns.lookup as unknown as ReturnType<typeof vi.fn>;
 
 // undici's fetch wraps a connect.lookup rejection as a generic
 // `TypeError: fetch failed`, stashing the real SSRF reason in `.cause` (which
@@ -141,8 +140,7 @@ describe("matchAllow", () => {
 
 describe("forwardWithTimeout connect-time SSRF guard", () => {
   beforeEach(() => {
-    resolve4.mockReset();
-    resolve6.mockReset();
+    lookup.mockReset();
   });
 
   // The core skeptic break: an upstream that PASSES the parse-time string check
@@ -150,19 +148,17 @@ describe("forwardWithTimeout connect-time SSRF guard", () => {
   // metadata / private range. Parse-time-only code dials it happily; the pinning
   // dispatcher must refuse the connection once DNS reveals the private address.
   it("blocks an https upstream whose hostname resolves to a private/metadata IP", async () => {
-    resolve4.mockResolvedValue(["169.254.169.254"]); // e.g. 169.254.169.254.nip.io
-    resolve6.mockResolvedValue([]);
+    lookup.mockResolvedValue([{ address: "169.254.169.254", family: 4 }]); // e.g. 169.254.169.254.nip.io
 
     await expectSsrfBlocked("https://169-254-169-254.nip.io/latest/meta-data/");
 
     // Proof the block happened at CONNECT time, after resolving the host —
     // not by a parse-time string check (the host is not an IP literal).
-    expect(resolve4).toHaveBeenCalledWith("169-254-169-254.nip.io");
+    expect(lookup).toHaveBeenCalledWith("169-254-169-254.nip.io", { all: true });
   });
 
   it("also blocks an https upstream whose hostname resolves to an RFC1918 IP", async () => {
-    resolve4.mockResolvedValue(["10.0.0.5"]);
-    resolve6.mockResolvedValue([]);
+    lookup.mockResolvedValue([{ address: "10.0.0.5", family: 4 }]);
 
     await expectSsrfBlocked("https://internal.attacker-controlled.example/x");
   });
@@ -176,8 +172,7 @@ describe("forwardWithTimeout connect-time SSRF guard", () => {
     await expect(
       forwardWithTimeout("http://127.0.0.1:1/health", { method: "GET", headers: {} }, 1000, true),
     ).rejects.toThrow();
-    expect(resolve4).not.toHaveBeenCalled();
-    expect(resolve6).not.toHaveBeenCalled();
+    expect(lookup).not.toHaveBeenCalled();
   });
 
   it("refuses redirects instead of forwarding connector credentials to a second origin", async () => {

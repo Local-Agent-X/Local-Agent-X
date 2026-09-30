@@ -6,10 +6,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const resolve4 = vi.fn<(host: string) => Promise<string[]>>();
 const resolve6 = vi.fn<(host: string) => Promise<string[]>>();
 
+// resolveAndPinHost reads dns.promises.lookup (the OS resolver); the fixtures
+// below still answer in A and AAAA records, composed into one lookup answer.
 vi.mock("node:dns", () => ({
   promises: {
-    resolve4: (host: string) => resolve4(host),
-    resolve6: (host: string) => resolve6(host),
+    lookup: async (host: string) => [
+      ...(await resolve4(host)).map((address) => ({ address, family: 4 })),
+      ...(await resolve6(host)).map((address) => ({ address, family: 6 })),
+    ],
   },
 }));
 

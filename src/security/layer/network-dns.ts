@@ -15,16 +15,46 @@ import { canonicalizeHost, isPrivateIPv4, isPrivateIPv6 } from "./ip-classificat
 
 const logger = createLogger("security.network-dns");
 
+// How long a lookup may take before the caller is told no, instead of waiting
+// on it. The proxy's CONNECT and http_request both sit on this answer; a
+// resolver that has stopped answering must fail closed quickly, not after the
+// client's own timeout has already killed the request.
+const LOOKUP_TIMEOUT_MS = 8_000;
+
+/**
+ * Resolve every address of a hostname through the OS resolver (getaddrinfo),
+ * not c-ares (dns.resolve4/6). The two differ in a long-lived process: c-ares
+ * talks UDP to the nameservers it read at startup and, on this Mac after
+ * sleep/wake, intermittently returned nothing for real hosts (eight since
+ * 2026-08-31, registry.npmjs.org among them) while the same process reached
+ * api.anthropic.com through getaddrinfo in the same minute. getaddrinfo is
+ * what every other connection in the process — and curl — already uses, and it
+ * follows the live network config (VPN and scoped resolvers included).
+ * Rejects with the lookup's own error, or a timeout error after
+ * LOOKUP_TIMEOUT_MS; the caller fails closed on either.
+ */
+async function lookupAll(host: string): Promise<Array<{ address: string; family: number }>> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(Object.assign(new Error(`lookup timed out after ${LOOKUP_TIMEOUT_MS}ms`), { code: "ETIMEOUT" })), LOOKUP_TIMEOUT_MS);
+  });
+  try {
+    return await Promise.race([dns.lookup(host, { all: true }), deadline]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 /** Resolve a hostname to a single validated public IP for connection pinning.
  *  - Literal IPv4/IPv6 (host is already an IP): validated synchronously here —
  *    a private/reserved/metadata literal is BLOCKED (ok: false), a public literal
  *    returns { ok: true, pin: null } (nothing to resolve). This guard runs on
  *    EVERY redirect hop, so a 302 to e.g. 169.254.169.254 can't slip through
  *    (evaluateWebFetch only validates the original pre-redirect URL).
- *  - Hostname: resolves A + AAAA; if ANY resolved address is private/reserved,
- *    blocks (DNS-rebinding protection); otherwise returns the first valid
- *    address as the pin (prefer IPv4 if present, else IPv6).
- *  - DNS failure: fail-closed (ok: false).
+ *  - Hostname: resolves every address (lookupAll); if ANY resolved address is
+ *    private/reserved, blocks (DNS-rebinding protection); otherwise returns
+ *    the first valid address as the pin (prefer IPv4 if present, else IPv6).
+ *  - DNS failure or timeout: fail-closed (ok: false), the cause in the reason.
  *
  *  NOTE: loopback stays fail-closed here even for the `localhost` alias family,
  *  because this function has no PORT context and therefore cannot apply the
@@ -69,15 +99,19 @@ export async function resolveAndPinHost(host: string): Promise<
     return { ok: true, pin: null };
   }
 
-  let addresses: string[];
-  let addresses6: string[];
+  let records: Array<{ address: string; family: number }>;
   try {
-    addresses = await dns.resolve4(host).catch(() => []);
-    addresses6 = await dns.resolve6(host).catch(() => []);
-  } catch {
-    addresses = [];
-    addresses6 = [];
+    records = await lookupAll(host);
+  } catch (e) {
+    const cause = (e as NodeJS.ErrnoException).code ?? (e as Error).message;
+    logger.warn(`[security] DNS resolution failed for ${host}: ${cause}`);
+    return {
+      ok: false,
+      reason: `Blocked: DNS resolution failed for ${host} (${cause}; fail-closed SSRF protection)`,
+    };
   }
+  const addresses = records.filter((r) => r.family === 4).map((r) => r.address);
+  const addresses6 = records.filter((r) => r.family === 6).map((r) => r.address);
 
   // Host doesn't resolve at all → fail-closed.
   if (addresses.length === 0 && addresses6.length === 0) {

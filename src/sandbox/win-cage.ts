@@ -46,6 +46,12 @@ const logger = createLogger("sandbox.win-cage");
 
 export const WIN_CAGE_HELPER_ENV = "LAX_WIN_CAGE_HELPER";
 
+/** LAX's own WFP sublayer and sandbox account, so a machine that also runs
+ *  Anthropic's sandbox-runtime keeps both installs. The same values live in
+ *  scripts/win-cage/provision.ps1 (the one installer); a test pins them equal. */
+export const WIN_CAGE_SUBLAYER_GUID = "6f3b9c1e-4a7d-4e52-9c0b-2d8e5f1a7b34";
+export const WIN_CAGE_SANDBOX_USER = "lax-sandbox";
+
 /** The loopback ports the fence permits. The decision is "all of them"; the
  *  upstream helper caps a permit at 50 ports (see the header), so for now it
  *  is the proxy's range, and the wide permit waits for LAX's own helper build.
@@ -124,7 +130,7 @@ export function winCageStatus(): WinCageStatus {
   if (underUserProfile(helper)) {
     return { helper, installed: false, detail: `The cage helper is under your user profile (${helper}), which the sandbox user cannot read, so it cannot start the cage; move it to ${winCageHelperDir()}.` };
   }
-  const r = runHelper(helper, ["status"]);
+  const r = runHelper(helper, ["status", "--sublayer-guid", WIN_CAGE_SUBLAYER_GUID]);
   if (r.code !== 0) return { helper, installed: false, detail: `The cage helper could not report its status (exit ${r.code}).` };
   try {
     const parsed = parseHelperStatus(r.stdout);
@@ -305,6 +311,8 @@ export function wrapForWinCage(shell: string, shellArgs: string[], env: Record<s
 
 const INSTALL_EXIT: Record<number, string> = {
   0: "installed",
+  2: "the cage helper is not present",
+  3: "the cage helper's signature was rejected",
   10: "the administrator prompt was cancelled",
   12: "the network filters could not be installed",
   13: "already installed with a different port range or user; remove it first",
@@ -315,29 +323,48 @@ export function installExitDetail(code: number): string {
   return INSTALL_EXIT[code] ?? `the helper exited with code ${code}`;
 }
 
-function runElevated(args: string[]): Promise<{ ok: boolean; code: number; detail: string }> {
-  const helper = resolveWinCageHelper();
-  if (!helper) return Promise.resolve({ ok: false, code: -1, detail: "the cage helper is not present" });
+/** The one provisioning script (scripts/win-cage/provision.ps1): the installer,
+ *  Settings and the uninstaller all run it, and it elevates itself once. */
+function provisionScript(projectRoot = process.cwd()): string {
+  return join(projectRoot, "scripts", "win-cage", "provision.ps1");
+}
+
+/** A helper the installer staged with this install, before any is installed
+ *  machine-wide: `<installRoot>/vendor/srt-win/srt-win.exe`. */
+export function stagedWinCageHelper(projectRoot = process.cwd()): string | null {
+  const staged = join(projectRoot, "vendor", "srt-win", "srt-win.exe");
+  return existsSync(staged) ? staged : null;
+}
+
+function runProvision(args: string[]): Promise<{ ok: boolean; code: number; detail: string }> {
   return new Promise((resolve) => {
-    const child = spawn(helper, args, { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
-    let err = "";
-    child.stderr?.on("data", (d) => { err += d.toString(); });
+    const child = spawn(join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
+      ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", provisionScript(), ...args],
+      { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+    let out = "";
+    child.stdout?.on("data", (d) => { out += d.toString(); });
+    child.stderr?.on("data", (d) => { out += d.toString(); });
     child.once("error", (e) => resolve({ ok: false, code: -1, detail: e.message }));
     child.once("exit", (code) => {
       const c = code ?? -1;
       _resetWinCageProbe();
-      resolve({ ok: c === 0, code: c, detail: c === 0 ? installExitDetail(0) : `${installExitDetail(c)}${err.trim() ? ` — ${err.trim().split("\n").slice(-1)[0]}` : ""}` });
+      const last = out.trim().split("\n").slice(-1)[0]?.trim();
+      resolve({ ok: c === 0, code: c, detail: c === 0 ? installExitDetail(0) : `${installExitDetail(c)}${last ? ` — ${last}` : ""}` });
     });
   });
 }
 
-/** Provision the sandbox user and the fence with loopback open. UAC prompt. */
+/** Provision the sandbox user and the fence. One administrator prompt. The
+ *  helper comes from the machine-wide folder when it is already there, else
+ *  from the copy the installer staged with this install. */
 export function installWinCage(): Promise<{ ok: boolean; code: number; detail: string }> {
   const { from, to } = winCageLoopbackPermit();
-  return runElevated(["install", "--proxy-port-range", `${from}-${to}`]);
+  const helper = resolveWinCageHelper() ?? stagedWinCageHelper();
+  if (!helper) return Promise.resolve({ ok: false, code: 2, detail: installExitDetail(2) });
+  return runProvision(["-Helper", helper, "-PortRange", `${from}-${to}`]);
 }
 
-/** Remove the fence and the sandbox user. UAC prompt. */
+/** Remove the fence, the sandbox user and the machine-wide helper. One administrator prompt. */
 export function uninstallWinCage(): Promise<{ ok: boolean; code: number; detail: string }> {
-  return runElevated(["uninstall"]);
+  return runProvision(["-Uninstall"]);
 }

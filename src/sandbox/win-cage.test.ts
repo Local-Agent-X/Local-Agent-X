@@ -1,5 +1,7 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { installExitDetail, parseHelperStatus, underUserProfile, winCageEnvOverlay, winCageHelperDir, winCageLoopbackPermit, wrapForWinCage, WIN_CAGE_HELPER_MAX_PERMIT_WIDTH } from "./win-cage.js";
+import { installExitDetail, parseHelperStatus, stagedWinCageHelper, underUserProfile, winCageEnvOverlay, winCageHelperDir, winCageLoopbackPermit, wrapForWinCage, WIN_CAGE_HELPER_MAX_PERMIT_WIDTH, WIN_CAGE_SANDBOX_USER, WIN_CAGE_SUBLAYER_GUID } from "./win-cage.js";
 import { winCageReadGrants } from "./win-cage-grants.js";
 
 describe("win-cage — what the caged shell is granted to read", () => {
@@ -25,6 +27,18 @@ describe("win-cage — what the caged shell is granted to read", () => {
     expect(winCageReadGrants("C:\\Users\\peter\\app\\git\\bin\\bash.exe", "C:\\Users\\peter\\app\\git\\node\\node.exe", "C:\\Users\\peter\\app", home)).toEqual([
       "C:\\Users\\peter\\app\\git",
     ]);
+  });
+});
+
+describe("win-cage — the app and the provisioning script name the same cage", () => {
+  it("sublayer GUID and sandbox account match scripts/win-cage/provision.ps1", () => {
+    const script = readFileSync(join(process.cwd(), "scripts", "win-cage", "provision.ps1"), "utf-8");
+    expect(script).toContain(`$SublayerGuid = "${WIN_CAGE_SUBLAYER_GUID}"`);
+    expect(script).toContain(`$SandboxUser = "${WIN_CAGE_SANDBOX_USER}"`);
+  });
+
+  it("the staged helper is the installer's copy under the install root, or nothing", () => {
+    expect(stagedWinCageHelper("C:\\definitely\\not\\here")).toBeNull();
   });
 });
 

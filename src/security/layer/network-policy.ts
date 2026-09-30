@@ -18,7 +18,7 @@ import {
 // every existing `from "./network-policy.js"` import site keeps working.
 import { resolveAndPinHost } from "./network-dns.js";
 export { resolveAndPinHost } from "./network-dns.js";
-import { ollamaLoopbackPort, localRuntimeLoopbackPorts, manualRuntimeHostPorts, devServerLoopbackPorts, ownedLoopbackPorts } from "./security-config.js";
+import { manualRuntimeHostPorts, liveLocalServicePorts } from "./security-config.js";
 import { endpointHostPort } from "../../local-runtimes/admission.js";
 import { isLocalOnlyMode, isLoopbackUrl, LOCAL_ONLY_BLOCK_MESSAGE } from "../../local-only-policy.js";
 
@@ -246,7 +246,6 @@ export function loadEgressConfig(): EgressConfig {
   }
 
   let mode: EgressMode = "permissive";
-  const localServicePorts = new Set<string>();
   try {
     const cfgPath = join(dir, "security.json");
     if (existsSync(cfgPath)) {
@@ -254,25 +253,16 @@ export function loadEgressConfig(): EgressConfig {
       if (cfg.egressMode === "strict" || cfg.egressMode === "permissive") {
         mode = cfg.egressMode;
       }
-      if (Array.isArray(cfg.localServicePorts)) {
-        for (const p of cfg.localServicePorts) {
-          const n = Number(p);
-          if (Number.isInteger(n) && n > 0 && n <= 65535) localServicePorts.add(String(n));
-        }
-      }
     }
   } catch {}
 
-  // Fold in the configured ollama loopback port + DISCOVERED local-runtime
-  // ports (plus loopback manual adds) so a redirect re-check (this path)
-  // agrees with the pre-dispatch gate's localServicePorts. Same
-  // validate-as-loopback guarantee. Manual runtime entries fold in as exact
+  // The same live derivation the pre-dispatch gate reads (security-config.ts
+  // liveLocalServicePorts): configured ports, the ollama + discovered
+  // local-runtime ports, dev servers and process_start listeners, minus the
+  // reserved ports — so a redirect re-check here, the shell egress proxy and
+  // the cages all agree with the gate. Manual runtime entries fold in as exact
   // host:port identities so operator-named (incl. LAN) endpoints agree too.
-  const ollama = ollamaLoopbackPort();
-  if (ollama) localServicePorts.add(ollama);
-  for (const p of localRuntimeLoopbackPorts()) localServicePorts.add(p);
-  for (const p of devServerLoopbackPorts()) localServicePorts.add(p);
-  for (const p of ownedLoopbackPorts()) localServicePorts.add(p);
+  const localServicePorts = liveLocalServicePorts();
 
   return { allowlist, configured, mode, localServicePorts, manualHostPorts: manualRuntimeHostPorts() };
 }

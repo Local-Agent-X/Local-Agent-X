@@ -65,9 +65,11 @@ upstream?
    quarantine on LAX installs today. Shipping it means building and signing
    it ourselves either way.
 4. **macOS is the one platform where LAX is already ahead.** LAX's guarded
-   profile has confined the network to loopback since August and, as of
-   today, allowlists unix sockets in the same shape srt does. Replacing it
-   would change the write posture (allow-only) for no security gain.
+   profile has denied off-machine network since August, admits only the
+   registered loopback ports (as of 2026-09-30 — the same union Linux
+   bridges and the proxy judges by) and allowlists unix sockets in the same
+   shape srt does. Replacing it would change the write posture (allow-only)
+   for no security gain.
 
 ## What is worth reusing
 
@@ -131,8 +133,8 @@ Order of work, each step shippable on its own:
   (one UAC prompt; it creates a local user and machine-wide WFP filters, both
   removable with `windows-uninstall`). Not run without an explicit yes.
 - ~~The loopback policy for caged Windows spawns.~~ Decided 2026-09-28: loopback
-  is OPEN inside the fence on Windows, as on macOS (the permit covers every
-  loopback port; the proxy is protected by its token). Not yet delivered:
+  is OPEN inside the fence on Windows (the permit covers every loopback port;
+  the proxy is protected by its token). Not yet delivered:
   the upstream helper's install refuses a permit wider than 50 ports
   (measured on 0.0.1), so the installed fence permits only the proxy's range
   and Windows behaves like Linux (loopback through the proxy, no NO_PROXY)
@@ -140,10 +142,15 @@ Order of work, each step shippable on its own:
   off-machine egress; closing loopback breaks every non-HTTP dev tool, and a
   narrower permit still could not be scoped to the caged shell. Linux is
   closed by its mechanism (a namespace's loopback is its own): host services
-  are reachable through the proxy, and raw TCP to a registered local service
-  needs a per-port forwarder into the namespace — a follow-up. The one
-  loopback egress channel LAX creates itself, the agent browser's debugging
-  port, is to be closed at its source (a pipe, not a port).
+  are reachable through the proxy, and registered local services directly
+  through the in-cage forwarder (delivered 2026-09-28). macOS (2026-09-30)
+  admits the same registered set in the seatbelt profile, like Linux: the
+  kernel honors a port-specific allow for every port but a port-specific
+  deny for only a few (measured on Darwin 25), so an open loopback with the
+  debugging port carved out was never enforceable there. The one loopback
+  egress channel LAX creates itself, the agent browser's debugging port, is
+  withheld from the admitted set at its source (`security-config.ts`
+  `reservedLoopbackPorts`), so no cage, proxy or `http_request` admits it.
 
 ## Step 5 — Windows escape matrix (2026-09-29, as the sandbox account; re-run in CI on every push by `scripts/win-cage/escape-matrix.ps1`)
 
@@ -184,5 +191,9 @@ Decision (2026-09-29): default-on, shipped as follows.
    proxy). Reported to Anthropic's vulnerability disclosure program for the
    Windows helper, since their design shares it.
 
-Residual outside this plan: Electron's opt-in in-app debugging port
-(`browserNativeDriving`) is still a loopback port when that option is on.
+Closed 2026-09-30: Electron's opt-in in-app debugging port
+(`browserNativeDriving`) is reserved out of every loopback admission
+(`security-config.ts reservedLoopbackPorts`): the macOS profile never allows
+it, the Linux forwarder never listens on it, and the proxy and `http_request`
+never judge it reachable. Windows' wide permit, when delivered, must derive
+from the same union.

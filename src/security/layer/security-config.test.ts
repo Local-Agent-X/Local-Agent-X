@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { loadFileAccessModeAtLeast, manualRuntimeHostPorts } from "./security-config.js";
+import { loadFileAccessModeAtLeast, manualRuntimeHostPorts, liveLocalServicePorts, reservedLoopbackPorts } from "./security-config.js";
 
 // loadFileAccessModeAtLeast is what the subsystem agents (cron, build-app,
 // autopilot, self-edit) use so they HONOR the user's global file-access setting
@@ -83,5 +83,50 @@ describe("manualRuntimeHostPorts — admission entries feed agent egress (C7)", 
       localRuntimes: [{ kind: "bogus", baseUrl: "http://192.168.1.50:11434" }, { kind: "ollama", baseUrl: "nope" }],
     }));
     expect(manualRuntimeHostPorts().size).toBe(0);
+  });
+});
+
+// The loopback ports an agent path may reach come from ONE derivation, and the
+// in-app browser's debugging port is withheld there — so no cage, proxy or
+// http_request gate can admit it, and none needs its own deny (the macOS
+// kernel cannot reliably carve one port out of an allowed loopback).
+describe("liveLocalServicePorts — one admitted-loopback derivation, minus the reserved ports", () => {
+  let dir: string;
+  const prev = { data: process.env.LAX_DATA_DIR, cdp: process.env.LAX_ELECTRON_CDP_PORT };
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "lax-cfg-"));
+    process.env.LAX_DATA_DIR = dir;
+    delete process.env.LAX_ELECTRON_CDP_PORT;
+  });
+  afterEach(() => {
+    if (prev.data === undefined) delete process.env.LAX_DATA_DIR; else process.env.LAX_DATA_DIR = prev.data;
+    if (prev.cdp === undefined) delete process.env.LAX_ELECTRON_CDP_PORT; else process.env.LAX_ELECTRON_CDP_PORT = prev.cdp;
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("nothing is reserved while native driving is off, and a registered port is admitted", () => {
+    writeFileSync(join(dir, "security.json"), JSON.stringify({ localServicePorts: [3000, 49123] }));
+    expect(reservedLoopbackPorts().size).toBe(0);
+    const live = liveLocalServicePorts();
+    expect(live.has("3000")).toBe(true);
+    expect(live.has("49123")).toBe(true);
+  });
+
+  it("withholds the in-app debugging port even when security.json registers it, and only that port", () => {
+    writeFileSync(join(dir, "security.json"), JSON.stringify({ localServicePorts: [3000, 49123] }));
+    process.env.LAX_ELECTRON_CDP_PORT = "49123";
+    expect(reservedLoopbackPorts()).toEqual(new Set(["49123"]));
+    const live = liveLocalServicePorts();
+    expect(live.has("3000")).toBe(true);
+    expect(live.has("49123")).toBe(false);
+  });
+
+  it("withholds it from a caller-supplied base too (the security layer's constructor-cached ports)", () => {
+    process.env.LAX_ELECTRON_CDP_PORT = "49123";
+    const base = new Set(["49123", "8080"]);
+    const live = liveLocalServicePorts(base);
+    expect([...live]).toEqual(["8080"]);
+    expect(base.has("49123"), "the base is not mutated").toBe(true);
   });
 });

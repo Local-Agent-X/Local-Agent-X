@@ -18,7 +18,7 @@ import { kernelClassForTool } from "../../ari-kernel/tool-class-map.js";
 import { TOOL_PATH_ARGS, type KernelClass, type PathArgSpec } from "../../tool-registry.js";
 import { sessionWorkRootOf } from "../../workspace/paths.js";
 import { evaluateByKernelClass as evaluateKernelClassPolicy } from "./kernel-class-policy.js";
-import { loadLocalServicePorts, loadFileAccessMode, loadInlineEvalPolicy, manualRuntimeHostPorts, devServerLoopbackPorts, ownedLoopbackPorts } from "./security-config.js";
+import { loadLocalServicePorts, liveLocalServicePorts, loadFileAccessMode, loadInlineEvalPolicy, manualRuntimeHostPorts } from "./security-config.js";
 import { EgressPolicyState, updateSecurityJson } from "./egress-policy-state.js";
 import { fingerprintSecurityPolicy, parseJsonPathArray, restoreSecurityAllowedPaths, snapshotSecurityRuntime, type SecurityRuntimeIdentity } from "./runtime-state.js";
 import { evaluateDelegatedWorktreeGate } from "./delegated-worktree-gate.js";
@@ -147,6 +147,7 @@ export class SecurityLayer {
     this.fileAccessMode = fileAccessMode || loadFileAccessMode();
     this.inlineEvalPolicy = inlineEvalPolicy || loadInlineEvalPolicy();
     this.localServicePorts = loadLocalServicePorts();
+    if (this.localServicePorts.size > 0) logger.info(`[security] Local service ports loaded: ${this.localServicePorts.size} ports`);
     logger.info(`[security] File access mode: ${this.fileAccessMode}`);
   }
 
@@ -161,10 +162,7 @@ export class SecurityLayer {
    *  OPERATOR's policy surface, and a container must not fail closed because a
    *  dev server came up on one side. */
   private effectiveLocalServicePorts(): ReadonlySet<string> {
-    const ports = new Set(this.localServicePorts);
-    for (const p of devServerLoopbackPorts()) ports.add(p);
-    for (const p of ownedLoopbackPorts()) ports.add(p);
-    return ports;
+    return liveLocalServicePorts(this.localServicePorts);
   }
 
   runtimeIdentity(sessionId?: string): SecurityRuntimeIdentity {

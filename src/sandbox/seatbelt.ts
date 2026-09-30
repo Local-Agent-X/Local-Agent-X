@@ -21,12 +21,18 @@
 // (whole-server). See ari-redteam-round5.md.
 //
 // The "guarded" scope is the DEFAULT posture: items 2 and 3 (credential +
-// persistence denies) plus a LOOPBACK-CONFINED version of item 1 — network is
-// denied except loopback, so a guarded shell can talk to anything ON the
-// machine (dev servers, Ollama, the self server, a local egress proxy) and
-// nothing OFF it — and it exempts ~/.config so the kernel backstops the
+// persistence denies) plus an ALLOWLISTED version of item 1 — network is
+// denied except outbound to the loopback ports the security layer admits
+// (this server, the egress proxy's range, Ollama, registered local services,
+// dev servers this harness started), the same set Linux bridges and the
+// proxy judges — and it exempts ~/.config so the kernel backstops the
 // command parser's $VAR/$(...) blind spot on credentials while local dev tools
-// keep working. Unix-domain sockets are on-machine too, but some of them ARE
+// keep working. Loopback is NOT open wholesale: the one loopback port LAX
+// itself creates that must stay out of reach, the in-app browser's debugging
+// port, cannot be carved out of an open loopback on this kernel (a
+// port-specific deny layered on "localhost:*" is honored for only a handful
+// of ports, measured on Darwin 25 across twelve; a port-specific ALLOW is
+// honored for every one), so the cage admits ports rather than denying one. Unix-domain sockets are on-machine too, but some of them ARE
 // the host: docker.sock is root on the machine, the ssh and gpg agents sign
 // with the user's keys, D-Bus drives the session. So a guarded shell may bind
 // its own sockets anywhere and connect only to the allowlist below
@@ -47,16 +53,9 @@ import { join } from "node:path";
 
 import { HOME_RELATIVE_DENY_DIRS, HOME_RELATIVE_DENY_FILES, SERVER_SCOPE_EXEMPT_DIRS, GUARDED_SCOPE_EXEMPT_DIRS } from "./validate.js";
 import type { SandboxScope } from "./types.js";
-import { electronCdpPort } from "../browser/electron-cdp.js";
+import { cageLoopbackPorts } from "../net/shell-egress-proxy.js";
 
 export const SANDBOX_EXEC = "/usr/bin/sandbox-exec";
-
-/** Loopback ports the guarded cage denies although loopback is open: the
- *  in-app browser's debugging port, present only when native driving is on. */
-export function cagedLoopbackDenies(): number[] {
-  const cdp = electronCdpPort();
-  return cdp === null ? [] : [cdp];
-}
 
 /**
  * Unix-domain sockets a guarded shell may CONNECT to (SBPL subpath: the path
@@ -137,7 +136,7 @@ const ABSOLUTE_PERSISTENCE_DIRS = ["/Library/LaunchAgents", "/Library/LaunchDaem
  * the dirs the server itself owns (~/.lax, ~/.codex) are exempted.
  * Persistence write-denies apply to all scopes.
  */
-export function generateSeatbeltProfile(home: string = homedir(), scope: SandboxScope = "shell", denyLoopbackPorts: number[] = cagedLoopbackDenies()): string {
+export function generateSeatbeltProfile(home: string = homedir(), scope: SandboxScope = "shell", loopbackPorts: number[] = cageLoopbackPorts()): string {
   const realHome = canonical(home);
 
   const exemptDirs =
@@ -160,11 +159,13 @@ export function generateSeatbeltProfile(home: string = homedir(), scope: Sandbox
     // Strict "shell" scope: blanket network deny — no loopback, no unix
     // sockets, nothing. The opt-in dark cage; do not soften it.
     ...(scope === "shell" ? ["(deny network*)"] : []),
-    // Guarded (default) network invariant: the shell may talk to anything ON
-    // this machine and nothing OFF it. Deny all network, then carve back:
-    //  - outbound to loopback only (SBPL "localhost" matches 127.0.0.1 AND
-    //    ::1) — dev servers, Ollama, the self server, and the future egress
-    //    proxy all live on loopback;
+    // Guarded (default) network invariant: the shell may talk to the loopback
+    // ports the security layer admits and nothing else. Deny all network,
+    // then carve back:
+    //  - outbound to each admitted loopback port (SBPL "localhost" matches
+    //    127.0.0.1 AND ::1): this server, the egress proxy, Ollama, registered
+    //    local services, dev servers — cageLoopbackPorts(), read per spawn so
+    //    a service registered mid-session counts for the next shell call;
     //  - bind + inbound on any local address, so dev servers can listen;
     //  - unix-domain sockets: bind its own anywhere (a listener is not an
     //    escape), connect only to GUARDED_UNIX_SOCKET_ALLOW, and never to a
@@ -177,12 +178,7 @@ export function generateSeatbeltProfile(home: string = homedir(), scope: Sandbox
     // in-process by the canonicalFetch chokepoint (see docstring above).
     ...(scope === "guarded" ? [
       "(deny network*)",
-      `(allow network-outbound (remote ip "localhost:*"))`,
-      // Loopback ports a caged shell must NOT reach even though loopback is
-      // open here: the in-app browser's debugging port, when native driving
-      // is on, would let a caged shell drive the user's browser with no
-      // credentials. A later rule wins, so the denies follow the allow.
-      ...denyLoopbackPorts.map((port) => `(deny network-outbound (remote ip "localhost:${port}"))`),
+      ...loopbackPorts.map((port) => `(allow network-outbound (remote ip "localhost:${port}"))`),
       `(allow network-bind (local ip "*:*"))`,
       `(allow network-inbound (local ip "*:*"))`,
       `(allow network-bind (local unix-socket (path-regex #"^/")))`,

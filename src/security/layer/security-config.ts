@@ -6,10 +6,12 @@ import { manualAllowlist } from "../../local-runtimes/endpoints.js";
 // The dev-server record store, via its dependency-free leaf — importing
 // tools/dev-server.js here would cycle (process-session → security/layer/index).
 import { devServerLoopbackPorts } from "../../tools/dev-server-records.js";
+import { ownedLoopbackPorts } from "../../tools/owned-listeners.js";
 import type { FileAccessMode, InlineEvalPolicy } from "./types.js";
 import type { EgressMode } from "./network-policy.js";
 
 import { createLogger } from "../../logger.js";
+import { electronCdpPort } from "../../browser/electron-cdp.js";
 const logger = createLogger("security.layer-core");
 
 /**
@@ -231,9 +233,31 @@ export function loadLocalServicePorts(): Set<string> {
   // persisted a record). Closes the registration gap that made the agent unable
   // to fetch the page of the app it had just served — see devServerLoopbackPorts.
   for (const p of devServerLoopbackPorts()) ports.add(p);
-  if (ports.size > 0) {
-    logger.info(`[security] Local service ports loaded: ${ports.size} ports`);
-  }
+  return ports;
+}
+
+/** Loopback ports no agent path may reach even when registered: the in-app
+ *  browser's debugging port (present only when native driving is on) drives
+ *  the user's browser with no credentials. Removed from every live union below
+ *  rather than denied downstream — the macOS kernel cannot reliably carve one
+ *  port out of an allowed loopback (measured on Darwin 25), and a port that is
+ *  never admitted needs no carve-out on any platform. */
+export function reservedLoopbackPorts(): Set<string> {
+  const cdp = electronCdpPort();
+  return cdp === null ? new Set() : new Set([String(cdp)]);
+}
+
+/** The loopback ports an agent path may reach NOW: the configured base, the
+ *  dev-server ports read fresh from disk and the ports live process_start
+ *  sessions hold — minus reservedLoopbackPorts(). The ONE derivation the
+ *  security layer's gate, loadEgressConfig (http_request, the shell egress
+ *  proxy) and the shell cages (cageLoopbackPorts) all read, so a port admitted
+ *  or reserved in one is admitted or reserved in all. */
+export function liveLocalServicePorts(base: ReadonlySet<string> = loadLocalServicePorts()): Set<string> {
+  const ports = new Set(base);
+  for (const p of devServerLoopbackPorts()) ports.add(p);
+  for (const p of ownedLoopbackPorts()) ports.add(p);
+  for (const p of reservedLoopbackPorts()) ports.delete(p);
   return ports;
 }
 

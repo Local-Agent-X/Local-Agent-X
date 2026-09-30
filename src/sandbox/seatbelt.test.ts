@@ -6,8 +6,9 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { cagedLoopbackDenies, generateSeatbeltProfile, isSeatbeltAvailable, seatbeltProfileLoads, wrapForSeatbelt, SANDBOX_EXEC, GUARDED_UNIX_SOCKET_ALLOW, GUARDED_UNIX_SOCKET_DENY } from "./seatbelt.js";
+import { generateSeatbeltProfile, isSeatbeltAvailable, seatbeltProfileLoads, wrapForSeatbelt, SANDBOX_EXEC, GUARDED_UNIX_SOCKET_ALLOW, GUARDED_UNIX_SOCKET_DENY } from "./seatbelt.js";
 import { HOME_RELATIVE_DENY_DIRS, HOME_RELATIVE_DENY_FILES, SERVER_SCOPE_EXEMPT_DIRS, GUARDED_SCOPE_EXEMPT_DIRS } from "./validate.js";
+import { shellProxyPortRange } from "../net/shell-egress-proxy.js";
 
 const onDarwin = process.platform === "darwin";
 
@@ -67,11 +68,13 @@ describe("seatbelt profile generation", () => {
     expect(profile).toContain(`(subpath "${sb(join(home, "Library/LaunchAgents"))}")`);
   });
 
-  it("guarded scope (default) confines network to loopback and exempts ~/.config but still denies the crown jewels", () => {
-    const profile = generateSeatbeltProfile(home, "guarded");
-    // Network invariant: anything ON the machine, nothing OFF it.
+  it("guarded scope (default) admits only the given loopback ports and exempts ~/.config but still denies the crown jewels", () => {
+    const profile = generateSeatbeltProfile(home, "guarded", [7007, 60090]);
+    // Network invariant: the admitted loopback ports, nothing else — on or off the machine.
     expect(profile).toContain("(deny network*)");
-    expect(profile).toContain(`(allow network-outbound (remote ip "localhost:*"))`);
+    expect(profile).toContain(`(allow network-outbound (remote ip "localhost:7007"))`);
+    expect(profile).toContain(`(allow network-outbound (remote ip "localhost:60090"))`);
+    expect(profile).not.toContain(`"localhost:*"`);
     expect(profile).toContain(`(allow network-bind (local ip "*:*"))`);
     expect(profile).toContain(`(allow network-inbound (local ip "*:*"))`);
     expect(profile).not.toContain("(allow network* (remote unix-socket))");
@@ -113,18 +116,23 @@ describe("seatbelt profile generation", () => {
     }
   });
 
-  // Loopback is open in the guarded cage; the in-app browser's debugging port
-  // is the one loopback port a caged shell must not reach (it would drive the
-  // user's browser with no credentials). Denied after the allow, so it wins.
-  it("guarded scope: the in-app debugging port is denied on loopback when native driving is on, and nothing is denied otherwise", () => {
-    const withPort = generateSeatbeltProfile(home, "guarded", [49123]);
-    const allow = withPort.indexOf(`(allow network-outbound (remote ip "localhost:*"))`);
-    const deny = withPort.indexOf(`(deny network-outbound (remote ip "localhost:49123"))`);
-    expect(allow).toBeGreaterThan(-1);
-    expect(deny).toBeGreaterThan(allow);
-    expect(generateSeatbeltProfile(home, "guarded", [])).not.toContain('(deny network-outbound (remote ip "localhost:');
-    // The port comes from the desktop's env contract, and only when it is a port.
-    expect(cagedLoopbackDenies()).toEqual(process.env.LAX_ELECTRON_CDP_PORT ? [Number(process.env.LAX_ELECTRON_CDP_PORT)] : []);
+  // Loopback is admitted per port, never wholesale. This kernel honors a
+  // port-specific ALLOW for every port but a port-specific DENY for only a
+  // few (measured on Darwin 25 across twelve ports, every deny spelling), so
+  // the one loopback port LAX must keep out of reach — the in-app browser's
+  // debugging port — is withheld from the admitted set at its source
+  // (security-config.ts reservedLoopbackPorts), not denied here.
+  it("guarded scope: no wholesale loopback allow in any scope, and no outbound loopback rule at all when nothing is admitted", () => {
+    const none = generateSeatbeltProfile(home, "guarded", []);
+    expect(none).toContain("(deny network*)");
+    expect(none).not.toMatch(/\(allow network-outbound \(remote ip /);
+    expect(none).not.toMatch(/\(deny network-outbound \(remote ip /);
+    for (const scope of ["shell", "guarded", "server"] as const) {
+      expect(generateSeatbeltProfile(home, scope, [7007])).not.toContain(`"localhost:*"`);
+    }
+    // The default set is the cage union (proxy range + self port + registered
+    // services), read per call so a service registered mid-session counts.
+    expect(generateSeatbeltProfile(home, "guarded")).toContain(`(allow network-outbound (remote ip "localhost:${shellProxyPortRange().from}"))`);
   });
 
   it("the allowlist names only service and temp sockets, never a home directory or a host-control socket", () => {
@@ -361,12 +369,39 @@ describe.skipIf(!onDarwin)("seatbelt guarded-scope enforcement (live sandbox-exe
     });
   }
 
-  it("ALLOWS outbound TCP to a loopback listener", async () => {
+  // The probes below target ephemeral listeners this process opens, so they
+  // admit that port explicitly: the production default admits the cage union
+  // (cageLoopbackPorts), which cannot know a test's port.
+  function runGuardedAdmitting(home: string, ports: number[], command: string): Promise<{ out: string }> {
+    const profile = generateSeatbeltProfile(home, "guarded", ports);
+    return new Promise((resolve) => {
+      execFile(SANDBOX_EXEC, ["-p", profile, "/bin/bash", "-c", command], { encoding: "utf-8", timeout: 10_000 },
+        (_err, stdout, stderr) => resolve({ out: stdout + stderr }));
+    });
+  }
+
+  it("ALLOWS outbound TCP to an admitted loopback port", async () => {
     const dir = mkdtempSync(join(tmpdir(), "lax-sb-grd-"));
     try {
       await withLoopbackListener(async (port) => {
-        const r = await runGuardedAsync(dir, `/usr/bin/curl -sS --max-time 3 http://127.0.0.1:${port}/`);
+        const r = await runGuardedAdmitting(dir, [port], `/usr/bin/curl -sS --max-time 3 http://127.0.0.1:${port}/`);
         expect(r.out).toContain("LOOPBACK-OK");
+      });
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it("REFUSES an unregistered loopback port with EPERM while an admitted one is reached — the allowlist is the mechanism, not a per-port deny", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lax-sb-grd-"));
+    try {
+      await withLoopbackListener(async (admitted) => {
+        await withLoopbackListener(async (stray) => {
+          const r = await runGuardedAdmitting(dir, [admitted],
+            `/usr/bin/curl -sS --max-time 3 http://127.0.0.1:${admitted}/; echo " ADMITTED-EXIT=$?"; ` +
+            `/usr/bin/curl -sS --max-time 3 http://127.0.0.1:${stray}/; echo " STRAY-EXIT=$?"`);
+          expect(r.out).toContain("LOOPBACK-OK ADMITTED-EXIT=0");
+          expect(r.out).toContain("STRAY-EXIT=7"); // refused at connect (EPERM), not a timeout (28)
+          expect(r.out.match(/LOOPBACK-OK/g)).toHaveLength(1);
+        });
       });
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
@@ -375,9 +410,9 @@ describe.skipIf(!onDarwin)("seatbelt guarded-scope enforcement (live sandbox-exe
     const dir = mkdtempSync(join(tmpdir(), "lax-sb-grd-"));
     try {
       await withLoopbackListener(async (port) => {
-        // By NAME, not IP: proves getaddrinfo still works inside the cage
-        // (resolution rides the system resolver daemon — decision D8).
-        const r = await runGuardedAsync(dir, `/usr/bin/curl -sS --max-time 3 http://localhost:${port}/`);
+        // By NAME, not IP: "localhost" comes from /etc/hosts, which libc
+        // reads itself — no resolver daemon needed (that socket is denied).
+        const r = await runGuardedAdmitting(dir, [port], `/usr/bin/curl -sS --max-time 3 http://localhost:${port}/`);
         expect(r.out).toContain("LOOPBACK-OK");
       });
     } finally { rmSync(dir, { recursive: true, force: true }); }
@@ -455,21 +490,6 @@ describe.skipIf(!onDarwin)("seatbelt guarded-scope enforcement (live sandbox-exe
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 
-  it("DENIES a loopback port named as the in-app debugging port, while the rest of loopback stays open", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "lax-sb-grd-"));
-    try {
-      await withLoopbackListener(async (port) => {
-        const { execFile } = await import("node:child_process");
-        const profile = generateSeatbeltProfile(dir, "guarded", [port]);
-        const out = await new Promise<string>((resolve) => execFile(SANDBOX_EXEC, ["-p", profile, "/bin/bash", "-c",
-          `/usr/bin/curl -sS --max-time 3 http://127.0.0.1:${port}/ ; echo "CURL-EXIT=$?"`],
-          { encoding: "utf-8", timeout: 10_000 }, (_e, so, se) => resolve(so + se)));
-        expect(out).not.toContain("LOOPBACK-OK");
-        expect(out).toContain("CURL-EXIT=7");
-      });
-    } finally { rmSync(dir, { recursive: true, force: true }); }
-  });
-
   it("DENIES the resolver daemon's socket: a name does not resolve inside the cage (the proxy resolves it)", async () => {
     const dir = mkdtempSync(join(tmpdir(), "lax-sb-grd-"));
     try {
@@ -479,7 +499,7 @@ describe.skipIf(!onDarwin)("seatbelt guarded-scope enforcement (live sandbox-exe
       expect(r.out).toContain("CURL-EXIT=6");
       // Loopback by address needs no resolver and still works.
       await withLoopbackListener(async (port) => {
-        const ok = await runGuardedAsync(dir, `/usr/bin/curl -sS --max-time 3 http://127.0.0.1:${port}/`);
+        const ok = await runGuardedAdmitting(dir, [port], `/usr/bin/curl -sS --max-time 3 http://127.0.0.1:${port}/`);
         expect(ok.out).toContain("LOOPBACK-OK");
       });
     } finally { rmSync(dir, { recursive: true, force: true }); }

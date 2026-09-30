@@ -31,9 +31,11 @@ const logger = createLogger("tools.shell-proxy-env");
 const PROXY_START_TIMEOUT_MS = 3000;
 const PROXY_START_TIMED_OUT = Symbol("shell-egress-proxy-start-timeout");
 
-// Where the cage lets a shell reach the machine's own loopback directly (macOS
-// seatbelt guarded), loopback bypasses the proxy: dev servers, ollama and the
-// app's own API live there, and the proxy would only see hairpin traffic.
+// Where the cage lets a shell reach admitted loopback ports directly (macOS
+// seatbelt guarded allows each registered port in the profile), loopback
+// bypasses the proxy: dev servers, ollama and the app's own API live there,
+// and the proxy would only see hairpin traffic. An unregistered port is
+// refused by the kernel either way — the proxy judges by the same set.
 const NO_PROXY_HOSTS = "localhost,127.0.0.1,::1";
 
 /**

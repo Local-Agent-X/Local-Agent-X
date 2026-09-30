@@ -158,10 +158,11 @@ describe("guarded sandbox mode (default)", () => {
     expect(args.slice(-3)).toEqual(["/bin/bash", "-c", "echo hi"]);
     const blob = [cmd, ...args].join(" ");
     if (process.platform === "darwin") {
-      // ...macOS guarded is loopback-confined: network denied by default with
-      // the loopback carve-back (anything ON the machine, nothing OFF it).
+      // ...macOS guarded admits only the cage's loopback union (the proxy
+      // range, the self port, registered services) — never loopback wholesale.
       expect(blob).toContain("(deny network*)");
-      expect(blob).toContain(`(allow network-outbound (remote ip "localhost:*"))`);
+      expect(blob).toMatch(/\(allow network-outbound \(remote ip "localhost:\d+"\)\)/);
+      expect(blob).not.toContain(`"localhost:*"`);
     } else {
       // ...Linux guarded is an empty network namespace; the egress proxy's
       // bridge is the only way out, and it is mounted only when one is live.

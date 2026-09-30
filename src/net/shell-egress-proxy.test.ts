@@ -255,3 +255,40 @@ describe("singleton race guards", () => {
     expect(manualStarts).toHaveLength(2);
   });
 });
+
+// What a caged shell may reach on loopback is ONE union, read per spawn: the
+// proxy's whole range (the route out, whichever port it bound or will bind),
+// this server's port and the registered local services — never the reserved
+// in-app debugging port, which the security layer withholds at the source.
+// Linux bridges these ports into the namespace; macOS allows them in the
+// seatbelt profile; both read this function.
+describe("cageLoopbackPorts — the admitted loopback set every cage reads", () => {
+  const prev = { data: process.env.LAX_DATA_DIR, cdp: process.env.LAX_ELECTRON_CDP_PORT };
+  let dataDir: string;
+  beforeEach(async () => {
+    const { mkdtempSync, writeFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const { tmpdir } = await import("node:os");
+    dataDir = mkdtempSync(join(tmpdir(), "lax-cage-ports-"));
+    process.env.LAX_DATA_DIR = dataDir;
+    writeFileSync(join(dataDir, "security.json"), JSON.stringify({ localServicePorts: [3000, 49123] }));
+    process.env.LAX_ELECTRON_CDP_PORT = "49123";
+  });
+  afterEach(async () => {
+    const { rmSync } = await import("node:fs");
+    if (prev.data === undefined) delete process.env.LAX_DATA_DIR; else process.env.LAX_DATA_DIR = prev.data;
+    if (prev.cdp === undefined) delete process.env.LAX_ELECTRON_CDP_PORT; else process.env.LAX_ELECTRON_CDP_PORT = prev.cdp;
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  it("admits the proxy range, the self port and the registered services, and withholds the reserved debugging port", async () => {
+    const { cageLoopbackPorts, shellProxyPortRange } = await import("./shell-egress-proxy.js");
+    const ports = cageLoopbackPorts();
+    const range = shellProxyPortRange();
+    for (let p = range.from; p <= range.to; p++) expect(ports, `proxy port ${p}`).toContain(p);
+    expect(ports).toContain(7007); // LAX_PORT, set by this file's beforeEach
+    expect(ports).toContain(3000);
+    expect(ports).not.toContain(49123);
+    expect(new Set(ports).size, "no duplicates").toBe(ports.length);
+  });
+});

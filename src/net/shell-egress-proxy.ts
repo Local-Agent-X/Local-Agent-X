@@ -71,14 +71,20 @@ export function currentShellEgressProxyUrl(): string | null {
 }
 
 /**
- * The loopback ports a caged shell may reach through the bridge besides the
- * proxy's: this server's own port and the registered local services — the
- * one union http_request is judged by (loadEgressConfig), read at call time
- * so a dev server registered mid-session counts for the next spawn.
+ * The loopback ports a caged shell may reach: this server's own port and the
+ * registered local services — the one union http_request is judged by
+ * (loadEgressConfig, which already withholds the reserved ports) — plus the
+ * proxy's port range, so the sanctioned route out is admitted whichever port
+ * of the range the proxy bound (or will bind: the macOS profile is generated
+ * per spawn and may precede the proxy's warm-up). Read at call time so a dev
+ * server registered mid-session counts for the next spawn. Linux bridges these
+ * ports into the namespace; macOS allows them in the seatbelt profile.
  */
 export function cageLoopbackPorts(): number[] {
   const ports = new Set<number>([Number(selfPort())]);
   for (const p of loadEgressConfig().localServicePorts) ports.add(Number(p));
+  const range = shellProxyPortRange();
+  for (let p = range.from; p <= range.to; p++) ports.add(p);
   return [...ports].filter((p) => Number.isInteger(p) && p > 0 && p <= 65535);
 }
 
@@ -93,8 +99,8 @@ function runDir(): string {
   return join(getLaxDir(), "run");
 }
 
-// The bridge is Linux-only: macOS guarded reaches loopback directly and the
-// Windows cage permits the proxy port. A bridge that fails to start leaves the
+// The bridge is Linux-only: macOS guarded allows the same ports in its
+// seatbelt profile and the Windows cage permits the proxy port. A bridge that fails to start leaves the
 // proxy up for what can reach it and the cage without a route — fail closed,
 // said in the log.
 async function startBridge(proxy: ShellEgressProxy): Promise<ShellEgressBridge | null> {

@@ -175,8 +175,22 @@ describe.skipIf(!liveGate)("guarded egress contract: sanctioned route (cage + en
     expect(overlay.NO_PROXY).toContain("127.0.0.1");
 
     const listener = await startListener("CONTRACT-OK");
-    const r = await cagedRun(`/usr/bin/curl -sS --max-time 3 http://127.0.0.1:${listener.port}/ok`, overlay);
+    const stray = await startListener("STRAY");
+    // The seatbelt profile admits the same union the proxy judges by
+    // (security.json localServicePorts under this test's data dir, read per
+    // spawn); an unregistered loopback port has no rule and is refused.
+    const { mkdirSync, writeFileSync } = await import("node:fs");
+    const laxDir = join(home, ".lax");
+    mkdirSync(laxDir, { recursive: true });
+    writeFileSync(join(laxDir, "security.json"), JSON.stringify({ localServicePorts: [listener.port] }));
+    const r = await cagedRun(
+      `/usr/bin/curl -sS --max-time 3 http://127.0.0.1:${listener.port}/ok; ` +
+      `(exec 4<>/dev/tcp/127.0.0.1/${stray.port}) 2>&1 && echo STRAY-REACHED || echo STRAY-BLOCKED`,
+      overlay,
+    );
     expect(r.out).toContain("CONTRACT-OK");
+    expect(r.out).toContain("STRAY-BLOCKED");
+    expect(r.out).not.toContain("STRAY-REACHED");
   });
 
   it.skipIf(!onLinux)("Linux: the overlay has no NO_PROXY, a caged curl to the self port transits the bridge and proxy, and a direct dial reaches it through the in-cage forwarder (the self port is a registered port)", async () => {

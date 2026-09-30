@@ -99,9 +99,9 @@ const CONNECT_UNREACH_RE = /\bconnect\b[^\n]{0,80}network is unreachable/i;
  *  - Fires only under a cage mode, and only on connect-context EPERM (or, in a
  *    network namespace — strict bwrap and Linux guarded — netns-unreachable)
  *    — never on generic network failure.
- *  - Guarded network confinement ships on darwin (seatbelt: loopback direct,
- *    off-machine denied) and linux (bwrap namespace: only the proxy's bridge
- *    crosses the wall). Windows has no guarded cage yet, so guarded stays
+ *  - Guarded network confinement ships on darwin (seatbelt: registered
+ *    loopback ports direct, everything else denied) and linux (bwrap
+ *    namespace: only the proxy's bridge crosses the wall). Windows has no guarded cage yet, so guarded stays
  *    silent there: a connect failure is real and the cage must not take credit.
  *  - Each guarded message claims exactly what its platform's cage allows; the
  *    strict messages claim no route at all.
@@ -125,7 +125,7 @@ export function networkDenialHint(
   if (mode === "guarded") {
     const reach = platform === "linux"
       ? "the guarded shell runs in its own network namespace, so the host's loopback services and anything off-machine are reachable only through the injected HTTP_PROXY/HTTPS_PROXY egress proxy (the app's own port and registered local services are allowed)"
-      : "guarded shells reach loopback directly, but anything off-machine must go through the injected HTTP_PROXY/HTTPS_PROXY egress proxy";
+      : "guarded shells reach the app's own port and registered local services on loopback directly, and anything else — an unregistered loopback port or anything off-machine — only through the injected HTTP_PROXY/HTTPS_PROXY egress proxy";
     return `[sandbox: connection blocked by the bash network cage (mode "guarded") — ${reach}, which applies the app's egress policy; this is the sandbox, not the remote host being down. Retry with a tool that honors the proxy env (curl/git/npm do), or use the native http_request tool. If the user needs direct shell network, they can change the sandbox mode in Settings → Security (or LAX_SANDBOX=host); offer that rather than disabling it yourself.]`;
   }
   const confinement = mode === "seatbelt"

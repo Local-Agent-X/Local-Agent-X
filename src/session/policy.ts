@@ -8,6 +8,8 @@
  * Policies are ephemeral — they die with the session. No persistence.
  */
 
+import { CAPABILITY_CLASS_MEMBERS, type CapabilityClass } from "../tool-registry.js";
+
 export type PolicyPreset = "default" | "high-security" | "dev-mode" | "read-only";
 
 export interface SessionPolicy {
@@ -20,6 +22,15 @@ export interface SessionPolicy {
   allowNetworkTools: boolean;
 }
 
+// A preset blocks CAPABILITY CLASSES, read from the tool registry at load, so
+// every synonym is covered: bash's process_* family and ari_shell, write's
+// edit_lines / multi_edit / bulk_replace / delete_file and ari_file, browser's
+// sub-actions and every other sender in the egress class. A hand-written name
+// list here silently fails open under a synonym the day one is added.
+function membersOf(...classes: CapabilityClass[]): Set<string> {
+  return new Set(classes.flatMap((cls) => CAPABILITY_CLASS_MEMBERS[cls]));
+}
+
 const PRESETS: Record<PolicyPreset, Omit<SessionPolicy, "preset">> = {
   "default": {
     blockedTools: new Set(),
@@ -30,10 +41,7 @@ const PRESETS: Record<PolicyPreset, Omit<SessionPolicy, "preset">> = {
     allowNetworkTools: true,
   },
   "high-security": {
-    // ari_* are the AriKernel bridge synonyms — same I/O capability as their
-    // canonical counterparts, so they must be denied here too (otherwise a
-    // model could call ari_shell/ari_http to slip a block on bash/http_request).
-    blockedTools: new Set(["bash", "browser", "http_request", "web_fetch", "ari_shell", "ari_http"]),
+    blockedTools: membersOf("shell", "egress"),
     allowedTools: new Set(),
     maxBashTimeout: 0,
     allowFileWrites: true,
@@ -49,12 +57,7 @@ const PRESETS: Record<PolicyPreset, Omit<SessionPolicy, "preset">> = {
     allowNetworkTools: true,
   },
   "read-only": {
-    // ari_shell (bash), ari_http (network), and ari_file writes are the
-    // AriKernel bridge synonyms of the blocked canonical tools. Block the
-    // shell/network synonyms outright; ari_file write is gated by the
-    // allowFileWrites category check below (it also covers reads, which stay
-    // allowed). Without these a model could do shell/IO via the ari_* path.
-    blockedTools: new Set(["bash", "write", "edit", "browser", "ari_shell", "ari_http"]),
+    blockedTools: membersOf("shell", "egress", "workspace-write"),
     allowedTools: new Set(),
     maxBashTimeout: 0,
     allowFileWrites: false,

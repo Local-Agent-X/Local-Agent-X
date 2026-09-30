@@ -38,7 +38,9 @@ import { execFile, execFileSync, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { createServer, type Server } from "node:net";
 import { homedir } from "node:os";
-import { join, resolve, sep } from "node:path";
+// Windows paths whatever the host: the helper, the sandbox user and the profile
+// only exist on Windows, and the tests run on every CI runner.
+import { join, resolve, sep } from "node:path/win32";
 import { shellProxyPortRange } from "../net/shell-egress-proxy.js";
 import { createLogger } from "../logger.js";
 

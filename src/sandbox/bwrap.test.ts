@@ -155,8 +155,9 @@ describe("bwrap guarded network (BwrapNetwork)", () => {
       const { args } = wrapForBwrap("/bin/bash", ["-c", "true"], home, "guarded", { network: "namespace", bridge: { socketPath: sock, port: 60090 } });
       const at = args.indexOf(process.execPath);
       expect(at).toBeGreaterThan(0);
-      expect(args.slice(at + 1, at + 3)[0]).toBe("-e");
-      expect(args.slice(at + 3)).toEqual(["--", sock, "60090", "--", "/bin/bash", "-c", "true"]);
+      // node's own proxy-agent warning must not land in the shell's output.
+      expect(args.slice(at + 1, at + 3)).toEqual(["--no-warnings", "-e"]);
+      expect(args.slice(at + 4)).toEqual(["--", sock, "60090", "--", "/bin/bash", "-c", "true"]);
       // Registered local-service ports ride along, the proxy's first and never twice.
       const withPorts = wrapForBwrap("/bin/bash", ["-c", "true"], home, "guarded",
         { network: "namespace", bridge: { socketPath: sock, port: 60090, loopbackPorts: [7007, 60090, 3000] } }).args;

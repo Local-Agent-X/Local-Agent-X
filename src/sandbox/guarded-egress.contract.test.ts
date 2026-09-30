@@ -179,7 +179,7 @@ describe.skipIf(!liveGate)("guarded egress contract: sanctioned route (cage + en
     expect(r.out).toContain("CONTRACT-OK");
   });
 
-  it.skipIf(!onLinux)("Linux: the overlay has no NO_PROXY, a caged curl to a sanctioned loopback listener transits the bridge and proxy, and a direct dial to it has no route", async () => {
+  it.skipIf(!onLinux)("Linux: the overlay has no NO_PROXY, a caged curl to the self port transits the bridge and proxy, and a direct dial reaches it through the in-cage forwarder (the self port is a registered port)", async () => {
     const proxy = await ensureShellEgressProxy();
     expect(currentShellEgressBridge()).not.toBeNull();
     const overlay = await shellProxyEnv();
@@ -195,8 +195,11 @@ describe.skipIf(!liveGate)("guarded egress contract: sanctioned route (cage + en
       overlay,
     );
     expect(r.out).toContain("CONTRACT-OK");
-    expect(r.out).toContain("DIRECT-BLOCKED");
-    expect(r.out).not.toContain("DIRECT-REACHED");
+    // The forwarder listens on every registered loopback port inside the
+    // namespace, the self port first; an unregistered port's dial is proven to
+    // have no route by the next test (STRAY-BLOCKED).
+    expect(r.out).toContain("DIRECT-REACHED");
+    expect(r.out).not.toContain("DIRECT-BLOCKED");
   });
 
   it.skipIf(!onLinux)("Linux: a registered local service is dialled directly from the cage (raw TCP, no proxy), an unregistered one is not", async () => {

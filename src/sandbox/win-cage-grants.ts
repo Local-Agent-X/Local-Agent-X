@@ -10,7 +10,7 @@
 
 import { execFile, execFileSync } from "node:child_process";
 import { homedir } from "node:os";
-import { basename, dirname, resolve, sep } from "node:path";
+import { basename, dirname, resolve, sep } from "node:path/win32";
 import { workspaceRoot } from "../config.js";
 import { createLogger } from "../logger.js";
 import { resolveWinCageHelper, runHelper, underUserProfile, winCageStatus } from "./win-cage.js";

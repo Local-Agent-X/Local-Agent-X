@@ -135,22 +135,35 @@ export class RBACManager {
     this.operatorTokenHash = hashToken(operatorToken);
     this.load();
 
-    // Ensure operator token exists — clear stale operator entries to prevent duplication
+    // Ensure the operator entry exists, and that it never expires. The
+    // operator token is the app's own identity (config.authToken): the desktop
+    // loads the UI with it and nothing in the product rotates it on a
+    // schedule, so an expiry here is a cliff, not a control. On 2026-09-30 an
+    // install minted 2026-07-02 crossed the 90-day window it used to carry and
+    // every REST call from the UI 401'd ("Couldn't save … (Unauthorized)")
+    // while chat, whose WS upgrade compares the same token with no expiry
+    // (ws-operator-auth.ts), kept working — and a restart could not heal it,
+    // because a present-but-expired entry was left as found. Rotation
+    // (rotateOperatorToken) is the operator's control; tokens issued through
+    // createToken keep their expiry.
     const existingOp = this.findByHash(this.operatorTokenHash);
     if (!existingOp) {
       // Remove any previous operator-default entries (prevents duplication on token change)
       if (this.tokens.has("operator-default")) {
         this.tokens.delete("operator-default");
       }
-      const TOKEN_EXPIRY_DAYS = 90;
       this.tokens.set("operator-default", {
         id: "operator-default",
         name: "Default operator token",
         role: "operator",
         tokenHash: this.operatorTokenHash,
         createdAt: Date.now(),
-        expiresAt: Date.now() + TOKEN_EXPIRY_DAYS * 24 * 60 * 60 * 1000,
       });
+      this.save();
+    } else if (existingOp.expiresAt !== undefined) {
+      // A file written by a build that minted the window: heal it on load,
+      // whether the window is still open or already past.
+      delete existingOp.expiresAt;
       this.save();
     }
 
@@ -213,8 +226,9 @@ export class RBACManager {
       const a = Buffer.from(incomingHash);
       const b = Buffer.from(entry.tokenHash);
       if (a.length === b.length && timingSafeEqual(a, b)) {
-        // Check expiry
-        if (entry.expiresAt && Date.now() > entry.expiresAt) {
+        // Check expiry — never for the operator credential (see the
+        // constructor): REST and the WS upgrade must agree on it.
+        if (entry.expiresAt && Date.now() > entry.expiresAt && entry.tokenHash !== this.operatorTokenHash) {
           return { valid: false };
         }
         // Update last used
@@ -301,13 +315,12 @@ export class RBACManager {
    *  untouched (it is unrelated to the operator credential). */
   rotateOperatorToken(newToken: string): void {
     this.operatorTokenHash = hashToken(newToken);
-    const TOKEN_EXPIRY_DAYS = 90;
     const existing = this.tokens.get("operator-default");
     if (existing) {
       existing.tokenHash = this.operatorTokenHash;
       existing.createdAt = Date.now();
       existing.lastUsed = undefined;
-      existing.expiresAt = Date.now() + TOKEN_EXPIRY_DAYS * 24 * 60 * 60 * 1000;
+      delete existing.expiresAt; // the operator credential never expires (constructor)
     } else {
       this.tokens.set("operator-default", {
         id: "operator-default",
@@ -315,7 +328,6 @@ export class RBACManager {
         role: "operator",
         tokenHash: this.operatorTokenHash,
         createdAt: Date.now(),
-        expiresAt: Date.now() + TOKEN_EXPIRY_DAYS * 24 * 60 * 60 * 1000,
       });
     }
     this.save();

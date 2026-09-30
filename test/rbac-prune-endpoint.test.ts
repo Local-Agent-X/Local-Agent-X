@@ -45,7 +45,8 @@ describe("RBACManager.pruneExpired", () => {
   it("never prunes the operator-default entry even when its expiresAt is in the past", () => {
     const rbac = new RBACManager(tmpDir, randomBytes(32).toString("hex"));
 
-    // operator-default is minted with a ~90-day expiry. Jump well past it.
+    // operator-default carries no expiry (rbac.ts constructor); a file from a
+    // build that minted one heals on load. Jump far ahead regardless.
     vi.setSystemTime(NOW + 365 * 24 * 60 * 60 * 1000);
 
     rbac.pruneExpired();

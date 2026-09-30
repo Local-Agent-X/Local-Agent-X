@@ -1,9 +1,10 @@
-import { describe, it, expect, afterAll } from "vitest";
+import { describe, it, expect, afterAll, afterEach, vi } from "vitest";
 import { mkdirSync, rmSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomBytes } from "node:crypto";
 import { RBACManager } from "./rbac.js";
+import { authorizeUpgrade } from "./server/ws-operator-auth.js";
 
 // ── RBAC: least-privilege "agent" role + per-process internal token ──
 
@@ -103,11 +104,10 @@ describe("RBAC rotateOperatorToken", () => {
     expect(result.entry?.role).toBe("agent");
   });
 
-  it("refreshes the operator-default entry's expiresAt to a full ~90-day window", () => {
+  it("leaves the operator-default entry without an expiry after rotation", () => {
     const entry = rbac.listTokens().find((e) => e.id === "operator-default");
     expect(entry).toBeDefined();
-    // A rotated credential must reset its full lifetime, not keep the old window.
-    expect(entry!.expiresAt).toBeGreaterThan(Date.now() + 89 * 24 * 60 * 60 * 1000);
+    expect(entry!.expiresAt).toBeUndefined();
   });
 
   afterAll(() => {
@@ -115,33 +115,60 @@ describe("RBAC rotateOperatorToken", () => {
   });
 });
 
-// ── RBAC: rotating a near-expiry operator credential resets its lifetime ──
+// ── RBAC: the operator credential never expires (the 2026-09-30 cliff) ──
+//
+// The operator token is the app's own identity; the UI loads with it and
+// nothing rotates it on a schedule. It used to be minted with a 90-day window,
+// so 90 days after first boot every REST call from the UI 401'd while chat
+// (WS upgrade, no expiry) kept working, and a restart left the expired entry
+// as found. These pin: an already-expired entry from such a build heals on
+// load, the credential stays valid indefinitely, REST and WS agree, and
+// tokens issued with an expiry still expire.
 
-describe("RBAC rotateOperatorToken refreshes a near-expiry window", () => {
-  const tmpDir = join(tmpdir(), `lax-rbac-rotate-expiry-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+describe("RBAC operator credential never expires", () => {
+  const tmpDir = join(tmpdir(), `lax-rbac-cliff-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   mkdirSync(tmpDir, { recursive: true });
-  const oldToken = randomBytes(32).toString("hex");
-  const newToken = randomBytes(32).toString("hex");
+  const token = randomBytes(32).toString("hex");
+  const DAY = 24 * 60 * 60 * 1000;
 
-  // First instance seeds tokens.json with the operator-default entry.
-  new RBACManager(tmpDir, oldToken);
+  // A tokens.json as a pre-fix build left it on a 91-day-old install: the
+  // operator entry present, its window already past.
+  new RBACManager(tmpDir, token);
   const file = join(tmpDir, "tokens.json");
-  // Force the persisted operator-default entry into a near-expiry window.
-  const nearExpiry = Date.now() + 24 * 60 * 60 * 1000; // ~1 day left
   const persisted = JSON.parse(readFileSync(file, "utf-8")) as Array<{ id: string; expiresAt?: number }>;
-  for (const e of persisted) {
-    if (e.id === "operator-default") e.expiresAt = nearExpiry;
-  }
+  for (const e of persisted) if (e.id === "operator-default") e.expiresAt = Date.now() - DAY;
   writeFileSync(file, JSON.stringify(persisted));
 
-  // Reload from disk so the manager carries the short-lived entry, then rotate.
-  const rbac = new RBACManager(tmpDir, oldToken);
-  rbac.rotateOperatorToken(newToken);
+  const rbac = new RBACManager(tmpDir, token);
 
-  it("resets expiresAt to a full ~90-day window, discarding the near-expiry one", () => {
-    const entry = rbac.listTokens().find((e) => e.id === "operator-default");
-    expect(entry).toBeDefined();
-    expect(entry!.expiresAt).toBeGreaterThan(Date.now() + 89 * 24 * 60 * 60 * 1000);
+  afterEach(() => vi.useRealTimers());
+
+  it("an operator entry persisted with a past expiry authenticates after load (the 401 every UI call hit)", () => {
+    const r = rbac.authenticate(token);
+    expect(r.valid).toBe(true);
+    expect(r.entry?.role).toBe("operator");
+  });
+
+  it("heals the persisted entry: no expiry in memory or on disk", () => {
+    expect(rbac.listTokens().find((e) => e.id === "operator-default")!.expiresAt).toBeUndefined();
+    const onDisk = JSON.parse(readFileSync(file, "utf-8")) as Array<{ id: string; expiresAt?: number }>;
+    expect(onDisk.find((e) => e.id === "operator-default")!.expiresAt).toBeUndefined();
+  });
+
+  it("stays valid indefinitely, and REST agrees with the WS upgrade rule", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(Date.now() + 400 * DAY);
+    expect(rbac.authenticate(token).valid).toBe(true);
+    expect(authorizeUpgrade(token, token).ok).toBe(true);
+  });
+
+  it("a token issued WITH an expiry still expires — the control is per issued token, not gone", () => {
+    const issued = rbac.createToken("short-lived", "operator", DAY);
+    expect(rbac.authenticate(issued.token).valid).toBe(true);
+    vi.useFakeTimers();
+    vi.setSystemTime(Date.now() + 2 * DAY);
+    expect(rbac.authenticate(issued.token).valid).toBe(false);
+    expect(rbac.authenticate(token).valid, "the operator credential is unaffected").toBe(true);
   });
 
   afterAll(() => {

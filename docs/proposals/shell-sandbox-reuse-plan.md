@@ -145,37 +145,44 @@ Order of work, each step shippable on its own:
   loopback egress channel LAX creates itself, the agent browser's debugging
   port, is to be closed at its source (a pipe, not a port).
 
-## Step 5 — Windows escape matrix (run 2026-09-29, helper 0.0.1, as the sandbox user)
+## Step 5 — Windows escape matrix (2026-09-29, as the sandbox account; re-run in CI on every push by `scripts/win-cage/escape-matrix.ps1`)
 
 | Probe | Result | Verdict |
 |---|---|---|
-| Direct HTTP to 127.0.0.1:7007 (outside the permit) | "Unable to connect" | held |
-| DNS through the resolver service (Resolve-DnsName, .NET GetHostAddresses) | resolves, real answers | **leak**: the DNS client service answers for any user, so a DNS tunnel exfiltrates. Direct UDP/53 from the process is fenced (nslookup times out). |
-| BITS transfer, off-box and to 7007 | "the user has not logged on to the network" | held (the sandbox logon carries no network credential) |
+| Direct HTTP to a loopback port outside the permit | "Unable to connect" | held |
+| BITS transfer, off-box and to that port | "the user has not logged on to the network" | held (the sandbox logon carries no network credential) |
 | ShellExecute on a URL (Start-Process) | "Access is denied" | held |
-| COM Shell.Application.Open(url) | hangs; nothing reaches 7007 | held |
-| SMB loopback (IPC share) | not reachable | held |
-| schtasks /create as the sandbox user | SUCCESS | **persistence**: a task outlives the shell (still fenced by SID when it runs); the shell policy refuses schtasks by command, the Win32 API path does not |
+| COM Shell.Application.Open(url) | hangs; nothing reaches the port | held |
+| SMB loopback (IPC share) | not reachable | held (SeDenyNetworkLogonRight) |
+| schtasks /create then /run as the sandbox account | registers; never runs ("has not run", marker absent) | inert by design: the helper stamps SeDenyBatchLogonRight at install, so a task is persistence-spam with no logon to run under |
+| DNS through the resolver service (Resolve-DnsName, .NET GetHostAddresses) | resolves, real answers | **residual**: the DNS client service answers for any user and the fence cannot attribute its queries; a DNS tunnel exfiltrates. Direct UDP/53 from the process is fenced (nslookup times out). |
 
-What default-on needs, in order (owner's call on each):
+Decision (2026-09-29): default-on, shipped as follows.
 
-1. **DNS.** The cage cannot fence the resolver service. Closing it means the
-   helper denies the sandbox user the DNS client's RPC endpoint (or applies a
-   per-user DNS policy) — a change to srt-win's source, worth an upstream
-   issue. Interim, the shell policy refuses Resolve-DnsName, dig and nslookup
-   by command (9a023d1b); a script body can still call the resolver.
-2. **schtasks.** The helper removes "Log on as a batch job" from the sandbox
-   user at install, so a created task never runs.
-3. **Signed helper.** The Rust source is in Anthropic's sandbox-runtime GitHub
-   repository, not the npm package. Build it with cargo on the windows-latest
-   runner in installer-release.yml, sign it in the same Azure Artifact Signing
-   step as the installer, ship it under resources and copy it to
-   ProgramData/Local Agent X/bin at install.
-4. **Installer.** The NSIS target is oneClick and per-user, with no UAC.
-   Default-on needs a customInstall macro running the helper's install
-   elevated (one UAC prompt during install) and customUnInstall running its
-   uninstall.
+1. **The helper is ours.** `packages/srt-win` vendors the upstream Rust source
+   (pinned commit in its README) with four constants changed so a machine that
+   also runs Anthropic's runtime keeps both installs apart: account
+   `lax-sandbox`, registry root `HKLM\SOFTWARE\Local Agent X\shell-cage`,
+   state dir `%ProgramData%\Local Agent X\shell-cage`, its own sublayer GUID.
+   The C runtime is linked statically (upstream issue 451). CI builds it on
+   windows-latest, signs it with the installer's Azure Artifact Signing
+   profile, verifies the publisher, embeds it in the standalone installer and
+   attaches it to the release.
+2. **One provisioning path.** `scripts/win-cage/provision.ps1` elevates itself
+   once, checks the helper carries the installer's own publisher signature,
+   copies it to `%ProgramData%\Local Agent Xin` and runs its install.
+   The installer's `netcage` step, the app's Settings action and the
+   uninstaller (`-Uninstall`) all run this one script.
+3. **Proof on every push.** The `windows-cage` job in security.yml builds the
+   helper, provisions the cage on the elevated runner, runs the matrix as the
+   sandbox account and asserts the table above, then removes the cage.
+4. **DNS stays a documented residual on Windows.** The shell policy refuses
+   Resolve-DnsName, dig and nslookup by command; the proxy resolves for every
+   proxy-aware client. The same channel on macOS is closed: the guarded
+   seatbelt no longer allows the resolver socket, so names resolve only at the
+   proxy (curl exits 6 inside the cage, and reaches the network through the
+   proxy). Reported to Anthropic's vulnerability disclosure program for the
+   Windows helper, since their design shares it.
 
-Recommendation: keep the cage opt-in (the Settings toggle) until 1 and 2 are
-closed in the helper; ship 3 and 4 behind that toggle so opting in no longer
-needs a hand-copied binary.
+Residual outside this plan: Electron's opt-in in-app debugging port
+(`browserNativeDriving`) is still a loopback port when that option is on.

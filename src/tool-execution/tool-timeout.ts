@@ -45,6 +45,10 @@ export const DEFAULT_TIMEOUTS: Record<string, number> = {
   build_app: 0,
   start_app_build: 0,
   finalize_app_build: 0,
+  // app_rebuild runs a static build with its own 240s deadline and returns a
+  // timed-out envelope on it; the harness backstop must sit ABOVE that or it
+  // abandons the promise first and the envelope is never seen (found 2026-07-29).
+  app_rebuild: 300_000,
   run_build_plan: 0,
   op_submit: 0,
   op_submit_async: 0,

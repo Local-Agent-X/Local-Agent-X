@@ -60,6 +60,11 @@ describe("withTimeout", () => {
 });
 
 describe("getToolTimeout exemptions", () => {
+  it("app_rebuild's backstop sits above the static build's own 240s deadline, so its timed-out envelope is reachable", async () => {
+    const { getToolTimeout } = await import("./tool-timeout.js");
+    expect(getToolTimeout("app_rebuild")).toBeGreaterThan(240_000);
+  });
+
   it("returns 0 (unbounded) for known long-runners", async () => {
     const { getToolTimeout } = await import("./tool-timeout.js");
     // self_edit drives a CLI subprocess for minutes — must be exempt.

@@ -320,7 +320,112 @@ gate.
 
 ---
 
-## 5. What I can start on today, in this environment
+## 5. Agent modes: one switch in the composer, not nine in Settings
+
+Added 2026-10-01 from the owner's request: replace the composer's Plan chip
+with a mode picker like a coding agent's permission picker, where the top
+mode means the user is never blocked, and the other modes tighten security
+in named steps.
+
+### 5.1 Why users get blocked on the "Autonomous" profile today
+
+Nine independent gates can deny a call, and the autonomy profile is only one
+of them. Picking `Autonomous` in Settings leaves the other eight where they
+were:
+
+| Gate | Where | Scope | Controlled by |
+|---|---|---|---|
+| Autonomy profile (ask/allow per risk class) | `src/autonomy/profiles.ts` | global | Settings → Autonomy |
+| Safety toggles: shell, http, browser, computer control, supervised browser | `src/settings-schema.ts` | global | Settings → Security |
+| File access mode (workspace / common / unrestricted) | `public/js/settings-file-access.js` | global | Settings → File access |
+| Web access policy (strict allowlist on a fresh install) | `0825fc6` | global | Settings, or the "Allow host" card |
+| Session policy preset (default / high-security / dev-mode / read-only) | `src/session/policy.ts`, `src/routes/security.ts` | per session | API only |
+| Plan mode (read-only turn) | `src/chat-ws/message-router.ts`, `plan-mode-chip` | per session | composer chip |
+| Session taint latch + kernel run rules | `src/tool-execution/enforce-policy.ts`, `src/ari-kernel/` | per session / per turn | nothing: no profile or setting reaches the kernel |
+| Shell cage (guarded / host / docker) | `LAX_SANDBOX`, Settings | global | Settings |
+| `developer_mode` for `self_edit` | `src/settings-schema.ts` | global | Settings |
+
+The kernel row is the one that matters. The Phase 0 audit recorded it
+plainly: "today no kernel or tool policy varies by model" and nothing in the
+profile table is consulted by the taint or run rules. So a user on
+`Autonomous`, with every toggle on, still gets "Run has been quarantined"
+after an inbox read. A mode picker whose top mode does not reach the kernel
+would be a lie.
+
+### 5.2 The design
+
+**One per-session value, `agentMode`, is the source of truth.** Picking a
+mode in the composer sets it over the chat socket (the same path
+`plan_mode` uses today), the server derives every gate above from it for
+that session, and broadcasts `settings_changed`. Global Settings keep their
+fields, but each becomes the *default mode for new sessions* rather than a
+separate switch the user has to find. A mode is per session so two chats
+can run at different trust levels without one changing the other.
+
+**Modes, top to bottom** (hotkeys 1–5, like the picker in the screenshot):
+
+| # | Mode | What it means | Gates it sets |
+|---|---|---|---|
+| 1 | **Autopilot** | Nothing is denied. The agent does the whole job and tells you what it did. | profile Autonomous; all safety toggles on; file access unrestricted; web access open; session preset dev-mode; plan off; taint and run rules downgraded from *deny* to *audit* (logged, never blocking); shell cage stays guarded (it protects credentials from the shell, not the user from the agent, and costs the user nothing) |
+| 2 | **Copilot** | Works freely on this machine; asks once before anything leaves it. | profile Power; toggles on; file access common; web access open; the only prompts are money, secrets, and a red publish review |
+| 3 | **Chaperone** | Asks before any change. Reads, searches, and browses on its own. | profile Safe; `toolApproval` confirm-risky; file access common; strict web access with the allow-host card |
+| 4 | **Plan** | Read-only. Proposes a plan and stops. | existing plan mode plus session preset read-only |
+| 5 | **Locked** | Untrusted work: workspace only, no shell, no outbound writes. | session preset high-security; shell/http/computer off; file access workspace; strict web |
+
+The default for a fresh install is **Copilot**. The owner's ask is that
+Autopilot be the everyday mode for a trusted user; that is one click and
+remembered per session, and Settings can set it as the default.
+
+**Name options for the top mode,** since "bypass" and "shadow" read as
+hostile: Autopilot (recommended: everyone knows what it means and it says
+hands-off, not reckless), Free Agent, Full Trust, Unleashed, Open Agent.
+The recommendation is Autopilot / Copilot for the top two, because the pair
+explains itself.
+
+### 5.3 The one decision the owner has to make
+
+In Autopilot, what happens when actual secret bytes (a key the agent read
+from a file or inbox this session) are about to leave the machine in an
+outbound payload? That is the single case the kernel's taint rules exist
+for, and the only one where "never blocked" and "never exfiltrated" pull
+apart. Two options:
+
+- **A. Audit only.** Autopilot never stops. The send is logged with the
+  evidence and shown in the chat after the fact. The user accepted this by
+  choosing the mode.
+- **B. One card.** Autopilot never *denies*, but this one case shows a
+  confirm card with the payload evidence and a "Send anyway" button, and
+  "Always for this session" makes it go away. Everything else in Autopilot
+  stays silent.
+
+Recommendation: **B**, with the card worded as a notice, not a block, and
+with the whole session clean afterwards (no latch, no quarantine). It costs
+one click in the one case a reasonable user would want to see, and it keeps
+the kernel's payload-evidence work meaningful. If the owner wants A, the
+implementation is the same with the card's default flipped.
+
+### 5.4 Where it lands in the phases
+
+This is Phase 1 work, because it is the same job as the reset and the
+session-health view: one model of what is allowed in this session, derived
+from one value, shown in one place. Chunks, in order:
+
+1. `agentMode` on the session with the derivation table above, replacing
+   the direct reads of profile, toggles, file access, web access, preset,
+   and plan flag in `src/tool-execution/` and `src/tool-policy/` with one
+   resolver (`src/session/agent-mode.ts`).
+2. Kernel downgrade: in Autopilot the taint-keyed rules and run rules return
+   an audit verdict instead of a deny. This is the piece the current
+   profiles never did.
+3. The composer chip and popover, replacing `plan-mode-chip`, with the
+   hotkeys and the mode badge in the chat header (the same badge that shows
+   session health).
+4. Settings → Autonomy, Security and File access become "default mode for
+   new sessions" plus an "Advanced" expander that still exposes the raw
+   fields.
+5. The "cannot brick" suite (Phase 1 item 6) runs once per mode.
+
+## 6. What I can start on today, in this environment
 
 Without provider keys and native modules in the cloud container, the work
 available now is Phase 0 items 1, 2, 3 (the PR and the protection rules

@@ -1,6 +1,7 @@
 import { Agent, fetch as undiciFetch } from "undici";
 import type { RequestInit as UndiciRequestInit, Response as UndiciResponse } from "undici";
 import { getInternalAgentToken } from "../rbac.js";
+import type { BlockAction } from "../types.js";
 import { resolveAndPinHost, evaluateEgressForUrl } from "../security/layer/index.js";
 import { isLoopbackHost, LOOPBACK_HOSTNAMES } from "../security/layer/ip-classification.js";
 
@@ -18,10 +19,38 @@ export const BROWSER_ACCEPT_LANGUAGE = "en-US,en;q=0.9";
  *  policy reason so the tool can fail closed with an actionable message rather
  *  than a generic fetch error. */
 export class EgressRedirectBlocked extends Error {
-  constructor(public readonly blockedUrl: string, reason: string) {
+  /** The user's way out when the policy named one (a strict-mode host the user can allow). */
+  readonly action?: BlockAction;
+  constructor(public readonly blockedUrl: string, reason: string, action?: BlockAction) {
     super(reason);
     this.name = "EgressRedirectBlocked";
+    this.action = action;
   }
+}
+
+/** The host a blocked URL named, for a tool's blocked result. */
+export function blockedHostOf(e: EgressRedirectBlocked): string {
+  try { return new URL(e.blockedUrl).hostname.toLowerCase(); } catch { return e.blockedUrl; }
+}
+
+/** The web-access policy on the INITIAL destination of a canonicalFetch, for
+ *  hostname targets: the same evaluateWebFetch the dispatch gate runs for
+ *  web_fetch / http_request, so a tool whose destination is its own choice
+ *  (web_search, image_search, image acquisition for a deck) answers to the
+ *  strict-mode allowlist like every other off-box read. Literal-IP and
+ *  loopback targets are decided by assertLiteralIpEgressAllowed, which needs
+ *  the real runtime port. Throws EgressRedirectBlocked carrying the policy's
+ *  action so the caller can offer "Allow <host> & retry". */
+export function assertInitialEgressAllowed(url: string): void {
+  let host: string;
+  try {
+    host = new URL(url).hostname.replace(/^\[/, "").replace(/\]$/, "").toLowerCase();
+  } catch {
+    throw new EgressRedirectBlocked(url, "Blocked: invalid URL (SSRF protection)");
+  }
+  if (isLiteralIpHost(host) || isLoopbackHost(host)) return;
+  const decision = evaluateEgressForUrl(url);
+  if (!decision.allowed) throw new EgressRedirectBlocked(url, decision.reason, decision.action);
 }
 
 /** Re-run the egress policy on a redirect target when it crosses to a new host.
@@ -45,7 +74,7 @@ export function assertRedirectEgressAllowed(fromUrl: string, toUrl: string): voi
   } catch { /* unparseable → fall through to the policy check, which fails closed */ }
   const decision = evaluateEgressForUrl(toUrl);
   if (!decision.allowed) {
-    throw new EgressRedirectBlocked(toUrl, decision.reason);
+    throw new EgressRedirectBlocked(toUrl, decision.reason, decision.action);
   }
 }
 
@@ -183,6 +212,8 @@ export interface CanonicalFetchOptions {
   timeoutMs?: number;
   /** Max redirect hops to follow before failing (default 5). */
   maxRedirects?: number;
+  /** A caller's abort (a tool's own deadline), combined with the timeout. */
+  signal?: AbortSignal;
 }
 
 /** Schemes a canonicalFetch is allowed to dial. A redirect that bounces to
@@ -235,16 +266,19 @@ export async function canonicalFetch(
   const timeoutMs = opts.timeoutMs ?? 30_000;
   const maxRedirects = opts.maxRedirects ?? 5;
   let currentUrl = url;
+  const timeout = AbortSignal.timeout(timeoutMs);
   const fetchOpts: UndiciRequestInit = {
     headers: opts.headers ?? {},
-    signal: AbortSignal.timeout(timeoutMs),
+    signal: opts.signal ? AbortSignal.any([opts.signal, timeout]) : timeout,
     redirect: "manual",
     dispatcher: pinnedDispatcher(),
   };
 
-  // Pre-connect scheme + literal-IP SSRF check on the INITIAL url (the pinning
+  // Pre-connect checks on the INITIAL url: scheme, the web-access policy for
+  // a hostname (strict-mode allowlist), and literal-IP SSRF (the pinning
   // dispatcher's connect.lookup never fires for a literal IP).
   assertHttpScheme(currentUrl);
+  assertInitialEgressAllowed(currentUrl);
   await assertLiteralIpEgressAllowed(currentUrl);
   let r = await undiciFetch(currentUrl, fetchOpts);
 

@@ -6,6 +6,13 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { collectArgViolations } from "../tool-execution/arg-validation.js";
 import { webSearchTool, dedupeResults, canonicalUrl } from "./web-search-tool.js";
 
+// The tool reaches the providers through the hardened fetch (web-egress.ts),
+// never the global: the tests stand in for that module and answer through
+// `fetchStub`, so a test that set globalThis.fetch would prove nothing.
+const { fetchStub } = vi.hoisted(() => ({ fetchStub: { fn: null as null | ((url: string, init?: unknown) => Promise<Response>) } }));
+vi.mock("./web-egress.js", async (importOriginal) => ({ ...(await importOriginal<typeof import("./web-egress.js")>()), canonicalFetch: (url: string, init?: unknown) => fetchStub.fn!(url, init) }));
+import { EgressRedirectBlocked } from "./web-egress.js";
+
 function ddgHtml(items: { url: string; title: string; snippet: string }[]): string {
   return items
     .map(
@@ -20,11 +27,10 @@ function braveJson(items: { url: string; title: string; description: string }[])
   return { web: { results: items } };
 }
 
-const origFetch = globalThis.fetch;
 const origKey = process.env.BRAVE_API_KEY;
 
 afterEach(() => {
-  globalThis.fetch = origFetch;
+  fetchStub.fn = null;
   if (origKey === undefined) delete process.env.BRAVE_API_KEY;
   else process.env.BRAVE_API_KEY = origKey;
   vi.restoreAllMocks();
@@ -57,23 +63,26 @@ describe("web_search execute", () => {
 
   it("falls back to DDG when Brave errors", async () => {
     process.env.BRAVE_API_KEY = "test-key";
-    globalThis.fetch = vi.fn(async (input: unknown) => {
+    fetchStub.fn = vi.fn(async (input: unknown) => {
       const url = String(input);
       if (url.includes("brave.com")) throw new Error("brave 429");
       return new Response(ddgHtml([{ url: "https://fallback.com/a", title: "Fallback", snippet: "via ddg" }]), {
         status: 200,
         headers: { "content-type": "text/html" },
       });
-    }) as typeof fetch;
+    });
 
     const res = await webSearchTool.execute({ query: "anything" });
     expect(res.isError).toBeFalsy();
     expect(res.content).toContain("https://fallback.com/a");
     expect(res.content).toContain("Fallback");
+    // Results are external content, fenced like a fetched page.
+    expect(res.content).toMatch(/<<<EXTERNAL_UNTRUSTED_CONTENT/);
+    expect(res.content).toContain('source: web_search');
   });
 
   it("fans out multiple queries and dedupes overlapping URLs", async () => {
-    globalThis.fetch = vi.fn(async (input: unknown) => {
+    fetchStub.fn = vi.fn(async (input: unknown) => {
       const url = String(input);
       // q1 and q2 both surface the shared URL; only q2 has the unique one.
       const shared = { url: "https://shared.com/x", title: "Shared", snippet: "s" };
@@ -81,7 +90,7 @@ describe("web_search execute", () => {
         ? ddgHtml([shared, { url: "https://only2.com/y", title: "Only2", snippet: "u" }])
         : ddgHtml([shared]);
       return new Response(body, { status: 200, headers: { "content-type": "text/html" } });
-    }) as typeof fetch;
+    });
 
     const res = await webSearchTool.execute({ query: "q1", queries: ["q1", "q2"], max_results: 10 });
     expect(res.isError).toBeFalsy();
@@ -97,13 +106,13 @@ describe("web_search execute", () => {
     };
     expect(collectArgViolations({ queries: ["q1", "q2"] }, schema)).toEqual([]);
 
-    globalThis.fetch = vi.fn(async (input: unknown) => {
+    fetchStub.fn = vi.fn(async (input: unknown) => {
       const query = new URL(String(input)).searchParams.get("q");
       return new Response(ddgHtml([{ url: `https://${query}.example/result`, title: String(query), snippet: "ok" }]), {
         status: 200,
         headers: { "content-type": "text/html" },
       });
-    }) as typeof fetch;
+    });
 
     const res = await webSearchTool.execute({ queries: ["q1", "q2"] });
     expect(res.isError).toBeFalsy();
@@ -117,10 +126,21 @@ describe("web_search execute", () => {
     expect(res.content).toContain("query or queries is required");
   });
 
+  it("a provider off the strict-mode allowlist is a blocked result naming the host to allow", async () => {
+    fetchStub.fn = vi.fn(async (url: string) => {
+      throw new EgressRedirectBlocked(url, "Blocked: html.duckduckgo.com is not on the web access allowlist (strict mode).", { kind: "allow-host", host: "html.duckduckgo.com" });
+    });
+    const res = await webSearchTool.execute({ query: "x" });
+    expect(res.isError).toBe(true);
+    expect(res.status).toBe("blocked");
+    expect(res.metadata).toMatchObject({ layer: "security", clearable: "allow-host", host: "html.duckduckgo.com" });
+    expect(res.content).toContain("not on the web access allowlist");
+  });
+
   it("errors only when every query fails", async () => {
-    globalThis.fetch = vi.fn(async () => {
+    fetchStub.fn = vi.fn(async () => {
       throw new Error("network down");
-    }) as typeof fetch;
+    });
     const res = await webSearchTool.execute({ query: "x" });
     expect(res.isError).toBe(true);
     expect(res.content).toContain("network down");

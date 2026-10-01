@@ -1,4 +1,7 @@
 import type { ToolDefinition, ToolResult } from "../types.js";
+import { canonicalFetch, EgressRedirectBlocked } from "./web-egress.js";
+import { blockedResult } from "./web-search-tool.js";
+import { wrapExternalContent } from "../sanitize.js";
 
 /**
  * image_search — find DIRECT image URLs on the web so the agent can embed them
@@ -26,7 +29,7 @@ const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/
 const enc = encodeURIComponent;
 
 async function braveImages(query: string, max: number, apiKey: string, signal: AbortSignal): Promise<ImageHit[]> {
-  const res = await fetch(`https://api.search.brave.com/res/v1/images/search?q=${enc(query)}&count=${max}`, {
+  const res = await canonicalFetch(`https://api.search.brave.com/res/v1/images/search?q=${enc(query)}&count=${max}`, {
     headers: { "User-Agent": UA, Accept: "application/json", "X-Subscription-Token": apiKey }, signal,
   });
   const json = (await res.json()) as { results?: { title?: string; url?: string; thumbnail?: { src?: string }; properties?: { url?: string } }[] };
@@ -39,12 +42,12 @@ async function braveImages(query: string, max: number, apiKey: string, signal: A
 
 async function ddgImages(query: string, max: number, signal: AbortSignal): Promise<ImageHit[]> {
   // DDG's image endpoint needs a `vqd` token minted by the HTML search page.
-  const tokenRes = await fetch(`https://duckduckgo.com/?q=${enc(query)}&iax=images&ia=images`, {
+  const tokenRes = await canonicalFetch(`https://duckduckgo.com/?q=${enc(query)}&iax=images&ia=images`, {
     headers: { "User-Agent": UA, Accept: "text/html", "Accept-Language": "en-US,en;q=0.9" }, signal,
   });
   const vqd = (await tokenRes.text()).match(/vqd=["']?([\d-]+)["']?/)?.[1];
   if (!vqd) return [];
-  const res = await fetch(`https://duckduckgo.com/i.js?l=us-en&o=json&q=${enc(query)}&vqd=${vqd}&f=,,,&p=1`, {
+  const res = await canonicalFetch(`https://duckduckgo.com/i.js?l=us-en&o=json&q=${enc(query)}&vqd=${vqd}&f=,,,&p=1`, {
     headers: { "User-Agent": UA, Accept: "application/json", Referer: "https://duckduckgo.com/" }, signal,
   });
   const json = (await res.json()) as { results?: { image: string; thumbnail?: string; title?: string; width?: number; height?: number; source?: string }[] };
@@ -59,7 +62,7 @@ async function wikimediaImages(query: string, max: number, signal: AbortSignal):
   // rescues originals past the acquirer's 10MB/4096px caps.
   const url = `https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrnamespace=6` +
     `&gsrsearch=${enc(query)}&gsrlimit=${max}&prop=imageinfo&iiprop=url|size|mime&iiurlwidth=1600&format=json&origin=*`;
-  const res = await fetch(url, { headers: { "User-Agent": UA, Accept: "application/json" }, signal });
+  const res = await canonicalFetch(url, { headers: { "User-Agent": UA, Accept: "application/json" }, signal });
   const json = (await res.json()) as { query?: { pages?: Record<string, { title: string; imageinfo?: { url: string; thumburl?: string; width: number; height: number; mime: string }[] }> } };
   const pages = json.query?.pages ? Object.values(json.query.pages) : [];
   const out: ImageHit[] = [];
@@ -128,12 +131,21 @@ export const imageSearchTool: ToolDefinition = {
     const chain: Provider[] = key ? ["brave", "ddg", "wikimedia"] : ["ddg", "wikimedia"];
 
     let lastErr = "";
+    let blocked: EgressRedirectBlocked | null = null;
     for (const p of chain) {
       try {
         const hits = dedupe(await run(p, query, max, key, merged));
-        if (hits.length) return { content: format(hits.slice(0, max)), metadata: { provider: p, count: hits.length } };
-      } catch (e) { lastErr = e instanceof Error ? e.message : String(e); }
+        // Titles come from the provider's index of arbitrary pages: external
+        // content, fenced like a fetched page.
+        if (hits.length) return { content: wrapExternalContent(format(hits.slice(0, max)), "image_search", { query }), metadata: { provider: p, count: hits.length } };
+      } catch (e) {
+        if (!blocked && e instanceof EgressRedirectBlocked && e.action) blocked = e;
+        lastErr = e instanceof Error ? e.message : String(e);
+      }
     }
+    // Every provider the chain reached was refused by the strict-mode
+    // allowlist (or failed): name the first refused host so the user can allow it.
+    if (blocked) return blockedResult(blocked);
     return { content: lastErr ? `Image search failed: ${lastErr}` : "No images found.", isError: !!lastErr };
   },
 };

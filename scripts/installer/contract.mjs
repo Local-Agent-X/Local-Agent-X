@@ -12,6 +12,10 @@ export const NODE_MAJOR_MIN = (() => {
 export const NODE_LTS_INSTALL = 24;
 export const NODE_PORTABLE_VERSION = "24.16.0";
 export const EMBED_MODEL = "mxbai-embed-large";
+// The hosts web_search and image_search reach (src/tools/web-search-tool.ts,
+// image-search-tool.ts). A fresh install's strict web access allows them so
+// search works before the user has allowed anything of their own.
+export const SEARCH_PROVIDER_HOSTS = ["html.duckduckgo.com", "duckduckgo.com", "api.search.brave.com", "commons.wikimedia.org"];
 export const WINGET_SOURCE = ["--source", "winget"];
 export const INSTALL_CHECKPOINT_VERSION = 1;
 

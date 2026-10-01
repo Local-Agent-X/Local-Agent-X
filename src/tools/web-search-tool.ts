@@ -1,14 +1,18 @@
-import type { ToolDefinition, ToolResult } from "../types.js";
+import { USER_HINTS, type ToolDefinition, type ToolResult } from "../types.js";
 import { htmlToText } from "../app-renderer/sanitize.js";
+// The ONE hardened fetch every off-box read uses: DNS-pinned, private-address
+// blocked at connect, every redirect hop re-checked. Search providers are
+// public hosts, but a provider redirect is still a redirect.
+import { canonicalFetch, EgressRedirectBlocked, blockedHostOf } from "./web-egress.js";
+import { wrapExternalContent } from "../sanitize.js";
 
 interface SearchResult { title: string; url: string; snippet: string }
 
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/125.0 Safari/537.36";
 
 async function searchDDG(query: string, max: number, signal?: AbortSignal): Promise<SearchResult[]> {
-  const res = await fetch(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`, {
+  const res = await canonicalFetch(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`, {
     headers: { "User-Agent": UA, Accept: "text/html", "Accept-Language": "en-US,en;q=0.9" },
-    redirect: "follow",
     signal,
   });
   const html = await res.text();
@@ -24,12 +28,22 @@ async function searchDDG(query: string, max: number, signal?: AbortSignal): Prom
 
 async function searchBrave(query: string, max: number, apiKey: string, signal?: AbortSignal): Promise<SearchResult[]> {
   const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${max}`;
-  const res = await fetch(url, {
+  const res = await canonicalFetch(url, {
     headers: { "User-Agent": UA, Accept: "application/json", "X-Subscription-Token": apiKey },
     signal,
   });
   const json = (await res.json()) as { web?: { results?: { title: string; url: string; description: string }[] } };
   return (json.web?.results ?? []).slice(0, max).map(r => ({ title: r.title, url: r.url, snippet: r.description }));
+}
+
+export function blockedResult(e: EgressRedirectBlocked): ToolResult {
+  const host = blockedHostOf(e);
+  return {
+    content: e.message,
+    isError: true,
+    status: "blocked",
+    metadata: { layer: "security", clearable: e.action!.kind, host, userHint: USER_HINTS.network },
+  };
 }
 
 function formatResults(results: SearchResult[]): string {
@@ -114,12 +128,22 @@ export const webSearchTool: ToolDefinition = {
     const all: SearchResult[] = [];
     let anyFulfilled = false;
     let firstErr = "";
+    let blocked: EgressRedirectBlocked | null = null;
     for (const s of settled) {
       if (s.status === "fulfilled") { anyFulfilled = true; all.push(...s.value); }
-      else if (!firstErr) firstErr = s.reason instanceof Error ? s.reason.message : String(s.reason);
+      else {
+        if (!blocked && s.reason instanceof EgressRedirectBlocked && s.reason.action) blocked = s.reason;
+        if (!firstErr) firstErr = s.reason instanceof Error ? s.reason.message : String(s.reason);
+      }
     }
+    // The provider is off the strict-mode allowlist: the same blocked result
+    // the dispatch gate emits for web_fetch, so the chat offers "Allow & retry".
+    if (!anyFulfilled && blocked) return blockedResult(blocked);
     if (!anyFulfilled) return { content: `Search failed: ${firstErr || "no results"}`, isError: true };
-    return { content: formatResults(dedupeResults(all).slice(0, max)) };
+    // Titles and snippets are text a search engine scraped off arbitrary
+    // pages: external content, fenced like a fetched page so an instruction
+    // planted in a snippet is marked, not obeyed.
+    return { content: wrapExternalContent(formatResults(dedupeResults(all).slice(0, max)), "web_search", { query: queries.join(" | ") }) };
   },
 };
 

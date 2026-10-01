@@ -26,12 +26,12 @@ function freshContext() {
 const read = (path: string) => JSON.parse(readFileSync(path, "utf-8"));
 
 describe("installer settings step: web access", () => {
-  it("a fresh install is strict with an empty allowlist", () => {
+  it("a fresh install is strict, with only the search providers allowed", () => {
     const { directory, context } = freshContext();
     scaffoldSettings(context, false);
     expect(read(join(directory, "settings.json"))).toMatchObject({ embeddingProvider: "local" });
     expect(read(join(directory, "security.json"))).toEqual({ egressMode: "strict" });
-    expect(read(join(directory, "egress-allowlist.json"))).toEqual([]);
+    expect(read(join(directory, "egress-allowlist.json"))).toEqual(["html.duckduckgo.com", "duckduckgo.com", "api.search.brave.com", "commons.wikimedia.org"]);
   });
 
   it("an existing install with NEITHER policy file (the common case) is left alone: config.json is the install's identity", () => {

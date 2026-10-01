@@ -91,7 +91,7 @@ Layer 4:  ToolPolicy         — Configurable allow/deny (default-deny), per-too
 Layer 5:  ThreatEngine       — Canary tokens, chain analysis (exfil patterns: read-sensitive → send-external), loop detection (generic repeat, ping-pong, circuit breaker), data classification (auto-tags credentials / PII / secrets / financial), encoding detection, adaptive scoring
 Layer 6:  Content Sanitizer  — 41 injection patterns, Unicode homoglyph normalization, external-content wrapping with unique boundary markers
 Layer 7:  Memory Taint       — Blocks untrusted content from persisting to memory
-Layer 8:  Shell/Server Sandbox — Guarded by default: macOS `seatbelt` or Linux `bwrap` denies credential paths and lets the shell off the machine only through the loopback egress proxy (macOS: loopback direct, off-machine denied at the kernel; Linux: an empty network namespace whose one way out is the proxy's bind-mounted socket). Stricter native modes deny all network with no proxy route; Docker provides hermetic isolation. Unsupported guarded backends visibly fall back to host and unattended shell paths require explicit acknowledgement. Whole-server confinement is available via boot re-exec on macOS/Linux. Windows has an opt-in cage (alpha): a dedicated local user fenced by Windows Filtering Platform, installed from Settings with one administrator prompt, usable only once its fence is proven at first use; until then guarded falls back visibly to host (see "Windows shell confinement" below)
+Layer 8:  Shell/Server Sandbox — Guarded by default: macOS `seatbelt` or Linux `bwrap` denies credential paths and lets the shell off the machine only through the loopback egress proxy (macOS: loopback direct, off-machine denied at the kernel; Linux: an empty network namespace whose one way out is the proxy's bind-mounted socket). Stricter native modes deny all network with no proxy route; Docker provides hermetic isolation. Unsupported guarded backends visibly fall back to host and unattended shell paths require explicit acknowledgement. Whole-server confinement is available via boot re-exec on macOS/Linux. Windows runs guarded shells as a dedicated local account fenced by Windows Filtering Platform, provisioned by the installer with one administrator prompt (or later from Settings) and used only once its fence is proven at first use; until then guarded falls back visibly to host. Its one known gap is name lookups through the Windows DNS service (see "Windows shell confinement" below)
 Layer 9:  Crypto Audit Trail — Tamper-evident SHA-256 hash chain + ARI Kernel audit DB, per-session threat scoring, daily JSONL files at `~/.lax/audit/`
 Layer 10: Output Redaction   — Credential masking before AI sees tool results
 ```
@@ -99,7 +99,7 @@ Layer 10: Output Redaction   — Credential masking before AI sees tool results
 ## Known Limitations
 
 1. **Single-user model** — RBAC adds roles (operator / user / readonly) but not full enterprise IAM (OIDC/SAML planned). Don't share a single instance between mutually untrusted users.
-2. **Shell sandbox coverage is platform-dependent** — The selected default is `guarded`; macOS and Linux apply a credential-denying native cage whose only route off the machine is the egress proxy (see Layer 8). Stricter `seatbelt`/`bwrap` modes deny network outright, and Docker mode works across platforms. **Windows has no native mode — use Docker** (see "Windows shell confinement"). An unavailable selected backend produces a visible effective-`host` fallback; unattended delegated/API shell paths remain blocked until the user acknowledges that posture. **The Linux cage has never been exercised on a live machine.** No maintainer runs Local Agent X on Linux day to day; the bubblewrap namespace, the unix-socket bridge and the guarded egress contract are verified only by the CI lane (ubuntu-latest with bubblewrap installed). macOS and Windows are verified on real machines. Treat Linux as CI-proven, not field-proven, and report what you see.
+2. **Shell sandbox coverage is platform-dependent** — The selected default is `guarded`; macOS and Linux apply a credential-denying native cage whose only route off the machine is the egress proxy (see Layer 8). Stricter `seatbelt`/`bwrap` modes deny network outright, and Docker mode works across platforms. **Windows** runs the shell as a separate account behind a firewall fence; name lookups through the Windows DNS service are not fenced (see "Windows shell confinement"). An unavailable selected backend produces a visible effective-`host` fallback; unattended delegated/API shell paths remain blocked until the user acknowledges that posture. **The Linux cage has never been exercised on a live machine.** No maintainer runs Local Agent X on Linux day to day; the bubblewrap namespace, the unix-socket bridge and the guarded egress contract are verified only by the CI lane (ubuntu-latest with bubblewrap installed). macOS and Windows are verified on real machines (on Windows, with the cage installed from Settings; the installer's provisioning step has not yet run on a fresh machine). Treat Linux as CI-proven, not field-proven, and report what you see.
 3. **Secrets and LAX-owned provider auth encryption** — AES-256-GCM data is protected by a master key in DPAPI, macOS Keychain, or Linux libsecret when available; the weaker fallback derives the key from machine identity plus a local scrypt salt. CLI-native stores are outside this boundary; see [docs/provider-auth.md](docs/provider-auth.md).
 4. **Memory taint is heuristic** — Pattern-based detection + Unicode normalization can be evaded by sufficiently creative injection. ARI Kernel taint tracking adds formal enforcement.
 5. **No formal verification** — Security properties are tested empirically, not formally proven.
@@ -111,13 +111,50 @@ On macOS and Linux, the default `guarded` profile uses seatbelt/bwrap to shadow
 credential paths and route external network through the egress proxy while
 keeping common development paths.
 The explicit strict `seatbelt`/`bwrap` modes additionally deny external network
-and more configuration paths. **Windows has no equivalent native mode**: guarded
-falls back visibly to unconfined host, unattended shell paths require explicit
-acknowledgement, and Docker is the documented confinement answer. The in-process
-guards (shell-policy denylist, path/symlink guard, egress/lineage layers) still
-apply in host mode, but they are best-effort, not a kernel boundary.
+and more configuration paths.
 
-### Why not a native Windows mode (AppContainer evaluated, rejected)
+On Windows, `guarded` runs the shell as a dedicated local account,
+`lax-sandbox`, fenced by Windows Filtering Platform. The installer provisions it
+with one administrator prompt; a declined prompt or a developer install can
+provision it later from Settings → Security, and the uninstaller removes it. The
+helper that provisions it is built from source (vendored from Anthropic's
+sandbox-runtime, `packages/srt-win`) and signed by the installer's publisher.
+The app uses the cage only after proving the fence at first use. Until then, or
+when provisioning failed, guarded falls back visibly to unconfined host and
+unattended shell paths require explicit acknowledgement; the in-process guards
+(shell-policy denylist, path/symlink guard, egress/lineage layers) still apply
+there, but they are best-effort, not a kernel boundary.
+
+The escape matrix (`scripts/win-cage/escape-matrix.ps1`) runs as the sandbox
+account on an elevated CI runner on every push and asserts:
+
+- a direct connection to anything but the egress proxy's loopback ports is refused;
+- BITS, a URL handed to another app (ShellExecute) and SMB do not get out;
+- a scheduled task can be registered but never runs (the account has no batch
+  logon right).
+
+The account cannot read the user's profile (`~/.ssh`, `~/.lax`); the app grants
+it read access to the shell and runtime it ships and write access to the
+workspace.
+
+**Known gap: name lookups.** Windows programs resolve names through the shared
+DNS Client service, which sends the query under its own account, so the fence
+cannot tell a lookup made for the sandbox account from anyone else's. A caged
+shell can therefore carry data out inside the names it looks up, a few dozen
+characters per query, to a DNS server an attacker runs. What it can put there is
+limited to what it can read (the workspace, not the profile) and what the agent
+writes into a command. The shell policy refuses the lookup commands
+(Resolve-DnsName, nslookup, dig, host, ping), but a script can reach the service
+by other means. Tools that use the proxy (curl, git, npm, pip, Node with the
+injected proxy settings) hand names to the proxy and do not need the service, so
+nothing the cage supports depends on it. Windows offers no per-account switch
+for the service: RPC filters apply only to calls from other machines, and the
+service refuses only AppContainer callers without a network capability, a mode
+that cannot run the toolchain (below). The macOS and Linux cages do not have
+this gap. The escape matrix asserts the lookup as still resolving, so the day it
+is closed the assertion is flipped on purpose.
+
+### Why not AppContainer (evaluated, rejected)
 
 A native arm was prototyped against **AppContainer** (the userspace analog to
 seatbelt/bwrap: per-process, kernel-enforced, no admin). The **cage itself holds** —
@@ -139,13 +176,12 @@ makes seatbelt/bwrap shippable, on two independent counts:
    per-path grant that changes per command — effectively docker's hermetic posture
    without docker's clean isolation.
 
-The restricted-local-user alternative (separate `lax-shell` account + `icacls`
-denies + firewall `-LocalUser` block) was not pursued: it requires admin, hits the
-same wall (a second principal cannot read the main user's workspace/toolchain), and
-adds spawn-as-user credential plumbing. Per the project's security stance, an honest
-"no native mode, use Docker" beats shipping a confinement wrapper whose self-check
-had to be weakened to pass. Revisit if Windows ships a bind-mount-style namespace
-primitive (targeted-deny over a bound host), which is the piece AppContainer lacks.
+The shipped design is the restricted-local-user alternative: a separate account
+behind a firewall fence. Its costs were an administrator prompt at install and
+read grants for the toolchain the app ships, since a second account cannot read
+the main user's profile. Revisit AppContainer if Windows ships a bind-mount-style
+namespace primitive (targeted-deny over a bound host); it would also close the
+lookup gap above.
 
 ## Incident Response
 

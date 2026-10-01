@@ -107,7 +107,7 @@ describe("collapsed real families", () => {
     const expected: Record<string, { tools: { name: string; parameters: unknown }[]; actions: string[] }> = {
       spreadsheet: { tools: spreadsheetTools, actions: ["read", "write", "edit", "query"] },
       document: { tools: documentTools, actions: ["create", "read", "edit", "template"] },
-      presentation: { tools: presentationTools, actions: ["create", "add_slide", "from_outline", "edit"] },
+      presentation: { tools: presentationTools, actions: ["create", "add_slide", "from_outline", "from_template", "edit"] },
       pdf: { tools: pdfTools, actions: ["read", "create", "merge", "extract_tables"] },
     };
     for (const [name, { tools, actions }] of Object.entries(expected)) {

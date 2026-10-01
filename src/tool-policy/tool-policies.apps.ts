@@ -155,7 +155,8 @@ export const TOOL_POLICIES_APPS: Record<string, ToolPolicyEntry> = {
     { arg: "output_path", action: "write",   forActions: ["template"] },
   ] },
   presentation: { kernel: "internal", risk: "workspace-write", rules: [{ id: "allow-presentation", decision: "allow", reason: "PowerPoint create/edit", priority: 50 }], pathArgs: [
-    { arg: "file_path", action: "write", forActions: ["create", "add_slide", "from_outline", "edit"] },
+    { arg: "file_path", action: "write", forActions: ["create", "add_slide", "from_outline", "from_template", "edit"] },
+    { arg: "template_path", action: "read", forActions: ["from_template"] },
   ] },
   pdf: { kernel: "internal", risk: "workspace-write", rules: [{ id: "allow-pdf", decision: "allow", reason: "PDF read/generate/merge", priority: 50 }], pathArgs: [
     { arg: "file_path", action: "write", forActions: ["create"] },

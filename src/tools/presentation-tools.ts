@@ -10,6 +10,8 @@ import { acquireBrandLogo } from "./shared/office-brand.js";
 import { applySlide, appendImageSlides, type SlideSpec, type SlideBrand } from "./shared/pptx-render.js";
 import { collapseFamily } from "./shared/collapse-family.js";
 import { SOURCES_DOC_SENTENCE, SOURCES_PARAM_SCHEMA } from "./shared/provenance-sources.js";
+import { outlineToSlides } from "./presentation-outline.js";
+import { presentationFromTemplate } from "./presentation-template.js";
 
 /**
  * Every requested image failed. The deck is still WRITTEN — the user asked for
@@ -173,41 +175,6 @@ const presentationAddSlide: ToolDefinition = {
 
 // ── presentation_from_outline ──
 
-/** Pre-process outline text so flat/unformatted input still parses.
- *  Ensures # headings and - bullets each start on their own line. */
-function normalizeOutline(raw: string): string {
-  if (/^#+\s/m.test(raw)) return raw;   // already markdown
-  return raw
-    .replace(/\s+(#{1,3}\s)/g, "\n$1")
-    .replace(/\s+[-*]\s+/g, "\n- ")
-    .replace(/([.!?])\s+([A-Z])/g, "$1\n$2");
-}
-
-function outlineToSlides(md: string): SlideSpec[] {
-  const slides: SlideSpec[] = [];
-  let cur: SlideSpec | null = null;
-  let first = true;
-  for (const raw of normalizeOutline(md).split("\n")) {
-    const line = raw.trimEnd();
-    if (line.startsWith("# ")) {
-      if (cur) slides.push(cur);
-      cur = { title: line.slice(2).trim(), layout: first ? "title" : "content" };
-      first = false;
-    } else if (line.startsWith("## ")) {
-      if (cur) slides.push(cur);
-      cur = { title: line.slice(3).trim(), layout: "section" };
-    } else if (/^\s*[-*]\s+/.test(line)) {
-      if (!cur) cur = { layout: "content" };
-      (cur.bullets ??= []).push(line.replace(/^\s*[-*]\s+/, ""));
-    } else if (line.trim()) {
-      if (!cur) cur = { layout: "content" };
-      cur.body = cur.body ? `${cur.body}\n${line.trim()}` : line.trim();
-    }
-  }
-  if (cur) slides.push(cur);
-  return slides;
-}
-
 const presentationFromOutline: ToolDefinition = {
   name: "presentation_from_outline",
   description:
@@ -355,23 +322,26 @@ const presentationEdit: ToolDefinition = {
   },
 };
 
-// One collapsed tool (action param) — the four defs above stay as the
-// per-action implementations. All actions write file_path (see
+// One collapsed tool (action param) — the defs above and presentation-template.ts
+// stay as the per-action implementations. All actions write file_path (see
 // tool-policies.apps.ts pathArgs); keep both in sync when adding an action.
 export const presentationTools: ToolDefinition[] = [
   collapseFamily({
     name: "presentation",
-    compactDescription: "Build and edit PowerPoint .pptx decks. actions: create, from_outline, add_slide, edit. THE only way to produce a .pptx — never write one with the write tool, it is a binary container. Takes images:[{source,caption}].",
+    compactDescription: "Build and edit PowerPoint .pptx decks. actions: create, from_outline, from_template (new deck on an existing deck's theme/layouts), add_slide, edit. THE only way to produce a .pptx — never write one with the write tool, it is a binary container. Takes images:[{source,caption}].",
     intro: "Create and edit PowerPoint (.pptx) presentations. For advanced custom layouts beyond these actions, a Node build script may use pptxgenjs directly — it's bundled, so `require('pptxgenjs')` by bare name (never an absolute cwd/node_modules path).",
     actions: {
       create: presentationCreate,
       add_slide: presentationAddSlide,
       from_outline: presentationFromOutline,
+      from_template: presentationFromTemplate,
       edit: presentationEdit,
     },
     fullActionDocs: true,
     properties: {
-      file_path: { type: "string", description: "Path to the .pptx file (output for create/from_outline, existing for edit/add_slide)" },
+      file_path: { type: "string", description: "Path to the .pptx file (output for create/from_outline/from_template, existing for edit/add_slide)" },
+      template_path: { type: "string", description: "(from_template) Existing .pptx whose theme, layouts and media the new deck keeps" },
+      keep_slides: { type: "string", description: "(from_template) JSON array of 1-based template slide numbers to keep" },
       title: { type: "string", description: "(create/from_outline/add_slide) Presentation title metadata" },
       author: { type: "string", description: "(create) Author metadata" },
       slides: { type: "string", description: "(create) JSON array of slide specs (see action docs — prefer charts/images over bullet walls)" },

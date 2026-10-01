@@ -19,7 +19,7 @@ import JSZip from "jszip";
 
 const SLIDE_RE = /^ppt\/slides\/slide(\d+)\.xml$/;
 
-function escapeXml(s: string): string {
+export function escapeXml(s: string): string {
   return s
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
@@ -171,7 +171,7 @@ export async function deleteSlide(zip: JSZip, slide: number): Promise<void> {
 // ── Append an image slide ──────────────────────────────────────────────────
 
 const EMU_PER_PX = 9525; // 96 dpi
-const SLIDE_NS =
+export const SLIDE_NS =
   'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" ' +
   'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" ' +
   'xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"';
@@ -188,48 +188,98 @@ export interface ImageSlideInput {
 }
 
 /** Slide canvas size in EMU from presentation.xml (sldSz). */
-async function slideSize(zip: JSZip): Promise<{ cx: number; cy: number }> {
+export async function slideSize(zip: JSZip): Promise<{ cx: number; cy: number }> {
   const presXml = await zip.file("ppt/presentation.xml")!.async("string");
   const m = presXml.match(/<p:sldSz[^>]*\bcx="(\d+)"[^>]*\bcy="(\d+)"/);
   if (!m) throw new Error("presentation.xml has no sldSz — deck structure not recognized");
   return { cx: Number(m[1]), cy: Number(m[2]) };
 }
 
-/**
- * Append a new slide containing one centered image (plus optional title and
- * caption). All five registrations a slide needs are minted here — part,
- * media, slide rels (layout borrowed from the last existing slide), the
- * [Content_Types] entries, and the presentation.xml.rels + sldIdLst pair.
- * Returns the new slide's 1-based position.
- */
-export async function addImageSlide(zip: JSZip, img: ImageSlideInput): Promise<number> {
+/** The number the next minted slide part gets (slideN.xml, N past the highest present). */
+export function nextSlideNumber(zip: JSZip): number {
   const files = slideFileNames(zip);
   if (files.length === 0) throw new Error("Deck has no slides — not a .pptx?");
-  const nextNum = Math.max(...files.map((f) => Number(f.match(SLIDE_RE)![1]))) + 1;
-  const slidePath = `ppt/slides/slide${nextNum}.xml`;
+  return Math.max(...files.map((f) => Number(f.match(SLIDE_RE)![1]))) + 1;
+}
+
+/** The slideLayout part the last existing slide uses, relative to ppt/slides/. */
+export async function lastSlideLayoutTarget(zip: JSZip): Promise<string> {
+  const files = slideFileNames(zip);
+  const lastRelsPath = files[files.length - 1].replace("ppt/slides/", "ppt/slides/_rels/") + ".rels";
+  const lastRels = await zip.file(lastRelsPath)?.async("string");
+  const layoutTarget = lastRels?.match(/<Relationship[^>]*Type="[^"]*\/slideLayout"[^>]*Target="([^"]+)"/)?.[1]
+    ?? lastRels?.match(/Target="([^"]*slideLayouts[^"]+)"/)?.[1];
+  if (!layoutTarget) throw new Error(`Could not find a slideLayout relationship on ${lastRelsPath} — deck structure not recognized`);
+  return layoutTarget;
+}
+
+export interface SlideRel { id: string; type: string; target: string }
+
+/**
+ * Register a minted slide part at the end of the deck: the part itself, its
+ * rels, the [Content_Types] override, and the presentation.xml.rels +
+ * sldIdLst pair. Every structural append (image slide, template slide) goes
+ * through here so the five registrations exist exactly once. Returns the new
+ * slide's 1-based position.
+ */
+export async function registerSlide(zip: JSZip, num: number, slideXml: string, rels: SlideRel[]): Promise<number> {
+  const slidePath = `ppt/slides/slide${num}.xml`;
+  const ctPath = "[Content_Types].xml";
+  const ctXml = await zip.file(ctPath)!.async("string");
+  zip.file(ctPath, ctXml.replace(
+    "</Types>",
+    `<Override PartName="/${slidePath}" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/></Types>`,
+  ));
+  zip.file(slidePath, slideXml);
+  zip.file(
+    `ppt/slides/_rels/slide${num}.xml.rels`,
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+    rels.map((r) => `<Relationship Id="${r.id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/${r.type}" Target="${r.target}"/>`).join("") +
+    `</Relationships>`,
+  );
+
+  const relsPath = "ppt/_rels/presentation.xml.rels";
+  const relsXml = await zip.file(relsPath)!.async("string");
+  const maxRid = Math.max(0, ...[...relsXml.matchAll(/Id="rId(\d+)"/g)].map((m) => Number(m[1])));
+  const newRid = `rId${maxRid + 1}`;
+  zip.file(relsPath, relsXml.replace(
+    "</Relationships>",
+    `<Relationship Id="${newRid}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide${num}.xml"/></Relationships>`,
+  ));
+
+  const presPath = "ppt/presentation.xml";
+  const presXml = await zip.file(presPath)!.async("string");
+  const maxSldId = Math.max(255, ...[...presXml.matchAll(/<p:sldId[^>]*\bid="(\d+)"/g)].map((m) => Number(m[1])));
+  if (!presXml.includes("</p:sldIdLst>")) throw new Error("presentation.xml has no sldIdLst — deck structure not recognized");
+  zip.file(presPath, presXml.replace(
+    "</p:sldIdLst>",
+    `<p:sldId id="${maxSldId + 1}" r:id="${newRid}"/></p:sldIdLst>`,
+  ));
+
+  return slideFileNames(zip).length;
+}
+
+/**
+ * Append a new slide containing one centered image (plus optional title and
+ * caption): the media part and its content-type default here, the slide's
+ * registrations through registerSlide. The layout is borrowed from the last
+ * existing slide so the new slide inherits a valid master chain. Returns the
+ * new slide's 1-based position.
+ */
+export async function addImageSlide(zip: JSZip, img: ImageSlideInput): Promise<number> {
+  const nextNum = nextSlideNumber(zip);
 
   // Media part + content-type default for its extension.
   const ext = img.mimeType === "image/png" ? "png" : img.mimeType === "image/jpeg" ? "jpeg" : "gif";
   const mediaPath = `ppt/media/image_lax_${nextNum}.${ext}`;
   zip.file(mediaPath, img.buffer);
   const ctPath = "[Content_Types].xml";
-  let ctXml = await zip.file(ctPath)!.async("string");
+  const ctXml = await zip.file(ctPath)!.async("string");
   if (!new RegExp(`<Default[^>]*Extension="${ext}"`, "i").test(ctXml)) {
-    ctXml = ctXml.replace("</Types>", `<Default Extension="${ext}" ContentType="${img.mimeType}"/></Types>`);
+    zip.file(ctPath, ctXml.replace("</Types>", `<Default Extension="${ext}" ContentType="${img.mimeType}"/></Types>`));
   }
-  ctXml = ctXml.replace(
-    "</Types>",
-    `<Override PartName="/${slidePath}" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/></Types>`,
-  );
-  zip.file(ctPath, ctXml);
-
-  // Borrow the last slide's layout relationship so the new slide inherits a
-  // valid master chain instead of minting a layout from scratch.
-  const lastRelsPath = files[files.length - 1].replace("ppt/slides/", "ppt/slides/_rels/") + ".rels";
-  const lastRels = await zip.file(lastRelsPath)?.async("string");
-  const layoutTarget = lastRels?.match(/<Relationship[^>]*Type="[^"]*\/slideLayout"[^>]*Target="([^"]+)"/)?.[1]
-    ?? lastRels?.match(/Target="([^"]*slideLayouts[^"]+)"/)?.[1];
-  if (!layoutTarget) throw new Error(`Could not find a slideLayout relationship on ${lastRelsPath} — deck structure not recognized`);
+  const layoutTarget = await lastSlideLayoutTarget(zip);
 
   // Geometry: image centered in the lower ~85% (room for the title band),
   // fit preserving aspect ratio, sized from pixel dims at 96dpi.
@@ -258,8 +308,7 @@ export async function addImageSlide(zip: JSZip, img: ImageSlideInput): Promise<n
       `<p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:pPr algn="ctr"/><a:r><a:rPr lang="en-US" sz="1400" i="1"/><a:t>${escapeXml(img.caption.trim())}</a:t></a:r></a:p></p:txBody></p:sp>`
     : "";
 
-  zip.file(
-    slidePath,
+  const slideXml =
     `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
     `<p:sld ${SLIDE_NS}><p:cSld><p:spTree>` +
     `<p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>` +
@@ -269,37 +318,10 @@ export async function addImageSlide(zip: JSZip, img: ImageSlideInput): Promise<n
     `<p:blipFill><a:blip r:embed="rId2"/><a:stretch><a:fillRect/></a:stretch></p:blipFill>` +
     `<p:spPr><a:xfrm><a:off x="${x}" y="${y}"/><a:ext cx="${w}" cy="${h}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>` +
     captionSp +
-    `</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>`,
-  );
+    `</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>`;
 
-  // Slide rels: layout (rId1) + the image (rId2).
-  zip.file(
-    `ppt/slides/_rels/slide${nextNum}.xml.rels`,
-    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
-    `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
-    `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout" Target="${layoutTarget}"/>` +
-    `<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image_lax_${nextNum}.${ext}"/>` +
-    `</Relationships>`,
-  );
-
-  // Register in presentation.xml.rels + sldIdLst (append = last position).
-  const relsPath = "ppt/_rels/presentation.xml.rels";
-  const relsXml = await zip.file(relsPath)!.async("string");
-  const maxRid = Math.max(0, ...[...relsXml.matchAll(/Id="rId(\d+)"/g)].map((m) => Number(m[1])));
-  const newRid = `rId${maxRid + 1}`;
-  zip.file(relsPath, relsXml.replace(
-    "</Relationships>",
-    `<Relationship Id="${newRid}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide${nextNum}.xml"/></Relationships>`,
-  ));
-
-  const presPath = "ppt/presentation.xml";
-  const presXml = await zip.file(presPath)!.async("string");
-  const maxSldId = Math.max(255, ...[...presXml.matchAll(/<p:sldId[^>]*\bid="(\d+)"/g)].map((m) => Number(m[1])));
-  if (!presXml.includes("</p:sldIdLst>")) throw new Error("presentation.xml has no sldIdLst — deck structure not recognized");
-  zip.file(presPath, presXml.replace(
-    "</p:sldIdLst>",
-    `<p:sldId id="${maxSldId + 1}" r:id="${newRid}"/></p:sldIdLst>`,
-  ));
-
-  return slideFileNames(zip).length;
+  return registerSlide(zip, nextNum, slideXml, [
+    { id: "rId1", type: "slideLayout", target: layoutTarget },
+    { id: "rId2", type: "image", target: `../media/image_lax_${nextNum}.${ext}` },
+  ]);
 }

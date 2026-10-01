@@ -26,36 +26,23 @@ function freshContext() {
 const read = (path: string) => JSON.parse(readFileSync(path, "utf-8"));
 
 describe("installer settings step: web access", () => {
-  it("a fresh install is strict, with only the search providers allowed", () => {
+  // Web access on a fresh install is "any public site": the outbound checks
+  // (secret scan, data-flow evidence, SSRF) guard what leaves, so the step
+  // writes no web policy. Strict mode stays the user's choice in Settings.
+  it("a fresh install writes no web-access policy, so it is permissive", () => {
     const { directory, context } = freshContext();
     scaffoldSettings(context, false);
     expect(read(join(directory, "settings.json"))).toMatchObject({ embeddingProvider: "local" });
-    expect(read(join(directory, "security.json"))).toEqual({ egressMode: "strict" });
-    expect(read(join(directory, "egress-allowlist.json"))).toEqual(["html.duckduckgo.com", "duckduckgo.com", "api.search.brave.com", "commons.wikimedia.org"]);
-  });
-
-  it("an existing install with NEITHER policy file (the common case) is left alone: config.json is the install's identity", () => {
-    const { directory, context } = freshContext();
-    writeFileSync(join(directory, "config.json"), JSON.stringify({ authToken: "abc", projectRoot: directory }));
-    writeFileSync(join(directory, "settings.json"), JSON.stringify({ temperature: 0.7 }));
-    scaffoldSettings(context, true);
     expect(existsSync(join(directory, "security.json"))).toBe(false);
     expect(existsSync(join(directory, "egress-allowlist.json"))).toBe(false);
   });
 
-  it("an install with its own security.json keeps it, and gets no allowlist written", () => {
+  it("an install with its own policy files keeps them untouched", () => {
     const { directory, context } = freshContext();
-    writeFileSync(join(directory, "security.json"), JSON.stringify({ fileAccessMode: "workspace" }));
-    scaffoldSettings(context, true);
-    expect(read(join(directory, "security.json"))).toEqual({ fileAccessMode: "workspace" });
-    expect(existsSync(join(directory, "egress-allowlist.json"))).toBe(false);
-  });
-
-  it("an install with its own allowlist keeps it, and its mode is left as it was", () => {
-    const { directory, context } = freshContext();
+    writeFileSync(join(directory, "security.json"), JSON.stringify({ egressMode: "strict" }));
     writeFileSync(join(directory, "egress-allowlist.json"), JSON.stringify(["api.example.com"]));
     scaffoldSettings(context, true);
+    expect(read(join(directory, "security.json"))).toEqual({ egressMode: "strict" });
     expect(read(join(directory, "egress-allowlist.json"))).toEqual(["api.example.com"]);
-    expect(existsSync(join(directory, "security.json"))).toBe(false);
   });
 });

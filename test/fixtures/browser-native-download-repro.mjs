@@ -95,21 +95,27 @@ await new Promise((resolve) => proxy.listen(0, "127.0.0.1", resolve));
 const proxyAddress = proxy.address();
 if (!proxyAddress || typeof proxyAddress === "string") throw new Error("test proxy did not bind");
 
+// The production launcher, exactly as the agent uses it: system Chrome under
+// Playwright's persistent context over the pipe (no debugging port since
+// f8f0dc14), the quarantine dir as the download target.
 const launched = await launchAgentChrome(playwright, `http://127.0.0.1:${proxyAddress.port}`, {
   executablePath,
-  cdpPort,
   userDataDir,
   downloadsDir: downloadsPath,
   headless: true,
   forceProfileLaunch: true,
   removeProfileOnCleanup: true,
-  readyAttempts: 50,
 });
 
 try {
-  if (!launched.chromeProcess) throw new Error("production launcher fell back instead of connecting over CDP");
+  // The persistent context writes Chrome's profile state into the dir we gave
+  // it; the headless-only path (no profile) would not. That is the proof the
+  // production profile launch ran rather than a different launcher.
+  if (!existsSync(join(userDataDir, "Default")) && !existsSync(join(userDataDir, "Local State"))) {
+    throw new Error("production launcher did not launch the agent profile");
+  }
   const context = launched.browser.contexts()[0];
-  if (!context) throw new Error("CDP launcher exposed no default browser context");
+  if (!context) throw new Error("production launcher exposed no default browser context");
   const page = await context.newPage();
   await page.setContent(`<a id="download" href="http://download.test/review.txt">download</a>`);
   let downloadSeen = false;
@@ -124,7 +130,7 @@ try {
     }
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  process.stdout.write(`NATIVE_RESULT=${JSON.stringify({ nativePath, existed: existsSync(nativePath), usedCdp: true, downloadSeen })}\n`);
+  process.stdout.write(`NATIVE_RESULT=${JSON.stringify({ nativePath, existed: existsSync(nativePath), viaProductionLauncher: true, downloadSeen })}\n`);
   await page.close();
 } finally {
   await launched.browser.close().catch(() => {});

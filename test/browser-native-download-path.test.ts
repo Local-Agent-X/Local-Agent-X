@@ -67,8 +67,8 @@ describe("native browser download path", () => {
     ));
     const line = stdout.split(/\r?\n/).find((entry) => entry.startsWith("NATIVE_RESULT="));
     if (!line) throw new Error(`live CDP fixture returned no result: ${stdout}`);
-    const result = JSON.parse(line.slice("NATIVE_RESULT=".length)) as { nativePath: string; existed: boolean; usedCdp: boolean; downloadSeen: boolean };
-    expect(result.usedCdp).toBe(true);
+    const result = JSON.parse(line.slice("NATIVE_RESULT=".length)) as { nativePath: string; existed: boolean; viaProductionLauncher: boolean; downloadSeen: boolean };
+    expect(result.viaProductionLauncher).toBe(true);
     expect(result.downloadSeen).toBe(true);
     expect(result.existed).toBe(true);
     expect(isInsideDirectory(result.nativePath, quarantine)).toBe(true);

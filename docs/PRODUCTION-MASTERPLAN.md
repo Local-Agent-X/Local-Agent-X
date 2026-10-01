@@ -382,27 +382,36 @@ hands-off, not reckless), Free Agent, Full Trust, Unleashed, Open Agent.
 The recommendation is Autopilot / Copilot for the top two, because the pair
 explains itself.
 
-### 5.3 The one decision the owner has to make
+### 5.3 Secrets leaving the machine: the user chooses
 
-In Autopilot, what happens when actual secret bytes (a key the agent read
-from a file or inbox this session) are about to leave the machine in an
-outbound payload? That is the single case the kernel's taint rules exist
-for, and the only one where "never blocked" and "never exfiltrated" pull
-apart. Two options:
+In Autopilot, one case remains where "never blocked" and "never
+exfiltrated" pull apart: actual secret bytes the agent read this session
+(a key from a file or an inbox) are about to leave the machine in an
+outbound payload. That is the only thing the kernel's taint rules exist
+for. Both behaviours have a place, so the user picks, per session, and the
+pick is remembered:
 
-- **A. Audit only.** Autopilot never stops. The send is logged with the
+- **Notify me** (default). Autopilot never *denies*, but this one case
+  shows a notice card with the payload evidence and a "Send anyway" button.
+  "Always for this session" silences it. Everything else in Autopilot stays
+  silent, and the session is clean afterward: no latch, no quarantine.
+- **Just log it.** Autopilot never stops. The send is logged with the
   evidence and shown in the chat after the fact. The user accepted this by
-  choosing the mode.
-- **B. One card.** Autopilot never *denies*, but this one case shows a
-  confirm card with the payload evidence and a "Send anyway" button, and
-  "Always for this session" makes it go away. Everything else in Autopilot
-  stays silent.
+  choosing it.
 
-Recommendation: **B**, with the card worded as a notice, not a block, and
-with the whole session clean afterwards (no latch, no quarantine). It costs
-one click in the one case a reasonable user would want to see, and it keeps
-the kernel's payload-evidence work meaningful. If the owner wants A, the
-implementation is the same with the card's default flipped.
+**Where the choice lives: inside Autopilot, not as a sixth mode.** Two
+modes whose only difference is one rare card would be indistinguishable in
+a picker, and users would pick the wrong one for the wrong reason. The
+picker stays at five entries. When Autopilot is selected, one line appears
+under it: *Secrets leaving the machine: Notify me / Just log it*. Settings →
+Autonomy carries the same control as the default for new sessions. The
+implementation is one boolean on the session, read by the payload-evidence
+gate in `enforce-policy.ts`; both paths share the same evidence, the same
+audit record, and the same post-send state.
+
+If the owner later prefers the two-mode shape, the name for the silent one
+should say what it does rather than sound covert: "Autopilot, silent" or
+"Autopilot (log only)", never a name that implies stealth.
 
 ### 5.4 Where it lands in the phases
 

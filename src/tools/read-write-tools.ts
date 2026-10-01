@@ -16,6 +16,7 @@ import { appUrlHint, servedFileHint } from "./file-hints.js";
 import { connectorManifestWriteRejection } from "./connector-write-guard.js";
 import { buildImportAppendix, isJsFamilyFile } from "./read-imports.js";
 import { deleteFolderToTrash } from "./delete-folder.js";
+import { extractOfficeText, isOfficeTextFile } from "./office-text.js";
 
 /**
  * Skip injection screening only for the agent's own generated CODE under
@@ -35,9 +36,9 @@ export function isScreenExemptAgentCode(filePath: string): boolean {
 
 export const readTool: ToolDefinition = {
   name: "read",
-  compactDescription: "Read a file with line numbers. It comes back whole when it fits; if the result says it continues, read again with the offset it names; do NOT chunk a short file with limit.",
+  compactDescription: "Read a file with line numbers (.pptx/.docx come back as extracted text). It comes back whole when it fits; if the result says it continues, read again with the offset it names; do NOT chunk a short file with limit.",
   description:
-    "Read a file from the filesystem, with line numbers. A file comes back whole when it fits in one result; when it does not, the result shows the lines that fit and names the offset to continue from — read again with that offset. Do not chunk a short file with offset/limit yourself.",
+    "Read a file from the filesystem, with line numbers. PowerPoint (.pptx) and Word (.docx) files come back as extracted text — slide by slide, with speaker notes, for a deck. A file comes back whole when it fits in one result; when it does not, the result shows the lines that fit and names the offset to continue from — read again with that offset. Do not chunk a short file with offset/limit yourself.",
   readOnly: true,
   concurrencySafe: true,
   parameters: {
@@ -99,7 +100,16 @@ export const readTool: ToolDefinition = {
     // binary files almost always contain a null byte in their header, text
     // files almost never do. Surface a clear actionable error pointing at the
     // right tool for binary content.
-    {
+    // .pptx/.docx are zip containers: extract their text instead of tripping
+    // the binary guard, then page/screen it exactly like any text file.
+    let content: string;
+    if (isOfficeTextFile(filePath, probe)) {
+      try {
+        content = await extractOfficeText(filePath, probe);
+      } catch (e) {
+        return err(`Failed to extract text from ${filePath}: ${(e as Error).message}`, { path: filePath });
+      }
+    } else {
       if (containsNulByte(probe)) {
         return err(
           `File appears to be binary (${probe.length} bytes, null byte detected in header) — refusing to decode as utf-8. ` +
@@ -107,10 +117,10 @@ export const readTool: ToolDefinition = {
           { path: filePath, bytes: probe.length, binary: true },
         );
       }
+      content = probe.toString("utf-8");
     }
 
     try {
-      const content = probe.toString("utf-8");
       const lines = content.split("\n");
       // A file under 1000 lines ignores `limit` (weak models chunked small files
       // into dozens of tiny reads), but honors `offset`: a result too big for the

@@ -57,15 +57,13 @@ const SHINGLE_WIDTH = 24;
 // Step between shingle starts. < width so windows overlap (a chunk that doesn't
 // align to a window boundary still shares one). 8 keeps the count bounded.
 const SHINGLE_STEP = 8;
-// Coverage budget: the max normalized-char prefix a single entry can FULLY
-// fingerprint (and thus be marked `complete`). Raised well above the old
-// head-only window so typical small configs (a config line, a short dotfile,
-// a few-KB file) are fully coverable — that is what lets B+ clear a
-// provably-unrelated payload without over-blocking. Still bounded: content
-// longer than this is HEAD-fingerprinted but marked INCOMPLETE (never
-// "complete"), so a large key/credential/kubeconfig stays UNCLEARABLE and its
-// tail can never egress by evading the head window.
-const MAX_FINGERPRINT_CHARS = 1024;
+// Coverage: an entry is fingerprinted over its whole content up to
+// MAX_FINGERPRINT_CONTENT, so a key's tail is as visible as its head and an
+// unrelated payload can be proven clean. Until 2026-10-01 sensitive reads were
+// covered for their first 1 KB only, which marked every larger file
+// "incomplete" and turned every later outbound call into a deny on the label
+// alone. Content past the cap is still marked INCOMPLETE and stays unclearable.
+//
 // The per-entry fingerprint cap is derived from the coverage budget inside
 // computeFingerprints: enough sparse (step-SHINGLE_STEP) windows to span the
 // budget, +1 for the tail window. At the default budget that is ~129 * 16 hex
@@ -134,7 +132,7 @@ function shingleHashes(norm: string, step: number, max: number): { hashes: Set<s
  * is actually present in a payload is found regardless of where the chunk sits —
  * only one side needs step-1 to guarantee detection of a substring overlap.
  */
-export function computeFingerprints(content: string, coverageChars = MAX_FINGERPRINT_CHARS): FingerprintResult {
+export function computeFingerprints(content: string, coverageChars = MAX_FINGERPRINT_CONTENT): FingerprintResult {
   if (!content) return { fingerprints: [], complete: false };
   const truncatedByContentCap = content.length > MAX_FINGERPRINT_CONTENT;
   const sliced = truncatedByContentCap ? content.slice(0, MAX_FINGERPRINT_CONTENT) : content;

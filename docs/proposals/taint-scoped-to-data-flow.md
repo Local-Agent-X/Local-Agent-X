@@ -8,9 +8,10 @@ http request included), and the kernel runs with
 `RunStatePolicy.hostAdjudicatesDataFlow`, so it neither merges the run's taint
 into later calls nor runs the data-flow sequence rules or post-read GET
 heuristics. `src/tool-execution/outbound-taint-sequence.test.ts` drives the
-case below as a sequence through the real kernel. Open items: payloads under
-the 24-character evidence window still keep the block, and taint entries
-larger than the fingerprint coverage still cannot be proven absent.
+case below as a sequence through the real kernel. Taint entries are
+fingerprinted over their whole content up to 64 KB. Kept on purpose: payloads
+under the 24-character evidence window keep the block (they cannot be proven
+absent), and an entry larger than 64 KB keeps the presence floor.
 
 ## What happened
 

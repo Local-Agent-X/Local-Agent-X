@@ -463,8 +463,15 @@ One line per closed item, newest first, with the commit that closed it.
   the dead foreign-taint rescue in `ari-kernel/evaluate.ts` is gone. A browser
   `evaluate` script is now scanned too (`873b487`, a hole the audit found).
   Proof: `outbound-taint-sequence.test.ts` runs ten calls in one run through
-  the real kernel and fails with the old behaviour. Still open in this item:
-  sub-24-character payloads and over-coverage taint entries.
+  the real kernel and fails with the old behaviour. Taint entries are now
+  fingerprinted over their whole content (up to 64 KB, as web ingestion
+  already was), so a large file's tail is caught on evidence and an unrelated
+  payload after it clears. Kept on purpose: payloads under the 24-character
+  evidence window are still refused while the session carries content the
+  model saw (a short value cannot be proven absent, and sub-window chunks are
+  how a secret would be dripped out); after the read stub, sessions rarely
+  carry such content. The approval prompt when external content would be
+  promoted into long-term memory stays: it guards memory, not egress.
 - **2026-10-01: fresh installs allow any public site** (`6f995db`), decided by
   the owner; the threat model states the limit for untracked private content.
 

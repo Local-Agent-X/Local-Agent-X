@@ -71,29 +71,37 @@ describe("SC-7 completeness-guarded Option B+", () => {
     expect(res.evidence).toEqual([]);
   });
 
-  // (2) Large secret; exfil of its TAIL bytes (no head overlap) → BLOCKED.
-  // THIS IS THE CRITICAL TEST. On a head-capped B+ with no completeness guard,
-  // the tail overlaps zero head fingerprints ⇒ it would ALLOW. The guard blocks.
-  it("(2) BLOCKS tail-byte exfil of a >cap key even though the tail overlaps NO fingerprint", () => {
+  // (2) Large secret; exfil of its TAIL bytes → BLOCKED, on evidence.
+  // THIS IS THE CRITICAL TEST. The whole key is fingerprinted, tail included,
+  // so the tail is found in the payload; an unrelated payload is provably clean.
+  it("(2) BLOCKS tail-byte exfil of a large key on overlap evidence, and clears an unrelated payload", () => {
     const key = makeLargeOpenSshKey();
     expect(key.length).toBeGreaterThan(1900);
 
-    // The head-cap is real: the key is fingerprinted (head) but NOT complete.
     const fp = computeFingerprints(key);
     expect(fp.fingerprints.length).toBeGreaterThan(0);
-    expect(fp.complete).toBe(false);
+    expect(fp.complete).toBe(true);
 
     recordSensitiveRead(SESS, "sensitive_file", "/home/u/.ssh/id_ed25519", key);
 
-    // Exfiltrate a chunk from the TAIL of the key body — beyond the fingerprinted
-    // head, so it produces ZERO overlap evidence...
+    // A chunk from the TAIL of the key body is found…
     const tail = key.slice(key.length - 320, key.length - 40);
-    expect(findTaintInPayload(SESS, tail)).toEqual([]);
-
-    // ...yet the completeness guard keeps the block: the entry is incomplete, so
-    // "no overlap" cannot prove the payload free of the uncovered tail.
+    expect(findTaintInPayload(SESS, tail).length).toBeGreaterThan(0);
     const res = checkEgressTaintWithPayload(SESS, `POST body=${tail}`);
     expect(res.blocked).toBe(true);
+    expect(res.evidence.length).toBeGreaterThan(0);
+
+    // …and a payload carrying nothing from the key is not refused on the label.
+    expect(checkEgressTaintWithPayload(SESS, "Reminder: the quarterly review is Thursday at ten.").blocked).toBe(false);
+  });
+
+  // (2b) Content past the coverage cap is still unprovable: the presence floor holds.
+  it("(2b) BLOCKS regardless of payload when an entry is larger than the coverage cap", () => {
+    let huge = "";
+    for (let i = 0; huge.length < 70 * 1024; i++) huge += `kv_${i}=${(i * 7919).toString(36)}-${(i * 104729).toString(36)}\n`;
+    expect(computeFingerprints(huge).complete).toBe(false);
+    recordSensitiveRead(SESS, "sensitive_file", "/home/u/.config/huge.env", huge);
+    expect(checkEgressTaintWithPayload(SESS, "unrelated note about lunch").blocked).toBe(true);
   });
 
   // (3) Payload with the secret HEAD bytes (raw AND a decode/evasion view) → BLOCKED.
@@ -130,29 +138,24 @@ describe("SC-7 completeness-guarded Option B+", () => {
     expect(checkEgressTaintWithPayload(SESS, "still an unrelated benign note").blocked).toBe(true);
   });
 
-  // (5) `cat benign.md + large_key` concat → entry incomplete → BLOCKED.
-  // The bash-stdout amplifier: a benign prefix makes the entry "fingerprinted",
-  // but the key bytes are beyond the coverage budget, so the entry is incomplete.
-  it("(5) BLOCKS a benign-prefixed concat whose key TAIL is uncovered (incomplete)", () => {
+  // (5) `cat benign.md + large_key` concat: the key bytes cannot slip out
+  // under the benign head, because the whole concat is fingerprinted.
+  it("(5) BLOCKS the key TAIL of a benign-prefixed concat on evidence", () => {
     const benign = "# Project README\n".repeat(12) + "Build with `npm run build`. See CONTRIBUTING for details.\n";
     const key = makeLargeOpenSshKey();
     const concat = `${benign}\n${key}`; // mimics `cat README.md ~/.ssh/id_ed25519` stdout
 
-    // The concat is too large to fully fingerprint → incomplete despite carrying
-    // fingerprints for the benign head.
     const fp = computeFingerprints(concat);
     expect(fp.fingerprints.length).toBeGreaterThan(0);
-    expect(fp.complete).toBe(false);
+    expect(fp.complete).toBe(true);
 
     recordSensitiveRead(SESS, "secret", "bash:openssh-key", concat);
 
-    // A payload of the key TAIL overlaps no head fingerprint, but the incomplete
-    // entry keeps the block — the key bytes cannot slip out under the benign head.
     const tail = key.slice(key.length - 320, key.length - 40);
-    expect(findTaintInPayload(SESS, tail)).toEqual([]);
+    expect(findTaintInPayload(SESS, tail).length).toBeGreaterThan(0);
     expect(checkEgressTaintWithPayload(SESS, `x=${tail}`).blocked).toBe(true);
-    // And a plainly-unrelated payload is ALSO blocked (incomplete ⇒ unclearable).
-    expect(checkEgressTaintWithPayload(SESS, "unrelated note about lunch").blocked).toBe(true);
+    // A plainly-unrelated payload is provably clean.
+    expect(checkEgressTaintWithPayload(SESS, "unrelated note about lunch on Thursday").blocked).toBe(false);
   });
 
   // Bonus: the content-less pre-taint TWIN that the sensitive-read path sets

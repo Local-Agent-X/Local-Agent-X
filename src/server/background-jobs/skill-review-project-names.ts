@@ -13,7 +13,7 @@
  */
 import { homedir } from "node:os";
 import { resolve, sep } from "node:path";
-import { readOpMessages } from "../../canonical-loop/store.js";
+import { readOpMessages } from "../../canonical-loop/index.js";
 import { workspaceRoot } from "../../config.js";
 
 const PATH_PATTERN = /(?:[A-Za-z]:[\\/]|\/)(?:[^\\/\s"'<>|`]+[\\/]?)+/g;
@@ -50,7 +50,10 @@ export function projectNamesInText(text: string, roots: readonly string[] = proj
   const names = new Set<string>();
   for (const match of text.matchAll(PATH_PATTERN)) {
     // Git Bash spells C:\Users as /c/Users; the shell tool's commands use it.
-    const spelled = match[0].replace(/^\/([a-zA-Z])\//, "$1:/");
+    // Backslashes become slashes before resolving: a Windows path in a
+    // reviewed op is a Windows path whichever OS reviews it (the Linux runner
+    // would otherwise keep "C:\Users\..." as one segment).
+    const spelled = match[0].replace(/^\/([a-zA-Z])\//, "$1:/").replace(/\\/g, "/");
     const path = resolve(spelled).toLowerCase();
     for (const root of roots) {
       if (!path.startsWith(root + sep)) continue;

@@ -251,6 +251,20 @@ function startProvider(requests: CapturedRequest[]): Promise<Server> {
       res.end(JSON.stringify({ version: "0.0.0" }));
       return;
     }
+    if (req.url === "/api/show" || req.url === "/api/ps") {
+      // Context-sizing probe (cf6b04c7, 2026-09-28): resolve-target asks the
+      // runtime for the model's architecture and the loaded set to decide its
+      // context, under a bounded wait, so the decision may land before or
+      // after the completion depending on the host. Not part of the recovery
+      // contract; answer with nothing to size by (the runtime default stands)
+      // and keep it out of the recorded requests.
+      req.resume();
+      req.on("end", () => {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(req.url === "/api/ps" ? JSON.stringify({ models: [] }) : JSON.stringify({ model_info: {} }));
+      });
+      return;
+    }
     if (req.url === "/api/generate") {
       // Advisory chat-residency warm (bb3704f6, 2026-08-25): resolve-target
       // fire-and-forgets a keep-alive /api/generate for local Ollama targets.

@@ -126,6 +126,28 @@ describe.each(workflows)("%s Windows release signing", (path) => {
     expect(job).not.toMatch(/\n\s+if:.*AZURE_SIGN/);
   });
 
+  it("builds, signs and verifies the cage helper before the installer embeds it", () => {
+    // A first-time install provisions the shell cage from the helper the
+    // installer carries (Installer.csproj embeds installer/srt-win-bundle/*.exe;
+    // scripts/installer/windows-cage-step.mjs runs it). A lane that publishes
+    // the installer without staging the helper ships an install whose agent
+    // shells run unconfined — the rolling lane did exactly that until 2026-09-30.
+    const job = windowsJob(path);
+    const build = job.indexOf("cargo build --release --manifest-path packages/srt-win/Cargo.toml");
+    const sign = job.indexOf("files: ${{ github.workspace }}\\packages\\srt-win\\target\\release\\srt-win.exe");
+    const verify = job.indexOf("- name: Verify the cage helper's signature and stage it for embedding");
+    const stage = job.indexOf("Copy-Item -LiteralPath $exe -Destination installer/srt-win-bundle/srt-win.exe -Force");
+    const publish = job.indexOf("dotnet publish installer/Installer.csproj");
+
+    expect(build).toBeGreaterThanOrEqual(0);
+    expect(sign).toBeGreaterThan(build);
+    expect(verify).toBeGreaterThan(sign);
+    expect(stage).toBeGreaterThan(verify);
+    expect(publish).toBeGreaterThan(stage);
+    // The helper is held to the same signer as the installer, fail-closed.
+    expect(job.slice(verify, stage)).toContain("$sig.SignerCertificate.Subject -cne $env:WIN_SIGN_EXPECTED_SUBJECT");
+  });
+
   it("requires a valid timestamped signature and exact expected subject", () => {
     const job = windowsJob(path);
 

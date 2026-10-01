@@ -452,6 +452,27 @@ merging onto a red base.
 
 One line per closed item, newest first, with the commit that closed it.
 
+- **2026-10-01, OPEN: on the next pull on the Mac, verify the macOS cage.**
+  Four macOS cage changes have only been tested on Linux and Windows:
+  `09ef9f77` (names resolve only at the proxy), `97f7bef5` (the launchd deny
+  regex covers `/private/var/run`), `08e6bc00` (registered loopback ports are
+  admitted) and `74aa6c8c` (the cage admits this instance's proxy port, not the
+  whole range). From a Terminal where `echo $SSH_AUTH_SOCK` shows a
+  `com.apple.launchd.` path, run:
+
+  ```
+  npx vitest run src/sandbox/seatbelt.test.ts src/sandbox/guarded-egress.contract.test.ts
+  ```
+
+  Pass means every live macOS block ran instead of being skipped, including
+  "DENIES the real ssh-agent socket at $SSH_AUTH_SOCK" and "DENIES the resolver
+  daemon's socket", and every test is green. Skipped live blocks are a
+  failure too: a profile that does not load (a bad SBPL regex) makes the cage
+  report itself unusable, and the live tests skip instead of failing. Then rebuild with
+  `npm run build` and relaunch the app. Record the result here, and delete this
+  entry when it passes. The Windows DNS gap documented the same day
+  (THREAT-MODEL.md, "Windows shell confinement") needs nothing on the Mac.
+
 - **2026-10-01, Phase 1 item 3 (first pass): one adjudicator for data flow.**
   An audit found 12 places a taint label, not the bytes, could deny a call.
   The root: the kernel re-derived data flow from run history (it merged the

@@ -445,3 +445,32 @@ need the running server, which needs the environment in §3.
 
 The first PR is Phase 0 item 1 and 2: green `main`. Nothing else is worth
 merging onto a red base.
+
+---
+
+## 7. Progress log
+
+One line per closed item, newest first, with the commit that closed it.
+
+- **2026-10-01, Phase 0 item 2: the Windows lease flake, root-caused.** The
+  24-process race in `test/lease-cross-process.test.ts` queues 23 losers
+  through the op's file lock behind the winner; measured on a developer box
+  the slowest waits up to 359 ms against the lock's 500 ms budget, and a
+  slower CI disk pushed one past it, so it reported `lock_unavailable`
+  instead of `held` (22 held, not 23, on `dc5b2c4`'s Windows lane). The
+  lock is a write lock and `held` is a read of state only the holder
+  writes, so a caller that waited out the lock now reads the persisted row
+  and answers `held` when a fresh lease exists; `lock_unavailable` remains
+  for the case the row cannot answer (an expired lease, which only the lock
+  holder may take over). Regression tests in `test/loop-lease.test.ts`.
+- **2026-10-01, Phase 0 item 1: `model-tiers` green** (`7a0d1ca`). Took the
+  short route the plan allows: the presentation compact description is back
+  under the 220-char cap and the medium manifest under its ceiling, with no
+  ceiling raised. The `{action, params}` schema collapse for office families
+  is still the lever and moves to Phase 2.
+- **2026-10-01, main green on every workflow** at `7a0d1ca`: Security & CI
+  on both OSes (unit, build, integration, Windows cage escape matrix),
+  Pre-flight, Semgrep, Rolling Source Asset, and the Rolling Installer with
+  its test gate, which then published the first Windows installer carrying
+  the signed cage helper. The macOS notarization failure that morning was
+  Apple's updated developer agreement (HTTP 403), accepted by the owner.

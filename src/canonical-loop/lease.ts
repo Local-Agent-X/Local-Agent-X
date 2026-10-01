@@ -100,7 +100,15 @@ export function acquireLease(opId: string, workerId: string): LeaseAcquireResult
     }
     return { ok: true, claim };
   });
-  return locked.acquired ? locked.value : { ok: false, reason: "lock_unavailable" };
+  if (locked.acquired) return locked.value;
+  // The lock is a write lock; "held" is a read of state only the holder
+  // writes, atomically. A caller that waited out the lock budget behind the
+  // winner (24 contenders on a slow disk, 2026-10-01 CI) must learn the lease
+  // is held, not that a lock was busy. lock_unavailable stays the answer only
+  // when the persisted row cannot say.
+  const op = readOp(opId);
+  if (leaseClaimFromOp(op) && !isLeaseExpired(op)) return { ok: false, reason: "held" };
+  return { ok: false, reason: "lock_unavailable" };
 }
 
 export function heartbeatLease(opId: string, claim: LeaseClaim): LeaseActionResult {

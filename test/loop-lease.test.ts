@@ -112,6 +112,33 @@ describe("exact lease claims", () => {
     rmSync(lock, { force: true });
   });
 
+  it("a caller that waits out the lock behind a fresh owner learns the lease is held", () => {
+    // The Windows CI shape: 23 losers queue through the op lock behind the
+    // winner, and one runs out of lock budget. What it must report is the
+    // state (someone holds a fresh lease), not that the lock was busy.
+    const op = makeAndPersistOp(ctx);
+    setLeaseConfig({ leaseDurationMs: 60_000, heartbeatIntervalMs: 10_000 });
+    const winner = acquireLease(op.id, "w-A");
+    expect(winner.ok).toBe(true);
+    const lock = join(opDir(op.id), "operation.lock");
+    writeFileSync(lock, "foreign-holder", { flag: "wx" });
+    const before = readFileSync(join(opDir(op.id), "operation.json"), "utf8");
+    expect(acquireLease(op.id, "w-B")).toEqual({ ok: false, reason: "held" });
+    expect(readFileSync(join(opDir(op.id), "operation.json"), "utf8")).toBe(before);
+    rmSync(lock, { force: true });
+  });
+
+  it("an expired lease behind a busy lock is still lock_unavailable: only the holder may take it over", () => {
+    const op = makeAndPersistOp(ctx);
+    const row = readOp(op.id)!;
+    row.canonical = { leaseOwner: "w-old", leaseGeneration: 3, leaseExpiresAt: new Date(Date.now() - 1_000).toISOString() };
+    writeOp(row);
+    const lock = join(opDir(op.id), "operation.lock");
+    writeFileSync(lock, "foreign-holder", { flag: "wx" });
+    expect(acquireLease(op.id, "w-B")).toEqual({ ok: false, reason: "lock_unavailable" });
+    rmSync(lock, { force: true });
+  });
+
   it("fails closed instead of wrapping an exhausted generation", () => {
     const op = makeAndPersistOp(ctx);
     const row = readOp(op.id)!;

@@ -126,7 +126,7 @@ function hostOf(url: string): string {
   try { return new URL(url).hostname.toLowerCase(); } catch { return ""; }
 }
 
-function isTrustedDestination(url: string): boolean {
+export function isTrustedDestination(url: string): boolean {
   const host = hostOf(url);
   return !!host && matchEgressList(host, loadTrustedDestinations());
 }
@@ -181,7 +181,7 @@ export function parseRecipientAddresses(raw: string): string[] {
   return out;
 }
 
-function isTrustedEmailRecipient(addr: string, own: ReadonlySet<string>): boolean {
+export function isTrustedEmailRecipient(addr: string, own: ReadonlySet<string>): boolean {
   if (own.has(addr)) return true;
   const trusted = loadTrustedDestinations();
   // An allowlist entry containing "@" is an exact address; a bare entry is a

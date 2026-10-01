@@ -169,7 +169,7 @@ const USER_FOLDER_NAMES = ["Downloads", "Documents", "Desktop", "Pictures", "Vid
 // non-OneDrive / non-Windows machines, so their behavior is unchanged.
 // (A non-OneDrive KFM redirect to another drive would need the known-folder
 // registry; OneDrive is the dominant case and is covered without that cost.)
-function userContentDirs(homeDir: string): string[] {
+export function userContentDirs(homeDir: string): string[] {
   const roots = new Set<string>([resolve(homeDir)]);
   for (const envVar of ["OneDrive", "OneDriveConsumer", "OneDriveCommercial"]) {
     const root = process.env[envVar];

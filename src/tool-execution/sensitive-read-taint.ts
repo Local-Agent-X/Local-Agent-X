@@ -34,6 +34,7 @@ import { DEFAULT_MAX_RESULT_CHARS } from "../context-manager/tool-result-cap.js"
 import { hasCapability } from "../tool-registry.js";
 import { resolveAgentPath } from "../workspace/paths.js";
 import { realpathDeep, isSanctionedWorkRootEnvFile } from "../security/layer/index.js";
+import { recordPrivateReadFromResult } from "./private-read-record.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("tool-execution");
@@ -249,6 +250,9 @@ export function applyResultTaintPolicy(
     const url = typeof args.url === "string" ? ` ${args.url}` : "";
     recordExternalIngestion(sid, result.content.slice(0, DEFAULT_MAX_RESULT_CHARS), `${toolName}${url}`);
   }
+  // Private content (an email body, a personal document): recorded so a send
+  // to someone new can be put to the user (private-content-gate.ts).
+  recordPrivateReadFromResult(sid, toolName, args, result, DEFAULT_MAX_RESULT_CHARS);
 
   if (redactReason && result && !result.isError) {
     // Whole-result stub: the sensitive bytes never reach the model, so per the

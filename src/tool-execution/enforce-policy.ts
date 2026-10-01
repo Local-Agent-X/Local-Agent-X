@@ -21,6 +21,7 @@ import { ToolBlocked } from "./errors.js";
 import type { Phase, PhaseOutcome, ToolCallContext } from "./context.js";
 import { terminate, CONTINUE, BLOCK } from "./context.js";
 import { egressAggregateGate, type EgressBlocker } from "./egress-gates.js";
+import { privateContentGate } from "./private-content-gate.js";
 import { outboundIsTaintFree, withoutUntrustedContent } from "./taint-scope.js";
 import { kernelDenyBlocker, kernelDenyResult } from "./kernel-block.js";
 import { rewritePathForWorktree } from "./worktree-paths.js";
@@ -358,6 +359,9 @@ async function securityAndValidationGates(ctx: ToolCallContext): Promise<PhaseOu
   // verdict prepended and short-circuited before here.)
   outcome = egressAggregateGate(ctx);
   if (outcome.kind !== "continue") return outcome;
+  // Private content to a destination the user did not choose is put to the
+  // user, never refused (private-content-gate.ts).
+  await privateContentGate(ctx);
 
   return validateArgs(ctx);
 }

@@ -96,6 +96,11 @@ export function egressPayload(name: string, args: Record<string, unknown>): { te
     case "clipboard_write":
       push(args.text);
       break;
+    case "calendar_create_event":
+      // An invite carries its title, description and location to every
+      // attendee; the attendee list itself names who receives it.
+      push(args.title); push(args.description); push(args.location); push(args.attendees);
+      break;
     case "computer":
       // The `computer` family's ONLY exfil channel is the text it types
       // (action:"type"); mouse move/click/drag and key chords carry no data.

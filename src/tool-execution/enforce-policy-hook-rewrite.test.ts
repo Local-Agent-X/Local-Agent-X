@@ -24,6 +24,7 @@ vi.mock("./egress-gates.js", () => ({
   dataLineageGate: vi.fn(),
   canaryEgressGate: vi.fn(),
 }));
+vi.mock("./private-content-gate.js", () => ({ privateContentGate: vi.fn(async () => ({ kind: "continue" })) }));
 vi.mock("./pre-dispatch.js", () => ({ assertToolCallAllowed: vi.fn(async () => {}) }));
 vi.mock("../circuit-breaker.js", () => ({
   checkCircuit: vi.fn(() => ({ allowed: true })),

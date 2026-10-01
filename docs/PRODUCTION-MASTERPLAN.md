@@ -474,6 +474,14 @@ One line per closed item, newest first, with the commit that closed it.
   promoted into long-term memory stays: it guards memory, not egress.
 - **2026-10-01: fresh installs allow any public site** (`6f995db`), decided by
   the owner; the threat model states the limit for untracked private content.
+- **2026-10-01: private content asks before it leaves.** Email bodies and
+  documents from the user's own folders are fingerprinted on read (a separate
+  per-session store, `src/data-lineage/private-content.ts`); a send carrying
+  their bytes to a destination the user did not choose gets an approval card
+  (`src/tool-execution/private-content-gate.ts`), and an unattended run is
+  refused. Own address, trusted destinations, destinations the user typed, and
+  the correspondents of the one opened email pass silently. Open: logged-in
+  browser pages are not tagged private.
 
 - **2026-10-01, Phase 0 item 2: the Windows lease flake, root-caused.** The
   24-process race in `test/lease-cross-process.test.ts` queues 23 losers

@@ -963,6 +963,16 @@
           </div>
         </div>
         <div class="section-card">
+          <div class="section-title">Operator credential</div>
+          <div class="section-desc">The token this app signs in to its own server with. Rotate it if it may have leaked (a screenshot of a link, a pasted log). Issued API tokens are separate and keep their own expiry.</div>
+          <div class="field-hint" id="operator-token-rotated" style="margin:0 0 8px"></div>
+          <div class="btn-row">
+            <button class="action-btn danger" id="operator-token-rotate" onclick="rotateOperatorTokenUI()">Rotate operator credential</button>
+            <span id="operator-token-status" style="font-size:.78rem"></span>
+          </div>
+          <div class="field-hint" id="operator-token-hint" style="margin-top:6px"></div>
+        </div>
+        <div class="section-card">
           <div class="section-title">Rollback</div>
           <div class="section-desc">Recent tool calls captured under "allow-with-rollback". Click Undo to restore the pre-state.</div>
           <div id="rollback-list" style="margin-top:8px;font-size:.78rem"></div>
@@ -1796,6 +1806,7 @@
 <script src="/js/settings-audit-log.js?v=v1"></script>
 <script src="/js/settings-sandbox.js?v=v3"></script>
 <script src="/js/settings-web-access.js?v=v1"></script>
+<script src="/js/settings-operator-token.js?v=v1"></script>
 <script src="/js/settings-tool-policy.js?v=v1"></script>
 <script src="/js/settings-browser-mode.js?v=v2"></script>
 <script src="/js/settings-usage.js?v=v1"></script>

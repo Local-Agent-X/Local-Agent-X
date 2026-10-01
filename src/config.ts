@@ -71,6 +71,20 @@ function generateAuthToken(): string {
   return randomBytes(32).toString("hex"); // 256-bit token
 }
 
+/**
+ * Mint a new operator credential and persist it: the runtime config and
+ * config.json agree before this returns. The credential never expires on its
+ * own (rbac.ts), so rotation is the one control against a leaked token — the
+ * caller re-keys the RBAC entry and restarts the server, since the WebSocket
+ * upgrade and the desktop window hold the token they booted with.
+ */
+export function rotateAuthToken(): string {
+  const config = getRuntimeConfig();
+  config.authToken = generateAuthToken();
+  saveConfig(config);
+  return config.authToken;
+}
+
 export function loadConfig(): LAXConfig {
   const configPath = getConfigPath();
   let diskRaw: Record<string, unknown> = {};

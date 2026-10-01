@@ -10,6 +10,8 @@ import { runInjectionTests } from "../security-tests.js";
 import { setSessionPolicy, getSessionPolicy, listPresets, type PolicyPreset } from "../session/policy.js";
 import { isAriActive } from "../ari-kernel/index.js";
 import { ThreatEngine } from "../threat/threat-engine.js";
+import { rotateAuthToken } from "../config.js";
+import { desktopBridgeAvailable, desktopRestartServer } from "../desktop-bridge.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("routes.security");
@@ -102,6 +104,31 @@ export const handleSecurityRoutes: RouteHandler = async (method, url, req, res, 
     logger.info(`[security] web access: mode=${egress.mode} allowlist=${egress.allowlist.length} hosts (${role})`);
     ctx.broadcastAll({ type: "settings_changed", settings: { egress } });
     json(200, { ok: true, ...egress }); return true;
+  }
+
+  // The operator credential: the token the app's own UI authenticates with
+  // (config.authToken). It never expires on its own, so this is where it is
+  // rotated. Operator-only: the agent and lesser roles cannot re-key the UI.
+  // Rotation persists the new token, re-keys RBAC so REST accepts it at once,
+  // and asks the desktop to restart the server: the WebSocket upgrade and the
+  // window hold the boot-time token, and the desktop reloads the window with
+  // the new one after the restart. Without the desktop bridge (a dev server
+  // in a browser) the caller restarts by hand; the response says which.
+  if (method === "GET" && url.pathname === "/api/security/operator-token") {
+    const entry = ctx.rbac.listTokens().find((t) => t.id === "operator-default");
+    json(200, { rotatedAt: entry?.createdAt ?? null, restart: desktopBridgeAvailable() ? "desktop" : "manual" }); return true;
+  }
+  if (method === "POST" && url.pathname === "/api/security/operator-token/rotate") {
+    if (role !== "operator") { json(403, { error: "Rotating the operator credential requires the operator role" }); return true; }
+    const token = rotateAuthToken();
+    ctx.rbac.rotateOperatorToken(token);
+    const restart = desktopBridgeAvailable() ? "desktop" : "manual";
+    logger.info(`[security] operator credential rotated (restart: ${restart})`);
+    json(200, { ok: true, token, restart });
+    // After the response is on the wire: the desktop restarts the server and
+    // reloads the window with the new token from config.json.
+    if (restart === "desktop") setTimeout(() => { desktopRestartServer(); }, 500);
+    return true;
   }
 
   // Tool policy toggles

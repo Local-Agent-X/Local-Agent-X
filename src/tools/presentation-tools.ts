@@ -328,7 +328,7 @@ const presentationEdit: ToolDefinition = {
 export const presentationTools: ToolDefinition[] = [
   collapseFamily({
     name: "presentation",
-    compactDescription: "Build and edit PowerPoint .pptx decks. actions: create, from_outline, from_template (new deck on an existing deck's theme/layouts), add_slide, edit. THE only way to produce a .pptx — never write one with the write tool, it is a binary container. Takes images:[{source,caption}].",
+    compactDescription: "Build and edit PowerPoint .pptx decks. actions: create, from_outline, from_template (keeps a deck's theme), add_slide, edit. THE only way to make a .pptx; never the write tool. images:[{source,caption}].",
     intro: "Create and edit PowerPoint (.pptx) presentations. For advanced custom layouts beyond these actions, a Node build script may use pptxgenjs directly — it's bundled, so `require('pptxgenjs')` by bare name (never an absolute cwd/node_modules path).",
     actions: {
       create: presentationCreate,
@@ -340,8 +340,8 @@ export const presentationTools: ToolDefinition[] = [
     fullActionDocs: true,
     properties: {
       file_path: { type: "string", description: "Path to the .pptx file (output for create/from_outline/from_template, existing for edit/add_slide)" },
-      template_path: { type: "string", description: "(from_template) Existing .pptx whose theme, layouts and media the new deck keeps" },
-      keep_slides: { type: "string", description: "(from_template) JSON array of 1-based template slide numbers to keep" },
+      template_path: { type: "string", description: "(from_template) Existing .pptx to start from" },
+      keep_slides: { type: "string", description: "(from_template) JSON array of 1-based slide numbers to keep" },
       title: { type: "string", description: "(create/from_outline/add_slide) Presentation title metadata" },
       author: { type: "string", description: "(create) Author metadata" },
       slides: { type: "string", description: "(create) JSON array of slide specs (see action docs — prefer charts/images over bullet walls)" },

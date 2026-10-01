@@ -10,7 +10,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { TEMPLATES_FILE } from "./paths.js";
 import { ProjectRosterStore } from "../project-rosters.js";
-import { builtInTemplateDefaults } from "./template-defaults.js";
+import { builtInTemplateDefaults, WORKER_OFFICE_TOOLS } from "./template-defaults.js";
 import { renderPersonaPrompt, appBuilderPersonaRefresh } from "../tools/render-builder-prompt.js";
 import { readTrashRecord, trashRecord } from "../safe-delete.js";
 import { createLogger } from "../logger.js";
@@ -56,7 +56,7 @@ export class AgentTemplateStore {
   private static instance: AgentTemplateStore;
   private templates: AgentTemplate[] = [];
 
-  private constructor() { this.load(); this.migrateStripDeprecatedOrgFields(); this.migrateAppBuilderTools(); this.migrateAppBuilderCodexStrategy(); this.migrateAppBuilderAnthropicStrategy(); this.migrateManagerModel(); this.migrateAppBuilderPersona(); this.seedDefaults(); }
+  private constructor() { this.load(); this.migrateStripDeprecatedOrgFields(); this.migrateAppBuilderTools(); this.migrateWorkerOfficeTools(); this.migrateAppBuilderCodexStrategy(); this.migrateAppBuilderAnthropicStrategy(); this.migrateManagerModel(); this.migrateAppBuilderPersona(); this.seedDefaults(); }
 
   /**
    * Strip deprecated org-membership fields from persisted templates.
@@ -103,6 +103,24 @@ export class AgentTemplateStore {
     t.updatedAt = Date.now();
     this.persist();
     logger.info("[agents] migrated app-builder template: list_directory → glob");
+  }
+
+  /**
+   * Older seeds of `builtin-worker` had no Office tools, and a delegated
+   * worker's bash is denied, so a deck/doc/sheet/pdf task delegated to it had
+   * no route to the file ("no presentation tools exposed"). seedDefaults never
+   * touches an existing template, so append the missing ones here. Idempotent:
+   * a worker already carrying all of them is left alone.
+   */
+  private migrateWorkerOfficeTools(): void {
+    const t = this.templates.find(x => x.id === "builtin-worker");
+    if (!t) return;
+    const missing = WORKER_OFFICE_TOOLS.filter(tool => !t.allowedTools.includes(tool));
+    if (missing.length === 0) return;
+    t.allowedTools.push(...missing);
+    t.updatedAt = Date.now();
+    this.persist();
+    logger.info(`[agents] migrated builtin-worker template: + ${missing.join(", ")}`);
   }
 
   /**

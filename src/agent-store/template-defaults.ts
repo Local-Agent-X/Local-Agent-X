@@ -6,6 +6,11 @@
 import { renderPersonaPrompt } from "../tools/render-builder-prompt.js";
 import type { AgentTemplate } from "./template-store.js";
 
+/** The Office umbrella tools (each covers create/edit/read actions). A worker
+ *  delegated a deck/doc/sheet/pdf task needs them: its bash is denied in a
+ *  delegated session, so without these it has no route to the file at all. */
+export const WORKER_OFFICE_TOOLS = ["presentation", "document", "spreadsheet", "pdf"] as const;
+
 /** Catalog of built-in template definitions. A function (not a const) so
  *  `renderPersonaPrompt()` runs at seed time, matching the original
  *  inline-in-seedDefaults timing. */
@@ -89,7 +94,7 @@ export function builtInTemplateDefaults(): Array<Omit<AgentTemplate, "createdAt"
       role: "worker",
       description: "Generic worker for one-off tasks that don't fit a specialist role. Broad tool surface, neutral persona. Use when no named role (researcher, coder, writer, etc.) matches and the task is a one-off — recurring needs should get their own agent_create entry instead.",
       systemPrompt: "You are a generic worker agent. The supervisor delegated this task to you because no specialist role fit. Approach the work directly: read what's needed, do it, report the result. Use the right tool for each step (read/write/edit/bash for files, web_fetch/web_search for the web). Keep the output focused on what the supervisor asked for — no extra commentary, no padding.\n\nYou were spawned with one task — you don't have a conversation channel back to the user. NEVER ask the user to clarify or confirm. If the task is genuinely ambiguous, make a reasonable interpretation, do the work, and note the assumption in your result. If a tool fails repeatedly, try alternatives before bailing.",
-      allowedTools: ["read", "write", "edit", "bash", "glob", "grep", "web_fetch", "web_search", "view_image"],
+      allowedTools: ["read", "write", "edit", "bash", "glob", "grep", "web_fetch", "web_search", "view_image", ...WORKER_OFFICE_TOOLS],
       icon: "🛠️",
     },
     {

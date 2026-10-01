@@ -21,7 +21,7 @@ import { ToolBlocked } from "./errors.js";
 import type { Phase, PhaseOutcome, ToolCallContext } from "./context.js";
 import { terminate, CONTINUE, BLOCK } from "./context.js";
 import { egressAggregateGate, type EgressBlocker } from "./egress-gates.js";
-import { browserWriteIsTaintFree, httpWriteIsTaintFree, withoutUntrustedContent } from "./taint-scope.js";
+import { outboundIsTaintFree, withoutUntrustedContent } from "./taint-scope.js";
 import { kernelDenyBlocker, kernelDenyResult } from "./kernel-block.js";
 import { rewritePathForWorktree } from "./worktree-paths.js";
 
@@ -133,15 +133,15 @@ async function ariKernelGate(ctx: ToolCallContext): Promise<PhaseOutcome> {
       // was already terminated above and never reaches here.
       kernelTaintLabels = taintLabels.filter((s) => !SHELL_TAINT_DENY_SOURCES.has(s));
     }
-    // The same adjudication for a BROWSER write. The kernel denies one on
-    // session taint alone, so an inbox read disarmed every later click/fill on
-    // every site for the rest of the run. browserWriteIsTaintFree answers the
+    // The same adjudication for every other outbound write (browser, http,
+    // email, messaging, calendar, typed input). The kernel's taint policies
+    // deny on the labels it is handed, so outboundIsTaintFree answers the
     // question the kernel cannot — do THESE bytes come from the tainted source
     // — and only a payload proven clean (and fully fingerprinted) clears. A
     // write that does carry tainted bytes keeps its labels and is denied below,
     // then reported by the egress aggregate with the declassify card.
     const sid = sessionId || "default";
-    if (browserWriteIsTaintFree(sid, tc.name, args, kernelTaintLabels) || httpWriteIsTaintFree(sid, tc.name, args, kernelTaintLabels)) {
+    if (outboundIsTaintFree(sid, tc.name, args, kernelTaintLabels)) {
       kernelTaintLabels = withoutUntrustedContent(kernelTaintLabels);
     }
     const ariResult = await ariEvaluate(tc.name, deriveAriAction(tc.name, args), args, kernelTaintLabels, ariScopeId);

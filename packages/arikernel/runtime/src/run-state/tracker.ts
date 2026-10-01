@@ -54,6 +54,8 @@ export class RunStateTracker {
 	private readonly _egressAllowHosts: ReadonlySet<string>;
 	private readonly threshold: number;
 	readonly behavioralRulesEnabled: boolean;
+	/** See RunStatePolicy.hostAdjudicatesDataFlow. */
+	readonly hostAdjudicatesDataFlow: boolean;
 	/** The policy configuration used to construct this tracker. */
 	readonly policy: RunStatePolicy | undefined;
 
@@ -61,6 +63,7 @@ export class RunStateTracker {
 		this.policy = policy;
 		this.threshold = policy?.maxDeniedSensitiveActions ?? 5;
 		this.behavioralRulesEnabled = policy?.behavioralRules !== false;
+		this.hostAdjudicatesDataFlow = policy?.hostAdjudicatesDataFlow === true;
 		this._egressAllowHosts = new Set(policy?.egressAllowHosts ?? []);
 	}
 

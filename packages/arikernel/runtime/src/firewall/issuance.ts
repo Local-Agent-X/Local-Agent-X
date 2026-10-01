@@ -118,7 +118,7 @@ export function requestCapabilityLocal(
 	// taint propagates to capability issuance even when the agent omits
 	// taintLabels — the kernel tracks taint, not the agent.
 	let taintLabels = options?.taintLabels ?? [];
-	if (ctx.runState.tainted) {
+	if (ctx.runState.tainted && !ctx.runState.hostAdjudicatesDataFlow) {
 		const runLabels = ctx.runState.accumulatedTaintLabels as TaintLabel[];
 		if (runLabels.length > 0) {
 			const seen = new Set(taintLabels.map((l) => `${l.source}:${l.origin}`));

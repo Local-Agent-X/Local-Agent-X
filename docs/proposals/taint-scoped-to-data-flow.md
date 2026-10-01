@@ -1,7 +1,16 @@
 # Proposal: scope taint to the data flow, not the run
 
-Status: **proposal — no policy code changed.** Written 2026-09-18 after a live
-session was disarmed mid-task.
+Status: **implemented (2026-10-01).** Written 2026-09-18 after a live session
+was disarmed mid-task. LAX is now the one adjudicator of data flow: every
+egress-capable tool is cleared or refused on its own bytes
+(`outboundIsTaintFree` in `src/tool-execution/taint-scope.ts`, the URL of an
+http request included), and the kernel runs with
+`RunStatePolicy.hostAdjudicatesDataFlow`, so it neither merges the run's taint
+into later calls nor runs the data-flow sequence rules or post-read GET
+heuristics. `src/tool-execution/outbound-taint-sequence.test.ts` drives the
+case below as a sequence through the real kernel. Open items: payloads under
+the 24-character evidence window still keep the block, and taint entries
+larger than the fingerprint coverage still cannot be proven absent.
 
 ## What happened
 

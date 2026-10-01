@@ -17,6 +17,22 @@ export interface RunStatePolicy {
 	 * normalized before it is handed over.
 	 */
 	sensitivePath?: (path: string) => boolean;
+	/**
+	 * The host decides, at every sink, whether the outbound bytes carry data
+	 * the run read (payload evidence: fingerprint overlap and a registered-
+	 * secret scan on every channel that leaves). When true the kernel stops
+	 * re-deriving that answer from run history, which carries no evidence and
+	 * overrules the host's per-call verdict: run-level taint labels are still
+	 * accumulated for audit but are not merged into later calls, and the
+	 * data-flow sequence rules (web_taint_sensitive_probe,
+	 * sensitive_read_then_egress, tainted_database_write,
+	 * tainted_shell_with_data) and the post-sensitive-read GET signals
+	 * (reclassification as egress, the encoded-path drip budget, custom-header
+	 * inspection) do not run. The taint labels the host hands in with each
+	 * call still drive the policy rules, and rules that are not about data
+	 * flow (capability escalation after a denial) still run. Default: false.
+	 */
+	hostAdjudicatesDataFlow?: boolean;
 }
 
 export interface RunStateCounters {

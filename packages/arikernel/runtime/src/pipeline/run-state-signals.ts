@@ -87,7 +87,7 @@ function trackHttpSignals(ctx: PipelineContext, toolCall: ToolCall): void {
 	// When the run is already restricted, enforceRestrictedMode (Step 1.5a) owns
 	// the path-drip accounting for this request and has already returned/thrown,
 	// so we skip it here to avoid double-counting the same encoded path bytes.
-	const sensitiveContext = runState.sensitiveReadObserved || hasEgressTaint(runState);
+	const sensitiveContext = !runState.hostAdjudicatesDataFlow && (runState.sensitiveReadObserved || hasEgressTaint(runState));
 	let isPathDripExfil = false;
 	let hasEncodedPathPayload = false;
 	if (!isWriteEgress && isGet && sensitiveContext && !runState.restricted) {
@@ -145,7 +145,7 @@ function trackHttpSignals(ctx: PipelineContext, toolCall: ToolCall): void {
 		}
 	}
 
-	if (!isWriteEgress && isGet && runState.sensitiveReadObserved) {
+	if (!isWriteEgress && isGet && runState.sensitiveReadObserved && !runState.hostAdjudicatesDataFlow) {
 		inspectGetHeaders(ctx, toolCall);
 	}
 }

@@ -171,7 +171,7 @@ describe("canonical tool pipeline audit contract", () => {
     const firewall = getFirewallForTest(operationId);
     if (!firewall) throw new Error("operation-scoped Ari firewall was not created");
     const auditEvents = firewall.getEvents();
-    expect(auditEvents).toHaveLength(3);
+    expect(auditEvents).toHaveLength(2);
     expect(auditEvents[0]).toMatchObject({
       toolCall: {
         toolClass: "file",
@@ -180,19 +180,11 @@ describe("canonical tool pipeline audit contract", () => {
       },
       decision: { verdict: "allow" },
     });
-    // The rule's refusal of THIS call is a system event of its own; the run
-    // is not quarantined by it.
+    // The tainted POST is refused by the kernel's taint policy on the labels
+    // LAX handed it (its body is too short to prove clean). No run rule adds a
+    // system event: LAX adjudicates data flow, the kernel does not re-derive it
+    // from the run's history.
     expect(auditEvents[1]).toMatchObject({
-      toolCall: {
-        toolClass: "_system",
-        action: "rule_denied",
-      },
-      decision: {
-        verdict: "deny",
-        reason: expect.stringMatching(/untrusted web input.*http\.post/i),
-      },
-    });
-    expect(auditEvents[2]).toMatchObject({
       toolCall: {
         toolClass: "http",
         action: "post",
@@ -200,16 +192,13 @@ describe("canonical tool pipeline audit contract", () => {
       },
       decision: {
         verdict: "deny",
-        reason: expect.stringMatching(/refused by run rule web_taint_sensitive_probe.*run continues/i),
+        reason: expect.stringMatching(/untrusted|taint/i),
       },
     });
     expect(auditEvents[0].hash).toBeTruthy();
     expect(auditEvents[1].previousHash).toBe(auditEvents[0].hash);
     expect(auditEvents[1].hash).toBeTruthy();
     expect(auditEvents[1].hash).not.toBe(auditEvents[1].previousHash);
-    expect(auditEvents[2].previousHash).toBe(auditEvents[1].hash);
-    expect(auditEvents[2].hash).toBeTruthy();
-    expect(auditEvents[2].hash).not.toBe(auditEvents[2].previousHash);
 
     const replay = firewall.replay();
     if (!replay) throw new Error("operation-scoped Ari replay was unavailable");

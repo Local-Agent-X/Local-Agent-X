@@ -63,7 +63,10 @@ function buildAriFirewall(
     // post-read GET header check) judge paths with LAX's own anchored
     // credential-file classifier, so the two can never disagree on what a
     // credential file is. Its built-in catalog is the standalone default only.
-    runStatePolicy: { sensitivePath: (p) => isSensitivePath(resolveAgentPath(p)) },
+    // LAX adjudicates data flow on the bytes at every sink (taint-scope.ts,
+    // egress-gates.ts), so the kernel stops re-deriving it from run history:
+    // history carries no evidence and overruled LAX's per-call clearance.
+    runStatePolicy: { sensitivePath: (p) => isSensitivePath(resolveAgentPath(p)), hostAdjudicatesDataFlow: true },
   });
 
   // Manifest-driven grant issuance — the per-call rule engine still evaluates

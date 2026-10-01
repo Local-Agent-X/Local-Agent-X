@@ -5,7 +5,7 @@ import { type PipelineContext, checkBehavioralRules } from "./context.js";
 // run-level taint so taint propagates even when a tool or agent omits taintLabels.
 export function collectInputTaints(ctx: PipelineContext, toolCall: ToolCall): TaintLabel[] {
 	let inputTaints = ctx.taintTracker.collectInputTaints(toolCall);
-	if (ctx.runState?.tainted) {
+	if (ctx.runState?.tainted && !ctx.runState.hostAdjudicatesDataFlow) {
 		const runLabels = ctx.runState.accumulatedTaintLabels as TaintLabel[];
 		if (runLabels.length > 0) {
 			inputTaints = ctx.taintTracker.merge(inputTaints, [...runLabels]);
@@ -28,7 +28,7 @@ export function propagateOutputTaint(
 	const propagated = ctx.taintTracker.propagate(inputTaints, toolCall.id);
 	result.taintLabels = ctx.taintTracker.merge(autoTaints, contentTaints, propagated);
 
-	if (ctx.runState?.tainted) {
+	if (ctx.runState?.tainted && !ctx.runState.hostAdjudicatesDataFlow) {
 		const runLabels = ctx.runState.accumulatedTaintLabels as TaintLabel[];
 		result.taintLabels = ctx.taintTracker.merge(result.taintLabels, [...runLabels]);
 	}

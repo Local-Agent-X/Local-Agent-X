@@ -22,8 +22,6 @@ export interface AriVerdict {
   quarantine?: KernelQuarantine;
 }
 
-const KERNEL_FOREIGN_TAINT_TRIGGER = /shell execution with untrusted input is forbidden/i;
-
 // Per-tool action override: secret-vault tools have a fixed action mapping
 // (capture / fill / clipboard) regardless of what the executor passes in.
 // ARI sees the canonical action in audit logs and behavioral rules.
@@ -39,7 +37,6 @@ export async function ariEvaluate(
   params: Record<string, unknown>,
   taintLabels?: string[],
   scopeId?: string,
-  retriedAfterForeignTaint = false,
 ): Promise<AriVerdict> {
   const firewall = ensureAriKernelScope(scopeId);
   // Restricted BEFORE this call ran → any deny below is a cascade, not a rule
@@ -110,20 +107,6 @@ export async function ariEvaluate(
     // A behavioral-rule quarantine is thrown, not returned (denyQuarantinedAction),
     // so it lands here — and read literally as "evaluation error" it sent two
     // live turns chasing an engine fault; the quarantine is named below.
-    // Compatibility rescue for the default/ad-hoc scope, where unrelated calls
-    // can still share one firewall. Canonical operations pass an operation scope
-    // and are isolated before reaching this branch.
-    if (
-      !retriedAfterForeignTaint &&
-      (!taintLabels || taintLabels.length === 0) &&
-      KERNEL_FOREIGN_TAINT_TRIGGER.test(rawDetail) &&
-      refreshAriKernelScope(scopeId)
-    ) {
-      logger.warn(
-        `[ari] foreign run-level taint detected on clean call — refreshed ARI scope and retrying once`,
-      );
-      return ariEvaluate(toolName, action, params, taintLabels, scopeId, true);
-    }
     if (isAriRequired()) {
       logger.warn(`[ari] Tool call blocked due to ARI error (ariRequired=true): ${rawDetail}`);
       // Surface the underlying error IN the result the model sees. The

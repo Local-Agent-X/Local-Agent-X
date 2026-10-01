@@ -72,6 +72,9 @@ export function egressPayload(name: string, args: Record<string, unknown>): { te
   switch (name) {
     case "http_request":
     case "ari_http":
+      // The URL leaves the machine on every method, GET included: a tainted
+      // byte in the path or query is carried out exactly like one in the body.
+      push(args.url);
       push(args.body);
       if (args.headers && typeof args.headers === "object") {
         for (const v of Object.values(args.headers as Record<string, unknown>)) push(v);

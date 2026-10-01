@@ -452,6 +452,22 @@ merging onto a red base.
 
 One line per closed item, newest first, with the commit that closed it.
 
+- **2026-10-01, Phase 1 item 3 (first pass): one adjudicator for data flow.**
+  An audit found 12 places a taint label, not the bytes, could deny a call.
+  The root: the kernel re-derived data flow from run history (it merged the
+  run's labels into every later call and ran sequence rules such as
+  `sensitive_read_then_egress`) after LAX had cleared the call on its bytes.
+  The kernel now takes `RunStatePolicy.hostAdjudicatesDataFlow` (default off,
+  on in LAX); LAX clears every egress tool through one predicate
+  (`outboundIsTaintFree`), with an http request's URL now scanned as payload;
+  the dead foreign-taint rescue in `ari-kernel/evaluate.ts` is gone. A browser
+  `evaluate` script is now scanned too (`873b487`, a hole the audit found).
+  Proof: `outbound-taint-sequence.test.ts` runs ten calls in one run through
+  the real kernel and fails with the old behaviour. Still open in this item:
+  sub-24-character payloads and over-coverage taint entries.
+- **2026-10-01: fresh installs allow any public site** (`6f995db`), decided by
+  the owner; the threat model states the limit for untracked private content.
+
 - **2026-10-01, Phase 0 item 2: the Windows lease flake, root-caused.** The
   24-process race in `test/lease-cross-process.test.ts` queues 23 losers
   through the op's file lock behind the winner; measured on a developer box

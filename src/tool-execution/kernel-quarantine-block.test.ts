@@ -11,8 +11,13 @@
 // of which there was none. The event log recorded status "blocked" and
 // nothing else; no notice reached the user. That rule has since been deleted
 // (a secrets response is masked and its values registered instead), so the
-// sequence is pinned as allowed and a genuine rule-3 quarantine (a .env write
-// then a POST) carries the naming and tracing assertions.
+// sequence is pinned as allowed.
+//
+// Since 2026-10-01 LAX is the one adjudicator of data flow (the kernel runs
+// with hostAdjudicatesDataFlow): a .env write followed by a POST that carries
+// nothing from it is no longer refused by run rule sensitive_read_then_egress,
+// and the naming/tracing assertions ride a genuine leak instead — a POST whose
+// body carries bytes of a tainted read.
 //
 // 02:51:15 — a WRITE to scripts/set-unsub-secret.mjs counted as a sensitive
 // read to the kernel's substring matcher; the next POST quarantined the turn
@@ -29,7 +34,7 @@ import {
 } from "../canonical-loop/index.js";
 import { startAriKernel, stopAriKernel } from "../ari-kernel/lifecycle.js";
 import { readKernelQuarantine } from "../ari-kernel/quarantine.js";
-import { clearSessionTaint, isSensitivePath } from "../data-lineage/index.js";
+import { clearSessionTaint, isSensitivePath, recordSensitiveRead } from "../data-lineage/index.js";
 import type { ServerEvent, ToolBlockRecord, ToolDefinition, ToolResult } from "../types.js";
 
 const OPS_BASE = join(homedir(), ".lax", "operations");
@@ -37,6 +42,9 @@ const PROJECT = "kybhkldvgdezjrwnmmyr";
 const SECRETS_URL = `https://api.supabase.com/v1/projects/${PROJECT}/secrets`;
 const QUERY_URL = `https://api.supabase.com/v1/projects/${PROJECT}/database/query`;
 const AUTH = { Authorization: "Bearer {{SUPABASE_FULL_ACCOUNT_TOKEN}}", "Content-Type": "application/json" };
+// Bytes of a tainted read the agent then tries to send: long enough to be
+// fingerprinted, plain words so it is judged on provenance, not secret shape.
+const LEAKED = "the quarterly vendor ledger lists harbor-ninety as the settlement account";
 
 let seq = 0;
 const trackedOpIds: string[] = [];
@@ -123,45 +131,33 @@ describe("a kernel quarantine, through the chat lane's dispatcher", () => {
     } finally { stop(); }
   });
 
-  it("a rule refusal names the rule, offers no declassify (no taint to clear), refuses only that call, and is traced end to end", async () => {
+  it("a POST carrying bytes of a tainted read is refused, offers the declassify control, and is traced end to end", async () => {
     const opId = freshOpId();
     clearSessionTaint(`s-${opId}`);
-    const env = join(tmpdir(), "lax-kblock-ws", "proj", ".env");
-    const { ui, log, stop } = wire(opId, ["write", "http_request", "bash"]);
+    recordSensitiveRead(`s-${opId}`, "sensitive_file", "proj/.env", LEAKED);
+    const { ui, log, stop } = wire(opId, ["http_request", "bash"]);
     try {
-      await dispatchTools(opId, 6, [{ toolCallId: "w", tool: "write", args: { path: env, content: "X=1" } }]);
-      const out = await dispatchTools(opId, 6, [{ toolCallId: "post-query", tool: "http_request", args: { url: QUERY_URL, method: "POST", headers: AUTH, body: "{}" } }]);
+      const out = await dispatchTools(opId, 6, [{ toolCallId: "post-query", tool: "http_request", args: { url: QUERY_URL, method: "POST", headers: AUTH, body: JSON.stringify({ note: LEAKED }) } }]);
 
-      // The call is blocked, and the block names what actually fired.
       expect(out.toolSummary.map((s) => s.resultStatus)).toEqual(["blocked"]);
       const end = toolEnd(ui, "post-query");
       expect(end?.status).toBe("blocked");
       const md = end?.metadata ?? {};
-      expect(md.layer === "arikernel" || (md.layers as string[] | undefined)?.includes("arikernel")).toBe(true);
-      expect(md.rule).toBe("sensitive_read_then_egress");
-      expect(md.trigger).toBe("behavioral_rule");
-      expect(md.scope).toBe("operation");
-      // Declassify clears session taint; none went into this verdict, so the
-      // control is NOT offered and the model is not told to send the user to it.
-      expect(md.clearable).toBeUndefined();
-      expect(String(md.recovery)).not.toMatch(/Declassif/i);
-      expect(String(md.recovery)).toMatch(/Only this call was refused; the turn continues/);
-      expect(String(md.recovery)).toMatch(/refusal 1 of 5/);
-      expect(end?.result).toMatch(/sensitive_read_then_egress/);
-      expect(end?.result).not.toMatch(/evaluation error/);
+      // The kernel refused it on the labels LAX kept (the payload is not
+      // clean), and data-lineage names the evidence: one aggregate, both layers.
+      expect(md.layer).toBe("egress-aggregate");
+      expect(md.layers).toEqual(expect.arrayContaining(["arikernel", "data-lineage"]));
+      // The block is session taint the user can clear, so the control is offered.
+      expect(md.clearable).toBe("declassify");
 
       // Durable: the op's event log carries the structured record …
       const [fin] = finished(log, "http_request").slice(-1);
       expect(fin.status).toBe("blocked");
-      expect(fin.block?.notice).toBe("kernel-notice");
-      expect(fin.block?.quarantine?.rule).toBe("sensitive_read_then_egress");
-      expect(fin.block?.quarantine?.deniedActions).toBe(1);
-      expect(fin.block?.quarantine?.threshold).toBe(5);
-      expect(fin.block?.scope).toBe("operation");
-      expect(fin.block?.clearable).toBeUndefined();
+      expect(fin.block?.clearable).toBe("declassify");
+      expect(fin.block?.notice).toBe("declassify-card");
       // … and the tool_result row does too, without the request's header values.
       const row = out.toolMessages[0].content as { block?: ToolBlockRecord };
-      expect(row.block?.quarantine?.rule).toBe("sensitive_read_then_egress");
+      expect(row.block?.clearable).toBe("declassify");
       expect(JSON.stringify(row.block)).not.toContain("SUPABASE_FULL_ACCOUNT_TOKEN");
 
       // Only that call was refused: the run is not restricted, and the next
@@ -169,24 +165,19 @@ describe("a kernel quarantine, through the chat lane's dispatcher", () => {
       expect(readKernelQuarantine(opId, false)).toBeNull();
       const after = await dispatchTools(opId, 7, [{ toolCallId: "sh", tool: "bash", args: { command: "echo ok" } }]);
       expect(after.toolSummary.map((s) => s.resultStatus)).toEqual(["ok"]);
-    } finally { stop(); }
+    } finally { stop(); clearSessionTaint(`s-${opId}`); }
   });
 
-  it("a run that keeps being refused is restricted at the threshold; the cascade is a blocked call with the same record, not an 'ok'", async () => {
+  it("a run that keeps trying to send tainted bytes is restricted at the threshold; the cascade is a blocked call with a record, not an 'ok'", async () => {
     const opId = freshOpId();
     clearSessionTaint(`s-${opId}`);
-    const env = join(tmpdir(), "lax-kblock-ws", "proj", ".env");
-    const { ui, log, stop } = wire(opId, ["write", "http_request", "bash"]);
+    recordSensitiveRead(`s-${opId}`, "sensitive_file", "proj/.env", LEAKED);
+    const { ui, log, stop } = wire(opId, ["http_request", "bash"]);
     try {
-      await dispatchTools(opId, 1, [{ toolCallId: "w", tool: "write", args: { path: env, content: "X=1" } }]);
-      // Five refusals of the same POST reach the kernel's default threshold.
+      // Five refusals of the same leaking POST reach the kernel's default threshold.
       for (let i = 1; i <= 5; i++) {
-        const out = await dispatchTools(opId, 1 + i, [{ toolCallId: `p${i}`, tool: "http_request", args: { url: QUERY_URL, method: "POST", headers: AUTH, body: "{}" } }]);
+        const out = await dispatchTools(opId, 1 + i, [{ toolCallId: `p${i}`, tool: "http_request", args: { url: QUERY_URL, method: "POST", headers: AUTH, body: JSON.stringify({ note: LEAKED }) } }]);
         expect(out.toolSummary[0].resultStatus).toBe("blocked");
-        const row = out.toolMessages[0].content as { block?: ToolBlockRecord };
-        expect(row.block?.quarantine?.rule).toBe("sensitive_read_then_egress");
-        expect(row.block?.quarantine?.deniedActions).toBe(i);
-        expect(row.block?.quarantine?.trigger).toBe(i < 5 ? "behavioral_rule" : "threshold");
       }
       expect(readKernelQuarantine(opId, false)?.trigger).toBe("restricted");
       const out = await dispatchTools(opId, 8, [{ toolCallId: "sh", tool: "bash", args: { command: "echo ok" } }]);
@@ -196,7 +187,6 @@ describe("a kernel quarantine, through the chat lane's dispatcher", () => {
       const [fin] = finished(log, "bash");
       expect(fin.status).toBe("blocked");
       expect(fin.block?.quarantine?.trigger).toBe("restricted");
-      expect(fin.block?.quarantine?.rule).toBe("sensitive_read_then_egress");
       expect(fin.block?.quarantine?.restrictedAt).toMatch(/^\d{4}-/);
       const end = toolEnd(ui, "sh");
       expect(end?.status).toBe("blocked");
@@ -205,7 +195,7 @@ describe("a kernel quarantine, through the chat lane's dispatcher", () => {
       expect(String(end?.metadata?.recovery)).toMatch(/restricted mode since/);
       // The restriction is the op's: another op's scope is clean.
       expect(readKernelQuarantine(freshOpId(), false)).toBeNull();
-    } finally { stop(); }
+    } finally { stop(); clearSessionTaint(`s-${opId}`); }
   });
 
   it("02:51:15 — a write to a 'secret'-named script is not a sensitive read; the POST after it proceeds", async () => {
@@ -224,7 +214,7 @@ describe("a kernel quarantine, through the chat lane's dispatcher", () => {
     } finally { stop(); }
   });
 
-  it("… but a genuine secret path keeps the refusal", async () => {
+  it("a write to a genuine secret path, then a POST carrying nothing from it, proceeds: the sequence alone is not a leak", async () => {
     const opId = freshOpId();
     clearSessionTaint(`s-${opId}`);
     const env = join(tmpdir(), "lax-kblock-ws", "proj", ".env");
@@ -233,9 +223,8 @@ describe("a kernel quarantine, through the chat lane's dispatcher", () => {
     try {
       await dispatchTools(opId, 2, [{ toolCallId: "w", tool: "write", args: { path: env, content: "X=1" } }]);
       const out = await dispatchTools(opId, 2, [{ toolCallId: "p", tool: "http_request", args: { url: QUERY_URL, method: "POST", headers: AUTH, body: "{}" } }]);
-      expect(out.toolSummary[0].resultStatus).toBe("blocked");
-      const row = out.toolMessages[0].content as { block?: ToolBlockRecord };
-      expect(row.block?.quarantine?.rule).toBe("sensitive_read_then_egress");
+      expect(out.toolSummary[0].resultStatus).toBe("ok");
+      expect(readKernelQuarantine(opId, false)).toBeNull();
     } finally { stop(); }
   });
 });

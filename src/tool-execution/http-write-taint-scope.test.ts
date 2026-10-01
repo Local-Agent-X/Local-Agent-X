@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import { enforcePolicyPhase } from "./enforce-policy.js";
-import { httpWriteIsTaintFree } from "./taint-scope.js";
+import { outboundIsTaintFree } from "./taint-scope.js";
 import { blockRecordOf } from "./block-record.js";
 import { startAriKernel, stopAriKernel } from "../ari-kernel/lifecycle.js";
 import { recordSensitiveRead, clearSessionTaint } from "../data-lineage/index.js";
@@ -92,7 +92,7 @@ describe("http writes are scoped to the data flow, not the run", () => {
   });
 });
 
-describe("httpWriteIsTaintFree — the predicate", () => {
+describe("outboundIsTaintFree — the predicate", () => {
   const sid = "htaint-pred";
   beforeEach(() => {
     clearSessionTaint(sid);
@@ -100,36 +100,36 @@ describe("httpWriteIsTaintFree — the predicate", () => {
   });
 
   it("clears an authored write with a secret PLACEHOLDER in its headers", () => {
-    expect(httpWriteIsTaintFree(sid, "http_request", { url: URL, method: "POST", headers: AUTH, body: MIGRATION }, ["web"])).toBe(true);
+    expect(outboundIsTaintFree(sid, "http_request", { url: URL, method: "POST", headers: AUTH, body: MIGRATION }, ["web"])).toBe(true);
   });
 
   it("refuses a body or URL carrying the tainted bytes", () => {
-    expect(httpWriteIsTaintFree(sid, "http_request", { url: URL, method: "POST", body: TAINTED_BODY }, ["web"])).toBe(false);
+    expect(outboundIsTaintFree(sid, "http_request", { url: URL, method: "POST", body: TAINTED_BODY }, ["web"])).toBe(false);
     // A verbatim run of the tainted text in the query string, percent-encoded.
-    expect(httpWriteIsTaintFree(sid, "http_request", { url: `${URL}?x=${encodeURIComponent("the recovery phrase is velvet-harbor-ninety")}`, method: "PUT", body: MIGRATION }, ["web"])).toBe(false);
+    expect(outboundIsTaintFree(sid, "http_request", { url: `${URL}?x=${encodeURIComponent("the recovery phrase is velvet-harbor-ninety")}`, method: "PUT", body: MIGRATION }, ["web"])).toBe(false);
   });
 
   it("refuses a write carrying a real secret shape, whatever its provenance", () => {
-    expect(httpWriteIsTaintFree(sid, "http_request", {
+    expect(outboundIsTaintFree(sid, "http_request", {
       url: URL, method: "POST", headers: { Authorization: "Bearer sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghij" }, body: MIGRATION,
     }, ["web"])).toBe(false);
   });
 
   it("refuses a payload too short to be proven clean", () => {
-    expect(httpWriteIsTaintFree(sid, "http_request", { url: "https://a.b/c", method: "POST", body: "ok" }, ["web"])).toBe(false);
+    expect(outboundIsTaintFree(sid, "http_request", { url: "https://a.b/c", method: "POST", body: "ok" }, ["web"])).toBe(false);
   });
 
   it("only ever speaks for http_request WRITES under untrusted-content taint", () => {
-    expect(httpWriteIsTaintFree(sid, "http_request", { url: URL, method: "GET" }, ["web"])).toBe(false);
-    expect(httpWriteIsTaintFree(sid, "web_fetch", { url: URL, method: "POST", body: MIGRATION }, ["web"])).toBe(false);
-    expect(httpWriteIsTaintFree(sid, "http_request", { url: URL, method: "POST", body: MIGRATION }, ["user-provided"])).toBe(false);
-    expect(httpWriteIsTaintFree(sid, "http_request", { url: URL, method: "POST", body: MIGRATION }, [])).toBe(false);
+    expect(outboundIsTaintFree(sid, "http_request", { url: URL, method: "GET" }, ["web"])).toBe(false);
+    expect(outboundIsTaintFree(sid, "web_fetch", { url: URL, method: "POST", body: MIGRATION }, ["web"])).toBe(false);
+    expect(outboundIsTaintFree(sid, "http_request", { url: URL, method: "POST", body: MIGRATION }, ["user-provided"])).toBe(false);
+    expect(outboundIsTaintFree(sid, "http_request", { url: URL, method: "POST", body: MIGRATION }, [])).toBe(false);
   });
 
   it("keeps the presence floor when a taint entry has no captured content", () => {
     const bare = "htaint-bare";
     clearSessionTaint(bare);
     recordSensitiveRead(bare, "web", "mail.example/unknown");
-    expect(httpWriteIsTaintFree(bare, "http_request", { url: URL, method: "POST", body: MIGRATION }, ["web"])).toBe(false);
+    expect(outboundIsTaintFree(bare, "http_request", { url: URL, method: "POST", body: MIGRATION }, ["web"])).toBe(false);
   });
 });

@@ -124,10 +124,12 @@ describe("ARI run refresh — restricted mode does not survive an op boundary", 
     expect(getFirewallForTest(opB)).toBe(beforeB);
   });
 
-  it("recovers when another session's run-level taint reaches a clean shell call", async () => {
-    // Simulate a background session contributing taint to the process-wide
-    // firewall. The foreground shell call supplies no labels because its own
-    // trusted LAX session is clean.
+  it("another session's run-level taint never reaches a clean shell call", async () => {
+    // A background session contributes taint to the process-wide firewall.
+    // The foreground shell call supplies no labels because its own trusted LAX
+    // session is clean. LAX adjudicates data flow (hostAdjudicatesDataFlow), so
+    // the kernel does not merge the run's labels into it: the call is allowed
+    // on the same firewall, with no refresh needed to rescue it.
     const background = await ariEvaluate(
       "memory_search",
       "search",
@@ -139,7 +141,7 @@ describe("ARI run refresh — restricted mode does not survive an op boundary", 
     const before = getFirewallForTest();
     const foreground = await ariEvaluate("bash", "exec", { command: "git status" }, []);
     expect(foreground.allowed).toBe(true);
-    expect(getFirewallForTest()).not.toBe(before);
+    expect(getFirewallForTest()).toBe(before);
     expect(fw()?.isRestricted).not.toBe(true);
   });
 });

@@ -1,21 +1,21 @@
 // Which taint labels does the ARI kernel get to see for THIS call?
 //
-// The kernel judges an egress-class write on session-scoped taint: read one
-// email with token-shaped content and every later browser write is denied and
-// the run quarantined, on any site, carrying any bytes. LAX front-runs that
-// where it can answer the narrower question the kernel cannot — do these
-// specific bytes come from the tainted source? — and hands the kernel a label
-// set that reflects the answer.
+// LAX is the one adjudicator of data flow: at every sink it asks whether these
+// specific outbound bytes come from a tainted source (fingerprint overlap,
+// registered-secret scan, canaries), and the kernel runs with
+// RunStatePolicy.hostAdjudicatesDataFlow so it no longer re-derives that from
+// run history. What the kernel does get, per call, is the label set that
+// reflects LAX's answer: a payload proven clean is handed over without the
+// untrusted-content labels, so the kernel's taint-keyed policy rules (deny a
+// tainted http write) fire only on a write that is not proven clean.
 //
-// The shell twin of this decision lives in shell-block-guidance.ts and has
-// worked this way since the whole-run brick it removed; this module is the
-// browser half. Enforcement is unchanged either way: the kernel still owns
-// grants, approvals and every non-taint rule, and a write that DOES carry
-// tainted bytes keeps its labels and is denied exactly as before.
+// The shell twin of this decision lives in shell-block-guidance.ts. The kernel
+// still owns grants, approvals and every rule that is not about data flow.
 
 import { checkEgressTaintWithPayload, detectSecretsInOutput } from "../data-lineage/index.js";
 import { payloadFingerprints } from "../data-lineage/fingerprint.js";
-import { BROWSER_WRITE_ACTIONS, deriveAriAction } from "./ari-action-map.js";
+import { hasCapability } from "../tool-registry.js";
+import { deriveAriAction } from "./ari-action-map.js";
 import { egressPayload } from "./egress-gates.js";
 
 /**
@@ -25,46 +25,38 @@ import { egressPayload } from "./egress-gates.js";
  * as "rag". So clearing "rag" clears a secret read too — which is why a payload
  * carrying secret-shaped content is refused outright below, the same way the
  * shell gate refuses one.
- *
- * ("email" appears in the shell gate's copy of this set and is dead — nothing
- * maps to it. Left alone here rather than fixed in passing.)
  */
 const UNTRUSTED_CONTENT_SOURCES: ReadonlySet<string> = new Set(["web", "rag"]);
 
 /**
- * May the kernel judge this browser write WITHOUT the session's
- * untrusted-content taint?
+ * May the kernel judge this outbound call WITHOUT the session's
+ * untrusted-content taint? One predicate for every egress-capable tool —
+ * browser writes, http writes, email, messaging, calendar, clipboard, typed
+ * input — because the question is the same for all of them: do THESE bytes
+ * come from the tainted source? A deny on session state alone is what bricked
+ * sessions: one sensitive read and every later write on any site, carrying any
+ * bytes, was refused (2026-09-18, an OAuth setup after an inbox question).
  *
- * The kernel denies a tainted browser write on session state alone: read one
- * email with token-shaped content, and every later click/fill/select is denied
- * and the run quarantined — on any site, carrying any bytes. A user setting up
- * an OAuth app after asking about their inbox lost the rest of the conversation
- * to it (2026-09-18).
+ * `checkEgressTaintWithPayload` answers conservatively — it clears only when
+ * the payload contains no tainted bytes in any decoded view AND every active
+ * taint entry is fully fingerprinted. Reads (the kernel's "get") are not judged
+ * on taint by any policy rule, so they are left as they are.
  *
- * So ask the question the kernel cannot: do THESE bytes come from the tainted
- * source? `checkEgressTaintWithPayload` answers it conservatively — it clears
- * only when the payload contains no tainted bytes in any decoded view AND every
- * active taint entry is fully fingerprinted, so an entry whose content we never
- * captured keeps the presence floor and this returns false.
- *
- * Clearing here hides the untrusted-content labels from this ONE call. The
- * payload secret scan, canary tripwire and host allowlist all still run
- * downstream, and a write that DOES carry tainted bytes keeps its labels and is
- * denied exactly as before. Directly mirrors the shell gate (shell-block-guidance.ts), which has
- * front-run the kernel this way since the whole-run brick it removed.
- *
- * Pure + exported for the contract test.
+ * Pure + exported for the contract tests.
  */
-export function browserWriteIsTaintFree(
+export function outboundIsTaintFree(
   sessionId: string,
   toolName: string,
   args: Record<string, unknown>,
   taintLabels: readonly string[],
 ): boolean {
-  if (toolName !== "browser") return false;
+  if (!hasCapability(toolName, "egress")) return false;
   if (!taintLabels.some((s) => UNTRUSTED_CONTENT_SOURCES.has(s))) return false;
-  if (!BROWSER_WRITE_ACTIONS.has(String(args.action ?? "").toLowerCase())) return false;
-  const { text } = egressPayload(toolName, args);
+  if (deriveAriAction(toolName, args) === "get") return false;
+  const { text, attachmentPaths } = egressPayload(toolName, args);
+  // A file that leaves with the call is judged by the attachment scan
+  // downstream; this predicate only clears what it can read.
+  if (attachmentPaths.length > 0) return false;
   // Nothing to carry: a click/act with no payload cannot exfiltrate, exactly as
   // a mouse move cannot (see the `computer` case in egressPayload). Provably
   // clean, not merely unproven.
@@ -80,32 +72,6 @@ export function browserWriteIsTaintFree(
   // to wave through on the strength of a fingerprint miss.
   if (detectSecretsInOutput(text).structured) return false;
   return !checkEgressTaintWithPayload(sessionId, text).blocked;
-}
-
-/**
- * The http_request twin of browserWriteIsTaintFree, and the other half of the
- * asymmetry docs/proposals/taint-scoped-to-data-flow.md names: an http POST
- * after a web read was still judged on session state alone while a browser
- * fill was judged on its bytes. Same predicate, one channel more — the URL is
- * an outbound channel for an http write and joins the scanned payload, so a
- * tainted byte in the path or query keeps the labels exactly as one in the
- * body does. Write verbs only: a GET carries no body and the kernel's own
- * query/path drip accounting judges it. Pure + exported for the contract test.
- */
-export function httpWriteIsTaintFree(
-  sessionId: string,
-  toolName: string,
-  args: Record<string, unknown>,
-  taintLabels: readonly string[],
-): boolean {
-  if (toolName !== "http_request") return false;
-  if (!taintLabels.some((s) => UNTRUSTED_CONTENT_SOURCES.has(s))) return false;
-  if (deriveAriAction(toolName, args) === "get") return false;
-  const { text } = egressPayload(toolName, args);
-  const payload = `${String(args.url ?? "")}\n${text}`.trim();
-  if (payloadFingerprints(payload).size === 0) return false;
-  if (detectSecretsInOutput(payload).structured) return false;
-  return !checkEgressTaintWithPayload(sessionId, payload).blocked;
 }
 
 /** The labels to hand the kernel once a write has proven itself clean. */

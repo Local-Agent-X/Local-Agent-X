@@ -57,6 +57,10 @@ export function evaluateBehavioralRules(state: RunStateTracker): BehavioralRuleM
 	const events = state.recentEvents;
 	if (events.length < 2) return null;
 
+	// The host judges data flow on the bytes; only the rule that is not about
+	// data flow runs here (RunStatePolicy.hostAdjudicatesDataFlow).
+	if (state.hostAdjudicatesDataFlow) return checkDeniedCapabilityThenEscalation(events, state);
+
 	return (
 		checkWebTaintSensitiveProbe(events, state) ??
 		checkDeniedCapabilityThenEscalation(events, state) ??

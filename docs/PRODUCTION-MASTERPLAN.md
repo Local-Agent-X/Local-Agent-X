@@ -461,6 +461,17 @@ merging onto a red base.
 
 One line per closed item, newest first, with the commit that closed it.
 
+- **2026-10-02, Phase 0 item 5, first part: the board is open.** Labels
+  `session-health`, `tool-reliability`, `gate`, `installer`, `experimental`.
+  Follow-ups that lived in this log are now issues #5 (Windows flake class),
+  #6 (dev-server probes), #7 (scheduler scan and launch race), #8 (installer
+  rough edges), #9 (private content in logged-in browser pages), #10 (CI
+  lanes and PR-only). Two exploitable weaknesses are private draft security
+  advisories, published once fixed: the shell-cage bypass through build and
+  hook runners (high) and the op-store lock (low). Still to migrate:
+  `docs/known-issues.md`, the OPEN rows of `eval/HARNESS_LEDGER.md` and the
+  failure-manifest rows.
+
 - **2026-10-01, Phase 0 item 3, first half: branch protection is on for
   `main`.** Required checks: `Unit tests (ubuntu-latest)` and `Audit + clean
   build` (type-check plus full build). Force-pushes and deletion of `main` are

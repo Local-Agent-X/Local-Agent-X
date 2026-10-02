@@ -461,6 +461,26 @@ merging onto a red base.
 
 One line per closed item, newest first, with the commit that closed it.
 
+- **2026-10-01, correction: main did not stay green after `7a0d1ca`.** Four
+  of the next ten pushes went red on `Unit tests (windows-latest)`, each on a
+  different test hitting a fixed deadline: dev-server crash detection, the
+  glob-tool afterAll, the container handoff, rolling-source extraction and
+  the global-cap sampler (the last two on one docs-only push). The runner has
+  four vCPUs, so vitest runs one file at a time; synchronous file I/O and
+  process spawns cost 10-50x Ubuntu there, with 1.5-3 s stalls. Each was
+  root-caused, adversarially reviewed and fixed without raising a timeout:
+  `687dd3d4` + `53e4f404` (product: a claim written during a stall was read
+  as a handoff timeout and the container torn down), `980dc7f3` (product: the
+  scheduler snapshot omitted ops holding a reserved slot), `44fae266`
+  (product: a synchronous PowerShell port probe blocked the event loop for up
+  to 5 s and delayed crash reports), `4ceea91c`, `4177d304`, `e8b4078a`
+  (tests doing work their property did not need). A sweep found the rest of
+  the class, led by 16 files that run sub-second leases against a 30 s
+  production floor, plus a product bug in the op-store lock (a contended
+  mutation is skipped or runs unlocked after 500 ms); both are filed as
+  follow-ups. Without a required check, a red push still lands silently,
+  which is Phase 0 items 3 and 4.
+
 - **2026-10-01, the macOS cage is verified on a Mac.** `09ef9f77`, `97f7bef5`,
   `08e6bc00` and `74aa6c8c` passed live at `91d2a9bf` with a launchd
   `SSH_AUTH_SOCK`: seatbelt + guarded-egress contract 38 passed, every live
@@ -518,7 +538,8 @@ One line per closed item, newest first, with the commit that closed it.
   under the 220-char cap and the medium manifest under its ceiling, with no
   ceiling raised. The `{action, params}` schema collapse for office families
   is still the lever and moves to Phase 2.
-- **2026-10-01, main green on every workflow** at `7a0d1ca`: Security & CI
+- **2026-10-01, main green on every workflow** at `7a0d1ca` (true for that
+  commit only; see the correction above): Security & CI
   on both OSes (unit, build, integration, Windows cage escape matrix),
   Pre-flight, Semgrep, Rolling Source Asset, and the Rolling Installer with
   its test gate, which then published the first Windows installer carrying

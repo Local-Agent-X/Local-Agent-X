@@ -1,7 +1,21 @@
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
-import { installExitDetail, parseHelperStatus, stagedWinCageHelper, underUserProfile, winCageEnvOverlay, winCageHelperDir, winCageLoopbackPermit, wrapForWinCage, WIN_CAGE_HELPER_MAX_PERMIT_WIDTH, WIN_CAGE_SANDBOX_USER, WIN_CAGE_SUBLAYER_GUID } from "./win-cage.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+// The proof's two process calls — the helper's `status`, and the child node
+// that runs both fence probes — answered here, so no helper is needed. With
+// `hold` set, a fence probe waits in `held` until the test answers it.
+type ProbeDone = (error: Error | null, stdout: string) => void;
+const child = vi.hoisted(() => ({ status: "", probe: "", hold: false, held: [] as Array<(error: Error | null, stdout: string) => void> }));
+vi.mock("node:child_process", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("node:child_process")>()),
+  execFileSync: () => child.status,
+  execFile: (_file: string, _args: string[], _opts: unknown, done: ProbeDone) => { if (child.hold) child.held.push(done); else done(null, child.probe); },
+}));
+
+import { _resetWinCageProbe, onWinCageProofSettled, parseHelperStatus, underUserProfile, winCageEnforces, winCageEnforcesSync, winCageEnvOverlay, winCageHelperDir, winCageLoopbackPermit, winCageProbePending, winCageProofView, wrapForWinCage, WIN_CAGE_HELPER_ENV, WIN_CAGE_HELPER_MAX_PERMIT_WIDTH, WIN_CAGE_SANDBOX_USER, WIN_CAGE_SUBLAYER_GUID, type WinCageProof } from "./win-cage.js";
+import { installExitDetail, stagedWinCageHelper } from "./win-cage-install.js";
 import { winCageReadGrants } from "./win-cage-grants.js";
 
 describe("win-cage — what the caged shell is granted to read", () => {
@@ -98,6 +112,118 @@ describe("win-cage — the child's environment", () => {
     const wrapped = wrapForWinCage("C:\\Program Files\\Git\\bin\\bash.exe", ["-c", "echo hi"], { PATH: "C:\\Windows", USERPROFILE: "C:\\Users\\peter" }, "C:\\lax\\bin\\srt-win.exe");
     expect(wrapped.cmd).toBe("C:\\lax\\bin\\srt-win.exe");
     expect(wrapped.args).toEqual(["exec", "--quiet", "--env", "PATH=C:\\Windows", "--", "C:\\Program Files\\Git\\bin\\bash.exe", "-c", "echo hi"]);
-    expect(wrapForWinCage("bash", ["-c", "x"], {}, null)).toEqual({ cmd: "bash", args: ["-c", "x"] });
+  });
+});
+
+// The server re-broadcasts the sandbox status from this listener: it is what
+// moves a Settings page opened while the proof ran off its "checking" state.
+describe("win-cage — the fence proof's lifecycle", () => {
+  const realPlatform = process.platform;
+  const prevHelper = process.env[WIN_CAGE_HELPER_ENV];
+  const prevProgramData = process.env.ProgramData;
+  const INSTALLED = JSON.stringify({ user: { cred_present: true, marker_user_sid: "S-1-5-21-9-1005", user: { exists: true } } });
+  const PROVEN = JSON.stringify({ offBox: "blocked", loopback: "reached" });
+  const OPEN = JSON.stringify({ offBox: "unreachable", loopback: "reached" });
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "lax-cage-helper-"));
+    writeFileSync(join(dir, "srt-win.exe"), "");
+    process.env[WIN_CAGE_HELPER_ENV] = join(dir, "srt-win.exe");
+    Object.defineProperty(process, "platform", { value: "win32" });
+    child.status = INSTALLED;
+    child.hold = false;
+    child.held = [];
+    _resetWinCageProbe();
+  });
+  afterEach(() => {
+    Object.defineProperty(process, "platform", { value: realPlatform });
+    if (prevHelper === undefined) delete process.env[WIN_CAGE_HELPER_ENV]; else process.env[WIN_CAGE_HELPER_ENV] = prevHelper;
+    if (prevProgramData === undefined) delete process.env.ProgramData; else process.env.ProgramData = prevProgramData;
+    rmSync(dir, { recursive: true, force: true });
+    _resetWinCageProbe();
+  });
+
+  it("fires once for a proven fence and once for an open one, after the proof stops pending", async () => {
+    const heard: Array<{ proof: WinCageProof; pendingThen: boolean }> = [];
+    onWinCageProofSettled((proof) => heard.push({ proof, pendingThen: winCageProbePending() }));
+
+    child.probe = PROVEN;
+    expect(winCageEnforcesSync()).toBe(false);
+    expect(winCageProofView()).toEqual({ proofPending: true });
+    expect(await winCageEnforces()).toBe(true);
+    expect(heard).toEqual([{ proof: { ok: true, installed: true, reason: "" }, pendingThen: false }]);
+    expect(winCageProofView()).toEqual({ proofPending: false });
+
+    _resetWinCageProbe();
+    child.probe = OPEN;
+    expect(await winCageEnforces()).toBe(false);
+    expect(heard).toHaveLength(2);
+    expect(heard[1]).toMatchObject({ proof: { ok: false, installed: true }, pendingThen: false });
+    expect(heard[1].proof.reason).toMatch(/fence is not active.*unreachable/);
+    expect(winCageProofView()).toEqual({ proofPending: false, proofFailure: heard[1].proof.reason });
+  });
+
+  // A machine without the cage has nothing to verify. Reading as "being
+  // verified" there would hold every shell for a proof that can only fail and
+  // refuse the synchronous starts (dev servers) outright.
+  it("settles at once, never pending, when the helper is missing or the cage is not installed", () => {
+    const heard: WinCageProof[] = [];
+    onWinCageProofSettled((proof) => heard.push(proof));
+
+    delete process.env[WIN_CAGE_HELPER_ENV];
+    process.env.ProgramData = dir;
+    expect(winCageEnforcesSync()).toBe(false);
+    expect(winCageProbePending()).toBe(false);
+    expect(winCageProofView()).toEqual({ proofPending: false });
+    expect(winCageEnforcesSync()).toBe(false);
+    expect(winCageProbePending()).toBe(false);
+
+    _resetWinCageProbe();
+    process.env[WIN_CAGE_HELPER_ENV] = join(dir, "srt-win.exe");
+    child.status = JSON.stringify({ user: { cred_present: false, user: { exists: false } } });
+    expect(winCageEnforcesSync()).toBe(false);
+    expect(winCageProbePending()).toBe(false);
+    // Not installed is not "installed but broken": the page offers the install.
+    expect(winCageProofView()).toEqual({ proofPending: false });
+    expect(heard).toEqual([]);
+  });
+
+  // Install and uninstall forget the proof while one may be running; the old
+  // probe's answer is about the cage as it was.
+  it("a proof started before a reset never overwrites the one started after it", async () => {
+    const heard: WinCageProof[] = [];
+    onWinCageProofSettled((proof) => heard.push(proof));
+    child.hold = true;
+
+    winCageEnforcesSync();
+    _resetWinCageProbe();
+    winCageEnforcesSync();
+    const [before, after] = child.held;
+    expect(child.held).toHaveLength(2);
+
+    before(null, PROVEN);
+    await flush();
+    expect(winCageProbePending()).toBe(true);
+    expect(winCageProofView()).toEqual({ proofPending: true });
+    expect(heard).toEqual([]);
+
+    after(null, OPEN);
+    expect(await winCageEnforces()).toBe(false);
+    expect(winCageProbePending()).toBe(false);
+    expect(heard).toHaveLength(1);
+    expect(heard[0]).toMatchObject({ ok: false, installed: true });
+  });
+
+  it("an awaited proof follows a reset to the proof that replaced it", async () => {
+    child.hold = true;
+    const answer = winCageEnforces();
+    _resetWinCageProbe();
+    winCageEnforcesSync();
+    const [before, after] = child.held;
+    before(null, OPEN);
+    await flush();
+    after(null, PROVEN);
+    expect(await answer).toBe(true);
   });
 });

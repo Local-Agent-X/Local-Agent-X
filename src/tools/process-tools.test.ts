@@ -3,9 +3,32 @@
 // change fixes: (a) detached spawn lets process_kill actually terminate the
 // child, and (b) process_restart replaces a tracked session with a new one.
 
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+
+// The Windows cage: no helper (so every suite here spawns on the host, on any
+// machine), or a helper whose fence proof is still running when any wait for
+// it ends. Every export that would reach the real srt-win helper is modelled,
+// so no test here runs the helper on a machine that has the cage installed.
+const cage = vi.hoisted(() => ({ helper: null as string | null }));
+vi.mock("../sandbox/win-cage.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../sandbox/win-cage.js")>()),
+  resolveWinCageHelper: () => cage.helper,
+  winCageStatus: () => ({ helper: cage.helper, installed: cage.helper !== null, detail: "modelled" }),
+  winCageEnforcesSync: () => false,
+  winCageEnforces: async () => false,
+  winCageProbePending: () => cage.helper !== null,
+  winCageProofView: () => ({ proofPending: cage.helper !== null }),
+  winCageUnusableReason: () => (cage.helper === null ? "the cage helper is not present (modelled)" : "the fence proof is still running"),
+  wrapForWinCage: () => { throw new Error("the cage is never proven here, so nothing is wrapped"); },
+}));
+vi.mock("../sandbox/win-cage-grants.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../sandbox/win-cage-grants.js")>()),
+  ensureWinCageGrants: async () => undefined,
+  ensureWinCageGrantsSync: () => undefined,
+}));
+
 import {
   processStartTool,
   processStatusTool,
@@ -13,6 +36,7 @@ import {
   processRestartTool,
   runningSessionsForPath,
 } from "./process-tools.js";
+import { SESSIONS, startSession } from "./process-session.js";
 import type { ToolResult } from "../types.js";
 
 // A node one-liner that stays alive until killed.
@@ -137,4 +161,55 @@ describe("process_restart", () => {
     const res = await processRestartTool.execute({ session_id: "px-deadbeef" });
     expect(res.isError).toBe(true);
   });
+});
+
+describe("startSession while the Windows cage is still proving its fence", () => {
+  const realPlatform = process.platform;
+  const prevMode = process.env.LAX_SANDBOX;
+  beforeEach(() => {
+    process.env.LAX_SANDBOX = "guarded";
+    Object.defineProperty(process, "platform", { value: "win32" });
+    cage.helper = "C:\\ProgramData\\Local Agent X\\bin\\srt-win.exe";
+  });
+  afterEach(() => {
+    Object.defineProperty(process, "platform", { value: realPlatform });
+    cage.helper = null;
+    if (prevMode === undefined) delete process.env.LAX_SANDBOX; else process.env.LAX_SANDBOX = prevMode;
+  });
+
+  // Dev servers start through here synchronously and cannot wait for the
+  // proof; the refusal must name the wait, not read as a broken command.
+  it("refuses with a retryable message and starts nothing", () => {
+    const before = SESSIONS.size;
+    const r = startSession(FOREVER);
+    expect(r).toEqual({ error: expect.stringMatching(/^The Windows shell cage is still being verified; try again in a few seconds\./) });
+    expect(SESSIONS.size).toBe(before);
+  });
+});
+
+describe("process_restart while the Windows cage is still proving its fence", () => {
+  const realPlatform = process.platform;
+  const prevMode = process.env.LAX_SANDBOX;
+  afterEach(() => {
+    Object.defineProperty(process, "platform", { value: realPlatform });
+    cage.helper = null;
+    if (prevMode === undefined) delete process.env.LAX_SANDBOX; else process.env.LAX_SANDBOX = prevMode;
+  });
+
+  // Refusing only at the new start would leave the old process dead and
+  // nothing in its place.
+  it("refuses before stopping the session it would replace", async () => {
+    const oldId = await startForever();
+    expect(await pollRunning(oldId, true)).toBe(true);
+
+    process.env.LAX_SANDBOX = "guarded";
+    Object.defineProperty(process, "platform", { value: "win32" });
+    cage.helper = "C:\\ProgramData\\Local Agent X\\bin\\srt-win.exe";
+    const res = await processRestartTool.execute({ session_id: oldId });
+    Object.defineProperty(process, "platform", { value: realPlatform });
+
+    expect(res.isError).toBe(true);
+    expect(String(res.content)).toMatch(/still being verified; try again in a few seconds\. Nothing was stopped or started\.$/);
+    expect(await isRunning(oldId)).toBe(true);
+  }, 20_000);
 });

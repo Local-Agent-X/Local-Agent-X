@@ -1,4 +1,4 @@
-import { getSandboxStatus } from "../sandbox/index.js";
+import { getSandboxStatus, SANDBOX_PROOF_PENDING_RETRY } from "../sandbox/index.js";
 import { hasCapability } from "../tool-registry.js";
 import { blocked } from "../tools/result-helpers.js";
 import type { ToolResult } from "../types.js";
@@ -20,6 +20,22 @@ export function unattendedShellBlock(
       ? sandbox.delegatedShellAllowed || scopedDelegatedRun
       : sandbox.apiShellAllowed;
   if (contextAllowed) return null;
+
+  // Not a host to acknowledge yet: the Windows cage is still proving its fence,
+  // and its answer lands within seconds.
+  if (callContext !== "cron" && sandbox.proofPending) {
+    return blocked(
+      `BLOCKED (unattended): ${toolName} cannot execute yet in this ${callContext} context. ${SANDBOX_PROOF_PENDING_RETRY}`,
+      {
+        layer: "sandbox",
+        callContext,
+        selectedMode: sandbox.selectedMode,
+        effectiveMode: sandbox.effectiveMode,
+        proofPending: true,
+        recovery: "Retry this call in a few seconds, once the cage check has finished.",
+      },
+    );
+  }
 
   const reason = callContext === "cron"
     ? "Shell execution is categorically disabled for cron runs, regardless of sandbox mode or host acknowledgement."

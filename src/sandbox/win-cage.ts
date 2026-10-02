@@ -34,7 +34,7 @@
 // "access denied" (2026-09-28, an evening lost to it). A profile path is
 // therefore refused here with the reason, never tried.
 
-import { execFile, execFileSync, spawn } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { createServer, type Server } from "node:net";
 import { homedir } from "node:os";
@@ -181,12 +181,35 @@ function probeCwd(): string {
   return join(systemRoot(), "Temp");
 }
 
-let enforces: { ok: boolean; reason: string } | null = null;
-let probeInFlight: Promise<void> | null = null;
+export interface WinCageProof {
+  ok: boolean;
+  reason: string;
+  /** The helper reported the cage installed, so a failure is the fence's own
+   *  rather than a missing helper or install. */
+  installed: boolean;
+}
 
-/** True while the first proof is still running (a few seconds after start). */
+let enforces: WinCageProof | null = null;
+let probeInFlight: Promise<void> | null = null;
+const settleListeners = new Set<(proof: WinCageProof) => void>();
+
+/** True while a fence probe is running (a few seconds after start or an install). */
 export function winCageProbePending(): boolean {
   return enforces === null && probeInFlight !== null;
+}
+
+/** Called each time a fence probe lands, either way. The caller registers here
+ *  (the server does at boot, to re-broadcast the sandbox status) so this
+ *  module never imports the code that reacts to it. A missing helper or
+ *  install settles at once, with nothing pending to announce. */
+export function onWinCageProofSettled(listener: (proof: WinCageProof) => void): void {
+  settleListeners.add(listener);
+}
+
+/** The proof as the settings page shows it: still running, or why an installed cage failed it. */
+export function winCageProofView(): { proofPending: boolean; proofFailure?: string } {
+  if (winCageProbePending()) return { proofPending: true };
+  return enforces && !enforces.ok && enforces.installed ? { proofPending: false, proofFailure: enforces.reason } : { proofPending: false };
 }
 
 /** Why guarded is unusable on this Windows host, or null when the fence is proven. */
@@ -202,41 +225,57 @@ export function winCageUnusableReason(): string | null {
  * unfenced connect to TEST-NET-1 does, so it counts as no fence), and a
  * connect to a loopback listener in the proxy's range must succeed (a
  * PowerShell one-liner run as the sandbox user). Both, or the cage is not a
- * cage. The proof takes seconds, so it runs off the event loop: the first
- * call starts it and answers "not yet" (the mode resolver does not cache that
- * answer — winCageProbePending), later calls read the result.
+ * cage. The fence probe takes seconds, so it runs off the event loop: the
+ * first call starts it and answers "not yet" (winCageProbePending; meanwhile
+ * the spawn seam in index.ts waits or refuses, never runs on the host), later
+ * calls read the result. A missing helper or install needs no probe and is
+ * settled on the spot: a machine without the cage must never read as "being
+ * verified", or its synchronous spawns would be refused for nothing.
  */
 export function winCageEnforcesSync(): boolean {
   if (enforces) return enforces.ok;
-  if (!probeInFlight) {
-    probeInFlight = probe()
-      .then((r) => { enforces = r; if (!r.ok) logger.warn(`[win-cage] guarded unavailable: ${r.reason}`); })
-      .catch((e) => { enforces = { ok: false, reason: `the fence proof failed to run: ${(e as Error).message}` }; })
-      .finally(() => { probeInFlight = null; });
+  if (probeInFlight) return false;
+  const status = process.platform === "win32" ? winCageStatus() : null;
+  if (!status?.helper || !status.installed) {
+    enforces = { ok: false, installed: false, reason: status?.detail ?? "not Windows" };
+    return false;
   }
+  const inFlight: Promise<void> = probeFence(status.helper)
+    .catch((e): WinCageProof => ({ ok: false, installed: true, reason: `the fence proof failed to run: ${(e as Error).message}` }))
+    .then((r) => {
+      // An install or uninstall forgot the proof while this one ran: its
+      // answer is about the cage as it was, and the proof started since then
+      // owns the result.
+      if (probeInFlight !== inFlight) return;
+      // Settled before the listeners run, so a status they read is final.
+      enforces = r;
+      probeInFlight = null;
+      if (!r.ok) logger.warn(`[win-cage] guarded unavailable: ${r.reason}`);
+      for (const listener of settleListeners) {
+        // One listener failing must not leave the proof's promise rejected
+        // with nobody awaiting it.
+        try { listener(r); } catch (e) { logger.warn(`[win-cage] proof listener failed: ${(e as Error).message}`); }
+      }
+    });
+  probeInFlight = inFlight;
   return false;
 }
 
-/** The proof, awaited (settings, tests). */
+/** The proof, awaited (spawn paths that can wait, tests). */
 export async function winCageEnforces(): Promise<boolean> {
-  if (enforces) return enforces.ok;
-  winCageEnforcesSync();
-  await probeInFlight;
+  // Re-asked after every wait: a reset while waiting hands the answer to the
+  // proof started after it.
+  while (!winCageEnforcesSync() && probeInFlight) await probeInFlight;
   // Read through a call: the narrowing above does not see the assignment made
   // inside the probe's continuation.
   return currentProof()?.ok ?? false;
 }
 
-function currentProof(): { ok: boolean; reason: string } | null {
+function currentProof(): WinCageProof | null {
   return enforces;
 }
 
-async function probe(): Promise<{ ok: boolean; reason: string }> {
-  if (process.platform !== "win32") return { ok: false, reason: "not Windows" };
-  const status = winCageStatus();
-  if (!status.helper) return { ok: false, reason: status.detail };
-  if (!status.installed) return { ok: false, reason: status.detail };
-  const helper = status.helper;
+async function probeFence(helper: string): Promise<WinCageProof> {
   // The loopback probe needs a listener; run both probes in a child node so
   // the mode resolver (sync) can call this. The listener takes the first
   // free port of the proxy's range — the one loopback destination the cage
@@ -271,11 +310,11 @@ async function probe(): Promise<{ ok: boolean; reason: string }> {
     });
     result = JSON.parse(stdout);
   } catch (e) {
-    return { ok: false, reason: `the fence probe could not run: ${(e as Error).message.split("\n")[0]}` };
+    return { ok: false, installed: true, reason: `the fence probe could not run: ${(e as Error).message.split("\n")[0]}` };
   }
-  if (result.offBox !== "blocked") return { ok: false, reason: `the fence is not active: a connect from the cage to an off-machine address was ${result.offBox}` };
-  if (result.loopback !== "reached") return { ok: false, reason: `loopback is not reachable from the cage: a connect to a proxy-range port was ${result.loopback}` };
-  return { ok: true, reason: "" };
+  if (result.offBox !== "blocked") return { ok: false, installed: true, reason: `the fence is not active: a connect from the cage to an off-machine address was ${result.offBox}` };
+  if (result.loopback !== "reached") return { ok: false, installed: true, reason: `loopback is not reachable from the cage: a connect to a proxy-range port was ${result.loopback}` };
+  return { ok: true, installed: true, reason: "" };
 }
 
 /** After install/uninstall, and in tests: forget the memoized proof. */
@@ -303,70 +342,7 @@ export function winCageEnvOverlay(env: Record<string, string>): string[] {
   return pairs;
 }
 
-export function wrapForWinCage(shell: string, shellArgs: string[], env: Record<string, string>, helper: string | null = resolveWinCageHelper()): { cmd: string; args: string[] } {
-  if (!helper) return { cmd: shell, args: shellArgs };
+export function wrapForWinCage(shell: string, shellArgs: string[], env: Record<string, string>, helper: string): { cmd: string; args: string[] } {
   const overlay = winCageEnvOverlay(env).flatMap((pair) => ["--env", pair]);
   return { cmd: helper, args: ["exec", "--quiet", ...overlay, "--", shell, ...shellArgs] };
-}
-
-// ── Install / uninstall (one UAC prompt each) ────────────────────────────
-
-const INSTALL_EXIT: Record<number, string> = {
-  0: "installed",
-  2: "the cage helper is not present",
-  3: "the cage helper's signature was rejected",
-  10: "the administrator prompt was cancelled",
-  12: "the network filters could not be installed",
-  13: "already installed with a different port range or user; remove it first",
-  14: "the sandbox user could not be provisioned",
-};
-
-export function installExitDetail(code: number): string {
-  return INSTALL_EXIT[code] ?? `the helper exited with code ${code}`;
-}
-
-/** The one provisioning script (scripts/win-cage/provision.ps1): the installer,
- *  Settings and the uninstaller all run it, and it elevates itself once. */
-function provisionScript(projectRoot = process.cwd()): string {
-  return join(projectRoot, "scripts", "win-cage", "provision.ps1");
-}
-
-/** A helper the installer staged with this install, before any is installed
- *  machine-wide: `<installRoot>/vendor/srt-win/srt-win.exe`. */
-export function stagedWinCageHelper(projectRoot = process.cwd()): string | null {
-  const staged = join(projectRoot, "vendor", "srt-win", "srt-win.exe");
-  return existsSync(staged) ? staged : null;
-}
-
-function runProvision(args: string[]): Promise<{ ok: boolean; code: number; detail: string }> {
-  return new Promise((resolve) => {
-    const child = spawn(join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
-      ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", provisionScript(), ...args],
-      { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
-    let out = "";
-    child.stdout?.on("data", (d) => { out += d.toString(); });
-    child.stderr?.on("data", (d) => { out += d.toString(); });
-    child.once("error", (e) => resolve({ ok: false, code: -1, detail: e.message }));
-    child.once("exit", (code) => {
-      const c = code ?? -1;
-      _resetWinCageProbe();
-      const last = out.trim().split("\n").slice(-1)[0]?.trim();
-      resolve({ ok: c === 0, code: c, detail: c === 0 ? installExitDetail(0) : `${installExitDetail(c)}${last ? ` — ${last}` : ""}` });
-    });
-  });
-}
-
-/** Provision the sandbox user and the fence. One administrator prompt. The
- *  helper comes from the machine-wide folder when it is already there, else
- *  from the copy the installer staged with this install. */
-export function installWinCage(): Promise<{ ok: boolean; code: number; detail: string }> {
-  const { from, to } = winCageLoopbackPermit();
-  const helper = resolveWinCageHelper() ?? stagedWinCageHelper();
-  if (!helper) return Promise.resolve({ ok: false, code: 2, detail: installExitDetail(2) });
-  return runProvision(["-Helper", helper, "-PortRange", `${from}-${to}`]);
-}
-
-/** Remove the fence, the sandbox user and the machine-wide helper. One administrator prompt. */
-export function uninstallWinCage(): Promise<{ ok: boolean; code: number; detail: string }> {
-  return runProvision(["-Uninstall"]);
 }

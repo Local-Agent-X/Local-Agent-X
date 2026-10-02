@@ -52,6 +52,12 @@ function handleSettingsChanged(msg) {
   if (msg.settings.egress && typeof renderWebAccess === 'function') {
     renderWebAccess(msg.settings.egress);
   }
+  // Sandbox status changed: a mode or acknowledgement change, a Windows cage
+  // install, or the cage's fence proof landing after start. The section is
+  // re-read rather than drawn from the payload, which lacks the cage detail.
+  if (msg.settings.sandbox && typeof loadSandboxMode === 'function') {
+    loadSandboxMode();
+  }
 }
 
 function handleSidebarPinsChanged(msg) {

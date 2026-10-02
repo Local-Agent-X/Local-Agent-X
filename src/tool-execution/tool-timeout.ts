@@ -122,8 +122,9 @@ export function setToolTimeout(toolName: string, ms: number): void {
 
 /**
  * `ms` bounds the TOOL's own work. `excludedMs` reports time the call spent
- * waiting on something that is not the tool working — today, a human deciding
- * an approval (approval-manager.ts approvalWaitMsFor). Without it the two
+ * waiting on something that is not the tool working — a human deciding an
+ * approval (approval-manager.ts approvalWaitMsFor), or a shell waiting for the
+ * Windows cage's startup proof (sandbox awaitSandboxProof). Without it the two
  * budgets fought: a 30s browser timeout around a 5-minute approval card meant
  * every sensitive-page action timed out before the user could answer, and the
  * retry raised another card (live 2026-09-16, Google Cloud console).

@@ -1,19 +1,22 @@
 // The delegated-agent worktree-isolation gate — extracted from layer-core.ts's
 // evaluate() to keep that class under the source-hygiene LOC ceiling. Pure
-// policy: given the delegated call and three predicates over the SecurityLayer's
-// state, it returns a blocking SecurityDecision or null (pass through to the
-// shared command/file vetting). Behavior is identical to the inlined form.
+// policy: given the delegated call and four predicates over the SecurityLayer's
+// state and the sandbox status, it returns a blocking SecurityDecision or null
+// (pass through to the shared command/file vetting).
 
 import type { SecurityDecision } from "../../types.js";
 import { USER_HINTS } from "../../types.js";
 import type { ToolCallContext } from "./types.js";
 import { hasCapability } from "../../tool-registry.js";
+import { SANDBOX_PROOF_PENDING_RETRY } from "../../sandbox/index.js";
 
 export interface DelegatedGateDeps {
   hasSessionWorktree(sessionId: string | undefined): boolean;
   /** OS-containment half of the gate (confined sandbox / acknowledged host /
    *  scoped work root) — see SecurityLayer.delegatedShellOsContained. */
   delegatedShellOsContained(sessionId: string | undefined): boolean;
+  /** The Windows cage is still proving its fence (sandbox status proofPending). */
+  sandboxProofPending(): boolean;
   isUserContentPath(targetPath: string): boolean;
 }
 
@@ -67,6 +70,15 @@ export function evaluateDelegatedWorktreeGate(
       };
     }
     if (!deps.delegatedShellOsContained(sessionKey)) {
+      // Not an unconfined host yet: the Windows cage is still proving its
+      // fence, and its answer lands within seconds.
+      if (deps.sandboxProofPending()) {
+        return {
+          allowed: false,
+          reason: `Blocked for now: delegated shell tool "${toolName}" waits for the sandbox. ${SANDBOX_PROOF_PENDING_RETRY}`,
+          userHint: SANDBOX_PROOF_PENDING_RETRY,
+        };
+      }
       return {
         allowed: false,
         reason: `Blocked: delegated shell tool "${toolName}" requires an effectively-confined sandbox — the selected sandbox fell back to the unconfined host and this run has no operator acknowledgement or scoped work root, so a self-verify shell cannot be contained`,

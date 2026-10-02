@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { CAN_CREATE_DIRECTORY_LINK } from "../../symlink-capabilities.test-helper.js";
 import { SecurityLayer } from "./layer-core.js";
 import { blockedSelfVerifyGuidance } from "../../tool-execution/shell-block-guidance.js";
+import { unattendedShellBlock } from "../../tool-execution/unattended-shell-gate.js";
 
 // The delegated-shell gate reads getSandboxStatus().confined / .delegatedShellAllowed;
 // mock ONLY that export (spread the rest of the real module) so we can pin
@@ -34,6 +35,11 @@ function setHostFallback() {
     fallbackReason: "guarded cage unavailable", unconfinedHostAcknowledged: false,
     cronShellAllowed: false, delegatedShellAllowed: false, apiShellAllowed: false,
   };
+}
+/** Guarded on Windows with the cage's fence proof still running. */
+function setProofPending() {
+  setHostFallback();
+  sandbox.status = { ...sandbox.status, proofPending: true, fallbackReason: "The Windows shell cage is being verified; shell commands wait for it." };
 }
 
 const DIRECTORY_LINK_TYPE = process.platform === "win32" ? "junction" : "dir";
@@ -183,6 +189,24 @@ describe("delegated-shell containment gate (worktree AND confinement)", () => {
       expect(d.allowed).toBe(false);
       expect(d.reason).toMatch(/confined sandbox|unconfined host/i);
     });
+  });
+
+  // Not an unconfined host to acknowledge: the cage answers within seconds.
+  it("(c2) says retry, not acknowledge, while the Windows cage is still being verified", () => {
+    setProofPending();
+    withWorktree("agent-k-c2", (sec) => {
+      const d = delegatedBash(sec, "npm test", "agent-k-c2");
+      expect(d.allowed).toBe(false);
+      expect(d.reason).toMatch(/still being verified; try again in a few seconds/);
+      expect(d.reason).not.toMatch(/acknowledg/i);
+      expect(d.userHint).toBe("The Windows shell cage is still being verified; try again in a few seconds.");
+    });
+    const unattended = unattendedShellBlock("bash", "delegated", "agent-k-c2");
+    expect(unattended?.content).toMatch(/still being verified; try again in a few seconds/);
+    expect(unattended?.content).not.toMatch(/acknowledg/i);
+    expect(unattended?.metadata).toMatchObject({ proofPending: true, recovery: expect.stringMatching(/Retry this call in a few seconds/) });
+    // Cron stays categorically refused, pending or not.
+    expect(unattendedShellBlock("bash", "cron", "agent-k-c2")?.content).toMatch(/categorically disabled for cron/);
   });
 
   it("(d) BLOCKS shell in cron context regardless of worktree + confinement", () => {

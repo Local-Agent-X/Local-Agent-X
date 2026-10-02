@@ -158,7 +158,6 @@ export function startSession(
   // is sync (DevServerDeps.start types it sync); a cold-start miss fails
   // closed at the cage, see shell-proxy-env.ts.
   const childEnv = sanitizeEnv({ ...shellProxyEnvSync(), ...env });
-  const spawned = wrapSpawnForSandbox(shell, shellArgs, childEnv);
 
   // An explicit caller cwd (build/dev flows) wins; otherwise default to the
   // workspace rather than inheriting the server cwd — same anchor as bash and
@@ -172,6 +171,9 @@ export function startSession(
     // process_kill's `process.kill(-pid, "SIGKILL")` reaches grandchildren
     // (e.g. a node server holding a port). On Windows taskkill /T handles the
     // tree, and detached would risk a stray console. Pipes are unaffected.
+    // The wrap refuses, retryably, while the Windows cage is still proving its
+    // fence; this path cannot wait for it, so that refusal is the error returned.
+    const spawned = wrapSpawnForSandbox(shell, shellArgs, childEnv);
     child = spawn(spawned.cmd, spawned.args, {
       env: childEnv,
       cwd: effectiveCwd,

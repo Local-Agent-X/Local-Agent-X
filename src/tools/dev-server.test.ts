@@ -373,6 +373,19 @@ describe("registerDevServer kind — backend vs frontend", () => {
 });
 
 describe("appServeBackendTool", () => {
+  // About crash reporting, not confinement. Where the Windows cage is
+  // installed a guarded start is refused until the cage's startup proof
+  // lands, and then runs under the cage's own logon.
+  let prevSandbox: string | undefined;
+  beforeEach(() => {
+    prevSandbox = process.env.LAX_SANDBOX;
+    process.env.LAX_SANDBOX = "host";
+  });
+  afterEach(() => {
+    if (prevSandbox === undefined) delete process.env.LAX_SANDBOX;
+    else process.env.LAX_SANDBOX = prevSandbox;
+  });
+
   it("validates inputs (numeric port required)", async () => {
     const r = await appServeBackendTool.execute({ app_id: "notes", command: "node s.js", port: "not-a-number" });
     expect(r.isError).toBe(true);

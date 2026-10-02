@@ -208,6 +208,7 @@ export class SecurityLayer {
       const blocked = evaluateDelegatedWorktreeGate(ctx, {
         hasSessionWorktree: (s) => this.hasSessionWorktree(s),
         delegatedShellOsContained: (s) => this.delegatedShellOsContained(s),
+        sandboxProofPending: () => getSandboxStatus().proofPending,
         isUserContentPath: (p) => this.isUserContentPath(p),
       });
       if (blocked) return blocked;

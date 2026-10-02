@@ -4,7 +4,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 
+// The real status unless a test pins one (a Windows cage still proving its
+// fence cannot be produced on every runner).
+const pinned = vi.hoisted(() => ({ status: null as Record<string, unknown> | null }));
+vi.mock("../../sandbox/index.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../sandbox/index.js")>();
+  return { ...actual, getSandboxStatus: () => (pinned.status ? { ...actual.getSandboxStatus(), ...pinned.status } : actual.getSandboxStatus()) };
+});
+
 import { getRuntimeConfig, loadConfig, setRuntimeConfig } from "../../config.js";
+import { getSandboxStatus } from "../../sandbox/index.js";
 import { handleSystemRoutes } from "./system.js";
 
 function makeReq(body?: unknown): Readable & { headers: Record<string, string> } {
@@ -95,5 +104,20 @@ describe("sandbox status acknowledgement API", () => {
       apiShellAllowed: false,
     });
     expect(revoked.broadcastAll).toHaveBeenCalledOnce();
+  });
+
+  // Nothing runs unconfined while the Windows cage is being verified, and an
+  // acknowledgement made then would outlive the proof.
+  it("refuses an acknowledgement while the Windows cage is still being verified", async () => {
+    pinned.status = { selectedMode: "guarded", effectiveMode: "host", confined: false, proofPending: true };
+    try {
+      const refused = await request("POST", { acknowledgeUnconfinedHost: true });
+      expect(refused.status).toBe(409);
+      expect(refused.body.error).toMatch(/^The Windows shell cage is still being verified; try again in a few seconds\./);
+      expect(refused.broadcastAll).not.toHaveBeenCalled();
+    } finally {
+      pinned.status = null;
+    }
+    expect(getSandboxStatus().unconfinedHostAcknowledged).toBe(false);
   });
 });

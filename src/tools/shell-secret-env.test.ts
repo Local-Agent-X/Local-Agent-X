@@ -1,7 +1,7 @@
 // A vault secret handed to a command reaches the process environment and
 // nowhere the model can read. Live 2026-09-26: a working Supabase token could
 // not deploy three functions because the shell had no route to the vault.
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 
 const VAULT: Record<string, string> = { SUPABASE_TOKEN: "sbp_0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c" };
 vi.mock("../secrets.js", () => ({ getSecretsStoreSingleton: () => ({ get: (name: string) => VAULT[name] }) }));
@@ -35,6 +35,20 @@ describe("secret_env arguments", () => {
 });
 
 describe("bash with secret_env", () => {
+  // About secret delivery, not confinement. Where the Windows cage is
+  // installed, bash waits for the cage's startup proof and then runs under the
+  // cage's own logon, which the test's stand-in profile leaves unable to
+  // start the shell (no read grant is made for it).
+  let prevSandbox: string | undefined;
+  beforeAll(() => {
+    prevSandbox = process.env.LAX_SANDBOX;
+    process.env.LAX_SANDBOX = "host";
+  });
+  afterAll(() => {
+    if (prevSandbox === undefined) delete process.env.LAX_SANDBOX;
+    else process.env.LAX_SANDBOX = prevSandbox;
+  });
+
   it("the command gets the value in its environment; the output never carries it", async () => {
     const result = await bashTool.execute({
       command: 'test -n "$SUPABASE_ACCESS_TOKEN" && echo "set, ${#SUPABASE_ACCESS_TOKEN} chars: $SUPABASE_ACCESS_TOKEN"',

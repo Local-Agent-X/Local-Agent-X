@@ -352,6 +352,14 @@ export async function bootstrapServices(config: LAXConfig): Promise<Bootstrapped
     setInterval(warmRuntimes, 60_000).unref();
   }).catch(() => {});
 
+  // Prove the Windows shell cage now, not on the first ask: the proof took
+  // ~25 s on a fresh PC and every shell spawn waits for it. When a proof lands
+  // the sandbox status is re-broadcast, so an open Settings page leaves its
+  // "checking" state.
+  Promise.all([import("../sandbox/index.js"), import("../chat-ws/index.js")]).then(([sandbox, { broadcastAll }]) => {
+    sandbox.startSandboxProof(() => broadcastAll({ type: "settings_changed", settings: { sandbox: sandbox.getSandboxStatus() } }));
+  }).catch((e) => logger.warn(`[sandbox] cage proof start failed: ${(e as Error).message}`));
+
   _t = _bsT("CronService+IntegrationRegistry");
   const cronService = new CronService(dataDir);
   const integrations = new IntegrationRegistry(dataDir, secretsStore);

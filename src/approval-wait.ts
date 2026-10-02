@@ -1,6 +1,7 @@
 /**
- * Time a tool call spent waiting for a HUMAN, excluded from the tool's own
- * deadline.
+ * Time a tool call spent waiting on something outside its own work (a human
+ * answering an approval card, or the Windows shell cage finishing its proof),
+ * excluded from the tool's own deadline.
  *
  * An approval card is raised from inside `tool.execute`, and the runner wraps
  * that same execute in a per-tool timeout (tool-execution/tool-timeout.ts).
@@ -16,6 +17,10 @@
  * `|| "fallback-id"` — so any mismatch silently restores the bug with nothing
  * failing. An AsyncLocalStorage scope opened by the runner covers whatever the
  * execute awaits, however deep, whatever it calls itself.
+ *
+ * A shell's wait for the Windows cage's startup proof is booked here too
+ * (sandbox awaitSandboxProof): like a human's answer, it is time the tool is
+ * not working, and the command keeps its whole timeout after it.
  */
 import { AsyncLocalStorage } from "node:async_hooks";
 
@@ -36,7 +41,7 @@ export function runInApprovalWaitScope<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 /**
- * Mark the start of a wait for a human; the returned function ends it. Outside
+ * Mark the start of such a wait; the returned function ends it. Outside
  * a scope (a pre-dispatch gate, a server route) both are no-ops: those waits
  * are not inside any tool deadline.
  */

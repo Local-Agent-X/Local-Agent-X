@@ -9,6 +9,27 @@ const SANDBOX_HINTS = {
   docker: 'Bash runs inside a Docker container (Alpine Linux, --network=none, workspace-only). Strongest isolation, but breaks host-OS commands and network access.'
 };
 
+// The server broadcasts settings_changed when the Windows cage's fence proof
+// lands, and that reload is what clears "checking". A page whose socket was
+// down misses it, so while the check is pending the section also re-reads the
+// status about 5, 15 and 45 seconds in, then stops: the broadcast still
+// carries a slower proof's answer, and an open page must not poll forever.
+const SANDBOX_RECHECK_DELAYS_MS = [5000, 10000, 30000];
+let sandboxRecheckTimer = null;
+let sandboxRechecksUsed = 0;
+function sandboxSectionPresent() {
+  return document.getElementById('sandbox-effective-status') !== null;
+}
+function scheduleSandboxRecheck(pending) {
+  clearTimeout(sandboxRecheckTimer);
+  sandboxRecheckTimer = null;
+  if (!pending) { sandboxRechecksUsed = 0; return; }
+  const delay = SANDBOX_RECHECK_DELAYS_MS[sandboxRechecksUsed];
+  if (delay === undefined || !sandboxSectionPresent()) return;
+  sandboxRechecksUsed++;
+  sandboxRecheckTimer = setTimeout(() => { if (sandboxSectionPresent()) loadSandboxMode(); }, delay);
+}
+
 function renderSandboxStatus(d) {
   const badge = document.getElementById('sandbox-effective-status');
   const detail = document.getElementById('sandbox-effective-detail');
@@ -17,18 +38,23 @@ function renderSandboxStatus(d) {
   const revoke = document.getElementById('sandbox-revoke-btn');
   const effective = d.effectiveMode || d.mode || 'host';
   const confined = d.confined === true;
+  // Guarded on Windows with the cage still being proven: not a failure, and
+  // nothing runs unconfined meanwhile, so there is no host state to acknowledge.
+  const pending = d.proofPending === true;
   if (badge) {
-    badge.className = 'status-badge ' + (confined ? 'ok' : 'err');
-    badge.innerHTML = '<span class="status-dot"></span> Effective: ' + (confined ? effective + ' confined' : 'HOST UNCONFINED');
+    badge.className = 'status-badge ' + (pending ? 'warn' : confined ? 'ok' : 'err');
+    badge.innerHTML = '<span class="status-dot"></span> ' + (pending ? 'Checking the Windows cage…' : 'Effective: ' + (confined ? effective + ' confined' : 'HOST UNCONFINED'));
   }
   if (detail) {
-    if (confined) detail.textContent = 'Cron shell is blocked. Delegated and API shell are allowed because the effective mode is confined.';
+    if (pending) detail.textContent = 'Shell commands wait until the check finishes (a few seconds after start); none runs outside the cage meanwhile.';
+    else if (confined) detail.textContent = 'Cron shell is blocked. Delegated and API shell are allowed because the effective mode is confined.';
     else if (d.unconfinedHostAcknowledged) detail.textContent = (d.fallbackReason || 'Shell commands run directly on the host.') + ' Cron shell is blocked; delegated and API host shell are acknowledged.';
     else detail.textContent = (d.fallbackReason || 'Shell commands run directly on the host.') + ' Cron shell is blocked; delegated and API shell are blocked until acknowledgement.';
   }
-  if (actions) actions.style.display = confined ? 'none' : '';
-  if (ack) ack.style.display = !confined && !d.unconfinedHostAcknowledged ? '' : 'none';
-  if (revoke) revoke.style.display = !confined && d.unconfinedHostAcknowledged ? '' : 'none';
+  const unconfinedHost = !confined && !pending;
+  if (actions) actions.style.display = unconfinedHost ? '' : 'none';
+  if (ack) ack.style.display = unconfinedHost && !d.unconfinedHostAcknowledged ? '' : 'none';
+  if (revoke) revoke.style.display = unconfinedHost && d.unconfinedHostAcknowledged ? '' : 'none';
 }
 
 // The Windows network cage (src/sandbox/win-cage.ts): shown only when the
@@ -42,7 +68,8 @@ function renderWindowsCage(cage) {
   const detail = document.getElementById('sandbox-windows-cage-detail');
   const install = document.getElementById('sandbox-windows-cage-install');
   const uninstall = document.getElementById('sandbox-windows-cage-uninstall');
-  if (detail) detail.textContent = 'Windows network cage: ' + (cage.detail || '');
+  const broken = cage.installed && cage.proofFailure ? ' It is installed but not working: ' + cage.proofFailure + '.' : '';
+  if (detail) detail.textContent = 'Windows network cage: ' + (cage.detail || '') + broken;
   const helperMissing = !cage.helper;
   if (install) { install.style.display = cage.installed || helperMissing ? 'none' : ''; install.disabled = false; install.textContent = 'Install the Windows network cage (one administrator prompt)'; }
   if (uninstall) { uninstall.style.display = cage.installed ? '' : 'none'; uninstall.disabled = false; }
@@ -59,6 +86,7 @@ async function windowsCageAction(action) {
     const d = await r.json().catch(() => ({}));
     if (!r.ok && detail) detail.textContent = 'Windows network cage: ' + (d.detail || d.error || 'the action failed.');
     renderSandboxStatus(d);
+    scheduleSandboxRecheck(d.proofPending === true);
     if (d.windowsCage) renderWindowsCage(d.windowsCage);
     else await loadSandboxMode();
   } catch (e) {
@@ -68,6 +96,23 @@ async function windowsCageAction(action) {
 }
 function installWindowsCage() { return windowsCageAction('install'); }
 function uninstallWindowsCage() { return windowsCageAction('uninstall'); }
+
+// The section re-renders on every status change, so an option disabled while
+// the cage was being checked must come back with its own label once proven.
+function setSandboxModeOption(sel, value, unavailableLabel) {
+  const opt = sel.querySelector('option[value="' + value + '"]');
+  if (!opt) return;
+  if (opt.dataset.label === undefined) opt.dataset.label = opt.textContent;
+  opt.disabled = unavailableLabel !== null;
+  opt.textContent = unavailableLabel === null ? opt.dataset.label : unavailableLabel;
+}
+
+function guardedUnavailableLabel(cage) {
+  if (!cage) return 'Protected — not available on this OS (needs macOS or Linux)';
+  if (cage.proofPending) return 'Protected — checking the Windows cage…';
+  if (cage.installed) return 'Protected — the Windows network cage is installed but not working (see below)';
+  return 'Protected — install the Windows network cage below to enable';
+}
 
 async function loadSandboxMode() {
   try {
@@ -79,23 +124,12 @@ async function loadSandboxMode() {
     renderSandboxStatus(d);
     renderWindowsCage(d.windowsCage || null);
     const hint = document.getElementById('sandbox-hint');
-    if (hint) hint.textContent = SANDBOX_HINTS[d.mode] || SANDBOX_HINTS.guarded;
-    if (sel && !d.dockerAvailable) {
-      const dockerOpt = sel.querySelector('option[value="docker"]');
-      if (dockerOpt) {
-        dockerOpt.disabled = true;
-        dockerOpt.textContent = 'Maximum — Docker not installed (install Docker Desktop first)';
-      }
+    if (hint) hint.textContent = SANDBOX_HINTS[d.proofPending ? d.selectedMode : d.mode] || SANDBOX_HINTS.guarded;
+    if (sel) {
+      setSandboxModeOption(sel, 'docker', d.dockerAvailable ? null : 'Maximum — Docker not installed (install Docker Desktop first)');
+      setSandboxModeOption(sel, 'guarded', d.guardedAvailable === false ? guardedUnavailableLabel(d.windowsCage) : null);
     }
-    if (sel && d.guardedAvailable === false) {
-      const guardedOpt = sel.querySelector('option[value="guarded"]');
-      if (guardedOpt) {
-        guardedOpt.disabled = true;
-        guardedOpt.textContent = d.windowsCage
-          ? 'Protected — install the Windows network cage below to enable'
-          : 'Protected — not available on this OS (needs macOS or Linux)';
-      }
-    }
+    scheduleSandboxRecheck(d.proofPending === true || (d.windowsCage && d.windowsCage.proofPending) === true);
   } catch (e) { console.warn('[sandbox] load failed', e); }
 }
 

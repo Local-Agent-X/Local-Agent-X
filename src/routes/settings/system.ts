@@ -83,12 +83,12 @@ export const handleSystemRoutes: RouteHandler = async (method, url, req, res, ct
   // Sandbox
   if (method === "GET" && url.pathname === "/api/sandbox") {
     const { getSandboxStatus, isDockerAvailable, isGuardedUsable } = await import("../../sandbox/index.js");
-    const { winCageStatus } = await import("../../sandbox/win-cage.js");
+    const { winCageStatus, winCageProofView } = await import("../../sandbox/win-cage.js");
     const status = getSandboxStatus();
     json(200, {
       mode: status.effectiveMode, ...status, dockerAvailable: isDockerAvailable(), guardedAvailable: isGuardedUsable(),
       dockerDownloadUrl: "https://www.docker.com/products/docker-desktop/",
-      ...(process.platform === "win32" ? { windowsCage: winCageStatus() } : {}),
+      ...(process.platform === "win32" ? { windowsCage: { ...winCageStatus(), ...winCageProofView() } } : {}),
     }); return true;
   }
   // The Windows network cage: one administrator prompt to install or remove
@@ -98,12 +98,13 @@ export const handleSystemRoutes: RouteHandler = async (method, url, req, res, ct
     const body = await readBody(req);
     const { action } = JSON.parse(body);
     if (action !== "install" && action !== "uninstall") { json(400, { error: "action must be install or uninstall" }); return true; }
+    const { installWinCage, uninstallWinCage } = await import("../../sandbox/win-cage-install.js");
     const cage = await import("../../sandbox/win-cage.js");
-    const result = action === "install" ? await cage.installWinCage() : await cage.uninstallWinCage();
+    const result = action === "install" ? await installWinCage() : await uninstallWinCage();
     const { getSandboxStatus } = await import("../../sandbox/index.js");
     const status = getSandboxStatus();
     ctx.broadcastAll({ type: "settings_changed", settings: { sandbox: status } });
-    json(result.ok ? 200 : 409, { ...result, mode: status.effectiveMode, ...status, windowsCage: cage.winCageStatus() }); return true;
+    json(result.ok ? 200 : 409, { ...result, mode: status.effectiveMode, ...status, windowsCage: { ...cage.winCageStatus(), ...cage.winCageProofView() } }); return true;
   }
   if (method === "POST" && url.pathname === "/api/sandbox") {
     const body = await readBody(req);
@@ -116,9 +117,12 @@ export const handleSystemRoutes: RouteHandler = async (method, url, req, res, ct
       json(200, { ok: true, mode: status.effectiveMode, ...status }); return true;
     }
     if (acknowledgeUnconfinedHost === true) {
-      const { getSandboxStatus, setUnconfinedHostAcknowledgement } = await import("../../sandbox/index.js");
+      const { getSandboxStatus, setUnconfinedHostAcknowledgement, SANDBOX_PROOF_PENDING_RETRY } = await import("../../sandbox/index.js");
       const current = getSandboxStatus();
       if (current.confined) { json(409, { error: "The effective sandbox is confined; there is no unconfined host state to acknowledge.", ...current }); return true; }
+      // While the Windows cage is being verified nothing runs unconfined, and
+      // an acknowledgement now would outlive a proof that is about to pass.
+      if (current.proofPending) { json(409, { error: `${SANDBOX_PROOF_PENDING_RETRY} There is no unconfined host state to acknowledge until it finishes.`, ...current }); return true; }
       setUnconfinedHostAcknowledgement(true);
       const status = getSandboxStatus();
       ctx.broadcastAll({ type: "settings_changed", settings: { sandbox: status } });

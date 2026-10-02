@@ -1,20 +1,20 @@
-import { execSync, execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 
 import { createLogger } from "../logger.js";
 import { getRuntimeConfig, saveConfig } from "../config.js";
 import { getLaxDir } from "../lax-data-dir.js";
-import type { SandboxConfig, SandboxMode } from "./types.js";
-import { validateSandboxConfig } from "./validate.js";
+import type { SandboxMode } from "./types.js";
 import { isSeatbeltAvailable, seatbeltProfileLoads, wrapForSeatbelt } from "./seatbelt.js";
 import { isBwrapAvailable, bwrapEnforces, bwrapGuardedRuns, wrapForBwrap } from "./bwrap.js";
 import { currentShellEgressBridge } from "../net/shell-egress-proxy.js";
-import { resolveWinCageHelper, winCageEnforcesSync, winCageProbePending, winCageUnusableReason, wrapForWinCage } from "./win-cage.js";
+import { onWinCageProofSettled, resolveWinCageHelper, winCageEnforces, winCageEnforcesSync, winCageProbePending, winCageProofView, winCageUnusableReason, wrapForWinCage } from "./win-cage.js";
 import { ensureWinCageGrantsSync } from "./win-cage-grants.js";
+import { isDockerAvailable } from "./docker-shell.js";
+import { beginApprovalWait } from "../approval-wait.js";
 export { ensureWinCageGrants } from "./win-cage-grants.js";
+export { execInSandbox, isDockerAvailable } from "./docker-shell.js";
 const logger = createLogger("sandbox");
 
 export type { SandboxMode } from "./types.js";
@@ -52,144 +52,18 @@ function isBwrapUsable(): boolean {
 // build-only bwrapGuardedRuns (NOT bwrapEnforces, which requires net-blocked).
 let guardedUsable: boolean | null = null;
 export function isGuardedUsable(): boolean {
+  // Windows: the opt-in user+WFP cage, usable only once its fence is proven.
+  // The proof runs off the event loop after the first ask and answers "not
+  // yet" until it lands. win-cage.ts memoizes it and forgets it on install or
+  // uninstall, so it is read through here: a second cache would keep the
+  // pre-install answer until a restart.
+  if (process.platform === "win32") return resolveWinCageHelper() !== null && winCageEnforcesSync();
   if (guardedUsable === null) {
     if (process.platform === "darwin") guardedUsable = isSeatbeltAvailable() && seatbeltProfileLoads(undefined, "guarded");
     else if (process.platform === "linux") guardedUsable = isBwrapAvailable() && bwrapGuardedRuns();
-    // Windows: the opt-in user+WFP cage, usable only once its fence is proven.
-    // The proof runs off the event loop after the first ask; until it lands
-    // the answer is "not yet" and is not cached.
-    else if (process.platform === "win32") {
-      const usable = resolveWinCageHelper() !== null && winCageEnforcesSync();
-      if (winCageProbePending()) return false;
-      guardedUsable = usable;
-    }
     else guardedUsable = false;
   }
   return guardedUsable;
-}
-
-/**
- * Container Sandbox for Shell Execution
- *
- * When enabled, shell commands run inside a Docker container instead of
- * directly on the host. This is the strongest isolation boundary — even
- * if the LLM is fully compromised, damage is contained to the container.
- *
- * Modes include the guarded default, explicit unconfined host execution,
- * stricter native seatbelt/bwrap profiles, and Docker confinement. This
- * section documents the Docker implementation specifically.
- *
- * The container:
- * - Has workspace mounted read-write at /workspace
- * - Has no network access by default (--network=none)
- * - Drops all capabilities (--cap-drop=ALL)
- * - Has no access to host filesystem outside workspace
- * - Has a 2-minute timeout
- * - Uses a lightweight Alpine image
- */
-
-// Default workspace lives under the OS temp dir, NOT inside the repo.
-// validateSandboxConfig rejects any workspacePath inside LAX_REPO_ROOT
-// (so the agent can't bind-mount its own source into the container);
-// the previous default of "./workspace" resolved to cwd()+"/workspace",
-// which tripped that rule and made docker-mode bash always return
-// "Sandbox config rejected" with no caller override. The os.tmpdir()
-// location is outside the repo, outside ~/.lax (also denied), and is on
-// Docker Desktop's default file-sharing paths across platforms.
-const DEFAULT_WORKSPACE_PATH = join(tmpdir(), "lax-sandbox-workspace");
-
-const DEFAULT_CONFIG: SandboxConfig = {
-  mode: "host",
-  image: "node:22-alpine",
-  workspacePath: DEFAULT_WORKSPACE_PATH,
-  networkEnabled: false,
-  extraMounts: [],
-  memoryLimit: "512m",
-};
-
-/** Check if Docker is available */
-export function isDockerAvailable(): boolean {
-  try {
-    execSync("docker info", { stdio: "ignore", timeout: 5000 });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Execute a command in a Docker container sandbox.
- * Returns { stdout, stderr, exitCode }.
- */
-export function execInSandbox(
-  command: string,
-  config: Partial<SandboxConfig> = {}
-): { stdout: string; stderr: string; exitCode: number } {
-  const cfg = { ...DEFAULT_CONFIG, ...config };
-
-  const validation = validateSandboxConfig(cfg);
-  if (!validation.ok) {
-    logger.warn(`[sandbox] Config rejected: ${validation.reason}`);
-    return { stdout: "", stderr: `Sandbox config rejected: ${validation.reason}`, exitCode: 1 };
-  }
-
-  // docker -v auto-creates a missing source as a root-owned directory;
-  // pre-create as the running user so subsequent host-side reads/writes
-  // by the agent don't hit a permission wall.
-  try { mkdirSync(cfg.workspacePath, { recursive: true }); } catch { /* best-effort */ }
-
-  // ─── Non-negotiable security defaults ─────────────────────────────────────
-  // The following docker flags are NOT user-configurable and must not be
-  // exposed via SandboxConfig. Adding a knob here (e.g., "allowCapabilities",
-  // "writableRoot", "privileged") is what gets sandboxes broken in production.
-  // If you think you need to weaken one of these, the answer is almost always
-  // "use a different image" or "run on the host" — not "loosen the cage".
-  // ──────────────────────────────────────────────────────────────────────────
-  const args: string[] = [
-    "docker", "run",
-    "--rm",                              // Remove container after execution
-    "--cap-drop=ALL",                    // Drop all Linux capabilities
-    "--security-opt=no-new-privileges",  // Prevent privilege escalation
-    `--memory=${cfg.memoryLimit}`,       // Memory limit
-    "--pids-limit=100",                  // Process limit
-    "--read-only",                       // Read-only root filesystem
-    "--tmpfs=/tmp:rw,noexec,nosuid,size=64m", // Writable /tmp
-  ];
-
-  // Network
-  if (!cfg.networkEnabled) {
-    args.push("--network=none");
-  }
-
-  // Mount workspace
-  args.push(`-v`, `${cfg.workspacePath}:/workspace:rw`);
-  args.push(`-w`, `/workspace`);
-
-  // Extra read-only mounts
-  for (const mount of cfg.extraMounts) {
-    args.push(`-v`, `${mount}:ro`);
-  }
-
-  // Image and command
-  args.push(cfg.image);
-  args.push("/bin/sh", "-c", command);
-
-  try {
-    const [cmd, ...cmdArgs] = args;
-    const stdout = execFileSync(cmd, cmdArgs, {
-      encoding: "utf-8",
-      timeout: 120_000,
-      maxBuffer: 1024 * 1024 * 10,
-    });
-    return { stdout, stderr: "", exitCode: 0 };
-  } catch (e) {
-    const error = e as { stdout?: string; stderr?: string; status?: number; message: string };
-    return {
-      stdout: error.stdout || "",
-      stderr: error.stderr || error.message,
-      exitCode: error.status || 1,
-    };
-  }
 }
 
 // Runtime override — set via API, persists in memory for this process
@@ -200,6 +74,9 @@ export interface SandboxStatus {
   effectiveMode: SandboxMode;
   confined: boolean;
   fallbackReason?: string;
+  /** Guarded is selected on Windows and the cage's fence proof is still
+   *  running: nothing is confined yet, and no shell spawns until it lands. */
+  proofPending: boolean;
   unconfinedHostAcknowledged: boolean;
   cronShellAllowed: boolean;
   delegatedShellAllowed: boolean;
@@ -255,13 +132,16 @@ export function getSandboxStatus(): SandboxStatus {
   const selectedMode = getSelectedSandboxMode();
   let effectiveMode = selectedMode;
   let fallbackReason: string | undefined;
+  let proofPending = false;
 
   if (selectedMode === "docker" && !isDockerAvailable()) {
     effectiveMode = "host";
     fallbackReason = "Docker is unavailable, so bash fell back to the unconfined host.";
   } else if (selectedMode === "guarded" && !isGuardedUsable()) {
     effectiveMode = "host";
-    fallbackReason = process.platform === "win32"
+    proofPending = process.platform === "win32" && winCageProbePending();
+    if (proofPending) fallbackReason = "The Windows shell cage is being verified; shell commands wait for it.";
+    else fallbackReason = process.platform === "win32"
       ? `The Windows network cage is not active (${winCageUnusableReason() ?? "not proven"}), so bash is unconfined.`
       : "The guarded kernel cage is unavailable on this host, so bash is unconfined.";
   } else if (selectedMode === "seatbelt" && !isSeatbeltUsable()) {
@@ -280,6 +160,7 @@ export function getSandboxStatus(): SandboxStatus {
     effectiveMode,
     confined,
     ...(fallbackReason ? { fallbackReason } : {}),
+    proofPending,
     unconfinedHostAcknowledged,
     cronShellAllowed: false,
     delegatedShellAllowed: unattendedHostAllowed,
@@ -295,6 +176,59 @@ export function getSandboxMode(): SandboxMode {
   return getSandboxStatus().effectiveMode;
 }
 
+/** What every refusal made while the Windows fence proof runs says: the spawn
+ *  seam, process_restart, the unattended and delegated shell gates. */
+export const SANDBOX_PROOF_PENDING_RETRY = "The Windows shell cage is still being verified; try again in a few seconds.";
+
+/** Thrown by wrapSpawnForSandbox while the Windows fence proof runs. Retryable. */
+export class SandboxProofPendingError extends Error {
+  constructor() {
+    super(`${SANDBOX_PROOF_PENDING_RETRY} Nothing was started: until the check finishes, a command would run outside the cage.`);
+    this.name = "SandboxProofPendingError";
+  }
+}
+
+/** How long a spawn path that can wait gives a pending Windows fence proof. */
+export const SANDBOX_PROOF_WAIT_MS = 60_000;
+
+/**
+ * Wait, bounded, for a pending Windows fence proof, so an async spawn path runs
+ * under the settled answer (caged when proven, the visible host fallback when
+ * it failed) instead of being refused. A proof still running after the bound
+ * leaves the refusal to wrapSpawnForSandbox. An abort ends the wait at once;
+ * the caller reads its own signal. The wait is booked as time the tool was not
+ * working (approval-wait.ts), so the harness's backstop does not count it
+ * against the command. `onWait` runs only when there is a wait.
+ */
+export async function awaitSandboxProof(opts: { signal?: AbortSignal; onWait?: () => void; timeoutMs?: number } = {}): Promise<void> {
+  if (process.platform !== "win32" || opts.signal?.aborted) return;
+  if (getSelectedSandboxMode() !== "guarded" || !getSandboxStatus().proofPending) return;
+  opts.onWait?.();
+  const endWait = beginApprovalWait();
+  let timer: NodeJS.Timeout | undefined;
+  let release!: () => void;
+  const bound = new Promise<void>((resolve) => { release = resolve; timer = setTimeout(resolve, opts.timeoutMs ?? SANDBOX_PROOF_WAIT_MS); });
+  opts.signal?.addEventListener("abort", release, { once: true });
+  try {
+    await Promise.race([winCageEnforces(), bound]);
+  } finally {
+    clearTimeout(timer);
+    opts.signal?.removeEventListener("abort", release);
+    endWait();
+  }
+}
+
+/**
+ * Boot: start the Windows fence proof now (it runs in a child process) rather
+ * than on the first ask, so it has normally landed before the first shell
+ * command. `onSettled` runs whenever a proof lands, this one or a later one
+ * after an install; the server re-broadcasts the sandbox status from it.
+ */
+export function startSandboxProof(onSettled: () => void): void {
+  onWinCageProofSettled(onSettled);
+  if (process.platform === "win32" && getSelectedSandboxMode() === "guarded" && resolveWinCageHelper() !== null) winCageEnforcesSync();
+}
+
 /**
  * Wrap an intended `(shell, shellArgs)` spawn for the active sandbox mode.
  * In "seatbelt" mode it returns the sandbox-exec invocation; in every other
@@ -304,7 +238,15 @@ export function getSandboxMode(): SandboxMode {
  * to the sandboxed child explicitly (the child does not inherit the broker's).
  */
 export function wrapSpawnForSandbox(shell: string, shellArgs: string[], childEnv: Record<string, string> = {}): { cmd: string; args: string[] } {
-  const mode = getSandboxMode();
+  const status = getSandboxStatus();
+  // Fail closed: while the Windows fence proof runs, the effective mode reads
+  // "host", and a spawn here would put the first commands after a start
+  // outside a cage that is about to be proven. Every shell spawn the mode
+  // governs (bash, process_*, dev servers) wraps through this function, so
+  // this one check covers them all; the ones that can wait call
+  // awaitSandboxProof first.
+  if (status.proofPending) throw new SandboxProofPendingError();
+  const mode = status.effectiveMode;
   if (mode === "seatbelt") {
     return wrapForSeatbelt(shell, shellArgs);
   }
@@ -313,25 +255,39 @@ export function wrapSpawnForSandbox(shell: string, shellArgs: string[], childEnv
   }
   if (mode === "guarded") {
     // Default cage: credential deny, network only through the egress proxy.
-    // getSandboxMode only returns "guarded" when a backend is usable, so pick
-    // the platform's; passthrough is a belt-and-suspenders no-op if neither is
-    // somehow available. On Linux the shell gets its own network namespace and
-    // the proxy's unix socket as its one way out; no socket yet (the proxy is
-    // still warming) means no route, which is the fail-closed side.
+    // The status read above only says "guarded" when a backend is usable, so
+    // pick the platform's. On Linux the shell gets its own network namespace
+    // and the proxy's unix socket as its one way out; no socket yet (the proxy
+    // is still warming) means no route, which is the fail-closed side.
     if (isSeatbeltAvailable()) return wrapForSeatbelt(shell, shellArgs, undefined, "guarded");
     if (isBwrapAvailable()) {
       const bridge = currentShellEgressBridge();
       return wrapForBwrap(shell, shellArgs, undefined, "guarded", { network: "namespace", ...(bridge ? { bridge } : {}) });
     }
-    if (process.platform === "win32" && resolveWinCageHelper()) {
+    const helper = process.platform === "win32" ? resolveWinCageHelper() : null;
+    if (helper) {
       // A no-op when the bash tool already warmed the grants asynchronously;
       // the sync path (process_start) pays once otherwise.
       ensureWinCageGrantsSync(shell);
-      return wrapForWinCage(shell, shellArgs, childEnv);
+      return wrapForWinCage(shell, shellArgs, childEnv, helper);
     }
-    return { cmd: shell, args: shellArgs };
+    // A backend gone since the status read (the helper deleted mid-run) must
+    // not turn a guarded spawn into a host one.
+    throw new Error(process.platform === "win32"
+      ? "The Windows shell cage's helper (srt-win.exe) is no longer where the cage was proven, so nothing was started. Reinstall the cage from Settings → Security."
+      : "The guarded shell cage's backend is no longer available, so nothing was started.");
   }
   return { cmd: shell, args: shellArgs };
+}
+
+/** Why guarded cannot be selected here. On Windows an installed cage that
+ *  failed its fence proof needs repair, not the install the other cases do. */
+function guardedUnavailableError(): string {
+  if (process.platform !== "win32") return "The kernel cage is not available on this machine (needs macOS, or Linux with unprivileged user namespaces) — bash runs unconfined here.";
+  if (winCageProbePending()) return SANDBOX_PROOF_PENDING_RETRY;
+  const broken = winCageProofView().proofFailure;
+  if (broken) return `The Windows network cage is installed but not working (${broken}) — bash runs unconfined until it passes its check; remove and reinstall it from Settings → Security.`;
+  return `The Windows network cage is not active (${winCageUnusableReason() ?? "not proven"}) — install it from Settings → Security first; bash runs unconfined until then.`;
 }
 
 /** Set sandbox mode at runtime (from settings API). Persists to ~/.lax/config.json. */
@@ -346,10 +302,7 @@ export function setSandboxMode(mode: SandboxMode): { ok: boolean; actual: Sandbo
     return { ok: false, actual: "host", error: "Namespace sandbox (bwrap) is not usable on this machine — it requires Linux with bubblewrap installed and unprivileged user namespaces enabled." };
   }
   if (mode === "guarded" && !isGuardedUsable()) {
-    const error = process.platform === "win32"
-      ? `The Windows network cage is not active (${winCageUnusableReason() ?? "not proven"}) — install it from Settings → Security first; bash runs unconfined until then.`
-      : "The kernel cage is not available on this machine (needs macOS, or Linux with unprivileged user namespaces) — bash runs unconfined here.";
-    return { ok: false, actual: "host", error };
+    return { ok: false, actual: "host", error: guardedUnavailableError() };
   }
   runtimeMode = mode;
   try {

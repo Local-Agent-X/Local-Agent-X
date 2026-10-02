@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import type { ServerEvent, ToolDefinition } from "../types.js";
-import { getSandboxMode, execInSandbox, wrapSpawnForSandbox, sandboxDenialHint, networkDenialHint, ensureWinCageGrants } from "../sandbox/index.js";
+import { getSandboxMode, execInSandbox, wrapSpawnForSandbox, sandboxDenialHint, networkDenialHint, ensureWinCageGrants, awaitSandboxProof } from "../sandbox/index.js";
 import { ok, err, blocked, timeout as timeoutResult } from "./result-helpers.js";
 import { detectTargetShell, translateForShell, powershellCmdletHint, quotedGlobHint, windowsPathHint, workspacePrefixHint } from "./shell-translate.js";
 import { resolveWindowsShell, recordAvSuspectKill, isLikelyAvKill, buildSanitizedEnv } from "./shell-env.js";
@@ -56,6 +56,20 @@ export const bashTool: ToolDefinition = {
     // shared evaluateShellCommand gate (security/shell-policy.ts), which the
     // SecurityLayer runs against every bash call pre-dispatch — so it covers
     // process_start/process_restart too, not just bash. Single source there.
+    // A Windows cage still proving its fence: wait (bounded) for the answer
+    // before anything below reads the mode, so the command runs caged (or on
+    // the visible fallback) rather than being refused at the spawn seam. The
+    // wait is not the command's: it keeps its whole timeout, and the harness's
+    // backstop leaves the wait out (awaitSandboxProof). An abort during the
+    // wait starts nothing.
+    const abortSignal = args._signal as AbortSignal | undefined;
+    const onProgress = typeof args._onProgress === "function" ? args._onProgress as (message: string) => void : undefined;
+    const proofWaitStart = Date.now();
+    await awaitSandboxProof({
+      signal: abortSignal,
+      onWait: () => onProgress?.("Waiting for the Windows shell cage check to finish before running the command…"),
+    });
+    if (abortSignal?.aborted) return err("Aborted", { duration_ms: Date.now() - proofWaitStart });
     // Guarded sandbox gets the egress-proxy env (the sanctioned route);
     // every other mode gets {} — see shell-proxy-env.ts for the rationale.
     const sanitizedEnv = buildSanitizedEnv(await shellProxyEnv());
@@ -158,7 +172,6 @@ export const bashTool: ToolDefinition = {
 
         const killTree = () => { if (child.pid) killProcessGroup(child.pid, child); };
 
-        const abortSignal = args._signal as AbortSignal | undefined;
         if (abortSignal) {
           if (abortSignal.aborted) { killTree(); settle(resolveP, { kind: "abort", durationMs: 0 }); return; }
           abortSignal.addEventListener("abort", () => {

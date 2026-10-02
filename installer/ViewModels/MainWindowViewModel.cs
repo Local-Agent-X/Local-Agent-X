@@ -1,7 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Linq;
-using System.Text;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -14,13 +13,10 @@ public partial class MainWindowViewModel : ObservableObject
     private readonly InstallProcess _process = new();
     private readonly NodeBootstrap _node = new();
     private readonly SourceDownloader _source = new();
-    private readonly StringBuilder _log = new();
     private string _repoRoot = "";
-
-    // The full install log is mirrored to disk as it streams, so the user can
-    // open the complete record even after output scrolls out of the panel.
-    private StreamWriter? _logWriter;
-    private string _logFilePath = "";
+    // The run in flight before install-common.mjs starts; null once it has
+    // handed over to _process (whose own Cancel kills that tree).
+    private CancellationTokenSource? _runCts;
 
     public ObservableCollection<StepViewModel> Steps { get; } = new();
 
@@ -71,18 +67,43 @@ public partial class MainWindowViewModel : ObservableObject
         _source.OnStatus += s => Dispatcher.UIThread.Post(() => { CurrentStepDetail = s; });
         _source.OnProgress += (got, total) => Dispatcher.UIThread.Post(() =>
         {
-            if (total > 0)
-            {
-                var mb = got / (1024.0 * 1024.0);
-                var totalMb = total!.Value / (1024.0 * 1024.0);
-                CurrentStepDetail = $"Downloading: {mb:F1} / {totalMb:F1} MB";
-            }
+            var mb = got / (1024.0 * 1024.0);
+            // codeload streams chunked with no Content-Length, so a running
+            // byte count is the only progress there is to show.
+            CurrentStepDetail = total is long t && t > 0
+                ? $"Downloading: {mb:F1} / {t / (1024.0 * 1024.0):F1} MB"
+                : $"Downloading: {mb:F1} MB";
         });
         _ = RefreshHardwareEvidenceAsync();
     }
 
-    [RelayCommand]
+    // Not concurrent: after Cancel the welcome screen's Install button stays
+    // disabled until the cancelled run has unwound, so a new run never overlaps
+    // the old one's download or Node bootstrap in the same install directory.
+    [RelayCommand(AllowConcurrentExecutions = false)]
     private async Task Install()
+    {
+        using var run = new CancellationTokenSource();
+        _runCts = run;
+        try
+        {
+            await RunInstallAsync(run.Token);
+        }
+        catch (Exception) when (run.IsCancellationRequested)
+        {
+            // Cancel already put the welcome screen back; whatever the
+            // abandoned step threw while unwinding isn't the user's problem.
+        }
+        finally
+        {
+            _runCts = null;
+        }
+    }
+
+    // Cancel runs on this UI thread too, so it can only land while a step is
+    // being awaited: checking the token after every await is what guarantees a
+    // cancelled run never reaches _process.Start.
+    private async Task RunInstallAsync(CancellationToken ct)
     {
         Screen = "progress";
         Steps.Clear();
@@ -118,10 +139,11 @@ public partial class MainWindowViewModel : ObservableObject
             Steps.Add(srcStep);
             try
             {
-                _repoRoot = await Task.Run(() => _source.DownloadAndExtractAsync(InstallLocation.GetSourceDir()));
+                _repoRoot = await Task.Run(() => _source.DownloadAndExtractAsync(InstallLocation.GetSourceDir(), ct), ct);
+                ct.ThrowIfCancellationRequested();
                 srcStep.State = "done";
             }
-            catch (Exception ex)
+            catch (Exception ex) when (!ct.IsCancellationRequested)
             {
                 Screen = "error";
                 ErrorMessage = $"Couldn't download Local Agent X source.\n\n{ex.Message}\n\nCheck your internet connection and try again.";
@@ -142,7 +164,8 @@ public partial class MainWindowViewModel : ObservableObject
             CurrentStepLabel = "Node.js runtime";
             CurrentStepDetail = "Provisioning the portable runtime (one-time)…";
             Steps.Add(new StepViewModel { Id = "_bootstrap_node", Label = "Node.js runtime", State = "running", Detail = "Downloading Node.js…" });
-            bool ok = await Task.Run(() => _node.InstallNode());
+            bool ok = await Task.Run(() => _node.InstallNode(ct), ct);
+            ct.ThrowIfCancellationRequested();
             if (!ok)
             {
                 Screen = "error";
@@ -159,6 +182,10 @@ public partial class MainWindowViewModel : ObservableObject
     [RelayCommand]
     private void Cancel()
     {
+        // CancelAsync flips the token at once but runs its callbacks on the
+        // thread pool, so a step that unwinds inline on cancellation (temp-dir
+        // cleanup in a finally) doesn't freeze this UI thread.
+        _ = _runCts?.CancelAsync();
         _process.Cancel();
         Screen = "welcome";
     }
@@ -299,59 +326,6 @@ public partial class MainWindowViewModel : ObservableObject
                     ErrorMessage = $"Installer exited with code {code}. See log for details.";
             }
         });
-    }
-
-    // Single sink for every log line: mirrors to the visible panel and to the
-    // on-disk log. Must be called on the UI thread (it touches observables).
-    private void AppendLog(string text)
-    {
-        _log.AppendLine(text);
-        LogText = _log.ToString();
-        LogLineCount++;
-        // Logging must never break the install — a locked/unwritable file is
-        // downgraded to panel-only output rather than surfaced as a failure.
-        try { _logWriter?.WriteLine(text); } catch { /* best-effort */ }
-    }
-
-    // Open a fresh timestamped log file in a stable, discoverable location
-    // (%LOCALAPPDATA%\Local Agent X Installer\logs on Windows). Deliberately
-    // OUTSIDE the install target dir — see InstallLocation.GetInstallerLogDir.
-    // AutoFlush so the file is complete-to-the-last-line whenever the user
-    // opens it.
-    private void OpenLogFile()
-    {
-        try
-        {
-            var dir = InstallLocation.GetInstallerLogDir();
-            Directory.CreateDirectory(dir);
-            _logFilePath = Path.Combine(dir, $"install-{DateTime.Now:yyyyMMdd-HHmmss}.log");
-            _logWriter?.Dispose();
-            _logWriter = new StreamWriter(_logFilePath, append: false) { AutoFlush = true };
-            HasLogFile = true;
-        }
-        catch
-        {
-            // Non-fatal: the install still runs, just without an on-disk copy.
-            _logWriter = null;
-            _logFilePath = "";
-            HasLogFile = false;
-        }
-    }
-
-    [RelayCommand]
-    private void OpenLog()
-    {
-        if (string.IsNullOrEmpty(_logFilePath) || !File.Exists(_logFilePath)) return;
-        try
-        {
-            // UseShellExecute lets the OS open the .log with its default handler
-            // (Notepad on Windows, Console/TextEdit on macOS).
-            Process.Start(new ProcessStartInfo { FileName = _logFilePath, UseShellExecute = true });
-        }
-        catch (Exception ex)
-        {
-            AppendLog($"[error] Couldn't open log file: {ex.Message}");
-        }
     }
 
     // Walk up from the exe's directory looking for scripts/install-common.mjs.

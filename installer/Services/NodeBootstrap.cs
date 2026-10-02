@@ -58,8 +58,10 @@ public class NodeBootstrap
         catch { return -1; }
     }
 
-    // Returns true on success, false if install failed.
-    public bool InstallNode()
+    // Returns true on success, false if install failed. ct aborts the portable
+    // runtime download and keeps a cancelled install from moving on to the
+    // winget/brew fallback; those package managers run to completion once started.
+    public bool InstallNode(CancellationToken ct)
     {
         OnStatus?.Invoke("Installing Node.js 24 (LTS)…");
         if (OperatingSystem.IsWindows())
@@ -72,8 +74,9 @@ public class NodeBootstrap
             // raise when it isn't itself elevated — that path silently failed with
             // exit 1602 ("user cancelled") and NO visible prompt. winget stays
             // only as a fallback for when the ZIP download itself fails.
-            InstallNodeFromZip();
+            InstallNodeFromZip(ct);
             if (NodeAvailable()) return true;
+            ct.ThrowIfCancellationRequested();
 
             OnStatus?.Invoke("Portable Node download failed — trying winget…");
             // winget's exit code is unreliable — it returns benign non-zero codes
@@ -100,7 +103,8 @@ public class NodeBootstrap
             // official build is self-contained + Developer-ID signed, so the
             // grant survives. Provision it into ~/.lax/runtime (where the desktop
             // runtime resolves it). brew stays only as a last-resort fallback.
-            if (InstallNodeFromTarball()) return true;
+            if (InstallNodeFromTarball(ct)) return true;
+            ct.ThrowIfCancellationRequested();
             OnStatus?.Invoke("Portable Node download failed — falling back to Homebrew…");
             if (!HasOnPath("brew"))
             {
@@ -145,7 +149,7 @@ public class NodeBootstrap
     // which needs elevation the installer doesn't request, so it failed silently
     // on machines without App Installer. The caller verifies success via
     // NodeAvailable() afterward and only falls back to winget if this fails.
-    bool InstallNodeFromZip()
+    bool InstallNodeFromZip(CancellationToken ct)
     {
         // Match the host CPU — Windows on ARM (Surface Pro X, Snapdragon laptops)
         // can't run the x64 node.exe natively. node ships a win-arm64 build.
@@ -162,7 +166,7 @@ public class NodeBootstrap
             using (var http = new HttpClient())
             {
                 http.DefaultRequestHeaders.UserAgent.ParseAdd("LocalAgentXInstaller/1.0");
-                File.WriteAllBytes(zip, http.GetByteArrayAsync(url).GetAwaiter().GetResult());
+                File.WriteAllBytes(zip, http.GetByteArrayAsync(url, ct).GetAwaiter().GetResult());
             }
             OnStatus?.Invoke("Unpacking the Node.js runtime…");
             Directory.CreateDirectory(installRoot);
@@ -174,7 +178,7 @@ public class NodeBootstrap
             InstallerShell.PersistUserPath(nodeDir);
             return true;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!ct.IsCancellationRequested)
         {
             OnLogLine?.Invoke($"[error] Node portable runtime fallback failed: {ex.Message}");
             return false;
@@ -190,7 +194,7 @@ public class NodeBootstrap
     // Developer-ID-signed Node the desktop runtime resolves first (server-
     // process.ts prepends ~/.lax/runtime/bin to PATH). Writes the same
     // .node-version sentinel node-runtime.ts reads.
-    bool InstallNodeFromTarball()
+    bool InstallNodeFromTarball(CancellationToken ct)
     {
         var arch = RuntimeInformation.OSArchitecture == Architecture.Arm64 ? "arm64" : "x64";
         var pkg = $"node-v{NODE_FALLBACK_VERSION}-darwin-{arch}";
@@ -204,7 +208,7 @@ public class NodeBootstrap
             using (var http = new HttpClient())
             {
                 http.DefaultRequestHeaders.UserAgent.ParseAdd("LocalAgentXInstaller/1.0");
-                File.WriteAllBytes(tgz, http.GetByteArrayAsync(url).GetAwaiter().GetResult());
+                File.WriteAllBytes(tgz, http.GetByteArrayAsync(url, ct).GetAwaiter().GetResult());
             }
             OnStatus?.Invoke("Unpacking the Node.js runtime…");
             if (Directory.Exists(runtimeDir)) Directory.Delete(runtimeDir, true);
@@ -217,7 +221,7 @@ public class NodeBootstrap
             InstallerShell.SplicePath(Path.Combine(runtimeDir, "bin"));
             return File.Exists(Path.Combine(runtimeDir, "bin", "node"));
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!ct.IsCancellationRequested)
         {
             OnLogLine?.Invoke($"[error] portable Node provision failed: {ex.Message}");
             return false;

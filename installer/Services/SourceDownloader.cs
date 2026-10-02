@@ -1,4 +1,6 @@
+using System.Diagnostics;
 using System.Formats.Tar;
+using System.Net;
 using System.IO.Compression;
 using System.Reflection;
 using System.Text.Json;
@@ -25,6 +27,21 @@ public class SourceDownloader
 {
     private const string REPO_OWNER = "Local-Agent-X";
     private const string REPO_NAME = "Local-Agent-X";
+
+    // codeload streams the archive chunked with no Content-Length, so a
+    // connection that goes quiet mid-body would block a read forever. Silence
+    // for READ_IDLE_TIMEOUT abandons the attempt; a partial chunked body can't
+    // be resumed, so each retry starts again from byte zero.
+    private const int DOWNLOAD_ATTEMPTS = 3;
+    private static readonly TimeSpan READ_IDLE_TIMEOUT = TimeSpan.FromSeconds(30);
+    // HttpClient.Timeout stops covering the request once ResponseHeadersRead
+    // hands back the body stream, so this bounds only the wait for headers
+    // (including the github.com -> codeload redirect).
+    private static readonly TimeSpan HEADERS_TIMEOUT = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan RETRY_BACKOFF = TimeSpan.FromSeconds(2);
+    // Every progress event becomes a UI-thread post; one per 80 KB read would
+    // flood the dispatcher on a fast link.
+    private const int PROGRESS_INTERVAL_MS = 250;
 
     public event Action<string>? OnStatus;
     public event Action<long, long?>? OnProgress;
@@ -171,28 +188,100 @@ public class SourceDownloader
         }
     }
 
+    // Every handler is filtered on ct: a user cancel is never retried and never
+    // reported as a stall.
     private async Task DownloadFileAsync(string url, string destPath, CancellationToken ct)
     {
-        using var http = new HttpClient();
+        using var http = new HttpClient { Timeout = HEADERS_TIMEOUT };
         // GitHub returns 403 to requests without a User-Agent.
         http.DefaultRequestHeaders.UserAgent.ParseAdd("LocalAgentXInstaller/1.0");
 
+        for (int attempt = 1; ; attempt++)
+        {
+            try
+            {
+                await DownloadAttemptAsync(http, url, destPath, ct);
+                return;
+            }
+            catch (Exception ex) when (!ct.IsCancellationRequested && NetworkFault(ex) is string fault)
+            {
+                if (attempt == DOWNLOAD_ATTEMPTS)
+                    throw new IOException(
+                        $"The download from GitHub stalled or failed {DOWNLOAD_ATTEMPTS} times (last: {fault}). " +
+                        "If this PC is behind a VPN, proxy, or firewall, make sure it can reach github.com and codeload.github.com, then run the installer again.",
+                        ex);
+                var kind = ex is TimeoutException or OperationCanceledException ? "stalled" : "failed";
+                OnStatus?.Invoke($"Download {kind}, retrying ({attempt + 1}/{DOWNLOAD_ATTEMPTS})…");
+                await Task.Delay(RETRY_BACKOFF * attempt, ct);
+            }
+        }
+    }
+
+    // File.Create truncates, so every attempt writes a fresh file from byte zero.
+    private async Task DownloadAttemptAsync(HttpClient http, string url, string destPath, CancellationToken ct)
+    {
         using var resp = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct);
         resp.EnsureSuccessStatusCode();
         var total = resp.Content.Headers.ContentLength;
 
         await using var inStream = await resp.Content.ReadAsStreamAsync(ct);
         await using var outStream = File.Create(destPath);
+        // Linked so the user's cancel still aborts a pending read at once; the
+        // timer is re-armed before every read, so only a full idle window of
+        // silence trips it.
+        using var idle = CancellationTokenSource.CreateLinkedTokenSource(ct);
 
         var buf = new byte[81920];
         long downloaded = 0;
-        int read;
-        while ((read = await inStream.ReadAsync(buf, ct)) > 0)
+        var sinceProgress = Stopwatch.StartNew();
+        while (true)
         {
+            idle.CancelAfter(READ_IDLE_TIMEOUT);
+            int read;
+            try
+            {
+                read = await inStream.ReadAsync(buf, idle.Token);
+            }
+            catch (Exception) when (idle.IsCancellationRequested && !ct.IsCancellationRequested)
+            {
+                throw new TimeoutException($"no data received for {READ_IDLE_TIMEOUT.TotalSeconds:F0} s");
+            }
+            catch (IOException ex) when (!ct.IsCancellationRequested)
+            {
+                throw new BodyReadException(ex);
+            }
+            if (read == 0) return;
             await outStream.WriteAsync(buf.AsMemory(0, read), ct);
             downloaded += read;
-            OnProgress?.Invoke(downloaded, total);
+            if (sinceProgress.ElapsedMilliseconds >= PROGRESS_INTERVAL_MS)
+            {
+                OnProgress?.Invoke(downloaded, total);
+                sinceProgress.Restart();
+            }
         }
+    }
+
+    // The reason an attempt failed, worded for the final error, or null when the
+    // failure isn't a network fault another attempt could fix. An
+    // OperationCanceledException that isn't the user's cancel is HttpClient.Timeout.
+    // A local write error (disk full, a locked temp file) and a definite HTTP
+    // refusal such as 404 fail on the first attempt with their own message.
+    private static string? NetworkFault(Exception ex) => ex switch
+    {
+        TimeoutException => ex.Message,
+        OperationCanceledException => $"GitHub didn't respond within {HEADERS_TIMEOUT.TotalSeconds:F0} s",
+        BodyReadException => ex.Message,
+        HttpRequestException { StatusCode: null } => ex.Message,
+        HttpRequestException { StatusCode: HttpStatusCode.TooManyRequests } => ex.Message,
+        HttpRequestException { StatusCode: { } status } when (int)status >= 500 => ex.Message,
+        _ => null,
+    };
+
+    // The response body failed mid-read: a network fault, unlike an IOException
+    // from writing the temp file.
+    private sealed class BodyReadException : IOException
+    {
+        public BodyReadException(IOException inner) : base($"the connection dropped ({inner.Message})", inner) { }
     }
 
     // Write the Electron runtime archive embedded in this installer to

@@ -1,50 +1,21 @@
 import {
   closeSync, cpSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync,
-  readFileSync, readdirSync, realpathSync, renameSync, rmSync,
+  readdirSync, renameSync, rmSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, normalize, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import {
   loadLegacyCheckpointState, removeLegacyCheckpoint, writeDurableJson,
 } from "./checkpoint.mjs";
 import {
   defaultStepState, INSTALL_JOURNAL_VERSION, stepStatesEqual, validStepState,
 } from "./install-journal.mjs";
+import {
+  ARTIFACTS, directoryIdentity, ensureDataDirectory, installIdentity, journalProvenance,
+  readJson, safePathChain, sameIdentity,
+} from "./rollback-provenance.mjs";
 
 const VERSION = INSTALL_JOURNAL_VERSION;
-const ARTIFACTS = ["node_modules", "dist", join("desktop", "node_modules"), join("desktop", "dist")];
-
-function samePath(left, right) {
-  return process.platform === "win32"
-    ? resolve(left).toLocaleLowerCase("en-US") === resolve(right).toLocaleLowerCase("en-US")
-    : resolve(left) === resolve(right);
-}
-
-function directoryIdentity(path) {
-  let info;
-  try { info = lstatSync(path); }
-  catch { throw new Error(`Trusted rollback base is missing: ${path}`); }
-  if (!info.isDirectory() || info.isSymbolicLink()) throw new Error(`Trusted rollback base is linked or not a directory: ${path}`);
-  let real;
-  try { real = realpathSync(path); } catch { throw new Error(`Trusted rollback base cannot be resolved: ${path}`); }
-  if (!samePath(real, path)) throw new Error(`Trusted rollback base has a linked ancestor: ${path}`);
-  return { path: resolve(path), real: resolve(real), dev: info.dev, ino: info.ino, birthtimeMs: info.birthtimeMs };
-}
-
-function sameIdentity(expected, actual) {
-  return expected && samePath(expected.path, actual.path) && samePath(expected.real, actual.real)
-    && expected.dev === actual.dev && expected.ino === actual.ino && expected.birthtimeMs === actual.birthtimeMs;
-}
-
-function ensureDataDirectory(path) {
-  if (!existsSync(path)) {
-    let ancestor = dirname(path);
-    while (!existsSync(ancestor) && dirname(ancestor) !== ancestor) ancestor = dirname(ancestor);
-    directoryIdentity(ancestor);
-    mkdirSync(path, { recursive: true });
-  }
-  return directoryIdentity(path);
-}
 
 function syncCopiedPath(path) {
   const info = lstatSync(path);
@@ -67,73 +38,7 @@ function syncDirectory(path) {
   } catch {}
 }
 
-function readJson(path) {
-  try { return JSON.parse(readFileSync(path, "utf-8")); } catch { return null; }
-}
-
-function installIdentity(root, dataDirectory) {
-  const manifest = readJson(join(root, "package.json"));
-  const source = readJson(join(dataDirectory, "installed-source.json"));
-  if (!manifest || typeof manifest.version !== "string") throw new Error("Cannot establish installed package identity.");
-  if (source && !/^[0-9a-f]{40}$/.test(source.commit || "")) throw new Error("Installed source identity is corrupt.");
-  return { root: resolve(root), version: manifest.version, source };
-}
-
-function inside(base, path) {
-  const rel = relative(resolve(base), resolve(path));
-  return rel !== "" && !isAbsolute(rel) && !rel.split(/[\\/]/).includes("..");
-}
-
-function safePathChain(base, relativePath) {
-  let current = resolve(base);
-  for (const part of relativePath.split(/[\\/]/)) {
-    current = join(current, part);
-    let info;
-    try { info = lstatSync(current); }
-    catch (error) {
-      if (error.code === "ENOENT") continue;
-      return false;
-    }
-    if (info.isSymbolicLink()) return false;
-    try { if (!inside(base, realpathSync(current))) return false; }
-    catch { return false; }
-  }
-  return true;
-}
-
-function validJournal(value, root, dataDirectory, backupRoot) {
-  if (!value || ![1, VERSION].includes(value.version) || !["backing-up", "active", "rolling-back", "verified", "restored"].includes(value.status)) return false;
-  if (value.version === VERSION && !validStepState(value.steps)) return false;
-  if (resolve(value.identity?.root || "") !== resolve(root)) return false;
-  let installBase;
-  let dataBase;
-  try { installBase = directoryIdentity(root); dataBase = directoryIdentity(dataDirectory); }
-  catch { return false; }
-  if (!sameIdentity(value.identity.installBase, installBase) || !sameIdentity(value.identity.dataBase, dataBase)) return false;
-  if (typeof value.identity.version !== "string") return false;
-  if (value.identity.source !== null && !/^[0-9a-f]{40}$/.test(value.identity.source?.commit || "")) return false;
-  if (!Array.isArray(value.artifacts)) return false;
-  if (value.artifacts.length !== ARTIFACTS.length) return false;
-  const expected = [...ARTIFACTS].sort((left, right) => left.localeCompare(right));
-  const received = value.artifacts.map((item) => item?.relative).sort((left, right) => String(left).localeCompare(String(right)));
-  if (!expected.every((item, index) => item === received[index])) return false;
-  if (new Set(received.map((item) => String(item).toLocaleLowerCase("en-US"))).size !== received.length) return false;
-  return value.artifacts.every((item) => {
-    if (!item || typeof item.relative !== "string" || typeof item.existed !== "boolean") return false;
-    if (item.restored !== undefined && typeof item.restored !== "boolean") return false;
-    if (item.restored && !["rolling-back", "restored"].includes(value.status)) return false;
-    if (!item.relative || item.relative === "." || isAbsolute(item.relative) || normalize(item.relative) !== item.relative) return false;
-    if (item.relative.split(/[\\/]/).some((part) => !part || part === "." || part === "..")) return false;
-    const target = resolve(root, item.relative);
-    const backup = resolve(backupRoot, item.relative);
-    if (!inside(root, target) || !inside(backupRoot, backup)) return false;
-    if (!safePathChain(root, item.relative)) return false;
-    if (!safePathChain(dataDirectory, join("install-rollback", "artifacts", item.relative))) return false;
-    if (item.restored && !existsSync(target)) return false;
-    if (item.existed && !existsSync(target) && !existsSync(backup)) return false;
-    return item.existed || !existsSync(backup);
-  });
-}
+const supersededStamp = () => new Date().toISOString().replace(/[:.]/g, "-");
 
 export function createInstallRollback(context) {
   if (!context.installRoot) {
@@ -168,7 +73,7 @@ export function createInstallRollback(context) {
   };
   const assertJournalPaths = (journal) => {
     assertBases();
-    if (!validJournal(journal, root, dataDirectory, backupRoot)) {
+    if (journalProvenance(journal, root, dataDirectory, backupRoot) !== "valid") {
       throw new Error("Installer rollback journal paths changed or became unsafe.");
     }
   };
@@ -242,10 +147,22 @@ export function createInstallRollback(context) {
   /** Move a spent journal aside instead of deleting it — the next install
    *  proceeds, and the record survives for diagnosis. */
   const archiveSpentJournal = () => {
-    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-    const relativeTarget = join("install-rollback", `transaction.superseded-${stamp}.json`);
+    const relativeTarget = join("install-rollback", `transaction.superseded-${supersededStamp()}.json`);
     assertPath(dataDirectory, relativeTarget);
     renamePath(journalPath, resolve(dataDirectory, relativeTarget));
+  };
+
+  /** Move the whole rollback directory, journal and backed-up artifacts, to a
+   *  sibling. The bases are bound first so every path assertion during the
+   *  move also re-proves the data root is the one the journal recorded. */
+  const archiveInterruptedAttempt = (journal) => {
+    const archived = `install-rollback.superseded-${supersededStamp()}`;
+    boundBases = { install: directoryIdentity(root), data: journal.identity.dataBase };
+    movePath(dataDirectory, "install-rollback", dataDirectory, archived);
+    context.reporter?.warn(
+      `The previous install attempt was interrupted and its leftovers were moved to ${join(dataDirectory, archived)}. `
+        + "Nothing in that folder is needed; delete it to reclaim the space.",
+    );
   };
 
   const load = () => {
@@ -254,7 +171,8 @@ export function createInstallRollback(context) {
     if (existsSync(dataDirectory)) directoryIdentity(dataDirectory);
     if (!existsSync(journalPath)) return null;
     const value = readJson(journalPath);
-    if (!validJournal(value, root, dataDirectory, backupRoot)) {
+    const provenance = journalProvenance(value, root, dataDirectory, backupRoot);
+    if (provenance !== "valid") {
       // A SPENT journal is not ambiguity, it is litter. Terminal status means
       // its transaction already finished (verified) or already rolled back
       // (restored), and an empty/absent artifacts tree means it is holding no
@@ -263,11 +181,20 @@ export function createInstallRollback(context) {
       // the install directory: the recorded inode/birthtime stop matching, the
       // provenance check fails, and every future install is blocked forever
       // with no way out. Archive it and carry on.
-      // Fail-closed still governs the case that matters: an IN-FLIGHT journal
-      // (active / backing-up / rolling-back) whose provenance no longer matches
-      // may be the only record of where the prior install's files went.
       if (spentJournal(value)) {
         archiveSpentJournal();
+        return null;
+      }
+      // The standalone installer deletes and re-extracts the install root on
+      // every run, so any attempt interrupted mid-transaction leaves a journal
+      // that is valid in every respect except that root's identity. Its backups
+      // are build output of a source tree that no longer exists and can never
+      // be restored into the new one, so blocking protects nothing; moving them
+      // aside keeps every byte while this install starts fresh. Every other
+      // mismatch (another root path, a replaced data directory, an unsafe or
+      // inconsistent artifact set) is still ambiguous and fails closed below.
+      if (provenance === "install-replaced") {
+        archiveInterruptedAttempt(value);
         return null;
       }
       throw new Error(

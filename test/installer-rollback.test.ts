@@ -1,4 +1,6 @@
-import { cpSync, existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  cpSync, existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -35,6 +37,25 @@ function replaceDirectoryIdentity(directory: string): void {
   cpSync(previous, directory, { recursive: true });
   rmSync(previous, { recursive: true, force: true });
 }
+
+/** Every entry under a directory with its file bytes, to prove nothing moved. */
+function treeContents(directory: string): Record<string, string | null> {
+  return Object.fromEntries((readdirSync(directory, { recursive: true }) as string[]).sort().map((entry) => {
+    const path = join(directory, entry);
+    return [entry, statSync(path).isFile() ? readFileSync(path, "utf-8") : null];
+  }));
+}
+
+/** The single sibling an interrupted attempt's rollback directory was moved to. */
+function supersededAttempt(dataDirectory: string): string {
+  const names = readdirSync(dataDirectory).filter((name) => name.startsWith("install-rollback.superseded-"));
+  expect(names).toHaveLength(1);
+  return join(dataDirectory, names[0]);
+}
+
+const interruptedWarning = (archived: string) =>
+  `The previous install attempt was interrupted and its leftovers were moved to ${archived}. `
+  + "Nothing in that folder is needed; delete it to reclaim the space.";
 
 describe("installer artifact rollback", () => {
   it("restores prior runtime artifacts without touching user workspace", () => {
@@ -144,17 +165,38 @@ describe("installer artifact rollback", () => {
     expect(readFileSync(join(f.installRoot, "workspace", "user.txt"), "utf-8")).toBe("keep-me");
   });
 
-  it("still fails closed when an IN-FLIGHT journal's install directory was replaced (backups are the only copy)", () => {
+  // The standalone installer deletes and re-extracts the install directory on
+  // every run, so an attempt interrupted mid-transaction (Cancel, crash, kill)
+  // leaves a journal whose only mismatch is that directory's identity. Its
+  // backups are build output of a deleted source tree: they are kept, moved
+  // aside, never restored over the new tree, and the install proceeds.
+  it("moves an IN-FLIGHT journal and its backups aside when the install directory was replaced", () => {
     const f = fixture();
     createInstallRollback(f).begin(); // status is mid-transaction, backups on disk
     replaceDirectoryIdentity(f.installRoot);
-    expect(() => createInstallRollback(f).reconcile()).toThrow(/ambiguous provenance/);
-    // The error now names the file, so the block is actionable.
-    expect(() => createInstallRollback(f).reconcile()).toThrow(/transaction\.json/);
-    expect(existsSync(join(f.dataDirectory, "install-rollback", "transaction.json"))).toBe(true);
+    const installBefore = treeContents(f.installRoot);
+    const warn = vi.fn();
+    const recovered = createInstallRollback({ ...f, reporter: { warn } });
+    expect(recovered.reconcile()).toMatchObject({ restored: false, resumed: false, outcome: "none" });
+    expect(treeContents(f.installRoot)).toEqual(installBefore);
+    expect(readFileSync(join(f.installRoot, "workspace", "user.txt"), "utf-8")).toBe("keep-me");
+    expect(existsSync(join(f.dataDirectory, "install-rollback"))).toBe(false);
+    const archived = supersededAttempt(f.dataDirectory);
+    expect(JSON.parse(readFileSync(join(archived, "transaction.json"), "utf-8")).status).toBe("active");
+    expect(readFileSync(join(archived, "artifacts", "dist", "index.js"), "utf-8")).toBe("verified-old");
+    expect(warn).toHaveBeenCalledWith(interruptedWarning(archived));
+
+    recovered.begin();
+    expect(JSON.parse(readFileSync(installTransactionPath(f.dataDirectory), "utf-8")).status).toBe("active");
+    mkdirSync(join(f.installRoot, "dist"));
+    writeFileSync(join(f.installRoot, "dist", "index.js"), "verified-new");
+    recovered.verified();
+    expect(existsSync(join(f.dataDirectory, "install-rollback"))).toBe(false);
+    expect(readFileSync(join(f.installRoot, "dist", "index.js"), "utf-8")).toBe("verified-new");
+    expect(readFileSync(join(archived, "artifacts", "dist", "index.js"), "utf-8")).toBe("verified-old");
   });
 
-  it("a terminal journal STILL blocks while real backup bytes survive", () => {
+  it("moves a terminal journal's surviving backup bytes aside and the next install completes", async () => {
     const f = fixture();
     createInstallRollback(f).begin();
     const journalPath = join(f.dataDirectory, "install-rollback", "transaction.json");
@@ -162,10 +204,87 @@ describe("installer artifact rollback", () => {
     journal.status = "restored"; // terminal…
     writeFileSync(journalPath, JSON.stringify(journal));
     replaceDirectoryIdentity(f.installRoot);
-    // …but begin() backed dist/index.js up, so there is still something to protect.
+    // …but begin() backed dist/index.js up, so those bytes must be kept.
     expect(existsSync(join(f.dataDirectory, "install-rollback", "artifacts", "dist", "index.js"))).toBe(true);
-    expect(() => createInstallRollback(f).reconcile()).toThrow(/ambiguous provenance/);
+    const installBefore = treeContents(f.installRoot);
+    const events: Array<Record<string, unknown>> = [];
+    const stdout = { write: (line: string) => events.push(JSON.parse(line)) > 0 } as unknown as NodeJS.WriteStream;
+    const reporter = createReporter({ ipcMode: true, stdout });
+    await runInstaller({ ...f, reporter, platform: "linux", selections: {}, verifyInstallStep: () => "absent" }, {
+      prerequisites: async () => { expect(treeContents(f.installRoot)).toEqual(installBefore); },
+      core: async () => {
+        expect(reporter.step("build")).toBe(true);
+        mkdirSync(join(f.installRoot, "dist"));
+        writeFileSync(join(f.installRoot, "dist", "index.js"), "verified-new");
+        reporter.stepDone("build");
+      },
+      posixShell: async () => {}, windowsCage: async () => {}, desktop: async () => ({}), persist: () => true,
+    });
+    const archived = supersededAttempt(f.dataDirectory);
+    expect(events).toContainEqual(expect.objectContaining({ type: "log", level: "warn", line: interruptedWarning(archived) }));
+    expect(JSON.parse(readFileSync(join(archived, "transaction.json"), "utf-8")).status).toBe("restored");
+    expect(readFileSync(join(archived, "artifacts", "dist", "index.js"), "utf-8")).toBe("verified-old");
+    expect(readFileSync(join(f.installRoot, "workspace", "user.txt"), "utf-8")).toBe("keep-me");
+    expect(readFileSync(join(f.installRoot, "dist", "index.js"), "utf-8")).toBe("verified-new");
+    expect(existsSync(join(f.dataDirectory, "install-rollback"))).toBe(false);
   });
+
+  // What the journal says sat in the deleted tree cannot be checked against the
+  // new one: an artifact not yet backed up went with the old directory.
+  it("moves aside a journal interrupted mid-backup whose unmoved artifact went with the deleted directory", () => {
+    const f = fixture();
+    expect(() => createInstallRollback({ ...f, installerFault: (point: string) => {
+      if (point === "after-backup-journal") throw new Error("kill");
+    } }).begin()).toThrow("kill");
+    rmSync(join(f.installRoot, "dist"), { recursive: true }); // the re-extracted tree has no build output
+    replaceDirectoryIdentity(f.installRoot);
+    expect(createInstallRollback(f).reconcile()).toMatchObject({ restored: false, resumed: false, outcome: "none" });
+    const archived = supersededAttempt(f.dataDirectory);
+    expect(JSON.parse(readFileSync(join(archived, "transaction.json"), "utf-8")).status).toBe("backing-up");
+    expect(readFileSync(join(f.installRoot, "workspace", "user.txt"), "utf-8")).toBe("keep-me");
+  });
+
+  it.each(["a different root path", "a different install base path", "a corrupt install base identity", "a replaced data directory", "an unsafe artifact path"])(
+    "still fails closed and moves nothing when a replaced install directory comes with %s", (defect) => {
+      const f = fixture();
+      createInstallRollback(f).begin();
+      const journalPath = installTransactionPath(f.dataDirectory);
+      const journal = JSON.parse(readFileSync(journalPath, "utf-8"));
+      if (defect === "a different root path") journal.identity.root = join(f.base, "elsewhere");
+      if (defect === "a different install base path") journal.identity.installBase.path = join(f.base, "elsewhere");
+      if (defect === "a corrupt install base identity") delete journal.identity.installBase.ino;
+      if (defect === "an unsafe artifact path") journal.artifacts[0].relative = "..\\outside";
+      writeFileSync(journalPath, JSON.stringify(journal));
+      replaceDirectoryIdentity(f.installRoot);
+      if (defect === "a replaced data directory") replaceDirectoryIdentity(f.dataDirectory);
+      const installBefore = treeContents(f.installRoot);
+      const dataBefore = treeContents(f.dataDirectory);
+      // The error names the journal, so the block is actionable.
+      expect(() => createInstallRollback(f).reconcile()).toThrow(/ambiguous provenance.*transaction\.json/);
+      expect(treeContents(f.installRoot)).toEqual(installBefore);
+      expect(treeContents(f.dataDirectory)).toEqual(dataBefore);
+    },
+  );
+
+  it.skipIf(!CAN_CREATE_DIRECTORY_LINK).each(["the replaced install's dist", "the backed-up dist"])(
+    "still fails closed and moves nothing when a replaced install directory comes with a junction at %s", (where) => {
+      const f = fixture();
+      createInstallRollback(f).begin();
+      replaceDirectoryIdentity(f.installRoot);
+      const outside = join(f.base, "outside");
+      mkdirSync(outside);
+      writeFileSync(join(outside, "keep.txt"), "outside-safe");
+      const link = where === "the backed-up dist"
+        ? join(f.dataDirectory, "install-rollback", "artifacts", "dist")
+        : join(f.installRoot, "dist");
+      rmSync(link, { recursive: true, force: true });
+      symlinkSync(outside, link, process.platform === "win32" ? "junction" : "dir");
+      expect(() => createInstallRollback(f).reconcile()).toThrow(/ambiguous provenance/);
+      expect(readFileSync(join(outside, "keep.txt"), "utf-8")).toBe("outside-safe");
+      expect(existsSync(installTransactionPath(f.dataDirectory))).toBe(true);
+      expect(readFileSync(join(f.installRoot, "workspace", "user.txt"), "utf-8")).toBe("keep-me");
+    },
+  );
 
   it("fails closed when package identity drifts before recovery", () => {
     const f = fixture();

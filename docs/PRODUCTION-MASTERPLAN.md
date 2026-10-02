@@ -329,16 +329,17 @@ in named steps.
 
 ### 5.1 Why users get blocked on the "Autonomous" profile today
 
-Nine independent gates can deny a call, and the autonomy profile is only one
-of them. Picking `Autonomous` in Settings leaves the other eight where they
-were:
+Ten independent gates can deny or hold a call, and the autonomy profile is
+only one of them. Picking `Autonomous` in Settings leaves the other nine where
+they were:
 
 | Gate | Where | Scope | Controlled by |
 |---|---|---|---|
 | Autonomy profile (ask/allow per risk class) | `src/autonomy/profiles.ts` | global | Settings → Autonomy |
 | Safety toggles: shell, http, browser, computer control, supervised browser | `src/settings-schema.ts` | global | Settings → Security |
 | File access mode (workspace / common / unrestricted) | `public/js/settings-file-access.js` | global | Settings → File access |
-| Web access policy (strict allowlist on a fresh install) | `0825fc6` | global | Settings, or the "Allow host" card |
+| Web access policy (any public site on a fresh install since `6f995db`; strict allowlist when chosen) | `src/security/layer/egress-policy-state.ts` | global | Settings, or the "Allow host" card |
+| Private content leaving for a new destination (email bodies, the user's own documents) | `src/tool-execution/private-content-gate.ts` (`227de1c`) | per session | approval card in an attended run; refused in an unattended run; nothing else reaches it |
 | Session policy preset (default / high-security / dev-mode / read-only) | `src/session/policy.ts`, `src/routes/security.ts` | per session | API only |
 | Plan mode (read-only turn) | `src/chat-ws/message-router.ts`, `plan-mode-chip` | per session | composer chip |
 | Session taint latch + kernel run rules | `src/tool-execution/enforce-policy.ts`, `src/ari-kernel/` | per session / per turn | nothing: no profile or setting reaches the kernel |
@@ -366,9 +367,9 @@ can run at different trust levels without one changing the other.
 
 | # | Mode | What it means | Gates it sets |
 |---|---|---|---|
-| 1 | **Autopilot** | Nothing is denied. The agent does the whole job and tells you what it did. | profile Autonomous; all safety toggles on; file access unrestricted; web access open; session preset dev-mode; plan off; taint and run rules downgraded from *deny* to *audit* (logged, never blocking); shell cage stays guarded (it protects credentials from the shell, not the user from the agent, and costs the user nothing) |
-| 2 | **Copilot** | Works freely on this machine; asks once before anything leaves it. | profile Power; toggles on; file access common; web access open; the only prompts are money, secrets, and a red publish review |
-| 3 | **Chaperone** | Asks before any change. Reads, searches, and browses on its own. | profile Safe; `toolApproval` confirm-risky; file access common; strict web access with the allow-host card |
+| 1 | **Autopilot** | Nothing is denied. The agent does the whole job and tells you what it did. | profile Autonomous; all safety toggles on; file access unrestricted; web access open; session preset dev-mode; plan off; taint and run rules downgraded from *deny* to *audit* (logged, never blocking); the private-content card follows the 5.3 choice, and an unattended run takes the log path instead of being refused; shell cage stays guarded (it protects credentials from the shell, not the user from the agent, and costs the user nothing) |
+| 2 | **Copilot** | Works freely on this machine; asks once before anything leaves it. | profile Power; toggles on; file access common; web access open; the only prompts are money, secrets, private content going to a destination the user did not name, and a red publish review |
+| 3 | **Chaperone** | Asks before any change. Reads, searches, and browses on its own. | profile Safe; `toolApproval` confirm-risky; file access common; strict web access with the allow-host card; the private-content card as in Copilot |
 | 4 | **Plan** | Read-only. Proposes a plan and stops. | existing plan mode plus session preset read-only |
 | 5 | **Locked** | Untrusted work: workspace only, no shell, no outbound writes. | session preset high-security; shell/http/computer off; file access workspace; strict web |
 
@@ -398,6 +399,14 @@ pick is remembered:
 - **Just log it.** Autopilot never stops. The send is logged with the
   evidence and shown in the chat after the fact. The user accepted this by
   choosing it.
+
+The same choice governs private content (an email body or a personal document
+the agent read, sent to a destination the user did not name; `227de1c`). It
+is a lower stake than a secret, so it never gets its own control: in
+Autopilot it rides this switch, and in an unattended Autopilot run it always
+takes the log path, because no one is there to answer a card. Today, before
+`agentMode` exists, that gate asks in every attended run and refuses in every
+unattended one.
 
 **Where the choice lives: inside Autopilot, not as a sixth mode.** Two
 modes whose only difference is one rare card would be indistinguishable in

@@ -461,6 +461,21 @@ merging onto a red base.
 
 One line per closed item, newest first, with the commit that closed it.
 
+- **2026-10-01, Phase 0 item 3, first half: branch protection is on for
+  `main`.** Required checks: `Unit tests (ubuntu-latest)` and `Audit + clean
+  build` (type-check plus full build). Force-pushes and deletion of `main` are
+  blocked. `enforce_admins` is off, so direct pushes from the owner's machines
+  and sessions still land, reported as bypassed; requiring PRs of everyone is
+  the second half, after the fast lane (item 4). `Unit tests (windows-latest)`
+  is deliberately not required yet: it still times out on the remaining flake
+  class (`src/update-rollback.test.ts` at `db6625b2`, `src/ota-update.test.ts`
+  at `7255126c`). Not done: items 4 (lanes) and 5 (issue board).
+- **2026-10-02, the Windows shell cage is live-verified on a fresh install**
+  (rolling installer at `b5f376ee`: Settings reads guarded confined, `whoami`
+  returns the sandbox account), and shells no longer run unconfined while its
+  proof is pending (`df8be7d6`; measured before the fix: a command in that
+  window ran as the user's own account).
+
 - **2026-10-01, correction: main did not stay green after `7a0d1ca`.** Four
   of the next ten pushes went red on `Unit tests (windows-latest)`, each on a
   different test hitting a fixed deadline: dev-server crash detection, the

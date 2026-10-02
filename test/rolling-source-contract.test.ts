@@ -80,11 +80,14 @@ describe("rolling-source publish ⟷ verify contract", () => {
 
     expect(tar("xzOf", `${prefix}/desktop/dist/main.js`)).toBe("// compiled desktop fixture\n");
 
-    // A non-admin Windows user's bsdtar cannot create links, so one entry would
-    // break the update there. bsdtar and GNU tar both print a symlink's mode
-    // as "l…" and a hard link's as "h…".
-    const links = tar("tvzf").split(/\r?\n/).filter((line) => /^[lh]/.test(line));
-    expect(links).toEqual([]);
+    // A non-admin Windows user's bsdtar cannot create a symlink, so one entry
+    // would break the update there; the source tree has no reason to carry hard
+    // links either. bsdtar and GNU tar both print a symlink's mode as "l…" and a
+    // hard link's as "h…". The verbose listing must cover every entry, or an
+    // empty one would pass.
+    const verbose = tar("tvzf").trim().split(/\r?\n/);
+    expect(verbose).toHaveLength(entries.length);
+    expect(verbose.filter((line) => /^[lh]/.test(line))).toEqual([]);
   });
 
   it("refuses a short / malformed sha (won't publish an asset the app can't address)", () => {

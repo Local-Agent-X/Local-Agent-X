@@ -26,8 +26,9 @@ vi.mock("node:fs", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("node:fs")>();
 	const path = await import("node:path");
 	const inTree = (p: unknown) => {
+		if (vtree.root === "") return false;
 		const r = path.resolve(String(p));
-		return vtree.root !== "" && (r === vtree.root || r.startsWith(vtree.root + path.sep));
+		return r === vtree.root || r.startsWith(vtree.root + path.sep);
 	};
 	const realReaddir = actual.readdir as (...a: unknown[]) => void;
 	const dirent = (name: string, isDir: boolean) => ({ name, isFile: () => !isDir, isDirectory: () => isDir, isSymbolicLink: () => false });
@@ -50,8 +51,9 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("node:fs/promises")>();
 	const path = await import("node:path");
 	const inTree = (p: unknown) => {
+		if (vtree.root === "") return false;
 		const r = path.resolve(String(p));
-		return vtree.root !== "" && (r === vtree.root || r.startsWith(vtree.root + path.sep));
+		return r === vtree.root || r.startsWith(vtree.root + path.sep);
 	};
 	const realStat = actual.stat as (...a: unknown[]) => Promise<unknown>;
 	return {
@@ -278,6 +280,7 @@ describe("glob tool — the walk is bounded", () => {
 		// resolve(): the walker asks for the drive-anchored spelling on Windows
 		// (see the /virtual test below), and the overrides resolve their side too.
 		vtree.root = resolve("/virtual-glob-wide");
+		vtree.stats = 0;
 		try {
 			const res = await globTool.execute({ pattern: "**/*.txt", path: vtree.root });
 			const lines = res.content.split("\n");

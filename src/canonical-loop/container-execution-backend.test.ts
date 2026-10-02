@@ -124,24 +124,42 @@ describe("ContainerExecutionBackend", () => {
     expect(runtime.create).toHaveBeenCalledOnce();
   });
 
-  it("reattaches after start-before-claim using the durable launch identity", async () => {
-    const runtime = fakeRuntime();
-    const backend = backendWith(runtime);
-    const op = fixtureOp("start-crash", backend);
-    const placement = op.canonical!.executionPlacement!;
-    let intent = createContainerLaunchIntent({ opId: op.id, placement, token: "kept-token",
-      name: "lax-op-started", imageReference, imageId });
-    intent = bindContainerLaunchIntent(intent, { containerId, createdAt, imageId });
-    writeContainerLaunchIntent(intent);
-    setTimeout(() => {
-      expect(claimProcessExecution(claim(op, placement.targetId,
-        placement.revision, "kept-token"))).toBe(true);
-    }, 0);
+  it.each(["delay", "inspect"] as const)(
+    "reattaches after start-before-claim when the claim lands in the %s window past the deadline",
+    async (window) => {
+      let clock = 0;
+      const runtime = fakeRuntime();
+      const backend = backendWith(runtime, fakeProjection(), () => clock);
+      const op = fixtureOp(`start-crash-${window}`, backend);
+      const placement = op.canonical!.executionPlacement!;
+      let intent = createContainerLaunchIntent({ opId: op.id, placement, token: "kept-token",
+        name: "lax-op-started", imageReference, imageId });
+      intent = bindContainerLaunchIntent(intent, { containerId, createdAt, imageId });
+      writeContainerLaunchIntent(intent);
+      // The clock moves first so a failed claim write ends the poll as a timeout
+      // instead of spinning on a frozen clock until the test times out.
+      const claimAcrossDeadline = () => {
+        clock += 1_000;
+        expect(claimProcessExecution(claim(op, placement.targetId,
+          placement.revision, "kept-token"))).toBe(true);
+      };
+      if (window === "delay") {
+        setTimeout(claimAcrossDeadline, 0);
+      } else {
+        const inspect = vi.mocked(runtime.inspect);
+        const live = inspect.getMockImplementation()!;
+        // reconcileLaunchIntent inspects once before awaitClaim's first poll.
+        inspect.mockImplementationOnce(live).mockImplementationOnce(async id => {
+          claimAcrossDeadline();
+          return live(id);
+        });
+      }
 
-    await expect(backend.startWithoutAdapter({ op, placement }).done).resolves.toBeUndefined();
-    expect(runtime.create).not.toHaveBeenCalled();
-    expect(runtime.wait).toHaveBeenCalledWith(containerId);
-  });
+      await expect(backend.startWithoutAdapter({ op, placement }).done).resolves.toBeUndefined();
+      expect(runtime.create).not.toHaveBeenCalled();
+      expect(runtime.wait).toHaveBeenCalledWith(containerId);
+    },
+  );
 
   it("retains claim, intent and projection when container stop cannot be confirmed", async () => {
     const runtime = fakeRuntime({ stop: vi.fn().mockRejectedValue(new Error("daemon unavailable")) });
@@ -252,7 +270,11 @@ describe("ContainerExecutionBackend", () => {
   });
 });
 
-function backendWith(runtime: DockerExecutionRuntime, projection = fakeProjection()): ContainerExecutionBackend {
+function backendWith(
+  runtime: DockerExecutionRuntime,
+  projection = fakeProjection(),
+  now: () => number = Date.now,
+): ContainerExecutionBackend {
   return new Backend({
     imageReference,
     runtime,
@@ -260,6 +282,7 @@ function backendWith(runtime: DockerExecutionRuntime, projection = fakeProjectio
       projection.durableId = durableId;
       return projection;
     },
+    now,
     claimPollMs: 1,
     readyTimeoutMs: 100,
   });

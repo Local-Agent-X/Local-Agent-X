@@ -253,7 +253,12 @@ export class ContainerExecutionBackend implements ExecutionBackend {
     container: DockerContainerIdentity,
   ): Promise<ContainerExecutionClaim> {
     const deadline = this.now() + this.readyTimeoutMs;
-    while (this.now() <= deadline) {
+    for (;;) {
+      // Expiry and liveness are sampled before the claim read, so a stall that spans
+      // the deadline still sees a claim the worker wrote during it instead of failing
+      // (and the launch path then tearing down) a container that already owns the op.
+      const expired = this.now() > deadline;
+      const state = await this.runtime.inspect(container.containerId);
       const claim = readProcessExecutionClaim(opId);
       if (claim) {
         if (claim.ownerKind !== "container" || claim.backendId !== this.id
@@ -264,11 +269,10 @@ export class ContainerExecutionBackend implements ExecutionBackend {
         }
         return claim;
       }
-      const state = await this.runtime.inspect(container.containerId);
       if (!state?.running) throw new Error("container worker exited before durable handoff");
+      if (expired) throw new Error("container worker handoff timed out");
       await delay(this.claimPollMs);
     }
-    throw new Error("container worker handoff timed out");
   }
 
   private async waitForCompletion(

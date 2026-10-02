@@ -137,16 +137,18 @@ const definition = {
   version: QUALIFICATION_BENCHMARK_CATALOG_VERSION,
   packs: [
     {
-      schema: QUALIFICATION_BENCHMARK_PACK_SCHEMA, schemaVersion: 1, id: "installer", version: 4,
+      schema: QUALIFICATION_BENCHMARK_PACK_SCHEMA, schemaVersion: 1, id: "installer", version: 5,
       gate: { id: "installer", script: "test:installer-qualification", timeoutMs: 10 * 60_000, preflightScripts: [] },
       scenarios: [
         { id: "contract", version: 1, testPath: "test/installer-contract.test.ts", assertionCount: 23, assertionManifestSha256: "sha256:e3ab089e51e06f1b15df9b891a28e89a92ffab3456dcd18797a344e77ae0cf30", platformIndependent: false, allowedSkips: [] },
         { id: "resume", version: 1, testPath: "test/installer-resume.test.ts", assertionCount: 19, assertionManifestSha256: "sha256:c430e624a1adf05a7d5d087de4ff00cf9a2c76a8496f6fc2caae1716304df097", platformIndependent: false, allowedSkips: [] },
-        // Refreshed for c4753262 (spent-rollback-journal fix added 3 tests) —
-        // same maintenance step as ded3a267. Recompute via `vitest list` when
-        // the scenario file changes; a stale pin fails every release gate with
+        // Refreshed for 7255126c (an interrupted install's journal is moved aside
+        // instead of blocking; 56 tests) — same maintenance step as ded3a267 and
+        // c4753262. Recompute when the scenario file changes: hash each
+        // assertion's fullName from the vitest JSON reporter, sort, hash the
+        // JSON array. A stale pin fails every release gate with
         // "benchmark reporter assertion manifest does not match the catalog".
-        { id: "rollback", version: 3, testPath: "test/installer-rollback.test.ts", assertionCount: 48, assertionManifestSha256: "sha256:30de50f19bb11aaa43826c4877eb445d4cce293221bb6b4a6fee0e243d903741", platformIndependent: false, allowedSkips: [] },
+        { id: "rollback", version: 4, testPath: "test/installer-rollback.test.ts", assertionCount: 56, assertionManifestSha256: "sha256:d673f9421a0d6c95f5d1e2e7e465510cd0b72570f50e8dfb79e5f413d6bcf646", platformIndependent: false, allowedSkips: [] },
       ],
     },
     {

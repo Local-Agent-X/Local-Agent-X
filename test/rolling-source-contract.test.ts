@@ -11,6 +11,7 @@ import { buildRollingSource, buildRollingPointer, ROLLING_POINTER_ASSET } from "
 // that was the open gap. If either side drifts, this fails.
 import { assertSha256 } from "../src/ota-update.js";
 import { parseRollingPointer, ROLLING_POINTER_ASSET as CLIENT_POINTER_ASSET } from "../src/ota-rolling-pointer.js";
+import { resolveTarBinaries } from "../src/ota-extract.js";
 
 // `git archive` needs a real commit; HEAD always exists in the repo under test.
 const sha = execFileSync("git", ["rev-parse", "HEAD"]).toString().trim();
@@ -59,20 +60,31 @@ describe("rolling-source publish ⟷ verify contract", () => {
     expect(() => assertSha256(tampered, sidecar)).toThrow(/checksum mismatch/);
   });
 
-  it("extracts cleanly with --strip-components=1 to the source root (applyUpdate's contract)", () => {
-    const extractDir = join(outDir, "extract");
-    mkdirSync(extractDir, { recursive: true });
-    // Mirror applyUpdate: run from the tarball's dir with a relative name.
-    // Relative `-C`: GNU tar reads the colon in an absolute Windows path as a
-    // remote rsh host, so an absolute extractDir fails on this platform only.
-    execFileSync("tar", ["xzf", built.assetName, "-C", "extract", "--strip-components=1"], { cwd: outDir });
-    // package.json must land at the extract root (proves the single-prefix shape).
-    const pkg = JSON.parse(readFileSync(join(extractDir, "package.json"), "utf-8"));
-    expect(pkg.name).toBeTruthy();
-    expect(readFileSync(join(extractDir, "desktop", "dist", "main.js"), "utf-8"))
-      .toBe("// compiled desktop fixture\n");
-    // node_modules must NOT ride along (git archive ships tracked source only).
-    expect(() => readFileSync(join(extractDir, "node_modules", ".bin", "tsc"))).toThrow();
+  it("packs one top-level prefix so applyUpdate's --strip-components=1 lands the source root, with the desktop overlay, no node_modules and no links", () => {
+    // The extractor half (applyUpdate -> extractTarball) is proven in src/ota-update.test.ts against single-prefix tarballs.
+    const prefix = `lax-source-${sha}`;
+    // Relative archive name: GNU tar reads the colon in an absolute Windows
+    // path as a remote rsh host.
+    const tar = (mode: string, ...members: string[]) =>
+      execFileSync(resolveTarBinaries()[0], [mode, built.assetName, ...members], {
+        cwd: outDir,
+        encoding: "utf-8",
+        maxBuffer: 64 * 1024 * 1024,
+      });
+
+    const entries = tar("tzf").trim().split(/\r?\n/);
+    expect(entries.every((entry) => entry.startsWith(`${prefix}/`))).toBe(true);
+    expect(entries).toContain(`${prefix}/package.json`);
+    expect(entries).toContain(`${prefix}/desktop/dist/main.js`);
+    expect(entries.some((entry) => entry.startsWith(`${prefix}/node_modules/`))).toBe(false);
+
+    expect(tar("xzOf", `${prefix}/desktop/dist/main.js`)).toBe("// compiled desktop fixture\n");
+
+    // A non-admin Windows user's bsdtar cannot create links, so one entry would
+    // break the update there. bsdtar and GNU tar both print a symlink's mode
+    // as "l…" and a hard link's as "h…".
+    const links = tar("tvzf").split(/\r?\n/).filter((line) => /^[lh]/.test(line));
+    expect(links).toEqual([]);
   });
 
   it("refuses a short / malformed sha (won't publish an asset the app can't address)", () => {

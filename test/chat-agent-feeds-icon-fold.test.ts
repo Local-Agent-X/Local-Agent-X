@@ -171,6 +171,11 @@ describe("formatTokens (Part B — token bar label)", () => {
     expect(formatTokens(50000)).toBe("50.0k");
   });
 
+  it("shows one-decimal 'M' at or above a million (a job's roll-up)", () => {
+    expect(formatTokens(999_999)).toBe("1000.0k");
+    expect(formatTokens(4_800_000)).toBe("4.8M");
+  });
+
   it("is defensive about junk / negative input (never throws, never NaN)", () => {
     expect(formatTokens(undefined)).toBe("0");
     expect(formatTokens(null)).toBe("0");

@@ -85,8 +85,8 @@ function warnOnce(msg: string): void {
  *                 data …> FAILED" cards plus a "hit a snag" idle nudge.
  *
  * NOT here on purpose: memory_consolidation — its bg_op_queued/started (with
- * opType) are the only feed for the ambient "dreaming" dock
- * (public/js/chat-agent-feeds-ambient.js). Suppressing it kills that dock.
+ * opType) are the only feed for the ambient "dreaming" group
+ * (public/js/chat-agent-feeds-ambient.js). Suppressing it empties that group.
  */
 const SIDEBAR_SUPPRESSED_OP_TYPES: ReadonlySet<string> = new Set([
   "chat_turn", "agent_spawn", "voice_turn", "skill_review",
@@ -181,6 +181,7 @@ function recordCanonicalEventWithSink(
             provider: "",
             ...(op?.parentOpId ? { parentOpId: op.parentOpId } : {}),
             ...(op?.type ? { opType: op.type } : {}),
+            ...(typeof op?.startedAt === "string" ? { startedAt: op.startedAt } : {}),
           } as ServerEvent);
         } else if (to === "paused") {
           const suspension = op?.canonical?.suspension;
@@ -351,11 +352,14 @@ function recordCanonicalEventWithSink(
         // turn_committed (aggregateOpUsage across all persisted op_turns); we
         // relay only the total — additive/optional, absent if unusable.
         const usage = b.usage as { totalTokens?: number } | undefined;
+        // The round's model rides along for the panel's Model column.
+        const model = (b.context as { model?: unknown } | undefined)?.model;
         if (emitBrowser) emitBrowser(sessionId, {
           type: "bg_op_progress",
           opId: event.opId,
           line: `✓ turn ${turnIdx} · ${summary}`,
           ...(typeof usage?.totalTokens === "number" ? { totalTokens: usage.totalTokens } : {}),
+          ...(typeof model === "string" && model ? { model } : {}),
         } as ServerEvent);
         return;
       }

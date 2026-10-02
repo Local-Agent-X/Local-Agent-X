@@ -27,7 +27,7 @@ describe("agent worker-card markup carries no inline event handlers", () => {
 
   it("wires controls via data-agent-action", () => {
     const html = renderAgentCard(agent);
-    for (const action of ["pause", "redirect", "stayinline", "cancel", "dismiss"]) {
+    for (const action of ["pause", "redirect", "stayinline", "cancel"]) {
       expect(html).toContain(`data-agent-action="${action}"`);
     }
     expect(html).toContain('data-agent-id="op-123"');

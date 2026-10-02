@@ -102,10 +102,10 @@ function onAgentDismiss(agentId) {
   removeAgentFeed(agentId);
 }
 
-// ── Delegated DOM handlers ── moved from chat-agent-feeds.js (400-LOC
-// ceiling). Everything below resolves its callees (toggleAgentFeeds,
-// ambientExpanded, sendAgentRedirect) at event time via the classic-script
-// global environment, so load order vs the core file doesn't matter.
+// ── Delegated DOM handlers ── Everything below resolves its callees
+// (toggleAgentFeeds, toggleAgentRowDetail, sendAgentRedirect) at event time
+// via the classic-script global environment, so load order vs the core file
+// doesn't matter.
 
 // Inline agent-card click → open the panel and scroll the matching card into
 // view. Delegated, since sanitizeHtml() strips inline on*= handlers from the
@@ -136,28 +136,25 @@ document.addEventListener('click', function(e) {
       case 'stayinline': onAgentStayInline(id); break;
       case 'cancel': onAgentCancel(id); break;
       case 'dismiss': onAgentDismiss(id); break;
+      case 'clear-finished': clearFinishedAgentFeeds(); break;
     }
     return;
   }
-  // C8 "calm": click a header to fold/expand, per-card (dismiss above returns
-  // first). Main cards only fold once TERMINAL (running cards keep their live
-  // body); AMBIENT cards toggle at ANY status — expanding is their only way to
-  // reveal activity + the mission report link. Track expanded ambient ids so
-  // the state survives full dock rebuilds (renderAmbientRegion reads it).
-  var header = e.target.closest('.agent-feed-header');
-  if (header) {
-    var foldCard = header.closest('.agent-feed-card');
-    if (!foldCard) return;
-    var isAmbientCard = foldCard.classList.contains('ambient');
-    if (isAmbientCard || foldCard.getAttribute('data-terminal') === '1') {
-      var nowFolded = foldCard.classList.toggle('folded');
-      if (isAmbientCard) {
-        var ambientId = foldCard.id.replace(/^agent-card-/, '');
-        if (nowFolded) delete ambientExpanded[ambientId]; else ambientExpanded[ambientId] = 1;
-      }
-    }
+  // Jobs layout: a row, a task card or a job head opens its detail in place;
+  // phase, Ambient and Finished heads fold their section.
+  var more = e.target.closest('[data-prompt-toggle]');
+  if (more) {
+    var prompt = more.parentElement;
+    var full = prompt.classList.toggle('full');
+    more.textContent = full ? 'Show less' : 'Show more';
     return;
   }
+  var rowEl = e.target.closest('[data-agent-row]');
+  if (rowEl) { toggleAgentRowDetail(rowEl.getAttribute('data-agent-row')); return; }
+  var phaseEl = e.target.closest('[data-phase-toggle]');
+  if (phaseEl) { toggleAgentPhase(phaseEl.getAttribute('data-phase-toggle')); return; }
+  if (e.target.closest('[data-ambient-toggle]')) { toggleAgentAmbient(); return; }
+  if (e.target.closest('[data-finished-toggle]')) { toggleAgentFinished(); return; }
   var toggle = e.target.closest('[data-agent-toggle="tools"]');
   if (toggle) {
     var group = toggle.parentElement;

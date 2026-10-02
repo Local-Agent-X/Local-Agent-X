@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, readFileSync, existsSync } from "node:fs";
+import { EventEmitter } from "node:events";
+import type { ChildProcess } from "node:child_process";
+import { mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -14,7 +16,8 @@ import {
   persistDevServerStartupFailure,
   type DevServerDeps,
 } from "./dev-server.js";
-import { formatBoundThenDied } from "./dev-server-readiness.js";
+import { formatBoundThenDied, waitForBackend } from "./dev-server-readiness.js";
+import { SESSIONS, startSession, parseNetstatListenerPids, type ProcessSession } from "./process-session.js";
 import { appServeBackendTool } from "./dev-server-tools.js";
 import { clearDevServerActivity, devServerActivity } from "./dev-server-access.js";
 
@@ -388,5 +391,121 @@ describe("appServeBackendTool", () => {
 
   it("devConnectorName is always dev-<appId>", () => {
     expect(devConnectorName("my-app")).toBe("dev-my-app");
+  });
+});
+
+function spawnInTmp(command: string): ProcessSession {
+  const r = startSession(command, tmpLax);
+  if ("error" in r) throw new Error(r.error);
+  return r.session;
+}
+
+describe("waitForBackend — a crash is reported when it happens, not after the next probe", () => {
+  // These are about readiness, not confinement. Where the Windows cage is
+  // installed it launches the shell under its own logon, which cannot always
+  // enter a fresh temp cwd and then exits with its own error, not the child's.
+  let prevSandbox: string | undefined;
+  beforeEach(() => {
+    prevSandbox = process.env.LAX_SANDBOX;
+    process.env.LAX_SANDBOX = "host";
+  });
+  afterEach(() => {
+    if (prevSandbox === undefined) delete process.env.LAX_SANDBOX;
+    else process.env.LAX_SANDBOX = prevSandbox;
+  });
+
+  // The child exits only once the bind probe has been entered, and the probe
+  // never returns: the crash can be seen only if the exit is awaited as an
+  // event rather than checked between probes.
+  it("reports a child that dies while a bind probe is still in flight", async () => {
+    const s = spawnInTmp("while [ ! -f go ]; do sleep 0.05; done; exit 7");
+    let probeCalls = 0;
+    const hungProbe = (): Promise<boolean> => {
+      probeCalls++;
+      writeFileSync(join(tmpLax, "go"), "");
+      return new Promise<boolean>(() => {});
+    };
+    const outcome = await waitForBackend(s.sessionId, 39518, 30_000, hungProbe);
+    expect(outcome).toMatchObject({ status: "crashed", code: 7 });
+    expect(probeCalls).toBe(1);
+  }, 10_000);
+
+  it("waits for the crashed child's stderr before reporting it", async () => {
+    const s = spawnInTmp("echo boom >&2; exit 7");
+    const outcome = await waitForBackend(s.sessionId, 39519, 30_000, async () => false);
+    expect(outcome.status).toBe("crashed");
+    if (outcome.status === "crashed") expect(outcome.output).toContain("boom");
+  }, 10_000);
+
+  // A real child's stderr usually lands before its exit, so ordering is forced
+  // here: output that arrives between the exit and the stdio close is reported.
+  it("reads the crash output only once the child's stdio has closed", async () => {
+    const child = new EventEmitter() as unknown as ChildProcess;
+    let markExited!: () => void;
+    const s: ProcessSession = {
+      sessionId: "px-drain", command: "x", pid: 1, child, startedAt: Date.now(),
+      exitedAt: null, exitCode: null, exitSignal: null,
+      exited: new Promise<void>((r) => { markExited = r; }),
+      stdout: "", stderr: "", truncated: false, totalBytes: 0,
+    };
+    SESSIONS.set(s.sessionId, s);
+    try {
+      const pending = waitForBackend(s.sessionId, 39521, 30_000, async () => false);
+      s.exitCode = 7;
+      s.exitedAt = Date.now();
+      markExited();
+      await Promise.resolve();
+      s.stderr = "late boom";
+      child.emit("close");
+      expect(await pending).toEqual({ status: "crashed", code: 7, signal: null, output: "late boom" });
+    } finally {
+      SESSIONS.delete(s.sessionId);
+    }
+  });
+
+  it("still settles on a bind or the deadline when nothing exits", async () => {
+    expect(await waitForBackend("px-unknown", 39520, 5_000, async () => true)).toEqual({ status: "listening" });
+    expect(await waitForBackend("px-unknown", 39520, 50, async () => false)).toEqual({ status: "timeout", output: "" });
+  });
+
+  it("rejects when the bind probe throws, instead of polling on silently until the deadline", async () => {
+    const failing = async (): Promise<boolean> => { throw new Error("probe failed"); };
+    await expect(waitForBackend("px-unknown", 39522, 5_000, failing)).rejects.toThrow("probe failed");
+  });
+});
+
+describe("parseNetstatListenerPids", () => {
+  const table = [
+    "",
+    "Active Connections",
+    "",
+    "  Proto  Local Address          Foreign Address        State           PID",
+    "  TCP    0.0.0.0:5180           0.0.0.0:0              LISTENING       1111",
+    "  TCP    127.0.0.1:5180         127.0.0.1:62001        ESTABLISHED     2222",
+    "  TCP    0.0.0.0:51800          0.0.0.0:0              LISTENING       3333",
+    "  TCP    [::]:5180              [::]:0                 LISTENING       1111",
+    "  TCP    [::1]:5180             [::1]:62002            ESTABLISHED     6666",
+    "  TCP    [::1]:5181             [::]:0                 LISTENING       4444",
+    "  UDP    0.0.0.0:5180           *:*                                    5555",
+  ].join("\r\n");
+
+  it("returns IPv4 and IPv6 listeners once each, never a connection on the same port", () => {
+    expect(parseNetstatListenerPids(table, 5180)).toEqual([1111]);
+    expect(parseNetstatListenerPids(table, 5181)).toEqual([4444]);
+  });
+
+  it("matches the whole port, so 5180 and 51800 stay apart", () => {
+    expect(parseNetstatListenerPids(table, 51800)).toEqual([3333]);
+    expect(parseNetstatListenerPids(table, 518)).toEqual([]);
+  });
+
+  it("parses a localized table without reading the state word", () => {
+    const german = [
+      "Aktive Verbindungen",
+      "  Proto  Lokale Adresse         Remoteadresse          Status           PID",
+      "  TCP    0.0.0.0:5180           0.0.0.0:0              ABHÖREN          1111",
+      "  TCP    127.0.0.1:5180         127.0.0.1:62001        HERGESTELLT      2222",
+    ].join("\r\n");
+    expect(parseNetstatListenerPids(german, 5180)).toEqual([1111]);
   });
 });

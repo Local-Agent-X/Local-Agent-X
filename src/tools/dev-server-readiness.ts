@@ -29,6 +29,15 @@ export type BackendOutcome =
   | { status: "timeout"; output: string };
 
 const BACKEND_POLL_MS = 400;
+/** After a crash, how long to wait for the child's stdio to close so the tail of
+ *  its stderr is captured. Bounded because a grandchild that inherited the pipe
+ *  can hold it open long after the shell itself died. */
+const CRASH_DRAIN_MS = 300;
+
+/** Is something bound to `port`? Async so a caller can swap in a probe that
+ *  does not block; the default is the synchronous OS lookup. */
+export type BindProbe = (port: number) => Promise<boolean>;
+const pidBindProbe: BindProbe = async (port) => pidsOnPort(port).length > 0;
 
 /** Human descriptor for how a process died — a signal name when killed by one
  *  (the "code null" case), else the numeric exit code. One formatter so the
@@ -43,21 +52,78 @@ function sessionOutput(sessionId: string, lines = 20): string {
   return s ? tailLines(s.stderr || s.stdout || "", lines).trim() : "";
 }
 
-/** Poll until the server binds its port, the process exits, or we time out — so
+/** Wait until the server binds its port, the process exits, or we time out — so
  *  no caller ever treats a dead/never-bound server as running. Both the crashed
  *  and timeout outcomes carry the child's captured output so the caller can
- *  surface (or persist) the actual cause. */
-export async function waitForBackend(sessionId: string, port: number, timeoutMs: number): Promise<BackendOutcome> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    await sleep(BACKEND_POLL_MS);
-    const s = SESSIONS.get(sessionId);
-    if (s && s.exitedAt) {
-      return { status: "crashed", code: s.exitCode, signal: s.exitSignal, output: tailLines(s.stderr || s.stdout || "", 20).trim() };
-    }
-    if (pidsOnPort(port).length > 0) return { status: "listening" };
-  }
-  return { status: "timeout", output: sessionOutput(sessionId) };
+ *  surface (or persist) the actual cause. The exit is awaited as an event rather
+ *  than checked between polls, so a crash is reported as soon as it is observed
+ *  instead of after the next sleep and probe; once the child has exited, neither
+ *  a probe nor the deadline can pre-empt the crash while its output drains. A
+ *  probe that throws rejects the wait, as it did when the probe ran inline. */
+export function waitForBackend(
+  sessionId: string,
+  port: number,
+  timeoutMs: number,
+  probe: BindProbe = pidBindProbe,
+): Promise<BackendOutcome> {
+  const s = SESSIONS.get(sessionId);
+  // Taken now: the exit handler clears session.child, and node can emit 'close'
+  // in the same tick as 'exit', before an exit callback could subscribe to it.
+  const child = s?.child ?? null;
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let stdioClosed = child === null;
+    // Set once the child has exited; from then on only the crash may settle.
+    let reportCrash: (() => void) | null = null;
+    let pollTimer: ReturnType<typeof setTimeout> | undefined;
+    let drainTimer: ReturnType<typeof setTimeout> | undefined;
+    const finish = (): boolean => {
+      if (settled) return false;
+      settled = true;
+      clearTimeout(pollTimer);
+      clearTimeout(deadlineTimer);
+      clearTimeout(drainTimer);
+      child?.off("close", onClose);
+      return true;
+    };
+    const settle = (outcome: BackendOutcome): void => {
+      if (finish()) resolve(outcome);
+    };
+    const onClose = (): void => {
+      stdioClosed = true;
+      reportCrash?.();
+    };
+    child?.once("close", onClose);
+
+    const deadlineTimer = setTimeout(() => settle({ status: "timeout", output: sessionOutput(sessionId) }), timeoutMs);
+    const poll = (): void => {
+      pollTimer = setTimeout(async () => {
+        let bound: boolean;
+        try {
+          bound = await probe(port);
+        } catch (e) {
+          if (finish()) reject(e);
+          return;
+        }
+        if (settled || reportCrash) return;
+        if (bound) settle({ status: "listening" });
+        else poll();
+      }, BACKEND_POLL_MS);
+    };
+    poll();
+
+    if (s) void s.exited.then(() => {
+      if (settled) return;
+      clearTimeout(pollTimer);
+      clearTimeout(deadlineTimer);
+      reportCrash = () => settle({
+        status: "crashed", code: s.exitCode, signal: s.exitSignal,
+        output: tailLines(s.stderr || s.stdout || "", 20).trim(),
+      });
+      if (stdioClosed) reportCrash();
+      else drainTimer = setTimeout(reportCrash, CRASH_DRAIN_MS);
+    });
+  });
 }
 
 /**

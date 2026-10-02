@@ -41,6 +41,10 @@ export interface ProcessSession {
    *  Load-bearing for diagnosing "code null" dev-server deaths: SIGKILL means our
    *  own killProcessGroup did it; anything else (SIGTERM/SIGSEGV/…) is external. */
   exitSignal: NodeJS.Signals | null;
+  /** Settles once the child exits or fails to spawn, after the exit fields are
+   *  recorded — so a waiter reacts to the death itself instead of finding it on
+   *  its next poll, which a blocking port probe can delay by seconds. */
+  exited: Promise<void>;
   stdout: string;
   stderr: string;
   truncated: boolean;
@@ -180,6 +184,7 @@ export function startSession(
     return { error: (e as Error).message };
   }
 
+  let markExited!: () => void;
   const session: ProcessSession = {
     sessionId,
     command,
@@ -191,6 +196,7 @@ export function startSession(
     exitedAt: null,
     exitCode: null,
     exitSignal: null,
+    exited: new Promise<void>((r) => { markExited = r; }),
     stdout: "",
     stderr: "",
     truncated: false,
@@ -229,6 +235,7 @@ export function startSession(
     session.exitedAt = Date.now();
     session.stderr += `\n[spawn error] ${e.message}`;
     unregisterOwnedProcess(child.pid);
+    markExited();
   });
   child.on("exit", (code, signal) => {
     session.exitCode = code;
@@ -242,6 +249,7 @@ export function startSession(
     if (code === null && signal) {
       logger.warn(`session ${sessionId} killed by ${signal} after ${Date.now() - session.startedAt}ms: ${command.slice(0, 80)}`);
     }
+    markExited();
   });
 
   return { session };
@@ -277,17 +285,19 @@ export function killWinPid(pid: number): void {
  */
 export function pidsOnPort(port: number): number[] {
   if (!Number.isInteger(port) || port <= 0) return [];
-  const isWin = process.platform === "win32";
   try {
-    let out: string;
-    if (isWin) {
-      out = execFileSync("powershell.exe", [
-        "-NoProfile", "-Command",
-        `(Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess)`,
-      ], { encoding: "utf-8", timeout: 5000, windowsHide: true });
-    } else {
-      out = execFileSync("lsof", ["-ti", `tcp:${port}`, "-sTCP:LISTEN"], { encoding: "utf-8", timeout: 5000 });
+    if (process.platform === "win32") {
+      // netstat, not a PowerShell Get-NetTCPConnection probe: this call is
+      // synchronous and blocks the event loop, and PowerShell startup costs
+      // ~0.5s idle and up to the full timeout on a loaded machine.
+      // The whole socket table comes back; a busy host can exceed the 1 MiB
+      // default buffer, which would read as "nothing listening".
+      const table = execFileSync("netstat.exe", ["-ano"], {
+        encoding: "utf-8", timeout: 5000, windowsHide: true, maxBuffer: 32 * 1024 * 1024,
+      });
+      return parseNetstatListenerPids(table, port);
     }
+    const out = execFileSync("lsof", ["-ti", `tcp:${port}`, "-sTCP:LISTEN"], { encoding: "utf-8", timeout: 5000 });
     const pids = new Set<number>();
     for (const line of out.split(/\r?\n/)) {
       const n = Number(line.trim());
@@ -297,6 +307,27 @@ export function pidsOnPort(port: number): number[] {
   } catch {
     return [];
   }
+}
+
+/**
+ * PIDs listening on `port` in `netstat -ano` output. A TCP row is a listener
+ * when its foreign address is the unspecified one; the State column is not
+ * read because Windows localizes it (LISTENING, ABHÖREN, ...). The port is the
+ * text after the local address's last ':', compared whole, so 5180 never
+ * matches 51800 and a bracketed IPv6 address parses the same way.
+ */
+export function parseNetstatListenerPids(out: string, port: number): number[] {
+  const pids = new Set<number>();
+  for (const line of out.split(/\r?\n/)) {
+    const cols = line.trim().split(/\s+/);
+    if (cols[0] !== "TCP" || cols.length < 4) continue;
+    const [, local, foreign] = cols;
+    if (foreign !== "0.0.0.0:0" && foreign !== "[::]:0") continue;
+    if (Number(local.slice(local.lastIndexOf(":") + 1)) !== port) continue;
+    const pid = Number(cols[cols.length - 1]);
+    if (Number.isInteger(pid) && pid > 0) pids.add(pid);
+  }
+  return [...pids];
 }
 
 /**

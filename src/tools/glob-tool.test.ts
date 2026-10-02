@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync, utimesSync, realpathSync, type readdir as fsReaddir } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
@@ -12,6 +12,58 @@ import { renderToolResultForModel } from "./result-helpers.js";
 // N of them in one Promise.all, and the Aug 30 OOM (3.9GB heap, 126-206
 // pending FSReqCallbacks) was that fan-out. These tests pin the bounds, the
 // symlink-following the product depends on, AND the unchanged ordinary output.
+
+// The MAX_SCAN cut is a counter in walkBounded, and a real tree wide enough to
+// reach it takes longer to delete than the hook timeout on a slow Windows
+// runner, so that one test walks a virtual tree served by these overrides.
+// Every other test walks the real disk through them, so they answer only
+// inside vtree.root: the separator boundary keeps a sibling that merely shares
+// the prefix on disk, "" means off (a bare `sep` prefix is every POSIX path),
+// and the test clears it in a finally so a failed assertion cannot leave the
+// rest of the file walking the virtual tree.
+const vtree = vi.hoisted(() => ({ root: "", stats: 0 }));
+vi.mock("node:fs", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("node:fs")>();
+	const path = await import("node:path");
+	const inTree = (p: unknown) => {
+		const r = path.resolve(String(p));
+		return vtree.root !== "" && (r === vtree.root || r.startsWith(vtree.root + path.sep));
+	};
+	const realReaddir = actual.readdir as (...a: unknown[]) => void;
+	const dirent = (name: string, isDir: boolean) => ({ name, isFile: () => !isDir, isDirectory: () => isDir, isSymbolicLink: () => false });
+	return {
+		...actual,
+		existsSync: (p: Parameters<typeof actual.existsSync>[0]) => inTree(p) || actual.existsSync(p),
+		readdir: (...args: unknown[]) => {
+			if (!inTree(args[0])) return realReaddir(...args);
+			const cb = args[args.length - 1] as (err: null, entries: unknown[]) => void;
+			const dir = path.resolve(String(args[0]));
+			const n = Number(path.basename(dir).slice(1));
+			const entries = dir === vtree.root
+				? Array.from({ length: 10 }, (_, d) => dirent(`d${d}`, true))
+				: Array.from({ length: 510 }, (_, i) => dirent(`f${i * 10 + n}.txt`, false));
+			setImmediate(() => cb(null, entries));
+		},
+	};
+});
+vi.mock("node:fs/promises", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("node:fs/promises")>();
+	const path = await import("node:path");
+	const inTree = (p: unknown) => {
+		const r = path.resolve(String(p));
+		return vtree.root !== "" && (r === vtree.root || r.startsWith(vtree.root + path.sep));
+	};
+	const realStat = actual.stat as (...a: unknown[]) => Promise<unknown>;
+	return {
+		...actual,
+		stat: async (...args: unknown[]) => {
+			if (!inTree(args[0])) return realStat(...args);
+			vtree.stats++;
+			const n = parseInt(path.basename(String(args[0])).slice(1), 10);
+			return { mtimeMs: 1_700_000_000_000 + n, size: 0, isDirectory: () => false };
+		},
+	};
+});
 
 let root: string;
 
@@ -223,18 +275,21 @@ describe("glob tool — the walk is bounded", () => {
 	});
 
 	it(`cuts the walk off at ${MAX_SCAN} matches, keeps at most 200 entries and says so`, async () => {
-		const dir = join(root, "wide");
-		for (let d = 0; d < 10; d++) mkdirSync(join(dir, `d${d}`), { recursive: true });
-		const total = MAX_SCAN + 100;
-		for (let i = 0; i < total; i++) writeFileSync(join(dir, `d${i % 10}`, `f${i}.txt`), "");
-
-		const res = await run("**/*.txt", dir);
-		const lines = res.content.split("\n");
-		expect(lines).toHaveLength(201);
-		expect(lines[200]).toMatch(new RegExp(`^WARNING: the walk stopped after ${MAX_SCAN} matches`));
-		expect(lines[200]).toContain("narrow the path");
-		expect(res.isError).toBeUndefined();
-		expect(res.metadata).toMatchObject({ count: 200, capped: true, scan_truncated: true });
+		// resolve(): the walker asks for the drive-anchored spelling on Windows
+		// (see the /virtual test below), and the overrides resolve their side too.
+		vtree.root = resolve("/virtual-glob-wide");
+		try {
+			const res = await globTool.execute({ pattern: "**/*.txt", path: vtree.root });
+			const lines = res.content.split("\n");
+			expect(lines).toHaveLength(201);
+			expect(lines[200]).toMatch(new RegExp(`^WARNING: the walk stopped after ${MAX_SCAN} matches`));
+			expect(lines[200]).toContain("narrow the path");
+			expect(res.isError).toBeUndefined();
+			expect(res.metadata).toMatchObject({ count: 200, capped: true, scan_truncated: true });
+			expect(vtree.stats).toBe(MAX_SCAN);
+		} finally {
+			vtree.root = "";
+		}
 	});
 
 	it(`stops issuing readdir()s once ${MAX_SCAN} matches are in hand (destroy reaches the walker)`, async () => {

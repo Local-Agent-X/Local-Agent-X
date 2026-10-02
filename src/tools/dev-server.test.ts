@@ -418,7 +418,9 @@ describe("waitForBackend — a crash is reported when it happens, not after the 
   // never returns: the crash can be seen only if the exit is awaited as an
   // event rather than checked between probes.
   it("reports a child that dies while a bind probe is still in flight", async () => {
-    const s = spawnInTmp("while [ ! -f go ]; do sleep 0.05; done; exit 7");
+    // A script file: the shell policy refuses `;` chaining in a command line.
+    writeFileSync(join(tmpLax, "wait-for-go.sh"), "while [ ! -f go ]; do sleep 0.05; done\nexit 7\n");
+    const s = spawnInTmp("bash wait-for-go.sh");
     let probeCalls = 0;
     const hungProbe = (): Promise<boolean> => {
       probeCalls++;
@@ -431,7 +433,7 @@ describe("waitForBackend — a crash is reported when it happens, not after the 
   }, 10_000);
 
   it("waits for the crashed child's stderr before reporting it", async () => {
-    const s = spawnInTmp("echo boom >&2; exit 7");
+    const s = spawnInTmp("echo boom >&2 && exit 7");
     const outcome = await waitForBackend(s.sessionId, 39519, 30_000, async () => false);
     expect(outcome.status).toBe("crashed");
     if (outcome.status === "crashed") expect(outcome.output).toContain("boom");

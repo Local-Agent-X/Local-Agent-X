@@ -180,12 +180,17 @@ export type ServerEvent =
   // consumers must treat it as optional and fall back to a generic icon.
   | { type: "bg_op_queued"; opId: string; task: string; provider: string; lane: string; queuePosition: number; parentOpId?: string; opType?: string }
   | { type: "bg_op_queue_reordered"; opId: string; queuePosition: number }
-  | { type: "bg_op_started"; opId: string; task: string; provider: string; parentOpId?: string; opType?: string }
+  // `startedAt` (optional) is the op record's ISO start time, so the agents
+  // panel's elapsed clock counts from the real start rather than from when the
+  // event happened to arrive.
+  | { type: "bg_op_started"; opId: string; task: string; provider: string; parentOpId?: string; opType?: string; startedAt?: string }
   // `totalTokens` (optional) is the running per-op token total, forwarded from
   // a turn_committed's usage. The agents panel scales a per-card token bar off
   // it. Additive/optional — absent for progress lines that don't carry usage
   // (lifecycle markers, errors) and for ops that don't emit canonical turns.
-  | { type: "bg_op_progress"; opId: string; line: string; totalTokens?: number }
+  // `model` (optional) rides on the same turn_committed relay: the model that
+  // served the round, for the panel's Model column. Set-once on the client.
+  | { type: "bg_op_progress"; opId: string; line: string; totalTokens?: number; model?: string }
   // `headless` (optional) marks a completion whose originating session is a
   // headless background one (the ONE predicate: chat-ws/state.ts
   // isHeadlessSession — dream-/skill-review-/eval_). Stamped server-side so

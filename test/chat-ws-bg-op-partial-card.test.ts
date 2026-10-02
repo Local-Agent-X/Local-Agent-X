@@ -24,6 +24,9 @@ const bgSource = readFileSync(join(process.cwd(), "public/js/chat-ws-handler-bg-
 const escSource = readFileSync(join(process.cwd(), "public/js/shared-escape.js"), "utf8");
 const renderSource = readFileSync(join(process.cwd(), "public/js/chat-agent-feeds-render.js"), "utf8");
 const feedsSource = readFileSync(join(process.cwd(), "public/js/chat-agent-feeds.js"), "utf8");
+const ambientSource = readFileSync(join(process.cwd(), "public/js/chat-agent-feeds-ambient.js"), "utf8");
+const jobsSource = readFileSync(join(process.cwd(), "public/js/chat-agent-feeds-jobs.js"), "utf8");
+const syncSource = readFileSync(join(process.cwd(), "public/js/chat-agent-feeds-sync.js"), "utf8");
 
 function loadBgOps() {
   const addAgentFeed = vi.fn();
@@ -51,10 +54,11 @@ function loadBgOps() {
 
 function loadRender() {
   // eslint-disable-next-line no-new-func
-  const factory = new Function(escSource + "\n" + renderSource + "\nreturn { renderAgentCard, agentStatusLabel, isTerminalStatus };");
+  const factory = new Function(escSource + "\n" + renderSource + "\n" + ambientSource + "\n" + jobsSource + "\nreturn { renderAgentCard, renderTaskCard, jobOutcome, isTerminalStatus };");
   return factory() as {
     renderAgentCard: (agent: Record<string, unknown>) => string;
-    agentStatusLabel: (status: string) => string;
+    renderTaskCard: (agent: Record<string, unknown>, now: number, expanded?: boolean) => string;
+    jobOutcome: (status: string) => { label: string; cls: string };
     isTerminalStatus: (status: unknown) => boolean;
   };
 }
@@ -92,53 +96,55 @@ describe("bg_op_completed status partial — the chat card says stopped (unfinis
   });
 });
 
-describe("agent card — the partial token renders as a terminal, amber-classed card labelled stopped (unfinished)", () => {
-  it("agentStatusLabel: the four terminal labels", () => {
+describe("agent card — the partial token renders as a terminal, amber-classed task labelled Stopped", () => {
+  it("jobOutcome: the four terminal labels; partial is Stopped, never a fraction of something", () => {
     const r = loadRender();
-    expect(r.agentStatusLabel("completed")).toBe("completed");
-    expect(r.agentStatusLabel("failed")).toBe("failed");
-    expect(r.agentStatusLabel("cancelled")).toBe("cancelled");
-    expect(r.agentStatusLabel("partial")).toBe("stopped (unfinished)");
+    expect(r.jobOutcome("completed")).toEqual({ label: "Completed", cls: "ok" });
+    expect(r.jobOutcome("failed")).toEqual({ label: "Failed", cls: "failed" });
+    expect(r.jobOutcome("cancelled")).toEqual({ label: "Cancelled", cls: "cancelled" });
+    expect(r.jobOutcome("partial")).toEqual({ label: "Stopped", cls: "partial" });
   });
 
-  it("partial is terminal: the card folds, carries the .partial class, shows the label and no live controls", () => {
+  it("partial is terminal: the task carries the .partial class, shows the label and no live controls", () => {
     const r = loadRender();
     expect(r.isTerminalStatus("partial")).toBe(true);
-    const html = r.renderAgentCard({ id: "op-p", name: "Worker: op-p", status: "partial", output: "" });
-    expect(html).toContain('class="agent-feed-card partial folded"');
+    const html = r.renderTaskCard({ id: "op-p", name: "Worker: op-p", status: "partial", output: "" }, Date.now());
+    expect(html).toContain('class="job-task partial"');
+    expect(html).toContain('class="agent-feed-card partial"');
     expect(html).toContain('data-terminal="1"');
-    expect(html).toContain("stopped (unfinished)");
+    expect(html).toContain(">Stopped<");
     expect(html).not.toContain(">partial<");
     for (const action of ["pause", "redirect", "cancel"]) expect(html).not.toContain(`data-agent-action="${action}"`);
   });
 
-  it("the live status rewrite in updateAgentFeed goes through the same label", () => {
-    // chat-agent-feeds.js reaches for the render file's helpers at call time;
-    // feed it the real render source and a real DOM card, then flip the status.
-    document.body.innerHTML = "";
-    // agentFeedsData / agentFeedsOpen / agentFeedsAutoOpen live in the autoopen
-    // sibling, isAmbientType in the ambient one; the card record is seeded
-    // directly so the targeted-rewrite path (card exists) is what runs.
+  it("the live status change in updateAgentFeed rebuilds the list with the same label", () => {
+    // chat-agent-feeds.js reaches for the layout and render helpers at call
+    // time; feed it the real sources and a real list, then flip the status.
+    document.body.innerHTML = '<span id="agent-count"></span><div id="agent-feeds-list"></div>';
     const factory = new Function(
       "document",
-      "var agentFeedsData = {}; var agentFeedsOpen = false; var agentFeedsAutoOpen = false;\n"
-        + "function isAmbientType() { return false; }\n"
-        + escSource + "\n" + renderSource + "\n" + feedsSource
-        + "\nreturn { updateAgentFeed, renderAgentCard, agentFeedsData };",
+      "var agentFeedsData = {}; var agentFeedsOpen = false; var agentFeedsAutoOpen = false; var setInterval = function() {};\n"
+        + escSource + "\n" + renderSource + "\n" + ambientSource + "\n" + jobsSource + "\n" + feedsSource + "\n" + syncSource
+        + "\nreturn { updateAgentFeed, addAgentFeed, agentFeedsData };",
     );
     const api = factory(document) as {
       updateAgentFeed: (id: string, u: Record<string, unknown>) => void;
-      renderAgentCard: (a: Record<string, unknown>) => string;
+      addAgentFeed: (a: Record<string, unknown>) => void;
       agentFeedsData: Record<string, Record<string, unknown>>;
     };
-    const live = { id: "op-live", name: "Worker: op-live", status: "working", output: "" };
-    api.agentFeedsData["op-live"] = live;
-    document.body.innerHTML = api.renderAgentCard(live);
+    api.addAgentFeed({ id: "op-live", name: "Worker: op-live", status: "working", output: "", startedAt: Date.now() - 5000 });
+    expect(document.getElementById("agent-count")!.textContent).toBe("1");
     api.updateAgentFeed("op-live", { status: "partial", output: "PARTIAL — stopped" });
     const card = document.getElementById("agent-card-op-live")!;
     expect(card.className).toContain("agent-feed-card partial");
     expect(card.getAttribute("data-terminal")).toBe("1");
-    expect(card.querySelector(".agent-feed-status")!.textContent).toContain("stopped (unfinished)");
+    const row = document.getElementById("agent-row-op-live")!;
+    expect(row.className).toContain("job-task partial");
+    expect(row.querySelector(".job-row-status")!.textContent).toBe("Stopped");
+    // Finished work leaves the live count and lands in the drawer.
+    expect(document.getElementById("agent-count")!.textContent).toBe("0");
+    expect(document.querySelector(".job-finished-title")!.textContent).toContain("Finished 1");
+    expect(api.agentFeedsData["op-live"].endedAt).toBeTypeOf("number");
   });
 });
 
@@ -146,7 +152,8 @@ describe("the CSS carries a partial rule distinct from failed and cancelled", ()
   it(".agent-feed-card.partial is amber (var(--warn)), not danger or muted", () => {
     const css = readFileSync(join(process.cwd(), "public/css/app.css"), "utf8");
     expect(css).toMatch(/\.agent-feed-card\.partial\{border-left-color:var\(--warn\)/);
-    expect(css).toMatch(/\.agent-feed-card\.partial \.agent-status-dot\{background:var\(--warn\)/);
+    expect(css).toMatch(/\.job-task\.paused,\.job-task\.partial\{border-left-color:var\(--warn\)/);
+    expect(css).toMatch(/\.job-row-status\.partial,\.job-row-status\.paused\{color:var\(--warn\)/);
   });
 });
 

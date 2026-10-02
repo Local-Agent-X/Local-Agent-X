@@ -50,13 +50,14 @@ function iconForType(type) {
 // live; it simply stays at 0 (label blank) for cards that never report usage.
 //
 // formatTokens — compact human label. <1000 → the bare integer; ≥1000 → one
-//   decimal "k" (12100 → "12.1k"). tabular-nums in the CSS keeps the digits
-//   from reflowing as the count ticks up.
+//   decimal "k" (12100 → "12.1k"); ≥1,000,000 → one decimal "M" (a job's
+//   roll-up). tabular-nums in the CSS keeps the digits from reflowing.
 function formatTokens(n) {
   var t = Number(n) || 0;
   if (t < 0) t = 0;
   if (t < 1000) return String(Math.round(t));
-  return (t / 1000).toFixed(1) + 'k';
+  if (t < 1000000) return (t / 1000).toFixed(1) + 'k';
+  return (t / 1000000).toFixed(1) + 'M';
 }
 
 // tokenBarFillPct — map a running total to a bar-fill percentage [0..100].
@@ -87,15 +88,6 @@ function isTerminalStatus(status) {
   return !!TERMINAL_AGENT_STATUSES[String(status == null ? '' : status).trim().toLowerCase()];
 }
 
-// Pure: the human-readable label for a card status. The status token itself
-// is the card's CSS class and terminal key, so it stays a bare word; only
-// `partial` needs words the token doesn't carry — "stopped (unfinished)" says
-// what happened where "partial" alone reads as a fraction of something. Both
-// the initial render and updateAgentFeed's status rewrite go through here.
-function agentStatusLabel(status) {
-  return status === 'partial' ? 'stopped (unfinished)' : status;
-}
-
 // Single owner of the control row. Both the initial render and
 // updateAgentFeed's targeted rewrite call this — they used to carry separate
 // copies of the markup, which had already drifted (the rewrite silently
@@ -115,22 +107,10 @@ function renderAgentCardControls(safeId, status) {
     '<button class="agent-ctrl-btn cancel" data-agent-action="cancel" data-agent-id="' + safeId + '">Cancel</button>';
 }
 
-// Pure: decide a card's folded state AFTER an update, so updateAgentFeed's
-// className rewrite doesn't wipe the fold. A card folds by DEFAULT the moment
-// it FIRST goes terminal; once terminal we preserve whatever fold/expand the
-// user last set — a late trailing event must never pop a finished card open.
-//   nowTerminal  — isTerminalStatus(new status)
-//   prevTerminal — was the card already terminal before this update
-//   prevFolded   — did the card carry the `folded` class before this update
-function foldedAfterUpdate(nowTerminal, prevTerminal, prevFolded) {
-  if (nowTerminal && !prevTerminal) return true; // first terminal render → fold
-  return !!prevFolded;                           // preserve user's / prior state
-}
-
 // Result-link markup for a URL-producing op (build_app URL, cron report, …).
-// Single chokepoint shared by updateAgentFeed's live write, renderAgentCard,
-// and renderAmbientCard — so the link renders identically live and across
-// full re-renders (chat-switch used to silently drop it).
+// Single chokepoint shared by updateAgentFeed's live write and renderAgentCard,
+// so the link renders identically live and across full re-renders
+// (chat-switch used to silently drop it).
 //
 // /api/* and loopback URLs need the auth token appended — Electron child
 // windows (and external browser tabs) don't carry the parent's Authorization
@@ -256,22 +236,12 @@ function buildAgentFeedTree(dataMap) {
   return nodes;
 }
 
-// childrenHtml (optional): pre-rendered markup for cards spawned BY this
-// worker (parentOpId === this card's id), from C6 run-lineage nesting.
-// When present, the card is wrapped in an `.agent-feed-branch` and the
-// children ride in a SIBLING `.agent-feed-children` container — NOT inside
-// `#agent-card-<id>` — so updateAgentFeed's `card.querySelector('.worker-*')`
-// targeted writes and the 1s resync only ever touch THIS card's own body,
-// never a nested child's. When absent, the returned markup is byte-identical
-// to the pre-nesting flat card (keeps the flat-list path unchanged).
-function renderAgentCard(agent, childrenHtml) {
-  // Icon keys off the op's real TYPE (threaded via bg_op_* opType → the card
-  // record's `type`), falling back to the legacy `role` then a generic default.
-  var icon = iconForType(agent.type || agent.role);
-  // SUPERVISOR (Part A): the orchestrator card reads as the tree ROOT — a
-  // persistent accent left-border (workers only light theirs while working),
-  // driven off this class. updateAgentFeed re-appends it on its className
-  // rewrite so the accent survives status changes.
+// The detail under a jobs-layout row (chat-agent-feeds-jobs.js). The row owns
+// the name, status and elapsed time, so the card is body only: the latest
+// activity line, the worker's own text, the collapsible tool trace, the token
+// meter, the result link, the controls and the redirect input. Every element
+// keeps the selector updateAgentFeed and the 1s sync write to.
+function renderAgentCard(agent) {
   var isSupervisor = agent.type === 'orchestrator' || agent.type === 'supervisor';
   var status = agent.status || 'working';
   var streamText = agent.streamText || '';
@@ -279,53 +249,19 @@ function renderAgentCard(agent, childrenHtml) {
   var outputLines = output.split('\n').filter(function(l) { return l.trim().length > 0; });
   var initialToolCount = outputLines.length;
   var latestLine = outputLines.length > 0 ? outputLines[outputLines.length - 1] : '';
-  // Terminal cards fold to a one-line row by default (the "calm" feature). The
-  // full body stays in the DOM (CSS hides it) so updateAgentFeed's targeted
-  // writes + the 1s resync never miss their selectors — a late trailing event
-  // must not throw or pop a finished card open. `data-terminal` lets the CSS
-  // show the pointer/chevron affordance and lets updateAgentFeed preserve the
-  // user's manual fold/expand across late re-renders.
+  // `data-terminal` lets sendAgentRedirect refuse an instruction to a finished op.
   var terminal = isTerminalStatus(status);
   var isActive = !terminal;
-  var foldedClass = terminal ? ' folded' : '';
-  var termAttr = terminal ? '1' : '0';
   var safeId = esc(agent.id);
-  // Body shape mirrors the main chat layout, smaller, in the right rail:
-  //   .worker-text         — worker's reasoning (worker_stream deltas), like
-  //                          the assistant text bubble in main chat.
-  //   .worker-tools-group  — collapsible activity-group of tool calls /
-  //                          lifecycle markers (bg_op_progress + queued/
-  //                          started/completed lines), default collapsed,
-  //                          click to expand. Mirrors the "⚙ Agent activity
-  //                          (N)" pattern on the main chat side.
-  // worker-latest = ALWAYS-visible most-recent bg_op_progress line.
-  // Without this, the only liveness cue on a collapsed card is the small
-  // tools-count badge — easy to miss between visual saccades. Field
-  // report: "I see it work then it freezes then I leave and come back
-  // and it jumps then I can see it live again". The badge was actually
-  // ticking the whole time; the user couldn't tell because the body was
-  // collapsed and 1 line/10s of count change is below their attention
-  // threshold. A real text preview right under the name updates on every
-  // event and is impossible to miss.
-  //
-  // Worker activity defaults to OPEN while the worker is active so
-  // users see the full stream without needing to expand. Auto-collapses
-  // on terminal state via updateAgentFeed so finished cards don't
-  // accumulate visual weight.
+  // The tool trace defaults to OPEN while the worker is live so the full
+  // stream shows without a click, and closed once it has finished.
   var bodyDisplay = isActive ? 'block' : 'none';
   var bodyOpenClass = isActive ? ' open' : '';
   var chevron = isActive ? '▼' : '▶';
-  // Token meter (Part B): blank label until real usage arrives so a card with
-  // no reported tokens shows an empty track, never a misleading "0 tok".
+  // Token meter: blank label until real usage arrives, never a misleading "0 tok".
   var tokTotal = agent.totalTokens;
   var tokLabel = (tokTotal != null && Number(tokTotal) > 0) ? (formatTokens(tokTotal) + ' tok') : '';
-  var cardHtml = '<div id="agent-card-' + safeId + '" class="agent-feed-card ' + status + foldedClass + (isSupervisor ? ' supervisor' : '') + '" data-terminal="' + termAttr + '">' +
-    '<div class="agent-feed-header">' +
-      '<span class="agent-feed-icon">' + icon + '</span>' +
-      '<span class="agent-feed-name">' + esc(agent.name || agent.id) + '</span>' +
-      '<span class="agent-feed-status"><span class="agent-status-dot"></span> ' + esc(agentStatusLabel(status)) + '</span>' +
-      '<button class="agent-feed-dismiss" title="Dismiss card (does not cancel)" data-agent-action="dismiss" data-agent-id="' + safeId + '">×</button>' +
-    '</div>' +
+  return '<div id="agent-card-' + safeId + '" class="agent-feed-card ' + status + (isSupervisor ? ' supervisor' : '') + '" data-terminal="' + (terminal ? '1' : '0') + '">' +
     '<div class="worker-latest" style="padding:.25rem .55rem;font-family:var(--mono,monospace);font-size:.68rem;color:var(--muted,#888);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border-bottom:1px solid var(--border,#333);min-height:1.2em">' + esc(latestLine) + '</div>' +
     '<div class="worker-text" style="white-space:pre-wrap;font-size:.78rem;line-height:1.35;color:var(--text,#ddd);padding:.4rem .55rem;max-height:240px;overflow-y:auto">' + esc(streamText) + '</div>' +
     '<div class="worker-tools-group' + bodyOpenClass + '" style="border-top:1px solid var(--border,#333);background:rgba(0,0,0,0.18)">' +
@@ -347,33 +283,6 @@ function renderAgentCard(agent, childrenHtml) {
     '<div class="agent-feed-controls">' + renderAgentCardControls(safeId, status) + '</div>' +
     '<input class="agent-redirect-input" id="agent-redirect-' + safeId + '" data-agent-redirect="' + safeId + '" placeholder="New instructions..." />' +
   '</div>';
-  // No children → return the flat card unchanged (identical to pre-C6).
-  if (!childrenHtml) return cardHtml;
-  // Children present → wrap card + a sibling `.agent-feed-children` branch,
-  // mirroring org-chart's `.org-branch` / `.org-children`. The card id stays
-  // a direct, clean `#agent-card-<id>` node; nested cards live outside it.
-  return '<div class="agent-feed-branch">' + cardHtml +
-    '<div class="agent-feed-children">' + childrenHtml + '</div>' +
-  '</div>';
-}
-
-// Synthetic "fan-out" group header for the C6 run-lineage tree: when ≥2
-// root worker cards share the same NON-card parentOpId (e.g. the chat turn
-// that launched a batch — which is itself not a worker card), they render
-// nested under one lightweight header so a fan-out reads as one tree
-// (supervisor → workers) instead of a flat list. This is NOT an
-// `.agent-feed-card` and carries no id, so it is never counted by
-// _updateAgentCount and never picked up by updateAgentFeed's targeted
-// DOM writes. `count` = number of direct sibling worker cards.
-function renderAgentFeedGroup(parentOpId, count, childrenHtml) {
-  return '<div class="agent-feed-group">' +
-    '<div class="agent-feed-group-header">' +
-      '<span class="agent-feed-group-icon">🎯</span>' +
-      '<span class="agent-feed-group-title">Fan-out</span>' +
-      '<span class="agent-feed-group-count">' + Number(count || 0) + ' agents</span>' +
-    '</div>' +
-    '<div class="agent-feed-children">' + (childrenHtml || '') + '</div>' +
-  '</div>';
 }
 
 function renderAgentCard_inline(agent) {
@@ -388,7 +297,6 @@ function renderAgentCard_inline(agent) {
   '</div>';
 }
 
-// ── AMBIENT background agents moved to chat-agent-feeds-ambient.js ──
-// (AMBIENT_OP_TYPES / isAmbientType / partitionAmbient / ambientStatusLabel /
-// renderAmbientCard / renderAmbientRegion) — split out when this file hit the
-// 400-LOC gate. Load order: that script rides right after this one in app.html.
+// AMBIENT_OP_TYPES / isAmbientType / partitionAmbient / ambientStatusLabel live
+// in chat-agent-feeds-ambient.js; the jobs layout (header, phase tables, rows,
+// Finished drawer) in chat-agent-feeds-jobs.js. Both load after this file.

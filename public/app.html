@@ -344,11 +344,10 @@
         <button id="agent-feeds-autoopen-toggle" class="agent-feeds-autoopen on" onclick="toggleAgentFeedsAutoOpen()" title="Auto-open this panel when an agent spawns. Click to toggle.">AUTO</button>
       </div>
       <div id="agents-tab-body" class="side-tab-body">
+        <!-- One list: running jobs and tasks, the Ambient group (dream ☾ and
+             cron ◎ ops), and the Finished drawer. Rendered by
+             renderBackgroundTasks (chat-agent-feeds-jobs.js). -->
         <div id="agent-feeds-list" class="agent-feeds-list"></div>
-        <!-- AMBIENT dock: background dream (☾) + research/cron (◎) agents dock here,
-             in their own quiet bottom corner apart from the active build tree.
-             Populated by renderAmbientRegion; hidden (display:none) while empty. -->
-        <div id="agent-feeds-ambient" class="agent-feeds-ambient" style="display:none"></div>
       </div>
       <div id="artifacts-tab-body" class="side-tab-body" style="display:none">
         <div id="artifacts-filters" class="artifacts-filters"></div>
@@ -1698,12 +1697,14 @@
 <!-- chat-agent-feeds split: render + actions before core so the core's
      _renderAgentFeedsList sees renderAgentCard and updateAgentFeed's
      control-button HTML references on*Agent handlers. -->
-<script src="/js/chat-agent-feeds-render.js?v=v2"></script>
-<script src="/js/chat-agent-feeds-ambient.js?v=v1"></script>
-<script src="/js/chat-agent-feeds-actions.js?v=v2"></script>
+<script src="/js/chat-agent-feeds-render.js?v=v3"></script>
+<script src="/js/chat-agent-feeds-ambient.js?v=v2"></script>
+<script src="/js/chat-agent-feeds-jobs.js?v=v1"></script>
+<script src="/js/chat-agent-feeds-actions.js?v=v3"></script>
 <script src="/js/chat-agent-feeds-autoopen.js?v=v1"></script>
-<script src="/js/chat-agent-feeds.js?v=v6"></script>
+<script src="/js/chat-agent-feeds.js?v=v7"></script>
 <script src="/js/chat-agent-feeds-resize.js?v=v1"></script>
+<script src="/js/chat-agent-feeds-sync.js?v=v1"></script>
 <script src="/js/chat-artifacts.js?v=v2"></script>
 <script src="/js/browser-tab-strip.js?v=v5"></script>
 <script src="/js/browser-workspace.js?v=v1"></script>
@@ -1749,7 +1750,7 @@
      dispatchBgOpEvent, dispatchChatStreamEvent, handleAgentFeedEvent,
      renderBuildRunSummary. -->
 <script src="/js/chat-ws-handler-build-summary.js?v=v1"></script>
-<script src="/js/chat-ws-handler-bg-ops.js?v=v1"></script>
+<script src="/js/chat-ws-handler-bg-ops.js?v=v2"></script>
 <script src="/js/chat-ws-handler-misc.js?v=v1"></script>
 <script src="/js/chat-ws-handler-chat-events.js?v=v2"></script>
 <script src="/js/chat-ws-process-relay.js?v=v1"></script>

@@ -43,7 +43,7 @@ function handleBgOpStarted(msg) {
     // updateAgentFeed is no-op if the card doesn't exist; addAgentFeed
     // is idempotent on existing IDs. So calling both is safe.
     if (typeof updateAgentFeed === 'function') {
-      updateAgentFeed(msg.event.opId, { status: 'working', output: '▶ started\n', sessionId: msg.sessionId, lastActivityMs: Date.now(), parentOpId: msg.event.parentOpId, type: msg.event.opType });
+      updateAgentFeed(msg.event.opId, { status: 'working', output: '▶ started\n', sessionId: msg.sessionId, lastActivityMs: Date.now(), parentOpId: msg.event.parentOpId, type: msg.event.opType, startedAt: bgOpStartedAtMs(msg.event.startedAt) });
     }
     if (typeof addAgentFeed === 'function') {
       // Friendlier card name. Cron missions arrive with task =
@@ -76,10 +76,18 @@ function handleBgOpStarted(msg) {
         // C6 run-lineage parent (see handleBgOpQueued). Set-once in the
         // agent record so re-broadcasts never clobber it.
         parentOpId: msg.event.parentOpId,
+        startedAt: bgOpStartedAtMs(msg.event.startedAt),
       });
     }
     return true;
   } catch(e) { console.warn('[bg_op_started] sidebar update failed', e); return false; }
+}
+
+// The op record's ISO start when the event carries one, else arrival time:
+// the panel's elapsed clock counts from here (chat-agent-feeds-jobs.js).
+function bgOpStartedAtMs(iso) {
+  var t = iso ? Date.parse(iso) : NaN;
+  return isNaN(t) ? Date.now() : t;
 }
 
 function handleBgOpProgress(msg) {
@@ -91,6 +99,7 @@ function handleBgOpProgress(msg) {
       var upd = { output: (msg.event.line || '') + '\n', lastActivityMs: Date.now() };
       if (msg.event.status) upd.status = msg.event.status;
       if (typeof msg.event.totalTokens === 'number') upd.totalTokens = msg.event.totalTokens;
+      if (typeof msg.event.model === 'string' && msg.event.model) upd.model = msg.event.model;
       updateAgentFeed(msg.event.opId, upd);
     }
     return true;
@@ -184,7 +193,7 @@ function handleBgOpNudge(msg) {
 // Card status token for a bg_op_completed status. The token is the card's CSS
 // class AND its terminal check (chat-agent-feeds-render.js TERMINAL_AGENT_
 // STATUSES), so it must stay a bare word; the human label is derived from it
-// at render time by agentStatusLabel ("stopped (unfinished)" for partial).
+// at render time by jobOutcome ("Stopped" for partial).
 // `partial` = the op stopped at an iteration checkpoint with its work saved
 // but unfinished (checkpoint-stop.ts). It is neither done nor failed, and it
 // was never cancelled — before this it fell through to the 'cancelled' label,

@@ -68,14 +68,17 @@ describe("renderAgentCardControls — pause/resume toggle", () => {
 });
 
 describe("worker card control markup has exactly one owner", () => {
-  it("neither render site hand-rolls its own control buttons", () => {
-    // Both call sites must delegate. If a future edit inlines the markup
-    // again, the terminal rule silently stops applying at that site.
+  it("no other file hand-rolls the control row", () => {
+    // The core never writes controls: a status change rebuilds the list, so
+    // the row and its detail come back through renderAgentCard. If a future
+    // edit inlines the markup elsewhere, the terminal rule silently stops
+    // applying at that site.
     const render = readFileSync(join(here, "../public/js/chat-agent-feeds-render.js"), "utf8");
-    const update = readFileSync(join(here, "../public/js/chat-agent-feeds.js"), "utf8");
+    const core = readFileSync(join(here, "../public/js/chat-agent-feeds.js"), "utf8");
+    const jobs = readFileSync(join(here, "../public/js/chat-agent-feeds-jobs.js"), "utf8");
 
-    expect(update).toContain("renderAgentCardControls(");
-    expect(update).not.toContain('data-agent-action="redirect"');
+    expect(core).not.toContain("data-agent-action=");
+    expect(jobs).not.toContain('data-agent-action="redirect"');
     // The render file defines the helper, so it legitimately contains the
     // markup once — inside that function and nowhere else.
     expect(render.match(/data-agent-action="redirect"/g) ?? []).toHaveLength(1);

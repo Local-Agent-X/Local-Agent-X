@@ -257,8 +257,10 @@ export class ContainerExecutionBackend implements ExecutionBackend {
       // Expiry and liveness are sampled before the claim read, so a stall that spans
       // the deadline still sees a claim the worker wrote during it instead of failing
       // (and the launch path then tearing down) a container that already owns the op.
+      // A claim on disk also outranks a failed inspect for the same reason.
       const expired = this.now() > deadline;
-      const state = await this.runtime.inspect(container.containerId);
+      const inspected = await this.runtime.inspect(container.containerId)
+        .then((state) => ({ state }), (error: unknown) => ({ error }));
       const claim = readProcessExecutionClaim(opId);
       if (claim) {
         if (claim.ownerKind !== "container" || claim.backendId !== this.id
@@ -269,7 +271,8 @@ export class ContainerExecutionBackend implements ExecutionBackend {
         }
         return claim;
       }
-      if (!state?.running) throw new Error("container worker exited before durable handoff");
+      if ("error" in inspected) throw inspected.error;
+      if (!inspected.state?.running) throw new Error("container worker exited before durable handoff");
       if (expired) throw new Error("container worker handoff timed out");
       await delay(this.claimPollMs);
     }

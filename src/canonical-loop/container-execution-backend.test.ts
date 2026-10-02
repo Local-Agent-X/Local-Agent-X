@@ -126,11 +126,11 @@ describe("ContainerExecutionBackend", () => {
 
   it.each(["delay", "inspect"] as const)(
     "reattaches after start-before-claim when the claim lands in the %s window past the deadline",
-    async (window) => {
+    async (stallWindow) => {
       let clock = 0;
       const runtime = fakeRuntime();
       const backend = backendWith(runtime, fakeProjection(), () => clock);
-      const op = fixtureOp(`start-crash-${window}`, backend);
+      const op = fixtureOp(`start-crash-${stallWindow}`, backend);
       const placement = op.canonical!.executionPlacement!;
       let intent = createContainerLaunchIntent({ opId: op.id, placement, token: "kept-token",
         name: "lax-op-started", imageReference, imageId });
@@ -143,7 +143,7 @@ describe("ContainerExecutionBackend", () => {
         expect(claimProcessExecution(claim(op, placement.targetId,
           placement.revision, "kept-token"))).toBe(true);
       };
-      if (window === "delay") {
+      if (stallWindow === "delay") {
         setTimeout(claimAcrossDeadline, 0);
       } else {
         const inspect = vi.mocked(runtime.inspect);
@@ -160,6 +160,33 @@ describe("ContainerExecutionBackend", () => {
       expect(runtime.wait).toHaveBeenCalledWith(containerId);
     },
   );
+
+  it.each([
+    { name: "the inspect fails", slug: "inspect-fails",
+      inspectOutcome: () => Promise.reject(new Error("docker daemon hiccup")) },
+    { name: "the container has already exited", slug: "exited",
+      inspectOutcome: () => Promise.resolve({ containerId, createdAt, imageId, running: false, exitCode: 0 }) },
+  ])("accepts a claim written during the poll's inspect when $name", async ({ slug, inspectOutcome }) => {
+    const runtime = fakeRuntime();
+    const backend = backendWith(runtime);
+    const op = fixtureOp(`claim-during-inspect-${slug}`, backend);
+    const placement = op.canonical!.executionPlacement!;
+    let intent = createContainerLaunchIntent({ opId: op.id, placement, token: "kept-token",
+      name: "lax-op-started", imageReference, imageId });
+    intent = bindContainerLaunchIntent(intent, { containerId, createdAt, imageId });
+    writeContainerLaunchIntent(intent);
+    const inspect = vi.mocked(runtime.inspect);
+    const live = inspect.getMockImplementation()!;
+    // reconcileLaunchIntent inspects once before awaitClaim's first poll.
+    inspect.mockImplementationOnce(live).mockImplementationOnce(() => {
+      expect(claimProcessExecution(claim(op, placement.targetId,
+        placement.revision, "kept-token"))).toBe(true);
+      return inspectOutcome() as ReturnType<DockerExecutionRuntime["inspect"]>;
+    });
+
+    await expect(backend.startWithoutAdapter({ op, placement }).done).resolves.toBeUndefined();
+    expect(runtime.wait).toHaveBeenCalledWith(containerId);
+  });
 
   it("retains claim, intent and projection when container stop cannot be confirmed", async () => {
     const runtime = fakeRuntime({ stop: vi.fn().mockRejectedValue(new Error("daemon unavailable")) });

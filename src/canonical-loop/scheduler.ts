@@ -94,6 +94,7 @@ const active = new Map<string, ExecutionHandle>();
 // message for the same op) slips past and the op is launched twice: two lane
 // increments, one decrement, one permanently leaked slot.
 const launching = new Set<string>();
+const inFlightCount = (): number => active.size + launching.size;
 const activeByLane = new Map<CanonicalLane, number>();
 // Resource locks held by each committed slot, keyed by opId. The source of
 // truth for what to `release` — recorded at the acquire site so a slot's lock
@@ -192,7 +193,7 @@ export function pumpScheduler(): void {
       // and releases via launch()'s finally / evictWorker, so it can't deadlock
       // even if the cap is somehow below the current in-flight set. Leaves the
       // remaining ops queued (same as the lane-full path below).
-      if (active.size + launching.size >= globalCap()) break;
+      if (inFlightCount() >= globalCap()) break;
       const q = queue[i];
       const cap = laneCap(q.lane);
       const inUse = activeByLane.get(q.lane) ?? 0;
@@ -395,5 +396,5 @@ export function rebuildDependencyScheduling(): void {
 }
 
 export function schedulerSnapshot(): { queueDepth: number; activeCount: number } {
-  return { queueDepth: queue.length + deferred.size, activeCount: active.size };
+  return { queueDepth: queue.length + deferred.size, activeCount: inFlightCount() };
 }

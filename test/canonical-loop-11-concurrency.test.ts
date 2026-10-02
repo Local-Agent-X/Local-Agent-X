@@ -348,44 +348,37 @@ describe("global cap throttles total in-flight workers across all lanes", () => 
 
     const lanes: OpLane[] = ["interactive", "build", "background", "ide"];
     const ops = lanes.map((lane, i) => mkOp(`gcap${i}`, lane));
+    // The scheduler calls an op's factory at the moment it commits a slot to that
+    // op, so every launch is observed exactly once, with no polling window to miss.
+    // The snapshot is itself under test, so the lease rows the workers write are
+    // read alongside it as an independent count of who else is running.
+    const launches: { inFlight: number; otherLeases: number }[] = [];
     for (const op of ops) {
-      // Long-ish streams so each op stays `running` long enough to observe the
-      // cap saturate before the first wave completes (~750ms/op).
       const adapter = new FakeAdapter({
-        script: [scriptLongStreamingTurn({ chunkIntervalMs: 15, maxChunks: 50 })],
+        script: [scriptTurn({ streamChunks: ["x"], text: "ok", terminal: "done" })],
       });
-      registerAdapterForOp(op.id, () => adapter);
+      registerAdapterForOp(op.id, () => {
+        launches.push({
+          inFlight: schedulerSnapshot().activeCount,
+          otherLeases: ops.filter(o => o.id !== op.id && (readOp(o.id)?.canonical?.leaseOwner ?? null) !== null).length,
+        });
+        return adapter;
+      });
     }
 
-    // Submit all four in one synchronous burst.
+    // Submit all four in one synchronous burst. The two admitted ops are still
+    // awaiting their factories when it returns: they hold reserved slots with no
+    // worker yet, and the snapshot must count them or a saturated cap reads idle.
     for (const op of ops) canonicalLoopEntry(op);
-
-    // Sample the scheduler while the first wave streams. activeCount must NEVER
-    // exceed the global cap, and we must actually SEE it saturate at 2 with ops
-    // still queued (proving the cap — not slow starts — is the binding limit).
-    let maxActive = 0;
-    let sawSaturatedWithQueue = false;
-    const deadline = Date.now() + 2_000;
-    while (Date.now() < deadline && !sawSaturatedWithQueue) {
-      const snap = schedulerSnapshot();
-      maxActive = Math.max(maxActive, snap.activeCount);
-      if (snap.activeCount === 2 && snap.queueDepth >= 1) sawSaturatedWithQueue = true;
-      await new Promise(r => setTimeout(r, 3));
-    }
-
-    expect(maxActive, `global cap breached: ${maxActive} active at once`).toBeLessThanOrEqual(2);
-    expect(sawSaturatedWithQueue, "never observed 2 active with ops still queued").toBe(true);
-
-    // Keep sampling until the queue fully drains, asserting the ceiling holds the
-    // whole time (the second wave must not overshoot either).
-    while (schedulerSnapshot().queueDepth > 0 && Date.now() < deadline + 5_000) {
-      maxActive = Math.max(maxActive, schedulerSnapshot().activeCount);
-      await new Promise(r => setTimeout(r, 3));
-    }
-    expect(maxActive, `global cap breached during drain: ${maxActive}`).toBeLessThanOrEqual(2);
+    expect(schedulerSnapshot()).toEqual({ queueDepth: 2, activeCount: 2 });
 
     // All four drain to terminal as slots free — no op is stranded by the guard.
     await Promise.all(ops.map(o => awaitTerminal(o.id, 10_000)));
+    expect(launches).toHaveLength(4);
+    const maxInFlight = Math.max(...launches.map(l => l.inFlight));
+    const maxOtherLeases = Math.max(...launches.map(l => l.otherLeases));
+    expect(maxInFlight, `global cap breached: ${maxInFlight} in flight at once`).toBeLessThanOrEqual(2);
+    expect(maxOtherLeases, `${maxOtherLeases} other ops held a lease as one launched`).toBeLessThanOrEqual(1);
     for (const op of ops) {
       expect(readOp(op.id)?.canonical?.state).toBe("succeeded");
     }

@@ -131,44 +131,41 @@ describe("scheduler serializes ops that share a resource lock", () => {
   it("two ops each holding gpu:0 never run at once; the second launches when the first releases", async () => {
     // Both on `interactive` (cap 10) with no global-cap config, so the LANE
     // would happily run both at once — the ONLY thing that can serialize them
-    // is the shared gpu:0 lock. Long streams so the first stays running long
-    // enough to observe the second sitting queued behind the lock.
+    // is the shared gpu:0 lock. The scheduler calls an op's factory at the
+    // moment it commits a slot to that op, so every launch is observed exactly
+    // once. The snapshot is itself under test, so the lease rows the workers
+    // write are read alongside it as an independent count of who else is running.
     const a = mkOp("gpuA", { resourceLocks: ["gpu:0"] });
     const b = mkOp("gpuB", { resourceLocks: ["gpu:0"] });
+    const launches: { inFlight: number; otherLeases: number }[] = [];
     for (const op of [a, b]) {
       const adapter = new FakeAdapter({
-        script: [scriptLongStreamingTurn({ chunkIntervalMs: 15, maxChunks: 25 })],
+        script: [scriptTurn({ streamChunks: ["x"], text: "ok", terminal: "done" })],
       });
-      registerAdapterForOp(op.id, () => adapter);
+      registerAdapterForOp(op.id, () => {
+        launches.push({
+          inFlight: schedulerSnapshot().activeCount,
+          otherLeases: [a, b].filter(o => o.id !== op.id && (readOp(o.id)?.canonical?.leaseOwner ?? null) !== null).length,
+        });
+        return adapter;
+      });
     }
 
     canonicalLoopEntry(a);
     canonicalLoopEntry(b);
 
-    // Sample the scheduler: activeCount must NEVER exceed 1 (the lock caps
-    // concurrent holders to one), and we must actually SEE 1 active with the
-    // other queued — proving the lock, not a slow start, is the binding limit.
-    let maxActive = 0;
-    let sawOneActiveWithQueue = false;
-    const deadline = Date.now() + 3_000;
-    while (Date.now() < deadline && !sawOneActiveWithQueue) {
-      const snap = schedulerSnapshot();
-      maxActive = Math.max(maxActive, snap.activeCount);
-      if (snap.activeCount === 1 && snap.queueDepth >= 1) sawOneActiveWithQueue = true;
-      await new Promise(r => setTimeout(r, 3));
-    }
-    expect(maxActive, `lock breached: ${maxActive} gpu:0 ops active at once`).toBeLessThanOrEqual(1);
-    expect(sawOneActiveWithQueue, "never observed 1 active with the other queued behind the lock").toBe(true);
+    // A is still awaiting its factory, holding gpu:0 in a reserved slot with no
+    // worker yet; B was skipped behind the lock and sits queued.
+    expect(schedulerSnapshot()).toEqual({ queueDepth: 1, activeCount: 1 });
 
     // Both drain to terminal — the second only runs because releasing the lock
-    // re-pumps the scheduler. Assert the ceiling held the whole way.
-    while (schedulerSnapshot().queueDepth > 0 && Date.now() < deadline + 5_000) {
-      maxActive = Math.max(maxActive, schedulerSnapshot().activeCount);
-      await new Promise(r => setTimeout(r, 3));
-    }
-    expect(maxActive, `lock breached during drain: ${maxActive}`).toBeLessThanOrEqual(1);
-
-    await Promise.all([awaitTerminal(a.id), awaitTerminal(b.id)]);
+    // re-pumps the scheduler.
+    await Promise.all([awaitTerminal(a.id, 10_000), awaitTerminal(b.id, 10_000)]);
+    expect(launches).toHaveLength(2);
+    const maxInFlight = Math.max(...launches.map(l => l.inFlight));
+    const maxOtherLeases = Math.max(...launches.map(l => l.otherLeases));
+    expect(maxInFlight, `lock breached: ${maxInFlight} gpu:0 ops in flight at once`).toBeLessThanOrEqual(1);
+    expect(maxOtherLeases, "the other gpu:0 op still held its lease as one launched").toBeLessThanOrEqual(0);
     expect(readOp(a.id)?.canonical?.state).toBe("succeeded");
     expect(readOp(b.id)?.canonical?.state).toBe("succeeded");
   });

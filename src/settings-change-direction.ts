@@ -15,15 +15,8 @@
  * including a value of the wrong type, is treated as a widening.
  */
 import { getRuntimeConfig } from "./config.js";
-import { FLIPPABLE_SETTINGS, isProtectedSetting } from "./settings-schema.js";
+import { FLIPPABLE_SETTINGS, SPENDING_CAP_SETTINGS, isProtectedSetting } from "./settings-schema.js";
 import { loadSettings } from "./settings.js";
-
-/** The spending caps, each in USD, where 0 (or a missing per-model entry) means no cap. */
-export const SPENDING_CAP_SETTINGS: ReadonlySet<string> = new Set([
-  "dailyBudgetUsd",
-  "sessionBudgetUsd",
-  "modelDailyBudgetsUsd",
-]);
 
 type Tightening = { safe: unknown } | { stricterLast: readonly string[] };
 

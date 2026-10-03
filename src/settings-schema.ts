@@ -306,6 +306,14 @@ export function isProtectedSetting(field: string): boolean {
   return PROTECTED_SETTINGS.has(field);
 }
 
+/** The spending caps, each in USD, where 0 (or a missing per-model entry) means
+ *  no cap. User-owned like the protected settings (settings-change-direction.ts). */
+export const SPENDING_CAP_SETTINGS: ReadonlySet<string> = new Set([
+  "dailyBudgetUsd",
+  "sessionBudgetUsd",
+  "modelDailyBudgetsUsd",
+]);
+
 /**
  * One-time migration: if a user's settings.json has a runtime value that
  * config.json doesn't match, copy settings.json → config.json. Fixes installs

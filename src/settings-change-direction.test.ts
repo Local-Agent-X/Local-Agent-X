@@ -1,9 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { FLIPPABLE_SETTINGS, PROTECTED_SETTINGS } from "./settings-schema.js";
+import { FLIPPABLE_SETTINGS, PROTECTED_SETTINGS, SPENDING_CAP_SETTINGS } from "./settings-schema.js";
 import {
   PROTECTED_TIGHTENING,
   PROTECTED_WITHOUT_SAFE_DIRECTION,
-  SPENDING_CAP_SETTINGS,
   isUserOwnedSetting,
   strictlyTightens,
 } from "./settings-change-direction.js";

@@ -30,7 +30,8 @@
  */
 import type { ServerEvent } from "../types.js";
 import { USER_HINTS } from "../types.js";
-import { currentSettingValue, isUserOwnedSetting, SPENDING_CAP_SETTINGS, strictlyTightens } from "../settings-change-direction.js";
+import { currentSettingValue, isUserOwnedSetting, strictlyTightens } from "../settings-change-direction.js";
+import { SPENDING_CAP_SETTINGS } from "../settings-schema.js";
 
 /** Minimal shapes borrowed from pre-dispatch so this module stays leaf-level. */
 interface GateCall {

@@ -3,8 +3,7 @@ import { createRequire } from "node:module";
 
 import { MANIFEST_PATH } from "./paths.js";
 import type { AppManifest } from "./types.js";
-import { FLIPPABLE_SETTINGS } from "../settings-schema.js";
-import { SPENDING_CAP_SETTINGS } from "../settings-change-direction.js";
+import { FLIPPABLE_SETTINGS, SPENDING_CAP_SETTINGS } from "../settings-schema.js";
 
 /**
  * Security-settings line for the App Map — DERIVED from the settings

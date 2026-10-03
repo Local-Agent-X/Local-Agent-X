@@ -13,8 +13,18 @@
  */
 import { readFileSync } from "node:fs";
 import { basename, dirname } from "node:path";
-import { bashTool } from "../../tools/shell-tool.js";
-import { statusOf } from "../../tools/result-helpers.js";
+import { runCaged } from "../../tools/caged-spawn.js";
+
+/**
+ * git in the agent's repository, under the shell cage like any command the
+ * agent runs there, with every path and pattern its own argv entry so none is
+ * ever shell syntax. Starts no fsmonitor hook from the repository's config.
+ * Stdout on a clean exit, null otherwise.
+ */
+export async function cagedGit(args: string[], cwd: string, timeoutMs: number, signal?: AbortSignal): Promise<string | null> {
+  const r = await runCaged({ file: "git", args: ["-c", "core.fsmonitor=false", ...args] }, { cwd, timeoutMs, signal });
+  return r.kind === "exit" && r.code === 0 ? r.stdout : null;
+}
 
 const DIFF_TIMEOUT_MS = 20_000;
 /** Paths handed to `git diff` / the contents fallback — beyond this a sweep is
@@ -36,17 +46,13 @@ export async function collectDiffEvidence(
   const paths = absPaths.slice(0, MAX_EVIDENCE_PATHS);
   if (paths.length === 0) return "";
   try {
-    const quoted = paths.map((p) => `"${p}"`).join(" ");
-    const r = await bashTool.execute({
-      command: `git diff HEAD -- ${quoted}`,
-      _cwd: dirname(paths[0]),
-      _signal: signal,
-      timeout: DIFF_TIMEOUT_MS,
-    });
-    const diff = (r.content ?? "").trim();
-    if (statusOf(r) === "ok" && diff.length > 0) {
-      return truncateHead(diff, evidenceLimit);
-    }
+    // No external diff driver or textconv filter: either would show the audit
+    // whatever text the repository's config chose instead of the change.
+    const diff = (await cagedGit(
+      ["diff", "--no-color", "--no-ext-diff", "--no-textconv", "HEAD", "--", ...paths],
+      dirname(paths[0]), DIFF_TIMEOUT_MS, signal,
+    ))?.trim() ?? "";
+    if (diff.length > 0) return truncateHead(diff, evidenceLimit);
   } catch {
     // fall through to contents
   }

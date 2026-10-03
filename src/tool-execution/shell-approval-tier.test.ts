@@ -326,7 +326,6 @@ describe("isShellTierTool", () => {
   it("recognizes shell-spawner tools", () => {
     expect(isShellTierTool("bash")).toBe(true);
     expect(isShellTierTool("shell")).toBe(true);
-    expect(isShellTierTool("ari_shell")).toBe(true);
     expect(isShellTierTool("read")).toBe(false);
     expect(isShellTierTool("http_request")).toBe(false);
   });

@@ -66,6 +66,7 @@ import { handleObserve } from "./observe.js";
 import { handleReadConsole, handleReadNetwork, handleReadResponse } from "./perception.js";
 import { createLogger } from "../../logger.js";
 import { runWithSensitiveReadGrant, secrecyOpenWarning, sensitivePageStub } from "../../browser/guards.js";
+import { recordSiteTokens } from "../../browser/site-provenance.js";
 import { blocked } from "../result-helpers.js";
 
 // Names the action that wedged. Without it the circuit-breaker FAIL only says
@@ -229,6 +230,7 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
             };
           }
           const finalResult = await applyProgressGuard(action, manager, sessionId, result);
+          if (!finalResult.isError && typeof finalResult.content === "string") recordSiteTokens(sessionId, manager.getCurrentUrl(), finalResult.content);
           // Open-level transparency: the first browser call of a session that
           // ENDS on a secret-bearing page (any action — landing snapshots and
           // post-mutation snapshots carry content at open too) names the

@@ -49,7 +49,7 @@ describe("delegatedToolsetForOp", () => {
     const denied = [
       "op_submit", "op_submit_async", "op_submit_batch", "agent_spawn",
       "mission_schedule_create", "mission_schedule_update",
-      "write", "edit", "bash", "ari_file", "ari_shell", "process_start",
+      "write", "edit", "bash", "ari_file", "process_start",
       "edit_lines", "multi_edit", "bulk_replace", "delete_file",
     ];
     // Adversarial registration: tag every denied tool with the spawned-agent

@@ -8,14 +8,13 @@
 
 import { homedir } from "node:os";
 import type { ToolResult } from "../types.js";
-import { recordPrivateRead } from "../data-lineage/private-content.js";
+import { addressesIn, recordPrivateRead } from "../data-lineage/private-content.js";
 import { TOOL_PATH_ARGS } from "../tool-registry.js";
 import { resolveAgentPath } from "../workspace/paths.js";
 import { workspaceRoot } from "../config.js";
 import { pathIsWithin, userContentDirs } from "../security/layer/file-access.js";
 
 const EMAIL_READS: ReadonlySet<string> = new Set(["email_read", "email_search", "email_read_message"]);
-const EMAIL_ADDRESS = /[a-z0-9._%+-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)+/gi;
 
 /** The user's own document a read named, or null. Respects action-scoped path specs. */
 function personalDocumentRead(toolName: string, args: Record<string, unknown>, sessionId: string): string | null {
@@ -47,10 +46,10 @@ export function recordPrivateReadFromResult(
     // Only a single message names who already holds it; a search or inbox
     // listing mixes many senders, and trusting all of them would trust the
     // sender of an injected email too.
-    const correspondents = toolName === "email_read_message" ? [...new Set(content.match(EMAIL_ADDRESS) ?? [])] : [];
-    recordPrivateRead(sessionId, "an email you read", content, correspondents);
+    const correspondents = toolName === "email_read_message" ? addressesIn(content) : [];
+    recordPrivateRead(sessionId, { label: "an email you read", correspondents }, content);
     return;
   }
   const doc = personalDocumentRead(toolName, args, sessionId);
-  if (doc) recordPrivateRead(sessionId, doc, content);
+  if (doc) recordPrivateRead(sessionId, { label: doc, key: doc }, content);
 }

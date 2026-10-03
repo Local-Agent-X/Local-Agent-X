@@ -16,6 +16,8 @@
  *     it; adapter surfaces "aborted" error report (the gap-A regression
  *     guard — closes the Phase-2 bug where abort flipped a flag but the
  *     subprocess kept running).
+ *   - with developer_mode off the CLI is never spawned, even for an op
+ *     queued while it was on.
  */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
@@ -28,6 +30,7 @@ import {
   type CliBuildRunner,
 } from "../src/canonical-loop/adapters/app-build-adapter.js";
 import type { AppSmokeGateRunner } from "../src/canonical-loop/adapters/app-build-verify-adapter.js";
+import { setSetting } from "../src/settings.js";
 
 // The verify wrapper headless-smokes static apps at the done terminal; unit
 // tests stub it (the real gate launches chromium and the bare fixture page
@@ -71,6 +74,36 @@ function collectReports(): {
 }
 
 describe("createAppBuildAdapter — cli-subprocess strategy", () => {
+  beforeEach(() => setSetting("developer_mode", true));
+  afterEach(() => setSetting("developer_mode", false));
+
+  it("with developer_mode off, refuses before spawning — an op queued while it was on included", async () => {
+    let runnerCalls = 0;
+    const cliRunner: CliBuildRunner = async () => {
+      runnerCalls++;
+      return { content: "" };
+    };
+    const adapter = await createAppBuildAdapter({
+      strategy: "cli-subprocess",
+      provider: "anthropic",
+      appName: "off",
+      appDir: makeAppDir(),
+      appUrl: "http://localhost/off",
+      prompt: "P",
+      systemPrompt: "P",
+      cliRunner,
+      smokeGate: passSmoke,
+    });
+    setSetting("developer_mode", false);
+    const { reports, report } = collectReports();
+    const result = await adapter.runTurn(emptyTurnInput(), report);
+    expect(runnerCalls).toBe(0);
+    expect(result.terminalReason).toBe("error");
+    const err = reports.find(r => r.kind === "error");
+    expect(err).toMatchObject({ kind: "error", code: "developer_mode_off", retryable: false });
+    expect((err as { message: string }).message).toContain("requires developer_mode");
+  });
+
   it("codex provider routes to the codex subprocess branch of the runner", async () => {
     const calls: Array<{ provider: string; prompt: string; hasSignal: boolean }> = [];
     const cliRunner: CliBuildRunner = async (input) => {

@@ -1,12 +1,13 @@
-// ── App IDE — runtime error pipe ──
-// Captures uncaught errors, unhandled promise rejections, and console.error
-// from inside the preview iframe (same-origin, sandbox allows it), surfaces
-// them as red chat bubbles, and prepends a fresh-since-last-turn summary to
-// the next user message so the agent sees what's broken instead of being
-// told "Done" while the app is throwing.
+// ── App IDE — runtime error pipe (the shell's half) ──
+// Surfaces the preview's uncaught errors, unhandled promise rejections, and
+// console.error as red chat bubbles, and prepends a fresh-since-last-turn
+// summary to the next user message so the agent sees what's broken instead of
+// being told "Done" while the app is throwing.
 //
-// Injection pattern mirrors apps-ide-picker.js — stringified IIFE dropped
-// into the iframe's document, idempotent via window.__laxErrorPipe flag.
+// The preview is on the agent origin, so the capture runs in the page itself
+// (apps-error-pipe-core.js + apps-ide-frame-bridge.js, injected by the server)
+// and arrives here by postMessage. Only messages that pass
+// ideMessageFromPreview (apps-ide-picker.js) are taken.
 
 // Buffer of unread errors keyed by a hash of {message, source, line, col}.
 // Each entry: { key, kind, message, stack, source, line, col, count, ts, el }
@@ -18,27 +19,9 @@ const _ideErrorBuffer = new Map();
 // the user can tell a fresh failure happened.
 const _IDE_ERROR_DEDUP_MS = 60_000;
 
-function _ideInjectErrorPipe() {
-  const frame = document.getElementById('ide-preview-frame');
-  if (!frame) return;
-  let doc;
-  try { doc = frame.contentDocument; } catch { return; }
-  if (!doc || !doc.body || !doc.documentElement) return;
-  try { if (frame.contentWindow && frame.contentWindow.__laxErrorPipe) return; } catch { return; }
-  const s = doc.createElement('script');
-  s.id = '__lax-error-pipe-script';
-  s.textContent = _ideErrorPipeSource();
-  doc.documentElement.appendChild(s);
-}
-
-// Called from enterIdeView / _ideDoRefresh on iframe load. Pairs with the
-// picker's _ideOnPreviewLoad — both want a fresh inject every new document.
-function _ideOnPreviewLoadErrors() {
-  _ideInjectErrorPipe();
-}
-
 window.addEventListener('message', (e) => {
-  const d = e && e.data;
+  if (!ideMessageFromPreview(e)) return;
+  const d = e.data;
   if (!d || d.type !== 'lax-ide-runtime-error') return;
   _ideHandleRuntimeError(d);
 });
@@ -188,15 +171,4 @@ function ideDrainErrorsForAgent() {
          '\n\n[User message:] ';
 }
 
-// Iframe-side script. The capture logic lives in apps-error-pipe-core.js
-// (shared with the server-side phone injection — see error-pipe-inject.ts);
-// here we stringify it into the iframe with a postMessage-to-parent emitter.
-// Keeps the original console.error wired up so devtools still shows
-// everything; we just observe.
-function _ideErrorPipeSource() {
-  return __laxInstallErrorPipe.toString() +
-    ';__laxInstallErrorPipe(function(payload){try{window.parent.postMessage(payload,"*")}catch(e){}});';
-}
-
 window.ideDrainErrorsForAgent = ideDrainErrorsForAgent;
-window._ideOnPreviewLoadErrors = _ideOnPreviewLoadErrors;

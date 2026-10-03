@@ -101,7 +101,9 @@ export function collectArgViolations(
 }
 
 // Weak models emit malformed args. Lightweight required[] + type checks on
-// top-level fields; safe scalar coercion ("5" → 5) before validation.
+// top-level fields; safe scalar coercion ("5" → 5) before validation. The
+// repaired args are the ones the tool runs with, so the policy phase runs this
+// before any of its gates (enforce-policy.ts): a gate must judge exactly those.
 export async function validateArgs(ctx: ToolCallContext): Promise<PhaseOutcome> {
   const { tc, tool, sessionId } = ctx;
   if (!tool) return CONTINUE;

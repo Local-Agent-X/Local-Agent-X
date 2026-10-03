@@ -4,6 +4,7 @@ import { randomBytes } from "node:crypto";
 import { MIN_MAX_ITERATIONS, type LAXConfig } from "./types.js";
 import { getLaxDir } from "./lax-data-dir.js";
 import { atomicWriteFileSync } from "./util/json-store.js";
+import { registerRedactedSecretValue } from "./security/secrets/known-secrets.js";
 import {
   deOneDrive,
   isCloudStoragePath,
@@ -12,6 +13,7 @@ import {
   migrateWorkspace,
   ensureWorkspaceLink,
 } from "./workspace/lifecycle.js";
+import { unsafeWorkspaceReason } from "./workspace/workspace-location.js";
 
 import { createLogger } from "./logger.js";
 const logger = createLogger("config");
@@ -81,6 +83,7 @@ function generateAuthToken(): string {
 export function rotateAuthToken(): string {
   const config = getRuntimeConfig();
   config.authToken = generateAuthToken();
+  registerRedactedSecretValue(config.authToken);
   saveConfig(config);
   return config.authToken;
 }
@@ -232,15 +235,19 @@ export function loadConfig(): LAXConfig {
   // value is non-legacy and this never runs again. Dev / standalone server
   // (no LAX_DOCUMENTS_DIR) keeps "./workspace".
   const docsDir = process.env.LAX_DOCUMENTS_DIR ? deOneDrive(process.env.LAX_DOCUMENTS_DIR) : undefined;
+  // iCloud-synced Documents (macOS) → keep the high-write workspace on
+  // local-only disk instead of seeding it into a sync engine that evicts
+  // files; otherwise nest under ~/Documents/Local Agent X/workspace so the
+  // "Local Agent X" container mirrors the repo layout (workspace/ holds
+  // apps/, images/, videos/, downloads/, …) and the cwd↔workspace junction
+  // bridges two identically-named "workspace" dirs.
+  const defaultWorkspace = (): string => {
+    if (!docsDir) return "./workspace";
+    return isCloudSyncedDir(docsDir) ? localOnlyWorkspace() : join(docsDir, "Local Agent X", "workspace");
+  };
   const legacyWorkspace = diskRaw.workspace === undefined || diskRaw.workspace === "./workspace";
   if (allowWorkspaceMutation && docsDir && !workspaceEnv && legacyWorkspace) {
-    // iCloud-synced Documents (macOS) → keep the high-write workspace on
-    // local-only disk instead of seeding it into a sync engine that evicts
-    // files; otherwise nest under ~/Documents/Local Agent X/workspace so the
-    // "Local Agent X" container mirrors the repo layout (workspace/ holds
-    // apps/, images/, videos/, downloads/, …) and the cwd↔workspace junction
-    // bridges two identically-named "workspace" dirs.
-    const newWorkspace = isCloudSyncedDir(docsDir) ? localOnlyWorkspace() : join(docsDir, "Local Agent X", "workspace");
+    const newWorkspace = defaultWorkspace();
     migrateWorkspace(resolve(config.workspace), newWorkspace);
     config.workspace = newWorkspace;
     applyDiskMutation({ workspace: newWorkspace });
@@ -276,6 +283,18 @@ export function loadConfig(): LAXConfig {
     }
   }
 
+  // A workspace no write zone may have (unsafeWorkspaceReason) is ignored, not
+  // honored: otherwise one settings write and a restart widen the agent's
+  // write zone to the whole profile or the engine. The default takes its
+  // place, and nothing is moved out of the refused folder.
+  const refused = unsafeWorkspaceReason(resolve(config.workspace));
+  if (refused) {
+    const fallback = defaultWorkspace();
+    logger.warn(`[config] ignoring workspace ${config.workspace}: ${refused}. Using ${fallback} instead.`);
+    config.workspace = fallback;
+    if (!workspaceEnv) applyDiskMutation({ workspace: fallback });
+  }
+
   // The static file server (and a few tools) read from config.workspace, while
   // most file tools resolve agent paths against <cwd>/workspace. They MUST be
   // the same directory or generated files 404 / land where nothing serves
@@ -293,6 +312,11 @@ export function loadConfig(): LAXConfig {
     applyDiskMutation({ authToken: config.authToken });
     logger.info("[config] Generated new auth token (see ~/.lax/config.json)");
   }
+  // The operator credential is a known secret: every tool result masks it and
+  // every egress scan refuses it. config.json sits in the data dir the agent
+  // may read, and a token the model has seen opens every route the agent role
+  // is denied.
+  registerRedactedSecretValue(config.authToken);
 
   if (diskDirty) writeConfigFile(diskRaw);
 

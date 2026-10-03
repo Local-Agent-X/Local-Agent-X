@@ -246,7 +246,7 @@ export async function executeToolCalls(
   // name, asked before anything dispatches; each call collects its answer in
   // requireApprovalPhase. No-op for unattended runs, tier-A and unprofiled
   // models, and turns with no such delete. See unnamed-delete-gate.ts.
-  const noticed = await preauthorizeUnnamedDeletes({ toolCalls, priorMessages, modelId, callContext, sessionId, operationId, onEvent });
+  const noticed = await preauthorizeUnnamedDeletes({ toolCalls, toolMap, priorMessages, modelId, callContext, sessionId, operationId, onEvent });
   const turn = newHeapGuardTurn();
   const width = maxParallelToolBatch();
 

@@ -55,7 +55,7 @@ export const SKIPPED_GATE: GateResult = { ok: false, skipped: true, durationMs: 
 
 interface GateRun { ok: boolean; durationMs: number; stdout: string; stderr: string }
 
-async function runGateCommand(name: string, args: string[], signal?: AbortSignal, env = process.env): Promise<GateRun> {
+async function runGateCommand(name: string, args: string[], signal: AbortSignal | undefined, env: NodeJS.ProcessEnv): Promise<GateRun> {
   const cwd = getWorktreePath(name);
   if (!cwd) return { ok: false, durationMs: 0, stdout: "", stderr: "worktree path not found" };
   return runGateCommandAt(cwd, args, signal, env);
@@ -63,7 +63,7 @@ async function runGateCommand(name: string, args: string[], signal?: AbortSignal
 
 /** The ONE npm-gate runner. Registered worktrees resolve their path first
  *  (runGateCommand); candidate trees that aren't registered pass `cwd` here. */
-function runGateCommandAt(cwd: string, args: string[], signal?: AbortSignal, env = process.env): Promise<GateRun> {
+function runGateCommandAt(cwd: string, args: string[], signal: AbortSignal | undefined, env: NodeJS.ProcessEnv): Promise<GateRun> {
   const start = Date.now();
   return new Promise((resolveRun) => {
     const child = spawn("npm", args, { cwd, env, windowsHide: true, shell: process.platform === "win32", stdio: ["ignore", "pipe", "pipe"] });
@@ -101,7 +101,12 @@ export async function gateDeps(name: string, signal?: AbortSignal): Promise<Gate
   if (!isolate.ok) {
     return { ok: false, skipped: false, durationMs: 0, detail: isolate.detail };
   }
-  const r = await runGateCommand(name, ["ci"], signal);
+  // Scrubbed env: `npm ci` runs lifecycle scripts (the root's and every
+  // dependency's) from a manifest the untrusted self_edit child just changed.
+  // An install needs the registry, not the server's credentials; npm still
+  // reads its registry/proxy/auth config from ~/.npmrc via the home dir vars
+  // the scrub keeps.
+  const r = await runGateCommand(name, ["ci"], signal, buildSelfEditChildEnv());
   return {
     ok: r.ok,
     skipped: false,

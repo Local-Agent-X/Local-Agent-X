@@ -13,9 +13,7 @@ export interface LockResult {
 }
 
 export interface AcquireOptions {
-  force?: boolean;
   task?: string;
-  onRevoke?: () => boolean | void;
 }
 
 const heldLocks = new Map<string, SharedMutationLock>();

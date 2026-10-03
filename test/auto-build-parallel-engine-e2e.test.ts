@@ -145,6 +145,10 @@ beforeEach(() => {
   // Skip the preflight probe — it runs a real chunk-agent (a model call) that we
   // are neither stubbing nor want. It runs before path selection for BOTH paths.
   process.env.LAX_BUILD_PREFLIGHT = "0";
+  // The loop's git runs through the shell cage seam; on a box with the
+  // Windows cage installed the default would prove and use the real cage,
+  // whose account cannot read this temp repo.
+  process.env.LAX_SANDBOX = "host";
   shared.builds.length = 0;
   vi.clearAllMocks();
 
@@ -168,6 +172,7 @@ beforeEach(() => {
 
 afterEach(() => {
   delete process.env.LAX_BUILD_PREFLIGHT;
+  delete process.env.LAX_SANDBOX;
   // Belt for the failure path: a green run already cleans up merged worktrees
   // inside mergeWorktree, but if an assertion threw mid-run these could leak.
   for (const name of WT_NAMES) {

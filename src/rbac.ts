@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { USER_HINTS } from "./types.js";
+import { AGENT_DENIED_ENDPOINTS, agentDeniedRouteFor, endpointUnder } from "./rbac-agent-denials.js";
 
 /**
  * Basic RBAC (Role-Based Access Control)
@@ -14,7 +15,7 @@ import { USER_HINTS } from "./types.js";
  * - user: Chat + safe tools only (no secrets management, limited shell)
  * - readonly: Read-only access (view sessions, audit logs, health)
  * - agent: In-process agent self-call principal — chat + benign self-calls,
- *   but denied every sensitive sink (secrets, tokens, plugins, auth, audit, logs)
+ *   but denied every sensitive sink and self-gating control (rbac-agent-denials.ts)
  *
  * Tokens are stored in ~/.lax/tokens.json with hashed values.
  * The original shared token from config.json becomes the "operator" token.
@@ -47,7 +48,7 @@ const ROLE_PERMISSIONS: Record<Role, {
   canViewAudit: boolean;
   canManageTokens: boolean;
   allowedTools: string[] | "*";    // "*" = all tools
-  deniedEndpoints: string[];       // API paths that are denied
+  deniedEndpoints: readonly string[];  // API paths that are denied
 }> = {
   operator: {
     canChat: true,
@@ -84,39 +85,36 @@ const ROLE_PERMISSIONS: Record<Role, {
     // HTTP endpoint gating is the control here; tool dispatch is governed
     // elsewhere, so "*" keeps the agent loop's benign self-calls working.
     allowedTools: "*",
-    // Deny every sensitive sink reachable over HTTP. Benign self-calls
-    // (/api/settings, theme, orgs) are not under any of these prefixes.
-    //
-    // /api/local-runtimes is EGRESS-GRANTING: a POST/DELETE there rewrites
-    // settings.localRuntimes, and every entry becomes an exact host:port the
-    // agent's own HTTP tools may then reach (security/layer/security-config.ts
-    // manualRuntimeHostPorts → evaluateWebFetch carve-out). Without this denial
-    // an injected agent could self-call POST /api/local-runtimes — self-calls
-    // auto-carry the internal agent token (tools/web-egress.ts selfCallAuthHeader)
-    // — to allowlist an arbitrary LAN host, then egress to it: a confused-deputy
-    // privilege escalation that turns "chat may route to a named runtime" into
-    // "the agent may name its own egress targets". Denied for ALL methods,
-    // matching the path-only shape of the sinks above (deniedEndpoints carries no
-    // method scoping); the read-only GET is denied too only because the agent
-    // never needs it — its chat/routing path reads runtimes from the in-process
-    // cache (local-runtimes getLocalRuntimes), not this route, which exists for
-    // the operator settings UI. Keep this in sync with manualRuntimeHostPorts.
-    //
-    // /api/security and /api/tool-policy are SELF-GATING: they mutate the very
-    // controls that bound the agent. POST /api/security/file-access sets the
-    // file-access mode ("unrestricted" widens every write sink), and POST
-    // /api/tool-policy/toggle flips the bash/http/browser policy rules. Neither
-    // route carries its own operator check, so RBAC is the only thing standing
-    // between a blocked agent and its own leash — same confused-deputy shape as
-    // /api/local-runtimes above, observed in the wild 2026-07-25. User-owned
-    // security controls are changed by the operator UI (which holds a real
-    // operator token) or by the `setting` tool, which asks the user to approve.
-    deniedEndpoints: ["/api/secrets", "/api/tokens", "/api/plugins", "/api/auth", "/api/audit", "/api/logs", "/api/local-runtimes", "/api/security", "/api/tool-policy"],
+    deniedEndpoints: AGENT_DENIED_ENDPOINTS,
   },
 };
 
 function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
+}
+
+/**
+ * Whether `role` may call `method pathname`: the check the server runs before
+ * any route handler (RBACManager.checkEndpoint), and what the App Map uses to
+ * leave out the routes the agent would only be refused on. A refusal for the
+ * agent names where in Settings the user can make the change instead.
+ */
+export function checkEndpointAccess(role: Role, method: string, pathname: string): RBACDecision {
+  const perms = ROLE_PERMISSIONS[role];
+
+  if (perms.deniedEndpoints.some((denied) => endpointUnder(denied, pathname))) {
+    const place = role === "agent" ? agentDeniedRouteFor(pathname)?.place : undefined;
+    return place
+      ? { allowed: false, role, reason: `Role "agent" cannot access ${pathname}: only the user can, in ${place}.`, userHint: `That's yours to change, in ${place}.` }
+      : { allowed: false, role, reason: `Role "${role}" cannot access ${pathname}`, userHint: USER_HINTS.policy };
+  }
+
+  // Check chat permission for POST /api/chat
+  if (pathname === "/api/chat" && method === "POST" && !perms.canChat) {
+    return { allowed: false, role, reason: `Role "${role}" cannot send chat messages`, userHint: USER_HINTS.policy };
+  }
+
+  return { allowed: true, role, reason: "Endpoint allowed" };
 }
 
 export class RBACManager {
@@ -242,21 +240,7 @@ export class RBACManager {
 
   /** Check if a role is allowed to access an API endpoint */
   checkEndpoint(role: Role, method: string, pathname: string): RBACDecision {
-    const perms = ROLE_PERMISSIONS[role];
-
-    // Check denied endpoints — exact match or path prefix (with / boundary)
-    for (const denied of perms.deniedEndpoints) {
-      if (pathname === denied || pathname.startsWith(denied + "/")) {
-        return { allowed: false, role, reason: `Role "${role}" cannot access ${pathname}`, userHint: USER_HINTS.policy };
-      }
-    }
-
-    // Check chat permission for POST /api/chat
-    if (pathname === "/api/chat" && method === "POST" && !perms.canChat) {
-      return { allowed: false, role, reason: `Role "${role}" cannot send chat messages`, userHint: USER_HINTS.policy };
-    }
-
-    return { allowed: true, role, reason: "Endpoint allowed" };
+    return checkEndpointAccess(role, method, pathname);
   }
 
   /** Check if a role is allowed to use a specific tool */

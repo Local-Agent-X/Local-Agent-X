@@ -1,9 +1,10 @@
 import { spawn } from "node:child_process";
-import { resolve, relative } from "node:path";
+import { delimiter, resolve, relative } from "node:path";
 import type { ToolCall, ToolResult } from "@arikernel/core";
 import type { ToolExecutor } from "./base.js";
 import { DEFAULT_TIMEOUT_MS, makeResult } from "./base.js";
 import { runPreDispatchGate } from "./pre-dispatch-gate.js";
+import { resolveSystemExecutable, systemToolDirs, toolNameOf } from "./system-tools.js";
 
 /** Allowed root for cwd — defaults to process.cwd(), overridden by FILE_EXECUTOR_ROOT */
 function getAllowedCwd(): string {
@@ -42,8 +43,6 @@ const ALLOWED_EXECUTABLES = new Set([
 	"tail",
 	"wc",
 	"grep",
-	"sort",
-	"uniq",
 	"date",
 	"dirname",
 	"basename",
@@ -87,6 +86,11 @@ const BLOCKED_EXECUTABLES = new Set([
 	"rsync",
 	"awk",
 	"gawk",
+	// GNU sort runs --compress-program=PROG and writes wherever -o / -T point;
+	// uniq writes its OUTPUT operand. GNU takes any unambiguous long-option
+	// prefix (--comp=sh), so no argument filter can reliably catch these.
+	"sort",
+	"uniq",
 	// Script interpreters — execute arbitrary code from files/inline
 	"perl",
 	"ruby",
@@ -159,11 +163,11 @@ export function validateCommand(executable: string, args: readonly string[]): vo
 		throw new Error(`Command executable contains shell metacharacters: "${executable}"`);
 	}
 
-	// Resolve to a basename and refuse PATH games. Matching on basename (not
-	// the raw string) means an absolute path like /usr/bin/echo still resolves
-	// to "echo" and is checked against the allowlist; an absolute path to a
-	// non-allowed binary is rejected because its basename isn't in the set.
-	const base = (normalizedExe.split("/").pop()?.split("\\").pop() ?? normalizedExe).toLowerCase();
+	// Matching on basename (not the raw string) means an absolute path to a
+	// non-allowed binary is rejected because its basename isn't in the set. An
+	// allowed basename says nothing about WHICH file it names: that is settled
+	// by resolveSystemExecutable before anything is spawned.
+	const base = toolNameOf(normalizedExe);
 
 	// Named-denylist check before the allowlist so the error names the actual
 	// primitive (shell, interpreter, find/tar/xargs, editor, …) rather than a
@@ -172,7 +176,7 @@ export function validateCommand(executable: string, args: readonly string[]): vo
 	// "Blocked shell interpreter" message prefix that callers/tests key on.
 	if (BLOCKED_EXECUTABLES.has(base)) {
 		throw new Error(
-			`Blocked shell interpreter: "${executable}". Commands must be executed directly, not through a shell, and arg-injection primitives (find/tar/xargs/awk/editors/interpreters) are refused.`,
+			`Blocked shell interpreter: "${executable}". Commands must be executed directly, not through a shell, and arg-injection primitives (find/tar/xargs/awk/sort/uniq/editors/interpreters) are refused.`,
 		);
 	}
 
@@ -242,6 +246,7 @@ export class ShellExecutor implements ToolExecutor {
 			}
 
 			validateCommand(executable, args);
+			const file = resolveSystemExecutable(executable);
 
 			// Validate cwd stays within allowed root
 			const cwd = resolve(params.cwd ?? process.cwd());
@@ -251,7 +256,7 @@ export class ShellExecutor implements ToolExecutor {
 				throw new Error(`cwd must be within ${allowedRoot}. Got: ${params.cwd}`);
 			}
 
-			const { stdout, stderr } = await spawnSafe(executable, args, {
+			const { stdout, stderr } = await spawnSafe(file, args, {
 				timeout: DEFAULT_TIMEOUT_MS,
 				cwd,
 				maxBuffer: 5 * 1024 * 1024,
@@ -282,7 +287,6 @@ function spawnSafe(
 		// src/tools/shell-tools.ts `buildSanitizedEnv` (SAFE_ENV_KEYS) — this
 		// package can't import from src/, so the safe set is duplicated here.
 		const SAFE_ENV_KEYS = new Set([
-			"PATH",
 			"HOME",
 			"USER",
 			"LOGNAME",
@@ -303,6 +307,9 @@ function spawnSafe(
 				sanitizedEnv[key] = value;
 			}
 		}
+		// A tool that execs another by name resolves it against the same fixed
+		// directories its own file came from, not the server's PATH.
+		sanitizedEnv.PATH = systemToolDirs().join(delimiter);
 
 		const child = spawn(executable, args, {
 			cwd: options.cwd,

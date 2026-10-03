@@ -89,7 +89,9 @@ export function authorizeRequest(
   const role = authResult.entry.role;
   const endpoint = rbac.checkEndpoint(role, method, url.pathname);
   if (!endpoint.allowed) {
-    json(403, { error: endpoint.reason });
+    // The hint rides as its own field so a client can show the user where to
+    // make the change without parsing the refusal text.
+    json(403, { error: endpoint.reason, userHint: endpoint.userHint });
     return { handled: true, role };
   }
   return { handled: false, role };

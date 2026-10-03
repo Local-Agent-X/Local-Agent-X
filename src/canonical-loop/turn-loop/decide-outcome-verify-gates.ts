@@ -157,9 +157,9 @@ export const specProbeGate: CompletionGate = {
  */
 export const specAuditGate: CompletionGate = {
   name: "spec-audit",
-  async evaluate({ op, turnIdx }) {
+  async evaluate({ op, turnIdx, signal }) {
     if (opEditedSourcePaths(op.id).length === 0) return CONTINUE;
-    const gate = await runSpecAuditGate(op);
+    const gate = await runSpecAuditGate(op, { signal });
     if (gate.shouldRetry) {
       if (!appendNudgeAsUserMessage(op.id, turnIdx + 1, gate.nudge, gateSource("spec-audit", "nudge"))) return CONTINUE;
       return { reopen: true };
@@ -181,9 +181,9 @@ export const specAuditGate: CompletionGate = {
  */
 export const regressionAuditGate: CompletionGate = {
   name: "regression-audit",
-  async evaluate({ op, turnIdx }) {
+  async evaluate({ op, turnIdx, signal }) {
     if (opEditedSourcePaths(op.id).length === 0) return CONTINUE;
-    const gate = await runRegressionAuditGate(op);
+    const gate = await runRegressionAuditGate(op, { signal });
     if (gate.shouldRetry) {
       if (!appendNudgeAsUserMessage(op.id, turnIdx + 1, gate.nudge, gateSource("regression-audit", "nudge"))) return CONTINUE;
       return { reopen: true };

@@ -90,6 +90,10 @@ export const settingTool: ToolDefinition = {
     // 1) Persist to settings.json (UI cache + UI-only fields read here).
     const merged = { ...loadSettings(), [fieldName]: newValue };
     saveSettings(merged);
+    if (fieldName === "developer_mode") {
+      const { haltAutopilotsIfDeveloperModeOff } = await import("../autopilot/loop.js");
+      haltAutopilotsIfDeveloperModeOff();
+    }
 
     // 2) If runtime-bound, mirror to config.json + in-memory ctx.config
     //    so the gate / dispatcher reads the new value on the next call.

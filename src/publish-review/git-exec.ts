@@ -3,15 +3,19 @@
  * user has approved anything, so the invocation is hardened against a repo that
  * would execute code on a read: no fsmonitor daemon, no ext:: transport, no
  * external diff or textconv driver (callers pass --no-ext-diff/--no-textconv),
- * no hooks (the push dry run passes --no-verify), no credential prompt that
+ * no hooks (the push dry run passes --no-verify and points core.hooksPath at
+ * the null device), no credential prompt that
  * could hang the gate, no optional index lock that could collide with the
- * agent's own git, and a hard timeout.
+ * agent's own git, and a hard timeout. git itself is started by full path:
+ * the cwd is the agent's repository, which Windows would search for a bare
+ * "git" before the PATH.
  *
  * stdout is hashed in full and retained only up to `keepBytes`, so a huge diff
  * still fingerprints exactly while the review sees a bounded excerpt.
  */
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
+import { gitArgv, type ProgramArgv } from "../tools/program-argv.js";
 
 export interface GitResult {
   code: number | null;
@@ -37,9 +41,15 @@ const DEFAULT_KEEP_BYTES = 256 * 1024;
 export function runGit(
   cwd: string,
   args: string[],
-  opts: { timeoutMs?: number; keepBytes?: number; input?: string } = {},
+  opts: { timeoutMs?: number; keepBytes?: number; input?: string; env?: Record<string, string> } = {},
 ): Promise<GitResult> {
   const keep = opts.keepBytes ?? DEFAULT_KEEP_BYTES;
+  let argv: ProgramArgv;
+  try {
+    argv = gitArgv([...HARDENING, ...args]);
+  } catch (e) {
+    return Promise.resolve({ code: null, stdout: "", stderr: (e as Error).message, sha256: createHash("sha256").digest("hex"), truncated: false, missing: true });
+  }
   return new Promise((resolve) => {
     const hash = createHash("sha256");
     const out: Buffer[] = [];
@@ -54,12 +64,14 @@ export function runGit(
       clearTimeout(timer);
       resolve({ ...r, stdout: Buffer.concat(out).toString("utf8"), stderr, sha256: hash.digest("hex"), truncated, ...(timedOut ? { timedOut } : {}) });
     };
-    const child = spawn("git", [...HARDENING, ...args], {
+    const child = spawn(argv.file, argv.args, {
       cwd,
       windowsHide: true,
       stdio: [opts.input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
       env: {
         ...process.env,
+        // Before the hardening, so a caller's variables cannot undo it.
+        ...opts.env,
         GIT_TERMINAL_PROMPT: "0",
         GCM_INTERACTIVE: "never",
         GIT_OPTIONAL_LOCKS: "0",

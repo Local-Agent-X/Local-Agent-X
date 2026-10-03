@@ -38,6 +38,7 @@ import { secretEnvGate } from "./secret-env-approval.js";
 import { publishOperations } from "../publish-operation.js";
 import { publishReviewGate } from "./publish-review-gate.js";
 import { reviewCardContext, reviewNoteForModel, reviewPreview } from "./publish-review-text.js";
+import { rememberApprovedPrivateShares } from "./private-content-gate.js";
 import type { Decision } from "../autonomy/profiles.js";
 
 const STRICTNESS: Record<Decision, number> = { allow: 0, "allow-with-rollback": 1, ask: 2, deny: 3 };
@@ -124,11 +125,12 @@ export const requireApprovalPhase: Phase = async (ctx) => {
   }
 
   // Pre-publish review (publish-review-gate.ts): a fresh-context model reviews
-  // exactly what this call would ship. RED, and a review that could not run
-  // (FAILED / UNKNOWN), stop it here — with the review as the result, and in
-  // an interactive run an always-ask card ("Push anyway" / "Push unreviewed")
-  // whose yes stands in for every prompt below about running THIS call (the
-  // unnamed-delete precedent above). AMBER, GREEN and EMPTY fall through to
+  // exactly what this call would ship. RED, a review that could not run
+  // (FAILED / UNKNOWN), and a publish in the call that could not be reviewed
+  // stop it here — with the review as the result, and in an interactive run an
+  // always-ask card ("Push anyway" / "Push unreviewed") whose yes stands in for
+  // every prompt below about running THIS call (the unnamed-delete precedent
+  // above). AMBER and GREEN covering every publish, and EMPTY, fall through to
   // the profile.
   let publishOverridden = false;
   if (publishOps.length > 0) {
@@ -230,14 +232,18 @@ export const requireApprovalPhase: Phase = async (ctx) => {
 
   // Unattended run: no human to prompt. The profile says "ask" and nothing
   // authorized it, so block rather than silently run (this is the
-  // load-bearing guarantee for cron/delegated runs).
+  // load-bearing guarantee for cron/delegated runs). A policy reason or a
+  // memory promotion asks a person under every profile, so pointing at a
+  // looser profile would send the user to a switch that changes nothing.
   if (ctx.callContext !== "local") {
     const result: ToolResult = {
       content:
         `BLOCKED (unattended): ${ctx.tc.name} needs human approval` +
         `${promotion ? " because risky content cannot become durable memory without explicit user approval" : ctx.policyApprovalReason ? ` because ${ctx.policyApprovalReason}` : " under the active autonomy profile"}, ` +
         `but no one is watching this ${ctx.callContext} run. ` +
-        `Run this under the Autonomous profile (or pin a per-job profile) to allow it.` +
+        (policyRequiresPrompt
+          ? "It is refused under every profile: run it from a chat, where you can approve it."
+          : "Run this under the Autonomous profile (or pin a per-job profile) to allow it.") +
         (ctx.publishReview ? `\n\n${reviewNoteForModel(ctx.publishReview)}` : ""),
       isError: true,
       status: "blocked",
@@ -303,6 +309,7 @@ export const requireApprovalPhase: Phase = async (ctx) => {
       if (!outcome.grantId) throw new Error("approved memory promotion missing canonical grant id");
       stampApprovedMemoryPromotion(ctx.args, promotion, outcome.grantId);
     }
+    rememberApprovedPrivateShares(ctx);
     return CONTINUE;
   }
 

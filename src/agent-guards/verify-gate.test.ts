@@ -19,7 +19,6 @@ import {
 
 const edit = (filePath: string): VerifyTurnAction => ({ tool: "edit", filePath });
 const bash = (command: string, status: "ok" | "error"): VerifyTurnAction => ({ tool: "bash", command, status });
-const bashAt = (command: string, cwd: string, status: "ok" | "error"): VerifyTurnAction => ({ tool: "bash", command, cwd, status });
 const del = (filePath: string): VerifyTurnAction => ({ tool: "delete_file", filePath });
 
 describe("isSourceFile — which extensions demand a verify", () => {
@@ -125,16 +124,6 @@ describe("checkVerifyGate — verified clean", () => {
     const connectorSmoke = createVerifyGateState();
     noteVerifyEvidence([edit(appPath), bash("curl.exe -f http://127.0.0.1:7007/api/connectors/fastmail/jmap/session", "ok")], connectorSmoke);
     expect(checkVerifyGate(connectorSmoke).nudge).toBeNull();
-  });
-
-  it("credits executor cwd when it is the edited workspace app", () => {
-    const s = createVerifyGateState();
-    noteVerifyEvidence([
-      edit("C:/Users/manri/Documents/Local Agent X/workspace/apps/fastmail-dashboard/app.js"),
-      bashAt("npm run build", "C:/Users/manri/Documents/Local Agent X/workspace/apps/fastmail-dashboard", "ok"),
-    ], s);
-
-    expect(checkVerifyGate(s).nudge).toBeNull();
   });
 });
 

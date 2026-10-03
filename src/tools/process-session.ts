@@ -10,15 +10,13 @@
  * last time, then evicted. Stdout/stderr buffer is capped per session
  * to bound memory.
  */
-import { spawn, execFileSync, type ChildProcess } from "node:child_process";
+import { execFileSync, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { dirname, basename, resolve, sep } from "node:path";
-import { buildSanitizedEnv } from "./shell-tools.js";
-import { resolveWindowsShell } from "./shell-env.js";
 import { killProcessGroup } from "../process-tree-kill.js";
 import { evaluateShellCommand } from "../security/layer/index.js";
-import { getSandboxMode, getSandboxStatus, wrapSpawnForSandbox } from "../sandbox/index.js";
-import { shellProxyEnvSync } from "./shell-proxy-env.js";
+import { getSandboxMode, getSandboxStatus } from "../sandbox/index.js";
+import { spawnCagedSync } from "./caged-spawn.js";
 import { registerOwnedProcess, unregisterOwnedProcess } from "./owned-listeners.js";
 import { workspaceRoot } from "../config.js";
 
@@ -87,14 +85,6 @@ function newSessionId(): string {
   return `px-${randomBytes(4).toString("hex")}`;
 }
 
-// Credential scrub: process_* spawn a shell exactly like bash, so they must
-// scrub the same way. Delegates to the shared bash env-scrub (credential-name
-// + high-entropy-value allowlist) instead of copying the full process.env,
-// which leaked sidecar secrets to every background command.
-function sanitizeEnv(extra?: Record<string, string>): Record<string, string> {
-  return buildSanitizedEnv(extra);
-}
-
 /**
  * Build a session, spawn the command in a detached process group (so a
  * later `process.kill(-pid)` tree-kills any grandchild like a node server),
@@ -112,7 +102,7 @@ export function startSession(
   // unvetted command here is identical RCE to an unvetted bash call. The
   // effective-confinement signal rides along for the same reason it does on
   // the canonical evaluateShellCommandAndPaths path: this session spawns
-  // through wrapSpawnForSandbox below, so under a confined backend the
+  // through the cage (spawnCagedSync) below, so under a confined backend the
   // structural string heuristics stand down (docker reports confined but is
   // refused just after — the rules-skip is moot on that branch).
   const verdict = evaluateShellCommand(
@@ -136,28 +126,6 @@ export function startSession(
   }
 
   const sessionId = newSessionId();
-  const isWin = process.platform === "win32";
-  // Mirror the bash tool's shell resolution (the canonical resolveWindowsShell):
-  // a real Git Bash runs the model's POSIX commands natively; only PowerShell
-  // needs the `-NoProfile -Command` form. Background processes hit the same
-  // WSL/PowerShell mismatch as bash, so they resolve through the same path.
-  const winShell = isWin ? resolveWindowsShell() : null;
-  const winUsesPowerShell = winShell !== null && winShell.kind !== "bash";
-  const shell = isWin ? winShell!.path : "/bin/bash";
-  const shellArgs = winUsesPowerShell
-    ? ["-NoProfile", "-Command", command]
-    : ["-c", command];
-
-  // Unlike docker (refused above — it can't keep a live child handle),
-  // seatbelt and bwrap are transparent: sandbox-exec/bwrap exec the shell in
-  // place, so the tracked ChildProcess, the process group (detached), and the
-  // kill path are unchanged. Host/docker modes pass through unwrapped.
-  // Proxy env is the BASE and caller-provided env overrides it: the cage is
-  // the wall, the proxy env is only a default route — a caller that
-  // explicitly sets HTTP_PROXY etc. wins. Sync accessor because startSession
-  // is sync (DevServerDeps.start types it sync); a cold-start miss fails
-  // closed at the cage, see shell-proxy-env.ts.
-  const childEnv = sanitizeEnv({ ...shellProxyEnvSync(), ...env });
 
   // An explicit caller cwd (build/dev flows) wins; otherwise default to the
   // workspace rather than inheriting the server cwd — same anchor as bash and
@@ -167,20 +135,16 @@ export function startSession(
 
   let child: ChildProcess;
   try {
+    // Synchronous because DevServerDeps.start types this sync. The caller's env
+    // wins over the egress-proxy route: the cage is the wall, the proxy env is
+    // only a default route, so a caller that sets HTTP_PROXY itself keeps it.
     // detached:true on non-Windows makes the child a process-group leader so
     // process_kill's `process.kill(-pid, "SIGKILL")` reaches grandchildren
     // (e.g. a node server holding a port). On Windows taskkill /T handles the
     // tree, and detached would risk a stray console. Pipes are unaffected.
-    // The wrap refuses, retryably, while the Windows cage is still proving its
+    // The spawn refuses, retryably, while the Windows cage is still proving its
     // fence; this path cannot wait for it, so that refusal is the error returned.
-    const spawned = wrapSpawnForSandbox(shell, shellArgs, childEnv);
-    child = spawn(spawned.cmd, spawned.args, {
-      env: childEnv,
-      cwd: effectiveCwd,
-      windowsHide: true,
-      detached: !isWin,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    child = spawnCagedSync(command, { cwd: effectiveCwd, env, detached: process.platform !== "win32" });
     child.unref();
   } catch (e) {
     return { error: (e as Error).message };

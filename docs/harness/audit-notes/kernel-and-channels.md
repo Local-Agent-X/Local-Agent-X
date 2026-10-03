@@ -4,21 +4,22 @@ Read-only audit, repo `C:\Users\peter\local-agent-x` @ 71fca338. Every claim is 
 
 ## 1. Where the kernel sits
 
-Phase chain (VERIFIED, `src/tool-execution/execute-tool.ts:82-121`): resolve → heap-guard refusal → **enforcePolicyPhase** → dedup → **requireApprovalPhase** → capture-rollback → **runSandboxedPhase** → audit. Inside enforcePolicyPhase (`src/tool-execution/enforce-policy.ts:328-372`) the order is:
+Phase chain (VERIFIED, `src/tool-execution/execute-tool.ts:82-121`): resolve → heap-guard refusal → **enforcePolicyPhase** → dedup → **requireApprovalPhase** → capture-rollback → **runSandboxedPhase** → audit. Inside enforcePolicyPhase (`src/tool-execution/enforce-policy.ts:377-399`, gates 1-7 in `securityAndValidationGates` `:330-375`; line numbers re-read from the current tree, after the audit commit) the order is:
 
 | # | Gate | Where | Notes |
 |---|---|---|---|
-| 1 | **Ari kernel** (`ariKernelGate`) | `enforce-policy.ts:329`, body `:70-172` | First gate. Fail-closed when `ariRequired` and the kernel is inactive (`src/ari-kernel/evaluate.ts:66-70`; default `ariRequired: z.boolean().default(true)`, `src/config-schema.ts:81`). Unmapped tools fail closed (`evaluate.ts:77-84`). |
-| 2 | session policy | `:331` | |
-| 3 | worktree path rewrite | `:333` | before security so it judges the real path |
-| 4 | pre-dispatch chain | `:335` → `src/tool-execution/pre-dispatch.ts:115-367` | local-only (`:131`), category **kill switches** (`:145`), screen/computer redirects (`:166`), supervised browser (`:184`), op-prohibition + plan mode (`:207-258`), RBAC (`:261`), one pass over packs `spend-cap, security-layer, default-policy, threat-engine, egress-refutation` (`:275-286`), protected-setting gate (`:305`). The profile-approval branch at `:322-366` runs only when `ctx.approval` is passed; the canonical path passes none (`enforce-policy.ts:208-221`), so approvals are owned by `require-approval.ts`. |
-| 5 | egress aggregate (data-lineage + canary + egress-guard) | `:342` | |
-| 6 | tool lookup, arg coercion + schema | `:345-347` | |
-| 7 | PreToolUse hook, re-run of 1-6 on a rewrite | `:354-363` | |
-| 8 | learned-protocol envelope, circuit breaker, rate limit | `:366-371` | |
-| 9 | approval phase | `src/tool-execution/require-approval.ts:37-245` | |
-| 10 | sandbox phase | `src/tool-execution/run-sandboxed.ts:39-200` | unattended-shell gate (`:43`), stale-read + read-dedup guards, provisional taint floor (`:138`), execute, delivery-point taint/redaction (`:145`) |
-| 11 | audit | `src/tool-execution/audit-tool-call.ts:96-131` | threat engine evaluates the **result** post-hoc; result budgeting |
+| 1 | tool lookup | `enforce-policy.ts:345` → `src/tool-execution/arg-validation.ts:61` | First. A name that is not a tool gets the names the op can call, not a policy verdict; a real tool missing its kernel class still fail-closes at gate 3. |
+| 2 | arg repair, coercion + schema (`validateArgs`) | `:351` → `arg-validation.ts:107` | Before every security gate, so each one judges the args the tool will run with (a path under a key that repair renames is gated as that path). |
+| 3 | **Ari kernel** (`ariKernelGate`) | `:354`, body `:74-172` | First security gate. Fail-closed when `ariRequired` and the kernel is inactive (`src/ari-kernel/evaluate.ts:66-70`; default `ariRequired: z.boolean().default(true)`, `src/config-schema.ts:81`). Unmapped tools fail closed (`evaluate.ts:77-84`). |
+| 4 | session policy | `:356` | |
+| 5 | worktree path rewrite | `:358` | before the pre-dispatch chain so security judges the real path |
+| 6 | pre-dispatch chain | `:360` → `src/tool-execution/pre-dispatch.ts:115-367` | local-only (`:131`), category **kill switches** (`:145`), screen/computer redirects (`:166`), supervised browser (`:184`), op-prohibition + plan mode (`:207-258`), RBAC (`:261`), one pass over packs `spend-cap, security-layer, default-policy, threat-engine, egress-refutation` (`:275-286`), protected-setting gate (`:305`). The profile-approval branch at `:322-366` runs only when `ctx.approval` is passed; the canonical path passes none (`enforce-policy.ts:208-221`), so approvals are owned by `require-approval.ts`. |
+| 7 | egress aggregate (data-lineage + canary + egress-guard), then private-content and control-file gates | `:367`, `:372-373` | the last two put the call to the user, never refuse it |
+| 8 | PreToolUse hook, re-run of 1-7 on a rewrite | `:381-391` | |
+| 9 | learned-protocol envelope, circuit breaker, rate limit | `:393-398` | |
+| 10 | approval phase | `src/tool-execution/require-approval.ts:37-245` | |
+| 11 | sandbox phase | `src/tool-execution/run-sandboxed.ts:39-200` | unattended-shell gate (`:43`), stale-read + read-dedup guards, provisional taint floor (`:138`), execute, delivery-point taint/redaction (`:145`) |
+| 12 | audit | `src/tool-execution/audit-tool-call.ts:96-131` | threat engine evaluates the **result** post-hoc; result budgeting |
 
 File-access confinement lives inside the security-layer pack: `SecurityLayer.evaluate` calls `evaluateFileAccess` at `src/security/layer/layer-core.ts:328` (also `src/security/layer/kernel-class-policy.ts:148`, `src/security/layer/shell-path-guard.ts:123`). The sandbox cage is not a gate but a property gates consult: `getSandboxStatus().confined` enables the tier-0 shell fast-path (`require-approval.ts:103-113`) and the unattended-shell block (`src/tool-execution/unattended-shell-gate.ts:8-24`). Note the kill switches sit *after* the kernel; harmless (both deny) but the kernel is the first word, not the last.
 

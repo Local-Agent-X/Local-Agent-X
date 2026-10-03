@@ -28,7 +28,7 @@ import {
   secretsMaskedNote,
   isSecretEndpointUrl,
 } from "../data-lineage/index.js";
-import type { TaintSource } from "../data-lineage/index.js";
+import type { TaintSource, MaskOptions } from "../data-lineage/index.js";
 import { recordExternalIngestion, isExternalIngestingTool } from "../data-lineage/external.js";
 import { DEFAULT_MAX_RESULT_CHARS } from "../context-manager/tool-result-cap.js";
 import { hasCapability } from "../tool-registry.js";
@@ -40,10 +40,72 @@ import { createLogger } from "../logger.js";
 const logger = createLogger("tool-execution");
 
 // Sensitive-read tools whose taint is gated on the READ PATH (not on scanning
-// returned content): a file read / pattern list. Their content scan is
-// deliberately omitted to preserve canonical read/glob/grep behavior — output
-// secret-scanning applies only to data-returning sensitive-read sinks.
+// returned content): a file read / pattern list. Their output is masked for
+// registered values only (maskScope), preserving canonical read/glob/grep
+// behavior on files that merely contain credential-shaped strings.
 const PATH_GATED_READS: ReadonlySet<string> = new Set(["read", "glob", "grep", "structural_search"]);
+
+/**
+ * How much of a delivered output is masked.
+ *  - web_fetch / http_request bodies: every shape, and every value a secrets
+ *    endpoint served. The tools mask before their `find` filter; this is the
+ *    seam's own guarantee for a result that reached here another way.
+ *  - shell output and owned-source records (sql_query, email_read,
+ *    memory_search, ari_* reads): structured shapes and registered values. The
+ *    high-entropy pass fires on build hashes, message ids and camelCase
+ *    identifiers there; exfil of such a token is still caught at send time.
+ *  - every other tool (file reads, searches, documents, process output):
+ *    registered values only. A credential shape in a source file is content
+ *    the model is working on; the user's stored secrets and the operator token
+ *    never are, whichever tool happens to carry them.
+ */
+function maskScope(toolName: string, args: Record<string, unknown>, isSensitiveRead: boolean): MaskOptions {
+  if (toolName === "http_request" || toolName === "web_fetch") return { endpoint: isSecretEndpointUrl(args.url) };
+  if (toolName === "bash" || (isSensitiveRead && !PATH_GATED_READS.has(toolName))) return { structuredOnly: true };
+  return { knownOnly: true };
+}
+
+/**
+ * Mask the secret VALUES in everything the model is shown of a result, in
+ * place, and register each as a known secret (secret-values.ts): the model
+ * keeps the listing, the rows, the rest of the file, and loses only the
+ * values; the registry stops them leaving at every egress sink. Whole-result
+ * withholding because one span matched cost the model a `supabase` listing
+ * and an inbox it was asked to set up (2026-09-18). The session is NOT
+ * tainted: the bytes never entered context.
+ *
+ * "Shown" is the content AND every string metadata field:
+ * renderToolResultForModel prints partial_output, recovery and userHint in
+ * full and every other string in its header. A shell timeout carries its
+ * output only there (stderr, partial_output), and every shell error repeats
+ * stderr in the header. Masking runs before the header's 60-char cut, which
+ * would otherwise print a value's first 60 characters.
+ */
+export function maskDeliveredSecrets(toolName: string, args: Record<string, unknown>, result: ToolResult): ToolResult {
+  const scope = maskScope(toolName, args, hasCapability(toolName, "sensitive-read"));
+  let masked = 0;
+  const kinds = new Set<string>();
+  const mask = (text: string): string => {
+    const m = withholdSecretValues(text, scope);
+    masked += m.masked;
+    for (const kind of m.kinds) kinds.add(kind);
+    return m.text;
+  };
+  const content = typeof result.content === "string" ? mask(result.content) : result.content;
+  const metadata = Object.fromEntries(
+    Object.entries(result.metadata ?? {}).map(([key, value]) => [key, typeof value === "string" ? mask(value) : value]),
+  );
+  if (masked === 0) return result;
+  const note = secretsMaskedNote(masked, [...kinds]);
+  // A tool that masked its own body (http_request, web_fetch) already counted
+  // those; this pass adds what it found beyond them.
+  const prior = typeof metadata.secrets_masked === "number" ? metadata.secrets_masked : 0;
+  return {
+    ...result,
+    content: content ? `${content}\n\n${note}` : note,
+    metadata: { ...metadata, secrets_masked: prior + masked },
+  };
+}
 
 interface TaintPair {
   source: TaintSource;
@@ -165,72 +227,14 @@ export function applyResultTaintPolicy(
       // The floor for these paths was set pre-execute; whether it stands is
       // decided by the stub branch below (stubbed → retracted, delivered →
       // kept). No content-bearing re-record — these reads carry no per-path
-      // content to fingerprint.
+      // content to fingerprint. A command that names a secrets FILE gets the
+      // whole-result stub; any other command's output is masked below.
       redactReason = `bash command referenced sensitive path(s): ${matches.join(", ")}`;
     }
-    // Shell OUTPUT: a secret value in it is masked in place and registered as a
-    // known secret (secret-values.ts) — the model keeps the listing (names,
-    // digests, every other line) and loses only the values. Withholding the
-    // whole output because one line matched cost the model its `supabase`
-    // listing and left it telling the user "security is blocking it". Only a
-    // STRUCTURED shape or a registered value is masked: the high-entropy pass
-    // fires on build hashes and camelCase identifiers in ordinary output, and
-    // exfil of such a token is still caught at send time by the outbound scan.
-    // A command that names a secrets FILE keeps the whole-result stub above.
-    const stdout = typeof result?.content === "string" ? result.content : "";
-    if (!redactReason && stdout.length > 0 && result) {
-      const masked = withholdSecretValues(stdout, { structuredOnly: true });
-      if (masked.masked > 0) {
-        result = {
-          ...result,
-          content: `${masked.text}\n\n${secretsMaskedNote(masked.masked, masked.kinds)}`,
-          metadata: { ...(result.metadata ?? {}), secrets_masked: masked.masked },
-        };
-      }
-    }
   }
 
-  // Owned-source DATA reads (sql_query, email_read, memory_search, ari_file
-  // read, ari_retrieval, ari_database, ari_sqlite) return row/record content
-  // from a LOCAL or account-owned source. A secret VALUE in it is masked in
-  // place and registered as a known secret (secret-values.ts), exactly as
-  // shell output is: the model keeps the message, the rows, the sender and
-  // every other line, and loses only the value; the registry stops the value
-  // leaving at every egress sink. Withholding the whole result because one
-  // span matched cost the model the inbox it was asked to set up (2026-09-18,
-  // two email_read calls stubbed on message-id-shaped strings). Only a
-  // STRUCTURED shape or a registered value is masked: the high-entropy pass
-  // fires on message ids, tracking ids and transcript hashes in ordinary
-  // records, and exfil of such a token is caught at send time.
-  if (isSensitiveRead && !PATH_GATED_READS.has(toolName) && toolName !== "bash") {
-    const body = typeof result?.content === "string" ? result.content : "";
-    if (body.length > 0 && result) {
-      const masked = withholdSecretValues(body, { structuredOnly: true });
-      if (masked.masked > 0) {
-        result = {
-          ...result,
-          content: `${masked.text}\n\n${secretsMaskedNote(masked.masked, masked.kinds)}`,
-          metadata: { ...(result.metadata ?? {}), secrets_masked: masked.masked },
-        };
-      }
-    }
-  }
-
-  // web_fetch / http_request bodies: a secret value in them is masked in place
-  // and registered as a known secret (secret-values.ts) — the tools already do
-  // this BEFORE their `find` filter so the model cannot grep a value out; this
-  // pass is the seam's own guarantee for any result that reached here another
-  // way (idempotent on already-masked text). The session is NOT tainted: the
-  // bytes never entered context, and the registry is what stops them leaving.
-  if (toolName === "http_request" || toolName === "web_fetch") {
-    const body = typeof result?.content === "string" ? result.content : "";
-    if (body.length > 0 && result) {
-      const masked = withholdSecretValues(body, { endpoint: isSecretEndpointUrl(args.url) });
-      if (masked.masked > 0) {
-        result = { ...result, content: `${masked.text}\n\n${secretsMaskedNote(masked.masked, masked.kinds)}` };
-      }
-    }
-  }
+  // A result the stub below replaces is never delivered, so it is not masked.
+  if (result && !(redactReason && !result.isError)) result = maskDeliveredSecrets(toolName, args, result);
 
   // External-content ingestion mark (memory-promotion gate, NOT egress taint).
   // TOOL-CLASS keyed (D8): a successful result from an off-box-ingesting tool

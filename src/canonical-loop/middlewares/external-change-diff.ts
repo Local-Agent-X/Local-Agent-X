@@ -28,6 +28,7 @@ import { isDispatchFailure } from "../types.js";
 import { getSessionForOp } from "../../ops/session-bridge.js";
 import { sweepExternalChanges, resolveExternalChange, type ExternalChange } from "../../tools/read-state.js";
 import { resolveAgentPath } from "../../workspace/paths.js";
+import { isSensitivePath, withholdSecretValues, secretsMaskedNote } from "../../data-lineage/index.js";
 import { createLogger } from "../../logger.js";
 
 const logger = createLogger("canonical-loop.external-change-diff");
@@ -97,12 +98,19 @@ export const externalChangeDiffMiddleware: CanonicalMiddleware = {
       const shown = changes.slice(0, MAX_FILES_PER_NUDGE);
       const sections: string[] = [];
       for (const change of shown) {
-        const diff = fileDiff(change);
+        // A credential file is never diffed: the bytes a user adds to it (a
+        // real key pasted over a placeholder the model already saw) carry no
+        // registered value, so only the read gate's own verdict may show them.
+        const sensitive = isSensitivePath(change.path);
+        const diff = sensitive ? null : fileDiff(change);
         if (diff) {
           sections.push(`${change.path} changed:\n${diff.text}`);
         } else {
+          const why = sensitive
+            ? "it is a credential file, so its contents are never diffed"
+            : "the cached snapshot was too large or evicted";
           sections.push(
-            `${change.path} changed on disk (no diff available — the cached snapshot was too large or evicted). ` +
+            `${change.path} changed on disk (no diff available — ${why}). ` +
             `Re-read it before relying on or editing its contents.`,
           );
         }
@@ -112,13 +120,20 @@ export const externalChangeDiffMiddleware: CanonicalMiddleware = {
         changes.length > shown.length
           ? `\n\n(+${changes.length - shown.length} more changed file${changes.length - shown.length === 1 ? "" : "s"} not shown — they will be reported on a later turn.)`
           : "";
+      // The files left to diff are not credential files, so a `read` of them
+      // masks registered values only; both sides of a diff get that same mask
+      // (the snapshot and the new disk bytes can each hold a stored secret or
+      // the operator token).
+      const masked = withholdSecretValues(sections.join("\n\n"), { knownOnly: true });
+      const maskedNote = masked.masked > 0 ? `\n\n${secretsMaskedNote(masked.masked, masked.kinds)}` : "";
       return {
         kind: "nudge",
         reason: "external-change-diff",
         message:
           "Files you read earlier in this session have changed on disk OUTSIDE your own tool calls. " +
           "Your cached view of them is stale — each diff below is what changed (old = what you last saw, new = current disk):\n\n" +
-          sections.join("\n\n") +
+          masked.text +
+          maskedNote +
           overflow,
       };
     } catch (err) {

@@ -1,10 +1,27 @@
 // App recycle bin. Proves a destructive op moves user data into ~/.lax/trash
 // (recoverable) instead of perma-deleting it.
 
-import { describe, it, expect, afterEach, beforeEach } from "vitest";
+import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync, existsSync, mkdirSync, readdirSync, readFileSync, utimesSync } from "node:fs";
 import { join, basename } from "node:path";
 import { tmpdir } from "node:os";
+
+// Captures the platform recycle step instead of running it, so a test reads
+// the exact invocation without moving anything into the user's real bin.
+const recycle = vi.hoisted(() => ({
+  intercept: false,
+  calls: [] as Array<{ file: string; args: string[]; env?: NodeJS.ProcessEnv }>,
+}));
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  const execFileSync = ((file: string, args: string[], opts?: { env?: NodeJS.ProcessEnv }) => {
+    if (!recycle.intercept) return actual.execFileSync(file, args, opts as never);
+    recycle.calls.push({ file, args, env: opts?.env });
+    return Buffer.alloc(0);
+  }) as typeof actual.execFileSync;
+  return { ...actual, execFileSync };
+});
+
 import {
   moveToTrash,
   trashRecord,
@@ -54,6 +71,40 @@ describe("safe-delete recycle bin", () => {
 
   it("returns null for a path that doesn't exist", async () => {
     expect(await moveToTrash(join(workDir, "missing"))).toBeNull();
+  });
+
+  // PowerShell closes a quoted string on U+2018-U+201B as well as on ', so a
+  // name carrying one would run as script if the path were embedded as a
+  // literal. The script must be a constant, with the path in its environment.
+  it("hands the Windows Recycle Bin step its path through the environment, never the script", async () => {
+    const realPlatform = process.platform;
+    const noNative = process.env.LAX_NO_NATIVE_TRASH;
+    const files = ["report ‘final’.txt", "x’; Remove-Item -Recurse $HOME; ’.txt"].map((name) => {
+      const f = join(workDir, name);
+      writeFileSync(f, "x", "utf-8");
+      return f;
+    });
+    Object.defineProperty(process, "platform", { value: "win32" });
+    delete process.env.LAX_NO_NATIVE_TRASH;
+    recycle.intercept = true;
+    recycle.calls.length = 0;
+    try {
+      for (const f of files) await moveToTrash(f, "test");
+    } finally {
+      recycle.intercept = false;
+      process.env.LAX_NO_NATIVE_TRASH = noNative;
+      Object.defineProperty(process, "platform", { value: realPlatform });
+    }
+    const calls = recycle.calls.filter((c) => c.file === "powershell");
+    expect(calls).toHaveLength(2);
+    expect(calls[1].args).toEqual(calls[0].args);
+    calls.forEach((call, i) => {
+      const script = call.args.join(" ");
+      expect(script).not.toMatch(/[‘-‛]/);
+      const key = Object.keys(call.env ?? {}).find((k) => call.env?.[k] === files[i]);
+      expect(key).toBeDefined();
+      expect(script).toContain(`$env:${key}`);
+    });
   });
 
   it("snapshots a deleted config record (project/agent) as recoverable JSON", () => {

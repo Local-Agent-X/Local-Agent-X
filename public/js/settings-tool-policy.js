@@ -37,9 +37,11 @@ async function loadToolPolicyToggles() {
     if (auditModelInput) auditModelInput.value = s.regressionAuditModel || '';
     // developer_mode defaults OFF (=== true), unlike the kill-switches above
     // which default ON (!== false). The card only renders on installs where
-    // self_edit can exist at all (git checkout) — packaged installs hide it.
+    // self_edit can exist at all (git checkout) — packaged installs hide it —
+    // or while the setting is on, so the status-bar badge always leads to an
+    // off switch.
     const devCard = document.getElementById('dev-mode-card');
-    if (devCard) devCard.style.display = s.selfEditAvailable === true ? '' : 'none';
+    if (devCard) devCard.style.display = s.selfEditAvailable === true || s.developer_mode === true ? '' : 'none';
     setToolPolicyToggle('tp-toggle-developer-mode', s.developer_mode === true);
   } catch (e) { console.warn('[tool-policy] load failed', e); }
 }

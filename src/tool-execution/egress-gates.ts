@@ -20,6 +20,7 @@ import { checkEgressTaintWithPayload } from "../data-lineage/index.js";
 import { checkCanariesInPayload, recordCanaryExfilAudit } from "../threat/canaries.js";
 import { hasCapability } from "../tool-registry.js";
 import { checkOutboundRequest, checkOutboundPayload, checkOutboundEmail, checkAttachmentPaths } from "../tools/http-egress-guard.js";
+import { lastBrowserPageUrl, shownBySite } from "../browser/site-provenance.js";
 import type { PhaseOutcome, ToolCallContext } from "./context.js";
 import { terminate, CONTINUE } from "./context.js";
 
@@ -193,13 +194,19 @@ export function probeEgressGuard(ctx: ToolCallContext): EgressBlocker | null {
       },
       text,
     );
+  } else if (tc.name === "browser") {
+    // The page the call acts on: where it navigates, or the page it types into.
+    // A script can send to any host, so nothing it carries is vouched for.
+    const destination = typeof args.url === "string" && args.url ? args.url : lastBrowserPageUrl(ctx.sessionId ?? "");
+    const vouched = args.script ? undefined : (token: string) => shownBySite(ctx.sessionId ?? "", destination, token);
+    block = checkOutboundPayload(tc.name, text, vouched);
   } else {
     block = checkOutboundPayload(tc.name, text);
   }
   if (!block) return null;
   return {
     layer: "egress-guard", label: "egress guard", reason: block.message,
-    recovery: "Use {{SECRET_NAME}} placeholders instead of hardcoded credentials, or remove the secret from the outbound payload. Add a trusted destination to ~/.lax/egress-allowlist.json only if it legitimately needs credentials.",
+    recovery: "Use {{SECRET_NAME}} placeholders instead of hardcoded credentials, or remove the secret from the outbound payload. Only if the destination legitimately needs credentials, ask the user to allow its host in Settings → Security → Web access.",
     userHint: USER_HINTS.outboundContent, meta: block.meta,
     confirmable: block.confirmable,
   };

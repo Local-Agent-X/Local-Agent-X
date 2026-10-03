@@ -20,7 +20,8 @@ function mapToolName(toolClass: string, action: string): string {
     if (action === "write") return "write";
     return "edit";
   }
-  if (toolClass === "shell") return "bash";
+  // No shell case: no kernel shell executor is bridged (bash is the one
+  // shell), so a shell call maps to an unregistered name and is refused.
   if (toolClass === "http") return "http_request";
   if (toolClass === "database") return "memory_save";
   if (toolClass === "retrieval") return "memory_search";

@@ -1,8 +1,9 @@
 /**
  * How LAX serves a workspace app's static files — the response HEADERS and the
  * request-path → file RESOLUTION, in ONE definition shared by everything that
- * RESOLVES AN APP REQUEST: the `/apps/<id>/…` route (workspace-app-serving.ts)
- * and the app_build smoke gate's origin (app-build-smoke-origin.ts).
+ * RESOLVES AN APP REQUEST: the `/apps/<id>/…` route on the agent origin
+ * (workspace-app-serving.ts, agent-origin.ts) and the app_build smoke gate's
+ * origin (app-build-smoke-origin.ts).
  *
  * Not everything that touches an app's files is a request resolver. Notably
  * `src/routes/apps-bundle.ts` picks the same dist/-then-source-`index.html`
@@ -27,6 +28,25 @@ import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { confineToDir } from "../security/layer/index.js";
 
+/** The CSP part every app document on the agent origin carries, whichever
+ *  route renders it (static, dev-server proxy, registry renderer).
+ *
+ *  Apps are served from the agent origin (agent-origin.ts) and framed by the UI
+ *  on another loopback port, so framing is granted to loopback pages rather
+ *  than to the app's own origin. `sandbox` keeps the app its own (agent) origin
+ *  for storage and its own requests, but withholds top-level navigation: a
+ *  framed app cannot steer the shell around it. */
+export const AGENT_APP_FRAMING_CSP =
+  "frame-ancestors 'self' http://127.0.0.1:* http://localhost:*; " +
+  "sandbox allow-scripts allow-same-origin allow-forms allow-modals allow-popups " +
+  "allow-popups-to-escape-sandbox allow-downloads allow-pointer-lock";
+
+/** The script every route that serves an app document injects, so the app can
+ *  reach a backend through /api/connectors/*. Export strips it by this shape. */
+export function connectorBootstrapScript(connectorCapability: string): string {
+  return `<script>window.__LAX_CONNECTOR_TOKEN__=${JSON.stringify(connectorCapability)};</script>`;
+}
+
 /** Content-Security-Policy for a served workspace app's HTML document.
  *  `connect-src` deliberately admits loopback on any port: apps legitimately
  *  call their own dev server / local sidecars. Everything else off-origin is
@@ -34,14 +54,13 @@ import { confineToDir } from "../security/layer/index.js";
 const WORKSPACE_APP_CSP =
   "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; " +
   "img-src 'self' data: blob:; connect-src 'self' http://127.0.0.1:* http://localhost:*; " +
-  "object-src 'none'; base-uri 'self'; form-action 'self'";
+  "object-src 'none'; base-uri 'self'; form-action 'self'; " + AGENT_APP_FRAMING_CSP;
 
 /** Security + cache headers sent with a served app's HTML (not with its assets —
  *  the policy that governs a page comes from the document response). */
 export const WORKSPACE_APP_HTML_HEADERS: Readonly<Record<string, string>> = Object.freeze({
   "Content-Security-Policy": WORKSPACE_APP_CSP,
   "X-Content-Type-Options": "nosniff",
-  "X-Frame-Options": "SAMEORIGIN",
   "Referrer-Policy": "no-referrer",
   "Permissions-Policy": "camera=(self), microphone=(self), geolocation=()",
   "Cache-Control": "no-cache, must-revalidate",

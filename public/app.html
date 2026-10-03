@@ -993,12 +993,13 @@
             <span id="audit-verify-result" style="font-size:.78rem"></span>
           </div>
         </div>
-        <!-- Hidden unless the server reports a git checkout (selfEditAvailable):
-             packaged installs can't run self_edit, so the switch never shows there. -->
+        <!-- Hidden unless the server reports a git checkout (selfEditAvailable),
+             where self_edit can run, or the setting is on, so the status-bar
+             badge always leads to an off switch. -->
         <div class="section-card" id="dev-mode-card" style="display:none">
           <div class="section-title">Developer Mode</div>
-          <div class="section-desc">Lets the agent's self_edit tool modify this install's own source code. Off, customizations go through connectors, workspace apps, and settings — all of which survive updates. On, your install carries local source edits that future platform updates must merge with.</div>
-          <div class="toggle-row"><div><div class="toggle-label">Allow source self-edits (self_edit)</div><div class="toggle-desc">User-owned control — the agent can never flip this itself</div></div><div id="tp-toggle-developer-mode" class="toggle" onclick="toolPolicyToggle('developer_mode', this)"></div></div>
+          <div class="section-desc">Lets the agent change Local Agent X itself: self_edit on this install's source code and its config/ (the agent's own instructions and tool settings), autopilot sessions on that source, and app builds pinned to a coding CLI. It stays on until you turn it off; turning it off stops a running autopilot. Off, customizations go through connectors, workspace apps, and settings — all of which survive updates. On, your install carries local source edits that future platform updates must merge with.</div>
+          <div class="toggle-row"><div><div class="toggle-label">Allow self-edits and autopilot</div><div class="toggle-desc">User-owned control — the agent can never flip this itself</div></div><div id="tp-toggle-developer-mode" class="toggle" onclick="toolPolicyToggle('developer_mode', this)"></div></div>
         </div>
       </div>
       <!-- WhatsApp -->
@@ -1531,7 +1532,7 @@
         <div class="ide-resize-handle" data-resize-target="ide-chat-panel" data-resize-side="right"></div>
         <!-- Center: Preview -->
         <div id="ide-preview-panel" class="ide-panel">
-          <iframe id="ide-preview-frame" sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe>
+          <iframe id="ide-preview-frame" sandbox="allow-scripts allow-forms allow-popups" allow="clipboard-write"></iframe>
         </div>
         <div class="ide-resize-handle" data-resize-target="ide-files-panel" data-resize-side="left"></div>
         <!-- Right: File tree (collapsed by default — preview is the primary -->
@@ -1553,7 +1554,7 @@
 
   <!-- Dynamic pinned pages load here via iframe -->
   <div id="page-pin" class="page" style="flex:1;overflow:hidden">
-    <iframe id="pin-iframe" style="width:100%;height:100%;border:none;background:var(--bg)"></iframe>
+    <iframe id="pin-iframe" sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads allow-pointer-lock" allow="clipboard-write" style="width:100%;height:100%;border:none;background:var(--bg)"></iframe>
   </div>
 
   <div id="page-agents" class="page">

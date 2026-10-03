@@ -118,6 +118,27 @@ describe("requireApprovalPhase — unattended runs", () => {
     expect(ctx.result?.status).toBe("blocked");
   });
 
+  // Only a refusal the profile makes can be lifted by a looser profile; a
+  // policy reason asks a person under every one, so the Autonomous profile
+  // is the wrong way out and a chat is the right one.
+  it("a policy reason refused unattended points at a chat, never at a looser profile", async () => {
+    for (const callContext of ["cron", "delegated"] as const) {
+      const ctx = makeCtx({ name: "http_request", sessionId: pinned("Autonomous"), callContext, policyApprovalReason: "this host needs review" });
+      expect((await requireApprovalPhase(ctx)).kind, callContext).toBe("halt");
+      expect(String(ctx.result?.content), callContext).toContain("because this host needs review");
+      expect(String(ctx.result?.content), callContext).toContain("It is refused under every profile: run it from a chat, where you can approve it.");
+      expect(String(ctx.result?.content), callContext).not.toContain("Autonomous profile");
+    }
+  });
+
+  it("a refusal the profile makes still points at the profiles", async () => {
+    const ctx = makeCtx({ name: "http_request", sessionId: pinned("Normal"), callContext: "cron" });
+    expect((await requireApprovalPhase(ctx)).kind).toBe("halt");
+    expect(String(ctx.result?.content)).toContain("under the active autonomy profile");
+    expect(String(ctx.result?.content)).toContain("Run this under the Autonomous profile (or pin a per-job profile) to allow it.");
+    expect(String(ctx.result?.content)).not.toContain("refused under every profile");
+  });
+
   it("lets an allow-tier tool proceed in a cron run", async () => {
     const s = pinned("Normal"); // read is not ask-tier
     const ctx = makeCtx({ name: "read", sessionId: s, callContext: "cron" });
@@ -675,6 +696,9 @@ describe("requireApprovalPhase — external-ingestion taint demotes fact saves t
     expect(outcome.kind).toBe("halt");
     expect(ctx.result?.status).toBe("blocked");
     expect(String(ctx.result?.content)).toContain("risky content cannot become durable memory");
+    // A promotion asks a person under every profile, so no looser one helps.
+    expect(String(ctx.result?.content)).toContain("It is refused under every profile: run it from a chat, where you can approve it.");
+    expect(String(ctx.result?.content)).not.toContain("Autonomous profile");
   });
 
   it("tainted fact saves hit the per-session quota, then block with an honest message (flood guard)", async () => {

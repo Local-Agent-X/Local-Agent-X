@@ -17,10 +17,11 @@
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, statSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { delimiter, isAbsolute, join, resolve } from "node:path";
 import { killProcessTree } from "../process-tree-kill.js";
 import { detectFramework } from "./framework-detect.js";
 import { hardenChildEnv } from "./env-contamination.js";
+import { buildSelfEditChildEnv } from "../self-edit/child-env.js";
 import type { ToolResult } from "../types.js";
 
 // 15min hard cap. Earlier value was 300s, which killed legitimate builds:
@@ -127,7 +128,7 @@ async function buildWithCodex(input: BuildSpawnInput): Promise<ToolResult> {
       ],
       cwd: appDir,
       stdin: prompt,
-      env: { ...process.env, NO_COLOR: "1" },
+      env: { ...cliBuildEnv("codex"), NO_COLOR: "1" },
       signal,
       onEvent,
     });
@@ -189,6 +190,7 @@ async function buildWithClaude(input: BuildSpawnInput): Promise<ToolResult> {
       ],
       cwd: appDir,
       stdin: prompt,
+      env: cliBuildEnv("anthropic"),
       signal,
       onEvent,
       parseLine: claudeParser,
@@ -208,12 +210,47 @@ async function buildWithClaude(input: BuildSpawnInput): Promise<ToolResult> {
   }
 }
 
+/**
+ * The CLI sub-agent runs on the host with bypassed approvals, so it gets the
+ * self_edit surgeon's env: the build provider's own credential and none of the
+ * server's other secrets. Nothing in it may resolve a program name against the
+ * current directory, which is the app dir the agent writes into: cmd.exe looks
+ * there before the PATH unless NoDefaultCurrentDirectoryInExePath is set, and
+ * the npm shim that starts the CLI runs a bare `node`. A relative PATH entry
+ * is the same lookup on every platform.
+ */
+function cliBuildEnv(provider: BuildSpawnInput["provider"]): NodeJS.ProcessEnv {
+  const env = buildSelfEditChildEnv(process.env, provider);
+  env.PATH = (env.PATH ?? "").split(delimiter).filter((dir) => isAbsolute(dir)).join(delimiter);
+  if (process.platform === "win32") env.NoDefaultCurrentDirectoryInExePath = "1";
+  return env;
+}
+
+/** The CLI by full path on Windows, quoted for cmd.exe, so the name is never
+ *  looked up at all; null when the PATH has no such program. */
+function resolveCliCommand(bin: string, env: NodeJS.ProcessEnv): string | null {
+  if (process.platform !== "win32") return bin;
+  const exts = (env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean);
+  for (const dir of (env.PATH ?? "").split(delimiter)) {
+    for (const ext of exts) {
+      const file = join(dir, bin + ext);
+      if (statSync(file, { throwIfNoEntry: false })?.isFile()) return `"${file}"`;
+    }
+  }
+  return null;
+}
+
+const INSTALL_HINT: Record<string, string> = {
+  codex: "Install with: npm install -g @openai/codex",
+  claude: "Install with: npm install -g @anthropic-ai/claude-code",
+};
+
 interface SpawnArgs {
   cmd: string;
   args: string[];
   cwd: string;
   stdin: string;
-  env?: NodeJS.ProcessEnv;
+  env: NodeJS.ProcessEnv;
   signal?: AbortSignal;
   onEvent?: (e: { type: string; [k: string]: unknown }) => void;
   parseLine?: (line: string) => string | null;
@@ -221,14 +258,20 @@ interface SpawnArgs {
 
 function runSpawn(args: SpawnArgs): Promise<string> {
   return new Promise<string>((resolveP, rejectP) => {
-    const proc = spawn(args.cmd, args.args, {
+    // hardenChildEnv: strip host __CFBundleIdentifier + guard process.title, so
+    // a spawned build/agent node child can't SIGSEGV on macOS (env scrub alone
+    // is insufficient — see env-contamination.ts).
+    const env = hardenChildEnv(args.env);
+    const command = resolveCliCommand(args.cmd, env);
+    if (!command) {
+      rejectP(new Error(`${args.cmd} CLI not available: not found on the PATH. ${INSTALL_HINT[args.cmd]}`));
+      return;
+    }
+    const proc = spawn(command, args.args, {
       cwd: args.cwd,
       stdio: ["pipe", "pipe", "pipe"],
       shell: process.platform === "win32",
-      // hardenChildEnv: strip host __CFBundleIdentifier + guard process.title, so
-      // a spawned build/agent node child can't SIGSEGV on macOS (env scrub alone
-      // is insufficient — see env-contamination.ts).
-      env: hardenChildEnv(args.env ?? process.env),
+      env,
     });
     proc.stdin?.write(args.stdin);
     proc.stdin?.end();
@@ -281,10 +324,7 @@ function runSpawn(args: SpawnArgs): Promise<string> {
       clearTimeout(timer);
       stopProgress();
       args.signal?.removeEventListener("abort", abortListener);
-      const installHint = args.cmd === "codex"
-        ? "Install with: npm install -g @openai/codex"
-        : "Install with: npm install -g @anthropic-ai/claude-code";
-      rejectP(new Error(`${args.cmd} CLI not available: ${err.message}. ${installHint}`));
+      rejectP(new Error(`${args.cmd} CLI not available: ${err.message}. ${INSTALL_HINT[args.cmd]}`));
     });
   });
 }

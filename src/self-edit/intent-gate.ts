@@ -19,11 +19,14 @@ const TIMEOUT_MS = 8000;
 const SHAPE_HINT = `{"verdict": "match" | "mismatch" | "unsure", "reason": "<one short sentence>"}`;
 
 const SYSTEM_PROMPT =
-  `You are a sanity-check classifier for self_edit, a destructive tool that modifies the agent's own source code. ` +
-  `Decide whether the user's most recent message is actually requesting a source-code change right now. ` +
-  `self_edit should ONLY run when the user is asking for a code change: a bug fix, a broken behavior to repair, or a missing capability to add.\n\n` +
-  `- "match": the user is reporting a bug / broken behavior, or explicitly requesting a code change or new capability, AND the task addresses it ` +
-  `(e.g. user "fix the chat freeze" / "the export button does nothing" / "add a transcribe tool" → task patches that area).\n` +
+  `You are a sanity-check classifier for self_edit, a destructive tool that modifies the agent's own source code and its own config/ directory ` +
+  `(its system prompt and tools.json, which no other tool may write). ` +
+  `Decide whether the user's most recent message is actually requesting such a change right now. ` +
+  `self_edit should ONLY run when the user is asking for a change to the agent itself: a bug fix, a broken behavior to repair, a missing capability to add, ` +
+  `or a change to the agent's own config/.\n\n` +
+  `- "match": the user is reporting a bug / broken behavior, or explicitly requesting a code change, a new capability, or a change to the agent's own config/, ` +
+  `AND the task addresses it (e.g. user "fix the chat freeze" / "the export button does nothing" / "add a transcribe tool" / ` +
+  `"change your tools.json default bash timeout" / "add a rule to your system prompt" → task patches that area).\n` +
   `- "mismatch": the user is NOT requesting a change. This includes asking a question, making an observation about the agent's own prior action, ` +
   `brainstorming / weighing options, or a task on a different topic. Examples that are mismatch: "i don't see the committed change", ` +
   `"did that actually work?", "is that a bug?", "why did it do that?", "launch the installer" (that's a shell command, not a source edit).\n` +

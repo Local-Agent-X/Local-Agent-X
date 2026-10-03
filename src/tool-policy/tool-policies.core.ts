@@ -23,7 +23,6 @@ export const TOOL_POLICIES_CORE: Record<string, ToolPolicyEntry> = {
       { id: "allow-bash-limited", decision: "allow", reason: "Shell allowed (rate limited, command-checked)", priority: 40, constraints: { maxCallsPerSession: 30 } },
     ],
   },
-  ari_shell:        { kernel: "internal", risk: "shell" },
   process_start:    { kernel: "shell",    risk: "shell" },
   process_status:   { kernel: "shell",    risk: "safe" },
   process_kill:     { kernel: "shell",    risk: "destructive" },

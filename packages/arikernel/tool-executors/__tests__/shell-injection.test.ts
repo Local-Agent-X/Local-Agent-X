@@ -1,5 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { copyFileSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ShellExecutor, parseCommandString, validateCommand } from "../src/shell.js";
+import { resolveSystemExecutable } from "../src/system-tools.js";
 
 describe("validateCommand", () => {
 	it("accepts an allowlisted command with safe arguments", () => {
@@ -283,11 +287,7 @@ describe("ShellExecutor", () => {
 		expect(result.error).toContain("Executable not allowed");
 	});
 
-	// POSIX-only: echo (like most of the allowlist) is a shell builtin on
-	// Windows, not a binary on PATH, so the exec leg can't run there. The
-	// allowlist ACCEPTANCE logic is covered cross-platform by the
-	// validateCommand tests above.
-	it.skipIf(process.platform === "win32")("accepts an allowlisted executable (echo)", async () => {
+	it("accepts an allowlisted executable (echo)", async () => {
 		const result = await executor.execute({
 			id: "tc-allow-3",
 			toolClass: "shell",
@@ -308,5 +308,90 @@ describe("ShellExecutor", () => {
 		expect(result.success).toBe(false);
 		// curl is in the named denylist
 		expect(result.error).toContain("Blocked shell interpreter");
+	});
+
+	// sort's own options run a program and write files, and uniq writes its
+	// second operand, all on the host; neither may run in either call form.
+	it("refuses sort and uniq in the structured and the legacy command forms", async () => {
+		for (const parameters of [
+			{ executable: "sort", args: ["--compress-program=sh", "x"] },
+			{ command: "sort --compress-program=sh x" },
+			{ executable: "uniq", args: ["a", "b"] },
+			{ command: "uniq a b" },
+		]) {
+			const result = await executor.execute({ id: "tc-allow-5", toolClass: "shell", action: "exec", parameters });
+			expect(result.success, JSON.stringify(parameters)).toBe(false);
+			expect(result.error, JSON.stringify(parameters)).toContain("Blocked shell interpreter");
+		}
+	});
+});
+
+// The workspace is the executor's allowed cwd, and the agent can write a file
+// there named like an allowlisted tool. That file must never be what runs: not
+// through a path to it, and not through the bare name, which Windows looks up
+// in the cwd before PATH.
+describe("ShellExecutor runs allowlisted tools only from the system directories", () => {
+	const executor = new ShellExecutor();
+	const win = process.platform === "win32";
+	const savedRoot = process.env.FILE_EXECUTOR_ROOT;
+	const savedNoCwdLookup = process.env.NoDefaultCurrentDirectoryInExePath;
+	let dir = "";
+	const exec = (id: string, parameters: Record<string, unknown>) =>
+		executor.execute({ id, toolClass: "shell", action: "exec", parameters });
+	const restore = (key: string, value: string | undefined) => {
+		if (value === undefined) delete process.env[key];
+		else process.env[key] = value;
+	};
+
+	beforeAll(() => {
+		// realpath expands an 8.3 temp path, whose "~" the metacharacter check refuses.
+		dir = realpathSync.native(mkdtempSync(join(tmpdir(), "ari-shell-planted-")));
+		writeFileSync(join(dir, "note.txt"), "from the real cat\n");
+		// Windows completes a bare or extensionless name with .exe, so the
+		// lookalike there is a real program renamed; elsewhere a script.
+		if (win) {
+			copyFileSync(join(process.env.SystemRoot ?? "C:\\Windows", "System32", "hostname.exe"), join(dir, "cat.exe"));
+		} else {
+			writeFileSync(join(dir, "cat"), "#!/bin/sh\necho planted\n", { mode: 0o755 });
+		}
+		process.env.FILE_EXECUTOR_ROOT = dir;
+		// A host can switch the Windows cwd-first lookup off; this suite needs it on.
+		delete process.env.NoDefaultCurrentDirectoryInExePath;
+	});
+
+	afterAll(() => {
+		restore("FILE_EXECUTOR_ROOT", savedRoot);
+		restore("NoDefaultCurrentDirectoryInExePath", savedNoCwdLookup);
+		rmSync(dir, { recursive: true, force: true });
+	});
+
+	it("refuses an absolute path to a workspace file named cat", async () => {
+		const planted = `${dir.replace(/\\/g, "/")}/cat`;
+		for (const parameters of [
+			{ executable: planted, args: ["note.txt"], cwd: dir },
+			{ command: `${planted} note.txt`, cwd: dir },
+		]) {
+			const result = await exec("tc-sys-1", parameters);
+			expect(result.success).toBe(false);
+			expect(result.error).toContain("is not the system cat");
+		}
+	});
+
+	it("refuses a relative path to it", async () => {
+		const result = await exec("tc-sys-2", { executable: "./cat", args: ["note.txt"], cwd: dir });
+		expect(result.success).toBe(false);
+		expect(result.error).toContain("is not the system cat");
+	});
+
+	it("runs the system cat for the bare name, with the lookalike in the cwd", async () => {
+		const result = await exec("tc-sys-3", { executable: "cat", args: ["note.txt"], cwd: dir });
+		expect(result.error).toBeUndefined();
+		expect((result.data as { stdout: string }).stdout).toBe("from the real cat\n");
+	});
+
+	// On Windows the system file is cat.exe, a basename the allowlist never admits.
+	it.skipIf(win)("accepts an absolute path that is the system tool itself", () => {
+		const system = resolveSystemExecutable("cat");
+		expect(resolveSystemExecutable(system)).toBe(system);
 	});
 });

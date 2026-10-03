@@ -106,25 +106,22 @@ describe("failed self_edit releases its worktree registry slot (AB-7)", () => {
     rmSync(wtDir, { recursive: true, force: true });
   });
 
-  it("stops the sandbox before gates or merge when a rescue revokes its lease", async () => {
-    let revoke: (() => boolean | void) | undefined;
-    vi.mocked(lockModule.acquireGlobalSelfEditLock).mockImplementationOnce(async (options) => {
-      revoke = options.onRevoke;
-      return { acquired: true, nonce: "revocable-owner" };
-    });
+  it("stops the sandbox before gates or merge when the caller aborts", async () => {
+    vi.mocked(lockModule.acquireGlobalSelfEditLock).mockImplementationOnce(async () => ({ acquired: true, nonce: "stopped-owner" }));
+    const stop = new AbortController();
     vi.mocked(surgeonModule.runSurgeon).mockImplementationOnce(async (_path, _prompt, signal) => {
-      setTimeout(() => revoke?.(), 10);
+      setTimeout(() => stop.abort(), 10);
       await new Promise<void>((resolve) => signal?.addEventListener("abort", () => resolve(), { once: true }));
       return {} as Awaited<ReturnType<typeof surgeonModule.runSurgeon>>;
     });
     vi.mocked(gatesModule.gateDeps).mockClear();
     vi.mocked(lockModule.releaseGlobalSelfEditLock).mockClear();
 
-    const result = await runSelfEditInSandbox({ task: "revoked edit", fullPrompt: "noop", authToken: "t" });
+    const result = await runSelfEditInSandbox({ task: "stopped edit", fullPrompt: "noop", authToken: "t", signal: stop.signal });
 
     expect(result.ok).toBe(false);
     expect(result.failure).toMatch(/abort/i);
     expect(gatesModule.gateDeps).not.toHaveBeenCalled();
-    expect(lockModule.releaseGlobalSelfEditLock).toHaveBeenCalledWith("revocable-owner");
+    expect(lockModule.releaseGlobalSelfEditLock).toHaveBeenCalledWith("stopped-owner");
   });
 });

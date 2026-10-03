@@ -40,13 +40,17 @@ async function getCtx(): Promise<AutopilotToolsContext | null> {
 
 export const autopilotStartTool: ToolDefinition = {
   name: "autopilot_start",
+  compactDescription: "Autonomous session that edits Local Agent X's OWN source in a git worktree. Only when the user asks to change Local Agent X itself, never for their own projects or websites. Requires developer_mode.",
   description:
-    "Launch AUTOPILOT MODE: agent works autonomously inside an isolated git worktree on a named topic until it self-terminates, time runs out, or you interrupt. Each round commits separately so you can review/cherry-pick. Use when the user says 'autopilot X' or 'work on Y for the next 30 minutes' or asks for a long autonomous session.",
+    "Launch AUTOPILOT MODE on Local Agent X's OWN source code: an agent edits and builds this app's engine autonomously inside an isolated git worktree of the Local Agent X repo, one commit per round, until it self-terminates, time runs out, or you interrupt. " +
+    "Use ONLY when the user explicitly asks for an autonomous session that changes Local Agent X itself (e.g. 'autopilot: fix Local Agent X's cron edge cases'). " +
+    "It reaches nothing outside that repo, so it is NOT for the user's own projects, websites, apps or files; handle those with the normal tools, even when the user names a time budget. " +
+    "REQUIRES the developer_mode setting (off by default, user-owned); with it off the call is refused.",
   parameters: {
     type: "object",
     properties: {
-      topic: { type: "string", description: "What the agent should work on (e.g., 'fix cron edge cases')" },
-      scope: { type: "array", items: { type: "string" }, description: "File paths or globs the agent should focus on (HINT, not enforcement). Required." },
+      topic: { type: "string", description: "What the agent should change in Local Agent X (e.g., 'fix cron edge cases')" },
+      scope: { type: "array", items: { type: "string" }, description: "Paths or globs in the Local Agent X repo the agent should focus on, e.g. 'src/cron/' (HINT, not enforcement). Required." },
       durationMs: { type: "number", description: "Time budget in ms. Default 1800000 (30 min)." },
       maxRounds: { type: "number", description: "Max rounds before stop. Default 20." },
       maxNoopRounds: { type: "number", description: "Stop after this many no-op rounds in a row. Default 2." },

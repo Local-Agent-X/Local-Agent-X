@@ -187,7 +187,8 @@ async function loadCustomPages() {
 function openApp(urlOrId) {
   // Accept full URL or just an ID
   const target = urlOrId.startsWith('http') || urlOrId.startsWith('/') ? urlOrId : '/apps/' + urlOrId;
-  window.open(target, '_blank');
+  // The app is agent-built; with an opener it could navigate this window.
+  window.open(target, '_blank', 'noopener');
 }
 
 async function deleteApp(id, name) {
@@ -310,17 +311,16 @@ async function deleteCustomPage(name) {
 
 async function exportApp(id, name) {
   try {
-    // Fetch the rendered HTML
-    const r = await fetch(`${API}/apps/${id}`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
+    // The rendered HTML, from the agent origin that serves it (it lets this UI read it)
+    await laxAgentReady;
+    const r = await fetch(`${laxAgent.origin}/apps/${id}`);
     if (!r.ok) throw new Error('Failed to fetch app');
     let html = await r.text();
 
-    // Make it standalone: replace API polling with static state
-    // Remove the polling script's API dependency so it works offline
-    html = html.replace(
-      /var API = [^;]+;/,
-      'var API = ""; // Exported - no live connection'
-    );
+    // Make it standalone: no live connection, and no capability for the live app's state
+    html = html.replace(/var API = [^;]+;/, 'var API = ""; // Exported - no live connection');
+    html = html.replace(/var AUTH = [^;]+;/, 'var AUTH = "";');
+    html = html.replace(/<script>window\.__LAX_CONNECTOR_TOKEN__=[^<]*<\/script>/g, '');
 
     // Download as HTML file
     const blob = new Blob([html], { type: 'text/html' });

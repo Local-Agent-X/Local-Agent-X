@@ -17,6 +17,8 @@ import { join } from "node:path";
 import { createLogger } from "../logger.js";
 import { workspacePath } from "../config.js";
 import { phoneErrorPipeScript } from "./error-pipe-inject.js";
+import { ideFrameBridgeScript } from "./ide-frame-bridge.js";
+import { AGENT_APP_FRAMING_CSP, connectorBootstrapScript } from "./app-serving-policy.js";
 
 const logger = createLogger("server.dev-server-proxy");
 
@@ -121,17 +123,7 @@ const DEV_FRONTEND_CSP =
   `img-src 'self' data: blob: ${DEV_ORIGIN}; ` +
   "font-src 'self' data:; " +
   "connect-src 'self' http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:* wss://127.0.0.1:* wss://localhost:*; " +
-  "object-src 'none'; base-uri 'self'";
-
-/** Same connector-token bootstrap the static /apps path injects, so a proxied
- *  frontend can still reach a backend through /api/connectors/* and never sees
- *  the operator token. */
-function connectorBootstrapScript(connectorToken: string): string {
-  return (
-    `<script>sessionStorage.removeItem('lax_token');localStorage.removeItem('lax_token');` +
-    `delete window.__AUTH_TOKEN__;window.__LAX_CONNECTOR_TOKEN__=${JSON.stringify(connectorToken)};</script>`
-  );
-}
+  "object-src 'none'; base-uri 'self'; " + AGENT_APP_FRAMING_CSP;
 
 /** Holding page shown while a frontend dev server is still cold-starting (its
  *  boot outran the proxy's inline retry budget). Polls the same app URL and
@@ -178,7 +170,7 @@ export function proxyFrontendDevServer(
   port: number,
   url: URL,
   connectorToken: string,
-  opts: { coldStartWaitMs?: number; publicDir?: string } = {},
+  opts: { coldStartWaitMs?: number; publicDir?: string; uiPort?: number } = {},
 ): void {
   // A websocket upgrade (Vite HMR) cannot be proxied here — this forwarder only
   // handles a normal HTTP response, so forwarding an upgrade would HANG (Node
@@ -245,11 +237,14 @@ export function proxyFrontendDevServer(
           const chunks: Buffer[] = [];
           up.on("data", (c) => chunks.push(c as Buffer));
           up.on("end", () => {
-            // Tunneled (phone) documents also get the render-verify capture core —
-            // the desktop IDE injects it into its preview iframe itself, but nothing
-            // instruments a page the phone loads over the broker.
-            const inject = connectorBootstrapScript(connectorToken) +
-              (tunneled ? liveReloadScript(appId) + (opts.publicDir ? phoneErrorPipeScript(opts.publicDir, appId) : "") : "");
+            // The same instrumentation the static /apps path injects: a phone over
+            // the broker gets the live-reload poller and the fetch error pipe; on
+            // the desktop the page may be the IDE preview, framed from the UI's
+            // origin, so it gets the frame bridge for the picker and error capture.
+            const instrumentation = tunneled
+              ? liveReloadScript(appId) + (opts.publicDir ? phoneErrorPipeScript(opts.publicDir, appId) : "")
+              : (opts.publicDir && opts.uiPort ? ideFrameBridgeScript(opts.publicDir, opts.uiPort) : "");
+            const inject = connectorBootstrapScript(connectorToken) + instrumentation;
             const html = injectHead(Buffer.concat(chunks).toString("utf-8"), inject);
             delete out["content-length"];
             // We asked for identity, but strip content-encoding defensively: the

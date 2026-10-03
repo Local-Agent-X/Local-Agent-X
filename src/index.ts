@@ -6,6 +6,15 @@ import { getLaxDir } from "./lax-data-dir.js";
 
 import { createLogger } from "./logger.js";
 import { installProbeSelfDestruct, readProbeMaxLifetimeMs } from "./probe-self-destruct.js";
+
+// Windows looks a bare program name up in the child's working directory before
+// the PATH, and many children here run in a directory the agent writes (its
+// projects, worktrees, the repository under review), where a planted git.exe
+// would run in place of git. With this set, neither libuv (which reads it from
+// this process's environment) nor cmd.exe (which reads it from its own,
+// inherited from here) searches the cwd. First, so no boot step spawns before it.
+if (process.platform === "win32") process.env.NoDefaultCurrentDirectoryInExePath = "1";
+
 const logger = createLogger("index");
 
 // Broken-pipe guard. Must be installed BEFORE any code writes to stdout/

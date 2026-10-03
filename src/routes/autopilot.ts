@@ -47,7 +47,7 @@ export const handleAutopilotRoutes: RouteHandler = async (method, url, req, res,
         workspaceDir,
       });
       if (!result.ok) {
-        json(result.conflict ? 409 : 400, result);
+        json(result.conflict ? 409 : result.developerModeOff ? 403 : 400, result);
         return true;
       }
       json(200, result);

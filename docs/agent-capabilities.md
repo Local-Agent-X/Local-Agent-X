@@ -80,7 +80,7 @@ demand via tool search and aren't all listed here.)
 
 ### Self-edit
 
-- `self_edit` — Modify Agent X's own source via a coding agent. Requires the developer_mode setting; with it off, customization goes through connector manifests, workspace apps, and settings. _e.g._ "fix a bug in your own code"
+- `self_edit` — Modify Agent X's own source or its config/ (system prompt, tools.json) via a coding agent. Requires the developer_mode setting; with it off, customization goes through connector manifests, workspace apps, and settings. _e.g._ "fix a bug in your own code"
 
 ### Asking the user
 

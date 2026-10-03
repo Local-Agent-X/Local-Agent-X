@@ -152,13 +152,6 @@ describe("publishOperation — the directory the command publishes from", () => 
     expect(op.cwd).toBe(BASE);
   });
 
-  it("the structured ari_shell form carries its own cwd", () => {
-    const op = publishOperation("ari_shell", { executable: "git", args: ["push", "origin", "main"], cwd: BASE })!;
-    expect(op.kind).toBe("git-push");
-    expect(op.pushArgs).toEqual(["origin", "main"]);
-    expect(op.cwd).toBe(BASE);
-  });
-
   it("process_start is a shell spawner too", () => {
     expect(publishOperation("process_start", { command: "vercel --prod", cwd: BASE })?.kind).toBe("deploy");
   });

@@ -47,10 +47,12 @@ Order inside one turn (`turn-loop.ts`): drain injects `:102` → `beforeTurn` mi
 per-op registry `:117`) → provider call `:165 adapter.runTurn` (tool calls arrive as `tool_call_requested` reports
 `:195-197`) → `afterModelCall` `:264` → tool execution `:272 dispatchTools` → `afterToolExecution` `:289` → done gate
 `:310 decideTurnOutcome` → commit `:342 commitTurn`. Policy runs per call inside execution, after the model call:
-`turn-loop/dispatch-tools.ts:106` → `chat-tool-dispatcher.ts:101 executeToolCalls` → `src/tool-execution/execute-tool.ts:89
-enforcePolicyPhase` → `src/tool-execution/enforce-policy.ts:329 ariKernelGate` … `:345 lookupTool` … `:347 validateArgs`
-→ approval `execute-tool.ts:110` → `:113 runSandboxedPhase`. The kernel judges a call before the tool is even looked
-up, so a hallucinated tool name is judged by policy first.
+`turn-loop/dispatch-tools.ts:106` → `chat-tool-dispatcher.ts:101 executeToolCalls` → `src/tool-execution/execute-tool.ts:91
+enforcePolicyPhase` → `src/tool-execution/enforce-policy.ts:330 securityAndValidationGates`: `:345 lookupTool` →
+`:351 validateArgs` (arg repair, coercion, schema) → `:354 ariKernelGate` → session policy, worktree path rewrite,
+pre-dispatch, egress aggregate, private-content and control-file gates (`:356-373`) → approval `execute-tool.ts:112` →
+`:115 runSandboxedPhase`. A hallucinated tool name is answered by `lookupTool` with the names the op can call, before any
+security gate; every security gate then judges the args the tool will actually run with.
 
 **How a turn ends.** `src/canonical-loop/turn-loop/decide-outcome.ts:220-228`:
 
@@ -509,12 +511,14 @@ per-model breaker is open.
 ## 9. Ari Kernel integration
 
 **Where it sits.** `execute-tool.ts:82-121`: resolve → heap guard → **enforcePolicyPhase** → dedup → approval → capture →
-sandbox → audit. Inside the policy phase (`enforce-policy.ts:328-372`) the kernel is gate 1 (`:329`, fail-closed when
+sandbox → audit. Inside the policy phase (`securityAndValidationGates`, `enforce-policy.ts:330-375`) tool lookup
+(`:345`) and arg repair, coercion and schema validation (`:351`) come first, then the kernel (`:354`, fail-closed when
 inactive, `src/ari-kernel/evaluate.ts:66-70`; unmapped tools fail closed `:77-84`), then session policy, worktree path
 rewrite, the pre-dispatch chain (kill switches, redirects, supervised browser, prohibitions, RBAC, packs `spend-cap,
 security-layer, default-policy, threat-engine, egress-refutation`, protected settings; `pre-dispatch.ts:115-367`), the
-egress aggregate (`:342`), tool lookup and arg schema (`:345-347`), PreToolUse hook, learned-protocol envelope, breaker,
-rate limit. File-access confinement is inside the security-layer pack (`src/security/layer/layer-core.ts:328`).
+egress aggregate (`:367`), the private-content and control-file gates (`:372-373`); then (`enforcePolicyPhase`,
+`:377-399`) the PreToolUse hook with a full re-run of those gates on a rewrite, learned-protocol envelope, breaker, rate
+limit. File-access confinement is inside the security-layer pack (`src/security/layer/layer-core.ts:328`).
 
 **What it sees: tool calls only.** The request is class/action/parameters plus LAX-supplied taint labels
 (`evaluate.ts:99-114`); registered executors are no-ops (`src/ari-kernel/lifecycle.ts:82-87`) and `ariObserve` audits

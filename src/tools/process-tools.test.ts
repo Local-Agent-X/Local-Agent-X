@@ -4,30 +4,56 @@
 // child, and (b) process_restart replaces a tracked session with a new one.
 
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 // The Windows cage: no helper (so every suite here spawns on the host, on any
-// machine), or a helper whose fence proof is still running when any wait for
-// it ends. Every export that would reach the real srt-win helper is modelled,
-// so no test here runs the helper on a machine that has the cage installed.
-const cage = vi.hoisted(() => ({ helper: null as string | null }));
+// machine), a helper whose fence proof is still running when any wait for it
+// ends, or a proven one whose sandbox user is still being granted the
+// workspace. Every export that would reach the real srt-win helper is
+// modelled, so no test here runs the helper on a machine that has the cage
+// installed; a caged command is a node child that stays up.
+const cage = vi.hoisted(() => ({
+  helper: null as string | null,
+  proven: false,
+  granted: false,
+  grantsDone: Promise.resolve(),
+  grantFailure: null as string | null,
+  wrapped: 0,
+}));
 vi.mock("../sandbox/win-cage.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../sandbox/win-cage.js")>()),
   resolveWinCageHelper: () => cage.helper,
   winCageStatus: () => ({ helper: cage.helper, installed: cage.helper !== null, detail: "modelled" }),
-  winCageEnforcesSync: () => false,
-  winCageEnforces: async () => false,
-  winCageProbePending: () => cage.helper !== null,
-  winCageProofView: () => ({ proofPending: cage.helper !== null }),
-  winCageUnusableReason: () => (cage.helper === null ? "the cage helper is not present (modelled)" : "the fence proof is still running"),
-  wrapForWinCage: () => { throw new Error("the cage is never proven here, so nothing is wrapped"); },
+  winCageEnforcesSync: () => cage.proven,
+  winCageEnforces: async () => cage.proven,
+  winCageProbePending: () => cage.helper !== null && !cage.proven,
+  winCageProofView: () => ({ proofPending: cage.helper !== null && !cage.proven }),
+  winCageUnusableReason: () => (cage.proven ? null : cage.helper === null ? "the cage helper is not present (modelled)" : "the fence proof is still running"),
+  wrapForWinCage: () => {
+    if (!cage.proven) throw new Error("the cage is not proven here, so nothing is wrapped");
+    cage.wrapped++;
+    return { cmd: process.execPath, args: ["-e", "setInterval(()=>{},1000)"] };
+  },
 }));
-vi.mock("../sandbox/win-cage-grants.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../sandbox/win-cage-grants.js")>()),
-  ensureWinCageGrants: async () => undefined,
-  ensureWinCageGrantsSync: () => undefined,
-}));
+vi.mock("../sandbox/win-cage-grants.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../sandbox/win-cage-grants.js")>();
+  return {
+    ...actual,
+    ensureWinCageGrants: async () => {
+      if (cage.grantFailure) throw new actual.WinCageGrantFailedError(cage.grantFailure);
+      await cage.grantsDone;
+      cage.granted = true;
+    },
+    ensureWinCageGrantsSync: () => {
+      if (cage.grantFailure) throw new actual.WinCageGrantFailedError(cage.grantFailure);
+      if (cage.proven && !cage.granted) throw new actual.WinCageGrantPendingError();
+    },
+  };
+});
+// A guarded start asks for the egress proxy's route; these tests start no proxy.
+vi.mock("./shell-proxy-env.js", () => ({ shellProxyEnv: async () => ({}), shellProxyEnvSync: () => ({}) }));
 
 import {
   processStartTool,
@@ -210,6 +236,83 @@ describe("process_restart while the Windows cage is still proving its fence", ()
 
     expect(res.isError).toBe(true);
     expect(String(res.content)).toMatch(/still being verified; try again in a few seconds\. Nothing was stopped or started\.$/);
+    expect(await isRunning(oldId)).toBe(true);
+  }, 20_000);
+});
+
+// The proof has landed, and the server is still granting the sandbox user the
+// workspace in the background. startSession cannot wait for that and refuses;
+// the tools can, so they wait instead of passing the refusal on.
+describe("process_* on a proven Windows cage whose grants are still being made", () => {
+  const realPlatform = process.platform;
+  const prevMode = process.env.LAX_SANDBOX;
+  const prevDataDir = process.env.LAX_DATA_DIR;
+  let dataDir: string;
+  let release!: () => void;
+  const cageOn = (): void => {
+    process.env.LAX_SANDBOX = "guarded";
+    Object.defineProperty(process, "platform", { value: "win32" });
+    cage.helper = "C:\\ProgramData\\Local Agent X\\bin\\srt-win.exe";
+    cage.proven = true;
+  };
+  const cageOff = (): void => {
+    Object.defineProperty(process, "platform", { value: realPlatform });
+    cage.helper = null;
+    cage.proven = false;
+  };
+  beforeEach(() => {
+    dataDir = mkdtempSync(join(tmpdir(), "lax-process-grants-"));
+    process.env.LAX_DATA_DIR = dataDir;
+    cage.granted = false;
+    cage.grantFailure = null;
+    cage.wrapped = 0;
+    cage.grantsDone = new Promise<void>((r) => { release = r; });
+  });
+  afterEach(() => {
+    cageOff();
+    release();
+    if (prevMode === undefined) delete process.env.LAX_SANDBOX; else process.env.LAX_SANDBOX = prevMode;
+    if (prevDataDir === undefined) delete process.env.LAX_DATA_DIR; else process.env.LAX_DATA_DIR = prevDataDir;
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  it("process_start waits for them, then starts the command in the cage", async () => {
+    cageOn();
+    const before = SESSIONS.size;
+    const pending = processStartTool.execute({ command: FOREVER });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(SESSIONS.size).toBe(before);
+    release();
+    const res = await pending;
+    cageOff();
+    if (res.session_id) spawned.add(res.session_id);
+    expect(res.isError).toBeFalsy();
+    expect(cage.wrapped).toBe(1);
+    expect(await pollRunning(sessionIdOf(res), true)).toBe(true);
+  }, 20_000);
+
+  it("process_start refuses with the latched reason when they failed", async () => {
+    cageOn();
+    cage.grantFailure = "the helper exited with 5: Access is denied.";
+    const res = await processStartTool.execute({ command: FOREVER });
+    cageOff();
+    expect(res.isError).toBe(true);
+    expect(String(res.content)).toMatch(/^process_start: The Windows shell cage could not give its sandbox user access .*\(the helper exited with 5: Access is denied\.\).*Settings → Security/);
+    expect(cage.wrapped).toBe(0);
+  });
+
+  // Refusing only at the new start would leave the old process dead and
+  // nothing in its place.
+  it("process_restart refuses before stopping the session it would replace when they failed", async () => {
+    release();
+    const oldId = await startForever();
+    expect(await pollRunning(oldId, true)).toBe(true);
+    cageOn();
+    cage.grantFailure = "the helper exited with 5: Access is denied.";
+    const res = await processRestartTool.execute({ session_id: oldId });
+    cageOff();
+    expect(res.isError).toBe(true);
+    expect(String(res.content)).toMatch(/Settings → Security to try again; restarting the app also retries it\. Nothing was stopped or started\.$/);
     expect(await isRunning(oldId)).toBe(true);
   }, 20_000);
 });

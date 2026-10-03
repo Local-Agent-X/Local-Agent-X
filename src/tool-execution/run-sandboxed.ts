@@ -4,11 +4,11 @@
 // the model; fully-stubbed results never taint), then record stats /
 // circuit-breaker state / rate-limit consumption.
 
-import type { ServerEvent } from "../types.js";
+import type { ServerEvent, ToolResult } from "../types.js";
 import { circuitArgsSig, recordCircuitFailure, recordCircuitSuccess } from "../circuit-breaker.js";
 import { recordToolCall as recordToolStat } from "../tool-tracker.js";
 import { recordToolCall as recordRateLimit } from "./rate-limiter.js";
-import { setPreExecuteTaintFloor, applyResultTaintPolicy } from "./sensitive-read-taint.js";
+import { setPreExecuteTaintFloor, applyResultTaintPolicy, maskDeliveredSecrets } from "./sensitive-read-taint.js";
 import type { Phase } from "./context.js";
 import { CONTINUE } from "./context.js";
 import { RetryableToolResultError } from "../resilience-policy.js";
@@ -37,6 +37,36 @@ const RECORDS_SEEN: ReadonlySet<string> = new Set(["read", "write", "edit", "edi
 // CREATE_CLASS + createTargetPath (the per-family tool→output-path mapping the
 // pre-stat below keys on) live in create-target-path.ts — shared with the
 // audit phase's provenance recording, one mapping for both.
+
+/** The row for a call that threw instead of returning a result. The journal is
+ *  always told (a non-idempotent call that was cut off is ambiguous and must
+ *  not be replayed). But a TIMEOUT is shown to the model as a timeout:
+ *  "outcome is ambiguous, reconcile the external system" said nothing about
+ *  the fact that the command simply ran out of time, or that process_start
+ *  exists for work this long. */
+function failureRow(e: unknown, reconciliation: ToolResult | null, progressLog: string[]): ToolResult {
+  if (e instanceof ToolTimeoutError) {
+    // A hung tool: hand the model a hard [timeout] row so it can't narrate
+    // "done" against silence. The execute promise is orphaned (no abort), so
+    // tell the model to VERIFY state rather than assume success or failure.
+    // Whatever the tool streamed via _onProgress before the deadline is the
+    // one work product we still hold — surface it as partial_output (tail-
+    // capped) instead of discarding it with the orphaned promise.
+    const partial = progressLog.length > 0 ? progressLog.join("\n").slice(-4_000) : undefined;
+    return timeout(
+      `Tool "${e.toolName}" exceeded its ${e.ms}ms timeout and was abandoned. It may still be running in the background.`,
+      {
+        duration_ms: e.ms,
+        ...(partial ? { partial_output: partial } : {}),
+        recovery:
+          `Do NOT assume this succeeded or failed. Verify actual state before continuing: ` +
+          `check process_status / process_list for a still-running process, and inspect the ` +
+          `filesystem for any partial output. If the work is long-running, re-run it via an async tool (e.g. process_start / op_submit_async) and poll.`,
+      },
+    );
+  }
+  return reconciliation ?? { content: `Tool error: ${(e as Error).message}`, isError: true };
+}
 
 export const runSandboxedPhase: Phase = async (ctx) => {
   const { tc, tool, args, sessionId, signal, onEvent } = ctx;
@@ -151,37 +181,16 @@ export const runSandboxedPhase: Phase = async (ctx) => {
       ctx.result = checkShellDeleteHappened(args.command, ctx.result);
     }
   } catch (e) {
-    // The journal is always told (a non-idempotent call that was cut off is
-    // ambiguous and must not be replayed). But a TIMEOUT is shown to the model
-    // as a timeout: "outcome is ambiguous, reconcile the external system" said
-    // nothing about the fact that the command simply ran out of time, or that
-    // process_start exists for work this long.
     const reconciliation = runner.reconcile(e);
-    if (reconciliation && !(e instanceof ToolTimeoutError)) {
-      ctx.result = reconciliation;
-    } else if (e instanceof RetryableToolResultError) {
-      ctx.result = e.result;
-    } else if (e instanceof ToolTimeoutError) {
-      // A hung tool: hand the model a hard [timeout] row so it can't narrate
-      // "done" against silence. The execute promise is orphaned (no abort), so
-      // tell the model to VERIFY state rather than assume success or failure.
-      // Whatever the tool streamed via _onProgress before the deadline is the
-      // one work product we still hold — surface it as partial_output (tail-
-      // capped) instead of discarding it with the orphaned promise.
-      const partial = progressLog.length > 0 ? progressLog.join("\n").slice(-4_000) : undefined;
-      ctx.result = timeout(
-        `Tool "${e.toolName}" exceeded its ${e.ms}ms timeout and was abandoned. It may still be running in the background.`,
-        {
-          duration_ms: e.ms,
-          ...(partial ? { partial_output: partial } : {}),
-          recovery:
-            `Do NOT assume this succeeded or failed. Verify actual state before continuing: ` +
-            `check process_status / process_list for a still-running process, and inspect the ` +
-            `filesystem for any partial output. If the work is long-running, re-run it via an async tool (e.g. process_start / op_submit_async) and poll.`,
-        },
-      );
+    if (e instanceof RetryableToolResultError && !reconciliation) {
+      // The tool's own result, delivered after the runner stopped retrying:
+      // the same taint + masking seam as a result returned on the first try.
+      ctx.result = applyResultTaintPolicy(tc.name, args, sessionId, e.result, floor);
     } else {
-      ctx.result = { content: `Tool error: ${(e as Error).message}`, isError: true };
+      // Rows built here still carry tool bytes (streamed stdout/stderr, an
+      // error message), so they pass the delivery-point mask too: a hanging
+      // command that printed a registered secret must not show it.
+      ctx.result = maskDeliveredSecrets(tc.name, args, failureRow(e, reconciliation, progressLog));
     }
   }
 

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdirSync, writeFileSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -12,7 +12,7 @@ import { DEFAULT_POLICY } from "../../src/tool-policy/default-rules.js";
 import type { ToolDefinition } from "../../src/types.js";
 
 // Regression test for DRY-AUDIT.md F2 (final / 2C.3). The AriKernel
-// FileExecutor / HttpExecutor / ShellExecutor / DatabaseExecutor /
+// FileExecutor / HttpExecutor / DatabaseExecutor /
 // RetrievalExecutor used to be reachable only via the parallel kernel
 // dispatch path. After the collapse they are LAX ToolDefinitions in the
 // unified registry, callable through the chat-path single dispatcher
@@ -83,21 +83,32 @@ describe("Unified dispatcher — F2 final collapse", () => {
     expect(result.content).toMatch(/Unknown tool "ari_file"/);
   });
 
-  it("the shell bridge rejects metacharacters (sandbox property survives the collapse)", async () => {
-    const bridge = createArikernelBridgeTools().find((t) => t.name === "ari_shell");
-    expect(bridge).toBeDefined();
-    const toolMap = new Map<string, ToolDefinition>();
-    toolMap.set(bridge!.name, bridge!);
+  // bash is the one shell: a kernel shell bridge skipped bash's path
+  // confinement, cage, output masking and taint, so it is not bridged at all.
+  it("bridges no shell executor, while the other kernel bridges stay", async () => {
+    const bridges = createArikernelBridgeTools({ sqliteDatabase: {} as never });
+    const names = bridges.map((t) => t.name);
+    expect(names).not.toContain("ari_shell");
+    expect(names).toEqual(expect.arrayContaining(["ari_file", "ari_http", "ari_database", "ari_retrieval", "ari_sqlite"]));
 
+    const toolMap = new Map<string, ToolDefinition>(bridges.map((t) => [t.name, t]));
     const result = await dispatchSingleToolCall(
-      {
-        id: "tc-shell-inject",
-        name: "ari_shell",
-        args: { action: "exec", executable: "ls", args: [";rm", "-rf", "/"] },
-      },
+      { id: "tc-shell-gone", name: "ari_shell", args: { action: "exec", executable: "cat", args: [join(root, "ok.txt")] } },
       makeCtx(toolMap),
     );
-    expect(result.content.toLowerCase()).toMatch(/metacharacter|injection|blocked|rejected/);
+    expect(result.content).toMatch(/Unknown tool "ari_shell"/);
+  });
+
+  it("refuses an ari_shell call even when a tool by that name reaches the dispatcher", async () => {
+    const execute = vi.fn(async () => ({ content: "IMPOSTOR_EXECUTED" }));
+    const impostor = { name: "ari_shell", description: "", parameters: { type: "object", properties: {} }, execute } as unknown as ToolDefinition;
+    const result = await dispatchSingleToolCall(
+      { id: "tc-shell-impostor", name: "ari_shell", args: { command: `cat ${join(root, "ok.txt")}` } },
+      makeCtx(new Map([[impostor.name, impostor]])),
+    );
+    expect(execute).not.toHaveBeenCalled();
+    expect(result.content).not.toContain("IMPOSTOR_EXECUTED");
+    expect(result.content).toMatch(/blocked/i);
   });
 
   it("the file bridge blocks path traversal even when called through the unified dispatcher", async () => {

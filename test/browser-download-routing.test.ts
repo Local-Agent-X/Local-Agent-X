@@ -1,24 +1,90 @@
-// Download routing for the in-app browser: only a POSITIVELY user-attributed
-// webContents routes to ~/Downloads; agent views, popups (unresolvable), and
+// Download routing for the in-app browser: a POSITIVELY user-attributed
+// webContents, or an agent view the user acted in after the agent's last
+// command, routes to ~/Downloads; agent downloads, popups (unresolvable), and
 // missing resolvers all fail safe into quarantine. Naming is collision-free
 // and traversal-proof. Mirrors the trust split browser-loopback-policy pins.
 import { describe, expect, it } from "vitest";
 import { join } from "node:path";
 import { isUserDownload, uniqueDownloadPath, viewTrust } from "../desktop/src/browser-download-routing";
+import {
+	createCoDriveState,
+	humanActedLastIn,
+	noteAgentAction,
+	noteAgentDispatch,
+	noteFocus,
+	noteHumanNavigation,
+	noteObservedInput,
+	noteProgrammaticNavigation,
+} from "../desktop/src/in-app-browser";
 
 describe("isUserDownload — trust split", () => {
-	it("routes to Downloads only on a positive 'user' attribution", () => {
-		expect(isUserDownload(7, () => "user")).toBe(true);
-		expect(isUserDownload(7, () => "agent")).toBe(false);
+	const agentLast = () => false;
+	const humanLast = () => true;
+
+	it("routes a user view's download to Downloads, and an agent view's to quarantine", () => {
+		expect(isUserDownload(7, () => "user", agentLast)).toBe(true);
+		expect(isUserDownload(7, () => "agent", agentLast)).toBe(false);
 	});
 
-	it("fails safe into quarantine for popups/unknown webContents (resolver → null)", () => {
-		expect(isUserDownload(7, () => null)).toBe(false);
+	// 2026-10-02: the agent opened a Twilio login, the user finished it and
+	// saved the 2FA recovery code — it landed in the agent's workspace.
+	it("routes an agent view's download to Downloads when the user acted after the agent", () => {
+		expect(isUserDownload(7, () => "agent", humanLast)).toBe(true);
+	});
+
+	it("fails safe into quarantine for popups/unknown webContents (resolver → null), whoever acted", () => {
+		expect(isUserDownload(7, () => null, humanLast)).toBe(false);
 	});
 
 	it("fails safe when there is no webContents or no resolver at all", () => {
-		expect(isUserDownload(undefined, () => "user")).toBe(false);
-		expect(isUserDownload(7, null)).toBe(false);
+		expect(isUserDownload(undefined, () => "user", humanLast)).toBe(false);
+		expect(isUserDownload(7, null, humanLast)).toBe(false);
+	});
+});
+
+describe("who acted last in a view (in-app-browser co-drive state)", () => {
+	it("is nobody's on a fresh view", () => {
+		expect(humanActedLastIn(createCoDriveState())).toBe(false);
+	});
+
+	it("is the human's after a real click following the agent's command, and the agent's after it acts again", () => {
+		const s = createCoDriveState();
+		noteAgentAction(s, 1_000);
+		expect(noteObservedInput(s, 5_000, "mouseDown")).toBe(true);
+		expect(humanActedLastIn(s)).toBe(true);
+		noteAgentAction(s, 6_000);
+		expect(humanActedLastIn(s)).toBe(false);
+	});
+
+	it("never credits the human with the agent's own input echo, or with a hover", () => {
+		const s = createCoDriveState();
+		noteAgentDispatch(s, 1_000);
+		expect(noteObservedInput(s, 1_005, "mouseDown")).toBe(false);
+		noteObservedInput(s, 5_000, "mouseMove");
+		expect(humanActedLastIn(s)).toBe(false);
+	});
+
+	it("credits a focusing click, but not focus the agent's input pulled", () => {
+		const s = createCoDriveState();
+		noteAgentDispatch(s, 1_000);
+		expect(noteFocus(s, 1_010)).toBe(false);
+		expect(humanActedLastIn(s)).toBe(false);
+		expect(noteFocus(s, 5_000)).toBe(true);
+		expect(humanActedLastIn(s)).toBe(true);
+	});
+
+	it("counts a programmatic navigation (agent over CDP) as the agent's, but not the address bar's", () => {
+		const s = createCoDriveState();
+		noteObservedInput(s, 1_000, "mouseDown");
+		noteProgrammaticNavigation(s, 2_000);
+		expect(humanActedLastIn(s)).toBe(false);
+
+		noteHumanNavigation(s, 3_000);
+		noteProgrammaticNavigation(s, 3_050);
+		expect(humanActedLastIn(s)).toBe(true);
+		// The address bar's pass covers its own navigation only.
+		noteProgrammaticNavigation(s, 3_100);
+		expect(humanActedLastIn(s)).toBe(false);
 	});
 });
 

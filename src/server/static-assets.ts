@@ -5,6 +5,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { corsHeaders, jsonResponse } from "../server-utils.js";
 import { confineToDir } from "../security/layer/index.js";
 import { getPageBundle, stampAssetTags } from "./static-bundle.js";
+import { verifyAgentFileSignature } from "./agent-file-links.js";
 import type { LAXConfig } from "../types.js";
 
 const UPLOAD_CONTENT_TYPES: Record<string, string> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", svg: "image/svg+xml", bmp: "image/bmp", pdf: "application/pdf", txt: "text/plain", json: "application/json", csv: "text/csv", md: "text/markdown", rtf: "application/rtf", docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", doc: "application/msword", xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", xls: "application/vnd.ms-excel", pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation", ppt: "application/vnd.ms-powerpoint" };
@@ -12,10 +13,21 @@ const MEDIA_CONTENT_TYPES: Record<string, string> = { mp4: "video/mp4", webm: "v
 const FILE_CONTENT_TYPES: Record<string, string> = { docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation", pdf: "application/pdf", txt: "text/plain", json: "application/json", csv: "text/csv", md: "text/markdown", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", svg: "image/svg+xml", mp4: "video/mp4", webm: "video/webm", mp3: "audio/mpeg", html: "text/html", css: "text/css", js: "application/javascript" };
 const INLINEABLE_FILES = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "pdf", "txt", "json", "csv", "md", "html", "css", "js", "mp4", "webm"]);
 
+// Workspace media can be agent-written, and an SVG is a document that runs
+// script. Opened on this (the UI's) origin it must have no origin and no script.
+const MEDIA_SVG_CSP = "sandbox; script-src 'none'";
+
+// Agent-written documents on the agent origin get no origin at all: their
+// scripts run, but they cannot read another file there, keep storage, or
+// navigate the frame above them. The UI (any loopback port) may frame them.
+const AGENT_FILE_FRAMING = "frame-ancestors 'self' http://127.0.0.1:* http://localhost:*";
+const AGENT_FILE_HTML_CSP = `sandbox allow-scripts allow-modals allow-downloads allow-popups allow-popups-to-escape-sandbox; ${AGENT_FILE_FRAMING}`;
+const AGENT_FILE_SVG_CSP = `sandbox; script-src 'none'; ${AGENT_FILE_FRAMING}`;
+
 export function serveProtectedAssets(method: string, url: URL, req: IncomingMessage, res: ServerResponse, config: LAXConfig, dataDir: string): boolean {
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
   if (method !== "GET") return false;
-  if (!["/uploads/", "/videos/", "/images/", "/files/"].some(route => url.pathname.startsWith(route))) return false;
+  if (!["/uploads/", "/videos/", "/images/"].some(route => url.pathname.startsWith(route))) return false;
 
   const authorization = req.headers.authorization || "";
   const provided = (authorization.startsWith("Bearer ") ? authorization.slice(7) : "") || url.searchParams.get("token") || "";
@@ -42,7 +54,9 @@ export function serveProtectedAssets(method: string, url: URL, req: IncomingMess
       if (!file || url.pathname.includes("\x00")) { json(403, { error: "Path traversal blocked" }); return true; }
       if (existsSync(file)) {
         const ext = file.split(".").pop() || "";
-        res.writeHead(200, { "Content-Type": MEDIA_CONTENT_TYPES[ext] || "application/octet-stream" });
+        const headers: Record<string, string> = { "Content-Type": MEDIA_CONTENT_TYPES[ext] || "application/octet-stream", "X-Content-Type-Options": "nosniff" };
+        if (ext === "svg") headers["Content-Security-Policy"] = MEDIA_SVG_CSP;
+        res.writeHead(200, headers);
         res.end(readFileSync(file));
         return true;
       }
@@ -50,19 +64,28 @@ export function serveProtectedAssets(method: string, url: URL, req: IncomingMess
       return true;
     }
   }
-  if (url.pathname.startsWith("/files/")) {
-    const filePath = decodeURIComponent(url.pathname.slice(7));
-    const file = confineToDir(resolve(config.workspace), filePath);
-    if (!file || filePath.includes("\x00")) { json(403, { error: "Path traversal blocked" }); return true; }
-    if (!existsSync(file)) { json(404, { error: "File not found" }); return true; }
-    const ext = (file.split(".").pop() || "").toLowerCase();
-    const filename = file.split(/[/\\]/).pop() || "download";
-    const headers: Record<string, string> = { ...corsHeaders(req), "Content-Type": FILE_CONTENT_TYPES[ext] || "application/octet-stream", "X-Content-Type-Options": "nosniff" };
-    if (!INLINEABLE_FILES.has(ext)) headers["Content-Disposition"] = `attachment; filename="${filename}"`;
-    if (ext === "svg") headers["Content-Security-Policy"] = "script-src 'none'";
-    res.writeHead(200, headers); res.end(readFileSync(file)); return true;
-  }
   return false;
+}
+
+/** Workspace files, served ONLY on the agent origin (agent-origin.ts). The
+ *  request must carry the signature the UI origin's /files redirect minted for
+ *  exactly this path; the operator token is never accepted here. */
+export function serveAgentFile(method: string, url: URL, req: IncomingMessage, res: ServerResponse, config: LAXConfig): boolean {
+  if (method !== "GET" || !url.pathname.startsWith("/files/")) return false;
+  const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
+  const filePath = decodeURIComponent(url.pathname.slice(7));
+  if (!verifyAgentFileSignature(config.authToken, filePath, url.searchParams.get("sig") || "")) { json(401, { error: "Authentication required" }); return true; }
+  const file = confineToDir(resolve(config.workspace), filePath);
+  if (!file || filePath.includes("\x00")) { json(403, { error: "Path traversal blocked" }); return true; }
+  if (!existsSync(file)) { json(404, { error: "File not found" }); return true; }
+  const ext = (file.split(".").pop() || "").toLowerCase();
+  const filename = file.split(/[/\\]/).pop() || "download";
+  // no-referrer: the signature in this URL stays off every request the document makes.
+  const headers: Record<string, string> = { "Content-Type": FILE_CONTENT_TYPES[ext] || "application/octet-stream", "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer" };
+  if (!INLINEABLE_FILES.has(ext)) headers["Content-Disposition"] = `attachment; filename="${filename}"`;
+  if (ext === "html") headers["Content-Security-Policy"] = AGENT_FILE_HTML_CSP;
+  if (ext === "svg") headers["Content-Security-Policy"] = AGENT_FILE_SVG_CSP;
+  res.writeHead(200, headers); res.end(readFileSync(file)); return true;
 }
 
 export function servePublicAsset(method: string, url: URL, req: IncomingMessage, res: ServerResponse, publicDir: string): boolean {
@@ -86,11 +109,14 @@ export function servePublicAsset(method: string, url: URL, req: IncomingMessage,
   const contentTypes: Record<string, string> = { html: "text/html", css: "text/css", js: "application/javascript", json: "application/json", svg: "image/svg+xml", png: "image/png", ico: "image/x-icon" };
   const headers: Record<string, string> = { "Content-Type": contentTypes[ext] || "application/octet-stream" };
   if (ext === "html") {
-    headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:*; media-src 'self' blob: mediastream:; frame-src 'self' http://127.0.0.1:* http://localhost:*; frame-ancestors 'self'; object-src 'none'; base-uri 'self'; form-action 'self'";
-    headers["X-Content-Type-Options"] = "nosniff"; headers["X-Frame-Options"] = "SAMEORIGIN"; headers["Referrer-Policy"] = "no-referrer"; headers["Permissions-Policy"] = "camera=(self), microphone=(self), geolocation=()";
+    const page = (file.split(/[/\\]/).pop() || "").replace(/\.html$/i, "");
+    // Only settings frames a UI page (account.html). An agent frame that
+    // navigates itself here would otherwise sit inside the shell same-origin.
+    const framable = page === "account";
+    headers["Content-Security-Policy"] = `default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:*; media-src 'self' blob: mediastream:; frame-src 'self' http://127.0.0.1:* http://localhost:*; frame-ancestors ${framable ? "'self'" : "'none'"}; object-src 'none'; base-uri 'self'; form-action 'self'`;
+    headers["X-Content-Type-Options"] = "nosniff"; headers["X-Frame-Options"] = framable ? "SAMEORIGIN" : "DENY"; headers["Referrer-Policy"] = "no-referrer"; headers["Permissions-Policy"] = "camera=(self), microphone=(self), geolocation=()";
     headers["Cache-Control"] = "no-cache, must-revalidate"; headers["Pragma"] = "no-cache";
     const raw = readFileSync(file, "utf-8");
-    const page = (file.split(/[/\\]/).pop() || "").replace(/\.html$/i, "");
     const bundle = getPageBundle(page, publicDir, raw);
     // Stamp remaining asset tags (css/vendor/module js) with ?v=<mtime> so the
     // immutable branch below applies to them. HTML stays no-cache, so a changed

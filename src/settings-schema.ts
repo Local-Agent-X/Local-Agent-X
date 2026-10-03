@@ -275,8 +275,10 @@ export const FLIPPABLE_SETTINGS: ReadonlyArray<FlippableSetting> = [
     field: "developer_mode",
     validate: z.boolean(),
     runtime: false,
+    // Every open window shows a badge while it's on.
+    broadcast: true,
     protected: true,
-    description: "Unlocks self_edit on the platform's own source code. Off by default — customizations go through connectors (~/.lax/connectors), workspace apps, and settings, which all survive updates. Turning this on forks this install's core code: platform updates must then merge with the local edits.",
+    description: "Unlocks self_edit and autopilot on the platform's own source code. Off by default — customizations go through connectors (~/.lax/connectors), workspace apps, and settings, which all survive updates. Turning this on forks this install's core code: platform updates must then merge with the local edits.",
   },
   {
     field: "preferGrokForMedia",

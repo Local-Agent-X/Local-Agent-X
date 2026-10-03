@@ -3,7 +3,7 @@ import { jsonResponse } from "../server-utils.js";
 import { authorizeRequest } from "./request-auth.js";
 import { routeApiRequest } from "./api-request-router.js";
 import { serveProtectedAssets, servePublicAsset } from "./static-assets.js";
-import { serveWorkspaceApp } from "./workspace-app-serving.js";
+import { routeUiAgentPaths } from "./agent-origin.js";
 import type { ServerContext } from "../server-context.js";
 import type { LAXConfig, ServerEvent, Session, ToolDefinition } from "../types.js";
 import type { SecurityLayer } from "../security/index.js";
@@ -96,10 +96,12 @@ export function createRequestHandler(deps: RequestHandlerDeps): RequestHandler {
       return;
     }
 
+    // Agent-authored apps and files live on the agent origin (agent-origin.ts);
+    // this origin only redirects to them, ahead of every route that could render one.
+    if (routeUiAgentPaths(method, url, req, res, deps.config, authorization.role)) return;
     const ctx = createServerContext(deps);
     if (await routeApiRequest(method, url, req, res, ctx, authorization.role, deps.config, deps.dataDir)) return;
     if (serveProtectedAssets(method, url, req, res, deps.config, deps.dataDir)) return;
-    if (serveWorkspaceApp(method, url, req, res, deps.config, deps.publicDir)) return;
     if (servePublicAsset(method, url, req, res, deps.publicDir)) return;
     jsonResponse(res, 404, { error: "Not found" }, req);
   };

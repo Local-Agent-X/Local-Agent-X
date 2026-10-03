@@ -8,7 +8,10 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import type { CronService, CronJob } from "./cron-service.js";
-import type { ToolDefinition } from "../types.js";
+import type { ToolDefinition, ToolResult } from "../types.js";
+import { agentMissionRefusal } from "./job-authority.js";
+
+const refused = (reason: string): ToolResult => ({ content: reason, isError: true, status: "blocked" });
 
 export function createCronTools(cron: CronService): ToolDefinition[] {
   return [
@@ -40,8 +43,14 @@ export function createCronTools(cron: CronService): ToolDefinition[] {
         required: ["name", "schedule", "prompt"],
       },
       async execute(args) {
+        const name = String(args.name);
+        const schedule = String(args.schedule);
+        const prompt = String(args.prompt);
+        // A name already in use rewrites that mission's schedule and prompt (CronService.create).
+        const refusal = agentMissionRefusal({ schedule, prompt }, cron.list().find((j) => j.name === name));
+        if (refusal) return refused(refusal);
         const tz = typeof args.timezone === "string" && args.timezone.trim() ? args.timezone.trim() : undefined;
-        const job = cron.create(String(args.name), String(args.schedule), String(args.prompt), undefined, { tz });
+        const job = cron.create(name, schedule, prompt, undefined, { tz });
         return { content: `Created job "${job.name}" (${job.id}) — runs every ${job.schedule}${job.tz ? ` (${job.tz})` : ""}` };
       },
     },
@@ -81,6 +90,8 @@ export function createCronTools(cron: CronService): ToolDefinition[] {
         if (Object.keys(updates).length === 0) {
           return { content: "No fields to update. Provide name, schedule, prompt, or timezone.", isError: true };
         }
+        const refusal = agentMissionRefusal(updates, cron.get(String(args.id)));
+        if (refusal) return refused(refusal);
         let job: CronJob | null;
         try {
           job = cron.update(String(args.id), updates);

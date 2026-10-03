@@ -62,9 +62,14 @@ export function findSecretsInAddedContent(items: AddedContent[]): ExfilScanResul
   return { clean: hits.length === 0, hits };
 }
 
+// The worktree's config and .gitattributes are the child's to write, so no
+// read here may start an fsmonitor hook, an external diff driver or a textconv
+// filter on the host. Each would also replace the very text being scanned.
+const DIFF = ["diff", "--no-color", "--no-ext-diff", "--no-textconv"];
+
 function git(cwd: string, args: string[]): string {
   try {
-    return execFileSync("git", args, {
+    return execFileSync("git", ["-c", "core.fsmonitor=false", ...args], {
       cwd,
       encoding: "utf-8",
       timeout: 30_000,
@@ -124,9 +129,9 @@ export function collectAddedContent(worktreePath: string, baseSha?: string): Add
   };
 
   // Committed additions this worktree introduced (fork point → HEAD).
-  if (baseSha) addDiff(git(worktreePath, ["diff", "--no-color", `${baseSha}...HEAD`]));
+  if (baseSha) addDiff(git(worktreePath, [...DIFF, `${baseSha}...HEAD`]));
   // Uncommitted tracked modifications (vs HEAD).
-  addDiff(git(worktreePath, ["diff", "--no-color", "HEAD"]));
+  addDiff(git(worktreePath, [...DIFF, "HEAD"]));
 
   const items: AddedContent[] = [];
   for (const [file, texts] of byFile) items.push({ file, text: texts.join("\n") });

@@ -104,22 +104,3 @@ export function pullMemoryDir(dataDir: string, syncDir: string): void {
     }
   }
 }
-
-export function pullToolPolicy(dataDir: string, syncDir: string): void {
-  const syncPolicy = join(syncDir, "tool-policy.json");
-  if (!existsSync(syncPolicy)) return;
-  try {
-    const remote = JSON.parse(readFileSync(syncPolicy, "utf-8"));
-    const localPath = join(dataDir, "tool-policy.json");
-    if (existsSync(localPath)) {
-      const local = JSON.parse(readFileSync(localPath, "utf-8"));
-      const localIds = new Set((local.rules || []).map((r: any) => r.id));
-      for (const rule of (remote.rules || [])) {
-        if (!localIds.has(rule.id)) local.rules.push(rule);
-      }
-      writeFileSync(localPath, JSON.stringify(local, null, 2), "utf-8");
-    } else {
-      writeFileSync(localPath, readFileSync(syncPolicy, "utf-8"));
-    }
-  } catch { writeFileSync(join(dataDir, "tool-policy.json"), readFileSync(syncPolicy, "utf-8")); }
-}

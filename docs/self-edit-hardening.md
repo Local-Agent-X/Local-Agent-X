@@ -18,7 +18,7 @@ tracked below as two passes.
 ## Gate order (current, after Pass 2 + tiering)
 
 ```
-tier-gate(developer_mode required; _unsafe rescue exempt)
+tier-gate(developer_mode required; no exemption)
   → fingerprint-parent-deps → spawnClaude[scrubbed env] → verify-parent-deps(restore+abort if mutated)
   → deps → build → bind → smoke → security-scope(HOLD if security/auth/policy touched)
   → exfil-scan(HOLD if secret-shaped content staged in diff)
@@ -35,6 +35,41 @@ workspace apps, settings — which survive platform updates untouched. The
 and turning it on means the install carries local commits that platform
 updates must merge with.
 
+**No exemptions (2026-10-02):** the `_unsafe` emergency-rescue hatch, which
+skipped the tier gate and every sandbox gate and wrote straight into the live
+repo, is removed along with its pre-edit snapshot (`recordUnsafeEdit`) and the
+lock force-steal it used. Nothing in the product set it, and the dispatcher
+never stopped a model from sending it: `resolve-tool.ts` now drops every
+`_`-prefixed argument a model supplies before the server stamps its own.
+`autopilot_start` (tool and `POST /api/autopilot/start`) is developer-mode-only
+too, since its rounds edit and build this install's source.
+
+**Turning developer_mode off stops autopilot (2026-10-02):** the setting is
+not only checked at start. The loop (`src/autopilot/loop.ts`) re-reads it
+before each round, when the round's agent returns (nothing from that round is
+validated or committed) and before committing a round that passed validation.
+Both paths that write the setting (the Settings route and the `setting` tool)
+call `haltAutopilotsIfDeveloperModeOff()` right after the write, which cancels
+the round in flight through its canonical op's abort signal, so the agent stops
+editing the worktree then rather than when the round would have ended. The run
+ends in state `developer-mode-off` (op cancelled, no end-of-shift boot proof,
+which would boot the branch's code); rounds already committed stay on the
+autopilot branch, which never auto-merges.
+
+**CLI app builds need developer_mode (2026-10-02):** `build_app`'s
+`cli-subprocess` strategy hands the build to the codex or claude CLI on the
+host with its approvals bypassed and shell enabled, outside the cage: the same
+reach over the machine self_edit has. The app-builder template picks the
+strategy, and a template is a file the agent can change, so the template alone
+never unlocks it. `cliBuildDeveloperModeRefusal` (`src/tools/build-app-cli-gate.ts`)
+refuses the build while developer_mode is off, in `build_app` before any model
+call and again in the app-build adapter right before it spawns the CLI, since a
+build queued while the setting was on can be leased after it was turned off (a
+queue wait, a retry, a restore after restart). It refuses rather than quietly
+building in-canonical: the template says CLI, so the user decides. Builds on
+the default in-canonical strategy run inside LAX's own tool pipeline and need
+no developer_mode.
+
 **Updates ride the same gates (2026-06-11):** `src/update-pipeline.ts` runs
 platform updates (git fetch+merge in a worktree, or the OTA extracted tarball)
 through the same deps/build/bind/smoke gates and the same `recordMerge`
@@ -47,21 +82,21 @@ the user's credentials — and the gates that later EXECUTE its output (`gateBui
 the `gateBind` probe) run scrubbed too, so it can't exfil via written code
 either. Its output is secret-redacted before it reaches chat/logs.
 
-Both the sandbox path and the bypass path acquire the same machine-wide global
-lock before touching the shared tree (Pass 2, #9); the lock is atomic and the
-`_unsafe` rescue can force-steal it (Pass 3, #4).
+Both the sandbox path and the autopilot bypass path acquire the same
+machine-wide global lock before touching the shared tree (Pass 2, #9); the lock
+is atomic (Pass 3, #4) and nothing can steal a live owner's claim.
 
 Key files:
 - `src/self-edit/sandbox.ts` — orchestrates the gate flow + merge + re-gate
 - `src/self-edit/sandbox-gates.ts` — gateDeps / gateBuild / gateBind / gateSmoke
 - `src/self-edit/smoke-suite.ts` — broad endpoint assertions for the smoke gate
-- `src/self-edit/rollback.ts` — merge record + revertLastMerge + boot notice + unsafe-edit snapshot
+- `src/self-edit/rollback.ts` — merge record + revertLastMerge + boot notice
 - `src/self-edit/refute-merge.ts` — refutation gate: independent LLM skeptics vote on the merge diff before merge
 - `src/self-edit/global-lock.ts` — machine-wide PID-file lock shared by sandbox + bypass (#9)
 - `src/agency/worktree.ts` — junctions, isolateNodeModules, security-scope matcher, orphan sweep, git/build primitives
-- `src/self-edit/tool.ts` — entrypoint; tier gate (developer_mode); sandbox vs bypass (_cwd / _unsafe) routing; bypass lock + unsafe snapshot
+- `src/self-edit/tool.ts` — entrypoint; tier gate (developer_mode); sandbox vs autopilot bypass (_cwd) routing; bypass lock
 - `src/update-pipeline.ts` — platform updates through the same gates (git worktree merge + OTA extract validation)
-- `src/self-edit/bypass-runner.ts` — bypass path (no gates)
+- `src/self-edit/bypass-runner.ts` — autopilot bypass path (no gates)
 - `src/self-edit/child-env.ts` — confidentiality scrub of the `claude -p` child env (Pass 4, M1)
 - `src/self-edit/exfil-scan.ts` — staged-secret tripwire on the produced diff (Pass 4, M4)
 - `src/mcp-client/env-credential-patterns.ts` — shared child-env policy data (allowlist + credential-deny tables); canonical for env scrubbing across MCP + self_edit

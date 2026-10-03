@@ -3,14 +3,23 @@
  * Each case builds the repository state a publish would start from and checks
  * that the change set names exactly what would ship.
  */
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+// The fixtures push to a bare repository on disk, the one remote a test can
+// reach, and the transport guard refuses a remote on this machine by design
+// (push-dry-run.test.ts covers it), so here it stands aside.
+vi.mock("./push-transport-guard.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./push-transport-guard.js")>()),
+  refusePushTransport: async () => null,
+}));
+
 import { computeChangeSet } from "./change-set.js";
 import { changeSetIsEmpty } from "./change-set-types.js";
-import type { PublishOperation } from "../publish-operation.js";
+import { publishOperations, type PublishOperation } from "../publish-operation.js";
 
 let root: string;
 let remote: string;
@@ -126,6 +135,42 @@ describe("computeChangeSet — git push", () => {
     commit("a.ts", "2\n", "two");
     const c = await computeChangeSet([push([])]);
     expect(c.fingerprint).not.toBe(a.fingerprint);
+  });
+});
+
+// From the shell command to the change set: what a push runs with reaches the
+// dry run, which would otherwise review the push to the URL the command names.
+describe("computeChangeSet — a push's own git options and environment", () => {
+  const ops = (command: string) => publishOperations("bash", { command, _cwd: work });
+  const slashes = (p: string) => p.replace(/\\/g, "/");
+
+  it("a command-line pushInsteadOf is unknown, not a push to the URL it names", async () => {
+    const evil = join(root, "evil.git");
+    git(root, "init", "-q", "--bare", "-b", "main", evil);
+    commit("a.ts", "1\n", "one");
+    const cs = await computeChangeSet(ops(`git -c url.${slashes(evil)}.pushInsteadOf=${slashes(remote)} push ${slashes(remote)} main`));
+    expect(cs.parts).toEqual([]);
+    expect(cs.unknown[0].reason).toMatch(/pushinsteadof/);
+  });
+
+  it("a variable set for the push is unknown, however it is set", async () => {
+    commit("a.ts", "1\n", "one");
+    for (const command of [
+      "GIT_SSH_COMMAND=x git push origin main",
+      "export GIT_SSH_COMMAND=x; git push origin main",
+      "read GIT_SSH_COMMAND <<< x; export GIT_SSH_COMMAND; git push origin main",
+      "printf -v GIT_SSH_COMMAND x; export GIT_SSH_COMMAND; git push origin main",
+    ]) {
+      const cs = await computeChangeSet(ops(command));
+      expect(cs.unknown.map((u) => u.reason), command).toEqual([expect.stringMatching(/GIT_SSH_COMMAND/)]);
+    }
+  });
+
+  it("a second push that differs only in what it runs with is not folded into the first", async () => {
+    commit("a.ts", "1\n", "one");
+    const cs = await computeChangeSet(ops("git push origin main && GIT_SSH_COMMAND=x git push origin main"));
+    expect(cs.parts).toHaveLength(1);
+    expect(cs.unknown.map((u) => u.reason)).toEqual([expect.stringMatching(/GIT_SSH_COMMAND/)]);
   });
 });
 

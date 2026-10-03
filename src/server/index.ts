@@ -333,7 +333,7 @@ export async function startServer(config: LAXConfig) {
   // Security guardian is a boot precondition — must be up before we accept
   // a single request. When ariRequired, a failure here exits the process.
   await phase("startSecurityKernel", () => startSecurityKernel({ config, dataDir }));
-
+  await phase("startAgentOrigin", async () => (await import("./agent-origin.js")).startAgentOrigin({ config, publicDir, getCtx: buildWsCtx }));
   let jobScheduler: import("./scheduler.js").JobScheduler | undefined;
   server.listen(config.port, "127.0.0.1", () => {
     bootLogger.info(`[boot-phase] TOTAL ${Date.now() - _bootT0}ms (port ${config.port} listening)`);

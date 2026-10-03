@@ -213,6 +213,68 @@ jobs:
         shell: pwsh
         run: pwsh scripts/win-cage/provision.ps1 -Uninstall
 
+  # The Windows unit job cannot be a required check while it times out on the
+  # slow-runner flake class (issue #5), yet the cage, file-gate and egress code
+  # diverges on Windows (drive letters, junctions, 8.3 names, NTFS streams, the
+  # cage helper's PATH and profile rules). This lane runs only those test files:
+  # each has Windows-only cases or host path, link, process or socket behaviour,
+  # and none waits on a deadline the runner's stalls can reach, so the lane can
+  # be required on its own. src/sandbox/index.test.ts stays out: its docker
+  # smoke waits on Docker Hub and has used 12.5 s of its 15 s budget on this
+  # runner, and its cage-proof cases stand in for win32, so the required ubuntu
+  # lane already runs them. vitest drops a filter that matches no file, so a
+  # missing file fails the step instead of quietly shrinking the lane.
+  windows-security-tests:
+    name: Windows cage + file-access tests
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            desktop/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate test manifest
+        run: npm run test:prepare
+
+      - name: Cage, file-access and egress tests (vitest, blocking)
+        shell: pwsh
+        run: |
+          $files = @(
+            # The cage and its spawn seam
+            'src/sandbox/win-cage.test.ts'
+            'src/tools/caged-spawn.test.ts'
+            'src/sandbox/validate.test.ts'
+            'src/sandbox/docker-execution-runtime.test.ts'
+            # File access, the install and runtime roots, control files
+            'src/security/layer/file-access.test.ts'
+            'src/security/layer/layer-core-shell-confinement.test.ts'
+            'src/security/layer/shell-path-guard.tokenizer.test.ts'
+            'src/security/layer/layer-core-delegated-worktree.test.ts'
+            'src/security/layer/layer-core-document-confinement.test.ts'
+            'src/security/layer/layer-core-file-workspace-egress.test.ts'
+            'test/desktop-path-augment.test.ts'
+            'test/protected-files.test.ts'
+            'src/tool-execution/control-file-gate.test.ts'
+            'src/user-owned-controls.contract.test.ts'
+            # What may leave a caged shell or a session
+            'src/net/shell-egress-proxy.test.ts'
+            'src/net/egress-proxy-auth.test.ts'
+            'src/net/egress-proxy-core.test.ts'
+            'src/tool-execution/private-content-gate.test.ts'
+          )
+          $missing = @($files | Where-Object { -not (Test-Path -LiteralPath $_ -PathType Leaf) })
+          if ($missing.Count) { throw "Listed test files not found: $($missing -join ', ')" }
+          npx vitest run $files
+
   integration:
     name: Integration (API harness)
     runs-on: ubuntu-latest

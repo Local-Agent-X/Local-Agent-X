@@ -26,7 +26,7 @@ const ALL_ON = {
 
 describe("kill-switch gate registry contract", () => {
   // The Shell Access switch covers the shell CAPABILITY CLASS, read from the
-  // registry: `shell`, `ari_shell`, `app_serve_*`, `app_rebuild` all spawn a
+  // registry: `shell`, `app_serve_*`, `app_rebuild` all spawn a
   // subprocess and were left on by the old `bash || process_*` match
   // (found 2026-07-29).
   it("Shell Access covers every shell-class tool, not only bash and process_*", () => {
@@ -34,7 +34,7 @@ describe("kill-switch gate registry contract", () => {
       expect(killSwitchBlock(tool, { ...ALL_ON, enableShell: false }), `${tool} must be off with Shell Access off`).not.toBeNull();
       expect(killSwitchBlock(tool, ALL_ON), `${tool} must run with Shell Access on`).toBeNull();
     }
-    expect(CAPABILITY_CLASS_MEMBERS.shell).toEqual(expect.arrayContaining(["bash", "ari_shell", "app_rebuild"]));
+    expect(CAPABILITY_CLASS_MEMBERS.shell).toEqual(expect.arrayContaining(["bash", "app_rebuild"]));
   });
 
   it("every gate's recovery names the `setting` tool and the exact field", () => {

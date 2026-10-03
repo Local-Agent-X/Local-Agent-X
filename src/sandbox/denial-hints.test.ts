@@ -1,6 +1,11 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterAll } from "vitest";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, sep } from "node:path";
 
 import { networkDenialHint, sandboxDenialHint } from "./index.js";
+import { installRootDenialHint } from "./denial-hints.js";
+import { INSTALL_CHANGE_ROUTE, installRootWriteRule } from "../security/layer/install-root.js";
 
 // networkDenialHint unit tests. The fire-case inputs are the LIVE outputs the
 // macOS cage produces (captured via wrapForSeatbelt guarded/strict runs — the
@@ -117,8 +122,13 @@ describe("networkDenialHint — null cases (never lie)", () => {
     expect(networkDenialHint("docker", BASH_DEV_TCP_EPERM, "linux")).toBeNull();
   });
 
-  it("returns null for guarded on Windows — no guarded cage there yet, so a connect failure is real", () => {
+  // The Windows guarded cage (win-cage.ts) is a firewall fence on a sandbox
+  // account. Its refused connect has no live capture behind an anchor here,
+  // and neither guarded message describes its reach (loopback only through
+  // the proxy's ports), so the hint claims nothing there, whatever the output.
+  it("returns null for guarded on Windows — no captured refusal of that cage backs a hint, and neither guarded message describes it", () => {
     expect(networkDenialHint("guarded", BASH_DEV_TCP_EPERM, "win32")).toBeNull();
+    expect(networkDenialHint("guarded", NODE_CONNECT_EPERM, "win32")).toBeNull();
     expect(networkDenialHint("guarded", BWRAP_NETNS_UNREACH, "win32")).toBeNull();
   });
 
@@ -211,5 +221,131 @@ describe("networkDenialHint — null cases (never lie)", () => {
     const combined = FILE_EPERM_ONLY + BASH_DEV_TCP_EPERM;
     expect(sandboxDenialHint("guarded", combined)).toContain("~/.aws");
     expect(networkDenialHint("guarded", combined, "darwin")).toContain("network cage");
+  });
+});
+
+// The install-root rule (security/layer/install-root.ts): the cage refuses a
+// write into the install, config/ included, and the agent must learn the one
+// route that is open — self_edit in developer mode — instead of retrying the
+// write another way. A synthetic install on this host stands in for the real
+// one; the platform argument picks which cage's refusal is expected, so every
+// branch runs on any host.
+describe("installRootDenialHint — a write the install-root rule refused", () => {
+  const base = mkdtempSync(join(tmpdir(), "lax-dh-install-"));
+  afterAll(() => rmSync(base, { recursive: true, force: true }));
+  mkdirSync(join(base, "install", "workspace"), { recursive: true });
+  mkdirSync(join(base, "install", "config"), { recursive: true });
+  const rule = installRootWriteRule(join(base, "install"), join(base, "install", "workspace"))!;
+  const at = (...parts: string[]) => join(rule.root, ...parts);
+  const prompt = at("config", "system-prompt.md");
+
+  it("seatbelt's EPERM on macOS names the file, the rule, config/, and the self_edit route", () => {
+    for (const mode of ["guarded", "seatbelt"] as const) {
+      const hint = installRootDenialHint(mode, `bash: ${prompt}: Operation not permitted\n`, "darwin", rule);
+      expect(hint, mode).toContain(prompt);
+      expect(hint).toContain("inside the Local Agent X install folder");
+      expect(hint).toContain("config/ included");
+      expect(hint).toContain(`The bash kernel cage (mode "${mode}") enforces it at the OS level`);
+      expect(hint).toContain(INSTALL_CHANGE_ROUTE);
+    }
+  });
+
+  it("bwrap's read-only bind on Linux, as bash, touch, rm and python print it", () => {
+    for (const out of [
+      `bash: ${at("config", "tools.json")}: Read-only file system\n`,
+      `touch: cannot touch '${at("config", "tools.json")}': Read-only file system\n`,
+      `rm: cannot remove '${at("config", "protected-files.json")}': Read-only file system\n`,
+      `OSError: [Errno 30] Read-only file system: '${at("package.json")}'\n`,
+    ]) {
+      expect(installRootDenialHint("guarded", out, "linux", rule), out).toContain(INSTALL_CHANGE_ROUTE);
+      expect(installRootDenialHint("bwrap", out, "linux", rule), out).toContain('mode "bwrap"');
+    }
+  });
+
+  it("the Windows cage's access denied, as Git Bash, node and PowerShell print it", () => {
+    for (const out of [
+      `bash: ${prompt}: Permission denied\n`,
+      `Error: EPERM: operation not permitted, open '${prompt}'\n`,
+      `Access to the path '${prompt}' is denied.\n`,
+    ]) {
+      const hint = installRootDenialHint("guarded", out, "win32", rule);
+      expect(hint, out).toContain("runs as a separate Windows account that is granted the workspace, not the install folder");
+      expect(hint).toContain(INSTALL_CHANGE_ROUTE);
+    }
+  });
+
+  it.skipIf(!/^[a-z]:/i.test(rule.root))("the Windows cage's denial with the path in Git Bash's /c/ form, or another casing", () => {
+    const msys = `/${rule.root[0]!.toLowerCase()}${rule.root.slice(2).replace(/\\/g, "/")}/config/tools.json`;
+    expect(installRootDenialHint("guarded", `bash: ${msys}: Permission denied\n`, "win32", rule)).toContain(at("config", "tools.json"));
+    expect(installRootDenialHint("guarded", `bash: ${at("CONFIG", "tools.json").toUpperCase()}: Permission denied\n`, "win32", rule)).toContain(INSTALL_CHANGE_ROUTE);
+    // Git Bash's /backup is a folder of its own, not the drive: a path there
+    // that ends in the install's names is not the install.
+    expect(installRootDenialHint("guarded", `bash: /backup${msys}: Permission denied\n`, "win32", rule)).toBeNull();
+  });
+
+  // The Windows cage cannot read a git clone in the user's profile either, and
+  // its refused read reads like a refused write: the notice must send a read
+  // to the tools that can make it, not to the user.
+  it("the Windows cage's refused read, as Git Bash's cat, ls and grep print it, points at read, grep and glob", () => {
+    const shown = (p: string) => (/^[a-z]:/i.test(p) ? `/${p[0]!.toLowerCase()}${p.slice(2).replace(/\\/g, "/")}` : p);
+    for (const out of [
+      `cat: ${shown(at("package.json"))}: Permission denied\n`,
+      `ls: cannot open directory '${shown(at("src"))}': Permission denied\n`,
+      `grep: ${shown(prompt)}: Permission denied\n`,
+    ]) {
+      const hint = installRootDenialHint("guarded", out, "win32", rule);
+      expect(hint, out).toContain("refuses its writes, and its reads too");
+      expect(hint).toContain("Read files there with the read, grep and glob tools, which do not run in the cage");
+      expect(hint).toContain(INSTALL_CHANGE_ROUTE);
+    }
+  });
+
+  it("the macOS and Linux notices claim no refused read: those cages deny only writes", () => {
+    for (const [platform, refusal] of [["darwin", "Operation not permitted"], ["linux", "Read-only file system"]] as const) {
+      const hint = installRootDenialHint("guarded", `bash: ${prompt}: ${refusal}\n`, platform, rule);
+      expect(hint, platform).toContain(INSTALL_CHANGE_ROUTE);
+      expect(hint!.replace(prompt, "")).not.toMatch(/\bread(s|ing)?\b/i);
+    }
+  });
+
+  it("a path that climbs out of the workspace into the install is the install", () => {
+    const climbed = [rule.root, "workspace", "..", "config", "tools.json"].join(sep);
+    expect(installRootDenialHint("guarded", `bash: ${climbed}: Operation not permitted\n`, "darwin", rule)).toContain(at("config", "tools.json"));
+  });
+
+  it("never fires for the workspace inside the install, a path outside it, or a folder that only shares its names", () => {
+    for (const out of [
+      `bash: ${at("workspace", "notes.md")}: Operation not permitted\n`,
+      `bash: ${join(base, "elsewhere", "config", "tools.json")}: Operation not permitted\n`,
+      `bash: ${rule.root}-old${sep}config${sep}tools.json: Operation not permitted\n`,
+      `bash: ${join(base, "mirror")}${rule.root.replace(/^[a-z]:/i, "")}${sep}config${sep}tools.json: Operation not permitted\n`,
+    ]) {
+      expect(installRootDenialHint("guarded", out, "darwin", rule), out).toBeNull();
+    }
+  });
+
+  it("never fires on a refusal that is not the cage's: a plain EACCES on macOS or Linux is the file's own mode bits", () => {
+    expect(installRootDenialHint("guarded", `bash: ${prompt}: Permission denied\n`, "darwin", rule)).toBeNull();
+    expect(installRootDenialHint("guarded", `bash: ${prompt}: Permission denied\n`, "linux", rule)).toBeNull();
+    expect(installRootDenialHint("guarded", `cat: ${prompt}: No such file or directory\n`, "win32", rule)).toBeNull();
+  });
+
+  it("never fires without a cage that enforces the rule on that platform", () => {
+    const eperm = `bash: ${prompt}: Operation not permitted\n`;
+    expect(installRootDenialHint("host", eperm, "darwin", rule)).toBeNull();
+    expect(installRootDenialHint("docker", eperm, "linux", rule)).toBeNull();
+    expect(installRootDenialHint("bwrap", eperm, "darwin", rule)).toBeNull();
+    expect(installRootDenialHint("seatbelt", `bash: ${prompt}: Permission denied\n`, "win32", rule)).toBeNull();
+    expect(installRootDenialHint("guarded", eperm, "freebsd", rule)).toBeNull();
+    expect(installRootDenialHint("guarded", eperm, "darwin", null)).toBeNull();
+  });
+
+  // The shell tool reads the notice through sandboxDenialHint, on the live
+  // install root and this host's cage.
+  it("reaches the shell tool through sandboxDenialHint, for the live install's config/", () => {
+    const live = installRootWriteRule()!;
+    const target = join(live.root, "config", "system-prompt.md");
+    const refusal = process.platform === "win32" ? "Permission denied" : process.platform === "linux" ? "Read-only file system" : "Operation not permitted";
+    expect(sandboxDenialHint("guarded", `bash: ${target}: ${refusal}\n`)).toContain(INSTALL_CHANGE_ROUTE);
   });
 });

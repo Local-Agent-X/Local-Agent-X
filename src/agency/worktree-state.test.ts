@@ -3,9 +3,10 @@
  * event loop for the child's entire lifetime — and their ceilings are minutes,
  * so one repo build stopped the server answering anything at all.
  *
- * These pin the async runners' contract (exit codes, stderr, env passthrough,
- * the timeout ceiling) and the property the conversion exists for: timers keep
- * firing while the child runs.
+ * These pin the async runners' contract (exit codes, stderr, an explicit env
+ * passed through and a credential-scrubbed one by default, the timeout ceiling)
+ * and the property the conversion exists for: timers keep firing while the
+ * child runs.
  */
 import { execSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -47,6 +48,18 @@ function writeBuildScript(dir: string, script: string): void {
     join(dir, "package.json"),
     JSON.stringify({ name: "runner-fixture", version: "0.0.0", private: true, scripts: { build: script } }),
   );
+}
+
+const PROBE_SECRET_KEY = "LAX_SCRUB_PROBE_API_KEY";
+const PROBE_SECRET_VALUE = "sk-scrub-probe-6f1d0c2a9b8e7d3c";
+
+/** Run `run` with a credential-shaped var in the server env, then read the env
+ *  the child recorded via `dump-env.cjs` (written into `dir` here). */
+async function childEnvWithProbeSecret(dir: string, run: () => Promise<unknown>): Promise<Record<string, string>> {
+  writeFileSync(join(dir, "dump-env.cjs"), `require("node:fs").writeFileSync("env.json", JSON.stringify(process.env));\n`);
+  process.env[PROBE_SECRET_KEY] = PROBE_SECRET_VALUE;
+  try { await run(); } finally { delete process.env[PROBE_SECRET_KEY]; }
+  return JSON.parse(readFileSync(join(dir, "env.json"), "utf-8")) as Record<string, string>;
 }
 
 /**
@@ -114,6 +127,16 @@ describe("runCommandInWorktreeAsync", () => {
     expect(r.stdout).toContain("scrubbed-env-reached-child");
   });
 
+  it("withholds the server's credentials from the child when the caller passes no env", async () => {
+    const { name, dir } = registerWorktree();
+    const childEnv = await childEnvWithProbeSecret(dir, () =>
+      runCommandInWorktreeAsync(name, { command: "node dump-env.cjs", timeoutMs: 30_000 }));
+    expect(childEnv).not.toHaveProperty(PROBE_SECRET_KEY);
+    expect(JSON.stringify(childEnv)).not.toContain(PROBE_SECRET_VALUE);
+    // Scrubbed, not emptied: the child still resolves binaries.
+    expect(Object.keys(childEnv).some(k => k.toUpperCase() === "PATH")).toBe(true);
+  });
+
   it("rejects for an unregistered worktree", async () => {
     await expect(
       runCommandInWorktreeAsync("no-such-worktree", { command: "node -v", timeoutMs: 5_000 }),
@@ -155,6 +178,16 @@ describe("runRepoBuildAsync", () => {
     const { dir } = registerWorktree();
     writeBuildScript(dir, `node -e "console.log('built')"`);
     expect(await runRepoBuildAsync(dir, 120_000)).toEqual({ ok: true, detail: "build passed" });
+  }, 90_000);
+
+  it("runs the repo's build scripts without a credential from the server env", async () => {
+    const { dir } = registerWorktree();
+    writeBuildScript(dir, "node dump-env.cjs");
+    const childEnv = await childEnvWithProbeSecret(dir, async () => {
+      expect((await runRepoBuildAsync(dir, 120_000)).ok).toBe(true);
+    });
+    expect(childEnv).not.toHaveProperty(PROBE_SECRET_KEY);
+    expect(JSON.stringify(childEnv)).not.toContain(PROBE_SECRET_VALUE);
   }, 90_000);
 });
 

@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { externalChangeDiffMiddleware } from "./external-change-diff.js";
 import { recordFileSeen, checkFreshness, forgetSessionReads } from "../../tools/read-state.js";
 import { trackOpForSession } from "../../ops/session-bridge.js";
+import { registerRedactedSecretValue, unregisterRedactedSecretValue } from "../../security/secrets/index.js";
 import type { CanonicalLoopContext } from "./types.js";
 import { makeCanonicalLoopContext } from "./ctx.test-helper.js";
 
@@ -174,6 +175,58 @@ describe("external-change-diff", () => {
     // edit is forced through a real (re-redacted) read.
     expect((await fire(op)).kind).toBe("continue");
     expect(checkFreshness(session, file)).toBe("stale");
+  });
+
+  it("a key pasted into a placeholder .env the model saw is never diffed into the nudge", async () => {
+    // The everyday scaffold flow: the work-root .env holds only a placeholder,
+    // so its read (or the agent's own write) is delivered in full and cached
+    // as a snapshot. The user then pastes a real, unregistered key in their
+    // editor — no registered-value mask can catch it.
+    const realKey = "sk-ant-" + "api03-" + "Q".repeat(93) + "AA";
+    const { op, session } = ids();
+    const file = join(dir, ".env");
+    writeFileSync(file, "ANTHROPIC_API_KEY=\n", "utf-8");
+    recordFileSeen(session, file);
+
+    writeBumped(file, `ANTHROPIC_API_KEY=${realKey}\n`);
+    const r = await fire(op);
+    expect(r).toMatchObject({ kind: "nudge" });
+    if (r.kind === "nudge") {
+      expect(r.message).toContain(file);
+      expect(r.message).toContain("no diff available");
+      expect(r.message).not.toContain(realKey);
+      expect(r.message).not.toContain("sk-ant-");
+    }
+    // Only a real read, through the read gate, may show the new bytes.
+    expect((await fire(op)).kind).toBe("continue");
+    expect(checkFreshness(session, file)).toBe("stale");
+  });
+
+  it("a registered secret in either side of the diff is masked in the nudge, like the read that cached it", async () => {
+    const before = "registered-Diff-Secret-4Kq9";
+    const after = "registered-Diff-Secret-8Zp2";
+    registerRedactedSecretValue(before);
+    registerRedactedSecretValue(after);
+    try {
+      const { op, session } = ids();
+      const file = join(dir, "settings.local.json");
+      writeFileSync(file, `{\n  "name": "demo",\n  "key": "${before}"\n}\n`, "utf-8");
+      recordFileSeen(session, file);
+
+      writeBumped(file, `{\n  "name": "demo",\n  "key": "${after}"\n}\n`);
+      const r = await fire(op);
+      expect(r).toMatchObject({ kind: "nudge" });
+      if (r.kind === "nudge") {
+        expect(r.message).toContain('-  "key": "');
+        expect(r.message).toContain('+  "key": "');
+        expect(r.message).not.toContain(before);
+        expect(r.message).not.toContain(after);
+        expect(r.message).toMatch(/2 secret values masked/);
+      }
+    } finally {
+      unregisterRedactedSecretValue(before);
+      unregisterRedactedSecretValue(after);
+    }
   });
 
   it("an op with no session mapping stays inert", async () => {

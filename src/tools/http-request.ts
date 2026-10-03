@@ -14,9 +14,16 @@ import {
   assertRedirectEgressAllowed,
   assertLiteralIpEgressAllowed,
   selfCallAuthHeader,
+  reachesOwnServer,
   createPinningDispatcher,
   BROWSER_USER_AGENT,
 } from "./web-egress.js";
+
+/** A request header that carries a credential. */
+function isCredentialHeader(name: string): boolean {
+  const n = name.toLowerCase();
+  return n === "authorization" || n === "proxy-authorization" || n === "cookie" || n === "x-api-key" || /^x-[a-z0-9-]*token$/.test(n);
+}
 
 export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
   const tool: ToolDefinition = {
@@ -99,8 +106,17 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
       // redirect ever crosses to another origin.
       const selfAuth = await selfCallAuthHeader(url);
       if (selfAuth) Object.assign(headers, selfAuth);
+      // A call to this server's own port runs as the agent: a credential header
+      // the model wrote is dropped, because a known operator token would open
+      // every route the agent role is denied (rbac-agent-denials.ts).
+      const ownServer = await reachesOwnServer(url);
+      const dropped: string[] = [];
       if (args.headers && typeof args.headers === "object") {
         for (const [key, value] of Object.entries(args.headers as Record<string, unknown>)) {
+          if (ownServer && isCredentialHeader(key)) {
+            dropped.push(key);
+            continue;
+          }
           let resolved = String(value);
           if (secrets) {
             const missing = secrets.findMissing(resolved);
@@ -114,6 +130,11 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
           headers[String(key)] = resolved;
         }
       }
+      const droppedNote = dropped.length === 0 ? "" :
+        `\n\n[Dropped the ${dropped.join(", ")} header${dropped.length === 1 ? "" : "s"} you supplied: a request to ` +
+        `Local Agent X's own server always runs as the agent, with the agent's own credential. If the server ` +
+        `refuses the agent, its answer says where the user makes that change.]`;
+      const droppedMeta = dropped.length === 0 ? {} : { dropped_headers: dropped };
       if (args.idempotency_key && !Object.keys(headers).some(key =>
         ["idempotency-key", "x-idempotency-key"].includes(key.toLowerCase()),
       )) {
@@ -155,7 +176,6 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
       }
 
       try {
-        const SENSITIVE_HEADERS = ["authorization", "cookie", "proxy-authorization", "x-api-key"];
         const MAX_REDIRECTS = 5;
         let currentUrl = url;
 
@@ -179,10 +199,8 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
 
             const redirectHeaders = { ...headers };
             if (origOrigin !== newOrigin) {
-              for (const h of SENSITIVE_HEADERS) {
-                for (const key of Object.keys(redirectHeaders)) {
-                  if (key.toLowerCase() === h) delete redirectHeaders[key];
-                }
+              for (const key of Object.keys(redirectHeaders)) {
+                if (isCredentialHeader(key)) delete redirectHeaders[key];
               }
             }
 
@@ -209,11 +227,12 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
 
         const durationMs = Date.now() - startMs;
         if (method === "HEAD") {
-          return ok(`HTTP ${statusLine}\n\n${resHeaders.join("\n")}`, {
+          return ok(`HTTP ${statusLine}\n\n${resHeaders.join("\n")}${droppedNote}`, {
             url: currentUrl,
             method,
             status: res.status,
             duration_ms: durationMs,
+            ...droppedMeta,
           });
         }
 
@@ -259,7 +278,7 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
             method,
             status: statusLine,
           });
-          const output = `HTTP ${statusLine}\n\n${wrapped}${leadsNote}${maskedNote}`;
+          const output = `HTTP ${statusLine}\n\n${wrapped}${leadsNote}${maskedNote}${droppedNote}`;
           const meta = {
             url: currentUrl,
             method,
@@ -270,6 +289,7 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
             match_count: found.matchCount,
             content_type: contentType || undefined,
             ...maskedMeta,
+            ...droppedMeta,
           };
           return res.ok ? ok(output, meta) : err(output, meta);
         }
@@ -286,7 +306,7 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
           method,
           status: statusLine,
         });
-        const output = `HTTP ${statusLine}\n\n${wrapped}${leadsNote}${maskedNote}`;
+        const output = `HTTP ${statusLine}\n\n${wrapped}${leadsNote}${maskedNote}${droppedNote}`;
         const meta = {
           url: currentUrl,
           method,
@@ -296,21 +316,24 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
           truncated: truncated || undefined,
           content_type: contentType || undefined,
           ...maskedMeta,
+          ...droppedMeta,
         };
         return res.ok ? ok(output, meta) : err(output, meta);
       } catch (e) {
         if (e instanceof EgressRedirectBlocked) {
-          return err(e.message, {
+          return err(`${e.message}${droppedNote}`, {
             url,
             method,
             blocked_url: e.blockedUrl,
             duration_ms: Date.now() - startMs,
+            ...droppedMeta,
           });
         }
-        return err(`HTTP request failed: ${(e as Error).message}`, {
+        return err(`HTTP request failed: ${(e as Error).message}${droppedNote}`, {
           url,
           method,
           duration_ms: Date.now() - startMs,
+          ...droppedMeta,
         });
       } finally {
         await dispatcher.close().catch(() => {});

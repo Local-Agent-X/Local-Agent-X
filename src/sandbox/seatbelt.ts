@@ -11,12 +11,18 @@
 // dev shell can't be default-deny without breaking the package managers/build
 // tools it exists to run (the reason docker mode is a fresh container, not a
 // host jail). So seatbelt allows the host shell by default and hard-denies the
-// three things that actually matter and that rounds 2-4 kept patching by hand:
+// things that actually matter (1-3 are what rounds 2-4 kept patching by hand):
 //   1. ALL outbound network — closes the curl/wget/nc/openssl/websocat/
 //      /dev/tcp egress cluster categorically, at the syscall, not by binary name.
 //   2. Read AND write of the sensitive home dirs (~/.ssh, ~/.aws, ~/.lax, …) —
 //      the crown jewels, derived from the ONE list in sandbox/validate.ts.
-//   3. Write of the classic persistence vectors (LaunchAgents/Daemons, shell rc).
+//   3. Write of the persistence locations: shell startup files, launch agents,
+//      git config (the ONE list in security/layer/persistence-locations.ts,
+//      which the file tools put to the user instead).
+//   4. Write of the folder LAX is installed in, config/ included, except the
+//      workspace inside it (agent scopes only; security/layer/install-root.ts
+//      has the rule) — the file tools refuse those writes, and a shell must
+//      not walk around them.
 // Hermetic, write-everywhere-denied confinement remains docker mode / phase B
 // (whole-server). See ari-redteam-round5.md.
 //
@@ -54,6 +60,8 @@ import { join } from "node:path";
 import { HOME_RELATIVE_DENY_DIRS, HOME_RELATIVE_DENY_FILES, SERVER_SCOPE_EXEMPT_DIRS, GUARDED_SCOPE_EXEMPT_DIRS } from "./validate.js";
 import type { SandboxScope } from "./types.js";
 import { cageLoopbackPorts } from "../net/shell-egress-proxy.js";
+import { installRootWriteRule, type InstallRootRule } from "../security/layer/install-root.js";
+import { cagePersistenceLocations } from "../security/layer/persistence-locations.js";
 
 export const SANDBOX_EXEC = "/usr/bin/sandbox-exec";
 
@@ -112,14 +120,18 @@ function sb(path: string): string {
   return `"${path.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
-// Persistence vectors a confined shell must not be able to write, regardless of
-// file-access mode. Home-relative shell rc files + launch-agent dirs (user and
-// system); the absolute /Library ones need root anyway but the deny is free.
-const HOME_PERSISTENCE_FILES = [
-  ".zshrc", ".zprofile", ".zshenv", ".bashrc", ".bash_profile", ".profile",
-];
-const HOME_PERSISTENCE_DIRS = ["Library/LaunchAgents", "Library/LaunchDaemons"];
+// The system-wide launch dirs, beside the home-relative persistence locations
+// (security/layer/persistence-locations.ts). They need root anyway, but the
+// deny is free.
 const ABSOLUTE_PERSISTENCE_DIRS = ["/Library/LaunchAgents", "/Library/LaunchDaemons"];
+
+// A dotfile kept as a link (a dotfiles repo) is written through the link to
+// its target, and replaced by unlinking the link and creating the name again:
+// the deny covers both names.
+function bothNames(path: string): string[] {
+  const real = canonical(path);
+  return real === path ? [path] : [path, real];
+}
 
 /**
  * Build the sandbox-exec profile. `home` is injectable for tests; defaults to
@@ -134,10 +146,16 @@ const ABSOLUTE_PERSISTENCE_DIRS = ["/Library/LaunchAgents", "/Library/LaunchDaem
  * server's API egress goes through the in-process canonicalFetch chokepoint,
  * which governs destinations — SBPL can only filter by IP, not hostname) and
  * the dirs the server itself owns (~/.lax, ~/.codex) are exempted.
- * Persistence write-denies apply to all scopes.
+ * Persistence write-denies apply to all scopes. The install-root write deny
+ * applies to the agent scopes ("shell", "guarded"), never "server": the server
+ * writes its own install (updates, the manifest). `installRoot` is injectable
+ * for tests; undefined reads the live install root and workspace.
  */
-export function generateSeatbeltProfile(home: string = homedir(), scope: SandboxScope = "shell", loopbackPorts: number[] = cageLoopbackPorts()): string {
+export function generateSeatbeltProfile(home: string = homedir(), scope: SandboxScope = "shell", loopbackPorts: number[] = cageLoopbackPorts(), installRoot?: InstallRootRule | null): string {
   const realHome = canonical(home);
+  // Resolved only for agent scopes: the server-scope cage is built before the
+  // runtime config exists, and the workspace comes from it.
+  const install = scope === "server" ? null : installRoot === undefined ? installRootWriteRule() : installRoot;
 
   const exemptDirs =
     scope === "server" ? SERVER_SCOPE_EXEMPT_DIRS :
@@ -147,9 +165,10 @@ export function generateSeatbeltProfile(home: string = homedir(), scope: Sandbox
   const sensitiveSubpaths = denyDirs.map((d) => canonical(join(realHome, d)));
   const sensitiveFiles = HOME_RELATIVE_DENY_FILES.map((f) => canonical(join(realHome, f)));
 
-  const persistenceFiles = HOME_PERSISTENCE_FILES.map((f) => canonical(join(realHome, f)));
+  const persistence = cagePersistenceLocations();
+  const persistenceFiles = persistence.files.flatMap((f) => bothNames(join(realHome, f)));
   const persistenceSubpaths = [
-    ...HOME_PERSISTENCE_DIRS.map((d) => canonical(join(realHome, d))),
+    ...persistence.dirs.flatMap((d) => bothNames(join(realHome, d))),
     ...ABSOLUTE_PERSISTENCE_DIRS,
   ];
 
@@ -184,6 +203,14 @@ export function generateSeatbeltProfile(home: string = homedir(), scope: Sandbox
       `(allow network-bind (local unix-socket (path-regex #"^/")))`,
       ...GUARDED_UNIX_SOCKET_ALLOW.map((s) => `(allow network-outbound (remote unix-socket (subpath ${sb(s.path)})))`),
       ...GUARDED_UNIX_SOCKET_DENY.map((s) => `(deny network-outbound (remote unix-socket (path-regex #"${s.regex}")))`),
+    ] : []),
+    // Install root: deny writes, then re-allow the workspace and the temp dir
+    // inside it AFTER the deny, since a later rule wins. Before the
+    // crown-jewel and persistence denies below, so those still win inside a
+    // re-allowed folder.
+    ...(install ? [
+      `(deny file-write* (subpath ${sb(install.root)}))`,
+      ...install.writable.map((p) => `(allow file-write* (subpath ${sb(p)}))`),
     ] : []),
     // Crown jewels: deny every file op (read, write, exec, …) on the sensitive
     // home dirs. file* is the umbrella operation.

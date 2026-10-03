@@ -24,9 +24,15 @@
  *   4. raw file write          → security/layer/lax-control-files.ts
  *   5. POST /api/settings      → routes/settings/preferences.ts operator token
  *      (covered by its own route tests; asserted here only as a reminder row)
+ *   6. POST /api/sandbox/*     → rbac.ts agent deniedEndpoints (the shell cage)
+ *   7. POST /api/autonomy/*    → rbac.ts agent deniedEndpoints (approval profile)
+ *
+ * A change that can only NARROW the agent (settings-change-direction.ts) is
+ * not one the agent needs leave for, so seam 1 applies it without a card; the
+ * cases below each widen the field they name.
  */
-import { describe, expect, it } from "vitest";
-import { mkdirSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
@@ -38,10 +44,21 @@ import { isLaxControlFile, laxControlFileBasenames } from "./security/layer/lax-
 import {
   enforceProtectedSettingGate,
   ProtectedSettingDenied,
-  protectedFieldOf,
+  userOwnedFieldOf,
 } from "./tool-execution/protected-setting-gate.js";
 
 const FIELDS = [...PROTECTED_SETTINGS];
+
+// For each protected field, a value that widens the agent from the value
+// CURRENT holds. Covering every field is asserted below.
+const WIDENING: Record<string, unknown> = {
+  enableShell: true, enableHttp: true, enableBrowser: true, enableComputerControl: true,
+  enableRemoteControl: true, enableUiEventBus: true, skillReviewEnabled: true, developer_mode: true,
+  localOnlyMode: false, supervisedBrowser: false, learningMode: "autonomous", browserSecrecy: "open",
+  browserMode: "advanced-shared", toolApproval: "auto",
+};
+const CURRENT: Record<string, unknown> = { toolApproval: "confirm-all", browserMode: "isolated" };
+const readCurrent = (field: string) => CURRENT[field];
 
 // ── Seam 1: the `setting` tool ────────────────────────────────────────────
 describe("seam 1 — `setting` tool cannot self-apply a protected control", () => {
@@ -67,34 +84,35 @@ describe("seam 1 — `setting` tool cannot self-apply a protected control", () =
 
   it("guards EVERY protected setting — no field is exempt", () => {
     expect(FIELDS.length).toBeGreaterThan(0);
+    expect(Object.keys(WIDENING).sort()).toEqual([...FIELDS].sort());
     for (const field of FIELDS) {
-      expect(protectedFieldOf(call(field, true))).toBe(field);
+      expect(userOwnedFieldOf(call(field, true))).toBe(field);
     }
   });
 
-  it.each(FIELDS)("refuses %s outright in an autonomous run", async (field) => {
+  it.each(FIELDS)("refuses widening %s outright in an autonomous run", async (field) => {
     for (const callContext of ["api", "delegated", "cron"] as const) {
       const a = approver(true);
       await expect(
-        enforceProtectedSettingGate(call(field, true), { sessionId: "s", callContext }, a.manager),
+        enforceProtectedSettingGate(call(field, WIDENING[field]), { sessionId: "s", callContext }, a.manager, readCurrent),
       ).rejects.toBeInstanceOf(ProtectedSettingDenied);
       // Never even asked — there is no user on the other end to ask.
       expect(a.asked()).toBe(0);
     }
   });
 
-  it.each(FIELDS)("requires an explicit approval for %s in interactive chat", async (field) => {
+  it.each(FIELDS)("requires an explicit approval to widen %s in interactive chat", async (field) => {
     const a = approver(true);
-    const outcome = await enforceProtectedSettingGate(call(field, true), localCtx, a.manager);
+    const outcome = await enforceProtectedSettingGate(call(field, WIDENING[field]), localCtx, a.manager, readCurrent);
     expect(outcome).toBe("approved");
     // The load-bearing assertion: it ASKED. Silent application is the bug.
     expect(a.asked()).toBe(1);
   });
 
-  it.each(FIELDS)("refuses %s when the user declines", async (field) => {
+  it.each(FIELDS)("refuses widening %s when the user declines", async (field) => {
     const a = approver(false);
     await expect(
-      enforceProtectedSettingGate(call(field, true), localCtx, a.manager),
+      enforceProtectedSettingGate(call(field, WIDENING[field]), localCtx, a.manager, readCurrent),
     ).rejects.toBeInstanceOf(ProtectedSettingDenied);
   });
 
@@ -105,9 +123,73 @@ describe("seam 1 — `setting` tool cannot self-apply a protected control", () =
         call("developer_mode", true),
         { sessionId: "s", callContext: "local" },
         a.manager,
+        readCurrent,
       ),
     ).rejects.toBeInstanceOf(ProtectedSettingDenied);
     expect(a.asked()).toBe(0);
+  });
+
+  // The owner's rule: no card that tells him nothing new. Switching a
+  // capability off, or supervision on, narrows the agent in every context.
+  it.each([
+    ["enableShell", false], ["enableHttp", false], ["enableBrowser", false], ["enableComputerControl", false],
+    ["localOnlyMode", true], ["developer_mode", false], ["supervisedBrowser", true], ["browserSecrecy", "lockdown"],
+    ["toolApproval", "confirm-all"],
+  ] as const)("applies %s → %s without a card, even in a background run", async (field, value) => {
+    for (const ctx of [localCtx, { sessionId: "s", callContext: "cron" as const }]) {
+      const a = approver(false);
+      const outcome = await enforceProtectedSettingGate(call(field, value), ctx, a.manager, readCurrent);
+      expect(outcome).toBe("tightens");
+      expect(a.asked()).toBe(0);
+    }
+  });
+
+  it("asks before toolApproval moves from confirm-all to confirm-risky", async () => {
+    const a = approver(true);
+    expect(await enforceProtectedSettingGate(call("toolApproval", "confirm-risky"), localCtx, a.manager, readCurrent)).toBe("approved");
+    expect(a.asked()).toBe(1);
+  });
+
+  // The spending caps are the user's money: lowering one is free, raising one
+  // or removing it (0 = no cap) asks, and a background run cannot.
+  describe("spending caps", () => {
+    const caps = (field: string) => ({ dailyBudgetUsd: 75, sessionBudgetUsd: 15, modelDailyBudgetsUsd: { "gpt-x": 10 } } as Record<string, unknown>)[field];
+
+    it.each([
+      ["dailyBudgetUsd", 20], ["dailyBudgetUsd", 75], ["sessionBudgetUsd", 5],
+      ["modelDailyBudgetsUsd", { "gpt-x": 5 }], ["modelDailyBudgetsUsd", { "gpt-x": 10, "other": 3 }],
+    ] as const)("lowers %s to %j without a card", async (field, value) => {
+      const a = approver(false);
+      expect(await enforceProtectedSettingGate(call(field, value), localCtx, a.manager, caps)).toBe("tightens");
+      expect(a.asked()).toBe(0);
+    });
+
+    it.each([
+      ["dailyBudgetUsd", 500], ["dailyBudgetUsd", 0], ["sessionBudgetUsd", 0], ["sessionBudgetUsd", 16],
+      ["modelDailyBudgetsUsd", {}], ["modelDailyBudgetsUsd", { "gpt-x": 0 }], ["modelDailyBudgetsUsd", { "gpt-x": 11 }],
+    ] as const)("asks before %s → %j, and refuses it in a background run", async (field, value) => {
+      const a = approver(true);
+      expect(await enforceProtectedSettingGate(call(field, value), localCtx, a.manager, caps)).toBe("approved");
+      expect(a.asked()).toBe(1);
+      await expect(
+        enforceProtectedSettingGate(call(field, value), { sessionId: "s", callContext: "cron" }, approver(true).manager, caps),
+      ).rejects.toBeInstanceOf(ProtectedSettingDenied);
+    });
+
+    it("names the money in the card", async () => {
+      let context = "";
+      const manager = { async requestApproval(input: { context: string }) { context = input.context; return true; } };
+      await enforceProtectedSettingGate(call("dailyBudgetUsd", 0), localCtx, manager, caps);
+      expect(context).toBe("Change the daily spending cap on API-key usage from $75 to no cap?");
+    });
+  });
+
+  it("tells the user developer mode unlocks self_edit and autopilot, and stays on until they turn it off", async () => {
+    let context = "";
+    const manager = { async requestApproval(input: { context: string }) { context = input.context; return true; } };
+    await enforceProtectedSettingGate(call("developer_mode", true), localCtx, manager, readCurrent);
+    expect(context).toMatch(/self_edit and autopilot/);
+    expect(context).toMatch(/stays on until you turn it off in Settings/);
   });
 
   // The other half of the contract: ordinary settings stay frictionless.
@@ -146,6 +228,11 @@ describe("seams 2 & 3 — the agent RBAC role cannot reach its own leash", () =>
     ["POST", "/api/tool-policy/toggle"],
     ["GET", "/api/security/file-access"],
     ["GET", "/api/tool-policy/status"],
+    ["POST", "/api/sandbox"],
+    ["POST", "/api/sandbox/windows-cage"],
+    ["POST", "/api/autonomy/profile"],
+    ["POST", "/api/mcp/servers"],
+    ["POST", "/api/sync/pull"],
   ] as const;
 
   it.each(SELF_GATING_ROUTES)("agent role is denied %s %s", (method, path) => {
@@ -188,11 +275,45 @@ describe("seam 4 — control files cannot be rewritten by the file tools", () =>
 
   it.each(MODES)("blocks writes in %s mode — including unrestricted", (mode) => {
     for (const t of targets) {
-      for (const action of ["write", "edit", "delete"]) {
+      for (const action of ["write", "edit", "delete_file"]) {
         const d = evaluateFileAccess(workspace, mode, allowAll, action, t);
         expect(d.allowed, `${action} ${t} in ${mode}`).toBe(false);
       }
     }
+  });
+
+  // Windows writes the real settings.json through each of these spellings,
+  // and unrestricted mode allows any write under home, so the block is all
+  // that stands in the way.
+  describe.skipIf(process.platform !== "win32")("the other Windows spellings of the same file", () => {
+    let base = "";
+    let lax = "";
+    beforeEach(() => {
+      base = mkdtempSync(join(tmpdir(), "uoc-spell-"));
+      lax = join(base, ".lax");
+      mkdirSync(lax);
+      writeFileSync(join(lax, "settings.json"), "{}");
+    });
+    afterEach(() => rmSync(base, { recursive: true, force: true }));
+    const blocked = (p: string) => {
+      const d = evaluateFileAccess(workspace, "unrestricted", allowAll, "write", p);
+      expect(d.allowed, p).toBe(false);
+      expect(d.reason, p).toMatch(/user-owned control file/);
+    };
+    const sameAs = (a: string, b: string) => existsSync(a) && realpathSync.native(a) === realpathSync.native(b);
+
+    it("a stream suffix on the file or the folder, including a file that does not exist yet", () => {
+      blocked(`${join(lax, "settings.json")}::$DATA`);
+      blocked(join(`${lax}::$INDEX_ALLOCATION`, "settings.json"));
+      blocked(`${join(lax, "security.json")}::$DATA`);
+    });
+
+    it("an 8.3 short name for the data dir or the file, where the volume keeps them", (t) => {
+      if (!sameAs(join(base, "LAX~1"), lax) || !sameAs(join(lax, "SETTIN~1.JSO"), join(lax, "settings.json"))) return t.skip();
+      blocked(join(base, "LAX~1", "settings.json"));
+      blocked(join(base, "LAX~1", "tool-policy.json"));
+      blocked(join(lax, "SETTIN~1.JSO"));
+    });
   });
 
   it.each(MODES)("still permits READS in %s mode (config is not a secret)", (mode) => {
@@ -234,7 +355,7 @@ describe("no user-owned control is left without a seam", () => {
     // exactly the developer_mode bug, re-introduced.
     for (const field of FIELDS) {
       expect(
-        protectedFieldOf({ id: "c", name: "setting", args: { field, value: true } }),
+        userOwnedFieldOf({ id: "c", name: "setting", args: { field, value: true } }),
         `${field} is marked protected in settings-schema but the gate does not recognise it`,
       ).toBe(field);
     }

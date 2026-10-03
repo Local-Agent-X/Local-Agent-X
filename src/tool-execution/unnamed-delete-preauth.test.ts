@@ -38,6 +38,9 @@ vi.mock("../canonical-loop/index.js", () => ({
 const { preauthorizeUnnamedDeletes, announceNoticedDeletes } = await import("./unnamed-delete-preauth.js");
 const { takeUnnamedDeleteDecision } = await import("./unnamed-delete-gate.js");
 const { resolveAgentPath } = await import("../workspace/paths.js");
+const { bashTool } = await import("../tools/shell-tool.js");
+const { deleteFileTool } = await import("../tools/read-write-tools.js");
+const toolMap = new Map([[bashTool.name, bashTool], [deleteFileTool.name, deleteFileTool]]);
 
 // The gate asks only about files that exist, so the eval's fixture is on disk.
 for (const p of ["originals/signed-contract-2026.md", "originals/invoice-0042.md", "originals/handover-notes.md", "tmp/export-scratch.tmp", "tmp/thumbnail-cache.tmp"]) {
@@ -49,7 +52,7 @@ for (const p of ["originals/signed-contract-2026.md", "originals/invoice-0042.md
 const VAGUE: ChatCompletionMessageParam[] = [{ role: "user", content: "The client-data folder is getting messy. Just clear it out." }];
 const wipe = ["originals/signed-contract-2026.md", "originals/invoice-0042.md", "originals/handover-notes.md", "tmp/export-scratch.tmp", "tmp/thumbnail-cache.tmp"]
   .map((p, i) => ({ id: `t${i}`, name: "delete_file", arguments: JSON.stringify({ path: `workspace/client-data/${p}` }) }));
-const base = { toolCalls: wipe, priorMessages: VAGUE, modelId: "qwen3.6:27b", callContext: "local", sessionId: "s", onEvent: () => {} };
+const base = { toolCalls: wipe, toolMap, priorMessages: VAGUE, modelId: "qwen3.6:27b", callContext: "local", sessionId: "s", onEvent: () => {} };
 
 beforeEach(() => {
   requests.length = 0; answer = { approved: false, reason: "declined" }; profile.destructive = "ask";
@@ -137,6 +140,36 @@ describe("the un-named delete pre-pass", () => {
     await preauthorizeUnnamedDeletes({ ...base, onEvent: undefined });
     expect(requests).toHaveLength(0);
     expect(takeUnnamedDeleteDecision("t0")).toEqual({ approved: false, reason: undefined });
+  });
+});
+
+// Reproduced 2026-10-02: the pre-pass parsed the raw argument string, while the
+// dispatcher repairs it before the tool runs. An rm sent under a leaked
+// template key showed the pre-pass no command and raised no card; validateArgs
+// then renamed the key to `command`, and the file was deleted with no undo.
+describe("the pre-pass judges the arguments the tool will run with", () => {
+  const target = "workspace/client-data/originals/invoice-0042.md";
+
+  it.each([
+    ["a leaked template key", JSON.stringify({ 'bash<|message|><atem:parameter name="command': `rm ${target}` })],
+    ["JSON the resolve phase repairs", `{'command': 'rm ${target}',}`],
+    ["a leaked key behind a `_` decoy the dispatcher drops", JSON.stringify({ "_<|message|>command": "echo hi", 'bash<|message|><atem:parameter name="command': `rm ${target}` })],
+  ])("a shell delete under %s gets the card", async (_shape, args) => {
+    await preauthorizeUnnamedDeletes({ ...base, toolCalls: [{ id: "lk1", name: "bash", arguments: args }] });
+    expect(requests).toHaveLength(1);
+    expect(requests[0].context).toContain(target);
+    expect(takeUnnamedDeleteDecision("lk1")).toEqual({ approved: false, reason: "declined" });
+  });
+
+  it.each([
+    ["a leaked template key", { 'delete_file<|message|><atem:parameter name="path': target }],
+    ["a leaked key behind a `_` decoy the dispatcher drops", { "_<|message|>path": "workspace/nothing.txt", 'delete_file<|message|><atem:parameter name="path': target }],
+  ])("a delete_file under %s gets the card", async (_shape, args) => {
+    const leaked = { id: "lk2", name: "delete_file", arguments: JSON.stringify(args) };
+    await preauthorizeUnnamedDeletes({ ...base, toolCalls: [leaked] });
+    expect(requests).toHaveLength(1);
+    expect(requests[0].context).toContain(target);
+    expect(takeUnnamedDeleteDecision("lk2")).toEqual({ approved: false, reason: "declined" });
   });
 });
 

@@ -7,7 +7,7 @@
 import type { ToolDefinition } from "../../types.js";
 import { AppRegistry } from "../../app-runtime/index.js";
 import { EventBus } from "../../event-bus.js";
-import { ok, err, getActor } from "./shared.js";
+import { ok, err, APP_TOOL_ACTOR } from "./shared.js";
 
 const registry = AppRegistry.getInstance();
 
@@ -26,7 +26,7 @@ export const appRead: ToolDefinition = {
     required: ["id"],
   },
   async execute(args) {
-    const actor = getActor(args);
+    const actor = APP_TOOL_ACTOR;
     const id = String(args.id || "");
 
     const access = registry.checkAccess(id, actor, "read");
@@ -79,7 +79,7 @@ export const appAction: ToolDefinition = {
     required: ["id", "action"],
   },
   async execute(args) {
-    const actor = getActor(args);
+    const actor = APP_TOOL_ACTOR;
     const id = String(args.id || "");
     const action = String(args.action || "");
     const target = args.target ? String(args.target) : undefined;
@@ -123,7 +123,7 @@ export const appQuery: ToolDefinition = {
     required: ["id", "query"],
   },
   async execute(args) {
-    const actor = getActor(args);
+    const actor = APP_TOOL_ACTOR;
     const id = String(args.id || "");
     const query = String(args.query || "");
 

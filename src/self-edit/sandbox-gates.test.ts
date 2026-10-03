@@ -5,8 +5,10 @@
  *
  * These pin the unification — the same tree yields the same verdict whether it
  * is addressed by worktree name or by path — and the reason for it: the async
- * form leaves the event loop free while npm runs.
+ * form leaves the event loop free while npm runs. The deps gate's `npm ci` is
+ * pinned to the same credential-scrubbed env as the build.
  */
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,7 +16,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { activeWorktrees } from "../agency/worktree-core.js";
-import { gateBuild, gateBuildAtAsync } from "./sandbox-gates.js";
+import { gateBuild, gateBuildAtAsync, gateDeps } from "./sandbox-gates.js";
 
 // ── Fixtures ────────────────────────────────────────────────────────────────
 const dirs: string[] = [];
@@ -77,6 +79,48 @@ describe("build gate unification", () => {
     const r = await gateBuild("no-such-worktree");
     expect(r).toMatchObject({ ok: false, skipped: false, durationMs: 0, detail: "worktree path not found" });
   });
+});
+
+// ── The deps gate installs without the server's credentials ─────────────────
+const PROBE_SECRET_KEY = "LAX_SCRUB_PROBE_API_KEY";
+const PROBE_SECRET_VALUE = "sk-scrub-probe-6f1d0c2a9b8e7d3c";
+
+/** A git repo whose uncommitted manifest change puts it in the deps gate's
+ *  merge delta, with a postinstall that records the env npm ci handed it. */
+function registerDepsTree(): { name: string; dir: string } {
+  const dir = mkdtempSync(join(tmpdir(), "lax-gate-deps-"));
+  const name = `gate-${process.pid}-${names.length}`;
+  dirs.push(dir);
+  names.push(name);
+  const g = (...args: string[]) => execFileSync("git", args, {
+    cwd: dir, stdio: "pipe", windowsHide: true,
+    env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null" },
+  });
+  g("init", "-q", "-b", "main");
+  g("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "base");
+  writeFileSync(join(dir, "dump-env.cjs"), `require("node:fs").writeFileSync("env.json", JSON.stringify(process.env));\n`);
+  const manifest = { name: "deps-fixture", version: "0.0.0", private: true, scripts: { postinstall: "node dump-env.cjs" } };
+  writeFileSync(join(dir, "package.json"), JSON.stringify(manifest));
+  writeFileSync(join(dir, "package-lock.json"), JSON.stringify({
+    name: "deps-fixture", version: "0.0.0", lockfileVersion: 3, requires: true,
+    packages: { "": { name: "deps-fixture", version: "0.0.0" } },
+  }));
+  activeWorktrees.set(name, { path: dir, branch: "main", baseBranch: "main", repoRoot: dir, mergedSuccessfully: false });
+  return { name, dir };
+}
+
+describe("gateDeps env", () => {
+  it("runs npm ci lifecycle scripts without a credential from the server env", async () => {
+    const { name, dir } = registerDepsTree();
+    process.env[PROBE_SECRET_KEY] = PROBE_SECRET_VALUE;
+    let r: Awaited<ReturnType<typeof gateDeps>>;
+    try { r = await gateDeps(name); } finally { delete process.env[PROBE_SECRET_KEY]; }
+
+    expect(r).toMatchObject({ ok: true, skipped: false, detail: "isolated npm ci passed" });
+    const childEnv = JSON.parse(readFileSync(join(dir, "env.json"), "utf-8")) as Record<string, string>;
+    expect(childEnv).not.toHaveProperty(PROBE_SECRET_KEY);
+    expect(JSON.stringify(childEnv)).not.toContain(PROBE_SECRET_VALUE);
+  }, 120_000);
 });
 
 // ── The blocking twin must be gone, not merely unused ───────────────────────

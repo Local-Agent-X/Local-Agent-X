@@ -3,8 +3,13 @@ import { join } from "node:path";
 
 import { type SyncConfig } from "../constants.js";
 import { workspaceRoot } from "../../config.js";
+import type { CronJob } from "../../cron/cron-service-types.js";
+import { locallyGrantedProfile } from "../../cron/job-authority.js";
+import { createLogger } from "../../logger.js";
 import { pullDir } from "../mirror.js";
 import { applyTombstones, tombstonePaths } from "../tombstones.js";
+
+const logger = createLogger("sync.pull-files.misc");
 
 /**
  * Copy sessions from the mirror. Returns the ids whose local file changed, so
@@ -66,13 +71,41 @@ export function pullWorkspaceOrProtocols(dataDir: string, syncDir: string, confi
   }
 }
 
-export function pullCronJobs(dataDir: string, syncDir: string, config: SyncConfig): void {
-  if (!config.syncCronJobs) return;
+/**
+ * Copy the missions and their settings from the mirror. Returns the names of
+ * missions whose autonomy profile from the repo was left behind: a mission's
+ * own profile lets its unattended runs act without asking, and the agent can
+ * write the sync repo, so a mission runs with the profile this computer
+ * granted the same mission, or none (cron/job-authority.ts). Without one it
+ * runs under the user's own profile.
+ */
+export function pullCronJobs(dataDir: string, syncDir: string, config: SyncConfig): string[] {
+  if (!config.syncCronJobs) return [];
   const syncCronDir = join(syncDir, "cron");
   const cronDir = join(dataDir, "cron");
   if (!existsSync(cronDir)) mkdirSync(cronDir, { recursive: true });
-  if (!existsSync(syncCronDir)) return;
+  if (!existsSync(syncCronDir)) return [];
+  const dropped: string[] = [];
   for (const f of readdirSync(syncCronDir)) {
-    if (f.endsWith(".json")) writeFileSync(join(cronDir, f), readFileSync(join(syncCronDir, f), "utf-8"));
+    if (!f.endsWith(".json")) continue;
+    const remote = readFileSync(join(syncCronDir, f), "utf-8");
+    // CronService keeps its missions, an array of CronJob, in jobs.json.
+    if (f !== "jobs.json") { writeFileSync(join(cronDir, f), remote); continue; }
+    try {
+      const jobs = JSON.parse(remote) as CronJob[];
+      const localPath = join(cronDir, f);
+      const local = existsSync(localPath) ? JSON.parse(readFileSync(localPath, "utf-8")) as CronJob[] : [];
+      const localById = new Map(local.map((j) => [j.id, j]));
+      for (const job of jobs) {
+        const granted = locallyGrantedProfile(job, localById.get(job.id));
+        if (job.profile !== undefined && job.profile !== granted) dropped.push(job.name);
+        if (granted === undefined) delete job.profile;
+        else job.profile = granted;
+      }
+      writeFileSync(localPath, JSON.stringify(jobs, null, 2));
+    } catch (e) {
+      logger.warn(`[sync] cron/jobs.json pull skipped: ${(e as Error).message}`);
+    }
   }
+  return dropped;
 }

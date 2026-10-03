@@ -9,7 +9,6 @@ import { dirname, join, resolve } from "node:path";
 
 const FILE = "self-edit-sandbox.lock";
 let currentIncarnation;
-const localClaims = new Map();
 
 function samePath(left, right) {
   return process.platform === "win32"
@@ -266,21 +265,6 @@ async function claimKernelSet(endpoint, state = {}) {
   return { server: null, observed: { kind: "unsafe", reply: null } };
 }
 
-async function waitForRevokedClaim(endpoint, state, timeoutMs) {
-  const held = await observeKernelSet(endpoint);
-  if (held.kind !== "held") return null;
-  const owner = localClaims.get(endpoint.rootHash);
-  if (!owner?.onRevoke || !held.owners.some(({ reply }) => reply?.claimTicket === owner.claimTicket)) return null;
-  if (owner.onRevoke() === false) return null;
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const claim = await claimKernelSet(endpoint, state);
-    if (claim.server) return claim;
-    await new Promise((resolveWait) => setTimeout(resolveWait, 50));
-  }
-  return null;
-}
-
 export async function acquireMutationLock(dataDirectory, options = {}) {
   const identity = trustedDirectory(dataDirectory);
   const path = join(dataDirectory, FILE);
@@ -293,9 +277,8 @@ export async function acquireMutationLock(dataDirectory, options = {}) {
     return { acquired: false, holder: initial.holder, path };
   }
   const endpoint = endpointFor(dataDirectory);
-  const state = { holder: null, onRevoke: options.onRevoke };
-  let claim = await claimKernelSet(endpoint, state);
-  if (!claim.server && options.force) claim = await waitForRevokedClaim(endpoint, state, options.revokeTimeoutMs ?? 5_000) || claim;
+  const state = { holder: null };
+  const claim = await claimKernelSet(endpoint, state);
   if (!claim.server) {
     return {
       acquired: false, holder: claim.observed?.reply?.holder || readEvidence(path).holder || undefined,
@@ -321,13 +304,11 @@ export async function acquireMutationLock(dataDirectory, options = {}) {
   }
   const holder = { version: 2, pid: process.pid, ticket, incarnation, task: options.task, startedAt: new Date().toISOString() };
   state.holder = holder;
-  localClaims.set(endpoint.rootHash, state);
-  return { acquired: true, nonce: ticket, ticket, holder, path, identity, endpoint: claim.endpoint, rootHash: endpoint.rootHash, state, server, servers: claim.servers };
+  return { acquired: true, nonce: ticket, ticket, holder, path, identity, endpoint: claim.endpoint, server, servers: claim.servers };
 }
 
 export async function releaseMutationLock(lock) {
   if (!lock?.acquired) return;
-  if (localClaims.get(lock.rootHash) === lock.state) localClaims.delete(lock.rootHash);
   await closeKernelSet(lock.servers || [{ server: lock.server }]);
 }
 

@@ -15,11 +15,13 @@
  * to restored.jsonl so listRollbacks() can mark already-undone entries.
  */
 
-import { existsSync, mkdirSync, copyFileSync, statSync, appendFileSync, readFileSync, rmSync } from "node:fs";
-import { join, basename, isAbsolute } from "node:path";
+import { existsSync, mkdirSync, copyFileSync, statSync, lstatSync, appendFileSync, readFileSync, rmSync } from "node:fs";
+import { join, basename, dirname, isAbsolute, resolve } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
-import { execSync } from "node:child_process";
-import { gitSafeCmd } from "../git-safety.js";
+import { execFileSync } from "node:child_process";
+import { composeGitArgs } from "../git-safety.js";
+import { getRuntimeConfig } from "../config.js";
+import { evaluateFileAccess, loadFileAccessMode } from "../security/layer/index.js";
 import { createLogger } from "../logger.js";
 import type { ToolRisk } from "./risk.js";
 
@@ -28,6 +30,22 @@ const logger = createLogger("autonomy-rollback");
 const ROLLBACK_DIR = join(getLaxDir(), "rollback");
 const INDEX_FILE = join(ROLLBACK_DIR, "index.jsonl");
 const RESTORED_FILE = join(ROLLBACK_DIR, "restored.jsonl");
+
+// A tool-call id names a directory under ROLLBACK_DIR that a restore deletes
+// recursively, and it comes back out of an index any file writer can append
+// to: no path separator, no leading dot. "|" stays: one provider's ids join a
+// call id and an item id with it.
+const TOOL_CALL_ID = /^[A-Za-z0-9_-][A-Za-z0-9_.|-]{0,199}$/;
+const STASH_SHA = /^[0-9a-f]{40}$/;
+
+/** git as argv, never a shell string: the stash message carries the tool-call
+ *  id, and a restore's sha and directory are read back from the index. Starts
+ *  no fsmonitor hook the repository's config could name. */
+function git(args: string[], cwd: string): string {
+  return execFileSync("git", composeGitArgs(["-c", "core.fsmonitor=false", ...args]), {
+    cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], windowsHide: true,
+  });
+}
 
 export type RollbackArtifact =
   | { type: "file-backup"; original: string; backup: string }
@@ -70,19 +88,18 @@ function captureGitStash(toolCallId: string, cwd: string): RollbackArtifact {
     return { type: "none", reason: "refusing to stash LAX source repo" };
   }
   try {
-    execSync(gitSafeCmd("git rev-parse --is-inside-work-tree"), { cwd, stdio: "ignore" });
+    git(["rev-parse", "--is-inside-work-tree"], cwd);
   } catch {
     return { type: "none", reason: "cwd is not a git repository" };
   }
   try {
-    const dirty = execSync(gitSafeCmd("git status --porcelain"), { cwd, encoding: "utf-8" }).trim();
+    const dirty = git(["status", "--porcelain"], cwd).trim();
     if (!dirty) return { type: "none", reason: "no uncommitted changes to stash" };
-    const stashMsg = `lax-rollback-${toolCallId}`;
-    execSync(gitSafeCmd(`git stash push --include-untracked -m "${stashMsg}"`), { cwd, stdio: "ignore" });
+    git(["stash", "push", "--include-untracked", "-m", `lax-rollback-${toolCallId}`], cwd);
     // Capture the stash commit SHA, not the positional ref. stash@{0}
     // shifts when the user (or another lax capture) pushes more stashes;
     // the SHA is stable and survives reorders.
-    const sha = execSync(gitSafeCmd(`git rev-parse stash@{0}`), { cwd, encoding: "utf-8" }).trim();
+    const sha = git(["rev-parse", "stash@{0}"], cwd).trim();
     return { type: "git-stash", sha, cwd };
   } catch (e) {
     return { type: "none", reason: `git stash failed: ${(e as Error).message}` };
@@ -111,7 +128,9 @@ export function captureRollback(
   ensureDir(ROLLBACK_DIR);
   const artifacts: RollbackArtifact[] = [];
 
-  if (risk === "shell") {
+  if (!TOOL_CALL_ID.test(toolCallId)) {
+    artifacts.push({ type: "none", reason: "the tool call id cannot name a backup directory" });
+  } else if (risk === "shell") {
     artifacts.push(captureGitStash(toolCallId, cwd));
   } else if (risk === "workspace-write" || risk === "destructive") {
     const p = pathFromArgs(args, cwd);
@@ -174,23 +193,46 @@ export type RestoreResult =
   | { ok: true; restored: RollbackArtifact[]; skipped: RollbackArtifact[] }
   | { ok: false; error: string };
 
-function restoreOne(artifact: RollbackArtifact): { ok: boolean; error?: string } {
+/**
+ * Where a file backup may be copied back to, or why not. The index is an
+ * ordinary file under ~/.lax that any file writer can append to, so a restore
+ * trusts no path a line names: the backup must be a regular file capture wrote
+ * for this call (not a symlink to, say, a key file the copy would publish),
+ * and the original must be a path the file-access layer lets a write reach,
+ * the same answer the write tools get.
+ */
+function backupTarget(toolCallId: string, a: { original: unknown; backup: unknown }): { target: string } | { error: string } {
+  if (typeof a.original !== "string" || typeof a.backup !== "string" || !isAbsolute(a.original)) {
+    return { error: "the contract's file paths are malformed" };
+  }
+  if (dirname(resolve(a.backup)) !== join(ROLLBACK_DIR, toolCallId)) return { error: `not a backup of this call: ${a.backup}` };
+  if (!existsSync(a.backup)) return { error: `backup missing: ${a.backup}` };
+  if (!lstatSync(a.backup).isFile()) return { error: `backup is not a regular file: ${a.backup}` };
+  const d = evaluateFileAccess(getRuntimeConfig().workspace, loadFileAccessMode(), () => false, "write", a.original);
+  return d.allowed ? { target: d.canonicalPath ?? a.original } : { error: `refusing to write ${a.original}: ${d.reason}` };
+}
+
+function restoreOne(toolCallId: string, artifact: RollbackArtifact): { ok: boolean; error?: string } {
   if (artifact.type === "file-backup") {
-    if (!existsSync(artifact.backup)) return { ok: false, error: `backup missing: ${artifact.backup}` };
-    try { copyFileSync(artifact.backup, artifact.original); return { ok: true }; }
+    const to = backupTarget(toolCallId, artifact);
+    if ("error" in to) return { ok: false, error: to.error };
+    try { copyFileSync(artifact.backup, to.target); return { ok: true }; }
     catch (e) { return { ok: false, error: (e as Error).message }; }
   }
   if (artifact.type === "git-stash") {
+    if (typeof artifact.sha !== "string" || !STASH_SHA.test(artifact.sha)) {
+      return { ok: false, error: `not a stash commit sha: ${String(artifact.sha)}` };
+    }
     try {
       // Apply by SHA (stable) — see captureGitStash. `git stash drop` only
       // accepts positional refs, so look up the current stash@{n} that
       // matches our SHA at restore time. The ref may have shifted since
       // capture; the SHA hasn't.
-      execSync(gitSafeCmd(`git stash apply ${artifact.sha}`), { cwd: artifact.cwd, stdio: "ignore" });
-      const list = execSync(gitSafeCmd(`git stash list --format=%H:%gd`), { cwd: artifact.cwd, encoding: "utf-8" });
+      git(["stash", "apply", artifact.sha], artifact.cwd);
+      const list = git(["stash", "list", "--format=%H:%gd"], artifact.cwd);
       const match = list.split("\n").find((l) => l.startsWith(artifact.sha));
       const ref = match ? match.split(":")[1] : null;
-      if (ref) execSync(gitSafeCmd(`git stash drop ${ref}`), { cwd: artifact.cwd, stdio: "ignore" });
+      if (ref) git(["stash", "drop", ref], artifact.cwd);
       return { ok: true };
     } catch (e) { return { ok: false, error: (e as Error).message }; }
   }
@@ -198,6 +240,7 @@ function restoreOne(artifact: RollbackArtifact): { ok: boolean; error?: string }
 }
 
 export function restoreRollback(toolCallId: string): RestoreResult {
+  if (!TOOL_CALL_ID.test(toolCallId)) return { ok: false, error: `not a tool call id: ${toolCallId}` };
   const contracts = readJsonl<RollbackContract>(INDEX_FILE).filter((c) => c.toolCallId === toolCallId);
   if (contracts.length === 0) return { ok: false, error: `no contract for ${toolCallId}` };
   if (loadRestoredIds().has(toolCallId)) return { ok: false, error: `already restored: ${toolCallId}` };
@@ -208,7 +251,7 @@ export function restoreRollback(toolCallId: string): RestoreResult {
 
   for (const a of contract.artifacts) {
     if (a.type === "none") { skipped.push(a); continue; }
-    const r = restoreOne(a);
+    const r = restoreOne(toolCallId, a);
     if (r.ok) restored.push(a);
     else { logger.warn(`[rollback] restore of ${a.type} failed: ${r.error}`); skipped.push(a); }
   }

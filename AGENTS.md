@@ -18,7 +18,7 @@ reading the affected files and following the remaining invariants in this file.
 Every change goes through exactly one of:
 
 1. **Runtime state → HTTP API.** Theme, provider, any flip of a live value. Call the existing endpoint. Do NOT edit files to change runtime state.
-2. **Self-modification → `config/` directory.** Agent-editable behavior lives here. Edit directly, changes hot-reload.
+2. **Self-modification → `self_edit`, developer mode only.** No other tool writes the install outside `workspace/`.
 3. **External sites → `browser` tool.** Never reach out via raw fetch for user-facing web work; drive a real logged-in browser.
 
 If your task doesn't fit a lane, STOP and ask rather than pick the wrong tool.
@@ -28,8 +28,8 @@ If your task doesn't fit a lane, STOP and ask rather than pick the wrong tool.
 ## Escalation ladder (when a lane fails)
 
 1. HTTP API call
-2. Direct edit in `config/` or `workspace/`
-3. `self_edit` tool — for `src/` surgery, new tools, or missing capabilities
+2. Direct edit in `workspace/`
+3. `self_edit` tool (developer mode only) — for `config/` changes, `src/` surgery, new tools, or missing capabilities
 
 Don't skip. Try the cheapest step first. Only escalate when the one below returned the wrong outcome or the capability doesn't exist.
 
@@ -40,7 +40,7 @@ Don't skip. Try the cheapest step first. Only escalate when the one below return
 | Path | Who touches | Gitignored | Rules |
 |---|---|---|---|
 | `src/` | LAX runtime: `self_edit` only. Codex: user-approved repository edits. | no | Core engine. TypeScript. One responsibility per module. |
-| `config/` | agent or user | no | Agent-editable behavior (prompt, tools allowlist). Hot-reloads. |
+| `config/` | Same as `src/`. | no | Agent behavior (prompt, tools allowlist). Hot-reloads. |
 | `public/` | LAX runtime: `self_edit` only. Codex: user-approved repository edits. | **no — COMMITTED** | Shipped UI chrome (app.html, tasks.html, and the settings/sidebar panels under public/js/). Don't add user pages here. |
 | `workspace/` | agent or user | **YES — local only** | User files, built apps, per-machine customizations. Served at `/apps/<path>`. |
 | `packages/arikernel/` | hands off unless fixing a specific Ari bug | no | Vendored security layer. |

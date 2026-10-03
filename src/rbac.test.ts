@@ -3,8 +3,12 @@ import { mkdirSync, rmSync, readFileSync, writeFileSync, existsSync } from "node
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomBytes } from "node:crypto";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import { RBACManager } from "./rbac.js";
+import { AGENT_DENIED_ROUTES, agentDeniedRouteFor } from "./rbac-agent-denials.js";
 import { authorizeUpgrade } from "./server/ws-operator-auth.js";
+import { authorizeRequest } from "./server/request-auth.js";
+import { USER_HINTS, type LAXConfig } from "./types.js";
 
 // ── RBAC: least-privilege "agent" role + per-process internal token ──
 
@@ -65,6 +69,99 @@ describe("RBAC agent role", () => {
     const persisted = JSON.parse(readFileSync(file, "utf-8")) as Array<{ id: string }>;
     expect(persisted.some((e) => e.id === "internal-agent")).toBe(false);
     expect(rbac.listTokens().some((e) => e.id === "internal-agent")).toBe(false);
+  });
+
+  afterAll(() => {
+    try { rmSync(tmpDir, { recursive: true }); } catch {}
+  });
+});
+
+// ── RBAC: the agent cannot uncage itself, raise its own approval profile,
+// replay undo backups, or start host processes through voice setup ──
+//
+// None of these routes checks for the operator itself, and the agent's own
+// http_request self-calls carry the internal agent token, so the RBAC gate is
+// the only thing between an injected agent and each of them.
+
+describe("RBAC agent role is fenced out of the cage, autonomy, undo and voice-setup routes", () => {
+  const tmpDir = join(tmpdir(), `lax-rbac-cage-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  mkdirSync(tmpDir, { recursive: true });
+  const operatorToken = randomBytes(32).toString("hex");
+  const rbac = new RBACManager(tmpDir, operatorToken);
+  const config = { authToken: operatorToken } as unknown as LAXConfig;
+
+  const ROUTES = [
+    ["POST", "/api/sandbox"],
+    ["POST", "/api/sandbox/windows-cage"],
+    ["POST", "/api/autonomy/profile"],
+    ["POST", "/api/rollback/undo"],
+    ["POST", "/api/voices/setup/install"],
+    ["POST", "/api/voices/setup/repair"],
+    ["POST", "/api/voices/setup/start"],
+    ["POST", "/api/voices/setup/stop"],
+    ["POST", "/api/mcp/servers"],
+    ["POST", "/api/mcp/servers/toggle"],
+    ["DELETE", "/api/mcp/servers/github"],
+    ["POST", "/api/mcp/call"],
+    ["POST", "/api/sync/pull"],
+    ["POST", "/api/sync/push"],
+    ["POST", "/api/sync/configure"],
+  ] as const;
+
+  // The gate the server runs before any route handler, over a loopback
+  // request with no Origin, which is how a self-call arrives.
+  function gate(method: string, path: string, token: string) {
+    const sent = { status: 0, body: "" };
+    const req = {
+      method, url: path, headers: { authorization: `Bearer ${token}` }, socket: { remoteAddress: "127.0.0.1" },
+    } as unknown as IncomingMessage;
+    const res = {
+      writeHead(status: number) { sent.status = status; return this; },
+      end(body?: string) { sent.body = body ?? ""; return this; },
+    } as unknown as ServerResponse;
+    const out = authorizeRequest(method, new URL(`http://127.0.0.1:7007${path}`), req, res, config, rbac);
+    return { ...out, ...sent };
+  }
+
+  it.each(ROUTES)("agent %s %s is refused with the RBAC denial, naming where the user can do it", (method, path) => {
+    const place = agentDeniedRouteFor(path)!.place;
+    expect(place).toMatch(/^Settings → /);
+    const reason = `Role "agent" cannot access ${path}: only the user can, in ${place}.`;
+    expect(rbac.checkEndpoint("agent", method, path)).toEqual({
+      allowed: false, role: "agent", reason, userHint: `That's yours to change, in ${place}.`,
+    });
+    const r = gate(method, path, rbac.getInternalAgentToken());
+    expect(r.handled).toBe(true);
+    expect(r.status).toBe(403);
+    expect(JSON.parse(r.body)).toEqual({ error: reason, userHint: `That's yours to change, in ${place}.` });
+  });
+
+  it("names the Settings place the user changes each one in", () => {
+    expect(rbac.checkEndpoint("agent", "POST", "/api/sandbox").reason).toContain("Settings → Security → Bash Sandbox");
+    expect(rbac.checkEndpoint("agent", "POST", "/api/mcp/servers").reason).toContain("Settings → Tools & Integrations → MCP Servers");
+    expect(rbac.checkEndpoint("agent", "POST", "/api/sync/pull").reason).toContain("Settings → Sync");
+    for (const route of AGENT_DENIED_ROUTES) expect(route.place, route.prefix).toMatch(/^Settings → /);
+  });
+
+  it("keeps the generic policy hint for the other roles", () => {
+    expect(rbac.checkEndpoint("user", "GET", "/api/secrets")).toEqual({
+      allowed: false, role: "user", reason: `Role "user" cannot access /api/secrets`, userHint: USER_HINTS.policy,
+    });
+  });
+
+  it.each(ROUTES)("operator %s %s passes the gate to the route handler", (method, path) => {
+    expect(rbac.checkEndpoint("operator", method, path).allowed).toBe(true);
+    const r = gate(method, path, operatorToken);
+    expect(r.handled).toBe(false);
+    expect(r.role).toBe("operator");
+    expect(r.status).toBe(0);
+  });
+
+  it("denies the agent the reads under the same paths; its sandbox and profile stay readable on /api/system-status", () => {
+    for (const path of ["/api/sandbox", "/api/autonomy/profile", "/api/rollback/list", "/api/voices/setup/status"]) {
+      expect(rbac.checkEndpoint("agent", "GET", path).allowed, path).toBe(false);
+    }
+    expect(rbac.checkEndpoint("agent", "GET", "/api/system-status").allowed).toBe(true);
   });
 
   afterAll(() => {

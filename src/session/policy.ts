@@ -23,7 +23,7 @@ export interface SessionPolicy {
 }
 
 // A preset blocks CAPABILITY CLASSES, read from the tool registry at load, so
-// every synonym is covered: bash's process_* family and ari_shell, write's
+// every synonym is covered: bash's process_* family, write's
 // edit_lines / multi_edit / bulk_replace / delete_file and ari_file, browser's
 // sub-actions and every other sender in the egress class. A hand-written name
 // list here silently fails open under a synonym the day one is added.

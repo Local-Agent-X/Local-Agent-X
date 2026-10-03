@@ -44,6 +44,8 @@ vi.mock("../desktop/src/embedded-chrome-identity", () => ({
 vi.mock("../desktop/src/in-app-browser", () => ({
   isUserActive: () => false,
   markAgentInput: () => {},
+  markAgentAction: () => {},
+  markHumanNavigation: () => {},
   showAgentCursor: () => {},
 }));
 

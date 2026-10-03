@@ -319,7 +319,7 @@ export function classifyShellTier(command: string, ctx: ShellTierContext): Shell
 }
 
 /** Shell-spawner tool names whose string `command` is tier-classifiable. */
-const SHELL_TIER_TOOLS = new Set<string>(["bash", "shell", "ari_shell"]);
+const SHELL_TIER_TOOLS = new Set<string>(["bash", "shell"]);
 export function isShellTierTool(toolName: string): boolean {
   return SHELL_TIER_TOOLS.has(toolName.toLowerCase());
 }

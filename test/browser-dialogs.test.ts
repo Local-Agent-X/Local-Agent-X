@@ -40,6 +40,8 @@ vi.mock("../desktop/src/browser-ipc", () => ({ autoSurfaceAgentView: () => {} })
 vi.mock("../desktop/src/in-app-browser", () => ({
   isUserActive: () => false,
   markAgentInput: () => {},
+  markAgentAction: () => {},
+  markHumanNavigation: () => {},
   showAgentCursor: () => {},
 }));
 

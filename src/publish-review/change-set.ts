@@ -33,7 +33,7 @@ export async function computeChangeSet(ops: PublishOperation[]): Promise<ChangeS
   const unknown: ChangeSet["unknown"] = [];
   const seen = new Set<string>();
   for (const op of ops) {
-    const key = JSON.stringify([op.kind, op.cwd, op.pushArgs ?? [], op.explicitTarget ?? ""]);
+    const key = JSON.stringify([op.kind, op.cwd, op.pushArgs ?? [], op.gitOptions ?? [], op.gitEnv ?? [], op.explicitTarget ?? ""]);
     if (seen.has(key)) continue;
     seen.add(key);
     const result = await partFor(op);
@@ -57,7 +57,7 @@ async function partFor(op: PublishOperation): Promise<PartResult> {
 }
 
 async function pushPart(op: PublishOperation, root: string): Promise<PartResult> {
-  const dry = await pushDryRun(op.cwd, op.pushArgs ?? []);
+  const dry = await pushDryRun(op.cwd, op.pushArgs ?? [], op);
   if (!dry.ok) return { reason: dry.reason };
   const remote = await pickRemote(root, op.pushArgs);
   const defaultRef = await remoteDefaultRef(root, remote);

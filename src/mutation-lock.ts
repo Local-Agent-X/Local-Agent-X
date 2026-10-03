@@ -8,7 +8,7 @@ export type SharedMutationLock = MutationLockResult;
 
 export function acquireSharedMutationLock(
   dataDirectory: string,
-  options: { task?: string; force?: boolean; onRevoke?: () => boolean | void } = {},
+  options: { task?: string } = {},
 ): Promise<SharedMutationLock> {
   return acquireMutationLock(dataDirectory, options);
 }

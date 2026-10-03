@@ -1,9 +1,9 @@
-// Policy phase: AriKernel gate, session policy, worktree path rewrite,
-// shared pre-dispatch chain (security/rbac/tool-policy), data-lineage egress,
-// tool lookup, arg coercion + schema validation, PreToolUse hook, circuit
-// breaker, rate limit. Sets ctx.preBlocked on pre-dispatch / unknown-tool
-// failures (those flow through to audit); terminates outright on every
-// other policy failure.
+// Policy phase, in order: tool lookup, arg repair + schema validation, ARI
+// kernel, session policy, worktree path rewrite, pre-dispatch chain (security/
+// rbac/tool-policy), egress aggregate, private-content, control-file and MCP-secret
+// approval, PreToolUse hook, learned-protocol envelope, circuit breaker, rate
+// limit. Pre-dispatch and unknown-tool failures return BLOCK (audit still
+// runs); every other policy failure terminates the call outright.
 
 import { USER_HINTS, type ToolResult } from "../types.js";
 import { ariEvaluate, ariObserve, isAriActive, shouldGateInKernel, shouldObserveInKernel } from "../ari-kernel/index.js";
@@ -18,10 +18,11 @@ import { logRetry } from "../retry-telemetry.js";
 import { assertToolCallAllowed } from "./pre-dispatch.js";
 import { securityDenyRecovery } from "../tool-policy/packs/security-layer-pack.js";
 import { ToolBlocked } from "./errors.js";
-import type { Phase, PhaseOutcome, ToolCallContext } from "./context.js";
-import { terminate, CONTINUE, BLOCK } from "./context.js";
+import { terminate, CONTINUE, BLOCK, type Phase, type PhaseOutcome, type ToolCallContext } from "./context.js";
 import { egressAggregateGate, type EgressBlocker } from "./egress-gates.js";
 import { privateContentGate } from "./private-content-gate.js";
+import { controlFileGate } from "./control-file-gate.js";
+import { mcpSecretUseGate } from "../tools/mcp-admin-tools.js";
 import { outboundIsTaintFree, withoutUntrustedContent } from "./taint-scope.js";
 import { kernelDenyBlocker, kernelDenyResult } from "./kernel-block.js";
 import { rewritePathForWorktree } from "./worktree-paths.js";
@@ -343,6 +344,12 @@ async function securityAndValidationGates(ctx: ToolCallContext): Promise<PhaseOu
   // still passes lookupTool and still fail-closes at the kernel below.
   let outcome = lookupTool(ctx);
   if (outcome.kind !== "continue") return outcome;
+  // Then settle the args the tool will run with, before any gate below reads them.
+  // Repair renames keys and coercion changes values; judged before them, a
+  // path under a template-marker key passed every path gate as no path at
+  // all, then became `path` and was written. Hook rewrites re-enter here.
+  outcome = await validateArgs(ctx);
+  if (outcome.kind !== "continue") return outcome;
 
   outcome = await ariKernelGate(ctx);
   if (outcome.kind !== "continue") return outcome;
@@ -359,11 +366,12 @@ async function securityAndValidationGates(ctx: ToolCallContext): Promise<PhaseOu
   // verdict prepended and short-circuited before here.)
   outcome = egressAggregateGate(ctx);
   if (outcome.kind !== "continue") return outcome;
-  // Private content to a destination the user did not choose is put to the
-  // user, never refused (private-content-gate.ts).
+  // Private content to a destination the user did not choose, a write to a file the app
+  // later acts on, and a vault secret handed to an MCP server are put to the user, never refused.
   await privateContentGate(ctx);
-
-  return validateArgs(ctx);
+  controlFileGate(ctx);
+  mcpSecretUseGate(ctx);
+  return CONTINUE;
 }
 
 export const enforcePolicyPhase: Phase = async (ctx) => {

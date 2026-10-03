@@ -1,10 +1,13 @@
-import { mkdirSync, writeFileSync, existsSync } from "node:fs";
-import { resolve as resolvePath, join, basename, extname } from "node:path";
+import { mkdirSync, existsSync } from "node:fs";
+import { join, basename, extname, relative } from "node:path";
 import { createHash } from "node:crypto";
 import type { ToolDefinition } from "../types.js";
 import { ok, err } from "./result-helpers.js";
 import { createLogger } from "../logger.js";
 import { canonicalFetch, EgressRedirectBlocked } from "./web-egress.js";
+import { workspaceRoot } from "../config.js";
+import { resolveAgentPath, realpathDeep } from "../workspace/paths.js";
+import { confineToDir, writeValidatedFile } from "../security/layer/index.js";
 
 const logger = createLogger("tools.asset-tools");
 
@@ -101,13 +104,15 @@ function fetchPinned(url: string, accept: string, ms: number) {
   });
 }
 
-function ensureInsideCwd(p: string): string {
-  const abs = resolvePath(p);
-  const cwd = resolvePath(process.cwd());
-  if (!abs.startsWith(cwd)) {
-    throw new Error(`output_dir must be inside the workspace. Got: ${abs}`);
-  }
-  return abs;
+// Downloads land in the workspace, never relative to the server's cwd: that is
+// the install folder, which the agent may not modify (the default created
+// <install>/assets, and output_dir "public" dropped files into the shipped UI).
+// Resolved like every file tool's path, then through links and junctions, so
+// the folder the files land in is the folder checked.
+function workspaceOutputDir(p: string): string {
+  const dir = confineToDir(workspaceRoot(), resolveAgentPath(p));
+  if (!dir) throw new Error(`output_dir must be inside the workspace (${workspaceRoot()}). Got: ${p}`);
+  return dir;
 }
 
 interface DownloadedImage {
@@ -149,7 +154,7 @@ async function downloadOne(
   }
   usedNames.add(name);
   const outPath = join(outDir, name);
-  writeFileSync(outPath, Buffer.from(buf));
+  writeValidatedFile(outPath, Buffer.from(buf));
   return { url, path: outPath, bytes: buf.byteLength, mime };
 }
 
@@ -166,7 +171,7 @@ export const extractSiteAssetsTool: ToolDefinition = {
       url: { type: "string", description: "Source page URL." },
       output_dir: {
         type: "string",
-        description: "Directory to save into. Relative paths resolve from cwd. Defaults to ./assets/. Will be created if missing.",
+        description: "Directory to save into, inside the workspace. Relative paths resolve from the workspace like the file tools' (e.g. 'apps/my-site/assets'). Defaults to 'assets'. Will be created if missing.",
       },
       max_images: { type: "integer", description: `Max images to download. Default ${MAX_IMAGES_DEFAULT}.` },
       max_bytes_per_image: {
@@ -180,7 +185,7 @@ export const extractSiteAssetsTool: ToolDefinition = {
     const url = String(args.url || "");
     if (!url) return err("url is required");
 
-    const outputDir = String(args.output_dir || "./assets");
+    const outputDir = String(args.output_dir || "assets");
     const maxImages = Math.max(1, Math.min(100, Number(args.max_images ?? MAX_IMAGES_DEFAULT)));
     const maxBytesPerImage = Math.max(
       256 * 1024,
@@ -188,7 +193,7 @@ export const extractSiteAssetsTool: ToolDefinition = {
     );
 
     let outDir: string;
-    try { outDir = ensureInsideCwd(outputDir); }
+    try { outDir = workspaceOutputDir(outputDir); }
     catch (e) { return err((e as Error).message); }
     if (!existsSync(outDir)) mkdirSync(outDir, { recursive: true });
 
@@ -229,7 +234,7 @@ export const extractSiteAssetsTool: ToolDefinition = {
       }
     }
 
-    const cwd = resolvePath(process.cwd());
+    const workspace = realpathDeep(workspaceRoot());
     const manifest = {
       source: url,
       output_dir: outDir,
@@ -238,7 +243,7 @@ export const extractSiteAssetsTool: ToolDefinition = {
       total_bytes: totalBytes,
       images: results.map((r) => ({
         url: r.url,
-        path: r.path.startsWith(cwd) ? r.path.slice(cwd.length).replace(/^[\\/]/, "") : r.path,
+        path: relative(workspace, r.path),
         bytes: r.bytes,
         mime: r.mime,
       })),
@@ -258,7 +263,7 @@ export const extractSiteAssetsTool: ToolDefinition = {
       `Downloaded ${results.length}/${candidates.length} images from ${url} → ${outDir}`,
       `Total: ${(totalBytes / 1024).toFixed(1)} KB`,
       "",
-      "Use these local paths in your HTML (relative to the served root):",
+      "Saved at these paths, relative to the workspace:",
       ...manifest.images.slice(0, 20).map((img, i) => `  ${i + 1}. ${img.path} (${(img.bytes / 1024).toFixed(0)} KB)`),
     ];
     if (manifest.images.length > 20) lines.push(`  ... and ${manifest.images.length - 20} more`);

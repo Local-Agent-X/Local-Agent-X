@@ -18,7 +18,8 @@
  * just the tool surface over those helpers.
  */
 import type { ToolDefinition, ToolResult } from "../types.js";
-import { awaitSandboxProof, getSandboxStatus, SANDBOX_PROOF_PENDING_RETRY } from "../sandbox/index.js";
+import { getSandboxStatus, SANDBOX_PROOF_PENDING_RETRY } from "../sandbox/index.js";
+import { awaitCageReady } from "./caged-spawn.js";
 import { ok, err, running } from "./result-helpers.js";
 import {
   SESSIONS,
@@ -54,10 +55,15 @@ export const processStartTool: ToolDefinition = {
     const cwd = typeof args.cwd === "string" ? args.cwd : undefined;
     const env = args.env as Record<string, string> | undefined;
 
-    // startSession cannot wait for a Windows cage still proving its fence and
-    // would refuse; this tool can, so the command starts once it is settled.
+    // startSession cannot wait for a Windows cage still proving its fence or
+    // still being granted the workspace, and would refuse; this tool can, so
+    // the command starts once the cage is ready.
     const abortSignal = (args._signal as AbortSignal | undefined) ?? signal;
-    await awaitSandboxProof({ signal: abortSignal });
+    try {
+      await awaitCageReady(abortSignal);
+    } catch (e) {
+      return err(`process_start: ${(e as Error).message}`);
+    }
     if (abortSignal?.aborted) return err("process_start: aborted before the command started.");
     const res = startSession(command, cwd, env);
     if ("error" in res) return err(`process_start: spawn failed: ${res.error}`);
@@ -184,11 +190,15 @@ export const processRestartTool: ToolDefinition = {
     let cwd = typeof args.cwd === "string" ? args.cwd : undefined;
     let env = args.env as Record<string, string> | undefined;
 
-    // Before anything is killed: a cage still proving its fence after the wait
-    // would refuse the new start, leaving the old process dead and nothing in
-    // its place.
+    // Before anything is killed: a cage still proving its fence after the wait,
+    // or one whose grants failed, would refuse the new start, leaving the old
+    // process dead and nothing in its place.
     const abortSignal = (args._signal as AbortSignal | undefined) ?? signal;
-    await awaitSandboxProof({ signal: abortSignal });
+    try {
+      await awaitCageReady(abortSignal);
+    } catch (e) {
+      return err(`process_restart: ${(e as Error).message} Nothing was stopped or started.`);
+    }
     if (abortSignal?.aborted) return err("process_restart: aborted; nothing was stopped or started.");
     if (process.platform === "win32" && getSandboxStatus().proofPending) {
       return err(`process_restart: ${SANDBOX_PROOF_PENDING_RETRY} Nothing was stopped or started.`);

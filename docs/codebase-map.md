@@ -12,60 +12,60 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 67 top-level dirs · 67 live · 0 with no live importer · 1699 non-test source files · 0 god files (>400 LOC).
+**Totals:** 67 top-level dirs · 67 live · 0 with no live importer · 1720 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | God files |
 |---|--:|--:|:--:|--:|
-| `src/ops/` | 136 | 26 | XL |  |
-| `src/security/` | 98 | 41 | XL |  |
-| `src/tools/` | 81 | 203 | XL |  |
+| `src/ops/` | 137 | 26 | XL |  |
+| `src/security/` | 111 | 45 | XL |  |
+| `src/tools/` | 89 | 206 | XL |  |
 | `src/canonical-loop/` | 71 | 255 | XL |  |
 | `src/providers/` | 67 | 26 | XL |  |
-| `src/workspace/` | 52 | 2 | M |  |
+| `src/workspace/` | 57 | 3 | M |  |
 | `src/memory/` | 47 | 131 | XL |  |
+| `src/data-lineage/` | 40 | 11 | L |  |
 | `src/local-runtimes/` | 38 | 25 | XL |  |
 | `src/util/` | 38 | 3 | S |  |
 | `src/auth/` | 37 | 11 | L |  |
-| `src/data-lineage/` | 37 | 11 | L |  |
+| `src/browser/` | 37 | 85 | XL |  |
 | `src/session/` | 36 | 7 | L |  |
-| `src/browser/` | 35 | 84 | XL |  |
 | `src/threat/` | 34 | 12 | L |  |
 | `src/tool-policy/` | 30 | 20 | L |  |
-| `src/agency/` | 28 | 19 | L |  |
+| `src/agency/` | 27 | 19 | L |  |
 | `src/agent-store/` | 26 | 7 | L |  |
 | `src/classifiers/` | 24 | 16 | L |  |
 | `src/context-manager/` | 24 | 13 | L |  |
 | `src/agent-request/` | 23 | 14 | L |  |
 | `src/app-runtime/` | 23 | 12 | L |  |
 | `src/context/` | 23 | 8 | L |  |
+| `src/sandbox/` | 23 | 14 | L |  |
 | `src/chat-ws/` | 22 | 20 | L |  |
 | `src/orchestrator/` | 20 | 24 | L |  |
 | `src/protocols/` | 19 | 52 | XL |  |
-| `src/sandbox/` | 19 | 14 | L |  |
+| `src/tool-execution/` | 18 | 61 | XL |  |
 | `src/agents/` | 17 | 13 | L |  |
-| `src/anthropic-client/` | 16 | 21 | XL |  |
-| `src/tool-execution/` | 15 | 56 | XL |  |
+| `src/anthropic-client/` | 15 | 21 | XL |  |
+| `src/autonomy/` | 14 | 4 | M |  |
 | `src/cognition/` | 14 | 34 | XL |  |
-| `src/autonomy/` | 13 | 4 | M |  |
+| `src/server/` *(entrypoint)* | 14 | 57 | XL |  |
+| `src/self-edit/` | 13 | 19 | L |  |
 | `src/voice/` | 13 | 74 | XL |  |
-| `src/server/` *(entrypoint)* | 12 | 54 | XL |  |
 | `src/whatsapp-bridge/` | 12 | 8 | L |  |
 | `src/agent-guards/` | 11 | 11 | L |  |
-| `src/self-edit/` | 11 | 20 | L |  |
+| `src/cron/` | 11 | 9 | L |  |
 | `src/agent-loop/` | 10 | 1 | S |  |
 | `src/ari-kernel/` | 10 | 12 | L |  |
-| `src/cron/` | 10 | 8 | L |  |
+| `src/integrations/` | 10 | 15 | M |  |
 | `src/persistence/` | 10 | 2 | S |  |
-| `src/integrations/` | 9 | 15 | M |  |
+| `src/autopilot/` | 9 | 14 | L |  |
+| `src/routes/` | 9 | 89 | XL |  |
 | `src/screen-stream/` | 9 | 8 | L |  |
+| `src/sync/` | 9 | 21 | L |  |
 | `src/bridge-voice/` | 8 | 5 | M |  |
-| `src/routes/` | 8 | 89 | XL |  |
-| `src/sync/` | 8 | 21 | L |  |
 | `src/telegram-bridge/` | 8 | 6 | M |  |
 | `src/auto-build/` | 7 | 52 | XL |  |
-| `src/autopilot/` | 7 | 13 | L |  |
 | `src/plugin-system/` | 7 | 10 | L |  |
 | `src/android/` | 6 | 7 | M |  |
 | `src/app-renderer/` | 6 | 7 | M |  |
@@ -79,7 +79,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/routing/` | 4 | 6 | M |  |
 | `src/errors/` | 3 | 2 | S |  |
 | `src/language-intel/` | 3 | 4 | M |  |
-| `src/publish-review/` | 3 | 5 | M |  |
+| `src/publish-review/` | 3 | 8 | L |  |
 | `src/conversation/` | 2 | 3 | M |  |
 | `src/llm-dispatch/` | 2 | 2 | M |  |
 | `src/manifest-generator/` | 2 | 8 | M |  |
@@ -164,9 +164,10 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/progressive-loader.ts` | S |
 | `src/project-rosters.ts` | M |
 | `src/prompt-telemetry.ts` | S |
-| `src/publish-operation-table.ts` | S |
+| `src/publish-operation-table.ts` | M |
 | `src/publish-operation.ts` | S |
 | `src/qualification-boot.ts` | S |
+| `src/rbac-agent-denials.ts` | S |
 | `src/rbac.ts` | M |
 | `src/reap-stale-procs.ts` | S |
 | `src/replay-test.ts` | S |
@@ -187,6 +188,7 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/security-tests.ts` | S |
 | `src/server-context.ts` | S |
 | `src/server-utils.ts` | M |
+| `src/settings-change-direction.ts` | S |
 | `src/settings-schema.ts` | M |
 | `src/settings.ts` | S |
 | `src/slash-commands.ts` | S |

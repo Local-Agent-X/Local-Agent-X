@@ -1,7 +1,11 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from "node:http";
 import { AddressInfo } from "node:net";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { proxyFrontendDevServer } from "../src/server/dev-server-proxy.js";
+
+const publicDir = join(dirname(fileURLToPath(import.meta.url)), "..", "public");
 
 // Real servers on both ends — the proxy uses res.pipe() for non-HTML, which
 // needs a genuine Writable, so http-mocks won't do here.
@@ -154,5 +158,28 @@ describe("proxyFrontendDevServer (desktop-first live frontend)", () => {
     const proxy = await listen(proxyTo(up));
     const r = await fetch(`http://127.0.0.1:${proxy}/apps/spa/`); // no x-lax-tunnel header
     expect(await r.text()).not.toContain("__lax-livereload");
+  });
+
+  // The proxied page runs on the agent origin (server/agent-origin.ts), so the
+  // IDE's picker and error capture reach it only through the injected frame
+  // bridge, addressed to the UI's origins, as on the static /apps path.
+  it("gives a desktop document the IDE frame bridge and the agent-origin framing policy", async () => {
+    const up = await listen((_req, res) => {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end("<html><head></head><body>app</body></html>");
+    });
+    const proxy = await listen((req, res) =>
+      proxyFrontendDevServer(req, res, up, new URL(req.url!, "http://localhost"), "T", { publicDir, uiPort: 7007 }));
+    const desktop = await fetch(`http://127.0.0.1:${proxy}/apps/spa/`);
+    const csp = desktop.headers.get("content-security-policy") || "";
+    expect(csp).toContain("frame-ancestors 'self' http://127.0.0.1:* http://localhost:*");
+    expect(csp).not.toContain("allow-top-navigation");
+    const body = await desktop.text();
+    expect(body).toContain('__laxInstallIdeFrameBridge(["http://127.0.0.1:7007","http://localhost:7007"])');
+    expect(body).not.toContain("lax_token");
+
+    const phone = await (await fetch(`http://127.0.0.1:${proxy}/apps/spa/`, { headers: { "x-lax-tunnel": "1" } })).text();
+    expect(phone).not.toContain("__laxInstallIdeFrameBridge(");
+    expect(phone).toContain("/api/apps/spa/runtime-error");
   });
 });

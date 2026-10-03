@@ -4,16 +4,54 @@ import { timingSafeEqual } from "node:crypto";
 import type { IncomingMessage } from "node:http";
 import type { RouteHandler } from "../../server-context.js";
 import { jsonResponse, safeParseBody, atomicWriteFileSync } from "../../server-utils.js";
-import { FLIPPABLE_SETTINGS, RUNTIME_SETTINGS, BROADCAST_KEYS, publicSchema, isProtectedSetting } from "../../settings-schema.js";
+import { FLIPPABLE_SETTINGS, RUNTIME_SETTINGS, BROADCAST_KEYS, publicSchema } from "../../settings-schema.js";
+import { isUserOwnedSetting, strictlyTightens } from "../../settings-change-direction.js";
 import { loadSettings, saveSettings } from "../../settings.js";
 import { getRuntimeConfig } from "../../config.js";
+import { unsafeWorkspaceReason } from "../../workspace/workspace-location.js";
+
+/**
+ * Keys of the settings bag that only the user changes, because each hands the
+ * agent authority: the workspace is where the agent may write (and what the
+ * Windows cage's sandbox account may write), the port is where the server and
+ * its UI live, localRuntimes names hosts the agent's HTTP tools may then reach
+ * (security-config.ts manualRuntimeHostPorts), customBaseUrl is where a custom
+ * provider's API key is sent, and threat tunes how much evidence the threat
+ * engine needs before it restricts a session. `where` is what the refusal
+ * tells the agent to send the user to.
+ */
+export const OPERATOR_ONLY_SETTINGS: ReadonlyArray<{ key: string; where: string }> = [
+  { key: "workspace", where: "Settings → Account → Server" },
+  { key: "port", where: "Settings → Account → Server" },
+  { key: "localRuntimes", where: "Settings → AI & Models → Local Runtimes" },
+  { key: "customBaseUrl", where: "Settings → AI & Models → Model Provider" },
+  { key: "threat", where: "the threat section of their settings.json" },
+];
+
+/**
+ * Why a request without the operator token may not apply `body`, or null when
+ * it may. Such a request is the agent's own self-call: it may change any
+ * setting except the operator-only keys, and a user-owned setting only in the
+ * direction that narrows it (settings-change-direction.ts).
+ */
+export function agentSettingsRefusal(body: Record<string, unknown>): string | null {
+  const operatorOnly = OPERATOR_ONLY_SETTINGS.filter((s) => s.key in body);
+  if (operatorOnly.length > 0) {
+    const places = [...new Set(operatorOnly.map((s) => s.where))].join("; ");
+    return `Only the user can change ${operatorOnly.map((s) => s.key).join(", ")} (${places}). Ask them to do it there.`;
+  }
+  const widening = Object.keys(body).filter((k) => isUserOwnedSetting(k) && !strictlyTightens(k, body[k]));
+  if (widening.length > 0) {
+    return `${widening.join(", ")} can only be widened by the user, in Settings. Use the \`setting\` tool, which asks the user to approve.`;
+  }
+  return null;
+}
 
 /**
  * True only when the request carries the real app auth token. The authenticated
- * UI always does; the agent's own loopback `http_request` does not (it rides
- * the User-Agent auth exemption in request-handler with no token). We use this
- * to keep the agent from writing user-owned security settings through this
- * route — the equivalent gate to the `setting` tool's approval prompt.
+ * UI always does; the agent's own self-calls carry the internal agent token
+ * instead. Without it a request is held to agentSettingsRefusal — the
+ * equivalent gate to the `setting` tool's approval prompt.
  */
 function hasValidOperatorToken(req: IncomingMessage, authToken: string): boolean {
   const header = req.headers.authorization || "";
@@ -62,14 +100,9 @@ export const handlePreferencesRoutes: RouteHandler = async (method, url, req, re
     // clobber any hand edit made directly in config.json (and picked up by the
     // watcher) with the pre-reload snapshot — the split-brain this route caused.
     const runtimeConfig = getRuntimeConfig();
-    // User-owned security controls can only be changed by the authenticated UI
-    // (real operator token). The agent's own loopback http_request is auth-
-    // exempt by User-Agent and must not be able to flip a kill-switch here —
-    // it has to go through the `setting` tool, which asks the user to approve.
-    const protectedFields = Object.keys(body).filter((k) => isProtectedSetting(k));
-    if (protectedFields.length > 0 && !hasValidOperatorToken(req, runtimeConfig.authToken)) {
-      json(403, { error: `Security settings (${protectedFields.join(", ")}) can only be changed by the user in Settings → Security. Use the \`setting\` tool, which asks the user to approve.` });
-      return true;
+    if (!hasValidOperatorToken(req, runtimeConfig.authToken)) {
+      const refusal = agentSettingsRefusal(body);
+      if (refusal) { json(403, { error: refusal }); return true; }
     }
     const merged = { ...loadSettings(), ...body };
     // Atomic write — same race as cron-service.saveJobs() pre-9ec343f.
@@ -93,6 +126,10 @@ export const handlePreferencesRoutes: RouteHandler = async (method, url, req, re
         broadcastAll({ type: "settings_changed", settings: broadcastBody });
       } catch {}
     }
+    if ("developer_mode" in body) {
+      const { haltAutopilotsIfDeveloperModeOff } = await import("../../autopilot/loop.js");
+      haltAutopilotsIfDeveloperModeOff();
+    }
 
     // Port is special: lives in config.json (read at boot, env-overridable)
     // but never read via getRuntimeConfig() — separate persistence path.
@@ -110,13 +147,17 @@ export const handlePreferencesRoutes: RouteHandler = async (method, url, req, re
     // workspace, and loadConfig migrates + re-links the folder at the next boot,
     // once this app instance has exited. Validate by creating the directory;
     // persist the raw value the user entered (loadConfig resolves it). An
-    // invalid path is dropped — the next GET re-syncs the box to reality.
+    // invalid path is dropped — the next GET re-syncs the box to reality. So is
+    // a location no workspace may have (unsafeWorkspaceReason), which the next
+    // boot would refuse anyway; the response says why.
+    let workspaceRefused: string | null = null;
     if (typeof body.workspace === "string" && body.workspace.trim()) {
       const wsPath = body.workspace.trim();
-      let valid = true;
+      workspaceRefused = unsafeWorkspaceReason(resolve(wsPath));
+      let valid = workspaceRefused === null;
       try {
         const resolved = resolve(wsPath);
-        if (existsSync(resolved) && !statSync(resolved).isDirectory()) valid = false;
+        if (!valid || (existsSync(resolved) && !statSync(resolved).isDirectory())) valid = false;
         else mkdirSync(resolved, { recursive: true });
       } catch { valid = false; }
       if (valid) {
@@ -158,7 +199,7 @@ export const handlePreferencesRoutes: RouteHandler = async (method, url, req, re
       await activateLocalOnlyMode();
     }
 
-    json(200, { ok: true }); return true;
+    json(200, workspaceRefused ? { ok: true, workspaceRefused } : { ok: true }); return true;
   }
   if (method === "GET" && url.pathname === "/api/settings") {
     const merged: Record<string, unknown> = { ...loadSettings() };
@@ -292,18 +333,20 @@ export const handlePreferencesRoutes: RouteHandler = async (method, url, req, re
     try { if (existsSync(registryPath)) { json(200, JSON.parse(readFileSync(registryPath, "utf-8"))); } else { json(200, []); } } catch { json(200, []); }
     return true;
   }
+  // Takes the page off the list and deletes no file. An older create_page put
+  // these pages in the install's public/ folder, beside the app's own UI
+  // (app.html, tasks.html, ...), so unlinking <name>.html there let any caller,
+  // the agent included, delete the UI by naming it. Pages are workspace apps
+  // now (tools/create-page-tool.ts), removed with the other apps.
   if (method === "DELETE" && url.pathname.startsWith("/api/custom-pages/")) {
     const pageName = url.pathname.split("/").pop() || "";
     if (!pageName || /[^a-zA-Z0-9_-]/.test(pageName)) { json(400, { error: "Invalid page name" }); return true; }
     const registryPath = join(ctx.dataDir, "custom-pages.json");
-    try {
-      let registry: Array<{ name: string }> = [];
-      if (existsSync(registryPath)) registry = JSON.parse(readFileSync(registryPath, "utf-8"));
-      registry = registry.filter(p => p.name !== pageName);
-      writeFileSync(registryPath, JSON.stringify(registry, null, 2), "utf-8");
-    } catch {}
-    const filePath = join(ctx.publicDir, `${pageName}.html`);
-    try { const { unlinkSync } = await import("node:fs"); unlinkSync(filePath); } catch {}
+    let registry: Array<{ name: string }> = [];
+    try { if (existsSync(registryPath)) registry = JSON.parse(readFileSync(registryPath, "utf-8")); } catch {}
+    const kept = registry.filter(p => p.name !== pageName);
+    if (kept.length === registry.length) { json(404, { error: `No custom page named ${pageName}` }); return true; }
+    writeFileSync(registryPath, JSON.stringify(kept, null, 2), "utf-8");
     json(200, { ok: true, deleted: pageName }); return true;
   }
 

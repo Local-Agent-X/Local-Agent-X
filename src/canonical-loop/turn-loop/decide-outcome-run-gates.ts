@@ -45,6 +45,8 @@
  */
 import { COMPLETION_GATES, type CompletionGateContext, type GateHonestTerminal } from "./decide-outcome-gates.js";
 import type { GuardFire } from "./guard-fire.js";
+import { bridgeOpCancelToToolSignal } from "../cancel-handler.js";
+import { readOp } from "../../ops/op-store.js";
 
 export interface RunCompletionGatesResult {
   terminalReason: "done" | "error" | null;
@@ -67,17 +69,30 @@ export async function runCompletionGates(
 ): Promise<RunCompletionGatesResult> {
   let buildVerifyConfirmation = "";
   let honestTerminal: GateHonestTerminal | null = null;
-  for (const gate of endsOnQuestion ? [] : COMPLETION_GATES) {
-    if (terminalReason !== "done") break;
-    const out = await gate.evaluate(ctx);
-    if (out.buildVerifyConfirmation !== undefined) buildVerifyConfirmation = out.buildVerifyConfirmation;
-    if (out.honestTerminal !== undefined) honestTerminal = out.honestTerminal;
-    if (out.reopen) {
-      terminalReason = null;
-      // Inside `if (out.reopen)` so the fire cannot outlive its effect: a gate
-      // that named one without vetoing banks nothing.
-      if (out.reopenFire) earnedFires.push(out.reopenFire);
+  // One signal for the chain, so a Stop landing inside any gate's await also
+  // ends the later gates' spawns and model calls. A cancel published before
+  // the chain subscribed is read from the op itself.
+  const cancel = bridgeOpCancelToToolSignal(ctx.op.id);
+  const persisted = readOp(ctx.op.id)?.canonical;
+  const signal = persisted?.cancelRequestedAt || persisted?.state === "cancelling"
+    ? AbortSignal.abort(new Error("op cancelled"))
+    : cancel.signal;
+  const gateCtx: CompletionGateContext = { ...ctx, signal };
+  try {
+    for (const gate of endsOnQuestion ? [] : COMPLETION_GATES) {
+      if (terminalReason !== "done") break;
+      const out = await gate.evaluate(gateCtx);
+      if (out.buildVerifyConfirmation !== undefined) buildVerifyConfirmation = out.buildVerifyConfirmation;
+      if (out.honestTerminal !== undefined) honestTerminal = out.honestTerminal;
+      if (out.reopen) {
+        terminalReason = null;
+        // Inside `if (out.reopen)` so the fire cannot outlive its effect: a gate
+        // that named one without vetoing banks nothing.
+        if (out.reopenFire) earnedFires.push(out.reopenFire);
+      }
     }
+  } finally {
+    cancel.dispose();
   }
   return { terminalReason, buildVerifyConfirmation, honestTerminal };
 }

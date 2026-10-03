@@ -2,6 +2,7 @@
  * startAutopilot — entry point for autopilot mode.
  *
  * Sequence:
+ *   0. Refuse unless developer_mode is on
  *   1. Validate request
  *   2. Resolve AutopilotConfig from request + per-repo autopilot.config.json
  *   3. Acquire per-repo lock (rejects if another autopilot is live)
@@ -22,6 +23,7 @@ import type { Operation } from "./operation-types.js";
 import type { LAXConfig, ToolDefinition } from "../types.js";
 import type { AgentOptions } from "../providers/types.js";
 import { loadAnthropicTokens, isAnthropicTokenExpired, isAnthropicCliAuthenticated } from "../auth/anthropic.js";
+import { getSetting } from "../settings.js";
 
 import { createLogger } from "../logger.js";
 import { createRequire } from "node:module";
@@ -83,7 +85,15 @@ export interface StartAutopilotError {
   reason: string;
   /** If blocked by lock, identifies the holder. */
   conflict?: { pid: number; opId: string; topic: string };
+  /** Refused by policy (developer_mode is off), not by a bad request. */
+  developerModeOff?: true;
 }
+
+const DEVELOPER_MODE_REQUIRED =
+  "BLOCKED — autopilot edits and builds Local Agent X's own source code in a git worktree, which requires developer_mode (currently off).\n\n" +
+  "If the user genuinely wants an autonomous session on the platform's source, they can turn on developer_mode in Settings — " +
+  "it's a user-owned control you cannot flip for them. Tell them the trade-off: with developer_mode on, " +
+  "their install carries local source edits that future platform updates must merge with.";
 
 const DEFAULTS = {
   durationMs: 30 * 60_000,
@@ -138,6 +148,12 @@ export async function startAutopilot(
   req: StartAutopilotRequest,
   deps: StartAutopilotDeps,
 ): Promise<StartAutopilotResult | StartAutopilotError> {
+  // Every round works on this install's own source and may self_edit it, the
+  // same developer-mode work self_edit refuses without the setting.
+  if (getSetting("developer_mode") !== true) {
+    return { ok: false, reason: DEVELOPER_MODE_REQUIRED, developerModeOff: true };
+  }
+
   // Validate request
   const topic = (req.topic || "").trim();
   if (!topic) return { ok: false, reason: "topic is required" };

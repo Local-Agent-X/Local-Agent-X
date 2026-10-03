@@ -22,7 +22,7 @@ import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { createLogger } from "../logger.js";
-import { npmAugmentedEnv } from "../anthropic-client/cli-path.js";
+import { buildSelfEditChildEnv } from "./child-env.js";
 
 const logger = createLogger("self-edit.parent-deps");
 
@@ -49,7 +49,10 @@ export function fingerprintParentDeps(repoRoot: string): string | null {
  *  Only invoked on the (rare) corruption path. */
 export function restoreParentDeps(repoRoot: string): { ok: boolean; detail: string } {
   try {
-    execSync("npm ci", { cwd: repoRoot, timeout: 5 * 60_000, stdio: "pipe", env: npmAugmentedEnv(), windowsHide: true });
+    // Scrubbed env: this path runs only after a self_edit child broke the
+    // sandbox contract, and `npm ci` executes lifecycle scripts. The install
+    // needs the registry, not the server's credentials.
+    execSync("npm ci", { cwd: repoRoot, timeout: 5 * 60_000, stdio: "pipe", env: buildSelfEditChildEnv(), windowsHide: true });
     return { ok: true, detail: "npm ci restored parent node_modules" };
   } catch (e) {
     logger.error(`[self-edit.parent-deps] npm ci restore failed: ${(e as Error).message}`);

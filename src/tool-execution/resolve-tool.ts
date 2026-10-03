@@ -15,6 +15,10 @@ import { ARI_ACTION_MAP } from "./enforce-policy.js";
 import { sessionWorkRootOf } from "../workspace/paths.js";
 import { STATEFUL_LIVE_STATE_TOOLS } from "./stateful-tools.js";
 import { READ_DEDUP_STUB_LEAD } from "./read-dedup-evidence.js";
+import { isInternalArgKey } from "./internal-args.js";
+import { createLogger } from "../logger.js";
+
+const logger = createLogger("tool-execution.resolve");
 
 // Eval scaffolding — see markDryRunSession docstring below.
 const dryRunSessions = new Set<string>();
@@ -38,7 +42,20 @@ export const SESSION_SCOPED_TOOLS = new Set([
   // upserted task_update (unknown id → create) is owned by the right session
   // (task-tools.ts).
   "task_create", "task_update", "task_list", "task_get",
-  "op_submit", "op_submit_async", "op_wait", "op_status",
+  // op_kill with no op_id kills THIS session's newest op; op_submit_batch
+  // threads the session into every task it submits.
+  "op_submit", "op_submit_async", "op_submit_batch", "op_wait", "op_status", "op_kill",
+  // read_my_logs reads this conversation's action ledger, never another's.
+  "read_my_logs",
+  // restart / apply_update ping the requester back on the channel the request
+  // came in on (restart-notify.ts resolveNotifyTarget).
+  "restart", "apply_update",
+  // The collapsed family's name, not the inner protocol_* names: dispatch only
+  // ever sees `protocol`, and its inner actions record the calling session.
+  "protocol",
+  // A build reports to, and its workflow state belongs to, the chat that
+  // started or resumed it (kickoff.ts; orchestrator/tools.ts).
+  "run_build_plan", "build_plan_resume",
   "memory_search", "search_past_sessions", "memory_save", "remember", "update_fact",
   // recall resolves session→op from the trusted _sessionId (recall-tool.ts).
   "recall",
@@ -55,7 +72,7 @@ export const SESSION_SCOPED_TOOLS = new Set([
   // AriKernel bridge synonyms: stamp the trusted `_sessionId` so the bridge
   // derives runId/principal from trusted context (arikernel-bridge.ts), not
   // from forged model-supplied `_runId`/`_principalId`.
-  "ari_file", "ari_http", "ari_shell", "ari_database", "ari_retrieval", "ari_sqlite",
+  "ari_file", "ari_http", "ari_database", "ari_retrieval", "ari_sqlite",
   // Path-taking file tools: sessionIdOf(args) feeds resolveAgentPath so a
   // session with a registered work root (auto-build chunk workers) anchors
   // relative paths there. Without the stamp the work-root registry is dead
@@ -68,10 +85,11 @@ export const SESSION_SCOPED_TOOLS = new Set([
   "restore_file",
 ]);
 
-// `protocol` is the model-facing collapsed family. Keep the inner name for
-// direct/core callers, but never trust either a flat or nested model value.
-// show_unblock_control reads the kernel scope of the op it runs in, which is
-// keyed by the trusted operation id, never a model-supplied one.
+// `protocol` is the model-facing collapsed family; the inner name stays for
+// direct/core callers. A nested `params._operationId` never reaches the inner
+// tool (collapse-family.ts drops a model's `_` keys there), so the flat stamp
+// is the only one. show_unblock_control reads the kernel scope of the op it
+// runs in, which is keyed by the trusted operation id, never a model-supplied one.
 const OPERATION_SCOPED_TOOLS = new Set(["protocol", "protocol_get", "show_unblock_control"]);
 
 const SESSION_REPEAT_SKIP_TOOLS = new Set([
@@ -157,11 +175,27 @@ export function findPriorIdenticalResult(
   return null;
 }
 
+// A `_` key is the server's channel to a tool (_cwd, _sessionId, _onProgress,
+// _lastUserMessage, …), stamped after parsing. The stamps only fill a key the
+// call lacks, and nothing else checked who wrote one, so a model's own
+// `_unsafe` ran self_edit with no gates and its `_cwd` moved the shell. The
+// call's arguments are the model's, so every `_` key in them is dropped
+// before any stamp. `_raw` stays: it is the adapters' marker for arguments
+// that did not parse, carried here inside the JSON, and only makes dispatch
+// stricter.
+function dropModelInternalKeys(ctx: ToolCallContext, args: Record<string, unknown>): Record<string, unknown> {
+  const dropped = Object.keys(args).filter((key) => isInternalArgKey(key) && key !== "_raw");
+  if (dropped.length === 0) return args;
+  for (const key of dropped) delete args[key];
+  logger.debug(`[resolve] dropped model-supplied internal args on ${ctx.tc.name}: ${dropped.join(", ")}`);
+  return args;
+}
+
 async function parseArgs(ctx: ToolCallContext): Promise<void> {
   try {
     const parsed = JSON.parse(ctx.tc.arguments);
     ctx.args = (parsed && typeof parsed === "object" && !Array.isArray(parsed))
-      ? parsed as Record<string, unknown>
+      ? dropModelInternalKeys(ctx, parsed as Record<string, unknown>)
       : { _raw: ctx.tc.arguments };
   } catch {
     // Weak models often emit malformed JSON (trailing commas, single quotes,
@@ -169,7 +203,7 @@ async function parseArgs(ctx: ToolCallContext): Promise<void> {
     const { repairJson } = await import("./arg-repair.js");
     const repair = repairJson(ctx.tc.arguments);
     if (repair.ok) {
-      ctx.args = repair.value;
+      ctx.args = dropModelInternalKeys(ctx, repair.value);
       logRetry({ kind: "tool-arg-invalid", sessionId: ctx.sessionId, tool: ctx.tc.name, detail: { phase: "json-repair", fixes: repair.fixes } });
     } else {
       ctx.args = { _raw: ctx.tc.arguments };
@@ -185,9 +219,6 @@ async function injectSessionState(ctx: ToolCallContext): Promise<PhaseOutcome> {
   }
   if (OPERATION_SCOPED_TOOLS.has(tc.name)) {
     args._operationId = ctx.operationId;
-    if (args.params && typeof args.params === "object" && !Array.isArray(args.params)) {
-      (args.params as Record<string, unknown>)._operationId = ctx.operationId;
-    }
   }
 
   // Inject the chat's current project into agent_* tool calls so the
@@ -218,7 +249,7 @@ async function injectSessionState(ctx: ToolCallContext): Promise<PhaseOutcome> {
       const { isAutopilotSession, getAutopilotWorktree, trackSelfEditCall } = await import("../autopilot/registry.js");
       if (isAutopilotSession(sessionId)) {
         const wt = getAutopilotWorktree(sessionId);
-        if (wt && !args._cwd) args._cwd = wt;
+        if (wt) args._cwd = wt;
         if (tc.name === "self_edit") {
           const gate = trackSelfEditCall(sessionId);
           if (!gate.allowed) {

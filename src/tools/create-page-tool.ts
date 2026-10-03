@@ -1,6 +1,9 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
-import { resolve, join } from "node:path";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type { ToolDefinition } from "../types.js";
+import { workspaceRoot } from "../config.js";
+import { confineToDir, writeValidatedFile } from "../security/layer/index.js";
+import { err } from "./result-helpers.js";
 import { acquireImages, IMAGES_PARAM_SCHEMA, type ImageSpec } from "./shared/image-acquire.js";
 
 function escapeHtmlAttr(s: string): string {
@@ -12,17 +15,28 @@ function escapeHtmlAttr(s: string): string {
     .replace(/'/g, "&#39;");
 }
 
+// Marks a page this tool wrote, so a later call may replace it but never an
+// app the user or app_build put at the same name.
+const PAGE_MARKER = `<meta name="generator" content="lax-create-page">`;
+
+// The page is a workspace app (<workspace>/apps/<name>/index.html), not a file
+// in the install's public/ folder: the install is write-protected for the
+// agent, a page there could replace the app's own UI (public/app.html), and it
+// would run with the user's login token. A workspace app is served at
+// /apps/<name>/ under the app CSP, without that token, and is listed with the
+// other apps.
 export const createPageTool: ToolDefinition = {
   name: "create_page",
   description:
-    "Create a custom page inside the app. The page is served at /<name>.html and appears in the sidebar. " +
+    "Create a custom page as a workspace app: writes <workspace>/apps/<name>/index.html, served at /apps/<name>/ and listed with the user's apps. " +
     "Use this to build dashboards, tools, visualizations, or any custom UI directly inside the app. " +
-    "The page automatically gets the app's dark theme CSS variables.",
+    "The page automatically gets the app's theme CSS variables. Like every workspace app it does not get the user's login token; " +
+    "to show external data, define a connector (connector_create) and call /api/connectors/<name>/<path> with Authorization: 'Bearer ' + window.__LAX_CONNECTOR_TOKEN__.",
   parameters: {
     type: "object",
     properties: {
-      name: { type: "string", description: "Page slug (e.g. 'my-dashboard'). Served at /<name>.html" },
-      title: { type: "string", description: "Human-readable page title for the sidebar" },
+      name: { type: "string", description: "Page slug (e.g. 'my-dashboard'). Served at /apps/<name>/" },
+      title: { type: "string", description: "Human-readable page title" },
       content: { type: "string", description: "Full HTML content. Can include inline <style> and <script> tags. The app's CSS variables (--bg, --fg, --accent, etc.) are available." },
       images: IMAGES_PARAM_SCHEMA,
     },
@@ -47,6 +61,7 @@ export const createPageTool: ToolDefinition = {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  ${PAGE_MARKER}
   <title>${title} — Local Agent X</title>
   <link rel="stylesheet" href="/css/theme.css">
   <style>
@@ -56,46 +71,24 @@ export const createPageTool: ToolDefinition = {
 </head>
 <body>
 ${content}
-<script>
-  // Expose API helper for custom pages
-  const API = window.location.origin;
-  const AUTH_TOKEN = localStorage.getItem('lax_token') || '';
-  async function apiGet(path) {
-    const r = await fetch(API + path, { headers: { Authorization: 'Bearer ' + AUTH_TOKEN } });
-    return r.json();
-  }
-  async function apiPost(path, data) {
-    const r = await fetch(API + path, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + AUTH_TOKEN },
-      body: JSON.stringify(data)
-    });
-    return r.json();
-  }
-</script>
 </body>
 </html>`;
 
+    // Resolved through links and junctions, so a link planted at apps/<name>
+    // cannot carry the write out of the workspace.
+    const file = confineToDir(workspaceRoot(), join("apps", name, "index.html"));
+    if (!file) return err(`Cannot create page "${name}": apps/${name} resolves outside the workspace.`);
+    if (existsSync(file) && !readFileSync(file, "utf-8").includes(PAGE_MARKER)) {
+      return err(`An app named "${name}" already exists in the workspace and was not made by create_page. Pick another name.`);
+    }
     try {
-      const publicDir = resolve(import.meta.dirname || ".", "..", "..", "public");
-      mkdirSync(publicDir, { recursive: true });
-      writeFileSync(join(publicDir, `${name}.html`), html, "utf-8");
-
-      const registryPath = join(process.env.HOME || process.env.USERPROFILE || "", ".lax", "custom-pages.json");
-      let registry: Array<{ name: string; title: string; createdAt: number }> = [];
-      try {
-        if (existsSync(registryPath)) registry = JSON.parse(readFileSync(registryPath, "utf-8"));
-      } catch {}
-      const idx = registry.findIndex(p => p.name === name);
-      if (idx >= 0) registry[idx] = { name, title, createdAt: registry[idx].createdAt };
-      else registry.push({ name, title, createdAt: Date.now() });
-      writeFileSync(registryPath, JSON.stringify(registry, null, 2), "utf-8");
-
+      mkdirSync(dirname(file), { recursive: true });
+      writeValidatedFile(file, html);
       const port = process.env.LAX_PORT ?? "7007";
       const notes = imageNotes.length ? `\nImage notes:\n${imageNotes.join("\n")}` : "";
-      return { content: `Page created: http://127.0.0.1:${port}/${name}.html\nTitle: ${title}\nRegistered in sidebar.${notes}` };
+      return { content: `Page created: http://127.0.0.1:${port}/apps/${name}/\nTitle: ${title}\nListed with the apps.${notes}` };
     } catch (e) {
-      return { content: `Failed to create page: ${(e as Error).message}`, isError: true };
+      return err(`Failed to create page: ${(e as Error).message}`);
     }
   },
 };

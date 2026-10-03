@@ -1,8 +1,9 @@
 import type { RouteHandler } from "../../server-context.js";
 import { jsonResponse, safeParseBody, safeErrorMessage } from "../../server-utils.js";
 import { isProfileName } from "../../autonomy/profiles.js";
+import { agentMissionRefusal } from "../../cron/job-authority.js";
 
-export const handleCronRoutes: RouteHandler = async (method, url, req, res, ctx, _role) => {
+export const handleCronRoutes: RouteHandler = async (method, url, req, res, ctx, role) => {
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
 
   // ── Scheduled Missions ──
@@ -40,6 +41,12 @@ export const handleCronRoutes: RouteHandler = async (method, url, req, res, ctx,
   if (method === "POST" && url.pathname === "/api/cron") {
     const body = await safeParseBody(req) as { name?: string; schedule?: string; prompt?: string; systemJob?: boolean; provider?: string; model?: string; profile?: string; tz?: string };
     if (!body.name || !body.schedule || !body.prompt) { json(400, { error: "name, schedule, and prompt are required" }); return true; }
+    if (role === "agent") {
+      // A name already in use rewrites that mission's schedule and prompt (CronService.create).
+      const existing = ctx.cronService.list().find((j) => j.name === body.name);
+      const refusal = agentMissionRefusal(body, existing);
+      if (refusal) { json(403, { error: refusal }); return true; }
+    }
     if (body.profile !== undefined && !isProfileName(body.profile)) { json(400, { error: `Invalid profile "${body.profile}"` }); return true; }
     const tz = typeof body.tz === "string" && body.tz.trim() ? body.tz.trim() : undefined;
     try { json(200, { ok: true, job: ctx.cronService.create(body.name, body.schedule, body.prompt, body.systemJob, { provider: body.provider, model: body.model, profile: body.profile, tz }) }); }
@@ -49,6 +56,10 @@ export const handleCronRoutes: RouteHandler = async (method, url, req, res, ctx,
   if (method === "PATCH" && url.pathname.startsWith("/api/cron/")) {
     const id = url.pathname.split("/").pop()!;
     const body = await safeParseBody(req); if (body === null) { json(400, { error: "Invalid JSON" }); return true; }
+    if (role === "agent") {
+      const refusal = agentMissionRefusal(body, ctx.cronService.get(id));
+      if (refusal) { json(403, { error: refusal }); return true; }
+    }
     if ((body as { profile?: unknown }).profile !== undefined && !isProfileName((body as { profile?: unknown }).profile)) { json(400, { error: "Invalid profile" }); return true; }
     try {
       const job = ctx.cronService.update(id, body);

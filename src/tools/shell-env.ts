@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { containsNulByte } from "../binary-sniff.js";
 import { createRequire } from "node:module";
 import { homedir, platform } from "node:os";
-import { delimiter, join, sep } from "node:path";
+import { delimiter, join, sep, win32 } from "node:path";
 import type { ServerEvent } from "../types.js";
 // Host-process (Electron/CoreFoundation/IPC) contamination scrub — the
 // __CFBundleIdentifier that SIGSEGVs a child's process.title set on macOS, etc.
@@ -56,6 +56,13 @@ function isWslLauncher(p: string): boolean {
   return low.includes("\\system32\\") || low.includes("\\windowsapps\\");
 }
 
+// The folder the installer provisions the portable runtimes into: PortableGit
+// and the portable node (node-v*-win-*, which the desktop launcher puts first
+// on the server's PATH: desktop/src/path-augment.ts defaultPortableNodeRoot).
+export function portableRuntimeRoot(localAppData: string | undefined): string | null {
+  return localAppData ? join(localAppData, "LocalAgentX") : null;
+}
+
 // The bash.exe the installer provisions PortableGit to.
 //
 // LOAD-BEARING COUPLING: this path MUST stay byte-identical to
@@ -65,8 +72,8 @@ function isWslLauncher(p: string): boolean {
 // the resolver won't find what the installer wrote. Pure + exported so the
 // coupling is unit-testable without a Windows box.
 export function portableGitBashPath(localAppData: string | undefined): string | null {
-  if (!localAppData) return null;
-  return join(localAppData, "LocalAgentX", "PortableGit", "bin", "bash.exe");
+  const root = portableRuntimeRoot(localAppData);
+  return root && join(root, "PortableGit", "bin", "bash.exe");
 }
 
 // A real Git-for-Windows bash, validated to exist and to not be the WSL
@@ -136,6 +143,14 @@ export function resolveWindowsShell(): WindowsShell {
 // translation when the shell is a real bash).
 export function getWindowsShell(): string {
   return resolveWindowsShell().path;
+}
+
+/** The folder a Windows shell is installed in: `…\PortableGit\bin\bash.exe` →
+ *  `…\PortableGit`, which also holds the git and coreutils it runs. Win32
+ *  path rules on every host, so a Windows layout can be tested anywhere. */
+export function windowsShellInstallRoot(shell: string): string {
+  const dir = win32.dirname(win32.resolve(shell));
+  return win32.basename(dir).toLowerCase() === "bin" ? win32.dirname(dir) : dir;
 }
 
 // Test-only: drop the memoized resolution so a test can re-resolve under a

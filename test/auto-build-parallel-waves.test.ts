@@ -143,6 +143,10 @@ let projectDir: string;
 
 beforeEach(() => {
   process.env.LAX_BUILD_PREFLIGHT = "0";
+  // The loop's git runs through the shell cage seam; on a box with the
+  // Windows cage installed the default would prove and use the real cage,
+  // whose account cannot read this temp repo.
+  process.env.LAX_SANDBOX = "host";
   shared.calls.length = 0;
   shared.chunkActions.clear();
   shared.mergeResults.clear();
@@ -168,6 +172,7 @@ beforeEach(() => {
 
 afterEach(() => {
   delete process.env.LAX_BUILD_PREFLIGHT;
+  delete process.env.LAX_SANDBOX;
   try { rmSync(projectDir, { recursive: true, force: true }); } catch { /* best-effort */ }
 });
 

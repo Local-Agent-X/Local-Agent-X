@@ -22,11 +22,10 @@
  * (BuildExecRunner) so tests stub the runner without spawning a build.
  */
 
-import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { killProcessTree } from "../../process-tree-kill.js";
-import { hardenChildEnv } from "../../tools/env-contamination.js";
+import { runCaged, type CagedRunOutcome } from "../../tools/caged-spawn.js";
+import { npmCommandArgv } from "../../tools/program-argv.js";
 import { smokeUrl } from "../scenario-scorer/smoke.js";
 import type { GateFinding } from "./gates.js";
 
@@ -42,12 +41,8 @@ export interface BuildExecInput {
 /** Injectable so tests don't spawn a real build/browser. */
 export type BuildExecRunner = (input: BuildExecInput) => Promise<GateFinding | null>;
 
-interface CommandResult {
-  command: string;
-  exitCode: number | null;
-  timedOut: boolean;
-  outputTail: string;
-}
+/** How the command ended with the tail of its output, or why it never ran. */
+type CommandResult = { outcome: CagedRunOutcome; outputTail: string } | { notRun: string };
 
 /**
  * Discover which npm scripts to run from package.json. Prefer `build` then
@@ -88,49 +83,34 @@ export function findStaticEntry(projectDir: string): string | null {
   return null;
 }
 
-/** Spawn one command, await exit, capture a bounded output tail + real code. */
-function runCommand(command: string, projectDir: string, signal?: AbortSignal): Promise<CommandResult> {
-  return new Promise((resolve) => {
-    const isWin = process.platform === "win32";
-    const [bin, ...args] = command.split(/\s+/);
-    const proc = spawn(bin, args, {
+/**
+ * Run one npm script to completion with a bounded tail of its output, both
+ * streams in arrival order. The scripts are the agent's own package.json
+ * lines: they run in the shell cage on the scrubbed env, and a POSIX group
+ * kill reaches everything they start.
+ */
+async function runCommand(command: string, projectDir: string, signal?: AbortSignal): Promise<CommandResult> {
+  let output = "";
+  const seen = { stdout: 0, stderr: 0 };
+  try {
+    const outcome = await runCaged(npmCommandArgv(command), {
       cwd: projectDir,
-      stdio: ["ignore", "pipe", "pipe"],
-      shell: isWin, // npm on Windows must go through the shell
-      // hardenChildEnv: strip __CFBundleIdentifier + guard process.title so a
-      // `vite build` / dev server here can't SIGSEGV under the macOS app-bundle
-      // context (env scrub alone is insufficient — see env-contamination.ts).
-      env: { ...hardenChildEnv(process.env), FORCE_COLOR: "0", CI: "1" },
+      env: { FORCE_COLOR: "0", CI: "1" },
+      detached: process.platform !== "win32",
+      signal,
+      timeoutMs: BUILD_TIMEOUT_MS,
+      // One stream grows per call, so appending both deltas keeps the order.
+      onOutput: (captured) => {
+        output += captured.stdout.slice(seen.stdout) + captured.stderr.slice(seen.stderr);
+        seen.stdout = captured.stdout.length;
+        seen.stderr = captured.stderr.length;
+        if (output.length > OUTPUT_TAIL_CHARS * 4) output = output.slice(-OUTPUT_TAIL_CHARS * 4);
+      },
     });
-
-    let output = "";
-    const capture = (c: Buffer) => {
-      output += c.toString();
-      if (output.length > OUTPUT_TAIL_CHARS * 4) output = output.slice(-OUTPUT_TAIL_CHARS * 4);
-    };
-    proc.stdout?.on("data", capture);
-    proc.stderr?.on("data", capture);
-
-    let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      killProcessTree(proc, "SIGTERM");
-    }, BUILD_TIMEOUT_MS);
-
-    const onAbort = () => killProcessTree(proc, "SIGTERM");
-    signal?.addEventListener("abort", onAbort);
-
-    proc.on("close", (code) => {
-      clearTimeout(timer);
-      signal?.removeEventListener("abort", onAbort);
-      resolve({ command, exitCode: code, timedOut, outputTail: output.slice(-OUTPUT_TAIL_CHARS) });
-    });
-    proc.on("error", (err) => {
-      clearTimeout(timer);
-      signal?.removeEventListener("abort", onAbort);
-      resolve({ command, exitCode: 1, timedOut, outputTail: `${output}\n${err.message}`.slice(-OUTPUT_TAIL_CHARS) });
-    });
-  });
+    return { outcome, outputTail: output.slice(-OUTPUT_TAIL_CHARS) };
+  } catch (e) {
+    return { notRun: (e as Error).message };
+  }
 }
 
 function truncate(s: string, n: number): string {
@@ -153,7 +133,17 @@ export const runBuildExecGate: BuildExecRunner = async (input) => {
   for (const command of commands) {
     if (signal?.aborted) return null;
     const result = await runCommand(command, projectDir, signal);
-    if (result.timedOut) {
+    // Never a pass: a build that could not run (the cage refused it while its
+    // check was pending, npm missing) was not observed to work.
+    if ("notRun" in result) {
+      return {
+        gate: "build-exec",
+        action: "halt",
+        reasoning: `\`${command}\` could not run (${truncate(result.notRun, 300)}), so the chunk's build was not verified.`,
+      };
+    }
+    if (result.outcome.kind === "abort") return null;
+    if (result.outcome.kind === "timeout") {
       return {
         gate: "build-exec",
         action: "halt",
@@ -162,12 +152,12 @@ export const runBuildExecGate: BuildExecRunner = async (input) => {
           `but the build/test command hangs. Output tail: ${truncate(result.outputTail, 400) || "(none)"}`,
       };
     }
-    if (result.exitCode !== 0) {
+    if (result.outcome.code !== 0) {
       return {
         gate: "build-exec",
         action: "halt",
         reasoning:
-          `\`${command}\` exited ${result.exitCode} — the report claimed done but the command actually FAILS. ` +
+          `\`${command}\` exited ${result.outcome.code} — the report claimed done but the command actually FAILS. ` +
           `This is the "says fixed but isn't" case; do not trust the report's TESTS line. ` +
           `Output tail: ${truncate(result.outputTail, 500) || "(none)"}`,
       };

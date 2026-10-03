@@ -16,7 +16,11 @@ import { dirname, join } from "node:path";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const APP_ORIGIN = "http://127.0.0.1:8080";
-const src = readFileSync(join(here, "../public/js/shared-dom.js"), "utf8");
+// shared-md.js loads first in app.html; the file-link handler reads its linkPath.
+const src =
+	readFileSync(join(here, "../public/js/shared-md.js"), "utf8") +
+	"\n" +
+	readFileSync(join(here, "../public/js/shared-dom.js"), "utf8");
 
 interface Harness {
 	win: Record<string, unknown> & { isLocalServiceLink?: (href: string, origin: string) => boolean };
@@ -41,11 +45,13 @@ function loadSharedDom(opts: { desktop?: unknown; feedsOpen?: boolean } = {}): H
 	const location = { origin: APP_ORIGIN, href: `${APP_ORIGIN}/app.html` };
 	const switchTab = vi.fn();
 	const toggleFeeds = vi.fn();
+	// shared-md.js asks the server for the agent origin at load; no answer here.
 	new Function(
 		"document", "window", "location",
 		"switchSidePanelTab", "toggleAgentFeeds", "agentFeedsOpen",
+		"AUTH_TOKEN", "fetch",
 		src,
-	)(doc, win, location, switchTab, toggleFeeds, opts.feedsOpen === true);
+	)(doc, win, location, switchTab, toggleFeeds, opts.feedsOpen === true, "", () => new Promise(() => {}));
 	return { win, clickHandlers, newTab, switchTab, toggleFeeds };
 }
 

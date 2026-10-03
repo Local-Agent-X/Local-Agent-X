@@ -11,17 +11,21 @@ document.addEventListener('click', (e) => {
   // desktop opener, which hands them to their native app. Without this split,
   // Electron sent every link to the OS default app — e.g. macOS opening a .md
   // README in Xcode.
-  const ext = (href.split('?')[0].split('.').pop() || '').toLowerCase();
+  // linkPath (shared-md.js) is the parse md() names program links from, so
+  // the file this opens is the one the link's label names.
+  const path = linkPath(href);
+  const ext = (path.split('.').pop() || '').toLowerCase();
   const inlineable = ['md', 'markdown', 'txt', 'json', 'csv', 'pdf', 'html', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'];
   const isElectron = window.desktop?.isDesktop;
 
   if (isElectron && window.desktop?.openFile && !inlineable.includes(ext)) {
-    const filename = href.split('/files/')[1]?.split('?')[0];
-    if (filename) window.desktop.openFile('workspace/' + decodeURIComponent(filename));
+    if (path.startsWith('/files/')) window.desktop.openFile('workspace/' + path.slice('/files/'.length));
   } else {
     // Browser, or an inlineable file in Electron: open the /files/ URL so the
-    // content renders instead of launching an external editor.
-    window.open(href, '_blank');
+    // content renders instead of launching an external editor. The opened page
+    // is agent-written HTML: with an opener it could reach this window, which
+    // holds the operator token and, in the desktop app, window.desktop.
+    window.open(agentFilesHref(href), '_blank', 'noopener,noreferrer');
   }
 });
 

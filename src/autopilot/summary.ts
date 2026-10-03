@@ -82,6 +82,7 @@ export function renderSummaryMarkdown(summary: AutopilotRunSummary): string {
     "max-rounds": "Stopped (max rounds)",
     "no-progress": "Stopped (no-op rounds)",
     "interrupted": "Stopped (user interrupt)",
+    "developer-mode-off": "Stopped (developer mode turned off)",
     "error": "Stopped (error)",
   };
 

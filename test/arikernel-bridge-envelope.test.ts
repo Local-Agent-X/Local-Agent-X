@@ -9,9 +9,10 @@
  * model-supplied `_`-fields.
  *
  * Companion check: in a restrictive session preset (read-only / high-security)
- * an ari_shell call is denied just like bash — a forged `_runId` does not let
- * the call slip the session policy, because the policy keys on the tool name
- * and the bridge keys runId on the trusted `_sessionId`.
+ * an ari_file / ari_http call is denied just like write / http_request — a
+ * forged `_runId` does not let the call slip the session policy, because the
+ * policy keys on the tool name and the bridge keys runId on the trusted
+ * `_sessionId`.
  */
 import { describe, it, expect, afterEach } from "vitest";
 import type { ToolClass } from "@arikernel/core";
@@ -22,12 +23,14 @@ import {
   checkSessionPolicy,
 } from "../src/session/policy.js";
 import { recordSensitiveRead, clearSessionTaint } from "../src/data-lineage/index.js";
+import { join, resolve } from "node:path";
+import { workspaceRoot } from "../src/config.js";
 
 const cfg: BridgeConfig = {
-  toolName: "ari_shell",
-  toolClass: "shell" as ToolClass,
+  toolName: "ari_file",
+  toolClass: "file" as ToolClass,
   description: "test bridge",
-  defaultAction: "exec",
+  defaultAction: "read",
   // executor is never invoked by buildToolCall (a pure function); a stub keeps
   // the config shape honest without running real I/O.
   executor: { execute: async () => ({ success: true, callId: "x", durationMs: 0 }) } as unknown as BridgeConfig["executor"],
@@ -36,7 +39,7 @@ const cfg: BridgeConfig = {
 describe("bridge envelope sanitization", () => {
   it("ignores a forged _capabilityGrantId — grantId is never read from model args", () => {
     const tc = buildToolCall(cfg, {
-      action: "exec",
+      action: "read",
       _sessionId: "chat-trusted-123",
       _capabilityGrantId: "forged-grant",
     });
@@ -78,14 +81,14 @@ describe("bridge envelope sanitization", () => {
 
   it("strips all _-fields from the parameters handed to the executor", () => {
     const tc = buildToolCall(cfg, {
-      command: "id",
+      encoding: "utf-8",
       _sessionId: "s1",
       _runId: "x",
       _principalId: "y",
       _capabilityGrantId: "z",
       _taintLabels: [],
     });
-    expect(tc.parameters.command).toBe("id");
+    expect(tc.parameters.encoding).toBe("utf-8");
     expect(tc.parameters._sessionId).toBeUndefined();
     expect(tc.parameters._runId).toBeUndefined();
     expect(tc.parameters._principalId).toBeUndefined();
@@ -102,7 +105,7 @@ describe("bridge injects runtime session taint (Chunk 4 seam)", () => {
     // Simulate a prior web read tainting this session (runtime-recorded, NOT
     // model-supplied). The bridge keys off the trusted _sessionId.
     recordSensitiveRead(SID, "web", "https://evil.example/page");
-    const tc = buildToolCall(cfg, { command: "id", _sessionId: SID });
+    const tc = buildToolCall(cfg, { path: "notes.txt", _sessionId: SID });
     expect(tc.taintLabels.length).toBeGreaterThan(0);
     // web → kernel "web" source; origin is the trusted runtime, never the model.
     expect(tc.taintLabels.map(l => l.source)).toContain("web");
@@ -111,9 +114,9 @@ describe("bridge injects runtime session taint (Chunk 4 seam)", () => {
 
   it("a sensitive-file read taints the bridge ToolCall so the kernel sees non-empty taint", () => {
     recordSensitiveRead(SID, "sensitive_file", "/Users/x/.aws/credentials");
-    const tc = buildToolCall(cfg, { command: "id", _sessionId: SID });
+    const tc = buildToolCall(cfg, { path: "notes.txt", _sessionId: SID });
     // sensitive_file maps onto a kernel untrusted-content source (rag), which
-    // the deny-tainted-shell rule recognizes.
+    // the kernel's taint rules recognize.
     expect(tc.taintLabels.map(l => l.source)).toContain("rag");
   });
 
@@ -130,17 +133,15 @@ describe("session policy governs ari_* synonyms", () => {
   const SID = "chat-restrictive-1";
   afterEach(() => clearSessionPolicy(SID));
 
-  it("blocks ari_shell in a read-only session, just like bash", () => {
+  it("blocks ari_file in a read-only session, just like write", () => {
     setSessionPolicy(SID, "read-only");
-    expect(checkSessionPolicy(SID, "bash")).toBeTruthy();
-    expect(checkSessionPolicy(SID, "ari_shell")).toBeTruthy();
+    expect(checkSessionPolicy(SID, "write")).toBeTruthy();
+    expect(checkSessionPolicy(SID, "ari_file")).toBeTruthy();
   });
 
-  it("blocks ari_shell and ari_http in a high-security session, just like bash/http_request", () => {
+  it("blocks ari_http in a high-security session, just like http_request", () => {
     setSessionPolicy(SID, "high-security");
-    expect(checkSessionPolicy(SID, "bash")).toBeTruthy();
     expect(checkSessionPolicy(SID, "http_request")).toBeTruthy();
-    expect(checkSessionPolicy(SID, "ari_shell")).toBeTruthy();
     expect(checkSessionPolicy(SID, "ari_http")).toBeTruthy();
   });
 
@@ -151,7 +152,21 @@ describe("session policy governs ari_* synonyms", () => {
     setSessionPolicy(SID, "read-only");
     const tc = buildToolCall(cfg, { _sessionId: SID, _runId: "escape-hatch" });
     expect(tc.runId).toBe(SID);
-    // Policy keyed on the trusted runId (== sessionId) still denies ari_shell.
-    expect(checkSessionPolicy(tc.runId, "ari_shell")).toBeTruthy();
+    // Policy keyed on the trusted runId (== sessionId) still denies ari_file.
+    expect(checkSessionPolicy(tc.runId, "ari_file")).toBeTruthy();
+  });
+});
+
+// The file executor resolves a relative path against the server's cwd, which
+// is the install folder; the gate it calls resolves the same path from the
+// workspace. "package.json" was judged as <workspace>/package.json and written
+// to <install>/package.json.
+describe("ari_file hands the executor the path the gate judges", () => {
+  const fileCfg: BridgeConfig = { ...cfg, toolName: "ari_file", toolClass: "file" as ToolClass, defaultAction: "read" };
+
+  it("resolves a relative path from the workspace, not from the server's cwd", () => {
+    const tc = buildToolCall(fileCfg, { action: "write", path: "package.json", content: "x", _sessionId: "s1" });
+    expect(tc.parameters.path).toBe(join(workspaceRoot(), "package.json"));
+    expect(tc.parameters.path).not.toBe(resolve("package.json"));
   });
 });

@@ -125,19 +125,27 @@ function _ideDoRefresh() {
   _ideRefreshTimer = null;
   const frame = document.getElementById('ide-preview-frame');
   if (!frame || !_ideAppId) return;
-  // Always use the workspace file URL, never the registry render URL
-  const port = location.port || '7007';
-  const appUrl = `http://127.0.0.1:${port}/apps/${_ideAppId}/index.html`;
-  window._ideAppUrl = appUrl;
-  frame.src = appUrl + '?_t=' + Date.now();
-  // Re-inject the element picker if it was on — the iframe just got a
-  // fresh window, so the previous load's script is gone.
-  if (typeof _ideOnPreviewLoad === 'function') {
+  ideLoadPreview(frame);
+}
+
+// Loads the app's workspace files (never the registry render) into the preview.
+// The app is agent-built, so agentFrameTarget (shared-md.js) loads it from the
+// agent origin, and the frame keeps that origin only because it is not this
+// one. Waiting for the agent origin keeps the preview off the redirect, which
+// would land it with no origin, where the picker's origin check refuses it.
+function ideLoadPreview(frame) {
+  const appId = _ideAppId;
+  window._ideAppUrl = `/apps/${appId}/index.html`;
+  laxAgentReady.then(() => {
+    if (appId !== _ideAppId) return;
+    const target = agentFrameTarget(window._ideAppUrl);
+    if (!target) return;
+    frame.sandbox.toggle('allow-same-origin', target.ownOrigin);
+    // The new document starts with the picker off; turn it back on if the
+    // user left it on.
     frame.addEventListener('load', _ideOnPreviewLoad, { once: true });
-  }
-  if (typeof _ideOnPreviewLoadErrors === 'function') {
-    frame.addEventListener('load', _ideOnPreviewLoadErrors, { once: true });
-  }
+    frame.src = target.src;
+  });
 }
 
 // ── File tree ──

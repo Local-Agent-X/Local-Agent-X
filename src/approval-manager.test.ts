@@ -84,33 +84,8 @@ describe("computeArgsFingerprint — bash/shell", () => {
     expect(computeArgsFingerprint("bash", { command: "ls && rm -rf /" })).toBe("ls && rm -rf /");
   });
 
-  it("treats shell and ari_shell the same as bash", () => {
+  it("treats shell the same as bash", () => {
     expect(computeArgsFingerprint("shell", { command: "git status" })).toBe("git status");
-    expect(computeArgsFingerprint("ari_shell", { command: "git status" })).toBe("git status");
-  });
-
-  it("fingerprints the structured {executable, args[]} form distinctly", () => {
-    // The structured ari_shell form has no `command`; previously it collapsed
-    // to "" so every structured call shared one grant. `ls` and `rm -rf /`
-    // must fingerprint differently.
-    const ls = computeArgsFingerprint("ari_shell", { executable: "ls" });
-    const rm = computeArgsFingerprint("ari_shell", { executable: "rm", args: ["-rf", "/"] });
-    expect(ls).not.toBe(rm);
-    expect(ls).toBe("ls");
-    expect(rm).toBe("rm -rf /");
-  });
-
-  it("folds cwd into the structured fingerprint", () => {
-    const a = computeArgsFingerprint("ari_shell", { executable: "ls", cwd: "/a" });
-    const b = computeArgsFingerprint("ari_shell", { executable: "ls", cwd: "/b" });
-    expect(a).not.toBe(b);
-  });
-
-  it("preserves the string-form fingerprint when command is present", () => {
-    // Pure string-`command` calls must hash identically to before (so existing
-    // session approvals aren't invalidated) — executable/args only fold in
-    // when command is absent.
-    expect(computeArgsFingerprint("ari_shell", { command: "rm -rf /" })).toBe("rm -rf /");
   });
 });
 
@@ -383,41 +358,9 @@ describe("ApprovalManager — same-command cache hit", () => {
   });
 });
 
-describe("isDestructiveCommand — structured {executable, args[]} form", () => {
-  // Regression for the silent-RCE gap: the matcher used to read ONLY
-  // args.command, so an ari_shell call that passed {executable:"rm",
-  // args:["-rf","/"]} bypassed the destructive floor entirely.
-  it("matches a synthesized command against the text patterns", () => {
-    expect(isDestructiveCommand("ari_shell", { executable: "rm", args: ["-rf", "/tmp/x"] }))
-      .not.toBeNull();
-  });
-
-  it("matches a destructive binary by basename regardless of args", () => {
-    // No -rf flag, so the text pattern doesn't fire — the basename set must.
-    expect(isDestructiveCommand("ari_shell", { executable: "rm", args: ["foo"] })).not.toBeNull();
-    expect(isDestructiveCommand("ari_shell", { executable: "shred", args: ["f"] })).not.toBeNull();
-    expect(isDestructiveCommand("ari_shell", { executable: "mkfs.ext4", args: ["/dev/sda"] }))
-      .not.toBeNull();
-  });
-
-  it("matches a destructive binary given by absolute path (basename resolved)", () => {
-    expect(isDestructiveCommand("ari_shell", { executable: "/bin/rm", args: ["x"] })).not.toBeNull();
-  });
-
-  it("does NOT flag a benign structured command", () => {
-    expect(isDestructiveCommand("ari_shell", { executable: "ls" })).toBeNull();
-    expect(isDestructiveCommand("ari_shell", { executable: "echo", args: ["hi"] })).toBeNull();
-  });
-
-  it("forces an irreversible confirm for the structured destructive form", () => {
-    expect(destructiveOperationReason("ari_shell", { executable: "rm", args: ["-rf", "/tmp/x"] }))
-      .not.toBeNull();
-  });
-});
-
 describe("isDestructiveCommand — process_start/process_restart parity (H2)", () => {
   // Regression for the silent-RCE gap: the matcher early-returned null unless
-  // the tool was bash/shell/ari_shell, so process_start({command:"git push
+  // the tool was bash/shell, so process_start({command:"git push
   // --force"}) ran SILENTLY on the Normal profile while the identical bash
   // forced an unskippable confirm. The defense is now keyed on the spawn
   // primitive — process_start spawns the same /bin/bash -c <command>.

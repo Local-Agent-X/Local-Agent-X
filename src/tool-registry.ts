@@ -151,7 +151,7 @@ const WORKSPACE_WRITE_TOOLS: ReadonlySet<string> = new Set([
 // Shell = subprocess spawn / arbitrary command execution.
 const SHELL_TOOLS: ReadonlySet<string> = new Set([
   "bash",          // canonical
-  "shell", "ari_shell", "process_start", "process_restart",
+  "shell", "process_start", "process_restart",
   "app_serve_backend",  // wraps a process spawn — gate it as shell like process_start
   "app_serve_frontend", // also wraps a process spawn (Vite/Next dev server)
   "app_rebuild",        // wraps a process spawn (framework production build)

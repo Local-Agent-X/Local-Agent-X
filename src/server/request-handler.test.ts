@@ -4,8 +4,12 @@ import type { AddressInfo } from "node:net";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createRequestHandler } from "./request-handler.js";
+import { agentOrigin, startAgentOrigin } from "./agent-origin.js";
+import { deriveFilesLinkCapability } from "./agent-file-links.js";
 import { deriveConnectorCapability } from "./app-connector-auth.js";
+import type { ServerContext } from "../server-context.js";
 import { RBACManager } from "../rbac.js";
 import { SecurityLayer } from "../security/index.js";
 import { writeRunTargetManifest } from "../tools/app-run-target.js";
@@ -29,6 +33,7 @@ const SEEDED_NAME = "SEEDED";
 const SEEDED_VALUE = "s3cr3t-value";
 
 let server: http.Server;
+let agentServer: http.Server;
 let port: number;
 let tmpDir: string;
 let rbac: RBACManager;
@@ -101,6 +106,7 @@ beforeAll(async () => {
   tmpDir = mkdtempSync(join(tmpdir(), "request-handler-test-"));
   mkdirSync(join(tmpDir, "public"), { recursive: true });
   writeFileSync(join(tmpDir, "public", "app.html"), "<!doctype html><html><head><title>core</title></head><body>shell</body></html>");
+  writeFileSync(join(tmpDir, "public", "account.html"), "<!doctype html><html><head><title>account</title></head><body>account</body></html>");
   mkdirSync(join(tmpDir, "public", "js"), { recursive: true });
   mkdirSync(join(tmpDir, "public", "css"), { recursive: true });
   mkdirSync(join(tmpDir, "public", "vendor"), { recursive: true });
@@ -126,12 +132,19 @@ beforeAll(async () => {
   // Real RBAC: gives the operator token (= config.authToken) and the
   // per-process internal `agent` token via getInternalAgentToken().
   rbac = new RBACManager(tmpDir, OP_TOKEN);
-  server = http.createServer(createRequestHandler(makeDeps()));
+  const deps = makeDeps();
+  server = http.createServer(createRequestHandler(deps));
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
   port = (server.address() as AddressInfo).port;
+  // Agent paths redirect to the agent origin; stand it up as boot does. The
+  // real public dir supplies the IDE frame bridge it injects into app pages.
+  const ctx = { config: deps.config, appRegistry: deps.appRegistry } as unknown as ServerContext;
+  agentServer = await startAgentOrigin({ config: deps.config, publicDir: fileURLToPath(new URL("../../public", import.meta.url)), getCtx: () => ctx });
 });
 
 afterAll(async () => {
+  agentServer.closeAllConnections();
+  await new Promise<void>((r) => agentServer.close(() => r()));
   await new Promise<void>((r) => server.close(() => r()));
   rmSync(tmpDir, { recursive: true, force: true });
 });
@@ -320,6 +333,7 @@ describe("static-build app serving (/apps/<id>/ → dist/)", () => {
   it("serves the built index.html at /apps/<id>/ with the connector bootstrap injected", async () => {
     const res = await fetch(`${base()}/apps/${APP}/`);
     expect(res.status).toBe(200);
+    expect(new URL(res.url).origin).toBe(agentOrigin()); // served after the UI's redirect, never by the UI origin
     expect(res.headers.get("content-type")).toContain("text/html");
     const html = await res.text();
     expect(html).toContain("<title>built</title>");
@@ -373,7 +387,7 @@ describe("request-handler extraction preserves the recorded legacy contract", ()
       mediaWithRange: await outcome(`/videos/sample.mp4?token=${OP_TOKEN}`, { headers: { Range: "bytes=2-5" } }),
       appDeepLink: await outcome("/apps/spa-app/dashboard/settings"),
       appTraversal: await outcome(`/apps/spa-app/%2e%2e%2fsecret.txt`),
-      protectedTraversal: await outcome(`/files/%2e%2e%2fsecret.txt?token=${OP_TOKEN}`),
+      protectedTraversal: await outcome(`/files/%2e%2e%2fsecret.txt?ft=${deriveFilesLinkCapability(OP_TOKEN)}`),
     };
 
     expect(actual).toEqual({
@@ -387,6 +401,27 @@ describe("request-handler extraction preserves the recorded legacy contract", ()
     });
     expect(actual.appDeepLink.body).toContain("<title>built</title>");
     expect(actual.appDeepLink.body).toContain("__LAX_CONNECTOR_TOKEN__");
+  });
+
+  it("never renders an agent path on the UI origin, whatever the token", async () => {
+    for (const path of ["/apps/spa-app/", `/apps/spa-app/?token=${OP_TOKEN}`, "/dashboards/spa-app"]) {
+      const res = await fetch(`${base()}${path}`, { redirect: "manual", headers: { Authorization: `Bearer ${OP_TOKEN}` } });
+      expect(res.status, path).toBe(302);
+      const location = res.headers.get("location") ?? "";
+      expect(new URL(location).origin, path).toBe(agentOrigin());
+      expect(location, path).not.toContain(OP_TOKEN);
+    }
+    const files = await fetch(`${base()}/files/secret.txt?token=${OP_TOKEN}`, { redirect: "manual" });
+    expect(files.status).toBe(401);
+  });
+
+  it("serves workspace SVG media on the UI origin with no origin and no script", async () => {
+    mkdirSync(join(tmpDir, "workspace", "images"), { recursive: true });
+    writeFileSync(join(tmpDir, "workspace", "images", "chart.svg"), "<svg xmlns='http://www.w3.org/2000/svg'><script>parent.desktop</script></svg>");
+    const res = await fetch(`${base()}/images/chart.svg?token=${OP_TOKEN}`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-security-policy")).toBe("sandbox; script-src 'none'");
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
   });
 
   it("keeps query-token authentication confined to the browser report allowlist", async () => {
@@ -413,14 +448,19 @@ describe("request-handler extraction preserves the recorded legacy contract", ()
       "content-security-policy", "x-content-type-options", "x-frame-options",
       "referrer-policy", "permissions-policy", "cache-control", "pragma",
     ].map(name => [name, core.headers.get(name)]))).toEqual({
-      "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:*; media-src 'self' blob: mediastream:; frame-src 'self' http://127.0.0.1:* http://localhost:*; frame-ancestors 'self'; object-src 'none'; base-uri 'self'; form-action 'self'",
+      "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:*; media-src 'self' blob: mediastream:; frame-src 'self' http://127.0.0.1:* http://localhost:*; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self'",
       "x-content-type-options": "nosniff",
-      "x-frame-options": "SAMEORIGIN",
+      "x-frame-options": "DENY",
       "referrer-policy": "no-referrer",
       "permissions-policy": "camera=(self), microphone=(self), geolocation=()",
       "cache-control": "no-cache, must-revalidate",
       pragma: "no-cache",
     });
+
+    // Settings frames account.html; it is the one UI page that may be framed.
+    const account = await fetch(`${base()}/account.html`);
+    expect(account.headers.get("content-security-policy")).toContain("frame-ancestors 'self';");
+    expect(account.headers.get("x-frame-options")).toBe("SAMEORIGIN");
 
     const page = await fetch(`${base()}/bundle.html`);
     const html = await page.text();

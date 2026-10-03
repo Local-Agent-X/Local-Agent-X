@@ -349,8 +349,8 @@ export class MCPManager {
     }
     // Default template. Servers ship `disabled: true` — flip the flag and
     // make sure the referenced secret exists in the vault to enable.
-    // Placeholders `${HOME}` and `${secret:NAME}` resolve at load time so
-    // a single config syncs across machines without per-machine forks.
+    // Placeholders `${HOME}` and `${secret:NAME}` resolve at load time so the
+    // file holds no secret value (each stays in the vault) and no home path.
     //
     // No `filesystem` entry: it's in REDUNDANT_MCP_SERVERS (never spawned —
     // native read/write/edit cover it), so seeding it would only show a

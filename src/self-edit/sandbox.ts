@@ -26,13 +26,12 @@ import { releaseWorktreeSlot } from "../agency/worktree-core.js";
 import { recordMerge } from "./rollback.js";
 import { gateDeps, gateBuild, gateBind, gateSmoke, killProbe, SKIPPED_GATE, type GateResult } from "./sandbox-gates.js";
 import { runSurgeon, formatSurgeonOutput } from "./surgeon.js";
-import { releaseGlobalSelfEditLock, formatGlobalLockBusy } from "./global-lock.js";
+import { acquireGlobalSelfEditLock, releaseGlobalSelfEditLock, formatGlobalLockBusy } from "./global-lock.js";
 import { fingerprintParentDeps, restoreParentDeps } from "./parent-deps-guard.js";
 import { scanWorktreeForStagedSecrets } from "./exfil-scan.js";
 import { refuteSelfEditMerge } from "./refute-merge.js";
 import { redactSecrets } from "../security/secrets/index.js";
 import { slugify, nowSlug, pickProbePort } from "./sandbox-naming.js";
-import { acquireSandboxLease } from "./sandbox-cancellation.js";
 export { pickProbePort } from "./sandbox-naming.js";
 import { createLogger } from "../logger.js";
 const logger = createLogger("self-edit.sandbox");
@@ -74,8 +73,8 @@ export interface SandboxOpts {
 // ── Main entry ─────────────────────────────────────────────────────────────
 
 export async function runSelfEditInSandbox(opts: SandboxOpts): Promise<SandboxResult> {
-  const lease = await acquireSandboxLease(opts.task, opts.signal);
-  const { lock, signal } = lease;
+  const lock = await acquireGlobalSelfEditLock({ task: opts.task });
+  const signal = opts.signal ?? new AbortController().signal;
   if (!lock.acquired) {
     return {
       ok: false, output: "",
@@ -280,7 +279,6 @@ export async function runSelfEditInSandbox(opts: SandboxOpts): Promise<SandboxRe
     }
 
     progress("All gates passed — merging into main…");
-    lease.seal();
     signal.throwIfAborted();
     const merge = mergeWorktree(name);
     if (!merge.merged) {

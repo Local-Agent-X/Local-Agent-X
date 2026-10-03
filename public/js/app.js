@@ -44,22 +44,21 @@ function navigate(route) {
     }
   });
 
-  // Handle pinned page via iframe.
-  // Always cache-bust on click so file changes from agents/workers show up.
-  // Previously: only reloaded if URL changed → clicking the same tab after
-  // an edit kept showing the OLD version until the user manually refreshed
-  // the whole browser. Real workflow blocker since the agent/worker just
-  // edited the app the user wants to verify.
+  // Handle pinned page via iframe. A pin is agent-built content: agentFrameTarget
+  // (shared-md.js) loads it off this origin, cache-busted on every click so an
+  // agent's edits show, and says whether the frame may keep that origin.
   const pinPage = document.getElementById('page-pin');
   const pinIframe = document.getElementById('pin-iframe');
   if (isPin && pinPage && pinIframe) {
     const pinName = route.slice(4); // strip "pin:"
     const pin = _sidebarPins.find(p => p.name === pinName);
     if (pin) {
-      // Pass auth token + cache-bust timestamp so iframe always reloads fresh.
-      const sep = pin.url.includes('?') ? '&' : '?';
-      const pinUrl = pin.url + sep + 'token=' + AUTH_TOKEN + '&_t=' + Date.now();
-      pinIframe.src = pinUrl;
+      laxAgentReady.then(() => {
+        const target = agentFrameTarget(pin.url);
+        if (!target) return;
+        pinIframe.sandbox.toggle('allow-same-origin', target.ownOrigin);
+        pinIframe.src = target.src;
+      });
       pinPage.classList.add('active');
     }
   } else if (pinPage) {

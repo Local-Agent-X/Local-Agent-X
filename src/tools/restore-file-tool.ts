@@ -6,6 +6,28 @@ import type { ToolDefinition } from "../types.js";
 import { ok, err } from "./result-helpers.js";
 
 /**
+ * The ref restore_file hands to restoreDeleted. Exported so the control-file
+ * gate looks up the same journal entry this call will restore: the file
+ * written is the journalled original, which a same-basename ref reaches from
+ * anywhere.
+ *
+ * A bare name (no directory part) is a basename / in-trash-name reference and
+ * must reach safe-delete UNRESOLVED — anchoring it at the workspace would
+ * defeat restoreFromTaskTrash's basename matching. Anything with a directory
+ * part (or ~) resolves through the same resolver every other file tool and
+ * the security gate use. An explicit destination is always resolved:
+ * safe-delete treats a ref with a directory part as the restore target for
+ * recovered entries.
+ */
+export function restoreRef(args: Record<string, unknown>): string {
+  const sid = sessionIdOf(args);
+  const rawPath = String(args.path);
+  const rawDest = typeof args.destination === "string" && args.destination ? args.destination : undefined;
+  if (rawDest !== undefined) return resolveAgentPath(rawDest, sid);
+  return /[\\/]/.test(rawPath) || rawPath.startsWith("~") ? resolveAgentPath(rawPath, sid) : rawPath;
+}
+
+/**
  * restore_file — the inverse leg of delete_file's task-trash route.
  *
  * delete_file moves an AGENT-CREATED file (task-artifact registry hit) into
@@ -51,29 +73,15 @@ export const restoreFileTool: ToolDefinition = {
     // the OS bin or the ~/.lax trash restores without one.
     const sid = sessionIdOf(args);
     const rawPath = String(args.path);
-    const rawDest = typeof args.destination === "string" && args.destination ? args.destination : undefined;
-    // A bare name (no directory part) is a basename / in-trash-name reference
-    // and must reach safe-delete UNRESOLVED — anchoring it at the workspace
-    // would defeat restoreFromTaskTrash's basename matching. Anything with a
-    // directory part (or ~) resolves through the same resolver every other
-    // file tool and the security gate use. An explicit destination is always
-    // resolved: safe-delete treats a ref with a directory part as the restore
-    // target for recovered entries.
-    //
     // Gate/target honesty: the pre-dispatch write gate evaluated the CALLER-
     // SUPPLIED arg spellings (path/destination), while the path actually
-    // written for a non-recovered entry is the manifest's recorded `original`.
-    // That is safe, not a bypass: `original` was created by a gated
-    // create-class write under this same confinement (and delete_file's gate
-    // checked the identical path again on the way into the trash), so the
-    // restore target has already passed the exact boundary this call's arg
-    // just passed.
-    const ref = rawDest !== undefined
-      ? resolveAgentPath(rawDest, sid)
-      : /[\\/]/.test(rawPath) || rawPath.startsWith("~")
-        ? resolveAgentPath(rawPath, sid)
-        : rawPath;
-    const result = restoreDeleted(ref, sid ? { sessionId: sid } : {});
+    // written for a non-recovered entry is the recorded `original`. For
+    // confinement that is safe, not a bypass: the bytes go back to the path
+    // they were deleted from, and the records naming that path cannot be
+    // rewritten without the user's yes (laxApprovalGatedFile). Whether it is
+    // a file the app acts on is judged on the journalled original itself
+    // (control-file-gate.ts).
+    const result = restoreDeleted(restoreRef(args), sid ? { sessionId: sid } : {});
     if ("error" in result) {
       // Without a session the task tier is unreachable, and that is usually
       // the real reason a restore found nothing — say so rather than leaving

@@ -11,7 +11,9 @@
  * word past wrappers) and matches argv, never a substring. Alongside it this
  * tracks the directory each position runs in (`cd x && git push`, `git -C x
  * push`, `vercel --cwd x`), because the review has to look at the repository
- * the command will actually publish from.
+ * the command will actually publish from, and the variables the command sets
+ * on the way (`export GIT_SSH_COMMAND=…; git push`), because a git push's
+ * review has to know what it runs with.
  *
  * Cheap by construction: a call that is not a shell spawner costs one Set
  * lookup; a shell call costs one lex of its command line. Nothing here touches
@@ -20,9 +22,12 @@
 import { homedir } from "node:os";
 import { isAbsolute, resolve } from "node:path";
 import { commandPositions } from "./security/layer/shell-command-positions.js";
+import { execBasename } from "./security/layer/shell-lex.js";
 import { mapMsysDrivePath } from "./workspace/paths.js";
 import { workspaceRoot } from "./config.js";
-import { matchPublishArgv, normalizeBin, unwrapPackageRunner, type PublishKind } from "./publish-operation-table.js";
+import {
+  assignedNames, matchPublishArgv, normalizeBin, pastAssignments, unwrapPackageRunner, type GitOption, type PublishKind,
+} from "./publish-operation-table.js";
 
 export type { PublishKind } from "./publish-operation-table.js";
 
@@ -40,13 +45,19 @@ export interface PublishOperation {
   cwdUncertain?: boolean;
   /** git-push: the arguments after `push`, verbatim. */
   pushArgs?: string[];
+  /** git-push: git's own options before `push` (`-c k=v`, `--git-dir d`), in order. */
+  gitOptions?: GitOption[];
+  /** git-push: names of the variables set for it — assigned in front of git,
+   *  set earlier in the command (`export`, `$env:`, cmd's `set`), or passed in
+   *  the tool's own `env` argument. */
+  gitEnv?: string[];
   /** gh pr merge: the PR it names; gh release create: the tag. */
   explicitTarget?: string;
 }
 
-/** Tools that spawn a shell on `args.command` (or the structured
- *  `{executable, args}` form). Same set as isDestructiveCommand's spawners. */
-const SHELL_SPAWNERS: ReadonlySet<string> = new Set(["bash", "shell", "ari_shell", "process_start", "process_restart"]);
+/** Tools that spawn a shell on `args.command`. Same set as
+ *  isDestructiveCommand's spawners. */
+const SHELL_SPAWNERS: ReadonlySet<string> = new Set(["bash", "shell", "process_start", "process_restart"]);
 
 /**
  * Registered LAX tools whose whole purpose is to publish or deploy, by name.
@@ -77,22 +88,10 @@ export function publishOperations(toolName: string, args: Record<string, unknown
   const byName = PUBLISH_TOOLS[tool];
   if (byName) return [{ kind: byName, label: tool, tool, cwd: baseCwd(args) }];
   if (!SHELL_SPAWNERS.has(tool)) return [];
-  const command = shellCommandText(args);
-  if (!command) return [];
-  return shellPublishes(tool, command, baseCwd(args));
-}
-
-function shellCommandText(args: Record<string, unknown>): string {
-  if (typeof args.command === "string") return args.command;
-  if (typeof args.executable === "string") {
-    const parts = Array.isArray(args.args) ? args.args.map((a) => quoteIfNeeded(String(a))) : [];
-    return [quoteIfNeeded(args.executable), ...parts].join(" ");
-  }
-  return "";
-}
-
-function quoteIfNeeded(word: string): string {
-  return /[\s;&|]/.test(word) ? `"${word.replace(/"/g, "")}"` : word;
+  if (typeof args.command !== "string" || !args.command) return [];
+  // process_start / process_restart run the command with extra variables.
+  const toolEnv = args.env && typeof args.env === "object" && !Array.isArray(args.env) ? Object.keys(args.env) : [];
+  return shellPublishes(tool, args.command, baseCwd(args), toolEnv);
 }
 
 /** Where the tool starts the command: the stamped worktree/session root
@@ -130,28 +129,57 @@ function cdTarget(words: string[], at: number): string | undefined {
   return "~";
 }
 
-function shellPublishes(tool: string, command: string, start: string): PublishOperation[] {
+// Statements that set a variable for the rest of their shell body: bash's
+// export family, cmd's `set NAME=value`, and PowerShell's `$env:NAME = …`.
+// Assignments with no command after them are the fourth form. The export
+// family counts every NAME it names, with or without `=value`: the value can
+// come from anywhere (`read V <<< x; export V`, `printf -v V x; declare -x V`).
+const EXPORT_FAMILY = new Set(["export", "declare", "typeset", "readonly", "local"]);
+const NAME_WORD = /^([A-Za-z_][A-Za-z0-9_]*)(?:\+?=|$)/;
+const PS_ENV_ASSIGNMENT = /^\$\{?env:([A-Za-z_][A-Za-z0-9_]*)\}?(\+?=)?/i;
+
+/** The names an environment statement sets, or null when `words` is not one.
+ *  `cmdAt` is the command word past the leading assignments (pastAssignments). */
+function envStatement(words: string[], at: number, cmdAt: number, bin: string): string[] | null {
+  if (EXPORT_FAMILY.has(bin)) {
+    return [...assignedNames(words.slice(at, cmdAt)), ...words.slice(cmdAt + 1).flatMap((w) => NAME_WORD.exec(w)?.[1] ?? [])];
+  }
+  if (cmdAt === words.length || bin === "set") return assignedNames(words.slice(at));
+  const ps = PS_ENV_ASSIGNMENT.exec(words[cmdAt]);
+  return ps && (ps[2] || /^\+?=/.test(words[cmdAt + 1] ?? "")) ? [ps[1]] : null;
+}
+
+function shellPublishes(tool: string, command: string, start: string, toolEnv: string[]): PublishOperation[] {
   const found: PublishOperation[] = [];
-  // cwd per nesting depth: a nested shell body starts in its parent's
-  // directory, and a `cd` inside it does not leak back out.
-  const cwdAt: Array<{ dir: string; uncertain: boolean }> = [{ dir: start, uncertain: false }];
+  // The directory and the variables set so far, per nesting depth: a nested
+  // shell body starts with its parent's, and a `cd` or `export` inside it does
+  // not leak back out.
+  const bodyAt: Array<{ dir: string; uncertain: boolean; env: string[] }> = [{ dir: start, uncertain: false, env: toolEnv }];
   let lastDepth = 0;
   for (const pos of commandPositions(command).positions) {
-    if (pos.depth > lastDepth) cwdAt[pos.depth] = { ...cwdAt[pos.depth - 1] };
-    cwdAt.length = pos.depth + 1;
+    if (pos.depth > lastDepth) bodyAt[pos.depth] = { ...bodyAt[pos.depth - 1] };
+    bodyAt.length = pos.depth + 1;
     lastDepth = pos.depth;
-    const here = cwdAt[pos.depth];
-    const bin = normalizeBin(pos.bin);
-    if (CD_BINS.has(bin)) {
-      const target = cdTarget(pos.words, pos.at);
-      const next = target === undefined ? null : resolveDir(here.dir, target);
-      cwdAt[pos.depth] = next ? { dir: next, uncertain: here.uncertain } : { dir: here.dir, uncertain: true };
+    const here = bodyAt[pos.depth];
+    // The command word past any leading assignments: in `X=a/cd b` it is `b`.
+    const cmdAt = pastAssignments(pos.words, pos.at);
+    const bin = normalizeBin(execBasename(pos.words[cmdAt] ?? ""));
+    const set = envStatement(pos.words, pos.at, cmdAt, bin);
+    if (set) {
+      bodyAt[pos.depth] = { ...here, env: [...here.env, ...set] };
       continue;
     }
-    const at = unwrapPackageRunner(pos.words, pos.at);
+    if (CD_BINS.has(bin)) {
+      const target = cdTarget(pos.words, cmdAt);
+      const next = target === undefined ? null : resolveDir(here.dir, target);
+      bodyAt[pos.depth] = next ? { ...here, dir: next } : { ...here, uncertain: true };
+      continue;
+    }
+    const at = unwrapPackageRunner(pos.words, cmdAt);
     const match = matchPublishArgv(pos.words, at);
     if (!match) continue;
     const dir = match.dirArg === undefined ? here.dir : resolveDir(here.dir, match.dirArg);
+    const gitEnv = match.kind === "git-push" ? [...new Set([...here.env, ...(match.gitEnv ?? [])])] : [];
     found.push({
       kind: match.kind,
       label: match.label,
@@ -160,6 +188,8 @@ function shellPublishes(tool: string, command: string, start: string): PublishOp
       cwd: dir ?? here.dir,
       ...(here.uncertain || dir === null ? { cwdUncertain: true } : {}),
       ...(match.pushArgs ? { pushArgs: match.pushArgs } : {}),
+      ...(match.gitOptions ? { gitOptions: match.gitOptions } : {}),
+      ...(gitEnv.length ? { gitEnv } : {}),
       ...(match.explicitTarget ? { explicitTarget: match.explicitTarget } : {}),
     });
   }

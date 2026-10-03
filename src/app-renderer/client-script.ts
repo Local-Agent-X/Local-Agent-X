@@ -3,18 +3,21 @@
  * back to the server, tab switching, state polling, data-bind application,
  * and action-queue execution with DOM-safe sanitization.
  *
- * Only appId and apiBase are interpolated (both JSON-stringified). The rest is
+ * Only appId, apiBase and dataToken are interpolated (JSON-stringified). The rest is
  * a static string so the nonce-protected CSP can apply.
  */
 
-export function renderClientScript(appId: string, apiBase: string): string {
+export function renderClientScript(appId: string, apiBase: string, dataToken?: string): string {
+  // Served from the agent origin the page has no stored token; it gets the
+  // app-data capability for its own id (app-connector-auth.ts) instead.
+  const auth = dataToken === undefined ? "localStorage.getItem('lax_token') || ''" : JSON.stringify(dataToken);
   return `
 (function() {
   'use strict';
 
   var APP_ID = ${JSON.stringify(appId)};
   var API = ${JSON.stringify(apiBase)};
-  var AUTH = localStorage.getItem('lax_token') || '';
+  var AUTH = ${auth};
   var headers = { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + AUTH };
 
   // ── Event dispatch to server ──

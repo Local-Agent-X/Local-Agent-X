@@ -19,7 +19,8 @@ import {
   resetWorktree,
   runCommandInWorktreeAsync,
 } from "../agency/worktree.js";
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
+import { composeGitArgs } from "../git-safety.js";
 import type { AutopilotConfig, RoundOutcome } from "./types.js";
 
 import { createLogger } from "../logger.js";
@@ -46,18 +47,21 @@ function countLines(filePath: string): number {
 /**
  * Get LOC for a file at HEAD (the previous good commit) — used to compute
  * delta. If the file didn't exist at HEAD (newly created), prevLoc = 0.
+ * Counted as `wc -l` counts: newline characters.
+ *
+ * The path is a name the round's agent chose, so it is one argv entry and
+ * never shell text, and the read runs no fsmonitor hook or textconv filter
+ * the worktree's config could name.
  */
 function getPrevLoc(worktreePath: string, relPath: string): number {
   try {
-    const out = execSync(`git show HEAD:"${relPath}" 2>/dev/null | wc -l`, {
-      cwd: worktreePath,
-      encoding: "utf-8",
-      shell: process.platform === "win32" ? "bash" : undefined,
-      timeout: 10_000,
-      windowsHide: true,
-    });
-    const n = parseInt(out.trim(), 10);
-    return Number.isFinite(n) ? n : 0;
+    const out = execFileSync(
+      "git",
+      composeGitArgs(["-c", "core.fsmonitor=false", "show", "--no-textconv", `HEAD:${relPath}`]),
+      // A lockfile at HEAD is past execFileSync's 1 MiB default.
+      { cwd: worktreePath, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 64 * 1024 * 1024, timeout: 10_000, windowsHide: true },
+    );
+    return out.split("\n").length - 1;
   } catch {
     return 0;
   }

@@ -48,6 +48,13 @@ process.env.LAX_NO_NATIVE_TRASH = "1";
 // every child it spawns: only local-path remotes work, and a test that needs a
 // remote builds a bare one on disk.
 process.env.GIT_ALLOW_PROTOCOL = "file";
+// A unit test never drives the machine's Windows shell cage. With the helper
+// installed (a developer box, not a CI runner), guarded mode is live: a caged
+// spawn grants the sandbox account ACLs on real folders, 10+ s each, and the
+// outcome depends on what the box has installed. The helper is looked up under
+// %ProgramData% or LAX_WIN_CAGE_HELPER; a test that needs one points there itself.
+process.env.ProgramData = join(home, "ProgramData");
+delete process.env.LAX_WIN_CAGE_HELPER;
 
 // A unit test never reaches a real local model server. Two tests sent warms
 // to the developer's running Ollama on every run (2026-09-28) because their

@@ -381,9 +381,9 @@ describe("SecurityLayer kernel-class dispatch", () => {
   // ── 8: shell-class non-bash ──
 
   describe("shell-class non-bash tools", () => {
-    // Shell-class non-bash tools (process_start, ari_shell) now route their
-    // command through the SAME evaluateShellCommand scan bash gets, instead of
-    // an unconditional allow — closing the structured/background-shell bypass.
+    // Shell-class non-bash tools (process_start) now route their command
+    // through the SAME evaluateShellCommand scan bash gets, instead of an
+    // unconditional allow — closing the background-shell bypass.
     it("process_start: a benign command is allowed", () => {
       const sec = makeLayer();
       const d = sec.evaluate({

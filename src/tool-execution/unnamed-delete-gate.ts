@@ -42,6 +42,9 @@ import { isHarnessRow } from "../harness-rows.js";
 import { containsHarnessMarker } from "../harness-text.js";
 import { shellDeleteTargets } from "./shell-delete-targets.js";
 import { isTaskArtifact } from "../data-lineage/task-artifacts.js";
+import type { ToolDefinition } from "../types.js";
+import { coerceArgs, repairJson, repairMarkerKeys } from "./arg-repair.js";
+import { withoutInternalArgs } from "./internal-args.js";
 
 export const GATED_DELETE_TOOL = "delete_file";
 const UNTRUSTED = /EXTERNAL_UNTRUSTED_CONTENT|INJECTION WARNING/i;
@@ -97,23 +100,42 @@ export interface UnnamedDeleteCall {
 /** Shell tools whose command may delete a file one at a time. EXP-18 showed
  *  the ladder: `delete_file` refused → `rm -rf` carded by the floor → per-file
  *  `rm`, which nothing covered. The rule is about the act, not the tool. */
-export const GATED_SHELL_TOOLS: ReadonlySet<string> = new Set(["bash", "shell", "ari_shell"]);
+export const GATED_SHELL_TOOLS: ReadonlySet<string> = new Set(["bash", "shell"]);
 
-/** The file paths a tool call would delete, one entry per file. */
-export function deleteTargetsOf(tc: { name: string; arguments: string }): string[] {
-  let args: Record<string, unknown> = {};
-  try { args = JSON.parse(tc.arguments || "{}") as Record<string, unknown>; } catch { return []; /* unparseable args fail later, on their own */ }
+type ArgSchema = Parameters<typeof repairMarkerKeys>[1];
+
+/** The arguments the call will run with, not the string the model sent: the
+ *  resolve phase's JSON repair and its drop of model-written `_` keys, then
+ *  validateArgs' key and type repair, in that order. Reading the raw string hid
+ *  `{"bash<|message|><atem:parameter name=\"command": "rm notes.md"}` from the
+ *  card, and validateArgs then renamed the key and the file was deleted with no
+ *  undo. The drop must come first because a marker key is renamed only when its
+ *  clean name is free: a `_<|message|>command` decoy kept here took `command`,
+ *  while the dispatcher dropped it and renamed the real rm. The one difference
+ *  is a model-written `_raw`, which the dispatcher keeps to skip repair: dropping
+ *  it here can only show the card more targets, never fewer. Arguments no
+ *  repair can parse run nothing, so they delete nothing. */
+function dispatchedArgs(raw: string, schema: ArgSchema): Record<string, unknown> {
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw || "{}"); } catch {
+    const repaired = repairJson(raw);
+    if (!repaired.ok) return {};
+    parsed = repaired.value;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+  const modelArgs = withoutInternalArgs(parsed as Record<string, unknown>);
+  return coerceArgs(repairMarkerKeys(modelArgs, schema).coerced, schema).coerced;
+}
+
+/** The file paths a tool call would delete, one entry per file. `tools` is the
+ *  dispatch's tool map: its schemas drive the same repair the call gets. */
+export function deleteTargetsOf(tc: { name: string; arguments: string }, tools?: ReadonlyMap<string, ToolDefinition>): string[] {
+  const args = dispatchedArgs(tc.arguments, tools?.get(tc.name)?.parameters as ArgSchema);
   if (tc.name === GATED_DELETE_TOOL) {
     const path = String(args.path ?? "");
     return path ? [path] : [];
   }
-  if (GATED_SHELL_TOOLS.has(tc.name)) {
-    if (typeof args.command === "string") return shellDeleteTargets(args.command);
-    if (typeof args.executable === "string") {
-      const parts = Array.isArray(args.args) ? args.args.map((a) => String(a)) : [];
-      return shellDeleteTargets([args.executable, ...parts].join(" "));
-    }
-  }
+  if (GATED_SHELL_TOOLS.has(tc.name) && typeof args.command === "string") return shellDeleteTargets(args.command);
   return [];
 }
 
@@ -142,6 +164,9 @@ export interface UnnamedDeleteScope {
    *  file tools did not record was written by something the agent ran — or by
    *  the user mid-request, which is why it earns a notice, not silence. */
   requestStartedAt?: number;
+  /** The dispatch's tool map, whose schemas repair each call's arguments the
+   *  way the dispatcher will before the call runs. */
+  tools?: ReadonlyMap<string, ToolDefinition>;
 }
 
 /** Did this session's agent create the file with one of its file tools? */
@@ -192,7 +217,7 @@ export function unnamedDeletes(
   const noticed: UnnamedDeleteCall[] = [];
   const trusted = !!scope.sessionId && !scope.untrustedSession;
   for (const tc of toolCalls) {
-    for (const path of deleteTargetsOf(tc)) {
+    for (const path of deleteTargetsOf(tc, scope.tools)) {
       if (tc.name === GATED_DELETE_TOOL && absent(path)) continue;
       const folderFiles = tc.name === GATED_DELETE_TOOL ? folderTarget(path) : null;
       if (folderFiles !== null) out.push({ id: tc.id, path, folderFiles });

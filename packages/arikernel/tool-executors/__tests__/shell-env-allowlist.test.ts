@@ -8,12 +8,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 // dedicated to the env-allowlist assertion because the module-level spawn mock
 // would otherwise interfere with the real-spawn tests in shell-injection.test.ts.
 let capturedEnv: Record<string, string | undefined> = {};
+let capturedCmd = "";
 vi.mock("node:child_process", () => ({
 	spawn: (
-		_cmd: string,
+		cmd: string,
 		_args: readonly string[],
 		options: { env?: Record<string, string | undefined> },
 	) => {
+		capturedCmd = cmd;
 		capturedEnv = options?.env ?? {};
 		const child = new EventEmitter() as EventEmitter & {
 			stdout: Readable;
@@ -26,7 +28,9 @@ vi.mock("node:child_process", () => ({
 	},
 }));
 
+import { delimiter } from "node:path";
 import { ShellExecutor } from "../src/shell.js";
+import { resolveSystemExecutable, systemToolDirs } from "../src/system-tools.js";
 
 // The full set the sanitizer is allowed to forward (mirrors shell.ts).
 const ALLOWED = new Set([
@@ -79,7 +83,9 @@ describe("ShellExecutor environment allowlist (FIX 2)", () => {
 			expect(ALLOWED.has(key) || key.startsWith("LC_")).toBe(true);
 		}
 
-		// PATH (allowlisted) is forwarded so the child can resolve binaries.
-		expect(capturedEnv.PATH).toBeDefined();
+		// The child gets the fixed system tool directories as PATH, never the
+		// server's, and is spawned as an absolute file so nothing is looked up.
+		expect(capturedEnv.PATH).toBe(systemToolDirs().join(delimiter));
+		expect(capturedCmd).toBe(resolveSystemExecutable("echo"));
 	});
 });

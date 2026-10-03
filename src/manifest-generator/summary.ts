@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import { MANIFEST_PATH } from "./paths.js";
 import type { AppManifest } from "./types.js";
 import { FLIPPABLE_SETTINGS } from "../settings-schema.js";
+import { SPENDING_CAP_SETTINGS } from "../settings-change-direction.js";
 
 /**
  * Security-settings line for the App Map — DERIVED from the settings
@@ -14,8 +15,9 @@ import { FLIPPABLE_SETTINGS } from "../settings-schema.js";
 export function securitySettingsLine(): string {
   const fields = FLIPPABLE_SETTINGS.filter((s) => s.protected).map((s) => s.field).join("/");
   return (
-    `- **Security settings** (${fields}): when the user asks you to change one, use the \`setting\` tool with that field — it takes effect immediately. ` +
-    `That IS how you turn a capability back on at the user's request. Just don't change a security setting unless the user explicitly asked, ` +
+    `- **Security settings** (${fields}) and **spending caps** (${[...SPENDING_CAP_SETTINGS].join("/")}): when the user asks you to change one, use the \`setting\` tool with that field. ` +
+    `A change that only narrows what you may do or spend (a capability off, a cap lowered) applies at once; one that widens it asks the user to approve first. ` +
+    `That IS how you turn a capability back on at the user's request. Just don't widen one unless the user explicitly asked, ` +
     `and never silently re-enable one to get around a block.`
   );
 }
@@ -68,9 +70,6 @@ export function getManifestSummary(): string {
     `### API Routes: ${manifest.apiRoutes.length} endpoints — call via http_request when no dedicated tool fits`,
     ...summarizeRoutesByResource(manifest.apiRoutes),
     "",
-    "### Config Files (your safe zone — edit freely)",
-    ...manifest.configFiles.filter(c => c.agentEditable).map(c => `- \`${c.path}\` — ${c.description}`),
-    "",
     "### Three Lanes — ALWAYS pick the right one",
     "",
     "**Lane 1: CONTROL THE APP AT RUNTIME → use API routes via `http_request`**",
@@ -78,9 +77,9 @@ export function getManifestSummary(): string {
     "The API changes server-side state. The user's browser updates immediately (via WebSocket push or next load).",
     "NEVER use the `browser` tool to interact with your own app — that opens a separate browser the user can't see.",
     "",
-    "**Lane 2: CHANGE YOURSELF → edit config/ files**",
+    "**Lane 2: CHANGE YOURSELF → `self_edit`, in developer mode only**",
     "For changing how you think, behave, or what tools you have.",
-    "Edit files in `config/` directly with `read` + `edit`. Changes hot-reload — no restart needed.",
+    "`config/` is your own instructions, loaded into every chat, so your file tools and shell cannot write it. Changes there go through `self_edit`, which runs only when the user has turned developer mode on, and hot-reload once merged. With developer mode off, tell the user what change is needed rather than trying another way.",
     "",
     "**Lane 3: EXTERNAL WEBSITES → use `browser` tool**",
     "For Google, Amazon, social media, any site that isn't this app.",
@@ -100,8 +99,7 @@ export function getManifestSummary(): string {
     "- **Build a standalone app**: use `build_app` tool — creates in `workspace/apps/{name}/`",
     "- **Pin/unpin sidebar**: use `sidebar_pin` / `sidebar_unpin` tools",
     "- **Clear sidebar Conversations list**: use `sidebar_clear` (frontend-only; do NOT call `http_request DELETE /api/sessions` — that destroys backend session data)",
-    "- **Change system prompt**: `read` + `edit` on `config/system-prompt.md` (hot-reloads)",
-    "- **Add/remove tools**: `read` + `edit` on `config/tools.json`",
+    "- **Turn a tool family on or off**: the `setting` tool (`enableShell`, `enableHttp`, `enableBrowser`, `enableComputerControl`)",
     "",
     "**IMPORTANT**: Before creating anything new, check this map. If it already exists, USE the existing feature via its API route.",
   ];

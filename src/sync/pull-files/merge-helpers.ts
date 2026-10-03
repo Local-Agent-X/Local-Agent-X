@@ -90,6 +90,4 @@ export const MERGED_BRAIN_FILES: ReadonlySet<string> = new Set([
   "tasks.json",
   "calendar.json",
   "custom-missions.json",
-  "mcp.json",
-  "hooks.json",
 ]);

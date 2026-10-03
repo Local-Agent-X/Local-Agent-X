@@ -973,7 +973,7 @@ describe("completion-gate table — single ordering source", () => {
 describe("completion-gate context — what decideTurnOutcome hands each gate", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("passes {op, turnIdx, toolCalls, assistantText} — the assistant text is the input's, verbatim", async () => {
+  it("passes {op, turnIdx, toolCalls, assistantText, signal} — the assistant text is the input's, verbatim", async () => {
     const { COMPLETION_GATES } = await import("./decide-outcome-gates.js");
     const gate = COMPLETION_GATES.find((g) => g.name === "render-verify")!;
     const spy = vi.spyOn(gate, "evaluate").mockResolvedValue({ reopen: false });
@@ -982,7 +982,7 @@ describe("completion-gate context — what decideTurnOutcome hands each gate", (
       const r = await decideTurnOutcome(input({ turnIdx: 3, modelSignaledDone: true, assistantText: text }));
       expect(r.terminalReason).toBe("done");
       expect(spy).toHaveBeenCalledTimes(1);
-      expect(spy).toHaveBeenCalledWith({ op, turnIdx: 3, toolCalls: [bashCall], assistantText: text });
+      expect(spy).toHaveBeenCalledWith({ op, turnIdx: 3, toolCalls: [bashCall], assistantText: text, signal: expect.any(AbortSignal) });
     } finally {
       spy.mockRestore();
     }

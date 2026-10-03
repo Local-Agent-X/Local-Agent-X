@@ -114,9 +114,11 @@ describe("SC-10 · kernel↔aggregate seam — a tainted POST surfaces the taint
     // is not a recovery, so a message offering it again must fail here.
     expect(content).toMatch(/Declassify & retry/);
     expect(content).not.toMatch(/end the session/i);
-    // Host-allowlist blocker → trusted-destinations / egress-allowlist.json.
+    // Host-allowlist blocker → the user allows the host in Settings. The file
+    // behind it is a security switch the file tools refuse to write.
     expect(content).toMatch(/trusted-destinations list/i);
-    expect(content).toMatch(/egress-allowlist\.json/i);
+    expect(content).toContain("ask the user to allow the host in Settings → Security → Web access");
+    expect(content).not.toMatch(/egress-allowlist\.json/i);
 
     // The structured blockers array carries the same per-layer breakdown.
     const blockers = result!.metadata?.blockers as Array<{ layer: string }> | undefined;

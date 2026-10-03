@@ -1,4 +1,5 @@
 import type { ToolDefinition, ToolResult } from "../../types.js";
+import { withoutInternalArgs } from "../../tool-execution/internal-args.js";
 
 /**
  * Collapse a family of `prefix_action` tools into ONE tool with an `action`
@@ -51,6 +52,21 @@ function firstSentence(text: string): string {
   return (m ? m[0] : text).slice(0, 160);
 }
 
+/**
+ * The arguments a family call hands its action: nested `params` merged over
+ * the flat args, so both call shapes work. `params` is the model's own object,
+ * so it loses its `_` keys first: the executor's stamps in the flat args
+ * (_sessionId, _operationId, …) are the only ones the action may see. A
+ * wrapper that reads a family call's arguments uses this too, and passes the
+ * call on as it came, because stamps moved into `params` are dropped here.
+ */
+export function familyActionArgs(args: Record<string, unknown>): Record<string, unknown> {
+  const { action: _action, params, ...rest } = args;
+  return params && typeof params === "object" && !Array.isArray(params)
+    ? { ...rest, ...withoutInternalArgs(params as Record<string, unknown>) }
+    : rest;
+}
+
 export function collapseFamily(opts: CollapseFamilyOpts): ToolDefinition {
   const actionNames = Object.keys(opts.actions);
   const docs = actionNames.map((a) => {
@@ -91,15 +107,7 @@ export function collapseFamily(opts: CollapseFamilyOpts): ToolDefinition {
           isError: true,
         };
       }
-      // Merge nested params over flat args so both call shapes work; keep
-      // executor-injected underscore keys (_sessionId, …) visible to the inner
-      // tool either way.
-      const { action: _action, params, ...rest } = args;
-      const innerArgs =
-        params && typeof params === "object" && !Array.isArray(params)
-          ? { ...rest, ...(params as Record<string, unknown>) }
-          : rest;
-      return inner.execute(innerArgs, signal);
+      return inner.execute(familyActionArgs(args), signal);
     },
   };
 }

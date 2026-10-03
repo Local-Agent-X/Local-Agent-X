@@ -51,6 +51,7 @@ import {
 import { emitAgentViewClosed } from "./browser-perception";
 import { decideAgentSurface, isSessionAgentView } from "./browser-surface-policy";
 import { SHARED_BROWSER_PARTITION } from "./browser-partition";
+import { markHumanNavigation } from "./in-app-browser";
 
 const FOREGROUND_ID = "foreground";
 
@@ -248,6 +249,7 @@ export function setupBrowserIPC(): void {
 		// normal browsing, not an error to surface. Nav-state events carry the real
 		// outcome either way.
 		await prepareEmbeddedChromeIdentityForNavigation(view.webContents);
+		markHumanNavigation(viewId);
 		await view.webContents.loadURL(url).catch((error: unknown) => {
 			const message = error instanceof Error ? error.message : String(error);
 			if (!message.includes("ERR_ABORTED")) {
@@ -364,6 +366,7 @@ export function setupBrowserIPC(): void {
 		}
 		const target = (typeof url === "string" && url.trim()) || "about:blank";
 		await prepareEmbeddedChromeIdentityForNavigation(view.webContents);
+		markHumanNavigation(viewId);
 		await view.webContents.loadURL(target).catch(() => { /* ERR_ABORTED etc. — nav-state carries the real outcome */ });
 		const state = readNavState(viewId, view.webContents);
 		pushNavState(viewId, view.webContents);

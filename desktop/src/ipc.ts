@@ -6,8 +6,9 @@
 // background, autostart registration).
 
 import { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, shell, systemPreferences } from "electron";
-import { join, resolve, relative, isAbsolute, sep } from "path";
-import { getProjectRoot, reloadLAXConfig, getLAXConfig, LAX_DIR } from "./config";
+import { join } from "path";
+import { reloadLAXConfig, getLAXConfig, LAX_DIR } from "./config";
+import { openProjectFile } from "./open-project-file";
 import { type DesktopSettings, getSetting, setSetting } from "./settings";
 import { bgForTheme, applyNativeTheme } from "./theme";
 import {
@@ -181,28 +182,7 @@ export function setupIPC(): void {
   });
 
   ipcMain.handle("show-about", () => app.showAboutPanel());
-  ipcMain.handle("open-file", (_e, relativePath: string) => {
-    // Resolve against PROJECT_ROOT, not process.cwd() — the old `..` hack
-    // happened to work on Windows when cwd was `<repo>/desktop`, but
-    // breaks on a Finder-launched Mac .app (cwd is `/`).
-    const root = getProjectRoot();
-    if (!root) {
-      console.warn(`[desktop] open-file IPC ignored — PROJECT_ROOT unresolved`);
-      return Promise.resolve("PROJECT_ROOT unresolved");
-    }
-    // Contain to PROJECT_ROOT — `relativePath` is renderer-supplied, so a
-    // `../../` (or absolute) value would otherwise open ANY file on disk via
-    // the OS handler. resolve() collapses traversal; relative() confirms the
-    // result stays under root.
-    const filePath = resolve(root, relativePath);
-    const rel = relative(root, filePath);
-    if (rel === ".." || rel.startsWith(".." + sep) || isAbsolute(rel)) {
-      console.warn(`[desktop] open-file rejected (outside project root): ${relativePath}`);
-      return Promise.resolve("rejected: path outside project root");
-    }
-    console.log(`[desktop] Opening file: ${filePath}`);
-    return shell.openPath(filePath);
-  });
+  ipcMain.handle("open-file", (_e, relativePath: string) => openProjectFile(relativePath));
   ipcMain.handle("quit-app", async () => {
     setQuitting(true);
     await stopServer();

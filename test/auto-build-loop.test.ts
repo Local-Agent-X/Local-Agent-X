@@ -109,6 +109,10 @@ beforeEach(() => {
   // probe would consume the first queued mock report. It has its own suite
   // (auto-build-preflight.test.ts).
   process.env.LAX_BUILD_PREFLIGHT = "0";
+  // The loop's git runs through the shell cage seam; on a box with the
+  // Windows cage installed the default would prove and use the real cage,
+  // whose account cannot read this temp repo.
+  process.env.LAX_SANDBOX = "host";
   __queue.length = 0;
   __writeAgentChanges = true;
   projectDir = mkdtempSync(join(tmpdir(), "auto-build-loop-test-"));
@@ -126,6 +130,7 @@ beforeEach(() => {
 
 afterEach(() => {
   delete process.env.LAX_BUILD_PREFLIGHT;
+  delete process.env.LAX_SANDBOX;
   vi.clearAllMocks();
   try { rmSync(projectDir, { recursive: true, force: true }); } catch { /* best-effort */ }
 });

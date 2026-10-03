@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { FileExecutor } from "@arikernel/tool-executors";
-import { setPreDispatchGate } from "@arikernel/tool-executors";
+import { setPreDispatchGate, runPreDispatchGate } from "@arikernel/tool-executors";
 import type { ToolCall } from "@arikernel/core";
 import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -98,6 +98,19 @@ describe("AriKernel pre-dispatch gate (F3 closure)", () => {
     }
   });
 
+  it("refuses a kernel shell-class call: no LAX tool stands in for a kernel shell", async () => {
+    // A structured {executable,args} call mapped onto bash would be vetted as
+    // an EMPTY bash command; with no shell mapping it names no registered tool.
+    const security = new SecurityLayer(root, "unrestricted");
+    wireAriPreDispatch(security);
+    const call = makeCall("read", {
+      toolClass: "shell",
+      action: "exec",
+      parameters: { executable: "cat", args: [join(root, "ok.txt")] },
+    });
+    await expect(runPreDispatchGate(call)).rejects.toThrow(/not in registry/);
+  });
+
   it("assertToolCallAllowed throws ToolBlocked when approval is denied", async () => {
     // Direct-call assertion: with the profile gate forced to "ask" and the
     // user denying, the chain throws. Proves the approval branch wires
@@ -163,16 +176,25 @@ describe("protected security settings gate", () => {
         { id: "p2", name: "setting", args: { field: "enableShell", value: true } },
         { sessionId: "s", callContext: "cron" },
       ),
-    ).rejects.toThrow(/cannot be changed in an automated\/background run/);
+    ).rejects.toThrow(/cannot be widened in an automated\/background run/);
   });
 
   it("denies in a delegated sub-agent run too", async () => {
     await expect(
       assertToolCallAllowed(
-        { id: "p3", name: "setting", args: { field: "toolApproval", value: "auto" } },
+        { id: "p3", name: "setting", args: { field: "enableHttp", value: true } },
         { sessionId: "s", callContext: "delegated" },
       ),
-    ).rejects.toThrow(/security setting/);
+    ).rejects.toThrow(/user-owned setting/);
+  });
+
+  it("lets an autonomous run switch a capability off: that only narrows the agent", async () => {
+    await expect(
+      assertToolCallAllowed(
+        { id: "p3b", name: "setting", args: { field: "enableShell", value: false } },
+        { sessionId: "s", callContext: "cron" },
+      ),
+    ).resolves.toBeUndefined();
   });
 
   it("does not gate a non-security setting in an autonomous run", async () => {
@@ -211,6 +233,6 @@ describe("protected security settings gate", () => {
     await expect(assertToolCallAllowed(
       { id: "strict-off-no-ui", name: "setting", args: { field: "localOnlyMode", value: false } },
       { sessionId: "strict-disable-no-ui", callContext: "local" },
-    )).rejects.toThrow(/user-owned security setting|explicit user approval/);
+    )).rejects.toThrow(/user-owned setting|explicit user approval/);
   });
 });

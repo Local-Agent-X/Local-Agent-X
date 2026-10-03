@@ -169,7 +169,7 @@ function addMessageEl(role, text, attachments) {
       if (a.isImage && a.dataUrl) {
         return `<img src="${esc(a.dataUrl)}" alt="${esc(a.name)}" onclick="openLightbox(this.src)" title="${esc(a.name)}" loading="lazy" />`;
       } else if (a.isImage && a.url) {
-        const authedUrl = a.url + (a.url.includes('?') ? '&' : '?') + 'token=' + AUTH_TOKEN;
+        const authedUrl = a.url.startsWith('/uploads/') ? a.url + (a.url.includes('?') ? '&' : '?') + 'token=' + AUTH_TOKEN : a.url;
         return `<img src="${esc(authedUrl)}" alt="${esc(a.name)}" onclick="openLightbox(this.src)" title="${esc(a.name)}" loading="lazy" />`;
       } else if (a.isImage) {
         return `<div class="att-badge"><span>&#128444;</span> ${esc(a.name)}</div>`;

@@ -21,15 +21,16 @@
  *   - if any fail, the worktree branch is preserved and main is untouched
  *   - this means a self_edit that breaks the agent CANNOT brick the agent
  *
- * Bypass flow: when args._cwd is set (autopilot route) OR args._unsafe is
- * true (emergency rescues), the surgeon runs directly in the supplied cwd
- * without sandbox gates. _unsafe is server-injected only — not in the
- * public schema — so the model can't ask for it.
+ * Autopilot flow: an autopilot session already works in its own worktree and
+ * commits each round to its own branch, so the dispatcher stamps that worktree
+ * as args._cwd and the surgeon runs there directly, without the sandbox gates.
+ *
+ * Both flows require developer_mode.
  */
 
 import type { ToolDefinition } from "../types.js";
 import { getSetting } from "../settings.js";
-import { LAX_REPO_ROOT, isGitCheckout } from "./agents-rules.js";
+import { isGitCheckout } from "./agents-rules.js";
 import { checkScopeEvidence, checkWorkspaceMisroute } from "./scope-gate.js";
 import { checkSelfEditIntent, isAffirmativeGoAhead } from "./intent-gate.js";
 import {
@@ -44,7 +45,7 @@ import { acquireGlobalSelfEditLock, releaseGlobalSelfEditLock, formatGlobalLockB
 
 export const selfEditTool: ToolDefinition = {
   name: "self_edit",
-  compactDescription: "Modify Local Agent X's own source (src/*.ts) to fix a bug or add a missing capability; requires developer_mode. NOT for installs (bash), settings (`setting`) or workspace files (edit). One self_edit at a time.",
+  compactDescription: "Modify Local Agent X's own source (src/*.ts) or config/ to fix a bug or add a missing capability; needs developer_mode. NOT for installs (bash), settings (`setting`) or workspace files (edit). One at a time.",
   description:
     "Self-repair AND self-extension: modify the Local Agent X source code (.ts files in src/, " +
     "route handlers, tool implementations, server logic) to fix a bug OR add a capability that " +
@@ -60,6 +61,8 @@ export const selfEditTool: ToolDefinition = {
     "- Bug fixes in source: a tool returned 200 but the UI didn't update, an endpoint returns " +
     "wrong shape, a route is missing, a feature works on one provider but not another, user " +
     "reports 'that didn't work' after what looked like success.\n" +
+    "- Changes to your own config/ (system prompt, tools.json): edit and the shell refuse config/, " +
+    "so self_edit is the route; its files hot-reload once the change merges (no restart).\n" +
     "- Missing capabilities: you NEED a tool that doesn't exist to complete the user's task. " +
     "Examples: user sends voice message and there's no transcribe_audio tool → self_edit({task: " +
     "'Add transcribe_audio tool using local whisper, install whisper-node via npm'}). User wants " +
@@ -70,9 +73,8 @@ export const selfEditTool: ToolDefinition = {
     "use that tool — don't add a duplicate. Common misroutes that should NOT be self_edit:\n" +
     "- 'Install software' / 'launch an installer' → bash with winget/brew/apt (don't add install_X)\n" +
     "- 'Run a shell command' → bash exists for this (don't add run_command)\n" +
-    "- 'Edit a workspace/ file' → edit covers it (self_edit is for SOURCE only)\n" +
-    "- 'Change a setting' → the `setting` tool (don't add settings_set, don't POST /api/settings — `setting` validates per-field)\n" +
-    "- 'Hot-reload config' → edit a file in config/ directly (don't go through self_edit)\n\n" +
+    "- 'Edit a workspace/ file' → edit covers it (self_edit is for SOURCE and config/ only)\n" +
+    "- 'Change a setting' → the `setting` tool (don't add settings_set, don't POST /api/settings — `setting` validates per-field)\n\n" +
     "When wiring up code that ALREADY exists at a known path (e.g. a prototype in workspace/, " +
     "integrations/, or a sibling module), name that path in your task — self_edit reads the " +
     "codebase fresh per call and will REWRITE from scratch otherwise, duplicating work.\n\n" +
@@ -105,18 +107,14 @@ export const selfEditTool: ToolDefinition = {
       ? args._onProgress as (msg: string) => void
       : () => { /* no-op when dispatcher didn't inject the channel */ };
 
-    // Internal (server-injected) overrides — NOT in the public tool schema:
-    //   _cwd:    autopilot routes self_edit into its worktree path
-    //   _unsafe: emergency rescue mode (skip the sandbox + gates)
-    // The model itself can't set either — only the tool router can.
+    // The autopilot session's worktree, stamped by the dispatcher
+    // (resolve-tool.ts), which drops every `_` key the model itself sends.
     const internalCwd = typeof args._cwd === "string" && args._cwd.trim() ? args._cwd : null;
-    const unsafe = args._unsafe === true;
 
     // Install-type gate: the sandbox is built on git worktrees, so a packaged
     // (non-git) install can't run self_edit at all. Say that plainly instead
-    // of failing later with "could not create worktree". _unsafe stays exempt:
-    // the gateless rescue path writes directly and doesn't need git.
-    if (!unsafe && !isGitCheckout()) {
+    // of failing later with "could not create worktree".
+    if (!isGitCheckout()) {
       return {
         content:
           "BLOCKED — this install is a packaged copy without a git repository, so self_edit " +
@@ -134,10 +132,9 @@ export const selfEditTool: ToolDefinition = {
     // mode work — a self_edit forks this install's core code, and every later
     // platform update has to merge with it. Default installs route
     // customization to the extension surfaces instead (connector manifests,
-    // workspace apps, settings), which survive updates untouched. _unsafe is
-    // exempt: it's the human-triggered hatch for rescuing a bricked install,
-    // and policy must not block the rescue.
-    if (!unsafe && getSetting("developer_mode") !== true) {
+    // workspace apps, settings), which survive updates untouched. No path is
+    // exempt, the autopilot worktree included.
+    if (getSetting("developer_mode") !== true) {
       return {
         content:
           "BLOCKED — self_edit modifies Local Agent X's own source code, which requires developer_mode (currently off).\n\n" +
@@ -207,7 +204,7 @@ export const selfEditTool: ToolDefinition = {
               `Reason: ${verdict.reason}\n\n` +
               `If the user wants the change you described, they need to ask for it explicitly. ` +
               `If you misread their intent, use a different tool. ` +
-              `Common misroutes: "install / launch installer" → bash with winget/brew/apt, "run command" → bash, "edit workspace file" → edit, "change setting" → http_request to /api/settings.`,
+              `Common misroutes: "install / launch installer" → bash with winget/brew/apt, "run command" → bash, "edit workspace file" → edit, "change a setting" → the \`setting\` tool.`,
             isError: true,
           };
         }
@@ -215,11 +212,11 @@ export const selfEditTool: ToolDefinition = {
         // clear request to change source. Don't mutate on a guess; confirm.
         return {
           content:
-            `BLOCKED — the user's latest message isn't a clear go-ahead to modify source code.\n\n` +
+            `BLOCKED — the user's latest message isn't a clear go-ahead to modify the agent's source code or config/.\n\n` +
             `User's most recent message: ${userQuote}\n` +
             `Self_edit task you were about to run: ${taskQuote}\n\n` +
-            `self_edit changes the agent's own code, so it only runs on an explicit request (a bug to fix, ` +
-            `a capability to add) or a direct "yes, go ahead". This looked like a question, an observation, ` +
+            `self_edit changes the agent's own code and config/, so it only runs on an explicit request (a bug to fix, ` +
+            `a capability to add, a change to its system prompt or tools.json) or a direct "yes, go ahead". This looked like a question, an observation, ` +
             `or open brainstorming. Reply in plain text — tell the user what you'd change and ask if they ` +
             `want it — then wait for their go-ahead before calling self_edit again.`,
           isError: true,
@@ -252,7 +249,7 @@ export const selfEditTool: ToolDefinition = {
     const fullPrompt = await buildSelfEditPrompt(task, scopeHintArg);
 
     // Release the per-session live-call lock no matter how this function
-    // exits — sandbox path, bypass success, spawn error, timeout. Without a
+    // exits — sandbox path, autopilot success, spawn error, timeout. Without a
     // finally the lock would leak on the early returns and permanently block
     // the session from issuing another self_edit. Aborting the controller in
     // the same finally guarantees any orphan listeners shed even on errors.
@@ -261,16 +258,16 @@ export const selfEditTool: ToolDefinition = {
       try { controller.abort(); } catch { /* best-effort */ }
     };
 
-    // The bypass path acquires the machine-wide global self_edit lock (the same
-    // one runSelfEditInSandbox takes). Tracked here so the finally releases it
-    // only when this call actually acquired it. The sandbox path manages the
-    // global lock internally, so we never touch it on that branch.
+    // The autopilot path acquires the machine-wide global self_edit lock (the
+    // same one runSelfEditInSandbox takes). Tracked here so the finally
+    // releases it only when this call actually acquired it. The sandbox path
+    // manages the global lock internally, so we never touch it on that branch.
     let globalLockNonce: string | undefined;
 
     try {
-      // Default flow: sandboxed via worktree + 3-gate validation. Skipped when
-      // _cwd is set (autopilot already provides isolation) or _unsafe is set.
-      if (!internalCwd && !unsafe) {
+      // Default flow: sandboxed via worktree + 3-gate validation. Skipped in
+      // an autopilot session, whose worktree already isolates the edit.
+      if (!internalCwd) {
         onProgress("Creating sandbox worktree…");
         const { runSelfEditInSandbox, formatSandboxResult } = await import("./sandbox.js");
         const { getRuntimeConfig } = await import("../config.js");
@@ -284,51 +281,20 @@ export const selfEditTool: ToolDefinition = {
         return { content: formatSandboxResult(result), isError: !result.ok && !result.alreadyRunning };
       }
 
-      // Bypass flow: write directly to the supplied cwd (autopilot worktree
-      // OR LAX_REPO_ROOT for unsafe rescues). No gates — but still serialize
-      // against any sandboxed self_edit via the machine-wide global lock so the
-      // two can't build/install into the shared node_modules concurrently (#9).
-      //
-      // _unsafe asks a live self_edit to cancel and waits for its kernel lease.
-      // If the owner cannot stop, the rescue stays serialized.
-      const isUnsafeRescue = unsafe && !internalCwd;
-      const gLock = await acquireGlobalSelfEditLock({
-        force: isUnsafeRescue, task, onRevoke: () => controller.abort(),
-      });
+      // Autopilot flow: write directly to the session's worktree. No gates —
+      // but still serialize against any sandboxed self_edit via the
+      // machine-wide global lock so the two can't build/install into the
+      // shared node_modules concurrently (#9).
+      const gLock = await acquireGlobalSelfEditLock({ task });
       if (!gLock.acquired) {
         // Benign serialization notice (not a failure) — end the turn, don't
         // retry-loop. isError:false so the breaker doesn't trip.
         return { content: formatGlobalLockBusy(gLock.holder, task), isError: false };
       }
       globalLockNonce = gLock.nonce;
-      const subprocessCwd = internalCwd || LAX_REPO_ROOT;
-
-      // _unsafe is the deliberate gateless escape hatch — it writes straight
-      // into the live repo with no build/bind/smoke gate. Stays gateless, but
-      // log loudly and snapshot the pre-edit SHA so there's a known-good point
-      // to roll back to if the rescue makes things worse. (_cwd autopilot
-      // bypass already commits per-round to its own branch, so it's exempt.)
-      if (unsafe && !internalCwd) {
-        try {
-          const { getBranchHead } = await import("../agency/worktree.js");
-          const { recordUnsafeEdit } = await import("./rollback.js");
-          const preSha = getBranchHead(LAX_REPO_ROOT, "HEAD");
-          const { createLogger } = await import("../logger.js");
-          createLogger("self-edit.unsafe").warn(
-            `[self-edit] GATELESS _unsafe self_edit writing directly to ${LAX_REPO_ROOT} ` +
-            `(no sandbox, no gates). Pre-edit HEAD=${preSha.slice(0, 8)} snapshotted for rollback. ` +
-            `Task: ${task.slice(0, 120)}`,
-          );
-          recordUnsafeEdit({ preSha, repoRoot: LAX_REPO_ROOT, task, ts: new Date().toISOString() });
-        } catch (e) {
-          // Snapshot is best-effort — never block the emergency rescue on it.
-          const { createLogger } = await import("../logger.js");
-          createLogger("self-edit.unsafe").warn(`[self-edit] unsafe pre-edit snapshot failed: ${(e as Error).message}`);
-        }
-      }
 
       onProgress("Running source-code repair…");
-      return await runSelfEditBypass(subprocessCwd, fullPrompt, combinedSignal);
+      return await runSelfEditBypass(internalCwd, fullPrompt, combinedSignal);
     } finally {
       if (globalLockNonce) await releaseGlobalSelfEditLock(globalLockNonce);
       releaseLock();

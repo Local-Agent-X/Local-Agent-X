@@ -40,25 +40,11 @@ describe("computeArgsFingerprint", () => {
       expect(computeArgsFingerprint("BASH", { command: "GIT status" })).toBe(
         "GIT status",
       );
-      expect(computeArgsFingerprint("ari_shell", { command: "ls -la" })).toBe(
-        "ls -la",
-      );
     });
 
     it("returns empty string for a missing/non-string command", () => {
       expect(computeArgsFingerprint("bash", {})).toBe("");
       expect(computeArgsFingerprint("bash", { command: 42 })).toBe("");
-    });
-
-    // Structured {executable, args[]} form (ari_shell) must fingerprint
-    // distinctly — a benign `ls` grant must NOT cover a destructive `rm -rf /`.
-    it("distinguishes structured executable+args calls (ls vs rm -rf /)", () => {
-      const ls = computeArgsFingerprint("ari_shell", { executable: "ls" });
-      const rm = computeArgsFingerprint("ari_shell", {
-        executable: "rm",
-        args: ["-rf", "/"],
-      });
-      expect(ls).not.toBe(rm);
     });
 
     // The fingerprint keys on the FULL command, so risk-bearing subcommands and

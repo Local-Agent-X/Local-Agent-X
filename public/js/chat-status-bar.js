@@ -30,6 +30,15 @@ function laxGetSavedEffort() {
 let _providersCache = null;
 let _providersCacheTime = 0;
 
+// The one warning look for status-bar badges (weak model, developer mode).
+const STATUS_WARN_BADGE_STYLE = 'background:#fef3c7;color:#92400e;border:1px solid #fbbf24;padding:2px 8px;border-radius:10px';
+
+function openDeveloperModeSettings() {
+  openSettings('security');
+  const card = document.getElementById('dev-mode-card');
+  if (card) card.scrollIntoView({ block: 'center' });
+}
+
 // laxResolveActiveProvider / isProvidersComplete / loadProviderLabels /
 // laxProviderLabel live in the sibling chat-provider-identity.js — "which
 // provider is selected and is it connected" is its own concern, and splitting
@@ -41,6 +50,8 @@ async function _primeLaxSettings() {
     if (!r || !r.ok) return;
     const server = await r.json();
     if (!server || typeof server !== 'object') return;
+    // Kept current afterwards by settings_changed (chat-ws-handler-misc.js).
+    window._laxDeveloperMode = server.developer_mode === true;
     const local = JSON.parse(localStorage.getItem('lax_settings') || '{}');
     // Server is source of truth for tier-defining keys — overwrite local
     // copies that might be stale from a previous session. We don't replace
@@ -171,10 +182,16 @@ function updateStatusBar(force) {
   const currentModel = data?.current?.model || '—';
   const activeP = laxResolveActiveProvider(data);
 
+  // Developer mode stays on until the user turns it off, so the bar says so
+  // on every render while it is; the badge opens the toggle.
+  const devModeBadge = window._laxDeveloperMode === true
+    ? `<button id="dev-mode-badge" type="button" class="status-item" onclick="openDeveloperModeSettings()" style="${STATUS_WARN_BADGE_STYLE};font:inherit;cursor:pointer" title="The agent can change Local Agent X's own source code (self_edit, autopilot, CLI app builds). Click to open Settings, where you can turn developer mode off.">&#9888; Developer mode is on</button>`
+    : '';
+
   // Active-model badge: warn when selection is weak.
   const tier = classifyModelTier(currentModel);
   const tierBadge = tier === 'weak'
-    ? `<span class="status-item" style="background:#fef3c7;color:#92400e;border:1px solid #fbbf24;padding:2px 8px;border-radius:10px" title="This model may fail on agent tasks (tool calling, multi-step workflows). Switch to a stronger model for complex work.">&#9888; weak model — chat-only recommended</span>`
+    ? `<span class="status-item" style="${STATUS_WARN_BADGE_STYLE}" title="This model may fail on agent tasks (tool calling, multi-step workflows). Switch to a stronger model for complex work.">&#9888; weak model — chat-only recommended</span>`
     : tier === 'medium'
     ? `<span class="status-item" style="opacity:.7" title="Medium-tier model. Agent tasks work but may be less reliable than flagship models.">&#9888; medium</span>`
     : '';
@@ -297,6 +314,7 @@ function updateStatusBar(force) {
   `;
 
   if (info) info.innerHTML = `
+    ${devModeBadge}
     ${tierBadge}
     ${tokenInfo ? `<span class="status-item"><span class="status-icon">&#9998;</span> ${tokenInfo}</span>` : ''}
     <span class="status-item" title="All data stays on your machine. API calls go to your selected provider." style="cursor:help"><span class="status-icon">&#128274;</span> Local</span>

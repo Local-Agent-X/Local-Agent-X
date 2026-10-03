@@ -1,9 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join, delimiter } from "node:path";
 import { afterAll } from "vitest";
-import { mergeAugmentedPath, portableNodeDirs } from "../desktop/src/path-augment";
+import { defaultPortableNodeRoot, mergeAugmentedPath, portableNodeDirs } from "../desktop/src/path-augment";
+import { MANAGED_NODE_DIR } from "../desktop/src/node-runtime";
+import { launcherRuntimeFolder } from "../src/security/layer/install-root.js";
 
 // Regression: the in-app Node upgrade unpacks a portable node under
 // %LOCALAPPDATA%\LocalAgentX\node-v* — but the desktop's PATH builder joined
@@ -67,5 +69,26 @@ describe("mergeAugmentedPath", () => {
 
   it("tolerates an unset PATH", () => {
     expect(mergeAugmentedPath(["aug1"], undefined)).toBe("aug1");
+  });
+});
+
+// The server's file gate write-protects the folder this launcher picks the
+// next server's node from (src/security/layer/install-root.ts), or a node the
+// agent plants there runs as that server. Two packages name the one folder.
+describe("the folder the file gate protects is the one the launcher searches", () => {
+  it("on Windows, the portable node root", () => {
+    const local = join(tempRoot(), "AppData", "Local");
+    const saved = process.env.LOCALAPPDATA;
+    process.env.LOCALAPPDATA = local;
+    try {
+      expect(launcherRuntimeFolder("win32", homedir(), local)).toBe(defaultPortableNodeRoot());
+    } finally {
+      if (saved === undefined) delete process.env.LOCALAPPDATA;
+      else process.env.LOCALAPPDATA = saved;
+    }
+  });
+
+  it("elsewhere, the app-owned node", () => {
+    expect(launcherRuntimeFolder("darwin", homedir())).toBe(MANAGED_NODE_DIR);
   });
 });

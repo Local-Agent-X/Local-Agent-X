@@ -1,8 +1,9 @@
 import { readFileSync, writeFileSync } from "node:fs";
 
 import { createLogger } from "../logger.js";
+import { checkEndpointAccess } from "../rbac.js";
 import { MANIFEST_PATH } from "./paths.js";
-import type { AppManifest } from "./types.js";
+import type { AppManifest, RouteEntry } from "./types.js";
 import {
   scanPages,
   scanSettingsTabs,
@@ -15,13 +16,23 @@ import { scanApiRoutes } from "./route-scanner.js";
 
 const logger = createLogger("manifest-generator");
 
+/**
+ * The manifest is the agent's map of its own app, so it leaves out the routes
+ * the agent's self-calls are refused on (rbac.ts): listed, they sent the agent
+ * into dead ends it then tried to route around. A prefix route is scanned as
+ * `/api/foo*`, and is checked as the prefix it names.
+ */
+function agentMayCall(route: RouteEntry): boolean {
+  return checkEndpointAccess("agent", route.method, route.path.replace(/\*$/, "")).allowed;
+}
+
 export function generateManifest(): AppManifest {
   const manifest: AppManifest = {
     generatedAt: new Date().toISOString(),
     pages: scanPages(),
     settingsTabs: scanSettingsTabs(),
     agentTabs: scanAgentTabs(),
-    apiRoutes: scanApiRoutes(),
+    apiRoutes: scanApiRoutes().filter(agentMayCall),
     tools: scanTools(),
     apps: scanApps(),
     configFiles: scanConfigFiles(),

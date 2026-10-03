@@ -7,15 +7,15 @@
  * when nothing changes, trips when the package set or npm's install record
  * changes, and returns null when there's nothing to guard.
  *
- * restoreParentDeps actually runs `npm ci`, so it is exercised end-to-end, not
- * here.
+ * restoreParentDeps runs a real `npm ci`, so its test uses a zero-dependency
+ * lockfile: no registry traffic, but the root lifecycle scripts still run.
  */
 
 import { describe, it, expect } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fingerprintParentDeps } from "../src/self-edit/parent-deps-guard.js";
+import { fingerprintParentDeps, restoreParentDeps } from "../src/self-edit/parent-deps-guard.js";
 
 function makeRepo(): string {
   const root = mkdtempSync(join(tmpdir(), "lax-deps-test-"));
@@ -58,4 +58,33 @@ describe("fingerprintParentDeps", () => {
     rmSync(join(root, "node_modules", "typescript"), { recursive: true, force: true });
     expect(fingerprintParentDeps(root)).not.toBe(before);
   });
+});
+
+describe("restoreParentDeps", () => {
+  const PROBE_SECRET_KEY = "LAX_SCRUB_PROBE_API_KEY";
+  const PROBE_SECRET_VALUE = "sk-scrub-probe-6f1d0c2a9b8e7d3c";
+
+  it("runs npm ci lifecycle scripts without a credential from the server env", () => {
+    const root = mkdtempSync(join(tmpdir(), "lax-deps-restore-"));
+    try {
+      writeFileSync(join(root, "dump-env.cjs"), `require("node:fs").writeFileSync("env.json", JSON.stringify(process.env));\n`);
+      writeFileSync(join(root, "package.json"), JSON.stringify({
+        name: "restore-fixture", version: "0.0.0", private: true, scripts: { postinstall: "node dump-env.cjs" },
+      }));
+      writeFileSync(join(root, "package-lock.json"), JSON.stringify({
+        name: "restore-fixture", version: "0.0.0", lockfileVersion: 3, requires: true,
+        packages: { "": { name: "restore-fixture", version: "0.0.0" } },
+      }));
+      process.env[PROBE_SECRET_KEY] = PROBE_SECRET_VALUE;
+      let r: ReturnType<typeof restoreParentDeps>;
+      try { r = restoreParentDeps(root); } finally { delete process.env[PROBE_SECRET_KEY]; }
+
+      expect(r).toEqual({ ok: true, detail: "npm ci restored parent node_modules" });
+      const childEnv = JSON.parse(readFileSync(join(root, "env.json"), "utf-8")) as Record<string, string>;
+      expect(childEnv).not.toHaveProperty(PROBE_SECRET_KEY);
+      expect(JSON.stringify(childEnv)).not.toContain(PROBE_SECRET_VALUE);
+    } finally {
+      rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    }
+  }, 120_000);
 });

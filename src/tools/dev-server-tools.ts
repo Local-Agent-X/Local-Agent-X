@@ -10,6 +10,8 @@
  */
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { workspacePath } from "../config.js";
+import { getSandboxStatus, SANDBOX_PROOF_PENDING_RETRY } from "../sandbox/index.js";
+import { awaitCageReady } from "./caged-spawn.js";
 import { registerDevServer, stopDevServer } from "./dev-server.js";
 import { stripRedundantInstall } from "./dev-server-command.js";
 import { waitForBackend, exitDescriptor } from "./dev-server-readiness.js";
@@ -22,6 +24,28 @@ const BACKEND_READY_TIMEOUT_MS = 20_000;
 // too-short window falsely reports "didn't start" and pushes the model toward a
 // needless production build to "verify".
 const FRONTEND_READY_TIMEOUT_MS = 60_000;
+
+export type DevServerCage = { ready: true } | { ready: false; reason: string };
+
+/**
+ * Before registerDevServer, from a caller that can wait. It stops the app's
+ * running dev server and reclaims its port, then starts the new one through
+ * the synchronous startSession, which a Windows cage still proving its fence or
+ * still granting its sandbox user refuses: the old server would be gone and
+ * nothing in its place. So wait for the cage first, as process_restart does,
+ * and when it is still not ready (the proof outlasted the wait, the grants
+ * failed, an abort) say why, having stopped nothing.
+ */
+export async function awaitDevServerCage(signal?: AbortSignal): Promise<DevServerCage> {
+  try {
+    await awaitCageReady(signal);
+  } catch (e) {
+    return { ready: false, reason: `${(e as Error).message} Nothing was stopped or started.` };
+  }
+  if (signal?.aborted) return { ready: false, reason: "Aborted; nothing was stopped or started." };
+  if (getSandboxStatus().proofPending) return { ready: false, reason: `${SANDBOX_PROOF_PENDING_RETRY} Nothing was stopped or started.` };
+  return { ready: true };
+}
 
 export const appServeBackendTool: ToolDefinition = {
   name: "app_serve_backend",
@@ -37,11 +61,13 @@ export const appServeBackendTool: ToolDefinition = {
     },
     required: ["app_id", "command", "port"],
   },
-  async execute(args): Promise<ToolResult> {
+  async execute(args, signal?: AbortSignal): Promise<ToolResult> {
     const appId = String(args.app_id || "").replace(/[^a-zA-Z0-9_-]/g, "-");
     const command = String(args.command || "");
     const port = Number(args.port);
     const cwd = args.cwd ? String(args.cwd) : undefined;
+    const cage = await awaitDevServerCage(signal);
+    if (!cage.ready) return { content: `Could not start backend: ${cage.reason}`, isError: true };
     const res = registerDevServer({ appId, command, port, cwd });
     if (!res.ok) return { content: `Could not start backend: ${res.error}`, isError: true };
 
@@ -139,7 +165,7 @@ export const appServeFrontendTool: ToolDefinition = {
     },
     required: ["app_id", "port"],
   },
-  async execute(args): Promise<ToolResult> {
+  async execute(args, signal?: AbortSignal): Promise<ToolResult> {
     const appId = String(args.app_id || "").replace(/[^a-zA-Z0-9_-]/g, "-");
     const port = Number(args.port);
     const cwd = args.cwd ? String(args.cwd) : undefined;
@@ -150,6 +176,8 @@ export const appServeFrontendTool: ToolDefinition = {
     const resolved = resolveServeCommand(appDir, typeof args.command === "string" ? args.command : undefined, port);
     if (!resolved.ok) return { content: resolved.error, isError: true };
     const command = resolved.command;
+    const cage = await awaitDevServerCage(signal);
+    if (!cage.ready) return { content: `Could not start frontend dev server: ${cage.reason}`, isError: true };
     const res = registerDevServer({ appId, command, port, cwd, kind: "frontend" });
     if (!res.ok) return { content: `Could not start frontend dev server: ${res.error}`, isError: true };
 

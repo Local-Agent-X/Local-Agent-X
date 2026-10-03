@@ -235,7 +235,6 @@ describe("learned protocol capability envelope", () => {
     });
     expect((await resolvePhase(resolved)).kind).toBe("continue");
     expect(resolved.args._operationId).toBe(id);
-    expect((resolved.args.params as Record<string, unknown>)._operationId).toBe(id);
     await executeToolCalls(
       [{
         id: "collapsed-select",

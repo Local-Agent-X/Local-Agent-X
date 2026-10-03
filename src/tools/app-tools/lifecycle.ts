@@ -21,7 +21,7 @@ import { getLaxDir } from "../../lax-data-dir.js";
 import { workspaceRoot } from "../../config.js";
 import { EventBus } from "../../event-bus.js";
 import { verifyWriteLanded } from "../verify.js";
-import { ok, err, getActor, getAppPort } from "./shared.js";
+import { ok, err, APP_TOOL_ACTOR, getAppPort } from "./shared.js";
 
 const registry = AppRegistry.getInstance();
 
@@ -59,7 +59,7 @@ export const appCreate: ToolDefinition = {
     required: ["id", "name", "components", "layout"],
   },
   async execute(args) {
-    const actor = getActor(args);
+    const actor = APP_TOOL_ACTOR;
     const rawId = String(args.id || "").replace(/[^a-zA-Z0-9_-]/g, "-");
     const idValidation = validateAppId(rawId);
     if (!idValidation.valid) return err(idValidation.errors.join("; "));
@@ -130,7 +130,7 @@ export const appUpdate: ToolDefinition = {
     required: ["id"],
   },
   async execute(args) {
-    const actor = getActor(args);
+    const actor = APP_TOOL_ACTOR;
     const id = String(args.id || "");
 
     const partial: Partial<AppDefinition> = {};
@@ -160,8 +160,8 @@ export const appList: ToolDefinition = {
   name: "app_list",
   description: "List all apps you have access to, with IDs, names, status, component counts, and URLs.",
   parameters: { type: "object", properties: {} },
-  async execute(args) {
-    const actor = getActor(args);
+  async execute() {
+    const actor = APP_TOOL_ACTOR;
     const apps = registry.list(actor);
     if (apps.length === 0) return ok("No apps created yet.");
 
@@ -189,7 +189,7 @@ export const appDelete: ToolDefinition = {
     required: ["id"],
   },
   async execute(args) {
-    const actor = getActor(args);
+    const actor = APP_TOOL_ACTOR;
     const id = String(args.id || "");
     // Same semantics as the DELETE /api/apps/:id route: registry AND
     // workspace dir. The tool used to omit workspaceDir, which stopped the
@@ -222,7 +222,7 @@ export const appPermissions: ToolDefinition = {
     required: ["id", "action"],
   },
   async execute(args) {
-    const actor = getActor(args);
+    const actor = APP_TOOL_ACTOR;
     const id = String(args.id || "");
     const action = String(args.action || "");
 

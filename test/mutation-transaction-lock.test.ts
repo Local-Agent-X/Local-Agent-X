@@ -338,34 +338,4 @@ describe("shared installation mutation lease", () => {
     expect((await acquireMutationLock(dataDirectory, { task: "third" })).acquired).toBe(false);
     await releaseMutationLock(replacement);
   });
-
-  it("cooperatively stops a revocable owner before a forced rescue acquires", async () => {
-    const dataDirectory = mkdtempSync(join(tmpdir(), "lax-mutation-revoke-"));
-    roots.push(dataDirectory);
-    const cancelled = new AbortController();
-    let owner;
-    owner = await acquireMutationLock(dataDirectory, {
-      task: "owner",
-      onRevoke: () => { cancelled.abort(); },
-    });
-    expect(owner.acquired).toBe(true);
-    const ownerTask = new Promise<void>((resolve) => cancelled.signal.addEventListener("abort", () => {
-      void releaseMutationLock(owner).then(resolve);
-    }, { once: true }));
-    const rescue = await acquireMutationLock(dataDirectory, { task: "rescue", force: true, revokeTimeoutMs: 2_000 });
-    expect(rescue.acquired).toBe(true);
-    await ownerTask;
-    await releaseMutationLock(rescue);
-  });
-
-  it("does not overlap an unresponsive owner during a forced rescue", async () => {
-    const dataDirectory = mkdtempSync(join(tmpdir(), "lax-mutation-unresponsive-"));
-    roots.push(dataDirectory);
-    const owner = await acquireMutationLock(dataDirectory, { task: "owner" });
-    expect(owner.acquired).toBe(true);
-    const rescue = await acquireMutationLock(dataDirectory, { task: "rescue", force: true, revokeTimeoutMs: 100 });
-    expect(rescue.acquired).toBe(false);
-    expect(await mutationLockHeldByLiveProcess(dataDirectory)).toBe(true);
-    await releaseMutationLock(owner);
-  });
 });

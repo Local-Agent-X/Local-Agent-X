@@ -56,7 +56,7 @@ let allowlistLogged = false;
  * e.g. GITHUB_PERSONAL_ACCESS_TOKEN=${secret:GITHUB_TOKEN}). A host process.env
  * credential never reaches the exemption (the allowlist excludes it), and a
  * RAW inlined token (no ${secret:}) is not exempt — so it's still stripped,
- * preserving the "use the vault, don't inline" guarantee for the synced config.
+ * preserving the "use the vault, don't inline" guarantee for mcp.json.
  */
 export function buildMcpChildEnv(
   configEnv?: Record<string, string>,

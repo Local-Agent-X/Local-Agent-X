@@ -230,7 +230,7 @@ function __ideAttachmentHtml(attachments) {
       return `<img src="${safeEsc(a.dataUrl)}" alt="${safeEsc(a.name)}" onclick="typeof openLightbox==='function'&&openLightbox(this.src)" title="${safeEsc(a.name)}" loading="lazy" />`;
     } else if (a.isImage && a.url) {
       const tok = (typeof AUTH_TOKEN !== 'undefined') ? AUTH_TOKEN : '';
-      const authedUrl = a.url + (a.url.includes('?') ? '&' : '?') + 'token=' + tok;
+      const authedUrl = a.url.startsWith('/uploads/') ? a.url + (a.url.includes('?') ? '&' : '?') + 'token=' + tok : a.url;
       return `<img src="${safeEsc(authedUrl)}" alt="${safeEsc(a.name)}" onclick="typeof openLightbox==='function'&&openLightbox(this.src)" title="${safeEsc(a.name)}" loading="lazy" />`;
     } else if (a.isImage) {
       return `<div class="att-badge"><span>&#128444;</span> ${safeEsc(a.name)}</div>`;

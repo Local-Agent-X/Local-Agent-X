@@ -126,6 +126,8 @@ vi.mock("../desktop/src/in-app-browser", () => ({
   armCoDrive: () => {},
   isUserActive: () => false,
   markAgentInput: () => {},
+  markAgentAction: () => {},
+  markHumanNavigation: () => {},
   showAgentCursor: () => {},
 }));
 // Partial mock: real browser-ipc behavior, but autoSurfaceAgentView wrapped in

@@ -38,9 +38,7 @@ import { getSessionForOp } from "../../ops/session-bridge.js";
 import { resolveAgentPath } from "../../workspace/paths.js";
 import { auditRegressionRisk, AUDIT_EVIDENCE_LIMIT } from "../../classifiers/regression-audit.js";
 import { resolveRegressionAuditProvider } from "../../providers/resolve-regression-audit-provider.js";
-import { collectDiffEvidence } from "./diff-evidence.js";
-import { bashTool } from "../../tools/shell-tool.js";
-import { statusOf } from "../../tools/result-helpers.js";
+import { cagedGit, collectDiffEvidence } from "./diff-evidence.js";
 import { createLogger } from "../../logger.js";
 import type { Op } from "../../ops/types.js";
 
@@ -103,15 +101,10 @@ export async function defaultFindConsumers(
   if (identifiers.length === 0 || editedAbsPaths.length === 0) return "";
   const pattern = identifiers.map((id) => id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
   try {
-    const r = await bashTool.execute({
-      command: `git grep -l -E "${pattern}" -- "*.ts" "*.tsx"`,
-      _cwd: dirname(editedAbsPaths[0]),
-      _signal: signal,
-      timeout: GREP_TIMEOUT_MS,
-    });
-    if (statusOf(r) !== "ok") return "";
+    const out = await cagedGit(["grep", "-l", "-E", "-e", pattern, "--", "*.ts", "*.tsx"], dirname(editedAbsPaths[0]), GREP_TIMEOUT_MS, signal);
+    if (out === null) return "";
     const editedNormalized = editedAbsPaths.map((p) => p.replace(/\\/g, "/"));
-    const files = (r.content ?? "")
+    const files = out
       .split("\n")
       .map((f) => f.trim())
       .filter(Boolean)

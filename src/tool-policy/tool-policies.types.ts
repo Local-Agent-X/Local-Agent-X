@@ -24,8 +24,10 @@ export interface ToolRateLimit {
 export interface PathArgSpec {
   /** Argument name holding the path (e.g. "file_path", "path", "output_path"). */
   arg: string;
-  /** Action token handed to evaluateFileAccess. "write"/"edit" trigger write-
-   *  confinement + core-file protection; "read"/"delete_file" gate as a read. */
+  /** Action token handed to evaluateFileAccess. Every action but "read" is
+   *  refused, in every mode, for the security control files (isLaxControlFile)
+   *  and the install folder. "write"/"edit" add write-confinement + core-file
+   *  protection; "delete_file" is otherwise confined as a read is. */
   action: "read" | "write" | "edit" | "delete_file";
   /** Arg value is a JSON-array string of paths (pdf merge.files). Each element
    *  is gated independently. */

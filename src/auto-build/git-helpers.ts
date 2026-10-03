@@ -9,13 +9,20 @@
  * All functions are pure-ish wrappers around `git` subprocess calls
  * scoped to `cwd`. Failures bubble up as rejected promises with the
  * stderr text — the loop logs them as halts.
+ *
+ * The project, its .git config and its hooks are all agent-written, so git
+ * runs in the shell cage on the scrubbed env, and the repo config that starts
+ * a program is overridden (AGENT_REPO_HARDENING). Code the repo can still
+ * start (a clean filter on add) runs inside the cage.
  */
 
-import { spawn } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { devNull } from "node:os";
 import { join, isAbsolute } from "node:path";
-import { killProcessTree } from "../process-tree-kill.js";
 import { composeGitArgs } from "../git-safety.js";
+import { awaitSandboxProof, getSandboxMode } from "../sandbox/index.js";
+import { runCaged, type CagedRunOutcome } from "../tools/caged-spawn.js";
+import { gitArgv } from "../tools/program-argv.js";
 
 export interface GitRunOptions {
   cwd: string;
@@ -38,34 +45,55 @@ interface GitRunResult {
 // on Windows with AV scanning in the way.
 const SWEEP_TIMEOUT_MS = 180_000;
 
-function gitRun(args: string[], opts: GitRunOptions, stdin?: string): Promise<GitRunResult> {
-  return new Promise((resolve) => {
-    let stdout = "";
-    let stderr = "";
-    let timedOut = false;
-    // killProcessTree, not proc.kill: on Windows we spawn through cmd.exe
-    // (shell:true below), and proc.kill signals only the wrapper — the real
-    // git kept running holding .git/index.lock, wedging every later git op.
-    const timer = setTimeout(() => { timedOut = true; killProcessTree(proc); }, opts.timeoutMs ?? 30_000);
-    // composeGitArgs prepends `-c gc.auto=0` so no auto-build op (commit / add /
-    // init) can trip Git's auto-gc and prune a shared object store — the single
-    // git-spawn seam for this module, so every exported helper inherits it.
-    const proc = spawn("git", composeGitArgs(args), {
-      cwd: opts.cwd,
-      stdio: ["pipe", "pipe", "pipe"],
-      shell: process.platform === "win32",
-    });
-    proc.stdout?.on("data", c => stdout += c.toString());
-    proc.stderr?.on("data", c => stderr += c.toString());
-    proc.on("error", e => { clearTimeout(timer); resolve({ exitCode: null, stdout, stderr: stderr || e.message, timedOut }); });
-    proc.on("close", code => { clearTimeout(timer); resolve({ exitCode: code, stdout, stderr, timedOut }); });
-    if (stdin !== undefined) {
-      proc.stdin?.write(stdin);
-      proc.stdin?.end();
-    } else {
-      proc.stdin?.end();
-    }
-  });
+// Repo config that would start a program is overridden: an fsmonitor daemon,
+// an ext:: transport, a pager, a commit signer (the cage hides the signing
+// keys anyway). Hooks do not run: they are the agent's scripts, and the
+// loop's commits are plumbing a hook could only block or rewrite.
+const AGENT_REPO_HARDENING = [
+  "-c", "core.fsmonitor=false",
+  "-c", "protocol.ext.allow=never",
+  "-c", `core.hooksPath=${devNull}`,
+  "-c", "commit.gpgSign=false",
+  "--no-pager",
+];
+
+// The Windows cage runs git as its own account, which owns none of the user's
+// repos, so git's ownership check would refuse every one. Elsewhere the check
+// stays: a repo another account planted above the project must not be adopted.
+const ANY_REPO_OWNER = ["-c", "safe.directory=*"];
+
+async function gitRun(args: string[], opts: GitRunOptions): Promise<GitRunResult> {
+  // Settled first: whether git runs as the Windows sandbox account decides its args.
+  await awaitSandboxProof();
+  const winCage = process.platform === "win32" && getSandboxMode() === "guarded";
+  // composeGitArgs prepends `-c gc.auto=0` so no auto-build op (commit / add /
+  // init) can trip Git's auto-gc and prune a shared object store — the single
+  // git-spawn seam for this module, so every exported helper inherits it.
+  const argv = composeGitArgs([...AGENT_REPO_HARDENING, ...(winCage ? ANY_REPO_OWNER : []), ...args]);
+  let outcome: CagedRunOutcome;
+  try {
+    // A timeout kills the whole tree: a git left running would hold
+    // .git/index.lock and wedge every later op.
+    outcome = await runCaged(gitArgv(argv), { cwd: opts.cwd, timeoutMs: opts.timeoutMs ?? 30_000 });
+  } catch (e) {
+    return { exitCode: null, stdout: "", stderr: (e as Error).message, timedOut: false };
+  }
+  if (outcome.kind === "exit") return { exitCode: outcome.code, stdout: outcome.stdout, stderr: outcome.stderr, timedOut: false };
+  // With no signal to abort it, the run's only other ending is the timeout.
+  return { exitCode: null, stdout: "", stderr: "", timedOut: true };
+}
+
+const LOOP_IDENTITY = ["-c", "user.name=lax-auto-build", "-c", "user.email=auto-build@localagentx.local"];
+
+/**
+ * Commit with the repo's identity, or the loop's own when there is none: the
+ * loop's commits are tooling plumbing, not authorship, and the Windows cage's
+ * account never sees the user's global identity.
+ */
+async function commitWithIdentity(commitArgs: string[], opts: GitRunOptions): Promise<GitRunResult> {
+  const commit = await gitRun(commitArgs, opts);
+  if (commit.exitCode === 0 || !/user\.(name|email)|tell me who you are/i.test(commit.stderr + commit.stdout)) return commit;
+  return gitRun([...LOOP_IDENTITY, ...commitArgs], opts);
 }
 
 /**
@@ -128,17 +156,8 @@ export async function ensureGitBaseline(cwd: string): Promise<GitBaseline> {
   const add = await gitRun(["add", "-A"], { cwd, timeoutMs: SWEEP_TIMEOUT_MS });
   if (add.exitCode !== 0) throw new Error(gitFailText("git add -A", add, SWEEP_TIMEOUT_MS));
 
-  // Message via stdin (-F -) like gitCommit: gitRun spawns through a shell
-  // on Windows, where an arg with spaces would split. --allow-empty: an
-  // empty dir still gets a baseline sha to roll back to.
-  const commitArgs = ["commit", "--allow-empty", "-F", "-"];
-  const message = "chore: baseline before auto-build";
-  let commit = await gitRun(commitArgs, { cwd }, message);
-  if (commit.exitCode !== 0 && /user\.(name|email)|tell me who you are/i.test(commit.stderr + commit.stdout)) {
-    // No git identity on this machine — the baseline commit is tooling
-    // plumbing, not authorship, so a synthetic identity is fine here.
-    commit = await gitRun(["-c", "user.name=lax-auto-build", "-c", "user.email=auto-build@localagentx.local", ...commitArgs], { cwd }, message);
-  }
+  // --allow-empty: an empty dir still gets a baseline sha to roll back to.
+  const commit = await commitWithIdentity(["commit", "--allow-empty", "-m", "chore: baseline before auto-build"], { cwd });
   if (commit.exitCode !== 0) throw new Error(gitFailText("baseline commit", commit));
 
   return { sha: await getHeadSha(cwd), initialized, committed: true };
@@ -202,7 +221,8 @@ async function ensureLoopExcludes(cwd: string): Promise<void> {
 }
 
 export async function gitDiffPath(cwd: string, sinceSha: string, pathSpec: string): Promise<string> {
-  const r = await gitRun(["diff", "--no-color", sinceSha, "--", pathSpec], { cwd });
+  // No external diff or textconv driver: either is a program the repo config names.
+  const r = await gitRun(["diff", "--no-color", "--no-ext-diff", "--no-textconv", sinceSha, "--", pathSpec], { cwd });
   if (r.exitCode !== 0) throw new Error(gitFailText("git diff", r));
   return r.stdout;
 }
@@ -219,8 +239,8 @@ export async function gitAdd(cwd: string, pathSpec: string): Promise<void> {
 }
 
 /**
- * Commit with a message passed via stdin (-F -). Avoids escaping issues
- * for messages with quotes or newlines. Returns the new HEAD sha.
+ * Commit with `message` as one argv entry, so quotes and newlines reach git
+ * as written. Returns the new HEAD sha.
  *
  * Skips the commit entirely if nothing's staged — returns the existing
  * HEAD instead. This way the loop can safely call commit after a chunk
@@ -234,7 +254,7 @@ export async function gitCommit(cwd: string, message: string): Promise<{ sha: st
     const sha = await getHeadSha(cwd);
     return { sha, committed: false };
   }
-  const r = await gitRun(["commit", "-F", "-"], { cwd, timeoutMs: SWEEP_TIMEOUT_MS }, message);
+  const r = await commitWithIdentity(["commit", "-m", message], { cwd, timeoutMs: SWEEP_TIMEOUT_MS });
   if (r.exitCode !== 0) throw new Error(gitFailText("git commit", r, SWEEP_TIMEOUT_MS));
   const sha = await getHeadSha(cwd);
   return { sha, committed: true };

@@ -12,21 +12,29 @@
  *
  * Notices go only in the agent-facing content; meta.stderr stays raw.
  */
+import { join } from "node:path";
 import type { SandboxMode } from "./types.js";
 import { HOME_RELATIVE_DENY_DIRS, HOME_RELATIVE_DENY_FILES, GUARDED_SCOPE_EXEMPT_DIRS } from "./validate.js";
+import { INSTALL_CHANGE_ROUTE, installRootWriteRule, onDiskPath, type InstallRootRule } from "../security/layer/install-root.js";
+import { pathIsWithin } from "../security/layer/path-within.js";
 
 /**
  * When a bash command fails because the active kernel cage denied a credential
- * dir, return a one-line notice mapping the raw "Operation not permitted" to the
- * sandbox + its off switch; null otherwise. Now that "guarded" is the DEFAULT,
- * real users hit this (e.g. `aws s3 ls` → ~/.aws denied) and the bare EPERM reads
- * as a mystery failure. Gated on BOTH a permission-denial phrase AND a reference
- * to a path the active mode actually denies (guarded exempts ~/.config), so an
- * ordinary permission error is never mislabeled as the sandbox. The notice goes
- * only in the agent-facing content; meta.stderr stays the raw output. Mirrors the
- * docker-mode notice in shell-tool.ts.
+ * dir or the install folder, return a one-line notice mapping the
+ * raw denial to the rule that refused it and the way forward; null otherwise.
+ * Now that "guarded" is the DEFAULT, real users hit this (e.g. `aws s3 ls` →
+ * ~/.aws denied) and the bare EPERM reads as a mystery failure. Gated on BOTH a
+ * permission-denial phrase AND a reference to a path the active mode actually
+ * denies (guarded exempts ~/.config), so an ordinary permission error is never
+ * mislabeled as the sandbox. The notice goes only in the agent-facing content;
+ * meta.stderr stays the raw output. Mirrors the docker-mode notice in
+ * shell-tool.ts.
  */
 export function sandboxDenialHint(mode: SandboxMode, output: string): string | null {
+  return credentialDenialHint(mode, output) ?? installRootDenialHint(mode, output);
+}
+
+function credentialDenialHint(mode: SandboxMode, output: string): string | null {
   if (mode !== "guarded" && mode !== "seatbelt" && mode !== "bwrap") return null;
   if (!/operation not permitted|permission denied/i.test(output)) return null;
   const exempt = mode === "guarded" ? GUARDED_SCOPE_EXEMPT_DIRS : new Set<string>();
@@ -34,6 +42,83 @@ export function sandboxDenialHint(mode: SandboxMode, output: string): string | n
     ?? HOME_RELATIVE_DENY_FILES.find((f) => output.includes(`/${f}`));
   if (!hit) return null;
   return `[sandbox: blocked by the bash kernel cage (mode "${mode}") — it denies credential paths like ~/${hit} at the OS level, so this is the sandbox, not a real file error. If the user needs this command, they can turn the bash sandbox Off in Settings → Security; offer that rather than disabling it yourself.]`;
+}
+
+const kernelWriteDenyNotice = (mode: SandboxMode, target: string): string =>
+  `${target} is inside the Local Agent X install folder, which the agent may not modify outside its workspace, config/ included. ` +
+  `The bash kernel cage (mode "${mode}") enforces it at the OS level, as the file tools do — this is that rule, not a real file error.`;
+
+// The cages that refuse a write into the install, by platform, how each
+// refusal reads, and what the agent is told. Seatbelt's deny is EPERM and
+// bwrap's read-only bind is EROFS, while a plain EACCES there is a file's own
+// mode bits, never the cage; both deny only writes. The Windows cage's account
+// is granted the workspace and not the install, so the folder's ACL refuses
+// it, which bash spells EACCES, node EPERM, and cmd and PowerShell "access ...
+// denied". It refuses a read there too unless the account was granted one,
+// and a git clone in the user's profile is not (win-cage-grants.ts). The
+// refusal reads the same either way, so that notice covers a read as well as
+// a write and names the tools that can read there: told only about writes, an
+// agent refused a `cat` would stop and ask the user for a file it can read.
+const INSTALL_CAGES: Partial<Record<NodeJS.Platform, { modes: readonly SandboxMode[]; refusal: RegExp; notice: (mode: SandboxMode, target: string) => string }>> = {
+  darwin: {
+    modes: ["guarded", "seatbelt"],
+    refusal: /operation not permitted/i,
+    notice: kernelWriteDenyNotice,
+  },
+  linux: {
+    modes: ["guarded", "bwrap"],
+    refusal: /read-only file system|operation not permitted/i,
+    notice: kernelWriteDenyNotice,
+  },
+  win32: {
+    modes: ["guarded"],
+    refusal: /permission denied|operation not permitted|access is denied|access to the path .* is denied/i,
+    notice: (mode, target) =>
+      `${target} is inside the Local Agent X install folder. The bash cage (mode "${mode}") runs as a separate Windows account that is granted the workspace, not the install folder, ` +
+      `so the folder refuses its writes, and its reads too unless that account was granted read there (a git clone in the user's profile is not) — this is the cage, not a real file error. ` +
+      `Read files there with the read, grep and glob tools, which do not run in the cage. ` +
+      `The agent may not modify the install outside its workspace, config/ included, and the file tools refuse the same writes.`,
+  },
+};
+
+/**
+ * `root` as a shell prints it, then the rest of the path up to where the
+ * message goes on (a quote, a line end, or `: `). Either slash; on Windows
+ * without case, and with the drive also in Git Bash's `/c/` form. The root
+ * must start a path, so another folder that merely ends in the same names
+ * (/mnt/backup/<root>) is not taken for the install.
+ */
+function installPathPattern(root: string, platform: NodeJS.Platform): RegExp {
+  const segs = root.split(/[\\/]+/).map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  if (platform === "win32" && /^[a-z]:$/i.test(segs[0] ?? "")) segs[0] = `(?:${segs[0]}|[\\\\/]${segs[0]![0]})`;
+  const rootRe = segs.join("[\\\\/]+");
+  return new RegExp(`(?<![\\w\\\\/.~-])${rootRe}((?:[\\\\/][^'"\\r\\n]*?)?)(?=['"\\r\\n]|:\\s|:?$)`, platform === "win32" ? "gim" : "gm");
+}
+
+/**
+ * The install-root rule's notice: a denial naming a path inside the install
+ * folder, outside the folders the rule leaves writable, under a cage that
+ * enforces the rule on this platform (on Windows a refused read as well as a
+ * write, see INSTALL_CAGES). `rule` is injectable for tests; left
+ * out, the live install root and workspace are read, and only once the
+ * output already carries the cage's refusal.
+ */
+export function installRootDenialHint(
+  mode: SandboxMode,
+  output: string,
+  platform: NodeJS.Platform = process.platform,
+  rule?: InstallRootRule | null,
+): string | null {
+  const cage = INSTALL_CAGES[platform];
+  if (!cage || !cage.modes.includes(mode) || !cage.refusal.test(output)) return null;
+  const install = rule === undefined ? installRootWriteRule() : rule;
+  if (!install) return null;
+  for (const m of output.matchAll(installPathPattern(install.root, platform))) {
+    const target = onDiskPath(join(install.root, ...(m[1] ?? "").split(/[\\/]+/).filter(Boolean)));
+    if (!pathIsWithin(install.root, target) || install.writable.some((w) => pathIsWithin(w, target))) continue;
+    return `[sandbox: ${cage.notice(mode, target)} ${INSTALL_CHANGE_ROUTE}]`;
+  }
+  return null;
 }
 
 // Connect-context EPERM anchors. Every anchor is live-verified against the
@@ -101,8 +186,11 @@ const CONNECT_UNREACH_RE = /\bconnect\b[^\n]{0,80}network is unreachable/i;
  *    — never on generic network failure.
  *  - Guarded network confinement ships on darwin (seatbelt: registered
  *    loopback ports direct, everything else denied) and linux (bwrap
- *    namespace: only the proxy's bridge crosses the wall). Windows has no guarded cage yet, so guarded stays
- *    silent there: a connect failure is real and the cage must not take credit.
+ *    namespace: only the proxy's bridge crosses the wall). Guarded stays
+ *    silent on every other platform. On Windows no live capture of the cage's
+ *    refused connect backs an anchor here, and neither guarded message
+ *    describes its reach, so a hint there could take credit for a real
+ *    connect failure.
  *  - Each guarded message claims exactly what its platform's cage allows; the
  *    strict messages claim no route at all.
  */

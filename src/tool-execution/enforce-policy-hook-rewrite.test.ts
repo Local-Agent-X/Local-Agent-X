@@ -111,6 +111,22 @@ describe("PreToolUse arg rewrite — applied and re-screened", () => {
     expect((assertToolCallAllowed as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(1);
   });
 
+  it("a write to a file the app acts on leaves an approval reason for the approval phase", async () => {
+    hookEngineReturning(vi.fn(async () => ({ continue: true })));
+    const ctx = ctxFor({ path: "~/.lax/mcp.json", content: "{}" });
+
+    expect((await enforcePolicyPhase(ctx)).kind).toBe("continue");
+    expect(ctx.policyApprovalReason).toContain("This write call changes ~/.lax/mcp.json");
+  });
+
+  it("a rewrite that redirects a write onto such a file is caught by the re-screen", async () => {
+    hookEngineReturning(vi.fn(async () => ({ continue: true, rewriteArgs: { path: "~/.lax/hooks.json", content: "x" } })));
+    const ctx = ctxFor({ path: "notes.txt", content: "x" });
+
+    expect((await enforcePolicyPhase(ctx)).kind).toBe("continue");
+    expect(ctx.policyApprovalReason).toContain("This write call changes ~/.lax/hooks.json");
+  });
+
   it("a blocking hook still blocks (rewrite support does not weaken the veto)", async () => {
     hookEngineReturning(vi.fn(async () => ({ continue: false, reason: "policy says no" })));
     const ctx = ctxFor({ path: "original.txt" });
@@ -119,5 +135,46 @@ describe("PreToolUse arg rewrite — applied and re-screened", () => {
 
     expect(outcome.kind).not.toBe("continue");
     expect(ctx.result?.content).toContain("policy says no");
+  });
+});
+
+// Arg repair renames a key the model's chat template leaked into, and coercion
+// changes a value's type (arg-repair.ts). Run after the gates, the gates judged
+// one call and the tool ran another: this path was no path at all to the
+// file-access and control-file gates, then became `path` and was written.
+const LEAKED_PATH_KEY = 'write<|message|><atem:parameter name="path';
+
+function preDispatchArgs(call: number): unknown {
+  return (assertToolCallAllowed as ReturnType<typeof vi.fn>).mock.calls[call][0].args;
+}
+
+describe("the gates judge the args the tool runs with", () => {
+  it("a write whose path key only exists after repair is judged at that path", async () => {
+    hookEngineReturning(vi.fn(async () => ({ continue: true })));
+    const ctx = ctxFor({ [LEAKED_PATH_KEY]: "~/.lax/hooks.json", content: "x" });
+
+    expect((await enforcePolicyPhase(ctx)).kind).toBe("continue");
+    expect(ctx.args).toEqual({ path: "~/.lax/hooks.json", content: "x" });
+    expect(ctx.policyApprovalReason).toContain("This write call changes ~/.lax/hooks.json");
+    expect(preDispatchArgs(0)).toEqual(ctx.args);
+  });
+
+  it("a hook rewrite is repaired before the re-screen judges it", async () => {
+    hookEngineReturning(vi.fn(async () => ({ continue: true, rewriteArgs: { [LEAKED_PATH_KEY]: "~/.lax/hooks.json", content: "x" } })));
+    const ctx = ctxFor({ path: "notes.txt", content: "x" });
+
+    expect((await enforcePolicyPhase(ctx)).kind).toBe("continue");
+    expect(ctx.args).toEqual({ path: "~/.lax/hooks.json", content: "x" });
+    expect(ctx.policyApprovalReason).toContain("This write call changes ~/.lax/hooks.json");
+    expect(preDispatchArgs(1)).toEqual(ctx.args);
+  });
+
+  it("a coerced value reaches the gates in the type the tool receives", async () => {
+    hookEngineReturning(vi.fn(async () => ({ continue: true })));
+    const ctx = ctxFor({ path: "notes.txt", content: 42 });
+
+    expect((await enforcePolicyPhase(ctx)).kind).toBe("continue");
+    expect(ctx.args).toEqual({ path: "notes.txt", content: "42" });
+    expect(preDispatchArgs(0)).toEqual(ctx.args);
   });
 });

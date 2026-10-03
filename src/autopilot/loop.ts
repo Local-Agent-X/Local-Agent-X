@@ -6,7 +6,7 @@
  * Reuses Operation only for persistence + events + status.
  */
 
-import { writeFileSync, readFileSync, existsSync } from "node:fs";
+import { writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import type { Operation } from "./operation-types.js";
 import type { AutopilotState, BootProof, RoundResult } from "./types.js";
@@ -16,49 +16,12 @@ import { commitRound } from "./commit.js";
 import { buildRunSummary, renderSummaryMarkdown } from "./summary.js";
 import { runEndOfShiftBootProof } from "./boot-proof.js";
 import { releaseLock } from "./lock.js";
+import { broadcastStarted, broadcastProgress, broadcastCompleted } from "./sidebar-broadcast.js";
+import { getSetting } from "../settings.js";
 import type { StartAutopilotDeps } from "./start.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("autopilot.loop");
-
-// ── Sidebar broadcast helpers ─────────────────────────────────────────────
-//
-// Autopilot ops were previously invisible to the AGENTS sidebar — they ran
-// for hours emitting nothing the user could watch. The worker pool's
-// session-bridge handles bg_op_* events for op_* IDs, but autopilot uses
-// op_ap_* IDs and runs its own loop, bypassing that bridge entirely.
-// These helpers wire autopilot directly into broadcastAll so the sidebar
-// card surfaces start / per-round progress / completion in real time.
-
-// Autopilot ops aren't tied to a single chat session — pass null so the
-// envelope matches the worker pool's bg_op_* broadcast shape that chat.js
-// expects: { type: "event", sessionId, event: { type: "bg_op_*", ... } }.
-// Earlier I was sending { type: "bg_op_*", ... } at the top level, which
-// chat.js silently dropped because it checks msg.event.type, not msg.type.
-async function broadcast(event: Record<string, unknown>): Promise<void> {
-  try {
-    const { broadcastAll } = await import("../chat-ws/index.js");
-    // chat.js requires sessionId TRUTHY (`if (msg.type === 'event' && msg.sessionId && msg.event)`).
-    // null is falsy so it'd skip the whole bg_op handler block. Use "autopilot"
-    // as a sentinel session id — chat.js doesn't route bg_op_* per-session
-    // anyway (sidebar is global).
-    broadcastAll({ type: "event", sessionId: "autopilot", event });
-  } catch (e) {
-    logger.warn(`[autopilot.loop] broadcast threw: ${(e as Error).message}`);
-  }
-}
-
-async function broadcastStarted(opId: string, topic: string): Promise<void> {
-  await broadcast({ type: "bg_op_started", opId, task: topic, provider: "autopilot" });
-}
-
-async function broadcastProgress(opId: string, line: string): Promise<void> {
-  await broadcast({ type: "bg_op_progress", opId, line });
-}
-
-async function broadcastCompleted(opId: string, summary: string, ok: boolean): Promise<void> {
-  await broadcast({ type: "bg_op_completed", opId, status: ok ? "completed" : "failed", summary });
-}
 
 // ── Stop signal registry ──────────────────────────────────────────────────
 //
@@ -97,6 +60,29 @@ export function listActiveAutopilotOps(): Operation[] {
   return [...activeOps.values()];
 }
 
+// ── Developer-mode halt ───────────────────────────────────────────────────
+//
+// Rounds edit and build this install's own source, which needs developer_mode.
+// The loop re-reads the setting before each round, before validating (the
+// build runs the round's code) and before committing. Turning the setting off
+// also cancels the round in flight through its canonical op, so it stops
+// editing the worktree now rather than when the round would have ended.
+
+const roundAborts = new Map<string, AbortController>();
+
+function developerModeOff(): boolean {
+  return getSetting("developer_mode") !== true;
+}
+
+/** Called by every path that writes developer_mode, right after the write. */
+export function haltAutopilotsIfDeveloperModeOff(): void {
+  if (!developerModeOff()) return;
+  for (const [opId, controller] of roundAborts) {
+    logger.info(`[autopilot.loop] developer_mode off — cancelling the running round of ${opId}`);
+    controller.abort();
+  }
+}
+
 // ── Main loop ─────────────────────────────────────────────────────────────
 
 export async function runAutopilotLoop(op: Operation, deps: StartAutopilotDeps): Promise<void> {
@@ -125,6 +111,10 @@ export async function runAutopilotLoop(op: Operation, deps: StartAutopilotDeps):
   try {
     while (true) {
       // Top-of-loop exit checks
+      if (developerModeOff()) {
+        finalState = haltedByDeveloperMode(op, "no further round was started");
+        break;
+      }
       if (isStopRequested(op.id)) {
         logger.info(`[autopilot.loop] op ${op.id} interrupted by user`);
         finalState = "interrupted";
@@ -166,6 +156,8 @@ export async function runAutopilotLoop(op: Operation, deps: StartAutopilotDeps):
 
       // Spawn the round agent
       let agentResult;
+      const roundAbort = new AbortController();
+      roundAborts.set(op.id, roundAbort);
       try {
         agentResult = await runAutopilotRound(
           {
@@ -184,6 +176,7 @@ export async function runAutopilotLoop(op: Operation, deps: StartAutopilotDeps):
             selfEditUsed: totalSelfEditCalls,
             lastRound,
             wallClockMs: roundBudgetMs,
+            signal: roundAbort.signal,
           },
         );
       } catch (e) {
@@ -205,29 +198,37 @@ export async function runAutopilotLoop(op: Operation, deps: StartAutopilotDeps):
         // Don't increment noop counter — agent error is a different failure mode.
         // Just continue to next round; if it keeps failing, max-rounds will stop it.
         continue;
+      } finally {
+        roundAborts.delete(op.id);
       }
 
       totalSelfEditCalls += agentResult.selfEditCallsThisRound;
 
+      if (developerModeOff()) {
+        finalState = haltedByDeveloperMode(op, `round ${round} was stopped; nothing from it was validated or committed`);
+        break;
+      }
+
+      // Validate (the AUTOPILOT_DONE round too: its final changes still land)
+      const validation = await validateRound(config.worktreeName, config);
+      const partitioned = partitionByScope(validation.filesChanged, config.scope);
+      const agentSummary = extractAgentSummary(agentResult.output);
+
+      if (validation.outcome === "passed" && developerModeOff()) {
+        finalState = haltedByDeveloperMode(op, `round ${round} passed validation but was not committed`);
+        break;
+      }
+      const commitSha = validation.outcome === "passed"
+        ? commitRound({ worktreeName: config.worktreeName, round, topic: config.topic, agentSummary })
+        : null;
+
       // AUTOPILOT_DONE check — clean exit
       if (agentResult.autopilotDone) {
         logger.info(`[autopilot.loop] op ${op.id} agent self-terminated: ${agentResult.doneReason}`);
-        // Validate + commit any final changes from this round before stopping
-        const validation = await validateRound(config.worktreeName, config);
-        const partitioned = partitionByScope(validation.filesChanged, config.scope);
-        let commitSha: string | null = null;
-        if (validation.outcome === "passed") {
-          commitSha = commitRound({
-            worktreeName: config.worktreeName,
-            round,
-            topic: config.topic,
-            agentSummary: extractAgentSummary(agentResult.output),
-          });
-        }
         const result: RoundResult = {
           round,
           outcome: validation.outcome,
-          summary: agentResult.doneReason || extractAgentSummary(agentResult.output),
+          summary: agentResult.doneReason || agentSummary,
           filesChanged: validation.filesChanged,
           filesInScope: partitioned.inScope,
           filesOutOfScope: partitioned.outOfScope,
@@ -240,19 +241,7 @@ export async function runAutopilotLoop(op: Operation, deps: StartAutopilotDeps):
         break;
       }
 
-      // Validate
-      const validation = await validateRound(config.worktreeName, config);
-      const partitioned = partitionByScope(validation.filesChanged, config.scope);
-      const agentSummary = extractAgentSummary(agentResult.output);
-
-      let commitSha: string | null = null;
       if (validation.outcome === "passed") {
-        commitSha = commitRound({
-          worktreeName: config.worktreeName,
-          round,
-          topic: config.topic,
-          agentSummary,
-        });
         noopRoundsInARow = 0;
         addOpEvent(op, "progress", `Round ${round} passed (${commitSha?.slice(0, 8) || "no-sha"}, ${validation.filesChanged.length} files)`);
         void broadcastProgress(op.id, `✓ Round ${round} passed — ${validation.filesChanged.length} file${validation.filesChanged.length === 1 ? "" : "s"}, commit ${commitSha?.slice(0, 8) || "no-sha"}`);
@@ -293,12 +282,13 @@ export async function runAutopilotLoop(op: Operation, deps: StartAutopilotDeps):
     // End-of-shift boot proof. Per-round validation only proves the code
     // BUILDS; this proves it BOOTS. Run it once, only when there's committed
     // work to boot (passed rounds), a build gate is configured, and the run
-    // ended naturally — skip on interrupt (user wants out fast) and on error
+    // ended naturally — skip on interrupt (user wants out fast), on
+    // developer_mode off (the proof boots the branch's code) and on error
     // (loop state is unreliable). Autopilot never auto-merges to main, so a
     // failed boot proof is a human-merge warning, not a brick.
     let bootProof: BootProof | undefined;
     const passedCount = (op.autopilotRounds || []).filter(r => r.outcome === "passed").length;
-    const naturalEnd = finalState !== "interrupted" && finalState !== "error";
+    const naturalEnd = finalState !== "interrupted" && finalState !== "error" && finalState !== "developer-mode-off";
     if (passedCount > 0 && config.buildCommand !== null && naturalEnd) {
       try {
         void broadcastProgress(op.id, "🔌 Boot proof: launching server + smoke check…");
@@ -323,7 +313,9 @@ export async function runAutopilotLoop(op: Operation, deps: StartAutopilotDeps):
       bootProof,
     });
 
-    op.status = finalState === "error" ? "failed" : finalState === "interrupted" ? "cancelled" : "completed";
+    op.status = finalState === "error" ? "failed"
+      : finalState === "interrupted" || finalState === "developer-mode-off" ? "cancelled"
+      : "completed";
     op.completedAt = Date.now();
     addOpEvent(op, "done", renderSummaryMarkdown(summary));
     persistOp(op, deps.workspaceDir);
@@ -357,6 +349,12 @@ export async function runAutopilotLoop(op: Operation, deps: StartAutopilotDeps):
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────
+
+function haltedByDeveloperMode(op: Operation, detail: string): AutopilotState {
+  logger.info(`[autopilot.loop] op ${op.id} stopped: developer_mode is off — ${detail}`);
+  addOpEvent(op, "info", `Stopped: developer_mode is off — ${detail}.`);
+  return "developer-mode-off";
+}
 
 function appendRound(op: Operation, round: RoundResult, workspaceDir: string): void {
   if (!op.autopilotRounds) op.autopilotRounds = [];
@@ -392,6 +390,3 @@ function extractAgentSummary(output: string): string {
   }
   return lines[0]?.slice(0, 280) || "";
 }
-
-// Touch readFileSync to silence unused-import warning if loadOperation refactored later.
-void readFileSync;

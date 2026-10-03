@@ -18,7 +18,7 @@ import type { ChatCompletionMessageParam } from "openai/resources/chat/completio
 
 process.env.LAX_DATA_DIR = mkdtempSync(join(tmpdir(), "lax-unnamed-delete-"));
 
-const { userNamedFile, currentHumanText, unnamedDeletes, gateAppliesToModel, takeUnnamedDeleteDecision, recordUnnamedDeleteDecision } =
+const { userNamedFile, currentHumanText, unnamedDeletes, deleteTargetsOf, gateAppliesToModel, takeUnnamedDeleteDecision, recordUnnamedDeleteDecision } =
   await import("./unnamed-delete-gate.js");
 const { markHarnessRow } = await import("../harness-rows.js");
 const { resolveAgentPath } = await import("../workspace/paths.js");
@@ -150,11 +150,6 @@ describe("a shell delete of an un-named file is the same act", () => {
     expect(unnamedDeletes([sh("c1", "rm client-data/tmp/thumbnail-cache.tmp")], [user(CLEAR)])).toEqual([]);
     expect(unnamedDeletes([sh("l1", "ls -la client-data/tmp/ && cat README.md")], [user(VAGUE)])).toEqual([]);
   });
-
-  it("the structured executable/args form is read the same way", () => {
-    const structured = { id: "a1", name: "ari_shell", arguments: JSON.stringify({ executable: "rm", args: ["-f", "workspace/client-data/originals/invoice-0042.md"] }) };
-    expect(unnamedDeletes([structured], [user(VAGUE)])).toEqual([{ id: "a1", path: "workspace/client-data/originals/invoice-0042.md" }]);
-  });
 });
 
 describe("a decision covers exactly the call it was made for", () => {
@@ -163,6 +158,41 @@ describe("a decision covers exactly the call it was made for", () => {
     expect(takeUnnamedDeleteDecision("call-1")).toEqual({ approved: false, reason: "declined" });
     expect(takeUnnamedDeleteDecision("call-1")).toBeUndefined();
     expect(takeUnnamedDeleteDecision("never-asked")).toBeUndefined();
+  });
+});
+
+// The cross-seam pin for the 2026-10-02 bypass: the pre-pass and the dispatcher
+// each read the call's arguments, and only the dispatcher repaired them, so a
+// leaked template key hid an rm from the card. For every malformed shape the
+// dispatcher repairs, the pre-pass must see the targets the dispatched call runs.
+describe("the pre-pass reads the arguments the dispatcher runs", async () => {
+  const { bashTool } = await import("../tools/shell-tool.js");
+  const { deleteFileTool } = await import("../tools/read-write-tools.js");
+  const { createContext } = await import("./context.js");
+  const { resolvePhase } = await import("./resolve-tool.js");
+  const { validateArgs } = await import("./arg-validation.js");
+  const { shellDeleteTargets } = await import("./shell-delete-targets.js");
+  const tools = new Map([[bashTool.name, bashTool], [deleteFileTool.name, deleteFileTool]]);
+  const target = "workspace/client-data/originals/invoice-0042.md";
+
+  it.each([
+    { id: "k1", name: "bash", arguments: JSON.stringify({ 'bash<|message|><atem:parameter name="command': `rm ${target}` }) },
+    { id: "k2", name: "bash", arguments: `{"command": "rm ${target}",}` },
+    { id: "k3", name: "bash", arguments: `{'command': 'rm ${target}'}` },
+    { id: "k4", name: "delete_file", arguments: JSON.stringify({ 'delete_file<|message|><atem:parameter name="path': target }) },
+    // A `_` decoy first: the dispatcher drops it, so the real key is the one
+    // renamed. A pre-pass that kept it renamed the decoy and missed the target.
+    { id: "k5", name: "bash", arguments: JSON.stringify({ "_<|message|>command": "echo hi", 'bash<|message|><atem:parameter name="command': `rm ${target}` }) },
+    { id: "k6", name: "delete_file", arguments: JSON.stringify({ "_<|message|>path": "workspace/nothing.txt", 'delete_file<|message|><atem:parameter name="path': target }) },
+  ])("$name $arguments", async (tc) => {
+    const ctx = createContext({ tc, toolMap: tools, security: {} as never, sessionId: "seam" });
+    await resolvePhase(ctx);
+    ctx.tool = tools.get(tc.name);
+    await validateArgs(ctx);
+    const ran = tc.name === "bash" ? shellDeleteTargets(String(ctx.args.command)) : [String(ctx.args.path)];
+    expect(ran).toEqual([target]);
+    expect(deleteTargetsOf(tc, tools)).toEqual(ran);
+    expect(unnamedDeletes([tc], [user(VAGUE)], { tools })).toEqual([{ id: tc.id, path: target }]);
   });
 });
 

@@ -129,9 +129,15 @@ function openArtifact(filter, idx) {
     window.open(a.ref, '_blank', 'noopener');
     return;
   }
-  // Served media (/images|/videos|/uploads|/files) — static-assets auth is
+  // Workspace files are agent-written and served from the agent origin: the
+  // link carries the files-link capability, never the operator token.
+  if (/^\/files\//.test(a.ref)) {
+    window.open(agentFilesHref(a.ref), '_blank', 'noopener');
+    return;
+  }
+  // Served media (/images|/videos|/uploads) — static-assets auth is
   // header-or-?token=, and a plain window.open can't send headers.
-  if (/^\/(images|videos|uploads|files)\//.test(a.ref)) {
+  if (/^\/(images|videos|uploads)\//.test(a.ref)) {
     window.open(a.ref + '?token=' + encodeURIComponent(AUTH_TOKEN), '_blank', 'noopener');
     return;
   }

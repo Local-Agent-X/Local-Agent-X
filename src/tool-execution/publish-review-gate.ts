@@ -10,13 +10,14 @@
  *             the findings and a "Push anyway" override (alwaysAsk, registered
  *             in approval-overrides.ts); approving runs the original call and
  *             records the override in the audit trail. Unattended: no override.
- *   FAILED / UNKNOWN
- *             nothing was reviewed, and nothing ships unreviewed in ANY profile
- *             without the user's explicit yes (the owner's rule, 2026-09-28,
- *             after a live UNKNOWN under Power let a push out): the same
- *             always-ask card, worded "Push unreviewed", audited the same way;
- *             unattended: blocked.
- *   AMBER / GREEN / EMPTY
+ *   FAILED / UNKNOWN, or AMBER / GREEN with another publish in the call
+ *             that could not be reviewed
+ *             nothing (or not all of it) was reviewed, and nothing ships
+ *             unreviewed in ANY profile without the user's explicit yes (the
+ *             owner's rule, 2026-09-28, after a live UNKNOWN under Power let a
+ *             push out): the same always-ask card, worded "Push unreviewed",
+ *             audited the same way; unattended: blocked.
+ *   AMBER / GREEN covering every publish in the call, EMPTY
  *             the profile's "publish" row decides (requireApprovalPhase); a
  *             card, if one is raised, carries the review, and the tool result
  *             carries it either way.
@@ -188,9 +189,12 @@ async function overrideOutcome(ctx: ToolCallContext, op: PublishOperation, revie
 
 function recordOverride(ctx: ToolCallContext, op: PublishOperation, review: PublishReview, grantId?: string): void {
   const red = review.findings.filter((f) => f.severity === "red").map((f) => `${f.location}: ${f.problem}`);
+  const unreviewed = review.unknown.map((u) => `${u.label}: ${u.reason}`).join("; ");
   const over = review.status === "RED"
-    ? `over a RED pre-publish review`
-    : `although the pre-publish review could not run (${review.status}: ${review.reason ?? (review.unknown.map((u) => u.reason).join("; ") || "no reason recorded")})`;
+    ? `over a RED pre-publish review${unreviewed ? `, with part of it not reviewed (${unreviewed})` : ""}`
+    : review.status === "FAILED" || review.status === "UNKNOWN"
+      ? `although the pre-publish review could not run (${review.status}: ${review.reason ?? (unreviewed || "no reason recorded")})`
+      : `although part of it could not be reviewed (${unreviewed}; the rest was ${review.status})`;
   logger.warn(`[publish-gate] user approved ${op.label} ${over} (${review.fingerprint.slice(0, 12)})${red.length ? `: ${red.join("; ")}` : ""}`);
   try {
     getSharedAuditTrail(getLaxDir()).record({

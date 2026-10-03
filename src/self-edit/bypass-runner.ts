@@ -7,10 +7,9 @@ export type BypassResult = { content: string; isError?: boolean };
 
 /**
  * Bypass flow: run the resolved surgeon CLI directly inside the supplied cwd.
- * Used when the autopilot route already supplies its own worktree (_cwd) or
- * when the caller explicitly requested _unsafe (emergency rescue). No sandbox
- * gates. The surgeon (claude / codex / grok) is picked from the active provider
- * by runSurgeon — see surgeon.ts.
+ * Used when an autopilot session already supplies its own worktree (_cwd). No
+ * sandbox gates. The surgeon (claude / codex / grok) is picked from the active
+ * provider by runSurgeon — see surgeon.ts.
  */
 export async function runSelfEditBypass(
   subprocessCwd: string,

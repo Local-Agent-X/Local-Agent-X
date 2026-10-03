@@ -7,9 +7,10 @@ import { ensureDevServerRunning, readDevServerRecord, registerDevServer, listDev
 import { pidsOnPort } from "../tools/process-session.js";
 import { registerFrameworkDevServerFromDisk } from "../canonical-loop/public/build-adapters.js";
 import { deriveConnectorCapability } from "./app-connector-auth.js";
-import { APP_CONTENT_TYPES, WORKSPACE_APP_HTML_HEADERS, resolveAppStaticFile } from "./app-serving-policy.js";
+import { APP_CONTENT_TYPES, WORKSPACE_APP_HTML_HEADERS, connectorBootstrapScript, resolveAppStaticFile } from "./app-serving-policy.js";
 import { decideFrontendServe, proxyFrontendDevServer } from "./dev-server-proxy.js";
 import { phoneErrorPipeScript } from "./error-pipe-inject.js";
+import { ideFrameBridgeScript } from "./ide-frame-bridge.js";
 import type { LAXConfig } from "../types.js";
 
 export interface AppServingDeps {
@@ -75,7 +76,7 @@ export function serveWorkspaceApp(
         res.end();
         return true;
       }
-      deps.proxyFrontendDevServer(req, res, frontend.port, url, deriveConnectorCapability(config.authToken), { publicDir });
+      deps.proxyFrontendDevServer(req, res, frontend.port, url, deriveConnectorCapability(config.authToken), { publicDir, uiPort: config.port });
       return true;
     }
   }
@@ -100,9 +101,15 @@ export function serveWorkspaceApp(
   // so the gate loads a build under the SAME policy this route serves it with.
   Object.assign(headers, WORKSPACE_APP_HTML_HEADERS);
   let html = readFileSync(appFile, "utf-8");
+  // This page runs on the agent origin: it is handed the connector capability,
+  // never the operator token. A phone over the broker gets the fetch error
+  // pipe; on the desktop the page may be the IDE preview, so it gets the frame
+  // bridge, which is inert unless the UI frames it.
   const connectorCapability = deriveConnectorCapability(config.authToken);
-  const errorPipe = req.headers["x-lax-tunnel"] && appId ? phoneErrorPipeScript(publicDir, appId) : "";
-  const isolation = `<script>sessionStorage.removeItem('lax_token');localStorage.removeItem('lax_token');delete window.__AUTH_TOKEN__;window.__LAX_CONNECTOR_TOKEN__=${JSON.stringify(connectorCapability)};history.replaceState(null,'',location.pathname);</script>` + errorPipe;
-  html = html.includes("<head>") ? html.replace("<head>", "<head>" + isolation) : html.includes("<body>") ? html.replace("<body>", "<body>" + isolation) : isolation + html;
+  const instrumentation = req.headers["x-lax-tunnel"]
+    ? (appId ? phoneErrorPipeScript(publicDir, appId) : "")
+    : ideFrameBridgeScript(publicDir, config.port);
+  const bootstrap = connectorBootstrapScript(connectorCapability) + instrumentation;
+  html = html.includes("<head>") ? html.replace("<head>", "<head>" + bootstrap) : html.includes("<body>") ? html.replace("<body>", "<body>" + bootstrap) : bootstrap + html;
   res.writeHead(200, headers); res.end(html); return true;
 }

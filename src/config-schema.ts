@@ -4,7 +4,7 @@
 import { z } from "zod";
 import { loadSystemPrompt } from "./config-loader.js";
 
-// System prompt is loaded from config/system-prompt.md (agent-editable safe zone).
+// System prompt is loaded from config/system-prompt.md.
 // Falls back to a minimal prompt if the file is missing.
 const DEFAULT_SYSTEM_PROMPT = loadSystemPrompt() || "You are a personal AI companion running inside Local Agent X. Use your tools to help the user.";
 

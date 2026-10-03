@@ -10,7 +10,7 @@
  * contract: routing (handled:false for static/unknown), scaffold gating,
  * failure shaping, and dev-port allocation.
  */
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -24,6 +24,25 @@ import type { StaticBuildResult } from "../../tools/static-build-run.js";
 import { readRunTargetManifest } from "../../tools/app-run-target.js";
 import type { DetectedFramework } from "../../tools/framework-detect.js";
 import { DEFAULT_BASE_PORT } from "../../auto-build/scenario-scorer/port-alloc.js";
+
+// The defaults a test leaves uninjected, modelled so none starts a process or
+// reaches the Windows cage's helper: the real registerDevServer and the cage
+// wait that guards it.
+const real = vi.hoisted(() => ({
+  registered: [] as string[],
+  cage: { ready: true } as { ready: true } | { ready: false; reason: string },
+}));
+vi.mock("../../tools/dev-server.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../tools/dev-server.js")>()),
+  registerDevServer: (i: { appId: string; port: number; cwd?: string }): RegisterResult => {
+    real.registered.push(i.appId);
+    return { ok: true, connector: `dev-${i.appId}`, sessionId: "real-1", port: i.port, cwd: i.cwd ?? "", restarted: false, kind: "frontend" };
+  },
+}));
+vi.mock("../../tools/dev-server-tools.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../tools/dev-server-tools.js")>()),
+  awaitDevServerCage: async () => real.cage,
+}));
 
 const tempDirs: string[] = [];
 function makeDir(prefix: string): string {
@@ -178,6 +197,53 @@ describe("finalizeFrameworkBuild — failure shaping", () => {
     expect(r).toMatchObject({ handled: true, ok: false, code: "dev_server_failed" });
     if (!r.handled || r.ok) return;
     expect(r.message).toContain("spawn ENOENT");
+  });
+});
+
+// registerDevServer stops a rebuilt app's running dev server before its
+// synchronous start, which a Windows cage that is not ready refuses.
+describe("finalizeFrameworkBuild — the shell cage is waited for before registering", () => {
+  it("registers only once the cage is ready", async () => {
+    const dir = makeDir("cage-wait");
+    writeNextScaffold(dir);
+    const order: string[] = [];
+    let release!: () => void;
+    const ready = new Promise<void>((r) => { release = r; });
+    const { deps, calls } = fakeDeps();
+    const register = deps.registerDevServer!;
+    const r = finalizeFrameworkBuild(input(dir), {
+      ...deps,
+      registerDevServer: (i) => { order.push("register"); return register(i); },
+      awaitCage: async () => { order.push("cage"); await ready; return { ready: true }; },
+    });
+    await new Promise((res) => setTimeout(res, 20));
+    expect(calls.register).toHaveLength(0);
+    release();
+    expect(await r).toMatchObject({ handled: true, ok: true });
+    expect(order).toEqual(["cage", "register"]);
+  });
+
+  it("a cage that is not ready → dev_server_failed with its reason, and nothing registered", async () => {
+    const dir = makeDir("cage-refused");
+    writeNextScaffold(dir);
+    const { deps, calls } = fakeDeps();
+    const reason = "The Windows shell cage is still being verified; try again in a few seconds. Nothing was stopped or started.";
+    const r = await finalizeFrameworkBuild(input(dir), { ...deps, awaitCage: async () => ({ ready: false, reason }) });
+    expect(r).toEqual({ handled: true, ok: false, code: "dev_server_failed", message: reason });
+    expect(calls.register).toHaveLength(0);
+  });
+
+  it("the real registerDevServer is guarded by the real cage wait when nothing is injected", async () => {
+    const dir = makeDir("cage-default");
+    writeNextScaffold(dir);
+    const probes = { listDevServerRecords: () => [], portBound: () => false };
+    real.registered = [];
+    real.cage = { ready: false, reason: "not ready (modelled). Nothing was stopped or started." };
+    expect(await finalizeFrameworkBuild(input(dir), probes)).toEqual({ handled: true, ok: false, code: "dev_server_failed", message: "not ready (modelled). Nothing was stopped or started." });
+    expect(real.registered).toEqual([]);
+    real.cage = { ready: true };
+    expect(await finalizeFrameworkBuild(input(dir), probes)).toMatchObject({ handled: true, ok: true });
+    expect(real.registered).toEqual(["stitch"]);
   });
 });
 

@@ -1,9 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { existsSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, writeFileSync, readFileSync, rmdirSync, rmSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { execSync } from "node:child_process";
-import { captureRollback, restoreRollback, listRollbacks, ROLLBACK_DIR_PATH, ROLLBACK_INDEX_FILE } from "./rollback.js";
+import { captureRollback, restoreRollback, listRollbacks, ROLLBACK_DIR_PATH, ROLLBACK_INDEX_FILE, type RollbackContract } from "./rollback.js";
+
+// A restore asks the file-access layer whether its target may be written, and
+// that layer keeps writes inside the home directory (here, the test's own).
+const homeFile = (name: string): string => join(homedir(), name);
 
 // Tests run against the real ~/.lax/rollback dir, which is fine because
 // every contract is keyed on a unique toolCallId. We clean up our own
@@ -130,7 +134,7 @@ describe("captureRollback", () => {
 
   it("restoreRollback cleans up the toolCallId backup directory on success", () => {
     const id = freshId(); trackedIds.push(id);
-    const target = join(tmpdir(), `lax-rb-gc-${id}.txt`);
+    const target = homeFile(`lax-rb-gc-${id}.txt`);
     writeFileSync(target, "v1");
     captureRollback(id, "write", "workspace-write", { path: target });
 
@@ -147,8 +151,8 @@ describe("captureRollback", () => {
     const id = freshId(); trackedIds.push(id);
     // process.cwd() during vitest IS the LAX repo. Without the self-protect,
     // a shell-class capture without an explicit cwd would git-stash live
-    // working-tree edits — see test/tools/dispatcher-collapse.test.ts which
-    // dispatched ari_shell without a cwd and stashed real uncommitted work.
+    // working-tree edits — a test that dispatched a shell call without a cwd
+    // once stashed real uncommitted work.
     const contract = captureRollback(id, "bash", "shell", { command: "echo hi" });
     expect(contract.artifacts[0].type).toBe("none");
     if (contract.artifacts[0].type === "none") {
@@ -180,7 +184,7 @@ describe("captureRollback", () => {
 
   it("restoreRollback copies file-backup contents back to original", () => {
     const id = freshId(); trackedIds.push(id);
-    const target = join(tmpdir(), `lax-rb-restore-${id}.txt`);
+    const target = homeFile(`lax-rb-restore-${id}.txt`);
     writeFileSync(target, "original");
     captureRollback(id, "write", "workspace-write", { path: target });
     writeFileSync(target, "mutated-by-agent");
@@ -193,7 +197,7 @@ describe("captureRollback", () => {
 
   it("restoreRollback refuses to undo twice", () => {
     const id = freshId(); trackedIds.push(id);
-    const target = join(tmpdir(), `lax-rb-twice-${id}.txt`);
+    const target = homeFile(`lax-rb-twice-${id}.txt`);
     writeFileSync(target, "v1");
     captureRollback(id, "write", "workspace-write", { path: target });
     writeFileSync(target, "v2");
@@ -221,7 +225,7 @@ describe("captureRollback", () => {
 
   it("listRollbacks returns the most recent capture and marks restored entries", () => {
     const id = freshId(); trackedIds.push(id);
-    const target = join(tmpdir(), `lax-rb-list-${id}.txt`);
+    const target = homeFile(`lax-rb-list-${id}.txt`);
     writeFileSync(target, "v1");
     captureRollback(id, "write", "workspace-write", { path: target });
 
@@ -245,5 +249,143 @@ describe("captureRollback", () => {
     const idx = readFileSync(ROLLBACK_INDEX_FILE, "utf-8");
     expect(idx).toContain(id);
     rmSync(target, { force: true });
+  });
+});
+
+// The index is an ordinary file under ~/.lax that any file writer can append
+// to, so these forge lines in it the way a prompt-injected agent could, then
+// ask for the restore a user would click.
+describe("restore trusts nothing the index names", () => {
+  const forge = (contract: RollbackContract): void => {
+    mkdirSync(ROLLBACK_DIR_PATH, { recursive: true });
+    appendFileSync(ROLLBACK_INDEX_FILE, JSON.stringify(contract) + "\n");
+  };
+  const backupFor = (id: string, body: string): string => {
+    mkdirSync(join(ROLLBACK_DIR_PATH, id), { recursive: true });
+    const backup = join(ROLLBACK_DIR_PATH, id, "x.bak");
+    writeFileSync(backup, body);
+    return backup;
+  };
+  const dirtyRepo = (id: string): string => {
+    const repo = join(tmpdir(), `lax-rb-forged-${id}`);
+    mkdirSync(repo, { recursive: true });
+    execSync("git init -q", { cwd: repo });
+    execSync('git config user.email "t@t" && git config user.name "t"', { cwd: repo });
+    writeFileSync(join(repo, "a.txt"), "v1");
+    execSync("git add . && git commit -qm init", { cwd: repo });
+    return repo;
+  };
+
+  it("capture refuses a tool-call id that is not a plain name, so no backup lands outside the rollback dir", () => {
+    const escape = `escape-${Math.random().toString(36).slice(2, 10)}`;
+    const target = homeFile(`lax-rb-esc-${escape}.txt`);
+    writeFileSync(target, "x");
+    try {
+      const c = captureRollback(`../${escape}`, "write", "workspace-write", { path: target });
+      expect(c.artifacts[0].type).toBe("none");
+      expect(existsSync(join(ROLLBACK_DIR_PATH, "..", escape))).toBe(false);
+    } finally {
+      rmSync(join(ROLLBACK_DIR_PATH, "..", escape), { recursive: true, force: true });
+      rmSync(target, { force: true });
+    }
+  });
+
+  it("refuses an id that would make the post-restore cleanup delete the data dir", () => {
+    const canary = join(ROLLBACK_DIR_PATH, "..", "canary.txt");
+    writeFileSync(canary, "still here");
+    const original = homeFile(`lax-rb-dotdot-${Math.random().toString(36).slice(2, 10)}.txt`);
+    forge({ toolCallId: "..", ts: Date.now(), tool: "write", risk: "workspace-write",
+      artifacts: [{ type: "file-backup", original, backup: join(ROLLBACK_DIR_PATH, "..", "canary.txt") }] });
+    try {
+      expect(restoreRollback("..").ok).toBe(false);
+      expect(existsSync(canary)).toBe(true);
+    } finally {
+      rmSync(canary, { force: true });
+      rmSync(original, { force: true });
+    }
+  });
+
+  it("refuses to copy a backup over a path the file-access layer will not let a write reach", () => {
+    const id = freshId();
+    const sshDir = join(homedir(), ".ssh");
+    // Cleanup removes only what this test made: run without the test-env home
+    // redirect, homedir() is the developer's own.
+    const madeSshDir = mkdirSync(sshDir, { recursive: true }) !== undefined;
+    const original = join(sshDir, `authorized_keys_${id}`);
+    forge({ toolCallId: id, ts: Date.now(), tool: "write", risk: "workspace-write",
+      artifacts: [{ type: "file-backup", original, backup: backupFor(id, "ssh-ed25519 AAAA attacker") }] });
+    try {
+      expect(restoreRollback(id).ok).toBe(false);
+      expect(existsSync(original)).toBe(false);
+    } finally {
+      cleanup(id);
+      rmSync(original, { force: true });
+      if (madeSshDir) rmdirSync(sshDir);
+    }
+  });
+
+  it("refuses a backup this call never captured, so a restore cannot copy any file it names into reach", () => {
+    const id = freshId();
+    const secret = homeFile(`lax-rb-secret-${id}.txt`);
+    const leak = homeFile(`lax-rb-leak-${id}.txt`);
+    writeFileSync(secret, "s3cret");
+    forge({ toolCallId: id, ts: Date.now(), tool: "write", risk: "workspace-write",
+      artifacts: [{ type: "file-backup", original: leak, backup: secret }] });
+    try {
+      expect(restoreRollback(id).ok).toBe(false);
+      expect(existsSync(leak)).toBe(false);
+    } finally {
+      rmSync(secret, { force: true });
+      rmSync(leak, { force: true });
+    }
+  });
+
+  it("refuses a backup that is a link out of the call's own directory", (ctx) => {
+    const id = freshId();
+    const secret = homeFile(`lax-rb-linked-${id}.txt`);
+    const leak = homeFile(`lax-rb-linkleak-${id}.txt`);
+    writeFileSync(secret, "s3cret");
+    mkdirSync(join(ROLLBACK_DIR_PATH, id), { recursive: true });
+    const backup = join(ROLLBACK_DIR_PATH, id, "x.bak");
+    try {
+      try { symlinkSync(secret, backup, "file"); } catch { ctx.skip(); }
+      forge({ toolCallId: id, ts: Date.now(), tool: "write", risk: "workspace-write",
+        artifacts: [{ type: "file-backup", original: leak, backup }] });
+      expect(restoreRollback(id).ok).toBe(false);
+      expect(existsSync(leak)).toBe(false);
+    } finally {
+      cleanup(id);
+      rmSync(secret, { force: true });
+      rmSync(leak, { force: true });
+    }
+  });
+
+  it("refuses a stash 'sha' that is not one, so a positional ref cannot apply the user's own stash", () => {
+    const id = freshId();
+    const repo = dirtyRepo(id);
+    try {
+      writeFileSync(join(repo, "a.txt"), "the user's own stashed work");
+      execSync('git stash push -m "users"', { cwd: repo });
+      forge({ toolCallId: id, ts: Date.now(), tool: "bash", risk: "shell",
+        artifacts: [{ type: "git-stash", sha: "stash@{0}", cwd: repo }] });
+      expect(restoreRollback(id).ok).toBe(false);
+      expect(readFileSync(join(repo, "a.txt"), "utf-8")).toBe("v1");
+      expect(execSync("git stash list", { cwd: repo, encoding: "utf-8" })).toContain("users");
+    } finally { rmSync(repo, { recursive: true, force: true }); }
+  });
+
+  it("never hands a stash sha or a tool-call id to a shell", () => {
+    const id = freshId();
+    const repo = dirtyRepo(id);
+    const marker = join(repo, "pwned");
+    try {
+      forge({ toolCallId: id, ts: Date.now(), tool: "bash", risk: "shell",
+        artifacts: [{ type: "git-stash", sha: `${"0".repeat(40)} & echo pwned> ${marker} & `, cwd: repo }] });
+      expect(restoreRollback(id).ok).toBe(false);
+      writeFileSync(join(repo, "a.txt"), "dirty");
+      const c = captureRollback(`x" & echo pwned> ${marker} & "`, "bash", "shell", { command: "x" }, repo);
+      expect(c.artifacts[0].type).toBe("none");
+      expect(existsSync(marker)).toBe(false);
+    } finally { rmSync(repo, { recursive: true, force: true }); }
   });
 });

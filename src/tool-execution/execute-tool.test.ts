@@ -358,7 +358,7 @@ describe("dispatchSingleToolCall reports the real envelope status (TD-7)", () =>
 });
 
 describe("canonical unattended shell capability gate", () => {
-  const SHELL_BACKENDS = ["bash", "shell", "ari_shell", "process_start", "process_restart", "app_serve_backend", "app_serve_frontend"];
+  const SHELL_BACKENDS = ["bash", "shell", "process_start", "process_restart", "app_serve_backend", "app_serve_frontend"];
   let dataDir: string;
   let previousDataDir: string | undefined;
   let previousMode: string | undefined;

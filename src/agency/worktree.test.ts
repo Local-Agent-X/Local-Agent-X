@@ -16,7 +16,7 @@ import { tmpdir } from "node:os";
 import { activeWorktrees, logger, MAX_CONCURRENT_WORKTREES, worktreeSlotAvailable, type WorktreeEntry } from "./worktree-core.js";
 import { createWorktree, createNamedWorktree, cleanupWorktree, mergeWorktree } from "./worktree-lifecycle.js";
 import { pruneMergedAgentBranches } from "./worktree-junctions.js";
-import { getMergeDeltaFiles, securitySensitiveChangedFiles, commitInWorktree } from "./worktree-state.js";
+import { getMergeDeltaDiff, getMergeDeltaFiles, securitySensitiveChangedFiles, commitInWorktree } from "./worktree-state.js";
 import { scanWorktreeForStagedSecrets } from "../self-edit/exfil-scan.js";
 import { rewritePathForWorktree } from "../tool-execution/worktree-paths.js";
 
@@ -156,6 +156,46 @@ describe("self_edit merge-gate scoping (R6-B1/B2)", () => {
     }
   });
 
+  // The surgeon writes the worktree's .git config and attributes. Each of these
+  // would run a command of its choosing on the host while the gates read the
+  // delta, and the diff driver and textconv filter would also hand the
+  // refutation gate a diff the surgeon wrote instead of the real one.
+  it("reads the merge delta without starting the worktree's fsmonitor hook, external diff or textconv filter", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "lax-mgate-hostile-"));
+    const name = "mgate-hostile-test";
+    const marker = (hook: string) => join(repo, `fired-${hook}`).replace(/\\/g, "/");
+    try {
+      g(repo, ["init", "-q"]);
+      g(repo, ["config", "user.email", "t@t"]);
+      g(repo, ["config", "user.name", "t"]);
+      writeFileSync(join(repo, "a.ts"), "export const a = 1;\n");
+      g(repo, ["add", "-A"]);
+      g(repo, ["commit", "-qm", "base"]);
+      g(repo, ["branch", "-M", "main"]);
+      g(repo, ["checkout", "-q", "-b", "feature"]);
+      writeFileSync(join(repo, "b.ts"), "export const b = 1;\n");
+      g(repo, ["add", "-A"]);
+      g(repo, ["commit", "-qm", "committed"]);
+      writeFileSync(join(repo, "a.ts"), "export const a = 2;\n");
+      g(repo, ["config", "core.fsmonitor", `touch '${marker("fsmonitor")}'; false`]);
+      g(repo, ["config", "diff.external", `touch '${marker("ext-diff")}'; true`]);
+      g(repo, ["config", "diff.hide.textconv", `touch '${marker("textconv")}'; echo clean`]);
+      writeFileSync(join(repo, ".git", "info", "attributes"), "*.ts diff=hide\n");
+      activeWorktrees.set(name, { path: repo, branch: "feature", baseBranch: "main", repoRoot: repo, mergedSuccessfully: false });
+
+      const files = await getMergeDeltaFiles(name);
+      const diff = await getMergeDeltaDiff(name);
+
+      expect(["fsmonitor", "ext-diff", "textconv"].filter((h) => existsSync(marker(h)))).toEqual([]);
+      expect(files).toContain("b.ts");
+      expect(diff).toContain("+export const b = 1;");
+      expect(diff).toContain("+export const a = 2;");
+    } finally {
+      activeWorktrees.delete(name);
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
   it("holds every gate-pipeline module for review (the gate can't rewrite its own gate)", () => {
     // The modules that implement the gate itself — each must be in the held set,
     // else a self_edit could weaken the gate and auto-merge it. Derived from the
@@ -259,7 +299,7 @@ describe("concurrent-worktree cap", () => {
   // switches HEAD to `main`).
   it("mergeWorktree advances the base branch without disturbing the user's checkout (OP-8)", () => {
     const { repo, g, baseHead } = initRepo();
-    const id = "op8-agent";
+    const id = `op8-agent-${Date.now().toString(36)}`;
     const prevCwd = process.cwd();
     const env = { ...process.env };
     try {
@@ -298,7 +338,7 @@ describe("concurrent-worktree cap", () => {
   // so the fix doesn't regress the normal merge-back-to-main behavior.
   it("mergeWorktree fast-forwards the user's checkout when they are clean on base (OP-8)", () => {
     const { repo, g, baseHead } = initRepo();
-    const id = "op8-ff-agent";
+    const id = `op8-ff-agent-${Date.now().toString(36)}`;
     const prevCwd = process.cwd();
     const env = { ...process.env };
     try {

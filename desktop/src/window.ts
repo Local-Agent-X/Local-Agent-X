@@ -1,6 +1,6 @@
 // The main BrowserWindow: creation, splash→app handoff, content zoom, and the
-// window-level handlers. Owns mainWindow state. Child "app" windows (the
-// /apps/<id> frameless windows + warm pool) live in app-windows.ts.
+// window-level handlers. Owns mainWindow state. Child windows (the account
+// window and /files/ pages) live in app-windows.ts.
 //
 // macOS: titleBarStyle "hiddenInset" hides the visual title bar but keeps
 // a native drag region (the top ~28px) so the window stays draggable and
@@ -17,7 +17,7 @@ import { bgForTheme, overlayForTheme } from "./theme";
 import { getSetting, setSetting } from "./settings";
 import { buildSplashDataUrl } from "./splash";
 import { isServerRunning, isQuittingFlag } from "./server-process";
-import { handleWindowOpen, openDocByPath, openAccountWindow } from "./app-windows";
+import { handleWindowOpen, isAppShellUrl, openAccountWindow } from "./app-windows";
 
 // The in-app account popup lives in app-windows.ts; re-exported so main.ts's
 // existing import path is unchanged. (/apps/<id> links open in the system
@@ -243,17 +243,15 @@ export function createWindow(): void {
     mainWindow?.show();
   });
 
-  // Intercept navigation to document files — open with system default app.
+  // This window carries the preload bridge, so it only ever shows the app
+  // shell. Anything else a navigation would load here (a dropped file or link,
+  // a link without target=_blank, an agent page, an external site) is
+  // cancelled and routed as window.open is: documents to their native app,
+  // /files/ pages to a window without the bridge, the rest to the browser.
   mainWindow.webContents.on("will-navigate", (e, navUrl) => {
-    console.log(`[desktop] will-navigate: ${navUrl}`);
-    const DOC_EXTENSIONS = /\.(docx?|xlsx?|pptx?|pdf|csv)$/i;
-    try {
-      const pathname = new URL(navUrl).pathname;
-      if (DOC_EXTENSIONS.test(pathname)) {
-        e.preventDefault();
-        openDocByPath(pathname);
-      }
-    } catch { /* not a valid URL — let it navigate normally */ }
+    if (isAppShellUrl(navUrl)) return;
+    e.preventDefault();
+    handleWindowOpen(navUrl);
   });
 
   // Disable Ctrl+R / Ctrl+Shift+R / F5 (causes port/localStorage issues), and on

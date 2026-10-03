@@ -30,14 +30,14 @@ The agent picks up the new tools on next config save (file watcher reloads autom
 
 ## Child execution posture
 
-`executionMode` is required by the API and UI. Direct configs that omit it default to `sandboxed`, never trusted. The field is synced configuration and is not an approval.
+`executionMode` is required by the API and UI. Direct configs that omit it default to `sandboxed`, never trusted. The field is configuration, not an approval.
 
-- `sandboxed` wraps the integrity-checked executable in the existing macOS seatbelt or Linux bubblewrap guarded profile. This is targeted confinement, not a full sandbox: it retains network and broad host filesystem access while denying selected credential paths and persistence writes.
+- `sandboxed` wraps the integrity-checked executable in the existing macOS seatbelt or Linux bubblewrap guarded profile, the same cage an agent shell runs in. This is targeted confinement, not a full sandbox: the server reaches anything off the machine only through the app's egress proxy, which applies the egress policy (on Linux its network namespace is empty except for the proxy's bridge), and keeps broad host filesystem access while selected credential paths and persistence writes are denied.
 - `trusted` requests a normal child process with the current user account's host permissions. It remains blocked until the authenticated user approves that exact command/args/env fingerprint in Settings. Approval lives only in `~/.lax/mcp-local-trust.json`, is not synced, and is invalidated by a config change.
 - A valid signed manifest from a key in `~/.lax/trusted-publishers.json` can authorize its manifest-bound posture without local first-use approval. The signature binds the server name, release version, command identity, args/config fingerprint, publisher key, and `executionMode`.
 - Windows currently has no supported MCP guarded child confinement. A `sandboxed` entry is blocked before integrity trust or spawn; trusted execution needs the separate local approval.
 
-The agent-facing `mcp_add_server` tool cannot create or approve trusted execution. A synced or manually edited unsigned `executionMode: "trusted"` entry also cannot start through boot or the config watcher without matching local approval. Docker shell mode does not transparently containerize MCP servers because arbitrary host-installed MCP executables and their runtimes are not present in the shell image. Binary hash pinning, environment filtering, per-call policy, and output sanitization remain defense-in-depth controls; none makes an unreviewed server safe to run as trusted code.
+The agent-facing `mcp_add_server` tool cannot create or approve trusted execution. An unsigned `executionMode: "trusted"` entry written into `mcp.json` by hand also cannot start through boot or the config watcher without matching local approval. Docker shell mode does not transparently containerize MCP servers because arbitrary host-installed MCP executables and their runtimes are not present in the shell image. Binary hash pinning, environment filtering, per-call policy, and output sanitization remain defense-in-depth controls; none makes an unreviewed server safe to run as trusted code.
 
 ### Signed publisher manifests
 
@@ -103,17 +103,17 @@ Three forms are expanded at load time. **Nothing else is evaluated** — bare `$
 
 Use placeholders in `command`, any `args` element, or any `env` value. Multiple placeholders in one string expand independently.
 
-This is the fix for the cross-machine-sync problem: a single `mcp.json` lives in `~/.lax/sync-repo/mcp.json` and resolves to the right paths on each machine.
+Placeholders keep an entry portable: copied to another computer, it resolves to that computer's paths. Agent Sync does not carry `mcp.json`: it decides which programs start on this computer, and anything able to write the sync repo could otherwise set it without you. Each computer sets up its own servers in Settings; a pull that finds an `mcp.json` in the sync repo names it in its result and leaves this computer's copy alone.
 
 ## Secrets — never inline tokens
 
-`mcp.json` is synced across machines. Inlining a real token there means the token gets committed to the sync repo and propagated to every machine you sync with. Always reference secrets via `${secret:NAME}`:
+Inlining a real token in `mcp.json` leaves it in plain text on disk, outside the encrypted vault. Always reference secrets via `${secret:NAME}`:
 
 ```json
 "env": { "GITHUB_PERSONAL_ACCESS_TOKEN": "${secret:GITHUB_TOKEN}" }
 ```
 
-Add the actual token to the vault via the secrets UI or the `secret_save` tool. The MCP manager reads it from the vault at spawn time and injects it into the server process's env. The plaintext value never enters the agent's prompt history and never lands in the synced config.
+Add the actual token to the vault via the secrets UI or the `secret_save` tool. The MCP manager reads it from the vault at spawn time and injects it into the server process's env. The plaintext value never enters the agent's prompt history and never lands in `mcp.json`.
 
 This is **enforced, not just advised**. The child-env builder strips credential-shaped env keys (anything matching `*_TOKEN`, `*_SECRET`, `*_KEY`, `*_PASSWORD`, …) by default, so a raw token you inline in `env` is dropped before the server ever starts — the server then fails to authenticate, which is the signal to switch to `${secret:...}`. A value that resolved from a `${secret:NAME}` placeholder is exempt from that strip (it's the legitimate, vault-sourced injection channel), so only the vault path actually reaches the server. Credentials from the host's own environment (your `ANTHROPIC_API_KEY`, etc.) are never passed to MCP children regardless.
 

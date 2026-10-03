@@ -41,6 +41,8 @@ export interface RoundAgentOptions {
   /** Per-round wall-clock ceiling. Threaded into canonical's per-op
    *  wallClockMs so the cancel routes through canonical's state machine. */
   wallClockMs?: number;
+  /** Cancels the round's canonical op (developer_mode turned off). */
+  signal?: AbortSignal;
 }
 
 export interface RoundAgentResult {
@@ -116,6 +118,7 @@ export async function runAutopilotRound(
       callContext: "delegated",
       maxIterations: deps.config.maxIterations,
       wallClockMs: opts.wallClockMs,
+      signal: opts.signal,
       opType: "autopilot_round",
       lane: "background",
       // "Begin round N." is a harness kick, not user speech — the mission the

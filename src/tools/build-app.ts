@@ -6,11 +6,15 @@
  * streams in the AGENTS sidebar; APP_READY: <url> emits when done.
  *
  * Strategy split (from the app-builder agent template's providerStrategy):
- *   - codex / anthropic → cli-subprocess (preserves the subscription-endpoint
- *     truncation workaround the CLI path relies on; cancel kills the
- *     subprocess tree via the adapter's AbortController).
- *   - everyone else      → in-canonical-sub-agent (provider's HTTP adapter
- *     drives the turn_loop with write/read/edit/bash/glob tools).
+ *   - in-canonical-sub-agent — the default for every provider: the
+ *     provider's HTTP adapter drives the turn_loop with
+ *     write/read/edit/bash/glob tools.
+ *   - cli-subprocess — only for a provider the template pins to it: the build
+ *     runs the codex CLI for codex, the claude CLI otherwise, on the host,
+ *     outside the cage; cancel kills the subprocess tree via the adapter's
+ *     AbortController. It needs developer_mode (build-app-cli-gate.ts),
+ *     checked here before any model call and again by the adapter right
+ *     before it spawns.
  *
  * This tool is the collapse of the legacy build_app + build_app_canonical.
  */
@@ -51,6 +55,7 @@ import { checkBuildCollision } from "./build-app-collision.js";
 import { selectDesignBrief } from "./design-brief.js";
 import { recordDesignSpec } from "../canonical-loop/index.js";
 import { registerAppBuildRuntime } from "./build-app-runtime.js";
+import { cliBuildDeveloperModeRefusal } from "./build-app-cli-gate.js";
 
 export const APP_BUILD_OP_TYPE = "app_build";
 export const BUILD_APP_BUDGET = { maxIterations: 50, maxWallTimeMs: 0 } as const;
@@ -156,7 +161,7 @@ export const buildAppTool: ToolDefinition = {
     properties: {
       name: { type: "string", description: "App directory name (e.g. 'trading-bot', 'todo-app')" },
       prompt: { type: "string", description: "Build brief — what to make, target features, styling notes, behavior. Be specific." },
-      backend: { type: "string", enum: ["codex", "claude", "auto"], description: "Which model builds the app. 'auto' (default) matches your active provider. 'codex' = GPT, 'claude' = Claude. All build over HTTP (no CLI subprocess) unless a provider is explicitly pinned to cli-subprocess in the app-builder template." },
+      backend: { type: "string", enum: ["codex", "claude", "auto"], description: "Which model builds the app. 'auto' (default) matches your active provider. 'codex' = GPT, 'claude' = Claude. All build over HTTP (no CLI subprocess) unless a provider is explicitly pinned to cli-subprocess in the app-builder template, which also requires developer_mode." },
       update: { type: "boolean", description: "Set true ONLY when modifying an EXISTING app under the same name — e.g. user said 'make it green', 'update X', 'add Y to it'. Omit/false for a new app; if the name collides, the tool refuses rather than overwrite. For a new variant on the same theme, pick a different name instead." },
     },
     required: ["name", "prompt"],
@@ -167,11 +172,6 @@ export const buildAppTool: ToolDefinition = {
     // failure 2026-05-14 on Anthropic Opus 4.7 — prompt missing, description
     // present. Schema docs the right key; alias keeps back-compat.
     const prompt = String(args.prompt || args.description || "");
-    const resolved = await resolveAppTier(prompt);
-    // Materially-ambiguous brief ("a mega computer") → surface the scoped
-    // question instead of blind-building; harness backstop for tool-shy models.
-    if (typeof resolved !== "string") return { content: formatClarify(resolved), isError: false };
-    const tier = resolved;
     const backend = String(args.backend || "auto");
     const sessionId = String(args._sessionId || "");
     // The chat turn handler stamps args._runtimeProvider/_runtimeModel via
@@ -183,6 +183,14 @@ export const buildAppTool: ToolDefinition = {
 
     const provider = resolveBuildProvider(backend, forcedProvider ? { forcedProvider } : {});
     const strategy = resolveBuildStrategy(provider);
+    // Refused before the tier classifier spends a model call on a build that cannot run.
+    const cliRefusal = strategy === "cli-subprocess" ? cliBuildDeveloperModeRefusal(provider) : null;
+    if (cliRefusal) return { content: cliRefusal, isError: true };
+    const resolved = await resolveAppTier(prompt);
+    // Materially-ambiguous brief ("a mega computer") → surface the scoped
+    // question instead of blind-building; harness backstop for tool-shy models.
+    if (typeof resolved !== "string") return { content: formatClarify(resolved), isError: false };
+    const tier = resolved;
     const runtimeModel = args._runtimeModel ? String(args._runtimeModel) : undefined;
     const buildModel = resolveBuildModel(provider, runtimeModel);
 

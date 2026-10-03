@@ -25,8 +25,6 @@ export interface VerifyTurnAction {
   filePath?: string;
   /** command string for bash, when present. */
   command?: string;
-  /** Shell cwd, when the executor injected one. */
-  cwd?: string;
   /** Dispatch status. Mirrors the canonical ToolDispatchStatus union (kept as
    *  a local literal so this pure guard doesn't reach up into canonical-loop). */
   status?: "ok" | "error" | "blocked" | "declined" | "timeout" | "cancelled";
@@ -122,11 +120,11 @@ export function isSourceFile(filePath: string): boolean {
   return SOURCE_EXT_RE.test(filePath);
 }
 
-function verifyTargetsEditedApp(command: string, cwd: string | undefined, editedPaths: readonly string[]): boolean {
+function verifyTargetsEditedApp(command: string, editedPaths: readonly string[]): boolean {
   const appSlugs = Array.from(new Set(editedPaths.map(workspaceAppSlug).filter(Boolean))) as string[];
   if (appSlugs.length === 0) return true;
 
-  const haystack = normPath(`${cwd ?? ""}\n${command}`);
+  const haystack = normPath(command);
   if (HTTP_SMOKE_CMD_RE.test(command)) {
     return appSlugs.some(slug =>
       haystack.includes(`/apps/${slug}`) ||
@@ -167,7 +165,7 @@ export function noteVerifyEvidence(
       a.command &&
       state.editedSource &&
       (VERIFY_CMD_RE.test(a.command) || HTTP_SMOKE_CMD_RE.test(a.command)) &&
-      verifyTargetsEditedApp(a.command, a.cwd, state.editedPaths)
+      verifyTargetsEditedApp(a.command, state.editedPaths)
     ) {
       // Exit 0 → ok; any failure flavor (error / blocked / declined / timeout
       // — all of which arrived as "error" before the dispatch boundary carried

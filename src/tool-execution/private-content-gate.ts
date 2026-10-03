@@ -6,108 +6,141 @@
 // refused, so a silent run can never approve its own leak).
 //
 // A destination counts as chosen when it is the user's own address, on the
-// trusted-destinations list (~/.lax/egress-allowlist.json), named by the user
-// in this chat, or, for content from one email, someone already on that
-// email. Everything else is new.
+// trusted-destinations list (~/.lax/egress-allowlist.json), or, for content
+// from one email, someone already on that email. In the user's own chat it
+// also counts when the user named it there (an address, or a host the page is
+// on or under), or when the user already approved sending that same source to
+// that same address or host this session: a ten-field form filled from one
+// resume asks once, not ten times. Neither of those last two reaches an
+// unattended run, whose "user" row may be a mission prompt or another model's
+// delegation.
+//
+// Which calls are sends, what they carry and where it goes:
+// private-content-destinations.ts.
 
 import type { PhaseOutcome, ToolCallContext } from "./context.js";
 import { CONTINUE } from "./context.js";
-import { egressPayload } from "./egress-gates.js";
-import { findPrivateContent, type PrivateContentMatch } from "../data-lineage/private-content.js";
-import { isTrustedDestination, isTrustedEmailRecipient, parseRecipientAddresses } from "../tools/http-egress-guard.js";
+import {
+  addressesIn, findPrivateContent, hasPrivateReads, privateShareApproved, rememberPrivateShare, type PrivateContentMatch,
+} from "../data-lineage/private-content.js";
+import { isTrustedDestination, isTrustedEmailRecipient } from "../tools/http-egress-guard.js";
 import { getOwnEmailAddresses } from "../tools/email-config.js";
-import { BROWSER_WRITE_ACTIONS } from "./ari-action-map.js";
+import { currentHumanText } from "./unnamed-delete-gate.js";
+import { registrableDomain } from "../browser/registrable-domain.js";
+import {
+  describeDestination, destinationKey, destinationsOf, payloadOf, sendsOffBox,
+  type Destination, type PrivateGateDeps,
+} from "./private-content-destinations.js";
+import { UnreadableClipboardError } from "./private-content-computer.js";
 
-type Destination = { kind: "email"; address: string } | { kind: "url"; url: string; host: string } | { kind: "unknown"; label: string };
+export type { PrivateGateDeps } from "./private-content-destinations.js";
 
-export interface PrivateGateDeps {
-  /** The page the session's browser is on, for a browser write. */
-  browserCurrentUrl?: (sessionId: string) => Promise<string>;
+interface Share { sourceKey: string; destinationKey: string }
+
+/** The pairs this call's card asked about, collected by the approval phase on a yes. */
+const pendingShares = new WeakMap<ToolCallContext, Share[]>();
+
+/** Everything the human wrote in this chat, lowercased. Each row is held to
+ *  the same test as the delete gate's "what did the user say": not a harness
+ *  row, no harness or untrusted-content marker. */
+function humanWords(ctx: ToolCallContext): string {
+  return (ctx.priorMessages ?? []).map((m) => currentHumanText([m])).filter(Boolean).join("\n").toLowerCase();
 }
 
-async function defaultBrowserCurrentUrl(sessionId: string): Promise<string> {
+const bareHost = (host: string): string => host.replace(/^www\./, "");
+
+/** Did the user write this page's host, or a host it sits under, as a host of
+ *  its own: not inside a longer name ("notacme.com", "acme.com.evil.net") and
+ *  not as the domain of an email address. A sibling never counts: naming
+ *  calendar.google.com does not name script.google.com, another tenant's
+ *  host on the same platform. A public suffix ("com", "github.io") is no
+ *  one's host, so it names nothing under it. */
+function namedSite(words: string, host: string): boolean {
+  const page = bareHost(host);
+  const site = registrableDomain(page);
+  return words.split(/[^a-z0-9.@-]+/).some((token) => {
+    const named = bareHost(token.replace(/\.+$/, ""));
+    if (!named || named.includes("@")) return false;
+    return page === named || (site !== null && page.endsWith(`.${named}`) && registrableDomain(named) === site);
+  });
+}
+
+/** `words` is empty in an unattended run, so nothing there counts as named. */
+interface Judge { words: string; addresses: ReadonlySet<string>; own: ReadonlySet<string>; attended: boolean; sessionId: string }
+
+/** Chosen for every source alike: the user's own, trusted, or named by the user. */
+function chosenDestination(d: Destination, j: Judge): boolean {
+  switch (d.kind) {
+    case "email": return isTrustedEmailRecipient(d.address, j.own) || j.addresses.has(d.address);
+    case "site": return isTrustedDestination(d.url) || namedSite(j.words, d.host);
+    default: return false;
+  }
+}
+
+function chosenFor(m: PrivateContentMatch, d: Destination, j: Judge): boolean {
+  if (d.kind === "email" && m.correspondents.includes(d.address)) return true;
+  const key = destinationKey(d);
+  return j.attended && key !== null && privateShareApproved(j.sessionId, m.key, key);
+}
+
+/** The private sources this call would send. A paste whose clipboard cannot be
+ *  read may carry any of them, so it counts as a source of its own. Only a
+ *  paste reads the clipboard, and the window it lands in is never remembered,
+ *  so a yes for it covers that one call. */
+async function sourcesSent(ctx: ToolCallContext, deps: PrivateGateDeps, sessionId: string): Promise<PrivateContentMatch[]> {
+  let text: string;
   try {
-    const { getBrowserManager } = await import("../browser/instance.js");
-    return await getBrowserManager(sessionId).getCurrentUrl();
-  } catch {
-    return "";
+    text = await payloadOf(ctx, deps);
+  } catch (e) {
+    if (e instanceof UnreadableClipboardError) return [{ label: "the clipboard (the check could not read it)", key: "", correspondents: [] }];
+    throw e;
   }
-}
-
-function urlDestination(raw: unknown): Destination | null {
-  if (typeof raw !== "string" || !raw) return null;
-  try { return { kind: "url", url: raw, host: new URL(raw).hostname.toLowerCase() }; } catch { return null; }
-}
-
-/** Where this call would send its payload, or null when the tool is not a third-party channel. */
-async function destinationsOf(ctx: ToolCallContext, deps: PrivateGateDeps): Promise<Destination[] | null> {
-  const a = ctx.args;
-  switch (ctx.tc.name) {
-    case "email_send":
-      return parseRecipientAddresses([a.to, a.cc, a.bcc].filter(Boolean).join(",")).map((address) => ({ kind: "email", address }));
-    case "calendar_create_event":
-      return parseRecipientAddresses(String(a.attendees ?? "")).map((address) => ({ kind: "email", address }));
-    case "http_request":
-    case "ari_http":
-    case "web_fetch": {
-      const d = urlDestination(a.url);
-      return [d ?? { kind: "unknown", label: "an unparseable address" }];
-    }
-    case "browser": {
-      const action = String(a.action ?? "").toLowerCase();
-      if (action === "navigate" || action === "new_tab") {
-        const urls = Array.isArray(a.urls) ? a.urls : [a.url];
-        return urls.map(urlDestination).filter((d): d is Destination => d !== null);
-      }
-      if (!BROWSER_WRITE_ACTIONS.has(action)) return null;
-      const d = urlDestination(await (deps.browserCurrentUrl ?? defaultBrowserCurrentUrl)(ctx.sessionId || "default"));
-      return [d ?? { kind: "unknown", label: "the page the browser is on" }];
-    }
-    default:
-      return null;
-  }
-}
-
-/** Everything the user wrote in this chat, lowercased: a destination they named is one they chose. */
-function userWords(ctx: ToolCallContext): string {
-  const parts: string[] = [];
-  for (const m of ctx.msgs ?? []) {
-    if (m.role !== "user") continue;
-    if (typeof m.content === "string") parts.push(m.content);
-    else if (Array.isArray(m.content)) for (const p of m.content) if (p && typeof p === "object" && "text" in p && typeof p.text === "string") parts.push(p.text);
-  }
-  return parts.join("\n").toLowerCase();
-}
-
-function isChosen(d: Destination, matches: readonly PrivateContentMatch[], words: string, own: ReadonlySet<string>): boolean {
-  if (d.kind === "unknown") return false;
-  if (d.kind === "email") {
-    return isTrustedEmailRecipient(d.address, own)
-      || words.includes(d.address)
-      || matches.some((m) => m.correspondents.includes(d.address));
-  }
-  return isTrustedDestination(d.url) || (!!d.host && words.includes(d.host.replace(/^www\./, "")));
-}
-
-function describe(d: Destination): string {
-  return d.kind === "email" ? d.address : d.kind === "url" ? d.host : d.label;
+  return text.trim() ? findPrivateContent(sessionId, text) : [];
 }
 
 export async function privateContentGate(ctx: ToolCallContext, deps: PrivateGateDeps = {}): Promise<PhaseOutcome> {
-  const { text } = egressPayload(ctx.tc.name, ctx.args);
-  if (!text.trim()) return CONTINUE;
-  const matches = findPrivateContent(ctx.sessionId || "default", text);
+  pendingShares.delete(ctx);
+  const sessionId = ctx.sessionId || "default";
+  if (!sendsOffBox(ctx.tc.name) || !hasPrivateReads(sessionId)) return CONTINUE;
+  const matches = await sourcesSent(ctx, deps, sessionId);
   if (matches.length === 0) return CONTINUE;
-  const dests = await destinationsOf(ctx, deps);
-  if (!dests) return CONTINUE;
-  const words = userWords(ctx);
-  const own = new Set(getOwnEmailAddresses());
-  const fresh = dests.filter((d) => !isChosen(d, matches, words, own));
-  if (fresh.length === 0) return CONTINUE;
-  const sources = [...new Set(matches.map((m) => m.target))].join(", ");
-  const reason = `This ${ctx.tc.name} would send text from ${sources} to ${fresh.map(describe).join(", ")}, which you have not named in this chat. `
-    + "Approve it only if you meant to share that content there.";
+  const attended = ctx.callContext === "local";
+  const words = attended ? humanWords(ctx) : "";
+  const j: Judge = { words, addresses: new Set(addressesIn(words)), own: new Set(getOwnEmailAddresses()), attended, sessionId };
+  const fresh = (await destinationsOf(ctx, deps)).filter((d) => !chosenDestination(d, j));
+
+  const sources = new Set<string>();
+  const dests = new Set<string>();
+  // The destinations a yes is remembered for, as the card names them.
+  const remembered = new Set<string>();
+  const shares: Share[] = [];
+  for (const d of fresh) {
+    for (const m of matches) {
+      if (chosenFor(m, d, j)) continue;
+      const name = describeDestination(d);
+      sources.add(m.label);
+      dests.add(name);
+      const key = destinationKey(d);
+      if (!key) continue;
+      shares.push({ sourceKey: m.key, destinationKey: key });
+      remembered.add(name);
+    }
+  }
+  if (dests.size === 0) return CONTINUE;
+  pendingShares.set(ctx, shares);
+
+  const reason = `This ${ctx.tc.name} would send text from ${[...sources].join(", ")} to ${[...dests].join(", ")}, which you have not chosen in this chat. `
+    + "Approve it only if you meant to share that content there"
+    + (remembered.size > 0
+      ? `; a yes also covers sending it again in this session to ${[...remembered].join(", ")} only`
+      : "; a yes covers this call only");
   if (!ctx.policyApprovalReason) ctx.policyApprovalReason = reason;
   else if (!ctx.policyApprovalReason.includes(reason)) ctx.policyApprovalReason += `; ${reason}`;
   return CONTINUE;
+}
+
+/** The user approved this call: its card's source/destination pairs stop asking for the session. */
+export function rememberApprovedPrivateShares(ctx: ToolCallContext): void {
+  for (const s of pendingShares.get(ctx) ?? []) rememberPrivateShare(ctx.sessionId || "default", s.sourceKey, s.destinationKey);
+  pendingShares.delete(ctx);
 }

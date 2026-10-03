@@ -7,12 +7,10 @@ const source = (path: string) => readFileSync(join(process.cwd(), path), "utf-8"
 describe("shared mutation-lock async caller contract", () => {
   it("awaits ownership and release in every mutating entry point", () => {
     const sandbox = source("src/self-edit/sandbox.ts");
-    const cancellation = source("src/self-edit/sandbox-cancellation.ts");
     const tool = source("src/self-edit/tool.ts");
     const update = source("src/update-pipeline.ts");
     const installer = source("scripts/installer/orchestrator.mjs");
-    expect(sandbox).toMatch(/await acquireSandboxLease/);
-    expect(cancellation).toMatch(/await acquireGlobalSelfEditLock/);
+    expect(sandbox).toMatch(/await acquireGlobalSelfEditLock/);
     expect(sandbox).toMatch(/await releaseGlobalSelfEditLock/);
     expect(tool).toMatch(/await acquireGlobalSelfEditLock/);
     expect(tool).toMatch(/await releaseGlobalSelfEditLock/);

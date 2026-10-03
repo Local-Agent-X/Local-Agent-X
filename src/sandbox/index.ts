@@ -10,9 +10,10 @@ import { isSeatbeltAvailable, seatbeltProfileLoads, wrapForSeatbelt } from "./se
 import { isBwrapAvailable, bwrapEnforces, bwrapGuardedRuns, wrapForBwrap } from "./bwrap.js";
 import { currentShellEgressBridge } from "../net/shell-egress-proxy.js";
 import { onWinCageProofSettled, resolveWinCageHelper, winCageEnforces, winCageEnforcesSync, winCageProbePending, winCageProofView, winCageUnusableReason, wrapForWinCage } from "./win-cage.js";
-import { ensureWinCageGrantsSync } from "./win-cage-grants.js";
+import { ensureWinCageGrantsSync, WinCageGrantFailedError, WinCageGrantPendingError } from "./win-cage-grants.js";
 import { isDockerAvailable } from "./docker-shell.js";
 import { beginApprovalWait } from "../approval-wait.js";
+import { resolveWindowsShell } from "../tools/shell-env.js";
 export { ensureWinCageGrants } from "./win-cage-grants.js";
 export { execInSandbox, isDockerAvailable } from "./docker-shell.js";
 const logger = createLogger("sandbox");
@@ -218,15 +219,54 @@ export async function awaitSandboxProof(opts: { signal?: AbortSignal; onWait?: (
   }
 }
 
+// The server's reaction to a landed proof (startSandboxProof). Kept so the
+// proof it missed reaches it too: one that landed before it was registered
+// (anything that read the sandbox status at boot starts the proof), and one
+// that landed while another mode was selected, when guarded is chosen later.
+let proofSettledListener: (() => void) | null = null;
+
 /**
  * Boot: start the Windows fence proof now (it runs in a child process) rather
  * than on the first ask, so it has normally landed before the first shell
  * command. `onSettled` runs whenever a proof lands, this one or a later one
- * after an install; the server re-broadcasts the sandbox status from it.
+ * after an install, and at once when the proof had already landed, here or
+ * when guarded is chosen afterwards. The server starts the sandbox user's
+ * grants over in the background and re-broadcasts the sandbox status from it.
+ * A listener that missed its proof leaves the first caged command to start the
+ * grant and pay for it, and a start that cannot wait (a dev server's) refused,
+ * retryably, until the grant is done.
  */
 export function startSandboxProof(onSettled: () => void): void {
+  proofSettledListener = onSettled;
   onWinCageProofSettled(onSettled);
-  if (process.platform === "win32" && getSelectedSandboxMode() === "guarded" && resolveWinCageHelper() !== null) winCageEnforcesSync();
+  replayLandedProof();
+}
+
+/** With guarded selected on Windows: start the proof, or, when it has already
+ *  landed (the listener is called only as it lands), run the listener now. */
+function replayLandedProof(): void {
+  if (process.platform !== "win32" || getSelectedSandboxMode() !== "guarded" || resolveWinCageHelper() === null) return;
+  winCageEnforcesSync();
+  if (!winCageProbePending()) proofSettledListener?.();
+}
+
+/**
+ * The sandbox user's grants as the settings page shows them while the Windows
+ * cage is in use. Asked of the seam a caged start goes through, so the page
+ * says what such a start meets (and, as that start does, sets the grants going
+ * if nothing has): still being made, so it is refused, retryably; or failed,
+ * so every caged command is refused, with the reason and what to do about it.
+ */
+export function winCageGrantView(): { grantPending?: true; grantFailure?: string } {
+  if (process.platform !== "win32" || getSandboxMode() !== "guarded") return {};
+  try {
+    ensureWinCageGrantsSync(resolveWindowsShell().path);
+  } catch (e) {
+    if (e instanceof WinCageGrantFailedError) return { grantFailure: e.message };
+    if (e instanceof WinCageGrantPendingError) return { grantPending: true };
+    throw e;
+  }
+  return {};
 }
 
 /**
@@ -266,8 +306,10 @@ export function wrapSpawnForSandbox(shell: string, shellArgs: string[], childEnv
     }
     const helper = process.platform === "win32" ? resolveWinCageHelper() : null;
     if (helper) {
-      // A no-op when the bash tool already warmed the grants asynchronously;
-      // the sync path (process_start) pays once otherwise.
+      // Never grants here: on the event loop that froze every request for as
+      // long as the workspace took to stamp. Until the background grant
+      // started when the proof landed is done this refuses, retryably, and
+      // once it failed it refuses with the reason; nothing is started either way.
       ensureWinCageGrantsSync(shell);
       return wrapForWinCage(shell, shellArgs, childEnv, helper);
     }
@@ -304,6 +346,7 @@ export function setSandboxMode(mode: SandboxMode): { ok: boolean; actual: Sandbo
   if (mode === "guarded" && !isGuardedUsable()) {
     return { ok: false, actual: "host", error: guardedUnavailableError() };
   }
+  const previous = getSelectedSandboxMode();
   runtimeMode = mode;
   try {
     const cfg = getRuntimeConfig();
@@ -312,6 +355,10 @@ export function setSandboxMode(mode: SandboxMode): { ok: boolean; actual: Sandbo
   } catch (e) {
     logger.warn(`[sandbox] Failed to persist mode to config: ${(e as Error).message}`);
   }
+  // Guarded is chosen only once the proof has landed, and when it landed
+  // under another mode the listener found the cage out of use and granted
+  // nothing.
+  if (mode === "guarded" && previous !== "guarded") replayLandedProof();
   logger.info(`[sandbox] Mode set to: ${mode}`);
   return { ok: true, actual: mode };
 }

@@ -31,6 +31,7 @@ import {
   scanNormalizedView,
   scanKnownValues,
 } from "./secret-normalize.js";
+import { hasKnownSecretValues } from "./known-secrets.js";
 
 export type { SecretMatch };
 
@@ -113,6 +114,17 @@ export function scanForSecrets(text: string): ScanResult {
     matches: deduped,
     scannedLength: text.length,
   };
+}
+
+/**
+ * Only the known-secret-value pass of scanForSecrets: registered values, raw,
+ * encoded or normalized. For output whose credential SHAPES are legitimate
+ * content (a source file's example key) but where the user's actual secrets
+ * must still never appear.
+ */
+export function scanKnownSecretValues(text: string): SecretMatch[] {
+  if (!hasKnownSecretValues()) return [];
+  return scanKnownValues(text, buildNormalizedView(text));
 }
 
 /** Redact all detected secrets from text */

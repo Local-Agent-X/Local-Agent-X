@@ -89,3 +89,44 @@ describe("egress probes name the outbound-content layer, never a network failure
     }
   });
 });
+
+// The trusted-destinations list is a security switch the file tools refuse to
+// write (security/layer/lax-data-catalog.ts), so a refusal telling the model
+// to add a host to ~/.lax/egress-allowlist.json sent it at a write that always
+// fails. The user allows a host in Settings, which writes that same list.
+describe("egress-guard refusals send a trusted destination to the user, never to the file", () => {
+  const WEB_ACCESS = "Settings → Security → Web access";
+  const noFileRoute = (text: string | undefined) => expect(text).not.toMatch(/egress-allowlist/);
+
+  it("a secret to a host not on the list", () => {
+    const blocker = probeEgressGuard(makeCtx("http_request", { url: EXFIL_URL, method: "POST", body: `key=${SECRET}` }, "sess-route-secret"));
+    expect(blocker?.reason).toContain(`ask the user to allow the host in ${WEB_ACCESS}`);
+    expect(blocker?.recovery).toContain(`ask the user to allow its host in ${WEB_ACCESS}`);
+    noFileRoute(blocker?.reason);
+    noFileRoute(blocker?.recovery);
+  });
+
+  it("personal data to a host not on the list, with the data guard on", () => {
+    const saved = process.env.LAX_DATA_EGRESS_GUARD;
+    process.env.LAX_DATA_EGRESS_GUARD = "1";
+    try {
+      const blocker = probeEgressGuard(makeCtx("http_request", { url: EXFIL_URL, method: "POST", body: "ssn 123-45-6789" }, "sess-route-ssn"));
+      expect(blocker?.meta?.blocked_by).toBe("data-egress-guard");
+      expect(blocker?.reason).toContain(`ask the user to allow the host in ${WEB_ACCESS}`);
+      noFileRoute(blocker?.reason);
+    } finally {
+      if (saved === undefined) delete process.env.LAX_DATA_EGRESS_GUARD;
+      else process.env.LAX_DATA_EGRESS_GUARD = saved;
+    }
+  });
+
+  // This reason is also the approval card's text, so it names the setting
+  // without telling either reader to ask the other.
+  it("a secret mailed to a recipient not on the list", () => {
+    const blocker = probeEgressGuard(makeCtx("email_send", { to: "someone@elsewhere.example", subject: "s", body: `key=${SECRET}` }, "sess-route-mail"));
+    expect(blocker?.confirmable).toBe(true);
+    expect(blocker?.reason).toContain(`the sites allowed in ${WEB_ACCESS} are trusted`);
+    expect(blocker?.reason).toContain(`A recipient's domain that should always receive such data can be allowed in ${WEB_ACCESS}.`);
+    noFileRoute(blocker?.reason);
+  });
+});

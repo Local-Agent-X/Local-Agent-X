@@ -81,33 +81,27 @@ export function evaluateByKernelClass(
       };
 
     case "shell": {
-      // Non-bash shell tools (process_start, ari_shell, etc.) spawn the same
+      // Non-bash shell tools (process_start, app_serve_*, etc.) spawn the same
       // subprocess bash does, so route them through the SAME two-step gate bash
       // gets — command vetting AND file-access confinement — instead of an
-      // unconditional allow or a command-only scan. Build the command string
-      // from whichever form the call uses: a literal `command`, or the
-      // structured `{executable, args[]}` form (synthesize it so the
-      // denylist/metachar/path scan sees the real command). Tools with no
-      // command to inspect (process_status/kill/list operate on a session_id,
-      // not a command) fall through to the kernel/tool-impl gate as before.
+      // unconditional allow or a command-only scan. Tools with no command to
+      // inspect (process_status/kill/list operate on a session_id, not a
+      // command) fall through to the kernel/tool-impl gate as before.
       //
       // C3-3: process_start previously got evaluateShellCommand ONLY, skipping
       // the bash file-access confinement, so it could `cat ~/.ssh/id_rsa` in a
       // mode where bash could not. evaluateShellCommandAndPaths closes that —
       // it runs evaluateShellPaths with the SAME workspace / fileAccessMode /
       // isInAllowedPaths / sessionId the bash path uses.
-      let command = typeof args.command === "string" ? args.command : "";
-      if (!command && typeof args.executable === "string") {
-        const parts = Array.isArray(args.args) ? args.args.map((a) => String(a)) : [];
-        command = [args.executable, ...parts].join(" ");
-      }
+      const command = typeof args.command === "string" ? args.command : "";
       if (command) {
         return evaluateShellCommandAndPaths(command, {
           workspace: policy.workspace,
           fileAccessMode: policy.fileAccessMode,
           inlineEvalPolicy: policy.inlineEvalPolicy,
-          // Same effective-confinement signal the bash path passes: the
-          // shell-class tools spawn through wrapSpawnForSandbox too (and
+          // Same effective-confinement signal the bash path passes: the built-in
+          // tools that reach here with a command (process_start/_restart,
+          // app_serve_*) spawn through startSession → wrapSpawnForSandbox (and
           // process_start refuses docker outright), so .confined — fallback-
           // aware — describes the cage this spawn will actually run in.
           sandboxConfined: getSandboxStatus().confined,

@@ -25,6 +25,7 @@
 
 import {
   scanForSecrets,
+  scanKnownSecretValues,
   registerRedactedSecretValue,
   isSecretShaped,
   maskForDisplay,
@@ -70,6 +71,11 @@ export interface MaskOptions {
    *  high-entropy pass. For shell output, where a long build hash or a
    *  camelCase identifier must not be turned into `****`. */
   structuredOnly?: boolean;
+  /** Mask only registered values (the user's stored secrets, the operator
+   *  token, values an earlier mask withheld). For a file read or search, where
+   *  a credential-SHAPED string is the content being worked on — a test
+   *  fixture's example key — and masking it would break the edit after. */
+  knownOnly?: boolean;
   /** The text came from a secrets-serving endpoint (isSecretEndpointUrl):
    *  every JSON `"value"` that could be a secret is one, shape or not. */
   endpoint?: boolean;
@@ -111,7 +117,7 @@ function jsonValueSpans(head: string): Span[] {
 
 function scannerSpans(head: string, opts: MaskOptions): Span[] {
   const spans: Span[] = [];
-  for (const m of scanForSecrets(head).matches) {
+  for (const m of opts.knownOnly ? scanKnownSecretValues(head) : scanForSecrets(head).matches) {
     if (m.marker) continue;
     if (opts.structuredOnly && m.type === "high-entropy-token") continue;
     if (m.valueStart !== undefined && m.valueEnd !== undefined) {
@@ -167,7 +173,7 @@ export function maskSecretValues(text: string, opts: MaskOptions = {}): MaskedSe
  * Mask every secret value in a tool output AND register each one as a known
  * secret, so the outbound scan blocks it at every egress sink. The one call
  * every output channel makes (http_request / web_fetch before their `find`
- * filter, the sensitive-read taint policy, shell output). Idempotent: masked
+ * filter, and the delivery seam over every tool result). Idempotent: masked
  * text scans clean, so a second pass changes nothing.
  */
 export function withholdSecretValues(text: string, opts: MaskOptions = {}): { text: string; masked: number; kinds: string[] } {

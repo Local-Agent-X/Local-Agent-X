@@ -11,9 +11,10 @@ const SANDBOX_HINTS = {
 
 // The server broadcasts settings_changed when the Windows cage's fence proof
 // lands, and that reload is what clears "checking". A page whose socket was
-// down misses it, so while the check is pending the section also re-reads the
-// status about 5, 15 and 45 seconds in, then stops: the broadcast still
-// carries a slower proof's answer, and an open page must not poll forever.
+// down misses it, so while the check (or, after it, the sandbox user's grants)
+// is pending the section also re-reads the status about 5, 15 and 45 seconds
+// in, then stops: the broadcast still carries a slower proof's answer, and an
+// open page must not poll forever.
 const SANDBOX_RECHECK_DELAYS_MS = [5000, 10000, 30000];
 let sandboxRecheckTimer = null;
 let sandboxRechecksUsed = 0;
@@ -41,12 +42,23 @@ function renderSandboxStatus(d) {
   // Guarded on Windows with the cage still being proven: not a failure, and
   // nothing runs unconfined meanwhile, so there is no host state to acknowledge.
   const pending = d.proofPending === true;
+  // The Windows cage proven and in use, but its sandbox user not yet (or never)
+  // given the workspace: shell commands wait or are refused, which a plain
+  // "guarded confined" would hide. Only the full status read carries these.
+  const cage = d.windowsCage || {};
+  const grantFailure = cage.grantFailure;
+  const granting = cage.grantPending === true;
   if (badge) {
-    badge.className = 'status-badge ' + (pending ? 'warn' : confined ? 'ok' : 'err');
-    badge.innerHTML = '<span class="status-dot"></span> ' + (pending ? 'Checking the Windows cage…' : 'Effective: ' + (confined ? effective + ' confined' : 'HOST UNCONFINED'));
+    badge.className = 'status-badge ' + (pending || granting ? 'warn' : confined && !grantFailure ? 'ok' : 'err');
+    badge.innerHTML = '<span class="status-dot"></span> ' + (pending ? 'Checking the Windows cage…'
+      : grantFailure ? 'Effective: guarded, but shell commands are refused'
+      : granting ? 'Preparing the Windows cage…'
+      : 'Effective: ' + (confined ? effective + ' confined' : 'HOST UNCONFINED'));
   }
   if (detail) {
     if (pending) detail.textContent = 'Shell commands wait until the check finishes (a few seconds after start); none runs outside the cage meanwhile.';
+    else if (grantFailure) detail.textContent = grantFailure;
+    else if (granting) detail.textContent = 'The cage is giving its sandbox user access to the workspace and the shell\'s own files (once after each start). Shell commands wait for it or are asked to retry; none runs outside the cage.';
     else if (confined) detail.textContent = 'Cron shell is blocked. Delegated and API shell are allowed because the effective mode is confined.';
     else if (d.unconfinedHostAcknowledged) detail.textContent = (d.fallbackReason || 'Shell commands run directly on the host.') + ' Cron shell is blocked; delegated and API host shell are acknowledged.';
     else detail.textContent = (d.fallbackReason || 'Shell commands run directly on the host.') + ' Cron shell is blocked; delegated and API shell are blocked until acknowledgement.';
@@ -129,7 +141,8 @@ async function loadSandboxMode() {
       setSandboxModeOption(sel, 'docker', d.dockerAvailable ? null : 'Maximum — Docker not installed (install Docker Desktop first)');
       setSandboxModeOption(sel, 'guarded', d.guardedAvailable === false ? guardedUnavailableLabel(d.windowsCage) : null);
     }
-    scheduleSandboxRecheck(d.proofPending === true || (d.windowsCage && d.windowsCage.proofPending) === true);
+    const cage = d.windowsCage || {};
+    scheduleSandboxRecheck(d.proofPending === true || cage.proofPending === true || cage.grantPending === true);
   } catch (e) { console.warn('[sandbox] load failed', e); }
 }
 

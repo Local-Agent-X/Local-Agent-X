@@ -1,8 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createServer, type Server } from "node:http";
-import { rmSync, mkdirSync, readdirSync } from "node:fs";
+import { rmSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, existsSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadConfig, setRuntimeConfig } from "../config.js";
+import { platformRoot } from "../platform-root.js";
 import { extractSiteAssetsTool } from "./asset-tools.js";
 
 // R4-16 regression suite. extract_site_assets used to run its OWN weak SSRF
@@ -17,6 +19,8 @@ const METADATA_IP = "169.254.169.254";
 
 let server: Server;
 let port: number;
+let base: string;
+let workspace: string;
 let outDir: string;
 // HTML the loopback test page serves: a SECONDARY <img> candidate pointing at
 // the cloud-metadata IP, plus a public-looking URL that 302s to a private host.
@@ -54,18 +58,22 @@ beforeAll(async () => {
     `</body></html>`;
 
   // Make the loopback page server a recognised self-call so the TOP-LEVEL fetch
-  // is permitted while the harvested literal-IP candidates stay blocked.
+  // is permitted while the harvested literal-IP candidates stay blocked. The
+  // downloads land in the workspace, so it is a scratch one.
+  base = realpathSync(mkdtempSync(join(tmpdir(), "lax-assets-")));
+  workspace = join(base, "workspace");
   const cfg = loadConfig();
   cfg.port = port;
+  cfg.workspace = workspace;
   setRuntimeConfig(cfg);
 
-  outDir = join(process.cwd(), `.asset-tools-test-${process.pid}`);
+  outDir = join(workspace, "assets");
   mkdirSync(outDir, { recursive: true });
 });
 
 afterAll(() => {
   try { server.close(); } catch { /* best-effort */ }
-  try { rmSync(outDir, { recursive: true, force: true }); } catch { /* best-effort */ }
+  rmSync(base, { recursive: true, force: true });
 });
 
 describe("extract_site_assets SSRF gate (R4-16)", () => {
@@ -112,5 +120,29 @@ describe("extract_site_assets SSRF gate (R4-16)", () => {
     const text = (out as { content?: string }).content ?? "";
     expect(text).toMatch(/Failed to fetch source/i);
     expect(readdirSync(outDir).length).toBe(0);
+  });
+});
+
+// The server's cwd is the install folder, which the agent may not modify: the
+// output folder used to resolve from it, so the default created <install>/assets
+// and output_dir "public" wrote into the shipped UI. The source URL here is the
+// metadata IP, refused before any fetch, so nothing is ever downloaded.
+describe("extract_site_assets output folder", () => {
+  const blockedSource = `http://${METADATA_IP}/`;
+
+  it("refuses an output_dir outside the workspace, the install's public/ included", async () => {
+    for (const dir of [join(platformRoot(), "public"), join("..", "outside")]) {
+      const out = await extractSiteAssetsTool.execute({ url: blockedSource, output_dir: dir });
+      expect((out as { isError?: boolean }).isError, dir).toBe(true);
+      expect((out as { content?: string }).content ?? "", dir).toMatch(/output_dir must be inside the workspace/);
+    }
+    expect(existsSync(join(base, "outside"))).toBe(false);
+  });
+
+  it("resolves a relative output_dir from the workspace, like the file tools", async () => {
+    for (const [dir, landed] of [["public", "public"], ["apps/site/assets", join("apps", "site", "assets")], ["workspace/apps/two/assets", join("apps", "two", "assets")]]) {
+      await extractSiteAssetsTool.execute({ url: blockedSource, output_dir: dir });
+      expect(existsSync(join(workspace, landed)), dir).toBe(true);
+    }
   });
 });

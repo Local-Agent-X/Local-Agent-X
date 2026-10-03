@@ -8,8 +8,10 @@
  * into a quarantine only the agent can release. Same trust split, same
  * resolver, same fail-safe as the loopback carve-out
  * (browser-loopback-policy): only a webContents the trust resolver
- * POSITIVELY attributes to a user view routes to Downloads; agent views,
- * popups, and unresolvable webContents all stay quarantined.
+ * POSITIVELY attributes to a user view routes to Downloads, or an agent view
+ * where the user acted after the agent's last command (they took over the
+ * tab: a login the agent opened). Agent downloads, popups, and unresolvable
+ * webContents all stay quarantined.
  *
  * Pure module (no electron imports) so the routing is unit-testable.
  */
@@ -40,9 +42,13 @@ export interface QuarantinedDownload {
 export function isUserDownload(
 	webContentsId: number | undefined,
 	resolveTrust: ((webContentsId: number) => ViewTrust | null) | null,
+	/** Whether the human acted in the view after the agent's last command. A
+	 *  download from an agent tab the user took over is theirs, not the agent's. */
+	humanActedLast: () => boolean,
 ): boolean {
 	if (webContentsId === undefined || !resolveTrust) return false;
-	return resolveTrust(webContentsId) === "user";
+	const trust = resolveTrust(webContentsId);
+	return trust === "user" || (trust === "agent" && humanActedLast());
 }
 
 /**

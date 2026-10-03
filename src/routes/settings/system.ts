@@ -4,6 +4,15 @@ import { getToolStats, getToolSuccessRate, getRecentFailures } from "../../tool-
 import { getProviderHealthStatus } from "../../model-fallback.js";
 import { getThreatDashboard } from "../../threat/threat-dashboard.js";
 
+/** The Windows cage as Settings → Security shows it: installed, its fence
+ *  proof, and the sandbox user's grants (a failed grant refuses every caged
+ *  command while the cage still reads as proven). */
+async function windowsCageView(): Promise<Record<string, unknown>> {
+  const { winCageStatus, winCageProofView } = await import("../../sandbox/win-cage.js");
+  const { winCageGrantView } = await import("../../sandbox/index.js");
+  return { ...winCageStatus(), ...winCageProofView(), ...winCageGrantView() };
+}
+
 export const handleSystemRoutes: RouteHandler = async (method, url, req, res, ctx, _role) => {
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
 
@@ -83,12 +92,11 @@ export const handleSystemRoutes: RouteHandler = async (method, url, req, res, ct
   // Sandbox
   if (method === "GET" && url.pathname === "/api/sandbox") {
     const { getSandboxStatus, isDockerAvailable, isGuardedUsable } = await import("../../sandbox/index.js");
-    const { winCageStatus, winCageProofView } = await import("../../sandbox/win-cage.js");
     const status = getSandboxStatus();
     json(200, {
       mode: status.effectiveMode, ...status, dockerAvailable: isDockerAvailable(), guardedAvailable: isGuardedUsable(),
       dockerDownloadUrl: "https://www.docker.com/products/docker-desktop/",
-      ...(process.platform === "win32" ? { windowsCage: { ...winCageStatus(), ...winCageProofView() } } : {}),
+      ...(process.platform === "win32" ? { windowsCage: await windowsCageView() } : {}),
     }); return true;
   }
   // The Windows network cage: one administrator prompt to install or remove
@@ -99,12 +107,11 @@ export const handleSystemRoutes: RouteHandler = async (method, url, req, res, ct
     const { action } = JSON.parse(body);
     if (action !== "install" && action !== "uninstall") { json(400, { error: "action must be install or uninstall" }); return true; }
     const { installWinCage, uninstallWinCage } = await import("../../sandbox/win-cage-install.js");
-    const cage = await import("../../sandbox/win-cage.js");
     const result = action === "install" ? await installWinCage() : await uninstallWinCage();
     const { getSandboxStatus } = await import("../../sandbox/index.js");
     const status = getSandboxStatus();
     ctx.broadcastAll({ type: "settings_changed", settings: { sandbox: status } });
-    json(result.ok ? 200 : 409, { ...result, mode: status.effectiveMode, ...status, windowsCage: { ...cage.winCageStatus(), ...cage.winCageProofView() } }); return true;
+    json(result.ok ? 200 : 409, { ...result, mode: status.effectiveMode, ...status, windowsCage: await windowsCageView() }); return true;
   }
   if (method === "POST" && url.pathname === "/api/sandbox") {
     const body = await readBody(req);

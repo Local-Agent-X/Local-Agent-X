@@ -40,6 +40,10 @@ export const ENV_ALLOWLIST: readonly string[] = [
   "HOME", "USERPROFILE",
   // Windows shell + system paths
   "SYSTEMROOT", "WINDIR", "COMSPEC",
+  // NoDefaultCurrentDirectoryInExePath, which the server sets at boot: a
+  // cmd.exe reads it from its own env, and without it searches its cwd (the
+  // worktree or project it was started in) for a bare program name first.
+  "NODEFAULTCURRENTDIRECTORYINEXEPATH",
   // Windows user dirs
   "APPDATA", "LOCALAPPDATA",
   // Temp dirs

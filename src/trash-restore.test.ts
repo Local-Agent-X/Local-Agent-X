@@ -19,7 +19,7 @@ const DATA = mkdtempSync(join(tmpdir(), "lax-trash-restore-"));
 process.env.LAX_DATA_DIR = DATA;
 
 const { appendTrashJournal, findTrashEntry, listRestorable, readTrashJournal } = await import("./trash-journal.js");
-const { restoreDeleted } = await import("./trash-restore.js");
+const { restoreDeleted, restoreFromOsTrash } = await import("./trash-restore.js");
 const { moveToTaskTrash, trashRecord, readTrashRecord, listTrashRecords } = await import("./safe-delete.js");
 
 const work = () => mkdtempSync(join(tmpdir(), "lax-trash-work-"));
@@ -134,6 +134,25 @@ describe("restoreDeleted", () => {
     const out = restoreDeleted(join(work(), "never-existed.md"));
     expect("error" in out && out.error).toMatch(/Nothing in the trash journal/);
   });
+});
+
+describe("the Windows Recycle Bin lookup", () => {
+  // PowerShell closes a quoted string on U+2019 as well as on ', so a name
+  // carrying one would end any literal the path was embedded in, and the rest
+  // of the name would run as script. Nothing here is in the bin, so the lookup
+  // only enumerates it and reports the file missing.
+  it.runIf(process.platform === "win32")("treats a name with typographic quotes as a name, never as script", () => {
+    const marker = join(work(), "pwned");
+    process.env.LAX_TEST_PWNED = marker;
+    try {
+      const original = join(work(), "notes’; New-Item -ItemType File -Path $env:LAX_TEST_PWNED; ’.md");
+      const out = restoreFromOsTrash(original);
+      expect(existsSync(marker)).toBe(false);
+      expect("error" in out && out.error).toMatch(/is not in the Recycle Bin/);
+    } finally {
+      delete process.env.LAX_TEST_PWNED;
+    }
+  }, 60_000);
 });
 
 describe("config-record snapshots are readable again", () => {

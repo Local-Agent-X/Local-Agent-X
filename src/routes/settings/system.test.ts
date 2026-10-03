@@ -5,11 +5,27 @@ import { join } from "node:path";
 import { Readable } from "node:stream";
 
 // The real status unless a test pins one (a Windows cage still proving its
-// fence cannot be produced on every runner).
-const pinned = vi.hoisted(() => ({ status: null as Record<string, unknown> | null }));
+// fence, or one whose grants failed, cannot be produced on every runner).
+const pinned = vi.hoisted(() => ({
+  status: null as Record<string, unknown> | null,
+  cage: null as null | { grant: { grantPending?: true; grantFailure?: string } },
+}));
 vi.mock("../../sandbox/index.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../sandbox/index.js")>();
-  return { ...actual, getSandboxStatus: () => (pinned.status ? { ...actual.getSandboxStatus(), ...pinned.status } : actual.getSandboxStatus()) };
+  return {
+    ...actual,
+    getSandboxStatus: () => (pinned.status ? { ...actual.getSandboxStatus(), ...pinned.status } : actual.getSandboxStatus()),
+    isGuardedUsable: () => (pinned.cage ? true : actual.isGuardedUsable()),
+    winCageGrantView: () => (pinned.cage ? pinned.cage.grant : actual.winCageGrantView()),
+  };
+});
+vi.mock("../../sandbox/win-cage.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../sandbox/win-cage.js")>();
+  return {
+    ...actual,
+    winCageStatus: () => (pinned.cage ? { helper: "C:\\ProgramData\\Local Agent X\\bin\\srt-win.exe", installed: true, detail: "Installed (modelled)." } : actual.winCageStatus()),
+    winCageProofView: () => (pinned.cage ? { proofPending: false } : actual.winCageProofView()),
+  };
 });
 
 import { getRuntimeConfig, loadConfig, setRuntimeConfig } from "../../config.js";
@@ -119,5 +135,28 @@ describe("sandbox status acknowledgement API", () => {
       pinned.status = null;
     }
     expect(getSandboxStatus().unconfinedHostAcknowledged).toBe(false);
+  });
+
+  // A latched grant failure refuses every caged command while the cage itself
+  // still reads as proven and guarded; the status read must carry it.
+  it("reports the Windows cage's grant failure alongside its install and proof", async () => {
+    const realPlatform = process.platform;
+    Object.defineProperty(process, "platform", { value: "win32" });
+    pinned.status = { selectedMode: "guarded", effectiveMode: "guarded", confined: true, proofPending: false };
+    const grantFailure = "The Windows shell cage could not give its sandbox user access to the workspace and the shell's own files (the helper exited with 5: Access is denied.), so it cannot run commands. Remove and reinstall the Windows network cage in Settings → Security to try again; restarting the app also retries it.";
+    pinned.cage = { grant: { grantFailure } };
+    try {
+      const response = await request("GET");
+      expect(response.status).toBe(200);
+      expect(response.body).toMatchObject({ effectiveMode: "guarded", confined: true });
+      expect(response.body.windowsCage).toEqual({
+        helper: "C:\\ProgramData\\Local Agent X\\bin\\srt-win.exe", installed: true, detail: "Installed (modelled).",
+        proofPending: false, grantFailure,
+      });
+    } finally {
+      Object.defineProperty(process, "platform", { value: realPlatform });
+      pinned.status = null;
+      pinned.cage = null;
+    }
   });
 });

@@ -104,15 +104,14 @@ function findInFreedesktopTrash(original: string): string | null {
  *  format: the verb also repairs the bin's own index, which a manual move
  *  would leave stale. */
 function restoreFromWindowsBin(original: string): RestoreResult {
-  // The target is embedded as a single-quoted PowerShell literal, NOT passed
-  // as an argument: `-Command` does not bind trailing arguments to $args (only
-  // `-File` does), so an $args[0] version silently searched for the empty
-  // string and reported every file missing. Doubling `'` is the escape for a
-  // single-quoted literal, in which nothing else expands.
-  const lit = `'${original.replace(/'/g, "''")}'`;
+  // The target reaches PowerShell through the environment. Not as an argument:
+  // `-Command` does not bind trailing arguments to $args (only `-File` does),
+  // so an $args[0] version silently searched for the empty string and reported
+  // every file missing. Not as a quoted literal: PowerShell also closes one on
+  // the typographic quotes U+2018-U+201B, so no escaping of it is complete.
   const script = [
     "$ErrorActionPreference='Stop'",
-    `$target = ${lit}`,
+    "$target = $env:LAX_RESTORE_TARGET",
     "$shell = New-Object -ComObject Shell.Application",
     "$bin = $shell.Namespace(10)",
     "$item = $null",
@@ -157,7 +156,7 @@ function restoreFromWindowsBin(original: string): RestoreResult {
   ].join("\n");
   try {
     const out = execFileSync("powershell", ["-NoProfile", "-NonInteractive", "-Command", script], {
-      encoding: "utf8", timeout: 30_000, windowsHide: true,
+      encoding: "utf8", timeout: 30_000, windowsHide: true, env: { ...process.env, LAX_RESTORE_TARGET: original },
     }).trim();
     if (out.endsWith("NOTFOUND")) {
       return { error: `${original} is not in the Recycle Bin (it may have been emptied, or restored already).` };

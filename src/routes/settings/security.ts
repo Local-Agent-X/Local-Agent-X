@@ -1,8 +1,8 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { randomBytes } from "node:crypto";
 import type { RouteHandler } from "../../server-context.js";
-import { jsonResponse, safeErrorMessage, corsHeaders, atomicWriteFileSync } from "../../server-utils.js";
+import { jsonResponse, safeErrorMessage, corsHeaders } from "../../server-utils.js";
+import { rotateAuthToken } from "../../config.js";
 import { setBrowserAuthContext } from "../../browser/index.js";
 import { redactCredentials } from "../../security/index.js";
 import { createLogger } from "../../logger.js";
@@ -21,12 +21,10 @@ export const handleSecurityRoutes: RouteHandler = async (method, url, req, res, 
     // token), but enforced structurally so introducing scoped tokens can't
     // silently open it.
     if (role !== "operator") { json(403, { error: "Operator role required to rotate the auth token" }); return true; }
-    const newToken = randomBytes(32).toString("hex");
-    const configPath = join(ctx.dataDir, "config.json");
     try {
-      const cfg = existsSync(configPath) ? JSON.parse(readFileSync(configPath, "utf-8")) : {};
-      cfg.authToken = newToken;
-      atomicWriteFileSync(configPath, JSON.stringify(cfg, null, 2), { mode: 0o600 });
+      // The one minting path: it persists the token AND registers it for
+      // masking, so the model never sees the new token in any tool output.
+      const newToken = rotateAuthToken();
       ctx.config.authToken = newToken;
       ctx.rbac.rotateOperatorToken(newToken);
       setBrowserAuthContext(newToken, String(ctx.config.port));

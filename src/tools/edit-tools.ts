@@ -4,6 +4,9 @@ import fg from "fast-glob";
 import { resolveAgentPath, sessionIdOf } from "../workspace/paths.js";
 import { readValidatedFile } from "../security/layer/index.js";
 import { matchesSensitivePath } from "../security/layer/index.js";
+import { isLaxControlFile, laxApprovalGatedFile } from "../security/layer/lax-control-files.js";
+import { persistenceLocationJudge } from "../security/layer/persistence-locations.js";
+import { isProtectedInstallPath } from "../security/layer/install-root.js";
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { ok, err } from "./result-helpers.js";
 import { checkEditSyntax, syntaxRejectionMessage } from "./syntax-validate.js";
@@ -266,7 +269,12 @@ export const multiEditTool: ToolDefinition = {
 // vets the declared root (pathArgs action:"edit"). Everything under the root is
 // therefore re-screened here: symlinks are never followed during discovery,
 // each file is read through the validated-inode sink, and sensitive-pattern
-// files inside the tree are skipped (and reported) rather than rewritten.
+// files inside the tree are skipped (and reported) rather than rewritten. So
+// are the app's own control files under its data dir, the login, terminal and
+// git startup files (a root at the home folder reaches them), and the install
+// folder outside the workspace (a root above the install reaches it): the
+// gates that refuse or ask about a write to one only ever see a path the call
+// names.
 const BULK_SCAN_CAP = 2000;
 const BULK_FILE_MAX_BYTES = 5 * 1024 * 1024;
 
@@ -311,9 +319,17 @@ export const bulkReplaceTool: ToolDefinition = {
     const changed: Array<{ file: string; count: number }> = [];
     const skipped: string[] = [];
     const failed: string[] = [];
+    const startupFileOf = persistenceLocationJudge();
     for (const file of files) {
       const normalized = process.platform === "win32" ? file.toLowerCase() : file;
       if (matchesSensitivePath(normalized)) { skipped.push(`${relative(root, file)} (sensitive path)`); continue; }
+      if (file !== root && (isLaxControlFile(file) || laxApprovalGatedFile(file))) {
+        skipped.push(`${relative(root, file)} (app control file)`);
+        continue;
+      }
+      const startup = file !== root && startupFileOf(file);
+      if (startup) { skipped.push(`${relative(root, file)} (startup file that ${startup.runs})`); continue; }
+      if (isProtectedInstallPath(file)) { skipped.push(`${relative(root, file)} (Local Agent X install folder)`); continue; }
       let buf: Buffer;
       try {
         buf = readValidatedFile(file, sessionId);

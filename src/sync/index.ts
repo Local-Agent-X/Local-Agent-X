@@ -7,7 +7,7 @@ import { createLogger } from "../logger.js";
 import { gitCredentialArgs, gitCredentialEnv } from "./git-auth.js";
 import { DEFAULT_CONFIG, type SyncConfig } from "./constants.js";
 import { resolveConflicts } from "./conflict-resolver.js";
-import { copyFromSync } from "./pull-files.js";
+import { copyFromSync, pullReportNotes } from "./pull-files.js";
 import { copyToSync } from "./push-files.js";
 import { ABORT_THRESHOLD, findUnauthorizedAppDeletions, massDeleteAbortMessage } from "./mass-delete-guard.js";
 import { AUTH_REJECTION_MESSAGE, formatGitError, isAuthRejection, pushFailureMessage } from "./git-error.js";
@@ -289,7 +289,7 @@ export class AgentSync {
       // up-to-date) sets it. Stamping on every pull made the heartbeat's
       // inbound half keep the clock fresh while pushes silently failed,
       // showing "synced 14m ago" with no commit on the remote for a week.
-      return { success: true, message: hasChanges ? "Downloaded latest" : "Synced local files" };
+      return { success: true, message: `${hasChanges ? "Downloaded latest" : "Synced local files"}.${pullReportNotes(report)}` };
     } catch (e) {
       return { success: false, message: (e as Error).message };
     } finally { this.isSyncing = false; }

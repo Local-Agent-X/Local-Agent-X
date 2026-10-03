@@ -25,6 +25,10 @@ import {
 } from "../src/canonical-loop/adapters/app-build-adapter.js";
 import type { FinalizeFrameworkDeps } from "../src/canonical-loop/adapters/app-build-finalize.js";
 import type { AppSmokeGateRunner } from "../src/canonical-loop/adapters/app-build-verify-adapter.js";
+import { setSetting } from "../src/settings.js";
+
+// The CLI build strategy runs only with developer_mode on (build-app-cli-gate.ts).
+beforeEach(() => setSetting("developer_mode", true));
 
 // Stub the done-terminal headless smoke so no test launches a real browser;
 // the gate's own contract is tested in test/app-build-smoke-gate.test.ts.

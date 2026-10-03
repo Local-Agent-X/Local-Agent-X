@@ -6,6 +6,8 @@ import { join } from "node:path";
 
 import { generateBwrapArgs, isBwrapAvailable, resolveBwrapPath, wrapForBwrap, bwrapEnforces, bwrapServerCageRuns, bwrapGuardedRuns } from "./bwrap.js";
 import { HOME_RELATIVE_DENY_DIRS, HOME_RELATIVE_DENY_FILES, SERVER_SCOPE_EXEMPT_DIRS, GUARDED_SCOPE_EXEMPT_DIRS } from "./validate.js";
+import { installRootWriteRule, type InstallRootRule } from "../security/layer/install-root.js";
+import { installRootDenialHint } from "./denial-hints.js";
 
 const bwrapHere = isBwrapAvailable();
 
@@ -49,11 +51,14 @@ describe("bwrap arg generation", () => {
     } finally { rmSync(home, { recursive: true, force: true }); }
   });
 
-  it("shadows the shell-rc persistence vectors", () => {
+  // Read-only over itself, not shadowed: a login shell in the cage still
+  // reads it, and nothing the cage runs can change it.
+  it("binds the shell-rc persistence vectors read-only over themselves", () => {
     const home = makeHome();
     try {
       const args = generateBwrapArgs(home).join(" ");
-      expect(args).toContain(`--ro-bind /dev/null ${join(home, ".bashrc")}`);
+      expect(args).toContain(`--ro-bind ${join(home, ".bashrc")} ${join(home, ".bashrc")}`);
+      expect(args).not.toContain(`--ro-bind /dev/null ${join(home, ".bashrc")}`);
     } finally { rmSync(home, { recursive: true, force: true }); }
   });
 
@@ -94,18 +99,129 @@ describe("bwrap arg generation", () => {
       for (const file of HOME_RELATIVE_DENY_FILES) {
         expect(joined).toContain(`--ro-bind /dev/null ${join(home, file)}`);
       }
-      expect(joined).toContain(`--ro-bind /dev/null ${join(home, ".bashrc")}`);
+      expect(joined).toContain(`--ro-bind ${join(home, ".bashrc")} ${join(home, ".bashrc")}`);
     } finally { rmSync(home, { recursive: true, force: true }); }
   });
 
   it("omits binds for paths that do not exist (bwrap aborts on missing targets)", () => {
     const home = realpathSync(mkdtempSync(join(tmpdir(), "lax-bw-home-")));
     try {
-      // Empty home: no deny dir/file exists, so no shadow args at all.
-      const args = generateBwrapArgs(home);
+      // Empty home and no install rule: no deny dir/file exists, so no shadow args at all.
+      const args = generateBwrapArgs(home, "shell", undefined, null);
       expect(args).not.toContain("--tmpfs");
       expect(args).not.toContain("--ro-bind");
     } finally { rmSync(home, { recursive: true, force: true }); }
+  });
+});
+
+// The install folder is write-protected for the agent except its workspace,
+// config/ included (security/layer/install-root.ts). bwrap applies mounts in
+// order, so the order IS the rule: the root bind, then the install read-only,
+// then the workspace bound back read-write, then the home shadows on top.
+describe("bwrap install-root write deny", () => {
+  function makeInstall(): { base: string; rule: InstallRootRule } {
+    const base = realpathSync(mkdtempSync(join(tmpdir(), "lax-bw-install-")));
+    const root = join(base, "install");
+    mkdirSync(join(root, "workspace"), { recursive: true });
+    mkdirSync(join(root, "config"), { recursive: true });
+    for (const f of ["system-prompt.md", "tools.json", "protected-files.json"]) writeFileSync(join(root, "config", f), "{}");
+    return { base, rule: installRootWriteRule(root, join(root, "workspace"))! };
+  }
+  const at = (args: string[], ...seq: string[]) =>
+    args.findIndex((_, i) => seq.every((s, j) => args[i + j] === s));
+
+  it("agent scopes bind the install read-only, then only the workspace read-write, before the home shadows", () => {
+    const home = makeHome();
+    const { base, rule } = makeInstall();
+    const ws = join(rule.root, "workspace");
+    try {
+      for (const scope of ["shell", "guarded"] as const) {
+        const args = generateBwrapArgs(home, scope, { network: "namespace" }, rule);
+        const ro = at(args, "--ro-bind", rule.root, rule.root);
+        const rw = at(args, "--bind", ws, ws);
+        expect(ro, scope).toBeGreaterThan(at(args, "--bind", "/", "/"));
+        expect(rw, scope).toBeGreaterThan(ro);
+        expect(rw, scope).toBeLessThan(args.indexOf("--tmpfs"));
+        expect(args.filter((a) => a.startsWith(join(rule.root, "config"))), scope).toEqual([]);
+      }
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  it("server scope never carries it: the server writes its own install", () => {
+    const home = makeHome();
+    const { base, rule } = makeInstall();
+    try {
+      expect(generateBwrapArgs(home, "server", undefined, rule)).not.toContain(rule.root);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  it("skips a writable folder that does not exist yet (bwrap aborts on a missing bind source)", () => {
+    const { base, rule } = makeInstall();
+    try {
+      const missing = join(rule.root, "not-yet");
+      const args = generateBwrapArgs(base, "guarded", undefined, { root: rule.root, writable: [missing] });
+      expect(at(args, "--ro-bind", rule.root, rule.root)).toBeGreaterThan(-1);
+      expect(args).not.toContain(missing);
+    } finally { rmSync(base, { recursive: true, force: true }); }
+  });
+
+  it("by default reads the live install root", () => {
+    const live = installRootWriteRule();
+    expect(live).not.toBeNull();
+    const home = makeHome();
+    try {
+      const args = generateBwrapArgs(home, "guarded");
+      expect(at(args, "--ro-bind", live!.root, live!.root)).toBeGreaterThan(-1);
+    } finally { rmSync(home, { recursive: true, force: true }); }
+  });
+
+  it.skipIf(!bwrapHere)("live: a write into the install is refused and one into its workspace lands", () => {
+    const home = makeHome();
+    const { base, rule } = makeInstall();
+    const ws = rule.writable[0]!;
+    try {
+      const out = execFileSync(
+        resolveBwrapPath()!,
+        [...generateBwrapArgs(home, "guarded", { network: "namespace" }, rule), "/bin/bash", "-c",
+          `(echo x > "${rule.root}/engine.js") 2>/dev/null && echo ROOT-WROTE || echo ROOT-DENIED; ` +
+          `echo y > "${ws}/note.md" && echo WS-WROTE || echo WS-DENIED`],
+        { encoding: "utf-8", timeout: 10_000, stdio: ["ignore", "pipe", "pipe"] },
+      );
+      expect(out).toContain("ROOT-DENIED");
+      expect(out).toContain("WS-WROTE");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  // The refusal is what the shell's notice keys on (denial-hints.ts), so the
+  // live output is fed back to it: a capture, not an invented string.
+  it.skipIf(!bwrapHere)("live: writes into config/ are refused — the prompt, tools.json, the protected-files list — and the notice names the rule", () => {
+    const home = makeHome();
+    const { base, rule } = makeInstall();
+    try {
+      const out = execFileSync(
+        resolveBwrapPath()!,
+        [...generateBwrapArgs(home, "guarded", { network: "namespace" }, rule), "/bin/bash", "-c",
+          `for f in system-prompt.md tools.json protected-files.json; do (echo x > "${rule.root}/config/$f") && echo "$f-WROTE" || echo "$f-DENIED"; done; ` +
+          `(rm "${rule.root}/config/tools.json") && echo RM-REMOVED || echo RM-KEPT; ` +
+          `(echo x > "${rule.root}/config/new.json") 2>&1; true`],
+        { encoding: "utf-8", timeout: 10_000, stdio: ["ignore", "pipe", "pipe"] },
+      );
+      for (const f of ["system-prompt.md", "tools.json", "protected-files.json"]) expect(out).toContain(`${f}-DENIED`);
+      expect(out).toContain("RM-KEPT");
+      expect(installRootDenialHint("guarded", out, "linux", rule)).toContain("install folder");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(base, { recursive: true, force: true });
+    }
   });
 });
 
@@ -323,6 +439,29 @@ describe.skipIf(!bwrapHere)("bwrap enforcement (live)", () => {
       expect(out).toContain("RAN");
       expect(out).not.toContain("PRIVATE-KEY");
       expect(out).toContain("GH-CONFIG");
+    } finally { rmSync(home, { recursive: true, force: true }); }
+  });
+
+  // The persistence locations read normally (git still finds who you are)
+  // and refuse every write, in the default scope.
+  it("guarded scope: ~/.gitconfig and ~/.bashrc read, and refuse a write", () => {
+    const home = makeHome();
+    try {
+      writeFileSync(join(home, ".gitconfig"), "[user]\n\tname = Original\n");
+      mkdirSync(join(home, ".config", "systemd", "user"), { recursive: true });
+      const out = execFileSync(
+        resolveBwrapPath()!,
+        [...generateBwrapArgs(home, "guarded", { network: "namespace" }), "/bin/bash", "-c",
+          `cat "${join(home, ".gitconfig")}"; ` +
+          `(echo pwned >> "${join(home, ".gitconfig")}") 2>/dev/null && echo GIT-WROTE || echo GIT-DENIED; ` +
+          `(echo pwned >> "${join(home, ".bashrc")}") 2>/dev/null && echo RC-WROTE || echo RC-DENIED; ` +
+          `(echo x > "${join(home, ".config", "systemd", "user", "x.service")}") 2>/dev/null && echo UNIT-WROTE || echo UNIT-DENIED`],
+        { encoding: "utf-8", timeout: 10_000, stdio: ["ignore", "pipe", "pipe"] },
+      );
+      expect(out).toContain("name = Original");
+      expect(out).toContain("GIT-DENIED");
+      expect(out).toContain("RC-DENIED");
+      expect(out).toContain("UNIT-DENIED");
     } finally { rmSync(home, { recursive: true, force: true }); }
   });
 

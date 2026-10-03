@@ -2,36 +2,18 @@ import { resolve, relative, dirname, basename, isAbsolute, sep } from "node:path
 import type { SecurityDecision } from "../../types.js";
 import { USER_HINTS } from "../../types.js";
 import type { FileAccessMode } from "./types.js";
+import type { PathArgSpec } from "../../tool-registry.js";
 import { classifySensitivePath } from "./sensitive-paths.js";
 import { SYSTEM_DIR_PATTERNS } from "./catastrophic-paths.js";
 import { isLaxControlFile, isAppAtRestSecretUnderLax } from "./lax-control-files.js";
 import { resolveAgentPathFrom, realpathDeep, sessionWorkRootOf } from "../../workspace/paths.js";
 import { getLaxDir } from "../../lax-data-dir.js";
-import { platformRoot } from "../../platform-root.js";
+import { pathIsWithin } from "./path-within.js";
+import { INSTALL_CHANGE_ROUTE, protectedFolderOf } from "./install-root.js";
 
-// ── Containment predicate (the ONE lexical "is `target` inside `root`") ──
-//
-// path.relative() alone is NOT a containment test on Windows: across drives or
-// UNC shares it returns an ABSOLUTE path (e.g. `relative('C:\\ws','D:\\secret')`
-// → `'D:\\secret'`, `relative('C:\\ws','\\\\srv\\share\\x')` → the UNC path)
-// which does NOT start with '..'. A bare `!rel.startsWith('..')` therefore reads
-// a different-drive target as "inside" every root — voiding confinement (a
-// cross-drive traversal never trips the outer gate) AND widening every ALLOW set
-// (a C:-allowed path treats a D: target as contained). The `isAbsolute(rel)`
-// guard closes both, matching what confineToDir / isUserContentPath already do.
-// `rel === ''` (target === root) counts as inside.
-//
-// `pathImpl` defaults to the platform's node:path (win32 on Windows, posix
-// elsewhere) — the only reason it is injectable is so the Windows cross-drive
-// invariant can be exercised from a POSIX test host via path.win32.
-export function pathIsWithin(
-  root: string,
-  target: string,
-  pathImpl: Pick<typeof import("node:path"), "relative" | "isAbsolute"> = { relative, isAbsolute },
-): boolean {
-  const rel = pathImpl.relative(root, target);
-  return !rel.startsWith("..") && !pathImpl.isAbsolute(rel);
-}
+// The containment predicate lives in a leaf (install-root.ts needs it too);
+// re-exported so its many consumers keep importing it from here.
+export { pathIsWithin } from "./path-within.js";
 
 // Whether a (already case-normalized) path matches any always-blocked sensitive
 // rule: the regex catalog below OR the app's own at-rest key/seed files under
@@ -182,6 +164,15 @@ export function userContentDirs(homeDir: string): string[] {
   return dirs;
 }
 
+// Every action a path spec in the policy table hands this gate changes the
+// file except a read, so one the table adds is guarded from its first call.
+// Naming the changing actions instead is how "delete", which no spec sends,
+// stood in for delete_file and let the delete through.
+function changesFile(action: string): boolean {
+  const read: PathArgSpec["action"] = "read";
+  return action !== read;
+}
+
 export function evaluateFileAccess(
   workspace: string,
   fileAccessMode: FileAccessMode,
@@ -232,8 +223,10 @@ export function evaluateFileAccess(
   // Capability-control files in the data dir are read-only to the file tools, in
   // EVERY access mode — placed above the mode branches precisely because
   // "unrestricted" must not mean "may rewrite my own permissions". Reads fall
-  // through untouched; only mutation is refused. See isLaxControlFile.
-  if (action === "write" || action === "edit" || action === "delete") {
+  // through untouched; only mutation is refused. See isLaxControlFile. A
+  // delete_file counts: a switch the agent removes goes back to its default,
+  // which can be looser than what the user chose.
+  if (changesFile(action)) {
     if (isLaxControlFile(realPath)) {
       return {
         allowed: false,
@@ -241,6 +234,24 @@ export function evaluateFileAccess(
         userHint: USER_HINTS.policy,
       };
     }
+  }
+
+  // The install folder is write-protected except the workspace, config/
+  // included, and so are the runtimes the server runs programs from
+  // (install-root.ts).
+  // Above the mode branches for the same reason as the control files:
+  // unrestricted access must not reach the engine the agent runs on. A
+  // delete_file counts: trashing package.json breaks the install as surely as
+  // overwriting it.
+  const protectedFolder = changesFile(action) ? protectedFolderOf(realPath) : null;
+  if (protectedFolder) {
+    return {
+      allowed: false,
+      reason: protectedFolder.runtime
+        ? `Blocked: cannot modify platform files — ${realPath} is inside ${protectedFolder.root}, which holds programs Local Agent X runs (its shell or its Node runtime) and is write-protected. Build apps and save files under the workspace instead.`
+        : `Blocked: cannot modify platform files — ${realPath} is inside the Local Agent X install folder, which is write-protected except for the workspace. ${INSTALL_CHANGE_ROUTE}`,
+      userHint: USER_HINTS.secrets,
+    };
   }
 
   // Check for directory traversal (target resolved OUTSIDE the workspace).
@@ -325,9 +336,9 @@ export function evaluateFileAccess(
     // src/auth.ts, src/codex-client.ts, …) is deliberately NOT listed here: a
     // bare path-suffix regex like /src/auth.ts$/ ALSO matched a user app or a
     // foreign project's identically-named file and wrongly blocked the edit. The
-    // engine source is protected instead by the platform-root-anchored check
-    // below (inPlatform && !inWorkspace && touchesSrcOrPublic) — a strict
-    // superset for the platform tree, with zero false hits outside it.
+    // engine is protected instead by the install-root check above, anchored to
+    // where LAX is installed — a strict superset for the platform tree, with
+    // zero false hits outside it.
     const coreProtectedFiles = [
       /[/\\]\.env$/i,                        // Environment secrets
       /[/\\]\.lax[/\\]secrets\./i,           // Encrypted secrets store
@@ -348,23 +359,6 @@ export function evaluateFileAccess(
       return {
         allowed: false,
         reason: `Blocked: protected platform file. Use the apps system to build custom interfaces.`,
-        userHint: USER_HINTS.secrets,
-      };
-    }
-
-    // Block writes to the LAX platform's own source. <platformRoot>/src and
-    // <platformRoot>/public ARE the platform — anchored to the install root
-    // (see platform-root.ts for why NOT workspace/..), not a bare "/src/"
-    // substring. User apps live under workspace/ and legitimately use a src/
-    // convention (Astro mandates src/pages/; Vite, Next, Vue, SvelteKit all use
-    // src/) — those must NOT be caught. Everything else under the root is ours.
-    const inWorkspace = pathIsWithin(workspace, realPath);
-    const inPlatform = pathIsWithin(platformRoot(), realPath);
-    const touchesSrcOrPublic = /[/\\](src|public)[/\\]/i.test(realPath);
-    if (inPlatform && !inWorkspace && touchesSrcOrPublic) {
-      return {
-        allowed: false,
-        reason: `Blocked: cannot modify platform files (src/ or public/). Build apps under workspace/ instead.`,
         userHint: USER_HINTS.secrets,
       };
     }

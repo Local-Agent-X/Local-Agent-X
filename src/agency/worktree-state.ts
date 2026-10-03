@@ -11,6 +11,7 @@ import { activeWorktrees, git, gitAsync, logger } from "./worktree-core.js";
 import { unlinkSharedJunctions } from "./worktree-junctions.js";
 import { loadProtectedFiles } from "../config-loader.js";
 import { killProcessTree } from "../process-tree-kill.js";
+import { buildSelfEditChildEnv } from "../self-edit/child-env.js";
 
 /**
  * True when `file` (a repo-relative path) is covered by a protected-files.json
@@ -111,6 +112,12 @@ export function getWorktreeChangedFiles(name: string): string[] {
   return parsePorcelain(getWorktreeStatus(name));
 }
 
+// The worktree's config and .gitattributes are the surgeon's to write, so the
+// merge-delta reads start no fsmonitor hook, external diff driver or textconv
+// filter on the host. Each would also rewrite what the gates are shown.
+const NO_HOOKS = ["-c", "core.fsmonitor=false"];
+const DIFF = [...NO_HOOKS, "diff", "--no-ext-diff", "--no-textconv"];
+
 /**
  * The files that will actually land on the base branch if this worktree merges
  * NOW — the full merge delta, committed history included, plus any still-
@@ -133,12 +140,12 @@ export async function getMergeDeltaFiles(name: string): Promise<string[]> {
   const base = await gitAsync(["rev-parse", wt.baseBranch], wt.repoRoot);
   const head = await gitAsync(["rev-parse", "HEAD"], wt.path);
   if (base !== head) {
-    for (const f of (await gitAsync(["diff", "--name-only", `${base}...${head}`], wt.path)).split("\n")) {
+    for (const f of (await gitAsync([...DIFF, "--name-only", `${base}...${head}`], wt.path)).split("\n")) {
       if (f.trim()) files.add(f.trim());
     }
   }
   // Uncommitted changes the merge step will `git add -A` and commit.
-  for (const f of parsePorcelain(await gitAsync(["status", "--porcelain"], wt.path))) files.add(f);
+  for (const f of parsePorcelain(await gitAsync([...NO_HOOKS, "status", "--porcelain"], wt.path))) files.add(f);
   return [...files];
 }
 
@@ -162,12 +169,12 @@ export async function getMergeDeltaDiff(name: string): Promise<string> {
     const base = await gitAsync(["rev-parse", wt.baseBranch], wt.repoRoot);
     const head = await gitAsync(["rev-parse", "HEAD"], wt.path);
     if (base !== head) {
-      diff += await gitAsync(["diff", `${base}...${head}`], wt.path);
+      diff += await gitAsync([...DIFF, `${base}...${head}`], wt.path);
     }
     // Uncommitted changes the merge step will `git add -A` and commit. Include
     // untracked files (--no-index would need pairing); `git diff HEAD` plus
     // `git diff` covers staged+unstaged against HEAD.
-    const uncommitted = await gitAsync(["diff", "HEAD"], wt.path);
+    const uncommitted = await gitAsync([...DIFF, "HEAD"], wt.path);
     if (uncommitted.trim()) {
       diff += (diff ? "\n" : "") + uncommitted;
     }
@@ -206,9 +213,8 @@ export function commitInWorktree(name: string, message: string): string | null {
 interface BuildOptions {
   command: string;
   timeoutMs: number;
-  /** Env for the command. Defaults to the parent process env. Callers running
-   *  worktree code authored by an untrusted self_edit child pass a scrubbed env
-   *  so the command can't read+exfil the server's credentials. */
+  /** Env for the command. Defaults to the credential-scrubbed child env (see
+   *  runProcess). */
   env?: NodeJS.ProcessEnv;
 }
 
@@ -286,7 +292,12 @@ function runProcess(
       shell: true,
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"],
-      ...(opts.env ? { env: opts.env } : {}),
+      // Every command here builds or tests a tree an agent may have written (a
+      // merged self_edit, an autopilot round, an update candidate) and none
+      // needs the server's credentials. It is the scrub the self_edit build gate
+      // already runs the same `npm run build` under, so the post-merge re-run
+      // of that build never sees more than the gate did.
+      env: opts.env ?? buildSelfEditChildEnv(),
     });
     let stdout = "";
     let stderr = "";

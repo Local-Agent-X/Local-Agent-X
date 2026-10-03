@@ -6,11 +6,10 @@
  * build-app-spawn.ts uses for the build CLI. The framework→command mapping is
  * NOT duplicated here — it comes from viteScaffoldPlan.
  */
-import { spawn } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { resolve, dirname } from "node:path";
-import { killProcessTree } from "../process-tree-kill.js";
-import { hardenChildEnv } from "./env-contamination.js";
+import { runCaged, type CagedRunOutcome } from "./caged-spawn.js";
+import { npmCommandArgv } from "./program-argv.js";
 import type { DetectedFramework } from "./framework-detect.js";
 import {
   harnessOwnsScaffold,
@@ -97,48 +96,34 @@ interface ScaffoldManifestShape {
   ownedPaths: string[];
 }
 
-function runScaffoldCommand(
+async function runScaffoldCommand(
   command: string,
   cwd: string,
   opts: { signal?: AbortSignal; onEvent?: (e: { type: string; [k: string]: unknown }) => void },
 ): Promise<void> {
-  return new Promise<void>((resolveP, rejectP) => {
-    const proc = spawn(command, {
+  let seen = 0;
+  let outcome: CagedRunOutcome;
+  try {
+    // npm runs every installed package's lifecycle scripts and honours a
+    // .npmrc already sitting in the app dir: it runs in the shell cage on the
+    // scrubbed env, reaching the registry through the cage's egress proxy. A
+    // POSIX group kill takes the installs it starts down with it.
+    outcome = await runCaged(npmCommandArgv(command), {
       cwd,
-      shell: true,
-      // hardenChildEnv: strip __CFBundleIdentifier + guard process.title so a
-      // node-based scaffolder can't SIGSEGV under the macOS app-bundle context
-      // (env scrub alone is insufficient — see env-contamination.ts).
-      env: { ...hardenChildEnv(process.env), NO_COLOR: "1" },
-      stdio: ["ignore", "pipe", "pipe"],
+      env: { NO_COLOR: "1" },
+      detached: process.platform !== "win32",
+      signal: opts.signal,
+      timeoutMs: SCAFFOLD_STEP_TIMEOUT_MS,
+      onOutput: ({ stdout }) => {
+        const last = stdout.slice(seen).split(/\r?\n/).filter((l) => l.trim()).pop();
+        seen = stdout.length;
+        if (last) opts.onEvent?.({ type: "tool_progress", toolName: "build_app", message: `scaffold: ${last.slice(0, 120)}` });
+      },
     });
-    let errOut = "";
-    proc.stdout?.on("data", (d: Buffer) => {
-      const last = d.toString().split(/\r?\n/).filter((l) => l.trim()).pop();
-      if (last) opts.onEvent?.({ type: "tool_progress", toolName: "build_app", message: `scaffold: ${last.slice(0, 120)}` });
-    });
-    proc.stderr?.on("data", (d: Buffer) => { errOut += d.toString(); });
-
-    const abortListener = (): void => { killProcessTree(proc); };
-    if (opts.signal) {
-      if (opts.signal.aborted) abortListener();
-      else opts.signal.addEventListener("abort", abortListener);
-    }
-    const timer = setTimeout(() => {
-      killProcessTree(proc);
-      rejectP(new Error(`scaffold step timed out after ${Math.round(SCAFFOLD_STEP_TIMEOUT_MS / 1000)}s: ${command}`));
-    }, SCAFFOLD_STEP_TIMEOUT_MS);
-
-    proc.on("error", (e) => {
-      clearTimeout(timer);
-      opts.signal?.removeEventListener("abort", abortListener);
-      rejectP(new Error(`scaffold step failed to start (${command}): ${e.message}`));
-    });
-    proc.on("close", (code) => {
-      clearTimeout(timer);
-      opts.signal?.removeEventListener("abort", abortListener);
-      if (code === 0) resolveP();
-      else rejectP(new Error(`scaffold step exited ${code}: ${command}${errOut.trim() ? `\n${errOut.trim().slice(-800)}` : ""}`));
-    });
-  });
+  } catch (e) {
+    throw new Error(`scaffold step failed to start (${command}): ${(e as Error).message}`);
+  }
+  if (outcome.kind === "abort") throw new Error(`scaffold step was stopped: ${command}`);
+  if (outcome.kind === "timeout") throw new Error(`scaffold step timed out after ${Math.round(SCAFFOLD_STEP_TIMEOUT_MS / 1000)}s: ${command}`);
+  if (outcome.code !== 0) throw new Error(`scaffold step exited ${outcome.code}: ${command}${outcome.stderr.trim() ? `\n${outcome.stderr.trim().slice(-800)}` : ""}`);
 }

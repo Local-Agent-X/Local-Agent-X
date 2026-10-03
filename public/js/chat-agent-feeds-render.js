@@ -120,11 +120,20 @@ function renderAgentCardControls(safeId, status) {
 // Label shows the BARE url (no token leakage); href gets the authed variant.
 // esc() on the href guards against any agent-controlled string reaching it.
 function resultLinkHtml(rawUrl) {
-  var needsAuth = rawUrl.indexOf('/api/') === 0 || rawUrl.indexOf('http://127.0.0.1') === 0 || rawUrl.indexOf('http://localhost') === 0;
+  // Agent-built apps and files are served off this origin and never take the
+  // operator token (src/server/agent-origin.ts); a /files link gets the
+  // files-link capability instead (agentFilesHref, shared-md.js).
+  var agentContent = /^(https?:\/\/[^/]+)?\/(apps|dashboards|files)\//.test(rawUrl);
+  // Only this UI's own origin gets the token: the agent chooses resultUrl
+  // (any "Open: <url>" line in a tool result), so another loopback port may
+  // be a listener it started.
+  var ownOrigin = false;
+  try { ownOrigin = new URL(rawUrl, location.href).origin === location.origin; } catch (_) {}
+  var needsAuth = !agentContent && ownOrigin;
   var token = (typeof AUTH_TOKEN !== 'undefined' && AUTH_TOKEN) ? AUTH_TOKEN : (localStorage.getItem('lax_token') || '');
   var authedUrl = (needsAuth && token && rawUrl.indexOf('token=') === -1)
     ? rawUrl + (rawUrl.indexOf('?') === -1 ? '?' : '&') + 'token=' + encodeURIComponent(token)
-    : rawUrl;
+    : (agentContent ? agentFilesHref(rawUrl) : rawUrl);
   return '<a href="' + esc(authedUrl) + '" target="_blank" rel="noopener" style="color:var(--accent,#3a7);text-decoration:none">↗ Open: ' + esc(rawUrl) + '</a>';
 }
 

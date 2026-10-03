@@ -3,8 +3,9 @@
  *
  * All model calls are injected via the classifySchema `_llm` seam; no test
  * touches the network. Locks in: the strict verdict enum (off-vocabulary →
- * single retry → null → caller's fallback), the tolerant reason field, and
- * the deterministic affirmative-go-ahead backstop.
+ * single retry → null → caller's fallback), the tolerant reason field, the
+ * classifier being told a config/ change is a self_edit intent, and the
+ * deterministic affirmative-go-ahead backstop.
  */
 import { describe, it, expect, vi } from "vitest";
 import { checkSelfEditIntent, isAffirmativeGoAhead } from "./intent-gate.js";
@@ -60,6 +61,24 @@ describe("checkSelfEditIntent — schema-validated path (injected _llm)", () => 
     const llm = vi.fn<Llm>(async () => null);
     await expect(check(llm)).resolves.toBeNull();
     expect(llm).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("checkSelfEditIntent — a change to the agent's own config/ is a self_edit intent", () => {
+  // self_edit is the only route that writes config/, so a classifier told
+  // self_edit is for source code alone answers "mismatch" to a config/
+  // request, and the gate, which fails closed, strands every one of them.
+  it("the classifier's \"match\" rule names config/ changes and gives one as an example", async () => {
+    const llm = vi.fn<Llm>(async () => `{"verdict": "match", "reason": "config change"}`);
+    await checkSelfEditIntent(
+      "raise the default bash timeout in config/tools.json to 300 seconds",
+      "change your tools.json default bash timeout to 5 minutes",
+      "",
+      llm,
+    );
+    const systemPrompt = llm.mock.calls[0][0];
+    expect(systemPrompt).toMatch(/- "match":[^\n]*a change to the agent's own config\//);
+    expect(systemPrompt).toContain(`"change your tools.json default bash timeout"`);
   });
 });
 

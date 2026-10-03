@@ -47,10 +47,9 @@ export function bindBuildAppRuntime(
   return runtimeBound;
 }
 
-const ARI_BRIDGE_CLASS: Record<string, "file" | "http" | "shell" | "database" | "retrieval"> = {
+const ARI_BRIDGE_CLASS: Record<string, "file" | "http" | "database" | "retrieval"> = {
   ari_file: "file",
   ari_http: "http",
-  ari_shell: "shell",
   ari_database: "database",
   ari_retrieval: "retrieval",
 };

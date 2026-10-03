@@ -22,6 +22,7 @@ import type { AddressInfo } from "node:net";
 import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { runAppSmokeGate } from "../src/canonical-loop/adapters/app-build-smoke-gate.js";
 import { startStaticSmokeOrigin } from "../src/canonical-loop/adapters/app-build-smoke-origin.js";
 import { writeRunTargetManifest } from "../src/tools/app-run-target.js";
@@ -268,9 +269,11 @@ describe("smoke origin and the real route serve ONE policy", () => {
       ensureDevServerRunning: () => { throw new Error("no dev server in this test"); },
       proxyFrontendDevServer: () => {},
     };
+    // The real public dir: the route injects the IDE frame bridge from it.
+    const publicDir = join(dirname(fileURLToPath(import.meta.url)), "..", "public");
     const route = createServer((req: IncomingMessage, res: ServerResponse) => {
       const url = new URL(req.url || "/", "http://127.0.0.1");
-      if (!serveWorkspaceApp(req.method || "GET", url, req, res, config, root, deps)) { res.writeHead(404); res.end(); }
+      if (!serveWorkspaceApp(req.method || "GET", url, req, res, config, publicDir, deps)) { res.writeHead(404); res.end(); }
     });
     servers.push(route);
     await new Promise<void>((resolve) => route.listen(0, "127.0.0.1", resolve));
@@ -294,8 +297,12 @@ describe("smoke origin and the real route serve ONE policy", () => {
       // The policy itself must keep saying the two things the gate relies on.
       expect(WORKSPACE_APP_HTML_HEADERS["Content-Security-Policy"])
         .toContain("connect-src 'self' http://127.0.0.1:* http://localhost:*");
+      // Apps live on the agent origin and the UI frames them from another
+      // loopback port, so framing is CSP frame-ancestors, never X-Frame-Options.
+      expect(WORKSPACE_APP_HTML_HEADERS["Content-Security-Policy"])
+        .toContain("frame-ancestors 'self' http://127.0.0.1:* http://localhost:*");
       expect(Object.keys(WORKSPACE_APP_HTML_HEADERS)).toEqual([
-        "Content-Security-Policy", "X-Content-Type-Options", "X-Frame-Options",
+        "Content-Security-Policy", "X-Content-Type-Options",
         "Referrer-Policy", "Permissions-Policy", "Cache-Control", "Pragma",
       ]);
     } finally {

@@ -11,16 +11,24 @@
 import { shell, type BrowserWindow, type WindowOpenHandlerResponse } from "electron";
 import { getLAXConfig } from "./config";
 
+/** True when the URL parses to the live app origin. Parsed, never a string
+ *  prefix: `http://127.0.0.1:4321@evil.example/` starts with the origin but its
+ *  host is evil.example (the rest is userinfo), and `http://127.0.0.1:43210`
+ *  is another port. */
+export function isAppOrigin(url: string): boolean {
+  let parsed: URL;
+  try { parsed = new URL(url); } catch { return false; }
+  return parsed.origin === new URL(`http://127.0.0.1:${getLAXConfig().port}`).origin;
+}
+
 export function lockAppWindowNavigation(
   win: BrowserWindow,
   onWindowOpen: (url: string) => WindowOpenHandlerResponse,
 ): void {
   win.webContents.on("will-navigate", (e, navUrl) => {
-    const appOrigin = `http://127.0.0.1:${getLAXConfig().port}`;
-    if (!navUrl.startsWith(appOrigin)) {
-      e.preventDefault();
-      if (/^https?:\/\//i.test(navUrl)) shell.openExternal(navUrl).catch(() => { /* best-effort */ });
-    }
+    if (isAppOrigin(navUrl)) return;
+    e.preventDefault();
+    if (/^https?:\/\//i.test(navUrl)) shell.openExternal(navUrl).catch(() => { /* best-effort */ });
   });
   win.webContents.setWindowOpenHandler(({ url }) => onWindowOpen(url));
 }

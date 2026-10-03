@@ -18,15 +18,41 @@
  * follow-up — wire an LLM hook when one's available.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
+
+// The build-exec gate's npm scripts go through the caged-spawn seam. The
+// sandbox facade is modelled so the wrap is observable and no test reaches a
+// real cage; a real node child stands in for each script.
+const seam = vi.hoisted(() => ({
+  proofPending: false,
+  wrapped: [] as Array<{ file: string; args: string[]; env: Record<string, string> }>,
+  runInstead: { cmd: "", args: [] as string[] },
+}));
+vi.mock("../src/sandbox/index.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/sandbox/index.js")>();
+  return {
+    ...actual,
+    awaitSandboxProof: async () => {},
+    getSandboxMode: () => "host",
+    wrapSpawnForSandbox: (file: string, args: string[], env: Record<string, string>) => {
+      if (seam.proofPending) throw new actual.SandboxProofPendingError();
+      seam.wrapped.push({ file, args, env });
+      return seam.runInstead;
+    },
+  };
+});
+vi.mock("../src/tools/shell-proxy-env.js", () => ({ shellProxyEnv: async () => ({}), shellProxyEnvSync: () => ({}) }));
+
 import { runChunkReview, runChunkReviewWithJudgment } from "../src/auto-build/chunk-review/index.js";
 import type { JudgmentHook } from "../src/auto-build/chunk-review/judgment-hook.js";
 import type { BuildExecRunner } from "../src/auto-build/chunk-review/gate-build-exec.js";
-import { discoverCommands, findStaticEntry } from "../src/auto-build/chunk-review/gate-build-exec.js";
+import { discoverCommands, findStaticEntry, runBuildExecGate } from "../src/auto-build/chunk-review/gate-build-exec.js";
+import { SANDBOX_PROOF_PENDING_RETRY } from "../src/sandbox/index.js";
 import { parseChunkReport } from "../src/auto-build/chunk-review/report-parser.js";
 import {
   gateReportShape,
@@ -733,5 +759,67 @@ describe("build-exec gate: command + entry discovery (pure)", () => {
 
   it("returns null when there's no static entry — a server/CLI build has nothing to headless-load", () => {
     expect(findStaticEntry(dir)).toBeNull();
+  });
+});
+
+describe("build-exec gate: the project's scripts run in the shell cage", () => {
+  const CREDENTIAL = "BUILD_EXEC_TEST_API_KEY";
+  const node = (script: string) => ({ cmd: process.execPath, args: ["-e", script] });
+  /** The npm arguments of a wrapped spawn: npm by name, or on Windows node on npm's CLI script. */
+  const npmArgs = ({ file, args }: { file: string; args: string[] }): string[] => {
+    if (process.platform !== "win32") {
+      expect(file).toBe("npm");
+      return args;
+    }
+    expect(file).toMatch(/^[a-z]:\\.*\\node\.exe$/i);
+    expect(args[0]).toMatch(/\\node_modules\\npm\\bin\\npm-cli\.js$/i);
+    return args.slice(1);
+  };
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "buildexec-cage-"));
+    writeFileSync(join(dir, "package.json"), JSON.stringify({ scripts: { build: "vite build", test: "vitest run" } }));
+    seam.proofPending = false;
+    seam.wrapped = [];
+    seam.runInstead = node("");
+    process.env[CREDENTIAL] = "sk-live-0123456789abcdef";
+  });
+  afterEach(async () => {
+    delete process.env[CREDENTIAL];
+    // A killed script holds its cwd until taskkill lands; only the async rm retries.
+    await rm(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+  });
+
+  it("runs build then test as npm argv with no shell, on the scrubbed env", async () => {
+    expect(await runBuildExecGate({ projectDir: dir })).toBeNull();
+    expect(seam.wrapped.map(npmArgs)).toEqual([["run", "build"], ["test"]]);
+    for (const { env } of seam.wrapped) {
+      expect(env).toMatchObject({ CI: "1", FORCE_COLOR: "0" });
+      expect(env[CREDENTIAL]).toBeUndefined();
+    }
+  });
+
+  it("halts on a failing script, quoting its output in arrival order", async () => {
+    seam.runInstead = node("console.log('compiling'); setTimeout(() => { console.error('error TS2345'); process.exit(1); }, 50)");
+    const finding = await runBuildExecGate({ projectDir: dir });
+    expect(finding?.action).toBe("halt");
+    expect(finding?.reasoning).toMatch(/^`npm run build` exited 1 .*compiling\s+error TS2345/s);
+  });
+
+  it("fails closed while the Windows cage proof is pending: halts, and nothing runs", async () => {
+    seam.proofPending = true;
+    const finding = await runBuildExecGate({ projectDir: dir });
+    expect(finding).toMatchObject({ gate: "build-exec", action: "halt" });
+    expect(finding?.reasoning).toContain("`npm run build` could not run");
+    expect(finding?.reasoning).toContain(SANDBOX_PROOF_PENDING_RETRY);
+    expect(seam.wrapped).toEqual([]);
+  });
+
+  it("an abort mid-script stops it with no halt: the build was not observed failing", async () => {
+    seam.runInstead = node("setInterval(() => {}, 1000)");
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 300);
+    expect(await runBuildExecGate({ projectDir: dir, signal: controller.signal })).toBeNull();
+    expect(seam.wrapped).toHaveLength(1);
   });
 });

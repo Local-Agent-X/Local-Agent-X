@@ -16,4 +16,4 @@ export interface TabEntry { name: string; id: string; description: string }
 export interface RouteEntry { method: string; path: string; description: string }
 export interface ToolSummary { name: string; description: string; readOnly: boolean }
 export interface AppEntry { name: string; path: string; files: string[] }
-export interface ConfigFileEntry { path: string; description: string; agentEditable: boolean }
+export interface ConfigFileEntry { path: string; description: string }

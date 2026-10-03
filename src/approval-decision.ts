@@ -106,13 +106,11 @@ export function computeArgsFingerprint(
 ): string {
   const tool = toolName.toLowerCase();
 
-  if (tool === "bash" || tool === "shell" || tool === "ari_shell") {
-    // Pure string-`command` form: fingerprint the FULL command (whitespace-
-    // normalized), not just the leading binary. Keying on the binary alone
-    // collapsed every subcommand of a multi-purpose tool into one grant —
-    // approving `git log` would then auto-approve `git push --force` /
-    // `git reset --hard` under the same key. Preserved verbatim so existing
-    // string-form approvals aren't invalidated.
+  if (tool === "bash" || tool === "shell") {
+    // Fingerprint the FULL command (whitespace-normalized), not just the
+    // leading binary. Keying on the binary alone collapsed every subcommand of
+    // a multi-purpose tool into one grant — approving `git log` would then
+    // auto-approve `git push --force` / `git reset --hard` under the same key.
     if (typeof args.command === "string") {
       const raw = args.command;
       // Strip leading env-var assignments (`FOO=bar BAZ=qux cmd ...`) and
@@ -123,17 +121,6 @@ export function computeArgsFingerprint(
       let i = 0;
       while (i < tokens.length && /^\w+=\S+$/.test(tokens[i])) i++;
       return tokens.slice(i).join(" ");
-    }
-    // Structured `{executable, args[]}` form (ari_shell): synthesize the
-    // command so `{executable:"ls"}` and `{executable:"rm",args:["-rf","/"]}`
-    // fingerprint DIFFERENTLY and don't collapse to one grant. Fold in cwd so
-    // the same command in a different dir is a distinct grant.
-    if (typeof args.executable === "string") {
-      const exe = args.executable;
-      const parts = Array.isArray(args.args) ? args.args.map((a) => String(a)) : [];
-      const cwd = typeof args.cwd === "string" ? args.cwd : "";
-      const synthesized = [exe, ...parts].join(" ").replace(/\s+/g, " ").trim();
-      return cwd ? `${cwd}${synthesized}` : synthesized;
     }
     return "";
   }
@@ -267,29 +254,6 @@ const DESTRUCTIVE_COMMAND_PATTERNS: Array<{ pattern: RegExp; reason: string }> =
   { pattern: /\b(?:del|erase)\b(?:\s+\/\w+)*\s+\/s\b/i, reason: "del /s" },
 ];
 
-// Destructive binaries matched by EXECUTABLE BASENAME (structured shell form).
-// The text patterns above key on a command STRING; the structured
-// `{executable, args[]}` form has no string to scan, so a bare
-// `{executable:"rm", args:["-rf","/"]}` would slip the floor. Matching the
-// resolved basename closes that — these binaries are irreversible regardless
-// of args. Keyed lowercased; mkfs.* variants matched by prefix.
-const DESTRUCTIVE_BINARIES = new Set([
-  "rm",
-  "dd",
-  "mkfs",
-  "shred",
-  "fdisk",
-  "parted",
-  "wipefs",
-]);
-
-/** Resolve an executable string to its lowercased basename (strip dir + the
- *  trailing platform-specific extension is left intact; we only split on path
- *  separators). Used to match the destructive-binary set. */
-function executableBasename(executable: string): string {
-  return (executable.split("/").pop()?.split("\\").pop() ?? executable).toLowerCase();
-}
-
 /**
  * If a shell tool call is an irreversible/destructive operation, return a short
  * human reason; otherwise null. Used to force an approval prompt that bypasses
@@ -309,33 +273,13 @@ export function isDestructiveCommand(
   const isShellSpawner =
     tool === "bash" ||
     tool === "shell" ||
-    tool === "ari_shell" ||
     tool === "process_start" ||
     tool === "process_restart";
   if (!isShellSpawner) return null;
 
-  // Build the command string to scan. String form uses args.command as-is.
-  // Structured `{executable, args[]}` form synthesizes a string so the SAME
-  // text patterns apply — previously this whole branch saw "" and the
-  // structured destructive call (rm -rf via {executable,args}) bypassed the
-  // floor entirely.
-  let cmd = typeof args.command === "string" ? args.command : "";
-  if (!cmd && typeof args.executable === "string") {
-    const parts = Array.isArray(args.args) ? args.args.map((a) => String(a)) : [];
-    cmd = [args.executable, ...parts].join(" ");
-  }
+  const cmd = typeof args.command === "string" ? args.command : "";
   for (const { pattern, reason } of DESTRUCTIVE_COMMAND_PATTERNS) {
     if (pattern.test(cmd)) return reason;
-  }
-
-  // Basename match against the destructive-binary set, regardless of args —
-  // catches a structured `{executable:"rm"}` even when the args don't form a
-  // text pattern (e.g. no -rf), and `mkfs.ext4` etc. via prefix.
-  if (typeof args.executable === "string") {
-    const base = executableBasename(args.executable);
-    if (DESTRUCTIVE_BINARIES.has(base) || base.startsWith("mkfs.")) {
-      return `destructive binary (${base})`;
-    }
   }
   return null;
 }

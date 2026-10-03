@@ -36,10 +36,16 @@ export function reviewHeadline(review: PublishReview): string {
   }
 }
 
+const notReviewed = (review: PublishReview): string => review.unknown.map((u) => `${u.label} (${u.reason})`).join("; ");
+
 function unknownTail(review: PublishReview): string {
   if (review.status === "UNKNOWN" || review.unknown.length === 0) return "";
-  return `\nNot reviewed: ${review.unknown.map((u) => `${u.label} (${u.reason})`).join("; ")}`;
+  return `\nNot reviewed: ${notReviewed(review)}`;
 }
+
+/** A verdict that covers only part of the call: the rest could not be reviewed. */
+const partlyReviewed = (review: PublishReview): boolean =>
+  (review.status === "AMBER" || review.status === "GREEN") && review.unknown.length > 0;
 
 /** The note the model reads on a publish that ran. */
 export function reviewNoteForModel(review: PublishReview): string {
@@ -49,16 +55,20 @@ export function reviewNoteForModel(review: PublishReview): string {
   return lines.join("\n") + unknownTail(review);
 }
 
-/** A verdict the user must answer for in every profile: a red finding, or no
- *  review at all. Nothing ships over either without their explicit yes. */
+/** A verdict the user must answer for in every profile: a red finding, no
+ *  review at all, or a publish in the same call that could not be reviewed —
+ *  otherwise one reviewable push in front would carry an unreviewable one out
+ *  on the first push's verdict. Nothing ships over any of them without their
+ *  explicit yes. */
 export function needsOverride(review: PublishReview): boolean {
-  return review.status === "RED" || review.status === "FAILED" || review.status === "UNKNOWN";
+  return review.status === "RED" || review.status === "FAILED" || review.status === "UNKNOWN" || review.unknown.length > 0;
 }
 
 export type StopReason = "unattended" | "declined" | "unanswered" | "no-channel";
 
-/** What the model reads when the review stopped the publish: a RED verdict,
- *  or a review that could not run, and the user did not override it. */
+/** What the model reads when the review stopped the publish: a RED verdict, a
+ *  review that could not run, or a publish in the call that could not be
+ *  reviewed, and the user did not override it. */
 export function stopText(op: PublishOperation, review: PublishReview, how: StopReason): string {
   const anyway = review.status === "RED" ? "publish anyway" : "publish unreviewed";
   const why = how === "declined"
@@ -68,6 +78,14 @@ export function stopText(op: PublishOperation, review: PublishReview, how: StopR
       : how === "no-channel"
         ? "Nobody can be asked to override it on this dispatch."
         : "This is an unattended run, so nobody can override it.";
+  if (partlyReviewed(review)) {
+    return [
+      `NOT RUN: this ${op.tool} call was stopped because part of what it publishes could not be reviewed: ${notReviewed(review)}. ${why}`,
+      `The rest was reviewed: ${reviewHeadline(review)}`,
+      ...review.findings.map(findingLine),
+      "Nothing ships unreviewed without the user's explicit approval. Fix what stopped that part's review, or publish the reviewed part on its own, or tell the user what happened and let them decide. Do not publish by another route.",
+    ].join("\n");
+  }
   if (review.status !== "RED") {
     return [
       `NOT RUN: ${op.label} was stopped because the pre-publish review could not run (${reviewHeadline(review)}). ${why}`,
@@ -99,6 +117,9 @@ export function overrideLabel(op: PublishOperation, review: PublishReview): stri
 export function reviewCardContext(op: PublishOperation, review: PublishReview, base: string): string {
   if (review.status === "RED") {
     return `⛔ The pre-publish review found problems that should block ${op.label}. "${overrideLabel(op, review)}" overrides it and is recorded. ${review.summary}`;
+  }
+  if (partlyReviewed(review)) {
+    return `⚠ Part of what this call publishes was not reviewed: ${notReviewed(review)}. The rest: ${reviewHeadline(review)}. "${overrideLabel(op, review)}" runs all of it, the unreviewed part included, and is recorded.`;
   }
   if (needsOverride(review)) {
     return `⚠ Nothing was reviewed: ${reviewHeadline(review)}. "${overrideLabel(op, review)}" sends ${op.label} without a review and is recorded.`;

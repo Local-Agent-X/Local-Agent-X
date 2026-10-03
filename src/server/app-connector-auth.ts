@@ -1,5 +1,6 @@
-// Capability token an embedded app uses to reach the connector proxy — and
-// nothing else.
+// Capability tokens an embedded app uses in place of the operator token: one
+// that reaches the connector proxy and nothing else, and one per registry app
+// for that app's own state.
 //
 // A served app is a LOWER-TRUST principal than the operator: it's AI/user
 // generated, pulls unvetted dependencies, and renders remote data. So the app
@@ -38,4 +39,21 @@ export function authorizeAppConnectorHttp(token: string, pathname: string, opera
   const b = Buffer.from(deriveConnectorCapability(operatorToken));
   if (a.length !== b.length) return false;
   return timingSafeEqual(a, b);
+}
+
+// A registry-rendered app (app-renderer) reads and writes its own state through
+// /api/apps/<id>/{state,events,actions/consume}. On the agent origin it holds
+// no operator token, so it is handed this instead: bound to the one app id, and
+// admitted only for those three calls (agent-origin.ts).
+const APP_DATA_LABEL = "lax-app-data-capability:v1\n";
+
+export function deriveAppDataCapability(operatorToken: string, appId: string): string {
+  return createHmac("sha256", operatorToken).update(APP_DATA_LABEL + appId).digest("hex");
+}
+
+export function verifyAppDataCapability(operatorToken: string, appId: string, token: string): boolean {
+  if (!token || !operatorToken) return false;
+  const a = Buffer.from(token);
+  const b = Buffer.from(deriveAppDataCapability(operatorToken, appId));
+  return a.length === b.length && timingSafeEqual(a, b);
 }

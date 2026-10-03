@@ -99,7 +99,6 @@ describe("isDestructiveCommand — flags irreversible shell operations", () => {
 
   it("applies to shell aliases but not non-shell tools", () => {
     expect(isDestructiveCommand("shell", { command: "rm -rf /x" })).toBe("rm -rf");
-    expect(isDestructiveCommand("ari_shell", { command: "rm -rf /x" })).toBe("rm -rf");
     expect(isDestructiveCommand("write", { path: "/x", content: "rm -rf /" })).toBeNull();
     expect(isDestructiveCommand("bash", {})).toBeNull();
   });

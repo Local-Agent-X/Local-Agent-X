@@ -76,13 +76,13 @@ describe("capability-class membership (single source of truth)", () => {
     expect(WORKTREE_PATH_TOOLS.has("ari_file")).toBe(true);
     for (const t of ["read", "write", "edit", "glob", "grep"]) expect(WORKTREE_PATH_TOOLS.has(t)).toBe(true);
     // WORKTREE_REQUIRED_TOOLS: canonical preserved + synonyms added.
-    for (const t of ["write", "edit", "bash", "ari_file", "ari_shell", "process_start", "process_restart", "app_serve_backend", "app_serve_frontend"]) {
+    for (const t of ["write", "edit", "bash", "ari_file", "process_start", "process_restart", "app_serve_backend", "app_serve_frontend"]) {
       expect(WORKTREE_REQUIRED_TOOLS.has(t)).toBe(true);
     }
   });
 
   it("shell class covers every canonical shell-exec backend", () => {
-    for (const t of ["bash", "shell", "ari_shell", "process_start", "process_restart", "app_serve_backend", "app_serve_frontend"]) {
+    for (const t of ["bash", "shell", "process_start", "process_restart", "app_serve_backend", "app_serve_frontend"]) {
       expect(hasCapability(t, "shell"), t).toBe(true);
     }
   });

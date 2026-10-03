@@ -36,7 +36,6 @@ describe("TOOL_RISK", () => {
 
   it("classifies canonical high-risk tools at the expected tier", () => {
     expect(classifyToolRisk("bash")).toBe("shell");
-    expect(classifyToolRisk("ari_shell")).toBe("shell");
     expect(classifyToolRisk("delete_file")).toBe("destructive");
     expect(classifyToolRisk("memory_forget")).toBe("destructive");
     expect(classifyToolRisk("self_edit")).toBe("destructive");

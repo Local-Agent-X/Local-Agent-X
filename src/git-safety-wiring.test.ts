@@ -7,8 +7,8 @@
  * agency/worktree-git-safety.test.ts against real git. THIS file proves the
  * three call sites the first pass missed are actually wired to them, by
  * intercepting the spawned argv / command string:
- *   - auto-build/git-helpers.ts  (spawn array — commit/add/init)
- *   - autonomy/rollback.ts       (execSync string — stash push/apply/drop)
+ *   - auto-build/git-helpers.ts  (caged spawn argv — commit/add/init)
+ *   - autonomy/rollback.ts       (execFileSync argv — stash push/apply/drop)
  *   - update-service.ts          (execSync string — fetch origin main)
  */
 
@@ -21,9 +21,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const spawnCalls: Array<{ cmd: string; args: string[] }> = [];
 const execCalls: string[] = [];
 const execSyncImpl = vi.fn<(cmd: string) => string>();
+const gitArgvCalls: string[][] = [];
+const gitArgvImpl = vi.fn<(args: string[]) => string>();
 
-// Override ONLY execSync + spawn; keep every other child_process export real so
-// unrelated importers (process-tree-kill etc.) still load.
+// Override ONLY execSync, git's execFileSync + spawn; keep every other
+// child_process export real so unrelated importers (process-tree-kill etc.)
+// still load.
 vi.mock("node:child_process", async (importActual) => {
   const actual = await importActual<typeof import("node:child_process")>();
   return {
@@ -33,13 +36,19 @@ vi.mock("node:child_process", async (importActual) => {
       void rest;
       return execSyncImpl(cmd);
     },
+    execFileSync: (file: string, args: string[], ...rest: unknown[]) => {
+      if (file !== "git") return (actual.execFileSync as (...a: unknown[]) => unknown)(file, args, ...rest);
+      gitArgvCalls.push(args);
+      return gitArgvImpl(args);
+    },
     spawn: (cmd: string, args: string[]) => {
       spawnCalls.push({ cmd, args });
       const proc = new EventEmitter() as EventEmitter & {
         stdout: EventEmitter; stderr: EventEmitter; stdin: { write: () => void; end: () => void };
       };
-      proc.stdout = new EventEmitter();
-      proc.stderr = new EventEmitter();
+      // The caged run reads the streams as text.
+      proc.stdout = Object.assign(new EventEmitter(), { setEncoding: () => {} });
+      proc.stderr = Object.assign(new EventEmitter(), { setEncoding: () => {} });
       proc.stdin = { write: () => {}, end: () => {} };
       setImmediate(() => {
         proc.stdout.emit("data", Buffer.from("deadbeefdeadbeefdeadbeefdeadbeefdeadbeef\n"));
@@ -65,6 +74,8 @@ beforeEach(() => {
   spawnCalls.length = 0;
   execCalls.length = 0;
   execSyncImpl.mockReset();
+  gitArgvCalls.length = 0;
+  gitArgvImpl.mockReset();
 });
 
 afterEach(() => {
@@ -73,21 +84,29 @@ afterEach(() => {
 
 describe("git-helpers spawn carries gc.auto=0", () => {
   it("prepends -c gc.auto=0 to the spawned argv (all ops inherit the single seam)", async () => {
-    await getHeadSha("/nonexistent/cwd");
+    // Host mode: the cage wrap leaves git itself as the spawned program, and
+    // no real cage is proven on a machine that has one installed.
+    const prevMode = process.env.LAX_SANDBOX;
+    process.env.LAX_SANDBOX = "host";
+    try {
+      await getHeadSha("/nonexistent/cwd");
+    } finally {
+      if (prevMode === undefined) delete process.env.LAX_SANDBOX;
+      else process.env.LAX_SANDBOX = prevMode;
+    }
     expect(spawnCalls).toHaveLength(1);
-    expect(spawnCalls[0].cmd).toBe("git");
+    expect(spawnCalls[0].cmd).toMatch(/(^|[\\/])git(\.exe)?$/);
     // Flags come FIRST, before the subcommand, so git parses them as config.
     expect(spawnCalls[0].args.slice(0, 2)).toEqual(["-c", "gc.auto=0"]);
-    expect(spawnCalls[0].args).toEqual(["-c", "gc.auto=0", "rev-parse", "HEAD"]);
+    expect(spawnCalls[0].args.slice(-2)).toEqual(["rev-parse", "HEAD"]);
   });
 });
 
 describe("rollback stash carries gc.auto=0", () => {
   it("wraps `git stash push` (the object-creating mutation) with -c gc.auto=0", () => {
-    execSyncImpl.mockImplementation((cmd) => {
-      if (/is-inside-work-tree/.test(cmd)) return "";
+    gitArgvImpl.mockImplementation((args) => {
+      const cmd = args.join(" ");
       if (/status --porcelain/.test(cmd)) return "M a.txt\n";
-      if (/stash push/.test(cmd)) return "";
       if (/rev-parse stash/.test(cmd)) return "a".repeat(40) + "\n";
       return "";
     });
@@ -97,9 +116,10 @@ describe("rollback stash carries gc.auto=0", () => {
     try {
       const contract = captureRollback("test-gitsafety-rb", "bash", "shell", { command: "x" }, dir);
       expect(contract.artifacts[0].type).toBe("git-stash");
-      const push = execCalls.find((c) => /stash push/.test(c));
+      const push = gitArgvCalls.find((a) => a.includes("stash") && a.includes("push"));
       expect(push).toBeDefined();
-      expect(push).toContain("-c gc.auto=0");
+      // Flags come FIRST, before the subcommand, so git parses them as config.
+      expect(push!.slice(0, 2)).toEqual(["-c", "gc.auto=0"]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

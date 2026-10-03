@@ -1,5 +1,3 @@
-import { homedir } from "node:os";
-
 export interface SyncConfig {
   enabled: boolean;
   repoUrl: string;
@@ -95,14 +93,11 @@ export const BRAIN_JSON_FILES: readonly string[] = [
   "custom-missions.json",
   "mission-schedules.json",
   "emotional-history.json",
-  "hooks.json",
   "language-style.json",
-  "mcp.json",
   "milestones.json",
   "orchestration-examples.json",
   "orchestrator-state.json",
   "proactive-patterns.json",
-  "security.json",
   "shared-history.json",
   "tasks.json",
   "tool-stats.json",
@@ -148,25 +143,16 @@ const NEVER_SYNC_DOC: readonly string[] = [
 ];
 void NEVER_SYNC_DOC; // anchored for grep, not used at runtime
 
-// Rewrite this machine's home-dir literal into the ${HOME} placeholder
-// that mcp-client.ts expands at load time on the destination machine.
-// Without this, an MCP server entry like
-//   ["@modelcontextprotocol/server-filesystem", "C:/Users/alice/Documents"]
-// pushed from this box would ENOENT on every other machine that doesn't
-// have a "alice" user. Matches both forward-slash form (C:/Users/alice)
-// and JSON-escaped backslash form (C:\\Users\\alice); case-insensitive
-// for Windows. Belt-and-suspenders to mcp-client's runtime expansion —
-// the bytes on the wire stay portable even if expansion regresses.
-export function canonicalizeHomePaths(jsonText: string): string {
-  const home = homedir();
-  if (!home) return jsonText;
-  const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const homeForward = home.replace(/\\/g, "/");
-  const homeJsonEscaped = home.replace(/\\/g, "\\\\");
-  let out = jsonText;
-  out = out.replace(new RegExp(escapeRegex(homeForward), "gi"), "${HOME}");
-  if (homeJsonEscaped !== homeForward) {
-    out = out.replace(new RegExp(escapeRegex(homeJsonEscaped), "gi"), "${HOME}");
-  }
-  return out;
-}
+// Files that decide what the agent may do on THIS computer, which sync
+// neither pushes nor pulls: hooks run commands on every tool call, mcp.json
+// starts MCP servers, security.json opens egress, and tool-policy.json rules
+// which tools run. Older builds synced them, and a pull applied whatever the
+// sync repo held, so anything able to write the repo, the agent included,
+// could set them here without the user. They are set up on each computer in
+// Settings; a pull that finds one in the repo names it in its result.
+export const CONTROL_FILES_NOT_SYNCED: readonly string[] = [
+  "hooks.json",
+  "mcp.json",
+  "security.json",
+  "tool-policy.json",
+];

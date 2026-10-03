@@ -97,4 +97,14 @@ describe("every tool name a referrer uses is a registered tool", () => {
     expect(refs.size).toBeGreaterThan(0);
     expect(missing(refs.keys()).map((n) => `${n} (${refs.get(n)})`)).toEqual([]);
   });
+
+  // bash is the one shell: ari_shell skipped bash's path confinement, cage,
+  // output masking and taint, so no registration path may bring it back.
+  it("never registers ari_shell, nor lists it in a referrer", () => {
+    expect(registered.has("ari_shell")).toBe(false);
+    expect(unifiedRegistry.get("ari_shell")).toBeUndefined();
+    expect(Object.keys(TOOL_POLICIES)).not.toContain("ari_shell");
+    expect(Object.keys(AUDIENCES_BY_TOOL)).not.toContain("ari_shell");
+    expect(SESSION_SCOPED_TOOLS.has("ari_shell")).toBe(false);
+  });
 });

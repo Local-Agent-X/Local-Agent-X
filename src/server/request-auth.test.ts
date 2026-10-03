@@ -4,7 +4,7 @@ import { EventEmitter } from "node:events";
 import { authorizeRequest } from "./request-auth.js";
 import { getAuthFloodGuard, isLoopbackAddress } from "../server-utils.js";
 import type { LAXConfig } from "../types.js";
-import type { RBACManager } from "../rbac.js";
+import { checkEndpointAccess, type RBACManager } from "../rbac.js";
 
 // Minimal request/response stubs so we can inspect the status the auth
 // pipeline writes without booting a real HTTP server.
@@ -98,5 +98,23 @@ describe("authorizeRequest — loopback bypasses throttling", () => {
     const entry = getAuthFloodGuard().get("203.0.113.5");
     expect(entry).toBeDefined();
     expect(entry!.lockedUntil).toBeGreaterThan(Date.now());
+  });
+});
+
+describe("authorizeRequest — the agent refused a route the user owns", () => {
+  const agentRbac = {
+    authenticate: () => ({ valid: true, entry: { role: "agent" as const } }),
+    checkEndpoint: checkEndpointAccess,
+  } as unknown as RBACManager;
+
+  it("returns where in Settings the user makes the change as its own field", () => {
+    const req = makeReq({ method: "POST", path: "/api/security/file-access", headers: { authorization: "Bearer agent-token" } });
+    const res = makeRes();
+    const out = authorizeRequest("POST", new URL("http://127.0.0.1:7007/api/security/file-access"), req, res, config, agentRbac);
+    expect(out).toEqual({ handled: true, role: "agent" });
+    expect(res._status).toBe(403);
+    const body = JSON.parse(res._body) as { error: string; userHint?: string };
+    expect(body.error).toContain("only the user can, in Settings → Security.");
+    expect(body.userHint).toBe("That's yours to change, in Settings → Security.");
   });
 });

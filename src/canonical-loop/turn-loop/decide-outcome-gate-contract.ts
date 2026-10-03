@@ -31,6 +31,9 @@ export interface CompletionGateContext {
   /** The turn's final user-facing assistant text — for gates that judge what
    *  the model SAID, not just what it did. Existing gates ignore it. */
   assistantText: string;
+  /** Aborts when the op is cancelled (runCompletionGates sets it). A gate
+   *  that spawns or calls a model passes it on, so a Stop never waits on it. */
+  signal?: AbortSignal;
 }
 
 /** A gate's terminal message paired with the fire appending it earns. */

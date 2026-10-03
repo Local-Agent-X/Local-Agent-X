@@ -11,6 +11,7 @@
  *     On `adapter.abort()` the controller fires, build-app-spawn kills the
  *     subprocess tree (Windows shell:true wraps the binary in cmd.exe so a
  *     plain proc.kill leaks the descendant), and the runner promise rejects.
+ *     Refused unless developer_mode is on (tools/build-app-cli-gate.ts).
  *
  *   - in-canonical-sub-agent (qwen, cerebras, grok, gemini, local, …):
  *     delegates to the user's selected provider's HTTP adapter so the
@@ -32,6 +33,7 @@ import type { AppTier } from "../../tools/app-tier.js";
 import { finalizeFrameworkBuild, type FinalizeFrameworkDeps } from "./app-build-finalize.js";
 import { AppBuildVerifyAdapter, type AppSmokeGateRunner, type AppVisionJudge, type DevServerUrlResolver } from "./app-build-verify-adapter.js";
 import { defaultProviderAdapterFactory } from "./app-build-provider-factory.js";
+import { cliBuildDeveloperModeRefusal } from "../../tools/build-app-cli-gate.js";
 
 export const APP_BUILD_ADAPTER_NAME = "app_build";
 export const APP_BUILD_ADAPTER_VERSION = "1.0.0";
@@ -170,6 +172,14 @@ class CliBuildAdapter implements Adapter {
     if (this.aborted) {
       report({ kind: "error", code: "aborted", message: "adapter aborted before runTurn", retryable: false });
       return { providerState: this.buildProviderState({ aborted: true }), terminalReason: "error" };
+    }
+
+    // Checked per turn, at the spawn: the op may have been queued while
+    // developer_mode was still on.
+    const refusal = cliBuildDeveloperModeRefusal(this.opts.provider);
+    if (refusal) {
+      report({ kind: "error", code: "developer_mode_off", message: refusal, retryable: false });
+      return { providerState: this.buildProviderState({ error: refusal, stopReason: "developer_mode_off" }), terminalReason: "error" };
     }
 
     const subprocessProvider: "codex" | "anthropic" =

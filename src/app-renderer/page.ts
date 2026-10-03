@@ -10,8 +10,11 @@ import { escapeHtml } from "./sanitize.js";
 import { APP_STYLES } from "./styles.js";
 import { renderClientScript } from "./client-script.js";
 
-export function renderApp(def: AppDefinition, port?: number): string {
-  const apiBase = `http://127.0.0.1:${port || 7007}`;
+/** With a dataToken the page is being served by the agent origin
+ *  (agent-origin.ts): it calls that origin, its own, with the token. Without
+ *  one it is a stored or offline copy that calls the UI origin by port. */
+export function renderApp(def: AppDefinition, port?: number, dataToken?: string): string {
+  const apiBase = dataToken === undefined ? `http://127.0.0.1:${port || 7007}` : "";
   const nonce = randomBytes(16).toString("base64");
   const componentsHtml = renderLayout(def.layout, def.components);
   const statusBadge = def.status !== "active"
@@ -38,7 +41,7 @@ export function renderApp(def: AppDefinition, port?: number): string {
   ${componentsHtml}
   <div class="app-status" id="app-status"><span class="app-status-dot"></span> Connecting...</div>
 
-<script nonce="${nonce}">${renderClientScript(def.id, apiBase)}</script>
+<script nonce="${nonce}">${renderClientScript(def.id, apiBase, dataToken)}</script>
 </body>
 </html>`;
 }

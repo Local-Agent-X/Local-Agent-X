@@ -35,6 +35,16 @@ describe("collapseFamily", () => {
     expect(parsed.args).toEqual({ x: "1", _sessionId: "s1" });
   });
 
+  it("drops the model's `_` keys from nested params, so the executor's stamps are the ones the inner tool sees", async () => {
+    const r = await tool.execute({
+      action: "alpha",
+      _sessionId: "trusted",
+      _operationId: "op-trusted",
+      params: { x: "1", _sessionId: "forged", _operationId: "op-forged", _unsafe: true },
+    });
+    expect(JSON.parse(String(r.content)).args).toEqual({ x: "1", _sessionId: "trusted", _operationId: "op-trusted" });
+  });
+
   it("dispatches flat args (no params object)", async () => {
     const r = await tool.execute({ action: "beta", x: "2" });
     expect(JSON.parse(String(r.content)).args).toEqual({ x: "2" });

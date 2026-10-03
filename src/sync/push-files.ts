@@ -10,7 +10,6 @@ import {
   BRAIN_JSON_FILES,
   MISSION_FILES,
   type SyncConfig,
-  canonicalizeHomePaths,
 } from "./constants.js";
 import { engineCheckoutMarker, mirrorDir, pruneSkippedDirs } from "./mirror.js";
 import { exportFactsForSync } from "./facts-sync.js";
@@ -54,9 +53,6 @@ export async function copyToSync(dataDir: string, syncDir: string, config: SyncC
       unlinkSync(join(syncMemDir, f));
     }
   }
-
-  const policyPath = join(dataDir, "tool-policy.json");
-  if (existsSync(policyPath)) writeFileSync(join(syncDir, "tool-policy.json"), readFileSync(policyPath, "utf-8"));
 
   // Sidebar pins (user-level UI state — per-user, not per-machine).
   // Extract just the `sidebarPins` key from settings.json and ship it
@@ -155,17 +151,12 @@ export async function copyToSync(dataDir: string, syncDir: string, config: SyncC
 
   // Brain backup — flat JSON files. Last-push-wins. Skip if file
   // doesn't exist locally (means the user never created that surface).
-  // mcp.json gets path canonicalization on push so per-machine literal
-  // paths (C:/Users/alice/Documents) become portable ${HOME} placeholders
-  // for every other machine that pulls.
   for (const file of BRAIN_JSON_FILES) {
     if (!config.syncMissions && MISSION_FILES.has(file)) continue;
     const src = join(dataDir, file);
     if (!existsSync(src)) continue;
     try {
-      let content = readFileSync(src, "utf-8");
-      if (file === "mcp.json") content = canonicalizeHomePaths(content);
-      writeFileSync(join(syncDir, file), content, "utf-8");
+      writeFileSync(join(syncDir, file), readFileSync(src, "utf-8"), "utf-8");
     } catch (e) {
       logger.warn(`[sync] brain push skipped ${file}: ${(e as Error).message}`);
     }

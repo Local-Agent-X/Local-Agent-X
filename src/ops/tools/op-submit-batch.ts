@@ -30,6 +30,7 @@ import {
 import type { Op } from "../types.js";
 import { resourceLocksForProvider } from "../provider-matrix.js";
 import { trackOpForSession } from "../session-bridge.js";
+import { withoutInternalArgs } from "../../tool-execution/internal-args.js";
 import {
   buildOpFromArgs,
   configureDelegatedRuntime,
@@ -55,6 +56,13 @@ function hasDependencyMetadata(task: Record<string, unknown>): boolean {
   return Object.hasOwn(task, "task_key") || Object.hasOwn(task, "depends_on");
 }
 
+// A task is an object the model wrote, so it loses its `_` keys before it
+// becomes submit args, and the trusted session goes on after: a task cannot
+// file its op under another conversation's session.
+function taskArgs(rawTask: Record<string, unknown>, sessionId: string): Record<string, unknown> {
+  return { ...withoutInternalArgs(rawTask), ...(sessionId ? { _sessionId: sessionId } : {}) };
+}
+
 async function runDependencyBatch(
   tasks: Record<string, unknown>[],
   sessionId: string,
@@ -63,7 +71,7 @@ async function runDependencyBatch(
   const keys = new Map<string, Op>();
   const ops: Op[] = [];
   for (const rawTask of tasks) {
-    const op = await buildOpFromArgs({ ...rawTask, ...(sessionId ? { _sessionId: sessionId } : {}) });
+    const op = await buildOpFromArgs(taskArgs(rawTask, sessionId));
     const rawKey = rawTask.task_key;
     if (rawKey !== undefined) {
       const key = typeof rawKey === "string" ? rawKey.trim() : "";
@@ -160,8 +168,7 @@ async function runOneTask(
     return { task, opId: null, status: "invalid", finalSummary: "empty task description", filesChanged: [], error: "task description is required" };
   }
   try {
-    const args = { ...rawTask, ...(sessionId ? { _sessionId: sessionId } : {}) };
-    const op = await buildOpFromArgs(args);
+    const op = await buildOpFromArgs(taskArgs(rawTask, sessionId));
     const runtimeSessionId = delegatedRuntimeSessionId(op.id, sessionId);
     await configureDelegatedRuntime(op, runtimeSessionId);
 

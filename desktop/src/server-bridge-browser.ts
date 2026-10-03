@@ -46,7 +46,7 @@ import {
 	readNetworkEntries,
 	setBrowserUiEventSink,
 } from "./browser-perception";
-import { isUserActive, markAgentInput, showAgentCursor } from "./in-app-browser";
+import { isUserActive, markAgentAction, markAgentInput, showAgentCursor } from "./in-app-browser";
 import { dispatchAgentInput, toElectronInputEvent } from "./browser-agent-input";
 import { settleNavigation } from "./navigate-settle";
 
@@ -128,6 +128,9 @@ export async function handleBrowserBridgeMessage(proc: ChildProcess, msg: Browse
 			return;
 		}
 		case "lax:browser-navigate": {
+			// Navigation, scripts and dialog answers can start a download as surely
+			// as a click; each is the agent acting in the view (download routing).
+			markAgentAction(msg.viewId);
 			reply(proc, "lax:browser-navigate-result", msg.id, () => navigate(msg));
 			return;
 		}
@@ -135,6 +138,7 @@ export async function handleBrowserBridgeMessage(proc: ChildProcess, msg: Browse
 			// Isolated world only (1901) — never the main world. Default runs in
 			// the main frame; allFrames aggregates per same-origin frame (see
 			// execSameOriginFrames for the Electron 35 subframe limitation).
+			markAgentAction(msg.viewId);
 			reply(proc, "lax:browser-exec-result", msg.id, async () => ({
 				result: msg.allFrames
 					? await execSameOriginFrames(requireWebContents(msg.viewId), msg.script)
@@ -171,6 +175,7 @@ export async function handleBrowserBridgeMessage(proc: ChildProcess, msg: Browse
 		case "lax:browser-dialogs": {
 			reply(proc, "lax:browser-dialogs-result", msg.id, () => {
 				requireWebContents(msg.viewId); // typed "no browser view" on dead/unknown ids
+				if (msg.op !== "list") markAgentAction(msg.viewId);
 				return msg.op === "list"
 					? { dialogs: listDialogs(msg.viewId) }
 					: { handled: handleDialog(msg.viewId, msg.op) };

@@ -43,13 +43,6 @@ describe("global installation mutation lock", () => {
     await releaseGlobalSelfEditLock(second.nonce);
   });
 
-  it("does not let an unsafe rescue force-steal the live kernel claim", async () => {
-    const first = await acquireGlobalSelfEditLock({ task: "normal" });
-    expect(first.acquired).toBe(true);
-    expect((await acquireGlobalSelfEditLock({ force: true, task: "rescue" })).acquired).toBe(false);
-    await releaseGlobalSelfEditLock(first.nonce);
-  });
-
   it("reclaims valid evidence from a dead process after taking the kernel claim", async () => {
     writeFileSync(LOCK, JSON.stringify({
       version: 2, pid: 2_147_483_646, ticket: "dead", incarnation: "dead:1", startedAt: "2020-01-01T00:00:00.000Z",
@@ -160,8 +153,7 @@ describe("global installation mutation lock", () => {
   });
 
   it("does not let an unauthenticated kernel client revoke a live owner", async () => {
-    let revoked = 0;
-    const lock = await acquireGlobalSelfEditLock({ task: "protected", onRevoke: () => { revoked += 1; } });
+    const lock = await acquireGlobalSelfEditLock({ task: "protected" });
     expect(lock.acquired).toBe(true);
     const endpoint = mutationLockEndpoint(DATA_DIR);
     const reply = await new Promise<Record<string, unknown>>((resolve, reject) => {
@@ -176,7 +168,6 @@ describe("global installation mutation lock", () => {
       });
     });
     expect(reply.revokeAccepted).toBe(false);
-    expect(revoked).toBe(0);
     expect((await acquireGlobalSelfEditLock({ task: "still blocked" })).acquired).toBe(false);
     await releaseGlobalSelfEditLock(lock.nonce);
   });

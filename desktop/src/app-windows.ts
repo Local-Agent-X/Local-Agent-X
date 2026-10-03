@@ -1,15 +1,17 @@
-// Window-open routing for the MAIN window's popups. /apps/<id> links open in the
-// system browser (handleWindowOpen → openAppExternally): a user-built app is a
-// real web app, and a browser tab gives it devtools, real navigation, and a
-// static-build app that runs with no dev server. The one in-app popup that
-// remains is the account window (device-code login + phone pairing), which must
-// stay on our origin. Split out of window.ts (which owns the MAIN window) to keep
-// each file one responsibility; the main window wires handleWindowOpen into its
-// setWindowOpenHandler / will-navigate.
+// Window-open routing for the MAIN window's popups and navigations, and the
+// in-app windows that routing opens. /apps/<id> links open in the system
+// browser (handleWindowOpen → openAppExternally): a user-built app is a real
+// web app, and a browser tab gives it devtools, real navigation, and a
+// static-build app that runs with no dev server. /files/ pages open in an
+// in-app window, and the account window (device-code login + phone pairing)
+// stays on our origin. Split out of window.ts (which owns the MAIN window) to
+// keep each file one responsibility; the main window wires handleWindowOpen
+// into its setWindowOpenHandler / will-navigate.
 
 import { BrowserWindow, shell } from "electron";
 import { join } from "path";
-import { ICON_PATH, getProjectRoot, getLAXConfig } from "./config";
+import { ICON_PATH, getLAXConfig } from "./config";
+import { openProjectFile } from "./open-project-file";
 import { bgForTheme, overlayForTheme } from "./theme";
 import { getSetting } from "./settings";
 import { buildAppDragStripJs } from "./window-injections";
@@ -17,27 +19,52 @@ import { lockAppWindowNavigation } from "./app-window-guards";
 import { isExternalBrowserUrl } from "./url-classify";
 import { getMainWindow } from "./window";
 
-// Resolve /files/* paths against PROJECT_ROOT, not process.cwd() — a
-// Finder/Launchpad-launched .app has cwd `/`; a Windows desktop-launch.bat
-// has cwd `<repo>/desktop`. Neither resolves the workspace/ path correctly.
-export function openDocByPath(pathname: string): void {
-  const root = getProjectRoot();
-  if (!root) {
-    console.warn(`[desktop] openDocByPath(${pathname}) ignored — PROJECT_ROOT unresolved`);
-    return;
-  }
+const DOC_EXTENSIONS = /\.(docx?|xlsx?|pptx?|pdf|csv)$/i;
+const AGENT_APP_PATH = /^\/(apps|dashboards)\//;
+
+function appOrigin(): string {
+  return `http://127.0.0.1:${getLAXConfig().port}`;
+}
+
+function parseUrl(url: string): URL | null {
+  try { return new URL(url); } catch { return null; }
+}
+
+/** True only for the app shell on the live server origin: the one document
+ *  allowed to hold the preload bridge. Every place the desktop loads the UI
+ *  builds `/?token=`. An unparseable URL is not the shell, so a caller that
+ *  blocks everything else fails closed. */
+export function isAppShellUrl(url: string): boolean {
+  const parsed = parseUrl(url);
+  return parsed?.origin === appOrigin() && parsed.pathname === "/";
+}
+
+// The query carries the operator token on our own links and OAuth codes on
+// external ones, and these lines land in desktop-stdio.log.
+function loggableUrl(url: URL): string {
+  const copy = new URL(url.href);
+  copy.username = "";
+  copy.password = "";
+  copy.search = "";
+  copy.hash = "";
+  return copy.href;
+}
+
+// The extension test runs on the still-encoded pathname, so `run.exe%00.pdf`
+// passes it; openProjectFile is what stops the decoded path from reaching
+// ShellExecute, which would truncate it at the NUL and run run.exe.
+function openDocByPath(pathname: string): void {
   const relativePath = pathname.startsWith("/files/")
     ? join("workspace", decodeURIComponent(pathname.slice(7)))
     : decodeURIComponent(pathname.slice(1));
-  const filePath = join(root, relativePath);
-  shell.openPath(filePath).then((err) => {
-    if (err) console.warn(`[desktop] Failed to open ${filePath}: ${err}`);
+  openProjectFile(relativePath).then((err) => {
+    if (err) console.warn(`[desktop] Failed to open ${JSON.stringify(relativePath)}: ${err}`);
   });
 }
 
 export function handleWindowOpen(openUrl: string): Electron.WindowOpenHandlerResponse {
-  const laxConfig = getLAXConfig();
-  console.log(`[desktop] windowOpenHandler: ${openUrl}`);
+  const target = parseUrl(openUrl);
+  console.log(`[desktop] windowOpenHandler: ${target ? loggableUrl(target) : "(unparseable url)"}`);
 
   // External links → system browser. isExternalBrowserUrl classifies by hostname
   // (not a substring) so an OAuth URL carrying a 127.0.0.1 redirect_uri in its
@@ -47,78 +74,86 @@ export function handleWindowOpen(openUrl: string): Electron.WindowOpenHandlerRes
     return { action: "deny" };
   }
 
-  const appOrigin = `http://127.0.0.1:${laxConfig.port}`;
-  if (openUrl.startsWith(appOrigin)) {
-    const pathname = new URL(openUrl).pathname;
-    const DOC_EXTENSIONS = /\.(docx?|xlsx?|pptx?|pdf|csv)$/i;
+  // A pinned or previewed app opening one of its own pages. Apps are served
+  // from the server's agent origin, a loopback port this process is not told,
+  // so the page is recognised by its path; like an /apps link from the shell
+  // (below) it goes to the system browser, which holds nothing of ours.
+  if (target && target.protocol === "http:" && target.hostname === "127.0.0.1" && target.origin !== appOrigin() && AGENT_APP_PATH.test(target.pathname)) {
+    shell.openExternal(target.href);
+    return { action: "deny" };
+  }
 
-    if (DOC_EXTENSIONS.test(pathname)) {
-      openDocByPath(pathname);
-      return { action: "deny" };
-    }
+  // Origin equality, not a string prefix: `http://127.0.0.1:4321` is also a
+  // prefix of port 43210, a listener that is not ours.
+  if (target?.origin !== appOrigin()) return { action: "deny" };
 
-    if (pathname.startsWith("/files/")) {
-      return { action: "allow" };
-    }
+  if (DOC_EXTENSIONS.test(target.pathname)) {
+    openDocByPath(target.pathname);
+    return { action: "deny" };
+  }
+
+  // /files/ pages are agent-written. Main opens them in its own window rather
+  // than allowing Chromium's popup: a popup keeps window.opener, the main
+  // window, which the page could navigate through it whatever the popup's own
+  // preferences. The UI origin redirects the window to the agent origin.
+  if (target.pathname.startsWith("/files/")) {
+    openFilesWindow(openUrl);
+    return { action: "deny" };
   }
 
   // Local app links (/apps/xyz) → the system browser, not a frameless in-app
   // window. A user-built app is a real web app; opening it as a browser tab
   // gives it devtools, real navigation, and a shareable loopback URL, and lets
-  // a static-build app run with no dev server behind it. The operator token is
-  // appended so the loopback auth gate admits it; the served page strips it from
-  // the address bar (history.replaceState) on load.
-  if (openUrl.startsWith(appOrigin)) {
-    openAppExternally(openUrl);
-    return { action: "deny" };
-  }
+  // a static-build app run with no dev server behind it. The server redirects
+  // it to the agent origin, which needs no token, so none is added: the
+  // operator token never reaches the browser's history or an agent page.
+  shell.openExternal(openUrl);
   return { action: "deny" };
 }
 
-/** Open a loopback /apps/<id> URL in the user's default browser, appending the
- *  operator token so the same-origin auth gate admits the request. Only ever
- *  called with our own server origin (handleWindowOpen gates on appOrigin), so
- *  the token is never leaked to an arbitrary host. */
-function openAppExternally(targetUrl: string): void {
-  const laxConfig = getLAXConfig();
-  const separator = targetUrl.includes("?") ? "&" : "?";
-  shell.openExternal(`${targetUrl}${separator}token=${laxConfig.authToken}`);
-}
-
-function buildAppWindow(hidden: boolean): BrowserWindow {
+// Every in-app window opened here. None gets the preload: window.desktop
+// reaches the terminal PTY, open-file and settings IPC, and the main window
+// (window.ts), held to the app shell, is the only one that may carry it.
+// Popups come back through handleWindowOpen.
+function buildBridgelessWindow(chrome: Electron.BrowserWindowConstructorOptions): BrowserWindow {
   const win = new BrowserWindow({
     width: 1000,
     height: 700,
     icon: ICON_PATH,
     backgroundColor: bgForTheme(getSetting("theme")),
-    frame: false,
-    titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "hidden",
-    titleBarOverlay: process.platform === "darwin" ? undefined : overlayForTheme(getSetting("theme")),
-    show: !hidden,
+    ...chrome,
     webPreferences: {
-      preload: join(__dirname, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
     },
   });
-  // Lock child app windows to the loopback origin + route popups externally
-  // (they run arbitrary user HTML with the preload bridge). See app-window-guards.
   lockAppWindowNavigation(win, handleWindowOpen);
   return win;
 }
 
+function openFilesWindow(url: string): void {
+  const win = buildBridgelessWindow({ autoHideMenuBar: true });
+  // A page that navigates before it finishes loading aborts this load; the
+  // window then shows the page it navigated to, so there is nothing to report.
+  win.loadURL(url).catch(() => {});
+}
+
 /** Open the agentxos account page (device-code login + phone pairing) in an in-app
- *  window. Reuses the app-window shell: loopback-origin locked, and popups (the
- *  external "approval page" link) route to the default browser via handleWindowOpen —
- *  so the token stays in-app, not in the system browser's history. */
+ *  window. Popups (the external "approval page" link) route to the default
+ *  browser via handleWindowOpen — so the token stays in-app, not in the system
+ *  browser's history. */
 export function openAccountWindow(): void {
   const laxConfig = getLAXConfig();
-  const win = buildAppWindow(false);
+  const win = buildBridgelessWindow({
+    frame: false,
+    titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "hidden",
+    titleBarOverlay: process.platform === "darwin" ? undefined : overlayForTheme(getSetting("theme")),
+  });
   // Glue the popup to the main window: a CHILD window stays above its parent and is
   // raised with it — clicking the LAX dock icon brings the popup forward too — and it
   // needs no dock icon of its own. Fixes "it gets buried behind LAX and I have to
-  // minimize LAX to find it." setParentWindow (not the ctor) so buildAppWindow stays shared.
+  // minimize LAX to find it." setParentWindow (not the ctor) so buildBridgelessWindow stays shared.
   const parent = getMainWindow();
   if (parent && !parent.isDestroyed()) win.setParentWindow(parent);
   // It's real HTML on our origin, so give it the same draggable top strip the app
@@ -133,11 +168,9 @@ export function openAccountWindow(): void {
 // for the OS overlay so both halves of the top 32px share one color.
 // Skipped on the warm-up URL (/api/health) since that's not a real app page.
 function attachAppDragStrip(appWin: BrowserWindow): void {
-  const laxConfig = getLAXConfig();
-  const appOrigin = `http://127.0.0.1:${laxConfig.port}`;
   appWin.webContents.on("did-finish-load", () => {
     const currentUrl = appWin.webContents.getURL() || "";
-    if (!currentUrl.startsWith(appOrigin) || currentUrl.includes("/api/health")) return;
+    if (!currentUrl.startsWith(appOrigin()) || currentUrl.includes("/api/health")) return;
     const js = buildAppDragStripJs(getSetting("theme"));
     appWin.webContents.executeJavaScript(js).catch(() => { /* page unloaded */ });
     // On macOS the injected strip is a transparent drag region with no
@@ -147,4 +180,3 @@ function attachAppDragStrip(appWin: BrowserWindow): void {
     // clears the titleBarOverlay window controls.
   });
 }
-

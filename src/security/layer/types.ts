@@ -38,7 +38,7 @@ export const CONTEXT_RESTRICTED_TOOLS: Record<string, CallContext[]> = {
 // If not (e.g. Codex agents), block them to prevent uncontrolled writes.
 //
 // Keyed on workspace-write + shell CAPABILITY membership, not literal names, so
-// the kernel-bridge synonyms (ari_file write, ari_shell, process_start) require
+// the synonyms (ari_file write, process_start) require
 // worktree isolation identically to their canonical equivalents (write/edit/bash).
 // Canonical {write, edit, bash} are preserved; the synonyms are newly added.
 export const WORKTREE_REQUIRED_TOOLS = new Set([

@@ -1,6 +1,6 @@
 /**
- * AriKernel executor bridge — exposes the six vendored AriKernel executors
- * (file, http, shell, database, retrieval, sqlite-database) as LAX
+ * AriKernel executor bridge — exposes five vendored AriKernel executors
+ * (file, http, database, retrieval, sqlite-database) as LAX
  * ToolDefinitions in the unified registry. Closes DRY-AUDIT.md F2 part 2 by
  * removing the parallel "AriKernel dispatch path" — any LAX-side caller that
  * needs the kernel's I/O implementation now goes through `executeSingleTool`
@@ -15,8 +15,6 @@
  *     unchanged after the unified pre-dispatch gate fires).
  *   - SSRF protections on http (HttpExecutor's URL-length guards, method
  *     enforcement, header inspection survive).
- *   - Shell sandboxing (ShellExecutor's metacharacter rejection, blocked
- *     interpreters, environment sanitization, cwd boundary survive).
  *   - Capability tokens — a kernel-side capability grant must be MINTED by a
  *     trusted server-side path, never declared by the model. The adapter
  *     therefore does NOT read `_capabilityGrantId` from args (a compromised
@@ -35,6 +33,10 @@
  *   that — not the model-supplied `_runId`/`_principalId` — is what keys
  *   session-policy and run identity. Forged `_runId`/`_principalId`/
  *   `_capabilityGrantId`/`_taintLabels` are dropped for security decisions.
+ *
+ * The vendored ShellExecutor is deliberately not bridged: bash is the one
+ * shell, and only bash carries path confinement, the sandbox cage, output
+ * masking and taint — a second shell would be a way around all four.
  */
 import type { ToolCall, ToolClass, ToolResult as AriToolResult, TaintLabel, TaintSource } from "@arikernel/core";
 import { generateId, now } from "@arikernel/core";
@@ -44,12 +46,12 @@ import {
   FileExecutor,
   HttpExecutor,
   RetrievalExecutor,
-  ShellExecutor,
   SqliteDatabaseExecutor,
   type SqliteDatabase,
   type ToolExecutor,
 } from "@arikernel/tool-executors";
 import type { ToolDefinition, ToolResult } from "../types.js";
+import { resolveAgentPath } from "../workspace/paths.js";
 
 interface BridgeArgs {
   action?: string;
@@ -95,6 +97,20 @@ function stripInternal(args: Record<string, unknown>): Record<string, unknown> {
   return out;
 }
 
+// The file executor resolves a relative path against the server's cwd, which
+// is the install folder, while the gate it calls first (bootstrap-ari-gate.ts,
+// then the read/write tools' declared path) resolves it from the workspace like
+// every file tool. Handing the executor the path the gate resolves makes both
+// judge and open the same file: "package.json" was judged as
+// <workspace>/package.json and written to <install>/package.json.
+function executorParameters(cfg: BridgeConfig, args: BridgeArgs): Record<string, unknown> {
+  const params = stripInternal(args);
+  if (cfg.toolClass === "file" && typeof params.path === "string" && params.path) {
+    params.path = resolveAgentPath(params.path, args._sessionId);
+  }
+  return params;
+}
+
 // Exported for the envelope-sanitization test (arikernel-bridge-envelope.test.ts):
 // the trust-critical assertion is that this function derives runId/principal/
 // taint/grant from trusted context only, never from forged model `_`-fields.
@@ -130,7 +146,7 @@ export function buildToolCall(cfg: BridgeConfig, args: BridgeArgs): ToolCall {
     principalId: "lax",
     toolClass: cfg.toolClass,
     action: args.action ?? cfg.defaultAction,
-    parameters: stripInternal(args) as Record<string, unknown>,
+    parameters: executorParameters(cfg, args),
     taintLabels,
     // Capability grants are minted server-side via a trusted path; the bridge
     // never reads `_capabilityGrantId` from args. Until that path is wired,
@@ -200,7 +216,7 @@ function buildBridge(cfg: BridgeConfig): ToolDefinition {
 }
 
 /**
- * Build the canonical six-executor bridge bundle. Each adapter wraps a
+ * Build the canonical five-executor bridge bundle. Each adapter wraps a
  * vendored executor; the unified registry is the single index the LAX
  * dispatcher consults to find them.
  */
@@ -221,14 +237,6 @@ export function createArikernelBridgeTools(options?: { sqliteDatabase?: SqliteDa
         "AriKernel HTTP executor (kernel-side). Method derived from action, URL-length cap, SSRF protections, header inspection. Args: { action: 'get'|'post'|..., url, headers?, body? }.",
       defaultAction: "get",
       executor: new HttpExecutor(),
-    }),
-    buildBridge({
-      toolName: "ari_shell",
-      toolClass: "shell",
-      description:
-        "AriKernel shell executor (kernel-side). Shell-metacharacter rejection, blocked interpreters, sanitized environment, cwd boundary. Args: { action: 'exec', executable, args[], cwd? } or { command, cwd? }.",
-      defaultAction: "exec",
-      executor: new ShellExecutor(),
     }),
     buildBridge({
       toolName: "ari_database",

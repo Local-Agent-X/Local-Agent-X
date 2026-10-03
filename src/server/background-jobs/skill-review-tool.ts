@@ -15,6 +15,7 @@ import type { LearningNotice } from "../../protocols/learned-review-drafting.js"
 import { REVIEW_PROTOCOL_ACTIONS } from "./skill-review-prompt.js";
 import { LEARNED_KNOWLEDGE_KINDS, type LearnedKnowledge } from "../../protocols/learned-proposal-gate.js";
 import { MAX_GAP_SUMMARY_CHARS, MAX_GAP_TOOLS } from "../../cognition/cross-session-learning/capability-gaps.js";
+import { familyActionArgs } from "../../tools/shared/collapse-family.js";
 
 const LEARNED_SLUG = /^learned-[a-f0-9]{20}$/;
 
@@ -36,14 +37,6 @@ export interface ReviewProtocolToolContext {
   projectNames?: readonly string[];
   /** Tell the reviewed session a draft is waiting on the user. */
   onProposed?: (sessionId: string, notice: LearningNotice) => void;
-}
-
-function mergeFamilyArgs(args: Record<string, unknown>): { action: string; inner: Record<string, unknown> } {
-  const { action, params, ...rest } = args;
-  const nested = params && typeof params === "object" && !Array.isArray(params)
-    ? (params as Record<string, unknown>)
-    : undefined;
-  return { action: String(action ?? ""), inner: nested ? { ...rest, ...nested } : rest };
 }
 
 function refuse(content: string): ToolResult {
@@ -75,7 +68,7 @@ async function noteGapForReview(inner: Record<string, unknown>, ctx: ReviewProto
   return { content: `Recorded a capability gap: ${summary}. It is logged for the maintainer and is not a procedure.` };
 }
 
-async function getForReview(base: ToolDefinition, inner: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult> {
+async function getForReview(base: ToolDefinition, args: Record<string, unknown>, inner: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult> {
   const name = typeof inner.name === "string" ? inner.name.trim() : "";
   if (!name) return refuse("get needs the `name` of a protocol or learned procedure.");
   const { describeLearnedProcedure } = await import("../../protocols/learned-review-drafting.js");
@@ -87,7 +80,7 @@ async function getForReview(base: ToolDefinition, inner: Record<string, unknown>
     const learned = describeLearnedProcedure(hit.name);
     return learned ? { content: learned } : refuse(`"${hit.name}" could not be read.`);
   }
-  return base.execute({ action: "get", params: inner }, signal);
+  return base.execute(args, signal);
 }
 
 async function withPendingProcedures(result: ToolResult, query?: string): Promise<ToolResult> {
@@ -141,16 +134,21 @@ export function narrowProtocolToolForReview(base: ToolDefinition, ctx: ReviewPro
       },
       required: ["action"],
     },
+    // A read goes on to the family as the call came: the executor stamped
+    // `_operationId` and `_sessionId` flat, and that is the only place the
+    // family keeps them. Folded into `params` they were dropped, and every
+    // fork read counted as use (protocols/index.ts MAINTENANCE_OP_TYPES).
     async execute(args, signal): Promise<ToolResult> {
-      const { action, inner } = mergeFamilyArgs(args);
+      const action = String(args.action ?? "");
       if (!allowed.has(action)) {
         return refuse(`Action "${action}" is not available to the protocol review pass. Allowed: ${REVIEW_PROTOCOL_ACTIONS.join(", ")}.`);
       }
+      const inner = familyActionArgs(args);
       if (action === "propose") return proposeForReview(inner, ctx);
       if (action === "note_gap") return noteGapForReview(inner, ctx);
-      if (action === "get") return getForReview(base, inner, signal);
+      if (action === "get") return getForReview(base, args, inner, signal);
       const query = action === "search" && typeof inner.query === "string" ? inner.query : undefined;
-      return withPendingProcedures(await base.execute({ action, params: inner }, signal), query);
+      return withPendingProcedures(await base.execute(args, signal), query);
     },
   };
 }

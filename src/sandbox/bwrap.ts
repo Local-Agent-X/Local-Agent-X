@@ -10,15 +10,24 @@
 // Posture (deliberately a TARGETED deny, not a hermetic jail — same rationale
 // as seatbelt.ts): a general host dev shell can't be default-deny without
 // breaking the package managers/build tools it exists to run. So bwrap binds
-// the host root read-write and hard-denies the three things that matter:
+// the host root read-write and hard-denies the things that matter:
 //   1. ALL external network — --unshare-net gives a loopback-only namespace;
 //      external routes simply don't exist, closing the curl/wget/nc//dev/tcp
 //      egress cluster at the namespace, not by binary name.
 //   2. Read AND write of the sensitive home dirs (~/.ssh, ~/.aws, ~/.lax, …) —
 //      each shadowed by an empty --tmpfs; derived from the ONE list in
 //      sandbox/validate.ts. Reads see nothing, writes are throwaway.
-//   3. Sensitive files + shell-rc persistence — each shadowed by
-//      --ro-bind /dev/null, so reads are empty and writes fail.
+//   3. Sensitive files — each shadowed by --ro-bind /dev/null, so reads are
+//      empty and writes fail. The persistence locations (shell startup files,
+//      login autostart, systemd user units, git config: the ONE list in
+//      security/layer/persistence-locations.ts) are bound read-only over
+//      themselves, so they read normally and writes fail. One that does not
+//      exist yet is not bound: bwrap would create it on the host to mount over
+//      it, and an empty ~/.bash_profile alone stops bash reading ~/.profile.
+//   4. Write of the folder LAX is installed in, config/ included, except the
+//      workspace inside it (agent scopes only; security/layer/install-root.ts
+//      has the rule) — the file tools refuse those writes, and a shell must
+//      not walk around them.
 //
 // Paths MUST be realpath'd (the mount table holds canonical paths — a
 // symlinked home dir would otherwise leave the real target exposed) and MUST
@@ -43,6 +52,8 @@ import { delimiter, isAbsolute, join } from "node:path";
 import { HOME_RELATIVE_DENY_DIRS, HOME_RELATIVE_DENY_FILES, SERVER_SCOPE_EXEMPT_DIRS, GUARDED_SCOPE_EXEMPT_DIRS } from "./validate.js";
 import { NS_FORWARDER_SOURCE } from "./ns-forwarder-source.js";
 import type { SandboxScope } from "./types.js";
+import { installRootWriteRule, type InstallRootRule } from "../security/layer/install-root.js";
+import { cagePersistenceLocations } from "../security/layer/persistence-locations.js";
 
 /** The network a guarded cage gets. */
 export interface BwrapNetwork {
@@ -66,13 +77,6 @@ function bridgeMounted(scope: SandboxScope, net: BwrapNetwork | undefined): NonN
   if (!isolatesNetwork(scope, net) || scope === "shell" || !net?.bridge) return null;
   return existsSync(net.bridge.socketPath) ? net.bridge : null;
 }
-
-// Shell rc files a confined shell must not be able to persist into. The
-// launch-agent analog on Linux (~/.config/systemd/user, ~/.config/autostart)
-// is already covered by the ~/.config entry in HOME_RELATIVE_DENY_DIRS.
-const SHELL_RC_FILES = [
-  ".bashrc", ".bash_profile", ".profile", ".zshrc", ".zprofile", ".zshenv",
-];
 
 let bwrapPath: string | null | undefined;
 
@@ -120,11 +124,17 @@ function canonical(path: string): string {
  * sensitive home dirs shadowed. "server" scope (phase B) confines the whole
  * Node server: network stays in the host namespace (the server's API egress
  * goes through the in-process canonicalFetch chokepoint) and the dirs the
- * server itself owns (~/.lax, ~/.codex) are not shadowed.
+ * server itself owns (~/.lax, ~/.codex) are not shadowed. The install-root
+ * write deny applies to the agent scopes ("shell", "guarded"), never "server":
+ * the server writes its own install (updates, the manifest). `installRoot` is
+ * injectable for tests; undefined reads the live install root and workspace.
  */
-export function generateBwrapArgs(home: string = homedir(), scope: SandboxScope = "shell", net?: BwrapNetwork): string[] {
+export function generateBwrapArgs(home: string = homedir(), scope: SandboxScope = "shell", net?: BwrapNetwork, installRoot?: InstallRootRule | null): string[] {
   const realHome = canonical(home);
   const bridge = bridgeMounted(scope, net);
+  // Resolved only for agent scopes: the server-scope cage is built before the
+  // runtime config exists, and the workspace comes from it.
+  const install = scope === "server" ? null : installRoot === undefined ? installRootWriteRule() : installRoot;
 
   const args = [
     "--bind", "/", "/",        // full host RW so the dev shell stays usable
@@ -133,6 +143,25 @@ export function generateBwrapArgs(home: string = homedir(), scope: SandboxScope 
     ...(isolatesNetwork(scope, net) ? ["--unshare-net"] : []), // empty network namespace
     "--die-with-parent",       // caller's kill/timeout reaches the confined child
   ];
+
+  // The install root read-only, then the workspace and the temp dir inside it
+  // bound back read-write. Mounts apply in order, so the re-bind follows the
+  // one it overrides, and both precede the shadows below so a sensitive path
+  // under either stays shadowed. A folder that does not exist yet is skipped
+  // (bwrap aborts on a missing bind source).
+  if (install) {
+    args.push("--ro-bind", install.root, install.root);
+    for (const p of install.writable) if (existsSync(p)) args.push("--bind", p, p);
+  }
+
+  // Before the shadows: one under a shadowed dir (~/.config in the strict
+  // scope) is then hidden with the rest of it, and its writes land in the
+  // throwaway tmpfs.
+  const persistence = cagePersistenceLocations();
+  for (const rel of [...persistence.files, ...persistence.dirs]) {
+    const p = canonical(join(realHome, rel));
+    if (existsSync(p)) args.push("--ro-bind", p, p);
+  }
 
   const exemptDirs =
     scope === "server" ? SERVER_SCOPE_EXEMPT_DIRS :
@@ -144,8 +173,7 @@ export function generateBwrapArgs(home: string = homedir(), scope: SandboxScope 
     if (existsSync(p)) args.push("--tmpfs", p);
   }
 
-  const denyFiles = new Set([...HOME_RELATIVE_DENY_FILES, ...SHELL_RC_FILES]);
-  for (const file of denyFiles) {
+  for (const file of HOME_RELATIVE_DENY_FILES) {
     const p = canonical(join(realHome, file));
     if (existsSync(p)) args.push("--ro-bind", "/dev/null", p);
   }

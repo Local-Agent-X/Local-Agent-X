@@ -9,7 +9,7 @@
  * unnamed-delete-gate.ts; this file only owns the asking.
  */
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
-import type { ServerEvent } from "../types.js";
+import type { ServerEvent, ToolDefinition } from "../types.js";
 import { decisionDenies, decisionRequiresPrompt, getApprovalManager, getRiskDecision } from "../approval-manager.js";
 import { hasExternalIngestion } from "../data-lineage/external.js";
 import { readOpMessages } from "../canonical-loop/index.js";
@@ -36,6 +36,9 @@ export interface NoticedDelete { id: string; path: string }
 
 export async function preauthorizeUnnamedDeletes(opts: {
   toolCalls: ReadonlyArray<{ id: string; name: string; arguments: string }>;
+  /** The dispatch's tools: the card judges each call's arguments as repaired
+   *  against its schema, the arguments it will actually run with. */
+  toolMap: ReadonlyMap<string, ToolDefinition>;
   priorMessages: readonly ChatCompletionMessageParam[] | undefined;
   modelId: string | undefined;
   callContext: string;
@@ -50,6 +53,7 @@ export async function preauthorizeUnnamedDeletes(opts: {
     sessionId: opts.sessionId,
     untrustedSession: opts.sessionId ? hasExternalIngestion(opts.sessionId) : true,
     requestStartedAt: canNotice ? requestStartedAt(opts.operationId) : undefined,
+    tools: opts.toolMap,
   });
   // A noticed delete records no decision: the autonomy profile still decides
   // it (Power runs it, Normal asks), exactly as for the agent's own files.

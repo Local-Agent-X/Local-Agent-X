@@ -99,6 +99,22 @@ describe("verify-gate", () => {
     expect(r.kind).toBe("continue");
   });
 
+  // The call's args are the model's own; the executor drops a `_cwd` the
+  // model sends, so the command never ran there and cannot verify it.
+  it("a model-supplied `_cwd` does not stand in for where the verify ran", async () => {
+    _resetMiddlewareStates();
+    const op = opId();
+    const appDir = "C:/Users/u/Documents/Local Agent X/workspace/apps/fastmail-dashboard";
+    await editTurn(op, `${appDir}/app.js`);
+    await verifyGateMiddleware.afterToolExecution!(
+      ctxFor(op, {
+        toolCalls: [{ toolCallId: "b1", tool: "bash", args: { command: "npm run build", _cwd: appDir } }],
+        toolResults: [{ toolCallId: "b1", toolName: "bash", content: "done", status: "ok" }],
+      } as Partial<CanonicalLoopContext>),
+    );
+    expect(opEditedSourceUnverified(op)).toBe(true);
+  });
+
   it("re-arms when a new edit lands after a verified build", async () => {
     _resetMiddlewareStates();
     const op = opId();

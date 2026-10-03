@@ -19,9 +19,6 @@ export interface MutationLockResult {
 
 export function acquireMutationLock(dataDirectory: string, options?: {
   task?: string;
-  force?: boolean;
-  onRevoke?: () => boolean | void;
-  revokeTimeoutMs?: number;
   resolveIncarnation?: (pid: number) => string | null;
   resolveLegacyProcessIdentity?: (pid: number) => { startedAtMs: number; executable: string } | null;
 }): Promise<MutationLockResult>;

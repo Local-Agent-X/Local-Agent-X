@@ -4,11 +4,15 @@
 // off disk AND out of argv (visible in any process listing), unlike the old
 // approach of baking it into the remote URL.
 
+/** The variable a git child reads its token from; the pre-publish push dry
+ *  run hands the GitHub integration's token over the same way. */
+export const TOKEN_ENV = "GIT_SYNC_TOKEN";
+
 // `!f() {...}; f` is git's inline-shell credential helper form; git runs it via
 // its bundled sh on every platform, so reading $GIT_SYNC_TOKEN works on
 // Windows/macOS/Linux alike. Note this string carries the env-var NAME, not the
 // token value.
-const INLINE_HELPER = `!f() { echo username=x-access-token; echo "password=$GIT_SYNC_TOKEN"; }; f`;
+export const TOKEN_HELPER = `!f() { echo username=x-access-token; echo "password=$${TOKEN_ENV}"; }; f`;
 
 /**
  * git `-c` args for an invocation. The empty `credential.helper=` first RESETS
@@ -17,7 +21,7 @@ const INLINE_HELPER = `!f() { echo username=x-access-token; echo "password=$GIT_
  */
 export function gitCredentialArgs(token: string | undefined): string[] {
   return token
-    ? ["-c", "credential.helper=", "-c", `credential.helper=${INLINE_HELPER}`]
+    ? ["-c", "credential.helper=", "-c", `credential.helper=${TOKEN_HELPER}`]
     : ["-c", "credential.helper="];
 }
 
@@ -31,7 +35,7 @@ export function gitCredentialArgs(token: string | undefined): string[] {
  */
 export function gitCredentialEnv(token: string | undefined): Record<string, string> {
   return {
-    GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "", GIT_SYNC_TOKEN: token ?? "",
+    GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "", [TOKEN_ENV]: token ?? "",
     GIT_AUTHOR_NAME: "Local Agent X Sync", GIT_AUTHOR_EMAIL: "sync@localagentx.invalid",
     GIT_COMMITTER_NAME: "Local Agent X Sync", GIT_COMMITTER_EMAIL: "sync@localagentx.invalid",
   };

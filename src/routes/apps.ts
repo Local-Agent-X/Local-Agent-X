@@ -6,7 +6,10 @@ import { confineToDir } from "../security/layer/index.js";
 import { renderApp } from "../app-renderer/index.js";
 import { loadSettings, reloadSettings, saveSettings } from "../settings.js";
 import { readDevServerRecord, registerDevServer, listDevServerRecords } from "../tools/dev-server.js";
+import { awaitDevServerCage } from "../tools/dev-server-tools.js";
 import { buildAppList } from "./apps-list.js";
+import { deriveAppDataCapability } from "../server/app-connector-auth.js";
+import { AGENT_APP_FRAMING_CSP } from "../server/app-serving-policy.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("routes.apps");
@@ -50,13 +53,15 @@ export const handleAppRoutes: RouteHandler = async (method, url, req, res, ctx, 
       return false;
     }
     if (def.status === "suspended") { json(403, { error: "App is suspended" }); return true; }
-    const html = renderApp(def, ctx.config.port || 7007);
-    const cspHeaders: Record<string, string> = {
+    // Only the agent origin reaches this render (the UI origin redirects /apps
+    // there), so the page gets its app-data capability, never the operator
+    // token, and the framing policy every agent-origin app is served with.
+    const html = renderApp(def, ctx.config.port || 7007, deriveAppDataCapability(ctx.config.authToken, appId));
+    res.writeHead(200, {
       "Content-Type": "text/html", "X-Content-Type-Options": "nosniff",
-      "X-Frame-Options": "SAMEORIGIN", "Referrer-Policy": "strict-origin-when-cross-origin",
+      "Content-Security-Policy": AGENT_APP_FRAMING_CSP, "Referrer-Policy": "no-referrer",
       "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
-    };
-    res.writeHead(200, { ...cspHeaders, ...(req ? corsHeaders(req) : {}) });
+    });
     res.end(html);
     return true;
   }
@@ -138,11 +143,15 @@ export const handleAppRoutes: RouteHandler = async (method, url, req, res, ctx, 
   // effect until the dev server restarts (it stays live 15 min, so X-ing out
   // and reopening doesn't bounce it). registerDevServer reads the persisted
   // command/port/cwd and does a clean kill-then-restart, rewriting the record
-  // with the fresh session — no stop+ensure race.
+  // with the fresh session — no stop+ensure race. Its new start can be refused
+  // by a Windows cage that is not ready yet, so the cage is waited for first:
+  // a refusal then leaves the running backend as it was.
   if (method === "POST" && appPath.match(/^\/api\/apps\/[a-zA-Z0-9_-]+\/restart-backend$/)) {
     const id = appPath.split("/")[3];
     const rec = readDevServerRecord(id);
     if (!rec) { json(404, { error: "This app has no backend dev server to restart." }); return true; }
+    const cage = await awaitDevServerCage();
+    if (!cage.ready) { json(503, { error: cage.reason }); return true; }
     const r = registerDevServer({ appId: id, command: rec.command, port: rec.port, cwd: rec.cwd || undefined });
     if (!r.ok) { json(500, { error: r.error }); return true; }
     json(200, { ok: true, port: r.port, restarted: r.restarted }); return true;

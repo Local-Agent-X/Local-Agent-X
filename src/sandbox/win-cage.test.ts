@@ -58,7 +58,12 @@ describe("win-cage — the app and the provisioning script name the same cage", 
 
 describe("win-cage — where the helper may live", () => {
   it("the expected folder is machine-wide, and a profile path is recognised as one the sandbox user cannot read", () => {
-    expect(winCageHelperDir().toLowerCase()).not.toContain("\\users\\");
+    vi.stubEnv("ProgramData", "C:\\ProgramData");
+    try {
+      expect(winCageHelperDir()).toBe("C:\\ProgramData\\Local Agent X\\bin");
+    } finally {
+      vi.unstubAllEnvs();
+    }
     expect(underUserProfile("C:\\Users\\peter\\.lax\\bin\\srt-win.exe", "C:\\Users\\peter")).toBe(true);
     expect(underUserProfile("C:\\Users\\peter", "C:\\Users\\peter")).toBe(true);
     expect(underUserProfile("C:\\Users\\peterson\\srt-win.exe", "C:\\Users\\peter")).toBe(false);

@@ -102,7 +102,7 @@ export function checkOutboundRequest(args: GuardArgs): GuardBlock | null {
       message:
         `Refusing ${method} to ${hostOf(url) || url}: request contains secret-shaped content (${kinds}) ` +
         `and the destination is not in the trusted-destinations list. ` +
-        `If this destination should receive credentials, add it to ~/.lax/egress-allowlist.json. ` +
+        `If this destination should receive credentials, ask the user to allow the host in Settings → Security → Web access. ` +
         `For stored secrets prefer {{SECRET_NAME}} placeholders over hardcoded values.`,
       meta: { url, method, blocked_by: "outbound-secret-scan", secret_kinds: kinds },
     };
@@ -115,7 +115,7 @@ export function checkOutboundRequest(args: GuardArgs): GuardBlock | null {
       message:
         `Refusing ${method} to ${hostOf(url) || url}: payload contains sensitive personal data ` +
         `(financial account or SSN) and the destination is not in the trusted-destinations list. ` +
-        `Add it to ~/.lax/egress-allowlist.json if it should receive this data.`,
+        `If it should receive this data, ask the user to allow the host in Settings → Security → Web access.`,
       meta: { url, method, blocked_by: "data-egress-guard", data_labels: ["financial", "ssn"] },
     };
   }
@@ -142,11 +142,21 @@ export function isTrustedDestination(url: string): boolean {
  * Returns null if the payload may proceed. `{{SECRET_NAME}}` placeholders are not
  * secret-shaped, so they pass cleanly (the secrets store resolves them later).
  */
-export function checkOutboundPayload(sink: string, text: string): GuardBlock | null {
+export function checkOutboundPayload(
+  sink: string,
+  text: string,
+  /** Clears an entropy-heuristic hit the caller can vouch for (browser: the
+   *  destination's own site showed the agent that string). Never consulted for
+   *  a known secret value or a known key format. */
+  vouchedToken?: (token: string) => boolean,
+): GuardBlock | null {
   if (!text) return null;
   const scan = scanForSecrets(text);
-  if (!scan.clean) {
-    const kinds = [...new Set(scan.matches.map(m => m.pattern))].join(", ");
+  const matches = vouchedToken
+    ? scan.matches.filter(m => !(m.type === "high-entropy-token" && vouchedToken(text.slice(m.startIndex, m.endIndex))))
+    : scan.matches;
+  if (matches.length > 0) {
+    const kinds = [...new Set(matches.map(m => m.pattern))].join(", ");
     return {
       message:
         `Refusing ${sink}: outbound payload contains secret-shaped content (${kinds}). ` +
@@ -233,9 +243,9 @@ export function checkOutboundEmail(
   return {
     message:
       `email_send to ${dest}: the message content contains ${what} and the recipient is not a ` +
-      `trusted destination (your own address and ~/.lax/egress-allowlist.json entries are trusted). ` +
-      `Confirm the send only if these recipients are meant to receive this content; otherwise remove it, ` +
-      `or add the recipient to the allowlist if it should always receive such data.`,
+      `trusted destination (your own address and the sites allowed in Settings → Security → Web access are trusted). ` +
+      `Confirm the send only if these recipients are meant to receive this content; otherwise remove it. ` +
+      `A recipient's domain that should always receive such data can be allowed in Settings → Security → Web access.`,
     meta: {
       sink: "email_send",
       blocked_by: scan.clean ? "data-egress-guard" : "outbound-secret-scan",

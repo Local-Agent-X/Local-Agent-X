@@ -38,6 +38,13 @@ function handleSettingsChanged(msg) {
       if ('enableRemoteControl' in msg.settings) setToolPolicyToggle('tp-toggle-remote', msg.settings.enableRemoteControl === true);
     }
   }
+  // Developer mode flipped (Settings in another window, or an approved
+  // `setting` call): the status-bar badge and the Settings card follow.
+  if ('developer_mode' in msg.settings) {
+    window._laxDeveloperMode = msg.settings.developer_mode === true;
+    if (typeof updateStatusBar === 'function') updateStatusBar(true);
+    if (typeof loadToolPolicyToggles === 'function') loadToolPolicyToggles();
+  }
   if ('browserMode' in msg.settings && typeof renderBrowserMode === 'function') {
     renderBrowserMode(msg.settings.browserMode);
   }

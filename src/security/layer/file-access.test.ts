@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { join, win32 } from "node:path";
+import { basename, dirname, join, resolve, win32 } from "node:path";
+import { spawnSync } from "node:child_process";
 import {
+  existsSync,
   mkdtempSync,
   mkdirSync,
   realpathSync,
@@ -10,12 +12,16 @@ import {
   unlinkSync,
   closeSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { evaluateFileAccess, confineToDir, matchesSensitivePath, pathIsWithin, realpathDeep } from "./file-access.js";
 import { platformRoot } from "../../platform-root.js";
 import { openValidatedRead, readValidatedFile } from "./validated-io.js";
 import { isSensitivePath } from "../../data-lineage/index.js";
 import { SecurityLayer } from "./layer-core.js";
+import { INSTALL_CHANGE_ROUTE, installRootWriteRule, launcherRuntimeFolder, runtimeRoots } from "./install-root.js";
+import { getRuntimeConfig, setRuntimeConfig } from "../../config.js";
+import { _resetWindowsShellCache, portableGitBashPath, resolveWindowsShell } from "../../tools/shell-env.js";
+import type { LAXConfig } from "../../types.js";
 import { CAN_CREATE_DIRECTORY_LINK, CAN_CREATE_FILE_SYMLINK } from "../../symlink-capabilities.test-helper.js";
 
 const DIRECTORY_LINK_TYPE = process.platform === "win32" ? "junction" : "dir";
@@ -501,5 +507,390 @@ describe("platform-source guard is anchored to the install root, not workspace/.
     writeFileSync(appSrc, "// user code\n");
     const d = evaluateFileAccess(WORKSPACE, "unrestricted", () => true, "edit", appSrc);
     expect(d.allowed).toBe(true);
+  });
+});
+
+// The owner's rule (2026-10-02): the whole install folder is write-protected
+// for the agent except its workspace. src/ and public/ were the only protected
+// parts, so an unrestricted agent could still rewrite package.json, scripts/,
+// python/, dist/, config/ — anything the server loads or runs, and the
+// instructions it loads into every chat. REAL install paths, read only:
+// nothing here creates a file in the repo the suite runs from.
+describe("the install folder is write-protected except the workspace", () => {
+  const root = platformRoot();
+  const real = (...parts: string[]) => realpathDeep(join(root, ...parts));
+  let saved: LAXConfig;
+  beforeAll(() => {
+    saved = getRuntimeConfig();
+    // The packaged shape: the workspace lives outside the install.
+    setRuntimeConfig({ ...saved, workspace: WORKSPACE });
+  });
+  afterAll(() => setRuntimeConfig(saved));
+
+  // allowedPathCheck true: even explicit session standing does not open it.
+  it.each([
+    [["package.json"]],
+    [["scripts", "x.mjs"]],
+    [["python", "x.py"]],
+    [["dist", "x.js"]],
+  ])("refuses an unrestricted write to <install>/%s with a reason that names the folder", (parts) => {
+    const d = evaluateFileAccess(WORKSPACE, "unrestricted", () => true, "write", join(root, ...parts));
+    expect(d.allowed).toBe(false);
+    expect(d.reason).toContain(real(...parts));
+    expect(d.reason).toMatch(/inside the Local Agent X install folder, which is write-protected except for the workspace/);
+  });
+
+  it("refuses edit and delete_file too, in every mode", () => {
+    for (const mode of ["unrestricted", "common", "workspace"] as const) {
+      for (const action of ["edit", "delete_file"]) {
+        const d = evaluateFileAccess(WORKSPACE, mode, () => true, action, join(root, "package.json"));
+        expect(d.allowed, `${mode} ${action}`).toBe(false);
+        expect(d.reason).toMatch(/install folder/);
+      }
+    }
+  });
+
+  it("leaves reads alone", () => {
+    for (const parts of [["package.json"], ["scripts"], ["src", "index.ts"]]) {
+      expect(evaluateFileAccess(WORKSPACE, "unrestricted", () => false, "read", join(root, ...parts)).allowed).toBe(true);
+    }
+  });
+
+  it("still allows writes in a workspace that lives outside the install", () => {
+    const d = evaluateFileAccess(WORKSPACE, "unrestricted", () => false, "write", join(WORKSPACE, "notes.md"));
+    expect(d.allowed).toBe(true);
+  });
+
+  // config/ is no exception (the owner's ruling, 2026-10-02): it holds the
+  // agent's own instructions, loaded into every chat, and changes only
+  // through self_edit in developer mode. The refusal says so, in the same
+  // words the shell cage's notice uses, so the agent stops trying this lane.
+  // Nothing is written: the gate only judges the path.
+  it("refuses config/: the prompt, tools.json, the protected-files list, a model profile — and names the self_edit route", () => {
+    for (const parts of [["config", "system-prompt.md"], ["config", "tools.json"], ["config", "protected-files.json"], ["config", "model-profiles", "x.json"]]) {
+      for (const action of ["write", "edit", "delete_file"]) {
+        const d = evaluateFileAccess(WORKSPACE, "unrestricted", () => true, action, join(root, ...parts));
+        expect(d.allowed, `${action} ${join(...parts)}`).toBe(false);
+        expect(d.reason).toContain(real(...parts));
+        expect(d.reason).toContain(INSTALL_CHANGE_ROUTE);
+      }
+    }
+    expect(INSTALL_CHANGE_ROUTE).toMatch(/self_edit, which runs only in developer mode/);
+  });
+
+  it("still reads config/", () => {
+    for (const parts of [["config", "system-prompt.md"], ["config", "tools.json"], ["config", "protected-files.json"]]) {
+      expect(evaluateFileAccess(WORKSPACE, "unrestricted", () => false, "read", join(root, ...parts)).allowed).toBe(true);
+    }
+  });
+
+  // The developer clone: workspace/ sits inside the repo. Never created —
+  // the gate resolves a not-yet-existing path through its existing ancestor.
+  describe("with the workspace inside the install (developer clone)", () => {
+    const inRootWs = join(root, `lax-test-workspace-${process.pid}`);
+    beforeAll(() => setRuntimeConfig({ ...saved, workspace: inRootWs }));
+    afterAll(() => setRuntimeConfig({ ...saved, workspace: WORKSPACE }));
+
+    it("allows writes inside the workspace", () => {
+      const d = evaluateFileAccess(inRootWs, "unrestricted", () => false, "write", join(inRootWs, "apps", "todo", "index.html"));
+      expect(d.allowed, d.reason).toBe(true);
+    });
+
+    it("refuses the rest of the install, including a relative path that climbs out of the workspace", () => {
+      for (const p of [join("..", "package.json"), join(root, "scripts", "x.mjs")]) {
+        const d = evaluateFileAccess(inRootWs, "unrestricted", () => true, "write", p);
+        expect(d.allowed, p).toBe(false);
+        expect(d.reason).toMatch(/install folder/);
+      }
+    });
+  });
+
+  it("a workspace that contains the install does not open it", () => {
+    setRuntimeConfig({ ...saved, workspace: dirname(root) });
+    try {
+      const d = evaluateFileAccess(dirname(root), "unrestricted", () => true, "write", join(root, "package.json"));
+      expect(d.allowed).toBe(false);
+    } finally {
+      setRuntimeConfig({ ...saved, workspace: WORKSPACE });
+    }
+  });
+
+  // The filesystem opens the install under names other than the one on disk,
+  // and the JS realpath keeps whichever was typed. Each name must be refused
+  // like the real one. allowedPathCheck true stands in for whatever else opens
+  // a path outside the workspace (on a real box, the install sits under home).
+  function refusesUnder(spelling: string): void {
+    for (const parts of [["package.json"], ["src", "index.ts"], ["scripts", "new.mjs"]]) {
+      const d = evaluateFileAccess(WORKSPACE, "unrestricted", () => true, "write", join(spelling, ...parts));
+      expect(d.allowed, join(spelling, ...parts)).toBe(false);
+      expect(d.reason).toMatch(/install folder/);
+    }
+  }
+
+  it.skipIf(process.platform !== "win32")("refuses the install by its 8.3 short name, where the volume keeps one", (t) => {
+    const short = spawnSync("cmd.exe", ["/d", "/s", "/c", `"for %A in ("${root}") do @echo %~sA"`], { windowsVerbatimArguments: true, encoding: "utf-8" }).stdout.trim();
+    if (short.toLowerCase() === root.toLowerCase()) return t.skip();
+    refusesUnder(short);
+  });
+
+  it.skipIf(process.platform !== "win32")("refuses the install named through its directory stream", (t) => {
+    const stream = `${root}::$INDEX_ALLOCATION`;
+    if (!existsSync(stream)) return t.skip();
+    refusesUnder(stream);
+  });
+
+  // Windows compares paths without case already; this is the macOS volume,
+  // where a posix comparison does not.
+  it("refuses another casing of the install where the volume ignores case", (t) => {
+    const upper = root.toUpperCase();
+    if (upper === root || !existsSync(upper)) return t.skip();
+    refusesUnder(upper);
+  });
+});
+
+// The rule both layers read (file gate and macOS/Linux cage), on a synthetic install.
+describe("installRootWriteRule", () => {
+  const base = join(ROOT, "rule");
+  const install = join(base, "install");
+  const ws = join(install, "workspace");
+  beforeAll(() => {
+    mkdirSync(ws, { recursive: true });
+    mkdirSync(join(install, "config"), { recursive: true });
+  });
+
+  it("re-allows the workspace inside the install and nothing else: config/ stays write-protected", () => {
+    expect(installRootWriteRule(install, ws)).toEqual({
+      root: realpathSync.native(install),
+      writable: [realpathSync.native(ws)],
+    });
+  });
+
+  it("re-allows nothing when the workspace lives elsewhere or contains the install", () => {
+    expect(installRootWriteRule(install, WORKSPACE)?.writable).toEqual([]);
+    expect(installRootWriteRule(install, base)?.writable).toEqual([]);
+  });
+
+  it("never denies the temp dir when TMPDIR points inside the install", () => {
+    const tmp = join(install, "tmp");
+    mkdirSync(tmp, { recursive: true });
+    const env = { TMPDIR: process.env.TMPDIR, TMP: process.env.TMP, TEMP: process.env.TEMP };
+    Object.assign(process.env, { TMPDIR: tmp, TMP: tmp, TEMP: tmp });
+    try {
+      expect(installRootWriteRule(install, WORKSPACE)?.writable).toEqual([realpathSync.native(tmp)]);
+    } finally {
+      for (const [k, v] of Object.entries(env)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+  });
+
+  it("is skipped when the install root does not exist", () => {
+    expect(installRootWriteRule(join(base, "missing"), ws)).toBeNull();
+  });
+});
+
+// The runtimes the server runs programs from are write-protected where they
+// sit outside the install: a cat.exe planted in the installer's
+// PortableGit\usr\bin is what the server's next shell command runs. A
+// synthetic %LOCALAPPDATA%\LocalAgentX stands in for the real one, and
+// process.execPath for the node the server runs on.
+describe("the runtimes the server runs programs from are write-protected", () => {
+  const appData = join(ROOT, "appdata");
+  const git = join(appData, "LocalAgentX", "PortableGit");
+  const node = join(appData, "LocalAgentX", "node-v24.16.0-win-x64");
+  let saved: { config: LAXConfig; localAppData: string | undefined; execPath: string };
+  beforeAll(() => {
+    mkdirSync(join(git, "bin"), { recursive: true });
+    writeFileSync(join(git, "bin", "bash.exe"), "");
+    mkdirSync(node, { recursive: true });
+    saved = { config: getRuntimeConfig(), localAppData: process.env.LOCALAPPDATA, execPath: process.execPath };
+    setRuntimeConfig({ ...saved.config, workspace: WORKSPACE });
+    process.env.LOCALAPPDATA = appData;
+    process.execPath = join(node, "node.exe");
+    _resetWindowsShellCache();
+  });
+  afterAll(() => {
+    setRuntimeConfig(saved.config);
+    if (saved.localAppData === undefined) delete process.env.LOCALAPPDATA;
+    else process.env.LOCALAPPDATA = saved.localAppData;
+    process.execPath = saved.execPath;
+    _resetWindowsShellCache();
+  });
+
+  // The name the filesystem gives `p`, a tail that does not exist yet kept as typed.
+  const onDisk = (p: string): string => existsSync(p) ? realpathSync.native(p) : join(onDisk(dirname(p)), basename(p));
+
+  // allowedPathCheck true: even explicit session standing does not open them.
+  function refusedInside(root: string, ...paths: string[]): void {
+    for (const p of paths) {
+      for (const action of ["write", "edit", "delete_file"]) {
+        const d = evaluateFileAccess(WORKSPACE, "unrestricted", () => true, action, p);
+        expect(d.allowed, `${action} ${p}`).toBe(false);
+        expect(d.reason).toContain(`inside ${onDisk(root)}, which holds programs Local Agent X runs`);
+      }
+    }
+  }
+
+  it.skipIf(process.platform !== "win32")("refuses the Windows shell's install root (PortableGit), not just its bin folder", () => {
+    refusedInside(git, join(git, "usr", "bin", "cat.exe"), join(git, "cmd", "git.exe"), join(git, "bin", "bash.exe"));
+  });
+
+  it("refuses the folder of the node the server runs on", () => {
+    refusedInside(node, join(node, "node.exe"), join(node, "npx.cmd"), join(node, "node_modules", "npm", "index.js"));
+  });
+
+  // The launcher starts the next server on the newest LocalAgentX\node-v* that
+  // holds a node.exe (desktop/src/path-augment.ts portableNodeDirs).
+  it.skipIf(process.platform !== "win32")("refuses a newer portable node planted beside the one in use", () => {
+    refusedInside(join(appData, "LocalAgentX"), join(appData, "LocalAgentX", "node-v99.0.0-win-x64", "node.exe"));
+  });
+
+  // The shell resolver tries LocalAgentX\PortableGit before any other bash,
+  // so on a box without one a bash.exe put there is the next shell.
+  it.skipIf(process.platform !== "win32")("refuses creating a PortableGit where there is none", () => {
+    const bare = join(ROOT, "appdata-bare");
+    mkdirSync(bare, { recursive: true });
+    process.env.LOCALAPPDATA = bare;
+    _resetWindowsShellCache();
+    try {
+      expect(pathIsWithin(bare, resolveWindowsShell().path)).toBe(false);
+      const portableGit = join(bare, "LocalAgentX", "PortableGit");
+      refusedInside(join(bare, "LocalAgentX"), join(portableGit, "bin", "bash.exe"), join(portableGit, "usr", "bin", "cat.exe"));
+    } finally {
+      process.env.LOCALAPPDATA = appData;
+      _resetWindowsShellCache();
+    }
+  });
+
+  // The launcher puts ~/.lax/runtime/bin first on PATH (desktop/src/server-process.ts),
+  // so a node put there is the next server even while this one runs on brew's.
+  it.skipIf(process.platform === "win32")("refuses the app-owned node folder while the server runs on another node", () => {
+    const home = join(ROOT, "posix-home");
+    mkdirSync(home, { recursive: true });
+    const savedHome = process.env.HOME;
+    process.env.HOME = home;
+    try {
+      refusedInside(join(home, ".lax", "runtime"), join(home, ".lax", "runtime", "bin", "node"), join(home, ".lax", "runtime", "lib", "node_modules", "npm", "index.js"));
+    } finally {
+      if (savedHome === undefined) delete process.env.HOME;
+      else process.env.HOME = savedHome;
+    }
+  });
+
+  it("still allows a workspace write, and any read", () => {
+    expect(evaluateFileAccess(WORKSPACE, "unrestricted", () => false, "write", join(WORKSPACE, "notes.md")).allowed).toBe(true);
+    expect(evaluateFileAccess(WORKSPACE, "unrestricted", () => false, "read", join(node, "node.exe")).allowed).toBe(true);
+  });
+
+  it("leaves a node inside the workspace to the agent: it is its own toolchain", () => {
+    const own = join(WORKSPACE, "tools", "node");
+    process.execPath = join(own, "node.exe");
+    try {
+      const d = evaluateFileAccess(WORKSPACE, "unrestricted", () => false, "write", join(own, "node_modules", "x.js"));
+      expect(d.allowed, d.reason).toBe(true);
+    } finally { process.execPath = join(node, "node.exe"); }
+  });
+
+  it("keeps the workspace open when the node's folder sits around it", () => {
+    process.execPath = join(ROOT, "node.exe");
+    try {
+      expect(evaluateFileAccess(WORKSPACE, "unrestricted", () => false, "write", join(WORKSPACE, "notes.md")).allowed).toBe(true);
+      refusedInside(ROOT, join(ROOT, "node.exe"));
+    } finally { process.execPath = join(node, "node.exe"); }
+  });
+
+  // The packaged app runs on its own executable, whose folder holds the
+  // install. Home moves aside (never created) so the folder around the
+  // install is not above it, as the temp dir often is on a developer box.
+  // A path inside the install is the install rule's to judge: a workspace
+  // inside it stays open, and a refusal names that rule, not the runtime.
+  it("leaves the install to its own rule when the node's folder sits around it", () => {
+    const around = dirname(platformRoot());
+    const inRootWs = join(platformRoot(), `lax-test-workspace-${process.pid}`);
+    const env = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+    const elsewhere = resolve("/", `lax-test-home-${process.pid}`);
+    Object.assign(process.env, { HOME: elsewhere, USERPROFILE: elsewhere });
+    process.execPath = join(around, "node.exe");
+    setRuntimeConfig({ ...saved.config, workspace: inRootWs });
+    try {
+      expect(evaluateFileAccess(inRootWs, "unrestricted", () => false, "write", join(inRootWs, "notes.md")).allowed).toBe(true);
+      const d = evaluateFileAccess(inRootWs, "unrestricted", () => true, "write", join(platformRoot(), "config", "tools.json"));
+      expect(d.allowed).toBe(false);
+      expect(d.reason).toMatch(/inside the Local Agent X install folder/);
+      refusedInside(around, join(around, "node.exe"));
+    } finally {
+      setRuntimeConfig({ ...saved.config, workspace: WORKSPACE });
+      process.execPath = join(node, "node.exe");
+      Object.assign(process.env, env);
+    }
+  });
+
+  it("does not put the home folder off limits when the node sits at its top", () => {
+    process.execPath = join(homedir(), "node.exe");
+    try {
+      const d = evaluateFileAccess(WORKSPACE, "unrestricted", () => false, "write", join(homedir(), "notes.md"));
+      expect(d.allowed, d.reason).toBe(true);
+    } finally { process.execPath = join(node, "node.exe"); }
+  });
+});
+
+describe("runtimeRoots", () => {
+  const base = join(ROOT, "runtimes");
+  const install = join(base, "install");
+  const home = join(base, "home", "me");
+  beforeAll(() => mkdirSync(install, { recursive: true }));
+
+  it("names the folder of the node the server runs on", () => {
+    expect(runtimeRoots(null, join(base, "node", "node.exe"), install, home, null)).toEqual([join(realpathSync.native(base), "node")]);
+  });
+
+  it("skips one inside the install, the home folder itself, and any folder above it", () => {
+    for (const execPath of [join(install, "node", "node.exe"), join(home, "node.exe"), join(base, "home", "node.exe"), join(base, "node.exe")]) {
+      expect(runtimeRoots(null, execPath, install, home, null), execPath).toEqual([]);
+      expect(runtimeRoots(null, join(base, "node", "node.exe"), install, home, dirname(execPath)), execPath).toEqual([join(realpathSync.native(base), "node")]);
+    }
+  });
+
+  it.skipIf(process.platform !== "win32")("names the Windows shell's install root, and skips a bare shell name the OS looks up at spawn", () => {
+    const nodeDir = join(realpathSync.native(base), "node");
+    const node = join(base, "node", "node.exe");
+    expect(runtimeRoots(join(base, "Git", "bin", "bash.exe"), node, install, home, null)).toEqual([nodeDir, join(realpathSync.native(base), "Git")]);
+    expect(runtimeRoots(join(home, "bin", "bash.exe"), node, install, home, null)).toEqual([nodeDir]);
+    expect(runtimeRoots("powershell.exe", node, install, home, null)).toEqual([nodeDir]);
+  });
+
+  // Not yet created: a folder the launcher would search is protected before
+  // anything is in it, or the agent could be the one to fill it.
+  it("names the folder the launcher picks the next runtime from, after the runtime in use", () => {
+    const launcher = join(base, "appdata", "LocalAgentX");
+    expect(runtimeRoots(null, join(base, "node", "node.exe"), install, home, launcher))
+      .toEqual([join(realpathSync.native(base), "node"), join(realpathSync.native(base), "appdata", "LocalAgentX")]);
+  });
+});
+
+// The same folder the desktop launcher searches (pinned against it in
+// test/desktop-path-augment.test.ts).
+describe("launcherRuntimeFolder", () => {
+  it("is LocalAgentX under %LOCALAPPDATA% on Windows, where PortableGit lives too", () => {
+    const local = join(ROOT, "AppData", "Local");
+    expect(launcherRuntimeFolder("win32", homedir(), local)).toBe(join(local, "LocalAgentX"));
+    expect(portableGitBashPath(local)).toBe(join(local, "LocalAgentX", "PortableGit", "bin", "bash.exe"));
+  });
+
+  it("is none on Windows without %LOCALAPPDATA%", () => {
+    const saved = process.env.LOCALAPPDATA;
+    delete process.env.LOCALAPPDATA;
+    try {
+      expect(launcherRuntimeFolder("win32", homedir())).toBeNull();
+    } finally {
+      if (saved !== undefined) process.env.LOCALAPPDATA = saved;
+    }
+  });
+
+  it("is the app-owned node under ~/.lax/runtime elsewhere", () => {
+    for (const platform of ["darwin", "linux"] as const) {
+      expect(launcherRuntimeFolder(platform, join(ROOT, "me"), undefined)).toBe(join(ROOT, "me", ".lax", "runtime"));
+    }
   });
 });

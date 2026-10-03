@@ -1,11 +1,12 @@
 /**
  * Config Loader — reads config files from config/ directory and hot-reloads on change.
  *
- * The config/ directory is the "safe zone" — the agent can freely modify these files.
- * The src/ core reads from here but never gets modified by the agent.
+ * config/ is the agent's own instructions, so its file tools and shell may not
+ * write it (security/layer/install-root.ts): it changes through self_edit in
+ * developer mode, or by the user's hand. Changes hot-reload whoever makes them.
  *
  * Files:
- *   config/system-prompt.md     — base system prompt (agent-editable)
+ *   config/system-prompt.md     — base system prompt
  *   config/protected-files.json — list of files agent cannot modify (self-protecting)
  *   config/tools.json           — tool registry settings (eager/deferred/disabled)
  */

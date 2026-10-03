@@ -9,6 +9,8 @@ import { join } from "node:path";
 import { generateSeatbeltProfile, isSeatbeltAvailable, seatbeltProfileLoads, wrapForSeatbelt, SANDBOX_EXEC, GUARDED_UNIX_SOCKET_ALLOW, GUARDED_UNIX_SOCKET_DENY } from "./seatbelt.js";
 import { HOME_RELATIVE_DENY_DIRS, HOME_RELATIVE_DENY_FILES, SERVER_SCOPE_EXEMPT_DIRS, GUARDED_SCOPE_EXEMPT_DIRS } from "./validate.js";
 import { cageLoopbackPorts, shellProxyPortRange } from "../net/shell-egress-proxy.js";
+import { installRootWriteRule } from "../security/layer/install-root.js";
+import { installRootDenialHint } from "./denial-hints.js";
 
 const onDarwin = process.platform === "darwin";
 
@@ -154,6 +156,34 @@ describe("seatbelt profile generation", () => {
     // …and not the sockets dev tools legitimately use.
     expect(denied.some((re) => re.test("/private/tmp/.s.PGSQL.5432"))).toBe(false);
     expect(denied.some((re) => re.test("/private/var/folders/ab/T/watchman-peter/sock"))).toBe(false);
+  });
+
+  // The install folder is write-protected for the agent except its workspace,
+  // config/ included (security/layer/install-root.ts). A later SBPL rule wins,
+  // so the workspace re-allow follows the install deny, and both precede the
+  // crown-jewel and persistence denies so those still win.
+  it("agent scopes deny writes to the install root and re-allow only the workspace; server scope never carries it", () => {
+    const root = "/Users/test-home/Library/Application Support/Local Agent X";
+    const rule = { root, writable: [`${root}/workspace`] };
+    const deny = `(deny file-write* (subpath "${rule.root}"))`;
+    const allowWorkspace = `(allow file-write* (subpath "${root}/workspace"))`;
+    for (const scope of ["shell", "guarded"] as const) {
+      const profile = generateSeatbeltProfile(home, scope, [7007], rule);
+      expect(profile, scope).toContain(deny);
+      expect(profile.indexOf(allowWorkspace), scope).toBeGreaterThan(profile.indexOf(deny));
+      expect(profile.indexOf(allowWorkspace), scope).toBeLessThan(profile.indexOf("(deny file* "));
+      expect(profile.match(/\(allow file-write\*/g), scope).toHaveLength(1);
+    }
+    expect(generateSeatbeltProfile(home, "server", [], rule)).not.toContain(rule.root);
+    expect(generateSeatbeltProfile(home, "guarded", [], null)).not.toContain("(deny file-write* (subpath \"/Users/test-home/Library/Application");
+  });
+
+  it("by default reads the live install root, and leaves its config/ under the deny", () => {
+    const live = installRootWriteRule();
+    expect(live).not.toBeNull();
+    const profile = generateSeatbeltProfile(home, "guarded", []);
+    expect(profile).toContain(`(deny file-write* (subpath "${sb(live!.root)}"))`);
+    expect(profile).not.toContain(sb(join(live!.root, "config")));
   });
 });
 
@@ -348,6 +378,23 @@ describe.skipIf(!onDarwin)("seatbelt guarded-scope enforcement (live sandbox-exe
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 
+  // The persistence locations, existing or not, refuse writes and still read.
+  it("refuses writes to ~/.gitconfig and a new launch agent or zsh login file, and still reads ~/.gitconfig", () => {
+    const dir = mkdtempSync(join(tmpdir(), "lax-sb-grd-"));
+    try {
+      writeFileSync(join(dir, ".gitconfig"), "[user]\n\tname = Original\n");
+      const r = runGuarded(dir,
+        `cat "${join(dir, ".gitconfig")}"; ` +
+        `(echo pwned >> "${join(dir, ".gitconfig")}") 2>/dev/null && echo GIT-WROTE || echo GIT-DENIED; ` +
+        `(echo pwned > "${join(dir, ".zlogin")}") 2>/dev/null && echo ZLOGIN-WROTE || echo ZLOGIN-DENIED; ` +
+        `(mkdir -p "${join(dir, "Library", "LaunchAgents")}" && echo x > "${join(dir, "Library", "LaunchAgents", "x.plist")}") 2>/dev/null && echo AGENT-WROTE || echo AGENT-DENIED`);
+      expect(r.out).toContain("name = Original");
+      expect(r.out).toContain("GIT-DENIED");
+      expect(r.out).toContain("ZLOGIN-DENIED");
+      expect(r.out).toContain("AGENT-DENIED");
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
   it("blocks outbound TCP off-machine (TEST-NET-1 — RFC 5737, no real traffic leaves)", () => {
     const dir = mkdtempSync(join(tmpdir(), "lax-sb-grd-"));
     try {
@@ -504,6 +551,55 @@ describe.skipIf(!onDarwin)("seatbelt guarded-scope enforcement (live sandbox-exe
         const ok = await runGuardedAdmitting(dir, [port], `/usr/bin/curl -sS --max-time 3 http://127.0.0.1:${port}/`);
         expect(ok.out).toContain("LOOPBACK-OK");
       });
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+});
+
+// The install-root write deny, driven live: the profile must still load with
+// it (the mode resolver fails closed otherwise), and the kernel must honor the
+// later workspace allow over the earlier install deny.
+describe.skipIf(!onDarwin)("seatbelt install-root write deny (live sandbox-exec)", () => {
+  it("the guarded and strict profiles still load with the live install root in them", () => {
+    const dir = mkdtempSync(join(tmpdir(), "lax-sb-inst-"));
+    try {
+      expect(seatbeltProfileLoads(dir, "guarded")).toBe(true);
+      expect(seatbeltProfileLoads(dir, "shell")).toBe(true);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it("refuses a write into the install and lets one into its workspace land", () => {
+    const dir = mkdtempSync(join(tmpdir(), "lax-sb-inst-"));
+    try {
+      mkdirSync(join(dir, "install", "workspace"), { recursive: true });
+      const rule = installRootWriteRule(join(dir, "install"), join(dir, "install", "workspace"))!;
+      const profile = generateSeatbeltProfile(dir, "guarded", [], rule);
+      const out = execFileSync(SANDBOX_EXEC, ["-p", profile, "/bin/bash", "-c",
+        `(echo x > "${rule.root}/engine.js") 2>/dev/null && echo ROOT-WROTE || echo ROOT-DENIED; ` +
+        `echo y > "${rule.writable[0]}/note.md" && echo WS-WROTE || echo WS-DENIED`],
+      { encoding: "utf-8", timeout: 10_000, stdio: ["ignore", "pipe", "pipe"] });
+      expect(out).toContain("ROOT-DENIED");
+      expect(out).toContain("WS-WROTE");
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  // The refusal is what the shell's notice keys on (denial-hints.ts), so the
+  // live output is fed back to it: a capture, not an invented string.
+  it("refuses writes into config/ — the prompt, tools.json, the protected-files list — and the notice names the rule", () => {
+    const dir = mkdtempSync(join(tmpdir(), "lax-sb-inst-"));
+    try {
+      const config = join(dir, "install", "config");
+      mkdirSync(config, { recursive: true });
+      for (const f of ["system-prompt.md", "tools.json", "protected-files.json"]) writeFileSync(join(config, f), "{}");
+      const rule = installRootWriteRule(join(dir, "install"), join(dir, "workspace"))!;
+      const profile = generateSeatbeltProfile(dir, "guarded", [], rule);
+      const out = execFileSync(SANDBOX_EXEC, ["-p", profile, "/bin/bash", "-c",
+        `for f in system-prompt.md tools.json protected-files.json; do (echo x > "${rule.root}/config/$f") && echo "$f-WROTE" || echo "$f-DENIED"; done; ` +
+        `(rm "${rule.root}/config/tools.json") && echo RM-REMOVED || echo RM-KEPT; ` +
+        `(echo x > "${rule.root}/config/new.json") 2>&1; true`],
+      { encoding: "utf-8", timeout: 10_000, stdio: ["ignore", "pipe", "pipe"] });
+      for (const f of ["system-prompt.md", "tools.json", "protected-files.json"]) expect(out).toContain(`${f}-DENIED`);
+      expect(out).toContain("RM-KEPT");
+      expect(installRootDenialHint("guarded", out, "darwin", rule)).toContain("install folder");
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 });

@@ -97,14 +97,16 @@ async function nativeTrash(path: string): Promise<boolean> {
       // TCC-protected, so we can't check for collisions, only avoid them.
       renameSync(path, join(homedir(), ".Trash", `${basename(path)}.${Date.now()}`));
     } else if (process.platform === "win32") {
-      const p = path.replace(/'/g, "''");
+      // The path reaches PowerShell through the environment, never the script
+      // text: PowerShell also closes a quoted string on U+2018-U+201B, so no
+      // escaping of a path embedded as a literal is complete.
       execFileSync(
         "powershell",
         ["-NoProfile", "-NonInteractive", "-Command",
-          `Add-Type -AssemblyName Microsoft.VisualBasic; ` +
-          `if (Test-Path -PathType Container '${p}') { [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory('${p}','OnlyErrorDialogs','SendToRecycleBin') } ` +
-          `else { [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile('${p}','OnlyErrorDialogs','SendToRecycleBin') }`],
-        { stdio: "ignore", timeout: 10_000 },
+          `$p = $env:LAX_TRASH_PATH; Add-Type -AssemblyName Microsoft.VisualBasic; ` +
+          `if (Test-Path -LiteralPath $p -PathType Container) { [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory($p,'OnlyErrorDialogs','SendToRecycleBin') } ` +
+          `else { [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile($p,'OnlyErrorDialogs','SendToRecycleBin') }`],
+        { stdio: "ignore", timeout: 10_000, env: { ...process.env, LAX_TRASH_PATH: path } },
       );
     } else {
       execFileSync("gio", ["trash", "--", path], { stdio: "ignore", timeout: 10_000 });

@@ -217,6 +217,24 @@ export async function warmEmbeddingsWithRetry(
   }
 }
 
+/**
+ * Prove the Windows shell cage now, not on the first ask: the proof took ~25 s
+ * on a fresh PC and every shell spawn waits for it. Each time a proof lands the
+ * sandbox status is re-broadcast, so an open Settings page leaves its
+ * "checking" state, and the sandbox user's grants start over in the
+ * background: no spawn makes them (on the event loop that froze the server
+ * for as long as the workspace took to stamp), and the proof after a
+ * reinstall is what retries a grant that failed.
+ */
+export async function startWindowsCageProof(): Promise<void> {
+  const [sandbox, grants, { broadcastAll }] = await Promise.all([import("../sandbox/index.js"), import("../sandbox/win-cage-grants.js"), import("../chat-ws/index.js")]);
+  sandbox.startSandboxProof(() => {
+    const status = sandbox.getSandboxStatus();
+    grants.restartWinCageGrants(status.effectiveMode === "guarded");
+    broadcastAll({ type: "settings_changed", settings: { sandbox: status } });
+  });
+}
+
 export async function bootstrapServices(config: LAXConfig): Promise<BootstrappedServices> {
   // Process-wide event-loop stall detector. Armed FIRST so it also covers
   // boot — the 90-110s freezes seen in production logged nothing at all,
@@ -352,13 +370,7 @@ export async function bootstrapServices(config: LAXConfig): Promise<Bootstrapped
     setInterval(warmRuntimes, 60_000).unref();
   }).catch(() => {});
 
-  // Prove the Windows shell cage now, not on the first ask: the proof took
-  // ~25 s on a fresh PC and every shell spawn waits for it. When a proof lands
-  // the sandbox status is re-broadcast, so an open Settings page leaves its
-  // "checking" state.
-  Promise.all([import("../sandbox/index.js"), import("../chat-ws/index.js")]).then(([sandbox, { broadcastAll }]) => {
-    sandbox.startSandboxProof(() => broadcastAll({ type: "settings_changed", settings: { sandbox: sandbox.getSandboxStatus() } }));
-  }).catch((e) => logger.warn(`[sandbox] cage proof start failed: ${(e as Error).message}`));
+  startWindowsCageProof().catch((e) => logger.warn(`[sandbox] cage proof start failed: ${(e as Error).message}`));
 
   _t = _bsT("CronService+IntegrationRegistry");
   const cronService = new CronService(dataDir);

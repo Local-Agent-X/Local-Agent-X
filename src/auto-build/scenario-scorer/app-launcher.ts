@@ -3,10 +3,11 @@
  * a 2xx-or-similar. Returns a cleanup function that kills the server
  * process tree.
  *
- * The dev server runs as a child process in project_dir. We DON'T use
- * shell=true on non-Windows because that makes process-tree teardown
- * unreliable. We DO use shell=true on Windows because npm scripts only
- * work that way through node's spawn.
+ * The start line is the agent's own (`.lax-launch.json`: `pnpm dev`,
+ * `vite --port $PORT`), so it runs the way process_start runs one: vetted by
+ * the shell policy, then through the platform shell in the shell cage, on the
+ * scrubbed env, leading its own process group on POSIX so teardown reaches
+ * the server npm starts.
  *
  * Readiness check: poll the URL every 500ms until a connection succeeds
  * (status doesn't matter — many dev servers serve 200 or 304 once ready,
@@ -14,10 +15,13 @@
  * counts as "alive"). Hard timeout: launch.readyTimeoutMs.
  */
 
-import { spawn, type ChildProcess } from "node:child_process";
-import { killProcessTree } from "../../process-tree-kill.js";
+import type { ChildProcess } from "node:child_process";
+import { killProcessGroup } from "../../process-tree-kill.js";
+import { getSandboxStatus } from "../../sandbox/index.js";
+import { evaluateShellCommand } from "../../security/layer/index.js";
+import { spawnCaged } from "../../tools/caged-spawn.js";
+import { registerOwnedProcess, unregisterOwnedProcess } from "../../tools/owned-listeners.js";
 import { allocatePort } from "./port-alloc.js";
-import { hardenChildEnv } from "../../tools/env-contamination.js";
 import type { ProjectLaunchSpec } from "./types.js";
 
 export interface LaunchedApp {
@@ -36,19 +40,17 @@ export interface LaunchedApp {
  *   injected as `PORT` into the child env and the rewritten url is polled.
  */
 export async function launchApp(projectDir: string, launch: ProjectLaunchSpec, signal?: AbortSignal, workerIndex = 0): Promise<LaunchedApp> {
-  const isWin = process.platform === "win32";
   const stdout: string[] = [];
   const stderr: string[] = [];
 
   // Which port does THIS worker own? Worker 0 → base port, url unchanged.
   const { port, url } = allocatePort(launch.readyUrl, workerIndex);
 
-  const [bin, ...args] = launch.start.split(/\s+/);
-  // BROWSER=none stops Vite/CRA from launching a tab. hardenChildEnv strips
-  // __CFBundleIdentifier AND guards process.title so the launched dev server
-  // (vite sets process.title) can't SIGSEGV under the macOS app-bundle context
-  // (env scrub alone is insufficient — see env-contamination.ts).
-  const env: NodeJS.ProcessEnv = { ...hardenChildEnv(process.env), BROWSER: "none", FORCE_COLOR: "0" };
+  const verdict = evaluateShellCommand(launch.start, undefined, undefined, undefined, undefined, getSandboxStatus().confined);
+  if (!verdict.allowed) throw new Error(`blocked by shell policy: ${verdict.reason}`);
+
+  // BROWSER=none stops Vite/CRA from launching a tab.
+  const env: Record<string, string> = { BROWSER: "none", FORCE_COLOR: "0" };
   // Only a parallel worker overrides the port, so worker 0's env stays
   // byte-identical (no PORT set → the project's own default or an inherited
   // PORT is untouched). PORT is the framework-agnostic lever: Next/CRA/Remix
@@ -59,22 +61,20 @@ export async function launchApp(projectDir: string, launch: ProjectLaunchSpec, s
   // the server ignores is a documented gap, not a silent success.
   if (workerIndex > 0) env.PORT = String(port);
 
-  const proc = spawn(bin, args, {
-    cwd: projectDir,
-    stdio: ["ignore", "pipe", "pipe"],
-    shell: isWin, // npm/pnpm on Windows must be invoked through the shell
-    env,
-  });
+  const proc = await spawnCaged(launch.start, { cwd: projectDir, env, detached: process.platform !== "win32", signal });
+  // While it runs, the port the app listens on is admitted to the cage and to
+  // the agent's HTTP tools, as a process_start dev server's is.
+  registerOwnedProcess(proc.pid);
+  proc.on("exit", () => unregisterOwnedProcess(proc.pid));
 
-  proc.stdout?.on("data", c => { stdout.push(c.toString()); if (stdout.length > 200) stdout.shift(); });
-  proc.stderr?.on("data", c => { stderr.push(c.toString()); if (stderr.length > 200) stderr.shift(); });
+  proc.stdout.on("data", c => { stdout.push(c.toString()); if (stdout.length > 200) stdout.shift(); });
+  proc.stderr.on("data", c => { stderr.push(c.toString()); if (stderr.length > 200) stderr.shift(); });
 
   const stop = async (): Promise<void> => {
     if (proc.killed || proc.exitCode !== null) return;
-    // killProcessTree signals SIGTERM and, on Windows, taskkills the whole
-    // tree — npm wraps the real node dev server, which a bare proc.kill would
-    // orphan. One home for the platform logic (process-tree-kill.ts).
-    killProcessTree(proc, "SIGTERM");
+    // The whole tree: npm wraps the real node dev server, which killing the
+    // shell alone would orphan.
+    if (proc.pid) killProcessGroup(proc.pid, proc);
   };
 
   signal?.addEventListener("abort", () => { void stop(); });

@@ -2,13 +2,18 @@
  * Tests for the self_edit exfil tripwire (exfil-scan.ts).
  *
  * We test the pure core — findSecretsInAddedContent — which scans
- * (file, added-text) pairs for secret-shaped material. The git extraction
- * (collectAddedContent / scanWorktreeForStagedSecrets) needs a live
- * worktree and is exercised end-to-end by the sandbox flow.
+ * (file, added-text) pairs for secret-shaped material, and the git extraction
+ * (scanWorktreeForStagedSecrets) against a real repository whose config is
+ * hostile. The rest of the extraction is exercised end-to-end by the sandbox
+ * flow.
  */
 
 import { describe, it, expect } from "vitest";
-import { findSecretsInAddedContent } from "../src/self-edit/exfil-scan.js";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { findSecretsInAddedContent, scanWorktreeForStagedSecrets } from "../src/self-edit/exfil-scan.js";
 
 describe("findSecretsInAddedContent", () => {
   it("is clean when no added content carries a secret", () => {
@@ -58,5 +63,41 @@ describe("findSecretsInAddedContent", () => {
       { file: "src/empty.ts", text: "" },
     ]);
     expect(result.clean).toBe(true);
+  });
+});
+
+// The scan runs on the host against a worktree whose .git config and
+// .gitattributes the child wrote. Each of these would run a command of the
+// child's choosing, and the diff driver and textconv filter would also hand
+// the scan text without the secret in it.
+describe("scanWorktreeForStagedSecrets against a hostile worktree config", () => {
+  const HOOKS = ["fsmonitor", "ext-diff", "textconv"];
+
+  it("starts no fsmonitor hook, external diff or textconv filter, and still sees the secret", () => {
+    const repo = mkdtempSync(join(tmpdir(), "lax-exfil-hostile-"));
+    const g = (...args: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", ...args], { cwd: repo, stdio: "ignore" });
+    const marker = (name: string) => join(repo, `fired-${name}`).replace(/\\/g, "/");
+    try {
+      g("init", "-q", "-b", "main");
+      writeFileSync(join(repo, "a.ts"), "export const a = 1;\n");
+      g("add", "-A");
+      g("commit", "-q", "-m", "base");
+      const baseSha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf-8" }).trim();
+      writeFileSync(join(repo, "b.ts"), `export const t = "ghp_${"a".repeat(36)}";\n`);
+      g("add", "-A");
+      g("commit", "-q", "-m", "committed secret");
+      writeFileSync(join(repo, "a.ts"), `export const u = "ghp_${"b".repeat(36)}";\n`);
+      g("config", "core.fsmonitor", `touch '${marker("fsmonitor")}'; false`);
+      g("config", "diff.external", `touch '${marker("ext-diff")}'; true`);
+      g("config", "diff.hide.textconv", `touch '${marker("textconv")}'; echo clean`);
+      writeFileSync(join(repo, ".git", "info", "attributes"), "*.ts diff=hide\n");
+
+      const result = scanWorktreeForStagedSecrets(repo, baseSha);
+
+      expect(HOOKS.filter((h) => existsSync(marker(h)))).toEqual([]);
+      expect(result.hits.map((h) => h.file).sort()).toEqual(["a.ts", "b.ts"]);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
   });
 });

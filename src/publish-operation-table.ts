@@ -9,8 +9,17 @@
  * and `echo "git push"` are not publishes, and a quoted argument that happens to
  * contain `npm publish` is one word, not a command.
  */
+import { resolveRealArgv0Index } from "./security/layer/shell-lex.js";
 
 export type PublishKind = "git-push" | "deploy" | "package-publish" | "release";
+
+/** One of git's own options, given before the subcommand. */
+export interface GitOption {
+  /** As git reads it: `-c`, `-C`, `--git-dir`, `--no-pager`. */
+  name: string;
+  /** Its value: the next word, or what follows `=` on a long option. */
+  value?: string;
+}
 
 export interface PublishMatch {
   kind: PublishKind;
@@ -18,10 +27,37 @@ export interface PublishMatch {
   label: string;
   /** git-push: the words after `push`, exactly as the agent wrote them. */
   pushArgs?: string[];
+  /** git-push: git's own options before `push`, in order. */
+  gitOptions?: GitOption[];
+  /** git-push: names of the variables assigned in front of git on its own
+   *  command (`GIT_SSH_COMMAND=… git push`, `env GIT_DIR=… git push`). */
+  gitEnv?: string[];
   /** A directory the command itself selects (`git -C dir`, `vercel --cwd dir`). */
   dirArg?: string;
   /** gh pr merge: the PR it names; gh release create: the tag. */
   explicitTarget?: string;
+}
+
+/** `NAME=value` or `NAME+=value`: a shell assignment; group 1 is the name. */
+const ASSIGNMENT = /^([A-Za-z_][A-Za-z0-9_]*)\+?=/;
+
+/** The names a run of assignment words sets. */
+export function assignedNames(words: string[]): string[] {
+  return words.flatMap((w) => ASSIGNMENT.exec(w)?.[1] ?? []);
+}
+
+/**
+ * Index of the command a position runs when its first words are assignments
+ * (`GIT_SSH_COMMAND=… git push`, `A=1 env git push`): the shell runs the word
+ * after them, which the position walk does not skip. `words.length` when
+ * nothing runs after them, so they stay set for the rest of the shell body.
+ */
+export function pastAssignments(words: string[], at: number): number {
+  let i = at;
+  while (i < words.length && ASSIGNMENT.test(words[i])) i++;
+  if (i === at) return at;
+  const real = resolveRealArgv0Index(words.slice(i));
+  return real === null ? words.length : i + real;
 }
 
 /** Strip a Windows launcher extension (`vercel.cmd` is `vercel`) and a package
@@ -61,21 +97,36 @@ function flagValue(words: string[], start: number, flag: string): string | undef
 const isDryRun = (words: string[], start: number) => hasFlag(words, start, "--dry-run");
 const isHelp = (words: string[], start: number) => hasFlag(words, start, "--help", "-h");
 
-// git's global options that take the NEXT word as their value.
-const GIT_GLOBAL_VALUE_OPTS = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env", "--super-prefix"]);
+// git's global options that take the NEXT word as their value (the long ones
+// also take `=value`). One missing here hides the push: its value would be
+// read as the subcommand.
+const GIT_GLOBAL_VALUE_OPTS = new Set([
+  "-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env", "--super-prefix", "--attr-source", "--shallow-file",
+]);
 
 function matchGit(words: string[], at: number): PublishMatch | null {
   let i = at + 1;
   let dirArg: string | undefined;
+  const gitOptions: GitOption[] = [];
   while (i < words.length && words[i].startsWith("-")) {
-    if (words[i] === "-C") dirArg = words[i + 1];
-    i += GIT_GLOBAL_VALUE_OPTS.has(words[i]) ? 2 : 1;
+    const w = words[i];
+    const eq = w.startsWith("--") ? w.indexOf("=") : -1;
+    const option: GitOption = eq > 0 ? { name: w.slice(0, eq), value: w.slice(eq + 1) }
+      : GIT_GLOBAL_VALUE_OPTS.has(w) ? { name: w, value: words[++i] } : { name: w };
+    if (option.name === "-C") dirArg = option.value;
+    gitOptions.push(option);
+    i++;
   }
   if (words[i] !== "push") return null;
   const pushArgs = words.slice(i + 1);
   // A dry run publishes nothing; --help prints a man page.
   if (pushArgs.some((w) => w === "--dry-run" || w === "-n" || w === "--help" || w === "-h")) return null;
-  return { kind: "git-push", label: ["git push", ...pushArgs].join(" "), pushArgs, dirArg };
+  const gitEnv = assignedNames(words.slice(0, at));
+  return {
+    kind: "git-push", label: ["git push", ...pushArgs].join(" "), pushArgs, dirArg,
+    ...(gitOptions.length ? { gitOptions } : {}),
+    ...(gitEnv.length ? { gitEnv } : {}),
+  };
 }
 
 // A package.json script with one of these names ships something: `npm run

@@ -57,6 +57,9 @@ export const USER_ACTIVE_HOLD_MS = 1500;
  *  could eat a user event. */
 export const AGENT_INPUT_ATTRIBUTION_MS = 50;
 
+/** How long an address-bar navigate waits for its did-start-navigation. */
+export const HUMAN_NAVIGATION_WINDOW_MS = 2000;
+
 /** Must match EXEC_ISOLATED_WORLD_ID in server-bridge-browser.ts — the one
  *  isolated world all agent-injected script runs in (never the main world). */
 export const CURSOR_ISOLATED_WORLD_ID = 1901;
@@ -75,10 +78,17 @@ export interface CoDriveState {
 	agentTokens: number;
 	/** All outstanding tokens expire together at this timestamp. */
 	agentTokensExpireAt: number;
+	/** Last deliberate human input (or focusing click) in this view. */
+	lastHumanAt: number;
+	/** Last agent command on this view: input, navigation, script, dialog. */
+	lastAgentAt: number;
+	/** The address bar just navigated: the next programmatic navigation before
+	 *  this time is the human's. */
+	humanNavigationUntil: number;
 }
 
 export function createCoDriveState(): CoDriveState {
-	return { userActiveUntil: 0, agentTokens: 0, agentTokensExpireAt: 0 };
+	return { userActiveUntil: 0, agentTokens: 0, agentTokensExpireAt: 0, lastHumanAt: 0, lastAgentAt: 0, humanNavigationUntil: 0 };
 }
 
 /** Bank one attribution token — call immediately BEFORE each agent
@@ -87,6 +97,36 @@ export function noteAgentDispatch(state: CoDriveState, now: number): void {
 	if (now >= state.agentTokensExpireAt) state.agentTokens = 0; // stale batch
 	state.agentTokens += 1;
 	state.agentTokensExpireAt = now + AGENT_INPUT_ATTRIBUTION_MS;
+	state.lastAgentAt = now;
+}
+
+/** An agent command that is not input (navigation, script, dialog answer):
+ *  it can start a download as surely as a click. */
+export function noteAgentAction(state: CoDriveState, now: number): void {
+	state.lastAgentAt = now;
+}
+
+/** The address bar is about to navigate this view for the human. */
+export function noteHumanNavigation(state: CoDriveState, now: number): void {
+	state.lastHumanAt = now;
+	state.humanNavigationUntil = now + HUMAN_NAVIGATION_WINDOW_MS;
+}
+
+/** A main-frame navigation no frame started (loadURL, CDP Page.navigate,
+ *  back/forward). The agent's bridge marks its own navigations, but one driven
+ *  over CDP never passes the bridge, so the view counts it here. */
+export function noteProgrammaticNavigation(state: CoDriveState, now: number): void {
+	if (now < state.humanNavigationUntil) {
+		state.humanNavigationUntil = 0;
+		return;
+	}
+	noteAgentAction(state, now);
+}
+
+/** Whose action came last in this view. A download is the user's when they
+ *  acted after the agent's last command, even in a tab the agent opened. */
+export function humanActedLastIn(state: CoDriveState): boolean {
+	return state.lastHumanAt > state.lastAgentAt;
 }
 
 /** Hover byproducts: consumed as echoes like everything else, but a
@@ -105,6 +145,7 @@ export function noteObservedInput(state: CoDriveState, now: number, inputType: s
 	state.agentTokens = 0;
 	if (PASSIVE_INPUT_TYPES.has(inputType)) return false;
 	state.userActiveUntil = now + USER_ACTIVE_HOLD_MS;
+	state.lastHumanAt = now;
 	return true;
 }
 
@@ -114,6 +155,7 @@ export function noteObservedInput(state: CoDriveState, now: number, inputType: s
 export function noteFocus(state: CoDriveState, now: number): boolean {
 	if (now < state.agentTokensExpireAt) return false; // agent-induced focus
 	state.userActiveUntil = now + USER_ACTIVE_HOLD_MS;
+	state.lastHumanAt = now;
 	return true;
 }
 
@@ -145,6 +187,10 @@ export function armCoDrive(viewId: string, wc: WebContents): void {
 	wc.on("input-event", (_event, input) => {
 		noteObservedInput(state, Date.now(), input.type ?? "");
 	});
+	wc.on("did-start-navigation", (details) => {
+		if (!details.isMainFrame || details.isSameDocument || details.initiator) return;
+		noteProgrammaticNavigation(state, Date.now());
+	});
 	// Belt: the click that transitions focus into the view.
 	wc.on("focus", () => {
 		noteFocus(state, Date.now());
@@ -163,6 +209,22 @@ export function isUserActive(viewId: string): boolean {
 /** Bank an attribution token for an imminent agent input dispatch. */
 export function markAgentInput(viewId: string): void {
 	noteAgentDispatch(stateFor(viewId), Date.now());
+}
+
+/** Record an agent command on this view that is not input. */
+export function markAgentAction(viewId: string): void {
+	noteAgentAction(stateFor(viewId), Date.now());
+}
+
+/** The address bar is about to navigate this view for the human. */
+export function markHumanNavigation(viewId: string): void {
+	noteHumanNavigation(stateFor(viewId), Date.now());
+}
+
+/** Did the human act in this view after the agent's last command? */
+export function humanActedLast(viewId: string): boolean {
+	const state = coDriveStates.get(viewId);
+	return state ? humanActedLastIn(state) : false;
 }
 
 // ── Agent cursor overlay ─────────

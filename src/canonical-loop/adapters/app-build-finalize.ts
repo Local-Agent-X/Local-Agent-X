@@ -28,6 +28,7 @@ import { detectFramework, type DetectedFramework, type FrameworkDetection } from
 import type { DevServerKind, DevServerRecord, RegisterResult } from "../../tools/dev-server.js";
 import { supportsStaticBuild, writeRunTargetManifest } from "../../tools/app-run-target.js";
 import type { StaticBuildResult } from "../../tools/static-build-run.js";
+import type { DevServerCage } from "../../tools/dev-server-tools.js";
 import { DEFAULT_BASE_PORT } from "../../auto-build/scenario-scorer/port-alloc.js";
 
 /** How a finished app is served at /apps/<id>/. `static-build` builds a static
@@ -64,6 +65,9 @@ export interface FinalizeFrameworkDeps {
   /** Forget the app's dev-server record after a static build so the static serve
    *  isn't shadowed by a stray dev server the model started during the build. */
   stopDevServer?: (appId: string, opts: { forget?: boolean }) => void;
+  /** Wait for the shell cage before registerDevServer stops the app's running
+   *  dev server (dev-server-tools.ts awaitDevServerCage). */
+  awaitCage?: () => Promise<DevServerCage>;
 }
 
 export type FinalizeFrameworkResult =
@@ -124,6 +128,8 @@ export async function finalizeFrameworkBuild(
     staticNote = `static build failed, serving via dev server instead: ${built.error ?? "unknown error"}`;
   }
 
+  const cage = await d.awaitCage();
+  if (!cage.ready) return { handled: true, ok: false, code: "dev_server_failed", message: cage.reason };
   const registered = registerDetectedFramework(detection, appDir, appName, Number(laxPort), d);
   if (registered.handled && registered.ok && staticNote) return { ...registered, note: staticNote };
   return registered;
@@ -181,19 +187,25 @@ function incomplete(framework: DetectedFramework, reason: string): FinalizeFrame
 
 type ResolvedFinalizeDeps = Required<FinalizeFrameworkDeps>;
 
+// The cage wait guards the real registerDevServer; an injected one starts no
+// process, so it has no cage to wait for.
+const noCageToWaitFor = async (): Promise<DevServerCage> => ({ ready: true });
+
 async function resolveDeps(d: FinalizeFrameworkDeps): Promise<ResolvedFinalizeDeps> {
   if (d.registerDevServer && d.listDevServerRecords && d.portBound && d.runStaticBuild && d.stopDevServer) {
-    return d as ResolvedFinalizeDeps;
+    return { ...d, awaitCage: d.awaitCage ?? noCageToWaitFor } as ResolvedFinalizeDeps;
   }
   const devServer = await import("../../tools/dev-server.js");
   const { pidsOnPort } = await import("../../tools/process-session.js");
   const { runStaticBuild } = await import("../../tools/static-build-run.js");
+  const { awaitDevServerCage } = await import("../../tools/dev-server-tools.js");
   return {
     registerDevServer: d.registerDevServer ?? devServer.registerDevServer,
     listDevServerRecords: d.listDevServerRecords ?? devServer.listDevServerRecords,
     portBound: d.portBound ?? ((port) => pidsOnPort(port).length > 0),
     runStaticBuild: d.runStaticBuild ?? ((appDir, framework) => runStaticBuild(appDir, framework)),
     stopDevServer: d.stopDevServer ?? ((appId, opts) => devServer.stopDevServer(appId, {}, opts)),
+    awaitCage: d.awaitCage ?? (d.registerDevServer ? noCageToWaitFor : () => awaitDevServerCage()),
   };
 }
 

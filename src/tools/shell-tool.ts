@@ -1,11 +1,9 @@
-import { spawn } from "node:child_process";
 import type { ServerEvent, ToolDefinition } from "../types.js";
-import { getSandboxMode, execInSandbox, wrapSpawnForSandbox, sandboxDenialHint, networkDenialHint, ensureWinCageGrants, awaitSandboxProof } from "../sandbox/index.js";
+import { getSandboxMode, execInSandbox, sandboxDenialHint, networkDenialHint } from "../sandbox/index.js";
 import { ok, err, blocked, timeout as timeoutResult } from "./result-helpers.js";
 import { detectTargetShell, translateForShell, powershellCmdletHint, quotedGlobHint, windowsPathHint, workspacePrefixHint } from "./shell-translate.js";
-import { resolveWindowsShell, recordAvSuspectKill, isLikelyAvKill, buildSanitizedEnv } from "./shell-env.js";
-import { shellProxyEnv } from "./shell-proxy-env.js";
-import { killProcessGroup } from "../process-tree-kill.js";
+import { resolveWindowsShell, recordAvSuspectKill, isLikelyAvKill } from "./shell-env.js";
+import { runCaged, type CagedOutput } from "./caged-spawn.js";
 import { workspaceRoot } from "../config.js";
 import { resolveSecretEnv, secretEnvOf } from "./shell-secret-env.js";
 import { vendorDriftHint } from "../protocols/vendor-drift.js";
@@ -56,26 +54,8 @@ export const bashTool: ToolDefinition = {
     // shared evaluateShellCommand gate (security/shell-policy.ts), which the
     // SecurityLayer runs against every bash call pre-dispatch — so it covers
     // process_start/process_restart too, not just bash. Single source there.
-    // A Windows cage still proving its fence: wait (bounded) for the answer
-    // before anything below reads the mode, so the command runs caged (or on
-    // the visible fallback) rather than being refused at the spawn seam. The
-    // wait is not the command's: it keeps its whole timeout, and the harness's
-    // backstop leaves the wait out (awaitSandboxProof). An abort during the
-    // wait starts nothing.
     const abortSignal = args._signal as AbortSignal | undefined;
     const onProgress = typeof args._onProgress === "function" ? args._onProgress as (message: string) => void : undefined;
-    const proofWaitStart = Date.now();
-    await awaitSandboxProof({
-      signal: abortSignal,
-      onWait: () => onProgress?.("Waiting for the Windows shell cage check to finish before running the command…"),
-    });
-    if (abortSignal?.aborted) return err("Aborted", { duration_ms: Date.now() - proofWaitStart });
-    // Guarded sandbox gets the egress-proxy env (the sanctioned route);
-    // every other mode gets {} — see shell-proxy-env.ts for the rationale.
-    const sanitizedEnv = buildSanitizedEnv(await shellProxyEnv());
-    // The Windows cage runs the shell as another user: grant it what the
-    // shell needs (off the event loop) before the spawn below wraps it.
-    if (process.platform === "win32" && getSandboxMode() === "guarded") await ensureWinCageGrants(resolveWindowsShell().path);
     let secretEnv;
     try { secretEnv = secretEnvOf(args); } catch (e) { return err((e as Error).message); }
     const secrets = secretEnv ? resolveSecretEnv(secretEnv) : null;
@@ -85,8 +65,8 @@ export const bashTool: ToolDefinition = {
     const scrub = secrets ? secrets.scrub : (text: string) => text;
 
     const isWin = process.platform === "win32";
-    // Resolve the Windows shell ONCE so translation and spawn agree on it. A
-    // real Git Bash runs the model's POSIX commands natively (no rewrite);
+    // The same (memoized) Windows shell runCaged spawns, so translation and
+    // spawn agree on it. A real Git Bash runs the model's POSIX commands natively (no rewrite);
     // only the PowerShell fallbacks need the POSIX→PS translation and the
     // `mkdir -p` rewrite. On a Git Bash shell those rewrites would CORRUPT a
     // valid command (`mkdir -p` is real bash), so they are gated on PowerShell.
@@ -102,8 +82,9 @@ export const bashTool: ToolDefinition = {
       cmd = translateForShell(cmd, detectTargetShell(winShell!.path));
     }
 
-    const sandboxMode = getSandboxMode();
-    if (sandboxMode === "docker") {
+    // Read before runCaged waits out a pending Windows fence proof: only a
+    // guarded selection waits, and it settles to guarded or host, never docker.
+    if (getSandboxMode() === "docker") {
       if (secrets) return err("secret_env is not available in the Docker sandbox: the container gets no host secrets.");
       const sandboxStart = Date.now();
       const result = execInSandbox(cmd);
@@ -129,144 +110,70 @@ export const bashTool: ToolDefinition = {
     }
 
     try {
-      const startMs = Date.now();
       // _cwd (worktree, set by enforce-policy) wins; otherwise the WORKSPACE —
       // the same anchor relative agent paths resolve against (workspace/paths.ts)
       // — so `cat notes.txt` and write("notes.txt") mean one file, instead of
       // the shell landing a folder above it.
       const cwd = (args._cwd as string) || workspaceRoot();
-      // Resolve with structured fields so the call site can populate the
-      // tool-result envelope (exit_code, duration_ms, stderr separately).
-      // Rejection is reserved for runtime failures (spawn error, abort,
-      // timeout) — non-zero exits resolve normally with `code` set.
-      type ExecOutcome =
-        | { kind: "exit"; code: number | null; stdout: string; stderr: string; durationMs: number; avSuspect: boolean }
-        | { kind: "timeout"; durationMs: number; stdout: string; stderr: string }
-        | { kind: "abort"; durationMs: number };
-      const outcome = await new Promise<ExecOutcome>((resolveP, rejectP) => {
-        let settled = false;
-        const settle = (fn: typeof resolveP | typeof rejectP, val: ExecOutcome | Error) => {
-          if (settled) return;
-          settled = true;
-          clearTimeout(killTimer);
-          (fn as (v: unknown) => void)(val);
-        };
 
-        const shell = isWin ? winShell!.path : "/bin/bash";
-        const shellArgs = winUsesPowerShell
-          ? ["-NoProfile", "-Command", cmd]
-          : ["-c", cmd];
-
-        // In seatbelt/bwrap mode this rewrites (shell, args) to run under
-        // sandbox-exec/bwrap; host/docker modes pass through unchanged. The wrapper
-        // is transparent — child.pid, stdio pipes, and the kill path below all
-        // operate on the wrapped process exactly as before.
-        const childEnv = secrets ? { ...sanitizedEnv, ...secrets.env } : sanitizedEnv;
-        const spawned = wrapSpawnForSandbox(shell, shellArgs, childEnv);
-        const child = spawn(spawned.cmd, spawned.args, {
-          env: childEnv,
-          cwd,
-          windowsHide: true,
-          stdio: ["ignore", "pipe", "pipe"],
-        });
-
-        const killTree = () => { if (child.pid) killProcessGroup(child.pid, child); };
-
-        if (abortSignal) {
-          if (abortSignal.aborted) { killTree(); settle(resolveP, { kind: "abort", durationMs: 0 }); return; }
-          abortSignal.addEventListener("abort", () => {
-            killTree();
-            settle(resolveP, { kind: "abort", durationMs: Date.now() - startMs });
-          }, { once: true });
+      // Tool-progress streaming. Emits a `tool_progress` ServerEvent at
+      // most every 500ms with the latest tail of combined stdout/stderr,
+      // so the chat UI can show live output during long-running commands
+      // (winget install, npm install, model downloads). Without this the
+      // bash card sits silent for the full timeout — agent and user can't
+      // distinguish "still working" from "hung." Live failure (2026-05-07):
+      // ollama install via winget hung on UAC for 5+ minutes; agent
+      // retried 11 times and tripped circuit breaker because there was no
+      // progress signal to confirm forward motion.
+      // ServerEvent's union already includes tool_progress + av_blocked_warning
+      // (see src/types.ts). Use the broader type so this same callback is
+      // also compatible with recordAvSuspectKill below, which expects
+      // (e: ServerEvent) => void. Narrowing locally to ToolProgressEvent
+      // produced a TS2345 mismatch on the recordAvSuspectKill(onEvent) call.
+      const onEvent = args._onEvent as ((e: ServerEvent) => void) | undefined;
+      const toolCallId = args._toolCallId as string | undefined;
+      const PROGRESS_INTERVAL_MS = 500;
+      const PROGRESS_TAIL_CHARS = 200;
+      let lastProgressEmit = 0;
+      let pendingProgress = false;
+      let output: CagedOutput = { stdout: "", stderr: "" };
+      const emitProgress = (): void => {
+        if (!onEvent) return;
+        const now = Date.now();
+        if (now - lastProgressEmit < PROGRESS_INTERVAL_MS) {
+          if (!pendingProgress) {
+            pendingProgress = true;
+            setTimeout(emitProgress, PROGRESS_INTERVAL_MS - (now - lastProgressEmit));
+          }
+          return;
         }
+        pendingProgress = false;
+        lastProgressEmit = now;
+        // Tail of combined output, with carriage-return overwrites collapsed
+        // (winget/curl-style "downloading X% \r" updates) so the agent sees
+        // the latest line, not a glob of overwrites.
+        const combined = (output.stdout + output.stderr).slice(-PROGRESS_TAIL_CHARS * 4);
+        const lastLine = combined.split(/\r|\n/).filter(s => s.trim()).slice(-1)[0] || combined.trim();
+        const message = scrub(lastLine).slice(-PROGRESS_TAIL_CHARS);
+        if (!message) return;
+        try { onEvent({ type: "tool_progress", toolName: "bash", toolCallId, message }); } catch { /* best-effort */ }
+      };
 
-        const killTimer = setTimeout(() => {
-          killTree();
-          settle(resolveP, { kind: "timeout", durationMs: Date.now() - startMs, stdout: scrub(stdout), stderr: scrub(stderr) });
-        }, timeout);
-
-        const MAX_OUTPUT = 10 * 1024 * 1024;
-        let stdout = "", stderr = "";
-        let totalBytes = 0;
-
-        child.stdout.setEncoding("utf-8");
-        child.stderr.setEncoding("utf-8");
-
-        // Tool-progress streaming. Emits a `tool_progress` ServerEvent at
-        // most every 500ms with the latest tail of combined stdout/stderr,
-        // so the chat UI can show live output during long-running commands
-        // (winget install, npm install, model downloads). Without this the
-        // bash card sits silent for the full timeout — agent and user can't
-        // distinguish "still working" from "hung." Live failure (2026-05-07):
-        // ollama install via winget hung on UAC for 5+ minutes; agent
-        // retried 11 times and tripped circuit breaker because there was no
-        // progress signal to confirm forward motion.
-        // ServerEvent's union already includes tool_progress + av_blocked_warning
-        // (see src/types.ts). Use the broader type so this same callback is
-        // also compatible with recordAvSuspectKill below, which expects
-        // (e: ServerEvent) => void. Narrowing locally to ToolProgressEvent
-        // produced a TS2345 mismatch on the recordAvSuspectKill(onEvent) call.
-        const onEvent = args._onEvent as ((e: ServerEvent) => void) | undefined;
-        const toolCallId = args._toolCallId as string | undefined;
-        const PROGRESS_INTERVAL_MS = 500;
-        const PROGRESS_TAIL_CHARS = 200;
-        let lastProgressEmit = 0;
-        let pendingProgress = false;
-        const emitProgress = (): void => {
-          if (!onEvent) return;
-          const now = Date.now();
-          if (now - lastProgressEmit < PROGRESS_INTERVAL_MS) {
-            if (!pendingProgress) {
-              pendingProgress = true;
-              setTimeout(emitProgress, PROGRESS_INTERVAL_MS - (now - lastProgressEmit));
-            }
-            return;
-          }
-          pendingProgress = false;
-          lastProgressEmit = now;
-          // Tail of combined output, with carriage-return overwrites collapsed
-          // (winget/curl-style "downloading X% \r" updates) so the agent sees
-          // the latest line, not a glob of overwrites.
-          const combined = (stdout + stderr).slice(-PROGRESS_TAIL_CHARS * 4);
-          const lastLine = combined.split(/\r|\n/).filter(s => s.trim()).slice(-1)[0] || combined.trim();
-          const message = scrub(lastLine).slice(-PROGRESS_TAIL_CHARS);
-          if (!message) return;
-          try { onEvent({ type: "tool_progress", toolName: "bash", toolCallId, message }); } catch { /* best-effort */ }
-        };
-
-        child.stdout.on("data", (chunk: string) => {
-          totalBytes += chunk.length;
-          if (totalBytes <= MAX_OUTPUT) stdout += chunk;
-          emitProgress();
-        });
-        child.stderr.on("data", (chunk: string) => {
-          totalBytes += chunk.length;
-          if (totalBytes <= MAX_OUTPUT) stderr += chunk;
-          emitProgress();
-        });
-
-        child.on("error", (e) => settle(rejectP, e));
-        child.on("exit", (code) => {
-          // Antivirus detection — scoped to the PowerShell path only. AV
-          // behavior-shields (AVG/Avast/Norton/Defender heuristic) kill
-          // powershell.exe mid-execution; a signed Git Bash is not that target,
-          // and a fast no-output failure under it is a normal error (127 =
-          // command-not-found), not an AV kill. isLikelyAvKill encodes that.
-          // On a real PS-path kill we track it and surface a one-time UI banner
-          // so the user sees what's wrong before debugging phantom hangs.
-          const elapsed = Date.now() - startMs;
-          const looksLikeAvKill = isLikelyAvKill({
-            isPowerShell: winUsesPowerShell,
-            code,
-            elapsedMs: elapsed,
-            stdoutLen: stdout.length,
-            cmdLen: cmd.trim().length,
-          });
-          if (looksLikeAvKill) {
-            recordAvSuspectKill(onEvent);
-          }
-          settle(resolveP, { kind: "exit", code, stdout: scrub(stdout), stderr: scrub(stderr), durationMs: elapsed, avSuspect: looksLikeAvKill });
-        });
+      // Non-zero exits resolve with `code` set; a rejection means nothing ran.
+      const outcome = await runCaged(cmd, {
+        cwd,
+        env: secrets?.env,
+        signal: abortSignal,
+        // A Windows cage still proving its fence: the command waits (bounded)
+        // to run caged, or on the visible fallback, instead of being refused.
+        // The wait is not the command's: it keeps its whole timeout, and the
+        // harness's backstop leaves the wait out (awaitSandboxProof).
+        onWait: () => onProgress?.("Waiting for the Windows shell cage check to finish before running the command…"),
+        timeoutMs: timeout,
+        // A background job (`npm run dev &`) keeps the pipes open after the
+        // shell exits; the call returns when the shell does.
+        settleOn: "exit",
+        onOutput: (captured) => { output = captured; emitProgress(); },
       });
 
       // Map structured outcome to a tool-result envelope. metadata carries
@@ -276,20 +183,37 @@ export const bashTool: ToolDefinition = {
         return err("Aborted", { duration_ms: outcome.durationMs });
       }
       if (outcome.kind === "timeout") {
+        const [stdout, stderr] = [scrub(outcome.stdout), scrub(outcome.stderr)];
         return timeoutResult(
           `Command timed out after ${timeout / 1000}s.`,
           {
             duration_ms: outcome.durationMs,
-            stderr: outcome.stderr || undefined,
-            partial_output: (outcome.stdout || outcome.stderr)
-              ? (outcome.stdout + (outcome.stderr ? "\n[stderr]\n" + outcome.stderr : "")).slice(-1500)
+            stderr: stderr || undefined,
+            partial_output: (stdout || stderr)
+              ? (stdout + (stderr ? "\n[stderr]\n" + stderr : "")).slice(-1500)
               : undefined,
             recovery: "Increase the `timeout` arg, OR use process_start for long-running commands so the call returns immediately with a session_id you can poll.",
           },
         );
       }
 
-      const { code, stdout, stderr, durationMs, avSuspect } = outcome;
+      const { code, durationMs, sandboxMode } = outcome;
+      // Antivirus detection — scoped to the PowerShell path only. AV
+      // behavior-shields (AVG/Avast/Norton/Defender heuristic) kill
+      // powershell.exe mid-execution; a signed Git Bash is not that target,
+      // and a fast no-output failure under it is a normal error (127 =
+      // command-not-found), not an AV kill. isLikelyAvKill encodes that.
+      // On a real PS-path kill we track it and surface a one-time UI banner
+      // so the user sees what's wrong before debugging phantom hangs.
+      const avSuspect = isLikelyAvKill({
+        isPowerShell: winUsesPowerShell,
+        code,
+        elapsedMs: durationMs,
+        stdoutLen: outcome.stdout.length,
+        cmdLen: cmd.trim().length,
+      });
+      if (avSuspect) recordAvSuspectKill(onEvent);
+      const [stdout, stderr] = [scrub(outcome.stdout), scrub(outcome.stderr)];
 
       if (avSuspect) {
         return blocked(

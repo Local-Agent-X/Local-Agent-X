@@ -116,22 +116,10 @@ function enterIdeView(appId, appName, appUrl, buildPrompt) {
   // Set status bar
   ideSetStatus('ready', 'Ready');
 
-  // Always use workspace file path for preview (not registry render URL)
-  const port = location.port || '7007';
-  window._ideAppUrl = `http://127.0.0.1:${port}/apps/${_ideAppId}/index.html`;
-
   const frame = document.getElementById('ide-preview-frame');
   if (appUrl && frame) {
     try { frame.src = 'about:blank'; } catch {}
-    frame.src = window._ideAppUrl + '?_t=' + Date.now();
-    // Re-inject the picker if it's on (e.g. user toggled it, navigated
-    // away and back). Idempotent — noops if the iframe is empty.
-    if (typeof _ideOnPreviewLoad === 'function') {
-      frame.addEventListener('load', _ideOnPreviewLoad, { once: true });
-    }
-    if (typeof _ideOnPreviewLoadErrors === 'function') {
-      frame.addEventListener('load', _ideOnPreviewLoadErrors, { once: true });
-    }
+    ideLoadPreview(frame);
   } else if (frame) {
     frame.srcdoc = '<div style="display:flex;align-items:center;justify-content:center;height:100%;font-family:system-ui;color:#999;background:#1a1a2e"><div style="text-align:center"><div style="font-size:2rem;margin-bottom:12px;opacity:.5">&#9881;</div><div>Waiting for build...</div></div></div>';
   }

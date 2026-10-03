@@ -125,6 +125,19 @@ export async function assertLiteralIpEgressAllowed(url: string): Promise<void> {
   }
 }
 
+/** Whether `url` reaches this server's own port: any loopback name or address
+ *  (the pinning dispatcher dials every alias to the loopback literal) on the
+ *  port the server listens on. URL.hostname keeps an IPv6 literal's brackets,
+ *  so they are stripped before the loopback check. */
+export async function reachesOwnServer(url: string): Promise<boolean> {
+  let parsed: URL;
+  try { parsed = new URL(url); } catch { return false; } // the fetch reports a malformed URL
+  if (!isLoopbackHost(parsed.hostname.replace(/^\[|\]$/g, "").toLowerCase())) return false;
+  const port = parsed.port || (parsed.protocol === "https:" ? "443" : "80");
+  const { getRuntimeConfig } = await import("../config.js");
+  return port === String(getRuntimeConfig().port);
+}
+
 /** Auth header for a loopback self-call to our own server, or null for any
  *  external URL (so the token never leaks off-box). Uses the least-privilege
  *  internal agent token; falls back to the operator token only when the
@@ -140,14 +153,7 @@ export async function selfCallAuthHeader(url: string): Promise<Record<string, st
   } catch {
     return null;
   }
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    return null;
-  }
-  const isLoopback = parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost" || parsed.hostname === "::1";
-  if (!isLoopback || parsed.port !== String(rc.port)) return null;
+  if (!(await reachesOwnServer(url))) return null;
   const token = getInternalAgentToken() ?? rc.authToken;
   return { Authorization: `Bearer ${token}` };
 }

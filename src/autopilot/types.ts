@@ -86,6 +86,7 @@ export type AutopilotState =
   | "max-rounds"       // hit maxRounds cap
   | "no-progress"      // hit maxNoopRounds in a row
   | "interrupted"      // user POST /api/autopilot/stop
+  | "developer-mode-off" // the user turned developer_mode off mid-run
   | "error";           // unrecoverable error
 
 export interface AutopilotRunSummary {

@@ -21,6 +21,7 @@ import { contentTypeFromHeaders, noteRequestDone, noteRequestFailed, noteRequest
 import { shouldAllowLocalLoopback, type ViewTrust } from "./browser-loopback-policy";
 import { isUserDownload, uniqueDownloadPath, type QuarantinedDownload } from "./browser-download-routing";
 import { recordUserDownload, updateUserDownload } from "./browser-user-download-registry";
+import { humanActedLast } from "./in-app-browser";
 import { cacheGet, cacheSet, clearDecisionCache, extractUploadBody } from "./browser-partition-net";
 import { installPermissionHandlers } from "./browser-partition-permissions";
 import { registerEmbeddedChromeIdentitySession } from "./embedded-chrome-identity";
@@ -206,7 +207,16 @@ function hardenSession(sess: Session, partition: string): void {
 	// ~/Downloads like any browser (browser-download-routing.ts); popups and
 	// unresolvable webContents fail safe into quarantine.
 	sess.on("will-download", (_event: unknown, item: DownloadItem, wc?: WebContents) => {
-		if (isUserDownload(wc && !wc.isDestroyed() ? wc.id : undefined, viewTrustResolver)) {
+		// Attribute at DOWNLOAD time — the view may be gone by the time anyone
+		// lists the registry. No resolver wired yet → unattributed (null).
+		let context = { viewId: null as string | null, pageUrl: "" };
+		try {
+			if (downloadContextResolver) context = downloadContextResolver(wc);
+		} catch {
+			/* attribution is best-effort; the quarantine save is not */
+		}
+		const viewId = context.viewId;
+		if (isUserDownload(wc && !wc.isDestroyed() ? wc.id : undefined, viewTrustResolver, () => viewId !== null && humanActedLast(viewId))) {
 			const savePath = uniqueDownloadPath(app.getPath("downloads"), item.getFilename(), existsSync);
 			item.setSavePath(savePath);
 			const id = randomUUID();
@@ -225,14 +235,6 @@ function hardenSession(sess: Session, partition: string): void {
 		mkdirSync(QUARANTINE_DIR, { recursive: true });
 		const savePath = join(QUARANTINE_DIR, `${id}.part`);
 		item.setSavePath(savePath);
-		// Attribute at DOWNLOAD time — the view may be gone by the time anyone
-		// lists the registry. No resolver wired yet → unattributed (null).
-		let context = { viewId: null as string | null, pageUrl: "" };
-		try {
-			if (downloadContextResolver) context = downloadContextResolver(wc);
-		} catch {
-			/* attribution is best-effort; the quarantine save is not */
-		}
 		const record: QuarantinedDownload = {
 			id,
 			viewId: context.viewId,

@@ -62,8 +62,15 @@ function shellInvocation(command: string): { file: string; args: string[] } {
   return { file: shell.path, args: shell.kind === "bash" ? ["-c", command] : ["-NoProfile", "-Command", command] };
 }
 
+// Any stat failure means "not a program we can start", not just ENOENT: a PATH
+// entry that is too long, is a file (ENOTDIR) or is unreadable (EACCES) must
+// fall through to the next entry, not abort the whole search with a raw error.
 function isFile(path: string): boolean {
-  return statSync(path, { throwIfNoEntry: false })?.isFile() ?? false;
+  try {
+    return statSync(path, { throwIfNoEntry: false })?.isFile() ?? false;
+  } catch {
+    return false;
+  }
 }
 
 /**

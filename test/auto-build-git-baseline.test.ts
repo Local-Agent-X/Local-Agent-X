@@ -12,7 +12,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync, readFileSync, readdirSync, mkdirSync, existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { devNull, tmpdir } from "node:os";
-import { join, relative } from "node:path";
+import { isAbsolute, join, relative } from "node:path";
 
 // git runs through the caged-spawn seam. The sandbox facade is modelled so the
 // wrap is observable and no test reaches a real cage; the wrap passes the
@@ -247,12 +247,20 @@ describe("git runs in the shell cage, hardened against the agent's own repo", ()
   it.skipIf(process.platform !== "win32")("a git.exe planted in the project or on a relative PATH entry is never the one run", async () => {
     const elsewhere = mkdtempSync(join(tmpdir(), "planted-git-"));
     const path = process.env.PATH;
+    const cwd = process.cwd();
     try {
       writeFileSync(join(dir, "git.exe"), "");
       writeFileSync(join(elsewhere, "git.exe"), "");
-      process.env.PATH = `${relative(process.cwd(), elsewhere)};${path}`;
+      // From a cwd on the same drive: relative() across drives (a CI checkout
+      // on D:, temp on C:) returns an absolute path, and an absolute entry is
+      // a fair place to find git.
+      process.chdir(tmpdir());
+      const entry = relative(process.cwd(), elsewhere);
+      expect(isAbsolute(entry)).toBe(false);
+      process.env.PATH = `${entry};${path}`;
       await getHeadSha(dir).catch(() => undefined);
     } finally {
+      process.chdir(cwd);
       process.env.PATH = path;
       rmSync(elsewhere, { recursive: true, force: true });
     }

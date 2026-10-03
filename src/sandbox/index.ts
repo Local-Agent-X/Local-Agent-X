@@ -299,8 +299,10 @@ export function wrapSpawnForSandbox(shell: string, shellArgs: string[], childEnv
     // pick the platform's. On Linux the shell gets its own network namespace
     // and the proxy's unix socket as its one way out; no socket yet (the proxy
     // is still warming) means no route, which is the fail-closed side.
-    if (isSeatbeltAvailable()) return wrapForSeatbelt(shell, shellArgs, undefined, "guarded");
-    if (isBwrapAvailable()) {
+    // By platform, as isGuardedUsable decides it: a tool merely installed on
+    // another OS's host is not that platform's cage.
+    if (process.platform === "darwin" && isSeatbeltAvailable()) return wrapForSeatbelt(shell, shellArgs, undefined, "guarded");
+    if (process.platform === "linux" && isBwrapAvailable()) {
       const bridge = currentShellEgressBridge();
       return wrapForBwrap(shell, shellArgs, undefined, "guarded", { network: "namespace", ...(bridge ? { bridge } : {}) });
     }

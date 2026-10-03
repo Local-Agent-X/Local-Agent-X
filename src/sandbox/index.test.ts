@@ -19,6 +19,8 @@ const cage = vi.hoisted(() => {
     vanishing: false,
     landed: Promise.resolve(false),
     wrapped: [] as string[],
+    /** Overrides whether bwrap reads as installed (null: the real check, Linux only). */
+    bwrapInstalled: null as boolean | null,
     settle: (_ok: boolean): void => undefined,
     reset(helper: string | null): void {
       c.helper = helper;
@@ -26,6 +28,7 @@ const cage = vi.hoisted(() => {
       c.real = false;
       c.vanishing = false;
       c.wrapped = [];
+      c.bwrapInstalled = null;
       let land!: () => void;
       c.landed = new Promise<void>((r) => { land = r; }).then(() => c.proof === true);
       c.settle = (ok) => { c.proof = ok; land(); };
@@ -60,10 +63,10 @@ vi.mock("./win-cage-grants.js", async (importOriginal) => ({
   ensureWinCageGrantsSync: () => undefined,
 }));
 // bwrap's path is memoized when first probed on Linux; a test standing in for
-// Windows must not inherit it.
+// Windows must not inherit it unless it asks to (bwrapInstalled).
 vi.mock("./bwrap.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./bwrap.js")>();
-  return { ...actual, isBwrapAvailable: () => process.platform === "linux" && actual.isBwrapAvailable() };
+  return { ...actual, isBwrapAvailable: () => cage.bwrapInstalled ?? (process.platform === "linux" && actual.isBwrapAvailable()) };
 });
 // A guarded bash asks for the egress proxy's env; these tests start no proxy.
 vi.mock("../tools/shell-proxy-env.js", async (importOriginal) => ({
@@ -401,6 +404,15 @@ describe("Windows cage proof pending: nothing spawns on the unconfined host", ()
     expect(wrap).toThrow(/still being verified; try again in a few seconds/);
     cage.settle(true);
     expect(wrap()).toEqual({ cmd: process.execPath, args: ["-e", "process.stdout.write('CAGED')"] });
+  });
+
+  // The wrap picks the platform's cage, as the status does: on a Linux CI
+  // runner standing in for Windows, an installed bwrap took the Windows spawn.
+  it("a guarded spawn on Windows uses the Windows cage even where bwrap is installed", () => {
+    cage.bwrapInstalled = true;
+    cage.settle(true);
+    expect(wrapSpawnForSandbox("bash.exe", ["-c", "whoami"])).toEqual({ cmd: process.execPath, args: ["-e", "process.stdout.write('CAGED')"] });
+    expect(cage.wrapped).toEqual(["bash.exe"]);
   });
 
   it("a proof still running after the wait bound leaves the refusal in place", async () => {

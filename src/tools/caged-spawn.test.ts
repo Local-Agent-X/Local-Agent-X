@@ -21,6 +21,18 @@ const seam = vi.hoisted(() => ({
   grantFailure: null as string | null,
 }));
 
+// A PATH folder the server cannot read. Windows reports most bad paths as
+// ENOENT, so the EACCES a real unreadable folder raises is stood in for here.
+const { UNREADABLE_DIR } = vi.hoisted(() => ({ UNREADABLE_DIR: "C:\\unreadable-caged-spawn" }));
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  const statSync = ((path: string, opts?: unknown) => {
+    if (String(path).startsWith(UNREADABLE_DIR)) throw Object.assign(new Error(`EACCES: permission denied, stat '${path}'`), { code: "EACCES" });
+    return (actual.statSync as (p: string, o?: unknown) => unknown)(path, opts);
+  }) as typeof actual.statSync;
+  return { ...actual, statSync, default: { ...actual, statSync } };
+});
+
 // The profile the cage hides, so a test can place a program in one.
 vi.mock("node:os", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:os")>();
@@ -220,7 +232,19 @@ describe("the argv form", () => {
   it("under the Windows cage, a name not on the PATH starts nothing and grants nothing", async () => {
     setPlatform("win32");
     seam.mode = "guarded";
-    await expect(runCaged({ file: "no-such-program-caged-spawn", args: [] }, { cwd: tmpdir(), timeoutMs: 15_000 }))
+    const env = { PATH: "C:\\no-such-dir-caged-spawn-a;C:\\no-such-dir-caged-spawn-b" };
+    await expect(runCaged({ file: "no-such-program-caged-spawn", args: [] }, { cwd: tmpdir(), env, timeoutMs: 15_000 }))
+      .rejects.toThrow('"no-such-program-caged-spawn" was not found on the PATH, so nothing was started.');
+    expect(seam.calls).toEqual(["proof", "proxy"]);
+  });
+
+  // A PATH entry stat cannot read (unreadable, too long) is not a program: the
+  // search moves on rather than failing with the raw stat error.
+  it("under the Windows cage, a PATH entry stat cannot read is skipped, not fatal", async () => {
+    setPlatform("win32");
+    seam.mode = "guarded";
+    const env = { PATH: `${UNREADABLE_DIR};C:\\no-such-dir-caged-spawn-a` };
+    await expect(runCaged({ file: "no-such-program-caged-spawn", args: [] }, { cwd: tmpdir(), env, timeoutMs: 15_000 }))
       .rejects.toThrow('"no-such-program-caged-spawn" was not found on the PATH, so nothing was started.');
     expect(seam.calls).toEqual(["proof", "proxy"]);
   });

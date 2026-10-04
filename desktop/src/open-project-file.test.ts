@@ -114,18 +114,15 @@ describe("open-file IPC", () => {
 	});
 });
 
-describe("document route (window-open / will-navigate)", () => {
-	// The route's extension test sees the encoded pathname, so `%00.pdf`
-	// passes it; the decoded path must not reach ShellExecute.
-	it("refuses a .pdf URL whose NUL would truncate it to run.exe", async () => {
-		expect(handleWindowOpen("http://127.0.0.1:4321/files/run.exe%00.pdf")).toEqual({ action: "deny" });
-		await vi.waitFor(() => expect(warn).toHaveBeenCalledWith(expect.stringContaining("rejected: no such file")));
+describe("window-open never opens a document in its program", () => {
+	// An agent frame can call window.open with no click (GHSA-9mv6). The shell
+	// opens documents through desktop.openFile (the open-file IPC above, which
+	// opens with no prompt); a page asking through window.open gets nothing
+	// launched, whatever the path, encoded NUL included.
+	it.each(["report.pdf", "notes.docx", "run.exe%00.pdf"])("refuses to launch %s", async (name) => {
+		expect(handleWindowOpen(`http://127.0.0.1:4321/${name}`)).toEqual({ action: "deny" });
+		await new Promise((r) => setTimeout(r, 20));
 		expect(mocks.openPath).not.toHaveBeenCalled();
-	});
-
-	it("opens a linked document with no prompt", async () => {
-		expect(handleWindowOpen("http://127.0.0.1:4321/files/report.pdf")).toEqual({ action: "deny" });
-		await vi.waitFor(() => expect(mocks.openPath).toHaveBeenCalledWith(inWorkspace("report.pdf")));
 		expect(mocks.showMessageBox).not.toHaveBeenCalled();
 	});
 });

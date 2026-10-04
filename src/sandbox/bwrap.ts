@@ -157,7 +157,7 @@ export function generateBwrapArgs(home: string = homedir(), scope: SandboxScope 
   // Before the shadows: one under a shadowed dir (~/.config in the strict
   // scope) is then hidden with the rest of it, and its writes land in the
   // throwaway tmpfs.
-  const persistence = cagePersistenceLocations();
+  const persistence = cagePersistenceLocations(realHome);
   for (const rel of [...persistence.files, ...persistence.dirs]) {
     const p = canonical(join(realHome, rel));
     if (existsSync(p)) args.push("--ro-bind", p, p);

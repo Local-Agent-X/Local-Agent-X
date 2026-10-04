@@ -46,8 +46,8 @@ export async function computerPayload(args: Record<string, unknown>, clipboardTe
 }
 
 /** The clipboard's text, read the way clipboard_read reads it. Throws
- *  UnreadableClipboardError where it cannot be read (clipboard_read shells out
- *  to PowerShell, which a Mac does not have). */
+ *  UnreadableClipboardError where it cannot be read (no clipboard program on
+ *  this machine, or the read failed): a paste of unknown text is not empty. */
 export async function readClipboardText(): Promise<string> {
   const read = clipboardTools.find((t) => t.name === "clipboard_read");
   const result = await read?.execute({});

@@ -1,22 +1,44 @@
 import { execFile } from "node:child_process";
 import type { ToolDefinition, ToolResult } from "../types.js";
 
-function run(args: string[], stdin?: string): Promise<string> {
+type ClipboardCommand = { file: string; args: string[] };
+
+/** The platform's own clipboard programs, in the order tried. Linux has no
+ *  single one: Wayland's wl-clipboard, then the two common X11 tools. */
+export function clipboardCommands(direction: "read" | "write", platform: NodeJS.Platform = process.platform): ClipboardCommand[] {
+  if (platform === "win32") {
+    return [{ file: "powershell", args: ["-NoProfile", "-Command", direction === "read" ? "Get-Clipboard" : "$input | Set-Clipboard"] }];
+  }
+  if (platform === "darwin") return [{ file: direction === "read" ? "pbpaste" : "pbcopy", args: [] }];
+  return direction === "read"
+    ? [{ file: "wl-paste", args: ["--no-newline"] }, { file: "xclip", args: ["-selection", "clipboard", "-o"] }, { file: "xsel", args: ["--clipboard", "--output"] }]
+    : [{ file: "wl-copy", args: [] }, { file: "xclip", args: ["-selection", "clipboard"] }, { file: "xsel", args: ["--clipboard", "--input"] }];
+}
+
+function runOne(cmd: ClipboardCommand, stdin?: string): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = execFile(
-      "powershell",
-      ["-NoProfile", "-Command", ...args],
-      { timeout: 5000 },
-      (err, stdout, stderr) => {
-        if (err) return reject(new Error(stderr || err.message));
-        resolve(stdout.trimEnd());
-      },
-    );
+    const child = execFile(cmd.file, cmd.args, { timeout: 5000 }, (err, stdout, stderr) => {
+      if (err) return reject(Object.assign(new Error(stderr || err.message), { code: (err as NodeJS.ErrnoException).code }));
+      resolve(stdout.trimEnd());
+    });
     if (stdin !== undefined) {
       child.stdin?.write(stdin);
       child.stdin?.end();
     }
   });
+}
+
+/** Runs the first of the platform's clipboard programs that is installed. */
+async function run(direction: "read" | "write", stdin?: string): Promise<string> {
+  const commands = clipboardCommands(direction);
+  for (const cmd of commands) {
+    try {
+      return await runOne(cmd, stdin);
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+    }
+  }
+  throw new Error(`no clipboard program found (tried ${commands.map((c) => c.file).join(", ")})`);
 }
 
 function ok(content: string, meta?: Record<string, unknown>): ToolResult {
@@ -34,7 +56,7 @@ const clipboardRead: ToolDefinition = {
   async execute(_args, signal) {
     try {
       signal?.throwIfAborted();
-      const text = await run(["Get-Clipboard"]);
+      const text = await run("read");
       if (!text) return ok("(clipboard is empty)");
       return ok(text, { length: text.length });
     } catch (e: unknown) {
@@ -58,7 +80,7 @@ const clipboardWrite: ToolDefinition = {
       signal?.throwIfAborted();
       const text = String(args.text ?? "");
       if (!text) return fail("No text provided.");
-      await run(["$input | Set-Clipboard"], text);
+      await run("write", text);
       return ok(`Copied ${text.length} chars to clipboard.`);
     } catch (e: unknown) {
       return fail(`Clipboard write failed: ${(e as Error).message}`);
@@ -73,7 +95,7 @@ const clipboardWrite: ToolDefinition = {
  *
  * Security model:
  *   - Tool reads the value from the secrets vault server-side (DPAPI-decrypted)
- *   - Pipes the value via stdin to PowerShell `Set-Clipboard`
+ *   - Pipes the value via stdin to the platform clipboard program
  *   - Returns ONLY a length confirmation — the value never appears in tool
  *     output, so it never enters the conversation history sent to the model
  *     provider (Anthropic / OpenAI / etc.)
@@ -119,7 +141,7 @@ const clipboardWriteFromSecret: ToolDefinition = {
         registerRedactedSecretValue(value);
       } catch { /* redactor optional */ }
 
-      await run(["$input | Set-Clipboard"], value);
+      await run("write", value);
       // Deliberately do NOT include the value or any prefix in the response.
       // Length is a useful sanity check ("yes, something was copied") without
       // exposing the actual content.

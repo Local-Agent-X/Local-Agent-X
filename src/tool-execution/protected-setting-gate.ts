@@ -31,7 +31,6 @@
 import type { ServerEvent } from "../types.js";
 import { USER_HINTS } from "../types.js";
 import { currentSettingValue, isUserOwnedSetting, strictlyTightens } from "../settings-change-direction.js";
-import { SPENDING_CAP_SETTINGS } from "../settings-schema.js";
 
 /** Minimal shapes borrowed from pre-dispatch so this module stays leaf-level. */
 interface GateCall {
@@ -60,6 +59,15 @@ interface GateApprovalManager {
 
 /** Raised on refusal. The caller re-throws as its own ToolBlocked so this
  *  module does not depend on the pre-dispatch error class (cycle-free). */
+/** An interactive widening the caller's own approval phase must put to the
+ *  user; `reason` is the card's question. */
+export class ProtectedSettingNeedsApproval extends Error {
+  constructor(readonly reason: string) {
+    super(reason);
+    this.name = "ProtectedSettingNeedsApproval";
+  }
+}
+
 export class ProtectedSettingDenied extends Error {
   readonly reason: string;
   readonly recovery?: string;
@@ -156,14 +164,9 @@ export async function enforceProtectedSettingGate(
     );
   }
 
-  // Interactive, but no approval channel wired (headless bridge, MCP host).
-  // Without a way to ask, the answer is no.
-  if (!ctx.approval) {
-    throw new ProtectedSettingDenied(
-      `"${field}" is a user-owned setting and this session has no way to ask for approval.`,
-      `Tell the user to change it themselves in ${SPENDING_CAP_SETTINGS.has(field) ? "Settings → Usage → Spending limits" : "Settings"}.`,
-    );
-  }
+  // Interactive, asked from the tool pipeline: its approval phase shows the
+  // card (every time, under every profile) and refuses when it cannot ask.
+  if (!ctx.approval) throw new ProtectedSettingNeedsApproval(describeChange(field, value, readCurrent(field)));
 
   // alwaysAsk: a remembered "allow" grant or a permissive autonomy profile must
   // NOT auto-approve handing over a security control or the user's money.

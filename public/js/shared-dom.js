@@ -4,8 +4,12 @@ document.addEventListener('click', (e) => {
   if (!link) return;
   e.preventDefault();
   const href = link.getAttribute('href');
-  if (!href) return;
+  if (href) openFileLink(href);
+});
 
+// Opens a /files/ link the user clicked: the one way the shell opens a
+// workspace file (chat links, the artifacts list).
+function openFileLink(href) {
   // Text/doc formats the server serves inline (md/txt/json/pdf/images/…) open
   // in-app via the /files/ URL. Only true binaries (Office formats) go to the
   // desktop opener, which hands them to their native app. Without this split,
@@ -27,7 +31,7 @@ document.addEventListener('click', (e) => {
     // holds the operator token and, in the desktop app, window.desktop.
     window.open(agentFilesHref(href), '_blank', 'noopener,noreferrer');
   }
-});
+}
 
 // ── Local-service links → in-app browser ──
 // Chat links to loopback URLs on a port other than LAX's own (a ComfyUI the

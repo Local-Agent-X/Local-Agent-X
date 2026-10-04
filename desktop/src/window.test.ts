@@ -3,7 +3,6 @@
 // only ever show the app shell; a navigation that would put an agent page, a
 // local file or an external site under that bridge is cancelled and routed the
 // way window.open routes it.
-import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {
@@ -114,13 +113,30 @@ describe("the main window", () => {
 		expect(created[1].loadURL).toHaveBeenCalledWith(page);
 	});
 
+	// The artifacts panel opens served media with ?token=; the system browser
+	// would keep the operator token in its history.
+	it.each(["images/chart.png", "videos/clip.mp4", "uploads/photo.jpg"])("opens served media (%s) in a window without the bridge, never the system browser", (path) => {
+		const page = `${ORIGIN}/${path}?token=tok`;
+		navigateMainWindow(page);
+		expect(created).toHaveLength(2);
+		expect(created[1].options.webPreferences).toEqual(BRIDGELESS);
+		expect(created[1].loadURL).toHaveBeenCalledWith(page);
+		expect(mocks.openExternal).not.toHaveBeenCalled();
+	});
+
 	it("hands an external site to the system browser", () => {
 		navigateMainWindow("https://evil.example/");
 		expect(mocks.openExternal).toHaveBeenCalledWith("https://evil.example/");
 	});
 
-	it("hands a linked document to its native app", async () => {
+	// A page can navigate or window.open with no click, so a document it names
+	// renders in the bridgeless window; only the shell's desktop.openFile hands
+	// a file to its native app (GHSA-9mv6).
+	it("opens a linked document in a window without the bridge, never in its native app", async () => {
 		expect(navigateMainWindow(`${ORIGIN}/files/report.pdf`)).toHaveBeenCalled();
-		await vi.waitFor(() => expect(mocks.openProjectFile).toHaveBeenCalledWith(join("workspace", "report.pdf")));
+		expect(created).toHaveLength(2);
+		expect(created[1].options.webPreferences).toEqual(BRIDGELESS);
+		await new Promise((r) => setTimeout(r, 20));
+		expect(mocks.openProjectFile).not.toHaveBeenCalled();
 	});
 });

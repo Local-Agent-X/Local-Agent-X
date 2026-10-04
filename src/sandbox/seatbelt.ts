@@ -165,7 +165,7 @@ export function generateSeatbeltProfile(home: string = homedir(), scope: Sandbox
   const sensitiveSubpaths = denyDirs.map((d) => canonical(join(realHome, d)));
   const sensitiveFiles = HOME_RELATIVE_DENY_FILES.map((f) => canonical(join(realHome, f)));
 
-  const persistence = cagePersistenceLocations();
+  const persistence = cagePersistenceLocations(realHome);
   const persistenceFiles = persistence.files.flatMap((f) => bothNames(join(realHome, f)));
   const persistenceSubpaths = [
     ...persistence.dirs.flatMap((d) => bothNames(join(realHome, d))),

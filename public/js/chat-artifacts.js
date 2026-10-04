@@ -129,10 +129,10 @@ function openArtifact(filter, idx) {
     window.open(a.ref, '_blank', 'noopener');
     return;
   }
-  // Workspace files are agent-written and served from the agent origin: the
-  // link carries the files-link capability, never the operator token.
+  // Workspace files: the same opener as a chat link (shared-dom.js), so an
+  // Office file goes to its program and anything viewable renders in a window.
   if (/^\/files\//.test(a.ref)) {
-    window.open(agentFilesHref(a.ref), '_blank', 'noopener');
+    openFileLink(a.ref);
     return;
   }
   // Served media (/images|/videos|/uploads) — static-assets auth is

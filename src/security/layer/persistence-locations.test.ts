@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { PERSISTENCE_LOCATIONS, persistenceLocationJudge, persistenceRoots } from "./persistence-locations.js";
+import { PERSISTENCE_LOCATIONS, gitConfigIncludes, persistenceLocationJudge, persistenceRoots } from "./persistence-locations.js";
 import { evaluateFileAccess } from "./file-access.js";
 import { controlFileGate } from "../../tool-execution/control-file-gate.js";
 import { requireApprovalPhase } from "../../tool-execution/require-approval.js";
@@ -219,5 +219,47 @@ describe("the shell cages deny writes to the same locations", () => {
     const args = generateBwrapArgs(home, "guarded", undefined, null);
     expect(args.join(" ")).toContain(`--ro-bind ${join(home, ".bashrc")} ${join(home, ".bashrc")}`);
     expect(args.join(" ")).not.toContain(".bash_profile");
+  });
+});
+
+// git runs a file the config includes as surely as ~/.gitconfig itself, and
+// such a file has no fixed name (GHSA-9mv6): it is read out of the config.
+describe("files the git config includes", () => {
+  function homeWithIncludes(): string {
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "lax-persist-inc-")));
+    cleanup.push(() => rmSync(home, { recursive: true, force: true }));
+    writeFileSync(join(home, ".gitconfig"), [
+      "[user]",
+      "  name = Pat",
+      "[include]",
+      "  path = ~/.gitconfig.local",
+      "[includeIf \"gitdir:~/work/\"]",
+      "  path = .gitconfig-work ; a comment",
+      "[http]",
+      "  path = ~/not-an-include",
+    ].join("\n"));
+    writeFileSync(join(home, ".gitconfig.local"), "[include]\n\tpath = \"~/nested.inc\"\n");
+    writeFileSync(join(home, ".gitconfig-work"), "");
+    writeFileSync(join(home, "nested.inc"), "");
+    return home;
+  }
+
+  it("are found: ~/ paths, paths relative to the including file, and nested includes; not another section's path", () => {
+    const home = homeWithIncludes();
+    expect(gitConfigIncludes(home).sort()).toEqual([join(home, ".gitconfig-work"), join(home, ".gitconfig.local"), join(home, "nested.inc")].sort());
+  });
+
+  it("are denied in the shell cages, where they exist", () => {
+    const home = homeWithIncludes();
+    const args = generateBwrapArgs(home, "guarded", undefined, null).join(" ");
+    for (const rel of [".gitconfig.local", ".gitconfig-work", "nested.inc"]) expect(args, rel).toContain(`--ro-bind ${join(home, rel)} ${join(home, rel)}`);
+    expect(args).not.toContain("not-an-include");
+    expect(generateSeatbeltProfile(home, "guarded", [], null)).toContain(`(literal "${join(home, ".gitconfig.local").replace(/\\/g, "\\\\")}")`);
+  });
+
+  it("are put to the user when a file tool writes one", () => {
+    writeFileSync(join(HOME, ".gitconfig"), "[include]\n  path = ~/.gitconfig.local\n");
+    cleanup.push(() => unlinkSync(join(HOME, ".gitconfig")));
+    expect(reasonFor(join(HOME, ".gitconfig.local"))).toMatch(/can run commands every time git runs/);
   });
 });

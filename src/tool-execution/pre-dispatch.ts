@@ -21,7 +21,7 @@ import {
 } from "../approval-manager.js";
 import type { CapabilityClass } from "../tool-registry.js";
 import { shellCommandWritesFiles } from "../security/layer/index.js";
-import { enforceProtectedSettingGate, ProtectedSettingDenied } from "./protected-setting-gate.js";
+import { enforceProtectedSettingGate, ProtectedSettingDenied, ProtectedSettingNeedsApproval } from "./protected-setting-gate.js";
 import { supervisedEvaluateBlock } from "./supervised-browser-gate.js";
 import { computerRedirectBlock, killSwitchBlock, screenCaptureRedirectBlock } from "./kill-switch-gates.js";
 import type { BlockAction, ServerEvent } from "../types.js";
@@ -309,6 +309,9 @@ export async function assertToolCallAllowed(
     const outcome = await enforceProtectedSettingGate(call, ctx, d.getApprovalManager());
     if (outcome === "approved") return;
   } catch (err) {
+    if (err instanceof ProtectedSettingNeedsApproval) {
+      throw new ToolBlocked({ stage: "approval", disposition: "approval-required", reason: err.reason, userHint: USER_HINTS.policy });
+    }
     if (err instanceof ProtectedSettingDenied) {
       throw new ToolBlocked({
         stage: "approval",

@@ -5,6 +5,8 @@
 // stranger". The user is asked once (the approval card; an unattended run is
 // refused, so a silent run can never approve its own leak).
 //
+// A personal document attached to a send counts too, read or not.
+//
 // A destination counts as chosen when it is the user's own address, on the
 // trusted-destinations list (~/.lax/egress-allowlist.json), or, for content
 // from one email, someone already on that email. In the user's own chat it
@@ -32,6 +34,8 @@ import {
   type Destination, type PrivateGateDeps,
 } from "./private-content-destinations.js";
 import { UnreadableClipboardError } from "./private-content-computer.js";
+import { egressPayload } from "./egress-gates.js";
+import { personalDocumentPath } from "./private-read-record.js";
 
 export type { PrivateGateDeps } from "./private-content-destinations.js";
 
@@ -88,6 +92,7 @@ function chosenFor(m: PrivateContentMatch, d: Destination, j: Judge): boolean {
  *  paste reads the clipboard, and the window it lands in is never remembered,
  *  so a yes for it covers that one call. */
 async function sourcesSent(ctx: ToolCallContext, deps: PrivateGateDeps, sessionId: string): Promise<PrivateContentMatch[]> {
+  if (!hasPrivateReads(sessionId)) return [];
   let text: string;
   try {
     text = await payloadOf(ctx, deps);
@@ -98,11 +103,23 @@ async function sourcesSent(ctx: ToolCallContext, deps: PrivateGateDeps, sessionI
   return text.trim() ? findPrivateContent(sessionId, text) : [];
 }
 
+/** The user's own documents this call attaches. An attachment sends the whole
+ *  file, read or not, so each is a source of its own, keyed by its path as a
+ *  read of it is. */
+function documentsAttached(ctx: ToolCallContext, sessionId: string): PrivateContentMatch[] {
+  const out: PrivateContentMatch[] = [];
+  for (const raw of egressPayload(ctx.tc.name, ctx.args).attachmentPaths) {
+    const doc = personalDocumentPath(raw, sessionId);
+    if (doc) out.push({ label: doc, key: doc, correspondents: [] });
+  }
+  return out;
+}
+
 export async function privateContentGate(ctx: ToolCallContext, deps: PrivateGateDeps = {}): Promise<PhaseOutcome> {
   pendingShares.delete(ctx);
   const sessionId = ctx.sessionId || "default";
-  if (!sendsOffBox(ctx.tc.name) || !hasPrivateReads(sessionId)) return CONTINUE;
-  const matches = await sourcesSent(ctx, deps, sessionId);
+  if (!sendsOffBox(ctx.tc.name)) return CONTINUE;
+  const matches = [...await sourcesSent(ctx, deps, sessionId), ...documentsAttached(ctx, sessionId)];
   if (matches.length === 0) return CONTINUE;
   const attended = ctx.callContext === "local";
   const words = attended ? humanWords(ctx) : "";

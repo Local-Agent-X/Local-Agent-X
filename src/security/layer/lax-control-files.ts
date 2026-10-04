@@ -50,6 +50,7 @@
 import { realpathSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { isAppAtRestSecretBasename } from "../secrets/known-secrets.js";
+import { getLaxDir } from "../../lax-data-dir.js";
 import { LAX_DATA_CATALOG, UNLISTED_LAX_NOTE, laxDataEntry } from "./lax-data-catalog.js";
 
 /**
@@ -112,19 +113,35 @@ export function isAppAtRestSecretUnderLax(p: string): boolean {
   if (segs.length < 2) return false;
   const base = segs[segs.length - 1];
   if (base === undefined || !isAppAtRestSecretBasename(base)) return false;
-  return underLaxDir(segs);
+  return underLaxDir(segs) || belowConfiguredDataDir(p) !== null;
 }
 
 /**
  * `p`'s segments below the data dir, lowercased (Windows and macOS answer to
- * any casing), or null when `p` is not inside one. The data dir is known by
- * its `.lax` name, the outermost one, so a `.lax` folder inside the workspace
- * is the workspace's.
+ * any casing), or null when `p` is not inside one. The data dir is the one
+ * LAX_DATA_DIR configures, whatever its name, or one known by its `.lax`
+ * name, the outermost one, so a `.lax` folder inside the workspace is the
+ * workspace's.
  */
 function belowDataDir(p: string): string[] | null {
+  return belowConfiguredDataDir(p) ?? belowLaxNamedDir(p);
+}
+
+function belowLaxNamedDir(p: string): string[] | null {
   const segs = p.split(/[\\/]/).filter(Boolean).map((s) => s.toLowerCase());
   const at = segs.indexOf(".lax");
   return at >= 0 && at < segs.length - 1 ? segs.slice(at + 1) : null;
+}
+
+/** `p`'s segments below the data dir LAX_DATA_DIR configures, lowercased, or
+ *  null. A container or test deployment may name it anything, and its control
+ *  files are the same switches as in a `.lax` folder. */
+function belowConfiguredDataDir(p: string): string[] | null {
+  const split = (x: string) => resolve(x).split(/[\\/]/).filter(Boolean).map((s) => s.toLowerCase());
+  const dir = split(getLaxDir());
+  const segs = split(p);
+  if (segs.length <= dir.length || dir.some((s, i) => segs[i] !== s)) return null;
+  return segs.slice(dir.length);
 }
 
 /** Each spelling a classifier must judge `p` by: the file a write reaches
@@ -168,7 +185,12 @@ export function laxApprovalGatedFile(p: string): { path: string; controls: strin
   for (const s of spellings(p)) {
     const below = belowDataDir(s);
     const entry = below && laxDataEntry(below);
-    if (below && entry?.kind !== "data") return { path: s, controls: entry?.note ?? UNLISTED_LAX_NOTE };
+    if (!below || entry?.kind === "data") continue;
+    // A configured data dir with another name may hold the workspace too (a
+    // test or container layout), so only the files the catalog names are put
+    // to the user there; an unlisted file is the workspace's.
+    if (!entry && !belowLaxNamedDir(s)) continue;
+    return { path: s, controls: entry?.note ?? UNLISTED_LAX_NOTE };
   }
   return null;
 }

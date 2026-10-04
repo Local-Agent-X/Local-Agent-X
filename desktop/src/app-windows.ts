@@ -9,9 +9,7 @@
 // into its setWindowOpenHandler / will-navigate.
 
 import { BrowserWindow, shell } from "electron";
-import { join } from "path";
 import { ICON_PATH, getLAXConfig } from "./config";
-import { openProjectFile } from "./open-project-file";
 import { bgForTheme, overlayForTheme } from "./theme";
 import { getSetting } from "./settings";
 import { buildAppDragStripJs } from "./window-injections";
@@ -19,8 +17,8 @@ import { lockAppWindowNavigation } from "./app-window-guards";
 import { isExternalBrowserUrl } from "./url-classify";
 import { getMainWindow } from "./window";
 
-const DOC_EXTENSIONS = /\.(docx?|xlsx?|pptx?|pdf|csv)$/i;
 const AGENT_APP_PATH = /^\/(apps|dashboards)\//;
+const SERVED_MEDIA_PATH = /^\/(images|videos|uploads)\//;
 
 function appOrigin(): string {
   return `http://127.0.0.1:${getLAXConfig().port}`;
@@ -50,17 +48,6 @@ function loggableUrl(url: URL): string {
   return copy.href;
 }
 
-// The extension test runs on the still-encoded pathname, so `run.exe%00.pdf`
-// passes it; openProjectFile is what stops the decoded path from reaching
-// ShellExecute, which would truncate it at the NUL and run run.exe.
-function openDocByPath(pathname: string): void {
-  const relativePath = pathname.startsWith("/files/")
-    ? join("workspace", decodeURIComponent(pathname.slice(7)))
-    : decodeURIComponent(pathname.slice(1));
-  openProjectFile(relativePath).then((err) => {
-    if (err) console.warn(`[desktop] Failed to open ${JSON.stringify(relativePath)}: ${err}`);
-  });
-}
 
 export function handleWindowOpen(openUrl: string): Electron.WindowOpenHandlerResponse {
   const target = parseUrl(openUrl);
@@ -87,16 +74,24 @@ export function handleWindowOpen(openUrl: string): Electron.WindowOpenHandlerRes
   // prefix of port 43210, a listener that is not ours.
   if (target?.origin !== appOrigin()) return { action: "deny" };
 
-  if (DOC_EXTENSIONS.test(target.pathname)) {
-    openDocByPath(target.pathname);
-    return { action: "deny" };
-  }
+  // A document is never opened in its native program from here: an agent
+  // frame can call window.open with no click. The shell opens documents
+  // through desktop.openFile, which only its own top frame can reach; a
+  // /files/ document asked for here renders in the files window below.
 
   // /files/ pages are agent-written. Main opens them in its own window rather
   // than allowing Chromium's popup: a popup keeps window.opener, the main
   // window, which the page could navigate through it whatever the popup's own
   // preferences. The UI origin redirects the window to the agent origin.
   if (target.pathname.startsWith("/files/")) {
+    openFilesWindow(openUrl);
+    return { action: "deny" };
+  }
+
+  // Served media (the artifacts panel opens them with ?token=, since a plain
+  // window.open cannot send a header): in-app, so the operator token never
+  // lands in the system browser's history.
+  if (SERVED_MEDIA_PATH.test(target.pathname)) {
     openFilesWindow(openUrl);
     return { action: "deny" };
   }

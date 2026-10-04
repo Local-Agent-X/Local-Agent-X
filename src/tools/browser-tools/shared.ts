@@ -97,7 +97,14 @@ export function computeAuthWallPrefix(snapshot: string): string {
   const end = Math.min(lines.length, passwordIdx + 15);
   const window = lines.slice(start, end).join("\n").toLowerCase();
   const hasEmailOrUsername = /\b(type=email|name=(email|username|user|login)|placeholder="?(email|username|user))\b/i.test(window);
-  const hasLoginCta = /\b(sign in|log ?in|continue|submit|enter)\b/i.test(window);
+  // A password box already filled on a page with no username field is a
+  // secret the page shows (an API token behind dots on a logged-in console),
+  // not a login form, which loads empty; a disabled one takes no input at all.
+  const passwordLine = lines[passwordIdx];
+  if (/\{[^}]*\bdisabled\b[^}]*\}/.test(passwordLine)) return "";
+  if (/\{[^}]*\bfilled\b[^}]*\}/.test(passwordLine) && !hasEmailOrUsername) return "";
+  // "Continue", "Submit" and "Enter" are on every page; only a sign-in names a login.
+  const hasLoginCta = /\b(sign ?in|log ?in)\b/i.test(window);
   if (!hasEmailOrUsername && !hasLoginCta) return "";
 
   // Observability: mark the block moment so a route-around reads as

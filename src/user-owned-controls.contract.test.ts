@@ -44,6 +44,7 @@ import { isLaxControlFile, laxControlFileBasenames } from "./security/layer/lax-
 import {
   enforceProtectedSettingGate,
   ProtectedSettingDenied,
+  ProtectedSettingNeedsApproval,
   userOwnedFieldOf,
 } from "./tool-execution/protected-setting-gate.js";
 
@@ -116,7 +117,9 @@ describe("seam 1 — `setting` tool cannot self-apply a protected control", () =
     ).rejects.toBeInstanceOf(ProtectedSettingDenied);
   });
 
-  it("refuses when interactive but no approval channel exists", async () => {
+  // The tool pipeline passes no approval channel here: its own approval phase
+  // shows the card (protected-setting-pipeline.test.ts drives that end to end).
+  it("hands the question to the caller's approval phase when it has no channel of its own", async () => {
     const a = approver(true);
     await expect(
       enforceProtectedSettingGate(
@@ -125,7 +128,7 @@ describe("seam 1 — `setting` tool cannot self-apply a protected control", () =
         a.manager,
         readCurrent,
       ),
-    ).rejects.toBeInstanceOf(ProtectedSettingDenied);
+    ).rejects.toBeInstanceOf(ProtectedSettingNeedsApproval);
     expect(a.asked()).toBe(0);
   });
 

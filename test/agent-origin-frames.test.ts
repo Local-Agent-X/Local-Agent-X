@@ -25,10 +25,11 @@ function loadSharedMd(answer: AgentState | null) {
 	const lookup = answer ? Promise.resolve({ ok: true, json: () => answer }) : new Promise(() => {});
 	return new Function(
 		"AUTH_TOKEN", "fetch", "location",
-		`${read("js/shared-escape.js")}\n${read("js/shared-md.js")}\nreturn { agentFrameTarget, agentFilesHref, ready: laxAgentReady, agent: () => laxAgent };`,
+		`${read("js/shared-escape.js")}\n${read("js/shared-md.js")}\nreturn { agentFrameTarget, agentFilesHref, linkPath, ready: laxAgentReady, agent: () => laxAgent };`,
 	)(OP_TOKEN, () => lookup, { origin: UI, href: `${UI}/` }) as {
 		agentFrameTarget: (href: string) => FrameTarget;
 		agentFilesHref: (href: string) => string;
+		linkPath: (href: string) => string;
 		ready: Promise<void>;
 		agent: () => AgentState;
 	};
@@ -148,17 +149,37 @@ describe("every /files link the UI opens carries the files-link capability, neve
 		expect(hrefOf(`${location.origin}/api/status`)).toContain(`token=${OP_TOKEN}`);
 	});
 
-	it("the artifacts panel opens a workspace file with the capability", async () => {
+	// The artifacts panel opens workspace files with the chat link's opener
+	// (shared-dom.js openFileLink): a viewable file renders with the
+	// capability, and on the desktop an Office file goes to desktop.openFile,
+	// never window.open, which no longer opens a document natively.
+	async function artifactsPanel(desktop: { isDesktop: boolean; openFile: ReturnType<typeof vi.fn> } | undefined) {
 		const md = loadSharedMd({ origin: AGENT, filesLinkToken: "ft-cap" });
 		await md.ready;
 		const open = vi.fn();
-		const { openArtifact, setCache } = new Function(
-			"AUTH_TOKEN", "agentFilesHref", "window",
-			`${read("js/shared-escape.js")}\n${read("js/chat-artifacts.js")}\nreturn { openArtifact, setCache: (c) => { artifactsCache = c; } };`,
-		)(OP_TOKEN, md.agentFilesHref, { open, addEventListener: () => {} }) as { openArtifact: (f: string, i: number) => void; setCache: (c: unknown) => void };
+		const win = { open, addEventListener: () => {}, desktop };
+		const doc = { addEventListener: () => {}, getElementById: () => null };
+		const panel = new Function(
+			"AUTH_TOKEN", "agentFilesHref", "linkPath", "window", "document",
+			`${read("js/shared-escape.js")}\n${read("js/shared-dom.js")}\n${read("js/chat-artifacts.js")}\nreturn { openArtifact, setCache: (c) => { artifactsCache = c; } };`,
+		)(OP_TOKEN, md.agentFilesHref, md.linkPath, win, doc) as { openArtifact: (f: string, i: number) => void; setCache: (c: unknown) => void };
+		return { ...panel, open };
+	}
+
+	it("the artifacts panel opens a viewable workspace file with the capability", async () => {
+		const { openArtifact, setCache, open } = await artifactsPanel(undefined);
 		setCache([{ type: "file", ref: "/files/out.html" }]);
 		openArtifact("all", 0);
-		expect(open).toHaveBeenCalledWith("/files/out.html?ft=ft-cap", "_blank", "noopener");
+		expect(open).toHaveBeenCalledWith("/files/out.html?ft=ft-cap", "_blank", "noopener,noreferrer");
+	});
+
+	it("the artifacts panel hands an Office file to desktop.openFile, not window.open", async () => {
+		const openFile = vi.fn();
+		const { openArtifact, setCache, open } = await artifactsPanel({ isDesktop: true, openFile });
+		setCache([{ type: "file", ref: "/files/report.docx" }]);
+		openArtifact("all", 0);
+		expect(openFile).toHaveBeenCalledWith("workspace/report.docx");
+		expect(open).not.toHaveBeenCalled();
 	});
 });
 

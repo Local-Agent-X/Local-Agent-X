@@ -43,11 +43,13 @@ function isPermissionGranted(
 }
 
 export function setupSessionPermissions(): void {
-  // Auto-open downloaded document files instead of just saving them.
+  // Auto-open the app's own document downloads instead of just saving them.
+  // One an agent page starts (served from the agent origin, or a blob/data
+  // URL it made) is saved like any download, never opened by itself.
   session.defaultSession.on("will-download", (_event: unknown, item: DownloadItem) => {
     const filename = item.getFilename();
     const DOC_EXTENSIONS = /\.(docx?|xlsx?|pptx?|pdf|csv)$/i;
-    if (!DOC_EXTENSIONS.test(filename)) return;
+    if (!DOC_EXTENSIONS.test(filename) || !isAppOrigin(item.getURL())) return;
     const savePath = join(require("os").tmpdir(), filename);
     item.setSavePath(savePath);
     item.once("done", (_e: unknown, state: string) => {

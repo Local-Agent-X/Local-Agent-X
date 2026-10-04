@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import { MANIFEST_PATH } from "./paths.js";
 import type { AppManifest } from "./types.js";
 import { FLIPPABLE_SETTINGS, SPENDING_CAP_SETTINGS } from "../settings-schema.js";
+import { AGENT_DENIED_ROUTES } from "../rbac-agent-denials.js";
 
 /**
  * Security-settings line for the App Map — DERIVED from the settings
@@ -19,6 +20,17 @@ export function securitySettingsLine(): string {
     `That IS how you turn a capability back on at the user's request. Just don't widen one unless the user explicitly asked, ` +
     `and never silently re-enable one to get around a block.`
   );
+}
+
+/**
+ * The controls only the user changes, DERIVED from the routes the agent is
+ * refused. Without it the agent told a user asking to turn the shell sandbox
+ * off that LAX "doesn't have a single sandbox mode switch" (2026-10-03).
+ */
+export function userOnlyControlsLine(): string {
+  const places = [...new Set(AGENT_DENIED_ROUTES.map((r) => r.place))];
+  const named = places.map((p) => `${p.split(" → ").pop()} (${p})`).join("; ");
+  return `- **The user's alone** (no tool or route of yours changes these; when asked, say it is theirs to change and where, and do not look for another way): ${named}.`;
 }
 
 const require = createRequire(import.meta.url);
@@ -85,10 +97,9 @@ export function getManifestSummary(): string {
     "ONLY use `browser` for sites outside {{APP_URL}}.",
     "",
     "### Common Operations",
-    "- **Change theme**: `http_request` → `POST {{APP_URL}}/api/settings` with `{\"theme\": \"light\"}` (or `\"dark\"`, `\"system\"`)",
-    "- **Change a non-security setting** (theme, model, temperature, etc.): `http_request` → `POST {{APP_URL}}/api/settings` with the setting JSON",
+    "- **Change an app setting** (theme, provider, model, temperature, reasoning effort, …): the `setting` tool with that field. It checks the value, applies it, and updates every open window",
     securitySettingsLine(),
-    "- **Change AI provider/model**: `http_request` → `POST {{APP_URL}}/api/providers/switch` with `{\"provider\": \"...\", \"model\": \"...\"}`",
+    userOnlyControlsLine(),
     "- **Create an organization**: `http_request` → `POST {{APP_URL}}/api/agents/organizations` — uses existing Agents page Org Chart tab",
     "- **Create a project**: use `project_create` tool (name + optional agent_ids); list with `project_list`; add members with `project_add_agent`",
     "- **Spawn agents**: use `agent_spawn` tool (calls API internally)",

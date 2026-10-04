@@ -24,13 +24,20 @@ function personalDocumentRead(toolName: string, args: Record<string, unknown>, s
   for (const spec of specs) {
     if (spec.action !== "read" || spec.json) continue;
     if (spec.forActions && !spec.forActions.includes(action)) continue;
-    const raw = args[spec.arg];
-    if (typeof raw !== "string" || !raw) continue;
-    const path = resolveAgentPath(raw, sessionId);
-    if (pathIsWithin(workspaceRoot(), path)) continue;
-    if (userContentDirs(homedir()).some((dir) => pathIsWithin(dir, path))) return path;
+    const doc = personalDocumentPath(args[spec.arg], sessionId);
+    if (doc) return doc;
   }
   return null;
+}
+
+/** The resolved path when `raw` names a document in the user's own folders
+ *  (outside the agent's workspace), or null. Also how a send's attachments
+ *  are judged: attaching a document sends it whether or not it was read. */
+export function personalDocumentPath(raw: unknown, sessionId: string): string | null {
+  if (typeof raw !== "string" || !raw) return null;
+  const path = resolveAgentPath(raw, sessionId);
+  if (pathIsWithin(workspaceRoot(), path)) return null;
+  return userContentDirs(homedir()).some((dir) => pathIsWithin(dir, path)) ? path : null;
 }
 
 export function recordPrivateReadFromResult(

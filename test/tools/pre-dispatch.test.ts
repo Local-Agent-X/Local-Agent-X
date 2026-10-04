@@ -229,10 +229,14 @@ describe("protected security settings gate", () => {
     approvalModule.getApprovalManager().clearSession("strict-disable");
   });
 
-  it("cannot disable strict local-only mode without an interactive approval channel", async () => {
-    await expect(assertToolCallAllowed(
+  // The tool pipeline passes no approval channel: the change comes back as
+  // approval-required, for its approval phase to put to the user as a card.
+  it("hands disabling strict local-only mode to the caller's approval phase without a channel of its own", async () => {
+    const outcome = assertToolCallAllowed(
       { id: "strict-off-no-ui", name: "setting", args: { field: "localOnlyMode", value: false } },
       { sessionId: "strict-disable-no-ui", callContext: "local" },
-    )).rejects.toThrow(/user-owned setting|explicit user approval/);
+    );
+    await expect(outcome).rejects.toMatchObject({ disposition: "approval-required" });
+    await expect(outcome).rejects.toThrow(/Turn off strict local-only mode/);
   });
 });

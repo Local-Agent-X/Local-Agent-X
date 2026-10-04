@@ -40,6 +40,33 @@ describe("computeAuthWallPrefix — detection heuristic (unchanged)", () => {
     const snap = "[1]<text>hello</text>\n[2]<input type=password>\n[3]<text>world</text>";
     expect(computeAuthWallPrefix(snap)).toBe("");
   });
+
+  // A logged-in Twilio console read as a login wall (2026-10-03): its Auth
+  // Token is a filled password box, and "Continue"/"Enter" sat nearby.
+  it("does not fire on a secret a logged-in page shows behind dots", () => {
+    const snap = [
+      "[1]<heading>Ahoy, Pedro</heading>",
+      "[2]<button>Continue setup</button>",
+      "[3]<textbox>Account SID</textbox> {filled}",
+      "[4]<input type=password>Auth Token</input> {filled}",
+      "[5]<button>Show</button>",
+    ].join("\n");
+    expect(computeAuthWallPrefix(snap)).toBe("");
+  });
+
+  it("does not fire on a disabled password field", () => {
+    const snap = "[1]<heading>API keys</heading>\n[2]<input type=password>Key</input> {disabled}\n[3]<button>Sign in again</button>";
+    expect(computeAuthWallPrefix(snap)).toBe("");
+  });
+
+  it("still fires on a password-only step that says sign in, and on a form the browser pre-filled", () => {
+    expect(computeAuthWallPrefix("[1]<heading>Enter your password</heading>\n[2]<input type=password>\n[3]<button>Sign in</button>")).not.toBe("");
+    expect(computeAuthWallPrefix('[1]<input type=email name=email placeholder="Email"> {filled}\n[2]<input type=password> {filled}\n[3]<button>Log in</button>')).not.toBe("");
+  });
+
+  it("no longer fires on Continue/Submit/Enter alone", () => {
+    expect(computeAuthWallPrefix("[1]<input type=password>\n[2]<button>Continue</button>")).toBe("");
+  });
 });
 
 describe("computeAuthWallPrefix — prefix wording is page-scoped", () => {

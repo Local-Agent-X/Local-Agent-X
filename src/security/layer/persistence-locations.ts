@@ -20,8 +20,9 @@
  * nothing outside the workspace (sandbox/win-cage-grants.ts).
  */
 
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { onDiskSpelling } from "./lax-control-files.js";
 import { userContentDirs } from "./file-access.js";
 import { pathIsWithin } from "./path-within.js";
@@ -67,11 +68,57 @@ export const PERSISTENCE_LOCATIONS: readonly PersistenceLocation[] = [
   { base: "documents", rel: "WindowsPowerShell", kind: "dir", runs: AT_POWERSHELL },
 ];
 
-/** The home-relative locations the macOS and Linux shell cages deny writes to. */
-export function cagePersistenceLocations(): { files: string[]; dirs: string[] } {
+const GIT_CONFIGS = [".gitconfig", ".config/git/config"];
+const MAX_INCLUDE_DEPTH = 5;
+
+/** The `path` of every [include] / [includeIf …] section in one git config. */
+function includePaths(text: string): string[] {
+  const out: string[] = [];
+  let inInclude = false;
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    const section = /^\[([^\]]+)\]/.exec(line);
+    if (section) { inInclude = /^include(if\b|$)/i.test(section[1].trim()); continue; }
+    const m = inInclude ? /^path\s*=\s*(.+)$/i.exec(line) : null;
+    if (m) out.push(m[1].replace(/\s+[#;].*$/, "").replace(/^"(.*)"$/, "$1").trim());
+  }
+  return out;
+}
+
+/**
+ * The files the user's git config pulls in with [include] / [includeIf]
+ * (~/.gitconfig.local and the like): git runs what they say as surely as
+ * ~/.gitconfig, but they have no fixed name, so they are read out of it.
+ * Nested includes are followed a few levels; `~/` is the home folder and a
+ * relative path is relative to the file that includes it, as git reads them.
+ */
+export function gitConfigIncludes(userHome: string = homedir()): string[] {
+  const found = new Set<string>();
+  const visit = (file: string, depth: number): void => {
+    if (depth > MAX_INCLUDE_DEPTH || !existsSync(file)) return;
+    let text: string;
+    try { text = readFileSync(file, "utf8"); } catch { return; }
+    for (const p of includePaths(text)) {
+      const target = p.startsWith("~/") ? join(userHome, p.slice(2)) : isAbsolute(p) ? p : resolve(dirname(file), p);
+      if (found.has(target)) continue;
+      found.add(target);
+      visit(target, depth + 1);
+    }
+  };
+  for (const rel of GIT_CONFIGS) visit(join(userHome, ...rel.split("/")), 0);
+  return [...found];
+}
+
+/** The home-relative locations the macOS and Linux shell cages deny writes to,
+ *  with the files the git config includes from inside the home folder. */
+export function cagePersistenceLocations(userHome: string = homedir()): { files: string[]; dirs: string[] } {
   const inHome = PERSISTENCE_LOCATIONS.filter((l) => l.base === "home");
+  const included = gitConfigIncludes(userHome)
+    .map((p) => relative(userHome, p))
+    .filter((rel) => rel && !rel.startsWith("..") && !isAbsolute(rel))
+    .map((rel) => rel.split("\\").join("/"));
   return {
-    files: inHome.filter((l) => l.kind === "file").map((l) => l.rel),
+    files: [...inHome.filter((l) => l.kind === "file").map((l) => l.rel), ...included],
     dirs: inHome.filter((l) => l.kind === "dir").map((l) => l.rel),
   };
 }
@@ -118,6 +165,9 @@ export function persistenceLocationJudge(): PersistenceLocationOf {
     const bases = loc.base === "home" ? [roots.home] : loc.base === "documents" ? roots.documents : roots.appData;
     return bases.map((base) => ({ loc, at: comparable(onDiskSpelling(join(base, ...loc.rel.split("/")))) }));
   });
+  for (const file of gitConfigIncludes(roots.home)) {
+    named.push({ loc: { base: "home", rel: file, kind: "file", runs: AT_GIT }, at: comparable(onDiskSpelling(file)) });
+  }
   return (p) => {
     const target = onDiskSpelling(p);
     const key = comparable(target);

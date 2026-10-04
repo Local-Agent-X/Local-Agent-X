@@ -51,6 +51,7 @@ import {
   specProbeGate,
 } from "./decide-outcome-verify-gates.js";
 import { runToolIntentGate } from "./tool-intent-gate.js";
+import { runFailedCallGate } from "./failed-call-gate.js";
 import { earnedDoneNudge } from "../middlewares/open-steps.js";
 
 /** The gate contract lives in its own leaf module (no gate, no table) so the
@@ -120,6 +121,22 @@ export const unresolvedToolIntentGate: CompletionGate = {
  * turn out from under the user. Bounded to one fire per op, so the second pass
  * falls through to the loud-partial warning below.
  */
+/**
+ * Failed-call gate. A request ending on a tool call that failed operationally
+ * ("error"/"timeout", never a policy block) reopens once with a note to try
+ * another way or hand the user exactly what needs them. Contract lives in
+ * failed-call-gate.ts.
+ */
+const failedCallGate: CompletionGate = {
+  name: "failed-call",
+  evaluate(ctx) {
+    const gate = runFailedCallGate(ctx);
+    if (!gate.shouldRetry) return CONTINUE;
+    if (!appendNudgeAsUserMessage(ctx.op.id, ctx.turnIdx + 1, gate.nudge, gateSource("failed-call", "nudge"))) return CONTINUE;
+    return { reopen: true };
+  },
+};
+
 const earnedDoneGate: CompletionGate = {
   name: "earned-done",
   evaluate({ op, turnIdx }) {
@@ -254,6 +271,9 @@ export const COMPLETION_GATES: readonly CompletionGate[] = [
   // all — the call never ran. Sits BEFORE earned-done so the retry goes to
   // reissuing the call, not to an open-steps push. Contract in tool-intent-gate.ts.
   unresolvedToolIntentGate,
+  // A request ending on a failed call gets one more attempt before the
+  // open-steps push, which asks a different question. Contract in failed-call-gate.ts.
+  failedCallGate,
   earnedDoneGate,
   lateInjectGate,
   frameworkServeGate,

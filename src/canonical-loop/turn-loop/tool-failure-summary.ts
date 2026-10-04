@@ -356,7 +356,7 @@ export function formatFailureNudgeForModel(summary: ToolFailureSummary, opId?: s
   const lines = [
     allDeclined
       ? `[automatic check] ${n} tool ${noun} in your last turn ${n === 1 ? "was" : "were"} declined by the user. Do NOT claim the task is done, and do NOT retry the declined ${noun} as-is — adjust your approach or ask the user what they'd prefer.`
-      : `[automatic check] ${n} tool ${noun} in your last turn returned a non-ok status. Do NOT claim the task is done until you've either retried successfully (use the recovery hints already in the tool_result) or honestly reported what's still broken to the user.`,
+      : `[automatic check] ${n} tool ${noun} in your last turn returned a non-ok status. Do NOT claim the task is done. Follow the recovery hint already in each tool_result: where another way is open, try it before handing anything back; where it needs the user, tell them exactly what and keep going with the rest. Report something as broken only after that.`,
     "",
     "Failed calls:",
   ];

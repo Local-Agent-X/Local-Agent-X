@@ -82,6 +82,7 @@ import type { Op } from "../../ops/types.js";
 import { _resetMiddlewareStates } from "../middlewares/state.js";
 import { MISSING_TOOL_RESULT_TEXT } from "./orphan-tool-results.js";
 import { appendNudgeAsUserMessage } from "./nudges.js";
+import { failedCallNudge } from "./failed-call-gate.js";
 import { REASONING_ONLY_NUDGE } from "./empty-turn-termination.js";
 import { createLogger } from "../../logger.js";
 
@@ -281,6 +282,50 @@ describe("decideTurnOutcome — P-1 mutation-wrapup measurement (behavior-neutra
     // A gate re-opened the turn, so nothing was lost — promisedFollowup is
     // irrelevant here and recorded as false regardless of narration.
     expect(await recordMock()).toHaveBeenCalledWith("reopened-by-gate", false);
+  });
+});
+
+// The failed-call gate through the real decision (2026-10-03): a request whose
+// last tool call failed, ending on a turn that hands the work to the user,
+// keeps going once; one whose last call was refused by policy ends as asked.
+describe("decideTurnOutcome — a request ending on a failed call keeps going", () => {
+  beforeEach(() => vi.clearAllMocks());
+  const handoff = (id: string) => input({
+    op: { ...op, id },
+    turnIdx: 1,
+    toolCalls: [],
+    toolMessages: [],
+    toolSummary: [],
+    finalized: [{ messageId: "am2", role: "assistant", content: { text: "Send me a screenshot of the profile and I'll check it." } }],
+    assistantText: "Send me a screenshot of the profile and I'll check it.",
+    adapterTerminalReason: "done",
+    modelSignaledDone: true,
+  });
+  const priorTurn = (resultStatus: string) =>
+    vi.mocked(readOpTurns).mockReturnValue(
+      [{ turnIdx: 0, toolCallSummary: [{ tool: "browser", argsHash: "h", resultStatus, durationMs: 5 }], observedTools: [] }] as unknown as ReturnType<typeof readOpTurns>,
+    );
+
+  it("reopens the turn after an operational failure, with the note naming the tool", async () => {
+    priorTurn("error");
+    try {
+      const r = await decideTurnOutcome(handoff("op-failed-call-error"));
+      expect(r.terminalReason).toBeNull();
+      const { appendNudgeAsUserMessage } = await import("./nudges.js");
+      expect(appendNudgeAsUserMessage).toHaveBeenCalledWith("op-failed-call-error", 2, failedCallNudge("browser"), expect.objectContaining({ name: "failed-call" }));
+    } finally {
+      vi.mocked(readOpTurns).mockReturnValue([]);
+    }
+  });
+
+  it("ends the turn when the last call was refused by policy", async () => {
+    priorTurn("blocked");
+    try {
+      const r = await decideTurnOutcome(handoff("op-failed-call-blocked"));
+      expect(r.terminalReason).toBe("done");
+    } finally {
+      vi.mocked(readOpTurns).mockReturnValue([]);
+    }
   });
 });
 
@@ -905,13 +950,19 @@ describe("decideTurnOutcome — op-outcome telemetry", () => {
   });
 
   it("folds a prior turn's observed tools into op categorization", async () => {
-    vi.mocked(readOpTurns).mockReturnValueOnce(
+    // Every read in the call sees the prior turn (the failed-call gate reads
+    // the op's turns too), then the file's default comes back.
+    vi.mocked(readOpTurns).mockReturnValue(
       [{ toolCallSummary: [], observedTools: ["mcp__lax__web_search"] }] as unknown as ReturnType<typeof readOpTurns>,
     );
-    const { classifyOpCategory } = await import("../../tool-tracker.js");
-    await decideTurnOutcome(input({ toolCalls: [], toolMessages: [], toolSummary: [] }));
-    const arg = (classifyOpCategory as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as Set<string>;
-    expect(arg.has("mcp__lax__web_search")).toBe(true);
+    try {
+      const { classifyOpCategory } = await import("../../tool-tracker.js");
+      await decideTurnOutcome(input({ toolCalls: [], toolMessages: [], toolSummary: [] }));
+      const arg = (classifyOpCategory as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as Set<string>;
+      expect(arg.has("mcp__lax__web_search")).toBe(true);
+    } finally {
+      vi.mocked(readOpTurns).mockReturnValue([]);
+    }
   });
 });
 
@@ -953,6 +1004,8 @@ describe("completion-gate table — single ordering source", () => {
       // A "done" whose final text still holds tool-call syntax — the call never
       // ran; sits before earned-done so the retry reissues the call.
       "unresolved-tool-intent",
+      // A request ending on a failed call gets one more attempt (failed-call-gate.ts).
+      "failed-call",
       "earned-done",
       "late-inject",
       // Registers a framework app_build's dev server on the real terminal —
@@ -973,7 +1026,7 @@ describe("completion-gate table — single ordering source", () => {
 describe("completion-gate context — what decideTurnOutcome hands each gate", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("passes {op, turnIdx, toolCalls, assistantText, signal} — the assistant text is the input's, verbatim", async () => {
+  it("passes {op, turnIdx, toolCalls, assistantText, toolSummary, signal} — the assistant text is the input's, verbatim", async () => {
     const { COMPLETION_GATES } = await import("./decide-outcome-gates.js");
     const gate = COMPLETION_GATES.find((g) => g.name === "render-verify")!;
     const spy = vi.spyOn(gate, "evaluate").mockResolvedValue({ reopen: false });
@@ -982,7 +1035,7 @@ describe("completion-gate context — what decideTurnOutcome hands each gate", (
       const r = await decideTurnOutcome(input({ turnIdx: 3, modelSignaledDone: true, assistantText: text }));
       expect(r.terminalReason).toBe("done");
       expect(spy).toHaveBeenCalledTimes(1);
-      expect(spy).toHaveBeenCalledWith({ op, turnIdx: 3, toolCalls: [bashCall], assistantText: text, signal: expect.any(AbortSignal) });
+      expect(spy).toHaveBeenCalledWith({ op, turnIdx: 3, toolCalls: [bashCall], assistantText: text, toolSummary: expect.any(Array), signal: expect.any(AbortSignal) });
     } finally {
       spy.mockRestore();
     }

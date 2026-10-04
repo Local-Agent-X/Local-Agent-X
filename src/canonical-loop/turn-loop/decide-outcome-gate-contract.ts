@@ -21,7 +21,7 @@
 import type { Op } from "../../ops/types.js";
 import type { ToolCall } from "../contract-types.js";
 import type { GuardFire } from "./guard-fire.js";
-import type { GuardOutcome } from "../types.js";
+import type { GuardOutcome, ToolCallSummary } from "../types.js";
 
 /** Everything a completion gate reads about the turn under decision. */
 export interface CompletionGateContext {
@@ -34,6 +34,8 @@ export interface CompletionGateContext {
   /** Aborts when the op is cancelled (runCompletionGates sets it). A gate
    *  that spawns or calls a model passes it on, so a Stop never waits on it. */
   signal?: AbortSignal;
+  /** This turn's tool results, in call order (the failed-call gate reads the last). */
+  toolSummary?: ToolCallSummary[];
 }
 
 /** A gate's terminal message paired with the fire appending it earns. */

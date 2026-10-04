@@ -312,7 +312,7 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
   // so one more turn could only guess. Ordering, short-circuit and the
   // question exemption are documented in the runner.
   const endsOnQuestion = askedQuestions.length > 0 && terminalReason === "done";
-  const gates = await runCompletionGates({ op, turnIdx, toolCalls, assistantText }, terminalReason, endsOnQuestion, earnedFires);
+  const gates = await runCompletionGates({ op, turnIdx, toolCalls, assistantText, toolSummary }, terminalReason, endsOnQuestion, earnedFires);
   terminalReason = gates.terminalReason;
   const { buildVerifyConfirmation, honestTerminal } = gates;
 

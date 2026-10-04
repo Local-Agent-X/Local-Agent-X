@@ -238,8 +238,8 @@ describe("formatFailureNudgeForModel", () => {
       hadSuccessfulMutation: false,
     });
     expect(msg).toMatch(/declined by the user/);
-    expect(msg).not.toMatch(/retried successfully/);
-    expect(msg).not.toMatch(/recovery hints/);
+    expect(msg).not.toMatch(/try it before handing anything back/);
+    expect(msg).not.toMatch(/recovery hint/);
     expect(msg).toMatch(/do NOT retry the declined calls as-is/);
   });
 
@@ -251,7 +251,7 @@ describe("formatFailureNudgeForModel", () => {
       ],
       hadSuccessfulMutation: false,
     });
-    expect(msg).toMatch(/retried successfully/);
+    expect(msg).toMatch(/try it before handing anything back/);
     expect(msg).toMatch(/declined by the user/);
   });
 

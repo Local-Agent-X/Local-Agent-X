@@ -397,10 +397,12 @@ describe("reopen (c) — the guard's two SPEAKING branches bank no extra row", (
     const seen: number[] = [];
     await drive(op, () => failingCallAdapter(seen));
 
-    // NON-VACUOUS: the failed call really re-opened the turn.
-    expect(seen).toEqual([0, 1]);
+    // NON-VACUOUS: the failed call really re-opened the turn. Turn 1 then
+    // ends on that failure with no new attempt, so the failed-call gate
+    // re-opens once more (turn 2); each re-open files its own `nudge` row.
+    expect(seen).toEqual([0, 1, 2]);
     const fires = firesFor(op.id);
-    expect(fires.map(f => `${f.name}/${f.outcome}`)).toEqual(["tool-failure-summary/nudge"]);
+    expect(fires.map(f => `${f.name}/${f.outcome}`)).toEqual(["tool-failure-summary/nudge", "failed-call/nudge"]);
     expect(fires.filter(f => f.outcome === "reopen")).toEqual([]);
   }, 30_000);
 });

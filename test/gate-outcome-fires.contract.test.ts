@@ -567,7 +567,7 @@ describe("E2 — the merged whole", () => {
   it("the table the loop walks is assembled from BOTH gate modules, by identity", () => {
     expect(COMPLETION_GATE_ORDER).toEqual([
       "render-verify", "build-verify", "spec-probe", "spec-audit", "regression-audit", "design-verify",
-      "unresolved-tool-intent", "earned-done", "late-inject", "framework-serve",
+      "unresolved-tool-intent", "failed-call", "earned-done", "late-inject", "framework-serve",
     ]);
     const byName = new Map(COMPLETION_GATES.map(g => [g.name, g]));
     expect(byName.get("render-verify")).toBe(renderVerifyGate);

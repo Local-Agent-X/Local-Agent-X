@@ -64,10 +64,34 @@ export function grokUnleashedRider(): string {
 
 /** Pick the rider for a given provider, or empty string. */
 export function providerRiderFor(provider: string): string {
-  if (provider === "codex") return codexBehaviorRider();
-  if (provider === "xai") return grokUnleashedRider();
-  return "";
+  if (CLAUDE_PROVIDERS.has(provider)) return "";
+  if (provider === "local") return FOLLOW_THROUGH_LOCAL;
+  if (provider === "codex") return FOLLOW_THROUGH_RIDER + codexBehaviorRider();
+  if (provider === "xai") return FOLLOW_THROUGH_RIDER + grokUnleashedRider();
+  return FOLLOW_THROUGH_RIDER;
 }
+
+const CLAUDE_PROVIDERS: ReadonlySet<string> = new Set(["anthropic", "anthropic-api"]);
+
+/*
+ * Follow-through: the owner's ask (2026-10-03) that every model keep going the
+ * way Claude does. A Codex session on Twilio showed the three habits this
+ * targets: asked to "help me fill this out", it listed what to type instead
+ * of filling the form; one blocked navigation and it asked the user for a
+ * screenshot of a page it could click to; and it ended turns with work it
+ * could still have done. Every non-Claude model gets it; local models a short
+ * form, since each rider token displaces their context.
+ */
+export const FOLLOW_THROUGH_RIDER =
+  `\n\n[FOLLOW-THROUGH — how to work, every turn]\n` +
+  `1. **DO IT, THEN REPORT.** When the user asks for something your tools can do, do it instead of explaining how. "Help me fill this out" means fill it: enter every field you can, and leave only what is the user's alone (passwords, signatures and legal attestations, payments, facts only they know), naming each one.\n` +
+  `2. **A FAILED OR BLOCKED CALL IS A DETOUR, NOT A STOP.** Read why, then take another route (the page's own links and menus instead of a typed URL, a fresh snapshot, another selector, another source) before handing anything to the user. Never ask the user for a screenshot or a copy of something you can open yourself.\n` +
+  `3. **FINISH BEFORE YOU END.** Before your final message, check the request: whatever you can still do now, do now. End with what is done, and only the decisions or actions that truly need the user.\n` +
+  `[END FOLLOW-THROUGH]`;
+
+export const FOLLOW_THROUGH_LOCAL =
+  `\n\n[FOLLOW-THROUGH] Do what the user asks with your tools instead of explaining how; leave only passwords, signatures, payments and facts only they know. ` +
+  `If a tool call fails, try another way before asking the user. Before ending, do whatever is still doable.`;
 
 /*
  * ── Local model-family riders ──────────────────────────────────────────────

@@ -1,24 +1,37 @@
 import { describe, it, expect } from "vitest";
-import { codexBehaviorRider, grokUnleashedRider, modelFamilyRiderFor, providerRiderFor } from "./provider-riders.js";
+import { FOLLOW_THROUGH_LOCAL, FOLLOW_THROUGH_RIDER, codexBehaviorRider, grokUnleashedRider, modelFamilyRiderFor, providerRiderFor } from "./provider-riders.js";
 
 describe("providerRiderFor", () => {
-  it("codex gets the codex behavior rider", () => {
-    const rider = providerRiderFor("codex");
-    expect(rider).toContain("[CODEX BEHAVIOR RIDER");
-    expect(rider).toBe(codexBehaviorRider());
+  it("codex gets the follow-through rider, then its own behavior rider", () => {
+    expect(providerRiderFor("codex")).toBe(FOLLOW_THROUGH_RIDER + codexBehaviorRider());
   });
 
-  it("xai gets the unleashed rider", () => {
+  it("xai gets the follow-through rider, then the unleashed rider", () => {
     const rider = providerRiderFor("xai");
-    expect(rider).toContain("[GROK UNLEASHED");
+    expect(rider).toBe(FOLLOW_THROUGH_RIDER + grokUnleashedRider());
     expect(rider).toContain("[END GROK UNLEASHED]");
-    expect(rider).toBe(grokUnleashedRider());
   });
 
-  it("every other provider gets no provider rider", () => {
-    for (const p of ["anthropic", "local", "openai", "gemini", "ollama-cloud", "cerebras", "custom", ""]) {
-      expect(providerRiderFor(p)).toBe("");
+  // The owner's ask: every model keeps going the way Claude does.
+  it("every other cloud provider, and an unknown one, gets the follow-through rider", () => {
+    for (const p of ["openai", "gemini", "ollama-cloud", "cerebras", "custom", ""]) {
+      expect(providerRiderFor(p), p).toBe(FOLLOW_THROUGH_RIDER);
     }
+  });
+
+  it("local models get its short form; Claude gets none", () => {
+    expect(providerRiderFor("local")).toBe(FOLLOW_THROUGH_LOCAL);
+    expect(FOLLOW_THROUGH_LOCAL.length).toBeLessThan(FOLLOW_THROUGH_RIDER.length / 2);
+    for (const p of ["anthropic", "anthropic-api"]) expect(providerRiderFor(p), p).toBe("");
+  });
+
+  it("targets the habits seen in the Twilio session: telling instead of doing, quitting on one failure, ending with work left", () => {
+    expect(FOLLOW_THROUGH_RIDER).toContain('"Help me fill this out" means fill it');
+    expect(FOLLOW_THROUGH_RIDER).toContain("A FAILED OR BLOCKED CALL IS A DETOUR, NOT A STOP");
+    expect(FOLLOW_THROUGH_RIDER).toContain("Never ask the user for a screenshot");
+    expect(FOLLOW_THROUGH_RIDER).toContain("FINISH BEFORE YOU END");
+    // What stays the user's is named, so "do it" never reaches a password or a signature.
+    expect(FOLLOW_THROUGH_RIDER).toMatch(/passwords, signatures and legal attestations, payments/);
   });
 });
 

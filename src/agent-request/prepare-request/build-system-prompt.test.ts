@@ -9,7 +9,7 @@ import { pushPendingNotification } from "../../ops/pending-notifications.js";
 import type { BuildSystemPromptInput } from "./build-system-prompt.js";
 import { harnessNotice, renderPromptSection } from "../../context/system-prompt-builder.js";
 import { loadFileAccessMode } from "../../security/layer/index.js";
-import { modelFamilyRiderFor } from "./provider-riders.js";
+import { modelFamilyRiderFor, providerRiderFor } from "./provider-riders.js";
 import { loadSystemPrompt } from "../../config-loader.js";
 
 describe("fileAccessGroundingBlock", () => {
@@ -118,6 +118,7 @@ describe("local model-family rider wiring", () => {
     const expectedLocalPrompt =
       "Canonical prompt bytes." +
       fileAccessGroundingBlock(loadFileAccessMode()) +
+      providerRiderFor("local") +
       modelFamilyRiderFor("qwen3:32b") +
       harnessNotice("TURN DIRECTIVE", "Golden build route directive.");
     expect(local.prompt).toBe(expectedLocalPrompt);

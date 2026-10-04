@@ -23,11 +23,12 @@ import { DEFAULT_MAX_RESULT_CHARS, toolResultCapChars } from "../context-manager
 import { resolveOutputReserve } from "../context-manager/output-reserve.js";
 import { readOp } from "../ops/op-store.js";
 import { resolveOpModel } from "../canonical-loop/public/op-facts.js";
+import { STAGE_RECOVERY } from "./stage-recovery.js";
 
-interface ToolResultWithImage extends ToolResult {
+type ToolResultWithImage = ToolResult & {
   _image?: { path: string; question: string; mime: string; b64: string };
   _images?: Array<{ path: string; question: string; mime: string; b64: string }>;
-}
+};
 
 const DEFAULT_MAX_RESULT_SIZE = DEFAULT_MAX_RESULT_CHARS;
 
@@ -109,6 +110,9 @@ function evaluateThreat(ctx: ToolCallContext): void {
       metadata: {
         layer: "threat",
         userHint: threat.loop ? USER_HINTS.retryExhausted : USER_HINTS.threatConsent,
+        recovery: threat.loop
+          ? "The same call kept failing. Stop repeating it: try a different approach, or tell the user what is stuck."
+          : STAGE_RECOVERY.threat,
       },
     };
   }
@@ -127,7 +131,10 @@ function evaluateThreat(ctx: ToolCallContext): void {
         content: `BLOCKED: ${buildDenyReason(evidence)}`,
         isError: true,
         status: "blocked",
-        metadata: { layer: "threat", userHint: USER_HINTS.threatRestricted },
+        metadata: {
+          layer: "threat", userHint: USER_HINTS.threatRestricted,
+          recovery: "Outside calls are paused in this session by the threat monitor. Continue with work that does not need them, and tell the user what is waiting.",
+        },
       };
     }
   }

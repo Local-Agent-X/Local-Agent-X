@@ -144,7 +144,7 @@ export async function publishReviewGate(ctx: ToolCallContext, ops: PublishOperat
   progress(ctx, `Pre-publish review: ${review.status}`);
   logger.info(`[publish-gate] ${ctx.tc.name} ${op.label} → ${review.status}${review.cached ? " (cached)" : ""} fp=${review.fingerprint.slice(0, 12)}`);
   if (ctx.signal?.aborted) {
-    return { kind: "block", result: { content: `NOT RUN: the turn was stopped while ${op.label} was being reviewed.`, isError: true, status: "blocked", metadata: { layer: "approval", userHint: USER_HINTS.policy } } };
+    return { kind: "block", result: { content: `NOT RUN: the turn was stopped while ${op.label} was being reviewed.`, isError: true, status: "blocked", metadata: { layer: "approval", userHint: USER_HINTS.policy, recovery: "The user stopped the turn. Do not retry the publish; report what was left unpublished." } } };
   }
   if (!needsOverride(review)) return { kind: "proceed", review, overridden: false };
   return overrideOutcome(ctx, op, review);
@@ -157,7 +157,12 @@ function blocked(content: string, declined = false): PublishGateOutcome {
       content,
       isError: true,
       status: declined ? "declined" : "blocked",
-      metadata: { layer: "approval", userHint: declined ? USER_HINTS.declined : USER_HINTS.policy },
+      metadata: {
+        layer: "approval", userHint: declined ? USER_HINTS.declined : USER_HINTS.policy,
+        recovery: declined
+          ? "The user said no to publishing this. Do not push it another way; report what was left unpublished."
+          : "Publishing this needs the user's yes after the review. Report what is ready to publish, so they can push it or approve it in a chat.",
+      },
     },
   };
 }

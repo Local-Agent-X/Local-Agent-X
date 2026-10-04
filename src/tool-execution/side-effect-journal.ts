@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
 import { opDir } from "../ops/event-log.js";
 import type { ToolEffect, ToolEffectClass, ToolResult, ToolResultStatus } from "../types.js";
+import type { BlockedMetadata } from "../tools/result-helpers.js";
 
 export type SideEffectJournalPhase = "prepared" | "effect_returned" | "completed";
 
@@ -191,7 +192,7 @@ function claimOwnerAlive(claim: ExecutionClaim): boolean {
   catch (error) { return (error as NodeJS.ErrnoException).code !== "ESRCH"; }
 }
 
-function blockedResult(message: string, metadata: Record<string, unknown>): ToolResult {
+function blockedResult(message: string, metadata: BlockedMetadata): ToolResult {
   return {
     content: message,
     isError: true,
@@ -205,7 +206,10 @@ function ambiguousResult(entry: JournalEntry): ToolResult {
     `Side effect outcome is ambiguous for ${entry.tool} (${entry.toolCallId}). ` +
       `Execution began before the runtime stopped, and this non-idempotent call cannot be replayed safely. ` +
       `Reconcile the external system explicitly, then submit a new call only if the effect is confirmed absent.`,
-    { effect_fingerprint: entry.effectFingerprint },
+    {
+      effect_fingerprint: entry.effectFingerprint,
+      recovery: "Check the external system for this effect. If it did not happen, make a new call; if it did, report it as done. Tell the user if you cannot tell.",
+    },
   );
 }
 
@@ -215,7 +219,10 @@ function integrityFailure(reason: string): JournalDecision {
     result: blockedResult(
       `Side-effect journal integrity check failed (${reason}). Execution was blocked to prevent a duplicate mutation. ` +
         `Repair or explicitly reconcile the operation journal before retrying.`,
-      { journal_integrity_failure: true },
+      {
+        journal_integrity_failure: true,
+        recovery: "Do not retry this call. Tell the user the operation journal needs repair, and continue with work that does not change anything outside.",
+      },
     ),
   };
 }
@@ -249,7 +256,10 @@ export function prepareSideEffect(
           result: blockedResult(
             `Side effect ${tool} (${toolCallId}) is already claimed by a live execution. ` +
               `The concurrent duplicate was blocked; wait for the recorded result before retrying.`,
-            { execution_in_progress: true, effect_fingerprint: fingerprint },
+            {
+              execution_in_progress: true, effect_fingerprint: fingerprint,
+              recovery: "Another run is executing this exact call. Wait for its result with the op tools, or continue with other work; do not start it again.",
+            },
           ),
         };
       }

@@ -7,6 +7,7 @@
 import { dedupLookup, dedupRecord } from "./dedup-cache.js";
 import type { Phase, ToolCallContext } from "./context.js";
 import { CONTINUE, HALT } from "./context.js";
+import { blocked } from "../tools/result-helpers.js";
 
 function scopeFor(ctx: ToolCallContext): string | undefined {
   // Prefer runId when the call is part of a spawned-agent run (more
@@ -39,7 +40,7 @@ export const dedupCheckPhase: Phase = async (ctx: ToolCallContext) => {
     ? { ...hit.result, content: `${hit.result.content}\n\n${annotation}` }
     : hit.allowed
       ? { content: `${hit.resultContent}\n\n${annotation}` }
-      : { content: `${hit.resultContent}\n\n${annotation}`, isError: true, status: "blocked" };
+      : blocked(`${hit.resultContent}\n\n${annotation}`, { recovery: "This exact call was already refused this turn. Do not repeat it; do what that refusal said instead." });
   return HALT;
 };
 

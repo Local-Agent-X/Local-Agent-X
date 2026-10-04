@@ -100,7 +100,7 @@ describe("auditPhase provenance recording", () => {
     }));
     await auditPhase(makeCtx({
       args: { path: target, sources },
-      result: { content: "BLOCKED by threat engine", isError: true, status: "blocked" },
+      result: { content: "BLOCKED by threat engine", isError: true, status: "blocked", metadata: { recovery: "Tell the user." } },
     }));
     expect(readProvenance(target)).toEqual([]);
     expect(sidecarDirExists()).toBe(false);

@@ -4,6 +4,10 @@ export const HUMAN_VERIFICATION_MESSAGE =
 	"HUMAN VERIFICATION REQUIRED: A CAPTCHA or anti-bot verification is active. " +
 	"The agent must not click or attempt to bypass it. The user must complete it in the visible browser, then retry.";
 
+/** The next step a refusal names (result-helpers.ts `blocked`). */
+export const HUMAN_VERIFICATION_RECOVERY =
+	"Tell the user a verification check is on screen and ask them to complete it in the browser. Continue with any other part of the request meanwhile, then retry here.";
+
 const PROVIDER_FRAME =
 	/(?:challenges\.cloudflare\.com\/.*turnstile|hcaptcha\.com\/.*captcha|(?:google\.com|recaptcha\.net)\/recaptcha)/i;
 const CHALLENGE_TITLE =

@@ -16,6 +16,7 @@
  * continues. `read` honors that offset (read-write-tools.ts).
  */
 import type { ToolResult } from "../types.js";
+import { withMetadata } from "../tools/result-helpers.js";
 
 /** Room kept for the continuation note. */
 const NOTE_RESERVE = 240;
@@ -36,9 +37,5 @@ export function budgetReadResult(result: ToolResult, maxChars: number): ToolResu
   const last = Number(numbered[numbered.length - 1][1]);
   const note = `\n\n[Showing lines ${first}-${last} of ${total} — the rest did not fit in one result. ` +
     `Continue with read offset=${last + 1}. Nothing was saved elsewhere; the file itself is the source.]`;
-  return {
-    ...result,
-    content: body + note,
-    metadata: { ...(result.metadata ?? {}), lines_shown: last - first + 1, truncated: true, next_offset: last + 1 },
-  };
+  return withMetadata({ ...result, content: body + note }, { lines_shown: last - first + 1, truncated: true, next_offset: last + 1 });
 }

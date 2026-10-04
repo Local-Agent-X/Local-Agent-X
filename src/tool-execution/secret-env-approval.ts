@@ -31,16 +31,18 @@ export async function secretEnvGate(ctx: ToolCallContext): Promise<SecretEnvGate
 
   const rule = getRiskDecision("secrets", ctx.sessionId);
   const names = [...new Set(Object.values(secretEnv))].sort();
-  const blockedResult = (content: string): SecretEnvGate => ({
+  const blockedResult = (content: string, recovery: string): SecretEnvGate => ({
     kind: "blocked",
-    result: { content, isError: true, status: "blocked", metadata: { layer: "approval", userHint: USER_HINTS.policy } },
+    result: { content, isError: true, status: "blocked", metadata: { layer: "approval", userHint: USER_HINTS.policy, recovery } },
   });
   if (decisionDenies(rule)) {
-    return blockedResult(`BLOCKED by profile: this profile does not let a vault secret (${names.join(", ")}) be handed to a command. Use http_request with {{SECRET_NAME}} in a header, or ask the user to run the command.`);
+    return blockedResult(`BLOCKED by profile: this profile does not let a vault secret (${names.join(", ")}) be handed to a command. Use http_request with {{SECRET_NAME}} in a header, or ask the user to run the command.`,
+      "Send the secret with http_request and a {{SECRET_NAME}} placeholder, or give the user the command to run themselves. Continue with the rest of the request.");
   }
   if (!decisionRequiresPrompt(rule)) return { kind: "continue" };
   if (ctx.callContext !== "local" || !ctx.onEvent) {
-    return blockedResult(`BLOCKED: handing ${names.join(", ")} to a command needs the user's yes under this profile, and no one can be asked on this run.`);
+    return blockedResult(`BLOCKED: handing ${names.join(", ")} to a command needs the user's yes under this profile, and no one can be asked on this run.`,
+      "Send the secret with http_request and a {{SECRET_NAME}} placeholder if that fits; otherwise report the command as waiting for the user. Continue with the rest of the request.");
   }
 
   const command = String(ctx.args.command ?? "");

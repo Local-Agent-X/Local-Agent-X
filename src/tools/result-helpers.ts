@@ -23,8 +23,14 @@ export function err(content: string, metadata?: Record<string, unknown>): ToolRe
   return metadata ? { content, isError: true, status: "error", metadata } : { content, isError: true };
 }
 
-/** Refused by policy/safety — retrying won't help. Pass `recovery` in metadata. */
-export function blocked(content: string, metadata?: Record<string, unknown>): ToolResult {
+/** What a refusal carries: `recovery` is required, the next step the agent
+ *  should take instead (who can change it and where, another route, or what
+ *  to tell the user), so a refusal is never a dead end. */
+export type BlockedMetadata = { recovery: string } & Record<string, unknown>;
+
+/** Refused by policy/safety — retrying won't help. The one constructor for a
+ *  blocked result (blocked-results.contract.test.ts holds every site to it). */
+export function blocked(content: string, metadata: BlockedMetadata): ToolResult {
   return { content, isError: true, status: "blocked", metadata };
 }
 
@@ -73,6 +79,27 @@ export function parseStatusHeader(rendered: string): ToolResultStatus {
   if (typeof rendered !== "string") return "ok";
   const m = rendered.match(/^\[(ok|error|blocked|declined|timeout|running)(?:[,\s\]])/);
   return (m?.[1] as ToolResultStatus | undefined) ?? "ok";
+}
+
+/** The `Recovery:` line renderToolResultForModel wrote, or "" when there is none. */
+export function parseRecoveryLine(rendered: string): string {
+  return /^Recovery: (.*)$/m.exec(rendered)?.[1] ?? "";
+}
+
+/** An envelope rebuilt from its rendered text: the status from the header and,
+ *  for a refusal, the next step from its Recovery line. */
+export function resultFromRendered(content: string): ToolResult {
+  const status = parseStatusHeader(content);
+  const isError = status !== "ok" && status !== "running";
+  return status === "blocked"
+    ? { content, isError, status, metadata: { recovery: parseRecoveryLine(content) } }
+    : { content, isError, status };
+}
+
+/** The same result with `extra` merged into its metadata. A merge only adds
+ *  keys, so a refusal keeps the recovery the type requires of it. */
+export function withMetadata(result: ToolResult, extra: Record<string, unknown>): ToolResult {
+  return { ...result, metadata: { ...result.metadata, ...extra } } as ToolResult;
 }
 
 /**

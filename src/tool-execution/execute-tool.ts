@@ -20,7 +20,7 @@ import { emitTraceStartPhase, emitTraceCompletePhase } from "./emit-trace.js";
 import { runSandboxedPhase } from "./run-sandboxed.js";
 import { attachPublishReviewNote } from "./publish-review-gate.js";
 import { auditPhase } from "./audit-tool-call.js";
-import { parseStatusHeader } from "../tools/result-helpers.js";
+import { resultFromRendered } from "../tools/result-helpers.js";
 import { hasCapability, WORKTREE_PATH_TOOLS } from "../tool-registry.js";
 import { createLogger } from "../logger.js";
 import {
@@ -177,8 +177,7 @@ export async function dispatchSingleToolCall(
   // Hardcoding isError:false here reported blocked/errored/timed-out calls
   // as "ok" to every adopter of this unified entry. `running` stays
   // non-error: the START succeeded, work continues async.
-  const status = parseStatusHeader(content);
-  return { content, isError: status !== "ok" && status !== "running", status };
+  return resultFromRendered(content);
 }
 
 // Read-only tools are implicitly safe to parallelize (they never mutate

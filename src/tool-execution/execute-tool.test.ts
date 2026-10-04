@@ -306,7 +306,7 @@ describe("dispatchSingleToolCall reports the real envelope status (TD-7)", () =>
 
   it("a blocked tool result surfaces as status 'blocked' / isError true", async () => {
     const toolMap = new Map<string, ToolDefinition>([
-      ["deny_stub", resultTool("deny_stub", { content: "denied by gate", isError: true, status: "blocked" })],
+      ["deny_stub", resultTool("deny_stub", { content: "denied by gate", isError: true, status: "blocked", metadata: { recovery: "Tell the user." } })],
     ]);
     const r = await dispatchSingleToolCall(
       { id: "x1", name: "deny_stub", args: {} },

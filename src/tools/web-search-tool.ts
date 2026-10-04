@@ -42,7 +42,10 @@ export function blockedResult(e: EgressRedirectBlocked): ToolResult {
     content: e.message,
     isError: true,
     status: "blocked",
-    metadata: { layer: "security", clearable: e.action!.kind, host, userHint: USER_HINTS.network },
+    metadata: {
+      layer: "security", clearable: e.action!.kind, host, userHint: USER_HINTS.network,
+      recovery: `Web access does not allow ${host}. Use results from allowed sites, or tell the user: they can allow ${host} from the notice in chat and retry.`,
+    },
   };
 }
 

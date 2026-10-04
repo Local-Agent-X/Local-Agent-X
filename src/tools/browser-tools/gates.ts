@@ -17,7 +17,7 @@ import { recordProgress, resetProgress } from "../../browser/progress-tracker.js
 import { sensitivePageActionDecision } from "../../browser/guards.js";
 import { getApprovalManager } from "../../approval-manager.js";
 import { blocked, declined } from "../result-helpers.js";
-import { HUMAN_VERIFICATION_MESSAGE, requiresHumanVerification } from "../../browser/human-verification.js";
+import { HUMAN_VERIFICATION_MESSAGE, HUMAN_VERIFICATION_RECOVERY, requiresHumanVerification } from "../../browser/human-verification.js";
 import { RESET_ACTIONS, TRACKED_ACTIONS, READ_ONLY_ACTIONS, HUMAN_VERIFICATION_BLOCKED_ACTIONS } from "./action-tables.js";
 import { decisionRequiresPrompt, getRiskDecision } from "../../approval-decision.js";
 import type { SensitivePageCategory } from "../../browser/sensitive-pages.js";
@@ -75,11 +75,11 @@ export async function runPreDispatchGates(
     if (!id) return halt(err("'download_id' is required. Use action='downloads' first."));
     if (!onEvent) return halt(blocked(
       "BLOCKED: quarantined downloads can only be released from an interactive session with explicit user approval.",
-      { layer: "browser-download", browserStatus: "approval-required" },
+      { layer: "browser-download", browserStatus: "approval-required", recovery: "This run cannot ask the user. Tell them which download is waiting in quarantine; they can approve releasing it when they next chat with you." },
     ));
     let approvalBinding: ReturnType<BrowserBackend["getDownloadApproval"]>;
     try { approvalBinding = manager.getDownloadApproval(id); }
-    catch (error) { return halt(blocked(`BLOCKED: ${(error as Error).message}`, { layer: "browser-download", browserStatus: "not-releasable" })); }
+    catch (error) { return halt(blocked(`BLOCKED: ${(error as Error).message}`, { layer: "browser-download", browserStatus: "not-releasable", recovery: "List the downloads (action='downloads') and release one whose status is quarantined." })); }
     const outcome = await getApprovalManager().requestApprovalDetailed({
       toolName: "browser.release_download",
       toolCallId: String(args._toolCallId || `browser-release-${id}`),
@@ -99,7 +99,7 @@ export async function runPreDispatchGates(
     const pageDecision = sensitivePageActionDecision(pageUrl, action);
     if (pageDecision.disposition === "blocked") return halt(blocked(
       `BLOCKED: ${pageDecision.reason}`,
-      { layer: "browser-sensitive-page", browserStatus: "blocked", category: pageDecision.category },
+      { layer: "browser-sensitive-page", browserStatus: "blocked", category: pageDecision.category, recovery: "This action is off limits on this page by the user's browser secrecy setting. Tell the user what you needed to do here so they can do it, and continue with the rest of the request." },
     ));
     if (pageDecision.disposition === "approval-required") {
       // ONE disposition, TWO concerns. `unlocksRead` means the approval would
@@ -118,7 +118,7 @@ export async function runPreDispatchGates(
       }
       if (!onEvent) return halt(blocked(
         `BLOCKED: ${pageDecision.reason} Explicit approval is unavailable in this run.`,
-        { layer: "browser-sensitive-page", browserStatus: "approval-required", category: pageDecision.category },
+        { layer: "browser-sensitive-page", browserStatus: "approval-required", category: pageDecision.category, recovery: "This run cannot ask the user. Tell them what you need to do on this page; they can do it, or approve it when they next chat with you." },
       ));
       const outcome = await getApprovalManager().requestApprovalDetailed({
         toolName: "browser.sensitive_page_action",
@@ -157,6 +157,7 @@ export async function humanVerificationBlock(
       return blocked(HUMAN_VERIFICATION_MESSAGE, {
         layer: "browser-human-verification",
         browserStatus: "human-verification-required",
+        recovery: HUMAN_VERIFICATION_RECOVERY,
       });
     }
   }

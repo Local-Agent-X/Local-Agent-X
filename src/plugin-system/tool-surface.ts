@@ -112,6 +112,7 @@ export class PluginToolSurface implements PluginToolSurfacePort {
               content: `Plugin tool "${name}" is no longer active`,
               isError: true,
               status: "blocked",
+              metadata: { recovery: "This plugin tool was unloaded or replaced since you saw it. Use its replacement if one is listed, or tell the user the plugin needs turning back on." },
             };
           }
           return source.execute(args, signal);

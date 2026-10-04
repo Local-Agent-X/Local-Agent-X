@@ -6,7 +6,9 @@ import type { ToolResult } from "../../types.js";
 import type { BrowserEngine } from "../../browser/index.js";
 import { wrapExternalContent } from "../../sanitize.js";
 import { sensitivePageStub } from "../../browser/guards.js";
-import { HUMAN_VERIFICATION_MESSAGE, snapshotShowsHumanVerification } from "../../browser/human-verification.js";
+import { HUMAN_VERIFICATION_MESSAGE, HUMAN_VERIFICATION_RECOVERY, snapshotShowsHumanVerification } from "../../browser/human-verification.js";
+import { SENSITIVE_PAGE_RECOVERY } from "../../browser/sensitive-pages.js";
+import { blocked } from "../result-helpers.js";
 
 
 export function ok(content: string): ToolResult {
@@ -15,6 +17,16 @@ export function ok(content: string): ToolResult {
 
 export function err(content: string): ToolResult {
   return { content, isError: true };
+}
+
+/** A page the secrecy setting withholds, as the refusal the agent reads. */
+export function withheld(stub: string): ToolResult {
+  return blocked(stub, { layer: "browser-sensitive-page", browserStatus: "sensitive-content-withheld", recovery: SENSITIVE_PAGE_RECOVERY });
+}
+
+/** A CAPTCHA or anti-bot check on screen, as the refusal the agent reads. */
+export function humanVerificationRequired(): ToolResult {
+  return blocked(HUMAN_VERIFICATION_MESSAGE, { layer: "browser-human-verification", browserStatus: "human-verification-required", recovery: HUMAN_VERIFICATION_RECOVERY });
 }
 
 export const VALID_ENGINES: BrowserEngine[] = ["chromium", "firefox", "webkit"];

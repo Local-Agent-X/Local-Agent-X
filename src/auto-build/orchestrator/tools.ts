@@ -6,8 +6,9 @@
 
 import { existsSync } from "node:fs";
 import type { ToolDefinition, ToolResult } from "../../types.js";
+import { blocked } from "../../tools/result-helpers.js";
 import { parsePlanFile } from "../plan-parser.js";
-import { isFeatureEnabled, FEATURE_FLAG_ENV } from "../tool.js";
+import { AUTO_BUILD_DISABLED_RECOVERY, isFeatureEnabled, FEATURE_FLAG_ENV } from "../tool.js";
 import { defaultJudgmentHook } from "../chunk-review/judgment-hook.js";
 import { isActiveForProject, startOrchestration, listActive } from "./manager.js";
 import { computeResumeWindow, finalizeCompletedResume, readProjectState } from "./resume.js";
@@ -102,7 +103,7 @@ export const buildPlanResumeTool: ToolDefinition = {
     required: ["project_dir"],
   },
   async execute(args): Promise<ToolResult> {
-    if (!isFeatureEnabled()) return { content: FEATURE_FLAG_BLOCK_MESSAGE, isError: true, status: "blocked" };
+    if (!isFeatureEnabled()) return blocked(FEATURE_FLAG_BLOCK_MESSAGE, { recovery: AUTO_BUILD_DISABLED_RECOVERY });
 
     const projectDir = resolveProjectDir(args.project_dir);
     if (!projectDir) return { content: "build_plan_resume requires 'project_dir'.", isError: true };

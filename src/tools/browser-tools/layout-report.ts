@@ -32,7 +32,7 @@ import type { BrowserBackend } from "../../browser/backend.js";
 import { LAYOUT_REPORT_SCRIPT } from "../../browser/layout-report.js";
 import { scanEvaluateScript, sensitivePageStub } from "../../browser/guards.js";
 import { wrapExternalContent } from "../../sanitize.js";
-import { err } from "./shared.js";
+import { err, withheld } from "./shared.js";
 
 // The dispatcher (index.ts) hands each action the session id; this handler
 // keys nothing on it (see the header: no per-session profile is printed).
@@ -40,7 +40,7 @@ export async function handleLayoutReport(manager: BrowserBackend, _sessionId?: s
   const url = manager.getCurrentUrl();
   const sensitive = sensitivePageStub(url);
   if (sensitive) {
-    return { content: sensitive, status: "blocked", isError: true, metadata: { browserStatus: "sensitive-content-withheld" } };
+    return withheld(sensitive);
   }
   // Deliberate internal call: LAYOUT_REPORT_SCRIPT is a fixed constant, not
   // agent input, so the `evaluate` mutation heuristic (which judges UNTRUSTED

@@ -10,7 +10,8 @@ import { findSecretOnScreen, secretOnScreenMessage } from "../../browser/secret-
 import { closeBrowser } from "../../browser/index.js";
 import { evaluateBlockMessage, scanEvaluateScript, sensitivePageStub } from "../../browser/guards.js";
 import { wrapExternalContent } from "../../sanitize.js";
-import { ok, err, appendPostActionSnapshot } from "./shared.js";
+import { ok, err, appendPostActionSnapshot, withheld } from "./shared.js";
+import { blocked } from "../result-helpers.js";
 
 const EVALUATE_MUTATION =
   /\.(?:click|focus|blur|remove|dispatchEvent|setAttribute|removeAttribute|append|prepend|appendChild|removeChild|insertAdjacent\w*)\s*\(|\.set\??\.\s*call\s*\(|\.(?:value|checked|selected|innerHTML|outerHTML|textContent)\s*=|\.style(?:\.\w+|\[['"][^'"]+['"]\])?\s*=|\b(?:location|window\.location|document\.location)\s*=/;
@@ -26,7 +27,7 @@ export async function handleExtract(
   args: Record<string, unknown>,
 ): Promise<ToolResult> {
   const sensitive = sensitivePageStub(manager.getCurrentUrl());
-  if (sensitive) return { content: sensitive, status: "blocked", isError: true, metadata: { browserStatus: "sensitive-content-withheld" } };
+  if (sensitive) return withheld(sensitive);
   const selector = args.selector ? String(args.selector) : undefined;
   const find = args.find ? String(args.find) : undefined;
   // extractText already wraps in the untrusted-content boundary — don't re-wrap.
@@ -35,9 +36,9 @@ export async function handleExtract(
 
 export async function handleScreenshot(manager: BrowserBackend, secretOps: SecretBrowserOps): Promise<ToolResult> {
   const sensitive = sensitivePageStub(manager.getCurrentUrl());
-  if (sensitive) return { content: sensitive, status: "blocked", isError: true, metadata: { browserStatus: "sensitive-content-withheld" } };
+  if (sensitive) return withheld(sensitive);
   const onScreen = await findSecretOnScreen(secretOps);
-  if (onScreen) return { content: secretOnScreenMessage(onScreen), status: "blocked", isError: true, metadata: { browserStatus: "secret-on-screen" } };
+  if (onScreen) return blocked(secretOnScreenMessage(onScreen), { browserStatus: "secret-on-screen", recovery: "Save the secret with browser_capture_to_secret as the message says, before anything changes the page; then retry." });
   const shot = await manager.screenshot();
   if (!shot.image) return ok(shot.text);
   // Inline vision rides `_image` ONLY (audit-tool-call.ts turns it into a
@@ -51,7 +52,7 @@ export async function handleEvaluate(
   args: Record<string, unknown>,
 ): Promise<ToolResult> {
   const sensitive = sensitivePageStub(manager.getCurrentUrl());
-  if (sensitive) return { content: sensitive, status: "blocked", isError: true, metadata: { browserStatus: "sensitive-content-withheld" } };
+  if (sensitive) return withheld(sensitive);
   const script = String(args.script || "");
   if (!script) return err("'script' parameter is required for evaluate action.");
   const mutationReason = evaluateMutationReason(script);

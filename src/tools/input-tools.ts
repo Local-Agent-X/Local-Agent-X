@@ -40,7 +40,12 @@ function fail(e: unknown): ToolResult {
     };
   }
   if (e instanceof InputUnsupportedError) {
-    return { content: e.message, isError: true, status: "blocked" };
+    return {
+      content: e.message,
+      isError: true,
+      status: "blocked",
+      metadata: { recovery: "This computer cannot be driven directly. Use the browser tool for web pages and the file tools for files, and tell the user which steps they need to do by hand." },
+    };
   }
   if (e instanceof InputAbortError) {
     return { content: "Input action stopped.", isError: true };

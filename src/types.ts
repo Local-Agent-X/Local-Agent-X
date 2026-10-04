@@ -109,7 +109,7 @@ export type ToolResultStatus = "ok" | "error" | "blocked" | "declined" | "timeou
 // (400-LOC cap); re-exported so consumers keep importing from here.
 export type { KernelQuarantine, ToolBlockRecord } from "./types/tool-block.js";
 
-export interface ToolResult {
+interface ToolResultBase {
   /**
    * Output payload. May be "" when the call ran but produced no captured
    * output (ConPTY-only progress on Windows, etc.). Empty content with
@@ -124,13 +124,6 @@ export interface ToolResult {
    * existing tools that already use it.
    */
   isError?: boolean;
-
-  /**
-   * Optional outcome discriminator. When unset, derived from `isError`.
-   * Set this only when the tool needs to express blocked/timeout/running
-   * — the four non-default cases that change the model's next move.
-   */
-  status?: ToolResultStatus;
 
   /**
    * Handle for `status: "running"`. The receiving model polls a status
@@ -182,6 +175,14 @@ export interface ToolResult {
    */
   _media?: { kind: "image" | "video" | "file"; path: string; mime: string; name?: string };
 }
+
+/** `status` is optional (unset, it derives from `isError`). A blocked result
+ *  must name the next step in metadata.recovery: the compiler holds every
+ *  refusal to it. */
+export type ToolResult = ToolResultBase & (
+  | { status?: Exclude<ToolResultStatus, "blocked"> }
+  | { status: "blocked"; metadata: { recovery: string } & Record<string, unknown> }
+);
 
 export interface AgentTurn {
   messages: ChatCompletionMessageParam[];

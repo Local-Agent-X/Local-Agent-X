@@ -116,6 +116,10 @@ export function isSecretBearingCategory(category: SensitivePageCategory): boolea
  * how to trigger the approval prompt (the tool layer prompts on the READ
  * action itself — landing on a page never prompts, re-reading it does).
  */
+/** The next step a withheld-page refusal names (result-helpers.ts `blocked`). */
+export const SENSITIVE_PAGE_RECOVERY =
+  "The user's browser secrecy setting withholds this page from you. Ask the user for what you need from it, or continue with the rest of the request without it.";
+
 export function sensitivePageStub(rawUrl: string): string | null {
   const level = browserSecrecyLevel();
   if (level === "open") return null;

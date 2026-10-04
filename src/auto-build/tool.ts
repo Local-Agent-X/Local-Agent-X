@@ -11,7 +11,7 @@ import {
   type BuildPlanKickoff,
 } from "./kickoff.js";
 
-export { FEATURE_FLAG_ENV, isFeatureEnabled } from "./kickoff.js";
+export { AUTO_BUILD_DISABLED_RECOVERY, FEATURE_FLAG_ENV, isFeatureEnabled } from "./kickoff.js";
 
 export function createRunBuildPlanTool(
   kickoff: BuildPlanKickoff = kickoffBuildPlan,

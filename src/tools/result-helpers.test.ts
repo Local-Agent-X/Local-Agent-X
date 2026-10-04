@@ -26,7 +26,7 @@ describe("declined tool-result status", () => {
   });
 
   it("declined stays distinct from blocked through render + parse", () => {
-    const b = renderToolResultForModel(blocked("BLOCKED by profile: bash"));
+    const b = renderToolResultForModel(blocked("BLOCKED by profile: bash", { recovery: "Ask the user." }));
     const d = renderToolResultForModel(declined("DECLINED by user: bash"));
     expect(parseStatusHeader(b)).toBe("blocked");
     expect(parseStatusHeader(d)).toBe("declined");

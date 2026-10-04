@@ -18,6 +18,7 @@ import { logRetry } from "../retry-telemetry.js";
 import { assertToolCallAllowed } from "./pre-dispatch.js";
 import { securityDenyRecovery } from "../tool-policy/packs/security-layer-pack.js";
 import { ToolBlocked } from "./errors.js";
+import { STAGE_RECOVERY } from "./stage-recovery.js";
 import { terminate, CONTINUE, BLOCK, type Phase, type PhaseOutcome, type ToolCallContext } from "./context.js";
 import { egressAggregateGate, type EgressBlocker } from "./egress-gates.js";
 import { privateContentGate } from "./private-content-gate.js";
@@ -253,7 +254,7 @@ async function runPreDispatch(ctx: ToolCallContext): Promise<PhaseOutcome> {
       status: "blocked",
       metadata: {
         layer: layerMap[e.stage],
-        recovery: selfVerify?.recovery ?? e.recovery,
+        recovery: selfVerify?.recovery ?? e.recovery ?? STAGE_RECOVERY[e.stage],
         userHint: selfVerify?.userHint ?? e.userHint,
         // The chat renders the user's way out off these, never off the text.
         ...(e.action ? { clearable: e.action.kind, host: e.action.host } : {}),

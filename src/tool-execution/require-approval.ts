@@ -95,7 +95,10 @@ export const requireApprovalPhase: Phase = async (ctx) => {
       content: `BLOCKED by profile: ${ctx.tc.name} (risk class denied)`,
       isError: true,
       status: "blocked",
-      metadata: { layer: "approval", userHint: USER_HINTS.policy },
+      metadata: {
+        layer: "approval", userHint: USER_HINTS.policy,
+        recovery: "The user's autonomy profile does not allow this kind of action. Tell them what you wanted to do: they can do it, or allow it in Settings → Security → Autonomy. Continue with the rest of the request.",
+      },
     };
     return terminate(ctx, { rendered: "model", result, allowed: false });
   }
@@ -119,7 +122,12 @@ export const requireApprovalPhase: Phase = async (ctx) => {
         : `NOT RUN: this ${ctx.tc.name} call needs the user's confirmation, and none was given — nobody could be asked, or the question went unanswered. Do not assume consent; ask the user which files or folders they want deleted.`,
       isError: true,
       status: declined ? "declined" : "blocked",
-      metadata: { layer: "approval", userHint: declined ? USER_HINTS.declined : USER_HINTS.policy },
+      metadata: {
+        layer: "approval", userHint: declined ? USER_HINTS.declined : USER_HINTS.policy,
+        recovery: declined
+          ? "The user said no to this delete. Do not retry it or delete another way; continue with the rest of the request."
+          : "Ask the user which files or folders they want deleted, by name, before deleting anything.",
+      },
     };
     return terminate(ctx, { rendered: "model", result, allowed: false });
   }
@@ -219,7 +227,10 @@ export const requireApprovalPhase: Phase = async (ctx) => {
           `Stop saving; existing facts are unaffected.`,
         isError: true,
         status: "blocked",
-        metadata: { layer: "approval", userHint: USER_HINTS.policy },
+        metadata: {
+          layer: "approval", userHint: USER_HINTS.policy,
+          recovery: "Save no more facts in this session. If something you meant to save matters, tell the user in your reply.",
+        },
       };
       return terminate(ctx, { rendered: "model", result, allowed: false });
     }
@@ -247,7 +258,10 @@ export const requireApprovalPhase: Phase = async (ctx) => {
         (ctx.publishReview ? `\n\n${reviewNoteForModel(ctx.publishReview)}` : ""),
       isError: true,
       status: "blocked",
-      metadata: { layer: "approval", userHint: USER_HINTS.policy },
+      metadata: {
+        layer: "approval", userHint: USER_HINTS.policy,
+        recovery: "Nobody can approve this here. Report what you needed to do and why, so the user can do it or run it from a chat, and continue with the rest of the work.",
+      },
     };
     return terminate(ctx, { rendered: "model", result, allowed: false });
   }
@@ -276,7 +290,10 @@ export const requireApprovalPhase: Phase = async (ctx) => {
         `exists on this dispatch — refusing rather than proceeding silently.`,
       isError: true,
       status: "blocked",
-      metadata: { layer: "approval", userHint: USER_HINTS.policy },
+      metadata: {
+        layer: "approval", userHint: USER_HINTS.policy,
+        recovery: "Tell the user this needs their approval and this session cannot show the card; they can run it from a chat. Continue with the rest of the request.",
+      },
     };
     return terminate(ctx, { rendered: "model", result, allowed: false });
   }
@@ -342,21 +359,30 @@ function buildDenialResult(toolName: string, reason: ApprovalDenyReason | undefi
         content: `Approval request timed out for ${toolName} — nobody answered. Do not assume consent; proceed with other work or ask the user.`,
         isError: true,
         status: "blocked",
-        metadata: { layer: "approval", userHint: USER_HINTS.approvalTimeout },
+        metadata: {
+          layer: "approval", userHint: USER_HINTS.approvalTimeout,
+          recovery: "Nobody answered. Continue with other work, and ask the user in your reply whether to proceed with this.",
+        },
       };
     case "superseded":
       return {
         content: `Approval request for ${toolName} was dismissed because the user replied in chat instead of clicking. Re-read their latest message; if they said to proceed, you may request approval again.`,
         isError: true,
         status: "blocked",
-        metadata: { layer: "approval", userHint: USER_HINTS.approvalSuperseded },
+        metadata: {
+          layer: "approval", userHint: USER_HINTS.approvalSuperseded,
+          recovery: "Read the user's latest message: if they said to proceed, request approval again; otherwise do what they asked instead.",
+        },
       };
     default:
       return {
         content: `Approval for ${toolName} was not granted — no explicit user decision was recorded. Do not assume consent; adjust your approach or ask the user.`,
         isError: true,
         status: "blocked",
-        metadata: { layer: "approval", userHint: USER_HINTS.approvalTimeout },
+        metadata: {
+          layer: "approval", userHint: USER_HINTS.approvalTimeout,
+          recovery: "Ask the user whether to proceed with this, and continue with other work meanwhile.",
+        },
       };
   }
 }

@@ -9,12 +9,12 @@ import type { BrowserBackend, BrowserEngine } from "../../browser/index.js";
 import { ObservationRegistry, type BrowserObservation } from "../../browser/observation.js";
 import { wrapExternalContent } from "../../sanitize.js";
 import { createLogger } from "../../logger.js";
-import { ok, err, appendPostActionSnapshot } from "./shared.js";
+import { ok, err, appendPostActionSnapshot, withheld, humanVerificationRequired } from "./shared.js";
 import { safeBrowserPageLabel, sensitivePageStub } from "../../browser/guards.js";
 import { resolveNewTabUrls } from "../../security/layer/browser-egress-eval.js";
 import { getToolTimeout } from "../../tool-execution/tool-timeout.js";
 import { BROWSER_TOOL_NAME } from "./description.js";
-import { HUMAN_VERIFICATION_MESSAGE, requiresHumanVerification, snapshotShowsHumanVerification } from "../../browser/human-verification.js";
+import { requiresHumanVerification, snapshotShowsHumanVerification } from "../../browser/human-verification.js";
 import { formatMissingPageLeads, gatherMissingPageLeads, isMissingPageStatus } from "../missing-page-leads.js";
 import { selfCallAuthHeader } from "../web-egress.js";
 
@@ -168,7 +168,7 @@ export async function handleSnapshot(
   args: Record<string, unknown> = {},
 ): Promise<ToolResult> {
   const sensitive = sensitivePageStub(manager.getCurrentUrl());
-  if (sensitive) return { content: sensitive, status: "blocked", isError: true, metadata: { browserStatus: "sensitive-content-withheld" } };
+  if (sensitive) return withheld(sensitive);
   let raw: string;
   if (args.full === true) {
     // Force a complete re-list. The diff protocol has no other way to
@@ -180,7 +180,7 @@ export async function handleSnapshot(
     // diffing correctly.
     const obs = await manager.observe();
     if (requiresHumanVerification(obs)) {
-      return { content: HUMAN_VERIFICATION_MESSAGE, status: "blocked", isError: true, metadata: { browserStatus: "human-verification-required" } };
+      return humanVerificationRequired();
     }
     const forced: BrowserObservation = { ...obs, isInitial: true, full: obs.currentRefs, added: [], removed: [], changed: [] };
     raw = ObservationRegistry.format(forced);
@@ -188,7 +188,7 @@ export async function handleSnapshot(
     raw = await manager.snapshot();
   }
   if (snapshotShowsHumanVerification(raw)) {
-    return { content: HUMAN_VERIFICATION_MESSAGE, status: "blocked", isError: true, metadata: { browserStatus: "human-verification-required" } };
+    return humanVerificationRequired();
   }
   return ok(wrapExternalContent(raw, "browser.snapshot", { url: manager.getCurrentUrl() }));
 }

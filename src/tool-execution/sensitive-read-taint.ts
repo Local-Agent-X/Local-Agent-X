@@ -36,6 +36,7 @@ import { resolveAgentPath } from "../workspace/paths.js";
 import { realpathDeep, isSanctionedWorkRootEnvFile } from "../security/layer/index.js";
 import { recordPrivateReadFromResult } from "./private-read-record.js";
 import { createLogger } from "../logger.js";
+import { withMetadata } from "../tools/result-helpers.js";
 
 const logger = createLogger("tool-execution");
 
@@ -100,11 +101,7 @@ export function maskDeliveredSecrets(toolName: string, args: Record<string, unkn
   // A tool that masked its own body (http_request, web_fetch) already counted
   // those; this pass adds what it found beyond them.
   const prior = typeof metadata.secrets_masked === "number" ? metadata.secrets_masked : 0;
-  return {
-    ...result,
-    content: content ? `${content}\n\n${note}` : note,
-    metadata: { ...metadata, secrets_masked: prior + masked },
-  };
+  return withMetadata({ ...result, content: content ? `${content}\n\n${note}` : note }, { ...metadata, secrets_masked: prior + masked });
 }
 
 interface TaintPair {
@@ -275,7 +272,10 @@ export function applyResultTaintPolicy(
         `Do not re-read this source; if a credential is needed, use a {{SECRET_NAME}} placeholder or ask the user.]`,
       isError: false,
       status: "blocked",
-      metadata: { layer: "data-lineage", redacted: true, reason: redactReason },
+      metadata: {
+        layer: "data-lineage", redacted: true, reason: redactReason,
+        recovery: "Do not re-read this source. Report what it was for as not checked, and continue with the rest of the request.",
+      },
     };
   }
 

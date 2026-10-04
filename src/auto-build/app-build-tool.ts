@@ -29,7 +29,8 @@
 import { existsSync, readdirSync } from "node:fs";
 import { dirname, basename } from "node:path";
 import type { ToolDefinition, ToolResult } from "../types.js";
-import { isFeatureEnabled, FEATURE_FLAG_ENV } from "./tool.js";
+import { blocked, withMetadata } from "../tools/result-helpers.js";
+import { AUTO_BUILD_DISABLED_RECOVERY, isFeatureEnabled, FEATURE_FLAG_ENV } from "./tool.js";
 import { kickoffBuildPlan, type BuildPlanKickoff } from "./kickoff.js";
 import { loadSkillBody } from "./skill-bodies.js";
 import { parsePlanText } from "./plan-parser.js";
@@ -83,7 +84,7 @@ export const startAppBuildTool: ToolDefinition = {
   },
   async execute(args): Promise<ToolResult> {
     if (!isFeatureEnabled()) {
-      return { content: FEATURE_FLAG_BLOCK_MESSAGE, isError: true, status: "blocked" };
+      return blocked(FEATURE_FLAG_BLOCK_MESSAGE, { recovery: AUTO_BUILD_DISABLED_RECOVERY });
     }
     const concept = String(args.concept || "").trim();
     const sessionId = typeof args._sessionId === "string" ? args._sessionId.trim() : "";
@@ -218,7 +219,7 @@ export function createFinalizeAppBuildTool(
   },
   async execute(args, signal): Promise<ToolResult> {
     if (!isFeatureEnabled()) {
-      return { content: FEATURE_FLAG_BLOCK_MESSAGE, isError: true, status: "blocked" };
+      return blocked(FEATURE_FLAG_BLOCK_MESSAGE, { recovery: AUTO_BUILD_DISABLED_RECOVERY });
     }
     if (signal?.aborted) return cancellationResult();
 
@@ -320,20 +321,14 @@ export function createFinalizeAppBuildTool(
 
     const kick = await kickoff({ projectDir, sessionId, signal });
     if (kick.isError || kick.status === "blocked" || kick.status === "error") {
-      return {
+      return withMetadata({
+        ...kick,
         content:
           `App-build artifacts were finalized at ${projectDir}, but orchestration did not start.\n\n` +
           `${kick.content}\n\nThe finalized workflow is preserved. Fix the reported blocker, then use ` +
           `\`run_build_plan({ project_dir: "${projectDir.replace(/\\/g, "/")}" })\`.`,
         isError: true,
-        status: kick.status,
-        metadata: {
-          ...kick.metadata,
-          project_dir: projectDir,
-          files_written: written.length,
-          workflow_phase: "finalized",
-        },
-      };
+      }, { project_dir: projectDir, files_written: written.length, workflow_phase: "finalized" });
     }
 
     const opId = String(kick.metadata?.op_id || kick.session_id || "").trim();

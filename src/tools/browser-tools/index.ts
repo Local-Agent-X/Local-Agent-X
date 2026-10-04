@@ -26,7 +26,8 @@ import type { BrowserEngine, WedgeRecoveryOutcome } from "../../browser/index.js
 import { getToolTimeout } from "../../tool-execution/tool-timeout.js";
 import { withBridgeDeadline } from "../../browser/bridge-deadline.js";
 import { raceWedgeDeadline, WEDGED } from "./wedge-deadline.js";
-import { VALID_ENGINES, err } from "./shared.js";
+import { VALID_ENGINES, err, withheld } from "./shared.js";
+import { blocked } from "../result-helpers.js";
 import {
   BROWSER_TOOL_NAME,
   BROWSER_TOOL_DESCRIPTION,
@@ -67,7 +68,6 @@ import { handleReadConsole, handleReadNetwork, handleReadResponse } from "./perc
 import { createLogger } from "../../logger.js";
 import { runWithSensitiveReadGrant, secrecyOpenWarning, sensitivePageStub } from "../../browser/guards.js";
 import { recordSiteTokens } from "../../browser/site-provenance.js";
-import { blocked } from "../result-helpers.js";
 
 // Names the action that wedged. Without it the circuit-breaker FAIL only says
 // "an action hung" — which action is left to inference. The destructive part is
@@ -222,12 +222,10 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
           }
           const sensitive = sensitivePageStub(manager.getCurrentUrl());
           if (sensitive) {
-            return {
-              content: sensitive,
-              isError: result.isError,
-              status: result.status,
-              metadata: { ...result.metadata, browserStatus: "sensitive-content-withheld" },
-            };
+            const browserStatus = "sensitive-content-withheld";
+            return result.status === "blocked"
+              ? blocked(sensitive, { ...result.metadata, browserStatus })
+              : { content: sensitive, isError: result.isError, status: result.status, metadata: { ...result.metadata, browserStatus } };
           }
           const finalResult = await applyProgressGuard(action, manager, sessionId, result);
           if (!finalResult.isError && typeof finalResult.content === "string") recordSiteTokens(sessionId, manager.getCurrentUrl(), finalResult.content);
@@ -245,7 +243,7 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
             : await runGated();
         } catch (e) {
           const sensitive = sensitivePageStub(manager.getCurrentUrl());
-          if (sensitive) return blocked(sensitive, { layer: "browser-sensitive-page", browserStatus: "sensitive-content-withheld" });
+          if (sensitive) return withheld(sensitive);
           const message = (e as Error).message;
           if (e instanceof BrowserWedgeError) {
             // A page scan hung. Recover now — ~10s in — so the next call

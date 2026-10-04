@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import type { ToolResult } from "../types.js";
+import { blocked } from "../tools/result-helpers.js";
 import { defaultJudgmentHook } from "./chunk-review/judgment-hook.js";
 import { checkSystemic, readBuildState } from "./failure-recovery.js";
 import { startOrchestration } from "./orchestrator/manager.js";
@@ -13,6 +14,8 @@ import { resolveProjectDir } from "./project-paths.js";
 
 export const FEATURE_FLAG_ENV = "LAX_AUTO_BUILD_ENABLED";
 const LEGACY_FEATURE_FLAG_ENV = "PRIMAL_AUTO_BUILD_ENABLED";
+export const AUTO_BUILD_DISABLED_RECOVERY =
+  `App building is switched off on this install (${FEATURE_FLAG_ENV}). Tell the user: it comes back when they unset that flag and restart LAX. Do not build the app another way unless they ask.`;
 
 export function isFeatureEnabled(): boolean {
   const raw = process.env[FEATURE_FLAG_ENV] ?? process.env[LEGACY_FEATURE_FLAG_ENV] ?? "";
@@ -78,7 +81,7 @@ export function createBuildPlanKickoff(
         isError: true,
         status: "blocked",
         metadata: {
-          recovery: `unset ${FEATURE_FLAG_ENV} (or set to a non-disabling value) in the LAX server environment and restart`,
+          recovery: AUTO_BUILD_DISABLED_RECOVERY,
         },
       };
     }
@@ -131,6 +134,7 @@ export function createBuildPlanKickoff(
           systemic_gate: systemic.gate,
           systemic_count: systemic.count,
           advisor_diagnosed: diagnostic.length > 0,
+          recovery: "The build keeps halting at the same gate. Fix what the advice above names (amend the spec or the gate cause), then run the plan again; if that needs a product decision, tell the user exactly which.",
         },
       };
     }
@@ -161,15 +165,12 @@ export function createBuildPlanKickoff(
       });
     } catch (error) {
       const message = (error as Error).message;
-      const duplicate = message.includes("already running");
-      return {
-        content: `Build plan kickoff ${duplicate ? "blocked" : "failed"}: ${message}`,
-        isError: true,
-        status: duplicate ? "blocked" : "error",
-        metadata: duplicate
-          ? { recovery: "Use build_plan_status for the running Product Build instead of starting another." }
-          : undefined,
-      };
+      if (message.includes("already running")) {
+        return blocked(`Build plan kickoff blocked: ${message}`, {
+          recovery: "Use build_plan_status for the running Product Build instead of starting another.",
+        });
+      }
+      return { content: `Build plan kickoff failed: ${message}`, isError: true, status: "error" };
     }
 
     return {

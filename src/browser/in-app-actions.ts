@@ -36,6 +36,7 @@ import { asExecResult } from "./in-app-scripts.js";
 import { resolutionScript, textSearchScript } from "./in-app-resolve-scripts.js";
 import { selectFillScript, stableFillScript } from "./in-app-fill-scripts.js";
 import { hasStableIds } from "./stable-ids.js";
+import { PASSWORD_FIELD_REFUSAL, isPasswordFieldType } from "./password-field-rule.js";
 import type { InteractionResult } from "./backend.js";
 import { createLogger } from "../logger.js";
 
@@ -321,6 +322,7 @@ export async function fillRefInApp(ctx: InAppActionContext, refId: number, value
 	const resolved = await resolveRefOrFail(ctx, refId);
 	if ("fail" in resolved) return resolved.fail;
 	const { ref, note } = resolved;
+	if (isPasswordFieldType(ref.type)) return { ok: false, text: `[${ref.id}] ${PASSWORD_FIELD_REFUSAL}` };
 	const hit = await resolveWithRetry(ctx, ref, "fill");
 	if (!hit.found) {
 		// The coordinate path missed — but a hit-test refusal is about PIXELS
@@ -335,6 +337,7 @@ export async function fillRefInApp(ctx: InAppActionContext, refId: number, value
 				return { ok: true, text: `[${ref.id}] fill via ${key}${note} — ${value.length} chars (element was not clickable; wrote to the field directly)` };
 			}
 			if (res.error === "file-input") return { ok: false, text: `[${ref.id}] ${FILE_INPUT_NEEDS_HUMAN}` };
+			if (res.error === "password-field") return { ok: false, text: `[${ref.id}] ${PASSWORD_FIELD_REFUSAL}` };
 		}
 		return failedWithSnapshot(ctx, ref, hit.occluded ?? []);
 	}
@@ -342,6 +345,8 @@ export async function fillRefInApp(ctx: InAppActionContext, refId: number, value
 	if (hit.tag === "INPUT" && hit.type === "file") {
 		return { ok: false, text: `[${ref.id}] ${FILE_INPUT_NEEDS_HUMAN}` };
 	}
+	// The element at the point may not be the one the snapshot named.
+	if (hit.tag === "INPUT" && isPasswordFieldType(hit.type)) return { ok: false, text: `[${ref.id}] ${PASSWORD_FIELD_REFUSAL}` };
 	if (hit.tag === "SELECT") {
 		// Per A1 the agent is no longer auto-yielded while the user is driving —
 		// the SELECT mutation proceeds regardless; the user interrupts via Stop.

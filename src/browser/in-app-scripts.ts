@@ -229,6 +229,8 @@ export function fillScript(selector: string, value: string): string {
 	if (el && el.bad) return { ok: false, error: "invalid-selector: " + el.bad };
 	if (!el) return { ok: false, error: "not-found" };
 	const type = ((el.getAttribute && el.getAttribute("type")) || "").toLowerCase();
+	// Passwords reach a page only from the vault (password-field-rule.ts).
+	if (type === "password") return { ok: false, error: "password-field" };
 	if ("value" in el) { ${nativeValueSetStmt("el", val)} }
 	else if (el.isContentEditable) el.textContent = ${val};
 	else return { ok: false, error: "not-fillable" };

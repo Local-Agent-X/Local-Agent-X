@@ -3,7 +3,7 @@
  *
  * One tool (`browser`) with an `action` discriminator. The per-action handlers
  * live in src/tools/browser-tools/:
- *   shared.ts        — ok/err helpers, auth-wall detector, post-action snapshot,
+ *   shared.ts        — ok/err helpers, post-action snapshot,
  *                      input-ref lister, VALID_ENGINES
  *   description.ts   — static tool name + description + parameters schema
  *   action-tables.ts — action classification tables (reset / tracked /

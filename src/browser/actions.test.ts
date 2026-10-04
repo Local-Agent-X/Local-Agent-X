@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import type { Page } from "playwright";
 import { clickByText, fillRef } from "./actions.js";
+import { PASSWORD_FIELD_REFUSAL } from "./password-field-rule.js";
 import type { DurableRef, ObservationRegistry } from "./observation.js";
 
 /**
@@ -68,13 +69,14 @@ describe("clickByText budget", () => {
  * stable identifiers is resolved by them, before any fuzzy strategy runs, and
  * with the same nearest-to-observed-centre tie-break the in-app chain uses.
  */
-function fakeLocatorPage(matches: Record<string, Array<{ x: number; y: number }>>) {
+function fakeLocatorPage(matches: Record<string, Array<{ x: number; y: number }>>, passwordSels: string[] = []) {
   const filled: Array<{ sel: string; index: number; value: string }> = [];
   const selected: Array<{ sel: string; value: string }> = [];
   const fuzzy: string[] = [];
   const locatorFor = (sel: string, index: number) => ({
     first: () => locatorFor(sel, 0),
     nth: (i: number) => locatorFor(sel, i),
+    async getAttribute(name: string) { return name === "type" && passwordSels.includes(sel) ? "password" : null; },
     async count() { return (matches[sel] ?? []).length; },
     async boundingBox() {
       const box = (matches[sel] ?? [])[index];
@@ -94,6 +96,7 @@ function fakeLocatorPage(matches: Record<string, Array<{ x: number; y: number }>
   const fuzzyLocator = (label: string) => {
     const loc = {
       first: () => loc,
+      async getAttribute() { return null; },
       async count() { fuzzy.push(label); return 1; },
       async fill(value: string) { filled.push({ sel: label, index: 0, value }); },
       async selectOption(value: string) { selected.push({ sel: label, value }); },
@@ -132,6 +135,24 @@ function mkRef(over: Partial<DurableRef> = {}): DurableRef {
 function registryWith(ref: DurableRef): ObservationRegistry {
   return { recoverStaleRef: () => ref } as unknown as ObservationRegistry;
 }
+
+// Passwords reach a page only from the vault (password-field-rule.ts).
+describe("a password field is never filled", () => {
+  it("refuses a ref the snapshot recorded as a password field, before touching the page", async () => {
+    const { page, filled } = fakeLocatorPage({ 'input[id="pw"]': [{ x: 100, y: 100 }] });
+    const r = await fillRef(page, registryWith(mkRef({ type: "password", ids: { id: "pw" } })), 12, "hunter2");
+    expect(r.ok).toBe(false);
+    expect(r.message).toContain(PASSWORD_FIELD_REFUSAL);
+    expect(filled).toEqual([]);
+  });
+
+  it("refuses when the element itself is a password field, whatever the snapshot recorded", async () => {
+    const { page, filled } = fakeLocatorPage({ 'input[id="pw"]': [{ x: 100, y: 100 }] }, ['input[id="pw"]']);
+    const r = await fillRef(page, registryWith(mkRef({ type: "", ids: { id: "pw" } })), 12, "hunter2");
+    expect(r.ok).toBe(false);
+    expect(filled.some((f) => f.sel === 'input[id="pw"]')).toBe(false);
+  });
+});
 
 describe("exact stable-identifier resolution (CDP path)", () => {
   it("fills by unique id without ever consulting the fuzzy strategies", async () => {

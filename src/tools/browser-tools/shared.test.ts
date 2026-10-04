@@ -1,103 +1,13 @@
 /**
- * computeAuthWallPrefix — detection heuristic + prefix wording.
+ * appendPostActionSnapshot — what a fill/select result shows of the page.
  *
- * The wording tests exist because of a real regression: the old prefix said
- * "STOP. ... Do NOT call more browser actions", which the model read as a
- * GLOBAL halt — asked to open 3 sites, it hit a login wall on site 1 and
- * never opened the other 2. The prefix must be page-scoped: block bypass
- * attempts on THIS page while explicitly telling the model to continue any
- * other pending work.
+ * The login-wall banner it used to prefix was removed (2026-10-03): it
+ * guessed from page text and fired on logged-in pages. Password fields are
+ * now a hard rule at every fill path (browser/password-field-rule.ts).
  */
 import { describe, it, expect } from "vitest";
-import { appendPostActionSnapshot, computeAuthWallPrefix } from "./shared.js";
+import { appendPostActionSnapshot } from "./shared.js";
 import { ObservationRegistry, type BrowserObservation } from "../../browser/observation.js";
-
-/** A snapshot that trips the detector: password field near the top with adjacent auth cues. */
-const AUTH_WALL_SNAPSHOT = [
-  "[1]<heading>Welcome back</heading>",
-  '[2]<input type=email name=email placeholder="Email">',
-  "[3]<input type=password name=password>",
-  "[4]<button>Sign in</button>",
-].join("\n");
-
-describe("computeAuthWallPrefix — detection heuristic (unchanged)", () => {
-  it("fires on a primary login form (password near top + adjacent auth cues)", () => {
-    expect(computeAuthWallPrefix(AUTH_WALL_SNAPSHOT)).not.toBe("");
-  });
-
-  it("does not fire when there is no password field", () => {
-    const snap = "[1]<heading>News</heading>\n[2]<link>Sign in</link>";
-    expect(computeAuthWallPrefix(snap)).toBe("");
-  });
-
-  it("does not fire when the password field is below the fold (line > 60)", () => {
-    const filler = Array.from({ length: 70 }, (_, i) => `[${i + 1}]<text>row ${i + 1}</text>`);
-    const snap = [...filler, "[71]<input type=password>", "[72]<button>Sign in</button>"].join("\n");
-    expect(computeAuthWallPrefix(snap)).toBe("");
-  });
-
-  it("does not fire on a stray password field with no adjacent auth signals", () => {
-    const snap = "[1]<text>hello</text>\n[2]<input type=password>\n[3]<text>world</text>";
-    expect(computeAuthWallPrefix(snap)).toBe("");
-  });
-
-  // A logged-in Twilio console read as a login wall (2026-10-03): its Auth
-  // Token is a filled password box, and "Continue"/"Enter" sat nearby.
-  it("does not fire on a secret a logged-in page shows behind dots", () => {
-    const snap = [
-      "[1]<heading>Ahoy, Pedro</heading>",
-      "[2]<button>Continue setup</button>",
-      "[3]<textbox>Account SID</textbox> {filled}",
-      "[4]<input type=password>Auth Token</input> {filled}",
-      "[5]<button>Show</button>",
-    ].join("\n");
-    expect(computeAuthWallPrefix(snap)).toBe("");
-  });
-
-  it("does not fire on a disabled password field", () => {
-    const snap = "[1]<heading>API keys</heading>\n[2]<input type=password>Key</input> {disabled}\n[3]<button>Sign in again</button>";
-    expect(computeAuthWallPrefix(snap)).toBe("");
-  });
-
-  it("still fires on a password-only step that says sign in, and on a form the browser pre-filled", () => {
-    expect(computeAuthWallPrefix("[1]<heading>Enter your password</heading>\n[2]<input type=password>\n[3]<button>Sign in</button>")).not.toBe("");
-    expect(computeAuthWallPrefix('[1]<input type=email name=email placeholder="Email"> {filled}\n[2]<input type=password> {filled}\n[3]<button>Log in</button>')).not.toBe("");
-  });
-
-  it("no longer fires on Continue/Submit/Enter alone", () => {
-    expect(computeAuthWallPrefix("[1]<input type=password>\n[2]<button>Continue</button>")).toBe("");
-  });
-});
-
-describe("computeAuthWallPrefix — prefix wording is page-scoped", () => {
-  const prefix = computeAuthWallPrefix(AUTH_WALL_SNAPSHOT);
-
-  it("starts with the [AUTH-WALL DETECTED] marker (provider-riders matches on startsWith)", () => {
-    expect(prefix.startsWith("[AUTH-WALL DETECTED]")).toBe(true);
-  });
-
-  it("does not issue a global halt on browser actions", () => {
-    expect(prefix).not.toMatch(/do not call (any )?more browser actions/i);
-  });
-
-  it('contains no bare standalone "STOP."', () => {
-    expect(prefix).not.toMatch(/(^|\s)STOP\.(\s|$)/);
-  });
-
-  it("explicitly instructs continuing other pending work", () => {
-    expect(prefix).toMatch(/does not block other work/i);
-    expect(prefix).toMatch(/continue with those now/i);
-  });
-
-  it("still forbids bypassing the wall or typing credentials", () => {
-    expect(prefix).toMatch(/do not attempt to bypass/i);
-    expect(prefix).toMatch(/do not type credentials yourself/i);
-  });
-
-  it("tells the model to report which page is waiting on the user's login", () => {
-    expect(prefix).toMatch(/tell the user which page is waiting on their login/i);
-  });
-});
 
 describe("appendPostActionSnapshot — a degraded observation stays loud in the tool result", () => {
   it("the extraction-failure notice and screenshot steer survive the external-content wrap", async () => {

@@ -203,7 +203,7 @@ export class ObservationRegistry {
     ]);
     if (obstructions.length > 0) {
       // Observability: mark consent/cookie/modal blocks (the Guardian case) so
-      // a route-around reads as a clear trail next to navigations + auth-walls.
+      // a route-around reads as a clear trail next to navigations.
       logger.info(`obstruction(s) detected: ${obstructions.map(o => o.kind).join(", ")} (${obstructions.length})`);
     }
     const dialogs = pendingDialogs(page);

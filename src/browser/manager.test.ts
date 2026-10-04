@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Page, BrowserContext } from "playwright";
 import { BrowserManager } from "./manager.js";
+import { PASSWORD_FIELD_REFUSAL } from "./password-field-rule.js";
 import { wirePopupAdoption } from "./manager-popups.js";
 import { installRequestGuard } from "./guards.js";
 import { installDownloadHandler } from "./downloads.js";
@@ -16,6 +17,7 @@ import { handleNewTab } from "../tools/browser-tools/navigation.js";
 // We don't spin up Playwright — we stub getPage() with a hand-rolled page.
 
 interface FakeLocator {
+  first: () => FakeLocator;
   inputValue: () => Promise<string>;
   getAttribute: (name: string) => Promise<string | null>;
 }
@@ -33,11 +35,15 @@ function buildPage(opts: {
   return {
     waitForSelector: vi.fn().mockResolvedValue(undefined),
     fill: vi.fn().mockResolvedValue(undefined),
-    locator: () => ({
-      inputValue: async () =>
-        typeof opts.readback === "function" ? opts.readback() : opts.readback,
-      getAttribute: async () => opts.attrType ?? null,
-    }),
+    locator: () => {
+      const loc: FakeLocator = {
+        first: () => loc,
+        inputValue: async () =>
+          typeof opts.readback === "function" ? opts.readback() : opts.readback,
+        getAttribute: async () => opts.attrType ?? null,
+      };
+      return loc;
+    },
   };
 }
 
@@ -73,25 +79,13 @@ describe("BrowserManager.fill — readback policy", () => {
     );
   });
 
-  it("returns ok with masked-input note when readback is empty and type=password", async () => {
+  // Passwords reach a page only from the vault (password-field-rule.ts).
+  it("refuses a password field without filling it", async () => {
     const page = buildPage({ readback: "", attrType: "password" });
     const mgr = makeManager(page);
 
-    const result = await mgr.fill("#pw", "hunter2");
-
-    expect(result).toBe(`Filled "#pw" (verification skipped: masked input)`);
-  });
-
-  it("returns ok normally when a password input echoes back its real value", async () => {
-    // Some password fields aren't really masked at the DOM level (e.g. show-password toggles).
-    // If inputValue() returns the same string, normal verification path wins — no skip note.
-    const page = buildPage({ readback: "hunter2", attrType: "password" });
-    const mgr = makeManager(page);
-
-    const result = await mgr.fill("#pw", "hunter2");
-
-    expect(result).toBe(`Filled "#pw" with value (7 chars)`);
-    expect(result).not.toContain("verification skipped");
+    await expect(mgr.fill("#pw", "hunter2")).rejects.toThrow(PASSWORD_FIELD_REFUSAL);
+    expect(page.fill).not.toHaveBeenCalled();
   });
 
   it("returns ok with readback-failed note when the locator itself throws", async () => {

@@ -22,29 +22,27 @@ describe("providerRiderFor", () => {
   });
 });
 
-describe("codexBehaviorRider — auth-wall rule is page-scoped (C6)", () => {
-  // Motivating bug: user asked for 3 sites on provider=codex; site 1 tripped
-  // the auth wall and the model halted the whole turn, never opening sites
-  // 2-3. The rider must not re-inject a global-halt on auth-wall.
+describe("codexBehaviorRider — a login page is page-scoped (C6)", () => {
+  // Motivating bug: user asked for 3 sites on provider=codex; site 1 needed a
+  // login and the model halted the whole turn, never opening sites 2-3. Then
+  // a login-wall detector fired on a signed-in Twilio console (2026-10-03).
+  // The rule keys on the password-field refusal, not a guess about the page.
   const rider = codexBehaviorRider();
 
-  it("no longer instructs a turn-ending STOP on auth-wall", () => {
-    expect(rider).not.toMatch(/AUTH-WALL[^\n]*= ?STOP/);
+  it("never instructs a turn-ending STOP, and no longer keys on a detector marker", () => {
     expect(rider).not.toMatch(/On that signal: STOP/);
+    expect(rider).not.toContain("AUTH-WALL");
   });
 
-  it("still keys on the structural [AUTH-WALL DETECTED] marker", () => {
-    expect(rider).toContain('"[AUTH-WALL DETECTED]"');
+  it("points a password to the vault fill or the user, and continues the rest of the request", () => {
+    expect(rider).toContain("You cannot type into a password field");
+    expect(rider).toContain("browser_fill_from_secret");
+    expect(rider).toContain("NOT THE END OF THE TURN");
+    expect(rider).toContain("CONTINUE with every other part of the request");
   });
 
-  it("scopes the halt to the walled page and orders continuation of other pending work", () => {
-    expect(rider).toContain("does NOT end the turn");
-    expect(rider).toContain("CONTINUE with those");
-    expect(rider).toContain("report which page is waiting on their login");
-  });
-
-  it("keeps the anti-grind and safety guidance on the walled page", () => {
-    expect(rider).toContain('do NOT call more snapshot/extract tools on it to "make sure"');
+  it("keeps the anti-grind and safety guidance for a login page", () => {
+    expect(rider).toContain("Do not spend snapshot/extract calls deciding whether a page is a login page");
     expect(rider).toContain("double-check the URL is the real site");
   });
 

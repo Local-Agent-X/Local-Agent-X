@@ -21,26 +21,31 @@ export function createSecretTools(
   const requestSecretTool: ToolDefinition = {
     name: "request_secret",
     compactDescription:
-      "Ask the user for an API key or token through a secure prompt; it is stored encrypted and never enters the chat. Use this instead of asking them to type a credential to you.",
+      "Ask the user for an API key, token or website password through a secure prompt; stored encrypted, never in the chat. Use it instead of asking them to type a credential to you.",
     description:
-      "Request an API key or token from the user via a secure input prompt. The secret is stored encrypted and never appears in chat. Use this when you need credentials for an API call. If the secret already exists, it will confirm availability without re-prompting.",
+      "Request an API key, token or website password from the user via a secure input prompt. The secret is stored encrypted and never appears in chat. If the secret already exists, it will confirm availability without re-prompting.",
     parameters: {
       type: "object",
       properties: {
         name: {
           type: "string",
           description:
-            "Unique name for the secret, e.g. GITHUB_TOKEN, SLACK_BOT_TOKEN, LINEAR_API_KEY. Use SCREAMING_SNAKE_CASE.",
+            "SCREAMING_SNAKE_CASE name, e.g. GITHUB_TOKEN.",
         },
         service: {
           type: "string",
           description:
-            "Service name for display, e.g. 'GitHub', 'Slack', 'Linear'. Helps the user know what the key is for.",
+            "Display name, e.g. 'GitHub'.",
         },
         reason: {
           type: "string",
           description:
-            "Brief explanation of why this secret is needed, shown to the user in the prompt.",
+            "Why it is needed; shown in the prompt.",
+        },
+        url: {
+          type: "string",
+          description:
+            "Login page, for a website password.",
         },
       },
       required: ["name", "reason"],
@@ -49,6 +54,7 @@ export function createSecretTools(
       const name = String(args.name || "").toUpperCase().replace(/[^A-Z0-9_]/g, "_");
       const service = args.service ? String(args.service) : undefined;
       const reason = String(args.reason || "Required for API access");
+      const url = args.url ? String(args.url) : undefined;
 
       if (!name) {
         return err("Secret name is required.");
@@ -69,12 +75,15 @@ export function createSecretTools(
         name,
         service,
         reason,
+        ...(url ? { url } : {}),
       });
 
       return ok(
         `Requesting "${name}" from the user via secure input. ` +
-          `A prompt has been shown in the UI. Once they provide it, you can use {{${name}}} in http_request headers. ` +
-          `Wait for the user to confirm before making API calls.`
+          (url
+            ? `A prompt has been shown in the UI. Once they save it, fill it into ${url} with browser_fill_from_secret; it never passes through you. `
+            : `A prompt has been shown in the UI. Once they provide it, you can use {{${name}}} in http_request headers. `) +
+          `Wait for the user to confirm before using it.`
       );
     },
   };
@@ -107,6 +116,7 @@ export function createSecretTools(
               name: { type: "string", description: "Unique secret name in SCREAMING_SNAKE_CASE." },
               service: { type: "string", description: "Service name for display + grouping (e.g. 'WooCommerce', 'Stripe')." },
               reason: { type: "string", description: "Why this credential is needed; shown to the user." },
+              url: { type: "string", description: "Website logins: the login page's address. Filled only there." },
             },
             required: ["name", "reason"],
           },
@@ -115,15 +125,16 @@ export function createSecretTools(
       required: ["secrets"],
     },
     async execute(args) {
-      type SecretReq = { name: string; service?: string; reason: string };
+      type SecretReq = { name: string; service?: string; reason: string; url?: string };
       const raw = Array.isArray(args.secrets) ? args.secrets : [];
       const normalized: SecretReq[] = [];
       for (const s of raw) {
-        const r = s as { name?: unknown; service?: unknown; reason?: unknown };
+        const r = s as { name?: unknown; service?: unknown; reason?: unknown; url?: unknown };
         const name = String(r.name || "").toUpperCase().replace(/[^A-Z0-9_]/g, "_");
         if (!name) continue;
         const entry: SecretReq = { name, reason: String(r.reason || "Required for API access") };
         if (r.service) entry.service = String(r.service);
+        if (r.url) entry.url = String(r.url);
         normalized.push(entry);
       }
 
@@ -150,7 +161,8 @@ export function createSecretTools(
       return ok(
         `Requesting ${missing.length} credential(s) from the user in a single secure prompt: ${missing.map(s => s.name).join(", ")}.` +
           skippedNote +
-          ` Once saved, use them as ${missing.map(s => `{{${s.name}}}`).join(" / ")} in http_request headers. ` +
+          ` Once saved, use them as ${missing.map(s => `{{${s.name}}}`).join(" / ")} in http_request headers` +
+          (missing.some(s => s.url) ? `; a website login (one with a url) fills with browser_fill_from_secret on its site. ` : `. `) +
           `Wait for the user to confirm before making API calls.`
       );
     },
@@ -176,7 +188,12 @@ export function createSecretTools(
       const lines = list.map(s => {
         const svc = s.service ? ` (${s.service})` : "";
         const acct = s.account ? ` [${s.account}]` : "";
-        return `- ${s.name}${svc}${acct} — use as {{${s.name}}} in http_request headers`;
+        // A secret saved for a site is a website login: it goes into that
+        // site's field through the vault, never through a request you write.
+        const site = s.origin ?? s.url;
+        return site
+          ? `- ${s.name}${svc}${acct} — website login for ${site}: fill it with browser_fill_from_secret on that site`
+          : `- ${s.name}${svc}${acct} — use as {{${s.name}}} in http_request headers`;
       });
       return ok(`Stored secrets (${list.length}):\n${lines.join("\n")}`);
     },

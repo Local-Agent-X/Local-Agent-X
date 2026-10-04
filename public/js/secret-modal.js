@@ -99,7 +99,10 @@
         html += '<div style="margin-bottom:14px">';
         html += '<div style="display:inline-block;background:#1a1a30;border:1px solid var(--border);border-radius:6px;padding:3px 10px;font-family:var(--mono);font-size:.74rem;color:var(--accent);margin-bottom:4px">' + _esc(s.name) + '</div>';
         html += '<div style="color:var(--muted);font-size:.78rem;margin:4px 0 6px;line-height:1.4">' + _esc(s.reason) + '</div>';
-        html += '<input type="password" data-secret-name="' + _esc(s.name) + '" class="field-input secret-input-field" placeholder="Paste value..." autocomplete="off"/>';
+        // A website login names its site: the vault fills it only there.
+        const site = _siteOf(s.url);
+        if (site) html += '<div style="color:var(--muted);font-size:.74rem;margin:0 0 6px">For ' + _esc(site) + ' only &mdash; filled there by the vault, never shown to the agent.</div>';
+        html += '<input type="password" data-secret-name="' + _esc(s.name) + '" data-secret-url="' + _esc(s.url || '') + '" class="field-input secret-input-field" placeholder="Paste value..." autocomplete="off"/>';
         html += '</div>';
       }
     }
@@ -137,8 +140,13 @@
     }, 100);
   }
 
-  function showSecretModal(name, service, reason) {
-    showMultiSecretModal([{ name, service, reason }]);
+  function _siteOf(url) {
+    if (!url) return '';
+    try { return new URL(/^[a-z][a-z0-9+.-]*:/i.test(url) ? url : 'https://' + url).host; } catch (_) { return ''; }
+  }
+
+  function showSecretModal(name, service, reason, url) {
+    showMultiSecretModal([{ name, service, reason, url }]);
   }
 
   function showMultiSecretModal(secrets) {
@@ -168,13 +176,14 @@
     for (const inp of inputs) {
       const name = inp.getAttribute('data-secret-name');
       const value = inp.value.trim();
+      const url = inp.getAttribute('data-secret-url') || '';
       if (!name || !value) continue;
       // apiPost resolves for ANY JSON response, including 401/429/500 error
       // bodies — the POST route's success contract is {ok:true}. Trusting a
       // bare resolve told users "captured and ready for use" while the vault
       // had rejected the save (the GEMINI_API_KEY ×5 incident).
       try {
-        const res = await apiPost('/api/secrets', { name, value });
+        const res = await apiPost('/api/secrets', url ? { name, value, url } : { name, value });
         if (res && res.ok) {
           saved.push(name);
         } else {

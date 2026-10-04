@@ -28,6 +28,7 @@ import { consoleCaptureRefusal, networkCaptureRefusal, responseCaptureRefusal } 
 import type { BrowserMode } from "../types.js";
 import { waitForContinuityCacheRestore } from "./continuity-cache.js";
 import type { BrowserBackend, InteractionResult, ScrollOptions } from "./backend.js";
+import { PasswordFieldRefused, isPasswordFieldType } from "./password-field-rule.js";
 
 export interface BrowserContextRuntime {
   acquire(
@@ -215,7 +216,7 @@ export class BrowserManager implements BrowserBackend {
     const title = await page.title();
     const redirect = redirectMessage(requestedHost, safeHost(page.url()));
     // Deliberately NO snapshot here: handleNavigate appends the canonical
-    // post-action snapshot (auth-wall prefix + external-content wrap).
+    // post-action snapshot (external-content wrap).
     // Snapshotting here too ran a second full DOM extract + iframe traversal
     // on every navigate whose output was just "page unchanged" noise.
     return `Navigated to: ${page.url()}\nStatus: ${status}\nTitle: ${title}${redirect}`;
@@ -233,22 +234,15 @@ export class BrowserManager implements BrowserBackend {
   async fill(selector: string, value: string): Promise<string> {
     const page = await this.getPage();
     await page.waitForSelector(selector, { state: "visible", timeout: 5000 });
+    if (isPasswordFieldType(await page.locator(selector).first().getAttribute("type"))) throw new PasswordFieldRefused();
     await page.fill(selector, value, { timeout: ACTION_TIMEOUT });
-    // Best-effort readback: confirm the value actually landed. Masked inputs
-    // (type=password) return "" from inputValue() — skip verification rather
-    // than fail. If the readback itself throws (element gone, navigation,
-    // detach) we don't bury the underlying successful fill.
+    // Best-effort readback: confirm the value actually landed. If the readback
+    // itself throws (element gone, navigation, detach) we don't bury the
+    // underlying successful fill.
     try {
-      const loc = page.locator(selector);
-      const actual = await loc.inputValue();
+      const actual = await page.locator(selector).inputValue();
       if (actual === value) {
         return `Filled "${selector}" with value (${value.length} chars)`;
-      }
-      if (actual === "") {
-        const type = (await loc.getAttribute("type") || "").toLowerCase();
-        if (type === "password") {
-          return `Filled "${selector}" (verification skipped: masked input)`;
-        }
       }
       throw new Error(`Fill did not land: expected '${value}' got '${actual}'`);
     } catch (e) {

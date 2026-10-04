@@ -83,6 +83,8 @@ ${FRAME_HELPERS}
 			// A native picker and a <select> are not text sinks — refuse loudly
 			// rather than writing a value the widget will ignore.
 			if (type === "file") return { ok: false, error: "file-input" };
+			// Passwords reach a page only from the vault (password-field-rule.ts).
+			if (type === "password") return { ok: false, error: "password-field" };
 			if (el.tagName === "SELECT") return { ok: false, error: "not-fillable" };
 			if ("value" in el) { ${nativeValueSetStmt("el", "p.value")} }
 			else if (el.isContentEditable) el.textContent = p.value;

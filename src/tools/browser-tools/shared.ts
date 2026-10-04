@@ -5,11 +5,9 @@
 import type { ToolResult } from "../../types.js";
 import type { BrowserEngine } from "../../browser/index.js";
 import { wrapExternalContent } from "../../sanitize.js";
-import { createLogger } from "../../logger.js";
 import { sensitivePageStub } from "../../browser/guards.js";
 import { HUMAN_VERIFICATION_MESSAGE, snapshotShowsHumanVerification } from "../../browser/human-verification.js";
 
-const log = createLogger("browser.wall");
 
 export function ok(content: string): ToolResult {
   return { content };
@@ -23,7 +21,7 @@ export const VALID_ENGINES: BrowserEngine[] = ["chromium", "firefox", "webkit"];
 
 /**
  * Append a fresh post-action snapshot to a base result string. Mirrors what
- * the snapshot case does (auth-wall prefix + external-content wrap) so the
+ * the snapshot case does (external-content wrap) so the
  * agent sees the same thing it would after manually calling snapshot.
  *
  * Used by state-changing actions (fill, select, scroll, dialog, switch_tab)
@@ -42,9 +40,8 @@ export async function appendPostActionSnapshot(
   try {
     const raw = await manager.snapshot();
     if (snapshotShowsHumanVerification(raw)) return `${base}\n\n${HUMAN_VERIFICATION_MESSAGE}`;
-    const prefix = computeAuthWallPrefix(raw);
     const url = manager.getCurrentUrl ? manager.getCurrentUrl() : undefined;
-    return `${base}\n\n--- Page snapshot ---\n${wrapExternalContent(prefix + raw, "browser.snapshot", url ? { url } : undefined)}`;
+    return `${base}\n\n--- Page snapshot ---\n${wrapExternalContent(raw, "browser.snapshot", url ? { url } : undefined)}`;
   } catch {
     return base;
   }
@@ -64,51 +61,3 @@ export function listInputRefs(snap: string): string {
   return matches.slice(0, 8).join("\n");
 }
 
-/**
- * Smarter auth-wall detection. Old heuristic flagged ANY page with a
- * `type=password` field, which fired false positives all over —
- * many sites have hidden / collapsed login forms that aren't actually
- * blocking the agent (e.g. ChatGPT signup link in nav, Grok's footer
- * sign-in option). Now we only flag when the password field looks
- * PRIMARY: it's near the top of the snapshot (within first 60 lines)
- * AND surrounded by other form elements (email/username/login-button
- * cues) suggesting it's the page's main interaction.
- *
- * False negatives (real auth wall not flagged) are recoverable — the
- * agent will still try to interact and the user will tell it to log in.
- * False positives (non-blocking password field flagged) cause Codex to
- * give up early, which is the user-reported regression.
- */
-export function computeAuthWallPrefix(snapshot: string): string {
-  const lines = snapshot.split("\n");
-  const passwordIdx = lines.findIndex(l => /\btype=password\b/.test(l));
-  if (passwordIdx === -1) return "";
-
-  // Only consider it a primary auth wall if password field is in the first
-  // 60 lines of the snapshot (above-the-fold approximation). Pages where
-  // login is in a hidden modal or footer element won't match.
-  if (passwordIdx > 60) return "";
-
-  // Look for adjacent auth signals (email field, login button, sign-in
-  // text within +/- 15 lines of the password field). Without these,
-  // the password field is probably a stray element, not the page's
-  // primary call to action.
-  const start = Math.max(0, passwordIdx - 15);
-  const end = Math.min(lines.length, passwordIdx + 15);
-  const window = lines.slice(start, end).join("\n").toLowerCase();
-  const hasEmailOrUsername = /\b(type=email|name=(email|username|user|login)|placeholder="?(email|username|user))\b/i.test(window);
-  // A password box already filled on a page with no username field is a
-  // secret the page shows (an API token behind dots on a logged-in console),
-  // not a login form, which loads empty; a disabled one takes no input at all.
-  const passwordLine = lines[passwordIdx];
-  if (/\{[^}]*\bdisabled\b[^}]*\}/.test(passwordLine)) return "";
-  if (/\{[^}]*\bfilled\b[^}]*\}/.test(passwordLine) && !hasEmailOrUsername) return "";
-  // "Continue", "Submit" and "Enter" are on every page; only a sign-in names a login.
-  const hasLoginCta = /\b(sign ?in|log ?in)\b/i.test(window);
-  if (!hasEmailOrUsername && !hasLoginCta) return "";
-
-  // Observability: mark the block moment so a route-around reads as
-  // "navigate X -> auth-wall detected -> navigate Y" in the logs.
-  log.info("auth-wall detected on page snapshot");
-  return `[AUTH-WALL DETECTED] This page has a primary login form that only the user can complete. Do NOT attempt to bypass it, and do NOT type credentials yourself — the user enters credentials in the browser themselves. This applies to THIS page only and does not block other work: if you have other sites to open or unrelated actions pending, continue with those now, and tell the user which page is waiting on their login.\n\n`;
-}

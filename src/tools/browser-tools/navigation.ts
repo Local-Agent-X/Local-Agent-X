@@ -9,7 +9,7 @@ import type { BrowserBackend, BrowserEngine } from "../../browser/index.js";
 import { ObservationRegistry, type BrowserObservation } from "../../browser/observation.js";
 import { wrapExternalContent } from "../../sanitize.js";
 import { createLogger } from "../../logger.js";
-import { ok, err, computeAuthWallPrefix, appendPostActionSnapshot } from "./shared.js";
+import { ok, err, appendPostActionSnapshot } from "./shared.js";
 import { safeBrowserPageLabel, sensitivePageStub } from "../../browser/guards.js";
 import { resolveNewTabUrls } from "../../security/layer/browser-egress-eval.js";
 import { getToolTimeout } from "../../tool-execution/tool-timeout.js";
@@ -45,7 +45,7 @@ export async function handleNavigate(
   // Auto-snapshot on navigate. Without this, the agent has to remember to call
   // snapshot before fill/click/evaluate — which it routinely forgets, leading
   // to "Could not find input matching X" errors and blind selector guesses.
-  // appendPostActionSnapshot bakes the same auth-wall + structural prefix the
+  // appendPostActionSnapshot bakes the same structural wrap the
   // explicit snapshot action uses, and falls back to the bare nav result if the
   // page is still loading.
   return ok(await appendPostActionSnapshot(manager, navResult));
@@ -190,6 +190,5 @@ export async function handleSnapshot(
   if (snapshotShowsHumanVerification(raw)) {
     return { content: HUMAN_VERIFICATION_MESSAGE, status: "blocked", isError: true, metadata: { browserStatus: "human-verification-required" } };
   }
-  const prefix = computeAuthWallPrefix(raw);
-  return ok(wrapExternalContent(prefix + raw, "browser.snapshot", { url: manager.getCurrentUrl() }));
+  return ok(wrapExternalContent(raw, "browser.snapshot", { url: manager.getCurrentUrl() }));
 }

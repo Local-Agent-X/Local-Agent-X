@@ -129,8 +129,8 @@ export type ServerEvent =
   // one-liner; `debug` is the original technical text for diagnostics.
   | { type: "stopped"; reason: string; debug?: string; firedBy?: string; opId?: string }
   | { type: "error"; message: string; opId?: string }
-  | { type: "secret_request"; name: string; service?: string; reason: string }
-  | { type: "secrets_request"; secrets: Array<{ name: string; service?: string; reason: string }> }
+  | { type: "secret_request"; name: string; service?: string; reason: string; url?: string }
+  | { type: "secrets_request"; secrets: Array<{ name: string; service?: string; reason: string; url?: string }> }
   // `expiresAt` (optional, additive) is the ABSOLUTE epoch-ms instant this ask
   // auto-DENIES at — requestedAt + APPROVAL_TIMEOUT_MS, the same value the
   // manager arms its timeout on, so a rendered clock and the actual denial

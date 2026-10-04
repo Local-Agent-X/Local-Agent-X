@@ -14,6 +14,7 @@ import { asExecResult, clickScript, fillScript, selectScript } from "./in-app-sc
 import { execChecked } from "./in-app-observe.js";
 import { clickTextInApp, type InAppActionContext } from "./in-app-actions.js";
 import { selectorTextHint } from "./selector-compat.js";
+import { PasswordFieldRefused } from "./password-field-rule.js";
 
 export async function clickSelectorInApp(viewId: string, selector: string): Promise<void> {
 	const res = asExecResult(await execChecked(viewId, clickScript(selector)));
@@ -51,13 +52,11 @@ export async function fillSelectorInApp(viewId: string, selector: string, value:
 	const res = asExecResult(await execChecked(viewId, fillScript(selector, value)));
 	if (!res.ok) {
 		if (res.error === "not-found") throw new Error(`Element not found: ${selector}`);
+		if (res.error === "password-field") throw new PasswordFieldRefused();
 		throw new Error(`Cannot fill ${selector}: ${res.error}`);
 	}
 	const actual = typeof res.actual === "string" ? res.actual : "";
 	if (actual === value) return `Filled "${selector}" with value (${value.length} chars)`;
-	if (actual === "" && res.type === "password") {
-		return `Filled "${selector}" (verification skipped: masked input)`;
-	}
 	throw new Error(`Fill did not land: expected '${value}' got '${actual}'`);
 }
 

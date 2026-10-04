@@ -77,7 +77,7 @@ export function createBrowserSecretFillTool(
       properties: {
         name: {
           type: "string",
-          description: "Secret name (SCREAMING_SNAKE_CASE) already present in the vault. List with secret_list.",
+          description: "Secret name (SCREAMING_SNAKE_CASE) already present in the vault. List with list_secrets.",
         },
         ref: {
           type: "integer",
@@ -121,7 +121,7 @@ export function createBrowserSecretFillTool(
       const meta = secretsStore.getMeta(name);
       if (!meta) {
         auditLog({ event: "fill_denied", secret: name, reason: "not_in_vault", session: sessionId });
-        return err(`Secret "${name}" is not in the vault. Use secret_list to see what's stored, or capture it with browser_capture_to_secret.`);
+        return err(`Secret "${name}" is not in the vault. Use list_secrets to see what's stored, or capture it with browser_capture_to_secret.`);
       }
 
       // --- Guardrail 1: identify the target element + check selector whitelist ---

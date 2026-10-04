@@ -18,6 +18,7 @@ import type { Frame, Locator, Page } from "playwright";
 import type { DurableRef, ObservationRegistry } from "./observation.js";
 import { waitForStability } from "./stability.js";
 import { stableSelectors } from "./stable-ids.js";
+import { PASSWORD_FIELD_REFUSAL, PasswordFieldRefused, isPasswordFieldType } from "./password-field-rule.js";
 
 /** What the resolution chain does once it has narrowed to one element. */
 type RefOp = "click" | "fill" | "select";
@@ -103,6 +104,7 @@ export async function fillRef(
   if (!ref) {
     return { ok: false, via: "none", message: `Ref [${refId}] not found — take a fresh observation` };
   }
+  if (isPasswordFieldType(ref.type)) return { ok: false, via: "none", message: `[${refId}] ${PASSWORD_FIELD_REFUSAL}` };
 
   // A <select> cannot be typed into, but "put this value in this ref" is a
   // well-defined intent on one — the in-app backend has always honoured it
@@ -111,11 +113,16 @@ export async function fillRef(
   // the two backends can't disagree about what a ref-addressed write means.
   const op: RefOp = ref.tag.toUpperCase() === "SELECT" ? "select" : "fill";
   await scrollRefIntoView(page, ref);
-  const trace = await tryResolutionChain(page, ref, op, value);
-  if (trace.ok) return { ...trace, message: trace.message + staleNote(refId, ref) };
-  await page.waitForTimeout(1500);
-  const retry = await tryResolutionChain(page, ref, op, value);
-  return retry.ok ? { ...retry, message: retry.message + staleNote(refId, ref) } : retry;
+  try {
+    const trace = await tryResolutionChain(page, ref, op, value);
+    if (trace.ok) return { ...trace, message: trace.message + staleNote(refId, ref) };
+    await page.waitForTimeout(1500);
+    const retry = await tryResolutionChain(page, ref, op, value);
+    return retry.ok ? { ...retry, message: retry.message + staleNote(refId, ref) } : retry;
+  } catch (e) {
+    if (e instanceof PasswordFieldRefused) return { ok: false, via: "none", message: `[${refId}] ${PASSWORD_FIELD_REFUSAL}` };
+    throw e;
+  }
 }
 
 async function scrollRefIntoView(page: Page, ref: DurableRef): Promise<void> {
@@ -165,7 +172,11 @@ async function pickStable(loc: Locator, ref: DurableRef): Promise<Locator | null
 async function applyOp(loc: Locator, op: RefOp, value: string): Promise<void> {
   if (op === "click") await loc.click({ timeout: CLICK_TIMEOUT });
   else if (op === "select") await loc.selectOption(value, { timeout: CLICK_TIMEOUT });
-  else await loc.fill(value, { timeout: CLICK_TIMEOUT });
+  else {
+    // The element itself decides, whatever the snapshot recorded.
+    if (isPasswordFieldType(await loc.getAttribute("type", { timeout: CLICK_TIMEOUT }))) throw new PasswordFieldRefused();
+    await loc.fill(value, { timeout: CLICK_TIMEOUT });
+  }
 }
 
 async function tryResolutionChain(
@@ -195,7 +206,7 @@ async function tryResolutionChain(
       if (!loc) continue;
       await applyOp(loc, op, value);
       return { ok: true, via: "exact", message: `[${ref.id}] ${op} via ${s.key}${viaSuffix}` };
-    } catch { /* fall through */ }
+    } catch (e) { if (e instanceof PasswordFieldRefused) throw e; /* else fall through */ }
   }
 
   if (ref.role && ref.name) {
@@ -205,7 +216,7 @@ async function tryResolutionChain(
         await applyOp(loc.first(), op, value);
         return { ok: true, via: "role", message: `[${ref.id}] ${op} via role/name (${ref.role} "${ref.name}")${viaSuffix}` };
       }
-    } catch { /* fall through */ }
+    } catch (e) { if (e instanceof PasswordFieldRefused) throw e; /* else fall through */ }
   }
 
   if (op === "click" && ref.name) {
@@ -215,7 +226,7 @@ async function tryResolutionChain(
         await loc.first().click({ timeout: CLICK_TIMEOUT });
         return { ok: true, via: "text", message: `[${ref.id}] click via visible text "${ref.name}"${viaSuffix}` };
       }
-    } catch { /* fall through */ }
+    } catch (e) { if (e instanceof PasswordFieldRefused) throw e; /* else fall through */ }
   }
 
   if (ref.xpath) {
@@ -225,7 +236,7 @@ async function tryResolutionChain(
         await applyOp(loc.first(), op, value);
         return { ok: true, via: "xpath", message: `[${ref.id}] ${op} via XPath${viaSuffix}` };
       }
-    } catch { /* fall through */ }
+    } catch (e) { if (e instanceof PasswordFieldRefused) throw e; /* else fall through */ }
   }
 
   // Coords fallback uses the page-level mouse — extract.ts now records
@@ -238,7 +249,7 @@ async function tryResolutionChain(
     try {
       await page.mouse.click(ref.rect.x, ref.rect.y);
       return { ok: true, via: "coords", message: `[${ref.id}] click via coords (${ref.rect.x},${ref.rect.y})${viaSuffix} — layout-dependent, verify result` };
-    } catch { /* fall through */ }
+    } catch (e) { if (e instanceof PasswordFieldRefused) throw e; /* else fall through */ }
   }
 
   return {

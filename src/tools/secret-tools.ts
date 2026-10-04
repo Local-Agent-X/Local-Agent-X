@@ -83,7 +83,7 @@ export function createSecretTools(
           (url
             ? `A prompt has been shown in the UI. Once they save it, fill it into ${url} with browser_fill_from_secret; it never passes through you. `
             : `A prompt has been shown in the UI. Once they provide it, you can use {{${name}}} in http_request headers. `) +
-          `Wait for the user to confirm before using it.`
+          `When they save or cancel it, that arrives as their next message; end your turn here and continue then.`
       );
     },
   };
@@ -163,7 +163,7 @@ export function createSecretTools(
           skippedNote +
           ` Once saved, use them as ${missing.map(s => `{{${s.name}}}`).join(" / ")} in http_request headers` +
           (missing.some(s => s.url) ? `; a website login (one with a url) fills with browser_fill_from_secret on its site. ` : `. `) +
-          `Wait for the user to confirm before making API calls.`
+          `When they save or cancel, that arrives as their next message; end your turn here and continue then.`
       );
     },
   };

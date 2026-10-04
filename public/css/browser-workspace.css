@@ -90,6 +90,8 @@ body.browser-workspace.browser-chat-latest-open #chat-main #messages{
 }
 body.browser-workspace.browser-chat-latest-open #chat-main #messages > *{display:none!important}
 body.browser-workspace.browser-chat-latest-open #chat-main #messages > .browser-latest-turn{display:block!important}
+/* A secret card waiting for the user stays on screen with the latest turn. */
+body.browser-workspace.browser-chat-latest-open #chat-main #messages > #secret-modal-overlay.visible{display:block!important}
 body.browser-workspace.browser-chat-latest-open #chat-main #messages .msg.assistant.pin-bottom{
   min-height:0;padding-bottom:0;
 }

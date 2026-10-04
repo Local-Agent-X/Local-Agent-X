@@ -562,6 +562,13 @@ body.platform-darwin #sidebar-agents-controls{top:3px;right:14px}
 .msg.assistant.pin-bottom{
   min-height:calc(100vh - 240px);
 }
+/* An open secret card (secret-modal.js) is the conversation's live tail,
+   placed after the newest reply. Reserving room under that reply pushed the
+   card a viewport down, out of sight, every time a render re-pinned it (the
+   end of a stream does). One rule here covers every path that pins a reply. */
+#messages:has(> #secret-modal-overlay.visible) .msg.assistant.pin-bottom{
+  min-height:0;
+}
 /* When `scrollIntoView({block:'start'})` lands on a user message, leave
    breathing room above it (matches the gap ChatGPT shows above a freshly-
    sent prompt — feels less cramped than flush against the top edge). */
@@ -1227,6 +1234,10 @@ body.platform-win .settings-overlay{top:32px}
 /* ── Secret card (rendered inline in the chat flow) ── */
 #secret-modal-overlay{display:none}
 #secret-modal-overlay.visible{display:block;margin:8px 0 4px}
+.secret-input-wrap{position:relative}
+.secret-input-wrap .secret-input-field{padding-right:38px}
+.secret-reveal{position:absolute;right:6px;top:50%;transform:translateY(-50%);display:flex;padding:5px;background:none;border:0;border-radius:6px;color:var(--muted);cursor:pointer}
+.secret-reveal:hover,.secret-reveal:focus-visible,.secret-reveal[aria-pressed="true"]{color:var(--accent)}
 #secret-modal{background:var(--surface);border:1px solid var(--accent);border-radius:16px;padding:22px 24px;max-width:480px;box-shadow:0 0 24px color-mix(in srgb, var(--accent) 12%, transparent)}
 
 /* ── Skip to content (feature 100) ── */

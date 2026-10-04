@@ -16,6 +16,8 @@
     return !!(_cardEl && _cardEl.classList.contains('visible'));
   }
 
+  const EYE_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>';
+
   function _esc(s) {
     return String(s).replace(/[&<>"']/g, c => (
       { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
@@ -29,15 +31,6 @@
     return document.getElementById('messages') || document.body;
   }
 
-  // The newest assistant bubble carries a ~100vh `pin-bottom` min-height
-  // reservation (keeps the last reply near the viewport top). Our card appends
-  // AFTER that bubble, so the reservation would shove it a full screen down.
-  // Collapse the reservation while the card is the live bottom element.
-  function _collapsePin() {
-    const host = _host();
-    host.querySelectorAll('.msg.pin-bottom').forEach(m => m.classList.remove('pin-bottom'));
-  }
-
   function _ensureOverlay() {
     const host = _host();
     if (!_cardEl) {
@@ -47,11 +40,14 @@
     // Keep it as the last child of the live host (first mount, a chat
     // re-render that dropped it, or a host swap).
     if (_cardEl.parentNode !== host) host.appendChild(_cardEl);
-    _collapsePin();
     return _cardEl;
   }
 
+  // An open card is brought into view itself: the chat's follow-scroll tracks
+  // the last message, and the card sits below it. (The newest reply's
+  // reserved room is dropped while a card is open — app.css, #messages:has.)
   function _scrollIntoView() {
+    if (_isOpen() && typeof _cardEl.scrollIntoView === 'function') { _cardEl.scrollIntoView({ block: 'nearest' }); return; }
     if (typeof window.autoScroll === 'function') { window.autoScroll(); return; }
     const el = document.getElementById('messages');
     if (el) el.scrollTop = el.scrollHeight;
@@ -67,7 +63,6 @@
       const host = _host();
       if (_cardEl.parentNode !== host) {
         host.appendChild(_cardEl);
-        _collapsePin();
         _scrollIntoView();
       }
     });
@@ -102,7 +97,10 @@
         // A website login names its site: the vault fills it only there.
         const site = _siteOf(s.url);
         if (site) html += '<div style="color:var(--muted);font-size:.74rem;margin:0 0 6px">For ' + _esc(site) + ' only &mdash; filled there by the vault, never shown to the agent.</div>';
-        html += '<input type="password" data-secret-name="' + _esc(s.name) + '" data-secret-url="' + _esc(s.url || '') + '" class="field-input secret-input-field" placeholder="Paste value..." autocomplete="off"/>';
+        html += '<div class="secret-input-wrap">';
+        html += '<input type="password" data-secret-name="' + _esc(s.name) + '" data-secret-url="' + _esc(s.url || '') + '" class="field-input secret-input-field" placeholder="Paste value..." autocomplete="off" spellcheck="false"/>';
+        html += '<button type="button" class="secret-reveal" aria-label="Show value" aria-pressed="false" title="Show value">' + EYE_ICON + '</button>';
+        html += '</div>';
         html += '</div>';
       }
     }
@@ -113,6 +111,20 @@
     html += '<button class="action-btn primary" onclick="submitSecret()">Save</button>';
     html += '</div></div>';
     overlay.innerHTML = html;
+
+    // Show / hide what was typed, so the user can check it before saving. Each
+    // card starts hidden, and a closed card is discarded, so nothing stays shown.
+    overlay.querySelectorAll('.secret-reveal').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const inp = btn.parentNode.querySelector('.secret-input-field');
+        const show = inp.type === 'password';
+        inp.type = show ? 'text' : 'password';
+        btn.setAttribute('aria-pressed', String(show));
+        btn.setAttribute('aria-label', show ? 'Hide value' : 'Show value');
+        btn.title = show ? 'Hide value' : 'Show value';
+        inp.focus();
+      });
+    });
 
     overlay.querySelectorAll('.secret-input-field').forEach(inp => {
       inp.addEventListener('keydown', e => {
@@ -196,9 +208,27 @@
     }
     _afterClose();
     const parts = [];
-    if (saved.length) parts.push(`${saved.join(', ')} captured and ready for use.`);
-    if (failed.length) parts.push(`Couldn't save ${failed.join(', ')} — try again, or add it in Settings → Secrets.`);
-    _localNote(parts.join(' ') || `Couldn't save ${requested.join(', ') || 'the secret'} — try again.`);
+    if (saved.length) parts.push(`I saved ${_list(saved)} in the secrets vault.`);
+    if (failed.length) parts.push(`${_list(failed)} didn't save.`);
+    parts.push(saved.length ? 'Go ahead.' : 'Ask me again if you still need it.');
+    await _tellAgent(saved.length || failed.length ? parts.join(' ') : `${_list(requested) || 'The secret'} didn't save. Ask me again if you still need it.`);
+  }
+
+  function _list(names) {
+    return names.length < 2 ? names.join('') : names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1];
+  }
+
+  // The user's Save or Cancel is their answer to the agent, so it goes to the
+  // agent as their message (only names, never a value): it starts the next
+  // turn, or reaches a running one, instead of the user having to type "it's
+  // saved". A draft in the composer is put back afterwards.
+  async function _tellAgent(text) {
+    const input = document.getElementById('msg-input');
+    if (!input || typeof window.sendMessage !== 'function') { _localNote(text); return; }
+    const draft = input.value;
+    input.value = text;
+    await window.sendMessage();
+    if (draft && !input.value) input.value = draft;
   }
 
   // Drop an instant confirmation straight into the chat. Client-only: the note
@@ -217,10 +247,10 @@
     }
   }
 
-  function cancelSecret() {
+  async function cancelSecret() {
     const requested = _pendingNames.slice();
     _afterClose();
-    if (requested.length) _localNote(`${requested.join(', ')} not saved — request cancelled.`);
+    if (requested.length) await _tellAgent(`I cancelled the request for ${_list(requested)}; I didn't save ${requested.length > 1 ? 'them' : 'it'}.`);
   }
 
   function _afterClose() {

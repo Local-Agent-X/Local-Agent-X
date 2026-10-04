@@ -253,18 +253,18 @@ function renderMessages() {
 function _applyPinBottom(el) {
   const allAssistant = el.querySelectorAll('.msg.assistant');
   allAssistant.forEach(m => m.classList.remove('pin-bottom'));
-  // Local-note receipts (secret cancel/save confirmations) are trailing
-  // one-liners, not answers. Pinning one reserves a full viewport of dead
-  // space beneath it and glues the preceding approval card + note cluster to
-  // the bottom of the scroll region — the "stuck to the bottom" bug. Exclude
-  // them from both the pin target and the "is this the last message" test so
-  // a real answer above a receipt keeps (or forgoes) the pin correctly.
+  // Local-note receipts (secret cancel/save confirmations in older chats) are
+  // trailing one-liners, not answers. Pinning one reserves a full viewport of
+  // dead space beneath it and glues the cluster above it to the bottom of the
+  // scroll region, so a note is never the pin target. It still counts as the
+  // last message: a reply with a receipt after it is not the tail, and pinning
+  // that reply opened a viewport of blank space between the two.
   const isNote = m => m.classList.contains('local-note');
   const realAssistant = Array.from(allAssistant).filter(m => !isNote(m));
   const lastAssistant = realAssistant[realAssistant.length - 1];
   if (!lastAssistant) return;
-  const realMsgs = Array.from(el.querySelectorAll('.msg')).filter(m => !isNote(m));
-  if (realMsgs[realMsgs.length - 1] === lastAssistant) {
+  const msgs = el.querySelectorAll('.msg');
+  if (msgs[msgs.length - 1] === lastAssistant) {
     lastAssistant.classList.add('pin-bottom');
   }
   // Last-turn recovery controls ("Regenerate" / "Edit & resend") — attach to

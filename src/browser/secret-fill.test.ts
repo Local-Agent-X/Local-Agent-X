@@ -38,10 +38,24 @@ vi.mock("../logger.js", () => ({
 // fake stands in for either one, and every assertion below holds on both.
 let currentOps: SecretBrowserOps;
 let elementDescriptor = { found: true, tag: "input", type: "password", autocomplete: "current-password" };
+let holdsEmail = false;
+let pageOrigin = "https://example.com";
+let fillApproved = true;
 
 vi.mock("./index.js", () => ({
   getSecretBrowserOps: () => currentOps,
   withBrowserLock: async <T>(_sid: string, fn: () => Promise<T>) => fn(),
+}));
+
+// The in-chat approval card: answered by the test.
+const { approvals } = vi.hoisted(() => ({ approvals: { answer: true, asked: [] as Array<{ context: string }> } }));
+vi.mock("../approval-manager.js", () => ({
+  getApprovalManager: () => ({
+    requestApprovalDetailed: async (opts: { context: string }) => {
+      approvals.asked.push(opts);
+      return approvals.answer ? { approved: true } : { approved: false, reason: "declined" };
+    },
+  }),
 }));
 
 // Pre-bless: always empty (don't take that gate).
@@ -70,7 +84,7 @@ function buildOps(opts: {
   fillThrows?: boolean;
 }): SecretBrowserOps {
   return {
-    currentOrigin: async () => ORIGIN,
+    currentOrigin: async () => pageOrigin,
     describeElement: async () => ({ ...elementDescriptor }),
     readValue: async () => null,
     fillValue: async () => {
@@ -92,7 +106,9 @@ function buildStore(): SecretsStore {
       updatedAt: 0,
     })),
     get: vi.fn(() => SECRET_VALUE),
-    isFillApproved: vi.fn(() => true),
+    isFillApproved: vi.fn(() => fillApproved),
+    approveFill: vi.fn(() => true),
+    holdsEmailAddress: vi.fn(() => holdsEmail),
   } as unknown as SecretsStore;
 }
 
@@ -110,6 +126,11 @@ beforeEach(() => {
   auditCalls.length = 0;
   redactedRegistrations.length = 0;
   elementDescriptor = { found: true, tag: "input", type: "password", autocomplete: "current-password" };
+  holdsEmail = false;
+  pageOrigin = ORIGIN;
+  fillApproved = true;
+  approvals.answer = true;
+  approvals.asked.length = 0;
   vi.clearAllMocks();
 });
 
@@ -224,5 +245,89 @@ describe("browser_fill_from_secret — the standing emulation notice", () => {
     const result = await tool.execute({ name: SECRET_NAME, selector: "#pw" });
 
     expect(result.content).not.toContain("[emulating]");
+  });
+});
+
+// Twilio's sign-in page marks its email box with nothing (type=text, no
+// autocomplete). A stored login EMAIL is an account name, so it may go there;
+// anything else in the vault still only goes into a credential field.
+describe("browser_fill_from_secret — a login email into an unmarked box", () => {
+  const unmarked = { found: true, tag: "input", type: "text", autocomplete: "" };
+
+  it("fills a stored email address into a plain text box on its site", async () => {
+    elementDescriptor = { ...unmarked };
+    holdsEmail = true;
+    currentOps = buildOps({ outcome: { kind: "landed" } });
+    const result = await createBrowserSecretFillTool(buildStore(), () => "test-session").execute({ name: SECRET_NAME, selector: "#email" });
+    expect(result.isError).not.toBe(true);
+    expect(result.content).toContain("Filled");
+  });
+
+  it("still refuses any other secret there", async () => {
+    elementDescriptor = { ...unmarked };
+    currentOps = buildOps({ outcome: { kind: "landed" } });
+    const result = await createBrowserSecretFillTool(buildStore(), () => "test-session").execute({ name: SECRET_NAME, selector: "#email" });
+    expect(result.isError).toBe(true);
+    expect(result.content).toContain("Refused to fill");
+    assertNoSecretLeak([result.content, ...auditCalls]);
+  });
+
+  it("does not stretch to boxes that are not for an address", async () => {
+    holdsEmail = true;
+    currentOps = buildOps({ outcome: { kind: "landed" } });
+    for (const el of [{ ...unmarked, type: "search" }, { ...unmarked, tag: "textarea", type: "" }]) {
+      elementDescriptor = el;
+      const result = await createBrowserSecretFillTool(buildStore(), () => "test-session").execute({ name: SECRET_NAME, selector: "#q" });
+      expect(result.isError, `${el.tag}[type=${el.type}]`).toBe(true);
+    }
+  });
+});
+
+// Twilio signs in at login.twilio.com for a login saved on www.twilio.com. A
+// sibling origin of the same site is filled once the user approves it in the
+// chat; another site never is, and nothing is filled silently.
+describe("browser_fill_from_secret — where a login may be filled", () => {
+  const emit = () => undefined;
+  const fill = (store = buildStore()) =>
+    createBrowserSecretFillTool(store, () => "other-session").execute({ name: SECRET_NAME, selector: "#pw", _onEvent: emit });
+
+  it("asks the user, in the chat, before the first fill on another page of the same site", async () => {
+    pageOrigin = "https://login.example.com";
+    fillApproved = false;
+    currentOps = buildOps({ outcome: { kind: "landed" } });
+    const store = buildStore();
+    const result = await fill(store);
+    expect(result.isError).not.toBe(true);
+    expect(approvals.asked).toHaveLength(1);
+    expect(approvals.asked[0].context).toContain("saved for https://example.com");
+    expect(store.approveFill).toHaveBeenCalledWith(SECRET_NAME, "https://login.example.com");
+    assertNoSecretLeak([result.content, approvals.asked[0].context, ...auditCalls]);
+  });
+
+  it("fills nothing when the user says no", async () => {
+    pageOrigin = "https://login.example.com";
+    fillApproved = false;
+    approvals.answer = false;
+    currentOps = buildOps({ outcome: { kind: "landed" } });
+    const result = await fill();
+    expect(result.status).toBe("declined");
+    expect(redactedRegistrations).toEqual([]);
+  });
+
+  it("never fills another site, and does not ask", async () => {
+    pageOrigin = "https://example-login.attacker.test";
+    currentOps = buildOps({ outcome: { kind: "landed" } });
+    const result = await fill();
+    expect(result.isError).toBe(true);
+    expect(result.content).toContain("Cross-origin fill blocked");
+    expect(approvals.asked).toHaveLength(0);
+  });
+
+  it("asks before the first fill on the secret's own origin too, instead of sending the user to Settings", async () => {
+    fillApproved = false;
+    currentOps = buildOps({ outcome: { kind: "landed" } });
+    const result = await fill();
+    expect(result.isError).not.toBe(true);
+    expect(approvals.asked).toHaveLength(1);
   });
 });

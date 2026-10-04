@@ -33,6 +33,10 @@ import { withEmulationNotice } from "../tools/browser-tools/emulation-banner.js"
 import { registerRedactedSecretValue } from "../sanitize.js";
 import { getActivePreBlessedSecrets } from "../ops/pre-bless.js";
 import type { SecretElementDescriptor, SecretFillOutcome } from "./secret-ops.js";
+import { sameSite } from "./registrable-domain.js";
+import { getApprovalManager } from "../approval-manager.js";
+import { declined } from "../tools/result-helpers.js";
+import type { ServerEvent } from "../types.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("browser-secret-fill");
@@ -48,6 +52,14 @@ const ALLOWED_SELECTOR_PATTERNS: Array<{ test: (el: { tag: string; type?: string
   { label: "input[autocomplete=username]", test: (el) => el.tag === "input" && el.autocomplete === "username" },
   { label: "input[autocomplete=email]", test: (el) => el.tag === "input" && el.autocomplete === "email" },
 ];
+
+/** A login EMAIL may also go into a plain text or email box: it is an account
+ *  name, not a credential, and many sign-in pages (Twilio's) mark their
+ *  username box with nothing. Refusing it left the agent no way to log in. */
+const EMAIL_INTO_TEXT_FIELD = {
+  label: "input[type=text|email] (an email address)",
+  test: (el: { tag: string; type?: string }) => el.tag === "input" && ["", "text", "email"].includes(el.type ?? ""),
+};
 
 function auditLog(row: Record<string, unknown>): void {
   try {
@@ -67,7 +79,7 @@ export function createBrowserSecretFillTool(
       "Use this for login forms and any credentialed field when Chrome autofill can't/won't populate " +
       "(CDP-driven pages don't count as user gestures, so Chrome's password manager often won't fire).\n\n" +
       "GUARDRAILS (all enforced server-side):\n" +
-      " • Field must be <input type=\"password\"> or have autocomplete=username|email|current-password|new-password.\n" +
+      " • Field must be <input type=\"password\"> or have autocomplete=username|email|current-password|new-password; a stored email address may also fill a plain text/email box.\n" +
       " • Current page origin MUST match the secret's recorded origin — no cross-origin fill, ever.\n" +
       " • First use of a given {secret, origin} pair requires user approval UNLESS this session captured the secret itself OR the user pre-blessed it via op_submit_async(pre_blessed_secrets). If denied, the error tells you exactly how to get approval.\n\n" +
       "After a successful fill the plaintext value is added to the snapshot/extract redaction list — it can't leak back to you via subsequent tool output.\n\n" +
@@ -154,7 +166,8 @@ export function createBrowserSecretFillTool(
         return err(`Target element not found (selector: ${targetSelector}). Take a fresh snapshot and retry.`);
       }
 
-      const matchedPattern = ALLOWED_SELECTOR_PATTERNS.find((p) => p.test(elementDescriptor));
+      const matchedPattern = ALLOWED_SELECTOR_PATTERNS.find((p) => p.test(elementDescriptor))
+        ?? (secretsStore.holdsEmailAddress(name) && EMAIL_INTO_TEXT_FIELD.test(elementDescriptor) ? EMAIL_INTO_TEXT_FIELD : undefined);
       if (!matchedPattern) {
         auditLog({
           event: "fill_denied", secret: name, reason: "selector_not_whitelisted",
@@ -179,7 +192,13 @@ export function createBrowserSecretFillTool(
           `Edit the secret to add a login URL (Settings → Secrets), then retry.`
         );
       }
-      if (currentOrigin !== secretOrigin) {
+      // The secret's own origin, or another page of the same site: Twilio signs
+      // in at login.twilio.com for a login saved on www.twilio.com, and refusing
+      // that left no way to log in. A sibling origin is never filled silently
+      // (a big site hosts other people's pages, sites.google.com), so the user
+      // approves it below, once. Another site is never filled.
+      const sameOrigin = currentOrigin === secretOrigin;
+      if (!sameOrigin && !sameSite(currentOrigin, secretOrigin)) {
         auditLog({
           event: "fill_denied", secret: name, reason: "origin_mismatch",
           currentOrigin, secretOrigin, session: sessionId,
@@ -191,15 +210,40 @@ export function createBrowserSecretFillTool(
       }
 
       // --- Guardrail 3: approval ladder ---
-      const sameSession = !!(meta.createdBySession && sessionId && meta.createdBySession === sessionId);
+      const sameSession = sameOrigin && !!(meta.createdBySession && sessionId && meta.createdBySession === sessionId);
       const userApproved = secretsStore.isFillApproved(name, currentOrigin);
-      const preBlessed = getActivePreBlessedSecrets().has(name);
+      const preBlessed = sameOrigin && getActivePreBlessedSecrets().has(name);
 
-      const gateOutcome: "session" | "approved" | "pre_bless" | "denied" =
+      let gateOutcome: "session" | "approved" | "pre_bless" | "asked" | "denied" =
         sameSession ? "session" :
         userApproved ? "approved" :
         preBlessed ? "pre_bless" :
         "denied";
+
+      // Not yet approved here: ask the user in the chat, once per origin,
+      // instead of sending them to Settings mid-login.
+      const onEvent = args._onEvent as ((event: ServerEvent) => void) | undefined;
+      if (gateOutcome === "denied" && onEvent) {
+        const asked = await getApprovalManager().requestApprovalDetailed({
+          toolName: "browser_fill_from_secret",
+          toolCallId: String(args._toolCallId || `secret-fill-${name}`),
+          sessionId,
+          context: `Fill ${name} into the form on ${currentOrigin}${sameOrigin ? "" : ` (it was saved for ${secretOrigin})`}. ` +
+            `The value goes from the vault straight to the page; the agent never sees it.`,
+          args: { name, origin: currentOrigin },
+          alwaysAsk: true,
+          emit: onEvent,
+        });
+        if (!asked.approved) {
+          auditLog({ event: "fill_denied", secret: name, reason: "user_declined", origin: currentOrigin, session: sessionId });
+          return declined(
+            `The user did not approve filling "${name}" on ${currentOrigin}.`,
+            { recovery: "Ask the user to sign in themselves, and continue with the rest of the request." },
+          );
+        }
+        secretsStore.approveFill(name, currentOrigin);
+        gateOutcome = "asked";
+      }
 
       if (gateOutcome === "denied") {
         auditLog({
@@ -280,6 +324,7 @@ export function createBrowserSecretFillTool(
       const gateExplain =
         gateOutcome === "session" ? "approved (same session captured this secret)" :
         gateOutcome === "approved" ? "approved (user-saved approval for this origin)" :
+        gateOutcome === "asked" ? "approved by the user just now for this origin" :
         "approved (operation pre-blessed this secret)";
 
       return ok(

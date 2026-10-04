@@ -81,6 +81,11 @@ export async function createChatOp(ctx: CanonicalChatContext): Promise<CreatedCh
   };
 
   trackOpForSession(op.id, ctx.sessionId, ctx.message);
+  // Earlier messages too: provenance lives in memory, and a restart would
+  // otherwise forget a link the user pasted before it.
+  for (const m of ctx.prepared.cleanHistory) {
+    if (m.role === "user" && typeof m.content === "string") recordUserLinks(ctx.sessionId, m.content);
+  }
   recordUserLinks(ctx.sessionId, ctx.message);
   writeOp(op);
   seedOpMessages(op.id, ctx.prepared, ctx.message);

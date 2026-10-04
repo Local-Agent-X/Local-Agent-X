@@ -34,13 +34,59 @@ function setup(draft = "") {
   return { window, doc, input, sent, fields, apiPost: runtime.apiPost as ReturnType<typeof vi.fn> };
 }
 
+// The card belongs to the chat that asked. It used to follow the user into
+// whatever chat they opened, and its Save sent "I saved… Go ahead." there.
+describe("the secret card stays with the chat that asked", () => {
+  it("leaves the list when the user switches chats, keeps what was typed, and comes back with them", async () => {
+    const window = new Window({ url: "http://127.0.0.1" });
+    window.document.body.innerHTML = `<div id="messages"><div class="msg assistant">Enter your login</div></div><textarea id="msg-input"></textarea>`;
+    const runtime = window as unknown as Record<string, unknown>;
+    runtime.activeChat = { id: "chat-A", messages: [] };
+    runtime.apiPost = vi.fn(async () => ({ ok: true }));
+    runtime.sendMessage = vi.fn(async () => {});
+    window.eval(script);
+    window.eval(`showMultiSecretModal([{ name: "TWILIO_LOGIN_PASSWORD", service: "Twilio", reason: "Sign-in password" }], "chat-A")`);
+    const doc = window.document;
+    const messages = doc.getElementById("messages")!;
+    (doc.querySelector(".secret-input-field") as unknown as { value: string }).value = "typed-before-switch";
+    const settle = () => new Promise((r) => setTimeout(r, 0));
+
+    runtime.activeChat = { id: "chat-B", messages: [] };
+    messages.innerHTML = '<div class="msg assistant">another chat</div>';
+    await settle();
+    expect(messages.querySelector("#secret-modal-overlay")).toBeNull();
+
+    runtime.activeChat = { id: "chat-A", messages: [] };
+    messages.innerHTML = '<div class="msg assistant">Enter your login</div>';
+    await settle();
+    const card = messages.querySelector("#secret-modal-overlay");
+    expect(card).not.toBeNull();
+    expect((card!.querySelector(".secret-input-field") as unknown as { value: string }).value).toBe("typed-before-switch");
+  });
+
+  it("a request from another chat waits for its own card instead of joining this one", () => {
+    const window = new Window({ url: "http://127.0.0.1" });
+    window.document.body.innerHTML = `<div id="messages"></div><textarea id="msg-input"></textarea>`;
+    const runtime = window as unknown as Record<string, unknown>;
+    runtime.activeChat = { id: "chat-A", messages: [] };
+    window.eval(script);
+    window.eval(`showMultiSecretModal([{ name: "A_KEY", reason: "a" }], "chat-A")`);
+    window.eval(`showMultiSecretModal([{ name: "B_KEY", reason: "b" }], "chat-B")`);
+    const names = [...window.document.querySelectorAll(".secret-input-field")].map((i) => i.getAttribute("data-secret-name"));
+    expect(names).toEqual(["A_KEY"]);
+  });
+});
+
 describe("the secret card", () => {
   it("Save tells the agent which names were saved, never a value, and keeps the user's draft", async () => {
     const { window, sent, fields, input, apiPost } = setup("half-typed question");
     fields[0].value = "me@example.com";
     fields[1].value = VALUE;
     await window.eval("submitSecret()");
-    expect(apiPost).toHaveBeenCalledTimes(2);
+    const paths = apiPost.mock.calls.map((c: unknown[]) => c[0]);
+    expect(paths.filter((p: string) => p === "/api/secrets")).toHaveLength(2);
+    // Saving a site login in the card is the user's yes to filling it there.
+    expect(apiPost).toHaveBeenCalledWith("/api/secrets/TWILIO_LOGIN_PASSWORD/approve-origin", { origin: "https://www.twilio.com/login", sessionId: null });
     expect(sent).toEqual(["I saved TWILIO_LOGIN_EMAIL and TWILIO_LOGIN_PASSWORD in the secrets vault. Go ahead."]);
     expect(sent.join(" ")).not.toContain(VALUE);
     expect(input.value).toBe("half-typed question");
@@ -55,7 +101,8 @@ describe("the secret card", () => {
 
   it("a value that didn't save is reported as not saved", async () => {
     const { window, sent, fields, apiPost } = setup();
-    apiPost.mockResolvedValueOnce({ ok: true }).mockResolvedValueOnce({ ok: false, error: "vault locked" });
+    apiPost.mockImplementation(async (path: string, body: { name?: string }) =>
+      path === "/api/secrets" && body.name === "TWILIO_LOGIN_PASSWORD" ? { ok: false, error: "vault locked" } : { ok: true });
     fields[0].value = "me@example.com";
     fields[1].value = VALUE;
     await window.eval("submitSecret()");
@@ -77,7 +124,8 @@ describe("the secret card", () => {
   it("an open card cancels the reply's reserved room, and stays visible in the browser workspace's latest-turn view", () => {
     const { doc } = setup();
     expect(doc.querySelector("#messages > #secret-modal-overlay.visible")).not.toBeNull();
-    expect(css).toMatch(/#messages:has\(> #secret-modal-overlay\.visible\) \.msg\.assistant\.pin-bottom\{\s*min-height:0;/);
-    expect(workspaceCss).toContain("#messages > #secret-modal-overlay.visible{display:block!important}");
+    expect(doc.querySelector("#secret-modal-overlay")!.classList.contains("chat-inline-card")).toBe(true);
+    expect(css).toMatch(/#messages \.msg\.assistant\.pin-bottom:has\(~ \.msg, ~ \.chat-inline-card\)\{\s*min-height:0;/);
+    expect(workspaceCss).toContain("#messages > .chat-inline-card.visible{display:block!important}");
   });
 });

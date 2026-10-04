@@ -9,7 +9,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { blocked, renderToolResultForModel, resultFromRendered } from "../tools/result-helpers.js";
+import { BLOCKED_WITHOUT_RECOVERY, blocked, renderToolResultForModel, resultFromRendered } from "../tools/result-helpers.js";
 import { STAGE_RECOVERY } from "./stage-recovery.js";
 import { dispatchSingleToolCall } from "./execute-tool.js";
 import { _clearDedupCacheForTests } from "./dedup-cache.js";
@@ -56,6 +56,15 @@ describe("the recovery reaches the model", () => {
     const back = resultFromRendered(rendered);
     expect(back.status).toBe("blocked");
     expect(back.metadata?.recovery).toBe("Ask the user to allow it.");
+  });
+
+  // The type is satisfied by "" and a rebuilt envelope can lose its line;
+  // the render seam every result passes still names a next step.
+  it("a refusal that arrives with no next step still reaches the model with one", () => {
+    const empty = renderToolResultForModel(blocked("refused", { recovery: "" }));
+    expect(empty).toContain(`Recovery: ${BLOCKED_WITHOUT_RECOVERY}`);
+    const rebuilt = resultFromRendered("[blocked, layer=\"x\"]\nrefused");
+    expect(renderToolResultForModel(rebuilt)).toContain(`Recovery: ${BLOCKED_WITHOUT_RECOVERY}`);
   });
 
   describe("through dispatch", () => {

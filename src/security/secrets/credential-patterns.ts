@@ -63,7 +63,11 @@ const CURSOR_QUALIFIERS = "page|next|prev|previous|continuation|skip|delta|sync|
 
 /** One regex source per credential key name; CREDENTIAL_KEY_NAMES joins them. */
 export const CREDENTIAL_KEY_TERMS: readonly string[] = [
-  "api[_-]?key", "access[_-]?key", "private[_-]?key", "secret(?:[_-]?key)?", "password", "authorization",
+  "api[_-]?key", "access[_-]?key", "private[_-]?key", "secret(?:[_-]?key)?", "password", "passwd", "pwd", "passphrase",
+  "authorization", "credential", "credentials",
+  // A cookie header IS the login session (connect.sid, sessionid): it went to
+  // the model unmasked once masking stopped keying on how a value looks.
+  "cookie",
   `(?<!(?:${CURSOR_QUALIFIERS})[_-]?)token`,
 ];
 

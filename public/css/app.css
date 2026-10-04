@@ -562,11 +562,13 @@ body.platform-darwin #sidebar-agents-controls{top:3px;right:14px}
 .msg.assistant.pin-bottom{
   min-height:calc(100vh - 240px);
 }
-/* An open secret card (secret-modal.js) is the conversation's live tail,
-   placed after the newest reply. Reserving room under that reply pushed the
-   card a viewport down, out of sight, every time a render re-pinned it (the
-   end of a stream does). One rule here covers every path that pins a reply. */
-#messages:has(> #secret-modal-overlay.visible) .msg.assistant.pin-bottom{
+/* The reserved room belongs to the newest reply only while it is the end of
+   the conversation. Anything after it (another message, or an inline card
+   such as the secret card, which carries .chat-inline-card) makes reserved
+   room a viewport of blank space that pushes what follows out of sight, and
+   every render that re-pins the reply (the end of a stream does) did exactly
+   that. One rule, whichever path set the pin. */
+#messages .msg.assistant.pin-bottom:has(~ .msg, ~ .chat-inline-card){
   min-height:0;
 }
 /* When `scrollIntoView({block:'start'})` lands on a user message, leave

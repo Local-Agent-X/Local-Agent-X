@@ -81,6 +81,10 @@ export function parseStatusHeader(rendered: string): ToolResultStatus {
   return (m?.[1] as ToolResultStatus | undefined) ?? "ok";
 }
 
+/** What a refusal that named no next step tells the model. */
+export const BLOCKED_WITHOUT_RECOVERY =
+  "This was refused and named no next step. Do not retry it unchanged; tell the user what you were trying to do, and continue with the rest of the request.";
+
 /** The `Recovery:` line renderToolResultForModel wrote, or "" when there is none. */
 export function parseRecoveryLine(rendered: string): string {
   return /^Recovery: (.*)$/m.exec(rendered)?.[1] ?? "";
@@ -179,9 +183,14 @@ export function renderToolResultForModel(r: ToolResult): string {
   if (typeof meta.userHint === "string" && meta.userHint) {
     lines.push(`User hint: ${meta.userHint}`);
   }
-  if (typeof meta.recovery === "string" && meta.recovery) {
-    lines.push(`Recovery: ${meta.recovery}`);
-  }
+  // Every refusal reaches the model with a next step. The type requires one
+  // (types.ts), but an empty string satisfies it, and a result rebuilt from
+  // rendered text that lost its line (resultFromRendered) has none; every
+  // result passes through here, so the guarantee holds here.
+  const recovery = typeof meta.recovery === "string" && meta.recovery
+    ? meta.recovery
+    : status === "blocked" ? BLOCKED_WITHOUT_RECOVERY : "";
+  if (recovery) lines.push(`Recovery: ${recovery}`);
   if (typeof meta.partial_output === "string" && meta.partial_output) {
     lines.push(`Partial output:\n${meta.partial_output}`);
   }

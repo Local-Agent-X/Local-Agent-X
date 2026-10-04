@@ -11,6 +11,15 @@
   const _queue = [];        // pending {name, service, reason} entries
   let _observer = null;     // re-attaches the card if renderMessages() wipes it
   let _cardEl = null;       // live reference to the card (survives innerHTML wipes)
+  let _cardSession = null;  // the chat that asked: the card lives there, and its answer goes there
+
+  // A card shows only in the chat that asked for it. Switching away parks it
+  // (typed values kept); switching back brings it back. Otherwise it followed
+  // the user into another chat, and its Save sent "I saved…" there.
+  function _inItsChat() {
+    const chat = (typeof activeChat !== 'undefined') ? activeChat : null;
+    return !_cardSession || !!(chat && chat.id === _cardSession);
+  }
 
   function _isOpen() {
     return !!(_cardEl && _cardEl.classList.contains('visible'));
@@ -36,16 +45,25 @@
     if (!_cardEl) {
       _cardEl = document.createElement('div');
       _cardEl.id = 'secret-modal-overlay';
+      _cardEl.className = 'chat-inline-card';
     }
-    // Keep it as the last child of the live host (first mount, a chat
-    // re-render that dropped it, or a host swap).
-    if (_cardEl.parentNode !== host) host.appendChild(_cardEl);
+    _placeCard(host);
     return _cardEl;
+  }
+
+  // Keep it as the last child of the live host while its chat is in view (first
+  // mount, a chat re-render that dropped it, or a host swap); out of the list
+  // otherwise.
+  function _placeCard(host) {
+    if (!_inItsChat()) { if (_cardEl.parentNode) _cardEl.remove(); return false; }
+    if (_cardEl.parentNode === host) return false;
+    host.appendChild(_cardEl);
+    return true;
   }
 
   // An open card is brought into view itself: the chat's follow-scroll tracks
   // the last message, and the card sits below it. (The newest reply's
-  // reserved room is dropped while a card is open — app.css, #messages:has.)
+  // reserved room is dropped while anything follows it — app.css, .chat-inline-card.)
   function _scrollIntoView() {
     if (_isOpen() && typeof _cardEl.scrollIntoView === 'function') { _cardEl.scrollIntoView({ block: 'nearest' }); return; }
     if (typeof window.autoScroll === 'function') { window.autoScroll(); return; }
@@ -60,11 +78,7 @@
     if (_observer || typeof MutationObserver === 'undefined') return;
     _observer = new MutationObserver(() => {
       if (!_cardEl || !_cardEl.classList.contains('visible')) return;
-      const host = _host();
-      if (_cardEl.parentNode !== host) {
-        host.appendChild(_cardEl);
-        _scrollIntoView();
-      }
+      if (_placeCard(_host())) _scrollIntoView();
     });
     const host = _host();
     if (host) _observer.observe(host, { childList: true });
@@ -138,8 +152,9 @@
     });
   }
 
-  function _show(secrets) {
+  function _show(secrets, sessionId) {
     if (!secrets || secrets.length === 0) return;
+    _cardSession = sessionId || null;
     _pendingNames = secrets.map(s => s.name);
     const overlay = _ensureOverlay();
     _renderModalBody(overlay, secrets);
@@ -152,23 +167,30 @@
     }, 100);
   }
 
+  function _absoluteUrl(url) {
+    return /^[a-z][a-z0-9+.-]*:/i.test(url) ? url : 'https://' + url;
+  }
+
   function _siteOf(url) {
     if (!url) return '';
     try { return new URL(/^[a-z][a-z0-9+.-]*:/i.test(url) ? url : 'https://' + url).host; } catch (_) { return ''; }
   }
 
-  function showSecretModal(name, service, reason, url) {
-    showMultiSecretModal([{ name, service, reason, url }]);
+  function showSecretModal(name, service, reason, url, sessionId) {
+    showMultiSecretModal([{ name, service, reason, url }], sessionId);
   }
 
-  function showMultiSecretModal(secrets) {
+  // `sessionId` is the chat that asked; the card is shown and answered there.
+  function showMultiSecretModal(secrets, sessionId) {
     if (!Array.isArray(secrets) || secrets.length === 0) return;
-    if (!_isOpen()) { _show(secrets); return; }
+    const session = sessionId || null;
+    if (!_isOpen()) { _show(secrets, session); return; }
     const newOnes = secrets.filter(s =>
-      !_pendingNames.includes(s.name) && !_queue.some(q => q.name === s.name)
+      !(session === _cardSession && _pendingNames.includes(s.name)) &&
+      !_queue.some(q => q.name === s.name && q._session === session)
     );
     if (newOnes.length === 0) return;
-    _queue.push(...newOnes);
+    _queue.push(...newOnes.map(s => ({ ...s, _session: session })));
   }
 
   async function submitSecret() {
@@ -198,6 +220,10 @@
         const res = await apiPost('/api/secrets', url ? { name, value, url } : { name, value });
         if (res && res.ok) {
           saved.push(name);
+          // The card said "for <site> only — filled there by the vault"; saving
+          // it is the user's yes to that fill, so the agent's first fill there
+          // is not refused for want of an approval the user already gave.
+          if (url) await apiPost('/api/secrets/' + encodeURIComponent(name) + '/approve-origin', { origin: _absoluteUrl(url), sessionId: _cardSession });
         } else {
           failed.push(`${name} (${(res && res.error) || 'unexpected response'})`);
         }
@@ -261,9 +287,15 @@
       _cardEl = null;
     }
     _pendingNames = [];
+    _cardSession = null;
     if (_queue.length > 0) {
-      const next = _queue.splice(0, _queue.length);
-      setTimeout(() => _show(next), 200);
+      // The next card is one chat's batch; other chats' requests stay queued.
+      const session = _queue[0]._session;
+      const next = _queue.filter(q => q._session === session);
+      const rest = _queue.filter(q => q._session !== session);
+      _queue.length = 0;
+      _queue.push(...rest);
+      setTimeout(() => _show(next, session), 200);
     }
   }
 

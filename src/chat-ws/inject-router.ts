@@ -11,6 +11,7 @@
 
 import { randomUUID } from "node:crypto";
 import { createLogger } from "../logger.js";
+import { recordUserLinks } from "../browser/site-provenance.js";
 import { getApprovalManager } from "../approval-manager.js";
 import { broadcastToSession } from "./broadcast.js";
 import { getChatHandler } from "./chat-handler.js";
@@ -30,6 +31,8 @@ const logger = createLogger("chat-ws");
 
 /** Handle one `inject` frame. Synchronous by contract — see the import note. */
 export function handleInject(sessionId: string, text: string, clientInjectId?: string): void {
+  // A link typed mid-turn vouches for its own ids, like one in a new message.
+  recordUserLinks(sessionId, text);
   try {
     // Route as fresh turn ONLY when nothing is live, no chat handler is
     // mid-prep for this session, and the turn lock is free. The pending

@@ -1,5 +1,7 @@
 import type { RouteHandler } from "../../server-context.js";
 import { jsonResponse, safeParseBody } from "../../server-utils.js";
+import { lastBrowserPageUrl } from "../../browser/site-provenance.js";
+import { sameSite } from "../../browser/registrable-domain.js";
 
 export const handleSecretsRoutes: RouteHandler = async (method, url, req, res, ctx, _role) => {
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
@@ -69,7 +71,7 @@ export const handleSecretsRoutes: RouteHandler = async (method, url, req, res, c
   if (method === "POST" && url.pathname.match(/^\/api\/secrets\/[^/]+\/approve-origin$/)) {
     const name = decodeURIComponent(url.pathname.split("/")[3]);
     if (!/^[A-Z0-9_]{1,64}$/i.test(name)) { json(400, { error: "Invalid secret name" }); return true; }
-    const body = await safeParseBody(req) as { origin?: string };
+    const body = await safeParseBody(req) as { origin?: string; sessionId?: string };
     const originRaw = (body.origin || "").trim();
     if (!originRaw) { json(400, { error: "origin is required" }); return true; }
     // Normalize to canonical origin form (scheme://host[:port]); reject anything we can't parse.
@@ -77,7 +79,16 @@ export const handleSecretsRoutes: RouteHandler = async (method, url, req, res, c
     try { origin = new URL(originRaw).origin; } catch { json(400, { error: "origin must be a full URL" }); return true; }
     const ok = ctx.secretsStore.approveFill(name, origin);
     if (!ok) { json(404, { error: "Secret not found" }); return true; }
-    json(200, { ok: true, name, origin }); return true;
+    // From the secret card (it sends the chat): the page the agent's browser is
+    // on right now is where this login is about to be filled. When it is
+    // another page of the same site (Twilio signs in at login.twilio.com for a
+    // login saved on www.twilio.com), approve it too, so the user who just
+    // saved the login is not asked again for it. Another site never is.
+    const page = typeof body.sessionId === "string" ? lastBrowserPageUrl(body.sessionId) : "";
+    const pageOrigin = page && sameSite(page, origin) ? new URL(page).origin : null;
+    if (pageOrigin && pageOrigin !== origin) ctx.secretsStore.approveFill(name, pageOrigin);
+    ctx.broadcastAll({ type: "settings_changed", settings: { secrets: true } });
+    json(200, { ok: true, name, origin, ...(pageOrigin && pageOrigin !== origin ? { alsoApproved: pageOrigin } : {}) }); return true;
   }
   // Revoke a previously-granted fill approval for a specific origin.
   if (method === "DELETE" && url.pathname.match(/^\/api\/secrets\/[^/]+\/approvals\/.+$/)) {

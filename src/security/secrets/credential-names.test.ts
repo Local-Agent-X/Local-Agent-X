@@ -42,3 +42,24 @@ describe("the Key-Value catalog entry uses the same names", () => {
     expect(keyValueHit(text)).toBe(true);
   });
 });
+
+// Masking stopped hiding values for looking random (secret-values.ts); a
+// session cookie, a `pwd` field and a `credential` then reached the model
+// because their names were not on the list.
+describe("login sessions and password spellings are credential names", () => {
+  it.each(["set-cookie", "Cookie", "pwd", "passwd", "passphrase", "credential", "client_credentials"])("names a credential: %s", (name) => {
+    expect(namesCredential(name)).toBe(true);
+  });
+
+  it.each([
+    `set-cookie: connect.sid=s%3AQx7vB2mK9pL4wR8tY1nZ6cJ3hF5dG0aE; Path=/; HttpOnly`,
+    `Cookie: sessionid=Qx7vB2mK9pL4wR8tY1nZ6cJ3`,
+    `pwd=${VALUE}`,
+  ])("is caught: %s", (text) => {
+    expect(keyValueHit(text)).toBe(true);
+  });
+
+  it("an app's own session id is not a credential name (the agent's chat ids are named that)", () => {
+    expect(namesCredential("sessionId")).toBe(false);
+  });
+});

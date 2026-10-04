@@ -32,6 +32,11 @@ export interface AlwaysAskSite {
 
 export const ALWAYS_ASK_SITES: readonly AlwaysAskSite[] = [
   {
+    file: "browser/secret-fill.ts",
+    what: "the first vault fill of a stored login on an origin it is not yet approved for (including another page of the site it was saved for)",
+    why: "Which pages a stored password may be typed into is the user's own rule, kept per secret in the vault (approvedFills). It was a hard Settings approval before the in-chat card existed; a permissive profile auto-approving it would let a login be filled on any page of a big shared site (sites.google.com under google.com) with no one asked.",
+  },
+  {
     file: "tool-execution/protected-setting-gate.ts",
     what: "changing a user-owned security setting",
     why: "The setting IS the user's answer about what the agent may do. Letting a permissive profile auto-approve edits to it would let the agent widen its own permissions — the profile cannot be the thing that waives control over the profile.",

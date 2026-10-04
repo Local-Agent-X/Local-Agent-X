@@ -5,6 +5,7 @@
 export { scanForSecrets, scanKnownSecretValues, redactSecrets, decodedPayloadViews } from "./secret-scanner.js";
 export {
 	isSecretShaped,
+	isEmailAddress,
 	knownSecretValues,
 	registerRedactedSecretValue,
 	unregisterRedactedSecretValue,

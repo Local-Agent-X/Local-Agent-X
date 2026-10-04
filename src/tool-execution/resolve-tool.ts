@@ -280,6 +280,7 @@ async function injectSessionState(ctx: ToolCallContext): Promise<PhaseOutcome> {
     tc.name === "request_secret" ||
     tc.name === "request_secrets" ||
     tc.name === "browser" ||
+    tc.name === "browser_fill_from_secret" ||
     tc.name === "voice_visual" ||
     tc.name === "build_app" ||
     tc.name === "exit_plan_mode"

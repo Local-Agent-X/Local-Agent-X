@@ -1,7 +1,7 @@
 import { readFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { getOrCreateMasterKey, type KeychainProvider } from "./keychain.js";
-import { registerRedactedSecretValue } from "./security/secrets/index.js";
+import { isEmailAddress, registerRedactedSecretValue } from "./security/secrets/index.js";
 import { deriveOrigin, decrypt, encryptSecretsFile } from "./secrets-crypto.js";
 import { atomicWriteFileSync } from "./util/json-store.js";
 import type {
@@ -277,6 +277,13 @@ export class SecretsStore {
       name, service, account, url, notes, origin,
       createdBySession, approvedFills, addedAt, updatedAt,
     }));
+  }
+
+  /** Whether the stored value is an email address (a login name, not a
+   *  credential), answered without handing the value out. */
+  holdsEmailAddress(name: string): boolean {
+    const value = this.secrets.get(name)?.value;
+    return !!value && isEmailAddress(value);
   }
 
   /** Read metadata for a single secret (never exposes the value). */

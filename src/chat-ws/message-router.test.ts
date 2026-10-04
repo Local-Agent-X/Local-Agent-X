@@ -544,3 +544,23 @@ describe("reconnect_op subscription lifetime", () => {
     vi.doUnmock("../canonical-loop/index.js");
   });
 });
+
+// A link sent mid-turn vouches for its own ids the way a link in a new message
+// does (site-provenance.ts); otherwise the agent's next step with that link is
+// refused as carrying a random-looking token.
+describe("a link sent mid-turn is recorded for site provenance", () => {
+  it("vouches for the link's id to that link's site only", async () => {
+    const { handleInject } = await import("./inject-router.js");
+    const { shownBySite, _clearSiteProvenance } = await import("../browser/site-provenance.js");
+    const DOC_ID = "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms";
+    setChatHandler(() => {});
+    try {
+      handleInject("sess-inject-links", `use this one: https://docs.google.com/document/d/${DOC_ID}/edit`);
+      expect(shownBySite("sess-inject-links", "https://docs.google.com/", DOC_ID)).toBe(true);
+      expect(shownBySite("sess-inject-links", "https://collector.example/", DOC_ID)).toBe(false);
+    } finally {
+      _resetInjectQueues();
+      _clearSiteProvenance();
+    }
+  });
+});

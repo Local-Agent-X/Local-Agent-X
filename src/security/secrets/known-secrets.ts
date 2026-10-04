@@ -177,6 +177,16 @@ function buildMatcher(value: string): KnownSecretMatcher {
  * matcher (no word boundaries; a genuine secret embedded in a larger token must
  * still be caught).
  */
+// An email address names an account; it is not a credential. A login email
+// sits in the vault beside its password, and registering it refused the agent
+// typing the user's own address into a login form (2026-10-04). Addresses only:
+// a URL can be the credential itself (a webhook URL), so URLs stay registered.
+const EMAIL_ADDRESS_RE = /^[\w.+-]+@[\w-]+(?:\.[\w-]+)*\.[a-z]{2,}$/i;
+
+export function isEmailAddress(value: string): boolean {
+  return EMAIL_ADDRESS_RE.test(value.trim());
+}
+
 export function isSecretShaped(value: string): boolean {
   if (value.length < 6) return false; // too short to be a real secret (port/PIN guard)
   if (/^\d+$/.test(value)) return false; // purely numeric → ports, PINs, ids
@@ -187,7 +197,7 @@ export function isSecretShaped(value: string): boolean {
 
 /** Register a plaintext value to detect/redact from any outgoing content. */
 export function registerRedactedSecretValue(value: string): void {
-  if (value && isSecretShaped(value)) {
+  if (value && isSecretShaped(value) && !isEmailAddress(value)) {
     REDACTED_SECRET_VALUES.add(value);
     if (!SECRET_MATCHERS.has(value)) SECRET_MATCHERS.set(value, buildMatcher(value));
   }

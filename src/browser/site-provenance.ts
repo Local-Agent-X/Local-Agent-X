@@ -9,10 +9,12 @@
  * attacker.com/?k=<secret>" cannot have shown the agent the user's secret, so
  * this exempts the console URL and never the injection.
  *
- * Two sources are recorded: what each browser result showed, under the site
- * of the page it ended on (the page text and its URL), and each link the user
- * typed, under that link's site (a pasted document link shows its site the
- * document's own id; no one can type a secret they do not have). Every
+ * Three sources are recorded: what each browser result showed, under the site
+ * of the page it ended on (the page text and its URL); what each http_request
+ * or web_fetch response showed, under the site it came from (an API's ids are
+ * the next request's path); and each link the user typed, under that link's
+ * site (a pasted document link shows its site the document's own id; no one
+ * can type a secret they do not have). Every
  * outbound scan with a destination consults it (vouchedFor): the egress gate,
  * http_request's own check, and the threat engine's post-call scan, so the
  * three agree. Only entropy-heuristic hits consult it: vault values, known key
@@ -61,6 +63,13 @@ export function recordSiteTokens(sessionId: string, pageUrl: string, shown: stri
   const state = stateOf(sessionId);
   state.lastPageUrl = pageUrl;
   remember(state, site, `${pageUrl}\n${shown}`);
+}
+
+/** Record the token-shaped strings a network response showed, under the site
+ *  it came from. Unlike a browser result it moves no page. */
+export function recordResponseTokens(sessionId: string, url: string, shown: string): void {
+  const site = siteOf(url);
+  if (sessionId && site) remember(stateOf(sessionId), site, shown);
 }
 
 /** Record the token-shaped strings in each link the user typed, under that

@@ -11,10 +11,15 @@
  * screenshot.
  *
  * A known credential shape counts anywhere it is visible. A random
- * high-entropy string counts only in a form field: code blocks full of commit
- * hashes would otherwise block every screenshot of a repository.
+ * high-entropy string counts only in a form field that holds a credential:
+ * one the page names as one ("API key", "Auth Token", name="client_secret"),
+ * or one in a dialog, where services show a new key once. A random string in
+ * any other field is an identifier (an Account SID in a copyable box, an order
+ * id), and refusing the screenshot over it stalled the work; code blocks full
+ * of commit hashes would likewise block every screenshot of a repository.
  */
 import { scanForSecrets } from "../security/secrets/secret-scanner.js";
+import { namesCredential } from "../security/secrets/credential-patterns.js";
 import type { SecretBrowserOps } from "./secret-ops.js";
 
 export interface SecretOnScreen {
@@ -26,7 +31,8 @@ export interface SecretOnScreen {
 
 export async function findSecretOnScreen(ops: SecretBrowserOps): Promise<SecretOnScreen | null> {
   for (const v of await ops.visibleValues()) {
-    const match = scanForSecrets(v.value).matches.find((m) => m.type !== "high-entropy-token" || v.field);
+    const holdsCredential = v.field && (v.inDialog || v.names.some(namesCredential));
+    const match = scanForSecrets(v.value).matches.find((m) => m.type !== "high-entropy-token" || holdsCredential);
     if (match) return { kind: match.pattern, selector: v.selector, field: v.field };
   }
   return null;

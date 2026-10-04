@@ -19,8 +19,15 @@
  *     delivery-point invariant nothing entered context and nothing else is
  *     locked; the registry, not session taint, is what stops the value leaving.
  *
- * Detection is the canonical scanner (one catalog, one entropy pass) — nothing
- * here decides what a secret looks like.
+ * Detection is the canonical catalog: credential formats, registered values,
+ * and fields whose NAME is a credential's (credential-patterns.ts
+ * namesCredential). Never the entropy pass: on the web a random-looking string
+ * is almost always an identifier (a Drive file id, a Twilio Account SID, a
+ * pagination cursor), and masking one both blinded the model to it and
+ * registered it, so every later call carrying that id was refused, in every
+ * session, until restart. A secret of no known format under no credential
+ * name can reach the model; it still cannot leave for any site that did not
+ * show it (the outbound scan keeps the entropy pass, site-provenance.ts).
  */
 
 import {
@@ -30,6 +37,7 @@ import {
   isSecretShaped,
   maskForDisplay,
   isMaskedDisplay,
+  namesCredential,
 } from "../security/secrets/index.js";
 import { SECRET_SCAN_CAP } from "./paths.js";
 import { createLogger } from "../logger.js";
@@ -41,15 +49,28 @@ const logger = createLogger("data-lineage");
 // followed by any POST (pure sequence, no data flow); LAX now uses the same
 // shape for what actually protects the values: treating every value the
 // endpoint returns as a secret, whether or not it looks like one.
-const SECRET_ENDPOINT_URL_RE = /vault|secrets|credentials|\.well-known\/keys/i;
+// Judged by a host label (vault.example.com, myvault.vault.azure.net,
+// secretsmanager.…amazonaws.com) or a whole path segment (/secrets, /secret/,
+// /credentials): a substring anywhere in the URL also caught repositories and
+// pages that merely carry the word (github.com/acme/vault-ui).
+const SECRET_HOST_LABEL_RE = /vault|secrets|credentials/;
+const SECRET_PATH_SEGMENTS: ReadonlySet<string> = new Set(["vault", "secret", "secrets", "credentials"]);
 
 export function isSecretEndpointUrl(url: unknown): boolean {
-  return typeof url === "string" && SECRET_ENDPOINT_URL_RE.test(url);
+  if (typeof url !== "string") return false;
+  let parsed: URL;
+  try { parsed = new URL(url); } catch { return false; }
+  const path = parsed.pathname.toLowerCase();
+  return parsed.hostname.toLowerCase().split(".").some((label) => SECRET_HOST_LABEL_RE.test(label)) ||
+    path.split("/").some((segment) => SECRET_PATH_SEGMENTS.has(segment)) ||
+    path.includes("/.well-known/keys");
 }
 
-// A JSON string field named `value` — the `{name, value}` record shape that
-// secrets endpoints (Supabase, Vercel, Doppler, Vault's data map) answer with.
-const JSON_VALUE_FIELD_RE = /"value"\s*:\s*"((?:[^"\\]|\\.)*)"/g;
+// A JSON string field, key and value. A secrets endpoint answers with the
+// `{name, value}` record shape (Supabase, Vercel, Doppler, Vault's data map), so
+// there every `value` is a secret; anywhere else a field is one when its key
+// names a credential (access_token, client_secret, apiKey, password).
+const JSON_STRING_FIELD_RE = /"((?:[^"\\]|\\.){1,64})"\s*:\s*"((?:[^"\\]|\\.)*)"/g;
 
 // A value that names a place, not a credential: a URL, a host[:port], an
 // address. Secrets stores hold these next to real keys (SUPABASE_URL, a DB
@@ -67,10 +88,6 @@ const LOCATOR_VALUE_RE = /^(?:[a-z][a-z0-9+.-]*:\/\/|[\w.+-]+@[\w-]+(?:\.[\w-]+)
 const MIN_REGISTERED_ENDPOINT_VALUE = 12;
 
 export interface MaskOptions {
-  /** Mask only credential shapes and registered values; skip the loose
-   *  high-entropy pass. For shell output, where a long build hash or a
-   *  camelCase identifier must not be turned into `****`. */
-  structuredOnly?: boolean;
   /** Mask only registered values (the user's stored secrets, the operator
    *  token, values an earlier mask withheld). For a file read or search, where
    *  a credential-SHAPED string is the content being worked on — a test
@@ -93,12 +110,12 @@ export interface MaskedSecrets {
 
 interface Span { start: number; end: number; replacement: string; value: string | null; kind: string }
 
-function jsonValueSpans(head: string): Span[] {
+function jsonFieldSpans(head: string, endpoint: boolean): Span[] {
   const spans: Span[] = [];
-  JSON_VALUE_FIELD_RE.lastIndex = 0;
-  for (const m of head.matchAll(JSON_VALUE_FIELD_RE)) {
-    const raw = m[1];
-    if (!raw) continue;
+  for (const m of head.matchAll(JSON_STRING_FIELD_RE)) {
+    const [, key, raw] = m;
+    const fromEndpoint = endpoint && key === "value";
+    if (!raw || !(fromEndpoint || namesCredential(key))) continue;
     let value: string;
     try { value = JSON.parse(`"${raw}"`); } catch { continue; }
     // A value this masker already rendered (`corr****`) is shaped enough to
@@ -109,7 +126,7 @@ function jsonValueSpans(head: string): Span[] {
     spans.push({
       start, end: start + raw.length, replacement: maskForDisplay(value),
       value: LOCATOR_VALUE_RE.test(value) || value.length < MIN_REGISTERED_ENDPOINT_VALUE ? null : value,
-      kind: "Secrets Endpoint Value",
+      kind: fromEndpoint ? "Secrets Endpoint Value" : "Credential Field",
     });
   }
   return spans;
@@ -118,8 +135,7 @@ function jsonValueSpans(head: string): Span[] {
 function scannerSpans(head: string, opts: MaskOptions): Span[] {
   const spans: Span[] = [];
   for (const m of opts.knownOnly ? scanKnownSecretValues(head) : scanForSecrets(head).matches) {
-    if (m.marker) continue;
-    if (opts.structuredOnly && m.type === "high-entropy-token") continue;
+    if (m.marker || m.type === "high-entropy-token") continue;
     if (m.valueStart !== undefined && m.valueEnd !== undefined) {
       const value = head.slice(m.valueStart, m.valueEnd);
       spans.push({ start: m.valueStart, end: m.valueEnd, replacement: maskForDisplay(value), value, kind: m.pattern });
@@ -145,7 +161,7 @@ export function maskSecretValues(text: string, opts: MaskOptions = {}): MaskedSe
   const head = text.length > SECRET_SCAN_CAP ? text.slice(0, SECRET_SCAN_CAP) : text;
   const tail = text.length > SECRET_SCAN_CAP ? text.slice(SECRET_SCAN_CAP) : "";
 
-  const spans = [...(opts.endpoint ? jsonValueSpans(head) : []), ...scannerSpans(head, opts)];
+  const spans = [...(opts.knownOnly ? [] : jsonFieldSpans(head, !!opts.endpoint)), ...scannerSpans(head, opts)];
   // Earliest start first, longest first on a tie; a span overlapping one
   // already kept is dropped (the full PEM block wins over its BEGIN line, the
   // endpoint value over the shape match inside it).

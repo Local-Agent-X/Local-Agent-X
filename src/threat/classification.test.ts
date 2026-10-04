@@ -157,7 +157,7 @@ describe("credential key names are ONE list, shared with the redaction catalog",
   });
 
   it("scoring and redaction recognise the SAME key names", async () => {
-    const { CREDENTIAL_KEY_NAMES, CREDENTIAL_PATTERNS } = await import("../security/secrets/credential-patterns.js");
+    const { CREDENTIAL_KEY_NAMES, CREDENTIAL_KEY_TERMS, CREDENTIAL_PATTERNS } = await import("../security/secrets/credential-patterns.js");
     // The redaction catalog's key-value entry must be built from the shared list —
     // if someone re-inlines a literal alternation there, this fails.
     const kv = CREDENTIAL_PATTERNS.find((p) => p.name === "Key-Value Secret");
@@ -167,8 +167,9 @@ describe("credential key names are ONE list, shared with the redaction catalog",
     // ...and every key in the shared list must actually score here, with a live
     // value. A key present in the list but unrecognised by scoring is the exact
     // drift this test exists to catch.
-    for (const key of CREDENTIAL_KEY_NAMES.split("|")) {
-      const literal = key.replace(/\[_-\]\?/g, "_");   // api[_-]?key -> api_key
+    for (const key of CREDENTIAL_KEY_TERMS) {
+      // api[_-]?key -> api_key, secret(?:[_-]?key)? -> secret, (?<!…)token -> token
+      const literal = key.replace(/^\(\?<!.*\)(?=token$)/, "").replace(/\(\?:\[_-\]\?key\)\?/, "").replace(/\[_-\]\?/g, "_");
       expect(flagged(`${literal}=wJalrXUtnFEMIK7MDENGbPxRfiCY`), `${literal} should score`).toBe(true);
     }
   });

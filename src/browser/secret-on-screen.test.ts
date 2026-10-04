@@ -12,13 +12,15 @@ const FAKE_SUPABASE = "sbp_" + "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c";
 const RANDOM_TOKEN = "Zq8vN2kR7tLw4Xp9Hs3Jd6Fb1Mc5Gy0Ae8Uo2Ki7";
 const COMMIT = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b";
 
-const opsShowing = (values: VisibleValue[]): SecretBrowserOps => ({
+type Shown = Omit<VisibleValue, "names" | "inDialog"> & Partial<Pick<VisibleValue, "names" | "inDialog">>;
+
+const opsShowing = (shown: Shown[]): SecretBrowserOps => ({
   currentOrigin: async () => "https://supabase.com",
   describeElement: async () => ({ found: false, tag: "", type: "", autocomplete: "" }),
   readValue: async () => null,
   fillValue: async () => ({ kind: "not-found" }),
   pressEnter: async () => undefined,
-  visibleValues: async () => values,
+  visibleValues: async () => shown.map((v) => ({ names: [], inDialog: false, ...v })),
 });
 
 describe("findSecretOnScreen", () => {
@@ -35,10 +37,22 @@ describe("findSecretOnScreen", () => {
       .toMatchObject({ kind: "Supabase Token", field: false });
   });
 
-  it("a random token counts only in a field — a code block of commit hashes does not block screenshots", async () => {
-    expect(await findSecretOnScreen(opsShowing([{ value: RANDOM_TOKEN, selector: "#key", field: true }]))).not.toBeNull();
+  it("a random token counts only in a field that holds a credential — a code block of commit hashes does not block screenshots", async () => {
+    expect(await findSecretOnScreen(opsShowing([{ value: RANDOM_TOKEN, selector: "#key", field: true, names: ["API key"] }]))).not.toBeNull();
+    expect(await findSecretOnScreen(opsShowing([{ value: RANDOM_TOKEN, selector: "#cs", field: true, names: ["client_secret"] }]))).not.toBeNull();
+    expect(await findSecretOnScreen(opsShowing([{ value: RANDOM_TOKEN, selector: "#new", field: true, inDialog: true }]))).not.toBeNull();
     expect(await findSecretOnScreen(opsShowing([{ value: `commit ${COMMIT}`, selector: "pre", field: false }]))).toBeNull();
     expect(await findSecretOnScreen(opsShowing([{ value: RANDOM_TOKEN, selector: "code", field: false }]))).toBeNull();
+  });
+
+  // An identifier in a copyable field refused every screenshot of the page
+  // that showed it (a Twilio console with its Account SID).
+  it("a random string in a field the page names as anything else is an identifier", async () => {
+    expect(await findSecretOnScreen(opsShowing([
+      { value: "AC84d9ce8b2c77c8bc9f9423650da3d1d9", selector: "#sid", field: true, names: ["Account SID"] },
+      { value: RANDOM_TOKEN, selector: "#order", field: true, names: ["Order ID"] },
+      { value: RANDOM_TOKEN, selector: "#unnamed", field: true },
+    ]))).toBeNull();
   });
 
   it("an ordinary page finds nothing", async () => {

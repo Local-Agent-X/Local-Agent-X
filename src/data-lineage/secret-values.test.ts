@@ -9,7 +9,7 @@
 
 import { describe, it, expect, afterEach } from "vitest";
 import { maskSecretValues, withholdSecretValues, isSecretEndpointUrl, checkEgressTaint } from "./index.js";
-import { scanForSecrets, unregisterRedactedSecretValue } from "../security/secrets/index.js";
+import { scanForSecrets, unregisterRedactedSecretValue, knownSecretValues } from "../security/secrets/index.js";
 import { egressGuardGate } from "../tool-execution/enforce-policy.js";
 import { makeCtx } from "../tool-execution/capability-class-gates.test-helper.js";
 
@@ -67,6 +67,17 @@ describe("maskSecretValues — values masked in place, names and structure kept"
     expect(isSecretEndpointUrl(undefined)).toBe(false);
   });
 
+  // A substring anywhere in the URL treated a repository's every listing as a
+  // vault: every "value" in it masked and registered.
+  it("isSecretEndpointUrl judges a host label or a whole path segment, not a substring", () => {
+    expect(isSecretEndpointUrl("https://myvault.vault.azure.net/secrets/db?api-version=7.4")).toBe(true);
+    expect(isSecretEndpointUrl("https://secretsmanager.us-east-1.amazonaws.com/")).toBe(true);
+    expect(isSecretEndpointUrl("https://vault.example.com/v1/secret/data/app")).toBe(true);
+    expect(isSecretEndpointUrl("https://api.github.com/repos/acme/app/actions/secrets")).toBe(true);
+    expect(isSecretEndpointUrl("https://api.github.com/repos/acme/vault-ui/actions/variables")).toBe(false);
+    expect(isSecretEndpointUrl("https://docs.example.com/guides/rotating-credentials-safely")).toBe(false);
+  });
+
   it("a presence-only marker is neither masked nor registered", () => {
     const text = "-----BEGIN CERTIFICATE-----\nMIIB...\n-----END CERTIFICATE-----";
     const r = maskSecretValues(text);
@@ -82,10 +93,10 @@ describe("maskSecretValues — values masked in place, names and structure kept"
     expect(r.values).toEqual([pem]);
   });
 
-  it("structuredOnly leaves a high-entropy identifier alone", () => {
+  it("leaves a high-entropy identifier alone", () => {
     const line = "server/x.ts:42: const u = req.user; // useIframeNavigationApiHandlerFactory7f3a9c1e";
-    expect(maskSecretValues(line, { structuredOnly: true }).masked).toBe(0);
-    expect(maskSecretValues(line).masked).toBe(1);
+    expect(scanForSecrets(line).matches.some((m) => m.type === "high-entropy-token")).toBe(true);
+    expect(maskSecretValues(line).masked).toBe(0);
   });
 
   it("is idempotent — masked text scans clean and masks nothing on a second pass", () => {
@@ -108,6 +119,48 @@ describe("maskSecretValues — values masked in place, names and structure kept"
     expect(r.text).toBe(text);
     expect(r.masked).toBe(0);
     expect(r.kinds).toEqual([]);
+  });
+});
+
+// Masking by looks blinded the model to every id an API returned and
+// registered each one, so the next call carrying it was refused in every
+// session until restart: Drive file ids, Twilio Account SIDs, page tokens.
+// A value is withheld for what it IS (a credential format, a registered value)
+// or what the response CALLS it (a credential-named field), never for looking
+// random.
+describe("an API response's identifiers reach the model; its credentials do not", () => {
+  const DRIVE_ID = "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms";
+  const SID = "AC84d9ce8b2c77c8bc9f9423650da3d1d9";
+  const PAGE = "Cg8KDWNyZWF0ZWRfdGltZRIKAhoJGgYIo4fK3wU";
+  const OPAQUE = "Zq8vN2kR7tLw4Xp9Hs3Jd6Fb1Mc5Gy0Ae8Uo2Ki7";
+  afterEach(() => unregisterRedactedSecretValue(OPAQUE));
+
+  it("leaves ids and pagination cursors as they are, and registers none of them", () => {
+    const body = JSON.stringify({
+      files: [{ id: DRIVE_ID, name: "Q3 plan" }], account_sid: SID, nextPageToken: PAGE,
+      "@odata.nextLink": `https://graph.microsoft.com/v1.0/me/messages?$skiptoken=${PAGE}`,
+      next: `/v1/list?pageToken=${PAGE}&NextToken=${PAGE}`,
+    });
+    const r = withholdSecretValues(body);
+    expect(r.masked).toBe(0);
+    expect(r.text).toBe(body);
+    for (const id of [DRIVE_ID, SID, PAGE]) expect(knownSecretValues()).not.toContain(id);
+  });
+
+  it("masks and registers a value under a credential-named field, whatever it looks like", () => {
+    const body = JSON.stringify({ access_token: OPAQUE, token_type: "Bearer", expires_in: 3599, scope: "drive.readonly" });
+    const r = withholdSecretValues(body);
+    expect(r.masked).toBe(1);
+    expect(r.kinds).toEqual(["Credential Field"]);
+    expect(r.text).not.toContain(OPAQUE);
+    expect(r.text).toContain('"token_type":"Bearer"');
+    expect(knownSecretValues()).toContain(OPAQUE);
+  });
+
+  it("masks credential formats and env-style assignments as before", () => {
+    expect(maskSecretValues(`{"note":"key ${AWS}"}`).kinds).toContain("AWS Access Key");
+    expect(maskSecretValues(`SECRET_KEY=${OPAQUE}`).masked).toBe(1);
+    expect(maskSecretValues(`GITHUB_TOKEN=${OPAQUE}`).masked).toBe(1);
   });
 });
 

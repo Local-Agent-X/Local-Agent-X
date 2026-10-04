@@ -36,6 +36,7 @@ import { resolveAgentPath } from "../workspace/paths.js";
 import { realpathDeep, isSanctionedWorkRootEnvFile } from "../security/layer/index.js";
 import { recordPrivateReadFromResult } from "./private-read-record.js";
 import { createLogger } from "../logger.js";
+import { recordResponseTokens } from "../browser/site-provenance.js";
 import { withMetadata } from "../tools/result-helpers.js";
 
 const logger = createLogger("tool-execution");
@@ -48,13 +49,14 @@ const PATH_GATED_READS: ReadonlySet<string> = new Set(["read", "glob", "grep", "
 
 /**
  * How much of a delivered output is masked.
- *  - web_fetch / http_request bodies: every shape, and every value a secrets
- *    endpoint served. The tools mask before their `find` filter; this is the
- *    seam's own guarantee for a result that reached here another way.
+ *  - web_fetch / http_request bodies: credential shapes, credential-named
+ *    fields, registered values, and every value a secrets endpoint served. The
+ *    tools mask before their `find` filter; this is the seam's own guarantee
+ *    for a result that reached here another way.
  *  - shell output and owned-source records (sql_query, email_read,
- *    memory_search, ari_* reads): structured shapes and registered values. The
- *    high-entropy pass fires on build hashes, message ids and camelCase
- *    identifiers there; exfil of such a token is still caught at send time.
+ *    memory_search, ari_* reads): the same, without the endpoint rule. No
+ *    channel masks on looks alone (secret-values.ts): exfil of a random-looking
+ *    token is caught at send time.
  *  - every other tool (file reads, searches, documents, process output):
  *    registered values only. A credential shape in a source file is content
  *    the model is working on; the user's stored secrets and the operator token
@@ -62,7 +64,7 @@ const PATH_GATED_READS: ReadonlySet<string> = new Set(["read", "glob", "grep", "
  */
 function maskScope(toolName: string, args: Record<string, unknown>, isSensitiveRead: boolean): MaskOptions {
   if (toolName === "http_request" || toolName === "web_fetch") return { endpoint: isSecretEndpointUrl(args.url) };
-  if (toolName === "bash" || (isSensitiveRead && !PATH_GATED_READS.has(toolName))) return { structuredOnly: true };
+  if (toolName === "bash" || (isSensitiveRead && !PATH_GATED_READS.has(toolName))) return {};
   return { knownOnly: true };
 }
 
@@ -232,6 +234,13 @@ export function applyResultTaintPolicy(
 
   // A result the stub below replaces is never delivered, so it is not masked.
   if (result && !(redactReason && !result.isError)) result = maskDeliveredSecrets(toolName, args, result);
+
+  // What a network response showed the model, after masking, it may send back
+  // to that site: an id an API returned is the next request's path, and the
+  // outbound scan would otherwise refuse it as a random-looking token.
+  if ((toolName === "http_request" || toolName === "web_fetch") && typeof result?.content === "string") {
+    recordResponseTokens(sessionId ?? "", String(args.url ?? ""), result.content);
+  }
 
   // External-content ingestion mark (memory-promotion gate, NOT egress taint).
   // TOOL-CLASS keyed (D8): a successful result from an off-box-ingesting tool

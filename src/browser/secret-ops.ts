@@ -71,6 +71,11 @@ export interface VisibleValue {
 	 *  `textSelector` for an element's text. */
 	selector: string;
 	field: boolean;
+	/** What the page calls a field (its label, aria-label, placeholder, name,
+	 *  id); empty for text. */
+	names: string[];
+	/** The field sits in a dialog, where services show a new key once. */
+	inDialog: boolean;
 }
 
 /** Visible, non-password field values and code-like text, capped. A password
@@ -88,10 +93,17 @@ export function visibleValuesScript(): string {
 		}
 		return 'body > ' + parts.join(' > ');
 	};
+	var namesOf = function(f){
+		var ids = (f.getAttribute('aria-labelledby') || '').split(' ').filter(Boolean);
+		var n = [].concat(Array.prototype.map.call(f.labels || [], function(l){ return l.textContent; }),
+			ids.map(function(id){ var e = document.getElementById(id); return e ? e.textContent : ''; }),
+			[f.getAttribute('aria-label'), f.getAttribute('placeholder'), f.name, f.id]);
+		return n.filter(Boolean).map(function(s){ return String(s).trim().slice(0, 80); });
+	};
 	var fields = document.querySelectorAll('input:not([type=password]):not([type=hidden]), textarea');
-	for (var i = 0; i < fields.length && out.length < 200; i++) { var f = fields[i]; if (f.value && seen(f)) out.push({ value: String(f.value).slice(0, 4096), selector: path(f), field: true }); }
+	for (var i = 0; i < fields.length && out.length < 200; i++) { var f = fields[i]; if (f.value && seen(f)) out.push({ value: String(f.value).slice(0, 4096), selector: path(f), field: true, names: namesOf(f), inDialog: !!f.closest('[role=dialog], [role=alertdialog], dialog, [aria-modal=true]') }); }
 	var code = document.querySelectorAll('code, pre, kbd, samp, [role=dialog] span, [role=dialog] p');
-	for (var j = 0; j < code.length && out.length < 400; j++) { var c = code[j]; var t = (c.textContent || '').trim(); if (t && seen(c)) out.push({ value: t.slice(0, 4096), selector: path(c), field: false }); }
+	for (var j = 0; j < code.length && out.length < 400; j++) { var c = code[j]; var t = (c.textContent || '').trim(); if (t && seen(c)) out.push({ value: t.slice(0, 4096), selector: path(c), field: false, names: [], inDialog: false }); }
 	return out;
 })()`;
 }
@@ -100,7 +112,8 @@ function asVisibleValues(raw: unknown): VisibleValue[] {
 	if (!Array.isArray(raw)) return [];
 	return raw.filter((v): v is VisibleValue => !!v && typeof v === "object"
 		&& typeof (v as VisibleValue).value === "string" && typeof (v as VisibleValue).selector === "string"
-		&& typeof (v as VisibleValue).field === "boolean");
+		&& typeof (v as VisibleValue).field === "boolean" && Array.isArray((v as VisibleValue).names)
+		&& typeof (v as VisibleValue).inDialog === "boolean");
 }
 
 // ── Page scripts, shared by both backends ──

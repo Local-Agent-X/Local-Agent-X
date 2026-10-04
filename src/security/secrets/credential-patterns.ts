@@ -53,9 +53,35 @@ export interface CredentialPattern {
  * VALUE lengths (redaction 12, scoring 8) and only scoring applies a
  * live-vs-declaration guard: over-masking is free, over-alarming costs the
  * session its network. See threat/classification.ts for that asymmetry.
+ *
+ * A pagination cursor is not a credential: `pageToken`, `NextToken`,
+ * `$skiptoken`, `continuationToken` name an opaque position the API handed out
+ * to be sent back, and treating them as secrets masked Google, AWS and Graph
+ * pagination out of every response and refused the next-page request.
  */
-export const CREDENTIAL_KEY_NAMES =
-  "api[_-]?key|token|secret|password|authorization|access_key|private_key";
+const CURSOR_QUALIFIERS = "page|next|prev|previous|continuation|skip|delta|sync|resume|cursor|pagination";
+
+/** One regex source per credential key name; CREDENTIAL_KEY_NAMES joins them. */
+export const CREDENTIAL_KEY_TERMS: readonly string[] = [
+  "api[_-]?key", "access[_-]?key", "private[_-]?key", "secret(?:[_-]?key)?", "password", "authorization",
+  `(?<!(?:${CURSOR_QUALIFIERS})[_-]?)token`,
+];
+
+export const CREDENTIAL_KEY_NAMES = CREDENTIAL_KEY_TERMS.join("|");
+
+const CREDENTIAL_NAME_RE = new RegExp(`(?:${CREDENTIAL_KEY_NAMES})$`, "i");
+
+/**
+ * Whether a field's name (a JSON key, a form field's label) says its value is
+ * a credential: the name ENDS in a credential key name (access_token,
+ * client_secret, apiKey, "Auth Token"). What the value looks like plays no part:
+ * a random-looking value under `id` or `Account SID` is an identifier, and an
+ * ordinary-looking one under `password` is still a password.
+ */
+export function namesCredential(name: string): boolean {
+  const words = name.trim().replace(/([a-z0-9])([A-Z])/g, "$1_$2").replace(/[^A-Za-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  return CREDENTIAL_NAME_RE.test(words);
+}
 
 /**
  * The structured catalog — union of every credential shape recognized

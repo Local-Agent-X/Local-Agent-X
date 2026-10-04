@@ -156,7 +156,11 @@ export const BLOCKED_EVAL_PATTERNS: readonly RegExp[] = [
   /\blocalStorage\b/i,
   /\bsessionStorage\b/i,
   /\bindexedDB\b/i,
-  /\bcredentials\b/i,
+  // A fetch's credentials MODE (`credentials: 'include'`) only attaches the
+  // page's own cookies to a request the request gate still judges; it reads
+  // nothing. Every other mention (navigator.credentials, a key built from
+  // strings) stays blocked.
+  /\bcredentials\b(?!\s*:\s*['"`](?:include|same-origin|omit)['"`])/i,
   // (2) Dynamic code execution (direct + indirect). NOTE: `Function` is
   // CASE-SENSITIVE on purpose — the real constructor is always capital-F
   // (`new Function(...)`, `Function(...)()`); a case-insensitive match here
@@ -168,7 +172,9 @@ export const BLOCKED_EVAL_PATTERNS: readonly RegExp[] = [
   /\bsetInterval\s*\(\s*['"]/i,
   /\(\s*\d\s*,\s*eval\s*\)/i,
   /\[\s*['"]eval['"]\s*\]/i,
-  /\bwindow\s*\[\s*['"]/i,
+  // A framework's data global (window['__NEXT_DATA__'], '__NUXT__') is never a
+  // built-in, so a dunder key cannot reach eval or Function.
+  /\bwindow\s*\[\s*['"](?!__[A-Za-z0-9_]+__['"])/i,
   /\bglobalThis\s*\[\s*['"]/i,
   /\bself\s*\[\s*['"]/i,
   /\bReflect\s*\.\s*apply\b/i,

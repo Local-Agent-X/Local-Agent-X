@@ -11,6 +11,10 @@ export interface IframeInfo {
   origin: string;
   rect: { x: number; y: number; width: number; height: number };
   crossOrigin: boolean;
+  /** A provider response field beside the frame (g-recaptcha-response,
+   *  h-captcha-response, cf-turnstile-response) already holds a token: the
+   *  verification this frame shows has been completed. */
+  answered: boolean;
 }
 
 export async function listIframes(page: Page): Promise<IframeInfo[]> {
@@ -23,9 +27,15 @@ export async function listIframes(page: Page): Promise<IframeInfo[]> {
       const src = f.src || f.getAttribute('src') || '';
       let origin = '';
       try { origin = new URL(src, location.href).origin; } catch {}
+      let answered = false;
+      for (let el = f.parentElement, i = 0; el && i < 3; el = el.parentElement, i++) {
+        const field = el.querySelector('textarea[name$="-response"], input[name$="-response"]');
+        if (field) { answered = !!field.value; break; }
+      }
       out.push({
         src: src,
         origin: origin,
+        answered: answered,
         rect: { x: Math.round(r.x), y: Math.round(r.y),
                 width: Math.round(r.width), height: Math.round(r.height) },
       });

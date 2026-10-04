@@ -4,7 +4,7 @@ import { classifyData, luhnValid, stripExternalUntrusted } from "./classificatio
 describe("stripExternalUntrusted — inbound third-party content is not the session's own output", () => {
   it("removes a whole external block so its example credentials don't classify", () => {
     const wrapped =
-      '<<<EXTERNAL_UNTRUSTED_CONTENT id="z1">>>\nAuthorization: Bearer abc123def456\n<<<END_EXTERNAL_UNTRUSTED_CONTENT id="z1">>>';
+      '<<<EXTERNAL_UNTRUSTED_CONTENT id="z1">>>\nAuthorization: Bearer abc123def456ghi789jkl0\n<<<END_EXTERNAL_UNTRUSTED_CONTENT id="z1">>>';
     expect(classifyData(wrapped).labels).toContain("credentials");
     expect(classifyData(stripExternalUntrusted(wrapped)).labels).not.toContain("credentials");
   });
@@ -178,5 +178,25 @@ describe("credential key names are ONE list, shared with the redaction catalog",
     expect(flagged(`authorization: process.env.AUTH_HEADER`)).toBe(false);
     expect(flagged(`access_key: "YOUR_ACCESS_KEY_HERE"`)).toBe(false);
     expect(flagged(`private_key: undefined,`)).toBe(false);
+  });
+});
+
+// Each hit scores "credential in output" against the session, and enough of
+// them cut off every outside call. A bare prefix in ordinary local output is
+// not a credential.
+describe("a credential prefix alone does not classify as a credential", () => {
+  const credential = (text: string) => classifyData(text).labels.includes("credentials");
+
+  it("ignores locale ids, names and prose that only share a prefix", () => {
+    expect(credential("locales/sk-SK.json")).toBe(false);
+    expect(credential("Akiane Kramarik painted it")).toBe(false);
+    expect(credential("The bearer of this card is entitled to entry.")).toBe(false);
+  });
+
+  it("still classifies the real shapes", () => {
+    expect(credential("AWS_KEY AKIAIOSFODNN7EXAMPLE")).toBe(true);
+    expect(credential("Authorization: Bearer eyJhbGciOiJIUzI1NiJ9abcdefghij")).toBe(true);
+    expect(credential("token ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8")).toBe(true);
+    expect(credential("key sk-abcdefghijklmnopqrstuv")).toBe(true);
   });
 });

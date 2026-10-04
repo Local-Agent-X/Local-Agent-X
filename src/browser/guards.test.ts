@@ -82,6 +82,24 @@ describe("scanEvaluateScript", () => {
 		expect(scanEvaluateScript(script)).not.toBeNull();
 	});
 
+	// Each was refused as a restricted primitive while reading nothing.
+	it.each([
+		"fetch('/api/me', { credentials: 'include' }).then(r => r.json())",
+		"fetch(u, {credentials:\"same-origin\"})",
+		"JSON.stringify(window['__NEXT_DATA__'].props)",
+	])("allows a fetch credentials mode and a framework data global: %s", (script) => {
+		expect(scanEvaluateScript(script)).toBeNull();
+	});
+
+	it.each([
+		"navigator.credentials.get({ password: true })",
+		"navigator['credentials'].get({ password: true })",
+		"const k = 'cred' + 'entials'; navigator[k].get()",
+		"window['eval']('1')",
+	])("still blocks reading the credential store and reaching built-ins by key: %s", (script) => {
+		expect(scanEvaluateScript(script)).not.toBeNull();
+	});
+
 	it("blocks escaped and concatenated spellings", () => {
 		expect(scanEvaluateScript("window['ev' + 'al']('1')")).not.toBeNull();
 		expect(scanEvaluateScript("window['loc' + '\\u0061lStorage']")).not.toBeNull();

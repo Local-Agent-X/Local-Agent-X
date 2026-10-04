@@ -7,6 +7,7 @@ import type { SecretsStore } from "../secrets.js";
 import { ok, err } from "./result-helpers.js";
 import { capWithSpill } from "./result-spill.js";
 import { checkOutboundRequest } from "./http-egress-guard.js";
+import { vouchedFor } from "../browser/site-provenance.js";
 import { formatMissingPageLeads, gatherMissingPageLeads, isMissingPageStatus } from "./missing-page-leads.js";
 import { withholdSecretValues, secretsMaskedNote, isSecretEndpointUrl } from "../data-lineage/index.js";
 import {
@@ -94,7 +95,10 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
         });
       }
 
-      const guard = checkOutboundRequest({ url, method, body: args.body, headers: args.headers });
+      const guard = checkOutboundRequest(
+        { url, method, body: args.body, headers: args.headers },
+        vouchedFor("http_request", args, String(args._sessionId ?? "")),
+      );
       if (guard) return err(guard.message, guard.meta);
 
       const headers: Record<string, string> = {

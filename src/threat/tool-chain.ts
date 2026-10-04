@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 
 import type { DataClassification } from "./classification.js";
 import { fingerprintOf, isLearned } from "./trust-ledger.js";
-import { isSensitivePath, sensitivePathsReadByCommand, detectSecretsInOutput } from "../data-lineage/index.js";
+import { isSensitivePath, sensitivePathsReadByCommand } from "../data-lineage/index.js";
+import { unvouchedSecretMatches, vouchedFor } from "../browser/site-provenance.js";
 import { outboundPayloadParts } from "../security/secrets/index.js";
 import { STATEFUL_LIVE_STATE_TOOLS } from "../tool-execution/stateful-tools.js";
 
@@ -66,6 +67,9 @@ export class ToolChainAnalyzer {
   // Layer B carries the fingerprint across turns via session-bridge.
   private lastBlockedFingerprint: string | null = null;
   private lastBlockedAt: number | null = null;
+
+  /** The session whose site provenance vouches for IDs a destination showed it. */
+  constructor(private readonly sessionId = "") {}
 
   /** Record a tool call and check for dangerous patterns */
   recordAndAnalyze(
@@ -271,8 +275,11 @@ export class ToolChainAnalyzer {
     // non-secret-shaped value is still covered by the data-lineage taint gate.
     const payload = outboundPayload(args);
     if (!payload) return null;
-    const { matched, kinds } = detectSecretsInOutput(payload);
-    if (!matched) return null;
+    // The same rule the egress gate applied before the call ran
+    // (site-provenance.ts), so this post-call scan cannot re-judge an ID the
+    // destination's own site showed as exfiltration after the gate allowed it.
+    const kinds = [...new Set(unvouchedSecretMatches(payload, vouchedFor(sink.type, args, this.sessionId)).map((m) => m.pattern))];
+    if (kinds.length === 0) return null;
 
     // Attribute to the most recent in-window sensitive read for the audit
     // description + trust-ledger fingerprint; fall back to the sink itself.

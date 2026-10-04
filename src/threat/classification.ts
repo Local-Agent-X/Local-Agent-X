@@ -91,8 +91,10 @@ export function isLiveCredentialAssignment(match: string): boolean {
 }
 
 const CLASSIFICATION_PATTERNS: Array<{ label: DataLabel; pattern: RegExp; confidence: number; validate?: (match: string) => boolean }> = [
-  // Credentials
-  { label: "credentials", pattern: /\b(sk-|ghp_|github_pat_|xox[bpas]-|glpat-|AKIA|Bearer\s+[A-Za-z0-9])/i, confidence: 0.95 },
+  // Credentials. A prefix alone is not a credential: case-insensitive bare
+  // prefixes scored the sk-SK locale, "Akiane", and "bearer of this card".
+  // Each needs its exact case and a token body, as the redaction catalog does.
+  { label: "credentials", pattern: /\b(?:sk-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{20,}|xox[bpas]-[A-Za-z0-9-]{20,}|glpat-[A-Za-z0-9_-]{20,}|AKIA[A-Z0-9]{16})|\b[Bb]earer\s+[A-Za-z0-9._~+/-]{20,}/, confidence: 0.95 },
   // Key list comes from the credential catalog (CREDENTIAL_KEY_NAMES), NOT a local
   // copy. The local copy had drifted: it omitted authorization / access_key /
   // private_key, so a raw `AWS_SECRET_ACCESS_KEY=…` was redacted out of the model's

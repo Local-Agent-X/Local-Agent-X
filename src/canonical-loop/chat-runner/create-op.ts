@@ -10,6 +10,7 @@ import { foldSystemRowsIntoPrompt } from "./message-convert.js";
 import { appendSystemPromptSection } from "../../context/system-prompt-builder.js";
 import { preflightCapabilityAwarePrompt } from "../prompt-preflight.js";
 import type { OpenAICompatTarget } from "../adapters/openai-compat.js";
+import { recordUserLinks } from "../../browser/site-provenance.js";
 
 function readChatWallClockMs(): number {
   const raw = parseInt(process.env.LAX_CHAT_WALLCLOCK_MS ?? "7200000", 10);
@@ -80,6 +81,7 @@ export async function createChatOp(ctx: CanonicalChatContext): Promise<CreatedCh
   };
 
   trackOpForSession(op.id, ctx.sessionId, ctx.message);
+  recordUserLinks(ctx.sessionId, ctx.message);
   writeOp(op);
   seedOpMessages(op.id, ctx.prepared, ctx.message);
   return { op, wallClockMs, resolvedTarget };

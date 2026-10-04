@@ -86,3 +86,42 @@ describe("repeatOutputMiddleware", () => {
     expect(run(op, A)).toEqual({ kind: "continue" });
   });
 });
+
+// A batch narrates each item in near-identical words while every call lands;
+// aborting it mid-run (it differs by one token per turn) was a false stop.
+describe("a landed state change is progress, however alike the narration", () => {
+  const item = (n: number) =>
+    `Updating contact ${n} of 200 now: setting the status field to active and saving the record before moving on to the next one in the list.`;
+  const afterTools = (op: string, toolName: string, status: "ok" | "error") =>
+    repeatOutputMiddleware.afterToolExecution!(makeCanonicalLoopContext({
+      op: { id: op }, toolResults: [{ toolName, toolCallId: "c", content: "", status }],
+    }));
+
+  it("never aborts while each turn's write succeeds", () => {
+    const op = opId();
+    for (let n = 1; n <= 8; n++) {
+      expect((run(op, item(n)) as { kind: string }).kind).not.toBe("abort");
+      afterTools(op, "write", "ok");
+    }
+  });
+
+  it("still aborts when only reads land (the search-loop shape it was built for)", () => {
+    const op = opId();
+    const kinds = [];
+    for (let n = 1; n <= 5; n++) {
+      kinds.push((run(op, item(n)) as { kind: string }).kind);
+      afterTools(op, "tool_search", "ok");
+    }
+    expect(kinds.at(-1)).toBe("abort");
+  });
+
+  it("still aborts when the write keeps failing", () => {
+    const op = opId();
+    const kinds = [];
+    for (let n = 1; n <= 5; n++) {
+      kinds.push((run(op, item(n)) as { kind: string }).kind);
+      afterTools(op, "write", "error");
+    }
+    expect(kinds.at(-1)).toBe("abort");
+  });
+});

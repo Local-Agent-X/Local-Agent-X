@@ -31,6 +31,9 @@ export function unmarkDryRunSession(sessionId: string): void { dryRunSessions.de
 export const SESSION_SCOPED_TOOLS = new Set([
   "enter_plan_mode", "exit_plan_mode", "usage_report",
   "browser",
+  // http_request's own outbound check vouches for IDs the destination's site
+  // showed this session (site-provenance.ts vouchedFor), as the egress gate does.
+  "http_request",
   "agent_spawn", "browser_capture_to_secret", "browser_fill_from_secret",
   "session_status", "request_secret", "request_secrets",
   // show_unblock_control reads THIS session's taint registry; the trusted

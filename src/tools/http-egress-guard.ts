@@ -29,6 +29,7 @@ import { getLaxDir } from "../lax-data-dir.js";
 import { getOwnEmailAddresses } from "./email-config.js";
 import { isSensitiveAttachmentPath } from "../data-lineage/index.js";
 import { realpathDeep } from "../security/layer/index.js";
+import { unvouchedSecretMatches } from "../browser/site-provenance.js";
 
 let trustedDestinationsCache: { fingerprint: number; set: Set<string> } | null = null;
 
@@ -72,8 +73,10 @@ export interface GuardBlock {
   confirmable?: boolean;
 }
 
-/** Returns null if the call may proceed, or a GuardBlock describing the refusal. */
-export function checkOutboundRequest(args: GuardArgs): GuardBlock | null {
+/** Returns null if the call may proceed, or a GuardBlock describing the refusal.
+ *  `vouchedToken` clears an entropy-heuristic hit the destination's own site
+ *  showed (site-provenance.ts vouchedFor). */
+export function checkOutboundRequest(args: GuardArgs, vouchedToken?: (token: string) => boolean): GuardBlock | null {
   const { url, method } = args;
 
   if ((method === "GET" || method === "HEAD") && args.body) {
@@ -94,10 +97,10 @@ export function checkOutboundRequest(args: GuardArgs): GuardBlock | null {
   const preScanText = outboundPayloadParts(args, { includeUrl: true });
   if (!preScanText) return null;
 
-  const scan = scanForSecrets(preScanText);
-  if (!scan.clean) {
+  const matches = unvouchedSecretMatches(preScanText, vouchedToken);
+  if (matches.length > 0) {
     if (isTrustedDestination(url)) return null;
-    const kinds = [...new Set(scan.matches.map(m => m.pattern))].join(", ");
+    const kinds = [...new Set(matches.map(m => m.pattern))].join(", ");
     return {
       message:
         `Refusing ${method} to ${hostOf(url) || url}: request contains secret-shaped content (${kinds}) ` +
@@ -151,10 +154,7 @@ export function checkOutboundPayload(
   vouchedToken?: (token: string) => boolean,
 ): GuardBlock | null {
   if (!text) return null;
-  const scan = scanForSecrets(text);
-  const matches = vouchedToken
-    ? scan.matches.filter(m => !(m.type === "high-entropy-token" && vouchedToken(text.slice(m.startIndex, m.endIndex))))
-    : scan.matches;
+  const matches = unvouchedSecretMatches(text, vouchedToken);
   if (matches.length > 0) {
     const kinds = [...new Set(matches.map(m => m.pattern))].join(", ");
     return {

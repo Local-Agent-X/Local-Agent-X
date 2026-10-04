@@ -83,6 +83,7 @@ describe("handleObserve — degraded element extraction", () => {
         origin: "https://challenges.cloudflare.com",
         rect: { x: 10, y: 10, width: 300, height: 70 },
         crossOrigin: true,
+        answered: false,
       }],
     });
     const res = await handleObserve(fakeManager(obs));

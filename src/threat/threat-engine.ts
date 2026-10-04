@@ -106,7 +106,7 @@ export class ThreatEngine {
   }
 
   constructor(dataDir: string, sessionId: string = "default") {
-    this.chain = new ToolChainAnalyzer();
+    this.chain = new ToolChainAnalyzer(sessionId);
     this.scorer = new ThreatScorer(readThreatScorerOptions());
     // Shared single-writer audit trail (finding H10): every per-turn ThreatEngine
     // (and the read-only "audit-read" engine) targets the same daily file, so

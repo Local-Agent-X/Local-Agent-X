@@ -20,13 +20,17 @@
  * catches A,A,A AND short-period A,B,A,B alternation) by token-set similarity.
  * Two strikes: NUDGE once, then ABORT if it keeps repeating. Unlike loop-
  * detection — which stays nudge-only on interactive because a repeated tool CALL
- * can be legitimately user-wanted — repeated identical PROSE has no legitimate
- * form, so the abort fires on every lane. Short turns are ignored (a repeated
+ * can be legitimately user-wanted — repeated prose with nothing landing has no
+ * legitimate form, so the abort fires on every lane. A successful call with an
+ * observable effect (isMutationTool) clears the count: a batch narrates each
+ * item in near-identical words ("Updating contact 14 of 200…") while every
+ * update lands, and that is progress, not a loop. Short turns are ignored (a repeated
  * "ok"/"done" is not a runaway worth killing a turn over). Per-op state, cleared
  * on op-terminal like its siblings.
  */
 import { type CanonicalMiddleware } from "./types.js";
 import { getMiddlewareState } from "./state.js";
+import { isMutationTool } from "../../tool-mutation-check.js";
 
 const RING = 4;            // how many recent outputs to compare against
 const NUDGE_AT = 2;        // consecutive repeats before the warning
@@ -63,6 +67,10 @@ interface RepeatState {
   nudged: boolean;
 }
 
+function repeatState(opId: string): RepeatState {
+  return getMiddlewareState<RepeatState>(opId, "repeat-output", () => ({ recent: [], repeats: 0, nudged: false }));
+}
+
 export const repeatOutputMiddleware: CanonicalMiddleware = {
   name: "repeat-output",
 
@@ -70,11 +78,7 @@ export const repeatOutputMiddleware: CanonicalMiddleware = {
     const tokens = normalizeForRepeat(ctx.assistantContent);
     if (tokens.length < MIN_TOKENS) return { kind: "continue" };
 
-    const state = getMiddlewareState<RepeatState>(
-      ctx.op.id,
-      "repeat-output",
-      () => ({ recent: [], repeats: 0, nudged: false }),
-    );
+    const state = repeatState(ctx.op.id);
 
     const matched = state.recent.some((prev) => outputsSimilar(tokens, prev));
     state.repeats = matched ? state.repeats + 1 : 0;
@@ -101,6 +105,11 @@ export const repeatOutputMiddleware: CanonicalMiddleware = {
       };
     }
 
+    return { kind: "continue" };
+  },
+
+  afterToolExecution(ctx) {
+    if (ctx.toolResults.some((r) => r.status === "ok" && isMutationTool(r.toolName))) repeatState(ctx.op.id).repeats = 0;
     return { kind: "continue" };
   },
 };

@@ -115,3 +115,39 @@ describe("installer packaged-app seams", () => {
     expect(entitlements).not.toContain("com.apple.developer.speech-recognition");
   });
 });
+
+// A friend's install died on "Desktop app download failed: fetch failed", the
+// bare message Node gives for any dropped connection, with the cause (DNS,
+// reset, timeout, certificate) thrown away.
+describe("installer downloads survive a dropped connection and name the cause", () => {
+  const dropped = () => new TypeError("fetch failed", {
+    cause: Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET", host: "release-assets.githubusercontent.com" }),
+  });
+
+  it("retries a dropped connection and completes", async () => {
+    const root = mkdtempSync(join(tmpdir(), "lax-package-test-"));
+    roots.push(root);
+    const fixture = feed("win32", "x64", Buffer.from("signed-package"));
+    let drops = 2;
+    const acquired = await acquireDesktopPackage({
+      platform: "win32", arch: "x64", temporaryRoot: root, retryDelayMs: 0,
+      fetchImpl: async (url: string) => { if (drops-- > 0) throw dropped(); return fixture.fetchImpl(url); },
+    });
+    expect(readFileSync(acquired.packagePath, "utf-8")).toBe("signed-package");
+    acquired.cleanup();
+  });
+
+  it("reports the underlying cause and host when it keeps failing", async () => {
+    await expect(acquireDesktopPackage({
+      platform: "win32", arch: "x64", retryDelayMs: 0, fetchImpl: async () => { throw dropped(); },
+    })).rejects.toThrow(/could not reach github\.com after 3 tries: fetch failed \(ECONNRESET release-assets\.githubusercontent\.com: read ECONNRESET\)/);
+  });
+
+  it("does not retry an HTTP error; that is an answer", async () => {
+    let calls = 0;
+    await expect(acquireDesktopPackage({
+      platform: "win32", arch: "x64", retryDelayMs: 0, fetchImpl: async () => { calls += 1; return new Response("nope", { status: 404 }); },
+    })).rejects.toThrow(/\(404\)/);
+    expect(calls).toBe(1);
+  });
+});

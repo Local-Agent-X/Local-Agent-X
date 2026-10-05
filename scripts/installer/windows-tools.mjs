@@ -7,6 +7,7 @@ import {
 } from "../portable-git.mjs";
 import { NODE_PORTABLE_VERSION } from "./contract.mjs";
 import { extractZipTo } from "./archive-tools.mjs";
+import { fetchWithRetry } from "./download.mjs";
 
 export function wingetAvailable(processes, platform = process.platform) {
   return platform === "win32" && processes.has("winget");
@@ -60,7 +61,7 @@ export async function provisionPortableGit({ reporter, processes, env = process.
   try {
     mkdirSync(parent, { recursive: true });
     reporter.log(`Downloading PortableGit ${GIT_PORTABLE_VERSION} (~56 MB, one-time)…`);
-    const response = await fetch(portableGitDownloadUrl());
+    const response = await fetchWithRetry(portableGitDownloadUrl());
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const buffer = Buffer.from(await response.arrayBuffer());
     writeFileSync(selfExtractor, buffer);
@@ -95,7 +96,7 @@ export async function installNodePortableWin({ processes, env = process.env, hom
     const url = `https://nodejs.org/dist/v${NODE_PORTABLE_VERSION}/${packageName}.zip`;
     console.log(`[upgrade-node] downloading ${url}`);
     mkdirSync(installRoot, { recursive: true });
-    const response = await fetch(url);
+    const response = await fetchWithRetry(url);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     writeFileSync(zip, Buffer.from(await response.arrayBuffer()));
     rmSync(nodeDir, { recursive: true, force: true });

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import { fetchWithRetry } from "./download.mjs";
 
 export const DESKTOP_FEED_ROOT =
   "https://github.com/Local-Agent-X/Local-Agent-X/releases/download/desktop-stable";
@@ -35,8 +36,8 @@ function expectedArtifact(version, platform, arch) {
   return `Local-Agent-X-Desktop-${version}-${os}-${arch}.${extension}`;
 }
 
-async function fetchOk(url, fetchImpl) {
-  const response = await fetchImpl(url, { redirect: "follow" });
+async function fetchOk(url, fetchImpl, retryDelayMs) {
+  const response = await fetchWithRetry(url, { fetchImpl, init: { redirect: "follow" }, retryDelayMs });
   if (!response.ok) throw new Error(`Desktop package request failed (${response.status}) for ${url}.`);
   return response;
 }
@@ -46,13 +47,14 @@ export async function acquireDesktopPackage({
   arch,
   fetchImpl = globalThis.fetch,
   temporaryRoot = tmpdir(),
+  retryDelayMs,
 }) {
   if (!["darwin", "win32"].includes(platform)) throw new Error(`Unsupported desktop package platform: ${platform}`);
   if (!["x64", "arm64"].includes(arch)) throw new Error(`Unsupported desktop package architecture: ${arch}`);
   if (typeof fetchImpl !== "function") throw new Error("HTTPS download support is unavailable.");
   const metadataName = platform === "darwin" ? "latest-mac.yml" : "latest.yml";
   const metadataUrl = `${DESKTOP_FEED_ROOT}/${metadataName}`;
-  const metadataResponse = await fetchOk(metadataUrl, fetchImpl);
+  const metadataResponse = await fetchOk(metadataUrl, fetchImpl, retryDelayMs);
   const metadata = parseMetadata(await metadataResponse.text());
   const artifactName = expectedArtifact(metadata.version, platform, arch);
   const entry = metadata.files.find((file) => file.url === artifactName);
@@ -62,7 +64,7 @@ export async function acquireDesktopPackage({
   }
 
   const packageUrl = `${DESKTOP_FEED_ROOT}/${encodeURIComponent(artifactName)}`;
-  const response = await fetchOk(packageUrl, fetchImpl);
+  const response = await fetchOk(packageUrl, fetchImpl, retryDelayMs);
   if (!response.body) throw new Error("Desktop package response has no body.");
   const directory = mkdtempSync(join(temporaryRoot, "lax-desktop-"));
   const packagePath = join(directory, artifactName);

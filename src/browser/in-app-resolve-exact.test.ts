@@ -248,3 +248,33 @@ describe("stableFillScript", () => {
 		expect(runStableFill(mkRef({ ids: { id: "gone" } }), "x", doc)).toEqual({ ok: false, error: "not-found" });
 	});
 });
+
+// The vault fill acts by selector, so it asks this chain to mark the element
+// it settles on. It used to build [data-lax-ref="<ref>"] with nothing marking
+// the page, and every fill by ref failed "element not found".
+describe("resolutionScript marks the element it settles on when asked", () => {
+	const run = (doc: unknown, mark?: number) => new Function(
+		"document", "getComputedStyle", "devicePixelRatio", "visualViewport",
+		`return ${resolutionScript(mkRef({ ids: { id: "po-number" } }), "fill", mark)}`,
+	)(doc, () => ({ visibility: "visible", display: "block" }), 1, { scale: 1 }) as Record<string, unknown>;
+	const markable = () => {
+		const field = el("input");
+		(field as unknown as { setAttribute(n: string, v: string): void }).setAttribute = (n, v) => { field.attrs[n] = v; };
+		return field;
+	};
+
+	it("tags the resolved field with the mark", () => {
+		const field = markable();
+		const out = run(fakeDocument({ 'input[id="po-number"]': [field] }, () => field), 64);
+		expect(out.found).toBe(true);
+		expect(field.attrs["data-lax-ref"]).toBe("64");
+	});
+
+	it("tags nothing without a mark, or when nothing resolved", () => {
+		const field = markable();
+		run(fakeDocument({ 'input[id="po-number"]': [field] }, () => field));
+		expect(field.attrs["data-lax-ref"]).toBeUndefined();
+		const out = run(fakeDocument({}, () => null), 64);
+		expect(out.found).toBe(false);
+	});
+});

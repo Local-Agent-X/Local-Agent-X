@@ -20,6 +20,9 @@
 
 import type { Page } from "playwright";
 import { browserExec, browserInput } from "./bridge-client.js";
+import type { ObservationRegistry } from "./observation.js";
+import type { DurableRef } from "./observation-types.js";
+import { resolutionScript } from "./in-app-resolve-scripts.js";
 
 /** What the target element actually is — read server-side, never from the LLM. */
 export interface SecretElementDescriptor {
@@ -63,7 +66,28 @@ export interface SecretBrowserOps {
 	 *  with a selector that reads it back. Host-side only — for the
 	 *  secret-on-screen check; a value never goes into a result. */
 	visibleValues(): Promise<VisibleValue[]>;
+	/** Mark the element a snapshot ref names (the backend's registry resolves
+	 *  it, recovering a stale ref the way clicks do) and return a selector that
+	 *  reaches it, or null when the ref is gone. */
+	markRef(refId: number): Promise<string | null>;
 }
+
+/** The live ref behind a snapshot id, in the top document (the page scripts
+ *  query the main document, not a frame's). */
+function markableRef(registry: ObservationRegistry, refId: number): DurableRef | null {
+	const ref = registry.recoverStaleRef(refId);
+	return ref && ref.frameUrl === undefined ? ref : null;
+}
+
+/** The same resolution chain a fill by ref uses (stable id, role+name, xpath),
+ *  marking the element it settles on. */
+function markRefScript(ref: DurableRef): string {
+	return resolutionScript(ref, "fill", ref.id);
+}
+
+const marked = (raw: unknown): boolean => !!raw && typeof raw === "object" && (raw as { found?: unknown }).found === true;
+
+const refSelector = (id: number): string => `[data-lax-ref="${id}"]`;
 
 export interface VisibleValue {
 	value: string;
@@ -211,8 +235,12 @@ function originOf(url: string): string {
 
 // ── CDP backend ──
 
-export function createCdpSecretOps(getPage: () => Promise<Page>): SecretBrowserOps {
+export function createCdpSecretOps(getPage: () => Promise<Page>, getRegistry: () => ObservationRegistry): SecretBrowserOps {
 	return {
+		async markRef(refId) {
+			const ref = markableRef(getRegistry(), refId);
+			return ref && marked(await (await getPage()).evaluate(markRefScript(ref))) ? refSelector(ref.id) : null;
+		},
 		async currentOrigin() {
 			return originOf((await getPage()).url());
 		},
@@ -246,6 +274,8 @@ export interface InAppSecretDeps {
 	viewId: () => string;
 	/** Mount the view if it isn't already — the backend's lazy create. */
 	ensureView: () => Promise<void>;
+	/** The active tab's observation registry: what a snapshot ref names. */
+	registry: () => ObservationRegistry;
 }
 
 export function createInAppSecretOps(deps: InAppSecretDeps): SecretBrowserOps {
@@ -254,6 +284,10 @@ export function createInAppSecretOps(deps: InAppSecretDeps): SecretBrowserOps {
 		return browserExec(deps.viewId(), script);
 	};
 	return {
+		async markRef(refId) {
+			const ref = markableRef(deps.registry(), refId);
+			return ref && marked(await exec(markRefScript(ref))) ? refSelector(ref.id) : null;
+		},
 		async currentOrigin() {
 			const raw = await exec("location.href");
 			return typeof raw === "string" ? originOf(raw) : "";

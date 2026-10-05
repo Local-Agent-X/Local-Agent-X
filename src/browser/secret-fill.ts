@@ -153,7 +153,14 @@ export function createBrowserSecretFillTool(
       // Resolve ref → selector via the observation registry if ref was provided.
       // The target node's tag/type/autocomplete are read server-side, so the
       // decision doesn't depend on anything the LLM said.
-      const targetSelector = selector ?? `[data-lax-ref="${ref}"]`;
+      // A snapshot ref resolves through the backend's own registry (a stale ref
+      // recovered the way clicks recover it); nothing else marks the page, and
+      // a bare [data-lax-ref] selector matched nothing, so every ref fill failed.
+      const targetSelector = selector ?? await ops.markRef(ref!);
+      if (!targetSelector) {
+        auditLog({ event: "fill_denied", secret: name, reason: "ref_not_found", ref, session: sessionId });
+        return err(`Ref [${ref}] is not on the page any more. Take a fresh snapshot and retry with the field's new ref.`);
+      }
       let elementDescriptor: SecretElementDescriptor;
       try {
         elementDescriptor = await ops.describeElement(targetSelector);
@@ -214,7 +221,12 @@ export function createBrowserSecretFillTool(
       const userApproved = secretsStore.isFillApproved(name, currentOrigin);
       const preBlessed = sameOrigin && getActivePreBlessedSecrets().has(name);
 
-      let gateOutcome: "session" | "approved" | "pre_bless" | "asked" | "denied" =
+      // An email address is an account name, not a credential (known-secrets.ts):
+      // where it may be typed is not a decision to ask the user about. It still
+      // goes only to its own site (above).
+      const accountName = secretsStore.holdsEmailAddress(name);
+      let gateOutcome: "account-name" | "session" | "approved" | "pre_bless" | "asked" | "denied" =
+        accountName ? "account-name" :
         sameSession ? "session" :
         userApproved ? "approved" :
         preBlessed ? "pre_bless" :
@@ -322,6 +334,7 @@ export function createBrowserSecretFillTool(
       });
 
       const gateExplain =
+        gateOutcome === "account-name" ? "an email address: an account name, not a credential" :
         gateOutcome === "session" ? "approved (same session captured this secret)" :
         gateOutcome === "approved" ? "approved (user-saved approval for this origin)" :
         gateOutcome === "asked" ? "approved by the user just now for this origin" :

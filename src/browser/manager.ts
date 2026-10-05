@@ -272,6 +272,9 @@ export class BrowserManager implements BrowserBackend {
     return ObservationRegistry.format(obs);
   }
 
+  /** What a snapshot ref names on this page (secret fills resolve refs here). */
+  observationRegistry(): ObservationRegistry { return this.registry; }
+
   exportRegistry(): unknown { return this.registry.serialize(); }
   importRegistry(state: unknown): void { this.registry.restore(state); }
 

@@ -66,8 +66,9 @@ export const ACC_MATCH_SRC = `(el) => {
  * index path that rots on re-render, coords rot on re-layout. When the element
  * published a durable identifier (stable-ids.ts) there is nothing to guess at.
  */
-export function resolutionScript(ref: DurableRef, op: "click" | "fill"): string {
+export function resolutionScript(ref: DurableRef, op: "click" | "fill", mark?: number): string {
 	const params = JSON.stringify({
+		mark,
 		role: ref.role,
 		name: ref.name,
 		xpath: ref.xpath,
@@ -130,7 +131,14 @@ ${EXACT_MATCH_HELPER}
 		else if (typeof n.className === "string" && n.className.trim()) d += "." + n.className.trim().split(/\\s+/)[0];
 		return d;
 	};
+	// p.mark: tag the element this chain settled on, so a caller that acts by
+	// selector (the vault fill) reaches exactly it.
 	const finish = (el, root, via, px, py) => {
+		const res = finishCore(el, root, via, px, py);
+		if (res && res.found && p.mark != null && el.setAttribute) el.setAttribute("data-lax-ref", String(p.mark));
+		return res;
+	};
+	const finishCore = (el, root, via, px, py) => {
 		// behavior:"instant" is load-bearing: with a page-level scroll-behavior:
 		// smooth, scrollIntoView animates and the synchronous re-measure below
 		// runs MID-FLIGHT — the hit-test lands on whatever is passing through

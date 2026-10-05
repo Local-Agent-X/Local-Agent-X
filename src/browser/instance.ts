@@ -181,7 +181,7 @@ export function getSecretBrowserOps(sessionId: string = "default"): SecretBrowse
 	reportBrowserRoute(key, route);
 	if (route.kind === "in-app") return ensureInAppBackend(key).secretOps();
 	const manager = ensureCdpManager(key, route.reason === "windows-chat-chrome");
-	return createCdpSecretOps(() => manager.getPage());
+	return createCdpSecretOps(() => manager.getPage(), () => manager.observationRegistry());
 }
 
 /**

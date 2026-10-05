@@ -78,3 +78,11 @@ describe("human verification detection", () => {
 		)).toBe(false);
 	});
 });
+
+describe("a shadow-hosted widget reported from its host", () => {
+	it("is an open challenge until its response field is filled", () => {
+		const widget = frame("https://challenges.cloudflare.com/turnstile/widget", { rect: { x: 40, y: 380, width: 300, height: 65 } });
+		expect(onPage(widget)).toBe(true);
+		expect(onPage({ ...widget, answered: true })).toBe(false);
+	});
+});

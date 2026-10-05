@@ -10,6 +10,7 @@ vi.mock("./bridge-client.js", async (importOriginal) => {
 });
 
 import { browserExec, browserInput } from "./bridge-client.js";
+import { ObservationRegistry } from "./observation.js";
 import {
 	asElementDescriptor,
 	asFillOutcome,
@@ -117,7 +118,7 @@ describe("createInAppSecretOps", () => {
 		vi.mocked(browserExec).mockResolvedValue("https://a.example/");
 		vi.mocked(browserInput).mockResolvedValue(undefined);
 		let active = "view-a";
-		const ops = createInAppSecretOps({ viewId: () => active, ensureView: async () => { /* mounted */ } });
+		const ops = createInAppSecretOps({ viewId: () => active, ensureView: async () => { /* mounted */ }, registry: () => new ObservationRegistry() });
 
 		await ops.currentOrigin();
 		expect(vi.mocked(browserExec).mock.calls.at(-1)?.[0]).toBe("view-a");

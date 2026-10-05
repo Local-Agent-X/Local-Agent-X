@@ -93,6 +93,7 @@ function buildOps(opts: {
     },
     pressEnter: async () => undefined,
     visibleValues: async () => [],
+    markRef: async (id: number) => `[data-lax-ref="${id}"]`,
   };
 }
 
@@ -329,5 +330,44 @@ describe("browser_fill_from_secret — where a login may be filled", () => {
     const result = await fill();
     expect(result.isError).not.toBe(true);
     expect(approvals.asked).toHaveLength(1);
+  });
+});
+
+describe("browser_fill_from_secret — by snapshot ref", () => {
+  it("fills through the ref the backend's registry resolves", async () => {
+    currentOps = buildOps({ outcome: { kind: "landed" } });
+    const result = await createBrowserSecretFillTool(buildStore(), () => "test-session").execute({ name: SECRET_NAME, ref: 64 });
+    expect(result.isError).not.toBe(true);
+    expect(result.content).toContain("Filled");
+  });
+
+  it("says the ref is gone, instead of 'element not found' for a selector no page has", async () => {
+    currentOps = { ...buildOps({ outcome: { kind: "landed" } }), markRef: async () => null };
+    const result = await createBrowserSecretFillTool(buildStore(), () => "test-session").execute({ name: SECRET_NAME, ref: 64 });
+    expect(result.isError).toBe(true);
+    expect(result.content).toContain("Ref [64] is not on the page any more");
+  });
+});
+
+// Twilio asked the user to approve filling their own email address. An email
+// is an account name, not a credential: it needs no approval, but it still
+// goes only to its own site.
+describe("browser_fill_from_secret — a login email needs no approval", () => {
+  it("fills an email address on its site without asking", async () => {
+    holdsEmail = true;
+    fillApproved = false;
+    elementDescriptor = { found: true, tag: "input", type: "text", autocomplete: "" };
+    currentOps = buildOps({ outcome: { kind: "landed" } });
+    const result = await createBrowserSecretFillTool(buildStore(), () => "other-session").execute({ name: SECRET_NAME, selector: "#email", _onEvent: () => undefined });
+    expect(result.isError).not.toBe(true);
+    expect(approvals.asked).toHaveLength(0);
+  });
+
+  it("still never fills it on another site", async () => {
+    holdsEmail = true;
+    pageOrigin = "https://twilio-login.attacker.test";
+    currentOps = buildOps({ outcome: { kind: "landed" } });
+    const result = await createBrowserSecretFillTool(buildStore(), () => "other-session").execute({ name: SECRET_NAME, selector: "#email" });
+    expect(result.content).toContain("Cross-origin fill blocked");
   });
 });

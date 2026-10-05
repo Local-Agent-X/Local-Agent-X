@@ -228,7 +228,7 @@ export class ElectronInAppBackend implements BrowserBackend {
 	 *  a secret never takes the value-echoing BrowserBackend paths (secret-ops.ts). */
 	secretOps(): SecretBrowserOps {
 		// viewId resolves at CALL time — switch_tab between ops must retarget.
-		return createInAppSecretOps({ viewId: () => this.viewId, ensureView: () => this.ensureView() });
+		return createInAppSecretOps({ viewId: () => this.viewId, ensureView: () => this.ensureView(), registry: () => this.activeTab.registry });
 	}
 
 	/** The A2 resolution-chain + real-input driver context. Shares this

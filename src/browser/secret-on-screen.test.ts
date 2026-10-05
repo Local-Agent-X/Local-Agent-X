@@ -21,6 +21,7 @@ const opsShowing = (shown: Shown[]): SecretBrowserOps => ({
   fillValue: async () => ({ kind: "not-found" }),
   pressEnter: async () => undefined,
   visibleValues: async () => shown.map((v) => ({ names: [], inDialog: false, ...v })),
+  markRef: async () => null,
 });
 
 describe("findSecretOnScreen", () => {

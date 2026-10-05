@@ -229,6 +229,14 @@ function libsecretAvailable(): boolean {
 // File-based fallback (machine-identity + random salt)
 // ═══════════════════════════════════════════════════════════════════
 
+// The derivation is deliberately slow (scrypt, ~256 MB) and synchronous, and
+// every getOrCreateMasterKey call on this path used to pay it again: the event
+// loop froze for seconds per call, long enough on a loaded CI runner to time
+// out the test teardown that followed. Same identity and salt give the same
+// key, so one derivation per process serves them all. Callers get a copy, so
+// one that wipes its buffer cannot wipe the cache.
+const derivedKeys = new Map<string, Buffer>();
+
 function fileFallbackGetOrCreate(dataDir: string): Buffer {
   const saltPath = join(dataDir, KEYCHAIN_AT_REST_BASENAMES[0]);
   let salt: Buffer;
@@ -246,7 +254,13 @@ function fileFallbackGetOrCreate(dataDir: string): Buffer {
   // decrypt with the new one. DPAPI / macOS Keychain / libsecret users are
   // unaffected (their key is in the OS keychain, not derived from this).
   const identity = `lax-secrets::${hostname()}::${userInfo().username}`;
-  return scryptSync(identity, salt, 32, { N: 131072, r: 8, p: 2, maxmem: 256 * 1024 * 1024 });
+  const cacheKey = `${identity}\0${salt.toString("hex")}`;
+  let key = derivedKeys.get(cacheKey);
+  if (!key) {
+    key = scryptSync(identity, salt, 32, { N: 131072, r: 8, p: 2, maxmem: 256 * 1024 * 1024 });
+    derivedKeys.set(cacheKey, key);
+  }
+  return Buffer.from(key);
 }
 
 // ═══════════════════════════════════════════════════════════════════

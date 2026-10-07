@@ -121,7 +121,7 @@ export const LAX_DATA_CATALOG: readonly LaxDataEntry[] = [
     "model-profiles", "local-context-sizing.json", "local-model-certifications.json"),
   ...at("card", RECORDS, "action-log", "active-orchestrators.json", "agent-issues.json", "agent-runs", "app-build-workflows.json",
     "auto-delegate-decisions.jsonl", "crash-log.json", "dashboards", "db.sqlite", "install-report.json", "marketplace-cache.json",
-    "migration-version.json", "orchestrator-state.json", "p1-metrics.json", "provider-health.json", "restart-notify.json",
+    "migration-version.json", "orchestrator-state.json", "p1-metrics.json", "prompt-captures", "provider-health.json", "restart-notify.json",
     "run-traces", "sync-state", "telemetry", "tool-rag-cache.json", "tool-stats.json", "usage-log.json", "user-notices.json",
     "voice-timeline"),
   ...at("card", RUNNING, "run", "cr", "server.pid", ".doctor-check", ".startup-test-probe"),

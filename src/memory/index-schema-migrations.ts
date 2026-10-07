@@ -13,7 +13,7 @@ import { backfillEntityLinks } from "./entity-derive.js";
 import { createLogger } from "../logger.js";
 const logger = createLogger("memory.index-schema");
 
-export const CURRENT_SCHEMA_VERSION = 14;
+export const CURRENT_SCHEMA_VERSION = 15;
 
 function backfillValidChunkSessionIds(db: InstanceType<typeof Database>): void {
   const rows = db
@@ -349,6 +349,17 @@ export function migrateSchema(
       // column existed, and the renderer says so.
       try { db.exec(`ALTER TABLE facts ADD COLUMN occurred_at INTEGER`); } catch {}
       try { db.exec(`CREATE INDEX IF NOT EXISTS idx_facts_occurred_at ON facts(occurred_at)`); } catch {}
+    }
+
+    if (fromVersion < 15) {
+      // v15: session chunks carry per-message provenance (chunking.ts
+      // buildSessionChunks — message ids, the exchange's own time). Existing
+      // session chunks were dated by the session's start. Blank the stored
+      // hash of every session file so the next sync re-indexes each one once
+      // through the builder. The old session-live/ copies are left to the
+      // sync sweep, which no longer exempts them and removes them with their
+      // FTS and vector rows.
+      try { db.exec(`UPDATE files SET hash = '' WHERE source = 'session' AND path NOT LIKE 'session-live/%'`); } catch {}
     }
 
     db

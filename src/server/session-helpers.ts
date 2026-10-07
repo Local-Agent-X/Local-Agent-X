@@ -43,7 +43,6 @@ export function createSessionHelpers(deps: {
   const { sessionStore, memoryIndex, dataDir, maxCached } = deps;
   const sessions = new Map<string, Session>();
   const writeQueues = new Map<string, Promise<void>>();
-  const sessionIndexedPairs = new Map<string, number>();
 
   function getOrCreateSession(id: string): Session {
     let s = sessions.get(id);
@@ -79,49 +78,20 @@ export function createSessionHelpers(deps: {
     if (pending) await pending;
   }
 
+  // After a save, (re)index the session file through the one session-chunk
+  // builder — the same chunks, provenance and path the sync pass writes.
+  // Idempotent: only an exchange whose text is new is embedded, and an
+  // unchanged one only has its metadata refreshed. This used to pair and
+  // date the session itself and write each new exchange a second time under
+  // a virtual session-live/ path.
   async function indexSessionIncrementally(session: Session): Promise<void> {
     if (isSyntheticSessionId(session.id)) return;
-    logger.info(`[memory-live] Indexing session ${session.id} (${session.messages?.length || 0} messages)`);
-    const { extractSessionPairs, chunkConversationPairs } = await import("../memory/chunking.js");
-    const messages = extractSessionPairs(join(dataDir, "sessions", session.id + ".jsonl"));
-    if (messages.length < 2) return;
-
-    const pairs: Array<{ user: string; assistant: string }> = [];
-    let i = 0;
-    while (i < messages.length) {
-      if (messages[i].role === "user") {
-        const userContent = messages[i].content;
-        let assistantContent = "";
-        i++;
-        while (i < messages.length && messages[i].role === "assistant") {
-          assistantContent += (assistantContent ? "\n\n" : "") + messages[i].content;
-          i++;
-        }
-        if (assistantContent) pairs.push({ user: userContent, assistant: assistantContent });
-      } else { i++; }
-    }
-
-    const alreadyIndexed = sessionIndexedPairs.get(session.id) || 0;
-    if (pairs.length <= alreadyIndexed) return;
-
-    const newPairs = pairs.slice(alreadyIndexed);
-    const newMessages = newPairs.flatMap(p => [
-      { role: "user" as const, content: p.user },
-      { role: "assistant" as const, content: p.assistant },
-    ]);
-
-    const sessionDate = session.createdAt ? new Date(session.createdAt).toISOString().split("T")[0] : undefined;
-    const metadata = { source_type: "agent-x-session" as const, session_id: session.id, date: sessionDate };
-    const virtualPath = `session-live/${session.id}/${pairs.length}`;
-    const chunks = chunkConversationPairs(newMessages, virtualPath, "session", metadata);
-
-    if (chunks.length > 0) {
-      await memoryIndex.indexChunks(chunks, virtualPath, "session");
-      sessionIndexedPairs.set(session.id, pairs.length);
-      logger.info(`[memory-live] Indexed ${chunks.length} new chunks from ${newPairs.length} pairs (session ${session.id}, total pairs: ${pairs.length})`);
-    } else {
-      logger.info(`[memory-live] No new pairs to index for ${session.id}`);
-    }
+    const { buildSessionChunks } = await import("../memory/chunking.js");
+    const path = join(dataDir, "sessions", session.id + ".jsonl");
+    const chunks = buildSessionChunks(path, session.id);
+    if (chunks.length === 0) return;
+    const r = await memoryIndex.indexChunksIdempotent(chunks, path, "session");
+    if (r.added > 0) logger.info(`[memory-live] Indexed ${r.added} new chunks (session ${session.id})`);
   }
 
   return { sessions, getOrCreateSession, saveSession, flushSession };

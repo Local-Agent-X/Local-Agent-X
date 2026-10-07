@@ -7,7 +7,8 @@
  */
 
 import { isHarnessRow } from "../harness-rows.js";
-import { readSessionLogRows, sessionLogMeta } from "./session-log-rows.js";
+import { readSessionLogRows, sessionLogDate, sessionLogMeta } from "./session-log-rows.js";
+import { withChunkProvenance } from "./search-helpers.js";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import type { ChunkMetadata } from "./index.js";
@@ -28,6 +29,10 @@ export interface ConversationMessage {
   role: "user" | "assistant";
   content: string;
   timestamp?: number;
+  /** Provenance from the session row (session-message-provenance). */
+  id?: string;
+  createdAt?: string;
+  timeUnknown?: true;
 }
 
 function sha256(text: string): string {
@@ -103,12 +108,13 @@ export function chunkConversationPairs(
 
   for (let i = 0; i < pairs.length; i++) {
     const pair = pairs[i];
+    const pairMeta: ChunkMetadata = pair.provenance ? { ...metadata, ...pair.provenance } : metadata;
     const text = formatPair(pair.user, pair.assistant);
 
     if (text.length <= maxPairChars) {
       chunks.push({
         path, source, startLine: i + 1, endLine: i + 1,
-        text, hash: sha256(text), metadata,
+        text, hash: sha256(text), metadata: pairMeta,
       });
     } else {
       // Split long assistant responses at paragraph boundaries
@@ -122,7 +128,7 @@ export function chunkConversationPairs(
           // Flush buffer as a chunk
           chunks.push({
             path, source, startLine: i + 1, endLine: i + 1,
-            text: formatPair(userPrefix, buffer), hash: sha256(formatPair(userPrefix, buffer)), metadata,
+            text: formatPair(userPrefix, buffer), hash: sha256(formatPair(userPrefix, buffer)), metadata: pairMeta,
           });
           buffer = para;
         } else {
@@ -132,7 +138,7 @@ export function chunkConversationPairs(
       if (buffer.trim()) {
         chunks.push({
           path, source, startLine: i + 1, endLine: i + 1,
-          text: formatPair(userPrefix, buffer), hash: sha256(formatPair(userPrefix, buffer)), metadata,
+          text: formatPair(userPrefix, buffer), hash: sha256(formatPair(userPrefix, buffer)), metadata: pairMeta,
         });
       }
     }
@@ -144,6 +150,25 @@ export function chunkConversationPairs(
 interface ConversationPair {
   user: string;
   assistant: string;
+  /** What this exchange's messages say about when and where it happened. */
+  provenance?: Partial<ChunkMetadata>;
+}
+
+/** A pair's provenance: its messages' ids, and the opening message's time —
+ *  exact when the row knows it, otherwise flagged so the session date reads
+ *  as approximate. Nothing when the messages carry no provenance at all
+ *  (callers that pass plain messages). */
+function pairProvenance(opening: ConversationMessage, replies: ConversationMessage[]): Partial<ChunkMetadata> | undefined {
+  const ids = [opening, ...replies].map((m) => m.id).filter((id): id is string => !!id);
+  const out: Partial<ChunkMetadata> = {};
+  if (ids.length) out.message_ids = ids;
+  if (opening.createdAt && !opening.timeUnknown) {
+    out.datetime = opening.createdAt;
+    out.date = opening.createdAt.slice(0, 10);
+  } else if (opening.timeUnknown) {
+    out.date_approx = true;
+  }
+  return Object.keys(out).length ? out : undefined;
 }
 
 function buildPairs(messages: ConversationMessage[]): ConversationPair[] {
@@ -152,23 +177,27 @@ function buildPairs(messages: ConversationMessage[]): ConversationPair[] {
 
   while (i < messages.length) {
     if (messages[i].role === "user") {
-      const userContent = messages[i].content;
+      const opening = messages[i];
+      const userContent = opening.content;
+      const replies: ConversationMessage[] = [];
       let assistantContent = "";
       i++;
       // Collect all following assistant messages
       while (i < messages.length && messages[i].role === "assistant") {
+        replies.push(messages[i]);
         assistantContent += (assistantContent ? "\n\n" : "") + messages[i].content;
         i++;
       }
+      const provenance = pairProvenance(opening, replies);
       if (assistantContent) {
-        pairs.push({ user: userContent, assistant: assistantContent });
+        pairs.push({ user: userContent, assistant: assistantContent, provenance });
       } else {
         // User message with no response — still worth storing
-        pairs.push({ user: userContent, assistant: "(no response)" });
+        pairs.push({ user: userContent, assistant: "(no response)", provenance });
       }
     } else {
       // Orphan assistant message (no preceding user message)
-      pairs.push({ user: "(system)", assistant: messages[i].content });
+      pairs.push({ user: "(system)", assistant: messages[i].content, provenance: pairProvenance(messages[i], []) });
       i++;
     }
   }
@@ -233,7 +262,13 @@ export function extractSessionPairs(sessionPath: string): ConversationMessage[] 
     // via the existing min-length guard.
     const content = stripHarnessScaffolding(raw);
     if (!content || content.length < 3) continue;
-    messages.push({ role: msg.role as "user" | "assistant", content });
+    const prov = msg as { id?: string; createdAt?: string; timeUnknown?: true };
+    messages.push({
+      role: msg.role as "user" | "assistant", content,
+      ...(prov.id ? { id: prov.id } : {}),
+      ...(typeof prov.createdAt === "string" ? { createdAt: prov.createdAt } : {}),
+      ...(prov.timeUnknown ? { timeUnknown: true as const } : {}),
+    });
   }
 
   return messages;
@@ -243,10 +278,10 @@ function parseJsonlSession(path: string): SessionData | null {
   const rows = readSessionLogRows(path);
   if (!rows) return null;
   const meta = sessionLogMeta(rows);
-  const messages: Array<{ role: string; content: unknown }> = [];
+  const messages: Array<{ role: string; content: unknown; id?: string; createdAt?: string; timeUnknown?: true }> = [];
   for (const row of rows) {
     if (row.kind === "msg" && row.message && typeof row.message.role === "string") {
-      messages.push({ role: row.message.role, content: row.message.content });
+      messages.push({ role: row.message.role, content: row.message.content, id: row.id, createdAt: row.createdAt, timeUnknown: row.timeUnknown });
     }
   }
   return {
@@ -254,4 +289,25 @@ function parseJsonlSession(path: string): SessionData | null {
     title: typeof meta?.title === "string" ? meta.title : undefined,
     createdAt: typeof meta?.createdAt === "number" ? meta.createdAt : undefined,
   };
+}
+
+/**
+ * The chunks of a session transcript, with their provenance — the ONE way a
+ * session becomes search chunks. The sync pass (index-sync), the transcript
+ * indexer (universal-index) and the post-save live pass (session-helpers)
+ * each used to pair and date a session their own way, and the live pass
+ * wrote a second copy of every exchange under a virtual path; a message
+ * could surface twice, dated twice. Each chunk carries the session's
+ * identity and start date, and from its messages' rows their ids and the
+ * exact time the exchange began (or `date_approx` when that is not known).
+ */
+export function buildSessionChunks(path: string, sessionId: string): ChunkData[] {
+  const messages = extractSessionPairs(path);
+  if (messages.length < 2) return [];
+  const metadata = withChunkProvenance("session", {
+    source_type: "agent-x-session",
+    session_id: sessionId,
+    date: sessionLogDate(path),
+  });
+  return chunkConversationPairs(messages, path, "session", metadata);
 }

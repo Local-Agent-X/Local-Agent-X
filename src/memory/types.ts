@@ -216,6 +216,14 @@ export interface ChunkMetadata {
   project?: string;
   topic?: string;
   date?: string;
+  /** A session chunk's provenance, copied from its messages' rows
+   *  (session-message-provenance): the ids of the messages it holds, and the
+   *  exact time the user message was said. `date` is that time's day. */
+  message_ids?: string[];
+  datetime?: string;
+  /** `date` is the session's start, not when this exchange happened: the
+   *  message's own time is not known. */
+  date_approx?: true;
   source_type?: ChunkSourceType;
   session_id?: string;
   trust_status?: MemoryTrustStatus;

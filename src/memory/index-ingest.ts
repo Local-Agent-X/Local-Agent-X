@@ -93,8 +93,8 @@ export async function indexChunksIdempotent(
     chunk.metadata = withChunkProvenance(source, chunk.metadata ?? {});
   }
   const existing = db
-    .prepare("SELECT id, content_hash FROM chunks WHERE path = ?")
-    .all(virtualPath) as Array<{ id: number; content_hash: string | null }>;
+    .prepare("SELECT id, content_hash, metadata FROM chunks WHERE path = ?")
+    .all(virtualPath) as Array<{ id: number; content_hash: string | null; metadata: string | null }>;
 
   const existingByHash = new Map<string, number>();
   for (const row of existing) {
@@ -106,6 +106,18 @@ export async function indexChunksIdempotent(
     (r) => !r.content_hash || !incomingHashes.has(r.content_hash)
   );
   const toInsert = chunks.filter((c) => !existingByHash.has(c.hash));
+
+  // Metadata is derived from the source (a session chunk's provenance comes
+  // from its messages' rows), so an unchanged chunk still takes the current
+  // metadata: re-dating a transcript must not need its text to change. Text,
+  // embedding and clock stay as they are.
+  const metadataByHash = new Map(existing.filter((r) => r.content_hash).map((r) => [r.content_hash as string, r]));
+  const refresh = db.prepare("UPDATE chunks SET metadata = ?, session_id = ? WHERE id = ?");
+  for (const c of chunks) {
+    const row = metadataByHash.get(c.hash);
+    const next = c.metadata ? JSON.stringify(c.metadata) : null;
+    if (row && row.metadata !== next) refresh.run(next, c.metadata?.session_id ?? null, row.id);
+  }
 
   if (toDelete.length === 0 && toInsert.length === 0) {
     return { added: 0, removed: 0, unchanged: existing.length };

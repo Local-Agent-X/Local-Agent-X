@@ -4,8 +4,8 @@ import { basename, join, sep } from "node:path";
 import type Database from "better-sqlite3";
 import type { Session } from "../types.js";
 import type { CanonicalSource, Chunk, ChunkMetadata, EmbeddingProvider, FileRecord, MemoryConfig } from "./types.js";
-import { chunkConversationPairs, extractSessionPairs } from "./chunking.js";
-import { readSessionLogRows, sessionLogDate } from "./session-log-rows.js";
+import { buildSessionChunks } from "./chunking.js";
+import { readSessionLogRows } from "./session-log-rows.js";
 import { chunkText, withChunkProvenance } from "./search-helpers.js";
 import { redactCredentials, safeReadTextFile } from "./utils.js";
 import { encodeEmbedding } from "./embedding-codec.js";
@@ -173,16 +173,15 @@ async function indexFile(
   let chunks: Chunk[];
 
   if (file.source === "session") {
-    const messages = extractSessionPairs(file.path);
-    if (messages.length < 2) return;
     // Strip whichever extension is on the file path (.jsonl post migration,
     // .json on legacy callers) to recover the bare session id.
     const sessionId = basename(file.path, file.path.endsWith(".jsonl") ? ".jsonl" : ".json");
-    const sessionDate = file.path.endsWith(".jsonl") ? sessionLogDate(file.path) : legacySessionDate(file.path);
-    const metadata: ChunkMetadata = withChunkProvenance("session", {
-      source_type: "agent-x-session", session_id: sessionId, date: sessionDate,
-    });
-    chunks = chunkConversationPairs(messages, file.path, file.source, metadata) as Chunk[];
+    chunks = buildSessionChunks(file.path, sessionId) as Chunk[];
+    if (chunks.length === 0) return;
+    if (!file.path.endsWith(".jsonl")) {
+      const date = legacySessionDate(file.path);
+      for (const c of chunks) if (c.metadata) c.metadata = { ...c.metadata, date: c.metadata.date ?? date };
+    }
   } else {
     const raw = safeReadTextFile(file.path);
     if (!raw) return;
@@ -333,7 +332,6 @@ export async function syncIndex(deps: SyncDeps): Promise<void> {
       if (
         !allPaths.has(path) &&
         !path.startsWith("import/") &&
-        !path.startsWith("session-live/") &&
         !path.startsWith(archivePrefix)
       ) {
         removeFile(deps.db, deps.hasFts, deps.hasVec, path);

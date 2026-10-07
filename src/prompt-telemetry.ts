@@ -1,4 +1,6 @@
+import { createHash } from "node:crypto";
 import { estimateTokens } from "./context-manager/token-estimation.js";
+import { capturePromptSection } from "./prompt-capture.js";
 import type { ToolDefinition } from "./types.js";
 import { toOAuthWireName } from "./anthropic-client/oauth-direct.js";
 import {
@@ -17,6 +19,10 @@ export interface PromptSectionTelemetry {
   characters: number;
   utf8Bytes: number;
   estimatedTokens: number;
+  /** sha256 of the section text, hex. Content-free: says whether a section
+   *  changed between turns, and resolves to the text in prompt-captures/ when
+   *  LAX_PROMPT_CAPTURE=1 (prompt-capture.ts). */
+  sha256: string;
 }
 
 export interface PromptDegradationTelemetry {
@@ -69,12 +75,15 @@ export function measurePromptSection(
   type: PromptSectionTelemetry["type"],
   text: string,
 ): PromptSectionTelemetry {
+  const sha256 = createHash("sha256").update(text).digest("hex");
+  capturePromptSection(sha256, text);
   return {
     id,
     type,
     characters: text.length,
     utf8Bytes: Buffer.byteLength(text, "utf8"),
     estimatedTokens: estimateTokens(text),
+    sha256,
   };
 }
 

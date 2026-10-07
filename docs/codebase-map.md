@@ -18,7 +18,7 @@ over 400 LOC (the source-hygiene ceiling).
 
 | Directory | Importers | Files | Size | God files |
 |---|--:|--:|:--:|--:|
-| `src/ops/` | 137 | 26 | XL |  |
+| `src/ops/` | 138 | 26 | XL |  |
 | `src/security/` | 111 | 45 | XL |  |
 | `src/tools/` | 97 | 206 | XL |  |
 | `src/canonical-loop/` | 71 | 256 | XL |  |
@@ -163,6 +163,7 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/process-tree-kill.ts` | S |
 | `src/progressive-loader.ts` | S |
 | `src/project-rosters.ts` | M |
+| `src/prompt-capture.ts` | S |
 | `src/prompt-telemetry.ts` | S |
 | `src/publish-operation-table.ts` | M |
 | `src/publish-operation.ts` | S |

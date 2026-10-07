@@ -70,7 +70,8 @@ export async function searchInIndex(
       vectorResults,
       deps.config.vectorWeight,
       deps.config.textWeight,
-      deps.config.snippetMaxChars
+      deps.config.snippetMaxChars,
+      query,
     );
     // A chunk found ONLY by FTS merges to textWeight×score, which (with
     // textWeight 0.3 < minScore 0.35) can mathematically never pass the
@@ -99,9 +100,9 @@ export async function searchInIndex(
       merged.sort((a, b) => b.score - a.score);
     }
   } else if (vectorResults.length > 0) {
-    merged = vectorResults.map((c) => toSearchResult(c, deps.config.snippetMaxChars));
+    merged = vectorResults.map((c) => toSearchResult(c, deps.config.snippetMaxChars, query));
   } else {
-    merged = keywordResults.map((c) => toSearchResult(c, deps.config.snippetMaxChars));
+    merged = keywordResults.map((c) => toSearchResult(c, deps.config.snippetMaxChars, query));
 
     if (!deps.embeddingProvider && merged.length > 0) {
       const relaxedMin = Math.min(minScore, deps.config.textWeight);

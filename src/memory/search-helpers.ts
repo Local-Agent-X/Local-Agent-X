@@ -10,6 +10,7 @@ import type {
   MemorySearchResult, MemoryTaintStatus, MemoryTrustStatus,
 } from "./types.js";
 import { sha256, tokenize, jaccardSimilarity, normalizeScores } from "./utils.js";
+import { describeWhen, excerptAround } from "./retrieval-format.js";
 
 // ── Chunking ──
 
@@ -127,6 +128,8 @@ export function describeChunkProvenance(
       ? metadata.session_id.trim()
       : undefined,
     date: metadata?.date,
+    when: describeWhen(metadata),
+    message_ids: metadata?.message_ids,
     trust_status: metadata?.trust_status === "untrusted" ? "untrusted" : trust,
     taint_status: metadata?.taint_status === "tainted" ? "tainted" : "unknown",
     label: sourceLabel(source, sourceType),
@@ -161,7 +164,8 @@ export type IdentifiedSearchResult = MemorySearchResult & { id?: number };
 
 export function toSearchResult(
   chunk: Chunk & { score: number },
-  snippetMaxChars: number
+  snippetMaxChars: number,
+  query?: string,
 ): IdentifiedSearchResult {
   const entityMatches = chunk.text.match(/@([\w-]+)/g) || [];
   const entities = entityMatches.map((m) => m.slice(1));
@@ -181,7 +185,7 @@ export function toSearchResult(
     startLine: chunk.startLine,
     endLine: chunk.endLine,
     score: chunk.score,
-    snippet: chunk.text.slice(0, snippetMaxChars),
+    ...(() => { const e = excerptAround(chunk.text, query, snippetMaxChars); return { snippet: e.snippet, ...(e.window ? { snippetWindow: e.window } : {}) }; })(),
     source,
     entities: entities.length > 0 ? entities : undefined,
     metadata,
@@ -210,7 +214,8 @@ export function mergeHybridResults(
   vectorResults: Array<Chunk & { score: number }>,
   vectorWeight: number,
   textWeight: number,
-  snippetMaxChars: number
+  snippetMaxChars: number,
+  query?: string,
 ): IdentifiedSearchResult[] {
   const merged = new Map<
     string,
@@ -234,7 +239,7 @@ export function mergeHybridResults(
   const results: IdentifiedSearchResult[] = [];
   for (const [, entry] of merged) {
     const score = vectorWeight * entry.vectorScore + textWeight * entry.textScore;
-    results.push(toSearchResult({ ...entry.chunk, score }, snippetMaxChars));
+    results.push(toSearchResult({ ...entry.chunk, score }, snippetMaxChars, query));
   }
 
   results.sort((a, b) => b.score - a.score);

@@ -193,9 +193,14 @@ export async function autoSearchContext(
     const relevant = results
       .map((r) => {
         const provenance = r.provenance;
-        const ageStr = r.updatedAt !== undefined
-          ? `, ${relativeAge(r.updatedAt, now)}`
-          : (r.metadata?.date ? `, ${r.metadata.date}` : "");
+        // A session exchange whose time is known is aged by when it was said,
+        // not by when its chunk was last (re)indexed.
+        const saidAt = r.metadata?.datetime ? Date.parse(r.metadata.datetime) : NaN;
+        const ageStr = !Number.isNaN(saidAt)
+          ? `, ${relativeAge(saidAt, now)}`
+          : r.updatedAt !== undefined
+            ? `, ${relativeAge(r.updatedAt, now)}`
+            : (r.metadata?.date ? `, ${r.metadata.date}` : "");
         const caveat = r.updatedAt !== undefined ? memoryStaleCaveat(r.updatedAt, now) : "";
         const topic = r.metadata?.topic ? `, topic: ${r.metadata.topic}` : "";
         const entities = r.entities?.length ? `, about: ${r.entities.join(",")}` : "";
@@ -203,7 +208,7 @@ export async function autoSearchContext(
         const provenanceFields = provenance
           ? `, source_type: ${provenance.source_type}, trust: ${provenance.trust_status}, taint: ${provenance.taint_status}, label: ${provenance.label}` +
             (provenance.session_id ? `, session: ${provenance.session_id}` : "") +
-            (provenance.date ? `, date: ${provenance.date}` : "")
+            ((provenance.when ?? provenance.date) ? `, date: ${provenance.when ?? provenance.date}` : "")
           : "";
         const origin = crossSet.has(r) ? "PAST SESSION — " : "";
         return `[${origin}${r.source}${provenanceFields}${entities}${topic}${ageStr}${score}]${caveat}\n${r.snippet.slice(0, 300)}`;

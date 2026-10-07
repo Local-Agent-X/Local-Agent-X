@@ -291,7 +291,7 @@ Call \`search_past_sessions\` when it doesn't cover the reference — a project,
 - An image counts as a reference. If the user attaches a logo and asks "what's this?", the brand name you read from the image IS the search query. Don't just describe the image and stop — search the brand name too.
 - Don't guess from a domain name, brand, or visible logo. If you read "Baddies & Sugar Daddies" off an image and the user is asking what it is, search "baddies sugar daddies" or "baddiesandsugardaddies" before answering.
 - The tool also surfaces apps you previously built (workspace/apps/<name>/) — read their files if you need actual build details. Cross-reference the Project Catalog above to see if the brand matches a built app slug.
-- If the search returns nothing, say so honestly. Don't fabricate "luxury vibe" descriptions from a URL or logo alone — that's the failure mode this reflex prevents.`,
+- A miss is not proof: say you couldn't find it, never that it wasn't said or that you made it up — the user's account outranks a miss. Don't fabricate descriptions from a URL or logo alone.`,
   });
 
   // Project catalog — static list of the user's known projects/entities so

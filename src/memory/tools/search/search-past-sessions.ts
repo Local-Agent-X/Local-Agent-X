@@ -1,6 +1,8 @@
 import type { MemoryIndex } from "../../../memory/index.js";
 import type { MemorySearchResult } from "../../types.js";
 import { findMatchingApps } from "./app-matcher.js";
+import { excerptNote } from "../../retrieval-format.js";
+import { readPastMessage } from "./past-message.js";
 
 export interface PastSessionsQueryOptions {
   maxResults?: number;
@@ -45,10 +47,18 @@ export function searchPastSessionsTool(memory: MemoryIndex) {
           type: "string",
           description: "Only return sessions on/after this date (ISO format, e.g. 2026-03-01)",
         },
+        message_id: {
+          type: "string",
+          description: "Read one prior message in full by its id — use when a result is marked as an excerpt and names a message_id. Replaces query.",
+        },
       },
-      required: ["query"],
+      required: [],
     },
     async execute(args: Record<string, unknown>) {
+      if (typeof args.message_id === "string" && args.message_id.trim()) {
+        return { content: readPastMessage(memory, args.message_id.trim()) };
+      }
+      if (!args.query) return { content: "Provide a query, or a message_id to read one message in full.", isError: true };
       const query = String(args.query || "");
       const maxResults = (args.max_results as number) || 5;
       const since = args.since ? new Date(String(args.since)) : undefined;
@@ -72,13 +82,14 @@ export function searchPastSessionsTool(memory: MemoryIndex) {
       const formatted = sessionResults
         .map((r, i) => {
           const provenance = r.provenance;
-          const dateStr = provenance?.date ? ` date=${provenance.date}` : "";
+          const when = provenance?.when ?? provenance?.date;
+          const dateStr = when ? ` date=${JSON.stringify(when)}` : "";
           const topic = r.metadata?.topic ? ` topic=${r.metadata.topic}` : "";
           const sid = provenance?.session_id ? ` session=${provenance.session_id.slice(0, 12)}` : "";
           const provenanceFields = provenance
             ? ` source_type=${provenance.source_type} trust=${provenance.trust_status} taint=${provenance.taint_status} label=${JSON.stringify(provenance.label)}`
             : "";
-          return `[${i + 1}] source=${r.source}${provenanceFields}${dateStr}${topic}${sid} score=${r.score.toFixed(2)}\n${r.snippet}`;
+          return `[${i + 1}] source=${r.source}${provenanceFields}${dateStr}${topic}${sid} score=${r.score.toFixed(2)}\n${r.snippet}${excerptNote(r)}`;
         })
         .join("\n\n");
 

@@ -1,6 +1,7 @@
 import { resolve, relative } from "node:path";
 import { RETRIEVAL_RESULTS_INSTRUCTION } from "../../../harness-text.js";
 import type { MemoryIndex } from "../../../memory/index.js";
+import { excerptNote } from "../../retrieval-format.js";
 
 export function memorySearchTool(memory: MemoryIndex) {
   return {
@@ -85,9 +86,9 @@ export function memorySearchTool(memory: MemoryIndex) {
           const provenanceFields = provenance
             ? ` source_type=${provenance.source_type} trust=${provenance.trust_status} taint=${provenance.taint_status} label=${JSON.stringify(provenance.label)}` +
               (provenance.session_id ? ` session=${provenance.session_id}` : "") +
-              (provenance.date ? ` date=${provenance.date}` : "")
+              ((provenance.when ?? provenance.date) ? ` date=${JSON.stringify(provenance.when ?? provenance.date)}` : "")
             : "";
-          return `[${i + 1}] source=${r.source}${provenanceFields} path=${virtualPath}:${r.startLine}-${r.endLine} score=${r.score.toFixed(2)}${ent}\n${r.snippet}`;
+          return `[${i + 1}] source=${r.source}${provenanceFields} path=${virtualPath}:${r.startLine}-${r.endLine} score=${r.score.toFixed(2)}${ent}\n${r.snippet}${excerptNote(r)}`;
         })
         .join("\n\n");
 

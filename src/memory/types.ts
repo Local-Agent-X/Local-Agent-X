@@ -171,6 +171,9 @@ export interface MemorySearchResult {
   endLine: number;
   score: number;
   snippet: string;
+  /** Present when the snippet is an excerpt: which characters of the chunk it
+   *  shows. A consumer must say the hit was cut, never present it as whole. */
+  snippetWindow?: { start: number; end: number; total: number };
   source: CanonicalSource;
   entities?: string[];
   kind?: FactKind;
@@ -207,6 +210,11 @@ export interface MemoryProvenance {
   source_type: string;
   session_id?: string;
   date?: string;
+  /** When this was said, for display (describeWhen): the exchange's exact
+   *  local time, or its chat's start date marked as such. */
+  when?: string;
+  /** The messages a session hit holds — what a read-more asks for. */
+  message_ids?: string[];
   trust_status: MemoryTrustStatus;
   taint_status: MemoryTaintStatus;
   label: string;

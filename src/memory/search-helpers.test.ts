@@ -98,6 +98,8 @@ describe("memory provenance labels", () => {
       source_type: "agent-x-session",
       session_id: "session-123",
       date: "2026-07-09",
+      when: "2026-07-09",
+      message_ids: undefined,
       trust_status: "mixed",
       taint_status: "unknown",
       label: "Local session transcript",
@@ -308,7 +310,7 @@ describe("retrieval provenance output", () => {
     for (const content of [regular.content, past.content]) {
       expect(content).toContain("source=session");
       expect(content).toContain("source_type=agent-x-session");
-      expect(content).toContain("date=2026-07-09");
+      expect(content).toContain('date="2026-07-09"');
       expect(content).toContain("trust=mixed");
       expect(content).toContain("taint=unknown");
       expect(content).toContain('label="Local session transcript"');

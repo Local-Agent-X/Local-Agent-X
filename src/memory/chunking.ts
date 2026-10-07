@@ -7,6 +7,7 @@
  */
 
 import { isHarnessRow } from "../harness-rows.js";
+import { readSessionLogRows, sessionLogMeta } from "./session-log-rows.js";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import type { ChunkMetadata } from "./index.js";
@@ -239,26 +240,18 @@ export function extractSessionPairs(sessionPath: string): ConversationMessage[] 
 }
 
 function parseJsonlSession(path: string): SessionData | null {
-  let content: string;
-  try {
-    content = readFileSync(path, "utf-8");
-  } catch {
-    return null;
-  }
+  const rows = readSessionLogRows(path);
+  if (!rows) return null;
+  const meta = sessionLogMeta(rows);
   const messages: Array<{ role: string; content: unknown }> = [];
-  let title: string | undefined;
-  let createdAt: number | undefined;
-  for (const line of content.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    let row: { kind?: string; message?: { role: string; content: unknown }; title?: string; createdAt?: number };
-    try { row = JSON.parse(trimmed); } catch { continue; }
-    if (row.kind === "meta") {
-      if (typeof row.title === "string") title = row.title;
-      if (typeof row.createdAt === "number") createdAt = row.createdAt;
-    } else if (row.kind === "msg" && row.message && typeof row.message.role === "string") {
+  for (const row of rows) {
+    if (row.kind === "msg" && row.message && typeof row.message.role === "string") {
       messages.push({ role: row.message.role, content: row.message.content });
     }
   }
-  return { messages, title, createdAt };
+  return {
+    messages,
+    title: typeof meta?.title === "string" ? meta.title : undefined,
+    createdAt: typeof meta?.createdAt === "number" ? meta.createdAt : undefined,
+  };
 }

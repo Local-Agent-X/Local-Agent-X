@@ -29,6 +29,7 @@ import type { MemoryIndex } from "../memory/index.js";
 import type { CanonicalSource, ChunkMetadata, Chunk } from "./types.js";
 import { withChunkProvenance } from "./search-helpers.js";
 import { chunkText, chunkConversationPairs, extractSessionPairs } from "./chunking.js";
+import { sessionLogDate } from "./session-log-rows.js";
 import { runBackfill, type BackfillReport, type IndexResult } from "./universal-index-backfill.js";
 
 import { createLogger } from "../logger.js";
@@ -178,20 +179,7 @@ export class UniversalIndex {
     const messages = extractSessionPairs(path);
     if (messages.length < 2) return { added: 0, removed: 0, unchanged: 0 };
 
-    // Read createdAt from the meta line. extractSessionPairs already parses
-    // the file but doesn't expose meta — re-scan just for the timestamp.
-    let sessionDate: string | undefined;
-    try {
-      for (const line of (await safeRead(path))?.split("\n") ?? []) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        const row = JSON.parse(trimmed);
-        if (row.kind === "meta" && typeof row.createdAt === "number") {
-          sessionDate = new Date(row.createdAt).toISOString().split("T")[0];
-          break;
-        }
-      }
-    } catch {}
+    const sessionDate = sessionLogDate(path);
 
     const metadata: ChunkMetadata = withChunkProvenance("session", {
       source_type: "agent-x-session",

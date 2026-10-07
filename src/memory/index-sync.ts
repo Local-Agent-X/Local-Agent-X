@@ -5,6 +5,7 @@ import type Database from "better-sqlite3";
 import type { Session } from "../types.js";
 import type { CanonicalSource, Chunk, ChunkMetadata, EmbeddingProvider, FileRecord, MemoryConfig } from "./types.js";
 import { chunkConversationPairs, extractSessionPairs } from "./chunking.js";
+import { readSessionLogRows, sessionLogDate } from "./session-log-rows.js";
 import { chunkText, withChunkProvenance } from "./search-helpers.js";
 import { redactCredentials, safeReadTextFile } from "./utils.js";
 import { encodeEmbedding } from "./embedding-codec.js";
@@ -25,15 +26,7 @@ const logger = createLogger("memory.index-sync");
 export function countSessionMessages(path: string): number {
   let raw: string;
   try { raw = readFileSync(path, "utf-8"); } catch { return 0; }
-  if (path.endsWith(".jsonl")) {
-    let count = 0;
-    for (const line of raw.split("\n")) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      try { if ((JSON.parse(trimmed) as { kind?: string }).kind === "msg") count++; } catch { /* torn line */ }
-    }
-    return count;
-  }
+  if (path.endsWith(".jsonl")) return (readSessionLogRows(path) ?? []).filter((row) => row.kind === "msg").length;
   try {
     return (JSON.parse(raw) as Session).messages.length;
   } catch {
@@ -185,23 +178,7 @@ async function indexFile(
     // Strip whichever extension is on the file path (.jsonl post migration,
     // .json on legacy callers) to recover the bare session id.
     const sessionId = basename(file.path, file.path.endsWith(".jsonl") ? ".jsonl" : ".json");
-    let sessionDate: string | undefined;
-    try {
-      if (file.path.endsWith(".jsonl")) {
-        for (const line of readFileSync(file.path, "utf-8").split("\n")) {
-          const trimmed = line.trim();
-          if (!trimmed) continue;
-          const row = JSON.parse(trimmed);
-          if (row.kind === "meta" && typeof row.createdAt === "number") {
-            sessionDate = new Date(row.createdAt).toISOString().split("T")[0];
-            break;
-          }
-        }
-      } else {
-        const sess = JSON.parse(readFileSync(file.path, "utf-8"));
-        if (sess.createdAt) sessionDate = new Date(sess.createdAt).toISOString().split("T")[0];
-      }
-    } catch {}
+    const sessionDate = file.path.endsWith(".jsonl") ? sessionLogDate(file.path) : legacySessionDate(file.path);
     const metadata: ChunkMetadata = withChunkProvenance("session", {
       source_type: "agent-x-session", session_id: sessionId, date: sessionDate,
     });
@@ -371,5 +348,16 @@ export async function syncIndex(deps: SyncDeps): Promise<void> {
     deps.dirtyRef.value = true;
   } finally {
     deps.syncInProgressRef.value = false;
+  }
+}
+
+/** A pre-migration `{id}.json` blob's start date — the only format the row
+ *  reader does not cover. */
+function legacySessionDate(path: string): string | undefined {
+  try {
+    const sess = JSON.parse(readFileSync(path, "utf-8"));
+    return sess.createdAt ? new Date(sess.createdAt).toISOString().split("T")[0] : undefined;
+  } catch {
+    return undefined;
   }
 }

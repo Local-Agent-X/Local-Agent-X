@@ -20,6 +20,7 @@ import { existsSync, readFileSync, writeFileSync, readdirSync, statSync } from "
 import { isSyntheticSessionId } from "./synthetic-sessions.js";
 import { join } from "node:path";
 import { extractSessionPairs, type ConversationMessage } from "./chunking.js";
+import { readSessionLogRows, sessionLogMeta } from "./session-log-rows.js";
 import { getLaxDir } from "../lax-data-dir.js";
 import { runMemoryGate } from "./write-safely.js";
 import { createLogger } from "../logger.js";
@@ -149,21 +150,9 @@ export function listRecentSessionTranscripts(n = DEFAULT_SESSION_COUNT): Session
   for (const { file } of candidates) {
     const fullPath = join(SESSIONS_DIR, file);
     const sessionId = file.replace(/\.jsonl$/, "");
-    let date: string | undefined;
-    let title: string | undefined;
-    try {
-      // Read meta line from the jsonl file for date/title.
-      for (const line of readFileSync(fullPath, "utf-8").split("\n")) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        const row = JSON.parse(trimmed);
-        if (row.kind === "meta") {
-          if (typeof row.createdAt === "number") date = new Date(row.createdAt).toISOString().split("T")[0];
-          if (typeof row.title === "string") title = row.title;
-          break;
-        }
-      }
-    } catch {}
+    const meta = sessionLogMeta(readSessionLogRows(fullPath) ?? []);
+    const date = meta && typeof meta.createdAt === "number" ? new Date(meta.createdAt).toISOString().split("T")[0] : undefined;
+    const title = typeof meta?.title === "string" ? meta.title : undefined;
     const pairs = extractSessionPairs(fullPath);
     if (pairs.length < 2) continue;
     const charCount = pairs.reduce((sum, m) => sum + m.content.length, 0);

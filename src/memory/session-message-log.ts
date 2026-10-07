@@ -32,63 +32,8 @@ import { COMPACTION_PREFIX } from "../types.js";
 import type { ToolResultStatus } from "../types.js";
 import { parseStatusHeader } from "../tools/result-helpers.js";
 
-export interface SessionMetaRow {
-  kind: "meta";
-  id: string;
-  title: string;
-  createdAt: number;
-  updatedAt: number;
-  projectId?: string;
-}
-
-export interface SessionMessageRow {
-  kind: "msg";
-  message: ChatCompletionMessageParam;
-  createdAt: string;
-}
-
-/**
- * Compaction event. A `summary` row subsumes every `msg` row that
- * appears BEFORE it in the file — the projection drops those msg rows
- * and prepends a synthetic leading `{role:"system", content: <summary>}`
- * entry. Only `msg` rows that appear AFTER the latest summary survive
- * verbatim. Multiple summary rows can stack (e.g. compact, run for a
- * while, compact again) — the latest summary is the active one.
- */
-export interface SessionSummaryRow {
-  kind: "summary";
-  content: string;
-  createdAt: string;
-}
-
-/**
- * Compaction CHECKPOINT — deliberately NOT a `summary` row.
- *
- * A summary row SUBSUMES everything before it: the read path drops those msg
- * rows entirely, which is right for the user-invoked /api/compact ("forget the
- * details, keep the gist") and catastrophic for automatic compaction, where the
- * harness would be deleting the user's transcript from disk to save tokens on a
- * request.
- *
- * A checkpoint subsumes nothing. Every msg row stays on disk and in the
- * projection; the row only records that the MODEL's view of the first
- * `coversThrough` messages may be sent as `summary` instead. The transcript
- * stays whole for the chat, fork, export, search and recall; only the request
- * gets shorter. It is also what makes a request prefix stable: recomputing a
- * summary every message reshuffles the prefix and voids the provider cache.
- *
- * `coversThrough` is a COUNT of projected messages, not an index into the
- * file: a retract can shorten the transcript, and a checkpoint that reaches
- * past the end is ignored rather than trusted (readSessionLog).
- */
-export interface SessionCheckpointRow {
-  kind: "checkpoint";
-  summary: string;
-  coversThrough: number;
-  createdAt: string;
-}
-
-export type SessionLogRow = SessionMetaRow | SessionMessageRow | SessionSummaryRow | SessionCheckpointRow;
+export type { SessionMetaRow, SessionMessageRow, SessionSummaryRow, SessionCheckpointRow, SessionLogRow } from "./session-log-rows.js";
+import { readSessionLogRows, type SessionLogRow, type SessionMetaRow, type SessionMessageRow, type SessionSummaryRow, type SessionCheckpointRow } from "./session-log-rows.js";
 
 /** Pre-Item-3 meta shape — kept only so logs migrated by the previous
  *  Phase 2 step (which wrote `compactedSummary`/`compactedAt` onto the
@@ -147,28 +92,15 @@ export function messageCreatedAt(message: object): string | undefined {
 export function readSessionLog(dir: string, id: string): Session | null {
   const p = jsonlPath(dir, id);
   if (!existsSync(p)) return null;
-  let content: string;
-  try {
-    content = readFileSync(p, "utf-8");
-  } catch {
-    return null;
-  }
-  const lines = content.split("\n");
+  const rows = readSessionLogRows(p);
+  if (!rows) return null;
   let meta: SessionMetaRow | null = null;
   let legacyCompaction: LegacyCompactionMeta = {};
   let recentMsgs: ChatCompletionMessageParam[] = [];
   let summaryContent: string | null = null;
   let checkpoint: { summary: string; coversThrough: number } | null = null;
 
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    let row: SessionLogRow;
-    try {
-      row = JSON.parse(trimmed) as SessionLogRow;
-    } catch {
-      continue;
-    }
+  for (const row of rows) {
     if (row.kind === "meta") {
       meta = row;
       const legacy = row as SessionMetaRow & LegacyCompactionMeta;

@@ -110,6 +110,7 @@ export function buildCanonicalLoopContext(args: BuildContextArgs): CanonicalLoop
   const toolsCalledThisOp = new Set<string>();
   const committingToolsThisOp = new Set<string>();
   const substantiveCommittingToolsThisOp = new Set<string>();
+  let substantiveCommitCountThisOp = 0;
   const attemptedToolsThisOp = new Set<string>();
   for (const turn of readOpTurns(op.id)) {
     for (const s of turn.toolCallSummary ?? []) {
@@ -120,7 +121,10 @@ export function buildCanonicalLoopContext(args: BuildContextArgs): CanonicalLoop
       // The row reader re-checks resultStatus itself — that gate is
       // deliberately inside the shared reader so no caller can read a
       // `committing: true` stamped on a call policy blocked before it ran.
-      if (rowCommittedSubstantiveWork(s)) substantiveCommittingToolsThisOp.add(s.tool);
+      if (rowCommittedSubstantiveWork(s)) {
+        substantiveCommittingToolsThisOp.add(s.tool);
+        substantiveCommitCountThisOp++;
+      }
     }
   }
 
@@ -178,6 +182,7 @@ export function buildCanonicalLoopContext(args: BuildContextArgs): CanonicalLoop
     toolsCalledThisOp,
     committingToolsThisOp,
     substantiveCommittingToolsThisOp,
+    substantiveCommitCountThisOp,
     attemptedToolsThisOp,
     evidenceHistory: args.evidenceHistory,
     onEvent: args.onEvent,

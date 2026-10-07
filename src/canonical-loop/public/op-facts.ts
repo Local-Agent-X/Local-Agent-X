@@ -24,3 +24,9 @@ export type { TerminalState } from "../terminal-states.js";
 export { isEmbeddingModel } from "../model-capabilities.js";
 
 export { resolveOpModel } from "../op-model.js";
+
+// An op's committed turns and its per-op state: persistence and an in-memory
+// map, both leaves. For a tool that asks "has this request built anything
+// yet" (ask_user) and remembers its answer for the op.
+export { readOpTurns } from "../store.js";
+export { getMiddlewareState } from "../middlewares/state.js";

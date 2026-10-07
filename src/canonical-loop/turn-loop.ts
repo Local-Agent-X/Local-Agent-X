@@ -253,13 +253,13 @@ export async function driveTurn(
     assistantContent: assistantText,
   });
   // Wire the live toolCalls array so auto-build-app's push mutates the
-  // dispatcher's input. buildCanonicalLoopContext already passes it; this
-  // is documentation for the next reader.
+  // dispatcher's input (buildCanonicalLoopContext already passes it).
   afterModelCtx.toolCalls = toolCalls;
   // Thread this turn's REAL reasoning/usage signals so post-turn-detector can
   // tell a reasoning-burn turn from a genuinely empty one (HE-5).
   const usageOut = (result.providerState?.providerPayload as { usageOutputTokens?: unknown } | undefined)?.usageOutputTokens;
   afterModelCtx.hasReasoning = sawReasoning;
+  afterModelCtx.modelEnded = result.modelStop === "ended";
   afterModelCtx.completionTokens = typeof usageOut === "number" ? usageOut : undefined;
   const afterModelRes = await runMiddlewarePhase(afterModelCtx, "afterModelCall", middlewareStack);
   middlewareDirective = directiveFromPhaseResult(afterModelRes);

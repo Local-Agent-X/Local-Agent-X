@@ -123,6 +123,10 @@ export interface CanonicalLoopContext {
    *  model call. Lets post-turn-detector route a reasoning-burn turn to
    *  "reasoning-only" instead of "empty-response". */
   hasReasoning?: boolean;
+  /** The model ended its turn itself (provider stop = end_turn / stop) — set
+   *  for afterModelCall. A turn it ended with no tool calls continues only if
+   *  something reopens it; undefined where the phase does not observe it. */
+  modelEnded?: boolean;
   /** Provider-reported output tokens for THIS turn, read from
    *  providerState.providerPayload.usageOutputTokens (the same key
    *  op-usage.ts aggregates; all four adapters record it). undefined when
@@ -166,6 +170,10 @@ export interface CanonicalLoopContext {
    *  detectors — they read this field and must never re-read op_turns for it
    *  (see host.ts on why that multiplies). */
   substantiveCommittingToolsThisOp: Set<string>;
+  /** How many calls landed substantive work this op (the rows behind the set
+   *  above). A set of tool names cannot say whether NEW work happened since a
+   *  given moment; a second write has the same name as the first. */
+  substantiveCommitCountThisOp: number;
   /** Every tool the op has ATTEMPTED across turns — incl. ones that errored or
    *  were cancelled. The counterpart to the ok-only set above: a browser that
    *  crashed mid-op is absent from toolsCalledThisOp but present here, which is

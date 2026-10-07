@@ -85,6 +85,14 @@ export const repeatOutputMiddleware: CanonicalMiddleware = {
     state.recent.push(tokens);
     if (state.recent.length > RING) state.recent.shift();
 
+    // The model ended this turn itself, with words only: it stops here unless
+    // something reopens it, so the repeat was CAUSED by a reopen (a waiting
+    // model pushed to continue restates its question). Pushing again only
+    // adds another copy, and aborting turns its honest stop into a failure.
+    // The runaway this breaker exists for keeps going on its own (tool calls,
+    // or a turn the provider did not end), and that is where it still bites.
+    if (ctx.modelEnded && ctx.toolCalls.length === 0) return { kind: "continue" };
+
     if (state.repeats >= ABORT_AT) {
       const msg =
         `Halting: the same response has been produced ${state.repeats + 1} times in a row ` +

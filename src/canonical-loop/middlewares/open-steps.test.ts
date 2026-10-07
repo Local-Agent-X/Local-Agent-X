@@ -221,7 +221,7 @@ describe("openStepsTerminationWarning", () => {
 
   it("returns the warning when the op used task tools and steps remain open", () => {
     const w = openStepsTerminationWarning("op-w");
-    expect(w).toContain("1 step still open");
+    expect(w).toContain("Not finished yet, 1 planned step left: ");
     expect(w).toContain("Finish the report");
   });
 

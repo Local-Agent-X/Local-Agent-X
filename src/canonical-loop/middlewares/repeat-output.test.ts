@@ -125,3 +125,23 @@ describe("a landed state change is progress, however alike the narration", () =>
     expect(kinds.at(-1)).toBe("abort");
   });
 });
+
+// A turn the model ENDED with words only stops unless something reopens it, so
+// a repeat there was caused by a reopen (a waiting model restating its
+// question). Pushing again only added another copy; a friend saw the same
+// question four times. The runaway the breaker exists for keeps going on its own.
+describe("a repeat in a turn the model ended with words only", () => {
+  const ended = (op: string, text: string) =>
+    repeatOutputMiddleware.afterModelCall!(makeCanonicalLoopContext({ op: { id: op }, assistantContent: text, modelEnded: true }));
+
+  it("is never pushed or aborted, however many copies", () => {
+    const op = opId();
+    for (let i = 0; i < 6; i++) expect(ended(op, A)).toEqual({ kind: "continue" });
+  });
+
+  it("the same repeats in a turn that keeps going are still pushed and stopped", () => {
+    const op = opId();
+    const kinds = [1, 2, 3, 4, 5].map(() => (run(op, A) as { kind: string }).kind);
+    expect(kinds).toEqual(["continue", "continue", "nudge", "continue", "abort"]);
+  });
+});

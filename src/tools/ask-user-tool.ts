@@ -29,7 +29,23 @@
  *     sends nothing off-box. The question lands in the user's own transcript.
  */
 import type { ToolDefinition, ToolResult } from "../types.js";
-import { err, ok } from "./result-helpers.js";
+import { blocked, err, ok } from "./result-helpers.js";
+import { getMiddlewareState, readOpTurns } from "../canonical-loop/public/op-facts.js";
+import { opCommittedSubstantiveWork } from "../committing-tool-check.js";
+
+/** Asking before doing anything is how a model hands work back unstarted: "what
+ *  style should the deck be?" instead of a deck in a sensible style. So the
+ *  first ask of a request that has built nothing yet is answered with "decide
+ *  and do it" instead of delivered; a second ask goes through, for the
+ *  questions only the user can answer. Not delivered means the turn does not
+ *  end (decide-outcome ends a turn only on a delivered question), and the
+ *  result is a refusal naming its next step, not an error: nothing failed. */
+const DECIDE_FIRST =
+  "Nothing has been built for this request yet, so this question was not shown to the user. Decide " +
+  "what you can (style, structure, names, sensible defaults), do the work, and say what you assumed " +
+  "so the user can change it. Ask only what only the user can answer: their account, location, " +
+  "credentials, money, or a choice that cannot be undone. If that is what this is, call ask_user " +
+  "again with the same question.";
 
 /** Longest question we will deliver. A "question" past this is a report the
  *  model should have written as its answer, not a fork the user can decide. */
@@ -77,6 +93,14 @@ export const askUserTool: ToolDefinition = {
         `ask_user question is ${question.length} chars (max ${MAX_QUESTION_CHARS}). That is a ` +
         "report, not a fork. Say the long part as your normal answer and ask the short decision.",
       );
+    }
+    const opId = typeof args._operationId === "string" ? args._operationId : "";
+    if (opId) {
+      const asked = getMiddlewareState<{ decideFirstSent: boolean }>(opId, "ask-user-decide-first", () => ({ decideFirstSent: false }));
+      if (!asked.decideFirstSent && !opCommittedSubstantiveWork(readOpTurns(opId))) {
+        asked.decideFirstSent = true;
+        return blocked("Not asked yet.", { layer: "ask-user", recovery: DECIDE_FIRST });
+      }
     }
     return ok(
       "Question delivered — your turn ends here and the user is reading it now. Do not continue, " +

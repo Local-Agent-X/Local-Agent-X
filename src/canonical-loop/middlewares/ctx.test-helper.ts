@@ -109,6 +109,7 @@ export function makeCanonicalLoopContext(
     toolsCalledThisOp: new Set<string>(),
     committingToolsThisOp: new Set<string>(),
     substantiveCommittingToolsThisOp: new Set<string>(),
+    substantiveCommitCountThisOp: 0,
     attemptedToolsThisOp: new Set<string>(),
     evidenceHistory: [],
   };

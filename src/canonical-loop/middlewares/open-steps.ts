@@ -94,6 +94,14 @@ export const openStepsMiddleware: CanonicalMiddleware = {
 
     const signature = open.map((t) => t.id).sort().join(",");
     if (lastNudgedSignature.get(sessionId) === signature) return { kind: "continue" };
+    // Push again only after NEW work. A model that answered the last push by
+    // ticking a step off and asking the user the same question again has
+    // made bookkeeping, not progress, and is waiting on them; pushing it
+    // again only made it repeat the question (a friend's chat showed it
+    // four times, 2026-10-05). After real work since the push, it pushes again.
+    const pushed = getMiddlewareState<{ atWorkCount: number }>(ctx.op.id, "open-steps-pushed", () => ({ atWorkCount: -1 }));
+    if (pushed.atWorkCount === ctx.substantiveCommitCountThisOp) return { kind: "continue" };
+    pushed.atWorkCount = ctx.substantiveCommitCountThisOp;
     lastNudgedSignature.set(sessionId, signature);
 
     const list = open.map((t, i) => `${i + 1}. ${t.description}`).join("\n");
@@ -102,7 +110,9 @@ export const openStepsMiddleware: CanonicalMiddleware = {
       `still open on your task list:\n\n${list}\n\n` +
       "Continue with the next incomplete step now — don't stop until every step is " +
       "done. If a step is already finished, mark it complete with task_update. If you " +
-      "are genuinely blocked on one, state the specific blocker instead of stopping silently.";
+      "are genuinely blocked on one, state the specific blocker instead of stopping silently. " +
+      "If you are waiting on the user's answer, do not repeat your question (it is already on their " +
+      "screen): finish every step that does not depend on it, then stop.";
 
     return { kind: "nudge", message, reason: "open-steps" };
   },
@@ -191,7 +201,7 @@ export function openStepsTerminationWarning(opId: string): string | null {
   if (open.length === 0) return null;
   if (!opTouchedTaskLedger(opId)) return null;
   const names = open.map((t) => t.description).join("; ");
-  const headline = `⚠️ Stopped with ${open.length} step${open.length === 1 ? "" : "s"} still open: `;
+  const headline = `⚠️ Not finished yet, ${open.length} planned step${open.length === 1 ? "" : "s"} left: `;
   const budget = 199 - headline.length;
   return headline + (names.length > budget ? names.slice(0, budget - 1) + "…" : names);
 }

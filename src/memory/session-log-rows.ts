@@ -23,6 +23,10 @@ export interface SessionMessageRow {
   kind: "msg";
   message: ChatCompletionMessageParam;
   createdAt: string;
+  /** Set when the true time is not known: the row was re-stamped by a save
+   *  before 2026-10-07 and no op record recovered it (session-time-backfill).
+   *  createdAt then says when the row was last written, not when it was said. */
+  timeUnknown?: true;
 }
 
 /**

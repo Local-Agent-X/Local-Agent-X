@@ -84,6 +84,9 @@ export function sessionLogExists(dir: string, id: string): boolean {
 // A message object not seen before (new, or copied by a path that rebuilds
 // the array) is stamped with the save time, as before.
 const messageTimes = new WeakMap<object, string>();
+// Messages whose recorded time is known to be wrong (see SessionMessageRow
+// .timeUnknown); the marker is carried through every rewrite.
+const unknownTimes = new WeakSet<object>();
 
 export function messageCreatedAt(message: object): string | undefined {
   return messageTimes.get(message);
@@ -109,6 +112,7 @@ export function readSessionLog(dir: string, id: string): Session | null {
     } else if (row.kind === "msg" && row.message) {
       recentMsgs.push(row.message);
       if (typeof row.createdAt === "string") messageTimes.set(row.message, row.createdAt);
+      if (row.timeUnknown) unknownTimes.add(row.message);
     } else if (row.kind === "summary") {
       summaryContent = row.content;
       recentMsgs = [];
@@ -213,12 +217,12 @@ export function writeSessionLog(dir: string, session: Session): void {
     };
     lines.push(JSON.stringify(summaryRow));
     for (const m of session.messages.slice(1)) {
-      const row: SessionMessageRow = { kind: "msg", message: m, createdAt: stampOnce(m, now) };
+      const row: SessionMessageRow = { kind: "msg", message: m, createdAt: stampOnce(m, now), ...(unknownTimes.has(m) ? { timeUnknown: true as const } : {}) };
       lines.push(JSON.stringify(row));
     }
   } else {
     for (const m of session.messages) {
-      const row: SessionMessageRow = { kind: "msg", message: m, createdAt: stampOnce(m, now) };
+      const row: SessionMessageRow = { kind: "msg", message: m, createdAt: stampOnce(m, now), ...(unknownTimes.has(m) ? { timeUnknown: true as const } : {}) };
       lines.push(JSON.stringify(row));
     }
   }

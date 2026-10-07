@@ -85,8 +85,10 @@ describe("buildTurnContextCached invalidation (CM-1)", () => {
 
 // Locks the 2026-07-14 hang: a wedged retrieval dependency (Ollama embed,
 // reranker load) made buildTurnContext block chat prepare for 95-200s. The
-// wallclock backstop ships the turn without memory context instead of
+// wallclock backstop ships the turn with only the profile files instead of
 // freezing, and the late build still warms the cache for the next turn.
+// The profile files must survive the backstop: on 2026-10-06 an empty block
+// made a named agent tell its user it had no name.
 describe("buildTurnContextCached wallclock backstop", () => {
   beforeEach(() => clearTurnContextCache());
   afterEach(() => {
@@ -94,18 +96,19 @@ describe("buildTurnContextCached wallclock backstop", () => {
     vi.useRealTimers();
   });
 
-  it("ships an empty context when the build exceeds the wallclock, then serves the late build from cache", async () => {
+  it("ships only the profile block when the build exceeds the wallclock, then serves the late build from cache", async () => {
     vi.useFakeTimers();
     let resolveBuild: (c: TurnContext) => void;
     const slow = new Promise<TurnContext>((r) => { resolveBuild = r; });
     const build = vi.fn(async (_input: TurnContextInput) => slow);
-    const mgr = { buildTurnContext: build } as unknown as MemoryManager;
+    const profile = "<agent_identity>\n- Name: Primal\n</agent_identity>";
+    const mgr = { buildTurnContext: build, buildProfileBlock: async () => profile } as unknown as MemoryManager;
 
     const q = "Change the background pattern on the sip dirty landing page hero";
     const pending = buildTurnContextCached(mgr, input(q));
     await vi.advanceTimersByTimeAsync(10_100);
     const degraded = await pending;
-    expect(degraded.contextBlock).toBe("");
+    expect(degraded.contextBlock).toBe(profile);
     expect(degraded.relevantMemories).toBe("");
     expect(degraded.notifications).toEqual([]);
 

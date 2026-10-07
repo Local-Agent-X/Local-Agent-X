@@ -43,7 +43,7 @@ const TTL_MS = 45 * 1000;
 const MAX_ENTRIES = 32;
 // Backstop: a full context build measures 3-5s on real follow-ups; anything
 // past 10s means a retrieval dependency is wedged (Ollama embed, reranker
-// load). The turn ships without memory context rather than freezing — the
+// load). The turn ships with only the profile files rather than freezing — the
 // build keeps running in background and populates the cache for the next
 // turn. This should ~never fire in healthy operation; when it does, the warn
 // log (with a running count) is the signal that retrieval is degraded, not
@@ -175,11 +175,14 @@ export async function buildTurnContextCached(
   if (raced === BUILD_TIMEOUT_SENTINEL) {
     wallclockTrips += 1;
     logger.warn(
-      `[turn-context-cache] build exceeded ${BUILD_WALLCLOCK_MS}ms — shipping turn WITHOUT memory context (retrieval degraded; trip #${wallclockTrips}) sess=${input.sessionId}`,
+      `[turn-context-cache] build exceeded ${BUILD_WALLCLOCK_MS}ms — shipping turn with profile files only (retrieval degraded; trip #${wallclockTrips}) sess=${input.sessionId}`,
     );
     build.catch(() => {});
+    // The profile files are local reads, not retrieval: shipping without them
+    // made a named agent tell its user it had no name (2026-10-06, a fresh
+    // sync re-embedding thousands of chunks wedged Ollama past this wallclock).
     return {
-      contextBlock: "",
+      contextBlock: await memoryManager.buildProfileBlock(),
       relevantMemories: "",
       smartContext: "",
       memoryContext: "",

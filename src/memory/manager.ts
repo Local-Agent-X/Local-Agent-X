@@ -13,7 +13,7 @@
 import type { MemoryIndex } from "./index-core.js";
 import type { FactKind, MemorySearchResult, RetainedFact } from "./types.js";
 import type { SearchOptions } from "./index-search.js";
-import { buildContextBlock } from "./context.js";
+import { buildContextBlock, buildProfileBlock } from "./context.js";
 import { autoSearchContext } from "./auto-search-context.js";
 import { autoExtractAndSave } from "./auto-extract.js";
 import { findKnownProjectsInMessage, buildKnownProjectsNudge } from "./known-projects.js";
@@ -277,6 +277,11 @@ export class MemoryManager {
         logger.warn("end-of-turn extraction enqueue failed:", (e as Error).message);
       }
     }
+  }
+
+  /** The profile-only context block (see buildProfileBlock). */
+  buildProfileBlock(): Promise<string> {
+    return buildProfileBlock(this.index);
   }
 
   /** Tool-layer semantic search. */

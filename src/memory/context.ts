@@ -96,32 +96,49 @@ export async function buildContextBlock(memory: MemoryIndex, opts: ContextBlockO
   return parts.stable + parts.volatile;
 }
 
+async function profileSections(memDir: string): Promise<string[]> {
+  const sections: string[] = [];
+  ensurePersonalityFiles(memDir);
+
+  const identity = await readPersonalityFile(memDir, "identity");
+  if (identity) {
+    sections.push(`<agent_identity>\n${provenanceHeader("personality", "memory-file", "unknown", "clean", "Agent identity profile")}\n${identity}\n</agent_identity>`);
+  }
+
+  const heart = await readPersonalityFile(memDir, "heart");
+  if (heart) {
+    sections.push(`<agent_heart>\n${provenanceHeader("personality", "memory-file", "unknown", "clean", "Agent behavior profile")}\n${heart}\n</agent_heart>`);
+  }
+
+  const user = await readPersonalityFile(memDir, "user");
+  if (user) {
+    sections.push(`<user_profile>\n${provenanceHeader("personality", "memory-file", "unknown", "clean", "User profile")}\n${user}\n</user_profile>`);
+  }
+  return sections;
+}
+
+/**
+ * Only the three profile files (identity / heart / user) — local reads, no
+ * retrieval. The turn-context wallclock ships this when the full build is
+ * wedged on a retrieval dependency, so a slow embedder can't make the agent
+ * forget its own name and the user's.
+ */
+export async function buildProfileBlock(memory: MemoryIndex): Promise<string> {
+  const sections = await profileSections(memory["memoryDir"]);
+  if (sections.length === 0) return "";
+  return "\n\n--- MEMORY CONTEXT (auto-loaded, do not repeat verbatim to user) ---\n" + sections.join("\n\n") + "\n--- END MEMORY CONTEXT ---";
+}
+
 export async function buildContextBlockParts(
   memory: MemoryIndex,
   opts: ContextBlockOpts = {},
 ): Promise<ContextBlockParts> {
   // ── STABLE sections (cache-friendly prefix) ──
-  const stableSections: string[] = [];
   const memDir = memory["memoryDir"];
   const cfg = memory.getConfig();
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 
-  ensurePersonalityFiles(memDir);
-
-  const identity = await readPersonalityFile(memDir, "identity");
-  if (identity) {
-    stableSections.push(`<agent_identity>\n${provenanceHeader("personality", "memory-file", "unknown", "clean", "Agent identity profile")}\n${identity}\n</agent_identity>`);
-  }
-
-  const heart = await readPersonalityFile(memDir, "heart");
-  if (heart) {
-    stableSections.push(`<agent_heart>\n${provenanceHeader("personality", "memory-file", "unknown", "clean", "Agent behavior profile")}\n${heart}\n</agent_heart>`);
-  }
-
-  const user = await readPersonalityFile(memDir, "user");
-  if (user) {
-    stableSections.push(`<user_profile>\n${provenanceHeader("personality", "memory-file", "unknown", "clean", "User profile")}\n${user}\n</user_profile>`);
-  }
+  const stableSections = await profileSections(memDir);
 
   // Active project's living brief. Only when this turn is scoped to a
   // project (set via the session→project map). The brief is the shared,

@@ -93,7 +93,11 @@ export const handleDecommissionRoutes: RouteHandler = async (method, url, req, r
       if (!script) { json(404, { error: "Uninstall script not found (neither staged in ~/.lax/uninstall nor in the checkout)." }); return true; }
       const { spawn } = await import("node:child_process");
       const { command, args } = buildUninstallLaunch(process.platform, script, { deleteData: body.deleteData === true });
-      const child = spawn(command, args, { detached: true, stdio: "ignore", windowsHide: true });
+      // Not detached on Windows: a DETACHED_PROCESS powershell gets no console
+      // and exits 0 without running the script, so the UI reported "launched"
+      // while nothing happened. The script outlives this server on its own —
+      // it re-execs from TEMP via Start-Process before stopping the app.
+      const child = spawn(command, args, { detached: process.platform !== "win32", stdio: "ignore", windowsHide: true });
       child.unref();
       json(200, { ok: true, script, deleteData: body.deleteData === true });
     } catch (e) { json(500, { ok: false, error: safeErrorMessage(e) }); }

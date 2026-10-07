@@ -135,3 +135,20 @@ export function applyAllSessions(laxDir: string, plans: SessionTimePlan[], stamp
   }
   return backup;
 }
+
+/** Rows a fresh apply would change: a row with no id, or a time or unknown
+ *  marker that differs from the plan. Zero means the install is already
+ *  repaired — no backup, no rewrite. */
+export function countPendingRows(laxDir: string, plans: SessionTimePlan[]): number {
+  let pending = 0;
+  for (const plan of plans) {
+    const lines = readFileSync(join(laxDir, "sessions", `${plan.sessionId}.jsonl`), "utf-8").split("\n");
+    for (const t of plan.times) {
+      const row = JSON.parse(lines[t.line]) as SessionMessageRow;
+      const want = t.createdAt ?? null;
+      const have = row.timeUnknown ? null : row.createdAt;
+      if (!row.id || want !== have) pending++;
+    }
+  }
+  return pending;
+}

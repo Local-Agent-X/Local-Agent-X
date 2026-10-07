@@ -116,6 +116,29 @@ registerBuiltinMigration({
   },
 });
 
+// v5: chat message provenance. Until 2026-10-07 every save re-stamped every
+// session message with the save time, and no row had an id. Recover each
+// turn's true time and op-store messageId from the op records, mark what
+// cannot be recovered `timeUnknown`, and give every row an id — once, on
+// every install, before the socket binds and any chat is loaded (the running
+// server's session cache would otherwise write stale rows back). Backs up
+// every session log first; an install with nothing to change is left alone.
+// A failure is not recorded as applied, so the next boot retries.
+// Same logic as scripts/backfill-session-times.ts (src/memory/session-time-backfill.ts).
+registerBuiltinMigration({
+  version: 5,
+  name: "session-message-provenance",
+  up: async () => {
+    const laxDir = getLaxDir();
+    if (!existsSync(join(laxDir, "sessions"))) return;
+    const { planAllSessions, applyAllSessions, countPendingRows } = await import("./memory/session-time-backfill.js");
+    const { readOpMessages } = await import("./canonical-loop/index.js");
+    const plans = planAllSessions(laxDir, readOpMessages);
+    if (countPendingRows(laxDir, plans) === 0) return;
+    applyAllSessions(laxDir, plans, new Date().toISOString().replace(/[:.]/g, "-"));
+  },
+});
+
 function registerBuiltinMigration(m: Migration): void {
   const existing = registeredMigrations.find(x => x.version === m.version);
   if (!existing) { registeredMigrations.push(m); registeredMigrations.sort((a, b) => a.version - b.version); }

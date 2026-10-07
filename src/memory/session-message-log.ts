@@ -74,23 +74,8 @@ export function sessionLogExists(dir: string, id: string): boolean {
  * on the meta line. If those are present and no `summary` row exists,
  * synthesise the projection from them.
  */
-// When each message was first written. A message object carries only role and
-// content, so its row's createdAt is the only record of when it was said; the
-// writer rewrites the whole file on every save, and used to stamp every row
-// with the save time — after one save, every message in the chat read as
-// "now" (chat-muuow8r4: 62 rows, one createdAt). Keyed by the message object,
-// which the session cache keeps alive across turns: the reader records each
-// row's time, the writer writes it back and records what it stamps new.
-// A message object not seen before (new, or copied by a path that rebuilds
-// the array) is stamped with the save time, as before.
-const messageTimes = new WeakMap<object, string>();
-// Messages whose recorded time is known to be wrong (see SessionMessageRow
-// .timeUnknown); the marker is carried through every rewrite.
-const unknownTimes = new WeakSet<object>();
-
-export function messageCreatedAt(message: object): string | undefined {
-  return messageTimes.get(message);
-}
+import { provenanceForWrite, recordMessageProvenance } from "./session-message-provenance.js";
+export { recordMessageProvenance, messageProvenance } from "./session-message-provenance.js";
 
 export function readSessionLog(dir: string, id: string): Session | null {
   const p = jsonlPath(dir, id);
@@ -111,8 +96,11 @@ export function readSessionLog(dir: string, id: string): Session | null {
       if (typeof legacy.compactedAt === "number") legacyCompaction.compactedAt = legacy.compactedAt;
     } else if (row.kind === "msg" && row.message) {
       recentMsgs.push(row.message);
-      if (typeof row.createdAt === "string") messageTimes.set(row.message, row.createdAt);
-      if (row.timeUnknown) unknownTimes.add(row.message);
+      recordMessageProvenance(row.message, {
+        id: typeof row.id === "string" ? row.id : undefined,
+        createdAt: typeof row.createdAt === "string" ? row.createdAt : undefined,
+        timeUnknown: row.timeUnknown,
+      });
     } else if (row.kind === "summary") {
       summaryContent = row.content;
       recentMsgs = [];
@@ -178,13 +166,6 @@ export function readSessionLogForUI(dir: string, id: string): Session | null {
  * compaction state correctly. Other system messages are written as
  * regular msg rows.
  */
-function stampOnce(message: object, now: string): string {
-  const known = messageTimes.get(message);
-  if (known) return known;
-  messageTimes.set(message, now);
-  return now;
-}
-
 export function writeSessionLog(dir: string, session: Session): void {
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   const meta: SessionMetaRow = {
@@ -217,12 +198,12 @@ export function writeSessionLog(dir: string, session: Session): void {
     };
     lines.push(JSON.stringify(summaryRow));
     for (const m of session.messages.slice(1)) {
-      const row: SessionMessageRow = { kind: "msg", message: m, createdAt: stampOnce(m, now), ...(unknownTimes.has(m) ? { timeUnknown: true as const } : {}) };
+      const row: SessionMessageRow = { kind: "msg", message: m, ...provenanceForWrite(m, now) };
       lines.push(JSON.stringify(row));
     }
   } else {
     for (const m of session.messages) {
-      const row: SessionMessageRow = { kind: "msg", message: m, createdAt: stampOnce(m, now), ...(unknownTimes.has(m) ? { timeUnknown: true as const } : {}) };
+      const row: SessionMessageRow = { kind: "msg", message: m, ...provenanceForWrite(m, now) };
       lines.push(JSON.stringify(row));
     }
   }

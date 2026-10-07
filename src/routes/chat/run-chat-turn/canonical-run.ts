@@ -254,11 +254,17 @@ export async function persistTurnState(input: PersistInput): Promise<void> {
   if (canonicalOpId) {
     try {
       const { readOpMessages, opMessageRowToChatParam } = await import("../../../canonical-loop/index.js");
+      const { recordMessageProvenance } = await import("../../../memory/session-message-provenance.js");
       const projected: ChatCompletionMessageParam[] = [];
       for (const row of readOpMessages(canonicalOpId)) {
         if (row.messageId.startsWith("hist-")) continue;
         const param = opMessageRowToChatParam(row);
-        if (param) projected.push(sanitizeAssistantRowParam(param));
+        if (!param) continue;
+        // The session row keeps the op row's own identity and time (the
+        // projection to a chat message otherwise drops both).
+        const adopted = sanitizeAssistantRowParam(param);
+        recordMessageProvenance(adopted, { id: row.messageId, createdAt: row.createdAt });
+        projected.push(adopted);
       }
       newChatMessages.push(...projected);
       turnRowsRecovered = projected.length > 0;

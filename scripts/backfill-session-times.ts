@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Recover chat message times from the op records (src/memory/session-time-backfill.ts).
+// Recover chat message times and ids from the op records (src/memory/session-time-backfill.ts).
 //
 //   node --import=tsx scripts/backfill-session-times.ts           # dry run: print the plan
 //   node --import=tsx scripts/backfill-session-times.ts --apply   # rewrite (backs up every session log first)
@@ -12,10 +12,12 @@ import { getLaxDir } from "../src/lax-data-dir.js";
 
 setRuntimeConfig(loadConfig());
 const { planAllSessions, applyAllSessions } = await import("../src/memory/session-time-backfill.js");
+const { readOpMessages } = await import("../src/canonical-loop/index.js");
 const laxDir = getLaxDir();
-const plans = planAllSessions(laxDir);
+const plans = planAllSessions(laxDir, readOpMessages);
 const sum = (k: "turns" | "matched" | "unknown") => plans.reduce((n, p) => n + p[k], 0);
-console.log(`sessions=${plans.length} turns=${sum("turns")} matched=${sum("matched")} unknown=${sum("unknown")}`);
+const rows = plans.flatMap((p) => p.times);
+console.log(`sessions=${plans.length} turns=${sum("turns")} matched=${sum("matched")} unknown=${sum("unknown")} rows=${rows.length} opIds=${rows.filter((t) => t.id).length}`);
 for (const id of process.argv.filter((a) => a.startsWith("chat-"))) {
   const p = plans.find((x) => x.sessionId === id);
   if (!p) { console.log(`${id}: no such session`); continue; }
@@ -31,3 +33,7 @@ if (!process.argv.includes("--apply")) {
   const backup = applyAllSessions(laxDir, plans, new Date().toISOString().replace(/[:.]/g, "-"));
   console.log(`Applied. Backup of every session log: ${backup}`);
 }
+
+// Importing the canonical-loop store (readOpMessages) leaves timers on the
+// event loop; this is a one-shot script, so end it explicitly.
+process.exit(0);

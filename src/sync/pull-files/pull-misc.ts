@@ -1,3 +1,4 @@
+import { readSessionLogRows, sessionLogMeta, type SessionLogRow } from "../../memory/session-log-rows.js";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -39,7 +40,7 @@ export function pullSessions(dataDir: string, syncDir: string, config: SyncConfi
     if (existsSync(join(archiveDir, f))) continue;
     const local = join(sessDir, f);
     const remote = join(syncSessDir, f);
-    if (existsSync(local) && statSync(local).size >= statSync(remote).size) continue;
+    if (existsSync(local) && !remoteSessionIsAhead(local, remote)) continue;
     writeFileSync(local, readFileSync(remote, "utf-8"));
     pulled.push(f.replace(/\.jsonl?$/, ""));
   }
@@ -108,4 +109,21 @@ export function pullCronJobs(dataDir: string, syncDir: string, config: SyncConfi
     }
   }
   return dropped;
+}
+
+/**
+ * Whether the mirror's copy of a session log holds more of the conversation
+ * than the local one. One author per chat, so the copy with more message rows
+ * is the later one; a tie goes to the later updatedAt. Byte size used to stand
+ * in for "later", but row size varies with what a row records (an id, a time
+ * marker), so a copy could win on bytes while missing a message. Legacy
+ * `.json` blobs, which the row reader does not cover, keep the size rule.
+ */
+function remoteSessionIsAhead(local: string, remote: string): boolean {
+  if (!remote.endsWith(".jsonl")) return statSync(remote).size > statSync(local).size;
+  const localRows = readSessionLogRows(local) ?? [];
+  const remoteRows = readSessionLogRows(remote) ?? [];
+  const msgs = (rows: SessionLogRow[]) => rows.filter((r) => r.kind === "msg").length;
+  if (msgs(remoteRows) !== msgs(localRows)) return msgs(remoteRows) > msgs(localRows);
+  return (sessionLogMeta(remoteRows)?.updatedAt ?? 0) > (sessionLogMeta(localRows)?.updatedAt ?? 0);
 }

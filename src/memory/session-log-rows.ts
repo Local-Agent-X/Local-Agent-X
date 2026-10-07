@@ -21,6 +21,10 @@ export interface SessionMetaRow {
 
 export interface SessionMessageRow {
   kind: "msg";
+  /** Stable identity: the op store's messageId when the message came from a
+   *  chat turn's op, else minted once by the writer (session-message-provenance).
+   *  Absent only on rows written before 2026-10-07 and not yet rewritten. */
+  id?: string;
   message: ChatCompletionMessageParam;
   createdAt: string;
   /** Set when the true time is not known: the row was re-stamped by a save

@@ -12,21 +12,26 @@
  * given a guess. Every row other than a re-timed msg row is written back
  * byte-for-byte.
  */
+import { randomUUID } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { atomicWriteFileSync } from "./utils.js";
 import { isHarnessRow } from "../harness-rows.js";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { SessionMessageRow } from "./session-log-rows.js";
+import type { OpMessageRow } from "../canonical-loop/types.js";
 
-interface TurnOp { createdAt: string; completedAt?: string; task: string; used: boolean }
+interface TurnOp { opId: string; createdAt: string; completedAt?: string; task: string; used: boolean }
+/** An op's own message rows (canonical-loop readOpMessages), history replays excluded. */
+export type OpRowsReader = (opId: string) => OpMessageRow[];
 export interface SessionTimePlan {
   sessionId: string;
   turns: number;
   matched: number;
   unknown: number;
-  /** Per msg row, in file order: the time to write, or null for unknown. */
-  times: Array<{ line: number; createdAt: string | null; preview: string; before: string }>;
+  /** Per msg row, in file order: the time to write (null = unknown) and the
+   *  op store's messageId for it when the turn's op has a row of that role. */
+  times: Array<{ line: number; createdAt: string | null; id: string | null; preview: string; before: string }>;
 }
 
 function text(content: unknown): string {
@@ -48,7 +53,7 @@ export function loadTurnOps(operationsDir: string): Map<string, TurnOp[]> {
         { sessionId?: string; task?: string; createdAt?: string; completedAt?: string };
       if (!op.sessionId || typeof op.task !== "string" || !op.createdAt) continue;
       const list = bySession.get(op.sessionId) ?? [];
-      list.push({ createdAt: op.createdAt, completedAt: op.completedAt, task: op.task.trim(), used: false });
+      list.push({ opId: dir, createdAt: op.createdAt, completedAt: op.completedAt, task: op.task.trim(), used: false });
       bySession.set(op.sessionId, list);
     } catch { /* unreadable op: no evidence */ }
   }
@@ -56,10 +61,13 @@ export function loadTurnOps(operationsDir: string): Map<string, TurnOp[]> {
   return bySession;
 }
 
-export function planSessionTimes(sessionId: string, logText: string, ops: TurnOp[]): SessionTimePlan {
+const OP_ROLE: Record<string, string> = { user: "user", assistant: "assistant", tool: "tool_result", system: "system" };
+
+export function planSessionTimes(sessionId: string, logText: string, ops: TurnOp[], opRows: OpRowsReader = () => []): SessionTimePlan {
   const plan: SessionTimePlan = { sessionId, turns: 0, matched: 0, unknown: 0, times: [] };
   let turnTime: { start: string; end: string } | null = null;
   let inTurn = false;
+  let turnRows: OpMessageRow[] = [];
   logText.split("\n").forEach((line, i) => {
     let row: SessionMessageRow;
     try { row = JSON.parse(line); } catch { return; }
@@ -71,11 +79,16 @@ export function planSessionTimes(sessionId: string, logText: string, ops: TurnOp
       plan.turns++;
       const said = text(m.content);
       const op = ops.find((o) => !o.used && o.task === said);
-      if (op) { op.used = true; plan.matched++; turnTime = { start: op.createdAt, end: op.completedAt ?? op.createdAt }; }
-      else { plan.unknown++; turnTime = null; }
+      if (op) {
+        op.used = true; plan.matched++; turnTime = { start: op.createdAt, end: op.completedAt ?? op.createdAt };
+        try { turnRows = opRows(op.opId).filter((r) => !r.messageId.startsWith("hist-")); } catch { turnRows = []; }
+      } else { plan.unknown++; turnTime = null; turnRows = []; }
     }
     const at = !inTurn || !turnTime ? null : opensTurn ? turnTime.start : turnTime.end;
-    plan.times.push({ line: i, createdAt: at, preview: text(m.content).slice(0, 60), before: row.createdAt });
+    // The op's next row of the same role is this message's op identity.
+    const k = turnRows.findIndex((r) => r.role === OP_ROLE[m.role]);
+    const id = k >= 0 ? turnRows.splice(0, k + 1)[k].messageId : null;
+    plan.times.push({ line: i, createdAt: at, id, preview: text(m.content).slice(0, 60), before: row.createdAt });
   });
   return plan;
 }
@@ -85,21 +98,28 @@ export function planSessionTimes(sessionId: string, logText: string, ops: TurnOp
 export function applySessionTimes(path: string, logText: string, plan: SessionTimePlan): void {
   const lines = logText.split("\n");
   for (const t of plan.times) {
-    const row = JSON.parse(lines[t.line]) as SessionMessageRow;
-    delete row.timeUnknown;
-    if (t.createdAt) row.createdAt = t.createdAt;
-    else row.timeUnknown = true;
+    const prev = JSON.parse(lines[t.line]) as SessionMessageRow;
+    // Same key order as the session writer (message, then provenance), so a
+    // re-run — or the app's next save — rewrites nothing.
+    const row: SessionMessageRow = {
+      kind: "msg",
+      message: prev.message,
+      // An id, once written, is the row's identity for good.
+      id: prev.id ?? t.id ?? `sm-${randomUUID()}`,
+      createdAt: t.createdAt ?? prev.createdAt,
+      ...(t.createdAt ? {} : { timeUnknown: true as const }),
+    };
     lines[t.line] = JSON.stringify(row);
   }
   atomicWriteFileSync(path, lines.join("\n"));
 }
 
-export function planAllSessions(laxDir: string): SessionTimePlan[] {
+export function planAllSessions(laxDir: string, opRows: OpRowsReader = () => []): SessionTimePlan[] {
   const sessionsDir = join(laxDir, "sessions");
   const ops = loadTurnOps(join(laxDir, "operations"));
   return readdirSync(sessionsDir).filter((f) => f.endsWith(".jsonl")).sort().map((f) => {
     const id = f.slice(0, -".jsonl".length);
-    return planSessionTimes(id, readFileSync(join(sessionsDir, f), "utf-8"), ops.get(id) ?? []);
+    return planSessionTimes(id, readFileSync(join(sessionsDir, f), "utf-8"), ops.get(id) ?? [], opRows);
   });
 }
 

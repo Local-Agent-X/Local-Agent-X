@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { applyAllSessions, planAllSessions } from "./session-time-backfill.js";
+import type { OpMessageRow } from "../canonical-loop/types.js";
 import { readSessionLog, writeSessionLog } from "./session-message-log.js";
 
 // Before 2026-10-07 every save re-stamped every message with the save time.
@@ -77,5 +78,26 @@ describe("session time backfill", () => {
     applyAllSessions(lax, planAllSessions(lax), "t2");
     expect(readFileSync(join(lax, "sessions", "chat-a.jsonl"), "utf8")).toBe(once);
     expect(existsSync(join(lax, "backups", "session-times-t2"))).toBe(true);
+  });
+
+  it("gives each row the op store's messageId where the turn's op has a row of that role, mints the rest, and keeps ids on re-run", () => {
+    setup();
+    const opRow = (messageId: string, role: OpMessageRow["role"]): OpMessageRow =>
+      ({ messageId, opId: "", turnIdx: 0, seqInTurn: 0, role, content: {}, createdAt: "" });
+    const rowsOf: Record<string, OpMessageRow[]> = {
+      op_chat_turn_1: [opRow("hist-x", "user"), opRow("um-op_chat_turn_1-init-a", "user"), opRow("am-1", "assistant")],
+      op_chat_turn_2: [opRow("um-op_chat_turn_2-init-b", "user")],
+    };
+    const reader = (opId: string) => rowsOf[opId] ?? [];
+    const [plan] = planAllSessions(lax, reader);
+    expect(plan.times.map((t) => t.id)).toEqual(["um-op_chat_turn_1-init-a", "am-1", null, null, "um-op_chat_turn_2-init-b", null, null]);
+    applyAllSessions(lax, plan ? [plan] : [], "i1");
+    const ids = () => readFileSync(join(lax, "sessions", "chat-a.jsonl"), "utf8").split("\n").filter(Boolean)
+      .map((l) => JSON.parse(l)).filter((r) => r.kind === "msg").map((r) => r.id as string);
+    const once = ids();
+    expect(once.slice(0, 2)).toEqual(["um-op_chat_turn_1-init-a", "am-1"]);
+    expect(once[2]).toMatch(/^sm-/);
+    applyAllSessions(lax, planAllSessions(lax, reader), "i2");
+    expect(ids()).toEqual(once);
   });
 });

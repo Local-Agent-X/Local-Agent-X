@@ -85,16 +85,22 @@ export function readSessionLogRows(path: string): SessionLogRow[] | null {
   } catch {
     return null;
   }
-  const rows: SessionLogRow[] = [];
-  for (const line of content.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
+  return parseSessionLogText(content).map((r) => r.row);
+}
+
+/** A session log's text as rows, each with its 0-based line number in that
+ *  text — for a repair that rewrites rows in place and must keep every other
+ *  line byte-for-byte (session-time-backfill). A torn or unparseable line is
+ *  skipped. */
+export function parseSessionLogText(text: string): Array<{ line: number; row: SessionLogRow }> {
+  const rows: Array<{ line: number; row: SessionLogRow }> = [];
+  text.split("\n").forEach((raw, line) => {
+    const trimmed = raw.trim();
+    if (!trimmed) return;
     try {
-      rows.push(JSON.parse(trimmed) as SessionLogRow);
-    } catch {
-      continue;
-    }
-  }
+      rows.push({ line, row: JSON.parse(trimmed) as SessionLogRow });
+    } catch { /* torn line */ }
+  });
   return rows;
 }
 
@@ -111,4 +117,27 @@ export function sessionLogMeta(rows: readonly SessionLogRow[]): SessionMetaRow |
 export function sessionLogDate(path: string): string | undefined {
   const meta = sessionLogMeta(readSessionLogRows(path) ?? []);
   return meta && typeof meta.createdAt === "number" ? new Date(meta.createdAt).toISOString().split("T")[0] : undefined;
+}
+
+/** The pre-2026-05 single-blob session format (`{id}.json`), which a sync
+ *  pull from an older machine can still deliver until the boot migration
+ *  converts it. Owned here with the live format so no consumer parses a
+ *  session file itself. Null when unreadable or not an object. */
+export interface LegacySessionBlob {
+  id?: string;
+  title?: string;
+  createdAt?: number;
+  updatedAt?: number;
+  projectId?: string;
+  messages?: ChatCompletionMessageParam[];
+  compactedSummary?: string;
+  compactedAt?: number;
+}
+export function readLegacySessionBlob(path: string): LegacySessionBlob | null {
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf-8")) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as LegacySessionBlob : null;
+  } catch {
+    return null;
+  }
 }

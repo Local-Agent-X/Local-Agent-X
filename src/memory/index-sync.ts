@@ -1,11 +1,10 @@
-import { readFileSync } from "node:fs";
 import { isHarnessRow } from "../harness-rows.js";
 import { basename, join, sep } from "node:path";
 import type Database from "better-sqlite3";
 import type { Session } from "../types.js";
 import type { CanonicalSource, Chunk, ChunkMetadata, EmbeddingProvider, FileRecord, MemoryConfig } from "./types.js";
 import { buildSessionChunks } from "./chunking.js";
-import { readSessionLogRows } from "./session-log-rows.js";
+import { readLegacySessionBlob, readSessionLogRows } from "./session-log-rows.js";
 import { chunkText, withChunkProvenance } from "./search-helpers.js";
 import { redactCredentials, safeReadTextFile } from "./utils.js";
 import { encodeEmbedding } from "./embedding-codec.js";
@@ -24,19 +23,14 @@ const logger = createLogger("memory.index-sync");
  * session catching up, for one) was never re-indexed.
  */
 export function countSessionMessages(path: string): number {
-  let raw: string;
-  try { raw = readFileSync(path, "utf-8"); } catch { return 0; }
   if (path.endsWith(".jsonl")) return (readSessionLogRows(path) ?? []).filter((row) => row.kind === "msg").length;
-  try {
-    return (JSON.parse(raw) as Session).messages.length;
-  } catch {
-    return 0;
-  }
+  return readLegacySessionBlob(path)?.messages?.length ?? 0;
 }
 
 export function flattenSession(path: string): string {
   try {
-    const session = JSON.parse(readFileSync(path, "utf-8")) as Session;
+    const session = readLegacySessionBlob(path) as Session | null;
+    if (!session) return "";
     const lines: string[] = [
       `Session: ${session.title}`,
       `Date: ${new Date(session.createdAt).toISOString()}`,
@@ -352,10 +346,6 @@ export async function syncIndex(deps: SyncDeps): Promise<void> {
 /** A pre-migration `{id}.json` blob's start date — the only format the row
  *  reader does not cover. */
 function legacySessionDate(path: string): string | undefined {
-  try {
-    const sess = JSON.parse(readFileSync(path, "utf-8"));
-    return sess.createdAt ? new Date(sess.createdAt).toISOString().split("T")[0] : undefined;
-  } catch {
-    return undefined;
-  }
+  const createdAt = readLegacySessionBlob(path)?.createdAt;
+  return createdAt ? new Date(createdAt).toISOString().split("T")[0] : undefined;
 }

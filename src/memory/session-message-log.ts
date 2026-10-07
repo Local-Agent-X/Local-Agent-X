@@ -23,7 +23,7 @@
  */
 
 import { isHarnessRow } from "../harness-rows.js";
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, unlinkSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, renameSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { atomicWriteFileSync } from "./utils.js";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
@@ -33,7 +33,7 @@ import type { ToolResultStatus } from "../types.js";
 import { parseStatusHeader } from "../tools/result-helpers.js";
 
 export type { SessionMetaRow, SessionMessageRow, SessionSummaryRow, SessionCheckpointRow, SessionLogRow } from "./session-log-rows.js";
-import { readSessionLogRows, type SessionLogRow, type SessionMetaRow, type SessionMessageRow, type SessionSummaryRow, type SessionCheckpointRow } from "./session-log-rows.js";
+import { readLegacySessionBlob, readSessionLogRows, type SessionLogRow, type SessionMetaRow, type SessionMessageRow, type SessionSummaryRow, type SessionCheckpointRow } from "./session-log-rows.js";
 
 /** Pre-Item-3 meta shape — kept only so logs migrated by the previous
  *  Phase 2 step (which wrote `compactedSummary`/`compactedAt` onto the
@@ -256,12 +256,7 @@ export function migrateLegacyJsonToJsonl(dir: string, id: string): boolean {
   const oldPath = legacyJsonPath(dir, id);
   if (existsSync(newPath)) return false;
   if (!existsSync(oldPath)) return false;
-  let parsed: Session & LegacyCompactionMeta;
-  try {
-    parsed = JSON.parse(readFileSync(oldPath, "utf-8")) as Session & LegacyCompactionMeta;
-  } catch {
-    return false;
-  }
+  let parsed = readLegacySessionBlob(oldPath) as (Session & LegacyCompactionMeta) | null;
   if (!parsed || typeof parsed.id !== "string") return false;
 
   // Project legacy compactedSummary/compactedAt into a leading system

@@ -7,10 +7,9 @@
  */
 
 import { isHarnessRow } from "../harness-rows.js";
-import { readSessionLogRows, sessionLogDate, sessionLogMeta } from "./session-log-rows.js";
+import { readLegacySessionBlob, readSessionLogRows, sessionLogDate, sessionLogMeta } from "./session-log-rows.js";
 import { withChunkProvenance } from "./search-helpers.js";
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
 import type { ChunkMetadata } from "./index.js";
 import { stripHarnessScaffolding } from "../sanitize.js";
 
@@ -234,12 +233,8 @@ export function extractSessionPairs(sessionPath: string): ConversationMessage[] 
     // Legacy `.json` path — try the file directly first, then fall back
     // to a `.jsonl` sibling for post-migration callers that still pass
     // the old extension.
-    try {
-      session = JSON.parse(readFileSync(sessionPath, "utf-8")) as SessionData;
-    } catch {
-      const jsonlAlt = sessionPath.replace(/\.json$/, ".jsonl");
-      session = parseJsonlSession(jsonlAlt);
-    }
+    session = readLegacySessionBlob(sessionPath) as SessionData | null
+      ?? parseJsonlSession(sessionPath.replace(/\.json$/, ".jsonl"));
   }
   if (!session || !session.messages || !Array.isArray(session.messages)) return [];
 

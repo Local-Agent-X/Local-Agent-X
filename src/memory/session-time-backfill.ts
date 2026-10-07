@@ -18,7 +18,7 @@ import { join } from "node:path";
 import { atomicWriteFileSync } from "./utils.js";
 import { isHarnessRow } from "../harness-rows.js";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
-import type { SessionMessageRow } from "./session-log-rows.js";
+import { parseSessionLogText, type SessionMessageRow } from "./session-log-rows.js";
 import type { OpMessageRow } from "../canonical-loop/types.js";
 
 interface TurnOp { opId: string; createdAt: string; completedAt?: string; task: string; used: boolean }
@@ -68,10 +68,8 @@ export function planSessionTimes(sessionId: string, logText: string, ops: TurnOp
   let turnTime: { start: string; end: string } | null = null;
   let inTurn = false;
   let turnRows: OpMessageRow[] = [];
-  logText.split("\n").forEach((line, i) => {
-    let row: SessionMessageRow;
-    try { row = JSON.parse(line); } catch { return; }
-    if (row.kind !== "msg" || !row.message) return;
+  for (const { line: i, row } of parseSessionLogText(logText)) {
+    if (row.kind !== "msg" || !row.message) continue;
     const m = row.message as ChatCompletionMessageParam;
     const opensTurn = m.role === "user" && !isHarnessRow(m);
     if (opensTurn) {
@@ -89,7 +87,7 @@ export function planSessionTimes(sessionId: string, logText: string, ops: TurnOp
     const k = turnRows.findIndex((r) => r.role === OP_ROLE[m.role]);
     const id = k >= 0 ? turnRows.splice(0, k + 1)[k].messageId : null;
     plan.times.push({ line: i, createdAt: at, id, preview: text(m.content).slice(0, 60), before: row.createdAt });
-  });
+  }
   return plan;
 }
 
@@ -97,8 +95,9 @@ export function planSessionTimes(sessionId: string, logText: string, ops: TurnOp
  *  are kept byte-for-byte. */
 export function applySessionTimes(path: string, logText: string, plan: SessionTimePlan): void {
   const lines = logText.split("\n");
+  const rowAt = new Map(parseSessionLogText(logText).map((r) => [r.line, r.row]));
   for (const t of plan.times) {
-    const prev = JSON.parse(lines[t.line]) as SessionMessageRow;
+    const prev = rowAt.get(t.line) as SessionMessageRow;
     // Same key order as the session writer (message, then provenance), so a
     // re-run — or the app's next save — rewrites nothing.
     const row: SessionMessageRow = {
@@ -142,9 +141,9 @@ export function applyAllSessions(laxDir: string, plans: SessionTimePlan[], stamp
 export function countPendingRows(laxDir: string, plans: SessionTimePlan[]): number {
   let pending = 0;
   for (const plan of plans) {
-    const lines = readFileSync(join(laxDir, "sessions", `${plan.sessionId}.jsonl`), "utf-8").split("\n");
+    const rowAt = new Map(parseSessionLogText(readFileSync(join(laxDir, "sessions", `${plan.sessionId}.jsonl`), "utf-8")).map((r) => [r.line, r.row]));
     for (const t of plan.times) {
-      const row = JSON.parse(lines[t.line]) as SessionMessageRow;
+      const row = rowAt.get(t.line) as SessionMessageRow;
       const want = t.createdAt ?? null;
       const have = row.timeUnknown ? null : row.createdAt;
       if (!row.id || want !== have) pending++;

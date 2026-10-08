@@ -326,7 +326,9 @@ async function runCase(provider, caseDef, fixture) {
         result.approvals.push(...reply.approvals); result.notices.push(...reply.notices);
         if (reply.error) result.errors.push(reply.error);
         while (result.scriptedSends.length < MAX_SCRIPTED_SENDS) {
-          const rule = scripted.find((r) => r.used < (r.max ?? 1) && r.re.test(reply.text));
+          // `inSession` scopes a rule to one session (0-based): a pushback meant
+          // for the recall in session 2 must not fire on session 1's "saved".
+          const rule = scripted.find((r) => r.used < (r.max ?? 1) && (r.inSession === undefined || r.inSession === s) && r.re.test(reply.text));
           if (!rule) break;
           rule.used++;
           result.scriptedSends.push(rule.send);

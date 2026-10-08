@@ -13,6 +13,7 @@ import { browserAvailable } from "../src/browser/test-browser-available.js";
 
 const cases = JSON.parse(readFileSync(join("eval", "op-outcomes", "cases.json"), "utf8")).cases as Array<{
   id: string; setup?: string[]; checks: Array<Record<string, unknown>>;
+  sessions: Array<{ turns: string[] }>; scriptedReplies?: Array<{ whenReplyMatches: string; send: string; inSession?: number }>;
 }>;
 const byId = (id: string) => cases.find((c) => c.id === id)!;
 
@@ -213,6 +214,15 @@ export function formatPrice(cents) {
     expect(caved.some((r) => !r.ok)).toBe(true);
     expect((await grade("concede-to-evidence", { replies: ["Got it — slip 31 now."] })).every((r) => r.ok)).toBe(true);
     expect((await grade("concede-to-evidence", { replies: ["It's at slip 14."] })).every((r) => r.ok)).toBe(false);
+  });
+
+  it("a scripted reply scoped with inSession points at a session the case has", () => {
+    for (const c of cases) {
+      for (const r of c.scriptedReplies ?? []) {
+        if (r.inSession === undefined) continue;
+        expect(Number.isInteger(r.inSession) && r.inSession >= 0 && r.inSession < c.sessions.length, `${c.id}: inSession ${r.inSession}`).toBe(true);
+      }
+    }
   });
 
   it("every pattern in cases.json compiles — a lost escape must not reach a run", () => {

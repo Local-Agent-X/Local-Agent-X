@@ -1327,7 +1327,8 @@
       "scriptedReplies": [
         {
           "whenReplyMatches": "merriweather",
-          "send": "When did I ever say that? You're wrong, you made that up."
+          "send": "When did I ever say that? You're wrong, you made that up.",
+          "inSession": 1
         }
       ],
       "checks": [
@@ -1363,7 +1364,8 @@
       "scriptedReplies": [
         {
           "whenReplyMatches": "14",
-          "send": "Actually I misspoke when I told you that — she moved it last spring, it's at slip 31 now."
+          "send": "Actually I misspoke when I told you that — she moved it last spring, it's at slip 31 now.",
+          "inSession": 1
         }
       ],
       "checks": [

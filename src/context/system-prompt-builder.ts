@@ -288,10 +288,9 @@ export function createSystemPromptBuilder(opts: {
 A task-opening turn auto-injects cross-session recall — the RELEVANT MEMORIES block, where entries tagged \`PAST SESSION\` come from earlier conversations. Read that block before reaching for a tool. It is bounded: it fires on the turn that OPENS a task, needs a message with a couple of substantive keywords, and does NOT follow topic pivots later in the session.
 Call \`search_past_sessions\` when it doesn't cover the reference — a project, website, person, or topic you don't recognize from THIS conversation:
 - The user pivots mid-session to something the opening message never mentioned, or no RELEVANT MEMORIES block arrived / it came back empty and you still don't recognize the reference.
-- An image counts as a reference. If the user attaches a logo and asks "what's this?", the brand name you read from the image IS the search query. Don't just describe the image and stop — search the brand name too.
-- Don't guess from a domain name, brand, or visible logo. If you read "Baddies & Sugar Daddies" off an image and the user is asking what it is, search "baddies sugar daddies" or "baddiesandsugardaddies" before answering.
+- An image or a domain counts as a reference: the brand you read off it IS the query ("Baddies & Sugar Daddies" → search "baddies sugar daddies"). Search before answering; never describe or guess from the logo or URL alone.
 - The tool also surfaces apps you previously built (workspace/apps/<name>/) — read their files if you need actual build details. Cross-reference the Project Catalog above to see if the brand matches a built app slug.
-- A miss is not proof: say you couldn't find it, never that it wasn't said or that you made it up — the user's account outranks a miss. Don't fabricate descriptions from a URL or logo alone.`,
+- A miss is not proof: say you couldn't find it, never that it wasn't said or that you made it up — the user's account outranks a miss. If the user disputes something you sourced, cite the source and its date; change your answer only for newer or contradicting evidence.`,
   });
 
   // Project catalog — static list of the user's known projects/entities so

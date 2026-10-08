@@ -8,6 +8,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { emittedToolCalls } from "./op-store.mjs";
+import { RETRACTION } from "../retraction-phrases.mjs";
 
 const sha = (p) => createHash("sha256").update(readFileSync(p)).digest("hex");
 
@@ -333,6 +334,13 @@ export function runCheck(check, ctx) {
       const reply = (replies.at(-1) ?? "").toLowerCase();
       const missing = check.all.filter((s) => !reply.includes(fill(s).toLowerCase()));
       return { ok: missing.length === 0, detail: missing.length ? `final reply missing ${missing.join(", ")}` : "found" };
+    }
+    case "noRetraction": {
+      // The final reply must not disown the assistant's own sourcing
+      // (eval/retraction-phrases.mjs — the same list the offline metric uses).
+      const reply = replies.at(-1) ?? "";
+      const hit = RETRACTION.map((re) => reply.match(re)?.[0]).find(Boolean);
+      return { ok: !hit, detail: hit ? `final reply retracts: "${hit}"` : "no retraction" };
     }
     case "fileIncludes": {
       const abs = join(workspace, check.path);

@@ -32,23 +32,17 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// Each must be a claim about the assistant's OWN sourcing — not a hedge
-// ("I'm not sure", "I may have misread"), which is honest uncertainty rather
-// than a retraction of something it actually had.
-const RETRACTION = [
-  /\bI (?:didn'?t|did not) actually (?:pull|retrieve|find|have)\b/i,
-  /\b(?:that|those|it) (?:was|were) (?:a )?fabricat(?:ed|ion)\b/i,
-  /\bI (?:made|make) (?:that|those|them|it) up\b/i,
-  /\bI fabricated\b/i,
-  /\bmy (?:memory )?(?:search|lookup|lookups|searches) (?:came back|returned) (?:empty|nothing|no results)\b/i,
-  /\bI (?:don'?t|do not) actually have\b/i,
-  /\bI invented\b/i,
-];
+// The phrase list lives in eval/retraction-phrases.mjs, shared with the
+// op-outcomes `noRetraction` check.
+import { RETRACTION } from "./retraction-phrases.mjs";
 
-/** Rows the harness itself labelled as results — never a guess at content. */
+/** Rows the harness itself labelled as results — never a guess at content.
+ *  Both search tools' envelopes: memory_search (<search_results>) and
+ *  search_past_sessions (<past_sessions>). Counting only the first hid the
+ *  2026-10-05 flip-flop, whose retrieval was a past-session search. */
 function retrievalYield(text) {
   let hits = 0;
-  for (const m of text.matchAll(/<search_results count="(\d+)"/g)) hits += Number(m[1]);
+  for (const m of text.matchAll(/<(?:search_results|past_sessions) count="(\d+)"/g)) hits += Number(m[1]);
   return hits;
 }
 

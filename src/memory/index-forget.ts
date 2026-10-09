@@ -5,6 +5,7 @@ import type Database from "better-sqlite3";
 import type { FactKind, RetainedFact } from "./types.js";
 import { atomicWriteFileSync, slugify } from "./utils.js";
 import { recallByEntity } from "./index-facts.js";
+import { localDate } from "./retrieval-format.js";
 
 export const MAX_FACTS_PER_ENTITY = 50;
 export const MAX_FACTS_PER_KIND = 15;
@@ -116,7 +117,7 @@ export function updateEntityPage(
   const lines: string[] = [
     `# ${displayName}`,
     "",
-    `*Page rebuilt: ${new Date().toISOString().split("T")[0]} (memory maintenance — NOT when these things happened; each fact carries its own date below)*`,
+    `*Page rebuilt: ${localDate(Date.now())} (memory maintenance — NOT when these things happened; each fact carries its own date below)*`,
     "",
   ];
 
@@ -139,10 +140,8 @@ export function updateEntityPage(
       // Falling back to `timestamp` is what made a conversation from the 22nd
       // read as having happened on the 23rd, because that is when the
       // consolidation pass that recorded it happened to run.
-      const occurred = fact.occurredAt != null
-        ? new Date(fact.occurredAt).toISOString().split("T")[0]
-        : null;
-      const recorded = new Date(fact.timestamp).toISOString().split("T")[0];
+      const occurred = fact.occurredAt != null ? localDate(fact.occurredAt) : null;
+      const recorded = localDate(fact.timestamp);
       const when = occurred !== null
         ? `*${occurred}*`
         : `*date unknown* (recorded ${recorded})`;

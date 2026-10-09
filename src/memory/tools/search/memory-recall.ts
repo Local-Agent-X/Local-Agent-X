@@ -2,6 +2,7 @@ import type { MemoryIndex } from "../../../memory/index.js";
 import type { FactKind, RetainedFact } from "../../types.js";
 import { readDailyLogsInRange, listNearbyDailyLogDates } from "../../daily-log-range.js";
 import type { ImportChunkEntry } from "../../import-recall.js";
+import { localDate } from "../../retrieval-format.js";
 
 const isoOf = (d: Date): string => d.toISOString().slice(0, 10);
 
@@ -118,7 +119,11 @@ export function memoryRecallTool(memory: MemoryIndex) {
       if (facts.length > 0) {
         const formatted = facts
           .map((f, i) => {
-            const date = new Date(f.timestamp).toISOString().split("T")[0];
+            // Labelled, like the entity page: a bare date after "in 2014, …"
+            // read as when it happened, and in UTC as a date still to come.
+            const date = f.occurredAt != null
+              ? `happened ${localDate(f.occurredAt)}, recorded ${localDate(f.timestamp)}`
+              : `recorded ${localDate(f.timestamp)}`;
             const conf = f.kind === "opinion" ? ` (c=${f.confidence.toFixed(2)})` : "";
             const ents = f.entities.length > 0 ? ` @${f.entities.join(" @")}` : "";
             // Rows written before schema v12 have no persisted origin — omit

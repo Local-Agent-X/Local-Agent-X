@@ -10,7 +10,7 @@ import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import type { MemoryIndex } from "../../../memory/index.js";
 import { readSessionLogRows, sessionLogMeta } from "../../session-log-rows.js";
-import { describeWhen } from "../../retrieval-format.js";
+import { describeWhen, localDate } from "../../retrieval-format.js";
 
 const MAX_CHARS = 8000;
 
@@ -30,7 +30,7 @@ export function readPastMessage(memory: MemoryIndex, messageId: string): string 
     if (!row || row.kind !== "msg") continue;
     const meta = sessionLogMeta(rows);
     const when = describeWhen(row.timeUnknown
-      ? { date: meta ? new Date(meta.createdAt).toISOString().slice(0, 10) : undefined, date_approx: true }
+      ? { date: meta ? localDate(meta.createdAt) : undefined, date_approx: true }
       : { datetime: row.createdAt });
     const body = text(row.message.content);
     const shown = body.length > MAX_CHARS ? `${body.slice(0, MAX_CHARS)}…\n[message continues: ${body.length} characters in all]` : body;

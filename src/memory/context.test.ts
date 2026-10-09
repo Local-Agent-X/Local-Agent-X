@@ -16,6 +16,7 @@ import { join } from "node:path";
 import { MemoryIndex } from "../memory/index.js";
 import { authorizeTestFactMutations } from "./test-promotion.test-helper.js";
 import { buildContextBlock } from "./context.js";
+import { localDate } from "./retrieval-format.js";
 import { updateProjectBrief } from "./project-brief.js";
 import { createInternalMemoryContext } from "./promotion-gate.js";
 
@@ -64,7 +65,7 @@ describe("<core_memory> 'still fresh' salience", () => {
     const block = await buildContextBlock(memory, { skipDailyLog: true });
     const core = extractCoreMemory(block);
 
-    const expectedDate = new Date(thirtyDaysAgo).toISOString().slice(0, 10);
+    const expectedDate = localDate(thirtyDaysAgo);
     expect(core).toContain(`${expectedDate}: Rex the dog died`);
     expect(core).not.toContain("still fresh");
   });
@@ -80,7 +81,7 @@ describe("<core_memory> 'still fresh' salience", () => {
     const block = await buildContextBlock(memory, { skipDailyLog: true });
     const core = extractCoreMemory(block);
 
-    const expectedDate = new Date(threeDaysAgo).toISOString().slice(0, 10);
+    const expectedDate = localDate(threeDaysAgo);
     expect(core).toContain(`${expectedDate}: Started Bookwell build`);
     expect(core).toContain("still fresh");
   });
@@ -101,8 +102,8 @@ describe("<core_memory> 'still fresh' salience", () => {
     const block = await buildContextBlock(memory, { skipDailyLog: true });
     const core = extractCoreMemory(block);
 
-    const oldDate = new Date(thirtyDaysAgo).toISOString().slice(0, 10);
-    const todayDate = new Date(todayMs).toISOString().slice(0, 10);
+    const oldDate = localDate(thirtyDaysAgo);
+    const todayDate = localDate(todayMs);
     expect(core).toContain(`${oldDate}: Rex the dog died`);
     expect(core).not.toContain(`${todayDate}: Rex the dog died`);
     expect(core).not.toContain("still fresh");
@@ -119,7 +120,7 @@ describe("<core_memory> 'still fresh' salience", () => {
     const core = extractCoreMemory(block);
 
     expect(core).toContain("prefers oat milk");
-    const todayDate = new Date(now).toISOString().slice(0, 10);
+    const todayDate = localDate(now);
     expect(core).not.toContain(`${todayDate}: prefers oat milk`);
     expect(core).not.toContain("still fresh");
   });

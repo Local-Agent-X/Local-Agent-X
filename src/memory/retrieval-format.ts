@@ -36,6 +36,18 @@ export function excerptAround(text: string, query: string | undefined, max: numb
   return { snippet, window: { start, end, total: text.length } };
 }
 
+const pad2 = (n: number) => String(n).padStart(2, "0");
+
+/** A stored moment as the LOCAL calendar day (YYYY-MM-DD) — the clock the
+ *  prompt's "Today is …" is written in (context.ts <current_datetime>). Dating
+ *  memory in UTC beside it made a fact saved at 20:55 local read as saved
+ *  "tomorrow", and the agent took that as a sign the fact was fabricated
+ *  (eval run, 2026-10-08). Every date shown to the model uses this. */
+export function localDate(ms: number): string {
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+
 /** When a chunk's content was said, in words a model and a person read the
  *  same way: the exact local time for a session exchange whose time is known,
  *  the chat's start date flagged as approximate when it is not, else the
@@ -44,8 +56,7 @@ export function describeWhen(metadata: ChunkMetadata | undefined): string | unde
   if (metadata?.datetime) {
     const d = new Date(metadata.datetime);
     if (!Number.isNaN(d.getTime())) {
-      const p = (n: number) => String(n).padStart(2, "0");
-      return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())} local`;
+      return `${localDate(d.getTime())} ${pad2(d.getHours())}:${pad2(d.getMinutes())} local`;
     }
   }
   if (metadata?.date_approx && metadata.date) return `${metadata.date} (chat start; exact time unknown)`;

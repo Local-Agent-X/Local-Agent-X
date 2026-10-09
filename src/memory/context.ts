@@ -7,6 +7,7 @@ import { factTrustSuffix } from "./fact-provenance-label.js";
 import { safeReadTextFile } from "./utils.js";
 import { scanMentionedEntities, renderKnownEntitiesBody, findCutoffMisses } from "./entity-context.js";
 import { logMemoryRecall } from "./recall-telemetry.js";
+import { localDate } from "./retrieval-format.js";
 
 // autoSearchContext moved to its own module (task-start cross-session recall
 // lives there). Re-exported so existing importers of context.js keep working.
@@ -204,7 +205,7 @@ export async function buildContextBlockParts(
       let prefix = "";
       let suffix = "";
       if (f.kind === "experience" && f.timestamp) {
-        prefix = `${new Date(f.timestamp).toISOString().slice(0, 10)}: `;
+        prefix = `${localDate(f.timestamp)}: `;
         if (todayNum - localDayNumber(f.timestamp, tz) < FRESH_WINDOW_DAYS) suffix = " — still fresh";
       }
       suffix += factTrustSuffix(f.sourceFile);

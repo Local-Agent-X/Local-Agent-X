@@ -8,6 +8,11 @@ const logger = createLogger("memory.index-schema");
 // existing consumers of this module keep one import site.
 export { CURRENT_SCHEMA_VERSION, migrateSchema };
 
+/** Both keyword indexes stem, so every-word search matches across word
+ *  endings ("text" ~ "texted"). Changing it needs a migration that drops and
+ *  rebuilds the tables (v16). */
+export const FTS_TOKENIZE = "'porter unicode61'";
+
 export function getSchemaVersion(db: InstanceType<typeof Database>): number {
   try {
     const row = db
@@ -41,20 +46,24 @@ export function initSchema(
       CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
         text,
         content=chunks,
-        content_rowid=id
+        content_rowid=id,
+        tokenize=${FTS_TOKENIZE}
       );
     `);
     db.exec(`
       CREATE VIRTUAL TABLE IF NOT EXISTS facts_fts USING fts5(
         content,
         content=facts,
-        content_rowid=id
+        content_rowid=id,
+        tokenize=${FTS_TOKENIZE}
       );
     `);
     hasFts = true;
   } catch {
     logger.info("[memory] FTS5 not available — keyword search disabled");
   }
+  // v16 dropped both tables to change their tokenizer; refill from the source rows.
+  if (hasFts && existingVersion > 0 && existingVersion < 16) rebuildFtsIndex(db, hasFts);
 
   logger.info(`[memory] Schema migration complete (v${CURRENT_SCHEMA_VERSION})`);
   return { hasFts };

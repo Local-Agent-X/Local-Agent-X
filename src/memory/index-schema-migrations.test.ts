@@ -73,7 +73,7 @@ describe("schema v12 fact provenance migration", () => {
       const rows = db.prepare("SELECT provenance FROM facts ORDER BY id").all() as Array<{ provenance: string | null }>;
       expect(rows).toEqual([{ provenance: null }, { provenance: null }]);
       expect(schemaVersion(db)).toBe(CURRENT_SCHEMA_VERSION);
-      expect(CURRENT_SCHEMA_VERSION).toBe(15);
+      expect(CURRENT_SCHEMA_VERSION).toBe(16);
     } finally {
       db.close();
     }
@@ -189,5 +189,55 @@ describe("schema v14 fact event-time migration", () => {
     } finally {
       db.close();
     }
+  });
+});
+
+describe("schema v16 stemmed keyword indexes", () => {
+  const match = (db: Db, table: "chunks_fts" | "facts_fts", term: string) =>
+    (db.prepare(`SELECT rowid FROM ${table} WHERE ${table} MATCH ?`).all(`"${term}"`) as Array<{ rowid: number }>).map((r) => r.rowid);
+
+  // A v15 database: the full schema, but FTS tables created unstemmed and
+  // holding the rows the old tokenizer indexed.
+  function buildV15Db(): Db {
+    const db = new Database(":memory:");
+    initSchema(db);
+    db.exec(`
+      DROP TABLE chunks_fts; DROP TABLE facts_fts;
+      CREATE VIRTUAL TABLE chunks_fts USING fts5(text, content=chunks, content_rowid=id);
+      CREATE VIRTUAL TABLE facts_fts USING fts5(content, content=facts, content_rowid=id);
+      UPDATE meta SET value = '15' WHERE key = 'schema_version';
+    `);
+    db.prepare("INSERT INTO chunks (id, path, source, start_line, end_line, text, hash, updated_at) VALUES (1, 's.jsonl', 'session', 1, 2, ?, 'h', 0)")
+      .run('[user] in 2014 my cousin texted my brother "did you sell Merriweather yet"');
+    db.prepare("INSERT INTO chunks_fts (rowid, text) VALUES (1, ?)").run('[user] in 2014 my cousin texted my brother "did you sell Merriweather yet"');
+    db.prepare("INSERT INTO facts (id, kind, content, source_file, timestamp, last_updated) VALUES (1, 'experience', 'Odalys moved her boats to slip 31', 'x', 0, 0)").run();
+    db.prepare("INSERT INTO facts_fts (rowid, content) VALUES (1, 'Odalys moved her boats to slip 31')").run();
+    return db;
+  }
+
+  it("a v15 index misses word endings — the every-word search that lost the source (2026-10-08)", () => {
+    const db = buildV15Db();
+    expect(match(db, "chunks_fts", "text")).toEqual([]);
+    expect(match(db, "facts_fts", "boat")).toEqual([]);
+  });
+
+  it("upgrading rebuilds both indexes stemmed, keeping every row", () => {
+    const db = buildV15Db();
+    initSchema(db);
+    expect(schemaVersion(db)).toBe(CURRENT_SCHEMA_VERSION);
+    expect(match(db, "chunks_fts", "text")).toEqual([1]);
+    expect(match(db, "chunks_fts", "Merriweather")).toEqual([1]);
+    expect(match(db, "facts_fts", "boat")).toEqual([1]);
+    expect(match(db, "facts_fts", "move")).toEqual([1]);
+  });
+
+  it("a fresh database stems from the start, and reopening does not rebuild", () => {
+    const db = new Database(":memory:");
+    initSchema(db);
+    db.prepare("INSERT INTO chunks (id, path, source, start_line, end_line, text, hash, updated_at) VALUES (7, 'p', 'session', 1, 1, 'she texted him', 'h', 0)").run();
+    db.prepare("INSERT INTO chunks_fts (rowid, text) VALUES (7, 'she texted him')").run();
+    expect(match(db, "chunks_fts", "texts")).toEqual([7]);
+    initSchema(db);
+    expect(match(db, "chunks_fts", "text")).toEqual([7]);
   });
 });

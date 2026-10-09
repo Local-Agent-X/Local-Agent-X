@@ -13,7 +13,7 @@ import { backfillEntityLinks } from "./entity-derive.js";
 import { createLogger } from "../logger.js";
 const logger = createLogger("memory.index-schema");
 
-export const CURRENT_SCHEMA_VERSION = 15;
+export const CURRENT_SCHEMA_VERSION = 16;
 
 function backfillValidChunkSessionIds(db: InstanceType<typeof Database>): void {
   const rows = db
@@ -360,6 +360,19 @@ export function migrateSchema(
       // sync sweep, which no longer exempts them and removes them with their
       // FTS and vector rows.
       try { db.exec(`UPDATE files SET hash = '' WHERE source = 'session' AND path NOT LIKE 'session-live/%'`); } catch {}
+    }
+
+    if (fromVersion < 16) {
+      // v16: the keyword indexes stem (index-schema.ts FTS_TOKENIZE). Without
+      // it every-word search failed on word endings — "text" never matched
+      // "texted" — and a weaker chunk that happened to carry the literal word
+      // won instead: an eval run's past-session search returned the agent's own
+      // answer and missed the message the user had said it in, and the agent
+      // took a true fact back (2026-10-08). A tokenizer is fixed when an FTS
+      // table is created, so drop both here; initSchema recreates them and
+      // rebuilds their rows from chunks/facts.
+      try { db.exec("DROP TABLE IF EXISTS chunks_fts"); } catch {}
+      try { db.exec("DROP TABLE IF EXISTS facts_fts"); } catch {}
     }
 
     db

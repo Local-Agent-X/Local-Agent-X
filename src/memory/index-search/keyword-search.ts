@@ -5,6 +5,13 @@ import { bm25RankToScore, buildFtsAnyQuery, buildFtsQuery } from "../utils.js";
 /** "all": every keyword must appear. "any": at least one, bm25-ranked. */
 export type KeywordMatch = "all" | "any";
 
+/** Least score of a chunk holding every keyword. bm25 scores discrimination,
+ *  and FTS5 clamps a word's idf to ~0 once it is in over half the chunks — so
+ *  on a small index (a new install, an eval run: 11 chunks about one story) an
+ *  exact every-word match scored 0.000 and fell under the score floor, while
+ *  on a populated one the same match scores ~0.95 (measured 2026-10-08). */
+export const EVERY_WORD_MATCH_FLOOR = 0.5;
+
 export function searchKeyword(
   db: InstanceType<typeof Database>,
   query: string,
@@ -63,7 +70,7 @@ export function searchKeyword(
           session_id: r.session_id ?? undefined,
         },
         updatedAt: r.updated_at,
-        score: bm25RankToScore(r.rank),
+        score: match === "all" ? Math.max(EVERY_WORD_MATCH_FLOOR, bm25RankToScore(r.rank)) : bm25RankToScore(r.rank),
       }));
   } catch {
     return [];

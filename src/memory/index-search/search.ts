@@ -86,16 +86,24 @@ export async function searchInIndex(
     // collide with a vector-found sibling on a positional key, be misclassified
     // as vector-found, denied this rescore, and dropped. That is the very
     // non-unique key hybridMergeKey was written to reject.
+    //
+    // The same rescore is a FLOOR for a chunk both channels found: a weak
+    // vector match is not evidence against an exact keyword one. Blending
+    // alone scored an every-word hit 0.7×0.17 + 0.3×0.5 = 0.27 — under the
+    // floor, when missing the vector top-K would have scored it 0.70. A
+    // one-word past-session search ("Merriweather") returned nothing, the
+    // user's own message among the dropped, and the agent took a true fact
+    // back (eval run, 2026-10-08).
     if (deps.config.textWeight > 0) {
-      const vectorIds = new Set(vectorResults.map((r) => r.id));
+      const keywordScore = new Map(keywordResults.map((r) => [r.id, r.score]));
       for (const r of merged) {
-        if (!vectorIds.has(r.id)) {
-          // Cap the rescored keyword-only score at vectorWeight, the ceiling of
-          // a vector-only hit (vectorWeight×score, score≤1). Rescoring up to 1.0
-          // let a keyword-only hit outrank every vector hit, inverting the
-          // configured vectorWeight>textWeight priority for disjoint hits.
-          r.score = Math.min(deps.config.vectorWeight, r.score / deps.config.textWeight);
-        }
+        const k = keywordScore.get(r.id);
+        if (k === undefined) continue;
+        // Cap the rescored keyword score at vectorWeight, the ceiling of
+        // a vector-only hit (vectorWeight×score, score≤1). Rescoring up to 1.0
+        // let a keyword-only hit outrank every vector hit, inverting the
+        // configured vectorWeight>textWeight priority for disjoint hits.
+        r.score = Math.max(r.score, Math.min(deps.config.vectorWeight, k / deps.config.textWeight));
       }
       merged.sort((a, b) => b.score - a.score);
     }

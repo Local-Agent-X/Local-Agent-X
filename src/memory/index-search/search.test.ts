@@ -151,3 +151,30 @@ describe("hybrid search: keyword-only vs vector-found siblings sharing startLine
     expect(vecHit!.score).toBeCloseTo(0.7 * 0.7, 5);
   });
 });
+
+describe("hybrid search: a weak vector match never lowers an exact keyword hit", () => {
+  it("scores a chunk both channels found at least what its keyword match alone earns", async () => {
+    // Eval run 2026-10-08: search_past_sessions("Merriweather") — the user's
+    // message held the word (keyword 0.5), the local tf-idf vector barely
+    // matched (0.17). Blended 0.7×0.17 + 0.3×0.5 = 0.27 < 0.35: dropped, while
+    // the vector channel missing it entirely would have scored 0.70.
+    const sourceChunk = {
+      id: 6, path: "sessions/chat-0.jsonl", source: "session", startLine: 1, endLine: 2,
+      text: '[user] in 2014 my cousin Odalys texted my brother "did you sell Merriweather yet"', hash: "",
+    };
+    vi.mocked(searchKeyword).mockReturnValueOnce([{ ...sourceChunk, score: 0.5 }]);
+    vi.mocked(searchVectorOffThread).mockResolvedValueOnce([{ ...sourceChunk, score: 0.17 }]);
+    const results = await searchInIndex(makeDeps(), "merriweather", { maxResults: 5, minScore: 0.35, crossSession: true });
+    const hit = results.find((r) => r.snippet.includes("Merriweather"));
+    expect(hit, "an every-word keyword hit was dropped for also matching weakly by vector").toBeDefined();
+    expect(hit!.score).toBeCloseTo(0.7, 5);
+  });
+
+  it("keeps the blend when it is higher: a strong vector match still ranks above the keyword floor", async () => {
+    const chunk = { id: 7, path: "bank/x.md", source: "entity", startLine: 1, endLine: 1, text: "bookwell kickoff goals", hash: "" };
+    vi.mocked(searchKeyword).mockReturnValueOnce([{ ...chunk, score: 0.9 }]);
+    vi.mocked(searchVectorOffThread).mockResolvedValueOnce([{ ...chunk, score: 0.95 }]);
+    const [hit] = await searchInIndex(makeDeps(), "bookwell kickoff", { maxResults: 5, minScore: 0.35 });
+    expect(hit.score).toBeCloseTo(0.7 * 0.95 + 0.3 * 0.9, 5);
+  });
+});

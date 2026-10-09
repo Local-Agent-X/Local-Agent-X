@@ -8,6 +8,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { emittedToolCalls } from "./op-store.mjs";
+import { factStored } from "./checks-memory.mjs";
 import { RETRACTION } from "../retraction-phrases.mjs";
 
 const sha = (p) => createHash("sha256").update(readFileSync(p)).digest("hex");
@@ -341,6 +342,10 @@ export function runCheck(check, ctx) {
       const reply = replies.at(-1) ?? "";
       const hit = RETRACTION.map((re) => reply.match(re)?.[0]).find(Boolean);
       return { ok: !hit, detail: hit ? `final reply retracts: "${hit}"` : "no retraction" };
+    }
+    case "factStored": {
+      if (!dataDir) return { ok: false, detail: "factStored needs the run's data dir (ctx.dataDir)" };
+      return factStored(check, dataDir, fill);
     }
     case "fileIncludes": {
       const abs = join(workspace, check.path);

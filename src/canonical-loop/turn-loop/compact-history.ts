@@ -34,7 +34,8 @@ const logger = createLogger("canonical-loop.compact-history");
 // read. Lossy by design, but never EMPTY: token counting and the summarizer
 // transcript must see tool payloads or a tool-heavy op under-counts and never
 // compacts. tool_result payloads live under `content.result` (dispatch-tools.ts)
-// and assistant tool calls under `content.toolCalls` (seed-messages.ts) — both
+// or `content.text` (re-seeded history; extractToolResultText reads both) and
+// assistant tool calls under `content.toolCalls` (seed-messages.ts) — both
 // are surfaced here. tool_result/control collapse to user text so we never need
 // a tool_call_id; this projection is never sent to a provider.
 export function toChatParams(messages: CanonicalMessage[]): ChatCompletionMessageParam[] {

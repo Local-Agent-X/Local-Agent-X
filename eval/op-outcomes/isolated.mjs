@@ -162,6 +162,12 @@ export async function startIsolatedServer({ repoRoot, provider, model, fixturePo
   const seed = seedProbeProvider(dataDir, provider);
   if (seed.unavailable) throw new Error(`${provider}: ${seed.unavailable}`);
   writeFileSync(join(dataDir, "settings.json"), JSON.stringify({ provider, model, ...backgroundModelSetting() }));
+  // A named user and agent, as on any install past its first chat. Unnamed,
+  // the prompt's first-turn identity ask is owed, and every graded reply on
+  // every provider ended in "Agent X reporting for duty…" (2026-10-08).
+  mkdirSync(join(dataDir, "memory"), { recursive: true });
+  writeFileSync(join(dataDir, "memory", "USER.md"), "# About Me\n\n- Name: Sam\n");
+  writeFileSync(join(dataDir, "memory", "IDENTITY.md"), "# Agent Identity\n\n- Name: Agent X\n");
   // A case may pin the autonomy profile (restraint cases run as Normal, where an
   // un-named delete still asks); otherwise the product default applies.
   if (profile) writeFileSync(join(dataDir, "autonomy-profile.json"), JSON.stringify({ profile }));

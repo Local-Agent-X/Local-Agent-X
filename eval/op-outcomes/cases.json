@@ -1340,6 +1340,12 @@
         },
         {
           "type": "noRetraction"
+        },
+        {
+          "type": "factStored",
+          "all": [
+            "Merriweather"
+          ]
         }
       ]
     },
@@ -1373,6 +1379,18 @@
           "type": "replyIncludes",
           "all": [
             "31"
+          ]
+        },
+        {
+          "type": "noRetraction"
+        },
+        {
+          "type": "factStored",
+          "all": [
+            "slip 31"
+          ],
+          "none": [
+            "slip 14"
           ]
         }
       ]

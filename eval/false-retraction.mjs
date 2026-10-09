@@ -28,7 +28,15 @@
 // counted, so entity-page and file reads are invisible, and the phrase list
 // below catches only the bluntest wordings.
 //
-// Usage: node eval/false-retraction.mjs ~/.lax/sessions
+// Measured 2026-10-08 on a second machine (2,366 sessions): 3 candidates, all
+// three real false retractions, all three caused by one bug — before 9b4dd153
+// (2026-09-26) every tool result from an earlier turn reached the model as
+// the string "null", so it read its own lookups as empty. A count that mixes
+// in an already-fixed cause says nothing about today's code, so retractions
+// before --since (default: the day after that fix) are counted separately.
+// Rows whose time was unrecoverable (timeUnknown) are kept and flagged.
+//
+// Usage: node eval/false-retraction.mjs ~/.lax/sessions [--since YYYY-MM-DD]
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -59,19 +67,23 @@ function messagesOf(file) {
         : Array.isArray(m.content)
           ? m.content.map(c => c?.text ?? c?.content ?? "").map(x => (typeof x === "string" ? x : JSON.stringify(x))).join("\n")
           : "";
-      out.push({ role: m.role ?? "?", content });
+      out.push({ role: m.role ?? "?", content, createdAt: rec.createdAt, timeUnknown: rec.timeUnknown === true });
     } catch { /* a truncated tail line is not a finding */ }
   }
   return out;
 }
 
 const dir = process.argv[2];
-if (!dir) {
-  console.error("usage: node eval/false-retraction.mjs <sessions-dir>");
+const sinceArg = process.argv.indexOf("--since");
+const since = sinceArg > 0 ? process.argv[sinceArg + 1] : "2026-09-27";
+if (!dir || !/^\d{4}-\d{2}-\d{2}$/.test(since ?? "")) {
+  console.error("usage: node eval/false-retraction.mjs <sessions-dir> [--since YYYY-MM-DD]");
   process.exit(2);
 }
+// A row with no time at all predates per-message times; it cannot be after --since.
+const inWindow = (m) => typeof m.createdAt === "string" && m.createdAt.slice(0, 10) >= since;
 
-let scanned = 0, withRetrieval = 0, withRetraction = 0;
+let scanned = 0, withRetrieval = 0, withRetraction = 0, beforeSince = 0;
 const findings = [];
 
 for (const f of readdirSync(dir).filter(n => n.endsWith(".jsonl"))) {
@@ -85,7 +97,9 @@ for (const f of readdirSync(dir).filter(n => n.endsWith(".jsonl"))) {
     .reduce((sum, m) => sum + retrievalYield(m.content), 0);
   if (yielded > 0) withRetrieval++;
 
-  const retractions = msgs.filter(m => m.role === "assistant" && RETRACTION.some(re => re.test(m.content)));
+  const allRetractions = msgs.filter(m => m.role === "assistant" && RETRACTION.some(re => re.test(m.content)));
+  const retractions = allRetractions.filter(inWindow);
+  if (allRetractions.length > retractions.length) beforeSince++;
   if (retractions.length > 0) withRetraction++;
 
   if (retractions.length > 0 && yielded > 0) {
@@ -94,21 +108,24 @@ for (const f of readdirSync(dir).filter(n => n.endsWith(".jsonl"))) {
       file: f,
       resultsReturned: yielded,
       retractions: retractions.length,
+      at: retractions[0].createdAt + (retractions[0].timeUnknown ? " (time unknown)" : ""),
       quote: (retractions[0].content.match(matched)?.[0] ?? "").slice(0, 80),
     });
   }
 }
 
+console.log(`retractions counted from:         ${since}`);
 console.log(`sessions scanned:                 ${scanned}`);
 console.log(`  with a retrieval that returned: ${withRetrieval}`);
 console.log(`  with any retraction phrase:     ${withRetraction}`);
 console.log(`  candidates (both):              ${findings.length}`);
+console.log(`  with a retraction before then:  ${beforeSince} (not counted)`);
 console.log("");
 console.log("Candidates are NOT findings — read each one. A model that genuinely");
 console.log("invented placeholder data is correcting itself, which is the behavior");
 console.log("we want, and it matches these phrases too.");
 console.log("");
 for (const f of findings) {
-  console.log(`  ${f.file}  results=${f.resultsReturned} retractions=${f.retractions}`);
+  console.log(`  ${f.file}  ${f.at}  results=${f.resultsReturned} retractions=${f.retractions}`);
   console.log(`    "${f.quote}"`);
 }

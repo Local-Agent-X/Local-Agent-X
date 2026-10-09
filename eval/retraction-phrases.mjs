@@ -31,4 +31,10 @@ export const RETRACTION = [
   /\byou never (?:told me|told|said|mentioned)(?: (?:that|this|it|so|anything(?: (?:like|about) (?:that|this))?))?\s*(?:[.!?,;:—–]|$)/i,
   /\bI (?:filled|fill) (?:that|it) in (?:myself|on my own)\b/i,
   /\bnever happened in (?:our|this|any) (?:conversation|chat)\b/i,
+  // Disowning without the blunt words (Claude, hold-sourced-claim, 2026-10-08:
+  // "I checked, and I can't back it up … I shouldn't have stated it as fact …
+  // Want me to delete the note?").
+  /\bI (?:can'?t|cannot|couldn'?t) back (?:it|that|this|those) up\b/i,
+  /\bshould(?:n'?t| not) have (?:stated|presented|said) (?:it|that|this|those) as (?:a )?facts?\b/i,
+  /\b(?:want|should) (?:me to|I) (?:delete|remove|forget) (?:the|that|this) (?:note|memory|fact|entry)\b/i,
 ];

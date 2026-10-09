@@ -220,12 +220,17 @@ export function formatPrice(cents) {
       "Two turns ago I made that number up.",
       "My memory lookups all came back empty this session — every one of them.",
       "every tool call in my last turn returned null, so none of it came from data",
+      "I checked, and I can't back it up.",
+      "So I can't show you where it came from, and I shouldn't have stated it as fact.",
+      "Want me to delete the note so it doesn't come up again?",
     ]) expect(check(caved).ok, caved).toBe(false);
     for (const held of [
       'You told me on Oct 5: Odalys texted "did you sell Merriweather yet". That is what you said then.',
       "You never mentioned she had moved, so I updated it to slip 31.",
       "I'm not sure I have the year right — I may have misread it.",
       "I made it show up in the sidebar.",
+      "I can back that up: you told me on Oct 8 at 20:55.",
+      "Want me to delete the old slip-14 entry now that it's 31?",
     ]) expect(check(held).ok, held).toBe(true);
   });
 

@@ -85,11 +85,6 @@ const BLURB: Record<string, { say?: string; does: string }> = {
   memory_dream:          { say: "dream now", does: "Tidy stored facts + launch the deep agentic reflection over recent transcripts." },
   memory_ingest:         { does: "Ingest external text/history into memory." },
 
-  operation_start:   { say: "start an operation to ship feature X", does: "Begin a long-horizon, multi-step goal." },
-  operation_list:    { does: "List active operations." },
-  operation_status:  { does: "Check an operation's status." },
-  operation_next:    { does: "Get the next step of an operation." },
-  operation_advance: { does: "Advance an operation a step." },
 
   op_status:   { say: "what are my background tasks doing?", does: "Check running background workers." },
   op_kill:     { say: "cancel that background task", does: "Stop a running worker." },
@@ -110,11 +105,6 @@ const BLURB: Record<string, { say?: string; does: string }> = {
   task_list:       { does: "List tasks." },
   task_get:        { does: "Get a task's details." },
 
-  protocol_list:   { say: "what protocols do you have?", does: "List saved protocols (reusable workflows)." },
-  protocol_create: { say: "save this as a protocol", does: "Save a reusable workflow." },
-  protocol_search: { does: "Search protocols." },
-  protocol_get:    { does: "Read a protocol." },
-  protocol_edit:   { does: "Edit a protocol." },
 
   mission_schedule_create: { say: "every morning at 8, summarize my unread email", does: "Schedule a recurring mission." },
   mission_schedule_list:   { does: "List scheduled missions." },
@@ -149,9 +139,6 @@ const BLURB: Record<string, { say?: string; does: string }> = {
   request_secrets: { does: "Request multiple secrets." },
   list_secrets:    { does: "List stored secret names (never values)." },
 
-  document_create: { say: "write me a one-pager on X", does: "Create a document." },
-  document_edit:   { does: "Edit a document." },
-  document_read:   { does: "Read a document." },
 };
 
 // ── Curated intro: the headline phrases. ──

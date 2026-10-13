@@ -61,7 +61,7 @@ export interface ResolveRequest {
 
 const ALWAYS_ON_TOOLS: ReadonlySet<string> = new Set([
   "issue_create", "issue_list", "issue_update", "issue_search",
-  "issue_checkout", "issue_release", "issue_request_approval",
+  "issue_checkout", "issue_release",
   "agent_whoami", "agent_team_list", "agent_wakeup",
   // Every agent on a project can read and update the shared project brief.
   "project_brief_read", "project_brief_update",

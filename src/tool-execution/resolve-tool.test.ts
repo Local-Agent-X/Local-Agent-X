@@ -249,7 +249,7 @@ describe("session-repeat dedup exempts stateful tools", () => {
     for (const name of [
       "browser", "process_start", "process_status", "process_list",
       "op_status", "op_wait", "session_status", "agent_status", "agent_output",
-      "screen_capture", "camera_capture", "clipboard_read", "computer_position",
+      "screen_capture", "camera_capture", "clipboard_read", "computer",
     ]) {
       const { ctx, outcome } = await resolveRepeat(name, {});
       expect(outcome.kind, name).toBe("continue");

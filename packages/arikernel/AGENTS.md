@@ -18,11 +18,15 @@ repo-root Commons Clause `LICENSE`; no separate license file ships in
   were intentionally removed in commit 310829a2 because they existed only
   to support the now-deleted sidecar mode. Keep it lean — 6 packages total:
   `core`, `runtime`, `taint-tracker`, `policy-engine`, `audit-log`, `tool-executors`.
-- **Build with `npm run build:ari`.** Triggered automatically by `npm run build`
-  (and `postinstall`). Per package it runs two passes: `tsup src/index.ts
+- **Build with `npm run build:ari`.** Triggered by `npm run build` and
+  `postinstall`. Per package it runs two passes: `tsup src/index.ts
   --format esm` for JS, then `tsc --emitDeclarationOnly --declaration` (strict
   relaxed) for `.d.ts`. `--dts` is intentionally avoided — see the header
-  comment in `scripts/build-ari.js`.
+  comment in `scripts/build-ari.js`. Two things that script does NOT do: it
+  skips a package whose `dist/` is newer than its `src/`, and a failed build
+  only logs `[ari] WARN` and exits 0 — `npm run build` still passes. A missing
+  `packages/arikernel/*/dist/index.js` then shows up as a startup-integrity
+  refusal, not a build failure. Read the WARN lines.
 - **Don't upgrade to npm-hosted `@arikernel/*`.** We use local `file:` deps so
   the source lives inside this repo. Upstream npm packages may be stale or
   removed.
@@ -30,10 +34,13 @@ repo-root Commons Clause `LICENSE`; no separate license file ships in
 ## Integration point
 
 `src/ari-kernel/` is the Local Agent X-side wrapper (public surface in
-`src/ari-kernel/index.ts`). It imports `@arikernel/runtime` and calls
-`createFirewall({ ..., mode: "embedded" })` once at startup (in `lifecycle.ts`),
-then exposes `ariEvaluate()` / `isAriActive()` for the tool executor. If you
-need to change Ari's behavior, check whether the fix belongs in:
+`src/ari-kernel/index.ts`; sealed by `src/module-seals.test.ts`). It imports
+`@arikernel/runtime` and builds firewalls with `createFirewall({ ..., mode:
+"embedded" })` in `lifecycle.ts`: once for the server at `startAriKernel`
+(also in worker processes), and again per scope on demand
+(`ensureAriKernelScope` / `refreshAriKernelScope`). The tool executor calls
+`ariEvaluate()` / `isAriActive()`. If you need to change Ari's behavior,
+check whether the fix belongs in:
 
 1. **The wrapper** (`src/ari-kernel/`) — mapping tool names to Ari tool classes, fail-open vs fail-closed decisions, preset selection.
 2. **The kernel** (this directory) — actual policy rules, taint rules, engine logic.

@@ -40,5 +40,10 @@ export const STATEFUL_LIVE_STATE_TOOLS: ReadonlySet<string> = new Set([
   "op_status", "op_wait", "op_kill", "session_status", "agent_status", "agent_output",
   // No-arg live captures/reads: args always match, so dedup would freeze the
   // first capture for the whole session/window.
-  "screen_capture", "camera_capture", "clipboard_read", "computer_position",
+  "screen_capture", "camera_capture", "clipboard_read",
+  // Computer control is dispatched as the collapsed `computer` family (the
+  // inner computer_* names never reach the resolver). Every action reads or
+  // moves live desktop state, like browser: a repeated `position` is a poll
+  // and a repeated `click` must click again.
+  "computer",
 ]);

@@ -8,7 +8,7 @@
  * X actually delivered to this model on this turn?". Since commit a52b7aa2 the
  * base prompt is split into priced parts and the allocator SHEDS them on small
  * local windows (context/prompt-degradation.ts) — the "How to work" part alone
- * is 12,236 tokens and is dropped on every 65k local model. A rule whose only
+ * is about 5k tokens and is dropped on every 65k local model. A rule whose only
  * home is a shed part silently stops being delivered and no test notices.
  *
  * WHAT THIS IS. A plain exported const: the rules that actually bit us, each
@@ -32,7 +32,7 @@ import type { RenderedPromptSection } from "./system-prompt-builder.js";
  * (context/prompt-degradation.ts), which is the set that reached the model.
  *
  * It lives here rather than on the builder only because
- * system-prompt-builder.ts sits at 399 of its 400 permitted LOC and has no
+ * system-prompt-builder.ts sits just under its 400-LOC cap and has no
  * room for another export; it reads the builder's own RenderedPromptSection.
  */
 export function includedPartIds(sections: readonly RenderedPromptSection[]): Set<string> {
@@ -85,9 +85,9 @@ export const RULES: Record<RuleId, Rule> = {
   //     candidate. Until 2026-09-25 this channel said "Use PowerShell verbs" on
   //     win32 — the OPPOSITE of the rule — while the tool ran Git Bash; the
   //     shell is now read from the same resolver the tool spawns with.
-  //   tool-description: src/tools/shell-tool.ts:13-15 — "Run a shell command
+  //   tool-description: src/tools/shell-tool.ts — "Run a shell command
   //     (bash; Git Bash on Windows, else PowerShell — write POSIX sh)".
-  //   error-message: src/tools/shell-translate.ts:39-50 powershellCmdletHint —
+  //   error-message: src/tools/shell-translate.ts powershellCmdletHint —
   //     "'Get-ChildItem' is a PowerShell cmdlet, but the bash tool runs POSIX sh."
   "shell-posix-not-powershell": {
     id: "shell-posix-not-powershell",
@@ -100,11 +100,11 @@ export const RULES: Record<RuleId, Rule> = {
   },
 
   // A server started with plain `bash` blocks the turn and times out.
-  //   prompt-part: config/system-prompt.md:48 ("Long-running process … call
+  //   prompt-part: config/system-prompt.md ("Long-running process … call
   //     `process_start`") — inside `## How to work`, class `tuning`
   //     (src/config-loader.ts). The 32k window still sheds it; 65k keeps it
   //     since the principles rewrite (2026-09-16).
-  //   error-message: src/tools/shell-tool.ts:254 — the timeout recovery line
+  //   error-message: src/tools/shell-tool.ts — the timeout recovery line
   //     "use process_start for long-running commands". This is what actually
   //     reaches a local model.
   "long-running-process-uses-process-start": {
@@ -116,7 +116,7 @@ export const RULES: Record<RuleId, Rule> = {
     ],
   },
 
-  // prompt-part ONLY: config/system-prompt.md:46-50, inside `## How to work`.
+  // prompt-part ONLY: config/system-prompt.md, inside `## How to work`.
   // Searched src/canonical-loop, src/agent-request and src/routes/chat for a
   // hand-off detector — browser-handoff.ts covers the BROWSER case, nothing
   // covers "run this command yourself". No tool description or error says it.
@@ -126,7 +126,7 @@ export const RULES: Record<RuleId, Rule> = {
     channels: [{ kind: "prompt-part", part: "core-identity/how-to-work" }],
   },
 
-  // prompt-part ONLY: config/system-prompt.md:60 ("Never act on your own
+  // prompt-part ONLY: config/system-prompt.md ("Never act on your own
   // offer"), inside `## How to work`. Grepped src/**/*.ts and config/*.md —
   // this text exists in exactly one place.
   "never-act-on-your-own-offer": {
@@ -136,8 +136,8 @@ export const RULES: Record<RuleId, Rule> = {
   },
 
   // Commit 7e80bec6 — glob/grep with no path used to search process.cwd().
-  //   tool-description: src/tools/glob-tool.ts:149,165 and
-  //   src/tools/grep-tool.ts:249 — "defaults to the workspace (the same
+  //   tool-description: src/tools/glob-tool.ts and
+  //   src/tools/grep-tool.ts — "defaults to the workspace (the same
   //   root relative paths in read/bash resolve against)".
   "search-defaults-to-project-root": {
     id: "search-defaults-to-project-root",
@@ -148,9 +148,9 @@ export const RULES: Record<RuleId, Rule> = {
     ],
   },
 
-  //   tool-description: src/tools/edit-tools.ts:123,131 — "Matching tolerates
+  //   tool-description: src/tools/edit-tools.ts — "Matching tolerates
   //     CRLF/indentation but the content must match exactly".
-  //   error-message: src/tools/edit-tools.ts:69,90 — "old_string not found. …
+  //   error-message: src/tools/edit-tools.ts — "old_string not found. …
   //     Make sure it matches exactly." plus the nearby-lines recovery hint.
   "edit-requires-exact-match": {
     id: "edit-requires-exact-match",
@@ -161,11 +161,11 @@ export const RULES: Record<RuleId, Rule> = {
     ],
   },
 
-  //   nudge: src/canonical-loop/turn-loop/nudges.ts:25 WIRE_FORMAT_NUDGE, fired
-  //     by the unresolved-tool-intent gate (turn-loop/tool-intent-gate.ts:113).
-  //   rider: src/routes/chat/system-prompt-augmentations.ts:94-108 — the
+  //   nudge: src/canonical-loop/turn-loop/nudges.ts WIRE_FORMAT_NUDGE, fired
+  //     by the unresolved-tool-intent gate (turn-loop/tool-intent-gate.ts).
+  //   rider: src/routes/chat/system-prompt-augmentations.ts — the
   //     TOOL-CALL REQUIRED block after a 3-turn prose streak.
-  //   rider: src/agent-request/prepare-request/provider-riders.ts:91 rule 1 of
+  //   rider: src/agent-request/prepare-request/provider-riders.ts rule 1 of
   //     BASE_LOCAL_RIDER — appended on EVERY local turn, after allocation.
   "tool-call-must-be-structured-not-text": {
     id: "tool-call-must-be-structured-not-text",
@@ -177,11 +177,11 @@ export const RULES: Record<RuleId, Rule> = {
     ],
   },
 
-  //   prompt-part: src/context/system-prompt-builder.ts:289-299 — the
+  //   prompt-part: src/context/system-prompt-builder.ts — the
   //     `recall-reflex` section ("Call `search_past_sessions` when it doesn't
   //     cover the reference"). policy `required`, priority `safety` ⇒ never shed.
-  //   prompt-part: config/system-prompt.md:383 `## Memory — relational`, class
-  //     `navigation` (src/config-loader.ts:103) — shed-able, the backup copy.
+  //   prompt-part: config/system-prompt.md `## Memory — relational`, class
+  //     `navigation` (src/config-loader.ts) — shed-able, the backup copy.
   "memory-search-when-unknown": {
     id: "memory-search-when-unknown",
     summary: "Search past sessions before guessing at a project, brand or person you don't recognize.",
@@ -191,8 +191,8 @@ export const RULES: Record<RuleId, Rule> = {
     ],
   },
 
-  //   prompt-part: config/system-prompt.md:249 `## Coding discipline`, class
-  //     `tuning` (src/config-loader.ts:106) — shed on the 32k profile.
+  //   prompt-part: config/system-prompt.md `## Coding discipline`, class
+  //     `tuning` (src/config-loader.ts) — shed on the 32k profile.
   //   prompt-part: config/agent-rules.md "Open a file before you edit it",
   //     injected verbatim by the `agent-rules` builder section
   //     (context/agents-md-section.ts), policy `required` / priority `safety`
@@ -210,8 +210,8 @@ export const RULES: Record<RuleId, Rule> = {
   // graded only by the agent that found them — no independent re-check before
   // they shipped. A comparison run on the same repo, same model, that DID
   // verify caught 3 real privilege-escalation bugs the unverified pass missed
-  // entirely. Placed in `## Core rules` (config/system-prompt.md:339), class
-  // `safety` (src/config-loader.ts:98) — deliberately NOT `## How to work` or
+  // entirely. Placed in `## Core rules` (config/system-prompt.md), class
+  // `safety` (src/config-loader.ts) — deliberately NOT `## How to work` or
   // `## Coding discipline` (both `tuning`, shed on every local profile): this
   // rule matters MORE on a weaker model, which is exactly the profile that
   // would otherwise lose it, so it does not get a KNOWN_GAPS entry.
@@ -222,7 +222,7 @@ export const RULES: Record<RuleId, Rule> = {
   },
 
   // Same 2026-09-13 incident as unverified-claim-is-a-hypothesis, other half:
-  // `## Delegation` (config/system-prompt.md:284) already told the model to
+  // `## Delegation` (config/system-prompt.md) already told the model to
   // fan out independent pieces — the miss wasn't that the principle was
   // absent, it's that the specific protocol being followed laid its
   // workstreams out as a sequential task ledger (task_create/task_update per

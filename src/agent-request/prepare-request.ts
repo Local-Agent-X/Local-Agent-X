@@ -202,7 +202,10 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
     // The tools actually loaded this turn — drives the deferred-tool manifest
     // (allAgentTools − loadedTools) so the model can tool_search anything the
     // filtered schema omits. This is the discovery half of the lazy-load flip.
-    loadedTools: toolSel.tools,
+    // A lean prep (voice) loads nothing here and ships its own curated belt
+    // without tool_search, so a manifest would tell it to search for ~170
+    // tools it cannot reach; no manifest is the honest prompt there.
+    loadedTools: input.leanPrep ? undefined : toolSel.tools,
     systemPromptOverride: input.systemPromptOverride,
     bridgeContext: input.bridgeContext,
     resolvedProvider: resolved.provider,

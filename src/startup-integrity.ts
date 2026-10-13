@@ -1,6 +1,7 @@
 /**
- * Startup integrity check — fast-fail at boot if critical files that
- * git knows about are missing from disk.
+ * Startup integrity check — fast-fail at boot if critical files are
+ * missing from disk: tracked kernel sources (antivirus quarantine) or the
+ * kernel's built dist (build:ari skipped or failed).
  *
  * Specifically motivated by: Windows Defender repeatedly quarantines
  * files in packages/arikernel/runtime/__tests__/ because the test
@@ -36,7 +37,7 @@ const SENTINELS: Array<{ path: string; restoreHint: string }> = [
   // arikernel — most-frequently AV-eaten subtree
   { path: "packages/arikernel/runtime/src/index.ts", restoreHint: "git checkout -- packages/arikernel/" },
   { path: "packages/arikernel/core/src/index.ts", restoreHint: "git checkout -- packages/arikernel/" },
-  { path: "packages/arikernel/runtime/dist/index.js", restoreHint: "npm install (rebuilds via postinstall)" },
+  { path: "packages/arikernel/runtime/dist/index.js", restoreHint: "npm run build:ari (read its WARN lines; it exits 0 even when a package fails)" },
 ];
 
 export interface IntegrityResult {
@@ -137,9 +138,11 @@ export function enforceStartupIntegrity(): void {
     "═══════════════════════════════════════════════════════════════",
     "  STARTUP INTEGRITY CHECK FAILED — refusing to start.",
     "",
-    "  Files git tracks are missing from disk. On Windows this is",
-    "  almost certainly antivirus quarantine (Defender flags some of",
-    "  the security test fixtures as malicious payloads).",
+    "  Files the server needs are missing from disk. A missing src/",
+    "  file on Windows is almost certainly antivirus quarantine",
+    "  (Defender flags some security test fixtures as malicious). A",
+    "  missing dist/ file means the kernel packages were never built:",
+    "  `npm run build:ari` only warns when a package fails to build.",
     "",
     "  Missing:",
     ...result.missing.map(m => `    - ${m.path}`),

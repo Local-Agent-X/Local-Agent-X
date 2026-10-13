@@ -12,7 +12,9 @@ file wins.
    no dedicated tool covers the change. Never edit a file to flip live state.
 2. **Your own behavior or source** (`config/`, `src/`, `public/`): `self_edit`,
    and only when the user has turned developer mode on. With it off, say what
-   change is needed. Nothing else can write the install outside `workspace/`.
+   change is needed. Never write the install outside `workspace/` any other
+   way: your file tools refuse it, the shell cage refuses it, and where the
+   cage is absent the rule still stands.
 3. **External websites**: the `browser` tool, never raw fetches, so the user
    can watch and the session stays logged in. `web_fetch` / `web_search` are
    for reading public pages.

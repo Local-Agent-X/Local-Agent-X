@@ -158,3 +158,28 @@ describe("a resolver's background guess cannot end what the user said", () => {
     expect(live(fact)).toBe(false);
   });
 });
+
+// qwen3:8b eval 2026-10-13: memory_search("Odalys's sailboat slip") returned 0
+// hits while the fact was current — search reads entity pages, and a page was
+// rebuilt only by reflect or a pattern forget, never when a fact was saved.
+describe("a saved fact is searchable as soon as it is saved", () => {
+  const found = async (q: string) => (await memory.search(q, { maxResults: 5, sessionId: "another-chat" }))
+    .some((r) => r.snippet.includes("slip 14"));
+
+  it("remember → search finds it; forget → search no longer does", async () => {
+    authorizeTestFactMutations(memory);
+    expect(memory.rememberFact("@Odalys keeps her sailboat, the Kestrel Nine, at slip 14", { kind: "world" }).ok).toBe(true);
+    expect(await found("Odalys's sailboat slip")).toBe(true);
+    expect(memory.forgetFact("slip 14").ok).toBe(true);
+    expect(await found("Odalys's sailboat slip")).toBe(false);
+  });
+
+  it("update_fact rewrites the page: the new value is found, the old one is not", async () => {
+    authorizeTestFactMutations(memory);
+    memory.rememberFact("@Odalys keeps her sailboat at slip 14", { kind: "world" });
+    expect(memory.updateFact("slip 14", "@Odalys keeps her sailboat at slip 31", { kind: "world" }).ok).toBe(true);
+    const hits = await memory.search("Odalys sailboat slip", { maxResults: 5, sessionId: "another-chat" });
+    expect(hits.some((r) => r.snippet.includes("slip 31"))).toBe(true);
+    expect(hits.some((r) => r.snippet.includes("slip 14"))).toBe(false);
+  });
+});

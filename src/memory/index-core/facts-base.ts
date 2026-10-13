@@ -15,6 +15,8 @@ import * as Facts from "../index-facts.js";
 import * as FactsMutate from "../index-facts-mutate.js";
 import * as Relations from "../index-relations.js";
 import * as Reflectx from "../index-reflect.js";
+import { updateEntityPage } from "../index-forget.js";
+import { rowToFact, slugify } from "../utils.js";
 import { scoreFact, type ImportanceScore } from "../cognitive/importance/index.js";
 import type { MemoryPromotionContext } from "../promotion-gate.js";
 
@@ -37,7 +39,7 @@ export abstract class MemoryFactsBase {
     promotion?: MemoryPromotionContext,
     occurredAt?: number | null,
   ): RetainedFact[] {
-    return Facts.retain(this.db, this.hasFts, text, sourceFile, sourceLine, promotion, occurredAt);
+    return this.refreshEntityPages(Facts.retain(this.db, this.hasFts, text, sourceFile, sourceLine, promotion, occurredAt));
   }
 
   async retainSmart(
@@ -46,7 +48,9 @@ export abstract class MemoryFactsBase {
     sourceLine = 0,
     opts?: { candidateLimit?: number; resolverOpts?: { provider?: "ollama" | "anthropic" | "openai" | "auto"; model?: string }; promotion?: MemoryPromotionContext; occurredAt?: number | null }
   ): Promise<{ facts: RetainedFact[]; decisions: Array<{ content: string; op: string; targetId?: number; reason: string }> }> {
-    return Facts.retainSmart(this.db, this.hasFts, text, sourceFile, sourceLine, opts);
+    const result = await Facts.retainSmart(this.db, this.hasFts, text, sourceFile, sourceLine, opts);
+    this.refreshEntityPages(result.facts);
+    return result;
   }
 
   // ── RECALL ──
@@ -91,7 +95,9 @@ export abstract class MemoryFactsBase {
     content: string,
     opts?: { kind?: FactKind; confidence?: number; sourceFile?: string; promotion?: MemoryPromotionContext }
   ): FactsMutate.OneFactResult {
-    return FactsMutate.rememberFact(this.db, this.hasFts, content, opts);
+    const result = FactsMutate.rememberFact(this.db, this.hasFts, content, opts);
+    if (result.fact) this.refreshEntityPages([result.fact]);
+    return result;
   }
 
   updateFact(
@@ -99,11 +105,47 @@ export abstract class MemoryFactsBase {
     newContent: string,
     opts?: { kind?: FactKind; confidence?: number; sourceFile?: string; promotion?: MemoryPromotionContext }
   ): FactsMutate.OneFactResult {
-    return FactsMutate.updateFact(this.db, this.hasFts, query, newContent, opts);
+    const result = FactsMutate.updateFact(this.db, this.hasFts, query, newContent, opts);
+    if (result.fact) this.refreshEntityPages([result.fact, ...this.factsById([result.oldFactId])]);
+    return result;
   }
 
   forgetFact(query: string): FactsMutate.OneFactResult {
-    return FactsMutate.forgetFact(this.db, query);
+    const result = FactsMutate.forgetFact(this.db, query);
+    if (result.fact) this.refreshEntityPages([result.fact]);
+    return result;
+  }
+
+  /**
+   * Rebuild the entity page of every entity these facts name. The page is how
+   * a fact reaches memory_search (search indexes text, not the facts table),
+   * and it was rebuilt only by reflect or a pattern forget — so a fact saved
+   * mid-chat could not be searched for until maintenance ran (qwen3:8b eval
+   * 2026-10-13: memory_search "Odalys's sailboat slip" → 0 hits beside a
+   * current fact). The write returns as before; pages are file writes and the
+   * index picks them up on the next search's sync.
+   */
+  private refreshEntityPages<T extends RetainedFact[]>(facts: T): T {
+    const bySlug = new Map<string, RetainedFact[]>();
+    for (const fact of facts) {
+      for (const entity of fact.entities) {
+        const slug = slugify(entity);
+        if (slug) bySlug.set(slug, [...(bySlug.get(slug) ?? []), fact]);
+      }
+    }
+    for (const [slug, recent] of bySlug) {
+      updateEntityPage(this.db, this.entitiesDir, () => { this.dirty = true; },
+        (s) => { this.reindexThroughUniversal("entity", s).catch(() => {}); }, slug, recent);
+    }
+    return facts;
+  }
+
+  private factsById(ids: Array<number | undefined>): RetainedFact[] {
+    return ids.flatMap((id) => {
+      if (id === undefined) return [];
+      const row = this.db.prepare("SELECT * FROM facts WHERE id = ?").get(id) as Record<string, unknown> | undefined;
+      return row ? [rowToFact(row)] : [];
+    });
   }
 
   recallRecentFacts(opts?: { kinds?: FactKind[]; minConfidence?: number; limit?: number; sinceMs?: number; halfLifeDays?: number }): RetainedFact[] {

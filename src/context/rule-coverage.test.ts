@@ -63,7 +63,7 @@ const KNOWN_GAPS: Readonly<Record<string, readonly RuleId[]>> = {
 
 async function realPromptSections(): Promise<RenderedPromptSection[]> {
   // The real base prompt, split at its headings by basePromptSections(), plus
-  // the builder-owned sections every path gets (runtime-context, agents-md,
+  // the builder-owned sections every path gets (runtime-context, agent-rules,
   // recall-reflex, app-manifest). Per-turn dynamic sections are deliberately
   // absent — no rule claims one, and they only ADD pressure, so leaving them
   // out makes this the optimistic case: what survives here is an upper bound.
@@ -91,7 +91,7 @@ describe("behavioural rule coverage across prompt profiles", () => {
     expect(medium.has("core-identity/how-to-work")).toBe(true);
     expect(weak.has("core-identity/how-to-work")).toBe(false);
     // Safety/identity parts are never candidates, so the channels rules lean on survive.
-    for (const part of ["runtime-context", "agents-md", "recall-reflex", "core-identity/core-rules"]) {
+    for (const part of ["runtime-context", "agent-rules", "recall-reflex", "core-identity/core-rules"]) {
       expect(weak.has(part), `${part} should never be shed`).toBe(true);
     }
   });

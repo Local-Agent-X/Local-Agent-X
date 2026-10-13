@@ -120,7 +120,7 @@ export interface CanonicalLoopContext {
    *  a `heartbeat` adapter_report, which openai-compat and gemini-native emit
    *  per chain-of-thought delta (see adapter-contract.ts). Set by turn-loop
    *  for afterModelCall; undefined in phases/paths that don't observe the
-   *  model call. Lets post-turn-detector route a reasoning-burn turn to
+   *  model call. Lets the empty-turn handling route a reasoning-burn turn to
    *  "reasoning-only" instead of "empty-response". */
   hasReasoning?: boolean;
   /** The model ended its turn itself (provider stop = end_turn / stop) — set
@@ -156,7 +156,6 @@ export interface CanonicalLoopContext {
    *      left-nav "Purchase Orders" click was measured disarming the brake for
    *      whole interactive ops. See the comment at that call site — it carries
    *      the counts and the known gap this choice accepts.
-   *    - post-turn-detector's `committedWorkOrLedger` detector input.
    *    - open-steps' interactiveBuildPlanSeed, which only asks whether an
    *      EDIT_TOOLS name is present — a question both sets answer identically. */
   committingToolsThisOp: Set<string>;
@@ -192,7 +191,7 @@ export interface CanonicalLoopContext {
 /**
  * True for autonomous worker runs (agent_spawn / build / background), false for
  * interactive chat + voice turns. The worker-progress middlewares
- * (post-turn-detector, premature-completion, mid-turn-stale) gate on this:
+ * (premature-completion, mid-turn-stale) gate on this:
  * their commit/act/abort nudges are meant to push a STALLING WORKER. On an
  * interactive turn there's nothing to commit, so the model verbalizes its
  * compliance ("No commit tool applies here…", "Exact blocker: …") — which leaks

@@ -124,7 +124,7 @@ describe("bulkReplaceTool", () => {
     });
     const recovery = String(r.metadata?.recovery ?? "");
     const names = readdirSync(config, { withFileTypes: true }).filter((d) => d.isFile()).map((d) => d.name);
-    expect(names).toEqual(expect.arrayContaining(["system-prompt.md", "tools.json", "protected-files.json"]));
+    expect(names).toEqual(expect.arrayContaining(["system-prompt.md", "agent-rules.md", "protected-files.json"]));
     for (const name of names) expect(recovery, name).toContain(`${name} (Local Agent X install folder)`);
   });
 

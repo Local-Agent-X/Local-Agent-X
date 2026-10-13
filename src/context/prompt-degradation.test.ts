@@ -35,7 +35,7 @@ function profile(contextWindow: number | null, tier: LocalModelCapabilityProfile
 const REQUIRED_IDS = [
   "core-identity",
   "runtime-context",
-  "agents-md",
+  "agent-rules",
   "provider-hint",
   "tool-guidance",
   "recall-reflex",
@@ -55,7 +55,7 @@ function constrainedFixture(): RenderedPromptSection[] {
     section("core-identity", "required", "identity", "static"),
     section("app-manifest", "degradable", "manifest:" + "m".repeat(14_000), "static"),
     section("runtime-context", "required", "runtime", "static"),
-    section("agents-md", "required", "rules", "static"),
+    section("agent-rules", "required", "rules", "static"),
     section("provider-hint", "required", "provider", "static"),
     section("tool-guidance", "required", "tools", "static"),
     section("recall-reflex", "required", "recall", "static"),
@@ -315,7 +315,7 @@ describe("capability-aware prompt degradation", () => {
 // reason=required-sections-exceed-budget window=65536 budget=22937 full=36151
 // top=core-identity:21824,context-block:4184,tool-guidance:2544` — the user's
 // facts and the workspace map were shed first and ~22k tokens of behaviour
-// rules stayed. Sizes below mirror that line; app-manifest and agents-md are
+// rules stayed. Sizes below mirror that line; app-manifest and agent-rules are
 // whatever this checkout renders (both count as real sizes, both non-tuning).
 describe("priority-class allocation over the real base prompt", () => {
   const tokensOf = (items: readonly RenderedPromptSection[]) =>

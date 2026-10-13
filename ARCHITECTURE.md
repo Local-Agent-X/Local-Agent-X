@@ -33,7 +33,7 @@ Paths below were verified against the tree (the generated map's importer counts
 2. **`src/server/index.ts`** + **`src/server/lifecycle.ts`** — boot-phase orchestration; creates the HTTP server, wires the chat WebSocket, starts the security kernel.
 3. **`src/server-context.ts`** — the `ServerContext` dependency surface: every major subsystem handed to the request handlers. The cleanest single view of "what's wired to what."
 4. **`src/canonical-loop/index.ts`** → **`src/canonical-loop/turn-loop.ts`** — the agent turn loop: assemble input → call the provider adapter → dispatch tools → persist. This is the core.
-5. **`src/tool-policy/tool-policies.data.ts`** — the single table of every tool's allow rule, kernel class, risk tier, and rate limit. The whole tool-governance model in one file.
+5. **`src/tool-policy/tool-policies.<domain>.ts`** (`core`, `network`, `memory`, `orchestration`, `apps`, `globs`) — one entry per tool: allow rule, kernel class, risk tier, rate limit, path args. `tool-policies.data.ts` only merges the six fragments into `TOOL_POLICIES`; `~/.lax/tool-policy.json` user overrides and `packs/` are merged on top at runtime.
 6. **`src/ari-kernel/index.ts`** — the in-process security kernel gateway every tool call passes through.
 
 ## Subsystem map
@@ -44,7 +44,7 @@ Paths below were verified against the tree (the generated map's importer counts
 | **Agent / turn loop** | `src/canonical-loop/` | Entry `index.ts`; driver `turn-loop.ts`; chat runner `chat-runner.ts`; durable event store `store.ts`. One of the most-imported subsystems (see the map) — this is *the* loop. The module boundary is sealed: outside consumers import `index.ts` or the `public/` sub-barrels, enforced by `interface-seal.test.ts`. |
 | **Provider adapters + routing** | `src/providers/registry.ts`, `src/providers/provider-ids.ts` | Per-turn transport adapters: `src/canonical-loop/adapters/`. Credential resolution: `src/auth/resolve.ts`. Per-provider history prep: `src/agent-request/prepare-request.ts`. |
 | **Tool defs + registry + dispatch** | `src/tool-execution/` (entry `execute-tool.ts`) | Registry build: `src/tools/registry-build.ts`; tool impls under `src/tools/`. |
-| **Tool governance / policy** | `src/tool-policy/tool-policies.data.ts` + `evaluator.ts` | Default-deny; one row per tool. |
+| **Tool governance / policy** | `src/tool-policy/tool-policies.<domain>.ts` + `evaluator.ts` | Default-deny; one row per tool (or glob family) across six domain fragments. `evaluator.ts` runs the rule packs in priority order: default-policy, security-layer, threat-engine, spend-cap, egress-refutation. |
 | **Tool approvals** | `src/tool-execution/require-approval.ts`, `src/approval-manager.ts`, `src/approval-decision.ts` | Live tool-call gate for risky actions; emits `approval_requested` and is rendered by `public/js/chat-stream-store.js`/`chat-stream-store-approvals.js`. This is separate from retired issue-level approval fields. |
 | **Retry / resilience policy** | `src/auto-retry.ts`, `src/resilience-policy.ts` | Retries only recognized transient categories and only replay-safe tool effects: read-only, idempotent mutation, or keyed mutation with an operation key. Missing effect metadata and non-idempotent mutations are not auto-retried. |
 | **Security kernel (ARI)** | `src/ari-kernel/` (TS gateway) over `packages/arikernel/*` | The kernel is **TypeScript** (`@arikernel/core`, `policy-engine`, `taint-tracker`, `audit-log`, `tool-executors`, `runtime`), vendored as workspace packages — not a native binary. |
@@ -95,7 +95,6 @@ wired in and running — do not skip them:
 |---|---|
 | `src/routing/` | The "run this message inline vs. delegate to a worker" decision — imported by `src/routes/chat/`. |
 | `src/conversation/` | The chat-export → memory **ingest** pipeline (`ingest.ts`) — imported by the `/api/memory` route + `src/memory/tools/`. |
-| `src/agent-loop-detectors/` | **Post-turn validation** (planning-only / single-tool-then-stop detection) — imported by the loop's `post-turn-detector` middleware. |
 | `src/context-manager/` | Token-budget tracking + **auto-compaction** — imported by the loop's `turn-loop/compact-history.ts`. Don't confuse with `src/context/` (input builder). |
 | `src/anthropic-client/` | The live **Anthropic turn transport** (API + warm-pool CLI streaming) — dynamically imported by `src/canonical-loop/adapters/anthropic-transport.ts`, plus `llm-dispatch.ts` and the classifiers. An earlier version of this doc called it "parse utilities only"; that was wrong. |
 
@@ -105,6 +104,6 @@ A single local HTTP server (`127.0.0.1`) runs a durable, lane-based **op model**
 (`src/ops/`) on top of a provider-agnostic **turn loop** (`src/canonical-loop/`);
 every tool call is gated by an in-process **security kernel** (`src/ari-kernel/`
 + `packages/arikernel/`) against a single **default-deny policy table**
-(`src/tool-policy/tool-policies.data.ts`); state (memory, sessions, sync) is
+(`src/tool-policy/tool-policies.<domain>.ts`, merged by `tool-policies.data.ts`); state (memory, sessions, sync) is
 local-first, and the agent can rewrite its own source through a sandbox-gated
 **self-edit** pipeline.

@@ -37,7 +37,8 @@
     "src/db-migrations.ts",
     "src/ari-kernel/",
     "config/protected-files.json",
-    "config/system-prompt.md"
+    "config/system-prompt.md",
+    "config/agent-rules.md"
   ],
   "reason": {
     "src/index.ts": "Server bootstrap — breaks = nothing starts",
@@ -76,6 +77,7 @@
     "src/db-migrations.ts": "Database schema — breaks = data corruption",
     "src/ari-kernel/": "ARI kernel — breaks = no policy enforcement",
     "config/protected-files.json": "This file — agent can't remove its own guardrails",
-    "config/system-prompt.md": "Global agent prompt. Per-user preferences and facts go to MEMORY, not here — use `remember`, `memory_set_user_field`, or `memory_update_profile` instead. Editing the system prompt for user-specific content pollutes every future conversation with every user."
+    "config/system-prompt.md": "Global agent prompt. Per-user preferences and facts go to MEMORY, not here — use `remember`, `memory_set_user_field`, or `memory_update_profile` instead. Editing the system prompt for user-specific content pollutes every future conversation with every user.",
+    "config/agent-rules.md": "The never-shed invariant list injected into every turn — the three lanes, the install write boundary, secret handling. An agent that could rewrite it could lift its own limits."
   }
 }

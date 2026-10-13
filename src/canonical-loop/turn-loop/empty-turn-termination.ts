@@ -156,7 +156,7 @@ export interface EmptyInteractiveTurnResult {
  * never truncate real work:
  *   - lane === "interactive" only (chat_turn + voice_turn). Worker lanes keep
  *     their existing behavior — their empty-response nudge lives in the
- *     post-turn-detector stack (gated when:isWorkerOp), untouched here.
+ *     premature-completion middleware (gated when:isWorkerOp), untouched here.
  *   - "fully empty" is EXACTLY: assistantText.trim() empty AND no tool calls
  *     AND no reasoning. A tool-only turn (toolCalls.length>0) legitimately
  *     continues; a reasoning-only turn (hasReasoning) is the model thinking,

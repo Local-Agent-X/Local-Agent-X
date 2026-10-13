@@ -2,6 +2,7 @@ import { writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { ToolDefinition, ToolResult } from "../../types.js";
+import { canonicalFetch } from "../web-egress.js";
 import { createLogger } from "../../logger.js";
 import { getRuntimeConfig } from "../../config.js";
 import { ok, err, okWithVideo, resolveMediaProvider, resolveLocalImagePath, imageFileToDataUrl, findRecentLocalImage, workspaceDir, PROMPT_REFS_EARLIER_IMAGE } from "./shared.js";
@@ -71,11 +72,11 @@ async function generateViaXaiVideo(
   if (refs.length > 0) body.reference_images = refs;
 
   xaiLogger.info(`[xai-video] submitting prompt="${prompt.slice(0, 80)}" duration=${clamped} refs=${refs.length}`);
-  const submit = await fetch("https://api.x.ai/v1/videos/generations", {
+  const submit = await canonicalFetch("https://api.x.ai/v1/videos/generations", {
     method: "POST",
     headers: { ...headers, "x-idempotency-key": randomUUID() },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(60_000),
+    timeoutMs: 60_000,
   });
   if (!submit.ok) {
     const errText = await submit.text();
@@ -92,9 +93,7 @@ async function generateViaXaiVideo(
   let lastStatus = "queued";
   while (Date.now() < deadline) {
     await new Promise(r => setTimeout(r, 5000));
-    const poll = await fetch(`https://api.x.ai/v1/videos/${requestId}`, {
-      headers, signal: AbortSignal.timeout(30_000),
-    });
+    const poll = await canonicalFetch(`https://api.x.ai/v1/videos/${requestId}`, { headers });
     if (!poll.ok) {
       const errText = await poll.text();
       return err(`xAI video poll failed (${poll.status}): ${errText.slice(0, 300)}`);
@@ -121,7 +120,8 @@ async function generateViaXaiVideo(
   }
   if (!videoUrl) return err(`xAI video generation timed out (last status: ${lastStatus})`);
 
-  const vidRes = await fetch(videoUrl, { signal: AbortSignal.timeout(60_000) });
+  // The provider names the download host; canonicalFetch pins and allowlists it.
+  const vidRes = await canonicalFetch(videoUrl, { timeoutMs: 60_000 });
   if (!vidRes.ok) return ok(`Video generated!\nPrompt: ${prompt}\nView: ${videoUrl}\n(Could not save locally)`);
   const buffer = Buffer.from(await vidRes.arrayBuffer());
   const videosDir = workspaceDir("videos");

@@ -47,7 +47,7 @@ describe("Context Builder", () => {
       { id: "core-identity/preamble", policy: "required" },
       { id: "runtime-context", policy: "required" },
       { id: "app-manifest", policy: "degradable" },
-      { id: "agents-md", policy: "required" },
+      { id: "agent-rules", policy: "required" },
       { id: "provider-hint", policy: "required" },
       { id: "tool-guidance", policy: "required" },
       { id: "recall-reflex", policy: "required" },
@@ -115,7 +115,7 @@ describe("Context Builder", () => {
       "core-identity/personality": "identity/required",
       "runtime-context": "safety/required",
       "app-manifest": "navigation/degradable",
-      "agents-md": "safety/required",
+      "agent-rules": "safety/required",
       "provider-hint": "safety/required",
       "tool-guidance": "safety/required",
       "recall-reflex": "safety/required",
@@ -241,18 +241,13 @@ describe("Context Builder", () => {
   });
 });
 
-// The `agents-md` section resolves the repo root from this file's location and
-// injects the ROOT AGENTS.md verbatim under an "## Invariants" heading. It
-// regressed once: the root was resolved with ".." instead of "../..". In the
-// COMPILED build that resolved dist/context → dist/, which has no AGENTS.md, so
-// the section silently returned "" (`if (!existsSync(p)) return ""`) and the
-// harness's architectural invariants never reached the system prompt for
-// months. The dev/vitest run can't reproduce the empty mode — it runs from
-// src/context and a *sibling* src/AGENTS.md exists (one of four AGENTS.md in the
-// tree) — but the bug is worse there: ".." would inject the WRONG file. Both
-// failure modes are caught by locking the invariant "the canonical repo-root
-// AGENTS.md is the one injected". The catch-and-return-"" makes the empty mode
-// invisible, so it needs an explicit test.
+// The `agent-rules` section resolves the install root from this file's
+// location and injects config/agent-rules.md verbatim under an "## Invariants"
+// heading. The resolution regressed once (".." instead of "../.."): in the
+// COMPILED build that reached dist/, where the file doesn't exist, so the
+// section silently returned "" (`if (!existsSync(p)) return ""`) and the
+// invariants never reached the system prompt for months. The catch-and-
+// return-"" makes the empty mode invisible, so it needs an explicit test.
 describe("identity names ride a required section", () => {
   // The first-turn identity ask keys on the two names; they used to live only
   // in the degradable memory context block, which the weak tier strips and the
@@ -273,37 +268,30 @@ describe("identity names ride a required section", () => {
   });
 });
 
-describe("AGENTS.md invariants injection", () => {
+describe("agent-rules invariants injection", () => {
   const contextDir = dirname(fileURLToPath(import.meta.url)); // src/context/
   const repoRoot = resolve(contextDir, "../.."); // the fixed "../.." resolution
-  const siblingRoot = resolve(contextDir, ".."); // the old ".." resolution → src/
+  const rulesPath = join(repoRoot, "config", "agent-rules.md");
+  const codingRulesPath = join(repoRoot, "AGENTS.md");
 
-  it("keeps the root and src AGENTS.md distinct, so the resolution level matters", () => {
-    // If these were identical the injection test below couldn't tell a wrong
-    // root from a right one. They are different files (5073 vs 2817 bytes), so
-    // resolving to src/ (the old bug, in dev) silently swaps the invariants.
-    expect(existsSync(join(repoRoot, "AGENTS.md"))).toBe(true);
-    expect(existsSync(join(siblingRoot, "AGENTS.md"))).toBe(true); // the shadow
-    const rootMd = readFileSync(join(repoRoot, "AGENTS.md"), "utf-8");
-    const srcMd = readFileSync(join(siblingRoot, "AGENTS.md"), "utf-8");
-    expect(rootMd).not.toEqual(srcMd);
-  });
-
-  it("injects the canonical repo-root AGENTS.md verbatim, not the src sibling or empty", async () => {
-    const rootMd = readFileSync(join(repoRoot, "AGENTS.md"), "utf-8");
-    const srcMd = readFileSync(join(siblingRoot, "AGENTS.md"), "utf-8");
-    expect(rootMd.trim().length).toBeGreaterThan(0); // guard a truncated fixture
+  it("injects config/agent-rules.md verbatim, and not the coding-agent AGENTS.md", async () => {
+    expect(existsSync(rulesPath)).toBe(true);
+    const rules = readFileSync(rulesPath, "utf-8");
+    expect(rules.trim().length).toBeGreaterThan(0); // guard a truncated fixture
+    const codingRules = readFileSync(codingRulesPath, "utf-8");
 
     const builder = createSystemPromptBuilder(MOCK_INPUTS);
     const output = await builder.build();
 
-    // Heading present AND the ROOT file's actual bytes present. A ".." regression
-    // fails this on both paths: compiled → "" (no heading, no content); dev →
-    // src/AGENTS.md (heading present but root bytes absent). Content-agnostic
-    // whole-file contains, so editing AGENTS.md doesn't break the test.
-    expect(output).toContain("## Invariants (AGENTS.md)");
-    expect(output).toContain(rootMd);
-    expect(output).not.toContain(srcMd); // the shadow file must not be what shipped
+    // Heading present AND the file's actual bytes present: a ".." regression
+    // resolves to src/config, which doesn't exist, and yields no heading.
+    // Content-agnostic whole-file contains, so editing the rules doesn't break
+    // the test.
+    expect(output).toContain("## Invariants (agent-rules.md)");
+    expect(output).toContain(rules);
+    // The repo's AGENTS.md is for coding agents; it used to be what shipped
+    // here, and its tool-registration checklist reached every product turn.
+    expect(output).not.toContain(codingRules);
   });
 });
 

@@ -71,14 +71,14 @@ describe("checkSelfEditIntent — a change to the agent's own config/ is a self_
   it("the classifier's \"match\" rule names config/ changes and gives one as an example", async () => {
     const llm = vi.fn<Llm>(async () => `{"verdict": "match", "reason": "config change"}`);
     await checkSelfEditIntent(
-      "raise the default bash timeout in config/tools.json to 300 seconds",
-      "change your tools.json default bash timeout to 5 minutes",
+      "raise the default bash timeout to 300 seconds",
+      "raise the default bash timeout to 5 minutes",
       "",
       llm,
     );
     const systemPrompt = llm.mock.calls[0][0];
     expect(systemPrompt).toMatch(/- "match":[^\n]*a change to the agent's own config\//);
-    expect(systemPrompt).toContain(`"change your tools.json default bash timeout"`);
+    expect(systemPrompt).toContain(`"raise the default bash timeout"`);
   });
 });
 

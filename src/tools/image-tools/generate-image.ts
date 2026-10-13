@@ -1,6 +1,7 @@
 import { writeFileSync, mkdirSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ToolDefinition, ToolResult } from "../../types.js";
+import { canonicalFetch } from "../web-egress.js";
 import { getRuntimeConfig } from "../../config.js";
 import { ok, err, okWithImage, resolveMediaProvider, workspaceDir } from "./shared.js";
 
@@ -24,7 +25,7 @@ async function generateViaXai(
   aspect?: string,
   quality?: boolean,
 ): Promise<ToolResult> {
-  const res = await fetch("https://api.x.ai/v1/images/generations", {
+  const res = await canonicalFetch("https://api.x.ai/v1/images/generations", {
     method: "POST",
     headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
     body: JSON.stringify({
@@ -33,7 +34,7 @@ async function generateViaXai(
       aspect_ratio: xaiAspectRatio(aspect),
       resolution: "1k",
     }),
-    signal: AbortSignal.timeout(60_000),
+    timeoutMs: 60_000,
   });
   if (!res.ok) {
     const errText = await res.text();
@@ -54,7 +55,8 @@ async function generateViaXai(
   if (first.b64_json) {
     buffer = Buffer.from(first.b64_json, "base64");
   } else {
-    const imgRes = await fetch(first.url!, { signal: AbortSignal.timeout(30_000) });
+    // The provider names the download host; canonicalFetch pins and allowlists it.
+    const imgRes = await canonicalFetch(first.url!);
     if (!imgRes.ok) return ok(`Image generated!\nPrompt: ${prompt}\nView: ${first.url}\n(Could not save locally)`);
     buffer = Buffer.from(await imgRes.arrayBuffer());
   }
@@ -71,11 +73,11 @@ async function generateViaXai(
 
 /** Generate image via OpenAI DALL-E API */
 async function generateViaOpenai(prompt: string, apiKey: string): Promise<ToolResult> {
-  const res = await fetch("https://api.openai.com/v1/images/generations", {
+  const res = await canonicalFetch("https://api.openai.com/v1/images/generations", {
     method: "POST",
     headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
     body: JSON.stringify({ model: "dall-e-3", prompt, n: 1, size: "1024x1024", response_format: "url" }),
-    signal: AbortSignal.timeout(60_000),
+    timeoutMs: 60_000,
   });
   if (!res.ok) {
     const errText = await res.text();
@@ -85,7 +87,7 @@ async function generateViaOpenai(prompt: string, apiKey: string): Promise<ToolRe
   if (!data.data?.[0]?.url) return err("OpenAI returned no image.");
 
   const imageUrl = data.data[0].url;
-  const imgRes = await fetch(imageUrl, { signal: AbortSignal.timeout(30_000) });
+  const imgRes = await canonicalFetch(imageUrl);
   if (!imgRes.ok) return ok(`Image generated!\nPrompt: ${prompt}\nView: ${imageUrl}\n(Could not save locally)`);
 
   const buffer = Buffer.from(await imgRes.arrayBuffer());

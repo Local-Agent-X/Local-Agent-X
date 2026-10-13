@@ -193,16 +193,16 @@ export const RULES: Record<RuleId, Rule> = {
 
   //   prompt-part: config/system-prompt.md:249 `## Coding discipline`, class
   //     `tuning` (src/config-loader.ts:106) — shed on the 32k profile.
-  //   prompt-part: AGENTS.md:62 "**Read before edit.**", injected verbatim by
-  //     the `agents-md` builder section (context/agents-md-section.ts),
-  //     policy `required` / priority `safety` ⇒ never shed. This is the copy
-  //     that survives.
+  //   prompt-part: config/agent-rules.md "Open a file before you edit it",
+  //     injected verbatim by the `agent-rules` builder section
+  //     (context/agents-md-section.ts), policy `required` / priority `safety`
+  //     ⇒ never shed. This is the copy that survives.
   "read-before-you-change": {
     id: "read-before-you-change",
     summary: "Never edit code you haven't opened — read the function and its call sites first.",
     channels: [
       { kind: "prompt-part", part: "core-identity/coding-discipline" },
-      { kind: "prompt-part", part: "agents-md" },
+      { kind: "prompt-part", part: "agent-rules" },
     ],
   },
 

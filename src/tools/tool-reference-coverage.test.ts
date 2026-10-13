@@ -11,6 +11,8 @@ import { TOOL_POLICIES } from "../tool-policy/tool-policies.js";
 import { SESSION_SCOPED_TOOLS } from "../tool-execution/resolve-tool.js";
 import { builderToolsForTier } from "./build-app-runtime.js";
 import { createArikernelBridgeTools } from "./arikernel-bridge.js";
+import { BROWSER_TOOL_PARAMETERS } from "./browser-tools/description.js";
+import { FLIPPABLE_SETTINGS } from "../settings-schema.js";
 
 // The startup coverage check and tool-policy-default.test.ts prove that every
 // REGISTERED tool has a policy entry. Nothing proved the reverse, so a name
@@ -30,8 +32,12 @@ import { createArikernelBridgeTools } from "./arikernel-bridge.js";
 const PROMPT_SOURCES = [
   "src/context/system-prompt-builder.ts",
   "src/context/rule-registry.ts",
-  "src/context/agents-md-section.ts",
   "src/context/runtime-section.ts",
+  // The two prompt files the product agent reads every turn. A tool name
+  // written there that no longer exists leaves the agent calling a ghost
+  // (2026-10-13: `browser_evaluate`, `browser_screenshot` in the secret rule).
+  "config/agent-rules.md",
+  "config/system-prompt.md",
 ];
 
 async function registeredToolNames(): Promise<Set<string>> {
@@ -59,14 +65,32 @@ async function registeredToolNames(): Promise<Set<string>> {
   return names;
 }
 
+/** Backticked snake_case names the prompt uses that are NOT tools and never
+ *  will be: settings fields (`developer_mode`), browser and protocol actions
+ *  (`new_tab`, `save_preference`), and two plain nouns. Derived from the real
+ *  tables where one exists, so a renamed action can't go stale here. */
+function knownNonToolIdentifiers(): Set<string> {
+  const browserActions = (BROWSER_TOOL_PARAMETERS.properties.action as { enum: readonly string[] }).enum;
+  return new Set([
+    ...FLIPPABLE_SETTINGS.map((s) => s.field),
+    ...browserActions,
+    "save_preference", // `protocol` tool action
+    "node_modules",
+    "run_id", // what agent_spawn returns
+  ]);
+}
+
 /** Backticked snake_case identifiers in the prompt sources: the shape a tool
  *  reference takes there ("Call `search_past_sessions` when…"). Single-word
  *  tokens are ambiguous with file and env names and are not checked. */
 function promptToolReferences(): Map<string, string> {
   const refs = new Map<string, string>();
+  const nonTools = knownNonToolIdentifiers();
   for (const file of PROMPT_SOURCES) {
     const text = readFileSync(join(process.cwd(), file), "utf-8");
-    for (const m of text.matchAll(/`([a-z][a-z0-9]*(?:_[a-z0-9]+)+)`/g)) refs.set(m[1], file);
+    for (const m of text.matchAll(/`([a-z][a-z0-9]*(?:_[a-z0-9]+)+)`/g)) {
+      if (!nonTools.has(m[1])) refs.set(m[1], file);
+    }
   }
   return refs;
 }

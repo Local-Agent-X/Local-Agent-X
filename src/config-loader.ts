@@ -8,7 +8,7 @@
  * Files:
  *   config/system-prompt.md     — base system prompt
  *   config/protected-files.json — list of files agent cannot modify (self-protecting)
- *   config/tools.json           — tool registry settings (eager/deferred/disabled)
+ *   config/agent-rules.md       — the never-shed invariants (read by context/agents-md-section.ts)
  */
 
 import { readFileSync, existsSync, watch } from "node:fs";
@@ -32,13 +32,6 @@ const PLATFORM_ROOT = resolve(CONFIG_DIR, "..");
 
 let _systemPrompt: string | null = null;
 let _protectedFiles: string[] | null = null;
-let _toolsConfig: ToolsConfig | null = null;
-
-interface ToolsConfig {
-  eager: string[];
-  disabled: string[];
-  settings: Record<string, Record<string, unknown>>;
-}
 
 // ── Readers ──
 
@@ -161,23 +154,6 @@ export function loadProtectedFiles(): string[] {
   return _protectedFiles;
 }
 
-/** Load tool registry config from config/tools.json. */
-export function loadToolsConfig(): ToolsConfig {
-  if (_toolsConfig !== null) return _toolsConfig;
-  const path = join(CONFIG_DIR, "tools.json");
-  try {
-    const data = JSON.parse(readFileSync(path, "utf-8"));
-    _toolsConfig = {
-      eager: data.eager || [],
-      disabled: data.disabled || [],
-      settings: data.settings || {},
-    };
-  } catch {
-    _toolsConfig = { eager: [], disabled: [], settings: {} };
-  }
-  return _toolsConfig;
-}
-
 /**
  * Match a candidate path against a single manifest entry. The candidate is
  * already normalized to forward slashes and may be absolute or repo-relative.
@@ -257,9 +233,6 @@ export function startConfigWatcher(): void {
       } else if (name === "protected-files.json") {
         _protectedFiles = null;
         logger.info("[config-loader] Hot-reloaded protected-files.json");
-      } else if (name === "tools.json") {
-        _toolsConfig = null;
-        logger.info("[config-loader] Hot-reloaded tools.json");
       }
     }), "config-loader");
     _watching = true;

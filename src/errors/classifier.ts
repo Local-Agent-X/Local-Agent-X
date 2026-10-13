@@ -5,11 +5,8 @@
  * Replaces scattered inline string-matching with a centralized classifier
  * that the main retry loop consults for every API failure.
  *
- * Today this logic in LAX is scattered across:
- *   - src/agent-guards.ts (EMPTY_RESULT_RE for dead-end detection)
- *   - src/ops/worker-entry.ts (REFUSAL_PATTERNS for worker output)
- *   - src/providers/run-anthropic.ts (transient-error detection)
- *   - src/agent-loop-detectors.ts (various unresolved-error patterns)
+ * This logic used to be scattered across the old agent-guards, worker-entry
+ * and run-anthropic modules (dead-end, refusal and transient-error patterns).
  *
  * The classifier here is a SHELL with the most common patterns ported
  * from those files. Old call sites are updated to call classify() and

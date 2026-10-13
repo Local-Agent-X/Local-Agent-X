@@ -78,7 +78,7 @@ Provider OAuth/setup-token storage and CLI sign-ins have different encryption bo
 | `npm run test:unit` | Run the vitest unit suite. |
 | `npm run test:fixtures` | Run prompt-fixture replay tests. |
 | `npx tsc --noEmit` | Typecheck without emitting. |
-| `npx tsx scripts/gen-agent-capabilities.ts` | Regenerate [docs/agent-capabilities.md](docs/agent-capabilities.md) from the tool registry. |
+| `npm run docs:generated` | Regenerate [docs/agent-capabilities.md](docs/agent-capabilities.md) from the main-chat audience map (`src/tools/audience-map.ts`). CI pre-flight fails if it's stale. |
 | `npm run docs:map` | Regenerate [docs/codebase-map.md](docs/codebase-map.md) (structural map of `src/`). `npm run build` fails if it's stale. |
 
 There is no separate lint step.
@@ -87,7 +87,7 @@ There is no separate lint step.
 
 **Reading the code?** [ARCHITECTURE.md](ARCHITECTURE.md) is the current code map — every major subsystem to its canonical file, with superseded/dead directories flagged so you don't trace into them. Start there; its companion [docs/codebase-map.md](docs/codebase-map.md) is auto-generated (live importer counts, size tiers, god files, and the genuinely-dead dirs) and the build keeps it fresh. Historical design and migration records under `docs/` are labeled as such and defer to these runtime owners.
 
-Three lanes for change: **runtime state** flips through HTTP endpoints (settings, provider, theme — never edit files for live state), **self-modification** of the agent's own `config/` directory (which hot-reloads) or source goes through `self_edit` in developer mode, since the file tools and the shell cage refuse writes there, and **external sites** flow through the `browser` tool rather than raw fetch. Every tool call runs through the `src/tool-execution/` pipeline and the in-process Ari Kernel security layer; new tools need an explicit allow rule in the matching per-domain policy fragment (`src/tool-policy/tool-policies.<domain>.ts`). The architectural rules are non-negotiable and live in [AGENTS.md](AGENTS.md) — read that before touching the codebase.
+Three lanes for change: **runtime state** flips through the agent's `setting` tool or an HTTP endpoint (settings, provider, theme — never edit files for live state), **self-modification** of the agent's own `config/` directory (which hot-reloads) or source goes through `self_edit` in developer mode, since the file tools and the shell cage refuse writes there, and **external sites** flow through the `browser` tool rather than raw fetch. Every tool call runs through the `src/tool-execution/` pipeline and the in-process Ari Kernel security layer; new tools need an explicit allow rule in the matching per-domain policy fragment (`src/tool-policy/tool-policies.<domain>.ts`). The architectural rules are non-negotiable and live in [AGENTS.md](AGENTS.md) — read that before touching the codebase.
 
 ## Status
 

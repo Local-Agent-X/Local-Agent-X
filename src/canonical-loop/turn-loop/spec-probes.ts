@@ -32,8 +32,7 @@ import { firstUserMessageText } from "../store.js";
 import { getSessionForOp } from "../../ops/session-bridge.js";
 import { resolveAgentPath } from "../../workspace/paths.js";
 import { generateOracleProbe, type OracleProbe, type ProbeLanguage } from "../../classifiers/oracle-probe-gen.js";
-import { bashTool } from "../../tools/shell-tool.js";
-import { statusOf } from "../../tools/result-helpers.js";
+import { executeHarnessCommand } from "../../tool-execution/harness-exec.js";
 import { workspaceRoot } from "../../config.js";
 import { removeLeftovers, snapshotTree } from "./probe-leftovers.js";
 import { createLogger } from "../../logger.js";
@@ -120,7 +119,7 @@ export function classifyProbeRun(status: string, output: string): ProbeVerdict {
  * gate runs between turns and deletes the file immediately, so the model never
  * sees it (can't overfit to it) and nothing is left in the tree.
  */
-async function defaultExec(probe: OracleProbe, solutionDir: string, signal?: AbortSignal): Promise<{ verdict: ProbeVerdict; output: string }> {
+async function defaultExec(probe: OracleProbe, solutionDir: string, opId: string, signal?: AbortSignal): Promise<{ verdict: ProbeVerdict; output: string }> {
   const fileName = `.lax-probe-${randomUUID().slice(0, 8)}.${EXT[probe.language]}`;
   const probePath = join(solutionDir, fileName);
   // The probe may create files while it runs (a deletion task's probe builds
@@ -129,14 +128,15 @@ async function defaultExec(probe: OracleProbe, solutionDir: string, signal?: Abo
   const before = snapshotTree(solutionDir);
   try {
     writeFileSync(probePath, probe.script, "utf-8");
-    const r = await bashTool.execute({
+    const r = await executeHarnessCommand({
       command: `${RUNNER[probe.language]} ${fileName}`,
-      _cwd: solutionDir,
-      _signal: signal,
-      timeout: PROBE_TIMEOUT_MS,
+      cwd: solutionDir,
+      signal,
+      timeoutMs: PROBE_TIMEOUT_MS,
+      purpose: "spec-probe",
+      opId,
     });
-    const output = r.content ?? "";
-    return { verdict: classifyProbeRun(statusOf(r), output), output };
+    return { verdict: classifyProbeRun(r.status, r.output), output: r.output };
   } catch (e) {
     return { verdict: "invalid", output: (e as Error).message };
   } finally {
@@ -290,7 +290,7 @@ export async function runSpecProbeGate(op: Op, opts: SpecProbeOptions = {}): Pro
   }
   if (!probe) return NO_RETRY;
 
-  const exec = opts.exec ?? defaultExec;
+  const exec = opts.exec ?? ((p: OracleProbe, dir: string, signal?: AbortSignal) => defaultExec(p, dir, op.id, signal));
   const run = await exec(probe, solutionDir, opts.signal);
   logger.info(`op=${op.id} ran ${probe.language} spec-probe in ${solutionDir} → ${run.verdict} (retry ${getSpecProbeRetries(op.id)})`);
   // Opt-in diagnostic: on a non-pass verdict, dump the probe the active model

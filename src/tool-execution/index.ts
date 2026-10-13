@@ -3,6 +3,7 @@
 // tests) — this index is the public surface.
 
 export { executeToolCalls, dispatchSingleToolCall } from "./execute-tool.js";
+export { executeHarnessCommand } from "./harness-exec.js";
 export type { UnifiedDispatchCtx } from "./execute-tool.js";
 export { markDryRunSession, unmarkDryRunSession } from "./resolve-tool.js";
 export { getRiskLevel, buildApprovalContext } from "./approval-context.js";

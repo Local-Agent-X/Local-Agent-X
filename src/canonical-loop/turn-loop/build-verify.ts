@@ -21,8 +21,7 @@ import { opOutstandingIntroducedErrors } from "../middlewares/post-edit-diagnost
 import type { FileDiagnostic } from "../../language-intel/index.js";
 import { resolveAgentPath } from "../../workspace/paths.js";
 import { workspaceRoot } from "../../config.js";
-import { bashTool } from "../../tools/shell-tool.js";
-import { statusOf } from "../../tools/result-helpers.js";
+import { executeHarnessCommand } from "../../tool-execution/harness-exec.js";
 import { createLogger } from "../../logger.js";
 import type { Op } from "../../ops/types.js";
 
@@ -140,9 +139,9 @@ const realProbe: FsProbe = {
 /** Run the detected command and reduce it to a pass/output verdict. Anything
  *  short of a clean exit (error, timeout, blocked) counts as "not verified" —
  *  we never round a non-zero or aborted build up to green. */
-async function defaultExec(command: string, cwd: string): Promise<{ ok: boolean; output: string }> {
-  const r = await bashTool.execute({ command, _cwd: cwd, timeout: BUILD_TIMEOUT_MS });
-  return { ok: statusOf(r) === "ok", output: r.content };
+async function defaultExec(command: string, cwd: string, opId: string): Promise<{ ok: boolean; output: string }> {
+  const r = await executeHarnessCommand({ command, cwd, timeoutMs: BUILD_TIMEOUT_MS, purpose: "build-verify", opId });
+  return { ok: r.ok, output: r.output };
 }
 
 /** Head-truncate compiler output: the first errors are the root causes (a
@@ -307,7 +306,7 @@ export async function runBuildVerifyGate(op: Op, opts: BuildVerifyOptions = {}):
     return NO_RETRY;
   }
 
-  const exec = opts.exec ?? defaultExec;
+  const exec = opts.exec ?? ((command: string, cwd: string) => defaultExec(command, cwd, op.id));
 
   // 1. Type-check (fast, side-effect-free). The broken-reference class fails here.
   const build = await exec(detected.command, detected.cwd);

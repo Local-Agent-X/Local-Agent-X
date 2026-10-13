@@ -220,6 +220,10 @@ export interface CanonicalFetchOptions {
   maxRedirects?: number;
   /** A caller's abort (a tool's own deadline), combined with the timeout. */
   signal?: AbortSignal;
+  /** HTTP method (default GET) and body, for provider API calls (image/video
+   *  generation). Neither changes the SSRF checks; a redirect re-sends both. */
+  method?: string;
+  body?: string;
 }
 
 /** Schemes a canonicalFetch is allowed to dial. A redirect that bounces to
@@ -274,6 +278,8 @@ export async function canonicalFetch(
   let currentUrl = url;
   const timeout = AbortSignal.timeout(timeoutMs);
   const fetchOpts: UndiciRequestInit = {
+    method: opts.method ?? "GET",
+    body: opts.body,
     headers: opts.headers ?? {},
     signal: opts.signal ? AbortSignal.any([opts.signal, timeout]) : timeout,
     redirect: "manual",

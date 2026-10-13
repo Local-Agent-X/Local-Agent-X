@@ -12,7 +12,7 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 67 top-level dirs · 67 live · 0 with no live importer · 1728 non-test source files · 0 god files (>400 LOC).
+**Totals:** 67 top-level dirs · 67 live · 0 with no live importer · 1729 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -20,7 +20,7 @@ over 400 LOC (the source-hygiene ceiling).
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 138 | 26 | XL |  |
 | `src/security/` | 111 | 45 | XL |  |
-| `src/tools/` | 97 | 206 | XL |  |
+| `src/tools/` | 96 | 206 | XL |  |
 | `src/canonical-loop/` | 74 | 256 | XL |  |
 | `src/providers/` | 67 | 26 | XL |  |
 | `src/workspace/` | 57 | 3 | M |  |
@@ -31,7 +31,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/util/` | 38 | 3 | S |  |
 | `src/auth/` | 37 | 11 | L |  |
 | `src/session/` | 36 | 7 | L |  |
-| `src/threat/` | 34 | 12 | L |  |
+| `src/threat/` | 35 | 12 | L |  |
 | `src/tool-policy/` | 30 | 20 | L |  |
 | `src/agency/` | 27 | 19 | L |  |
 | `src/agent-store/` | 26 | 7 | L |  |
@@ -42,9 +42,9 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/context/` | 23 | 8 | L |  |
 | `src/sandbox/` | 23 | 14 | L |  |
 | `src/chat-ws/` | 22 | 20 | L |  |
+| `src/tool-execution/` | 21 | 63 | XL |  |
 | `src/orchestrator/` | 20 | 24 | L |  |
 | `src/protocols/` | 19 | 52 | XL |  |
-| `src/tool-execution/` | 19 | 62 | XL |  |
 | `src/agents/` | 17 | 13 | L |  |
 | `src/anthropic-client/` | 15 | 21 | XL |  |
 | `src/autonomy/` | 14 | 4 | M |  |
@@ -117,7 +117,7 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/committing-tool-check.ts` | M |
 | `src/computer-control.ts` | S |
 | `src/config-hot-reload.ts` | S |
-| `src/config-loader.ts` | M |
+| `src/config-loader.ts` | S |
 | `src/config-profiles.ts` | S |
 | `src/config-schema.ts` | S |
 | `src/config.ts` | M |

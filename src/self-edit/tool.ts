@@ -61,12 +61,12 @@ export const selfEditTool: ToolDefinition = {
     "- Bug fixes in source: a tool returned 200 but the UI didn't update, an endpoint returns " +
     "wrong shape, a route is missing, a feature works on one provider but not another, user " +
     "reports 'that didn't work' after what looked like success.\n" +
-    "- Changes to your own config/ (system prompt, tools.json): edit and the shell refuse config/, " +
+    "- Changes to your own config/ (system prompt, agent rules): edit and the shell refuse config/, " +
     "so self_edit is the route; its files hot-reload once the change merges (no restart).\n" +
-    "- Missing capabilities: you NEED a tool that doesn't exist to complete the user's task. " +
-    "Examples: user sends voice message and there's no transcribe_audio tool → self_edit({task: " +
-    "'Add transcribe_audio tool using local whisper, install whisper-node via npm'}). User wants " +
-    "to schedule a recurring email and there's no recurring_email tool → self_edit to add it. " +
+    "- Missing capabilities: you NEED a tool that doesn't exist to complete the user's task — " +
+    "confirm with tool_search first, since most capabilities already exist (transcription is " +
+    "transcribe_media, for example). Example: the user wants a recurring email and there's no " +
+    "recurring_email tool → self_edit to add it. " +
     "If after this self_edit the agent will have a new tool that matches the intent, that's the " +
     "right call.\n\n" +
     "BEFORE calling self_edit, CHECK THE EXISTING TOOL LIST. If a tool already covers the intent, " +
@@ -216,7 +216,7 @@ export const selfEditTool: ToolDefinition = {
             `User's most recent message: ${userQuote}\n` +
             `Self_edit task you were about to run: ${taskQuote}\n\n` +
             `self_edit changes the agent's own code and config/, so it only runs on an explicit request (a bug to fix, ` +
-            `a capability to add, a change to its system prompt or tools.json) or a direct "yes, go ahead". This looked like a question, an observation, ` +
+            `a capability to add, a change to its system prompt or agent rules) or a direct "yes, go ahead". This looked like a question, an observation, ` +
             `or open brainstorming. Reply in plain text — tell the user what you'd change and ask if they ` +
             `want it — then wait for their go-ahead before calling self_edit again.`,
           isError: true,

@@ -10,7 +10,7 @@ import { createRequire } from "node:module";
 import { measurePromptSection, type PromptSectionTelemetry } from "../prompt-telemetry.js";
 import { basePromptSections } from "../config-loader.js";
 import { snapshotForSession } from "./session-prompt-snapshot.js";
-import { readAgentsMdSection } from "./agents-md-section.js";
+import { readAgentRulesSection } from "./agents-md-section.js";
 import { runtimeSection } from "./runtime-section.js";
 import { resolveWindowsShell } from "../tools/shell-env.js";
 import { workspaceRoot } from "../config.js";
@@ -252,14 +252,14 @@ export function createSystemPromptBuilder(opts: {
     }),
   });
 
-  // AGENTS.md — hand-written invariants and architectural rules. Pairs with
-  // the JSON manifest: manifest says WHAT exists, AGENTS.md says what's
-  // ALLOWED (three-lane routing, directory boundaries, code limits, protocol
-  // invariants). Injected verbatim so the agent reads the canonical rules
-  // rather than a drifty paraphrase.
+  // config/agent-rules.md — the product agent's invariants (three-lane
+  // routing, workspace/ vs public/, self_edit gating, secret placeholders).
+  // Pairs with the App Map: the manifest says WHAT exists, this says what's
+  // ALLOWED. Injected verbatim, never shed, and re-read every build so a rule
+  // edit governs the very next message.
   builder.addSection({
-    id: "agents-md", label: "Rules", type: "static", policy: "required", priority: "safety",
-    build: readAgentsMdSection,
+    id: "agent-rules", label: "Rules", type: "static", policy: "required", priority: "safety",
+    build: readAgentRulesSection,
   });
 
   builder.addSection({

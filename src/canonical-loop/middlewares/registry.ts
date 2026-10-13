@@ -1,10 +1,8 @@
 /**
  * Default canonical-loop middleware stack.
  *
- * Order matters — copied from the universal-coverage order documented in
- * docs/runagent-caller-inventory.md "Legacy-loop middleware coverage" so the
- * canonical safety stack fires in the same sequence the three legacy loops
- * use:
+ * Order matters — the safety stack fires in a fixed sequence (the table
+ * below is the contract; the legacy loops it was copied from are gone):
  *
  *   beforeTurn:           mid-turn-stale, open-steps
  *                         (turn-0 plan seed on agent/background lanes)
@@ -14,11 +12,7 @@
  *                         nothing committed), open-steps
  *                         (forces continuation when the model left declared
  *                         task-list steps unfinished; runs on interactive too,
- *                         its open-tasks signal is safe for chat), browser-handoff
- *                         (interactive chat only — forces continuation when a
- *                         browser-driving turn punts the obstruction back to the
- *                         user with the page still open), self-check,
- *                         post-turn-detector
+ *                         its open-tasks signal is safe for chat)
  *   afterToolExecution:   dead-end, repeat-failure (ALL lanes —
  *                         same-tool same-error spiral breaker; nudge at 3,
  *                         abort at 5)

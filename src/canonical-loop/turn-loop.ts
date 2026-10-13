@@ -255,8 +255,8 @@ export async function driveTurn(
   // Wire the live toolCalls array so auto-build-app's push mutates the
   // dispatcher's input (buildCanonicalLoopContext already passes it).
   afterModelCtx.toolCalls = toolCalls;
-  // Thread this turn's REAL reasoning/usage signals so post-turn-detector can
-  // tell a reasoning-burn turn from a genuinely empty one (HE-5).
+  // Thread this turn's REAL reasoning/usage signals so the empty-turn handling
+  // can tell a reasoning-burn turn from a genuinely empty one (HE-5).
   const usageOut = (result.providerState?.providerPayload as { usageOutputTokens?: unknown } | undefined)?.usageOutputTokens;
   afterModelCtx.hasReasoning = sawReasoning;
   afterModelCtx.modelEnded = result.modelStop === "ended";
@@ -327,7 +327,7 @@ export async function driveTurn(
     // Reasoning is bus-only (never persisted into finalized), so decide-outcome
     // can't infer it from assistantText/finalized — thread the turn's real
     // signal so its interactive empty-turn terminator never truncates a
-    // reasoning-only turn. Same local the post-turn-detector reads (HE-5).
+    // reasoning-only turn (HE-5).
     hasReasoning: sawReasoning,
     adapterError,
     providerStop: typeof payloadStop === "string" ? payloadStop : undefined,

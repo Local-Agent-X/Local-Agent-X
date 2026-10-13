@@ -280,10 +280,10 @@ describe("stableSystemPrefixLength", () => {
   });
 
   // C6-polish F1, revised. app-manifest (watcher-rewritten file counts) is now
-  // snapshotted per session; agents-md is re-read every build but only changes
+  // snapshotted per session; agent-rules is re-read every build but only changes
   // when the rules do. Both extend the cached prefix.
-  it("includes app-manifest and agents-md in the stable prefix", () => {
-    for (const snapshotId of ["app-manifest", "agents-md"]) {
+  it("includes app-manifest and agent-rules in the stable prefix", () => {
+    for (const snapshotId of ["app-manifest", "agent-rules"]) {
       expect(stableSystemPrefixLength([
         section("core-identity", "static", "IDENTITY"),
         section(snapshotId, "static", "STABLE FOR THE SESSION"),
@@ -391,14 +391,14 @@ describe("stableSystemPrefixLength", () => {
     expect(turn2.prompt).not.toBe(turn1.prompt);
 
     // The cached head is the WHOLE base file + runtime-context + app-manifest +
-    // agents-md + provider-hint — splitting the
+    // agent-rules + provider-hint — splitting the
     // file into core-identity/* parts must not have shortened it by a byte.
     // No tools are loaded here, so no tool-guidance stops the walk and the
     // byte-stable recall-reflex joins the head too.
     const basePrompt = loadSystemPrompt();
     const runtime = turn1.renderedSections.find((section) => section.id === "runtime-context")!;
     expect(turn1.prompt.startsWith(basePrompt)).toBe(true);
-    const stableSections = ["app-manifest", "agents-md", "provider-hint", "recall-reflex"]
+    const stableSections = ["app-manifest", "agent-rules", "provider-hint", "recall-reflex"]
       .map((id) => turn1.renderedSections.find((section) => section.id === id)?.text.length ?? 0)
       .reduce((sum, n) => sum + n, 0);
     expect(len1).toBe(basePrompt.length + runtime.text.length + stableSections);

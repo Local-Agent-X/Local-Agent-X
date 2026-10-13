@@ -60,14 +60,14 @@ export function fileAccessGroundingBlock(mode: FileAccessMode): string {
  *  - `integrations`: IntegrationRegistry.getAgentContext(), which reflects live
  *    connector state and can change when a connector is added or gated.
  *
- * `app-manifest` and `agents-md` used to be listed here. The manifest renders
+ * `app-manifest` and `agent-rules` used to be listed here. The manifest renders
  * per-app file counts the watcher rewrites during app-build / self_edit; it is
  * now snapshotted per session (context/session-prompt-snapshot.ts). AGENTS.md
  * is re-read every build on purpose — an edit must reach the next message — and
  * its bytes only change when the rules do, so it stays in the prefix and costs
  * one cache miss per real edit.
  *
- * That leaves core-identity/* + runtime-context + app-manifest + agents-md +
+ * That leaves core-identity/* + runtime-context + app-manifest + agent-rules +
  * provider-hint as the prefix: stable for the session, invalidated only when a
  * new session snapshots changed files or config/system-prompt.md changes. (The
  * base prompt is one section per `## ` heading — config-loader's

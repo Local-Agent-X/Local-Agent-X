@@ -47,7 +47,7 @@ export const HEAD_SECTION_IDS: ReadonlySet<string> = new Set([
   "learned-protocol",
   "file-attachments",
   "app-manifest",
-  "agents-md",
+  "agent-rules",
   "provider-hint",
   "tool-guidance",
   "recall-reflex",

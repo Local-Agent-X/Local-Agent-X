@@ -100,7 +100,7 @@ export function scanApps(): AppEntry[] {
 export function scanConfigFiles(): ConfigFileEntry[] {
   const configs: ConfigFileEntry[] = [
     { path: "config/system-prompt.md", description: "Agent's system prompt — behavior, personality, rules" },
-    { path: "config/tools.json", description: "Tool registry — which tools are eager/disabled, tool-specific settings" },
+    { path: "config/agent-rules.md", description: "The agent's invariants — injected into every turn, never shed" },
     { path: "config/protected-files.json", description: "List of core files the agent cannot modify" },
     { path: "config/app-manifest.json", description: "This file — auto-generated map of the entire app (read-only)" },
   ];

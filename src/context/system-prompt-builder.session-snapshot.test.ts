@@ -1,13 +1,13 @@
 // app-manifest is snapshotted per session so the watcher rewriting file counts
 // mid-session can't change the cached system-prompt prefix; a new session (or a
-// caller with no session) reads the current manifest. AGENTS.md is NOT: a rule
-// edit must govern the very next message of the same session.
+// caller with no session) reads the current manifest. agent-rules.md is NOT: a
+// rule edit must govern the very next message of the same session.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 let manifest = "MANIFEST v1";
 vi.mock("../manifest-generator/index.js", () => ({ getManifestSummary: () => manifest }));
-let agentsMd = "## Invariants (AGENTS.md)\nrule v1";
-vi.mock("./agents-md-section.js", () => ({ readAgentsMdSection: async () => agentsMd }));
+let agentsMd = "## Invariants (agent-rules.md)\nrule v1";
+vi.mock("./agents-md-section.js", () => ({ readAgentRulesSection: async () => agentsMd }));
 
 import { createSystemPromptBuilder } from "./system-prompt-builder.js";
 import { _resetSessionSnapshotsForTests } from "./session-prompt-snapshot.js";
@@ -22,7 +22,7 @@ const renderManifest = (sessionId?: string) => renderSection("app-manifest", ses
 beforeEach(() => {
   _resetSessionSnapshotsForTests();
   manifest = "MANIFEST v1";
-  agentsMd = "## Invariants (AGENTS.md)\nrule v1";
+  agentsMd = "## Invariants (agent-rules.md)\nrule v1";
 });
 
 describe("per-session prompt snapshots", () => {
@@ -45,8 +45,8 @@ describe("per-session prompt snapshots", () => {
   });
 
   it("an AGENTS.md edit reaches the next message of the same session", async () => {
-    expect(await renderSection("agents-md", "s1")).toContain("rule v1");
-    agentsMd = "## Invariants (AGENTS.md)\nrule v2";
-    expect(await renderSection("agents-md", "s1")).toContain("rule v2");
+    expect(await renderSection("agent-rules", "s1")).toContain("rule v1");
+    agentsMd = "## Invariants (agent-rules.md)\nrule v2";
+    expect(await renderSection("agent-rules", "s1")).toContain("rule v2");
   });
 });

@@ -1,41 +1,40 @@
-# src/AGENTS.md — Core engine rules
+# src/AGENTS.md — core engine rules
 
-You're about to edit the Local Agent X core engine. Stricter rules here than
-anywhere else.
+Adds to the root [AGENTS.md](../AGENTS.md); it does not replace it. Where this
+file and the root disagree, the root wins.
 
-## Protected file list
+## Protected files
 
-Files listed in `config/protected-files.json` can ONLY be modified via
-`self_edit` (which routes around the block intentionally for deep repairs).
-Direct `edit`/`write` on those files will be BLOCKED. Don't try to work around
-the block — if you need to change protected core, either:
-1. Use `self_edit` (the right tool for src/ surgery), or
-2. Ask the user.
+`config/protected-files.json` lists engine files the product agent's `write` /
+`edit` / `delete_file` tools refuse outright (`src/tool-execution/resolve-tool.ts`).
+Beyond that list, every write anywhere in the install outside `workspace/` is
+refused by `src/security/layer/file-access.ts`. `self_edit` is the one route:
+it needs `developer_mode` and a git checkout, runs in a worktree, and a change
+that touches a protected file is **held for the user to merge by hand**, never
+auto-merged (`src/self-edit/sandbox.ts`). Coding agents editing the repo
+directly are not subject to any of this.
 
 ## Module boundaries
 
-| Module | Owns | Don't touch from elsewhere |
+| Module | Owns | Rule |
 |---|---|---|
-| `tool-execution/` | tool-call lifecycle, Ari+policy+approval gating | Never bypass to call tools directly |
-| `tool-policy/` | allow/deny rules + default-deny | New tools need `allow-<name>` rule |
-| `ari-kernel/` | in-process security layer | Don't add a second one |
-| `anthropic-client/`, `codex-client/`, `canonical-loop/adapters/` | provider-specific streaming | Keep provider differences here, not leaking into routes |
-| `canonical-loop/agent-runner/` | `runAgentViaCanonical` entry point | All provider routing goes through the canonical loop |
-| `routes/*.ts` | HTTP surface | Business logic lives in top-level modules, routes just call in |
-| `memory/` | sqlite-vec hybrid memory | Don't add a second memory store |
+| `canonical-loop/` | the agent turn loop | **Sealed.** Outside code imports only `canonical-loop/index.js` or a `canonical-loop/public/*.js` sub-barrel (`interface-seal.test.ts`). Chat enters via `runChatViaCanonical`; agents, cron and self-edit via `runAgentViaCanonical`; both are exported from `index.ts`. |
+| `tool-execution/` | tool-call lifecycle: Ari, policy, approval, RBAC, audit | Every model tool call goes through `executeToolCalls` / `dispatchSingleToolCall`. |
+| `tool-policy/` | the per-tool policy table | Default-deny. New entries go in the `tool-policies.<domain>.ts` fragment, never the `.data.ts` barrel. |
+| `ari-kernel/` | the in-process security kernel gateway | Don't add a second one. |
+| `security/` | file access, shell policy, network policy (`layer/`), secret detection (`secrets/`) | All file-access decisions go through `evaluateFileAccess`. |
+| `providers/`, `anthropic-client/`, `codex-client/`, `canonical-loop/adapters/` | provider transport | Provider differences stay here; routes never branch on provider. |
+| `routes/` | HTTP surface (flat files plus `agents/`, `bridges/`, `browser/`, `chat/`, `settings/`) | Routes call into modules; business logic lives in the module. |
+| `memory/` | sqlite-vec + FTS5 hybrid memory, `SessionStore` | One memory store. |
 
-## Invariants specific to src/
+## Invariants
 
-- **One responsibility per file.** If a file passes ~400 LOC, split before adding more.
-- **Tool results must pass through `tool-execution/`'s `executeToolCalls`.** That's where Ari, policy, RBAC, approval, and event emission live. Any new tool path that bypasses is a bug.
-- **Every new tool needs:** (a) `ToolDefinition` with JSON schema, (b) registration in the `allTools` array in `tools/registry-build.ts` (re-exported via `tools.ts`), (c) allow rule in `tool-policy/tool-policies.data.ts`. All three. Missing any → default-deny kicks in.
-- **Mutations to shared state must broadcast.** Any `/api/*` POST that changes theme/settings/provider/session must `broadcastAll({ type: "settings_changed", ... })`. Silent writes desync the UI.
-- **Never import from `dist/`.** Source files import source files with `.js` suffix (ESM + Node16 resolution quirk).
-- **No `require()` in new code.** Package is `"type": "module"` — use dynamic `import()` or top-level ESM imports.
-- **Guard external content.** Web/browser/http_request results must flow through `sanitize.ts` wrappers before reaching the model.
+- Source files import source files with the `.js` suffix; never `dist/`; no `require()` (`check:no-require`; `createRequire` is the sanctioned exception).
+- Mutations to shared state broadcast `settings_changed` (see root).
+- External content goes through `sanitize.ts` wrappers before the model sees it.
+- A silent `catch {}` needs a comment saying why. The codebase has many without one; don't add more.
 
-## Testing expectations
+## Testing
 
-- `npm run build` must pass. If tsc fails, your change is rejected.
-- No silent catch-all `catch {}` unless there's a specific reason in a comment.
-- Don't add test files unless the user asked — prefer inline sanity checks.
+- `npm run build` must pass; it runs the static checks before `tsc`.
+- Tests live beside the code as `*.test.ts` and ship with every behavior change. Run them with vitest (PowerShell on Windows).

@@ -1,25 +1,27 @@
-# config/AGENTS.md — The agent's own behavior
+# config/AGENTS.md — the product agent's own behavior
 
-Everything in this directory **hot-reloads** without a server restart. It is
-the agent's own instructions, loaded into every chat, so the agent's file tools
-and shell may not write it, like the rest of the install outside `workspace/`.
-The agent changes it only through `self_edit`, which runs only in developer
-mode — a switch only the user can turn on (Settings → Security, on a git-clone
-install). Without it, the agent tells the user what change is needed.
+Everything here is the agent's own instructions, loaded into every chat. The
+agent's file tools and shell may not write it, like the rest of the install
+outside `workspace/`. The agent changes it only through `self_edit`, which runs
+only in developer mode (Settings → Security, on a git-clone install); a
+`self_edit` that touches a protected file here is held for the user to merge.
+Without developer mode, the agent tells the user what change is needed.
 
 ## Files
 
 | File | Owner | Hot-reload | Notes |
 |---|---|---|---|
-| `system-prompt.md` | user or `self_edit` | yes | THE primary prompt. Edit to change identity, rules, personality, available knowledge. |
-| `tools.json` | user or `self_edit` | yes | Per-tool enable/disable, eager-load settings. Tool families also switch on and off through the `setting` tool. |
-| `protected-files.json` | user only | yes | List of engine files only `self_edit` may change; a `self_edit` that changes one is held for the user's review before it merges. Only the user should modify this — changing it affects what `self_edit` is really "required" for. |
-| `app-manifest.json` | auto-generated | n/a | Machine-readable catalog. Never hand-edit. Regenerates when `src/routes/`, `public/`, `workspace/apps/`, or `config/` changes. |
+| `system-prompt.md` | user or `self_edit` (held for review) | yes | THE primary prompt: identity, how to work, personality. Split at its `## ` headings into budget classes (`src/config-loader.ts`); on small local models the `tuning` and `navigation` parts are shed first, `safety` and `identity` never. |
+| `agent-rules.md` | user or `self_edit` (held for review) | yes (re-read every turn) | The short invariant list injected as a never-shed section. When it and the prompt differ, it wins. Keep it to what must always hold. |
+| `protected-files.json` | user only | yes | Engine files the agent's file tools refuse; `self_edit` changes to one are held for review. Changing this list changes what `self_edit` is required for. |
+| `model-profiles/*.json` | user | **no** — read once per process | Local-model capability profiles. |
+| `app-manifest.json` | auto-generated, gitignored | n/a | Machine-readable catalog of pages, routes, tools, apps. Never hand-edit. Rewritten at startup and when `src/routes/`, `public/`, `workspace/apps/`, or `config/` changes. Only a summary of it (the App Map) reaches the prompt. |
 
 ## Invariants
 
-- **No AI-attribution text in `system-prompt.md`.** No "I'm Claude", no "powered by Anthropic", no vendor branding. Identity is "you are running inside Local Agent X."
-- **No dark mode as default** in any behavioral config. Light unless user asks.
-- **Don't embed secrets.** Use `{{SECRET_NAME}}` placeholders — server resolves from `secretsStore`.
-- **`system-prompt.md` changes hot-reload immediately.** No restart, no build. If you edit it and don't see the change in the next turn, something is wrong with the watcher — use `self_edit` to debug.
-- **Keep `system-prompt.md` under ~400 lines.** Past that, cache hit rate drops and agents start skimming rather than reading.
+- **No AI-vendor self-identification in `system-prompt.md`.** Identity is "you are running inside Local Agent X." Third-party services may be named.
+- **Light theme is the default** in any behavioral config.
+- **No embedded secrets.** `{{SECRET_NAME}}` placeholders; `http_request` resolves them from the vault.
+- **Edits hot-reload.** `system-prompt.md`, `agent-rules.md` and `protected-files.json` take effect on the next turn with no restart or build. If an edit doesn't show, the watcher in `src/config-loader.ts` is the place to look.
+- **Keep `system-prompt.md` lean.** It is measured in tokens, not lines (~15k today; lines average 150 characters). Every addition costs on every turn, and past a point agents skim.
+- **Tool names in these files must exist.** `src/tools/tool-reference-coverage.test.ts` checks every backticked `snake_case` name against the registry.

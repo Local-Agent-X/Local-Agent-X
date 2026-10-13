@@ -123,6 +123,7 @@ function autoInvalidateContradicting(
   for (const p of pairs) {
     if (p.drop === newId) continue; // never invalidate the fact we just inserted
     invalidateFact(db, p.drop, {
+      by: "agent",
       reason: `superseded by remember #${newId}: auto-detected contradiction (overlap=${p.overlap.toFixed(2)})`,
       replacedBy: newId,
     });
@@ -212,6 +213,7 @@ export function updateFact(
   }
   const newFact = newFacts[0];
   invalidateFact(db, oldFact.id!, {
+    by: "agent",
     reason: `superseded by ${newFact.id}: agent update_fact`,
     replacedBy: newFact.id,
   });
@@ -235,7 +237,7 @@ export function forgetFact(
     };
   }
   const oldFact = found.fact!;
-  invalidateFact(db, oldFact.id!, { reason: "agent forget" });
+  invalidateFact(db, oldFact.id!, { by: "agent", reason: "agent forget" });
   return { ok: true, fact: oldFact, oldFactId: oldFact.id };
 }
 

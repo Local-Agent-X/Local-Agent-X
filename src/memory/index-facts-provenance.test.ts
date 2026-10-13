@@ -21,6 +21,7 @@ import { authorizeTestFactMutations } from "./test-promotion.test-helper.js";
 import { describeMemoryPromotionRequest, stampTrustedUserPromotion } from "./promotion-gate.js";
 import { createFactsTools } from "./tools/facts.js";
 import { memoryRecallTool } from "./tools/search/memory-recall.js";
+import { resolveFact } from "./resolver.js";
 
 let tempDir: string;
 let memory: MemoryIndex;
@@ -104,5 +105,56 @@ describe("fact provenance round-trip", () => {
     const res = await recall.execute({ kind: "world" });
     expect(res.content).toContain("legacy row without recorded origin");
     expect(res.content).not.toContain("origin=");
+  });
+});
+
+// Live 2026-10-09 (qwen3.6:27b eval, runs 2 and 3): ~20 s after the chat,
+// background extraction saved "is the user's cousin" and the 3B resolver
+// answered UPDATE on the user's Merriweather story ("new cousin info"), so
+// the story was gone before the next chat asked about it.
+describe("a resolver's background guess cannot end what the user said", () => {
+  function seed(content: string, provenance: string | null): number {
+    authorizeTestFactMutations(memory);
+    const [f] = memory.retain(`- E ${content}`, "agent-tool");
+    db().prepare("UPDATE facts SET provenance = ? WHERE id = ?").run(provenance, f.id!);
+    return f.id!;
+  }
+  const live = (id: number) => (db().prepare("SELECT valid_to FROM facts WHERE id = ?").get(id) as { valid_to: number | null }).valid_to === null;
+
+  it("a resolver UPDATE on a user statement stores the new fact beside it, and ends nothing", async () => {
+    const story = seed('In 2014 @Odalys texted the user\'s brother "did you sell Merriweather yet"', "user_statement");
+    vi.mocked(resolveFact).mockResolvedValueOnce({ op: "UPDATE", targetId: story, reason: "new cousin info" });
+    const { facts } = await memory.retainSmart("- W(c=0.95) @Odalys is the user's cousin", "auto-extract");
+    expect(live(story)).toBe(true);
+    expect(facts).toHaveLength(1);
+    expect(facts[0].content).toBe("Odalys is the user's cousin");
+  });
+
+  it("a resolver DELETE on a user statement stores the new fact instead of erasing", async () => {
+    const slip = seed("@Odalys keeps the Kestrel Nine at slip 14", "user_statement");
+    vi.mocked(resolveFact).mockResolvedValueOnce({ op: "DELETE", targetId: slip, reason: "contradicts" });
+    const { facts } = await memory.retainSmart("- W @Odalys moved the Kestrel Nine to slip 31", "auto-extract");
+    expect(live(slip)).toBe(true);
+    expect(facts.map((f) => f.content)).toEqual(["Odalys moved the Kestrel Nine to slip 31"]);
+  });
+
+  it("a row with no recorded origin is protected too", async () => {
+    const legacy = seed("@Dana is the user's wife", null);
+    vi.mocked(resolveFact).mockResolvedValueOnce({ op: "DELETE", targetId: legacy, reason: "guess" });
+    await memory.retainSmart("- W @Dana likes tea", "auto-extract");
+    expect(live(legacy)).toBe(true);
+  });
+
+  it("a resolver may still revise what a model wrote", async () => {
+    const modelNote = seed("@user seems to like dark mode", "assistant");
+    vi.mocked(resolveFact).mockResolvedValueOnce({ op: "UPDATE", targetId: modelNote, reason: "refines" });
+    await memory.retainSmart("- O @user prefers dark mode in every editor", "auto-extract");
+    expect(live(modelNote)).toBe(false);
+  });
+
+  it("an agent action on the user's words still ends a user statement", () => {
+    const fact = seed("@Odalys keeps the Kestrel Nine at slip 14", "user_statement");
+    expect(memory.invalidateFact(fact, { by: "agent", reason: "agent update_fact" })).toBe(true);
+    expect(live(fact)).toBe(false);
   });
 });

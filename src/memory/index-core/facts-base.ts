@@ -73,7 +73,7 @@ export abstract class MemoryFactsBase {
 
   // ── Validity ──
 
-  invalidateFact(id: number, opts?: { reason?: string; replacedBy?: number; at?: Date }): boolean {
+  invalidateFact(id: number, opts: Parameters<typeof Facts.invalidateFact>[2]): boolean {
     return Facts.invalidateFact(this.db, id, opts);
   }
 

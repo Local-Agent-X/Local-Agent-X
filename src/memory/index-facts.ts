@@ -6,6 +6,9 @@ import { deriveEntitySlugs, loadKnownEntitySlugs } from "./entity-derive.js";
 
 // GC + validity accounting moved to index-facts-purge.ts (LOC cap).
 export { purgeInvalidatedFacts, validityStats } from "./index-facts-purge.js";
+// Ending a fact's validity, and who may: index-facts-invalidate.ts (LOC cap).
+import { invalidateFact } from "./index-facts-invalidate.js";
+export { invalidateFact, type InvalidationActor } from "./index-facts-invalidate.js";
 
 import { createLogger } from "../logger.js";
 import { assertMemoryPromotionAllowed, type MemoryPromotionContext } from "./promotion-gate.js";
@@ -161,8 +164,10 @@ export async function retainSmart(
 
     if (decision.op === "NOOP") continue;
 
-    if (decision.op === "DELETE" && decision.targetId !== undefined) {
-      invalidateFact(db, decision.targetId, { reason: `deleted by resolver: ${decision.reason}` });
+    // A refused DELETE stores the new statement instead (ADD), so a background
+    // guess can add a fact but never erase one it may not end.
+    if (decision.op === "DELETE" && decision.targetId !== undefined
+      && invalidateFact(db, decision.targetId, { by: "resolver", reason: `deleted by resolver: ${decision.reason}` })) {
       continue;
     }
 
@@ -179,7 +184,7 @@ export async function retainSmart(
       const factId = result.lastInsertRowid as number;
 
       if (decision.op === "UPDATE" && decision.targetId !== undefined) {
-        invalidateFact(db, decision.targetId, { reason: `superseded by ${factId}: ${decision.reason}`, replacedBy: factId });
+        invalidateFact(db, decision.targetId, { by: "resolver", reason: `superseded by ${factId}: ${decision.reason}`, replacedBy: factId });
       }
 
       for (const entity of validEntities) {
@@ -364,19 +369,3 @@ export function recallAsOf(
     .all(...params) as Array<Record<string, unknown>>;
   return rows.map(rowToFact);
 }
-export function invalidateFact(
-  db: InstanceType<typeof Database>,
-  id: number,
-  opts?: { reason?: string; replacedBy?: number; at?: Date }
-): boolean {
-  const at = (opts?.at || new Date()).getTime();
-  const r = db
-    .prepare(
-      `UPDATE facts
-       SET valid_to = ?, invalidated_by = ?, invalidation_reason = ?, last_updated = ?
-       WHERE id = ? AND valid_to IS NULL`
-    )
-    .run(at, opts?.replacedBy ?? null, opts?.reason ?? null, at, id);
-  return r.changes > 0;
-}
-

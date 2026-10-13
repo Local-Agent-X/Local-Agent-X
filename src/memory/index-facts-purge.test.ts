@@ -69,7 +69,7 @@ describe("purgeInvalidatedFacts", () => {
     expect(oldFact.ok).toBe(true);
     const oldId = oldFact.fact!.id!;
     expect(entityMentionCount(oldId)).toBeGreaterThan(0);
-    memory.invalidateFact(oldId, { reason: "switched editors" });
+    memory.invalidateFact(oldId, { by: "agent", reason: "switched editors" });
     setValidTo(oldId, now - 40 * DAY_MS); // invalidated 40d ago — past 30d retention
 
     // RECENTLY invalidated fact — inside the retention window, must survive.
@@ -79,7 +79,7 @@ describe("purgeInvalidatedFacts", () => {
     });
     expect(recentFact.ok).toBe(true);
     const recentId = recentFact.fact!.id!;
-    memory.invalidateFact(recentId, { reason: "experiment ended" });
+    memory.invalidateFact(recentId, { by: "agent", reason: "experiment ended" });
     setValidTo(recentId, now - 5 * DAY_MS); // invalidated 5d ago — within window
 
     // VALID fact — never invalidated, must survive.
@@ -119,7 +119,7 @@ describe("purgeInvalidatedFacts", () => {
       .run(hash, now);
     expect(db().prepare("SELECT COUNT(*) AS n FROM embedding_cache WHERE hash = ?").get(hash)).toEqual({ n: 1 });
 
-    memory.invalidateFact(id, { reason: "color phase over" });
+    memory.invalidateFact(id, { by: "agent", reason: "color phase over" });
     setValidTo(id, now - 60 * DAY_MS);
 
     const deleted = memory.purgeInvalidatedFacts(RETENTION_MS);
@@ -131,7 +131,7 @@ describe("purgeInvalidatedFacts", () => {
     const now = Date.now();
     const r = memory.rememberFact("a recently invalidated fact", { kind: "observation", confidence: 0.5 });
     expect(r.ok).toBe(true);
-    memory.invalidateFact(r.fact!.id!, { reason: "recent" });
+    memory.invalidateFact(r.fact!.id!, { by: "agent", reason: "recent" });
     setValidTo(r.fact!.id!, now - 1 * DAY_MS);
 
     const before = memory.validityStats();

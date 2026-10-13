@@ -20,8 +20,8 @@ Companion docs: [AGENTS.md](AGENTS.md) (the invariants/rules),
 [docs/mcp-consuming-servers.md](docs/mcp-consuming-servers.md) (MCP trust and
 execution), and
 [docs/release-qualification.md](docs/release-qualification.md) (release gates,
-benchmark evidence, and report interpretation). `docs/canonical-agent-design.md`
-and `docs/canonical-loop-prd.md` are
+benchmark evidence, and report interpretation). `docs/history/canonical-agent-design.md`
+and `docs/history/canonical-loop-prd.md` are
 historical design/ship records; their headers point back to current owners.
 
 Paths below were verified against the tree (the generated map's importer counts

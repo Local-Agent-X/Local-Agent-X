@@ -1,3 +1,5 @@
+> **Historical record (2026-06-29).** Describes the code as of that date; paths and numbers here are not kept current. Current owner: the op model in [src/ops/](../../src/ops/) and the loop in [src/canonical-loop/](../../src/canonical-loop/).
+
 # F1 — Merging the forked delegation engine `src/operations/` into canonical `src/ops/`
 
 **Status:** Design doc only. No `src/` files edited. No commit.

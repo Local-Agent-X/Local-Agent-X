@@ -6,7 +6,7 @@ successful runs and (optionally) activated and surfaced automatically on future
 matching requests, without ever expanding the user's existing permissions.
 
 This is the reference for the feature as it ships. The two root-level
-`CAMPAIGN-SELF-LEARNING.md` / `CAMPAIGN-PROCEDURAL-LEARNING.md` files are build
+`docs/history/campaign-self-learning.md` / `docs/history/campaign-procedural-learning.md` files are build
 ledgers (chunk tables and verification history from the campaigns that built
 this) and describe two forks of the work — treat them as history, not as a
 description of current behavior. This doc is the source of truth for what runs.

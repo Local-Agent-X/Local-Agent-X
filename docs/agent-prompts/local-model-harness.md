@@ -196,7 +196,7 @@ Fix timeouts structurally, not by making numbers bigger.
 1. Run the full eval. Watch rows as they land.
 2. Triage every non-PASS row from its evidence before moving on. Evidence lives in
    `~/.cache/aider-polyglot-reports/evidence/<stamp>/<slug>/`. Look at:
-   - `logs/server.log.gz`: stalls, DENY lines, summarizer failures, preflight refusals,
+   - `<data dir>/logs/server.log.gz`: stalls, DENY lines, summarizer failures, preflight refusals,
      classifier timeouts, loop aborts
    - `operations/*/op-turns/*.json.gz`: what the model called and what it was shown
    - the report row: `err`, `recovered`, notes, test output
@@ -254,7 +254,7 @@ Open, start here:
 
 ## Final report
 
-Write `eval/HARNESS_REPORT.md`:
+Write `eval/HARNESS_REPORT.md` (a new file; the run creates it): <!-- doc-paths:ignore -->
 - Baseline vs final pass rates per model and tier (pass@1 / pass@2).
 - Ledger summary: found, fixed, deferred.
 - Capability tiers, with the evidence behind each.

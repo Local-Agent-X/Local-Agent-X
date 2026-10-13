@@ -14,7 +14,7 @@
  * by id ("builtin-researcher", "tpl-...") or role slug ("researcher").
  * The "I just need an anonymous worker for one task" escape hatch is
  * killed by design — extend the catalog (or use the generic "worker"
- * role) instead. See docs/canonical-agent-design.md Q1.
+ * role) instead. See docs/history/canonical-agent-design.md Q1.
  */
 
 import type { ToolDefinition, ToolResult } from "../types.js";

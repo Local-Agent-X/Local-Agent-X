@@ -1,9 +1,11 @@
 # Shell egress at the network layer (P5 design)
 
-Status: design only — approved direction from the 2026-07-23 security-vs-autonomy
-audit (P5). Implementation is a follow-up /grand-daddy-brown campaign; nothing in
-this doc is built yet. The interim string-layer egress rules stay in force until
-the final phase here retires them.
+Status: approved direction from the 2026-07-23 security-vs-autonomy audit (P5).
+The network-layer proxy core now exists in `src/net/` (`egress-proxy-core.ts`,
+evaluating each dial through the security layer's egress policy); check the
+phase list below against that directory before assuming a phase is unbuilt.
+The interim string-layer egress rules stay in force until the final phase here
+retires them.
 
 ## Problem
 

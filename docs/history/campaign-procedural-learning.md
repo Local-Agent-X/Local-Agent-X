@@ -1,3 +1,5 @@
+> **Historical record (2026-07-25).** Describes the code as of that date; paths and numbers here are not kept current. Current owner: [docs/learned-protocols.md](../learned-protocols.md).
+
 # Campaign — Autonomous procedural learning loop (skill-review fork)
 
 Status: **APPROVED — EXECUTING** (user said "Go", 2026-07-25)

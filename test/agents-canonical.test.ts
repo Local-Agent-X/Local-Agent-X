@@ -87,7 +87,7 @@ describe("AgentCatalog — superset merge of legacy sources", () => {
 
   it.skip("ships the generic Worker role for one-off tasks that don't fit a specialist", () => {
     // Worker is the escape hatch for delegations where no named
-    // specialist applies (per canonical-agent-design.md Q1). It MUST
+    // specialist applies (per docs/history/canonical-agent-design.md Q1). It MUST
     // be in the catalog so agent_spawn(agent: "worker", ...) always
     // resolves — otherwise the supervisor has to pick a wrong fit.
     const worker = AgentCatalog.getInstance().get("worker");

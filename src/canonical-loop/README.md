@@ -4,7 +4,7 @@ The one state machine that runs every agent turn: op lifecycle, durable events,
 per-turn checkpoints, control signals (pause / cancel / redirect / approvals),
 leases and crash recovery. Chat, delegated agents, cron, self-edit and the
 background verifiers are all "just an op" here. The locked v1 contract is
-[docs/canonical-loop-prd.md](../../docs/canonical-loop-prd.md); the
+[docs/history/canonical-loop-prd.md](../../docs/history/canonical-loop-prd.md); the
 issue-by-issue build log moved to
 [docs/history/canonical-loop-v1-build.md](../../docs/history/canonical-loop-v1-build.md);
 rollback is [docs/runbooks/canonical-loop-rollback.md](../../docs/runbooks/canonical-loop-rollback.md).

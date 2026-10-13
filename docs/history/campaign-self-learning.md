@@ -1,3 +1,5 @@
+> **Historical record (2026-07-18).** Describes the code as of that date; paths and numbers here are not kept current. Current owner: [docs/learned-protocols.md](../learned-protocols.md).
+
 # Self-Learning Campaign Ledger
 
 ## Goal

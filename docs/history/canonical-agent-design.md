@@ -1,3 +1,5 @@
+> **Historical record (2026-07-10).** Describes the code as of that date; paths and numbers here are not kept current. Current owner: [src/agents/](../../src/agents/), [src/agency/](../../src/agency/) and [src/session/](../../src/session/).
+
 # Canonical Agent System — Design
 
 **Status:** Historical design record. The six decisions and build order capture

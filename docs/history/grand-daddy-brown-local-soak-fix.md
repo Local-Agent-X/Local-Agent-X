@@ -1,3 +1,5 @@
+> **Historical record (2026-07-17).** Describes the code as of that date; paths and numbers here are not kept current. Current owner: the harness workspace in [docs/harness/](../harness/).
+
 # Local soak reliability campaign
 
 Goal: make local-model tool turns continue correctly and align `web_search` validation with its canonical multi-query contract.

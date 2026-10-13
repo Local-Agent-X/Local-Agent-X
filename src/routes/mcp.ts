@@ -7,7 +7,7 @@ import { jsonResponse, readBody, safeErrorMessage } from "../server-utils.js";
 // Autopilot and scripted flows still reach these via the inline tool path;
 // only the user-facing supervisor needs them hidden.
 //
-// As of the canonical agent design (docs/canonical-agent-design.md) and
+// As of the canonical agent design (docs/history/canonical-agent-design.md) and
 // the Reverse Uno fix (2026-05-11), `agent_spawn` IS the canonical
 // delegation primitive — it must be exposed via MCP so Claude picks it
 // naturally.

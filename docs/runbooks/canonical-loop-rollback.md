@@ -3,7 +3,7 @@
 **Audience:** on-call / shipper.
 **Scope:** the LAX canonical op loop (sole execution path since the worker-pool retirement landed 2026-05-15).
 **Runtime references:** [`src/canonical-loop/README.md`](../../src/canonical-loop/README.md)
-and PRD [§17](../canonical-loop-prd.md#17-feature-flag--parallel-run-strategy).
+and PRD [§17](../history/canonical-loop-prd.md#17-feature-flag--parallel-run-strategy).
 PRD §22 is an archived v1.0 ship checklist, not an operational procedure.
 
 The canonical loop is the **only** execution path for ops. There is no
@@ -143,7 +143,7 @@ Record:
 
 ## Related
 
-- [docs/canonical-loop-prd.md](../canonical-loop-prd.md) — PRD,
+- [docs/history/canonical-loop-prd.md](../history/canonical-loop-prd.md) — PRD,
   including §17 flag semantics and §22 Definition of Done.
 - [src/canonical-loop/README.md](../../src/canonical-loop/README.md)
   — module map / boundary contract.

@@ -3,7 +3,7 @@
  * which tools the chat-side LLM actually sees.
  *
  * Two invariants this test enforces, both load-bearing for the
- * canonical-agent design (see docs/canonical-agent-design.md Q1):
+ * canonical-agent design (see docs/history/canonical-agent-design.md Q1):
  *
  *   1. The canonical delegation tools (agent_list, agent_spawn,
  *      agent_create) are INCLUDED. Without them, the supervisor can't

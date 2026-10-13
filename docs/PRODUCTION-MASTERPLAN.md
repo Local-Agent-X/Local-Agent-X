@@ -431,7 +431,7 @@ from one value, shown in one place. Chunks, in order:
 1. `agentMode` on the session with the derivation table above, replacing
    the direct reads of profile, toggles, file access, web access, preset,
    and plan flag in `src/tool-execution/` and `src/tool-policy/` with one
-   resolver (`src/session/agent-mode.ts`).
+   resolver (`src/session/agent-mode.ts`, a new file). <!-- doc-paths:ignore -->
 2. Kernel downgrade: in Autopilot the taint-keyed rules and run rules return
    an audit verdict instead of a deny. This is the piece the current
    profiles never did.

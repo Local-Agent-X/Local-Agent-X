@@ -1,3 +1,5 @@
+> **Historical record (2026-07-04).** Describes the code as of that date; paths and numbers here are not kept current. Current owner: the harness workspace in [docs/harness/](../harness/).
+
 # Harness Reliability Campaign
 
 Status: implemented and verified

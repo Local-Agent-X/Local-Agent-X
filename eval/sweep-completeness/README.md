@@ -68,8 +68,10 @@ enumeration (docs + spec + scenarios + store copy, not only code).
 
 ## The harness change
 
-`broad-sweep-nudge` middleware — commit **62dd6948**
-([src/canonical-loop/middlewares/broad-sweep-nudge.ts](../../src/canonical-loop/middlewares/broad-sweep-nudge.ts)).
+`broad-sweep-nudge` middleware — commit **62dd6948**. (Removed in 4a5a4cb6,
+when the wording-based guards were folded into the shared nudge budget; the
+eval still measures the behavior, now carried by the open-steps and
+verify-gate middlewares in `src/canonical-loop/middlewares/`.)
 When the task reads as a codebase-wide sweep **and** the model wraps up
 tool-lessly **and** it never ran `grep`/`glob` this op, it injects one forced
 nudge to enumerate the full surface before finishing. Gated three ways,

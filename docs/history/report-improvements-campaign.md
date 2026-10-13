@@ -1,3 +1,5 @@
+> **Historical record (2026-07-10).** Describes the code as of that date; paths and numbers here are not kept current. Current owner: [ARCHITECTURE.md](../../ARCHITECTURE.md).
+
 # Independent Evaluation Remediation Campaign
 
 Status: complete; all 20 recommendations implemented or explicitly parked for

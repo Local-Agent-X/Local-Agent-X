@@ -3,7 +3,7 @@
  *
  * The user's active chat may be nested under a Project. When the chat agent
  * spawns an agent from that chat, the spawn should be scoped to the
- * project's roster (Q3 + Q4 from canonical-agent-design.md). Rather
+ * project's roster (Q3 + Q4 from docs/history/canonical-agent-design.md). Rather
  * than thread projectId through every layer (chat WS → agent loop →
  * tool executor → tool args), we keep a tiny map keyed by sessionId
  * and have the tool executor inject `project_id` into agent_* tool

@@ -1,3 +1,5 @@
+> **Historical record (2026-09-09).** Describes the code as of that date; paths and numbers here are not kept current. Current owner: [src/canonical-loop/README.md](../../src/canonical-loop/README.md).
+
 # LAX Canonical Operation Loop — v1 PRD
 
 **Status:** Shipped 2026-05-15; archived ship specification. The migration-era

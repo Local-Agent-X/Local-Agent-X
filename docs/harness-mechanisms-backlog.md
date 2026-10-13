@@ -1,5 +1,11 @@
 # Harness Mechanisms Backlog
 
+> Written 2026-07-07. Entries name the files they *proposed* to add or touch;
+> several have since been built under different names, and some proposed files
+> never existed. Treat the paths as pointers to a concern, not as live paths
+> (this backlog is not covered by the build's doc-path check). Where a
+> mechanism shipped, [ARCHITECTURE.md](../ARCHITECTURE.md) names its owner.
+
 Clean-room spec for ~40 harness mechanisms to adopt in LAX. Each entry describes
 BEHAVIOR and RATIONALE only — implementers design the code fresh against LAX's own
 architecture. This document is the sole brief for implementation work; no other

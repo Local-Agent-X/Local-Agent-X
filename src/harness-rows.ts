@@ -25,7 +25,13 @@ import type { ChatCompletionMessageParam } from "openai/resources/chat/completio
 /** What the harness wrote a row for. Extend when a new kind appears; every
  *  consumer below keys on the flag's PRESENCE, so a new kind is hidden from
  *  users and memory by default rather than leaking until someone notices. */
-export type HarnessRowKind = "nudge";
+export type HarnessRowKind = "nudge" | "recall";
+const KINDS: ReadonlySet<string> = new Set<HarnessRowKind>(["nudge", "recall"]);
+
+/** True for a `kind` an op row may carry to mark it as a harness row. */
+export function isHarnessRowKind(kind: unknown): kind is HarnessRowKind {
+  return typeof kind === "string" && KINDS.has(kind);
+}
 
 type Tagged = ChatCompletionMessageParam & { _harness?: HarnessRowKind };
 

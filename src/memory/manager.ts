@@ -14,7 +14,7 @@ import type { MemoryIndex } from "./index-core.js";
 import type { FactKind, MemorySearchResult, RetainedFact } from "./types.js";
 import type { SearchOptions } from "./index-search.js";
 import { buildContextBlock, buildProfileBlock } from "./context.js";
-import { autoSearchContext } from "./auto-search-context.js";
+import { autoSearchContext, type RecalledMemory } from "./auto-search-context.js";
 import { autoExtractAndSave } from "./auto-extract.js";
 import { findKnownProjectsInMessage, buildKnownProjectsNudge } from "./known-projects.js";
 import { appendToDailyLogSafely } from "./write-safely.js";
@@ -39,7 +39,9 @@ export interface TurnContextInput {
 
 export interface TurnContext {
   contextBlock: string;
-  relevantMemories: string;
+  /** This turn's associative recall, unrendered: the prompt renders only the
+   *  entries the chat does not already carry (agent-request/recall-carry.ts). */
+  recall: RecalledMemory | null;
   /**
    * @deprecated Always empty. Cross-session summaries are no longer
    * auto-injected; the model must call `search_past_sessions` explicitly.
@@ -106,7 +108,7 @@ export class MemoryManager {
   async buildTurnContext(input: TurnContextInput): Promise<TurnContext> {
     const out: TurnContext = {
       contextBlock: "",
-      relevantMemories: "",
+      recall: null,
       smartContext: "",
       memoryContext: "",
       notifications: [],
@@ -161,7 +163,7 @@ export class MemoryManager {
     // widening TurnContextInput. Opts autoSearchContext into the bounded,
     // caveated cross-session recall addition (see auto-search-context.ts).
     const taskStart = lastAssistant === undefined;
-    const [contextBlock, relevantMemories, knownProjectsNudge, orch] = await Promise.all([
+    const [contextBlock, recall, knownProjectsNudge, orch] = await Promise.all([
       buildContextBlock(this.index, {
         userMessage: input.userMessage,
         skipDailyLog: input.skipDailyLog,
@@ -173,7 +175,7 @@ export class MemoryManager {
       }),
       autoSearchContext(this.index, input.userMessage, { sessionId: input.sessionId, taskStart }).catch((e) => {
         logger.warn("autoSearchContext failed:", (e as Error).message);
-        return "";
+        return null;
       }),
       // Known-project recall trigger. One-line nudge when user mentions a
       // domain/project name we have prior content for. Bleed-safe — the
@@ -206,7 +208,7 @@ export class MemoryManager {
     ]);
 
     out.contextBlock = contextBlock;
-    out.relevantMemories = relevantMemories;
+    out.recall = recall;
     if (knownProjectsNudge) {
       out.smartContext = knownProjectsNudge;
       out.knownProjectsFound = true;

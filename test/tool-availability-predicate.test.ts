@@ -162,7 +162,7 @@ describe("availability predicate — the deferred manifest half", () => {
       loadedTools: loaded,
       resolvedProvider: "anthropic",
       resolvedModel: "claude-opus-4-8",
-      contextBlock: "", relevantMemories: "", smartContext: "", memoryContext: "",
+      contextBlock: "", recall: null, smartContext: "", memoryContext: "",
       memoryNotifications: [], memoryCurateBlock: "",
     });
   }

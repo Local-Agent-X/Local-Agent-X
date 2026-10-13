@@ -10,7 +10,7 @@ import type { MemoryManager, TurnContext, TurnContextInput } from "../memory/ind
 function ctx(tag: string): TurnContext {
   return {
     contextBlock: `<current_datetime>${tag}</current_datetime>`,
-    relevantMemories: tag,
+    recall: { entries: [{ ref: "m1", text: tag }], pastSessions: false },
     smartContext: "",
     memoryContext: tag,
     notifications: [],
@@ -109,7 +109,7 @@ describe("buildTurnContextCached wallclock backstop", () => {
     await vi.advanceTimersByTimeAsync(10_100);
     const degraded = await pending;
     expect(degraded.contextBlock).toBe(profile);
-    expect(degraded.relevantMemories).toBe("");
+    expect(degraded.recall).toBeNull();
     expect(degraded.notifications).toEqual([]);
 
     // The wedged build completes late — it must warm the cache, not vanish.

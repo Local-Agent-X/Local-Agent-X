@@ -207,7 +207,7 @@ async function systemPrompt(reg: IntegrationRegistry, message: string, loaded: T
     loadedTools: loaded,
     resolvedProvider: "anthropic",
     resolvedModel: "claude-opus-4-8",
-    contextBlock: "", relevantMemories: "", smartContext: "", memoryContext: "",
+    contextBlock: "", recall: null, smartContext: "", memoryContext: "",
     memoryNotifications: [], memoryCurateBlock: "",
   });
 }

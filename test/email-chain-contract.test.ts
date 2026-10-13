@@ -309,7 +309,7 @@ async function observe(message = "send an email to bob and check my inbox") {
     loadedTools: loaded,
     resolvedProvider: "anthropic",
     resolvedModel: "claude-opus-4-8",
-    contextBlock: "", relevantMemories: "", smartContext: "", memoryContext: "",
+    contextBlock: "", recall: null, smartContext: "", memoryContext: "",
     memoryNotifications: [], memoryCurateBlock: "",
   });
   const loadedNames = new Set(loaded.map((t) => t.name));

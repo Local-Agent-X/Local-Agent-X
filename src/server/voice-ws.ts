@@ -19,6 +19,8 @@ import { retractLastTurn } from "../memory/retract-last-turn.js";
 import { resolveVoiceModel } from "./voice-model.js";
 import { VOICE_FAST_TOOLS, buildVoiceTail } from "./voice-prompt.js";
 import type { ProviderId } from "../providers/provider-ids.js";
+import { userAuthoredRows } from "../harness-rows.js";
+import { withRecallCarried } from "../agent-request/recall-carry.js";
 const logger = createLogger("server.lifecycle");
 
 // A spoken reply is a few sentences; this caps a voice turn's output so a
@@ -98,7 +100,7 @@ export async function setupVoiceWs(deps: {
       // any other writer slipped a row in, keep history intact (mild
       // duplication beats deleting someone else's turn).
       if (continuationOf) {
-        const lastUser = [...session.messages].reverse().find((m) => m.role === "user");
+        const lastUser = [...userAuthoredRows(session.messages)].reverse().find((m) => m.role === "user");
         if (lastUser && typeof lastUser.content === "string" && lastUser.content === continuationOf) {
           const retracted = retractLastTurn(session.messages, { includeUser: true });
           if (retracted.removed > 0) session.messages = retracted.messages;
@@ -367,8 +369,7 @@ export async function setupVoiceWs(deps: {
       };
       session.messages = [
         ...session.messages,
-        { role: "user" as const, content: text },
-        assistantRow,
+        ...withRecallCarried([{ role: "user" as const, content: text }, assistantRow], prepared.recall),
       ];
       session.updatedAt = Date.now();
       void saveSession(session);

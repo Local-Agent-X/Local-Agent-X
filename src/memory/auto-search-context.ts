@@ -20,6 +20,7 @@
  * skips the cross-session addition only.
  */
 
+import { createHash } from "node:crypto";
 import type { MemoryIndex } from "./index-core.js";
 import type { MemorySearchResult } from "./types.js";
 import { relativeAge, memoryStaleCaveat } from "./relative-age.js";
@@ -106,13 +107,25 @@ async function crossSessionCandidates(
   }
 }
 
+/** One recalled snippet, rendered, with a reference that stays the same
+ *  across turns so a chat can tell what it already carries. */
+export interface RecallEntry { ref: string; text: string }
+export interface RecalledMemory { entries: RecallEntry[]; pastSessions: boolean }
+
+/** Stable across turns: the chunk's index id, else its position. The rendered
+ *  snippet is not — it is an excerpt centred on each turn's query. */
+function recallRef(r: MemorySearchResult & { id?: number }): string {
+  if (r.id !== undefined) return `m${r.id}`;
+  return `p${createHash("sha1").update(`${r.source}\0${r.path}\0${r.startLine}`).digest("hex").slice(0, 10)}`;
+}
+
 export async function autoSearchContext(
   memory: MemoryIndex,
   userMessage: string,
   opts: AutoSearchOptions = {},
-): Promise<string> {
+): Promise<RecalledMemory | null> {
   const keywords = extractKeywords(userMessage);
-  if (keywords.length < 2) return "";
+  if (keywords.length < 2) return null;
 
   const trimmed = userMessage.trim().toLowerCase();
   const wordCount = trimmed.split(/\s+/).length;
@@ -120,9 +133,9 @@ export async function autoSearchContext(
   const ANSWER_SHORT_RE = /^(y|n|yes|no|sure|ok|okay|nah|nope|meh|fine|good|bad|cool)$/i;
   // Bare digits ("1", "2") are option-picks too — skip retrieval.
   const BARE_NUMBER_RE = /^[0-9]{1,2}$/;
-  if (BARE_NUMBER_RE.test(trimmed)) return "";
+  if (BARE_NUMBER_RE.test(trimmed)) return null;
   if (wordCount <= 6 && (REFERENTIAL_RE.test(trimmed) || ANSWER_SHORT_RE.test(trimmed))) {
-    return "";
+    return null;
   }
 
   try {
@@ -159,7 +172,7 @@ export async function autoSearchContext(
           crossSessionCandidates: cross.length, crossSessionInjected: 0,
         });
       }
-      return "";
+      return null;
     }
 
     const { mmrRerank } = await import("./mmr.js");
@@ -190,8 +203,8 @@ export async function autoSearchContext(
     // a caveat that any file/line citations inside may have drifted. `now`
     // is captured once so every entry is scored against a single clock.
     const now = Date.now();
-    const relevant = results
-      .map((r) => {
+    const entries = results
+      .map((r): RecallEntry => {
         const provenance = r.provenance;
         // A session exchange whose time is known is aged by when it was said,
         // not by when its chunk was last (re)indexed.
@@ -211,19 +224,41 @@ export async function autoSearchContext(
             ((provenance.when ?? provenance.date) ? `, date: ${provenance.when ?? provenance.date}` : "")
           : "";
         const origin = crossSet.has(r) ? "PAST SESSION — " : "";
-        return `[${origin}${r.source}${provenanceFields}${entities}${topic}${ageStr}${score}]${caveat}\n${r.snippet.slice(0, 300)}`;
-      })
-      .join("\n\n");
+        const ref = recallRef(r);
+        return { ref, text: `[${origin}${r.source}, ref: ${ref}${provenanceFields}${entities}${topic}${ageStr}${score}]${caveat}\n${r.snippet.slice(0, 300)}` };
+      });
+    const recalled: RecalledMemory = { entries, pastSessions: crossInjected > 0 };
 
-    const rendered = crossInjected > 0
-      ? (
+    if (wantCross) {
+      logMemoryRecall({
+        sessionId: opts.sessionId, phase: "auto-search",
+        matched: [], factsRendered: 0, factsDeduped: 0,
+        bytesInjected: renderRecalledMemory(recalled).length,
+        totalEntities: 0, scannedEntities: 0,
+        crossSessionCandidates: cross.length, crossSessionInjected: crossInjected,
+      });
+    }
+
+    return recalled;
+  } catch {
+    return null;
+  }
+}
+
+/** The RELEVANT MEMORIES block: the system-prompt section on the turn it was
+ *  recalled, and the body of the transcript row that carries it after. */
+export function renderRecalledMemory(recalled: RecalledMemory | null): string {
+  if (!recalled || recalled.entries.length === 0) return "";
+  const relevant = recalled.entries.map((e) => e.text).join("\n\n");
+  return recalled.pastSessions
+    ? (
         "\n\n<<<RETRIEVED_MEMORY_CONTENT — this session + profile + past-session leads>>>\n" +
         "--- RELEVANT MEMORIES ---\n" +
         relevant +
         "\n--- END RELEVANT MEMORIES ---\n" +
-        "Reading guidance: entries marked PAST SESSION are from PRIOR conversations —\n" +
-        "leads, not proof. They may be stale and never describe current runtime,\n" +
-        "project, or task state; verify with fresh tools before relying on them.\n" +
+        "Reading guidance: entries marked PAST SESSION record PRIOR conversations —\n" +
+        "evidence of what was said and when, not of current runtime, project, or\n" +
+        "task state; verify state with fresh tools before relying on it.\n" +
         "For more history, call `search_past_sessions`.\n" +
         "<<<END_RETRIEVED_MEMORY_CONTENT>>>"
       )
@@ -236,19 +271,4 @@ export async function autoSearchContext(
         "user profile. To pull from past sessions, call `search_past_sessions`.\n" +
         "<<<END_RETRIEVED_MEMORY_CONTENT>>>"
       );
-
-    if (wantCross) {
-      logMemoryRecall({
-        sessionId: opts.sessionId, phase: "auto-search",
-        matched: [], factsRendered: 0, factsDeduped: 0,
-        bytesInjected: rendered.length,
-        totalEntities: 0, scannedEntities: 0,
-        crossSessionCandidates: cross.length, crossSessionInjected: crossInjected,
-      });
-    }
-
-    return rendered;
-  } catch {
-    return "";
-  }
 }

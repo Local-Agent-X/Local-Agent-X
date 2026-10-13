@@ -6,6 +6,7 @@ import type { SecretsStore } from "../secrets.js";
 import type { CredentialSource } from "../auth/auth-provider.js";
 import type { ReasoningEffort } from "../providers/reasoning-effort.js";
 import type { PromptTelemetry } from "../prompt-telemetry.js";
+import type { RecalledMemory } from "../memory/auto-search-context.js";
 import type { RenderedPromptSection } from "../context/system-prompt-builder.js";
 import type { LocalModelCapabilityProfile } from "../local-runtimes/index.js";
 import type { TargetPin } from "../ops/types.js";
@@ -117,6 +118,10 @@ export interface PreparedAgentRequest {
   providerSwitch?: ProviderSwitch;
   /** Force a single tool for this turn — explicit build routes only (tool-selection.ts). */
   toolChoice?: ForcedToolChoice;
+  /** Recall this turn showed the model that the chat did not already carry.
+   *  Whoever saves the turn keeps it after the user's message
+   *  (recall-carry.ts withRecallCarried). */
+  recall: RecalledMemory | null;
   /** Content-free prompt sizing persisted with the canonical operation. */
   promptTelemetry: PromptTelemetry;
   /** Exact ordered model-visible sections. Kept in memory for capability-aware

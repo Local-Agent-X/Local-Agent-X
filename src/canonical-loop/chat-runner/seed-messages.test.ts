@@ -25,6 +25,9 @@ import { imagesToOpenAIParts } from "../adapters/images-to-openai-parts.js";
 import { toGeminiContents } from "../adapters/gemini-native-transport.js";
 import type { TransportMessage } from "../adapters/anthropic.js";
 import { convertMessages } from "../../anthropic-client/request.js";
+import { withRecallCarried } from "../../agent-request/recall-carry.js";
+import type { RecalledMemory } from "../../memory/auto-search-context.js";
+import { harnessRowKind, isHarnessRow } from "../../harness-rows.js";
 
 const PNG_B64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
@@ -239,5 +242,38 @@ describe("seedOpMessages — a tool result from an earlier message reaches the m
     expect(transportTool).toMatchObject({ toolCallId: "toolu_1", content: OUTPUT });
     const wireTool = canonicalToChatParam(input.messages, input.pendingRedirect).find(m => m.role === "tool");
     expect(wireTool).toMatchObject({ tool_call_id: "toolu_1", content: OUTPUT });
+  });
+});
+
+// Carried recall (agent-request/recall-carry.ts): what recall showed the model
+// on the question turn must reach it again on a turn that recalls nothing —
+// the qwen3.6:27b pushback ("you made that up") recalled nothing and retracted
+// a true fact in every run (2026-10-08/09).
+const RECALL_SOURCE = '[PAST SESSION — session, ref: m28, session: chat-0]\n[user] Remember this for later: in 2014 my cousin Odalys texted my brother "did you sell Merriweather yet".';
+const recalled = (...entries: Array<[string, string]>): RecalledMemory =>
+  ({ entries: entries.map(([ref, text]) => ({ ref, text })), pastSessions: true });
+const recallQuestion: ChatCompletionMessageParam = { role: "user", content: "What did my cousin text my brother back in 2014?" };
+const recallAnswer: ChatCompletionMessageParam = { role: "assistant", content: 'She texted "did you sell Merriweather yet".' };
+
+describe("the pushback turn still sees the evidence (the 2026-10-08/09 flip-flop)", () => {
+  it("a turn that recalls nothing replays the earlier recall to the model, ahead of the challenge", async () => {
+    const session = withRecallCarried([recallQuestion, recallAnswer], recalled(["m28", RECALL_SOURCE]));
+    const opId = `op_recall_carry_${Date.now()}`;
+    seedOpMessages(opId, { cleanHistory: session, images: [] } as unknown as PreparedAgentRequest,
+      "When did I ever say that? You're wrong, you made that up.");
+    const input = await buildTurnInput({ id: opId, type: "chat_turn", task: "x", lane: "interactive" } as unknown as Op, 1, null);
+    const wire = canonicalToTransport(input.messages, input.pendingRedirect);
+    const evidence = wire.findIndex((m) => m.role === "user" && String(m.content).includes("did you sell Merriweather yet"));
+    const challenge = wire.findIndex((m) => m.role === "user" && String(m.content).includes("you made that up"));
+    expect(evidence).toBeGreaterThan(-1);
+    expect(evidence).toBeLessThan(challenge);
+  });
+
+  it("the replayed row keeps its tag through the op round trip", async () => {
+    const { opMessageRowToChatParam, readOpMessages } = await import("../index.js");
+    const opId = `op_recall_tag_${Date.now()}`;
+    seedOpMessages(opId, { cleanHistory: withRecallCarried([recallQuestion, recallAnswer], recalled(["m28", RECALL_SOURCE])), images: [] } as unknown as PreparedAgentRequest, "next");
+    const back = readOpMessages(opId).map(opMessageRowToChatParam).filter((m): m is ChatCompletionMessageParam => !!m);
+    expect(back.filter(isHarnessRow).map(harnessRowKind)).toEqual(["recall"]);
   });
 });

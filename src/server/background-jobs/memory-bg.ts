@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { SessionStore, MemoryIndex } from "../../memory/index.js";
 import { isExcludedFromSessionSummaries } from "../../memory/synthetic-sessions.js";
 import { createLogger } from "../../logger.js";
+import { userAuthoredRows } from "../../harness-rows.js";
 
 const logger = createLogger("server.background-jobs.memory-bg");
 
@@ -68,7 +69,8 @@ export function makeRunMemBg(deps: MemoryBgDeps): () => Promise<void> {
         }
         const sess = sessionStore.load(meta.id);
         if (!sess) continue;
-        const userMsgs = sess.messages.filter(m => m.role === "user" && typeof m.content === "string").map(m => (m.content as string).slice(0, 200));
+        // userAuthoredRows: a harness row (nudge, carried recall) is not something the user said.
+        const userMsgs = userAuthoredRows(sess.messages).filter(m => m.role === "user" && typeof m.content === "string").map(m => (m.content as string).slice(0, 200));
         const agentMsgs = sess.messages.filter(m => m.role === "assistant" && typeof m.content === "string").map(m => (m.content as string).split("\n").filter(l => l.trim())[0]?.slice(0, 200) || "");
         const summary = `# ${sess.title}\n\nDate: ${new Date(sess.createdAt).toISOString().split("T")[0]}\nMessages: ${sess.messages.length}\n\n## Key Exchanges\n${userMsgs.slice(0, 10).map((u, i) => `- User: ${u}\n  Agent: ${agentMsgs[i] || "..."}`).join("\n")}\n`;
         writeFileSync(sf, summary, "utf-8");

@@ -15,7 +15,7 @@ import { buildContext, type BuildContextInput } from "./build-context.js";
 function manager(): MemoryManager {
   return {
     buildTurnContext: vi.fn(async () => ({
-      contextBlock: "profile", relevantMemories: "memory", smartContext: "existing smart context",
+      contextBlock: "profile", recall: { entries: [{ ref: "m1", text: "memory" }], pastSessions: false }, smartContext: "existing smart context",
       memoryContext: "memory context", notifications: [], knownProjectsFound: true,
     })),
   } as unknown as MemoryManager;

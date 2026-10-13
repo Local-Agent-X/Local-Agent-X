@@ -159,7 +159,7 @@ async function selectedOutcome(
 function memoryManager(): MemoryManager {
   return {
     buildTurnContext: vi.fn(async () => ({
-      contextBlock: "profile", relevantMemories: "memory", smartContext: "prior context",
+      contextBlock: "profile", recall: { entries: [{ ref: "m1", text: "memory" }], pastSessions: false }, smartContext: "prior context",
       memoryContext: "memory context", notifications: [], knownProjectsFound: false,
     })),
   } as unknown as MemoryManager;

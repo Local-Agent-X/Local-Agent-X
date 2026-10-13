@@ -66,6 +66,7 @@ export async function runCanonicalChat(input: CanonicalRunInput): Promise<Canoni
         canonicalOpId, message, assistantText: getFullResponseText().trim(),
         session, ctx, sessionId,
         images: prepared.images.map((im) => ({ name: im.name, url: im.url })),
+        recall: prepared.recall,
         interrupted,
         terminalError,
         abortSignal,
@@ -189,6 +190,8 @@ interface PersistInput {
   sessionId: string;
   /** This turn's images (/uploads paths) — persisted on the user message. */
   images: Array<{ name: string; url: string }>;
+  /** Recall this turn showed the model; kept after the user's message. */
+  recall?: PreparedAgentRequest["recall"];
   /** Turn ended by user-stop / abort rather than a clean done. Salvage the
    *  committed work, mark the boundary, and refresh the stale context cache. */
   interrupted?: boolean;
@@ -219,7 +222,7 @@ function sanitizeAssistantRowParam(param: ChatCompletionMessageParam): ChatCompl
 // Exported for the salvage regression test (an interrupted turn must persist
 // its work + boundary marker instead of erasing the turn).
 export async function persistTurnState(input: PersistInput): Promise<void> {
-  const { canonicalOpId, message, session, ctx, sessionId, images, interrupted, terminalError, abortSignal } = input;
+  const { canonicalOpId, message, session, ctx, sessionId, images, interrupted, terminalError, abortSignal, recall } = input;
   // Persist-profile pass over what the MODEL said this turn (leaked template
   // tokens, reasoning tags, hallucinated tool markup, whole-reply repeats —
   // providers/output-sanitize.ts). Applied to this turn's NEW text only: the
@@ -319,7 +322,9 @@ export async function persistTurnState(input: PersistInput): Promise<void> {
   }
 
   const { COMPACTION_PREFIX: COMPACTION_PREFIX_CHAT } = await import("../../../types.js");
-  session.messages = stripCanonical([...session.messages, ...newChatMessages]).filter((m) => {
+  // The recall this turn showed the model stays in the chat for later turns.
+  const { withRecallCarried } = await import("../../../agent-request/recall-carry.js");
+  session.messages = stripCanonical([...session.messages, ...withRecallCarried(newChatMessages, recall ?? null)]).filter((m) => {
     if (m.role === "system") {
       return typeof m.content === "string" && m.content.startsWith(COMPACTION_PREFIX_CHAT);
     }

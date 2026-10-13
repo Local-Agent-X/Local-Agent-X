@@ -4,7 +4,7 @@
 // turn-end (outbound: canonical → OpenAI, via opMessageRowToChatParam,
 // for appending to per-session.messages history).
 
-import { markHarnessRow } from "../../harness-rows.js";
+import { isHarnessRowKind, markHarnessRow } from "../../harness-rows.js";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { OpMessageRow } from "../types.js";
 
@@ -124,8 +124,8 @@ export function opMessageRowToChatParam(row: OpMessageRow): ChatCompletionMessag
     // answering a question absent from their transcript (live 2026-09-15). The
     // tag is what keeps it out of the chat UI, memory and retract —
     // harness-rows.ts names every consumer.
-    if (content.kind === "nudge") {
-      return markHarnessRow({ role: "user", content: text } as ChatCompletionMessageParam, "nudge");
+    if (isHarnessRowKind(content.kind)) {
+      return markHarnessRow({ role: "user", content: text } as ChatCompletionMessageParam, content.kind);
     }
     // Strip the engine-side temporal marker that turn-loop wraps mid-turn
     // injects with — the chat UI / future turns should see what the user

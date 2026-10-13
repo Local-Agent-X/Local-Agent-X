@@ -21,7 +21,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { MemoryIndex } from "./index-core.js";
 import type { MemorySearchResult } from "./types.js";
-import { autoSearchContext } from "./auto-search-context.js";
+import { autoSearchContext as recallForTurn, renderRecalledMemory } from "./auto-search-context.js";
+// autoSearchContext returns entries; these assertions read the rendered block.
+const autoSearchContext = async (...args: Parameters<typeof recallForTurn>) => renderRecalledMemory(await recallForTurn(...args));
 import { searchPastSessions } from "./tools/search/search-past-sessions.js";
 import { logMemoryRecall } from "./recall-telemetry.js";
 
@@ -146,7 +148,10 @@ describe("autoSearchContext — task-start cross-session recall", () => {
     expect(out).toContain("may be outdated");
     expect(out).toContain("relevance 0.70");
     expect(out).toContain("Same-session note about the bambu printer nozzles.");
-    expect(out).toContain("leads, not proof");
+    // Past chats are evidence of what was said; "leads, not proof" read as
+    // "don't trust what the user told you" when challenged (2026-10-08).
+    expect(out).toContain("evidence of what was said and when");
+    expect(out).not.toContain("leads, not proof");
     expect(out).toContain("call `search_past_sessions`");
     // The cross query went through the shared core (crossSession opt-in).
     expect(search).toHaveBeenCalledWith(QUERY, expect.objectContaining({

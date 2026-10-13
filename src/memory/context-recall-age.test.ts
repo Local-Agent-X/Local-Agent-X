@@ -19,7 +19,9 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MemoryIndex } from "./index.js";
-import { autoSearchContext } from "./context.js";
+import { autoSearchContext as recallForTurn, renderRecalledMemory } from "./auto-search-context.js";
+// autoSearchContext returns entries; these assertions read the rendered block.
+const autoSearchContext = async (...args: Parameters<typeof recallForTurn>) => renderRecalledMemory(await recallForTurn(...args));
 
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;

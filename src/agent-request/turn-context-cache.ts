@@ -183,7 +183,7 @@ export async function buildTurnContextCached(
     // sync re-embedding thousands of chunks wedged Ollama past this wallclock).
     return {
       contextBlock: await memoryManager.buildProfileBlock(),
-      relevantMemories: "",
+      recall: null,
       smartContext: "",
       memoryContext: "",
       notifications: [],

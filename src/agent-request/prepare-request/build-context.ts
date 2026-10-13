@@ -14,6 +14,8 @@ import { createLogger } from "../../logger.js";
 import { harnessNotice } from "../../context/system-prompt-builder.js";
 import { getLearnedProtocolSuggestion, type LearnedProtocolSuggestion } from "../../protocols/learned-suggestion.js";
 import { identityNamesFrom, renderIdentityNames } from "../../context/identity-names.js";
+import { renderRecalledMemory, type RecalledMemory } from "../../memory/auto-search-context.js";
+import { uncarriedRecall } from "../recall-carry.js";
 
 const logger = createLogger("agent-request.prepare-request.context");
 
@@ -38,6 +40,9 @@ export interface BuildContextResult {
   contextBlock: string;
   /** `<identity_names>` block, or "" — extracted before any strip or shed. */
   identityNames: string;
+  /** This turn's recall the chat does not already carry: rendered into the
+   *  prompt (relevantMemories) and saved after the user's message. */
+  recall: RecalledMemory | null;
   relevantMemories: string;
   smartContext: string;
   memoryContext: string;
@@ -85,7 +90,9 @@ export async function buildContext(input: BuildContextInput): Promise<BuildConte
   // budget or the stable-prefix path can move the block out of the system
   // prompt: the first-turn identity ask keys on them (context/identity-names.ts).
   const identityNames = renderIdentityNames(identityNamesFrom(contextBlock));
-  let relevantMemories = turnCtx.relevantMemories;
+  // After the 45 s turn-context cache, so a reused result is checked against
+  // the transcript as it is now.
+  let recall = uncarriedRecall(turnCtx.recall, input.sessionMessages);
   let smartContext = turnCtx.smartContext;
   let memoryContext = turnCtx.memoryContext;
   let knownProjectsFound = turnCtx.knownProjectsFound;
@@ -116,7 +123,7 @@ export async function buildContext(input: BuildContextInput): Promise<BuildConte
   // parse it as third-person info correctly.
   if (input.tier === "weak") {
     contextBlock = "";
-    relevantMemories = "";
+    recall = null;
     smartContext = "";
     memoryContext = "";
     knownProjectsFound = false;
@@ -145,7 +152,8 @@ export async function buildContext(input: BuildContextInput): Promise<BuildConte
     ? harnessNotice("LEARNED WORKFLOW", learnedSuggestion.nudge)
     : "";
 
-  return { contextBlock, identityNames, relevantMemories, smartContext, memoryContext, protocolNotice, notifications, knownProjectsFound };
+  const relevantMemories = renderRecalledMemory(recall);
+  return { contextBlock, identityNames, recall, relevantMemories, smartContext, memoryContext, protocolNotice, notifications, knownProjectsFound };
 }
 
 export function isTrivialToolRequest(message: string): boolean {

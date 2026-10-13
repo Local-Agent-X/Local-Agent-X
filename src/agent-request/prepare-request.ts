@@ -304,6 +304,7 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
     systemPrompt,
     tools: toolSel.tools,
     cleanHistory,
+    recall: ctx.recall,
     ...(checkpointed.newCheckpoint ? { newCheckpoint: checkpointed.newCheckpoint } : {}),
     images,
     temperature: resolved.temperature,

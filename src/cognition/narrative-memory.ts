@@ -22,6 +22,8 @@ import {
   STORY_PATTERNS,
 } from "./narrative-memory-store.js";
 import type { Narrative, NarrativeContext } from "./narrative-memory-store.js";
+import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
+import { isHarnessRow } from "../harness-rows.js";
 
 export type { Narrative, NarrativeChapter, NarrativeContext } from "./narrative-memory-store.js";
 
@@ -215,8 +217,9 @@ export class NarrativeMemory {
    * recurring themes.
    */
   autoDetectNarrative(messages: { role: string; content: string }[]): Narrative | null {
+    // A harness row (nudge, carried recall) wears role "user" but is not the user.
     const userMessages = messages
-      .filter((m) => m.role === "user")
+      .filter((m) => m.role === "user" && !isHarnessRow(m as ChatCompletionMessageParam))
       .map((m) => m.content);
 
     if (userMessages.length === 0) return null;

@@ -35,6 +35,6 @@ export const RETRACTION = [
   // "I checked, and I can't back it up … I shouldn't have stated it as fact …
   // Want me to delete the note?").
   /\bI (?:can'?t|cannot|couldn'?t) back (?:it|that|this|those) up\b/i,
-  /\bshould(?:n'?t| not) have (?:stated|presented|said) (?:it|that|this|those) as (?:a )?facts?\b/i,
+  /\bshould(?:n'?t| not) have (?:stated|presented|said|repeated) (?:it|that|this|those)(?: back(?: to you)?)? as (?:a )?facts?\b/i,
   /\b(?:want|should) (?:me to|I) (?:delete|remove|forget) (?:the|that|this) (?:note|memory|fact|entry)\b/i,
 ];

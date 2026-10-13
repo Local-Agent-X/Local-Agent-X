@@ -144,18 +144,32 @@ export function parseFactLine(
   const entityMatches = rest.match(/@([\w-]+)/g) || [];
   const entities = entityMatches.map((m) => m.slice(1));
 
-  const content = rest.replace(/@[\w-]+:?\s*/g, "").trim();
-  if (!content) return null;
+  // The name stays in the sentence; only the "@" marks it as an entity.
+  // Deleting it stored "is the user's cousin" and "owns a sailboat named the ,
+  // which she keeps at slip 31 in" — sentences no reader can cite, and the
+  // nameless cousin fact is what a resolver mistook for a revision of an
+  // unrelated story about the same person (2026-10-09). A leading label
+  // ("@Dana: likes tea") names the subject, so it opens the sentence unless
+  // the sentence already says it; a tag the next word repeats ("@rex Rex
+  // passed away") is only a tag.
+  const label = /^((?:@[\w-]+[,\s]*)+):\s*/.exec(rest);
+  const content0 = (label ? rest.slice(label[0].length) : rest)
+    .replace(/@([\w-]+)\s+(?=\1\b)/gi, "")
+    .replace(/@([\w-]+)/g, "$1")
+    .trim();
+  const unsaid = label
+    ? (label[1].match(/@([\w-]+)/g) ?? []).map((m) => m.slice(1)).filter((name) => !content0.toLowerCase().includes(name.toLowerCase()))
+    : [];
+  const content = unsaid.length > 0 ? `${unsaid.join(", ")} ${content0}` : content0;
+  if (!content0) return null;
 
   return { kind, content, entities, confidence: Math.max(0, Math.min(1, confidence)) };
 }
 
-// parseFactLine strips @-entities out of content and stores them on the
-// side, which is right for retrieval (entity-keyed recall) but wrong for
-// any display path that shows content alone — "@Dana is the user's wife"
-// persists as content="is the user's wife", entities=["dana"], and reads
-// back to the user as a nameless sentence. Tool responses, previews, and
-// any future fact-list UI go through this so the name is glued back on.
+// Facts written before 2026-10-09 had their @-names deleted from content
+// ("@Dana is the user's wife" stored as "is the user's wife"); parseFactLine
+// now keeps them. Tool responses and previews still list the entities so
+// those older rows read with their names.
 export function displayContent(fact: Pick<RetainedFact, "content" | "entities">): string {
   if (!fact.entities || fact.entities.length === 0) return fact.content;
   return `${fact.content} (@${fact.entities.join(", @")})`;

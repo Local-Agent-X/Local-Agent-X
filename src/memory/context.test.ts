@@ -297,7 +297,7 @@ describe("<core_memory> cap / heading order / reinforcement", () => {
     });
     const core = extractCoreMemory(block);
 
-    // Fact A's persisted content is "loves hiking" (@-entity stripped).
+    // Fact A's persisted content is "loves hiking alex" (the name stays).
     expect(core).toContain("loves hiking");
     // And it should appear EARLIER than at least one filler fact —
     // proof that reinforcement moved it to the top of hot-score order,
@@ -387,8 +387,8 @@ describe("<core_memory> cap / heading order / reinforcement", () => {
     const block = await buildContextBlock(memory, { skipDailyLog: true });
     const core = extractCoreMemory(block);
 
-    expect(core).toMatch(/loves hiking \(@alex\)/);
-    expect(core).toMatch(/adopted puppies \(@fido, @rex\)/);
+    expect(core).toMatch(/loves hiking alex \(@alex\)/);
+    expect(core).toMatch(/adopted puppies fido rex \(@fido, @rex\)/);
   });
 });
 

@@ -33,7 +33,7 @@ describe("parseFactLine — schema-aligned prefix letters", () => {
     expect(r!.kind).toBe("observation");
     expect(r!.confidence).toBeCloseTo(0.8);
     expect(r!.entities).toEqual(["user"]);
-    expect(r!.content).toBe("writes commits in past tense");
+    expect(r!.content).toBe("user writes commits in past tense");
   });
 
   it("W with no (c=...) defaults to confidence 1.0", () => {
@@ -42,7 +42,7 @@ describe("parseFactLine — schema-aligned prefix letters", () => {
     expect(r!.kind).toBe("world");
     expect(r!.confidence).toBe(1.0);
     expect(r!.entities).toEqual(["user"]);
-    expect(r!.content).toBe("owns Initech Dallas");
+    expect(r!.content).toBe("user owns Initech Dallas");
   });
 
   it("O maps to opinion", () => {
@@ -50,7 +50,7 @@ describe("parseFactLine — schema-aligned prefix letters", () => {
     expect(r).not.toBeNull();
     expect(r!.kind).toBe("opinion");
     expect(r!.confidence).toBe(1.0);
-    expect(r!.content).toBe("prefers light mode");
+    expect(r!.content).toBe("user prefers light mode");
   });
 
   // Legacy B (behavior) prefix is gone. Returning null is the safer choice:
@@ -71,6 +71,31 @@ describe("parseFactLine — schema-aligned prefix letters", () => {
     expect(r!.kind).toBe("observation");
     expect(r!.confidence).toBe(1.0);
     expect(r!.entities).toEqual(["user"]);
+  });
+});
+
+// 2026-10-09: names were deleted from stored facts — "is the user's cousin",
+// "owns a sailboat named the , which she keeps at slip 31 in" — and a 3B
+// resolver read the nameless cousin fact as a revision of the user's
+// Merriweather story about the same person, ending it.
+describe("parseFactLine — the name stays in the sentence", () => {
+  it("an inline @name keeps its word; only the @ goes", () => {
+    const r = parseFactLine("W(c=1) @Odalys keeps her sailboat, the @KestrelNine, at slip 14 in @PortAvila")!;
+    expect(r.content).toBe("Odalys keeps her sailboat, the KestrelNine, at slip 14 in PortAvila");
+    expect(r.entities).toEqual(["Odalys", "KestrelNine", "PortAvila"]);
+  });
+
+  it("the auto-extracted relationship names its person", () => {
+    expect(parseFactLine("W(c=0.95) @Odalys is the user's cousin")!.content).toBe("Odalys is the user's cousin");
+  });
+
+  it("a leading label opens the sentence unless the sentence already names it", () => {
+    expect(parseFactLine("W @Dana: likes tea")!.content).toBe("Dana likes tea");
+    expect(parseFactLine("W @Dana: Dana likes tea")!.content).toBe("Dana likes tea");
+  });
+
+  it("a tag the next word repeats is not doubled", () => {
+    expect(parseFactLine("E @rex Rex passed away")!.content).toBe("Rex passed away");
   });
 });
 

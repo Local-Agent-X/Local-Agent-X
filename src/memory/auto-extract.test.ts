@@ -259,10 +259,9 @@ describe("autoExtractAndSave — Phase 2 write paths", () => {
 
     const rows = liveFactsWhere("kind = ?", "experience");
     expect(rows).toHaveLength(1);
-    // parseFactLine strips @-entities from content and routes them to
-    // entity_mentions. So the persisted content has @fido removed and the
-    // mention shows up in the join table.
-    expect(rows[0].content).toBe("User's dog passed away");
+    // The name stays in the sentence (only the @ goes); the mention also
+    // lands in the join table.
+    expect(rows[0].content).toBe("User's dog fido passed away");
     expect(rows[0].confidence).toBeCloseTo(0.9);
     expect(entityMentionsForFact(rows[0].id)).toContain("fido");
   });
@@ -279,11 +278,12 @@ describe("autoExtractAndSave — Phase 2 write paths", () => {
 
     const rows = liveFactsWhere("kind = ?", "world");
     expect(rows).toHaveLength(2);
-    // Content after @-entity stripping.
+    // Each fact names its person — a nameless "is the user's cousin" is what a
+    // resolver once mistook for a revision of an unrelated story (2026-10-09).
     const contents = rows.map((r) => r.content).sort();
     expect(contents).toEqual([
-      "is the user's son",
-      "is the user's wife",
+      "Dana is the user's wife",
+      "Liam is the user's son",
     ]);
     for (const r of rows) {
       expect(r.confidence).toBeCloseTo(0.95);

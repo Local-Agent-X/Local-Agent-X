@@ -18,23 +18,20 @@
  * set check-docs-consistency guards. Runs inside `npm run build`.
  */
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { currentDocs } from "./current-docs.mjs";
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+// The repo's own files — tracked plus untracked-not-ignored — as git lists
+// them. Walking the disk followed links: a workspace/ link walked the user's
+// whole Documents folder, and a leftover worktree whose workspace link pointed
+// at itself stopped the build with ELOOP (2026-10-13, two machines).
 // vendor/ and third_party/ docs are someone else's — their paths point into their own repos.
-const SKIP_DIRS = new Set(["node_modules", "dist", "build", ".git", "__pycache__", ".venv", "venv", "coverage", "vendor", "third_party"]);
-
-function walk(dir, out = []) {
-	for (const name of readdirSync(dir)) {
-		if (SKIP_DIRS.has(name)) continue;
-		const p = join(dir, name);
-		if (statSync(p).isDirectory()) walk(p, out);
-		else out.push(p);
-	}
-	return out;
+function repoFiles() {
+	const out = execFileSync("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard"], { cwd: REPO, encoding: "utf8", maxBuffer: 256 * 1024 * 1024 });
+	return out.split("\0").filter((p) => p && !/^(vendor|third_party)\//.test(p)).map((p) => join(REPO, p));
 }
 
 const rel = (p) => relative(REPO, p).split(sep).join("/");
@@ -87,7 +84,7 @@ function candidates(line) {
 // Docs often write a path relative to the subsystem under discussion
 // (`turn-loop/compact-history.ts` inside a canonical-loop paragraph). Accept a
 // span when some real repo path ends with it; a fully stale path matches nothing.
-const allPaths = walk(REPO, []).flatMap((p) => {
+const allPaths = repoFiles().flatMap((p) => {
 	const r = rel(p);
 	const parts = r.split("/");
 	return [r, ...parts.slice(0, -1).map((_, i) => parts.slice(0, i + 1).join("/"))];
@@ -117,12 +114,24 @@ for (const doc of docs) {
 		}
 	});
 }
-// git rejects the whole batch if any path is outside the repo, so only ask about inside ones.
-const ignored = gitIgnored(misses.map((m) => m.path).filter((p) => !p.startsWith("../")));
-const real = misses.filter((m) => !ignored.has(m.path));
+// git rejects the whole batch if any path is outside the repo or runs through a
+// symlink ("beyond a symbolic link"), so ask about inside paths, and for one
+// behind a link ask about the link itself, no trailing slash (workspace links to the user's
+// Documents on a Mac install).
+function throughLink(path) {
+	const parts = path.split("/").filter(Boolean);
+	for (let i = 0; i < parts.length - 1; i++) {
+		const at = parts.slice(0, i + 1).join("/");
+		try { if (lstatSync(join(REPO, at)).isSymbolicLink()) return at; } catch { return null; }
+	}
+	return null;
+}
+const asked = (m) => throughLink(m.path) ?? m.path;
+const ignored = gitIgnored(misses.map(asked).filter((p) => !p.startsWith("../")));
+const real = misses.filter((m) => !ignored.has(asked(m)));
 // Gitignored paths are usually per-machine (workspace/, build output), so they
 // don't fail the check — but a deleted module can be gitignored too, so list them.
-const perMachine = misses.filter((m) => ignored.has(m.path));
+const perMachine = misses.filter((m) => ignored.has(asked(m)));
 if (perMachine.length && process.argv.includes("--verbose")) {
 	console.warn(`Not on this machine, gitignored — confirm each is per-machine, not deleted:\n  ${perMachine.map((m) => `${m.where} → ${m.spec}`).join("\n  ")}`);
 }

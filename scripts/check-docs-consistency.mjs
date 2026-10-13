@@ -115,6 +115,87 @@ const claimRules = [
     stale: ["MCP supports trust on first use only."],
     current: ["MCP supports signed publisher manifests plus local trust fallback."],
   },
+  // ── 2026-10-13 agent-docs audit: every claim below was found live in a doc
+  // agents read, and was false. Each family stays forbidden so it cannot be
+  // written back; the "current" fixture is the wording that replaced it.
+  {
+    id: "product-agent-reads-agent-rules",
+    label: "root AGENTS.md or the raw app manifest described as injected into the product agent's prompt",
+    patterns: [
+      /AGENTS\.md[^.\n]{0,80}loaded into the system prompt/i,
+      /app-manifest\.json[^.\n]{0,60}(?:injected|loaded) into (?:the )?(?:system )?prompt/i,
+    ],
+    stale: ["AGENTS.md is auto-loaded into the system prompt alongside config/app-manifest.json."],
+    current: ["config/agent-rules.md is injected into every turn; AGENTS.md is for coding agents; the App Map is a summary of the manifest."],
+  },
+  {
+    id: "no-tools-json",
+    label: "config/tools.json described as a live control (deleted; nothing ever read it)",
+    patterns: [/config\/tools\.json/i, /\bloadToolsConfig\b/],
+    stale: ["Eager and disabled tools are configured in config/tools.json."],
+    current: ["Tool families are toggled with the setting tool; eager loading is AUDIENCES_BY_TOOL."],
+  },
+  {
+    id: "deleted-loop-modules",
+    label: "a deleted canonical-loop module described as live",
+    patterns: [/agent-loop-detectors/i, /post-turn-detector/i, /tool-executor\.ts/, /run-standard\.ts/],
+    stale: ["Post-turn validation is imported by the post-turn-detector middleware.", "Tool fan-out lives in tool-executor.ts."],
+    current: ["Completion gates live in turn-loop/decide-outcome-gates.ts; tool fan-out is chat-tool-dispatcher.ts."],
+  },
+  {
+    id: "loop-runtime-numbers",
+    label: "canonical-loop lease, janitor, wall-clock or lane-cap facts from the v1 build log",
+    patterns: [
+      /\b30 ?s lease\b|\blease (?:default|duration)(?: is| of)? 30 ?s\b|\b30s lease \/ 10s heartbeat\b/i,
+      /no timer-based janitor/i,
+      /wall-?clock[^.\n]{0,80}opCancel/i,
+      /lane caps?[^.\n]{0,60}interactive=1\b/i,
+    ],
+    stale: ["Leases are 30s lease / 10s heartbeat.", "There is no timer-based janitor.", "A wall-clock overrun fires opCancel.", "Lane caps: interactive=1, build=2."],
+    current: ["The lease default is 60s with a 10s heartbeat; RecoveryJanitor re-sweeps periodically; overrun ends as failed/deadline_exceeded or iteration_checkpoint; interactive=10 by config."],
+  },
+  {
+    id: "policy-table-shape",
+    label: "the tool policy described as one table in tool-policies.data.ts",
+    patterns: [/tool-policies\.data\.ts[^.\n]{0,60}(?:single table|one file|every tool)/i],
+    stale: ["tool-policies.data.ts is the single table of every tool's allow rule."],
+    current: ["Entries live in the six tool-policies.<domain>.ts fragments; tool-policies.data.ts only merges them."],
+  },
+  {
+    id: "ownership-misdirections",
+    label: "a subsystem row that sends readers to the wrong owner (voice, browser route, exfil, orchestration, session)",
+    patterns: [
+      /Node side is a forwarder/i,
+      /\bresolveBrowserRoute\(\)\s+in\s+`?instance\.ts/i,
+      /(?:scoring\.ts\)?[^.\n]{0,40}exfil|exfil[^.\n]{0,40}scoring\.ts)/i,
+      /(?:orchestrator\/registry\.ts[^.\n]{0,60}orchestration middleware|orchestration middleware[^.\n]{0,60}orchestrator\/registry\.ts)/i,
+      /\bsrc\/session\/router\.ts\b[^.\n]{0,80}session (?:state|persistence)/i,
+      /\boperations\.json\b/,
+    ],
+    stale: ["Node side is a forwarder; heavy STT/TTS runs in Python.", "resolveBrowserRoute() in instance.ts is the fallback matrix.", "Data-flow exfil blocks live in scoring.ts.", "Orchestration middleware: orchestrator/registry.ts.", "src/session/router.ts holds session state.", "Durable operations.json."],
+    current: ["The voice pipeline runs in Node; resolveBrowserRoute() is defined in route-resolve.ts; exfil blocking is tool-chain.ts; orchestrator/registry.ts is the persona signal table; SessionStore is memory/session-store.ts; each op has its own operation.json."],
+  },
+  {
+    id: "ghost-tool-names",
+    label: "a prompt or doc naming a tool that does not exist",
+    patterns: [/\bbrowser_(?:evaluate|screenshot)\b/, /\bcredentialed-integration-setup\b/, /\btranscribe_audio\b/],
+    stale: ["Never run browser_evaluate on a page holding a secret.", "Run the credentialed-integration-setup protocol."],
+    current: ["Never run a browser evaluate action on a page holding a secret; transcription is transcribe_media."],
+  },
+  {
+    id: "runtime-lane-order",
+    label: "runtime state routed to the HTTP API ahead of the setting tool",
+    patterns: [/Runtime state (?:→|->) HTTP API/, /Lane 1:[^.\n]{0,60}via `?http_request/i],
+    stale: ["Runtime state → HTTP API. Theme, provider, any flip of a live value."],
+    current: ["Runtime state: the setting tool first; http_request only when no dedicated tool covers the change."],
+  },
+  {
+    id: "coding-agent-text-in-product-prompt",
+    label: "the Codex scope paragraph or the registration checklist described as product-agent rules",
+    patterns: [/Codex may edit/i],
+    stale: ["Codex may edit repository source after reading the affected files."],
+    current: ["Coding agents such as Codex and Claude Code edit the repo directly; the product agent goes through self_edit."],
+  },
 ];
 
 const sourceContracts = [
@@ -137,6 +218,12 @@ const sourceContracts = [
   ["canonical-only submit decision", "src/canonical-loop/router.ts", /route: "canonical"[\s\S]{0,160}flagValue: true/],
   ["encrypted provider envelope", "src/auth/storage.ts", /ENVELOPE_FORMAT = "lax-auth-v2"/],
   ["signed MCP manifest trust", "src/mcp-client/manifest.ts", /MCPManifestTrust = "verified"/],
+  // 2026-10-13 audit: code facts the rules docs now state.
+  ["product agent reads config/agent-rules.md", "src/context/agents-md-section.ts", /AGENT_RULES_RELATIVE_PATH = "config\/agent-rules\.md"/],
+  ["harness commands go through the kill switch + audit seam", "src/canonical-loop/turn-loop/build-verify.ts", /executeHarnessCommand\(/],
+  ["spec probes go through the same seam", "src/canonical-loop/turn-loop/spec-probes.ts", /executeHarnessCommand\(/],
+  ["image generation uses the SSRF-pinned fetch", "src/tools/image-tools/generate-image.ts", /canonicalFetch\("https:\/\/api\.x\.ai/],
+  ["video generation uses the SSRF-pinned fetch", "src/tools/image-tools/generate-video.ts", /canonicalFetch\("https:\/\/api\.x\.ai/],
 ];
 
 function matchingClaim(text) {

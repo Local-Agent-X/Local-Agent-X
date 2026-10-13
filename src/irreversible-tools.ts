@@ -24,6 +24,12 @@ export const IRREVERSIBLE_TOOLS_UNCARDED: Readonly<Record<string, string>> = {
 const PREVIEWING_FORGETS = new Set(["memory_forget", "memory_forget_imports"]);
 const USER_ASKED_TO_FORGET = /\b(forget|delete|erase|remove|wipe|scrub|purge)\b/i;
 
+/** The human's own latest message asks for something to be forgotten. A
+ *  forget they asked for is theirs to have, with no second question. */
+export function userAskedToForget(userText: string): boolean {
+  return USER_ASKED_TO_FORGET.test(userText);
+}
+
 /** Why a non-shell tool call cannot be undone and needs its confirm, or null.
  *  `userText` is the human's latest message: a hard forget they asked for in
  *  their own words is theirs to have, with no second question. */
@@ -35,7 +41,7 @@ export function irreversibleToolReason(
   if (!IRREVERSIBLE.has(toolName) || toolName in IRREVERSIBLE_TOOLS_UNCARDED) return null;
   if (PREVIEWING_FORGETS.has(toolName)) {
     if (args.confirm !== true) return null;
-    if (USER_ASKED_TO_FORGET.test(userText)) return null;
+    if (userAskedToForget(userText)) return null;
   }
   return `irreversible tool (${toolName})`;
 }

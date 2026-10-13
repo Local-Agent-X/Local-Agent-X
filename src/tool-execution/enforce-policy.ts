@@ -21,9 +21,7 @@ import { ToolBlocked } from "./errors.js";
 import { STAGE_RECOVERY } from "./stage-recovery.js";
 import { terminate, CONTINUE, BLOCK, type Phase, type PhaseOutcome, type ToolCallContext } from "./context.js";
 import { egressAggregateGate, type EgressBlocker } from "./egress-gates.js";
-import { privateContentGate } from "./private-content-gate.js";
-import { controlFileGate } from "./control-file-gate.js";
-import { mcpSecretUseGate } from "../tools/mcp-admin-tools.js";
+import { askUserGates } from "./ask-user-gates.js";
 import { outboundIsTaintFree, withoutUntrustedContent } from "./taint-scope.js";
 import { kernelDenyBlocker, kernelDenyResult } from "./kernel-block.js";
 import { rewritePathForWorktree } from "./worktree-paths.js";
@@ -367,11 +365,8 @@ async function securityAndValidationGates(ctx: ToolCallContext): Promise<PhaseOu
   // verdict prepended and short-circuited before here.)
   outcome = egressAggregateGate(ctx);
   if (outcome.kind !== "continue") return outcome;
-  // Private content to a destination the user did not choose, a write to a file the app
-  // later acts on, and a vault secret handed to an MCP server are put to the user, never refused.
-  await privateContentGate(ctx);
-  controlFileGate(ctx);
-  mcpSecretUseGate(ctx);
+  // Calls put to the user rather than refused (ask-user-gates.ts).
+  await askUserGates(ctx);
   return CONTINUE;
 }
 

@@ -110,6 +110,11 @@ export abstract class MemoryFactsBase {
     return result;
   }
 
+  /** The one current fact `query` would select for update_fact / forget. */
+  findOneFact(query: string): ReturnType<typeof FactsMutate.findOneFactByContent> {
+    return FactsMutate.findOneFactByContent(this.db, query);
+  }
+
   forgetFact(query: string): FactsMutate.OneFactResult {
     const result = FactsMutate.forgetFact(this.db, query);
     if (result.fact) this.refreshEntityPages([result.fact]);

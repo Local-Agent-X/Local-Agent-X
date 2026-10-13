@@ -1,6 +1,8 @@
 import type { MemoryIndex } from "../../memory/index.js";
 import type { FactKind } from "../types.js";
 import { displayContent } from "../utils.js";
+import { localDate } from "../retrieval-format.js";
+import { userAskedToForget } from "../../irreversible-tools.js";
 import { looksLikeMultiFactBlob, normalizeFactLine, splitMultiFactBlob } from "../fact-split.js";
 import { saveFactsBatch } from "./facts-batch.js";
 import { runMemoryGate, MemoryWriteBlocked } from "../write-safely.js";
@@ -339,12 +341,14 @@ export function createFactsTools(memory: MemoryIndex) {
 
     {
       name: "forget",
-      compactDescription: "Mark ONE retained fact as no longer true: finds the fact containing `query` (substring) and soft-deletes it. Refuses if 0 or several match — use a more specific substring. Bulk scrubs use memory_forget.",
+      compactDescription: "Forget ONE fact the user asked you to forget (`query` = substring). A correction is update_fact; doubt about where a fact came from is not a forget — find the source. Forgetting what the user said asks them.",
       description:
         "Mark a fact as no longer true. Finds the fact whose content contains `query` (substring match) " +
         "and invalidates it (soft delete; preserves history for audit). " +
         "\n\n" +
-        "Use when the user says a fact is wrong, outdated, or shouldn't be remembered. " +
+        "Use when the user asks you to forget it. A correction (the user gives the right value) is update_fact, not forget. " +
+        "The user doubting where a fact came from is not a request to forget it — find where they said it (search_past_sessions) and show them. " +
+        "Forgetting something the user told you asks them first. " +
         "If 0 or multiple facts match, the call refuses — pick a more specific substring. " +
         "\n\n" +
         "Scope: ONE retained fact, reversibly. To delete imported chunks, an entire conversation, or to bulk-scrub a term from profile files + daily logs, use `memory_forget` instead (heavier, hard-delete).",
@@ -354,6 +358,19 @@ export function createFactsTools(memory: MemoryIndex) {
           query: { type: "string", description: "Substring of the fact to forget" },
         },
         required: ["query"],
+      },
+      // Forgetting what the user told you asks them first (Peter, 2026-10-13).
+      // qwen3.6:27b at 2023610d, challenged with "you made that up", had the
+      // user's own message in front of it and forgot the true fact in 2 of 3
+      // runs. A fact a model wrote, and a forget the user asked for in their
+      // own words, need no card.
+      confirmWithUser(args: Record<string, unknown>, { userText }: { userText: string }) {
+        const query = String(args.query || "").trim();
+        if (!query || userAskedToForget(userText)) return null;
+        const { fact } = memory.findOneFact(query);
+        if (!fact || fact.provenance === "assistant") return null;
+        return `The agent wants to forget something you told it: "${displayContent(fact).slice(0, 160)}" (recorded ${localDate(fact.timestamp)}). `
+          + "Approve only if you want it forgotten.";
       },
       async execute(args: Record<string, unknown>) {
         const query = String(args.query || "").trim();

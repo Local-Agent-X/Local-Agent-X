@@ -62,6 +62,7 @@ export interface ToolDefinition {
    * central name→predicate table.
    */
   available?: () => boolean;
+  confirmWithUser?: (args: Record<string, unknown>, ctx: { userText: string }) => string | null; // why THIS call needs the user's OK (ask-user-gates.ts)
 }
 
 /**

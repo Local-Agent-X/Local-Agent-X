@@ -28,6 +28,16 @@ export const currentDocs = [
   "docs/provider-auth.md",
   "docs/release-qualification.md",
   "docs/runbooks/canonical-loop-rollback.md",
-  // Module guides
+  // Module guides (≤25 lines each; also read by self_edit and background workers)
   "src/canonical-loop/README.md",
+  "src/ari-kernel/AGENTS.md",
+  "src/browser/AGENTS.md",
+  "src/context/AGENTS.md",
+  "src/memory/AGENTS.md",
+  "src/ops/AGENTS.md",
+  "src/providers/AGENTS.md",
+  "src/security/AGENTS.md",
+  "src/tool-execution/AGENTS.md",
+  "src/tool-policy/AGENTS.md",
+  "src/tools/AGENTS.md",
 ];

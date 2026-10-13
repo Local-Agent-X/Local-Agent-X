@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { applyAllSessions, planAllSessions } from "./session-time-backfill.js";
-import type { OpMessageRow } from "../canonical-loop/types.js";
+import type { OpMessageRow } from "../canonical-loop/public/op-facts.js";
 import { readSessionLog, writeSessionLog } from "./session-message-log.js";
 
 // Before 2026-10-07 every save re-stamped every message with the save time.

@@ -1,0 +1,23 @@
+# security
+
+**Owns:** The SecurityLayer decision core — file-access confinement, shell-command policy, network/egress policy (`layer/`) — and secret/credential detection and redaction (`secrets/`).
+**Does not own:** The Ari kernel → `src/ari-kernel/`; the threat engine, audit trail and canaries → `src/threat/`; the sandbox/cage → `src/sandbox/`; per-tool policy rows → `src/tool-policy/`.
+**Entry:** `index.ts` is a façade re-exporting `layer/index.ts` and `secrets/index.ts`; import from those barrels (deep imports are allowed only from inside `src/security/`).
+
+## Invariants
+- Every file sink (read/write/edit, shell paths, attachments) decides through `evaluateFileAccess` (`layer/file-access.ts`) — one checker so the pre-dispatch gate and the read sink cannot drift.
+- Dependency direction is one-way: `layer/` may import `secrets/`; `secrets/` must never import `layer/`.
+- `TOOL_PATH_ARGS` (`src/tool-registry.ts`, derived from policy `pathArgs`) names which args are paths; a path-taking tool missing there is a confinement bypass.
+- Tool egress URLs go through `evaluateEgressForUrl` / `evaluateWebFetch` (`layer/network-policy.ts`) with the resolved host pinned (`resolveAndPinHost`); never a raw `fetch` for tool egress.
+
+## Coupled to
+| If you change | Also check | Guard |
+|---|---|---|
+| `layer/file-access.ts` | `src/tool-execution/pre-dispatch.ts`, `src/tools/read-imports.ts`, `src/tool-registry.ts` | `layer/file-access.test.ts`, `layer/layer-core-document-confinement.test.ts` |
+| `layer/shell-rules.ts`, `layer/shell-command-rule-table.ts` | `src/tool-execution/shell-approval-tier.ts` | `layer/shell-policy.test.ts`, `layer/shell-command-rules.test.ts` |
+| `layer/types.ts` (`WORKTREE_REQUIRED_TOOLS`, `CONTEXT_RESTRICTED_TOOLS`) | `layer/layer-core.ts` dispatch | `layer/layer-core-dispatch.test.ts` |
+| `secrets/known-secrets.ts` | `src/tool-execution/` known-secret shell gate, `src/memory/write-safely.ts` redaction | `secrets/known-secrets-email.test.ts`, `src/tool-execution/known-secret-shell-gate.test.ts` |
+| `layer/index.ts` / `secrets/index.ts` exports | every `from "../security/index.js"` importer | none |
+
+## Tests
+`npx vitest run src/security` (PowerShell on Windows)

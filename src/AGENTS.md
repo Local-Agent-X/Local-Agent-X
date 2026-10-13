@@ -21,7 +21,8 @@ directly are not subject to any of this.
 | `canonical-loop/` | the agent turn loop | **Sealed.** Outside code imports only `canonical-loop/index.js` or a `canonical-loop/public/*.js` sub-barrel (`interface-seal.test.ts`). Chat enters via `runChatViaCanonical`; agents, cron and self-edit via `runAgentViaCanonical`; both are exported from `index.ts`. |
 | `tool-execution/` | tool-call lifecycle: Ari, policy, approval, RBAC, audit | Every model tool call goes through `executeToolCalls` / `dispatchSingleToolCall`. |
 | `tool-policy/` | the per-tool policy table | Default-deny. New entries go in the `tool-policies.<domain>.ts` fragment, never the `.data.ts` barrel. |
-| `ari-kernel/` | the in-process security kernel gateway | Don't add a second one. |
+| `ari-kernel/` | the in-process security kernel gateway | **Sealed** (`src/module-seals.test.ts`): import `ari-kernel/index.js` (or the `tool-class-map.js` leaf). Don't add a second kernel. |
+| `sandbox/` | cage selection + the platform cage backends | **Sealed**: `sandbox/index.js`, `types`, `server-confine`, or a backend leaf (`seatbelt`, `bwrap`, `win-cage*`, `docker-execution-runtime`). |
 | `security/` | file access, shell policy, network policy (`layer/`), secret detection (`secrets/`) | All file-access decisions go through `evaluateFileAccess`. |
 | `providers/`, `anthropic-client/`, `codex-client/`, `canonical-loop/adapters/` | provider transport | Provider differences stay here; routes never branch on provider. |
 | `routes/` | HTTP surface (flat files plus `agents/`, `bridges/`, `browser/`, `chat/`, `settings/`) | Routes call into modules; business logic lives in the module. |
@@ -29,6 +30,7 @@ directly are not subject to any of this.
 
 ## Invariants
 
+- A sealed module is entered only through its public entries (`src/module-seals.test.ts`, `src/canonical-loop/interface-seal.test.ts`). Export the symbol from the entry; don't widen the row. Any module with a short `AGENTS.md` inside it has its own invariants there.
 - Source files import source files with the `.js` suffix; never `dist/`; no `require()` (`check:no-require`; `createRequire` is the sanctioned exception).
 - Mutations to shared state broadcast `settings_changed` (see root).
 - External content goes through `sanitize.ts` wrappers before the model sees it.

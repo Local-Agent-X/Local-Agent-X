@@ -19,7 +19,7 @@ import { atomicWriteFileSync } from "./utils.js";
 import { isHarnessRow } from "../harness-rows.js";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import { parseSessionLogText, type SessionMessageRow } from "./session-log-rows.js";
-import type { OpMessageRow } from "../canonical-loop/types.js";
+import type { OpMessageRow } from "../canonical-loop/public/op-facts.js";
 
 interface TurnOp { opId: string; createdAt: string; completedAt?: string; task: string; used: boolean }
 /** An op's own message rows (canonical-loop readOpMessages), history replays excluded. */

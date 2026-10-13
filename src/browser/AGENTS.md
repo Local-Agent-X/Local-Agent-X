@@ -1,0 +1,23 @@
+# browser
+
+**Owns:** The agent's browser: two backends behind one `BrowserBackend` contract — the embedded in-app WebContentsView (default) and external Chrome over CDP — plus routing between them, observation and extraction, downloads, egress taint, and secret fill/capture.
+**Does not own:** The `browser` tool's schema and action handlers → `src/tools/browser-tools/`; the desktop-side view host → `desktop/src/browser-views.ts`; URL egress policy → `src/security/layer/network-policy.ts`.
+**Entry:** `index.ts` — `getBrowserManager(sessionId)` (the routed backend), `getSecretBrowserOps`, `BrowserManager`, `withBrowserLock`, the session-owner registry. The routing decision is `resolveBrowserRoute()` in `route-resolve.ts` (re-exported by `instance.ts`).
+
+## Invariants
+- `browserMode` defaults to `in-app` (`src/config-schema.ts`). `resolveBrowserRoute()` is the one fallback matrix: a non-`in-app` mode, `LAX_BROWSER_HEADLESS=1`, or no desktop bridge routes to CDP and says why. Don't add a second routing decision.
+- Both backends implement every `BrowserBackend` method; tool-layer security (sensitive-page guards, download approval, egress taint, mutex) sits above the interface and stays backend-agnostic.
+- Secret values touch a page only through `SecretBrowserOps` (`secret-ops.ts`): credential-field selectors, exact origin binding, first-use approval — never via `fill()` / `evaluate()`, which echo page content back to the model.
+- Every mode uses an agent-owned profile, never the user's own browser profile.
+
+## Coupled to
+| If you change | Also check | Guard |
+|---|---|---|
+| `backend.ts` | `in-app-backend.ts`, `manager.ts`, `src/tools/browser-tools/` | `backend-conformance.test.ts` |
+| `route-resolve.ts` / `instance.ts` | `emulation-route.ts`, `src/desktop-bridge.ts` | `instance-routing.test.ts`, `emulate-in-app-route.test.ts` |
+| `secret-ops.ts` | `secret-fill.ts`, `secret-capture.ts`, `src/tools/browser-tools/index.ts` | `secret-ops.test.ts`, `secret-fill.test.ts`, `secret-capture.test.ts` |
+| `runtime.ts` (the shared Chrome process) | `launcher.ts`, `continuity-cache.ts` | `continuity-persistence.test.ts` |
+| `bridge-client.ts` | `desktop/src/browser-views.ts`, `bridge-client-contract.ts` | `bridge-client.test.ts` |
+
+## Tests
+`npx vitest run src/browser` (PowerShell on Windows)

@@ -7,6 +7,8 @@ export { getAriPresetForSession, HOST_CAPABILITY_MANIFEST } from "./manifest.js"
 export { shouldGateInKernel, shouldObserveInKernel, TOOL_CLASS_MAP, GATED_CLASSES } from "./tool-class-map.js";
 export { auditKernelCoverage, printKernelCoverageReport } from "./coverage.js";
 export type { KernelCoverageReport } from "./coverage.js";
+export { queryAuditLog, getAuditSummary } from "./audit-viewer.js";
+export { runBenchmarks } from "./benchmarks.js";
 export { ariObserve } from "./observe.js";
 export { ariEvaluate } from "./evaluate.js";
 export type { AriVerdict } from "./evaluate.js";

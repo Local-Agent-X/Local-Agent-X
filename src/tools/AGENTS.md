@@ -1,0 +1,23 @@
+# tools
+
+**Owns:** Tool definitions (name, schema, description, `execute`) and the unified registry the model's schema is built from — which tools exist, which are eager vs deferred, and which audiences see them.
+**Does not own:** Running a call (policy, Ari, approval, sandbox, audit) → `src/tool-execution/`; the per-tool policy row → `src/tool-policy/`; kernel classing → `src/ari-kernel/`.
+**Entry:** `registry-build.ts` (`allTools`, `buildToolRegistry`) for core tools; `plugins.ts` registers everything else — the majority (`setting`, `http_request`, memory, browser, agents, protocols, apps, …); `registry.ts` (`unifiedRegistry`) is the one store; `runtime-tool-names.ts` builds the full runtime catalog for tests.
+
+## Invariants
+- A tool is reachable only if registered, and `allTools` is a minority: coverage tests must use `collectRuntimeToolNames()`, never `allTools` alone.
+- `AUDIENCES_BY_TOOL` (`audience-map.ts`) is exhaustive: a tool absent from it is deferred — reachable only through `tool_search`. After editing it run `npm run docs:generated` (`docs/agent-capabilities.md` is generated from it and the build byte-compares).
+- Registering a tool also means: a `src/tool-policy/` fragment entry, an `ARI_ACTION_MAP` row, `SESSION_SCOPED_TOOLS` if it reads `_sessionId`, and the capability sets in `src/tool-registry.ts` if it takes paths or reads sensitive content.
+- External content a tool returns is wrapped with `wrapExternalContent` (`src/sanitize.ts`) before it reaches the model.
+
+## Coupled to
+| If you change | Also check | Guard |
+|---|---|---|
+| `allTools` / `plugins.ts` | `src/tool-policy/` fragment, `src/tool-execution/ari-action-map.ts`, `src/tool-registry.ts` | `tool-registration-completeness.test.ts`, `src/tool-policy-default.test.ts` |
+| `audience-map.ts` | `docs/agent-capabilities.md` (`npm run docs:generated`) | `tool-reference-coverage.test.ts` |
+| a tool's `name` | every doc, prompt and table that names it | `tool-reference-coverage.test.ts` |
+| `tier-tool-set.ts` (`ESSENTIAL_TOOLS_ORDER`) | small-tier schemas | `src/model-tiers.test.ts` |
+| `undo-pairs.ts` | `src/irreversible-tools.ts` | none |
+
+## Tests
+`npx vitest run src/tools` (PowerShell on Windows)

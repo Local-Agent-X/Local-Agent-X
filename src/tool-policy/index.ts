@@ -340,7 +340,7 @@ export function loadToolPolicy(dataDir: string): LiveToolPolicy {
 //
 // Since every policy decision now comes from an explicit rule in the unified
 // table (the silent risk-tier fallback was removed), "uncovered" means a
-// genuine orphan: a registered tool with no rule in tool-policies.data.ts.
+// genuine orphan: a registered tool with no rule in a tool-policies.<domain>.ts fragment.
 // That is the orphan check the table refactor guarantees — also asserted by
 // the tool-policy-default.test.ts unit test against TOOLS.
 //
@@ -377,5 +377,5 @@ export function printPolicyCoverageReport(report: PolicyCoverageReport): void {
   }
   logger.error(`  \x1b[31m✖\x1b[0m ${report.uncovered.length} of ${report.totalTools} tools have NO matching policy rule:`);
   for (const name of report.uncovered) logger.error(`    - ${name}`);
-  logger.error(`  These will hit deny-by-default at runtime. Add the tool (with an explicit allow/deny rule) to src/tool-policy/tool-policies.data.ts.\n`);
+  logger.error(`  These will hit deny-by-default at runtime. Add the tool (with an explicit allow/deny rule) to the matching src/tool-policy/tool-policies.<domain>.ts fragment.\n`);
 }

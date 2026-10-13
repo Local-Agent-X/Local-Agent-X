@@ -16,6 +16,7 @@ export { isDispatchFailure } from "../types.js";
 export type {
 	CanonicalLane,
 	CanonicalOpFields,
+	OpMessageRow,
 	ToolDispatchStatus,
 } from "../types.js";
 

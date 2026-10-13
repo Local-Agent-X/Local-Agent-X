@@ -4,18 +4,22 @@
  * Order matters — the safety stack fires in a fixed sequence (the table
  * below is the contract; the legacy loops it was copied from are gone):
  *
- *   beforeTurn:           mid-turn-stale, open-steps
- *                         (turn-0 plan seed on agent/background lanes)
- *   afterModelCall:       loop-detection,
+ *   beforeTurn:           mid-turn-stale, instruction-ledger (turn 0 only),
+ *                         loop-detection, open-steps (turn-0 plan seed on
+ *                         agent/background lanes), budget-ladder
+ *   afterModelCall:       office-theme-guard, loop-detection, repeat-output,
  *                         premature-completion (worker ops only — forces one
  *                         more turn when a non-chat op ends tool-lessly with
- *                         nothing committed), open-steps
+ *                         nothing committed), verify-gate, open-steps
  *                         (forces continuation when the model left declared
  *                         task-list steps unfinished; runs on interactive too,
- *                         its open-tasks signal is safe for chat)
- *   afterToolExecution:   dead-end, repeat-failure (ALL lanes —
- *                         same-tool same-error spiral breaker; nudge at 3,
- *                         abort at 5)
+ *                         its open-tasks signal is safe for chat),
+ *                         app-design-guard
+ *   afterToolExecution:   mid-turn-stale, loop-detection, repeat-output,
+ *                         verify-gate, post-edit-diagnostics,
+ *                         external-change-diff, app-design-guard, dead-end,
+ *                         repeat-failure (ALL lanes — same-tool same-error
+ *                         spiral breaker; nudge at 3, abort at 5), thrash-guard
  *
  * Each middleware's `when` predicate gates per-provider extras at registration
  * walk time — `when:false` middlewares are skipped on every hook.

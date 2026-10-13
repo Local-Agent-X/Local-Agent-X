@@ -1,718 +1,165 @@
-# canonical-loop — module map
+# canonical-loop — module guide
 
-Runtime module guide. The shipped v1 contract is archived in
-[docs/canonical-loop-prd.md](../../docs/canonical-loop-prd.md); current routing
-and rollback behavior are documented here and in the rollback runbook.
+The one state machine that runs every agent turn: op lifecycle, durable events,
+per-turn checkpoints, control signals (pause / cancel / redirect / approvals),
+leases and crash recovery. Chat, delegated agents, cron, self-edit and the
+background verifiers are all "just an op" here. The locked v1 contract is
+[docs/canonical-loop-prd.md](../../docs/canonical-loop-prd.md); the
+issue-by-issue build log moved to
+[docs/history/canonical-loop-v1-build.md](../../docs/history/canonical-loop-v1-build.md);
+rollback is [docs/runbooks/canonical-loop-rollback.md](../../docs/runbooks/canonical-loop-rollback.md).
 
-This directory is the canonical-loop runtime — one state machine that owns
-op lifecycle, events, checkpoints, signals, and crash recovery (PRD §6
-Decision #1). Adapters live alongside (e.g., `anthropic-adapter`,
-`codex-adapter`); this dir is provider-neutral.
+## The seal
 
-## Files
+Code outside this directory imports only `canonical-loop/index.js` or one
+`canonical-loop/public/*.js` sub-barrel. `interface-seal.test.ts` scans every
+`.ts` under `src/` and fails on any deeper specifier (static, dynamic or
+type-only). `public/` exists because `index.js` sits inside a large import
+cycle: modules that canonical-loop itself transitively imports
+(`src/tool-execution/`, `src/chat-ws/`, registered tools, `src/ops/`) would mint
+cycles if they pointed at `index.js`, so they read light pass-through barrels
+such as `public/op-facts.ts` and `public/plan-ledger.ts` instead. Promote a
+symbol there rather than deep-importing. `public/test-surface.ts` is test-only
+(the same test enforces that).
 
-| File | Role | LOC limit |
+## Entry points
+
+| Caller | Entry | Where |
 |---|---|---|
-| `index.ts` | Public entry — re-exports the loop surface (store/schema/control-API/lease/recovery), the `runChatViaCanonical` / `runAgentViaCanonical` runners, adapters, and `sweepStaleCanonicalOps`, plus the sole submit entry `canonicalLoopEntry()`. | ≤ 400 |
-| `types.ts` | Canonical-state, lane, event, op-fields, turn-row, message-row, provider-state-envelope shapes (PRD §5 / §9). | ≤ 400 |
-| `schema.ts` | On-disk paths under `~/.lax/operations/<opId>/` — canonical-events.jsonl, op-turns/, op-messages.jsonl. | ≤ 400 |
-| `store.ts` | Append-only writers/readers for `op_events`, `op_turns`, `op_messages`. Sole disk gateway. | ≤ 400 |
-| `feature-flag.ts` | Compatibility reader retained for callers/tests; returns enabled for every lane and does not read environment values (PRD §17). | ≤ 400 |
-| `router.ts` | Compatibility submit decision; always returns `route: "canonical"` and `flagValue: true`. | ≤ 400 |
-| `bus.ts` | In-process pub/sub bus. Channels: `op_events:{opId}` (durable mirror) + `op_stream:{opId}` (ephemeral). | ≤ 400 |
-| `event-emitter.ts` | `emit()` = append to `op_events` + publish to bus. `publishStreamChunk()` = bus only. | ≤ 400 |
-| `state-machine.ts` | Sole writer of `op.canonical.state`. Validates transitions, emits `state_changed`. | ≤ 400 |
-| `tool-dispatch.ts` | `ToolDispatcher` boundary — loop never executes tools itself. Default = no-op; production wiring delegates to `tool-executor.ts`. | ≤ 400 |
-| `runtime.ts` | Adapter-factory and tool-dispatcher registry singletons. | ≤ 400 |
-| `checkpoint.ts` | `commitTurn()` — atomic post-turn write (op_messages + op_turns + canonical events + terminal-state transition). | ≤ 400 |
-| `turn-loop.ts` | `driveTurn()` — inner per-turn driver. Calls adapter, fans tool calls, commits. | ≤ 400 |
-| `worker.ts` | `runWorker()` — leases an op, drives the turn_loop until terminal, releases. | ≤ 400 |
-| `scheduler.ts` | Single in-process queue + per-lane caps. `enqueueOp` / `pumpScheduler` / `awaitIdle`. | ≤ 400 |
-| `adapter-contract.ts` | Locked PRD §15 adapter interface (`Adapter`, `TurnInput`, `AdapterReport`, `TurnResult`) + sandbox import deny-list. Type-only. | ≤ 400 |
-| `contract-types.ts` | Value-shape types referenced by the adapter contract (`CanonicalMessage`, `ToolCall`, `ToolDescriptor`). Type-only. | ≤ 400 |
-| `control-api.ts` | Public control API surface: `opEventsSince()` reconnect replay, `subscribeOpEvents()` / `subscribeOpStream()` live subscribers, `reconnectOp()` replay+subscribe with seq-dedup, `opPause()` / `opResume()` (Issue 05), `opCancel()` (Issue 06), `opRedirect()` (Issue 07). | ≤ 400 |
-| `signals.ts` | Bus-side fast-path control signals — `signalChannel(opId)` channel naming, `publishSignal()` (control-API only), `subscribeOpSignals()` for workers / observers. Durable signal columns on the op are still the source of truth. | ≤ 400 |
-| `cancel-handler.ts` | Worker-side cancel primitives (Issue 06): `startCancelTracker`, `finalizeCancel`, `applyPreLeaseCancel`, `applyBoundaryCancel`. Drives `adapter.abort()` with a 1s race timeout; skips commit on partial turns. | ≤ 400 |
-| `lease.ts` | Op-level lease primitives (Issue 08): `acquireLease`, `heartbeatLease`, `releaseLease`, `isLeaseExpired`, `LeaseConfig` (defaults 30s/10s, configurable for tests). Sole writer of `leaseOwner` / `leaseExpiresAt`. | ≤ 400 |
-| `recovery.ts` | Crash-recovery orchestration (Issue 08): `recoverStaleOp` evicts the dead worker, clears the expired lease, emits `lease_lost reason="expired"`, and routes `running → queued` (re-enqueue) or `cancelling → cancelled` (terminal). | ≤ 400 |
-| `adapters/anthropic.ts` | Production Anthropic adapter (Issue 09). Implements the locked PRD §15 contract: streams text/tool-calls/errors, maps to canonical adapter_reports, finalizes assistant messages, returns provider_state envelope (256 KB cap). Sandbox-clean — no DB, no events writer, no `child_process`. Helpers (stream-consume, type shapes, byte/tool conversion) split into `adapters/anthropic/`. | ≤ 400 |
-| `adapters/anthropic-transport.ts` | Default transport that wraps `streamAnthropicResponse` (CLI proxy / direct API path) and `getAnthropicApiKey`. Translates provider stream events → canonical `TransportEvent`s. Lives outside the audited adapter file so subprocess primitives don't leak into the adapter surface. | ≤ 400 |
+| Chat turn (`src/routes/chat/run-chat-turn/canonical-run.ts`) | `runChatViaCanonical()` — async generator of `ServerEvent`s | `chat-runner.ts` (+ `chat-runner/`) |
+| Agents, cron, autopilot, self-edit, voice, background jobs | `runAgentViaCanonical()` — Promise of an `AgentTurn` | `agent-runner/run.ts` (re-exported by `agent-runner.ts`) |
+| A single prepared op | `canonicalLoopEntry()` — seeds state, enqueues, pumps the scheduler | `index.ts` |
 
-> This table covers the v1.0 core modules. The runner entry points
-> (`chat-runner.ts`, `agent-runner.ts`), the `middlewares/`, `turn-loop/`,
-> `chat-runner/`, and `agent-runner/` helper subtrees, the `op-persist.ts`
-> persistence helper, and the additional adapters (`codex.ts`,
-> `openai-compat.ts`, `app-build-adapter.ts`, plus the `adapters/anthropic/`
-> helper dir) landed after v1.0 and are not enumerated here — read the
-> directory tree for the full surface.
+Both runners install the default middleware stack on first call
+(`enableDefaultMiddlewareStack()` in `middlewares/host.ts`); until then the
+loop runs zero middlewares.
 
-The scheduler selects an execution backend through `execution-backend.ts`.
-The default `in-process-execution-backend.ts` delegates exactly once to
-`runWorker()`; backends start work that the canonical scheduler has already
-made runnable and do not own admission, turn loops, or tool dispatchers.
+## Core modules
+
+| File | Role |
+|---|---|
+| `index.ts` | Front-door barrel plus `canonicalLoopEntry()`. |
+| `types.ts` | State, lane, event (`CanonicalEventType`, `GuardOutcome`), turn-row and message-row shapes. |
+| `schema.ts` | On-disk paths under `~/.lax/operations/<opId>/`: `canonical-events.jsonl`, `op-turns/<idx>.json`, `op-turns/<idx>.trace.json.gz`, `op-messages.jsonl`. |
+| `store.ts` | Append-only event writer/reader (seq assigned under the cross-process op lock) and the turn/message readers. `turn-commit-store.ts` writes the turn row + messages atomically; `turn-trace-store.ts` writes the gzipped replay trace. |
+| `bus.ts`, `event-emitter.ts` | `emit()` = append + publish on `op_events:{opId}`; `publishStreamChunk()` = bus-only `op_stream:{opId}`, never persisted. |
+| `state-machine.ts` | Sole writer of `op.canonical.state`; validates transitions, emits `state_changed`. |
+| `checkpoint.ts` | `commitTurn()` — idempotent per `(opId, turnIdx)`; writes the turn row, messages, `turn_committed` / `redirect_applied`, terminal transition. |
+| `turn-loop.ts` | `driveTurn()` — the per-turn conductor (below). |
+| `worker.ts` | `runWorker()` — leases an op, drives turns until terminal, releases. `worker-heartbeat.ts`, `worker-wall-clock.ts`, `worker-op-runtime.ts`, `worker-adapter-retry.ts` are its split-outs. |
+| `scheduler.ts` | Single in-process queue, per-lane caps, dependency batches, backend selection. |
+| `execution-backend.ts`, `execution-backend-registry.ts` | Placement boundary around the worker. Registered: `in-process-execution-backend.ts` (default; delegates once to `runWorker`), `process-execution-backend.ts` (forks `process-worker-entry.ts`; the one loop file allowed to import `child_process`, allow-listed by name in `test/canonical-loop-11-boundary-audit.test.ts`), `container-execution-backend.ts` (Docker, via `src/sandbox/docker-execution-runtime.ts`; `container-*.ts` are its projection, bootstrap and janitor). |
+| `lease.ts` | `acquireLease` / `heartbeatLease` / `releaseLease`; sole writer of `leaseOwner` / `leaseExpiresAt`. |
+| `recovery.ts`, `recovery-sweep.ts`, `recovery-janitor.ts` | `recoverStaleOp` takeover primitive; boot sweep; periodic `RecoveryJanitor`. |
+| `control-api.ts` | `opEventsSince`, `subscribeOpEvents` / `subscribeOpStream`, `reconnectOp`, `opPause`, `opResume`, `opCancel`. |
+| `control-api-redirect.ts`, `control-api-approvals.ts` | `opRedirect` / `opRedirectOnce`; `opResolveApproval` and the pending-approval record. |
+| `signals.ts`, `cancel-handler.ts` | Bus fast-path for control signals; mid-stream cancel (`adapter.abort()` raced against 1s). Durable op columns stay the source of truth. |
+| `tool-dispatch.ts`, `chat-tool-dispatcher.ts` | `ToolDispatcher` boundary — the loop never executes tools. Production wiring is `makeChatToolDispatcher()`, a per-op closure over `executeToolCalls` from `src/tool-execution/`. |
+| `runtime.ts` | Per-op / per-lane adapter factories and tool-dispatcher registry. `provider-adapter-factory.ts` seals the delegated runtime descriptor. |
+| `adapter-contract.ts`, `contract-types.ts` | The locked adapter interface (`Adapter`, `TurnInput`, `AdapterReport`, `TurnResult`) and `FORBIDDEN_ADAPTER_IMPORTS`. Type-only apart from that list. |
+
+## Directories
+
+| Dir | What lives there |
+|---|---|
+| `adapters/` | Provider adapters: `anthropic.ts`, `codex.ts`, `gemini-native.ts`, `openai-compat.ts` (+ `openai-compat/`), `app-build-adapter.ts`, `app-build-verify-adapter.ts`; their `*-transport.ts` files hold the subprocess / HTTP side; `tool-call-text-*.ts` is the one recognizer for tool calls written as text. |
+| `chat-runner/` | Chat op creation, history seeding, adapter + runtime registration, the event pump that turns canonical events into `ServerEvent`s. |
+| `agent-runner/` | The same for non-streaming callers: prompt, seed messages, result collection, runtime surface. |
+| `middlewares/` | The safety stack (order below), `host.ts` phase runner, `registry.ts` declaration. |
+| `turn-loop/` | Everything `driveTurn()` calls (below). |
+| `public/` | Light sub-barrels for sealed consumers. |
+| `instruction-ledger/` | Per-op ledger of the user's explicit run constraints (capability prohibitions, obligations) and enforced plan mode; filled on turn 0 by the `instruction-ledger` middleware. |
+| `verification-*.ts` | After an op that ingested external content succeeds, a background op re-checks its deliverables: `verification-trigger.ts` (observer on the event seam), `-spend.ts` (bounds), `-brief.ts` (prompt), `-submit.ts` (op construction). |
+| `publish-review-*.ts` | The awaited pre-publish reviewer that `src/tool-execution/publish-review-gate.ts` holds a push or deploy on: `-brief.ts`, `-submit.ts`, `-verdict.ts` (strict `VERDICT:` parser). |
+| `process-relay-*.ts`, `*-worker-entry.ts`, `execution-worker-runtime.ts` | Out-of-process worker plumbing: relay contract, journal, reconcile, the forked / containerised entry points. |
+
+## `turn-loop.ts` vs `turn-loop/`
+
+`turn-loop.ts` (400 lines, at the ceiling) is the conductor: it exports
+`driveTurn()` and owns only control flow — cancel checks, the three
+middleware-phase short-circuits, the `commitTurn` call and
+`bankEarnedFires` after it. Every helper it calls lives in `turn-loop/`
+(~49 source files) and reaches it through the injectable seam
+`turn-loop/turn-deps.ts`, so the conductor is testable without `vi.mock`:
+`build-input.ts` (history + `compact-history.ts`, which delegates to
+`src/context-manager/`), `inject-drain.ts`, `dispatch-tools.ts`,
+`decide-outcome*.ts` + `continuation-guard.ts` + `terminal-epilogue.ts`
+(terminal reason and the closing message), `nudges.ts` + `nudge-budget.ts`,
+`guard-fire.ts`, `suspension.ts` + `adapter-throw-recovery.ts`,
+`idle-watchdog.ts`, `record-outcome.ts`. Add behaviour in `turn-loop/`, never
+in the conductor.
+
+## Middleware order
+
+`middlewares/registry.ts` declares the stack with explicit `order` keys and
+`registry.test.ts` freezes the emitted sequence by name. `runMiddlewarePhase`
+(`middlewares/host.ts`) walks it in that order and stops at the first
+non-`continue` verdict. Per phase, the middlewares that implement the hook:
+
+- **beforeTurn:** mid-turn-stale, instruction-ledger, loop-detection, open-steps, budget-ladder
+- **afterModelCall:** office-theme-guard, loop-detection, repeat-output, premature-completion (worker ops only), verify-gate, open-steps, app-design-guard
+- **afterToolExecution:** mid-turn-stale, loop-detection, repeat-output, verify-gate, post-edit-diagnostics, external-change-diff, app-design-guard, dead-end, repeat-failure, thrash-guard
+
+Full registration order: mid-turn-stale, office-theme-guard, instruction-ledger,
+loop-detection, repeat-output, premature-completion, verify-gate, open-steps,
+budget-ladder, post-edit-diagnostics, external-change-diff, app-design-guard,
+dead-end, repeat-failure, thrash-guard. `open-steps` is skipped when the op
+forbids workspace writes (ledger or enforced plan mode).
+
+## Lifecycle numbers
+
+- **Lanes and caps** (`scheduler.ts`): `interactive` 10, `build` 2, `ide` 1, `background` 1, `agent` 5. Boot injects the live config reader, so `interactive` follows `maxInteractiveSessions`, `agent` follows `maxSubAgents`, and a global in-flight ceiling follows `maxConcurrentAgents` (fallback 12).
+- **Lease** (`lease.ts`): 60s default; `LAX_LEASE_DURATION_MS` overrides within 30s–600s. **Heartbeat** every 10s (`worker-heartbeat.ts`); `claim_lost` is fatal at once; three consecutive transient failures are too.
+- **Recovery:** `recoverStaleOp` evicts the dead worker, emits `lease_lost reason="expired"`, routes `running → queued` or `cancelling → cancelled`. It runs from the boot sweep (`src/server/canonical-loop-bootstrap.ts`) and then on a timer: `RecoveryJanitor` re-sweeps every lease duration for the life of the server. Policy backoff is intentionally not honored — requeue is immediate.
+- **Wall clock** (`worker-wall-clock.ts`): armed on every lane from `contextPack.budget.maxWallTimeMs` and also read synchronously at the turn boundary. An `interactive` op ends `failed / deadline_exceeded`; every other lane ends `succeeded / iteration_checkpoint` with an `iteration_checkpoint { stopReason: "wall-clock" }` record. It never calls `opCancel`.
+- **Control precedence:** cancel > pause > redirect. Cancel is mid-stream; pause and redirect apply at the next turn boundary.
 
 ## Boundaries
 
 | Concern | Owner | Forbidden |
 |---|---|---|
-| Writing `op_events` | `event-emitter.ts` (via `store.ts`). | Adapters, scheduler, worker outside `state-machine.ts`/`turn-loop.ts`/`checkpoint.ts`. |
-| Writing `op.canonical.state` | `state-machine.ts`. | Everywhere else. |
-| Writing `op_turns` / `op_messages` | `checkpoint.ts` (via `store.ts`). | Adapters, scheduler. |
-| Provider I/O | per-provider adapters (NOT in this dir). | Loop itself; `child_process` is forbidden in canonical-loop modules. |
-| Tool execution | `tool-executor.ts` via injected `ToolDispatcher`. | Loop / adapter / worker direct execution. |
-| Public-control signals | `op_*` public APIs (Issue 05+). | Loop never writes signal columns. |
+| Writing `canonical-events.jsonl` | `event-emitter.ts` via `store.ts` | Adapters, scheduler, backends. |
+| Writing `op.canonical.state` | `state-machine.ts` | Everywhere else. |
+| Writing turn rows / messages | `checkpoint.ts` via `turn-commit-store.ts` | Adapters, scheduler. |
+| Provider I/O | `adapters/*` | The loop. No loop file imports `child_process` except `process-execution-backend.ts`. |
+| Tool execution | `src/tool-execution/` behind the injected `ToolDispatcher` | Loop, adapter, worker direct execution. |
+| Adapter imports | — | `FORBIDDEN_ADAPTER_IMPORTS` (`adapter-contract.ts`): `canonical-loop/store`, `ops/op-store`, `ops/event-log` (each with and without `.js`), `node:child_process`, `child_process`. `adapters/anthropic-transport.ts` is the single allow-listed transport file. The list is locked by the boundary audit. |
 
-## Issue 03 happy-path event sequence (single text-only turn)
+## Event vocabulary
 
-```
-seq=0  state_changed   { from: null, to: "queued",   reason: "submitted" }
-seq=1  lease_acquired  { workerId }
-seq=2  state_changed   { from: "queued",  to: "running", reason: "leased" }
-seq=3  turn_started    { turnIdx: 0 }
-seq=4  message_appended{ turnIdx: 0, role: "assistant", messageId }
-seq=5  turn_committed  { turnIdx: 0, messageCount, toolCount }
-seq=6  state_changed   { from: "running", to: "succeeded", reason: "turn_done" }
-seq=7  lease_lost      { workerId, reason: "released" }
-```
+`CanonicalEventType` (`types.ts`) is the union; two hand-kept lists must
+match it: `EVENT_TYPES` in `store.ts` (a miss is SILENT — the reader truncates
+the log at that row) and `CANONICAL_EVENT_TYPES` in
+`process-relay-contract.ts` (a miss throws, out-of-process only).
+`event-vocabulary.test.ts` fails the build when the union grows without them.
+Add a new event to all three in one commit.
 
-Stream chunks are NOT in this list — they ride `op_stream:{opId}` only and
-are never persisted to `op_events` (PRD §12).
+`middleware_fired { name, reason, outcome, turnIdx }` is minted only by
+`turn-loop/guard-fire.ts` and counts a guard whose verdict TOOK EFFECT, never
+an invocation. `outcome` (`GuardOutcome`, required on every `GuardFire`):
 
-### Event vocabulary — one union, three enforcers
-
-`CanonicalEventType` (`types.ts`) is the vocabulary, but two hand-kept lists
-have to agree with it or events go missing:
-
-| Declaration | Enforces | Failure when a name is missing |
-|---|---|---|
-| `types.ts` `CanonicalEventType` | the union itself | — |
-| `store.ts` `EVENT_TYPES` | `isCanonicalEvent` → the durable reader/writer | SILENT. `Set<CanonicalEventType>` accepts a subset, so it compiles; at runtime the reader stops at the frame and truncates the log there, so the row and everything after it are lost and the next seq collides. |
-| `process-relay-contract.ts` `CANONICAL_EVENT_TYPES` | `validateRelayPayload` | LOUD, out-of-process only: throws `invalid canonical relay payload`. |
-
-`event-vocabulary.test.ts` is the guard: an exhaustive
-`Record<CanonicalEventType, true>` census fails `npm run build` when the
-union grows, and the runtime cases prove both validators accept every member.
-Add a new event type to all three lists in one commit.
-
-The union has outgrown the locked v1 table in PRD §12, which still does not
-list `iteration_checkpoint`, `approval_requested` or `approval_resolved`.
-The newest member is `middleware_fired` (`{ name, reason, outcome, turnIdx }` —
-`MiddlewareFiredBody` in `types.ts`), minted only by
-`turn-loop/guard-fire.ts`, which carries the authoritative ledger. It counts a
-guard whose verdict TOOK EFFECT, and `outcome` — a closed `GuardOutcome`
-vocabulary, required on every `GuardFire` so an unstated shape is a compile
-error — says WHAT it did. Without it every row reads alike and the first
-question a retirement review asks ("did this guard nudge or end the op?") has
-no answer. The eight shapes:
-
-| `outcome` | Where it is counted |
-| --- | --- |
-| `nudge` | `nudges.ts appendNudgeAsUserMessage` — middleware and completion-gate nudges alike, plus `adapter-throw-recovery.ts`'s resume nudge and `decide-outcome.ts`'s tool-failure summary. A nudge suppressed by `stableMessageId` is a replay, not a fire. |
-| `abort` | `nudges.ts middlewareAbortResult` (beforeTurn) and `apply-directive.ts` (afterModelCall / afterToolExecution). Counted only when the abort's error bubble is really emitted, so a repeat collapses with `emitErrorOnce`. |
-| `suspend` | `suspension.ts suspendedTurn` (beforeTurn) and `apply-directive.ts` (later phases + the idle-watchdog). |
-| `rewrite` | `middlewares/office-theme-guard.ts` — a guard that edits the tool call instead of speaking. |
-| `honest-terminal` | A completion gate that LETS the turn end but authors its closing words. Not a nudge; not an abort — the turn stays `done`. TWO producers, both on the earned-fire seam: `decide-outcome-gates.ts` unresolved-tool-intent's second and later fires (the gate NAMES it, `decide-outcome.ts` mints it at the append) and `terminal-epilogue.ts` build-verify's `build-verify-ok-*` confirmation (contributed inside the same `!endedPartial` branch that decides the append). `turn-loop.ts` banks both after `commitTurn`: see below. |
-| `reopen` | A user follow-up that vetoed the terminal and drove another turn WITHOUT saying anything. TWO producers, split only by arrival window, and a census must SUM them: `continuation-guard`/`injects-pending` (`decide-outcome.ts` via `continuation-guard.ts`) for an inject already queued when `decideTurnOutcome` ran, and `late-inject`/`late-inject` (`decide-outcome-gates.ts`) for one that landed DURING the async verify gates. Mutually exclusive — a veto in the guard stops the chain from being entered — and deliberately not one name: a `late-inject` row for a run where that gate never evaluated would be false provenance. late-inject's SEVEN re-opening gate siblings all speak, so they file as `nudge`: there the message is the landed effect and the reopen is only how it gets read. Both ride the earned-fire seam. |
-| `repair` | `decide-outcome-gates.ts` framework-serve — a guard that fixed the ENVIRONMENT instead of steering the model (the dev server a promoted "done" made the verify adapter skip). Outside the conversation, so unlike `rewrite` the turn is untouched. Counted only on `handled && ok`. |
-| `gave-up` | `decide-outcome-verify-gates.ts` render-verify's `capReached` — a guard that held a real adverse verdict, had no retries left, and let the turn stand, dropping the runtime errors it had already drained. Not an abort: the turn stays `done`. |
-
-`directiveFire` and `firedResultFire` derive `outcome` from the verdict's own
-`kind`, so the sites that route through them cannot state it wrong; the
-handful of hand-built `GuardFire` literals state it themselves.
-
-**Every fire is gated on its own EFFECT, not on a guard's intent** — `nudge` on
-the path that writes the row, `abort` on `if (bubbled)`, `rewrite` on
-`if (stripped)`, `repair` on `if (ok)`, `suspend` post-commit. Where a gate fire
-is MINTED follows from that, and the two cases pull in opposite directions.
-
-An effect already SPENT when `evaluate` returns is minted at the branch:
-framework-serve's registered dev server, render-verify's dropped runtime
-errors, and every nudge, whose row `appendNudgeAsUserMessage` has already
-written. Deferring one of these protects nothing and would drop it on any turn
-that ends non-terminally.
-
-An effect still CONTINGENT rides the seam, because a gate can see it from
-nowhere inside `evaluate`: a later gate's reopen discards the terminal it
-authored, and even a settled terminal is only an entry in an in-memory
-`allMessages` until `commitTurn`, with `driveTurn`'s cancel bail in between. So
-a gate NAMES the fire beside the payload it belongs to
-(`CompletionGateOutput.honestTerminal` carries `{ text, fire }` as one value,
-which is what stops the append and the count from drifting), the code that
-performs the effect contributes it to `DecideOutcomeResult.earnedFires`, and
-`turn-loop.ts` banks the list via `bankEarnedFires` **after `commitTurn`** —
-beside `applyCommittedDirective`, under the same ordering contract. Build-verify's
-confirmation joins that list from `terminal-epilogue.ts`, inside the
-`!endedPartial` branch that decides its append: sharing the condition is what
-keeps a partial-ending op from banking a fire for a message it suppressed. The
-seam has no idempotency key: two `decideTurnOutcome` calls for one `turnIdx`
-would bank two identical bodies.
-
-The silent `reopen` rides it too, from BOTH producers. A veto is nothing but an
-in-memory `terminalReason = null` on its way to that same `commitTurn`, so a
-Stop landing in the verify-gate window — the window both mechanisms exist for —
-erases it entirely, and a row banked at the branch would assert a gate that
-"drove another turn" when neither the vetoed turn nor the next one ever ran.
-Unlike `repair`'s leased port or `gave-up`'s discarded evidence, nothing about
-a veto survives the bail. `CompletionGateOutput.reopenFire` carries the gate's
-half and the chain runner contributes it under `if (out.reopen)`, so the fire
-cannot outlive the effect it names; `continuation-guard.ts` contributes the
-other half at its own branch.
-
-Read a slice with three caveats.
-
-(1) `outcome === "honest-terminal"` is a census of TWO gates, not of
-harness-authored terminals. The harness writes its own closing assistant message
-in six places and counts two; uncounted are `empty-turn-*`
-(empty-turn-termination.ts), `ask-user-*` (ask-user-terminal.ts) and
-`open-steps-warn-*` / `ground-truth-sizes-*` (terminal-epilogue.ts). Only
-`empty-turn-*` shares the `appendHonestTerminal` writer with the gate
-terminal's — that helper has exactly two call sites — so a writer-based search
-will not find the other three, and `build-verify-ok-*` is counted only because
-it was wired by hand.
-
-(2) A nudge that also suppressed tool dispatch (loop-detection's
-mutation-repeat, which empties `ctx.toolCalls` and sets `skipToolDispatch`)
-files as a plain `nudge` — a modifier on the verdict, not a shape of its own.
-
-(3) Rows minted between `e3e93aed` (which added the event) and the commit that
-added `outcome` carry no `outcome` at all and read `undefined`, so a
-`group by outcome` drops them.
-
-It is NOT a census of every guard invocation. Uncounted, deliberately: a
-`continue` verdict; a FAILED framework-serve registration (`handled && !ok` —
-the op ends with no server, so a `repair` row would assert a repair that did not
-happen; that path logs `dev-server registration failed`, so read a low `repair`
-count against the warn line, never as a dead gate); and a directive discarded by
-a user cancel before it is applied. Read a `0` with that list in hand.
-
-Every nudge caller must name its guard AND state what the fire did — the
-required `GuardFire` argument is what keeps one from reaching op_messages
-uncounted or unclassified.
-
-## Issue 04 — Reconnect / event replay
-
-`op_events` is durable; `op_stream:{opId}` is ephemeral. Clients survive
-disconnects by tracking the seq of the last canonical event they received
-and replaying everything after it on reconnect.
-
-### Reconnect protocol (PRD §12)
-
-```
-client tracks last_seq                             // -1 == "from the start"
-on reconnect:
-  rows = opEventsSince(op_id, last_seq)            // disk read, seq-ordered
-  apply rows in order                              // rebuild local state
-  re-attach to bus channel `op_events:{op_id}`     // canonical events
-  re-attach to bus channel `op_stream:{op_id}`     // stream chunks (live tail only)
-```
-
-`reconnectOp(opId, sinceSeq, listener)` packages all three steps into one
-call: it subscribes to the bus first, replays disk events with `seq >
-sinceSeq` in order, then drains any events that arrived during replay
-deduplicated by seq. Each event reaches the listener exactly once.
-
-### Public surface (control-api.ts)
-
-| Function | Purpose |
+| `outcome` | Counted where |
 |---|---|
-| `opEventsSince(opId, sinceSeq)` | Pure replay. `sinceSeq = OP_EVENTS_FROM_BEGINNING` (`-1`) returns full history. `sinceSeq >= MAX(seq)` returns `{ ok: true, events: [] }`. Unknown op → `{ ok: false, code: "unknown_op" }`. |
-| `subscribeOpEvents(opId, listener)` | Live canonical-event subscription only (no replay). Returns unsubscribe. |
-| `subscribeOpStream(opId, listener)` | Live stream-chunk subscription only (no replay — chunks are ephemeral by design). Returns unsubscribe. |
-| `reconnectOp(opId, sinceSeq, listener)` | Replay + live subscription with seq-dedup. Returns `{ ok, latestReplayedSeq, off }`. |
-
-### Invariants enforced by tests (Issue 04)
-
-- Per-op `seq` is monotonic 0..N with no gaps.
-- Different ops' seq spaces are independent.
-- Stream chunks never appear in `op_events_since` results.
-- Replay works against terminal ops (final state already on disk) and
-  running ops (events still being appended) identically.
-
-## Issue 05 — Pause / resume
-
-Public control APIs:
-
-| Function | Purpose |
-|---|---|
-| `opPause(opId, actor)` | Soft-pause request. Writes `pause_requested_at` on the op, emits `pause_requested`, publishes a fast-path message on `op_signals:{opId}`. Idempotent on already-paused ops AND on ops that already have a pending pause request. |
-| `opResume(opId, actor)` | Resume from `paused`. Emits `resume_requested`, transitions paused→queued (which emits `state_changed`), enqueues + pumps the scheduler so a worker leases the op again. The next adapter call sees the prior `provider_state` from the last `op_turns` row (PRD §11). |
-
-Result envelope: `{ ok: true } | { ok: false, code: "unknown_op" \| "invalid_op_id" \| "terminal" \| "not_paused", message }`.
-
-### Pause is soft (turn-boundary only)
-
-There are no mid-turn pauses in v1. The worker checks `pause_requested_at`
-ONLY between turns, after a turn commits. This means:
-
-- A `running` op continues its current turn to completion.
-- After commit, the worker re-reads the op from disk, sees the durable
-  signal, transitions running→paused, clears `pause_requested_at`, and
-  releases the lease.
-- A `pause_requested` event always precedes the `state_changed running→paused`
-  event in seq order.
-
-### Cancel beats pause beats redirect (PRD §13 precedence)
-
-The turn-boundary handler checks `cancel_requested_at` first; if set, it
-skips the pause path entirely and lets cancel handling take over (Issue 06
-implements that branch — for now the worker just continues looping if a
-cancel-only signal lands).
-
-### Resume protocol
-
-```
-opResume(opId, actor):
-  emit  resume_requested
-  emit  state_changed { from: paused, to: queued, reason: "resumed" }   // via state-machine
-  enqueueOp + pumpScheduler                                              // scheduler picks up the op
-  // worker leases again, transitions queued→running, drives next turn
-  // adapter receives prior provider_state from last op_turns row
-```
-
-### Issue 05 events
-
-| Event | Body shape | Emitted by |
-|---|---|---|
-| `pause_requested` | `{ actor }` | `opPause()` (control API) |
-| `resume_requested` | `{ actor }` | `opResume()` (control API) |
-| `state_changed` (running→paused) | `{ from: "running", to: "paused", reason: "pause_at_turn_boundary" }` | worker turn-boundary handler |
-| `state_changed` (paused→queued) | `{ from: "paused", to: "queued", reason: "resumed" }` | `opResume()` via state-machine |
-
-The locked v1 enum already includes `pause_requested` and `resume_requested`
-(PRD §12) — Issue 05 just lights them up.
-
-## Issue 06 — Cancel (mid-stream, hard cancel)
-
-Public control API:
-
-| Function | Purpose |
-|---|---|
-| `opCancel(opId, actor)` | Hard-cancel request. Read-modify-writes `cancel_requested_at` on the op (preserving pause/redirect signals), emits `cancel_requested`, publishes a `CancelSignal` on `op_signals:{opId}`. Idempotent on `state==="cancelling"` AND on ops that already have a pending cancel request. |
-
-Result envelope: `{ ok: true } | { ok: false, code: "unknown_op" \| "invalid_op_id" \| "terminal", message }`.
-
-### Cancel is mid-stream, not turn-boundary
-
-The worker subscribes to `op_signals:{opId}` for the duration of a lease.
-When a `CancelSignal` arrives, the handler runs synchronously inside the
-publish chain:
-
-1. flips `tracker.cancelled = true`;
-2. immediately transitions `running → cancelling` (PRD §13: "do not wait
-   for adapter.abort() to resolve");
-3. calls `adapter.abort()` and races it against a 1s timeout.
-
-Once abort resolves (or the timeout fires) `finalizeCancel` clears
-`cancel_requested_at` on disk and transitions `cancelling → cancelled`.
-The partial turn is discarded — `driveTurn` checks `tracker.cancelled`
-after the adapter resolves and returns BEFORE `commitTurn`. No `op_turns`
-row, no `op_messages`, no `turn_committed` event.
-
-### Precedence (PRD §13)
-
-`cancel > pause > redirect`. Concretely:
-
-- The cancel **bus signal handler** fires immediately on receipt and
-  preempts everything else.
-- The **per-iteration boundary check** (after a turn commits) checks
-  `cancel_requested_at` BEFORE `pause_requested_at`. A boundary cancel
-  goes through `applyBoundaryCancel` (running → cancelling → cancelled
-  with adapter.abort()) and skips the pause path entirely.
-- A **pre-lease cancel** (cancel set before any worker leases the op)
-  routes directly `queued → cancelled` via `applyPreLeaseCancel` — no
-  `lease_acquired`, no `running` state, no turn ever started.
-
-### Issue 06 events
-
-| Event | Body shape | Emitted by |
-|---|---|---|
-| `cancel_requested` | `{ actor }` | `opCancel()` (control API) |
-| `state_changed` (running → cancelling) | `{ from: "running", to: "cancelling", reason: "cancel_requested" }` | cancel-handler signal subscriber (mid-stream) OR `applyBoundaryCancel` (race-defensive) |
-| `state_changed` (cancelling → cancelled) | `{ from: "cancelling", to: "cancelled", reason: "adapter_aborted" }` | `finalizeCancel` after abort/timeout |
-| `state_changed` (queued → cancelled) | `{ from: "queued", to: "cancelled", reason: "cancel_before_lease" }` | `applyPreLeaseCancel` |
-| `lease_lost` | `{ workerId, reason: "cancelled" }` | worker `finally` block |
-
-### Happy-path cancel event sequence (cancel mid-turn)
-
-```
-seq=0  state_changed   { from: null,        to: "queued",     reason: "submitted" }
-seq=1  lease_acquired  { workerId }
-seq=2  state_changed   { from: "queued",    to: "running",    reason: "leased" }
-seq=3  turn_started    { turnIdx: 0 }
-       (... ephemeral stream chunks on op_stream:{opId}, NOT in this log ...)
-seq=4  cancel_requested      { actor }                                              ← opCancel
-seq=5  state_changed   { from: "running",   to: "cancelling", reason: "cancel_requested" }   ← signal handler
-seq=6  state_changed   { from: "cancelling",to: "cancelled",  reason: "adapter_aborted" }    ← finalizeCancel
-seq=7  lease_lost      { workerId, reason: "cancelled" }
-```
-
-No `turn_committed` event for the aborted turn. No `op-turns/0.json` row under the op's data dir. <!-- doc-paths:ignore -->
-
-## Issue 07 — Redirect (latest-wins, turn-boundary)
-
-Public control API:
-
-| Function | Purpose |
-|---|---|
-| `opRedirect(opId, instruction, actor)` | Latest-wins redirect. Direct-writes `redirect_instruction` (UUIDed envelope `{ instructionId, text, receivedAt }`) and `redirect_received_at` on the op, emits `redirect_received` with the new `instructionId`, publishes a `RedirectSignal` on `op_signals:{opId}`. A subsequent call before the prior redirect applies overwrites it on disk; both `redirect_received` events are durable, but only one `redirect_applied` ever fires per consumed redirect. |
-
-Result envelope: `{ ok: true } | { ok: false, code: "unknown_op" \| "invalid_op_id" \| "invalid_instruction" \| "terminal", message }`.
-
-### Redirect is turn-boundary (next prompt assembly)
-
-There is no mid-turn redirect application in v1. The fold-in happens in
-`turn_loop.driveTurn` BEFORE the adapter runs:
-
-1. `driveTurn` snapshots `redirect_instruction` from disk at prompt-assembly
-   time (latest-wins: a later overwrite wins as long as it lands before
-   this read).
-2. The snapshot is passed as `TurnInput.pendingRedirect` (PRD §15
-   adapter contract). The adapter folds it into its provider-specific
-   prompt format.
-3. After the turn commits, `commitTurn` emits `redirect_applied { turnIdx, instructionId }`,
-   sets `op_turns.redirect_consumed = true`, and clears `redirect_instruction`
-   from the op — but **only if the disk's current `instructionId` still
-   matches the one we applied**. If a newer opRedirect landed mid-turn,
-   the new instruction stays on disk for the next prompt. The applied
-   id still gets its single `redirect_applied` event.
-
-### Precedence with cancel and pause (PRD §13)
-
-`cancel > pause > redirect`. Concretely:
-
-- A pending cancel at the worker's per-iteration boundary check is taken
-  BEFORE redirect or pause — the next turn (which would have folded the
-  redirect) never starts. The redirect column survives on the cancelled
-  op as a benign orphan; nothing applies it.
-- Redirect and pause coexist. A redirect set during a paused window
-  survives the pause→resume cycle (worker's pause handler clears only
-  `pause_requested_at`) and is folded into the first turn after resume.
-
-### Issue 07 events
-
-| Event | Body shape | Emitted by |
-|---|---|---|
-| `redirect_received` | `{ actor, instructionId }` | `opRedirect()` (control API). One per call, even when latest-wins overwrites. |
-| `redirect_applied` | `{ turnIdx, instructionId }` | `commitTurn()` (Issue 07 wiring). Same transaction as `turn_committed`. Exactly one per consumed redirect. |
-
-The locked v1 enum already includes `redirect_received` and `redirect_applied`
-(PRD §12) — Issue 07 just lights them up.
-
-### Latest-wins audit trail (PRD acceptance #6)
-
-Two `opRedirect` calls in quick succession on the same op:
-
-- Both calls emit `redirect_received` (durable on `op_events`, distinct
-  `instructionId` per call).
-- Disk's `redirect_instruction` ends as the second call's envelope.
-- The next turn folds in only the second instruction.
-- Exactly one `redirect_applied` fires, with the second `instructionId`.
-- The first instruction is not re-emitted and not consumed.
-
-## Issue 08 — Lease heartbeat + crash recovery
-
-Lease lifecycle (PRD §14):
-
-| Primitive (`lease.ts`) | Purpose |
-|---|---|
-| `acquireLease(opId, workerId)` | Atomic-ish acquire. Steals only an EXPIRED lease; returns false if a fresh lease is held by another worker. Persists via `persistOpKeepingSignals` so control-API columns are not clobbered. |
-| `heartbeatLease(opId, workerId)` | Refresh `leaseExpiresAt` to `now + leaseDurationMs`. Returns false if the lease was stolen — worker treats this as "abort the in-flight turn". |
-| `releaseLease(opId, workerId)` | Idempotent release; no-op if another worker took the lease (recovery path). Worker `finally` blocks use the return value to decide whether to emit `lease_lost`. |
-| `setLeaseConfig({ leaseDurationMs, heartbeatIntervalMs })` | Test hook. Defaults: 30s / 10s (PRD §21). |
-
-Heartbeat is a `setInterval` started inside `worker.drive()`. On heartbeat
-failure (lease stolen) the worker calls `adapter.abort()` and exits the
-turn loop without committing the partial turn. The 10-second heartbeat is
-steady-state lease maintenance; it is not a retry delay.
-
-### Resume protocol uses `op_turns`, not the cache
-
-`worker.drive()` now derives the starting `turnIdx` from
-`readLatestOpTurn(opId).turnIdx + 1` (the source of truth) rather than
-`op.canonical.currentTurnIdx` (a denormalized cache that can lag a crash).
-A worker that committed a turn but died before the cache update no
-longer drives the same turn twice.
-
-### Idempotent commit (`checkpoint.ts`, PRD acceptance #8)
-
-`commitTurn` checks `readOpTurn(opId, turnIdx)` first. If the row exists
-the call is a replay — it skips message appends, event emission, and
-state transitions, and returns `{ inserted: false, messages: [] }`. The
-caller advances to the next turn. PK conflict on `(op_id, turn_idx)`
-cannot produce duplicate `op_turns` rows, duplicate `op_messages`, or
-duplicate `turn_committed` events.
-
-### Recovery (`recovery.ts`)
-
-```
-recoverStaleOp(opId):
-  read op
-  guard:  state ∈ {queued, running, cancelling}; skip a fresh running/cancelling lease
-  evict   stale worker from scheduler.active (frees the lane slot)
-  clear   leaseOwner / leaseExpiresAt and emit lease_lost when a lease exists
-  if state === queued:
-      enqueue + pump without consuming a recovery attempt
-  if state === cancelling:
-      transition cancelling → cancelled  (cancel always wins, PRD §13)
-  if state === running and retry cap/circuit breaker allow:
-      increment attemptCount
-      transition running → queued        (state-machine emits state_changed)
-      enqueue + pump scheduler            (replacement worker leases)
-  otherwise transition running → failed
-```
-
-`src/ops/heartbeat.ts` computes per-op recovery limits and a `nextDelayMs`
-from `retryPolicy.backoffMs`, but the canonical recovery seam deliberately does
-not schedule that delay. Recovery requeues immediately after lease expiry; the
-30-second lease duration already paces crash cycles, and an in-memory backoff
-timer could strand the queued op if the process died during the delay. The
-backoff arrays and computed `nextDelayMs` remain persisted/returned policy
-metadata, not an active canonical recovery delay. This is separate from the
-10-second live-worker heartbeat above and from tool-call retry backoff in
-`src/resilience-policy.ts`.
-
-Bulk variant `recoverStaleOps(opIds)` exists for ad-hoc/test sweeps.
-`sweepStaleCanonicalOps()` is a boot-time janitor that scans
-`~/.lax/operations/` and recovers any op left `running`/`cancelling` with an
-expired lease — the server wires it fire-and-forget at startup
-(`server/canonical-loop-bootstrap.ts`, via `setImmediate`). Beyond that
-one-shot boot sweep there is no timer-based janitor; otherwise callers (or
-tests) trigger recovery explicitly. Filesystem-backed v1 has no DB row-level
-guard, so recovery is the loop's authoritative way to take ownership back
-from a dead worker.
-
-### Issue 08 events
-
-| Event | Body shape | Emitted by |
-|---|---|---|
-| `lease_acquired` | `{ workerId }` | worker on lease take (existing). |
-| `lease_lost` (worker exit) | `{ workerId, reason }` | worker `finally` ONLY when it still owned the lease. |
-| `lease_lost` (recovery) | `{ workerId, reason: "expired" }` | `recoverStaleOp` before transitioning state. |
-| `state_changed` (running → queued) | `{ from: "running", to: "queued", reason: "lease_expired" }` | `recoverStaleOp` via state-machine. |
-| `state_changed` (cancelling → cancelled) | `{ from: "cancelling", to: "cancelled", reason: "lease_expired_during_cancel" }` | `recoverStaleOp` via state-machine. |
-
-The locked v1 enum already contains `lease_acquired` and `lease_lost`
-(PRD §12) — Issue 08 lights up the `lease_lost reason="expired"` and the
-`lease_expired` state-change reasons.
-
-### Crash recovery happy path (PRD acceptance #7)
-
-```
-Worker A acquires lease. Drives turn 0, commits.
-Worker A's adapter hangs on turn 1.
-Worker A's heartbeat is paused (process death simulation).
-Lease expires.
-recoverStaleOp(opId):
-    lease_lost { workerId: A, reason: "expired" }
-    state_changed { from: "running", to: "queued", reason: "lease_expired" }
-    enqueue + pump
-Worker B leases:
-    lease_acquired { workerId: B }
-    state_changed { from: "queued", to: "running", reason: "leased" }
-Worker B reads op_turns[0], drives turn 1 with prior provider_state,
-    commits, succeeds.
-    state_changed { from: "running", to: "succeeded", reason: "turn_done" }
-    lease_lost { workerId: B, reason: "released" }
-```
-
-Per-op event seq stays monotonic across the recovery boundary; turn 0
-is not re-driven, not re-committed, not re-emitted.
-
-### Wall-clock ceiling
-
-The worker arms a one-shot timer from `op.contextPack.budget.maxWallTimeMs`
-when that budget is set. On overrun it fires
-`opCancel(opId, "wall-clock-ceiling")`, so an over-budget op stops via the
-same running → cancelling → cancelled path as a user Stop — the single
-convergence point for chat, agents, cron, and sub-agents.
-
-## Issue 09 — Anthropic adapter (production conformance)
-
-`AnthropicAdapter` (`adapters/anthropic.ts`) is the first real-provider
-adapter against the locked v1 contract (PRD §15). It is the reference
-implementation for future adapters (Codex v1.1, build_app v1.2, IDE v1.3).
-
-| Concern | Where | Notes |
-|---|---|---|
-| Adapter surface | `adapters/anthropic.ts` | `runTurn` + `abort` only. No DB / event-writer / worker-pool / `child_process` imports — verified by conformance item I against `FORBIDDEN_ADAPTER_IMPORTS`. |
-| Subprocess / OAuth / stream parse | `adapters/anthropic-transport.ts` | Wraps `streamAnthropicResponse` and `getAnthropicApiKey`. Lives outside the audited adapter file so the sandbox boundary stays clean. |
-| Token resolution | `defaultAnthropicTransport` | Lazy — fetched at first stream call. Token is held in transport closure, NEVER passed to the canonical loop, NEVER appears in `provider_state` or events. |
-| Injectable transport | `AnthropicAdapterOptions.transport` | Tests inject a programmable mock without touching subprocess primitives. |
-
-### Streaming → canonical mapping
-
-| Provider event | Canonical adapter_report | Notes |
-|---|---|---|
-| `text { delta }` | `stream_chunk { delta }` | Bus-only, ephemeral. Also accumulated in-memory and finalized as a single `assistant` `message_finalized` at end of turn. |
-| `tool_call { id, name, arguments }` | `tool_call_requested { call }` | Loop dispatches via `tool-executor`; tool result rides back as a `tool_result` canonical message in the next turn (Issue 03 contract). |
-| `error { code, message }` | `error { code, message, retryable }` | Routine errors NEVER throw out of `runTurn` (PRD §15 H). Secrets scrubbed via regex-based redaction before the report fires. |
-| `done { stopReason }` | (not surfaced as a report) | Stop reason is recorded in `provider_state.providerPayload.stopReason`. |
-
-### `provider_state` envelope
-
-```ts
-{
-  adapterName: "anthropic",
-  adapterVersion: "1.0.0",
-  providerPayload: {
-    lastTurnIdx,                  // sanity marker
-    finalizedMessageId | null,    // pointer to op_messages row
-    stopReason | undefined,
-    pendingTools                  // 0 if turn naturally completed
-  }
-}
-```
-
-Intentionally minimal — the canonical loop replays messages on every
-turn, so the adapter doesn't need to remember a conversation id. The
-**256 KB size cap** (PRD §21) is enforced before return; oversize fails
-loudly with an `error` adapter_report (`code: "provider_state_oversize"`)
-and `terminalReason: "error"` rather than silent corruption.
-
-### Abort lifecycle
-
-- `runTurn` mints a fresh `AbortController` per turn so the adapter
-  instance is reusable across resume turns (conformance D).
-- `abort()`:
-  - flips `aborted = true` (preempts the per-iteration loop on the next
-    yielded transport event);
-  - calls `aborter.abort()` (signals the transport to tear down its
-    subprocess / HTTP request — the existing `streamAnthropicResponse`
-    honors `signal` and kills the spawned `claude` subprocess);
-  - awaits the in-flight stream consumption to drain so the promise
-    resolves only when the adapter is actually stopped.
-- Idempotent (F): two `abort()`s are a no-op.
-- Safe after completion (G): `aborter.abort()` on an already-fired
-  controller is a no-op.
-
-### Real-CLI smoke tests
-
-`test/canonical-loop-09-anthropic-smoke.test.ts` is gated behind
-`LAX_RUN_ANTHROPIC_SMOKE=1`. By default it skips — the standard test
-suite never makes live external API calls. Smoke tests cover end-to-end
-submit, real cancel mid-stream (subprocess actually killed), and crash
-recovery with `provider_state` round-trip.
-
-### Wire-up
-
-`setDefaultAdapterForLane("interactive", () => createAnthropicAdapter())`
-wires the adapter as the lane=interactive default when the host app
-chooses to. Issue 09 ships the adapter and the wiring helper; the
-actual cutover (flag-flip default) lands separately.
-
-## Issue 11 — v1.0 hardening cap
-
-The "everything together" cap that closes v1.0. Every prior issue ships
-one slice; Issue 11 proves the slices compose under load and stress.
-
-### Permanent invariants (asserted across the suite)
-
-| # | Invariant | Where enforced |
-|---|---|---|
-| I1 | `op.canonical.state` equals the `to` of the latest `state_changed` event | `assertCanonicalInvariants` in `test/canonical-loop-11-invariants.test.ts` |
-| I2 | `op.canonical.currentTurnIdx` equals MAX(`op_turns.turnIdx`) when any turn committed | same |
-| I3 | Per-op `op_events.seq` monotonic 0..N with no gaps and no cross-op leak | same + `concurrency.test.ts` |
-| I4 | Per-op `op_turns.turn_idx` monotonic with no gaps | same |
-| I5 | Exactly one terminal `state_changed` event per op (`succeeded` / `failed` / `cancelled`) | same |
-| I6 | Terminal ops have `leaseOwner=null` and `leaseExpiresAt=null` | same |
-
-`assertCanonicalInvariants(opId)` is exported from the Issue 11
-invariants test as a reusable helper — any test that drives an op to
-terminal can call it to enforce the full invariant set in one shot.
-
-### Boundary audits
-
-`test/canonical-loop-11-boundary-audit.test.ts` runs static-import
-audits on the canonical-loop source tree:
-
-- No file under `src/canonical-loop/` (loop modules) imports
-  `child_process` or `node:child_process`. Subprocess primitives live
-  behind the adapter contract — the loop never spawns processes.
-- Adapter source files (`src/canonical-loop/adapters/*.ts`) import
-  nothing on `FORBIDDEN_ADAPTER_IMPORTS` (`ops/op-store`,
-  `ops/event-log`, `ops/pool`, `canonical-loop/store`,
-  `child_process`).
-- Exception: `adapters/anthropic-transport.ts` is the bounded
-  transport-boundary file. The audit allow-lists this exact path
-  and audits everything else. Only `anthropic-transport.ts` is
-  allow-listed; later transports (`adapters/codex-transport.ts`) are
-  audited like any adapter file and must stay clean of
-  `FORBIDDEN_ADAPTER_IMPORTS`.
-- The `FORBIDDEN_ADAPTER_IMPORTS` set itself is locked — any change
-  to the list fails the audit.
-
-### Concurrency isolation (PRD acceptance #10)
-
-`test/canonical-loop-11-concurrency.test.ts` exercises the
-"5 concurrent ops mixed across lanes" scenario the PRD specifies.
-Lane caps are respected (interactive=1, build=2, ide=1, background=1, agent=3),
-per-op seq stays monotonic, no cross-op contamination of events,
-messages, provider_state, or workerIds.
-
-### "No op escapes canonical" (PRD §20)
-
-`test/canonical-loop-11-no-op-escapes-canonical.test.ts` is the
-post-cutover invariant the PRD locks in for the lifetime of the
-project: every terminal scenario (succeeded / failed /
-cancelled / pre-lease cancel) leaves canonical artifacts and **zero**
-legacy `events.jsonl`.
-
-### Hardening (cross-slice composition)
-
-`test/canonical-loop-11-hardening.test.ts` exercises edge interleavings
-the per-issue suites don't cover on their own:
-
-- Stale worker waking up after the op terminated cannot mutate state
-  (state-machine throws `IllegalTransitionError`; `commitTurn`
-  idempotent guard returns `inserted: false`).
-- A delayed adapter result arriving after cancel does not commit a
-  turn.
-- A delayed adapter result arriving after lease recovery does not
-  produce a duplicate `op_turns` row (Issue 08 PK guard).
-- `cancel-during-pause` and `cancel-during-redirect` are deterministic:
-  cancel always wins (PRD §13).
-- Pause idempotency holds across racing actors — one
-  `pause_requested` event regardless of how many `opPause` calls land.
-- Pause+resume+redirect chain leaves exactly one `redirect_applied`
-  event on the resumed turn.
-- A burst of concurrent pause+cancel calls produces exactly one of
-  each control event in the durable log.
-
-### Rollback
-
-[docs/runbooks/canonical-loop-rollback.md](../../docs/runbooks/canonical-loop-rollback.md)
-documents the current procedure. The flags are compatibility shims and cannot
-switch execution paths; roll back the specific post-cutover change or deploy a
-known-good build after draining/cancelling in-flight work. Canonical artifacts
-remain for audit.
-
-### v1.0 ship readiness
-
-PRD §22 Definition of Done — current state of the canonical loop:
-
-| Item | Status |
-|---|---|
-| canonical-loop modules ≤ 400 LOC each | green |
-| Anthropic adapter implements locked contract | green (Issue 09) |
-| Worker pool with op-level leases + heartbeats | green (Issues 03, 08) |
-| Single queue with lane scheduling | green (Issue 03) |
-| `op_pause` / `op_cancel` / `op_redirect` / `op_resume` / `op_events_since` live | green (Issues 04–07) |
-| Canonical-only submit routing; compatibility shims hardwired on | green (retired 2026-05-15) |
-| Schema additions migrated | green (Issue 01) |
-| All 11 v1 acceptance tests pass under fake adapter | green (Issues 01–11) |
-| All 9 conformance items pass for Anthropic | green (Issue 09) |
-| Real Anthropic CLI smoke tests | gated, opt-in via `LAX_RUN_ANTHROPIC_SMOKE=1` |
-| Permanent invariant tests | green (Issue 11) |
-| Historical old-path compatibility fixture | archived after cutover (Issue 10) |
-| No diff against PRD §19 untouchables | green |
-| Public API signatures unchanged | green (Issue 10 compat fixtures verify) |
-| Rollback procedure documented | green (this issue) |
-| Adapter sandbox audit clean | green (Issue 11 boundary audit) |
-| Loop has no `child_process` imports | green (Issue 11 boundary audit) |
-| PRD glossary terms used consistently in code identifiers | green |
-| No code, comment, or commit references competitor products | green |
-
-The remaining DoD items — real-staging exercises (one real worker
-death, one real client reconnect against the live Anthropic adapter)
-— are operational gates, not code work. They block "tag v1.0; canary
-on" but not "Issue 11 ships".
+| `nudge` | `turn-loop/nudges.ts` `appendNudgeAsUserMessage` — any synthetic user message that reached `op_messages`. |
+| `abort` | `middlewareAbortResult` (beforeTurn) and `turn-loop/apply-directive.ts`; only when the error bubble is really emitted. |
+| `suspend` | `turn-loop/suspension.ts` and `apply-directive.ts` (plus the idle watchdog). |
+| `rewrite` | `middlewares/office-theme-guard.ts` — edits the tool call instead of speaking. |
+| `honest-terminal` | A completion gate that lets the turn end but authors the closing words; banked after `commitTurn`. |
+| `reopen` | A user follow-up that vetoed the terminal silently: `continuation-guard.ts` (inject already queued) or `decide-outcome-gates.ts` `late-inject` (landed during the verify gates). Sum both. |
+| `repair` | `decide-outcome-gates.ts` framework-serve — fixed the environment (a dev server), not the conversation; only on `handled && ok`. |
+| `gave-up` | `decide-outcome-verify-gates.ts` render-verify `capReached` — held an adverse verdict, no retries left. |
+
+Fires whose effect is contingent on the commit ride `DecideOutcomeResult.earnedFires`
+and are banked by `turn-loop.ts` after `commitTurn`; fires already spent are
+minted at the branch. `appendHonestTerminal` (`turn-loop/empty-turn-termination.ts`)
+has exactly two call sites — its own `empty-turn` terminal and the gate
+terminal in `turn-loop/decide-outcome.ts` — and only the second is counted, so
+`honest-terminal` is a census of gates, not of every harness-authored closing
+message.
+
+## Tests that enforce this file
+
+`interface-seal.test.ts`, `event-vocabulary.test.ts`,
+`middlewares/registry.test.ts`, `execution-backend-interface-seal.test.ts`
+(backends never import the turn loop or a dispatcher),
+`test/canonical-loop-11-boundary-audit.test.ts`.

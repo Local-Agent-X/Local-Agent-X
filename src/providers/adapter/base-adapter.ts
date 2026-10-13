@@ -1,7 +1,7 @@
 /**
  * BaseAdapter — abstract contract every provider implementation extends.
  *
- * The dispatcher (run-standard.ts) holds a Map<providerName, BaseAdapter>
+ * The dispatcher (src/canonical-loop/adapters/openai-compat/chat-transport.ts) holds a Map<providerName, BaseAdapter>
  * and calls `stream()` / `invoke()` without knowing whether the adapter
  * is talking to an HTTP API, a local subprocess, or a CLI proxy. Adding
  * a new provider = one new file under src/providers/adapters/ + one

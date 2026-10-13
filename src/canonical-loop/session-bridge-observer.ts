@@ -166,7 +166,7 @@ function recordCanonicalEventWithSink(
             queuePosition: 1,
             // Spawn lineage: carry the spawning op's id through so the agents
             // panel can nest this op under its parent. Absent unless set at
-            // submit (ops/tools/shared.ts resolveParentOpId).
+            // submit (ops/delegation.ts delegatingOpId).
             ...(op?.parentOpId ? { parentOpId: op.parentOpId } : {}),
             // Op type: carry the real op type through so the agents panel can
             // pick a per-type icon (app_build/research/self_edit/…) instead of

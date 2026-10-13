@@ -130,6 +130,19 @@ function resolveTaintPath(rawPath: string, sessionId: string | undefined): strin
   }
 }
 
+/** Does this call read a secret or credential path, knowable from its args?
+ *  The same path detection the taint floor uses, with nothing recorded — what
+ *  a "don't read my secrets/credentials" ban actually covers. */
+export function callReadsSensitivePath(
+  toolName: string,
+  args: Record<string, unknown>,
+  sessionId: string | undefined,
+): boolean {
+  if (toolName === "bash") return sensitivePathsReadByCommand(String(args.command || "")).length > 0;
+  if (!hasCapability(toolName, "sensitive-read") || typeof args.path !== "string" || !args.path) return false;
+  return isSensitivePath(resolveTaintPath(args.path, sessionId));
+}
+
 /**
  * Pre-execute taint FLOOR-set (R4-09 defense-in-depth).
  *

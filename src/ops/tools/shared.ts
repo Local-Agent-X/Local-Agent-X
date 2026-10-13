@@ -26,8 +26,9 @@ import { loadToolPolicy } from "../../tool-policy/index.js";
 import { DELEGATED_WORKER_PROMPT } from "../../server/background-jobs/prompts.js";
 import { buildContextPack } from "../context-pack-builder.js";
 import { getRetryPolicy } from "../heartbeat.js";
-import { newOpId, readOp, isInteractiveHostOpType } from "../op-store.js";
-import { broadcastToSession, readRecentSessionMessages, listOpsForSession } from "../session-bridge.js";
+import { newOpId } from "../op-store.js";
+import { delegationFrom } from "../delegation.js";
+import { broadcastToSession, readRecentSessionMessages } from "../session-bridge.js";
 import { delegatedToolsetForOp } from "./delegated-toolset.js";
 import type { Op, OpLane, OpVisibility } from "../types.js";
 
@@ -143,29 +144,6 @@ export function delegatedRuntimeSessionId(opId: string, originatingSessionId: st
   return originatingSessionId || opId;
 }
 
-/**
- * Spawn-lineage parent for an op being submitted: the id of the op whose agent
- * is executing this submit tool. Recovered from the executor-stamped
- * `_sessionId` (resolve-tool.ts injectSessionState) — the live interactive-host
- * op (chat_turn / voice_turn) for that session IS the tool-calling turn that
- * just invoked op_submit (op-store.isInteractiveHostOpType; the same identity
- * the self-block guard keys on in op-submit-async.ts). The executing op's id is
- * NOT threaded into the tool args at this seam — it lives only in the canonical
- * ToolDispatcher closure (chat-tool-dispatcher.ts `opId`), which is outside this
- * footprint — so worker→worker spawns (no live host op in the session) return
- * undefined here. parentOpId stays strictly optional, so absence is a no-op.
- */
-function resolveParentOpId(sessionId: string): string | undefined {
-  if (!sessionId) return undefined;
-  for (const id of listOpsForSession(sessionId)) {
-    const op = readOp(id);
-    if (op && (op.status === "running" || op.status === "pending") && isInteractiveHostOpType(op.type)) {
-      return op.id;
-    }
-  }
-  return undefined;
-}
-
 export async function buildOpFromArgs(rawArgs: Record<string, unknown>): Promise<Op> {
   const args = rawArgs as unknown as SubmitArgs;
   const task = String(args.task || "").trim();
@@ -180,10 +158,11 @@ export async function buildOpFromArgs(rawArgs: Record<string, unknown>): Promise
   const sessionId = typeof rawArgs._sessionId === "string" ? rawArgs._sessionId : "";
   const parentSessionMessages = sessionId ? readRecentSessionMessages(sessionId) : [];
 
-  // Spawn lineage: stamp the op whose agent is executing this submit tool (the
-  // spawning turn) onto the new op, so the agents panel can later render a
-  // run-lineage tree. Resolved from `_sessionId`; undefined when unavailable.
-  const parentOpId = resolveParentOpId(sessionId);
+  // The task is the calling agent's own words: stamp the op that wrote it (the
+  // agents panel's run-lineage tree) and the user's bans recorded on that op,
+  // which the worker inherits instead of mining this text for them.
+  const callerOpId = typeof rawArgs._operationId === "string" ? rawArgs._operationId : undefined;
+  const { parentOpId, inheritedConstraints } = delegationFrom(sessionId, callerOpId);
   const preferredProvider = typeof args.preferred_provider === "string"
     ? args.preferred_provider
     : undefined;
@@ -219,6 +198,8 @@ export async function buildOpFromArgs(rawArgs: Record<string, unknown>): Promise
     ...(sessionId ? { sessionId } : {}),
     type: opType,
     task,
+    taskProvenance: "agent",
+    inheritedConstraints,
     contextPack,
     lane,
     retryPolicy: getRetryPolicy(opType),

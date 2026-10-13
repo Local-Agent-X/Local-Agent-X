@@ -17,6 +17,9 @@
  * a single line of app code. The user's REAL constraints live on the parent
  * chat op (a different op), which is unaffected — so app_build ops skip
  * extraction entirely and stay unconstrained.
+ *
+ * Nor for agent-written tasks (agent_spawn, op_submit): those inherit the
+ * delegating op's bans (Op.inheritedConstraints) — see ops/delegation.ts.
  */
 import { setOpLedger } from "../instruction-ledger/index.js";
 import type { InstructionLedger } from "../instruction-ledger/index.js";
@@ -52,6 +55,19 @@ export function createInstructionLedgerMiddleware(
       // for why both are needed and why it is NOT the worker-lane predicate.
       if (isHarnessAuthoredTask(ctx)) {
         setOpLedger(ctx.op.id, emptyLedger());
+        return { kind: "continue" };
+      }
+
+      // Another agent wrote this task (agent_spawn, op_submit): its prose is
+      // that model's paraphrase, so the bans come from the op that wrote it —
+      // snapshotted at delegation — never from extracting this text.
+      if (ctx.op.taskProvenance === "agent") {
+        const inherited = ctx.op.inheritedConstraints;
+        setOpLedger(ctx.op.id, {
+          prohibitions: [...(inherited?.prohibitions ?? [])],
+          obligations: [],
+          phrases: [...(inherited?.phrases ?? [])],
+        });
         return { kind: "continue" };
       }
 

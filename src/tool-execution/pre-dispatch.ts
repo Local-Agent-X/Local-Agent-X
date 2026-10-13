@@ -102,7 +102,7 @@ const OP_PROHIBITION_GUIDANCE: ReadonlyArray<{ cls: CapabilityClass; verb: strin
   { cls: "workspace-write", verb: "edit or write files", recovery: "Propose the change in your reply (e.g. as a diff or step-by-step instructions) instead of modifying files." },
   { cls: "egress", verb: "browse or send data over the network", recovery: "Work from local files and what is already in context; don't retry network tools." },
   { cls: "shell", verb: "run shell commands", recovery: "Use direct file tools (read/write/edit) if those are allowed, or tell the user the exact command to run themselves." },
-  { cls: "sensitive-read", verb: "read local files or data", recovery: "Answer from what is already in the conversation context; don't retry read tools." },
+  { cls: "sensitive-read", verb: "read secrets or credentials", recovery: "Read other files normally; leave secret and credential files alone, and ask the user if the task truly needs one." },
 ];
 
 /** Map pack id → ToolBlocked stage so the existing caller-side stage map
@@ -215,6 +215,15 @@ export async function assertToolCallAllowed(
     for (const { cls, verb, recovery } of OP_PROHIBITION_GUIDANCE) {
       if (!capForbidden(cls)) continue;
       if (!d.hasCapability(call.name, cls)) continue;
+      // A user's sensitive-read ban names secrets, credentials, keys — never
+      // every read. Class-wide, "keep credential files off-limits" hard-denied
+      // read/grep/bash on a delegated release's own repo. Plan mode's rule
+      // stays class-wide.
+      if (
+        cls === "sensitive-read" &&
+        !d.planModeForbidsCapability(ctx.sessionId, cls) &&
+        !d.callReadsSensitivePath(call.name, call.args as Record<string, unknown>, ctx.sessionId)
+      ) continue;
       // Plan mode gets its own wording — only the user's toggle lifts it, so
       // "ask the user to lift the restriction" would be misleading half-advice.
       if (!opForbids(cls)) {

@@ -59,19 +59,24 @@ function hasDependencyMetadata(task: Record<string, unknown>): boolean {
 // A task is an object the model wrote, so it loses its `_` keys before it
 // becomes submit args, and the trusted session goes on after: a task cannot
 // file its op under another conversation's session.
-function taskArgs(rawTask: Record<string, unknown>, sessionId: string): Record<string, unknown> {
-  return { ...withoutInternalArgs(rawTask), ...(sessionId ? { _sessionId: sessionId } : {}) };
+function taskArgs(rawTask: Record<string, unknown>, sessionId: string, operationId?: string): Record<string, unknown> {
+  return {
+    ...withoutInternalArgs(rawTask),
+    ...(sessionId ? { _sessionId: sessionId } : {}),
+    ...(operationId ? { _operationId: operationId } : {}),
+  };
 }
 
 async function runDependencyBatch(
   tasks: Record<string, unknown>[],
   sessionId: string,
   concurrency: number,
+  operationId?: string,
 ): Promise<BatchTaskResult[]> {
   const keys = new Map<string, Op>();
   const ops: Op[] = [];
   for (const rawTask of tasks) {
-    const op = await buildOpFromArgs(taskArgs(rawTask, sessionId));
+    const op = await buildOpFromArgs(taskArgs(rawTask, sessionId, operationId));
     const rawKey = rawTask.task_key;
     if (rawKey !== undefined) {
       const key = typeof rawKey === "string" ? rawKey.trim() : "";
@@ -162,13 +167,14 @@ function clampConcurrency(raw: unknown): number {
 async function runOneTask(
   rawTask: Record<string, unknown>,
   sessionId: string,
+  operationId?: string,
 ): Promise<BatchTaskResult> {
   const task = String(rawTask?.task ?? "").trim();
   if (!task) {
     return { task, opId: null, status: "invalid", finalSummary: "empty task description", filesChanged: [], error: "task description is required" };
   }
   try {
-    const op = await buildOpFromArgs(taskArgs(rawTask, sessionId));
+    const op = await buildOpFromArgs(taskArgs(rawTask, sessionId, operationId));
     const runtimeSessionId = delegatedRuntimeSessionId(op.id, sessionId);
     await configureDelegatedRuntime(op, runtimeSessionId);
 
@@ -207,6 +213,7 @@ async function runPool(
   tasks: Record<string, unknown>[],
   concurrency: number,
   sessionId: string,
+  operationId?: string,
 ): Promise<BatchTaskResult[]> {
   const results: BatchTaskResult[] = new Array(tasks.length);
   let next = 0;
@@ -214,7 +221,7 @@ async function runPool(
     for (;;) {
       const i = next++;
       if (i >= tasks.length) return;
-      results[i] = await runOneTask(tasks[i], sessionId);
+      results[i] = await runOneTask(tasks[i], sessionId, operationId);
     }
   };
   const poolSize = Math.min(concurrency, tasks.length);
@@ -254,14 +261,15 @@ export const opSubmitBatchTool: ToolDefinition = {
     }
 
     const sessionId = String(args._sessionId || "");
+    const operationId = typeof args._operationId === "string" ? args._operationId : undefined;
     const concurrency = clampConcurrency(args.concurrency);
 
     const startMs = Date.now();
     let results: BatchTaskResult[];
     try {
       results = rawTasks.some(hasDependencyMetadata)
-        ? await runDependencyBatch(rawTasks, sessionId, concurrency)
-        : await runPool(rawTasks, concurrency, sessionId);
+        ? await runDependencyBatch(rawTasks, sessionId, concurrency, operationId)
+        : await runPool(rawTasks, concurrency, sessionId, operationId);
     } catch (error) {
       return { content: `Dependency batch rejected before launch: ${(error as Error).message}`, isError: true };
     }

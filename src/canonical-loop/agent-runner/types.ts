@@ -1,4 +1,4 @@
-import type { ContextPack, OpLane } from "../../ops/types.js";
+import type { ContextPack, OpLane, TaskDelegation } from "../../ops/types.js";
 import type { AgentOptions } from "../../providers/types.js";
 import type { CallContext } from "../../tool-execution/context.js";
 import type { RenderedPromptSection } from "../../context/system-prompt-builder.js";
@@ -60,6 +60,9 @@ export interface CanonicalAgentOptions extends AgentOptions {
    *  chunk workers). Stamped as op.taskProvenance="harness" so the
    *  instruction-ledger middleware never extracts constraints from it. */
   harnessAuthoredTask?: boolean;
+  /** Set when another agent wrote the userMessage (agent_spawn). Stamped as
+   *  op.taskProvenance="agent" with the delegating op's bans inherited. */
+  delegation?: TaskDelegation;
 }
 
 export const DEFAULT_WALL_CLOCK_MS = 15 * 60 * 1000;

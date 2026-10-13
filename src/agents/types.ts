@@ -26,6 +26,7 @@
  */
 
 import type { ProviderId } from "../providers/provider-ids.js";
+import type { TaskDelegation } from "../ops/types.js";
 
 /** A pinned (provider, model) pair. Used by AgentDefinition.defaultModel
  *  (template-level pin), ProjectRoster.model (per-project override), and
@@ -134,12 +135,23 @@ export interface InvokeOpts {
    *  removes it when the run ends. Ignored when the definition provisions
    *  a real worktree. */
   workRoot?: string;
+  /** The folder the task is about (an existing project or repo, or a new
+   *  folder name under the workspace). The driver isolates it automatically —
+   *  a git repo gets its own worktree, merged back when the run ends — and
+   *  refuses roots, the home folder, LAX's source and secret locations. Wins
+   *  over workRoot and the definition's LAX worktree. */
+  workDir?: string;
   /** True when `task` is harness-composed prose (auto-build chunk workers),
    *  not something the user typed. Threaded to the op as
    *  taskProvenance="harness" so the instruction-ledger middleware skips
    *  constraint extraction — harness directives like "Never touch paths
    *  outside it" must never be read as a user workspace-write ban. */
   harnessAuthoredTask?: boolean;
+  /** Set when another AGENT wrote `task` (the agent_spawn tool): the
+   *  delegating op and the user's bans recorded on it. The op is stamped
+   *  taskProvenance="agent" and inherits those bans instead of having the
+   *  parent model's paraphrase mined for constraints. */
+  delegation?: TaskDelegation;
 }
 
 /** Handle returned from invokeAgent. Callers poll run status via

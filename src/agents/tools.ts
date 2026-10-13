@@ -23,6 +23,7 @@ import { AgentCatalog } from "./catalog.js";
 import { invokeAgent, awaitAgentRunning, AgentNotFoundError } from "./invoke.js";
 import { taskNeedsArtifactEdit, canEditArtifacts, spawnMismatchMessage } from "./spawn-guard.js";
 import { Handler } from "../agency/handler.js";
+import { delegationFrom } from "../ops/delegation.js";
 import { AgentTemplateStore } from "../agent-store/index.js";
 
 function ok(content: string): ToolResult { return { content }; }
@@ -100,6 +101,14 @@ export function createAgentTools(): ToolDefinition[] {
           task: { type: "string", description: "The task for the agent to perform" },
           project_id: { type: "string", description: "Optional project id to scope the lookup + apply project tool gating" },
           name_override: { type: "string", description: "Optional run-specific display name" },
+          work_dir: {
+            type: "string",
+            description:
+              "The folder this task works in: the project or repo it is about (absolute path), or a new folder " +
+              "name to create under the workspace. Pass it whenever the agent will change files or run commands " +
+              "there. A git repo is isolated automatically: the agent works in its own worktree and the changes " +
+              "merge back when it finishes.",
+          },
         },
         required: ["agent", "task"],
       },
@@ -127,6 +136,13 @@ export function createAgentTools(): ToolDefinition[] {
               parentSessionId: sessionFromArgs,
               scope,
               nameOverride: args.name_override ? String(args.name_override) : undefined,
+              workDir: typeof args.work_dir === "string" && args.work_dir.trim() ? args.work_dir : undefined,
+              // The task is this agent's words, not the user's: the run inherits
+              // the user's bans from the op calling us instead.
+              delegation: delegationFrom(
+                sessionFromArgs ?? "",
+                typeof args._operationId === "string" ? args._operationId : undefined,
+              ),
             },
           );
           // Lifecycle verification: invokeAgent void-fires runAgentViaDriver.

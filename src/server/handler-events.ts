@@ -1,5 +1,5 @@
 import { readFileSync, existsSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { type AgentOptions } from "../providers/types.js";
 import { runAgentViaCanonical } from "../canonical-loop/index.js";
 import { extractAgentOutput, safeErrorMessage } from "../server-utils.js";
@@ -19,7 +19,7 @@ import type { AgentRunStore, AgentTemplateStore } from "../agent-store/index.js"
 import { createLogger } from "../logger.js";
 import { clearSessionProfile } from "../autonomy/profile-store.js";
 import { registerChildSessionOwner, clearSessionOwner } from "../browser/session-owner-registry.js";
-import { setSessionWorkRoot, clearSessionWorkRoot } from "../workspace/paths.js";
+import { AgentWorkspaceError, provisionAgentWorkspace, releaseAgentWorkspace, type AgentWorkspace } from "../agency/agent-workspace.js";
 import { requiredPromptPlan } from "../context/system-prompt-builder.js";
 const logger = createLogger("server.handler-events");
 
@@ -121,9 +121,15 @@ export function registerHandlerEvents(deps: {
       : `\n\nYour agent ID: ${agentId}\n`;
 
     const agentSession: Session = { id: `agent-${agentId}`, title: `Agent: ${role}`, messages: [], createdAt: Date.now(), updatedAt: Date.now() };
-    let worktreeInfo: { path: string; branch: string } | null = null;
-    let workRootRegistered = false;
+    // Where the run works, decided BEFORE it starts: a folder that can't be
+    // isolated throws here, so the spawner hears why instead of getting an
+    // agent whose every command is denied.
+    const requiresWorktree = template?.requiresWorktree ?? false;
+    let workspace: AgentWorkspace | null = null;
     try {
+      workspace = provisionAgentWorkspace({
+        agentId, runSessionId, security, requiresWorktree, workDir: req.workDir, workRoot: req.workRoot,
+      });
       const { resolveProvider } = await import("../agent-request/index.js");
       // Thread the resolved per-agent model pin into the provider chain.
       // resolveAgentModel (invoke.ts) already walked run→roster→template;
@@ -157,48 +163,8 @@ export function registerHandlerEvents(deps: {
         allAgentTools,
       );
 
-      // Worktree decision is now explicit per AgentDefinition. Legacy
-      // role-string regex (`isCodeRole`) deleted per AUDIT Cluster 11.
-      // Default false = run in main workspace; true = isolated LAX-repo
-      // worktree for src/ edits only.
-      const requiresWorktree = template?.requiresWorktree ?? false;
-      let worktreeBlock = "";
-      if (requiresWorktree) {
-        try {
-          const { createWorktree } = await import("../agency/worktree.js");
-          worktreeInfo = createWorktree(agentId);
-          if (worktreeInfo) {
-            security.addAllowedPath(worktreeInfo.path, `agent-${agentId}`);
-            worktreeBlock = `\n\n--- WORKTREE ---\nYou are in an isolated git worktree at: ${worktreeInfo.path}\nCode changes: cd here first. Output files (reports, exports) go to ${resolve(config.workspace)}/ (worktree gets cleaned up).\n--- END WORKTREE ---\n`;
-          }
-        } catch { /* not a git repo */ }
-      } else if (req.workRoot) {
-        // Project worker: the generic WORKSPACE block below points at the
-        // data root and taught workers to read spec/plan.md THERE (live
-        // failure 2026-07-02: four reads of <data root>/spec/plan.md
-        // tripped the read circuit breaker). One root, stated once.
-        const workRootFwd = req.workRoot.replace(/\\/g, "/");
-        worktreeBlock = `\n\n--- PROJECT ROOT ---\nAll your work happens under: ${workRootFwd}\nRelative paths in file tools resolve against it. For bash, cd "${workRootFwd}" first. Do not read or write anywhere else.\n--- END PROJECT ROOT ---\n`;
-      } else {
-        worktreeBlock = `\n\n--- WORKSPACE ---\nWrite files (screenshots, exports, notes) to ${resolve(config.workspace)}/. You have bash/write/edit for non-code tasks. Do NOT edit the repo's source code.\n--- END WORKSPACE ---\n`;
-      }
-
-      // Project work-root provisioning: callers whose workers mutate a
-      // project that is NOT the LAX repo (auto-build chunk workers) pass
-      // req.workRoot. Registering it gives the run the same standing a
-      // worktree grants — the delegated-bash gate keys on session
-      // allowed-paths — and anchors the session's RELATIVE file paths to
-      // the project (write("app/x.tsx") lands in the project, not the
-      // data root). Scoped to this run, removed in the finally. Keyed by
-      // runSessionId — the id the tools' _sessionId and the gate's
-      // ctx.sessionId both carry.
-      if (!worktreeInfo && req.workRoot) {
-        security.addAllowedPath(req.workRoot, runSessionId);
-        setSessionWorkRoot(runSessionId, req.workRoot);
-        workRootRegistered = true;
-      }
-
-      logger.info(`[handler] Agent ${agentId} using ${provider}/${model} with ${spawnedTools.length} tools${worktreeInfo ? ` (worktree: ${worktreeInfo.path})` : req.workRoot ? ` (work root: ${req.workRoot})` : " (no worktree)"}`);
+      const worktreeInfo = workspace.worktree;
+      logger.info(`[handler] Agent ${agentId} using ${provider}/${model} with ${spawnedTools.length} tools${worktreeInfo ? ` (worktree: ${worktreeInfo.path})` : workspace.workRoot ? ` (work root: ${workspace.workRoot})` : " (no worktree)"}`);
       // Describe the shell the bash tool will ACTUALLY run — the old
       // hardcoded "bash runs PowerShell" line predates Git Bash resolution
       // and taught workers the wrong syntax (backslash Windows paths in a
@@ -210,7 +176,7 @@ export function registerHandlerEvents(deps: {
           ? "Windows with Git Bash. bash runs POSIX sh — use POSIX syntax, forward-slash paths (C:/Users/...), and quote any path containing spaces."
           : "Windows. bash runs PowerShell — use PowerShell syntax (Get-ChildItem, Select-Object) and Windows paths.";
       }
-      const executionRules = buildExecutionRules(platformLine, config.maxIterations, requiresWorktree);
+      const executionRules = buildExecutionRules(platformLine, config.maxIterations, !!(workspace.worktree || workspace.workRoot));
       // Wall-clock ceiling threaded into canonical via wallClockMs — the
       // runner issues opCancel on expiry so the state machine transitions
       // running → cancelling → cancelled cleanly. Replaces the caller-side
@@ -218,7 +184,7 @@ export function registerHandlerEvents(deps: {
       // aborted via signal — out-of-band from the loop). The
       // invokeDefinition-supplied AbortSignal also routes through canonical
       // via this options.signal, so Handler.cancelAgent → opCancel works.
-      const agentSystemPrompt = (systemPrompt || `You are a ${role} agent. Complete the task. STOP if login is needed or after 3 failed attempts. End with a summary.`) + executionRules + identityBlock + parentContext + briefing + worktreeBlock;
+      const agentSystemPrompt = (systemPrompt || `You are a ${role} agent. Complete the task. STOP if login is needed or after 3 failed attempts. End with a summary.`) + executionRules + identityBlock + parentContext + briefing + workspace.promptBlock;
       const agentResult = await runAgentViaCanonical(task, agentSession.messages, {
         apiKey, model, provider: provider as AgentOptions["provider"], systemPrompt: agentSystemPrompt,
         renderedPromptSections: requiredPromptPlan("spawned-agent", "Spawned Agent", agentSystemPrompt),
@@ -227,7 +193,7 @@ export function registerHandlerEvents(deps: {
         wallClockMs: config.agentTimeoutMs,
         opType: "agent_spawn",
         lane: "agent",
-        runId: agentId, harnessAuthoredTask: req.harnessAuthoredTask,
+        runId: agentId, harnessAuthoredTask: req.harnessAuthoredTask, delegation: req.delegation,
         signal,
         onEvent: (event) => {
           if (event.type === "stream" && "delta" in event && event.delta) {
@@ -262,7 +228,6 @@ export function registerHandlerEvents(deps: {
 
       let mergeSuccess = true;
       if (worktreeInfo) {
-        security.removeAllowedPath(worktreeInfo.path, `agent-${agentId}`);
         try {
           const { mergeWorktree } = await import("../agency/worktree.js");
           const mergeResult = mergeWorktree(agentId);
@@ -301,7 +266,10 @@ export function registerHandlerEvents(deps: {
       const branchHint = worktreeInfo ? `Changes preserved on branch agent/${agentId}. Run: git merge agent/${agentId}` : "File changes may be lost";
       return { result: `[Agent completed but merge had conflicts — ${branchHint}]\n\n${agentOutput}`, success: false };
     } catch (e) {
-      if (worktreeInfo) security.removeAllowedPath(worktreeInfo.path, `agent-${agentId}`);
+      // The folder the task named couldn't be isolated: say exactly why — the
+      // path is the spawner's own input — so it can pick another.
+      if (e instanceof AgentWorkspaceError) return { result: `Agent not started: ${e.message}`, success: false };
+      const worktreeInfo = workspace?.worktree;
       try {
         const { commitInWorktree, cleanupWorktree } = await import("../agency/worktree.js");
         // Commit any in-flight edits onto the agent branch BEFORE teardown.
@@ -320,10 +288,7 @@ export function registerHandlerEvents(deps: {
       const msg = (e as Error).name === "AbortError" ? "Agent timed out" : safeErrorMessage(e);
       return { result: p ? `[${msg}]\n\n${p}` : msg, success: false };
     } finally {
-      if (workRootRegistered && req.workRoot) {
-        security.removeAllowedPath(req.workRoot, runSessionId);
-        clearSessionWorkRoot(runSessionId);
-      }
+      if (workspace) releaseAgentWorkspace(workspace, security, runSessionId);
       // Tear down any inherited per-session profile override (set at spawn in
       // invoke.ts). Only for the auto-minted per-run session — an explicit
       // req.sessionId is a shared/borrowed session whose lifecycle the caller owns.

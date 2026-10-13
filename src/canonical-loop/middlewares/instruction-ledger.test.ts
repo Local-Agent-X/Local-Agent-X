@@ -60,6 +60,37 @@ describe("instructionLedgerMiddleware", () => {
     expect(getOpLedger(c.op.id)).toEqual({ prohibitions: [], obligations: [], phrases: [] });
   });
 
+  // Live failure: the main agent delegated a release with its own caution
+  // ("keep credential-file access and token output forbidden"), the worker
+  // mined that as the user's sensitive-read ban, and every read of its repo
+  // was hard-denied. An agent-written task inherits the delegating op's bans.
+  it("agent-authored op: never mines the parent's paraphrase, inherits the delegating op's bans", async () => {
+    let called = false;
+    const spyExtract = (msg: string) => { called = true; return offlineExtract(msg); };
+    const mw = createInstructionLedgerMiddleware(spyExtract);
+    const c = ctx({
+      op: {
+        id: "op-spawn-agent-x", type: "agent_spawn", lane: "agent", taskProvenance: "agent",
+        inheritedConstraints: { prohibitions: ["egress"], phrases: ["don't go online"] },
+      },
+      currentUserMessage: "Merge and deploy the broker fix. Never read credential files or print tokens; don't edit unrelated code.",
+    });
+    const r = await mw.beforeTurn!(c);
+    expect(r.kind).toBe("continue");
+    expect(called).toBe(false);
+    expect(getOpLedger(c.op.id)).toEqual({ prohibitions: ["egress"], obligations: [], phrases: ["don't go online"] });
+  });
+
+  it("agent-authored op with nothing inherited is unconstrained (fail-open)", async () => {
+    const mw = createInstructionLedgerMiddleware(offlineExtract);
+    const c = ctx({
+      op: { id: "op-spawn-agent-y", type: "agent_spawn", lane: "agent", taskProvenance: "agent" },
+      currentUserMessage: "Never read credential files. Don't edit any code.",
+    });
+    await mw.beforeTurn!(c);
+    expect(opHasConstraints(c.op.id)).toBe(false);
+  });
+
   it("harness-authored agent_spawn op: SKIPS extraction (taskProvenance beats op type)", async () => {
     let called = false;
     const spyExtract = (msg: string) => { called = true; return offlineExtract(msg); };

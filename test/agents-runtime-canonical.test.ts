@@ -133,6 +133,25 @@ describe("invokeDefinition — routes through registered canonical-loop driver",
     expect(received!.workRoot).toBe("/tmp/proj-root");
   });
 
+  // An agent_spawn task is the calling agent's words: the delegation (calling
+  // op + the user's bans on it) must reach the driver so the run's op is
+  // stamped agent-authored and inherits them instead of mining the paraphrase.
+  it("threads the delegation through to the driver request", async () => {
+    let received: AgentRunDriverRequest | null = null;
+    registerAgentRunDriver(async (req) => {
+      received = req;
+      return { result: "ok", success: true };
+    });
+    const finalResults: Array<{ agentId: string }> = [];
+    EventBus.on("handler:agent-result", (d) => { finalResults.push(d as typeof finalResults[number]); });
+
+    const delegation = { parentOpId: "op_chat_turn_1", inheritedConstraints: { prohibitions: ["egress" as const], phrases: ["stay offline"] } };
+    const ref = invokeDefinition(TEST_DEF, "ship the release", { delegation });
+    await waitFor(() => finalResults.some(r => r.agentId === ref.runId), 1_000);
+
+    expect(received!.delegation).toEqual(delegation);
+  });
+
   it("emits handler:agent-spawn synchronously with the resolved agentId", async () => {
     registerAgentRunDriver(async () => ({ result: "", success: true }));
     const spawns: Array<{ agentId: string; name: string; role: string; templateId: string | null }> = [];

@@ -130,6 +130,26 @@ describe("runAgentViaCanonical — op.taskProvenance", () => {
     expect(op.taskProvenance).not.toBe("harness");
   });
 
+  it("stamps taskProvenance='agent' with the delegating op and its inherited bans", async () => {
+    const op = await runAndCaptureOp({
+      delegation: { parentOpId: "op_chat_turn_parent", inheritedConstraints: { prohibitions: ["egress"], phrases: ["no network"] } },
+    });
+    expect(op.taskProvenance).toBe("agent");
+    expect(op.parentOpId).toBe("op_chat_turn_parent");
+    expect(op.inheritedConstraints).toEqual({ prohibitions: ["egress"], phrases: ["no network"] });
+    // Durable: a worker resumed after a restart still inherits them.
+    expect(readOp(op.id)?.inheritedConstraints).toEqual({ prohibitions: ["egress"], phrases: ["no network"] });
+  });
+
+  it("harness provenance wins over a delegation (harness prose is never the user's)", async () => {
+    const op = await runAndCaptureOp({
+      harnessAuthoredTask: true,
+      delegation: { inheritedConstraints: { prohibitions: ["egress"], phrases: [] } },
+    });
+    expect(op.taskProvenance).toBe("harness");
+    expect(op.inheritedConstraints).toBeUndefined();
+  });
+
   it("survives the op-store round-trip for a harness-authored op", async () => {
     const op = await runAndCaptureOp({ harnessAuthoredTask: true });
     expect(persistedRaw(op.id).taskProvenance).toBe("harness");

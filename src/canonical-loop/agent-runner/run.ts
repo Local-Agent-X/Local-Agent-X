@@ -28,7 +28,7 @@ import { newOpId, writeOp } from "../../ops/op-store.js";
 import { buildContextPack } from "../../ops/context-pack-builder.js";
 import { getRetryPolicy } from "../../ops/heartbeat.js";
 import { trackOpForSession } from "../../ops/session-bridge.js";
-import type { Op, OpLane, OpVisibility } from "../../ops/types.js";
+import type { Op, OpLane, OpVisibility, TaskDelegation } from "../../ops/types.js";
 import type { AgentTurn } from "../../types.js";
 
 import { canonicalLoopEntry } from "../index.js";
@@ -76,6 +76,7 @@ export function createAgentOperation(args: {
   lane: OpLane;
   sessionId: string;
   taskProvenance?: Op["taskProvenance"];
+  delegation?: TaskDelegation;
 }): Op {
   return {
     id: newOpId(`op_${args.opType}`),
@@ -83,6 +84,8 @@ export function createAgentOperation(args: {
     type: args.opType,
     task: args.userMessage,
     taskProvenance: args.taskProvenance,
+    ...(args.delegation?.parentOpId ? { parentOpId: args.delegation.parentOpId } : {}),
+    ...(args.delegation ? { inheritedConstraints: args.delegation.inheritedConstraints } : {}),
     contextPack: args.contextPack,
     lane: args.lane,
     retryPolicy: getRetryPolicy(args.opType),
@@ -137,7 +140,8 @@ export async function runAgentViaCanonical(
 
   const op = createAgentOperation({
     opType, userMessage, contextPack, lane, sessionId,
-    taskProvenance: options.harnessAuthoredTask ? "harness" : undefined,
+    taskProvenance: options.harnessAuthoredTask ? "harness" : options.delegation ? "agent" : undefined,
+    delegation: options.harnessAuthoredTask ? undefined : options.delegation,
   });
 
   // Resolve and install every non-durable runtime dependency before the op is

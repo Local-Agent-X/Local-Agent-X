@@ -217,6 +217,35 @@ describe("per-op instruction-ledger capability prohibitions", () => {
     ).rejects.toBeInstanceOf(ToolBlocked);
   });
 
+  // A "don't read my secrets" ban names secrets, not reading. Enforced class-wide
+  // it hard-denied read/grep/bash on a delegated release's own repo, so the
+  // worker could not even open the code it was sent to ship.
+  it("a sensitive-read ban blocks secret and credential paths, never ordinary reads", async () => {
+    setOpLedger("op-1", { prohibitions: ["sensitive-read"], obligations: [], phrases: ["never read credential files"] });
+    for (const call of [
+      { name: "read", args: { path: "src/index.ts" } },
+      { name: "grep", args: { pattern: "TURN", path: "src" } },
+      { name: "bash", args: { command: "git status && npm test" } },
+    ]) {
+      await expect(
+        assertToolCallAllowed({ id: `p-${call.name}`, ...call }, opCtx("op-1")),
+      ).resolves.toBeUndefined();
+    }
+    for (const call of [
+      { name: "read", args: { path: "~/.ssh/id_rsa" } },
+      { name: "read", args: { path: ".env" } },
+      { name: "bash", args: { command: "cat ~/.ssh/id_rsa" } },
+    ]) {
+      try {
+        await assertToolCallAllowed({ id: `p-${call.name}`, ...call }, opCtx("op-1"));
+        throw new Error(`expected ToolBlocked for ${JSON.stringify(call)}`);
+      } catch (e) {
+        expect(e).toBeInstanceOf(ToolBlocked);
+        expect((e as ToolBlocked).reason).toContain("The user asked you not to read secrets or credentials");
+      }
+    }
+  });
+
   it("still allows tools OUTSIDE the forbidden class (read passes under a workspace-write ban)", async () => {
     setOpLedger("op-1", { prohibitions: ["workspace-write"], obligations: [], phrases: ["don't edit any code"] });
     await expect(

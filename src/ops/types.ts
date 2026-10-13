@@ -10,8 +10,22 @@ import type { ChatCompletionMessageParam } from "openai/resources/chat/completio
 import type { CredentialSource } from "../auth/auth-provider.js";
 import type { PromptTelemetry } from "../prompt-telemetry.js";
 import type { ThreatEngineState } from "../threat/threat-engine.js";
+import type { CapabilityClass } from "../tool-registry.js";
 
 // ── Op model ───────────────────────────────────────────────────────────────
+
+/** The user's prohibitions a delegated op inherits from the op that wrote its
+ *  task — see Op.inheritedConstraints. */
+export interface InheritedConstraints {
+  prohibitions: CapabilityClass[];
+  phrases: string[];
+}
+
+/** Who wrote a delegated task: the delegating op and the user's constraints on it. */
+export interface TaskDelegation {
+  parentOpId?: string;
+  inheritedConstraints: InheritedConstraints;
+}
 
 export type OpStatus =
   | "pending"        // waiting in queue, not yet assigned
@@ -242,17 +256,24 @@ export interface Op {
    * instruction-ledger middleware skips constraint extraction on those:
    * running it on harness prose turned "Never touch paths outside it" into a
    * blanket workspace-write ban that bricked a build's preflight
-   * (2026-07-22, op_18bf554cd4b8402e). Absent = user-authored.
+   * (2026-07-22, op_18bf554cd4b8402e). "agent" marks a task one agent wrote
+   * for another (agent_spawn, op_submit): the parent model's paraphrase, whose
+   * own caution ("never read credentials") is not the user's instruction. Those
+   * ops carry `inheritedConstraints` instead. Absent = user-authored.
    */
-  taskProvenance?: "user" | "harness";
+  taskProvenance?: "user" | "harness" | "agent";
+  /** For an "agent"-authored task: the run constraints recorded on the op that
+   *  wrote it, snapshotted at delegation so they reach the child even after the
+   *  parent ends. They trace back to words a person typed. */
+  inheritedConstraints?: InheritedConstraints;
   lastFailureReason?: string;
   lastFailureAt?: string;
   /**
    * Spawn lineage: the id of the op whose agent submitted THIS op via
-   * op_submit / op_submit_async (the spawning turn). Distinct from `dependsOn`
+   * op_submit / op_submit_async / agent_spawn (the spawning turn). Distinct from `dependsOn`
    * below — that's a DAG dependency edge, this is a parent→child spawn edge.
-   * Set at submit time from the executor-stamped session's live interactive-host
-   * op (see ops/tools/shared.ts resolveParentOpId). Strictly optional: absent
+   * Set at submit time from the executor-stamped session's live delegating op
+   * (see ops/delegation.ts delegatingOpId). Strictly optional: absent
    * when the spawner can't be identified at the submit seam, and on every op
    * created before this field existed.
    */

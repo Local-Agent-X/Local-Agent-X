@@ -20,6 +20,7 @@ import type { ServerEvent } from "../types.js";
 import type { RulePack } from "../tool-policy/evaluator.js";
 import { makeSpendCapPack } from "../tool-policy/packs/spend-cap-pack.js";
 import { makeEgressRefutationPack } from "../tool-policy/packs/egress-refutation-pack.js";
+import { callReadsSensitivePath } from "./sensitive-read-taint.js";
 
 /** The slice of runtime config the pre-dispatch gates actually read:
  *  category kill-switches + the strict local-only flag. */
@@ -66,6 +67,9 @@ export interface PreDispatchDeps {
   planModeForbidsCapability?: (sessionId: string, cls: CapabilityClass) => boolean;
   /** Tool-registry capability classification. */
   hasCapability?: (toolName: string, cls: CapabilityClass) => boolean;
+  /** Whether a call targets a secret/credential path — the scope of a
+   *  user's "don't read my secrets" ban. */
+  callReadsSensitivePath?: (toolName: string, args: Record<string, unknown>, sessionId: string) => boolean;
   /** The two singleton-backed rule packs. The other three packs (security /
    *  default-policy / threat) already take their state via PreDispatchCtx. */
   makeSpendCapPack?: () => RulePack;
@@ -108,6 +112,7 @@ export function resolvePreDispatchDeps(deps: PreDispatchDeps = {}): ResolvedPreD
     opConstraintPhrases: deps.opConstraintPhrases ?? opConstraintPhrases,
     planModeForbidsCapability: deps.planModeForbidsCapability ?? planModeForbidsCapability,
     hasCapability: deps.hasCapability ?? hasCapability,
+    callReadsSensitivePath: deps.callReadsSensitivePath ?? callReadsSensitivePath,
     makeSpendCapPack: deps.makeSpendCapPack ?? makeSpendCapPack,
     makeEgressRefutationPack: deps.makeEgressRefutationPack ?? makeEgressRefutationPack,
     getApprovalManager: deps.getApprovalManager ?? getApprovalManager,

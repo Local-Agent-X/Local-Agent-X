@@ -26,6 +26,7 @@ import {
 } from "../src/ops/session-bridge.js";
 import { recordCanonicalEvent } from "../src/canonical-loop/session-bridge-observer.js";
 import type { Op } from "../src/ops/types.js";
+import { setOpLedger, _resetOpLedgers } from "../src/canonical-loop/public/plan-ledger.js";
 import type { ServerEvent } from "../src/types.js";
 import type { CanonicalEvent } from "../src/canonical-loop/types.js";
 
@@ -107,6 +108,18 @@ describe("op submit — spawn-lineage parentOpId (setter)", () => {
     expect(op.parentOpId).toBeUndefined();
   });
 
+  it("prefers the trusted calling op (_operationId) — a worker delegating from its own op", async () => {
+    const sessionId = `chat-lineage-${Date.now().toString(36)}-caller`;
+    const callerId = newOpId("op_freeform");
+    const op = await buildOpFromArgs({
+      task: "split the report into sections",
+      lane: "interactive",
+      _sessionId: sessionId,
+      _operationId: callerId,
+    });
+    expect(op.parentOpId).toBe(callerId);
+  });
+
   it("leaves parentOpId undefined when there is no session at all", async () => {
     const op = await buildOpFromArgs({ task: "unattended task", lane: "interactive" });
     expect(op.parentOpId).toBeUndefined();
@@ -149,5 +162,35 @@ describe("session-bridge-observer — parentOpId flows onto bg_op events", () =>
     const queued = events.find(e => e.type === "bg_op_queued");
     expect(queued).toBeDefined();
     expect((queued as { parentOpId?: string } | undefined)?.parentOpId).toBeUndefined();
+  });
+});
+
+// The task an agent submits is its own paraphrase. The worker must inherit the
+// user's bans recorded on the delegating op, never have them mined from the
+// paraphrase: a release worker's "never read credentials" became a ban on
+// reading its own repo.
+describe("op submit — the worker inherits the delegating op's bans", () => {
+  afterEach(() => { _resetOpLedgers(); });
+
+  it("stamps taskProvenance='agent' and snapshots the calling op's ledger", async () => {
+    const callerId = newOpId("op_chat_turn");
+    setOpLedger(callerId, { prohibitions: ["egress"], obligations: [{ kind: "commit-when-done" }], phrases: ["don't go online"] });
+    const op = await buildOpFromArgs({
+      task: "Deploy the broker. Never read credential files or print tokens.",
+      lane: "build",
+      _sessionId: `chat-inherit-${Date.now().toString(36)}`,
+      _operationId: callerId,
+    });
+    expect(op.taskProvenance).toBe("agent");
+    expect(op.parentOpId).toBe(callerId);
+    // Prohibitions and their phrases carry over; the parent's end-of-op
+    // obligations stay the parent's.
+    expect(op.inheritedConstraints).toEqual({ prohibitions: ["egress"], phrases: ["don't go online"] });
+  });
+
+  it("inherits nothing from an unconstrained or unknown delegator (fail-open)", async () => {
+    const op = await buildOpFromArgs({ task: "never read credential files", lane: "build" });
+    expect(op.taskProvenance).toBe("agent");
+    expect(op.inheritedConstraints).toEqual({ prohibitions: [], phrases: [] });
   });
 });

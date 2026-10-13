@@ -230,9 +230,10 @@ const SYNTHETIC_CONTEXT_OP_TYPES: ReadonlySet<string> = new Set(["app_build"]);
  *
  * NOT `isWorkerOp`. That predicate above answers a DIFFERENT question — which
  * lane the op runs in, interactive vs autonomous worker — and the two are
- * independent, so they must never be conflated: a user-delegated `agent_spawn`
- * is a worker op whose task text is HUMAN-authored (`isWorkerOp` true,
- * `isHarnessAuthoredTask` false). Substituting one for the other either muzzles
+ * independent, so they must never be conflated: an `agent_spawn` the user
+ * started themselves is a worker op whose task text is HUMAN-authored
+ * (`isWorkerOp` true, `isHarnessAuthoredTask` false). One another AGENT
+ * delegated carries taskProvenance "agent" instead (ops/delegation.ts). Substituting one for the other either muzzles
  * a user's real instructions or reads harness prose as if the user had said it
  * — the 2026-07-22 Merchhelm preflight brick, where a chunk preamble's "Never
  * touch paths outside it" extracted as a blanket workspace-write ban.

@@ -14,6 +14,7 @@
  */
 
 import type { AgentModelPin } from "./types.js";
+import type { TaskDelegation } from "../ops/types.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("agents.runtime");
@@ -50,9 +51,14 @@ export interface AgentRunDriverRequest {
    *  Set by callers whose workers operate on a project that is NOT the
    *  LAX repo (auto-build chunk workers). */
   workRoot?: string;
+  /** Mirrors InvokeOpts.workDir — the folder the driver isolates for the run. */
+  workDir?: string;
   /** Mirrors InvokeOpts.harnessAuthoredTask — the driver forwards it so the
    *  op records taskProvenance="harness" and skips constraint extraction. */
   harnessAuthoredTask?: boolean;
+  /** Mirrors InvokeOpts.delegation — forwarded so the op is stamped
+   *  agent-authored with the delegating op's bans. */
+  delegation?: TaskDelegation;
 }
 
 /** What the driver returns when the canonical op reaches a terminal state. */

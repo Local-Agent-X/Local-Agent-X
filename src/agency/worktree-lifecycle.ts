@@ -11,14 +11,16 @@ import { activeWorktrees, git, logger, MAX_CONCURRENT_WORKTREES, WORKTREE_BASE, 
 import { linkDirectoryInto, listCheckedOutBranches, unlinkSharedJunctions } from "./worktree-junctions.js";
 import { claimRecoveredWorktree, forgetWorktreeOwnership, ownsWorktree, registerWorktreeOwnership } from "./worktree-recovery.js";
 
-/** Create an isolated worktree for an agent */
-export function createWorktree(agentId: string): { path: string; branch: string } | null {
+/** Create an isolated worktree for an agent, of `repoDir`'s repository (a
+ *  user project the agent was sent to) or, by default, of the repo the app
+ *  runs from. */
+export function createWorktree(agentId: string, repoDir?: string): { path: string; branch: string } | null {
   let repoRoot: string;
   let baseBranch: string;
   try {
-    // Agency path: the repo is the one the app runs from — resolve it from the
-    // ambient cwd EXPLICITLY (git() no longer defaults cwd to process.cwd()).
-    repoRoot = git("rev-parse --show-toplevel", process.cwd());
+    // Resolve the repo from an EXPLICIT cwd (git() no longer defaults cwd to
+    // process.cwd()).
+    repoRoot = git("rev-parse --show-toplevel", repoDir ?? process.cwd());
     baseBranch = git("rev-parse --abbrev-ref HEAD", repoRoot);
   } catch (e) {
     logger.warn(`[worktree] Failed to resolve repository: ${(e as Error).message}`);

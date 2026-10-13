@@ -93,7 +93,12 @@ export const SESSION_SCOPED_TOOLS = new Set([
 // tool (collapse-family.ts drops a model's `_` keys there), so the flat stamp
 // is the only one. show_unblock_control reads the kernel scope of the op it
 // runs in, which is keyed by the trusted operation id, never a model-supplied one.
-const OPERATION_SCOPED_TOOLS = new Set(["protocol", "protocol_get", "show_unblock_control", "ask_user"]);
+// The delegation tools key spawn lineage and the child's inherited bans on the
+// CALLING op (ops/delegation.ts) — the trusted id, not a guess from the session.
+const OPERATION_SCOPED_TOOLS = new Set([
+  "protocol", "protocol_get", "show_unblock_control", "ask_user",
+  "agent_spawn", "op_submit", "op_submit_async", "op_submit_batch",
+]);
 
 const SESSION_REPEAT_SKIP_TOOLS = new Set([
   "request_secret", "request_secrets",

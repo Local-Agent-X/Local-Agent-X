@@ -139,7 +139,9 @@ export function invokeDefinition(
       templateId,
       modelOverride,
       workRoot: opts.workRoot,
+      workDir: opts.workDir,
       harnessAuthoredTask: opts.harnessAuthoredTask,
+      delegation: opts.delegation,
     },
     abortController.signal,
   );

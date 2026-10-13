@@ -36,6 +36,7 @@ pinned at `/apps/calendar/`, not `public/calendar.html`. <!-- doc-paths:ignore -
 - **No source file over 400 lines** (`check:source-hygiene`; tests exempt). Split by responsibility before a file gets there.
 - **No `require()`**; the package is ESM (`check:no-require`). Import source with the `.js` suffix; never import from `dist/`.
 - **The codebase map must be current** (`check:codebase-map`).
+- **Every path named in a current doc exists** (`check:doc-paths` over `scripts/current-docs.mjs`). Add a doc to that list when agents are pointed at it; move finished plans to `docs/history/`.
 
 ## Code rules (checked by review)
 
@@ -58,8 +59,11 @@ pinned at `/apps/calendar/`, not `public/calendar.html`. <!-- doc-paths:ignore -
 ## Adding a tool
 
 A tool is registered in more than one table, and most of the tables are
-hand-maintained. Until a single completeness test covers them, this is the
-list; the tests named will fail if you skip a step they cover.
+hand-maintained. `npm run build` runs `check:tool-registration`
+(`src/tools/tool-registration-completeness.test.ts` over the runtime catalog,
+plugins included, plus `tool-reference-coverage.test.ts`): a tool with no
+policy entry or kernel class, or a name in a prompt or table that isn't a
+tool, fails the build. The other steps are covered by the tests named.
 
 1. Define it under `src/tools/` and register it: `allTools` in `src/tools/registry-build.ts` for core file/retrieval tools, otherwise the owning plugin in `src/tools/plugins.ts` (memory, browser, secrets, agents, protocols, cron, apps, ...).
 2. Policy entry in the matching `src/tool-policy/tool-policies.<domain>.ts` (`core`, `network`, `memory`, `orchestration`, `apps`, `globs`). `tool-policies.data.ts` only merges them. The entry's `kernel` class decides whether Ari checks the tool at all; `pathArgs` names the args file-confinement must check; `offBoxFetch: true` must be mirrored in `EGRESS_TOOLS` (`capability-class-gates.test.ts`).

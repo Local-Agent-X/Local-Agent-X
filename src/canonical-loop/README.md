@@ -346,7 +346,7 @@ seq=6  state_changed   { from: "cancelling",to: "cancelled",  reason: "adapter_a
 seq=7  lease_lost      { workerId, reason: "cancelled" }
 ```
 
-No `turn_committed` event for the aborted turn. No `op_turns/0.json` row.
+No `turn_committed` event for the aborted turn. No `op-turns/0.json` row under the op's data dir. <!-- doc-paths:ignore -->
 
 ## Issue 07 — Redirect (latest-wins, turn-boundary)
 

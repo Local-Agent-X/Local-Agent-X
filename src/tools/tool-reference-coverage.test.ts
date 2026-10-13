@@ -1,16 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { ToolPluginContext } from "./plugin.js";
 import { allTools } from "./registry-build.js";
-import { plugins } from "./plugins.js";
 import { unifiedRegistry } from "./registry.js";
 import { AUDIENCES_BY_TOOL } from "./audience-map.js";
 import { TOOL_POLICIES } from "../tool-policy/tool-policies.js";
 import { SESSION_SCOPED_TOOLS } from "../tool-execution/resolve-tool.js";
-import { builderToolsForTier } from "./build-app-runtime.js";
-import { createArikernelBridgeTools } from "./arikernel-bridge.js";
+import { collectRuntimeToolNames } from "./runtime-tool-names.js";
 import { BROWSER_TOOL_PARAMETERS } from "./browser-tools/description.js";
 import { FLIPPABLE_SETTINGS } from "../settings-schema.js";
 
@@ -40,30 +36,7 @@ const PROMPT_SOURCES = [
   "config/system-prompt.md",
 ];
 
-async function registeredToolNames(): Promise<Set<string>> {
-  const dataDir = mkdtempSync(join(tmpdir(), "lax-tool-coverage-"));
-  const ctx = {
-    secretsStore: {},
-    memoryIndex: {},
-    cronService: {},
-    dataDir,
-    activeOnEventBySession: new Map(),
-    activeBrowserSessionIdRef: { value: "" },
-    activeRuntimeBySession: new Map(),
-    registry: unifiedRegistry,
-  } as unknown as ToolPluginContext;
-  const names = new Set(allTools.map((t) => t.name));
-  try {
-    for (const plugin of plugins) {
-      for (const tool of await plugin.register(ctx)) names.add(tool.name);
-    }
-    for (const tool of builderToolsForTier("full-stack")) names.add(tool.name);
-    for (const tool of createArikernelBridgeTools({ sqliteDatabase: {} as never })) names.add(tool.name);
-  } finally {
-    rmSync(dataDir, { recursive: true, force: true });
-  }
-  return names;
-}
+const registeredToolNames = collectRuntimeToolNames;
 
 /** Backticked snake_case names the prompt uses that are NOT tools and never
  *  will be: settings fields (`developer_mode`), browser and protocol actions

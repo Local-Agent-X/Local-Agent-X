@@ -11,17 +11,8 @@ import { fileURLToPath } from "node:url";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const read = (path) => readFileSync(join(root, path), "utf8");
 
-const currentDocs = [
-  "README.md",
-  "ARCHITECTURE.md",
-  "SECURITY.md",
-  "THREAT-MODEL.md",
-  "docs/known-issues.md",
-  "docs/provider-auth.md",
-  "docs/mcp-consuming-servers.md",
-  "docs/runbooks/canonical-loop-rollback.md",
-  "src/canonical-loop/README.md",
-];
+// One list for both doc checks — see scripts/current-docs.mjs.
+import { currentDocs } from "./current-docs.mjs";
 
 const claimRules = [
   {

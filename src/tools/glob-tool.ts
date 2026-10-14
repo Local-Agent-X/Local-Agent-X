@@ -94,6 +94,10 @@ export const MAX_SCAN = 5000;
 // file after opening the whole drive, 19.5s of walking (muse, 2026-09-17).
 export const MAX_DIRS = 20_000;
 
+// Entries returned after the mtime sort — the cap the description and prompt
+// state, and the one `capped` in the metadata reports.
+export const MAX_RESULTS = 200;
+
 /** Why a walk stopped early: too many matches, or too many directories opened. */
 export type WalkCut = "matches" | "breadth";
 
@@ -227,10 +231,11 @@ export async function noMatchHint(pattern: string, cwd: string): Promise<string>
 
 export const globTool: ToolDefinition = {
   name: "glob",
-  compactDescription: `Fast file pattern matching (e.g. src/**/*.tsx), newest first, from your workspace by default. Walks at most ${MAX_DEPTH} levels and stops after ${MAX_SCAN} matches (a bare **/* truncates) — pass a path to narrow the search.`,
+  compactDescription: `Fast file pattern matching (e.g. src/**/*.tsx), newest first, at most ${MAX_RESULTS} entries, from your work root (else the workspace); dot-files only when named. Stops after ${MAX_SCAN} matches — pass a path to narrow.`,
   description:
-    "Fast file pattern matching. Returns files AND folders matching a glob pattern, sorted by modification time (newest first); a folder is listed with a trailing separator. " +
+    `Fast file pattern matching. Returns up to ${MAX_RESULTS} files AND folders matching a glob pattern, sorted by modification time (newest first); a folder is listed with a trailing separator. ` +
     "Supports patterns like **/*.ts, src/**/*.tsx, *.json, and **/*crm* to find a project folder by name. " +
+    "Dot-files and dot-folders (.env, .git/, .github/) are skipped unless the pattern names them (e.g. .github/**). " +
     `Walks at most ${MAX_DEPTH} directory levels below the search root and stops after ${MAX_SCAN} matches — pass path to search deeper or narrower.`,
   readOnly: true,
   concurrencySafe: true,
@@ -243,7 +248,7 @@ export const globTool: ToolDefinition = {
       },
       path: {
         type: "string",
-        description: "Directory to search in. Defaults to the workspace (the same root relative paths in read/bash resolve against).",
+        description: "Directory to search in. Defaults to this session's work root when one is registered (a build worker's project), else the workspace — the same root relative paths in read/bash resolve against.",
       },
     },
     required: ["pattern"],
@@ -274,7 +279,7 @@ export const globTool: ToolDefinition = {
     }
 
     try {
-      const { entries, truncated, cut } = await globFiles(pattern, cwd, 200);
+      const { entries, truncated, cut } = await globFiles(pattern, cwd, MAX_RESULTS);
       const durationMs = Date.now() - startMs;
       const warning = cut === "breadth"
         ? `\nWARNING: the walk stopped after opening ${MAX_DIRS} directories — ${cwd} is too broad to search, so files in the part it never reached are not listed. Pass a narrower path.`
@@ -291,7 +296,7 @@ export const globTool: ToolDefinition = {
         pattern,
         cwd,
         count: entries.length,
-        capped: entries.length === 200 || undefined,
+        capped: entries.length === MAX_RESULTS || undefined,
         scan_truncated: truncated || undefined,
         duration_ms: durationMs,
       });
@@ -318,8 +323,8 @@ export function prompt(): string {
   return [
     "Use the glob tool for fast file pattern matching instead of bash find/ls.",
     "Supports patterns like **/*.ts, src/**/*.tsx, *.json. Folders match too (listed with a trailing separator), so **/*crm* finds a project folder named like crm.",
-    "Results are sorted by modification time (newest first), limited to 200.",
+    `Results are sorted by modification time (newest first), limited to ${MAX_RESULTS}. Dot-files and dot-folders are skipped unless the pattern names them.`,
     `The walk enters at most ${MAX_DEPTH} directory levels below the search root, opens at most ${MAX_DIRS} directories, and stops after ${MAX_SCAN} matches (the result says so) — pass path to re-root deeper, or narrow the pattern.`,
-    "Provide an optional path to search in a specific directory.",
+    "Provide an optional path to search in a specific directory; without one the search starts at the session's work root when one is registered, else the workspace.",
   ].join("\n");
 }

@@ -17,6 +17,15 @@ function tmpPath(ext: string): string {
   return join(TMP_DIR, `cam_${randomBytes(6).toString("hex")}.${ext}`);
 }
 
+/** Both entry points drive ffmpeg's DirectShow input ("-f dshow"), which only
+ *  exists on Windows; elsewhere ffmpeg would fail with an opaque "Unknown
+ *  input format", so say what the limit is before anything is spawned. */
+function assertWindows(): void {
+  if (process.platform !== "win32") {
+    throw new Error(`camera_capture is Windows-only (it captures through ffmpeg's DirectShow input); this machine is ${process.platform}.`);
+  }
+}
+
 export interface CaptureOptions {
   /** Video device name (Windows DirectShow). Auto-detected if omitted. */
   device?: string;
@@ -41,6 +50,7 @@ export interface CaptureResult {
 
 /** List available video devices (Windows) */
 export function listDevices(): string[] {
+  assertWindows();
   try {
     const output = execSync(
       'ffmpeg -list_devices true -f dshow -i dummy 2>&1',
@@ -87,6 +97,7 @@ export function listDevices(): string[] {
 
 /** Capture a single frame from webcam */
 export function captureFrame(options: CaptureOptions = {}): CaptureResult {
+  assertWindows();
   const format = options.format ?? "jpg";
   const width = options.width ?? 1280;
   const height = options.height ?? 720;

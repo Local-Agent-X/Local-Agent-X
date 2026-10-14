@@ -1,8 +1,13 @@
 import { describe, it, expect, afterAll } from "vitest";
 import { mkdtempSync, rmSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { chartTools } from "./chart-tools.js";
+import { join, resolve } from "node:path";
+import { chartOutPath, chartTools } from "./chart-tools.js";
+import { resolveAgentPath } from "../workspace/paths.js";
+import { workspaceRoot } from "../config.js";
+import type { SecurityLayer } from "../security/index.js";
+import { createContext } from "../tool-execution/context.js";
+import { resolvePhase } from "../tool-execution/resolve-tool.js";
 
 const tool = chartTools[0];
 const dir = mkdtempSync(join(tmpdir(), "chart-tool-"));
@@ -29,6 +34,26 @@ describe("create_chart", () => {
     });
     expect(r.isError).toBeFalsy();
     expect(existsSync(join(dir, "pie.png"))).toBe(true);
+  });
+
+  it("a relative path lands under the workspace, through the canonical resolver, with .png on the NAME before resolving", () => {
+    expect(chartOutPath("charts/rev")).toBe(resolveAgentPath("charts/rev.png"));
+    expect(chartOutPath("workspace/charts/rev.png")).toBe(resolve(workspaceRoot(), "charts", "rev.png"));
+    expect(chartOutPath("rev.PNG")).toBe(resolveAgentPath("rev.PNG"));
+    expect(chartOutPath("~/rev")).toBe(resolveAgentPath("~/rev.png"));
+  });
+
+  it("the dispatcher appends .png to the arg before the path gate sees it, so the gated name is the written name", async () => {
+    const ctx = createContext({
+      tc: { id: "call-chart", name: "create_chart", arguments: JSON.stringify({ file_path: "charts/rev", type: "bar", series: "[]" }) },
+      toolMap: new Map(),
+      security: {} as SecurityLayer,
+      sessionId: "chart-session",
+      callContext: "local",
+    });
+    expect((await resolvePhase(ctx)).kind).toBe("continue");
+    expect(ctx.args.file_path).toBe("charts/rev.png");
+    expect(chartOutPath(String(ctx.args.file_path))).toBe(chartOutPath("charts/rev"));
   });
 
   it("errors on malformed series JSON", async () => {

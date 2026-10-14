@@ -38,7 +38,9 @@ export const applyUpdate: ToolDefinition = {
     "Download, validate (sandbox build/boot/smoke-test), and apply the available " +
     "Local Agent X update, then relaunch the app to finish — messaging you when " +
     "it's back up. Run ONLY after the user confirms. Only works in the desktop " +
-    "app. If validation fails, nothing is applied and the reason is reported. " +
+    "app, and only with a connected Telegram or WhatsApp channel to send that " +
+    "message on — refused otherwise (update from Settings → Updates instead). " +
+    "If validation fails, nothing is applied and the reason is reported. " +
     "Check first with check_for_updates.",
   parameters: { type: "object", properties: {}, required: [] },
   async execute(args: Record<string, unknown>): Promise<ToolResult> {
@@ -50,7 +52,7 @@ export const applyUpdate: ToolDefinition = {
     }
     const target = await resolveNotifyTarget(args);
     if (!target) {
-      return { content: "I can update, but no messaging channel is connected to ping you back when it relaunches. Connect Telegram or WhatsApp first (or update from the app).", isError: true };
+      return { content: "Refused: apply_update needs a connected Telegram or WhatsApp channel to message you when the app relaunches, and none is connected. Connect one first, or update from Settings → Updates in the app.", isError: true };
     }
 
     // Blocks for minutes: download → sandbox deps/build/bind/smoke → swap. The

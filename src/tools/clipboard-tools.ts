@@ -1,5 +1,21 @@
 import { execFile } from "node:child_process";
 import type { ToolDefinition, ToolResult } from "../types.js";
+import { wrapExternalContent } from "../sanitize.js";
+
+// Values clipboard_write_from_secret placed, by secret name. The known-secret
+// registry (sanitize.ts) masks a value everywhere only when it is secret-
+// shaped — six or more varied characters, not purely numeric — so a short PIN
+// or a numeric code would otherwise come straight back out of clipboard_read.
+// This map is exact and local to the clipboard, so it can hold any value
+// without the registry's substring-clobber risk.
+const placedSecrets = new Map<string, string>();
+
+function maskPlacedSecrets(text: string): string {
+  for (const [name, value] of placedSecrets) {
+    if (value && text.includes(value)) text = text.split(value).join(`[REDACTED_SECRET:${name}]`);
+  }
+  return text;
+}
 
 type ClipboardCommand = { file: string; args: string[] };
 
@@ -51,14 +67,16 @@ function fail(msg: string): ToolResult {
 const clipboardRead: ToolDefinition = {
   name: "clipboard_read",
   effect: { class: "read-only" },
-  description: "Read the current text content from the system clipboard.",
+  description:
+    "Read the current text content from the system clipboard. The text is whatever was last copied, by anyone — it comes back " +
+    "as untrusted external content, and a value clipboard_write_from_secret placed is masked.",
   parameters: { type: "object", properties: {}, required: [] },
   async execute(_args, signal) {
     try {
       signal?.throwIfAborted();
       const text = await run("read");
       if (!text) return ok("(clipboard is empty)");
-      return ok(text, { length: text.length });
+      return ok(wrapExternalContent(maskPlacedSecrets(text), "clipboard_read"), { length: text.length });
     } catch (e: unknown) {
       return fail(`Clipboard read failed: ${(e as Error).message}`);
     }
@@ -111,7 +129,9 @@ const clipboardWriteFromSecret: ToolDefinition = {
     "Copy a vault-stored secret value to the system clipboard WITHOUT the model ever seeing it. " +
     "Use this when the user wants a secret on their clipboard (to paste into a 3rd-party UI) but the " +
     "value should never enter your context. Pass the secret name (the same name used by " +
-    "browser_capture_to_secret / browser_fill_from_secret). Tool returns only a length confirmation.",
+    "browser_capture_to_secret / browser_fill_from_secret). Tool returns only a length confirmation; " +
+    "a later clipboard_read masks the value. Elsewhere (page snapshots, command output) it is masked " +
+    "only when secret-shaped — six or more varied characters, not purely numeric.",
   parameters: {
     type: "object",
     properties: {
@@ -142,6 +162,7 @@ const clipboardWriteFromSecret: ToolDefinition = {
       } catch { /* redactor optional */ }
 
       await run("write", value);
+      placedSecrets.set(name, value);
       // Deliberately do NOT include the value or any prefix in the response.
       // Length is a useful sanity check ("yes, something was copied") without
       // exposing the actual content.

@@ -7,8 +7,30 @@ import { describe, expect, it } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileNotFoundError, suggestElsewhere } from "./edit-recovery.js";
+import { fileNotFoundError, suggestElsewhere, whitespaceTolerantEdit } from "./edit-recovery.js";
 import { renderToolResultForModel } from "./result-helpers.js";
+
+describe("whitespaceTolerantEdit — replace_all", () => {
+  const content = "fn a() {\n    log(x)\n}\nfn b() {\n        log(x)\n}\n";
+
+  it("without replace_all, two matches ignoring whitespace stay ambiguous", () => {
+    expect(whitespaceTolerantEdit(content, "  log(x)", "  log(y)")).toEqual({ kind: "ambiguous" });
+  });
+
+  it("with replace_all, every match is rebased onto its own indentation", () => {
+    const r = whitespaceTolerantEdit(content, "  log(x)", "  log(y)\n    trace()", true);
+    expect(r.kind).toBe("ok");
+    if (r.kind !== "ok") return;
+    expect(r.count).toBe(2);
+    expect(r.updated).toBe("fn a() {\n    log(y)\n      trace()\n}\nfn b() {\n        log(y)\n          trace()\n}\n");
+  });
+
+  it("a single match behaves the same with or without replace_all", () => {
+    const one = "x\n  keep\n";
+    expect(whitespaceTolerantEdit(one, "keep", "kept", true)).toEqual({ kind: "ok", updated: "x\n  kept\n", count: 1 });
+    expect(whitespaceTolerantEdit(one, "keep", "kept")).toEqual({ kind: "ok", updated: "x\n  kept\n", count: 1 });
+  });
+});
 
 function workspace(): string {
   const root = mkdtempSync(join(tmpdir(), "lax-elsewhere-"));

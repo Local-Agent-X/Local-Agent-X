@@ -7,13 +7,34 @@
  * while the tools left behind PERCEIVE them for the model.
  */
 
-import type { ToolDefinition } from "../types.js";
+import type { ToolDefinition, ToolResult } from "../types.js";
 import { createLogger } from "../logger.js";
 import { openValidatedRead } from "../security/layer/index.js";
+import { sessionIdOf } from "../workspace/paths.js";
+import { parseMessagingSessionTarget } from "../session/channel-registry.js";
 import { resolveMediaPath } from "./shared/media-path.js";
 import { IMAGE_EXTS, IMAGE_MIME, VIDEO_EXTS, VIDEO_MIME } from "./shared/media-formats.js";
 
 const logger = createLogger("tools.media-send");
+
+// The bridges' own ceilings (server/bridge-media-forward.ts): a video over the
+// channel's cap is refused here, before the user is told it is on its way.
+const VIDEO_LIMIT_MB: Record<string, number> = { whatsapp: 16, telegram: 50 };
+
+/** The channel this call came in on, from the trusted session stamp; a web
+ *  chat has none and gets the larger limit. */
+function videoLimit(args: Record<string, unknown>): { channel: string; limitMb: number } {
+  const channel = parseMessagingSessionTarget(sessionIdOf(args) ?? "")?.channel ?? "";
+  return { channel, limitMb: VIDEO_LIMIT_MB[channel] ?? 50 };
+}
+
+function resolveOrRefuse(args: Record<string, unknown>): { filePath: string } | { refused: ToolResult } {
+  try {
+    return { filePath: resolveMediaPath(String(args.path || ""), sessionIdOf(args)) };
+  } catch (e) {
+    return { refused: { content: (e as Error).message, isError: true } };
+  }
+}
 
 export const sendVideoTool: ToolDefinition = {
   name: "send_video",
@@ -22,7 +43,7 @@ export const sendVideoTool: ToolDefinition = {
     "Send a video file from this computer to the user over the current messaging channel (WhatsApp/Telegram). " +
     "Use when the user asks you to send or share a video file with them. Only delivers on a messaging bridge — " +
     "on web chat the user is already at the computer with the file. Supports mp4, mov, webm, mkv, avi. " +
-    "WhatsApp caps at 16MB, Telegram at 50MB.",
+    "WhatsApp caps at 16MB, Telegram at 50MB — enforced per channel.",
   parameters: {
     type: "object",
     properties: {
@@ -33,7 +54,9 @@ export const sendVideoTool: ToolDefinition = {
   async execute(args) {
     const { existsSync, fstatSync, closeSync } = await import("node:fs");
 
-    const filePath = resolveMediaPath(String(args.path || ""));
+    const resolved = resolveOrRefuse(args);
+    if ("refused" in resolved) return resolved.refused;
+    const { filePath } = resolved;
     if (!existsSync(filePath)) return { content: `File not found: ${filePath}`, isError: true };
 
     const ext = filePath.split(".").pop()?.toLowerCase() || "";
@@ -58,7 +81,10 @@ export const sendVideoTool: ToolDefinition = {
     } catch (e) {
       return { content: `Failed to send ${filePath}: ${(e as Error).message}`, isError: true };
     }
-    if (sizeMb > 50) return { content: `Video is ${sizeMb.toFixed(1)}MB — over the 50MB messaging limit, can't send.`, isError: true };
+    const { channel, limitMb } = videoLimit(args);
+    if (sizeMb > limitMb) {
+      return { content: `Video is ${sizeMb.toFixed(1)}MB — over the ${limitMb}MB ${channel || "messaging"} limit, can't send.`, isError: true };
+    }
 
     logger.info(`[send_video] ${canonicalPath} (${sizeMb.toFixed(1)}MB)`);
     return {
@@ -87,7 +113,9 @@ export const sendImageTool: ToolDefinition = {
   async execute(args) {
     const { existsSync, fstatSync, closeSync } = await import("node:fs");
 
-    const filePath = resolveMediaPath(String(args.path || ""));
+    const resolved = resolveOrRefuse(args);
+    if ("refused" in resolved) return resolved.refused;
+    const { filePath } = resolved;
     if (!existsSync(filePath)) return { content: `File not found: ${filePath}`, isError: true };
 
     const ext = filePath.split(".").pop()?.toLowerCase() || "";

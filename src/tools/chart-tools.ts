@@ -1,22 +1,23 @@
 import { mkdirSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname } from "node:path";
 import type { ToolDefinition, ToolResult } from "../types.js";
-import { workspacePath } from "../config.js";
+import { resolveAgentPath } from "../workspace/paths.js";
 import { resolveOfficeTheme, THEME_PARAM_SCHEMA } from "./shared/office-theme.js";
 import { renderChartPng, isValidChart, type ChartSpec, type ChartType } from "./shared/office-chart.js";
 import { verifyWriteLanded } from "./verify.js";
 
-// Charts are an intermediate to be embedded, so anchor output UNDER the
-// workspace (and return the absolute path): that's exactly where the image
-// acquirer will accept it from when the agent embeds it. A "workspace/" prefix
-// is tolerated and stripped. Exported because the task-artifact recording hook
-// (tool-execution/run-sandboxed.ts) must pre-stat the SAME output path this
-// tool will write — re-deriving the anchoring there would fork it.
+// Charts are an intermediate to be embedded, so a relative path lands UNDER
+// the workspace (the absolute path is returned): that's exactly where the
+// image acquirer will accept it from when the agent embeds it. The ".png"
+// suffix is appended to the NAME, before resolution, and the dispatcher
+// appends it to the arg before the path gate (resolve-tool.ts), so the gated,
+// pre-stat'd and written paths are one path. Resolution is the canonical
+// resolver the gate uses (workspace-anchored, "workspace/" prefix stripped, ~
+// expanded). Exported because the task-artifact recording hook
+// (tool-execution/create-target-path.ts) must pre-stat the SAME output path.
 export function chartOutPath(p: string): string {
-  let fp = isAbsolute(p) ? resolve(p) : join(workspacePath(), p.replace(/^\.?\/?workspace\//, "").replace(/^\/+/, ""));
-  if (!/\.png$/i.test(fp)) fp += ".png";
-  return fp;
+  return resolveAgentPath(/\.png$/i.test(p) ? p : `${p}.png`);
 }
 
 const chartCreate: ToolDefinition = {
@@ -30,7 +31,7 @@ const chartCreate: ToolDefinition = {
     type: "object",
     required: ["file_path", "type", "series"],
     properties: {
-      file_path: { type: "string", description: "Output .png path (saved under the workspace)" },
+      file_path: { type: "string", description: "Output .png path — a relative path is saved under the workspace; an absolute path is used as given (same file-access gate as write). '.png' is appended when missing." },
       type: { type: "string", enum: ["bar", "line", "area", "pie", "doughnut"], description: "Chart type" },
       title: { type: "string", description: "Chart title" },
       categories: { type: "array", items: { type: "string" }, description: "Category / x-axis labels (or pie slice labels)" },

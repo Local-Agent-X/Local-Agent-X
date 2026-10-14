@@ -158,53 +158,60 @@ function leadingWhitespace(line: string): string {
 // (Grok edit loop, 2026-06-09: 5 failed edits → circuit-breaker open, zero
 // edits landed, purely because old_string's indent didn't byte-match). The two
 // existing tiers (exact, then CRLF) don't cover it. Here: match lines by their
-// TRIMMED content; require the block to be UNIQUE; rebase new_string from the
-// model's indent frame onto the file's real one so relative structure is kept;
-// splice by byte offset so CRLF and the rest of the file are untouched. Bail
-// (caller falls through to the exact-match error) on no match, >1 match, or a
-// new_string line that isn't in the model's indent frame — a wrong-indent write
-// is worse than a failed edit, so never guess when the mapping is unclear.
+// TRIMMED content; require the block to be UNIQUE unless replaceAll, in which
+// case every non-overlapping match is rebased on its own; rebase new_string
+// from the model's indent frame onto the file's real one so relative structure
+// is kept; splice by byte offset so CRLF and the rest of the file are
+// untouched. Bail (caller falls through to the exact-match error) on no match,
+// >1 match without replaceAll, or a new_string line that isn't in the model's
+// indent frame — a wrong-indent write is worse than a failed edit, so never
+// guess when the mapping is unclear.
 export function whitespaceTolerantEdit(
   content: string,
   oldStr: string,
   newStr: string,
-): { kind: "ok"; updated: string } | { kind: "none" } | { kind: "ambiguous" } {
+  replaceAll = false,
+): { kind: "ok"; updated: string; count: number } | { kind: "none" } | { kind: "ambiguous" } {
   const fileLines = content.split("\n");
   const oldLines = oldStr.split("\n");
   const oldTrim = oldLines.map((l) => l.trim());
 
-  let start = -1;
+  const starts: number[] = [];
   for (let i = 0; i + oldLines.length <= fileLines.length; i++) {
     let hit = true;
     for (let j = 0; j < oldLines.length; j++) {
       if (fileLines[i + j].trim() !== oldTrim[j]) { hit = false; break; }
     }
     if (!hit) continue;
-    if (start !== -1) return { kind: "ambiguous" };
-    start = i;
+    starts.push(i);
+    i += oldLines.length - 1;
   }
-  if (start === -1) return { kind: "none" };
+  if (starts.length === 0) return { kind: "none" };
+  if (starts.length > 1 && !replaceAll) return { kind: "ambiguous" };
 
-  const matched = fileLines.slice(start, start + oldLines.length);
   const anchor = oldTrim.findIndex((t) => t.length > 0);
   if (anchor === -1) return { kind: "none" }; // whitespace-only block, too risky
-  const fileWs = leadingWhitespace(matched[anchor]);
   const oldWs = leadingWhitespace(oldLines[anchor]);
+  const lineStarts: number[] = [];
+  for (let i = 0, at = 0; i < fileLines.length; i++) { lineStarts.push(at); at += fileLines[i].length + 1; }
 
-  const newLines = newStr.split("\n").map((line) => {
-    if (line.trim() === "") return "";
-    const ws = leadingWhitespace(line);
-    if (!ws.startsWith(oldWs)) return null; // not in the model's indent frame
-    return fileWs + line.slice(oldWs.length);
-  });
-  if (newLines.some((l) => l === null)) return { kind: "none" };
+  // Splice last match first so earlier byte offsets stay valid.
+  let updated = content;
+  for (const start of [...starts].reverse()) {
+    const matched = fileLines.slice(start, start + oldLines.length);
+    const fileWs = leadingWhitespace(matched[anchor]);
+    const newLines = newStr.split("\n").map((line) => {
+      if (line.trim() === "") return "";
+      const ws = leadingWhitespace(line);
+      if (!ws.startsWith(oldWs)) return null; // not in the model's indent frame
+      return fileWs + line.slice(oldWs.length);
+    });
+    if (newLines.some((l) => l === null)) return { kind: "none" };
 
-  const eol = matched.some((l) => l.endsWith("\r")) ? "\r\n" : "\n";
-  const offsetStart = fileLines.slice(0, start).reduce((n, l) => n + l.length + 1, 0);
-  const windowLen = matched.join("\n").length;
-  const updated =
-    content.slice(0, offsetStart) +
-    (newLines as string[]).join(eol) +
-    content.slice(offsetStart + windowLen);
-  return { kind: "ok", updated };
+    const eol = matched.some((l) => l.endsWith("\r")) ? "\r\n" : "\n";
+    const offsetStart = lineStarts[start];
+    const windowLen = matched.join("\n").length;
+    updated = updated.slice(0, offsetStart) + (newLines as string[]).join(eol) + updated.slice(offsetStart + windowLen);
+  }
+  return { kind: "ok", updated, count: starts.length };
 }

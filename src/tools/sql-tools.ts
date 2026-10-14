@@ -1,18 +1,19 @@
 import Database from "better-sqlite3";
-import { homedir } from "node:os";
-import { resolve } from "node:path";
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { wrapExternalContent } from "../sanitize.js";
+import { resolveAgentPath } from "../workspace/paths.js";
 
-// Exported so the SecurityLayer can gate the EXACT path these tools open.
-// The layer's evaluateFileAccess only does resolve() — no ~ expansion — so
-// if it didn't share this normalization, validating <cwd>/~/x.db while the
-// tool opens <home>/x.db would re-open the confinement hole (TOCTOU).
+// Exported so the SecurityLayer gates the EXACT path these tools open
+// (kernel-class-policy.ts). The canonical resolver the file tools use: a
+// relative path is anchored to the workspace (a leading "workspace/" is the
+// same place), "~" is the home dir. It used to resolve against the server's
+// cwd, so the documented "workspace/data.db" named a file under the install
+// dir on the desktop, where the workspace lives elsewhere.
 export function resolvePath(p: string): string {
-  if (p.startsWith("~/") || p.startsWith("~\\")) return resolve(homedir(), p.slice(2));
-  if (p === "~") return homedir();
-  return resolve(p);
+  return resolveAgentPath(p);
 }
+
+const PATH_DOC = "Path to the .db/.sqlite file — relative to the workspace, or absolute; ~ is your home.";
 
 // Load the sqlite-vec (vec0) extension into a fresh connection so the SQL
 // tools can read databases that use vector virtual tables — chiefly the
@@ -39,8 +40,10 @@ function toMarkdownTable(rows: Record<string, unknown>[]): string {
   return [header, sep, ...body].join("\n");
 }
 
-function isSelect(query: string): boolean {
-  return /^\s*SELECT\b/i.test(query);
+// A read: SELECT, or a CTE (WITH … SELECT). The connection is opened read-only
+// too, so a "WITH … INSERT" passing this gate is still refused by SQLite.
+function isReadQuery(query: string): boolean {
+  return /^\s*(?:SELECT|WITH)\b/i.test(query);
 }
 
 /* ── sql_query ────────────────────────────────────────────────── */
@@ -48,11 +51,12 @@ function isSelect(query: string): boolean {
 const sqlQuery: ToolDefinition = {
   name: "sql_query",
   description:
-    'Run a SQL query against a SQLite database. Default is read-only. Example: database="workspace/data.db", query="SELECT * FROM users LIMIT 10"',
+    "Run a SQL query against a SQLite database. Default is read-only: SELECT and WITH … SELECT run; anything else needs readonly=false. " +
+    'A relative database path is under the workspace. Example: database="workspace/data.db", query="SELECT * FROM users LIMIT 10"',
   parameters: {
     type: "object",
     properties: {
-      database: { type: "string", description: "Path to .db/.sqlite file" },
+      database: { type: "string", description: PATH_DOC },
       query: { type: "string", description: "SQL query to execute" },
       readonly: { type: "boolean", description: "Open in read-only mode (default true)" },
     },
@@ -63,8 +67,8 @@ const sqlQuery: ToolDefinition = {
     const query = String(args.query);
     const readonly = args.readonly !== false;
 
-    if (readonly && !isSelect(query)) {
-      return { content: "Error: Set readonly=false to allow mutations", isError: true };
+    if (readonly && !isReadQuery(query)) {
+      return { content: "Error: Set readonly=false to allow mutations (SELECT and WITH … SELECT run read-only)", isError: true };
     }
 
     let db: ReturnType<typeof Database> | undefined;
@@ -72,8 +76,9 @@ const sqlQuery: ToolDefinition = {
       db = new Database(dbPath, { readonly });
       await loadVecExtension(db);
 
-      if (isSelect(query)) {
-        const rows = db.prepare(query).all() as Record<string, unknown>[];
+      const stmt = db.prepare(query);
+      if (stmt.reader) {
+        const rows = stmt.all() as Record<string, unknown>[];
         return {
           content: wrapExternalContent(toMarkdownTable(rows), "sql_query", {
             database: String(args.database),
@@ -82,7 +87,7 @@ const sqlQuery: ToolDefinition = {
         };
       }
 
-      const info = db.prepare(query).run();
+      const info = stmt.run();
       return {
         content: `Query executed. Changes: ${info.changes}`,
         metadata: { changes: info.changes },
@@ -104,7 +109,7 @@ const sqlSchema: ToolDefinition = {
   parameters: {
     type: "object",
     properties: {
-      database: { type: "string", description: "Path to .db/.sqlite file" },
+      database: { type: "string", description: PATH_DOC },
       table: { type: "string", description: "Table name (omit to list all tables)" },
     },
     required: ["database"],
@@ -168,7 +173,7 @@ const sqlExplain: ToolDefinition = {
   parameters: {
     type: "object",
     properties: {
-      database: { type: "string", description: "Path to .db/.sqlite file" },
+      database: { type: "string", description: PATH_DOC },
       query: { type: "string", description: "SQL query to explain" },
     },
     required: ["database", "query"],

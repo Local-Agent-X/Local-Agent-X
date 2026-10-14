@@ -142,6 +142,7 @@ const presentationAddSlide: ToolDefinition = {
       file_path: { type: "string", description: "Original .pptx path (derives output name)" },
       slide: { type: "string", description: "JSON slide spec (see description for shape)" },
       position: { type: "number", description: "Slide position number for filename suffix" },
+      title: { type: "string", description: "Presentation title metadata for the new file" },
       images: IMAGES_PARAM_SCHEMA,
       theme: THEME_PARAM_SCHEMA,
     },
@@ -157,6 +158,7 @@ const presentationAddSlide: ToolDefinition = {
       const outPath = addSlideOutPath(resolvePath(args.file_path as string), pos);
       ensureDir(outPath);
       const pptx = await makePptx();
+      if (args.title) pptx.title = args.title as string;
       pptx.author = brandAuthor(theme) || "";
       pptx.layout = "LAYOUT_WIDE";
       const r = await applySlide(pptx, spec, theme, brand);

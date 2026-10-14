@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { mkdtempSync, rmSync, statSync, truncateSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import ExcelJSDefault from "exceljs";
@@ -174,6 +174,37 @@ describe("spreadsheet edit — string values route through the same cleanText se
     const r = await tool.execute({ action: "edit", file_path: fp, cell: "A2", value: 42 });
     expect(r.isError).toBeFalsy();
     expect(await readBack(fp, "A2")).toBe(42);
+  });
+});
+
+describe("spreadsheet — a .csv target is written back as CSV, never as the xlsx container", () => {
+  const ZIP_MAGIC = "PK";
+  it("edit of a .csv cell leaves a CSV text file that reads back", async () => {
+    const fp = join(dir, "edit.csv");
+    writeFileSync(fp, "Name,Qty\nWidget,3\nGadget,12\n");
+    const r = await tool.execute({ action: "edit", file_path: fp, cell: "B2", value: "7" });
+    expect(r.isError).toBeFalsy();
+    expect(r.content).toContain("CSV holds values only");
+    const text = readFileSync(fp, "utf8");
+    expect(text.startsWith(ZIP_MAGIC)).toBe(false);
+    expect(text).toContain("Widget,7");
+    expect(text).toContain("Gadget,12");
+    const back = await tool.execute({ action: "read", file_path: fp });
+    expect(back.content).toContain("| Widget | 7");
+  });
+
+  it("write to a .csv target produces CSV text; an .xlsx target still produces the container", async () => {
+    const csv = join(dir, "write.csv");
+    const r = await tool.execute({ action: "write", file_path: csv, data: JSON.stringify([{ a: 1, b: "x" }]) });
+    expect(r.isError).toBeFalsy();
+    const text = readFileSync(csv, "utf8");
+    expect(text.startsWith(ZIP_MAGIC)).toBe(false);
+    expect(text).toContain("a,b");
+    expect(text).toContain("1,x");
+
+    const xlsx = join(dir, "write.xlsx");
+    await tool.execute({ action: "write", file_path: xlsx, data: JSON.stringify([{ a: 1 }]) });
+    expect(readFileSync(xlsx).subarray(0, 2).toString()).toBe(ZIP_MAGIC);
   });
 });
 

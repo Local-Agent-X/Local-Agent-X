@@ -91,7 +91,10 @@ async function generateViaOpenai(prompt: string, apiKey: string): Promise<ToolRe
   if (!imgRes.ok) return ok(`Image generated!\nPrompt: ${prompt}\nView: ${imageUrl}\n(Could not save locally)`);
 
   const buffer = Buffer.from(await imgRes.arrayBuffer());
-  const imagesDir = join("workspace", "generated");
+  // Same canonical images/ dir as the xAI path: the /images/<file> static
+  // mount serves from config.workspace, so a cwd-relative "workspace/" lands
+  // outside it in the packaged app and the returned URL 404s.
+  const imagesDir = workspaceDir("images");
   if (!existsSync(imagesDir)) mkdirSync(imagesDir, { recursive: true });
   const filename = `dalle_${Date.now()}.png`;
   const savePath = join(imagesDir, filename);
@@ -101,7 +104,7 @@ async function generateViaOpenai(prompt: string, apiKey: string): Promise<ToolRe
     `Image generated via DALL-E!\n` +
     `Prompt: ${prompt}\n` +
     `Saved: ${savePath}\n` +
-    `View: /uploads/../workspace/generated/${filename}`,
+    `View: /images/${filename}`,
     { b64: buffer.toString("base64"), path: savePath, question: `Generated image: ${prompt}` },
   );
 }

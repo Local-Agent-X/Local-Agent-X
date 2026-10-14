@@ -38,6 +38,21 @@ function fail(msg: string): ToolResult {
   return { content: msg, isError: true };
 }
 
+function isCsvPath(filePath: string): boolean {
+  return /\.csv$/i.test(filePath);
+}
+
+// The ONE writer for both read paths above and both write paths below: the
+// bytes written match the extension the file is opened by. edit used to read
+// a .csv through the csv parser and then write the xlsx container back under
+// the .csv name, so the user's CSV came back as a zip no CSV reader could open.
+async function writeWorkbook(wb: Workbook, filePath: string): Promise<void> {
+  if (isCsvPath(filePath)) await wb.csv.writeFile(filePath);
+  else await wb.xlsx.writeFile(filePath);
+}
+
+const CSV_NOTE = " (CSV holds values only — styling, formulas' cached results, images and extra sheets are not stored)";
+
 async function openWorkbook(filePath: string): Promise<Workbook> {
   // Read the VALIDATED canonical inode (realpath + O_NOFOLLOW leaf) and load
   // exceljs from those bytes, so a symlink swapped in after the gate (R4-19) is
@@ -53,7 +68,7 @@ async function openWorkbook(filePath: string): Promise<Workbook> {
     closeSync(fd);
   }
   const wb = new ExcelJS.Workbook();
-  if (filePath.endsWith(".csv")) {
+  if (isCsvPath(filePath)) {
     await wb.csv.read(Readable.from(buf));
   } else {
     // exceljs bundles an older Buffer interface; the runtime is the same Node
@@ -128,13 +143,13 @@ const spreadsheetWrite: ToolDefinition = {
   description:
     "Create or overwrite an Excel sheet with structured data. " +
     "Pass data as a JSON string containing an array of objects (one object per row). " +
-    "Keys become column headers. " +
+    "Keys become column headers. A .csv file_path writes CSV (values only, no styling or images); anything else writes .xlsx. " +
     'Example: data=\'[{"Product":"Widget","Price":9.99,"Qty":100},{"Product":"Gadget","Price":24.99,"Qty":50}]\' ' +
     SOURCES_DOC_SENTENCE,
   parameters: {
     type: "object",
     properties: {
-      file_path: { type: "string", description: "Path to the .xlsx file to create or update" },
+      file_path: { type: "string", description: "Path to the .xlsx (or .csv) file to create or update" },
       data: { type: "string", description: 'JSON array of row objects. Example: \'[{"Name":"Alice","Score":95},{"Name":"Bob","Score":87}]\'' },
       sheet: { type: "string", description: 'Sheet name (default: "Sheet1")' },
       headers: { type: "array", items: { type: "string" }, description: "Column headers (auto-derived from data keys if omitted)" },
@@ -159,7 +174,9 @@ const spreadsheetWrite: ToolDefinition = {
       // instead of being silently replaced by a one-sheet workbook.
       const onDisk = statSync(filePath, { throwIfNoEntry: false });
       if (onDisk) assertWorkbookSize(onDisk.size);
-      try { await wb.xlsx.readFile(filePath); } catch { /* new file */ }
+      // A CSV is one sheet with no container to merge into: it is overwritten whole.
+      const csv = isCsvPath(filePath);
+      if (!csv) try { await wb.xlsx.readFile(filePath); } catch { /* new file */ }
       // File metadata: the USER's brand (or empty) — never the app name.
       wb.creator = brandAuthor(theme);
       wb.lastModifiedBy = brandAuthor(theme);
@@ -207,12 +224,12 @@ const spreadsheetWrite: ToolDefinition = {
       }
 
       mkdirSync(dirname(filePath), { recursive: true });
-      await wb.xlsx.writeFile(filePath);
-      const verified = verifyWriteLanded(filePath, { minBytes: 500 });
+      await writeWorkbook(wb, filePath);
+      const verified = verifyWriteLanded(filePath, { minBytes: csv ? 1 : 500 });
       if (!verified.ok) return fail(`Failed to write spreadsheet: ${verified.reason}`);
       const imgSuffix = acquired.length ? ` and ${acquired.length} image(s)` : "";
       const notes = imageNotes.length ? `\nImage notes:\n${imageNotes.join("\n")}` : "";
-      return ok(`Wrote ${parsed.length} rows${imgSuffix} to "${sheetName}" in ${filePath}${notes}`);
+      return ok(`Wrote ${parsed.length} rows${imgSuffix} to "${sheetName}" in ${filePath}${csv ? CSV_NOTE : ""}${notes}`);
     } catch (e: unknown) {
       return fail(String((e as Error).message ?? e));
     }
@@ -221,11 +238,11 @@ const spreadsheetWrite: ToolDefinition = {
 
 const spreadsheetEdit: ToolDefinition = {
   name: "spreadsheet_edit",
-  description: "Edit a single cell in a spreadsheet. " + SOURCES_DOC_SENTENCE,
+  description: "Edit a single cell in a spreadsheet (.xlsx, or .csv — written back as CSV). " + SOURCES_DOC_SENTENCE,
   parameters: {
     type: "object",
     properties: {
-      file_path: { type: "string", description: "Path to the .xlsx file" },
+      file_path: { type: "string", description: "Path to the .xlsx or .csv file" },
       sheet: { type: "string", description: "Sheet name (default: first sheet)" },
       cell: { type: "string", description: 'Cell reference e.g. "B5"' },
       value: { type: "string", description: "Value to set" },
@@ -252,8 +269,8 @@ const spreadsheetEdit: ToolDefinition = {
         const num = Number(args.value);
         cell.value = isNaN(num) || args.value.trim() === "" ? cleanText(args.value) : num;
       }
-      await wb.xlsx.writeFile(filePath);
-      return ok(`Set ${args.cell} = ${args.value}${args.formula ? " (formula)" : ""}`);
+      await writeWorkbook(wb, filePath);
+      return ok(`Set ${args.cell} = ${args.value}${args.formula ? " (formula)" : ""}${isCsvPath(filePath) ? CSV_NOTE : ""}`);
     } catch (e: unknown) {
       return fail(String((e as Error).message ?? e));
     }

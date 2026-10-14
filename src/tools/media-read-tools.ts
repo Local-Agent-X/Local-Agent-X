@@ -12,15 +12,21 @@ import { existsSync, closeSync } from "node:fs";
 import type { ToolDefinition } from "../types.js";
 import { openValidatedRead } from "../security/layer/index.js";
 import { wrapExternalContent } from "../sanitize.js";
+import { sessionIdOf } from "../workspace/paths.js";
 import { resolveMediaPath } from "./shared/media-path.js";
 import { TRANSCRIBABLE_EXTS, VIDEO_EXTS } from "./shared/media-formats.js";
 
 /** Bind a model-supplied media path to the validated canonical inode, so the
  *  bytes ffmpeg opens are the bytes the file-access gate approved and a
  *  symlink swapped in afterwards (R4-19) is rejected here. */
-function openMediaPath(raw: string, allowed: ReadonlySet<string>, kind: string):
+function openMediaPath(args: Record<string, unknown>, allowed: ReadonlySet<string>, kind: string):
   { canonicalPath: string } | { error: string } {
-  const filePath = resolveMediaPath(raw);
+  let filePath: string;
+  try {
+    filePath = resolveMediaPath(String(args.path || ""), sessionIdOf(args));
+  } catch (e) {
+    return { error: (e as Error).message };
+  }
   if (!existsSync(filePath)) return { error: `File not found: ${filePath}` };
   const ext = filePath.split(".").pop()?.toLowerCase() || "";
   if (!allowed.has(ext)) {
@@ -42,17 +48,17 @@ export const transcribeMediaTool: ToolDefinition = {
     "Use this whenever the user asks what was said in a recording, meeting, voice note, podcast, or video — " +
     "including a video, where this reads the audio track (pair it with read_video_frames to also SEE the video). " +
     "Supports mp3, m4a, wav, ogg, opus, flac, aac, and every video container. " +
-    "Long recordings return the first 30 minutes; call again with start_at to continue.",
+    "Long recordings return the first 30 minutes; the result names its end_at — call again with start_at=end_at to continue.",
   parameters: {
     type: "object",
     properties: {
       path: { type: "string", description: "Path to the audio or video file (absolute, relative, or a bare filename from ~/.lax/uploads)" },
-      start_at: { type: "number", description: "Second to start transcribing from (default 0). Use the end_at from a previous call to continue a long recording." },
+      start_at: { type: "number", description: "Second to start transcribing from (default 0). Pass the end_at a previous call printed to continue a long recording." },
     },
     required: ["path"],
   },
   async execute(args) {
-    const opened = openMediaPath(String(args.path || ""), TRANSCRIBABLE_EXTS, "audio or video");
+    const opened = openMediaPath(args, TRANSCRIBABLE_EXTS, "audio or video");
     if ("error" in opened) return { content: opened.error, isError: true };
 
     try {
@@ -60,22 +66,25 @@ export const transcribeMediaTool: ToolDefinition = {
       const result = await transcribeMediaFile(opened.canonicalPath, {
         startSec: args.start_at != null ? Number(args.start_at) : 0,
       });
+      const endAt = Math.floor(result.endSec);
+      const span = { start_at: result.startSec, end_at: endAt, has_more: result.hasMore };
 
       if (result.windows.length === 0) {
-        return { content: `No speech detected in ${opened.canonicalPath} between ${result.startSec}s and ${result.endSec}s.` };
+        return { content: `No speech detected in ${opened.canonicalPath} between ${result.startSec}s and ${endAt}s (end_at=${endAt}).`, metadata: span };
       }
 
       const header = result.durationSec > 0
-        ? `Transcript of ${opened.canonicalPath} (${result.durationSec.toFixed(0)}s total), covering ${result.startSec}s-${result.endSec.toFixed(0)}s`
-        : `Transcript of ${opened.canonicalPath}, covering ${result.startSec}s-${result.endSec.toFixed(0)}s`;
+        ? `Transcript of ${opened.canonicalPath} (${result.durationSec.toFixed(0)}s total), covering ${result.startSec}s-${endAt}s (start_at=${result.startSec}, end_at=${endAt})`
+        : `Transcript of ${opened.canonicalPath}, covering ${result.startSec}s-${endAt}s (start_at=${result.startSec}, end_at=${endAt})`;
       const more = result.hasMore
-        ? `\n\nThis file continues past ${result.endSec.toFixed(0)}s — call transcribe_media again with start_at=${Math.floor(result.endSec)} for the rest.`
+        ? `\n\nThis file continues past ${endAt}s — call transcribe_media again with start_at=${endAt} for the rest.`
         : "";
 
       // A transcript is text the FILE supplied, not the user — wrap it so a
       // recording that reads out instructions is quoted, not obeyed.
       return {
         content: `${header}:\n\n${wrapExternalContent(formatTranscript(result), "transcribe_media", { file: opened.canonicalPath })}${more}`,
+        metadata: span,
       };
     } catch (e) {
       return { content: `Transcription failed: ${(e as Error).message}`, isError: true };
@@ -100,7 +109,7 @@ export const readVideoFramesTool: ToolDefinition = {
     required: ["path"],
   },
   async execute(args) {
-    const opened = openMediaPath(String(args.path || ""), VIDEO_EXTS, "video");
+    const opened = openMediaPath(args, VIDEO_EXTS, "video");
     if ("error" in opened) return { content: opened.error, isError: true };
 
     try {

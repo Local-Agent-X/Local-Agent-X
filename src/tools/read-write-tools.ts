@@ -46,7 +46,7 @@ export const readTool: ToolDefinition = {
     properties: {
       path: { type: "string", description: "File path to read" },
       offset: { type: "number", description: "Line number to start from (1-based)" },
-      limit: { type: "number", description: "Max number of lines to return" },
+      limit: { type: "number", description: "Max number of lines to return. Honored only for files of 1000+ lines; a shorter file always comes back whole (from offset), since chunking a small file wastes calls." },
       include_imports: { type: "boolean", description: "When exploring code, set true to get the file's local (./ ../) imports appended in the same call instead of follow-up reads. ts/js-family files only, depth 1, capped. Default false." },
     },
     required: ["path"],

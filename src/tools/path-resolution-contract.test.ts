@@ -25,14 +25,9 @@ const CANONICAL_RESOLVERS =
 const EXTRACTS_PATH_ARG =
   /String\(\s*args\.(path|file_path|dir|directory)\b|args\.(path|file_path|dir|directory)\s+as\s+string/;
 
-// Intentional, documented exceptions.
-const ALLOWLIST: Record<string, string> = {
-  // create_chart writes its PNG output UNDER the workspace by design (its
-  // file_path is described as "saved under the workspace"), so it anchors to
-  // workspacePath() rather than the project root the canonical resolver uses.
-  // Revisit if it ever needs to open arbitrary caller paths.
-  "src/tools/chart-tools.ts": "output tool, intentionally workspace-anchored",
-};
+// Intentional, documented exceptions. None today: create_chart, the last one,
+// now resolves its output through resolveAgentPath (chartOutPath).
+const ALLOWLIST: Record<string, string> = {};
 
 describe("path-resolution class lock", () => {
   it("every tool that resolves a caller path routes through the canonical resolver", async () => {

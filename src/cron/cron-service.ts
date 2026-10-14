@@ -231,7 +231,9 @@ export class CronService {
     const existing = [...this.jobs_internal.values()].find(j => j.name === name);
     if (existing) {
       logger.info(`[cron] Updated existing job ${name} instead of creating duplicate`);
-      return this.update(existing.id, { schedule, prompt }) || existing;
+      // A timezone given with the re-create applies like the schedule it
+      // qualifies; one not given leaves the job's own in place.
+      return this.update(existing.id, { schedule, prompt, ...(opts?.tz !== undefined ? { tz: opts.tz } : {}) }) || existing;
     }
     const id = `cron_${Date.now().toString(36)}`;
     const job: CronJob = {

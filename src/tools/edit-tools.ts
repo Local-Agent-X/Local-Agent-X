@@ -79,7 +79,7 @@ function applyStringEdit(content: string, rawOld: string, rawNew: string, replac
     return { ok: true, updated };
   }
 
-  const tolerant = whitespaceTolerantEdit(content, oldStr, newStr);
+  const tolerant = whitespaceTolerantEdit(content, oldStr, newStr, replaceAll);
   if (tolerant.kind === "ok") return { ok: true, updated: tolerant.updated, tolerant: true };
 
   const nearby = suggestNearbyLines(content, oldStr);

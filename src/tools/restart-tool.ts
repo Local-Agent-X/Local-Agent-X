@@ -12,7 +12,9 @@ export const restart: ToolDefinition = {
   description:
     "Restart the LAX server to pick up new code (after a self_edit, a git pull, " +
     "or a config change that needs a reload). The server goes down briefly and " +
-    "the agent messages you when it's back up. Only works in the desktop app. " +
+    "the agent messages you when it's back up. Only works in the desktop app, and " +
+    "only with a connected Telegram or WhatsApp channel to send that message on — " +
+    "refused otherwise (restart from the app instead). " +
     "Use when the user asks to restart / reload / 'pick up new code'. For a " +
     "platform UPDATE use apply_update instead (it restarts for you).",
   parameters: {
@@ -30,7 +32,7 @@ export const restart: ToolDefinition = {
     }
     const target = await resolveNotifyTarget(args);
     if (!target) {
-      return { content: "I can restart, but no messaging channel is connected to ping you back. Connect Telegram or WhatsApp first (or restart from the app).", isError: true };
+      return { content: "Refused: restart needs a connected Telegram or WhatsApp channel to message you when the server is back, and none is connected. Connect one first, or restart from the app.", isError: true };
     }
     const reason = String(args.reason || "pick up new code").slice(0, 120);
     const now = Date.now();

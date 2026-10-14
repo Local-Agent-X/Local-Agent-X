@@ -56,8 +56,9 @@ function fail(e: unknown): ToolResult {
 const moveTool: ToolDefinition = {
   name: "computer_move",
   description:
-    "Move the mouse cursor to absolute screen coordinates. (x, y) are pixels from the TOP-LEFT of the " +
-    "primary display. Take a screen_capture first to see where things are before moving.",
+    "Move the mouse cursor to absolute screen coordinates. (x, y) are pixels across the whole virtual desktop, " +
+    "from the primary display's top-left origin — a secondary monitor sits at an offset (often negative) that " +
+    "screen_size reports. Take a screen_capture first to see where things are before moving.",
   parameters: {
     type: "object",
     properties: {

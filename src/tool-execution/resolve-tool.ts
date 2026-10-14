@@ -43,10 +43,9 @@ export const SESSION_SCOPED_TOOLS = new Set([
   // stamp is what keeps it from being pointed at another session's state.
   "show_unblock_control",
   "voice_visual",
-  // task_create/task_update stamp the session onto the task so the open-steps
-  // completion gate can scope "unfinished work" to this conversation, and an
-  // upserted task_update (unknown id → create) is owned by the right session
-  // (task-tools.ts).
+  // task_create stamps the session onto the task so the open-steps completion
+  // gate can scope "unfinished work" to this conversation; task_list/task_get
+  // filter by it (task-tools.ts).
   "task_create", "task_update", "task_list", "task_get",
   // op_kill with no op_id kills THIS session's newest op; op_submit_batch
   // threads the session into every task it submits.
@@ -89,6 +88,11 @@ export const SESSION_SCOPED_TOOLS = new Set([
   // restore_file resolves the task-trash scope FROM the trusted _sessionId
   // (the scope is per-session); without the stamp there is no scope at all.
   "restore_file",
+  // The media tools resolve their path through resolveMediaPath with the
+  // session the gate resolved it with, so a work-rooted session opens the path
+  // that was gated; send_video also reads the channel off the session for its
+  // per-channel size cap (media-send-tools.ts).
+  "send_image", "send_video", "send_file", "transcribe_media", "read_video_frames",
 ]);
 
 // `protocol` is the model-facing collapsed family; the inner name stays for
@@ -230,6 +234,12 @@ async function injectSessionState(ctx: ToolCallContext): Promise<PhaseOutcome> {
   }
   if (OPERATION_SCOPED_TOOLS.has(tc.name)) {
     args._operationId = ctx.operationId;
+  }
+  // create_chart writes `<file_path>.png` when the suffix is missing. Name the
+  // real output here, before the path gate and the artifact pre-stat, so every
+  // stage judges the file that will be written (chart-tools.ts chartOutPath).
+  if (tc.name === "create_chart" && typeof args.file_path === "string" && args.file_path && !/\.png$/i.test(args.file_path)) {
+    args.file_path = `${args.file_path}.png`;
   }
 
   // Inject the chat's current project into agent_* tool calls so the

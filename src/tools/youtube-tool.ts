@@ -10,10 +10,14 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { htmlToText } from "../app-renderer/sanitize.js";
+import { wrapExternalContent } from "../sanitize.js";
 
 const execFileAsync = promisify(execFile);
 
-function ok(content: string): ToolResult { return { content }; }
+const MAX_CHARS = 80_000;
+const YT_DLP_INSTALL = "python -m pip install yt-dlp";
+
+function ok(content: string, metadata?: Record<string, unknown>): ToolResult { return { content, metadata }; }
 function err(content: string): ToolResult { return { content, isError: true }; }
 
 /** Extract video ID from various YouTube URL formats */
@@ -59,32 +63,23 @@ function parseTranscriptXml(xml: string): string | null {
 
 let _ytDlpReady: boolean | null = null;
 
-/** Ensure yt-dlp is importable; install once per process if missing. */
-async function ensureYtDlp(): Promise<boolean> {
+/** Whether yt-dlp is importable — checked once per process, never installed:
+ *  a tool call must not run pip on the user's machine behind their back. */
+async function ytDlpAvailable(): Promise<boolean> {
   if (_ytDlpReady !== null) return _ytDlpReady;
   try {
     await execFileAsync("python", ["-c", "import yt_dlp"], { timeout: 5_000, windowsHide: true });
     _ytDlpReady = true;
-    return true;
   } catch {
-    try {
-      await execFileAsync("python", ["-m", "pip", "install", "--quiet", "--upgrade", "yt-dlp"], {
-        timeout: 60_000, windowsHide: true,
-      });
-      await execFileAsync("python", ["-c", "import yt_dlp"], { timeout: 5_000, windowsHide: true });
-      _ytDlpReady = true;
-      return true;
-    } catch {
-      _ytDlpReady = false;
-      return false;
-    }
+    _ytDlpReady = false;
   }
+  return _ytDlpReady;
 }
 
-/** Fetch transcript via yt-dlp (most reliable) */
+/** Fetch transcript via yt-dlp (most reliable); null when yt-dlp is absent. */
 async function fetchTranscriptYtDlp(videoId: string): Promise<string | null> {
   if (!/^[a-zA-Z0-9_-]{11}$/.test(videoId)) return null;
-  if (!(await ensureYtDlp())) return null;
+  if (!(await ytDlpAvailable())) return null;
 
   const outPath = join(tmpdir(), `oax_yt_${videoId}`);
   const subFile = `${outPath}.en.srv1`;
@@ -172,9 +167,12 @@ export const youtubeAnalyzeTool: ToolDefinition = {
   name: "youtube_analyze",
   description:
     "ALWAYS use this for any YouTube URL or video ID — never web_fetch the watch page. " +
-    "Returns title, channel, duration, view count, description, and full timestamped transcript. " +
+    "Returns title, channel, duration, view count, description, and the ENGLISH timestamped transcript " +
+    "(manual or auto-generated captions; other languages are not fetched), the whole result capped at " +
+    `${MAX_CHARS.toLocaleString()} characters. ` +
     "Accepts youtube.com/watch?v=, youtu.be/, youtube.com/shorts/, embeds, or a bare 11-char video ID. " +
-    "Uses yt-dlp (auto-installed via python -m yt_dlp) with a direct caption-URL fallback.",
+    `Transcripts come from yt-dlp when it is installed (${YT_DLP_INSTALL} — this tool never installs it), ` +
+    "else from the watch page's own caption URL.",
   parameters: {
     type: "object",
     properties: {
@@ -233,14 +231,23 @@ export const youtubeAnalyzeTool: ToolDefinition = {
     if (transcript) {
       parts.push("", `## Transcript`, transcript);
     } else {
-      parts.push("", `_No transcript/captions available for this video._`);
+      parts.push("", `_No English transcript/captions available for this video._`);
     }
 
-    const output = parts.join("\n");
-    const MAX = 80_000;
-    if (output.length > MAX) {
-      return ok(output.slice(0, MAX) + "\n\n[Transcript truncated]");
+    // Title, description and transcript are the uploader's words: wrapped, so a
+    // video that reads out instructions is quoted, not obeyed. The cap applies
+    // to that body; the notes below are this tool's own.
+    let body = parts.join("\n");
+    const truncated = body.length > MAX_CHARS;
+    if (truncated) body = body.slice(0, MAX_CHARS);
+    const notes: string[] = [];
+    if (truncated) notes.push(`[Transcript truncated at ${MAX_CHARS.toLocaleString()} characters]`);
+    if (!ytdlpTranscript && _ytDlpReady === false) {
+      notes.push(`yt-dlp is not installed, so only the watch page's caption URL was tried. For reliable transcripts install it: ${YT_DLP_INSTALL}`);
     }
-    return ok(output);
+    const wrapped = wrapExternalContent(body, "youtube_analyze", { url: `https://www.youtube.com/watch?v=${videoId}` });
+    return ok(notes.length ? `${wrapped}\n\n${notes.join("\n")}` : wrapped, {
+      videoId, truncated: truncated || undefined, transcript: transcript ? (ytdlpTranscript ? "yt-dlp" : "caption-url") : "none",
+    });
   },
 };

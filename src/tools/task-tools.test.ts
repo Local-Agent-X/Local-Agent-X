@@ -1,13 +1,16 @@
 /**
- * task_create / task_update tolerance for model-assigned ids.
+ * task_create / task_update id handling.
  *
- * Regression (Jul 2 2026, food-truck preflight): grok named its own task ids
- * (`parent_id: "preflight-1"`, then `task_update id: "preflight-1-1"`), but the
- * old tool discarded the caller's id for a server-random UUID and hard-failed
- * every later reference ("Parent task X not found" × 6). The worker derailed
- * into explaining the errors and never emitted its report block. The tools now
- * honor the model's universal "name my own task ids" prior: caller id is kept,
- * a missing parent is coerced to root, and an update to an unknown id upserts.
+ * Models name their own task ids (a universal to-do-list prior) and reference
+ * them later, so a caller-chosen id is honored and a missing parent is coerced
+ * to a root task (Jul 2 2026, food-truck preflight: a server-random id made
+ * every later reference miss and the worker derailed). What is NOT tolerated
+ * any more: task_list prints the first 8 characters of a generated id, and a
+ * task_update by that prefix used to silently create a second task under it
+ * while the real one stayed open; a task_create on a taken id silently handed
+ * back a different id the model never learned. Both are now resolved (a
+ * unique prefix lands on its task) or refused (taken id, unknown or ambiguous
+ * prefix) — never silently redirected.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
@@ -47,21 +50,43 @@ describe("task_create — model-assigned ids", () => {
     expect(r.content).toContain("root task");
   });
 
-  it("falls back to a generated id when the requested id is taken", async () => {
+  it("refuses a taken id instead of silently swapping in another", async () => {
     await create.execute({ description: "first", id: "dup" });
     const r = await create.execute({ description: "second", id: "dup" });
-    expect(r.isError).toBeFalsy();
-    expect(r.metadata?.id).not.toBe("dup");
+    expect(r.isError).toBe(true);
+    expect(r.content).toMatch(/"dup" is already taken by "first" \(pending\)/);
+    expect((await list.execute({ all_sessions: true })).content).toMatch(/^1 tasks/);
   });
 });
 
-describe("task_update — upsert on unknown id", () => {
-  it("creates and sets status when the id was never created", async () => {
+describe("task_update — resolves the id, never creates", () => {
+  it("errors on an unknown id without creating anything", async () => {
     const r = await update.execute({ id: "preflight-1-1", status: "completed", output: "read sentinel" });
+    expect(r.isError).toBe(true);
+    expect(r.content).toMatch(/No task with id "preflight-1-1"/);
+    expect((await get.execute({ id: "preflight-1-1" })).isError).toBe(true);
+  });
+
+  it("the 8-character prefix task_list prints resolves to the generated id", async () => {
+    const c = await create.execute({ description: "generated" });
+    const full = String(c.metadata?.id);
+    const shown = (await list.execute({ all_sessions: true })).content.match(/\(([0-9a-f-]{8})\)/)?.[1];
+    expect(shown).toBe(full.slice(0, 8));
+    const r = await update.execute({ id: shown, status: "completed" });
     expect(r.isError).toBeFalsy();
-    expect(r.content).toContain("created");
-    const g = await get.execute({ id: "preflight-1-1" });
-    expect(g.content).toContain("completed");
+    expect(r.content).toBe(`Task ${full} updated — status: completed`);
+    expect((await list.execute({ all_sessions: true })).content).toMatch(/^1 tasks \(1 completed\)/);
+    expect((await get.execute({ id: shown })).content).toContain(`ID:          ${full}`);
+  });
+
+  it("an ambiguous prefix is refused and the candidates named", async () => {
+    await create.execute({ description: "a", id: "step-1" });
+    await create.execute({ description: "b", id: "step-10" });
+    const r = await update.execute({ id: "step-1", status: "completed" });
+    expect(r.isError).toBeFalsy(); // exact id wins over its own prefix
+    const amb = await update.execute({ id: "step", status: "completed" });
+    expect(amb.isError).toBe(true);
+    expect(amb.content).toMatch(/matches 2 tasks: step-1, step-10/);
   });
 
   it("still updates an existing task in place", async () => {
@@ -76,19 +101,6 @@ describe("task_update — upsert on unknown id", () => {
     expect(r.isError).toBe(true);
     const g = await get.execute({ id: "ghost" });
     expect(g.isError).toBe(true);
-  });
-
-  it("a full derailment sequence produces zero errors", async () => {
-    // The exact shape of grok's derailing calls: create with phantom parent,
-    // then update ids that create() never returned. None may error now. Run
-    // sequentially — the on-disk store is last-write-wins, not concurrent.
-    const results = [
-      await create.execute({ description: "preflight step 1", parent_id: "preflight-1" }),
-      await create.execute({ description: "preflight step 2", parent_id: "preflight-1" }),
-      await update.execute({ id: "preflight-1-1", status: "completed", output: "read sentinel, got token" }),
-      await update.execute({ id: "preflight-1-2", status: "completed", output: "wrote echo" }),
-    ];
-    expect(results.every((r) => !r.isError)).toBe(true);
   });
 });
 

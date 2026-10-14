@@ -7,15 +7,20 @@ import { resolveAgentPath } from "../workspace/paths.js";
 import { openValidatedRead, readValidatedFile } from "../security/layer/index.js";
 import { ALLOWED_MIME } from "./shared/image-acquire.js";
 import { detectMime } from "./shared/image-binary-meta.js";
+import { wrapExternalContent } from "../sanitize.js";
 
 const logger = createLogger("tools.vision");
+
+// What the vision providers decode (jpeg/png/gif/webp); the byte sniff below
+// (detectMime) knows the same set, so the two can't disagree on a file.
+const VIEWABLE_EXTS = ["jpg", "jpeg", "png", "gif", "webp"];
 
 export const viewImageTool: ToolDefinition = {
   name: "view_image",
   description:
     "View/analyze a local image file. Reads the image from disk and returns it for visual analysis. " +
     "Use this when the user asks you to look at, review, or analyze an image file on their computer. " +
-    "Supports: jpg, jpeg, png, gif, webp, bmp.",
+    `Supports: ${VIEWABLE_EXTS.join(", ")} (bmp and other formats are not accepted by the vision models — convert first).`,
   parameters: {
     type: "object",
     properties: {
@@ -31,8 +36,7 @@ export const viewImageTool: ToolDefinition = {
     if (!existsSync(filePath)) return { content: `File not found: ${filePath}`, isError: true };
 
     const ext = filePath.split(".").pop()?.toLowerCase() || "";
-    const imageExts = new Set(["jpg", "jpeg", "png", "gif", "webp", "bmp"]);
-    if (!imageExts.has(ext)) return { content: `Not an image file: .${ext}`, isError: true };
+    if (!VIEWABLE_EXTS.includes(ext)) return { content: `Not a viewable image file: .${ext} (supported: ${VIEWABLE_EXTS.join(", ")})`, isError: true };
 
     try {
       // Read the VALIDATED canonical inode (realpath + O_NOFOLLOW leaf) — closes
@@ -203,6 +207,7 @@ export const cameraCaptureTool: ToolDefinition = {
   description:
     "Take a photo from the webcam. Returns the image for visual analysis. " +
     "Use this when the user asks you to see them, take a photo, or use the camera. " +
+    "Windows only (captures through ffmpeg's DirectShow input) — refused on macOS and Linux. " +
     "On WhatsApp/Telegram the captured photo is delivered to the user automatically — do NOT also call send_image for it.",
   parameters: {
     type: "object",
@@ -263,7 +268,8 @@ export const ocrTool: ToolDefinition = {
         result = await recognizeText(canonicalPath, { language: args.language ? String(args.language) : undefined });
       }
       if (!result.text) return { content: "No text detected in image.", isError: false };
-      return { content: `OCR Result (${result.processingMs}ms, lang=${result.language}):\n\n${result.text}` };
+      // Text read off an image is the image's author talking, not the user.
+      return { content: `OCR Result (${result.processingMs}ms, lang=${result.language}):\n\n${wrapExternalContent(result.text, "ocr", { file: canonicalPath })}` };
     } catch (e) {
       return { content: `OCR failed: ${(e as Error).message}`, isError: true };
     }

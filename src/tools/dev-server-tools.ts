@@ -57,7 +57,7 @@ export const appServeBackendTool: ToolDefinition = {
       app_id: { type: "string", description: "The app's directory name (workspace/apps/<app_id>)." },
       command: { type: "string", description: "Command that starts the backend, e.g. 'npm install && npm run dev' or 'node server.js'." },
       port: { type: "number", description: "The localhost port the backend listens on." },
-      cwd: { type: "string", description: "Working directory for the command. Defaults to workspace/apps/<app_id>/server." },
+      cwd: { type: "string", description: "Working directory for the command. Defaults to the app root, workspace/apps/<app_id> — a backend in a subfolder is reached by the command itself (e.g. 'cd server && npm run dev')." },
     },
     required: ["app_id", "command", "port"],
   },

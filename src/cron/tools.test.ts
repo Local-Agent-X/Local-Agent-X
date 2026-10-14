@@ -50,6 +50,20 @@ describe("mission_schedule_create", () => {
     expect(plain.isError).toBeFalsy();
     expect(cron.list().find((j) => j.name === "plain")?.prompt).toBe("q");
   });
+
+  it("re-creating by name applies a given timezone and keeps the existing one when none is given", async () => {
+    const r = await run("mission_schedule_create", { name: "brief", schedule: "0 9 * * *", prompt: "p", timezone: "America/New_York" });
+    expect(r.content).toContain("(America/New_York)");
+    const moved = await run("mission_schedule_create", { name: "brief", schedule: "0 9 * * *", prompt: "p", timezone: "Europe/London" });
+    expect(moved.isError).toBeFalsy();
+    expect(moved.content).toContain("(Europe/London)");
+    expect(cron.list()).toHaveLength(1);
+    expect(cron.list()[0].tz).toBe("Europe/London");
+
+    const kept = await run("mission_schedule_create", { name: "brief", schedule: "0 10 * * *", prompt: "p" });
+    expect(kept.content).toContain("(Europe/London)");
+    expect(cron.list()[0]).toMatchObject({ schedule: "0 10 * * *", tz: "Europe/London" });
+  });
 });
 
 describe("mission_schedule_update", () => {

@@ -66,7 +66,10 @@ beforeAll(() => {
     enableShell: true,
     enableHttp: true,
     enableBrowser: true,
-  } as unknown as LAXConfig); // partial — only the three kill-switch flags are read here
+    // sql_* resolve a relative database path against the workspace, as the
+    // file tools do, so the runtime config needs the root the layer confines to.
+    workspace: WORKSPACE,
+  } as unknown as LAXConfig); // partial — the kill-switch flags plus the workspace root
 });
 
 afterAll(() => {

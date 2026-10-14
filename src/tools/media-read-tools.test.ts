@@ -109,13 +109,30 @@ describe("transcribe_media", () => {
     expect(res.content).toMatch(/EXTERNAL/);
   });
 
-  it("tells the caller how to continue a recording that ran past the cap", async () => {
+  it("prints the end_at the description says to pass back, and how to continue past the cap", async () => {
     transcribed.mockResolvedValueOnce({
       windows: [{ startSec: 0, text: "part one" }],
-      durationSec: 7200, startSec: 0, endSec: 1800, hasMore: true,
+      durationSec: 7200, startSec: 0, endSec: 1800.6, hasMore: true,
     });
     const res = await transcribeMediaTool.execute({ path: fixture("long.mp3") }, {} as never);
-    expect(res.content).toContain("start_at=1800");
+    expect(res.content).toContain("(start_at=0, end_at=1800)");
+    expect(res.content).toContain("start_at=1800 for the rest");
+    expect(res.metadata).toEqual({ start_at: 0, end_at: 1800, has_more: true });
+  });
+
+  it("resolves the path with the session the gate used", async () => {
+    transcribed.mockResolvedValueOnce({ windows: [{ startSec: 0, text: "hi" }], durationSec: 1, startSec: 0, endSec: 1, hasMore: false });
+    const { setSessionWorkRoot, clearSessionWorkRoot } = await import("../workspace/paths.js");
+    const path = fixture("rooted.mp3");
+    const root = path.slice(0, path.lastIndexOf("rooted.mp3") - 1);
+    setSessionWorkRoot("media-session", root);
+    try {
+      const res = await transcribeMediaTool.execute({ path: "rooted.mp3", _sessionId: "media-session" }, {} as never);
+      expect(res.isError).toBeFalsy();
+      expect(String(transcribed.mock.calls.at(-1)![0]).endsWith("rooted.mp3")).toBe(true);
+    } finally {
+      clearSessionWorkRoot("media-session");
+    }
   });
 
   it("forwards start_at to the engine", async () => {

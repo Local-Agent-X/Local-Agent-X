@@ -3,7 +3,10 @@ import { dirname } from "node:path";
 import { mkdir } from "node:fs/promises";
 import * as docx from "docx";
 import mammoth from "mammoth";
+import JSZip from "jszip";
 import type { ToolDefinition, ToolResult } from "../types.js";
+import { wrapExternalContent } from "../sanitize.js";
+import { packDocx, replaceTextInDocx } from "./shared/docx-edit.js";
 import { acquireImages, imageAltText, IMAGES_PARAM_SCHEMA, type AcquiredImage, type ImageSpec } from "./shared/image-acquire.js";
 import { verifyWriteLanded } from "./verify.js";
 // Resolve caller paths the SAME way SecurityLayer's file-access gate does
@@ -220,17 +223,26 @@ const documentRead: ToolDefinition = {
       const result = await mammoth.extractRawText({ buffer: readValidatedFile(filePath) });
       const text = result.value.trim();
       if (!text) return ok("(document is empty)");
-      return ok(text, { characters: text.length, words: text.split(/\s+/).length });
+      // The document's text is what its author wrote, not what the user said.
+      return ok(wrapExternalContent(text, "document.read", { file: filePath }), { characters: text.length, words: text.split(/\s+/).length });
     } catch (e: unknown) {
       return err(`Failed to read document: ${(e as Error).message}`);
     }
   },
 };
 
+const MERGE_NOTE = " A match that spanned several formatting runs merged that paragraph's runs into one (its inline bold/italic flattened; the paragraph style and everything else are intact).";
+
+function mergeNote(merged: number): string {
+  return merged > 0 ? MERGE_NOTE : "";
+}
+
 const documentEdit: ToolDefinition = {
   name: "document_edit",
   description:
-    "Find and replace text in a Word .docx file. Reads the document, performs replacements, and recreates it.",
+    "Find and replace text in a Word .docx file IN PLACE — styles, images, tables, headers and footers are kept. " +
+    "Matching is exact and case-sensitive. A match inside one formatting run keeps that run's formatting; a match split across " +
+    "runs merges that paragraph's runs into one (its inline bold/italic flattens), so prefer short exact fragments.",
   parameters: {
     type: "object",
     properties: {
@@ -248,25 +260,15 @@ const documentEdit: ToolDefinition = {
 
       // Read the VALIDATED canonical inode (realpath + O_NOFOLLOW leaf) so a
       // symlink swap after the gate (R4-19) is rejected rather than read.
-      const result = await mammoth.extractRawText({ buffer: readValidatedFile(filePath) });
-      const original = result.value;
+      const zip = await JSZip.loadAsync(readValidatedFile(filePath));
+      const { replacements, mergedParagraphs } = await replaceTextInDocx(zip, [{ find, replace }]);
+      if (replacements === 0) return ok(`No occurrences of "${find}" found in ${filePath}.`);
 
-      const escaped = find.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const re = new RegExp(escaped, "g");
-      const matches = original.match(re);
-      const count = matches ? matches.length : 0;
-
-      if (count === 0) return ok(`No occurrences of "${find}" found in ${filePath}.`);
-
-      const updated = original.replace(re, replace);
-      const doc = buildDocument(updated);
-      const buffer = await Packer.toBuffer(doc);
-      await writeFile(filePath, buffer);
-
+      await writeFile(filePath, await packDocx(zip));
       const verified = verifyWriteLanded(filePath, { minBytes: 1000 });
       if (!verified.ok) return err(`Failed to edit document: ${verified.reason}`);
 
-      return ok(`Replaced ${count} occurrence(s) of "${find}" with "${replace}" in ${filePath}.`);
+      return ok(`Replaced ${replacements} occurrence(s) of "${find}" with "${replace}" in ${filePath}.${mergeNote(mergedParagraphs)}`);
     } catch (e: unknown) {
       return err(`Failed to edit document: ${(e as Error).message}`);
     }
@@ -276,10 +278,12 @@ const documentEdit: ToolDefinition = {
 const documentTemplate: ToolDefinition = {
   name: "document_template",
   description:
-    "Fill a Word .docx template by replacing {{placeholders}} with values. " +
-    "The template file must contain {{key}} markers. Pass variables as a JSON object string. " +
+    "Fill a Word .docx template by replacing {{placeholders}} with values IN PLACE — the template's layout, styles, " +
+    "images, tables, headers and footers are kept in the output. " +
+    "The template file must contain {{key}} markers (a marker Word split across formatting runs is still found). Pass variables as a JSON object string. " +
     'Example: template has "Dear {{name}}, your invoice {{invoice_id}} is due {{date}}." ' +
     'Call with variables: \'{"name":"Alice","invoice_id":"INV-001","date":"2026-04-15"}\' ' +
+    "Images cannot be added here — put them in the template, or build a new document with the create action. " +
     SOURCES_DOC_SENTENCE,
   parameters: {
     type: "object",
@@ -290,7 +294,6 @@ const documentTemplate: ToolDefinition = {
         type: "string",
         description: 'JSON string of key:value pairs. Keys must match {{placeholders}} in template. Example: \'{"name":"Alice","date":"2026-01-01"}\'',
       },
-      images: IMAGES_PARAM_SCHEMA,
       sources: SOURCES_PARAM_SCHEMA,
     },
     required: ["template_path", "output_path", "variables"],
@@ -307,33 +310,22 @@ const documentTemplate: ToolDefinition = {
         return err("variables must be a valid JSON object string");
       }
 
-      const { images: acquired, notes: imageNotes } = await acquireImages((args.images as ImageSpec[] | undefined) ?? []);
+      if (Array.isArray(args.images) && args.images.length > 0) {
+        return err("The template action fills the template in place and cannot add images — put them in the template, or build a new document with the create action.");
+      }
       // Read the VALIDATED canonical inode of the template (realpath +
       // O_NOFOLLOW leaf) so a symlink swap after the gate (R4-19) is rejected.
-      const result = await mammoth.extractRawText({ buffer: readValidatedFile(templatePath) });
-      let text = result.value;
-      let totalReplacements = 0;
-
-      for (const [key, value] of Object.entries(vars)) {
-        const placeholder = `{{${key}}}`;
-        const escaped = placeholder.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        const re = new RegExp(escaped, "g");
-        const matches = text.match(re);
-        totalReplacements += matches ? matches.length : 0;
-        text = text.replace(re, String(value));
-      }
+      const zip = await JSZip.loadAsync(readValidatedFile(templatePath));
+      const pairs = Object.entries(vars).map(([key, value]) => ({ find: `{{${key}}}`, replace: String(value) }));
+      const { replacements, mergedParagraphs } = await replaceTextInDocx(zip, pairs);
 
       await mkdir(dirname(outputPath), { recursive: true });
-      const doc = buildDocument(text, undefined, acquired);
-      const buffer = await Packer.toBuffer(doc);
-      await writeFile(outputPath, buffer);
+      await writeFile(outputPath, await packDocx(zip));
 
       const keys = Object.keys(vars).join(", ");
-      const imgSuffix = acquired.length ? ` Embedded ${acquired.length} image(s).` : "";
-      const notes = imageNotes.length ? `\nImage notes:\n${imageNotes.join("\n")}` : "";
       return ok(
         `Created ${outputPath} from template ${templatePath}. ` +
-          `Replaced ${totalReplacements} placeholder(s) for keys: ${keys}.${imgSuffix}${notes}`,
+          `Replaced ${replacements} placeholder(s) for keys: ${keys}.${mergeNote(mergedParagraphs)}`,
       );
     } catch (e: unknown) {
       return err(`Failed to apply template: ${(e as Error).message}`);
@@ -348,8 +340,8 @@ const documentTemplate: ToolDefinition = {
 export const documentTools: ToolDefinition[] = [
   collapseFamily({
     name: "document",
-    compactDescription: "Create, read, edit and template-fill Word .docx documents. actions: create, read, edit, template. THE only way to produce a .docx — never write one with the write tool, it is a binary container.",
-    intro: "Create, read, edit, and template-fill Word .docx documents. For advanced custom layouts beyond these actions, a Node build script may use docx directly — it's bundled, so `require('docx')` by bare name (never an absolute cwd/node_modules path).",
+    compactDescription: "Create, read, edit and template-fill Word .docx documents (edit and template work in place — formatting kept). THE only way to produce a .docx — never write one with the write tool, it is a binary container.",
+    intro: "Create, read, edit, and template-fill Word .docx documents (edit and template change the text in place; styles, images and tables are kept). For advanced custom layouts beyond these actions, a Node build script may use docx directly — it's bundled, so `require('docx')` by bare name (never an absolute cwd/node_modules path).",
     actions: {
       create: documentCreate,
       read: documentRead,
@@ -361,7 +353,7 @@ export const documentTools: ToolDefinition[] = [
       file_path: { type: "string", description: "(create/read/edit) Path to the .docx file" },
       title: { type: "string", description: "(create) Document title metadata" },
       content: { type: "string", description: "(create) Formatted text with \\n newlines. Use # for headings, - for bullets, **bold** for emphasis. Separate sections with blank lines (\\n\\n)." },
-      images: IMAGES_PARAM_SCHEMA,
+      images: { ...IMAGES_PARAM_SCHEMA, description: `(create) ${IMAGES_PARAM_SCHEMA.description}` },
       theme: THEME_PARAM_SCHEMA,
       find: { type: "string", description: "(edit) Text to find" },
       replace: { type: "string", description: "(edit) Replacement text" },

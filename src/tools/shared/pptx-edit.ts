@@ -26,7 +26,7 @@ export function escapeXml(s: string): string {
     .replace(/>/g, "&gt;");
 }
 
-function unescapeXml(s: string): string {
+export function unescapeXml(s: string): string {
   return s
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")

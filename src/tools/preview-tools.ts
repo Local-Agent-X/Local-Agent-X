@@ -4,6 +4,7 @@ import { resolveAgentPath as resolvePath } from "../workspace/paths.js";
 import { workspaceRoot } from "../config.js";
 import { evaluateFileAccess, loadFileAccessMode } from "../security/layer/index.js";
 import { docKind, extractStructure, renderThumbnail } from "./shared/office-preview.js";
+import { wrapExternalContent } from "../sanitize.js";
 
 /** The thumbnail lands beside the file, a write the dispatch gate cannot see
  *  (only `file_path` is declared, as a read), so it is judged here by the same
@@ -47,7 +48,8 @@ const previewDocument: ToolDefinition = {
         if (t.ok) { thumbnail = t.outPath; lines.push(`Thumbnail: ${t.outPath} — view_image it to confirm the layout.`); }
         else lines.push(`Thumbnail: ${t.reason}`);
       }
-      if (report.textPreview) lines.push("", "--- text preview ---", report.textPreview);
+      // The file's own text, whoever wrote it — a PDF the user received is not the user speaking.
+      if (report.textPreview) lines.push("", "--- text preview ---", wrapExternalContent(report.textPreview, "preview_document", { file: fp }));
 
       return { content: lines.join("\n"), metadata: { kind, flags: report.flags, thumbnail } };
     } catch (e) {

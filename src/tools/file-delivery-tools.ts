@@ -18,6 +18,7 @@ import type { ToolDefinition } from "../types.js";
 import { createLogger } from "../logger.js";
 import { openValidatedRead, readValidatedFile } from "../security/layer/index.js";
 import { getLaxDir } from "../lax-data-dir.js";
+import { sessionIdOf } from "../workspace/paths.js";
 import { resolveMediaPath } from "./shared/media-path.js";
 
 const logger = createLogger("tools.file-delivery");
@@ -72,7 +73,12 @@ export const sendFileTool: ToolDefinition = {
     required: ["path"],
   },
   async execute(args) {
-    const filePath = resolveMediaPath(String(args.path || ""));
+    let filePath: string;
+    try {
+      filePath = resolveMediaPath(String(args.path || ""), sessionIdOf(args));
+    } catch (e) {
+      return { content: (e as Error).message, isError: true };
+    }
     if (!existsSync(filePath)) return { content: `File not found: ${filePath}`, isError: true };
 
     const ext = filePath.split(".").pop()?.toLowerCase() || "";

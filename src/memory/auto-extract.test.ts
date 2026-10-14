@@ -54,6 +54,19 @@ const resolveFactSpy = vi.fn(
     return { op: "ADD" as const, reason: "new info" };
   },
 );
+const { infoLines } = vi.hoisted(() => ({ infoLines: [] as string[] }));
+// The real logger, with its info lines also recorded.
+vi.mock("../logger.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../logger.js")>();
+  return {
+    ...actual,
+    createLogger: (ns: string) => {
+      const real = actual.createLogger(ns);
+      return { ...real, info: (m: string, ...e: unknown[]) => { infoLines.push(String(m)); real.info(m, ...e); } };
+    },
+  };
+});
+
 vi.mock("./resolver.js", () => ({
   resolveFact: resolveFactSpy,
 }));
@@ -365,10 +378,15 @@ describe("autoExtractAndSave — Phase 2 write paths", () => {
     __paraphraseOf = (n, c) =>
       n.includes("likes dark mode") && c === "User prefers dark mode";
     __nextReturn = { preference_rule: "User likes dark mode" };
+    infoLines.length = 0;
+    const autoSavedLines = () => infoLines.filter((l) => l.includes("Auto-saved")).join("\n");
     await autoExtractAndSave(memory, "honestly I just like dark mode", "ok");
 
     expect(liveFactsWhere("kind = ?", "opinion")).toHaveLength(1);
     expect(liveFactsWhere("content = ?", "User likes dark mode")).toHaveLength(0);
+    // …and does not log a save that never happened (it did, on every refused
+    // or NOOP'd write — "Auto-saved ongoing state …" with nothing stored).
+    expect(autoSavedLines()).not.toContain("User likes dark mode");
     // The resolver was actually consulted on the second turn (proves the
     // retainSmart path ran, not a bare exact-match insert).
     expect(resolveFactSpy).toHaveBeenCalled();

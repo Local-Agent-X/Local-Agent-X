@@ -372,8 +372,10 @@ async function saveFactSmart(
       target: "memory:retain",
       promotion,
     });
-    await memory.retainSmart(gated, sourceFile, 0, { promotion });
-    return true;
+    // True only when a fact was stored: the resolver may NOOP or be refused,
+    // and the callers' "Auto-saved …" line read as a save that never happened.
+    const { facts } = await memory.retainSmart(gated, sourceFile, 0, { promotion });
+    return facts.length > 0;
   } catch (e) {
     logger.warn(`[memory] ${kind} write failed: ${(e as Error).message}`);
     return false;

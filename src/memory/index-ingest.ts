@@ -96,14 +96,18 @@ export async function indexChunksIdempotent(
     .prepare("SELECT id, content_hash, metadata FROM chunks WHERE path = ?")
     .all(virtualPath) as Array<{ id: number; content_hash: string | null; metadata: string | null }>;
 
+  // One row per distinct chunk: the first row with a hash is kept, any other
+  // row with the same hash is deleted. Keeping every row whose hash was still
+  // incoming let duplicates written by older indexers survive every re-index —
+  // 298 groups (449 extra rows) on one install, each hit shown twice (2026-10-13).
   const existingByHash = new Map<string, number>();
   for (const row of existing) {
-    if (row.content_hash) existingByHash.set(row.content_hash, row.id);
+    if (row.content_hash && !existingByHash.has(row.content_hash)) existingByHash.set(row.content_hash, row.id);
   }
   const incomingHashes = new Set(chunks.map((c) => c.hash));
 
   const toDelete = existing.filter(
-    (r) => !r.content_hash || !incomingHashes.has(r.content_hash)
+    (r) => !r.content_hash || !incomingHashes.has(r.content_hash) || existingByHash.get(r.content_hash) !== r.id
   );
   const toInsert = chunks.filter((c) => !existingByHash.has(c.hash));
 
@@ -111,7 +115,7 @@ export async function indexChunksIdempotent(
   // from its messages' rows), so an unchanged chunk still takes the current
   // metadata: re-dating a transcript must not need its text to change. Text,
   // embedding and clock stay as they are.
-  const metadataByHash = new Map(existing.filter((r) => r.content_hash).map((r) => [r.content_hash as string, r]));
+  const metadataByHash = new Map(existing.filter((r) => r.content_hash && existingByHash.get(r.content_hash) === r.id).map((r) => [r.content_hash as string, r]));
   const refresh = db.prepare("UPDATE chunks SET metadata = ?, session_id = ? WHERE id = ?");
   for (const c of chunks) {
     const row = metadataByHash.get(c.hash);

@@ -100,4 +100,21 @@ describe("one indexing path for a session", () => {
     expect(m).not.toHaveProperty("date_approx");
     expect(db.prepare("SELECT count(*) AS n FROM chunks WHERE path LIKE 'session-live/%'").get()).toEqual({ n: 0 });
   });
+
+  it("re-indexing collapses identical rows an older indexer left for the file to one", async () => {
+    const path = writeSession([
+      msg("user", "create a dragon ball theme calculator", "um-3", "2026-10-07T17:00:00.000Z"),
+      msg("assistant", "Building it now.", "am-3", "2026-10-07T17:00:05.000Z"),
+    ]);
+    await memory.indexChunksIdempotent(buildSessionChunks(path, "chat-a"), path, "session");
+    const db = memory["db"] as InstanceType<typeof import("better-sqlite3")>;
+    // An older indexer wrote the same chunk again (298 such groups on one install).
+    db.exec(`INSERT INTO chunks (path, source, start_line, end_line, text, hash, content_hash, metadata, session_id, updated_at)
+      SELECT path, source, start_line, end_line, text, hash, content_hash, metadata, session_id, updated_at FROM chunks WHERE path = '${path}'`);
+    const count = () => (db.prepare("SELECT count(*) AS n FROM chunks WHERE path = ?").get(path) as { n: number }).n;
+    expect(count()).toBe(2);
+    const r = await memory.indexChunksIdempotent(buildSessionChunks(path, "chat-a"), path, "session");
+    expect(r).toMatchObject({ added: 0, removed: 1 });
+    expect(count()).toBe(1);
+  });
 });

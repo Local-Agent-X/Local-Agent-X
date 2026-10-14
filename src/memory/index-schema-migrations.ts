@@ -13,7 +13,7 @@ import { backfillEntityLinks } from "./entity-derive.js";
 import { createLogger } from "../logger.js";
 const logger = createLogger("memory.index-schema");
 
-export const CURRENT_SCHEMA_VERSION = 17;
+export const CURRENT_SCHEMA_VERSION = 18;
 
 function backfillValidChunkSessionIds(db: InstanceType<typeof Database>): void {
   const rows = db
@@ -375,12 +375,15 @@ export function migrateSchema(
       try { db.exec("DROP TABLE IF EXISTS facts_fts"); } catch {}
     }
 
-    if (fromVersion < 17) {
-      // v17: session parsing dropped the harness tag (chunking.ts
-      // parseJsonlSession), so every kept nudge (since 2026-09-15) and carried-
-      // recall row (since 2026-10-13) was indexed as "[user] …" — recalled
-      // memory searchable as something the user said. Re-chunk each session
-      // once through the fixed parser, as v15 did.
+    if (fromVersion < 18) {
+      // v17/v18: re-chunk every session once through the current indexer.
+      // v17 — parsing dropped the harness tag (chunking.ts parseJsonlSession),
+      // so kept nudges (since 2026-09-15) and carried-recall rows (since
+      // 2026-10-13) were indexed as "[user] …". v18 — the idempotent indexer
+      // now keeps one row per distinct chunk (index-ingest.ts); duplicates
+      // older indexers wrote survived every re-index before it, v17's
+      // included (298 groups on one install). Its delete path also removes
+      // their FTS and vector rows. A v16 install re-chunks once.
       try { db.exec(`UPDATE files SET hash = '' WHERE source = 'session'`); } catch {}
     }
 

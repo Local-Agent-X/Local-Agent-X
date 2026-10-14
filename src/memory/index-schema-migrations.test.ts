@@ -73,7 +73,7 @@ describe("schema v12 fact provenance migration", () => {
       const rows = db.prepare("SELECT provenance FROM facts ORDER BY id").all() as Array<{ provenance: string | null }>;
       expect(rows).toEqual([{ provenance: null }, { provenance: null }]);
       expect(schemaVersion(db)).toBe(CURRENT_SCHEMA_VERSION);
-      expect(CURRENT_SCHEMA_VERSION).toBe(17);
+      expect(CURRENT_SCHEMA_VERSION).toBe(18);
     } finally {
       db.close();
     }
@@ -242,7 +242,7 @@ describe("schema v16 stemmed keyword indexes", () => {
   });
 });
 
-describe("schema v17 re-chunks sessions indexed with harness rows as user text", () => {
+describe("schema v17/v18 re-chunks sessions (harness rows as user text; duplicate rows)", () => {
   it("blanks every session file's hash so the next sync re-chunks it; other sources keep theirs", () => {
     const db = new Database(":memory:");
     initSchema(db);
@@ -253,5 +253,14 @@ describe("schema v17 re-chunks sessions indexed with harness rows as user text",
     const hash = (p: string) => (db.prepare("SELECT hash FROM files WHERE path = ?").get(p) as { hash: string }).hash;
     expect(hash("sessions/chat-a.jsonl")).toBe("");
     expect(hash("bank/entities/odalys.md")).toBe("def");
+  });
+
+  it("an install already at v17 re-chunks once more for v18", () => {
+    const db = new Database(":memory:");
+    initSchema(db);
+    db.exec(`UPDATE meta SET value = '17' WHERE key = 'schema_version'`);
+    db.prepare("INSERT INTO files (path, source, hash, mtime, size) VALUES ('sessions/chat-b.jsonl', 'session', 'abc', 0, 0)").run();
+    initSchema(db);
+    expect((db.prepare("SELECT hash FROM files WHERE path = 'sessions/chat-b.jsonl'").get() as { hash: string }).hash).toBe("");
   });
 });

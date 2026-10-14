@@ -247,16 +247,12 @@ export function killSession(session: ProcessSession): void {
   else session.child?.kill("SIGKILL");
 }
 
-export function killWinPid(pid: number): void {
-  killProcessGroup(pid);
-}
-
 /**
  * Find every PID currently listening on a TCP port, cross-platform and
  * self-contained (the voice-setup pidOnPort is Windows-only and lives in a
  * route module — coupling here would be wrong). Returns integer PIDs; on any
- * failure returns []. Used by process_restart to reclaim a port held by a
- * stale/orphaned process before starting fresh.
+ * failure returns []. Used by reclaimPort (dev-server-readiness.ts) to free a
+ * port held by a stale/orphaned process before starting fresh.
  */
 export function pidsOnPort(port: number): number[] {
   if (!Number.isInteger(port) || port <= 0) return [];

@@ -50,9 +50,9 @@ export function killProcessTree(
  * if the group kill throws (the pid wasn't a group leader). On Windows
  * `taskkill /F /T` walks the tree the same way. Never throws.
  *
- * The ONE home for detached-spawn tree-killing: process-session
- * (killSession/killWinPid) and the shell tool's abort handler all route here so
- * the platform logic can't drift between them.
+ * The ONE home for detached-spawn tree-killing: process-session (killSession)
+ * and the shell tool's abort handler both route here so the platform logic
+ * can't drift between them.
  */
 export function killProcessGroup(pid: number, fallbackChild?: ChildProcess): void {
   try {

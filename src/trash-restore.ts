@@ -9,10 +9,14 @@
  * The bytes were recoverable the whole time; nothing on our side could reach
  * them.
  *
- * The journal (trash-journal.ts) records the original path and the tier at
- * delete time, which leaves only one platform-specific problem: finding the
- * file inside the OS trash, where each platform hides it differently.
- *   - macOS: ~/.Trash/<name>, a flat directory that keeps the file name.
+ * The journal (trash-journal.ts) records the original path, the tier and,
+ * whenever the delete side could see it, the exact in-trash path — then a
+ * restore is a move back. Only a line without one (the desktop bridge, older
+ * journals) leaves the platform-specific problem of finding the file inside
+ * the OS trash, where each platform hides it differently.
+ *   - macOS: ~/.Trash/<name>, a flat directory that keeps the file name
+ *     (Finder adds a numeric suffix on collision; our own direct move adds
+ *     `.<timestamp>`).
  *   - Linux: the freedesktop spec already writes the original path into a
  *     .trashinfo sidecar, so the lookup is exact.
  *   - Windows: the bin renames the file to $R<random><ext> beside an $I file
@@ -59,14 +63,22 @@ function putBack(src: string, target: string, tier: TrashTier): RestoreResult {
 }
 
 /** macOS puts the file in ~/.Trash under its own name, adding a numeric
- *  suffix on collision, so match the name and prefer the newest. */
+ *  suffix on collision, and our own direct move adds `.<timestamp>`; match
+ *  either and prefer the newest. The listing is TCC-protected, so a refused
+ *  read is "not found", never a throw. */
 function findInMacTrash(original: string): string | null {
   const dir = join(homedir(), ".Trash");
-  if (!existsSync(dir)) return null;
   const base = basename(original);
   const stem = base.slice(0, base.length - extname(base).length);
   const ext = extname(base);
-  const candidates = readdirSync(dir).filter((n) => n === base || (n.startsWith(stem) && n.endsWith(ext)));
+  let names: string[];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return null;
+  }
+  const candidates = names.filter((n) =>
+    n === base || (n.startsWith(stem) && n.endsWith(ext)) || (n.startsWith(`${base}.`) && /^\d+$/.test(n.slice(base.length + 1))));
   let newest: { path: string; at: number } | null = null;
   for (const name of candidates) {
     const p = join(dir, name);
@@ -84,8 +96,13 @@ function findInFreedesktopTrash(original: string): string | null {
   const root = join(homedir(), ".local", "share", "Trash");
   const info = join(root, "info");
   const files = join(root, "files");
-  if (!existsSync(info)) return null;
-  for (const name of readdirSync(info)) {
+  let names: string[];
+  try {
+    names = readdirSync(info);
+  } catch {
+    return null;
+  }
+  for (const name of names) {
     if (!name.endsWith(".trashinfo")) continue;
     try {
       const body = readFileSync(join(info, name), "utf8");
@@ -169,9 +186,23 @@ function restoreFromWindowsBin(original: string): RestoreResult {
   }
 }
 
-/** Put a file back from whichever OS trash took it. */
-export function restoreFromOsTrash(original: string): RestoreResult {
+/** The `$I` sidecar the Windows bin keeps beside a `$R` file: once the bytes
+ *  are moved out by hand it would describe a file that is no longer there. */
+function dropRecycleSidecar(dest: string): void {
+  const name = basename(dest);
+  if (name.startsWith("$R")) rmSync(join(dirname(dest), `$I${name.slice(2)}`), { force: true });
+}
+
+/** Put a file back from whichever OS trash took it. `dest` is the in-trash
+ *  path the journal recorded; when it still exists the restore is a plain move
+ *  back, and the per-platform search runs only for a line without one. */
+export function restoreFromOsTrash(original: string, dest: string | null = null): RestoreResult {
   if (existsSync(original)) return { error: `Nothing to restore: ${original} already exists.` };
+  if (dest && existsSync(dest)) {
+    const out = putBack(dest, original, "os");
+    if ("restored" in out) dropRecycleSidecar(dest);
+    return out;
+  }
   if (process.platform === "win32") return restoreFromWindowsBin(original);
   const found = process.platform === "darwin" ? findInMacTrash(original) : findInFreedesktopTrash(original);
   if (!found) {
@@ -216,7 +247,7 @@ export function restoreDeleted(ref: string, opts: { sessionId?: string } = {}): 
       }
       return putBack(entry.dest, entry.original, "lax");
     case "os":
-      return restoreFromOsTrash(entry.original);
+      return restoreFromOsTrash(entry.original, entry.dest);
     default:
       return { error: `${entry.original} was snapshotted as a config record, not a file — restore it through the tool that deleted it.` };
   }

@@ -28,21 +28,19 @@ export function restoreRef(args: Record<string, unknown>): string {
 }
 
 /**
- * restore_file — the inverse leg of delete_file's task-trash route.
+ * restore_file — the inverse leg of every delete_file route.
  *
- * delete_file moves an AGENT-CREATED file (task-artifact registry hit) into
- * the session's task-trash scope instead of the OS Trash, and its result text
- * promises `restore_file({ path: "<absolute original path>" })`. This tool
- * keeps that promise: it calls restoreFromTaskTrash (safe-delete.ts) for the
- * trusted session and surfaces its { restored } / { error } contract as the
- * ok/err envelope — the error strings are safe-delete's own, already written
- * to be model-surfaceable.
+ * delete_file's result text promises `restore_file({ path: "<absolute
+ * original path>" })`. This tool keeps that promise: it calls restoreDeleted
+ * (trash-restore.ts), which reads the trash journal to find which tier holds
+ * the bytes — the OS bin, the app trash or the session's task trash — and
+ * surfaces its { restored } / { error } contract as the ok/err envelope; the
+ * error strings are already written to be model-surfaceable.
  *
- * The ABSOLUTE original path is the primary contract on purpose: the policy
- * table write-gates both args, and in confined file-access modes a bare
- * basename resolves OUTSIDE the workspace (project-root anchoring) and is
- * blocked before the restore ever runs. Bare basename / in-trash-name refs
- * remain a documented convenience for unrestricted mode only.
+ * The ABSOLUTE original path is the primary contract: the policy table
+ * write-gates both args, and that spelling is what the gate checks. A bare
+ * basename is gated as a workspace path and restores the most recent journal
+ * match for that name.
  *
  * On success the restored path is RE-ENROLLED in the task-artifact registry:
  * delete_file un-enrolled it when the bytes left the world, so the shell
@@ -53,17 +51,15 @@ export const restoreFileTool: ToolDefinition = {
   name: "restore_file",
   compactDescription: "Bring back a file or folder that delete_file moved to the trash. Pass `path` as the absolute original path printed in delete_file's result.",
   description:
-    "Restore a file that delete_file moved to the task trash (agent-created files deleted during THIS task), byte-identical, back to the path it was deleted from. " +
-    "Pass `path` as the ABSOLUTE original path exactly as printed in delete_file's result — that spelling works in every file-access mode. (A bare basename or in-trash name also matches, but only in unrestricted mode: confined modes resolve a bare name outside the workspace and block the call before the restore runs.) " +
-    "When the same name was deleted more than once, the most recent delete wins. " +
+    "Bring back a file or folder that delete_file moved to the trash, byte-identical, to the path it was deleted from. " +
+    "delete_file records where every deletion went, and this restores from whichever trash holds it: the OS Recycle Bin / Trash (the user's own files), Local Agent X's own trash (a whole folder, or a file the Recycle Bin would not hold — kept 30 days), or the task trash (a file this task's agent created — restorable until the task ends). " +
+    "Pass `path` as the ABSOLUTE original path exactly as printed in delete_file's result — that spelling works in every file-access mode. A bare basename also works and restores the MOST RECENT deletion of that name; an in-trash name matches a task-trash entry. " +
     "Refuses to overwrite a file that now exists at the original path — move or delete that file first, then restore again. " +
-    "`destination` is ONLY for recovered entries (a restore error saying the original path was lost when the manifest was recovered): pass the full ABSOLUTE path to restore to, and it MUST keep the trashed file's basename — a recovered entry only matches a destination sharing that basename, so a different file name matches nothing. " +
-    "Works for the user's own files too: delete_file records where every deletion went, so a file that went to the OS Recycle Bin / Trash is brought back from there. An agent-created file is only restorable until its task's trash scope closes. " +
-    "Works for a whole FOLDER delete_file removed, too: pass the folder's original path and the folder comes back with everything in it (kept 30 days).",
+    "`destination` is ONLY for recovered entries (a restore error saying the original path was lost when the manifest was recovered): pass the full ABSOLUTE path to restore to, and it MUST keep the trashed file's basename — a recovered entry only matches a destination sharing that basename, so a different file name matches nothing.",
   parameters: {
     type: "object",
     properties: {
-      path: { type: "string", description: "The deleted file's ABSOLUTE original path (from delete_file's result). Bare basename / in-trash name work in unrestricted mode only." },
+      path: { type: "string", description: "The deleted file's ABSOLUTE original path (from delete_file's result), or a bare basename (restores the most recent deletion of that name)." },
       destination: { type: "string", description: "Recovered entries only: absolute path to restore to (must keep the trashed file's basename)" },
     },
     required: ["path"],

@@ -26,7 +26,7 @@ const logger = createLogger("trash-journal");
 
 /** Which tier holds the bytes, i.e. how a restore has to get them back. */
 export type TrashTier =
-  | "os"      // the OS Recycle Bin / Trash — per-platform lookup, no dest path of ours
+  | "os"      // the OS Recycle Bin / Trash — `dest` when the delete side saw the in-trash path, else a per-platform lookup
   | "lax"     // ~/.lax/trash/<date>/ — `dest` is the file, a plain move restores it
   | "task"    // ~/.lax/trash/task/<sessionId>/ — restoreFromTaskTrash owns it
   | "record"; // a JSON snapshot of a config object (project, agent), not a file
@@ -36,7 +36,9 @@ export interface TrashJournalEntry {
   /** Absolute original path for a file; the record's name for a snapshot. */
   original: string;
   tier: TrashTier;
-  /** Where the bytes are now. Null for `os`: the bin renames what it takes. */
+  /** Where the bytes are now. For `os` it is the in-trash path when the delete
+   *  side chose it (the macOS direct move) or could see it (the Windows `$R`
+   *  file); null when only the bin knows (the desktop bridge, older lines). */
   dest: string | null;
   kind: "file" | "record";
   sessionId?: string;

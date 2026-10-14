@@ -3,8 +3,8 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { killProcessGroup, killProcessGroupSync } from "./process-tree-kill.js";
 
 // Regression guard for the load-bearing platform logic in killProcessGroup.
-// The three detached-spawn sites (process-session killSession + killWinPid, the
-// shell tool's abort handler) rely on it killing the whole process GROUP. A
+// The detached-spawn sites (process-session killSession, the shell tool's
+// abort handler) rely on it killing the whole process GROUP. A
 // regression to a plain single-pid kill would silently ORPHAN child processes
 // (shells, dev servers) — the exact silent break this test exists to catch.
 //

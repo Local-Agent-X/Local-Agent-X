@@ -300,9 +300,10 @@ export const writeTool: ToolDefinition = {
 export const deleteFileTool: ToolDefinition = {
   name: "delete_file",
   description:
-    "Delete a file, or a whole folder the user asked to remove — moved to the trash, restorable with restore_file (path-checked by SecurityLayer). " +
-    "A folder delete always asks the user first and moves the entire folder in one call. Preferred over `bash rm`, which deletes permanently. To remove a few named files, call this once per file.",
-  compactDescription: "Delete a file or a whole folder to the trash, restorable with restore_file. Use this, not `bash rm` (permanent). A folder delete asks the user first.",
+    "Delete a file, or a whole folder — moved to the trash, restorable with restore_file (path-checked by SecurityLayer). " +
+    "A folder delete moves the entire folder in one call: under the default Power profile (and Developer/Autonomous) it runs without a confirmation and the user is shown an Undo; under Normal the user is asked first; under Safe it is refused; with no one watching (an unattended run) it is refused. " +
+    "Preferred over `bash rm`, which deletes permanently. To remove a few named files, call this once per file.",
+  compactDescription: "Delete a file or a whole folder to the trash, restorable with restore_file. Use this, not `bash rm` (permanent). A folder delete runs with an Undo under Power; stricter profiles ask first.",
   parameters: {
     type: "object",
     properties: {

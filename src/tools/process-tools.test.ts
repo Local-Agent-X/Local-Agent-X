@@ -54,6 +54,21 @@ vi.mock("../sandbox/win-cage-grants.js", async (importOriginal) => {
 });
 // A guarded start asks for the egress proxy's route; these tests start no proxy.
 vi.mock("./shell-proxy-env.js", () => ({ shellProxyEnv: async () => ({}), shellProxyEnvSync: () => ({}) }));
+// The port: who holds it, and what the shared reclaim reports killing. Nothing
+// here binds a real port.
+const port = vi.hoisted(() => ({
+  holders: [] as number[],
+  reclaimed: [] as number[],
+  reclaimCalls: [] as number[],
+}));
+vi.mock("./process-session.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./process-session.js")>()),
+  pidsOnPort: () => port.holders,
+}));
+vi.mock("./dev-server-readiness.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./dev-server-readiness.js")>()),
+  reclaimPort: (p: number) => { port.reclaimCalls.push(p); port.holders = port.holders.filter((pid) => !port.reclaimed.includes(pid)); return port.reclaimed; },
+}));
 
 import {
   processStartTool,
@@ -186,6 +201,38 @@ describe("process_restart", () => {
   it("errors on an unknown session_id", async () => {
     const res = await processRestartTool.execute({ session_id: "px-deadbeef" });
     expect(res.isError).toBe(true);
+  });
+});
+
+// process_restart's port reclaim is the dev-server lifecycle's reclaimPort —
+// the one that spares this process and the processes LAX runs for itself. It
+// used to kill every holder, the LAX server included.
+describe("process_restart port reclaim", () => {
+  beforeEach(() => {
+    port.holders = [];
+    port.reclaimed = [];
+    port.reclaimCalls = [];
+  });
+
+  it("frees the port through the shared reclaim, then starts", async () => {
+    port.holders = [4242];
+    port.reclaimed = [4242];
+    const res = await processRestartTool.execute({ command: FOREVER, port: 5180 });
+    if (res.session_id) spawned.add(res.session_id);
+    expect(port.reclaimCalls).toEqual([5180]);
+    expect(res.isError).toBeFalsy();
+    expect(await pollRunning(sessionIdOf(res), true)).toBe(true);
+  }, 20_000);
+
+  it("a holder the reclaim spares (LAX itself, its browser) leaves the port held: nothing is started and the reason names it", async () => {
+    port.holders = [process.pid];
+    port.reclaimed = [];
+    const before = SESSIONS.size;
+    const res = await processRestartTool.execute({ command: FOREVER, port: 5180 });
+    expect(port.reclaimCalls).toEqual([5180]);
+    expect(res.isError).toBe(true);
+    expect(String(res.content)).toMatch(new RegExp(`port 5180 is still held by pid\\(s\\) ${process.pid}\\. A holder that is Local Agent X itself`));
+    expect(SESSIONS.size).toBe(before);
   });
 });
 

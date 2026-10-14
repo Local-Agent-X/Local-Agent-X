@@ -39,15 +39,25 @@ describe("read_console / read_network handlers", () => {
     expect(r.content).toContain("UNTRUSTED");
   });
 
-  it("handleReadResponse without a url returns a guidance message (no backend call)", async () => {
+  it("handleReadResponse without a url is an error naming the missing arg (no backend call)", async () => {
     const manager = fakeManager({
       readResponse: async () => {
         throw new Error("backend must not be called without a url");
       },
     });
-    const r = await handleReadResponse(manager, { action: "read_response" });
-    expect(r.content).toContain("requires a 'url'");
-    expect(r.content).not.toContain("UNTRUSTED");
+    for (const args of [{ action: "read_response" }, { action: "read_response", url: "   " }]) {
+      const r = await handleReadResponse(manager, args);
+      expect(r.isError).toBe(true);
+      expect(r.content).toContain("'url' parameter is required for read_response");
+      expect(r.content).not.toContain("UNTRUSTED");
+    }
+  });
+
+  it("the action text says a re-fetch happens when the body is not buffered, under the web-access policy", async () => {
+    const { BROWSER_TOOL_DESCRIPTION } = await import("./description.js");
+    const line = BROWSER_TOOL_DESCRIPTION.split("\n").find((l) => l.startsWith("- read_response:")) ?? "";
+    expect(line).toMatch(/no longer buffered it is RE-FETCHED/);
+    expect(line).toMatch(/same web-access policy as navigate/);
   });
 
   it("the CDP backend's not-supported string flows through unchanged (no pretending)", async () => {

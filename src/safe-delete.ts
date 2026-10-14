@@ -1,10 +1,8 @@
 import { existsSync, mkdirSync, renameSync, cpSync, rmSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { execFileSync } from "node:child_process";
 import { join, basename, dirname, resolve } from "node:path";
-import { homedir } from "node:os";
 import { getLaxDir } from "./lax-data-dir.js";
-import { desktopTrashItem } from "./desktop-bridge.js";
-import { appendTrashJournal, findTrashEntry, listRestorable } from "./trash-journal.js";
+import { osTrash } from "./os-trash.js";
+import { appendTrashJournal, findTrashEntry, listRestorable, type TrashTier } from "./trash-journal.js";
 import { createLogger } from "./logger.js";
 
 const logger = createLogger("safe-delete");
@@ -23,7 +21,9 @@ export const TASK_TRASH_TTL_MS = 24 * 3_600_000;
 //      route is the Electron-main bridge (shell.trashItem), which records the
 //      original location so macOS "Put Back" / Windows-Linux "Restore" work.
 //      Standalone (no desktop) falls back to a direct move into the OS trash
-//      dir — recoverable, but without Put Back metadata on macOS.
+//      dir — recoverable, but without Put Back metadata on macOS. The tier
+//      lives in os-trash.ts, with the Windows guard against a bin that
+//      destroys what it will not hold.
 //   2. Fallback to ~/.lax/trash/<YYYY-MM-DD>/ when no OS trash is reachable
 //      (headless server, no GUI session, missing `gio`) — the data is still
 //      recoverable, just from a dotfolder.
@@ -44,27 +44,38 @@ function trashRoot(): string {
 
 /** Move a file or directory to the recycle bin. Returns a human-readable
  *  location (for surfacing to the user) or null if the source didn't exist.
- *  `appTrashOnly` skips the OS bin: Windows may PERMANENTLY delete an item too
- *  large for the Recycle Bin when confirmations are suppressed, so a folder
- *  whose restore is promised goes to the app's own trash, a rename. */
+ *  `appTrashOnly` skips the OS bin: a folder whose restore is promised goes
+ *  straight to the app's own trash, a rename. The journal line records the
+ *  exact in-trash path whenever this side knows it, so a restore moves the
+ *  bytes back rather than searching for them. */
 export async function moveToTrash(path: string, reason?: string, opts: { appTrashOnly?: boolean } = {}): Promise<string | null> {
   if (!existsSync(path)) return null;
   const tag = reason ? ` (${reason})` : "";
 
   const original = resolve(path);
-  if (!opts.appTrashOnly && await nativeTrash(path)) {
-    logger.info(`[trash] ${path} -> OS recycle bin${tag}`);
-    // The bin renames what it takes, so there is no destination of ours to
-    // record — the original path is the whole key a restore has to work from.
-    appendTrashJournal({ original, tier: "os", dest: null, kind: "file", ...(reason ? { reason } : {}) });
-    return "the system Trash";
+  const now = new Date();
+  const dir = join(trashRoot(), now.toISOString().slice(0, 10));
+  const dest = join(dir, `${basename(path)}.${now.getTime()}`);
+  const journal = (tier: TrashTier, at: string | null): void =>
+    appendTrashJournal({ original, tier, dest: at, kind: "file", ...(reason ? { reason } : {}) });
+
+  if (!opts.appTrashOnly) {
+    const taken = await osTrash(path, dest);
+    if (taken?.tier === "os") {
+      logger.info(`[trash] ${path} -> OS recycle bin${tag}`);
+      journal("os", taken.dest);
+      return "the system Trash";
+    }
+    if (taken) {
+      logger.info(`[trash] ${path} -> ${taken.dest}${tag} (kept out of the Recycle Bin)`);
+      journal("lax", taken.dest);
+      sweepOldTrash();
+      return taken.dest;
+    }
   }
 
   // Fallback: app-managed recycle bin under ~/.lax.
-  const now = new Date();
-  const dir = join(trashRoot(), now.toISOString().slice(0, 10));
   mkdirSync(dir, { recursive: true });
-  const dest = join(dir, `${basename(path)}.${now.getTime()}`);
   try {
     renameSync(path, dest);
   } catch {
@@ -72,49 +83,9 @@ export async function moveToTrash(path: string, reason?: string, opts: { appTras
     rmSync(path, { recursive: true, force: true });
   }
   logger.info(`[trash] ${path} -> ${dest}${tag}`);
-  appendTrashJournal({ original, tier: "lax", dest, kind: "file", ...(reason ? { reason } : {}) });
+  journal("lax", dest);
   sweepOldTrash();
   return dest;
-}
-
-// Move to the OS Trash / Recycle Bin via the platform's native facility. Best
-// effort: returns true only when the item actually left `path`. Disabled under
-// the test harness so suites never touch the developer's real Trash.
-async function nativeTrash(path: string): Promise<boolean> {
-  if (process.env.LAX_NO_NATIVE_TRASH) return false;
-  // Preferred: ask Electron main to use shell.trashItem (real Put Back /
-  // Restore). Absent outside the desktop app — then fall through to the
-  // platform's own facility below.
-  if (await desktopTrashItem(path)) return true;
-  try {
-    if (process.platform === "darwin") {
-      // Direct move into ~/.Trash. macOS TCC blocks driving Finder via
-      // osascript from a CLI/server process (Automation prompt), but WRITING
-      // into ~/.Trash is an ordinary filesystem op — the item shows up in the
-      // user's Trash, browsable and emptyable. (No Finder "Put Back" metadata;
-      // the user drags it out or Empty-Trashes it.) Timestamp suffix avoids
-      // clobbering an existing same-named item — the Trash listing is itself
-      // TCC-protected, so we can't check for collisions, only avoid them.
-      renameSync(path, join(homedir(), ".Trash", `${basename(path)}.${Date.now()}`));
-    } else if (process.platform === "win32") {
-      // The path reaches PowerShell through the environment, never the script
-      // text: PowerShell also closes a quoted string on U+2018-U+201B, so no
-      // escaping of a path embedded as a literal is complete.
-      execFileSync(
-        "powershell",
-        ["-NoProfile", "-NonInteractive", "-Command",
-          `$p = $env:LAX_TRASH_PATH; Add-Type -AssemblyName Microsoft.VisualBasic; ` +
-          `if (Test-Path -LiteralPath $p -PathType Container) { [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory($p,'OnlyErrorDialogs','SendToRecycleBin') } ` +
-          `else { [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile($p,'OnlyErrorDialogs','SendToRecycleBin') }`],
-        { stdio: "ignore", timeout: 10_000, env: { ...process.env, LAX_TRASH_PATH: path } },
-      );
-    } else {
-      execFileSync("gio", ["trash", "--", path], { stdio: "ignore", timeout: 10_000 });
-    }
-    return !existsSync(path);
-  } catch {
-    return false; // no GUI session / tool missing / permission — caller falls back to ~/.lax/trash
-  }
 }
 
 /** Snapshot a deleted CONFIG record (a project container, an agent definition)

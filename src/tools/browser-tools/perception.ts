@@ -10,6 +10,7 @@
 import type { ToolResult } from "../../types.js";
 import type { BrowserBackend } from "../../browser/index.js";
 import { wrapExternalContent } from "../../sanitize.js";
+import { err } from "./shared.js";
 
 // Defensive on getCurrentUrl (required on the real interface, but test
 // doubles / a future backend variant may not implement it) — mirrors the
@@ -34,7 +35,7 @@ export async function handleReadNetwork(manager: BrowserBackend): Promise<ToolRe
 export async function handleReadResponse(manager: BrowserBackend, args: Record<string, unknown>): Promise<ToolResult> {
   const url = typeof args.url === "string" ? args.url.trim() : "";
   if (url === "") {
-    return { content: "read_response requires a 'url' — use the endpoint URL surfaced by read_network's 'API/data endpoints observed' section." };
+    return err("'url' parameter is required for read_response action — use the endpoint URL surfaced by read_network's 'API/data endpoints observed' section.");
   }
   // The endpoint's own URL, not the page's — a page on a real domain can
   // still proxy/fetch an internal loopback API and vice versa.

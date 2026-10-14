@@ -108,6 +108,13 @@ function query(): { listeners: Listener[]; procs: Proc[] } {
 	};
 }
 
+/** The live pid → ppid table, for a caller that must tell this process's own
+ *  descendants from orphans (dev-server-readiness reclaimPort). Throws when
+ *  the OS query fails; the caller decides what a missing table means. */
+export function processTable(): Proc[] {
+	return query().procs;
+}
+
 /**
  * Loopback ports currently held by a process_start session or its descendants.
  * Empty (and free) when no session is live; otherwise read from the OS at most

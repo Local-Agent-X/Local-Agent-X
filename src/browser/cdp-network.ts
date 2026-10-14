@@ -17,12 +17,21 @@
  * labeled as a re-fetch. The sniffer persists across calls so a requestId
  * captured now can serve a later read of the same url.
  *
+ * The re-fetch is a request the MODEL chose, sent with the page's cookies, so
+ * it answers to the same web-access policy every page request and navigation
+ * does (evaluateEgressForUrl, the per-hop gate in guards.ts / bridge-egress.ts)
+ * before it leaves; a refused URL returns the policy's reason as the result.
+ * A buffered body needs no gate: the page's own request already passed it.
+ *
  * Bounded by an isDataEndpoint content-type allowlist (decision B3, reused from
  * bridge-perception.ts — no binary/media) and a 100k-char in-memory cap
  * (decision B4 — truncate in memory, never spill to disk).
  */
 import type { CDPSession, Page } from "playwright";
+import type { SecurityDecision } from "../types.js";
 import { createLogger } from "../logger.js";
+import { getRuntimeConfig } from "../config.js";
+import { evaluateEgressForUrl } from "../security/layer/index.js";
 import { getPageForView } from "./electron-cdp.js";
 import { isDataEndpoint, type BridgeNetworkEntry } from "./bridge-perception.js";
 
@@ -54,6 +63,15 @@ const REFETCH_PREFIX =
 export type PageProvider = (viewId: string) => Promise<Page | null>;
 
 let pageProvider: PageProvider = getPageForView;
+
+/** The web-access decision for a URL the model asked to re-fetch. Injectable
+ *  for the same reason as the page provider: the policy reads live config. */
+export type RefetchGate = (url: string) => SecurityDecision;
+
+const policyGate: RefetchGate = (url) =>
+	evaluateEgressForUrl(url, process.env.LAX_PORT ?? String(getRuntimeConfig().port));
+
+let refetchGate: RefetchGate = policyGate;
 
 interface ResponseMeta {
 	requestId: string;
@@ -141,8 +159,16 @@ async function tryGetResponseBody(session: CDPSession, requestId: string): Promi
 }
 
 /** Session-sharing re-fetch (Playwright APIRequestContext carries the context's
- *  cookies). Labeled as a re-fetch; content-type gated on the response header. */
+ *  cookies), gated by the web-access policy before it leaves. Labeled as a
+ *  re-fetch; content-type gated on the response header. */
 async function reFetch(page: Page, url: string): Promise<string> {
+	const decision = refetchGate(url);
+	if (!decision.allowed) {
+		return (
+			`The response body for ${url} is no longer buffered and re-fetching it was refused by the web-access policy: ${decision.reason}` +
+			(decision.recovery ? `\nRecovery: ${decision.recovery}` : "")
+		);
+	}
 	const resp = await page.request.get(url);
 	const refusal = refuseIfNotData(url, resp.headers()["content-type"], undefined);
 	if (refusal) return refusal;
@@ -186,4 +212,9 @@ export async function readResponseBody(viewId: string, url: string): Promise<str
 export function _setPageProviderForTest(fn: PageProvider | null): void {
 	pageProvider = fn ?? getPageForView;
 	sniffers.clear();
+}
+
+/** Test seam: override the re-fetch gate (pass null to restore the policy). */
+export function _setRefetchGateForTest(fn: RefetchGate | null): void {
+	refetchGate = fn ?? policyGate;
 }

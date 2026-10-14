@@ -20,13 +20,13 @@
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { getSandboxStatus, SANDBOX_PROOF_PENDING_RETRY } from "../sandbox/index.js";
 import { awaitCageReady } from "./caged-spawn.js";
+import { reclaimPort } from "./dev-server-readiness.js";
 import { ok, err, running } from "./result-helpers.js";
 import {
   SESSIONS,
   gcSessions,
   startSession,
   killSession,
-  killWinPid,
   pidsOnPort,
   tailLines,
   sleep,
@@ -171,7 +171,7 @@ export const processKillTool: ToolDefinition = {
 export const processRestartTool: ToolDefinition = {
   name: "process_restart",
   description:
-    "Restart: reclaims a port held by a stale/orphaned process, then starts fresh. Use when an edit won't take effect because an old process is still serving. Pass session_id to replace a tracked session (reusing its command/cwd/env unless overridden), and/or port to first SIGTERM/SIGKILL whatever is listening on that port before starting — so the new process won't hit EADDRINUSE. Returns a NEW session_id.",
+    "Restart: reclaims a port held by a stale/orphaned process, then starts fresh. Use when an edit won't take effect because an old process is still serving. Pass session_id to replace a tracked session (reusing its command/cwd/env unless overridden), and/or port to first kill whatever is listening on that port before starting — so the new process won't hit EADDRINUSE. The port reclaim kills every holder except Local Agent X itself and the processes it runs for itself (its browser, sidecars); a port one of those holds is reported as still held and nothing is started. Returns a NEW session_id.",
   parameters: {
     type: "object",
     properties: {
@@ -220,20 +220,21 @@ export const processRestartTool: ToolDefinition = {
     if (!command) return err("process_restart: command is required (or pass a session_id to reuse one)");
 
     // Reclaim the port BEFORE starting so the new process doesn't EADDRINUSE.
+    // The one reclaim the dev-server lifecycle also uses: it spares this
+    // process and the processes LAX runs for itself, so a port one of those
+    // holds is never freed by killing it and there is nothing to wait for.
     const port = typeof args.port === "number" ? Math.floor(args.port) : undefined;
     if (port !== undefined && port > 0) {
-      const holders = pidsOnPort(port);
-      for (const pid of holders) {
-        try { process.platform === "win32" ? killWinPid(pid) : process.kill(pid, "SIGTERM"); } catch { /* gone */ }
-      }
-      if (holders.length > 0) await sleep(1000);
-      for (const pid of holders) {
-        try { process.platform === "win32" ? killWinPid(pid) : process.kill(pid, "SIGKILL"); } catch { /* gone */ }
-      }
-      const deadline = Date.now() + 5000;
+      const killed = reclaimPort(port);
+      const deadline = Date.now() + (killed.length > 0 ? 5000 : 0);
       while (pidsOnPort(port).length > 0 && Date.now() < deadline) await sleep(200);
-      if (pidsOnPort(port).length > 0) {
-        return err(`process_restart: port ${port} is still held after kill attempt; not starting a doomed process.`);
+      const held = pidsOnPort(port);
+      if (held.length > 0) {
+        return err(
+          `process_restart: port ${port} is still held by pid(s) ${held.join(", ")}` +
+          `${killed.length > 0 ? ` after killing ${killed.join(", ")}` : ""}. ` +
+          `A holder that is Local Agent X itself, or a process it runs for itself (its browser, a sidecar), is never killed — use another port. Not starting a doomed process.`,
+        );
       }
     }
 

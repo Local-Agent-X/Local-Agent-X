@@ -50,7 +50,7 @@ export async function awaitDevServerCage(signal?: AbortSignal): Promise<DevServe
 export const appServeBackendTool: ToolDefinition = {
   name: "app_serve_backend",
   description:
-    "Start and keep alive a full-stack app's REAL backend dev server, and wire a connector so the app's frontend can reach it (same-origin — works from the phone too). Use this for full-stack apps INSTEAD of process_start + connector_create: it registers the backend so LAX lazily restarts it when the app is opened and stops it when the app is deleted. The frontend then fetches /api/connectors/dev-<app_id>/<path> with Authorization: 'Bearer ' + window.__LAX_CONNECTOR_TOKEN__.",
+    "Start and keep alive a full-stack app's REAL backend dev server, and wire a connector so the app's frontend can reach it (same-origin — works from the phone too). Use this for full-stack apps INSTEAD of process_start + connector_create: it registers the backend so LAX lazily restarts it when the app is opened and stops it when the app is deleted. Before starting it stops the app's previous dev server and kills any untracked process still holding the port (an orphan from an earlier run), sparing Local Agent X itself and the processes it runs for itself. The frontend then fetches /api/connectors/dev-<app_id>/<path> with Authorization: 'Bearer ' + window.__LAX_CONNECTOR_TOKEN__.",
   parameters: {
     type: "object",
     properties: {
@@ -154,7 +154,7 @@ export function resolveServeCommand(
 export const appServeFrontendTool: ToolDefinition = {
   name: "app_serve_frontend",
   description:
-    "Start and keep alive a build-step FRONTEND dev server (Vite / Next / a React/Vue/Svelte SPA with HMR) for an app. LAX reverse-proxies /apps/<app_id>/ straight to it, so the app's own URL serves the live dev server. Use this INSTEAD of writing a single static index.html when the frontend genuinely needs its own dev server / build step. REQUIRED dev-server config: set base path to '/apps/<app_id>/' and HMR client port to the dev port (so hot-reload connects from the browser on desktop), and bind the given port. Hot-reload is desktop-only for now; the phone shows the result on reload.",
+    "Start and keep alive a build-step FRONTEND dev server (Vite / Next / a React/Vue/Svelte SPA with HMR) for an app. LAX reverse-proxies /apps/<app_id>/ straight to it, so the app's own URL serves the live dev server. Use this INSTEAD of writing a single static index.html when the frontend genuinely needs its own dev server / build step. Before starting it stops the app's previous dev server and kills any untracked process still holding the port (an orphan from an earlier run), sparing Local Agent X itself and the processes it runs for itself. REQUIRED dev-server config: set base path to '/apps/<app_id>/' and HMR client port to the dev port (so hot-reload connects from the browser on desktop), and bind the given port. Hot-reload is desktop-only for now; the phone shows the result on reload.",
   parameters: {
     type: "object",
     properties: {

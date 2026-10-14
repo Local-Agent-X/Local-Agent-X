@@ -17,6 +17,7 @@
 import { mkdirSync, appendFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { SESSIONS, sleep, tailLines, pidsOnPort } from "./process-session.js";
+import { processTable, type Proc } from "./owned-listeners.js";
 import { killProcessGroupSync } from "../process-tree-kill.js";
 import { getLaxDir } from "../lax-data-dir.js";
 import { createLogger } from "../logger.js";
@@ -127,19 +128,64 @@ export function waitForBackend(
 }
 
 /**
+ * Which of a port's holders a reclaim may kill. Never this process, never its
+ * parent (the desktop app), and never a process that descends from this one
+ * without passing through a process_start session — the browser, the voice
+ * sidecar, an MCP server: LAX's own machinery, which holds ports the model
+ * may well name. A tracked session's tree is the agent's own and stays
+ * killable; so does anything the table cannot tie to us, which is the orphan
+ * class the reclaim exists for. Pure, so the process table is a fixture.
+ */
+export function reclaimTargets(
+  holders: readonly number[],
+  procs: readonly Proc[],
+  tracked: ReadonlySet<number>,
+  self = process.pid,
+  parent = process.ppid,
+): number[] {
+  const ppidOf = new Map(procs.map((p) => [p.pid, p.ppid]));
+  const ownMachinery = (pid: number): boolean => {
+    const seen = new Set<number>();
+    for (let cur: number | undefined = pid; cur !== undefined && cur > 0 && !seen.has(cur); cur = ppidOf.get(cur)) {
+      if (tracked.has(cur)) return false;
+      if (cur === self) return true;
+      seen.add(cur);
+    }
+    return false;
+  };
+  return holders.filter((pid) => pid !== self && pid !== parent && !ownMachinery(pid));
+}
+
+/** Root pids of the live process_start sessions. */
+function trackedSessionPids(): Set<number> {
+  const out = new Set<number>();
+  for (const s of SESSIONS.values()) if (s.exitedAt === null && s.pid) out.add(s.pid);
+  return out;
+}
+
+/**
  * Free a dev port held by processes this LAX server doesn't track — the orphan
  * class: a dev server that outlived the LAX process that spawned it (hard kill,
  * or an exit-time cleanup that couldn't run). Spawning a replacement without
  * reclaiming makes every `--strictPort` respawn die instantly against the
  * orphan while the port probe reads "listening" — one doomed spawn per request,
  * forever (the restart storm). Synchronous, so the caller can spawn immediately
- * after and the new child finds the port free. Never kills our own pid.
- * Returns the pids killed.
+ * after and the new child finds the port free. The ONE port reclaim: the
+ * dev-server lifecycle and process_restart both come here, so the exclusions
+ * in reclaimTargets hold for both. Returns the pids killed.
  */
 export function reclaimPort(port: number): number[] {
-  const holders = pidsOnPort(port).filter((pid) => pid !== process.pid);
-  for (const pid of holders) killProcessGroupSync(pid);
-  return holders;
+  const holders = pidsOnPort(port);
+  if (holders.length === 0) return [];
+  let procs: Proc[] = [];
+  try {
+    procs = processTable();
+  } catch (e) {
+    logger.warn(`[dev-server] process table unavailable while reclaiming port ${port}; only this process and its parent are spared: ${(e as Error).message}`);
+  }
+  const targets = reclaimTargets(holders, procs, trackedSessionPids());
+  for (const pid of targets) killProcessGroupSync(pid);
+  return targets;
 }
 
 /** How long the lazy-restart verifier waits for a re-spawned dev server to bind.

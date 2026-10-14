@@ -12,15 +12,23 @@
 // the property that a restore never quietly widens what the agent owns.
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { describe, it, expect, beforeEach } from "vitest";
+import { basename, join } from "node:path";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+
+// A home of our own, so the macOS tier's ~/.Trash is a temp dir here and no
+// test moves anything into the developer's real Trash.
+const fakeHome = vi.hoisted(() => ({ dir: null as string | null }));
+vi.mock("node:os", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:os")>();
+  return { ...actual, homedir: () => fakeHome.dir ?? actual.homedir() };
+});
 
 const DATA = mkdtempSync(join(tmpdir(), "lax-trash-restore-"));
 process.env.LAX_DATA_DIR = DATA;
 
 const { appendTrashJournal, findTrashEntry, listRestorable, readTrashJournal } = await import("./trash-journal.js");
 const { restoreDeleted, restoreFromOsTrash } = await import("./trash-restore.js");
-const { moveToTaskTrash, trashRecord, readTrashRecord, listTrashRecords } = await import("./safe-delete.js");
+const { moveToTrash, moveToTaskTrash, trashRecord, readTrashRecord, listTrashRecords } = await import("./safe-delete.js");
 
 const work = () => mkdtempSync(join(tmpdir(), "lax-trash-work-"));
 const laxTrashDir = join(DATA, "trash", "2026-09-20");
@@ -133,6 +141,79 @@ describe("restoreDeleted", () => {
   it("names the thing it could not find rather than failing silently", () => {
     const out = restoreDeleted(join(work(), "never-existed.md"));
     expect("error" in out && out.error).toMatch(/Nothing in the trash journal/);
+  });
+});
+
+describe("the OS tier restores from the journalled in-trash path first", () => {
+  it("moves the bytes back from `dest` without searching the platform trash, and drops a Windows $I sidecar", () => {
+    const home = work();
+    const original = join(home, "invoice-0042.md");
+    const bin = join(work(), "bin");
+    mkdirSync(bin);
+    const dest = join(bin, "$RQ1W2E3.md");
+    writeFileSync(dest, "# invoice");
+    writeFileSync(join(bin, "$IQ1W2E3.md"), "sidecar");
+    appendTrashJournal({ original, tier: "os", dest, kind: "file" });
+    expect(restoreDeleted(original)).toEqual({ restored: original, tier: "os" });
+    expect(readFileSync(original, "utf8")).toBe("# invoice");
+    expect(existsSync(dest)).toBe(false);
+    expect(existsSync(join(bin, "$IQ1W2E3.md"))).toBe(false);
+  });
+
+  it("a `dest` that is gone (the bin was emptied) falls through to the platform search and its plain error", () => {
+    const original = join(work(), "emptied.md");
+    appendTrashJournal({ original, tier: "os", dest: join(work(), "no-longer-there.md"), kind: "file" });
+    const out = restoreDeleted(original);
+    expect("error" in out && out.error).toMatch(/not in|Recycle Bin|Trash/);
+  });
+});
+
+describe("the macOS tier (direct move into ~/.Trash)", () => {
+  const realPlatform = process.platform;
+  const noNative = process.env.LAX_NO_NATIVE_TRASH;
+  beforeEach(() => {
+    fakeHome.dir = work();
+    mkdirSync(join(fakeHome.dir, ".Trash"));
+    Object.defineProperty(process, "platform", { value: "darwin" });
+    delete process.env.LAX_NO_NATIVE_TRASH;
+  });
+  afterEach(() => {
+    Object.defineProperty(process, "platform", { value: realPlatform });
+    process.env.LAX_NO_NATIVE_TRASH = noNative;
+    fakeHome.dir = null;
+  });
+
+  it("journals the exact ~/.Trash/<name>.<timestamp> path and restores a file with an extension from it", async () => {
+    const original = join(work(), "foo.txt");
+    writeFileSync(original, "mac bytes");
+    expect(await moveToTrash(original, "delete_file")).toBe("the system Trash");
+    const entry = findTrashEntry(original);
+    expect(entry?.tier).toBe("os");
+    expect(entry?.dest).toMatch(/[\\/]\.Trash[\\/]foo\.txt\.\d+$/);
+    expect(existsSync(entry!.dest!)).toBe(true);
+    expect(restoreDeleted(original)).toEqual({ restored: original, tier: "os" });
+    expect(readFileSync(original, "utf8")).toBe("mac bytes");
+  });
+
+  it("an older journal line without `dest` still finds our timestamp-suffixed name in ~/.Trash", async () => {
+    const original = join(work(), "bar.txt");
+    writeFileSync(original, "older line");
+    await moveToTrash(original, "delete_file");
+    const journal = join(DATA, "trash-journal.jsonl");
+    writeFileSync(journal, readFileSync(journal, "utf8").replace(/"dest":"[^"]*"/, '"dest":null'));
+    expect(findTrashEntry(original)?.dest).toBeNull();
+    expect(restoreDeleted(original)).toEqual({ restored: original, tier: "os" });
+    expect(readFileSync(original, "utf8")).toBe("older line");
+    expect(basename(original)).toBe("bar.txt");
+  });
+
+  it("a ~/.Trash that cannot be listed (TCC) is a plain error, never a throw", () => {
+    rmSync(join(fakeHome.dir!, ".Trash"), { recursive: true, force: true });
+    writeFileSync(join(fakeHome.dir!, ".Trash"), "not a directory");
+    const original = join(work(), "unlisted.txt");
+    appendTrashJournal({ original, tier: "os", dest: null, kind: "file" });
+    const out = restoreDeleted(original);
+    expect("error" in out && out.error).toMatch(/is not in ~\/\.Trash/);
   });
 });
 

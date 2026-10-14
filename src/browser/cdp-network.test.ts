@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { readResponseBody, _setPageProviderForTest } from "./cdp-network.js";
+import { readResponseBody, _setPageProviderForTest, _setRefetchGateForTest } from "./cdp-network.js";
 
 // Fakes standing in for Playwright's Page / CDPSession / APIResponse — no real
 // socket. The session records its responseReceived listener so a test can
@@ -39,6 +39,52 @@ function fakePage(session: unknown, getImpl: (url: string) => unknown) {
 
 afterEach(() => {
 	_setPageProviderForTest(null);
+	_setRefetchGateForTest(null);
+});
+
+// ── The re-fetch answers to the web-access policy ────────────────────────
+// A re-fetch is a request the MODEL chose, sent with the page's cookies. Before
+// this it left without passing the gate every navigation and page request pass.
+describe("readResponseBody — the re-fetch is gated", () => {
+	it("a refused URL returns the policy's reason and recovery as the result, and the request never leaves", async () => {
+		let fetched = 0;
+		const s = fakeSession({ body: "", base64Encoded: false });
+		const page = fakePage(s.session, () => { fetched++; return fakeResponse("application/json", "{}"); });
+		_setPageProviderForTest(async () => page as never);
+		_setRefetchGateForTest(() => ({ allowed: false, reason: "Blocked: evil.test is not on the web access allowlist (strict mode).", recovery: "Ask the user to allow evil.test." }));
+
+		const out = await readResponseBody("view-1", "https://evil.test/api");
+		expect(fetched).toBe(0);
+		expect(out).toContain("refused by the web-access policy");
+		expect(out).toContain("not on the web access allowlist");
+		expect(out).toContain("Recovery: Ask the user to allow evil.test.");
+		expect(out).not.toContain("[re-fetched");
+	});
+
+	it("an allowed URL is re-fetched; the gate sees the exact URL asked for", async () => {
+		const asked: string[] = [];
+		const s = fakeSession({ body: "", base64Encoded: false });
+		const page = fakePage(s.session, () => fakeResponse("application/json", '{"ok":1}'));
+		_setPageProviderForTest(async () => page as never);
+		_setRefetchGateForTest((url) => { asked.push(url); return { allowed: true, reason: "Web fetch allowed" }; });
+
+		const out = await readResponseBody("view-1", "https://x/api?page=2");
+		expect(asked).toEqual(["https://x/api?page=2"]);
+		expect(out).toContain('{"ok":1}');
+	});
+
+	it("a buffered body is served without consulting the gate: the page's own request already passed it", async () => {
+		const json = '{"buffered":true}';
+		const s = fakeSession({ body: json, base64Encoded: false });
+		const page = fakePage(s.session, () => fakeResponse("application/json", json));
+		_setPageProviderForTest(async () => page as never);
+		_setRefetchGateForTest(() => ({ allowed: true, reason: "ok" }));
+		await readResponseBody("view-1", "https://x/api"); // attaches the sniffer
+		s.emit("Network.responseReceived", { requestId: "req-1", type: "XHR", response: { url: "https://x/api", mimeType: "application/json" } });
+
+		_setRefetchGateForTest(() => { throw new Error("the gate must not run for a buffered body"); });
+		expect(await readResponseBody("view-1", "https://x/api")).toBe(json);
+	});
 });
 
 describe("readResponseBody", () => {

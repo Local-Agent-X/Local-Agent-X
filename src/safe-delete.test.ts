@@ -2,21 +2,24 @@
 // (recoverable) instead of perma-deleting it.
 
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync, existsSync, mkdirSync, readdirSync, readFileSync, utimesSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, utimesSync } from "node:fs";
 import { join, basename } from "node:path";
 import { tmpdir } from "node:os";
 
 // Captures the platform recycle step instead of running it, so a test reads
 // the exact invocation without moving anything into the user's real bin.
+// `onCall` lets a test play the bin itself (take the file, or destroy it).
 const recycle = vi.hoisted(() => ({
   intercept: false,
   calls: [] as Array<{ file: string; args: string[]; env?: NodeJS.ProcessEnv }>,
+  onCall: null as ((env: NodeJS.ProcessEnv | undefined) => void) | null,
 }));
 vi.mock("node:child_process", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:child_process")>();
   const execFileSync = ((file: string, args: string[], opts?: { env?: NodeJS.ProcessEnv }) => {
     if (!recycle.intercept) return actual.execFileSync(file, args, opts as never);
     recycle.calls.push({ file, args, env: opts?.env });
+    recycle.onCall?.(opts?.env);
     return Buffer.alloc(0);
   }) as typeof actual.execFileSync;
   return { ...actual, execFileSync };
@@ -30,6 +33,9 @@ import {
   markTaskTrashScopeClosed,
   sweepOldTrash,
 } from "./safe-delete.js";
+import { _setBinLocatorForTest } from "./os-trash.js";
+import { findTrashEntry } from "./trash-journal.js";
+import { restoreDeleted } from "./trash-restore.js";
 import { deleteFileTool } from "./tools/read-write-tools.js";
 import { recordTaskArtifact, clearTaskArtifacts } from "./data-lineage/task-artifacts.js";
 
@@ -107,6 +113,15 @@ describe("safe-delete recycle bin", () => {
     });
   });
 
+  it("journals the exact in-trash path of an app-trash move, so a restore is a move back", async () => {
+    const f = join(workDir, "ledger.csv");
+    writeFileSync(f, "a,b", "utf-8");
+    const dest = await moveToTrash(f, "test");
+    expect(findTrashEntry(f)).toMatchObject({ tier: "lax", dest });
+    expect(restoreDeleted(f)).toEqual({ restored: f, tier: "lax" });
+    expect(readFileSync(f, "utf-8")).toBe("a,b");
+  });
+
   it("snapshots a deleted config record (project/agent) as recoverable JSON", () => {
     const proj = { id: "proj-abc", name: "My Project", agentIds: ["a1", "a2"] };
     trashRecord(`project-${proj.id}`, proj);
@@ -116,6 +131,97 @@ describe("safe-delete recycle bin", () => {
       .filter((f) => f.includes("project-proj-abc") && f.endsWith(".json"));
     expect(snaps.length).toBe(1);
     expect(JSON.parse(readFileSync(snaps[0], "utf-8"))).toEqual(proj);
+  });
+});
+
+// ---- The Windows Recycle Bin guard -------------------------------------------
+// The bin permanently deletes an item it will not hold (oversized, a volume
+// with no bin) and reports success either way. The guard: a second name for
+// the bytes exists in the app trash before the bin is asked, the `$I` sidecar
+// is looked up afterwards, and only a confirmed item lets that reserve go.
+
+describe("Windows Recycle Bin guard", () => {
+  const realPlatform = process.platform;
+  const noNative = process.env.LAX_NO_NATIVE_TRASH;
+  beforeEach(() => {
+    Object.defineProperty(process, "platform", { value: "win32" });
+    delete process.env.LAX_NO_NATIVE_TRASH;
+    recycle.intercept = true;
+    recycle.calls.length = 0;
+    // The bin as it behaves on a volume that will not hold the item: the
+    // PowerShell call returns, and the file is simply gone.
+    recycle.onCall = (env) => rmSync(String(env?.LAX_TRASH_PATH), { force: true });
+  });
+  afterEach(() => {
+    recycle.intercept = false;
+    recycle.onCall = null;
+    _setBinLocatorForTest(null);
+    process.env.LAX_NO_NATIVE_TRASH = noNative;
+    Object.defineProperty(process, "platform", { value: realPlatform });
+  });
+
+  it("a file the bin destroys is still in the app trash, journalled there, and restores", async () => {
+    _setBinLocatorForTest(() => null);
+    const f = join(workDir, "huge.iso");
+    writeFileSync(f, "the only copy", "utf-8");
+    const where = await moveToTrash(f, "delete_file");
+    expect(recycle.calls.filter((c) => c.file === "powershell")).toHaveLength(1);
+    expect(existsSync(f)).toBe(false);
+    expect(where).not.toBe("the system Trash");
+    expect(existsSync(where!)).toBe(true);
+    expect(readFileSync(where!, "utf-8")).toBe("the only copy");
+    expect(findTrashEntry(f)).toMatchObject({ tier: "lax", dest: where });
+    expect(restoreDeleted(f)).toEqual({ restored: f, tier: "lax" });
+    expect(readFileSync(f, "utf-8")).toBe("the only copy");
+  });
+
+  it("a file the bin confirms drops its reserve and journals the bin's own $R path", async () => {
+    // The bin as it behaves when it keeps the item: the file moves to a $R
+    // slot with an $I sidecar beside it.
+    const binDir = join(workDir, "fake-bin");
+    mkdirSync(binDir);
+    const r = join(binDir, "$RABC123.txt");
+    recycle.onCall = (env) => {
+      renameSync(String(env?.LAX_TRASH_PATH), r);
+      writeFileSync(join(binDir, "$IABC123.txt"), "sidecar");
+    };
+    _setBinLocatorForTest(() => r);
+    const f = join(workDir, "note.txt");
+    writeFileSync(f, "kept by the bin", "utf-8");
+    const where = await moveToTrash(f, "delete_file");
+    expect(where).toBe("the system Trash");
+    expect(existsSync(f)).toBe(false);
+    expect(findTrashEntry(f)).toMatchObject({ tier: "os", dest: r });
+    const trashDir = join(laxDir, "trash");
+    const reserves = existsSync(trashDir)
+      ? readdirSync(trashDir).flatMap((d) => readdirSync(join(trashDir, d)))
+      : [];
+    expect(reserves.filter((n) => n.startsWith("note.txt."))).toEqual([]);
+    expect(restoreDeleted(f)).toEqual({ restored: f, tier: "os" });
+    expect(readFileSync(f, "utf-8")).toBe("kept by the bin");
+    expect(existsSync(join(binDir, "$IABC123.txt"))).toBe(false); // the orphaned sidecar goes with it
+  });
+
+  it("when the bin call leaves the file in place, the reserve is dropped and the app-trash fallback takes over", async () => {
+    recycle.onCall = null;
+    _setBinLocatorForTest(() => { throw new Error("never consulted: the item never left"); });
+    const f = join(workDir, "stays.txt");
+    writeFileSync(f, "x", "utf-8");
+    const where = await moveToTrash(f, "delete_file");
+    expect(where!.startsWith(join(laxDir, "trash"))).toBe(true);
+    expect(existsSync(f)).toBe(false);
+    expect(findTrashEntry(f)).toMatchObject({ tier: "lax", dest: where });
+  });
+
+  it("a folder never goes to the Windows bin", async () => {
+    _setBinLocatorForTest(() => { throw new Error("never consulted for a folder"); });
+    const app = join(workDir, "an-app");
+    mkdirSync(app);
+    writeFileSync(join(app, "index.html"), "<h1>hi</h1>", "utf-8");
+    const where = await moveToTrash(app, "app_delete");
+    expect(recycle.calls).toHaveLength(0);
+    expect(existsSync(join(where!, "index.html"))).toBe(true);
+    expect(findTrashEntry(app)).toMatchObject({ tier: "lax", dest: where });
   });
 });
 

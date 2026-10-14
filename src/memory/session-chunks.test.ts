@@ -49,6 +49,29 @@ describe("buildSessionChunks — provenance per exchange", () => {
   });
 });
 
+// The saved session-0 of a qwen3.6:27b eval run (2026-10-13), row for row:
+// the user's message, the carried-recall row, a tool-only assistant message,
+// the tool result, the reply. Parsing dropped the harness tag, so the recall
+// row was indexed as the user speaking and the message got "(no response)".
+describe("harness rows never become search chunks", () => {
+  it("indexes the user's message with the reply, and nothing of the recall row or a nudge", () => {
+    const path = writeSession([
+      msg("user", "Remember this for later: in 2014 my cousin Odalys texted my brother four words.", "um-1", "2026-10-13T04:10:00.000Z"),
+      { id: "sm-r", createdAt: "2026-10-13T04:10:01.000Z", message: { role: "user", content: "Recalled memory for the user's message above — retrieved by the app at the time, not written by the user.", _harness: "recall" } },
+      { id: "am-t", createdAt: "2026-10-13T04:10:02.000Z", message: { role: "assistant", content: "", tool_calls: [{ id: "c1", type: "function", function: { name: "remember", arguments: "{}" } }] } },
+      { id: "tr-1", createdAt: "2026-10-13T04:10:03.000Z", message: { role: "tool", content: "Remembered #1", tool_call_id: "c1" } },
+      msg("assistant", "Got it, Sam. Saved.", "am-1", "2026-10-13T04:10:04.000Z"),
+      { id: "sm-n", createdAt: "2026-10-13T04:10:05.000Z", message: { role: "user", content: "[automatic check] verify the save", _harness: "nudge" } },
+    ]);
+    const texts = buildSessionChunks(path, "chat-a").map((c) => c.text);
+    expect(texts.join("\n")).toContain("[user] Remember this for later");
+    expect(texts.join("\n")).toContain("[assistant] Got it, Sam. Saved.");
+    expect(texts.join("\n")).not.toContain("Recalled memory");
+    expect(texts.join("\n")).not.toContain("automatic check");
+    expect(texts.join("\n")).not.toContain("(no response)");
+  });
+});
+
 describe("one indexing path for a session", () => {
   it("indexing twice through the builder stores one copy, under the session file, and re-dating refreshes metadata in place", async () => {
     const path = writeSession([

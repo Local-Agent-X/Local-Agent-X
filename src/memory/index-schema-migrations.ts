@@ -13,7 +13,7 @@ import { backfillEntityLinks } from "./entity-derive.js";
 import { createLogger } from "../logger.js";
 const logger = createLogger("memory.index-schema");
 
-export const CURRENT_SCHEMA_VERSION = 16;
+export const CURRENT_SCHEMA_VERSION = 17;
 
 function backfillValidChunkSessionIds(db: InstanceType<typeof Database>): void {
   const rows = db
@@ -373,6 +373,15 @@ export function migrateSchema(
       // rebuilds their rows from chunks/facts.
       try { db.exec("DROP TABLE IF EXISTS chunks_fts"); } catch {}
       try { db.exec("DROP TABLE IF EXISTS facts_fts"); } catch {}
+    }
+
+    if (fromVersion < 17) {
+      // v17: session parsing dropped the harness tag (chunking.ts
+      // parseJsonlSession), so every kept nudge (since 2026-09-15) and carried-
+      // recall row (since 2026-10-13) was indexed as "[user] …" — recalled
+      // memory searchable as something the user said. Re-chunk each session
+      // once through the fixed parser, as v15 did.
+      try { db.exec(`UPDATE files SET hash = '' WHERE source = 'session'`); } catch {}
     }
 
     db

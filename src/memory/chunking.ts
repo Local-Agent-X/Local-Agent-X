@@ -276,7 +276,12 @@ function parseJsonlSession(path: string): SessionData | null {
   const messages: Array<{ role: string; content: unknown; id?: string; createdAt?: string; timeUnknown?: true }> = [];
   for (const row of rows) {
     if (row.kind === "msg" && row.message && typeof row.message.role === "string") {
-      messages.push({ role: row.message.role, content: row.message.content, id: row.id, createdAt: row.createdAt, timeUnknown: row.timeUnknown });
+      // The whole message, not a role/content copy: the copy dropped the
+      // harness tag, so extractSessionPairs' isHarnessRow check never fired for
+      // a .jsonl session — every nudge and carried-recall row was indexed as
+      // "[user] …", and a recall row between the user's message and the reply
+      // left the message paired with "(no response)" (eval, 2026-10-13).
+      messages.push({ ...row.message, content: row.message.content, id: row.id, createdAt: row.createdAt, timeUnknown: row.timeUnknown });
     }
   }
   return {

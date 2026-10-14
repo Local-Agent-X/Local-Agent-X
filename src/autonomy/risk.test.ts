@@ -40,12 +40,20 @@ describe("TOOL_RISK", () => {
     expect(classifyToolRisk("memory_forget")).toBe("destructive");
     expect(classifyToolRisk("self_edit")).toBe("destructive");
     expect(classifyToolRisk("email_send")).toBe("external-comms");
-    expect(classifyToolRisk("calendar_create_event")).toBe("external-comms");
+    // The calendar is the local calendar.json: no third party sees an event.
+    expect(classifyToolRisk("calendar_create_event")).toBe("workspace-write");
+    expect(classifyToolRisk("calendar_list_events")).toBe("safe");
     expect(classifyToolRisk("http_request")).toBe("network-write");
     expect(classifyToolRisk("ari_http")).toBe("network-write");
     expect(classifyToolRisk("browser")).toBe("network-read");
     expect(classifyToolRisk("web_fetch")).toBe("network-read");
-    expect(classifyToolRisk("web_search")).toBe("safe");
+    // Off-box reads, whatever the arg is called: the web_fetch tier.
+    expect(classifyToolRisk("web_search")).toBe("network-read");
+    expect(classifyToolRisk("image_search")).toBe("network-read");
+    // Tiers follow what the tool does on disk, not the family it sits in.
+    expect(classifyToolRisk("ocr")).toBe("safe");
+    expect(classifyToolRisk("preview_document")).toBe("workspace-write");
+    expect(classifyToolRisk("extract_site_assets")).toBe("workspace-write");
     expect(classifyToolRisk("read")).toBe("safe");
     expect(classifyToolRisk("write")).toBe("workspace-write");
     expect(classifyToolRisk("edit")).toBe("workspace-write");

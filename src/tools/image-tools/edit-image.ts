@@ -1,6 +1,7 @@
 import { writeFileSync, readFileSync, mkdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import type { ToolDefinition, ToolResult } from "../../types.js";
+import { canonicalFetch } from "../web-egress.js";
 import {
   ok, err, okWithImage, resolveMediaProvider, resolveLocalImagePath,
   findRecentLocalImage, workspaceDir, PROMPT_REFS_EARLIER_IMAGE,
@@ -34,7 +35,9 @@ async function loadImage(ref: string): Promise<LoadedImage | null> {
   }
 
   if (/^https?:\/\//i.test(s)) {
-    const res = await fetch(s, { signal: AbortSignal.timeout(30_000) });
+    // A model-named host: the SSRF-pinned, egress-gated fetch, like every
+    // other off-box read a tool makes from a URL the model chose.
+    const res = await canonicalFetch(s, { timeoutMs: 30_000 });
     if (!res.ok) return null;
     const ct = (res.headers.get("content-type") || "").split(";")[0].trim().toLowerCase();
     const mime = ct.startsWith("image/") ? ct : mimeFromExt(s);
@@ -92,7 +95,8 @@ async function editViaOpenai(
   if (first?.b64_json) {
     buffer = Buffer.from(first.b64_json, "base64");
   } else if (first?.url) {
-    const imgRes = await fetch(first.url, { signal: AbortSignal.timeout(30_000) });
+    // The provider names the download host; canonicalFetch pins and allowlists it.
+    const imgRes = await canonicalFetch(first.url, { timeoutMs: 30_000 });
     if (!imgRes.ok) return err("OpenAI returned an image URL that could not be fetched.");
     buffer = Buffer.from(await imgRes.arrayBuffer());
   } else {
@@ -116,7 +120,7 @@ async function editViaXai(
   image: LoadedImage,
   quality: boolean,
 ): Promise<ToolResult> {
-  const res = await fetch("https://api.x.ai/v1/images/edits", {
+  const res = await canonicalFetch("https://api.x.ai/v1/images/edits", {
     method: "POST",
     headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
     body: JSON.stringify({
@@ -124,7 +128,7 @@ async function editViaXai(
       prompt,
       image: { url: `data:${image.mime};base64,${image.buf.toString("base64")}`, type: "image_url" },
     }),
-    signal: AbortSignal.timeout(120_000),
+    timeoutMs: 120_000,
   });
   if (!res.ok) {
     const errText = await res.text();
@@ -138,7 +142,7 @@ async function editViaXai(
   if (first.b64_json) {
     buffer = Buffer.from(first.b64_json, "base64");
   } else {
-    const imgRes = await fetch(first.url!, { signal: AbortSignal.timeout(30_000) });
+    const imgRes = await canonicalFetch(first.url!, { timeoutMs: 30_000 });
     if (!imgRes.ok) return ok(`Image edited via Grok Imagine!\nPrompt: ${prompt}\nView: ${first.url}\n(Could not save locally)`);
     buffer = Buffer.from(await imgRes.arrayBuffer());
   }

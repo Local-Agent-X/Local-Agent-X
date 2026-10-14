@@ -13,6 +13,7 @@ import { TOOL_PATH_ARGS } from "../tool-registry.js";
 import { resolveAgentPath } from "../workspace/paths.js";
 import { workspaceRoot } from "../config.js";
 import { pathIsWithin, userContentDirs } from "../security/layer/file-access.js";
+import { declaredPaths } from "../security/layer/runtime-state.js";
 
 const EMAIL_READS: ReadonlySet<string> = new Set(["email_read", "email_search", "email_read_message"]);
 
@@ -24,8 +25,10 @@ function personalDocumentRead(toolName: string, args: Record<string, unknown>, s
   for (const spec of specs) {
     if (spec.action !== "read" || spec.json) continue;
     if (spec.forActions && !spec.forActions.includes(action)) continue;
-    const doc = personalDocumentPath(args[spec.arg], sessionId);
-    if (doc) return doc;
+    for (const raw of declaredPaths(args, spec) ?? []) {
+      const doc = personalDocumentPath(raw, sessionId);
+      if (doc) return doc;
+    }
   }
   return null;
 }

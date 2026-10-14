@@ -10,8 +10,12 @@ import type { ToolPolicyEntry } from "./tool-policies.types.js";
 export const TOOL_POLICIES_APPS: Record<string, ToolPolicyEntry> = {
   // ── Media generation / capture ──
   generate_image: { kernel: "internal", risk: "workspace-write", offBoxFetch: true, rateLimit: { maxCalls: 20, windowMs: 60_000, action: "block" }, rules: [{ id: "allow-generate-image", decision: "allow", reason: "Image generation allowed (rate limited)", priority: 40, constraints: { maxCallsPerSession: 20 } }] },
-  edit_image: { kernel: "internal", risk: "workspace-write", offBoxFetch: true, rateLimit: { maxCalls: 20, windowMs: 60_000, action: "block" }, rules: [{ id: "allow-edit-image", decision: "allow", reason: "Image editing allowed (rate limited)", priority: 40, constraints: { maxCallsPerSession: 20 } }] },
-  generate_video: { kernel: "internal", risk: "workspace-write", offBoxFetch: true, rateLimit: { maxCalls: 5, windowMs: 60_000, action: "block" }, rules: [{ id: "allow-generate-video", decision: "allow", reason: "Video generation allowed (rate limited)", priority: 40, constraints: { maxCallsPerSession: 5 } }] },
+  // The source image, mask and reference images are read off disk when they
+  // name local files (image-tools/shared.ts resolveLocalImagePath); a URL or
+  // data: value resolves inside the workspace and passes. reference_images
+  // arrives as a real array or, from some models, a JSON-encoded string.
+  edit_image: { kernel: "internal", risk: "workspace-write", offBoxFetch: true, pathArgs: [{ arg: "image", action: "read" }, { arg: "mask", action: "read" }], rateLimit: { maxCalls: 20, windowMs: 60_000, action: "block" }, rules: [{ id: "allow-edit-image", decision: "allow", reason: "Image editing allowed (rate limited)", priority: 40, constraints: { maxCallsPerSession: 20 } }] },
+  generate_video: { kernel: "internal", risk: "workspace-write", offBoxFetch: true, pathArgs: [{ arg: "reference_images", action: "read", json: true }], rateLimit: { maxCalls: 5, windowMs: 60_000, action: "block" }, rules: [{ id: "allow-generate-video", decision: "allow", reason: "Video generation allowed (rate limited)", priority: 40, constraints: { maxCallsPerSession: 5 } }] },
   camera_capture: { kernel: "internal", risk: "workspace-write", offBoxFetch: true },
   screen_capture: { kernel: "internal", risk: "workspace-write", offBoxFetch: true },
   // Mouse/keyboard actuation. kernel:"internal" — it has no data-I/O sink the
@@ -21,7 +25,7 @@ export const TOOL_POLICIES_APPS: Record<string, ToolPolicyEntry> = {
   // grant (driver), and risk:"shell" (top autonomy tier → confirm-risky/
   // autonomous profiles still gate the call).
   computer:       { kernel: "internal", risk: "shell", rules: [{ id: "allow-computer", decision: "allow", reason: "Mouse/keyboard control allowed at policy layer; gated by enableComputerControl + OS permission + risk tier", priority: 40 }] },
-  ocr:            { kernel: "internal", risk: "workspace-write", pathArgs: [{ arg: "path", action: "read" }], rules: [{ id: "allow-ocr", decision: "allow", reason: "OCR text extraction", priority: 50 }] },
+  ocr:            { kernel: "internal", risk: "safe", pathArgs: [{ arg: "path", action: "read" }], rules: [{ id: "allow-ocr", decision: "allow", reason: "OCR text extraction (read-only)", priority: 50 }] },
   // Genuinely "shell": every action spawns a real adb/emulator subprocess
   // (unlike `computer`, which drives OS input APIs with no child process at
   // all) — kernel:"shell" gives it the real taint/audit pipeline instead of
@@ -62,9 +66,11 @@ export const TOOL_POLICIES_APPS: Record<string, ToolPolicyEntry> = {
   task_update:    { kernel: "internal", risk: "workspace-write" },
 
   // ── Worker-pool (op_* globs) ──
-  op_submit:         { kernel: "internal", risk: "workspace-write" },
-  op_submit_async:   { kernel: "internal", risk: "workspace-write" },
-  op_submit_batch:   { kernel: "internal", risk: "workspace-write" },
+  // context_files are read into the worker's context pack before any of the
+  // worker's own gated reads run (context-pack-builder.ts).
+  op_submit:         { kernel: "internal", risk: "workspace-write", pathArgs: [{ arg: "context_files", action: "read" }] },
+  op_submit_async:   { kernel: "internal", risk: "workspace-write", pathArgs: [{ arg: "context_files", action: "read" }] },
+  op_submit_batch:   { kernel: "internal", risk: "workspace-write", pathArgs: [{ arg: "tasks", each: "context_files", action: "read" }] },
   op_wait:           { kernel: "internal", risk: "safe" },
   op_status:         { kernel: "internal", risk: "safe" },
   op_kill:           { kernel: "internal", risk: "destructive" },
@@ -77,7 +83,9 @@ export const TOOL_POLICIES_APPS: Record<string, ToolPolicyEntry> = {
 
   // ── App-build pipeline ──
   build_app:             { kernel: "internal", risk: "workspace-write", rules: [{ id: "allow-build-app", decision: "allow", reason: "Build workspace apps", priority: 50 }] },
-  connector_create:      { kernel: "internal", risk: "workspace-write", rules: [{ id: "allow-connector-create", decision: "allow", reason: "Define an external-API connector manifest (data file; egress stays gated by the per-manifest allow-list + connector proxy)", priority: 50 }] },
+  // The manifest names the upstream the connector proxy will then reach, so
+  // the call is gated as the off-box sink it opens.
+  connector_create:      { kernel: "internal", risk: "workspace-write", offBoxFetch: true, rules: [{ id: "allow-connector-create", decision: "allow", reason: "Define an external-API connector manifest (data file; egress stays gated by the per-manifest allow-list + connector proxy)", priority: 50 }] },
   // Spawns a real dev-server subprocess (via process-session) for a full-stack
   // app, so it's classed "shell" like process_start — the spawned command gets
   // the kernel shell defense pipeline + audit — NOT "internal" like its
@@ -88,10 +96,12 @@ export const TOOL_POLICIES_APPS: Record<string, ToolPolicyEntry> = {
   app_rebuild:           { kernel: "shell", risk: "shell" },   // spawns the framework's production build (npx vite build) via the canonical static-build runner — same sink class as app_serve_*; allowed via the app_* glob
   create_page:           { kernel: "internal", risk: "workspace-write", rules: [{ id: "allow-create-page", decision: "allow", reason: "Create custom pages", priority: 50 }] },
   start_app_build:       { kernel: "internal", risk: "workspace-write", rules: [{ id: "allow-start-app-build", decision: "allow", reason: "App-build kickoff handle", priority: 50 }] },
-  finalize_app_build:    { kernel: "internal", risk: "workspace-write", rules: [{ id: "allow-finalize-app-build", decision: "allow", reason: "App-build finalize handle", priority: 50 }] },
-  build_plan_resume:     { kernel: "internal", risk: "workspace-write", rules: [{ id: "allow-build-plan-resume", decision: "allow", reason: "Auto-build resume handle", priority: 50 }] },
-  build_plan_status:     { kernel: "internal", risk: "safe", rules: [{ id: "allow-build-plan-status", decision: "allow", reason: "Auto-build status read", priority: 50 }] },
-  run_build_plan:        { kernel: "internal", risk: "workspace-write", rules: [{ id: "allow-run-build-plan", decision: "allow", reason: "Auto-build loop kickoff", priority: 50 }] },
+  // finalize creates project_dir and writes the spec into it; run reads the
+  // plan under it (the build's own writes run under the worker's gates).
+  finalize_app_build:    { kernel: "internal", risk: "workspace-write", pathArgs: [{ arg: "project_dir", action: "write" }], rules: [{ id: "allow-finalize-app-build", decision: "allow", reason: "App-build finalize handle", priority: 50 }] },
+  build_plan_resume:     { kernel: "internal", risk: "workspace-write", pathArgs: [{ arg: "project_dir", action: "read" }], rules: [{ id: "allow-build-plan-resume", decision: "allow", reason: "Auto-build resume handle", priority: 50 }] },
+  build_plan_status:     { kernel: "internal", risk: "safe", pathArgs: [{ arg: "project_dir", action: "read" }], rules: [{ id: "allow-build-plan-status", decision: "allow", reason: "Auto-build status read", priority: 50 }] },
+  run_build_plan:        { kernel: "internal", risk: "workspace-write", pathArgs: [{ arg: "project_dir", action: "read" }], rules: [{ id: "allow-run-build-plan", decision: "allow", reason: "Auto-build loop kickoff", priority: 50 }] },
 
   // ── UI / state / config ──
   sidebar_pin:    { kernel: "internal", risk: "workspace-write" },
@@ -165,5 +175,7 @@ export const TOOL_POLICIES_APPS: Record<string, ToolPolicyEntry> = {
     { arg: "output_path", action: "write",      forActions: ["merge"] },
   ] },
   create_chart:     { kernel: "internal", risk: "workspace-write", pathArgs: [{ arg: "file_path", action: "write" }], rules: [{ id: "allow-create-chart", decision: "allow", reason: "Chart PNG generation (workspace-confined)", priority: 50 }] },
-  preview_document: { kernel: "internal", risk: "safe",            pathArgs: [{ arg: "file_path", action: "read" }],  rules: [{ id: "allow-preview-document", decision: "allow", reason: "Generated-file self-check (read-only)", priority: 50 }] },
+  // The thumbnail is written beside the file (<file>.preview.png); the tool
+  // gates that write itself through evaluateFileAccess (preview-tools.ts).
+  preview_document: { kernel: "internal", risk: "workspace-write", pathArgs: [{ arg: "file_path", action: "read" }],  rules: [{ id: "allow-preview-document", decision: "allow", reason: "Generated-file self-check (writes a sibling thumbnail)", priority: 50 }] },
 };

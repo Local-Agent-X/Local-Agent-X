@@ -30,8 +30,12 @@ export interface PathArgSpec {
    *  protection; "delete_file" is otherwise confined as a read is. */
   action: "read" | "write" | "edit" | "delete_file";
   /** Arg value is a JSON-array string of paths (pdf merge.files). Each element
-   *  is gated independently. */
+   *  is gated independently. Any arg may also arrive as a real array of
+   *  strings; a non-string element fails closed. */
   json?: boolean;
+  /** Arg value is an array of objects and the path lives under this key of
+   *  each element (op_submit_batch.tasks[].context_files). */
+  each?: string;
   /** For collapsed one-tool-many-actions families: this spec applies only when
    *  the call's `args.action` is in the list. A tool that declares ANY
    *  forActions spec is fail-closed — a call whose args.action matches no

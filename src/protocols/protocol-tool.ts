@@ -8,9 +8,10 @@ import { createCoreProtocolTools } from "./index.js";
  * (createCoreProtocolTools is untouched); this wrapper exposes them as
  * `protocol(action, params)` so the family costs one schema per turn, not 34.
  *
- * Destructive actions (delete, prune, archive_bulk, rollback_undo, var_delete)
- * stay approval-gated via the action-aware table in approval-decision.ts —
- * keep that table in sync when adding a destructive action here.
+ * Destructive actions (delete, prune, archive_bulk, rollback_undo, var_delete,
+ * install, update, curate) stay approval-gated via the action-aware table in
+ * approval-decision.ts — keep that table in sync when adding a destructive
+ * action here.
  *
  * Marketplace tools (marketplace_*) are a separate deferred family and pass
  * through uncollapsed.

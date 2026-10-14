@@ -131,8 +131,6 @@ async function foregroundDestination(_ctx: ToolCallContext, deps: PrivateGateDep
 /** Exported for the contract test: every rule must belong to a judged tool. */
 export const DESTINATION_RULES: Readonly<Record<string, Rule>> = {
   email_send: (ctx) => recipients([ctx.args.to, ctx.args.cc, ctx.args.bcc]),
-  // An event with no attendees stays on the user's own calendar.
-  calendar_create_event: (ctx) => recipients([ctx.args.attendees]),
   http_request: toUrl,
   ari_http: toUrl,
   web_fetch: toUrl,

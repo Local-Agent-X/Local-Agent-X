@@ -30,6 +30,7 @@ import { newOpId } from "../op-store.js";
 import { delegationFrom } from "../delegation.js";
 import { broadcastToSession, readRecentSessionMessages } from "../session-bridge.js";
 import { delegatedToolsetForOp } from "./delegated-toolset.js";
+import { resolveAgentPath } from "../../workspace/paths.js";
 import type { Op, OpLane, OpVisibility } from "../types.js";
 
 export interface SubmitArgs {
@@ -173,7 +174,10 @@ export async function buildOpFromArgs(rawArgs: Record<string, unknown>): Promise
     successCriteria: Array.isArray(args.success_criteria) ? args.success_criteria.map(String) : [],
     constraints: Array.isArray(args.constraints) ? args.constraints.map(String) : [],
     notWhatToRedo: Array.isArray(args.not_what_to_redo) ? args.not_what_to_redo.map(String) : [],
-    referencedFilePaths: Array.isArray(args.context_files) ? args.context_files.map(String) : [],
+    // Resolved as the file-access gate resolved them (a relative path anchors
+    // at the workspace or the session's work root), so the files the pack
+    // reads are the files the gate checked.
+    referencedFilePaths: Array.isArray(args.context_files) ? args.context_files.map((p) => resolveAgentPath(String(p), sessionId || undefined)) : [],
     scopeForAgentsRules: typeof args.scope_hint === "string" ? args.scope_hint : undefined,
     memoryQuery: typeof args.memory_query === "string" ? args.memory_query : undefined,
     lane,

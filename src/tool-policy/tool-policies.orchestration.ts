@@ -51,7 +51,8 @@ export const TOOL_POLICIES_ORCHESTRATION: Record<string, ToolPolicyEntry> = {
   // ── Protocols ──
   // One collapsed tool (action param) — see src/protocols/protocol-tool.ts.
   // Risk is the worst non-destructive tier across actions; the destructive
-  // actions (delete, prune, archive_bulk, rollback_undo, var_delete) are
-  // reclassified per-call by the action-aware table in approval-decision.ts.
+  // actions (delete, prune, archive_bulk, rollback_undo, var_delete, install,
+  // update, curate) are reclassified per-call by the action-aware table in
+  // approval-decision.ts.
   protocol: { kernel: "internal", risk: "workspace-write", rules: [{ id: "allow-protocols", decision: "allow", reason: "Protocol browsing, workflows, and execution", priority: 50 }] },
 };

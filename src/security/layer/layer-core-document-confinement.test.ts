@@ -87,15 +87,47 @@ describe("structured-document file-access confinement (TOOL_PATH_ARGS)", () => {
     const sec = new SecurityLayer(WORKSPACE, "workspace");
     for (const [toolName, specs] of Object.entries(TOOL_PATH_ARGS)) {
       for (const spec of specs) {
-        const val = spec.json ? JSON.stringify([OUTSIDE]) : OUTSIDE;
         // Conditional specs (collapsed family tools) need the declaring action
         // present, or the fail-closed undeclared-action deny fires instead of
         // the file gate this test exercises.
         const action = spec.forActions?.[0];
-        const d = sec.evaluate({ toolName, args: { ...(action ? { action } : {}), [spec.arg]: val }, sessionId: "t" });
-        expect(d.allowed, `${toolName}.${spec.arg} must be confined`).toBe(false);
+        // An `each` spec reads the path off every element of an array of objects.
+        const evaluate = (val: unknown) =>
+          sec.evaluate({ toolName, args: { ...(action ? { action } : {}), [spec.arg]: spec.each ? [{ [spec.each]: val }] : val }, sessionId: "t" });
+        const declared = spec.json ? JSON.stringify([OUTSIDE]) : OUTSIDE;
+        expect(evaluate(declared).allowed, `${toolName}.${spec.arg} must be confined`).toBe(false);
+        // A model may send a real array where the schema says string (and
+        // several schemas say array): every element is gated, never skipped.
+        const asArray = evaluate([resolve(ws, "in.bin"), OUTSIDE]);
+        expect(asArray.allowed, `${toolName}.${spec.arg} as an array must be confined`).toBe(false);
+        expect(asArray.reason, `${toolName}.${spec.arg}`).not.toContain("non-string element");
+        // An element the gate cannot read as a path fails closed.
+        const unreadable = evaluate([resolve(ws, "in.bin"), 5]);
+        expect(unreadable.allowed, `${toolName}.${spec.arg} with a non-string element must be refused`).toBe(false);
+        expect(unreadable.reason).toContain("non-string element");
+        if (spec.json) {
+          expect(evaluate(JSON.stringify([resolve(ws, "in.bin"), 5])).allowed, `${toolName}.${spec.arg} json non-string`).toBe(false);
+        }
       }
     }
+  });
+
+  it("a real array of in-bounds paths on an array-valued arg is allowed", () => {
+    const sec = new SecurityLayer(WORKSPACE, "workspace");
+    const d = sec.evaluate({
+      toolName: "generate_video",
+      args: { prompt: "x", reference_images: [resolve(ws, "a.png"), resolve(ws, "b.png")] },
+      sessionId: "t",
+    });
+    expect(d.allowed).toBe(true);
+  });
+
+  it("op_submit_batch gates every task's context_files, and refuses a task that is not an object", () => {
+    const sec = new SecurityLayer(WORKSPACE, "workspace");
+    const call = (tasks: unknown) => sec.evaluate({ toolName: "op_submit_batch", args: { tasks }, sessionId: "t" });
+    expect(call([{ task: "a", context_files: [resolve(ws, "a.md")] }, { task: "b", context_files: [OUTSIDE] }]).allowed).toBe(false);
+    expect(call([{ task: "a", context_files: [resolve(ws, "a.md")] }, { task: "b" }]).allowed).toBe(true);
+    expect(call(["not a task"]).allowed).toBe(false);
   });
 
   // Guard against silent regression: the known office/vision sinks must stay

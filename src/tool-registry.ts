@@ -91,6 +91,9 @@ const EGRESS_TOOLS: ReadonlySet<string> = new Set([
   "browser",                   // browser navigation/fetch actions (browser_* below)
   "extract_site_assets",       // model-controlled url → off-box GET (was DNS-pin only)
   "youtube_analyze",           // model-derived url → off-box GET + yt-dlp spawn
+  "compare_pages",             // two model-controlled urls → four off-box GETs
+  "email_setup",               // connects to the model-named SMTP host with the vault password
+  "connector_create",          // names the upstream the connector proxy will then reach
   // Off-box sinks whose payload rides a non-url arg (query/queries/prompt) or
   // ships local file bytes off-box — were missing the taint floor + secret scan
   // + canary tripwire (R3 C3-4/C3-11/C3-22). Membership is build-time-enforced

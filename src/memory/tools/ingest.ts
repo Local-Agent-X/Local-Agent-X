@@ -1,4 +1,5 @@
 import type { MemoryIndex } from "../../memory/index.js";
+import { resolveAgentPath } from "../../workspace/paths.js";
 
 // Conversation ingest tool
 export function createIngestTool(memory: MemoryIndex) {
@@ -18,8 +19,11 @@ export function createIngestTool(memory: MemoryIndex) {
     async execute(args: Record<string, unknown>) {
       const dir = args.directory ? String(args.directory) : undefined;
       const file = args.file ? String(args.file) : undefined;
-      const target = dir || file;
-      if (!target) return { content: "Provide either 'directory' or 'file' parameter.", isError: true };
+      const raw = dir || file;
+      if (!raw) return { content: "Provide either 'directory' or 'file' parameter.", isError: true };
+      // Resolved as the file-access gate resolved it (a relative path anchors at
+      // the workspace), so the path checked is the path read.
+      const target = resolveAgentPath(raw);
       const onProgress = typeof args._onProgress === "function" ? args._onProgress as (msg: string) => void : undefined;
 
       try {

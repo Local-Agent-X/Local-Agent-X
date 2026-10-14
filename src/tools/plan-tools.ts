@@ -21,7 +21,9 @@ export function clearSoftPlanMode(sessionId: string): void {
 
 export const READ_ONLY_TOOLS = new Set([
   'read', 'grep', 'glob', 'web_search', 'web_fetch', 'view_image',
-  'sql_query', 'sql_schema', 'sql_explain', 'clipboard_read',
+  // sql_query is read-only only while its default readonly:true holds; the
+  // readonly:false form is a mutation and is judged by args below.
+  'sql_schema', 'sql_explain', 'clipboard_read',
   'calendar_list_events', 'calendar_check_availability', 'email_read', 'email_search',
   // Read-only by construction, same as their two siblings above: email_read_message
   // issues one IMAP FETCH, email_folders one LIST. Neither STOREs, APPENDs, MOVEs
@@ -53,6 +55,7 @@ const READ_ONLY_TOOL_ACTIONS: Record<string, ReadonlySet<string>> = {
 
 export function isReadOnlyCall(name: string, args: Record<string, unknown>): boolean {
   if (READ_ONLY_TOOLS.has(name)) return true;
+  if (name === 'sql_query') return args.readonly !== false;
   const actions = READ_ONLY_TOOL_ACTIONS[name];
   return actions !== undefined && actions.has(String(args.action ?? ''));
 }

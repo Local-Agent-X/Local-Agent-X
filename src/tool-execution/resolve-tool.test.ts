@@ -32,6 +32,7 @@ import {
 import type { BuildPlanKickoff } from "../auto-build/kickoff.js";
 import { readAppBuildWorkflow } from "../auto-build/workflow-state.js";
 import { FEATURE_FLAG_ENV } from "../auto-build/tool.js";
+import { planTools } from "../tools/plan-tools.js";
 
 const SESSION = "agent-seam-test-1";
 // Pure path math — nothing touches disk, so the root doesn't need to exist.
@@ -263,6 +264,29 @@ describe("session-repeat dedup exempts stateful tools", () => {
     const msg = ctx.msgs.at(-1);
     expect(String(msg?.content)).toContain("[REPEATED CALL");
     expect(String(msg?.content)).toContain(PRIOR_RESULT);
+  });
+});
+
+describe("plan mode judges sql_query by its readonly flag", () => {
+  // sql_query was whitelisted by name, so `readonly:false` — a mutation the
+  // tool itself allows — ran under a mode whose premise is that nothing it
+  // permits changes the world.
+  const SID = "plan-mode-sql";
+  const sql = (args: Record<string, unknown>) => resolveRaw("sql_query", { database: "x.db", query: "delete from t", ...args }, SID);
+
+  it("refuses readonly:false and allows the default read-only form", async () => {
+    await planTools[0].execute({ _sessionId: SID });
+    try {
+      const mutation = await sql({ readonly: false });
+      expect(mutation.outcome.kind).toBe("halt");
+      expect(mutation.ctx.allowed).toBe(false);
+      expect(String(mutation.ctx.msgs.at(-1)?.content)).toContain("Plan mode is active");
+      expect((await sql({})).outcome.kind).toBe("continue");
+      expect((await sql({ readonly: true })).outcome.kind).toBe("continue");
+    } finally {
+      await planTools[1].execute({ _sessionId: SID });
+    }
+    expect((await sql({ readonly: false })).outcome.kind).toBe("continue");
   });
 });
 

@@ -1,13 +1,17 @@
 import { describe, it, expect, afterAll } from "vitest";
-import { mkdtempSync, rmSync, existsSync, readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { workspaceRoot } from "../config.js";
 import { pdfTools } from "./pdf-tools.js";
 import { documentTools } from "./document-tools.js";
 import { previewTools } from "./preview-tools.js";
 import type { ToolDefinition } from "../types.js";
 
-const dir = mkdtempSync(join(tmpdir(), "preview-"));
+// The thumbnail is written beside the file under the file-access mode, so the
+// fixtures live in the workspace, where every mode allows a write.
+mkdirSync(workspaceRoot(), { recursive: true });
+const dir = mkdtempSync(join(workspaceRoot(), "preview-"));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 const find = (a: ToolDefinition[], n: string) => a.find((t) => t.name === n)!;
 const preview = previewTools[0];
@@ -43,5 +47,22 @@ describe("preview_document", () => {
   it("errors on a missing file", async () => {
     const r = await preview.execute({ file_path: join(dir, "nope.pdf") });
     expect(r.isError).toBe(true);
+  });
+
+  it("refuses the sibling thumbnail where the write tools would refuse the write", async () => {
+    // Outside the workspace and outside home: no mode allows a write there, so
+    // the structural check still runs and the thumbnail line says why not.
+    const outside = mkdtempSync(join(tmpdir(), "preview-outside-"));
+    try {
+      const fp = join(outside, "r.pdf");
+      await find(pdfTools, "pdf").execute({ action: "create", file_path: fp, title: "Q3", content: "# Summary\nRevenue grew." });
+      const r = await preview.execute({ file_path: fp });
+      expect(r.isError).toBeFalsy();
+      expect(r.metadata?.thumbnail).toBeUndefined();
+      expect(String(r.content)).toMatch(/Thumbnail: not written — Blocked/);
+      expect(existsSync(join(outside, "r.preview.png"))).toBe(false);
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
   });
 });

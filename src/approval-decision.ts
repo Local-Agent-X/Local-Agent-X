@@ -316,6 +316,7 @@ const DESTRUCTIVE_TOOL_ACTIONS: Record<string, Record<string, string>> = {
     var_delete: "deletes a stored protocol variable",
     install: "downloads skills from a repo and writes them into the workspace",
     update: "overwrites an installed skill with its upstream version",
+    curate: "archives stale protocols and hard-deletes archived ones past their cutoff",
   },
 };
 

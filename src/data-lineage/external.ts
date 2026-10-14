@@ -133,6 +133,7 @@ const EXTERNAL_INGESTING_TOOLS: ReadonlySet<string> = new Set([
 	"web_search",
 	"image_search",
 	"extract_site_assets",
+	"compare_pages",
 	"youtube_analyze",
 	"email_read",
 	"email_search",

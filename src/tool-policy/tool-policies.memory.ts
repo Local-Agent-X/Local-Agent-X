@@ -32,7 +32,11 @@ export const TOOL_POLICIES_MEMORY: Record<string, ToolPolicyEntry> = {
   memory_forget:         { kernel: "internal", risk: "destructive" },
   memory_forget_imports: { kernel: "internal", risk: "destructive" },
   memory_get:            { kernel: "internal", risk: "safe" },
-  memory_ingest:         { kernel: "internal", risk: "workspace-write" },
+  memory_ingest:         { kernel: "internal", risk: "workspace-write", pathArgs: [{ arg: "directory", action: "read" }, { arg: "file", action: "read" }] },
+  // A recall bumps the hot-score timestamp of the facts it returns
+  // (memory-recall.ts reinforceFacts): bookkeeping the user never loses, so
+  // the tier stays "safe" — the mutating tiers would make a recall count as
+  // work for the loop guards (SPIRALABLE_TOOLS) and the failover checks.
   memory_recall:         { kernel: "internal", risk: "safe" },
   memory_reflect:        { kernel: "internal", risk: "workspace-write" },
   memory_reindex:        { kernel: "internal", risk: "workspace-write" },

@@ -1,7 +1,16 @@
 import { existsSync } from "node:fs";
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { resolveAgentPath as resolvePath } from "../workspace/paths.js";
+import { workspaceRoot } from "../config.js";
+import { evaluateFileAccess, loadFileAccessMode } from "../security/layer/index.js";
 import { docKind, extractStructure, renderThumbnail } from "./shared/office-preview.js";
+
+/** The thumbnail lands beside the file, a write the dispatch gate cannot see
+ *  (only `file_path` is declared, as a read), so it is judged here by the same
+ *  decision the write tools get: the file-access mode over the workspace. */
+function thumbnailWriteAllowed(out: string): { allowed: boolean; reason: string } {
+  return evaluateFileAccess(workspaceRoot(), loadFileAccessMode(), () => false, "write", out);
+}
 
 const previewDocument: ToolDefinition = {
   name: "preview_document",
@@ -33,7 +42,8 @@ const previewDocument: ToolDefinition = {
       let thumbnail: string | undefined;
       if (args.thumbnail !== false) {
         const out = fp.replace(/\.[^.]+$/, "") + ".preview.png";
-        const t = await renderThumbnail(fp, kind, out);
+        const write = thumbnailWriteAllowed(out);
+        const t = write.allowed ? await renderThumbnail(fp, kind, out) : { ok: false, reason: `not written — ${write.reason}` };
         if (t.ok) { thumbnail = t.outPath; lines.push(`Thumbnail: ${t.outPath} — view_image it to confirm the layout.`); }
         else lines.push(`Thumbnail: ${t.reason}`);
       }

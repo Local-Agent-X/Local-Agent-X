@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { evaluateFileAccess } from "./file-access.js";
 import { SecurityLayer } from "./layer-core.js";
+import { SESSIONS, type ProcessSession } from "../../tools/process-session.js";
 import { evaluateWebFetch } from "./network-policy.js";
 import { evaluateShellCommand } from "./shell-policy.js";
 
@@ -413,6 +414,54 @@ describe("SecurityLayer kernel-class dispatch", () => {
       });
       expect(d.allowed).toBe(true);
       expect(d.reason).toMatch(/shell-class tool/);
+    });
+
+    // The spawn's cwd is a path the command opens, so it is confined to the
+    // file-access mode like every path the command names.
+    it("cwd outside the file-access boundary is blocked, for every shell-class spawner", () => {
+      const sec = new SecurityLayer(WORKSPACE, "workspace");
+      const outside = resolve(tmpdir(), "lax-elsewhere");
+      for (const [toolName, args] of [
+        ["process_start", { command: "node server.js" }],
+        ["process_restart", { command: "node server.js" }],
+        ["app_serve_backend", { app_id: "demo", command: "npm run dev", port: 3000 }],
+        ["app_serve_frontend", { app_id: "demo", command: "npm run dev", port: 5173 }],
+      ] as const) {
+        const blocked = sec.evaluate({ toolName, args: { ...args, cwd: outside }, sessionId: "t" });
+        expect(blocked.allowed, toolName).toBe(false);
+        expect(blocked.reason, toolName).toMatch(/cwd .* outside the workspace file-access boundary/);
+        expect(sec.evaluate({ toolName, args: { ...args, cwd: resolve(WORKSPACE, "app") }, sessionId: "t" }).allowed, toolName).toBe(true);
+      }
+    });
+
+    it("a restart that names no command vets the tracked session's command and cwd", () => {
+      const sec = new SecurityLayer(WORKSPACE, "workspace");
+      SESSIONS.set("px-tracked", { command: "cat /etc/passwd", cwdHint: WORKSPACE } as ProcessSession);
+      SESSIONS.set("px-benign", { command: "node server.js", cwdHint: resolve(tmpdir(), "lax-elsewhere") } as ProcessSession);
+      SESSIONS.set("px-clean", { command: "node server.js", cwdHint: WORKSPACE } as ProcessSession);
+      try {
+        const inherited = sec.evaluate({ toolName: "process_restart", args: { session_id: "px-tracked" }, sessionId: "t" });
+        expect(inherited.allowed).toBe(false);
+        expect(inherited.reason).toMatch(/\/etc\/passwd/);
+        const cwd = sec.evaluate({ toolName: "process_restart", args: { session_id: "px-benign" }, sessionId: "t" });
+        expect(cwd.allowed).toBe(false);
+        expect(cwd.reason).toMatch(/cwd/);
+        expect(sec.evaluate({ toolName: "process_restart", args: { session_id: "px-clean", port: 3000 }, sessionId: "t" }).allowed).toBe(true);
+        // An explicit command wins over the inherited one, and is what gets vetted.
+        expect(sec.evaluate({ toolName: "process_restart", args: { session_id: "px-tracked", command: "node server.js" }, sessionId: "t" }).allowed).toBe(true);
+      } finally {
+        for (const id of ["px-tracked", "px-benign", "px-clean"]) SESSIONS.delete(id);
+      }
+    });
+
+    it("a restart with nothing to vet is blocked, not passed through as command-less", () => {
+      const sec = makeLayer();
+      const none = sec.evaluate({ toolName: "process_restart", args: { port: 3000 }, sessionId: "t" });
+      expect(none.allowed).toBe(false);
+      expect(none.reason).toMatch(/no command to vet/);
+      const unknown = sec.evaluate({ toolName: "process_restart", args: { session_id: "px-nope" }, sessionId: "t" });
+      expect(unknown.allowed).toBe(false);
+      expect(unknown.reason).toMatch(/not a tracked session/);
     });
   });
 

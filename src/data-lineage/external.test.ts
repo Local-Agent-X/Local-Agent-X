@@ -179,7 +179,7 @@ describe("adjudicatePayload — the verdict core shared with checkEgressTaintWit
 
 describe("isExternalIngestingTool — tool-class membership (D8)", () => {
 	it("covers the off-box ingestion class incl. ALL browser actions, inbound email, and mcp_*", () => {
-		for (const name of ["web_fetch", "http_request", "ari_http", "browser", "web_search", "image_search", "extract_site_assets", "youtube_analyze", "email_read", "email_search", "mcp_github_search_issues", "WebSearch", "WebFetch"]) {
+		for (const name of ["web_fetch", "http_request", "ari_http", "browser", "web_search", "image_search", "extract_site_assets", "compare_pages", "youtube_analyze", "email_read", "email_search", "mcp_github_search_issues", "WebSearch", "WebFetch"]) {
 			expect(isExternalIngestingTool(name), name).toBe(true);
 		}
 	});

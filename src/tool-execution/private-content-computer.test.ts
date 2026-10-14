@@ -3,7 +3,7 @@
 // native input library, and a clipboard that cannot be read (clipboard_read
 // has no PowerShell to run on a Mac) is unknown content the user is asked
 // about, never an empty paste. What is typed or pasted is read from the
-// arguments the action runs with, so text nested under `params` is judged too.
+// arguments the action runs with: the flat fields, with `params` dropped.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { computerPayload, isPasteChord, queryForegroundApp, readClipboardText, UnreadableClipboardError } from "./private-content-computer.js";
 import { clipboardTools } from "../tools/clipboard-tools.js";
@@ -73,19 +73,23 @@ describe("the clipboard a paste chord sends", () => {
 describe("a call that nests its arguments under params", () => {
   const app = { foregroundApp: async () => ({ name: "chrome", title: "Apply now - Acme Careers" }) };
 
-  it("typing private text nested under params is asked about, even beside a harmless flat text", async () => {
+  it("text nested under params is neither typed nor judged — the flat family drops params", async () => {
     readEmail();
-    expect(await verdict(ctx("computer", { action: "type", params: { text: STATEMENT } }), app)).toMatch(/to chrome/);
-    expect(await verdict(ctx("computer", { action: "type", text: "hello", params: { text: [STATEMENT] } }), app)).toMatch(/to chrome/);
+    expect(await verdict(ctx("computer", { action: "type", params: { text: STATEMENT } }), app)).toBeUndefined();
+    expect(await verdict(ctx("computer", { action: "type", text: STATEMENT, params: { text: "hello" } }), app)).toMatch(/to chrome/);
+    driver.typeText.mockClear();
+    await computerTool.execute({ action: "type", params: { text: STATEMENT } });
+    expect(driver.typeText.mock.calls[0]?.[0] ?? "").toBe("");
   });
 
-  it("a paste chord nested under params sends the clipboard", async () => {
+  it("a paste chord nested under params presses nothing, so it sends nothing", async () => {
     readEmail();
     const deps = { ...app, clipboardText: async () => `copied: ${STATEMENT}` };
-    expect(await verdict(ctx("computer", { action: "press", params: { keys: ["ctrl", "v"] } }), deps)).toMatch(/to chrome/);
+    expect(await verdict(ctx("computer", { action: "press", params: { keys: ["ctrl", "v"] } }), deps)).toBeUndefined();
+    expect(await verdict(ctx("computer", { action: "press", keys: ["ctrl", "v"], params: { keys: ["ctrl", "s"] } }), deps)).toMatch(/to chrome/);
   });
 
-  it("is judged by the text the action types and the chord it presses, whatever the flat fields say", async () => {
+  it("is judged by the text the action types and the chord it presses, whatever params say", async () => {
     const calls: Record<string, unknown>[] = [
       { action: "type", text: "flat" },
       { action: "type", params: { text: "nested" } },

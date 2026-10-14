@@ -37,25 +37,30 @@ export const TOOL_POLICIES_NETWORK: Record<string, ToolPolicyEntry> = {
   browser_capture_to_secret: { kernel: "secret-vault", risk: "workspace-write", rules: [{ id: "allow-browser-capture-to-secret", decision: "allow", reason: "Capture page value into encrypted vault (value never enters model context)", priority: 50 }] },
   browser_fill_from_secret:  { kernel: "secret-vault", risk: "secrets", rules: [{ id: "allow-browser-fill-from-secret", decision: "allow", reason: "Fill vault value into page input (origin-bound, selector-whitelisted, approval-gated)", priority: 50 }] },
   http_request: {
-    kernel: "http", risk: "network-write",
+    kernel: "http", risk: "network-write", offBoxFetch: true,
     rateLimit: { maxCalls: 20, windowMs: 60_000, action: "block" },
     rules: [{ id: "allow-http-limited", decision: "allow", reason: "HTTP allowed (rate limited, SSRF-checked, content-wrapped)", priority: 40, constraints: { maxCallsPerSession: 60 } }],
   },
-  ari_http: { kernel: "internal", risk: "network-write" },
+  ari_http: { kernel: "internal", risk: "network-write", offBoxFetch: true },
   web_fetch: {
-    kernel: "http", risk: "network-read",
+    kernel: "http", risk: "network-read", offBoxFetch: true,
     rateLimit: { maxCalls: 20, windowMs: 60_000, action: "block" },
     rules: [{ id: "allow-webfetch-limited", decision: "allow", reason: "Web fetch allowed (rate limited, SSRF-checked, content-wrapped)", priority: 40, constraints: { maxCallsPerSession: 60 } }],
   },
   compare_pages: {
-    kernel: "http", risk: "network-read",
+    kernel: "http", risk: "network-read", offBoxFetch: true,
     rateLimit: { maxCalls: 20, windowMs: 60_000, action: "block" },
     rules: [{ id: "allow-compare-pages", decision: "allow", reason: "Structural two-page compare (read-only, rate limited, SSRF-checked, content-wrapped)", priority: 40, constraints: { maxCallsPerSession: 60 } }],
   },
-  web_search:          { kernel: "http", risk: "safe", offBoxFetch: true, rules: [{ id: "allow-web-search", decision: "allow", reason: "Web search", priority: 50 }] },
-  image_search:        { kernel: "http", risk: "safe", offBoxFetch: true, rules: [{ id: "allow-image-search", decision: "allow", reason: "Web image search (read-only)", priority: 50 }] },
-  youtube_analyze:     { kernel: "http", risk: "network-read" },
-  extract_site_assets: { kernel: "http", risk: "network-read", rules: [{ id: "allow-extract-site-assets", decision: "allow", reason: "Web asset extraction (read-only)", priority: 50 }] },
+  // Both ship the model's query off-box and read what comes back: the same
+  // tier as web_fetch, not the local-read tier.
+  web_search:          { kernel: "http", risk: "network-read", offBoxFetch: true, rules: [{ id: "allow-web-search", decision: "allow", reason: "Web search", priority: 50 }] },
+  image_search:        { kernel: "http", risk: "network-read", offBoxFetch: true, rules: [{ id: "allow-image-search", decision: "allow", reason: "Web image search (read-only)", priority: 50 }] },
+  youtube_analyze:     { kernel: "http", risk: "network-read", offBoxFetch: true },
+  // Downloads land on disk under output_dir, which the tool confines to the
+  // workspace itself (asset-tools.ts workspaceOutputDir); declared here too so
+  // the file-access mode's write rules and the control-file gate see it.
+  extract_site_assets: { kernel: "http", risk: "workspace-write", pathArgs: [{ arg: "output_dir", action: "write" }], rules: [{ id: "allow-extract-site-assets", decision: "allow", reason: "Web asset extraction (downloads into the workspace)", priority: 50 }] },
 
   // ── External services (Gmail / Calendar / Marketplace) ──
   email_read:                  { kernel: "http", risk: "network-read" },
@@ -76,13 +81,18 @@ export const TOOL_POLICIES_NETWORK: Record<string, ToolPolicyEntry> = {
   email_delete:                { kernel: "http", risk: "destructive" },
   email_mark:                  { kernel: "http", risk: "workspace-write" },
   email_draft:                 { kernel: "http", risk: "workspace-write" },
-  email_setup:                 { kernel: "http", risk: "workspace-write" },
-  email_send:                  { kernel: "http", risk: "external-comms" },
+  // email_setup's verify step connects to the model-named SMTP host with the
+  // vault password: an off-box sink. email_send attaches local files by path.
+  email_setup:                 { kernel: "http", risk: "workspace-write", offBoxFetch: true },
+  email_send:                  { kernel: "http", risk: "external-comms", pathArgs: [{ arg: "attachments", action: "read", json: true }] },
   telegram_send:               { kernel: "http", risk: "external-comms", offBoxFetch: true, rules: [{ id: "allow-telegram-send", decision: "allow", reason: "Proactive owner DM over the Telegram bridge (egress-gated, confined to authorized chats)", priority: 50 }] },
   whatsapp_send:               { kernel: "http", risk: "external-comms", offBoxFetch: true, rules: [{ id: "allow-whatsapp-send", decision: "allow", reason: "Proactive owner DM over the WhatsApp bridge (egress-gated, confined to authorized numbers)", priority: 50 }] },
-  calendar_check_availability: { kernel: "http", risk: "network-read" },
-  calendar_list_events:        { kernel: "http", risk: "network-read" },
-  calendar_create_event:       { kernel: "http", risk: "external-comms" },
+  // The calendar is the local calendar.json in the data dir (calendar-tools.ts):
+  // nothing leaves the box and no third party sees an event, so the reads are
+  // "safe" and a create is a local write.
+  calendar_check_availability: { kernel: "http", risk: "safe" },
+  calendar_list_events:        { kernel: "http", risk: "safe" },
+  calendar_create_event:       { kernel: "http", risk: "workspace-write" },
   marketplace_search:          { kernel: "http", risk: "network-read" },
   marketplace_list:            { kernel: "http", risk: "network-read" },
   marketplace_install:         { kernel: "http", risk: "destructive" },

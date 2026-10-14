@@ -24,6 +24,7 @@ import { dirname, join } from "node:path";
 import { importedProtocolsDir } from "./loader.js";
 import { parseSkillMd } from "./skill-md-parser.js";
 import { isDestructiveCommand } from "../approval-decision.js";
+import { canonicalFetch } from "../tools/web-egress.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("protocols.skills-install");
@@ -38,6 +39,21 @@ const MAX_ARCHIVE_BYTES = 64 * 1024 * 1024;
 export const SOURCE_FILE = "source.json";
 
 export interface RepoRef { owner: string; repo: string; ref: string; path?: string }
+
+/** The two GitHub reads, shaped so a test can hand in a fake. */
+type GithubFetch = (url: string, init: { headers: Record<string, string>; timeoutMs: number }) => Promise<{
+  ok: boolean; status: number; text(): Promise<string>; arrayBuffer(): Promise<ArrayBuffer>;
+}>;
+
+/** The hardened fetch every tool's off-box read uses (SSRF-pinned, egress
+ *  policy on every hop); a test's `fetchImpl` stands in for it. */
+function githubFetch(fetchImpl: typeof fetch | undefined): GithubFetch {
+  if (fetchImpl) return (url, init) => fetchImpl(url, { headers: init.headers });
+  return (url, init) => canonicalFetch(url, { headers: init.headers, timeoutMs: init.timeoutMs });
+}
+
+const RESOLVE_TIMEOUT_MS = 30_000;
+const ARCHIVE_TIMEOUT_MS = 120_000;
 
 export interface InstalledSource {
   version: 1;
@@ -101,9 +117,10 @@ export function parseRepoRef(input: string, ref?: string, path?: string): RepoRe
   return { owner: m[1], repo: m[2], ref: ref?.trim() || m[3] || "HEAD", path: cleanPath || undefined };
 }
 
-async function resolveCommit(r: RepoRef, fetchImpl: typeof fetch): Promise<string> {
+async function resolveCommit(r: RepoRef, fetchImpl: GithubFetch): Promise<string> {
   const res = await fetchImpl(`https://api.github.com/repos/${r.owner}/${r.repo}/commits/${encodeURIComponent(r.ref)}`, {
     headers: { Accept: "application/vnd.github.sha", "User-Agent": "lax-skills-install" },
+    timeoutMs: RESOLVE_TIMEOUT_MS,
   });
   if (!res.ok) throw new Error(`GitHub could not resolve ${r.owner}/${r.repo}@${r.ref}: HTTP ${res.status}`);
   const sha = (await res.text()).trim();
@@ -111,9 +128,10 @@ async function resolveCommit(r: RepoRef, fetchImpl: typeof fetch): Promise<strin
   return sha;
 }
 
-async function downloadArchive(r: RepoRef, commit: string, fetchImpl: typeof fetch): Promise<JSZip> {
+async function downloadArchive(r: RepoRef, commit: string, fetchImpl: GithubFetch): Promise<JSZip> {
   const res = await fetchImpl(`https://codeload.github.com/${r.owner}/${r.repo}/zip/${commit}`, {
     headers: { "User-Agent": "lax-skills-install" },
+    timeoutMs: ARCHIVE_TIMEOUT_MS,
   });
   if (!res.ok) throw new Error(`GitHub archive download failed for ${r.owner}/${r.repo}@${commit.slice(0, 8)}: HTTP ${res.status}`);
   const bytes = await res.arrayBuffer();
@@ -272,7 +290,7 @@ async function writeSkill(dir: string, skill: ArchiveSkill, source: Omit<Install
 }
 
 export async function installSkills(opts: InstallOpts): Promise<InstallReport> {
-  const fetchImpl = opts.fetchImpl ?? fetch;
+  const fetchImpl = githubFetch(opts.fetchImpl);
   const r = parseRepoRef(opts.repo, opts.ref, opts.path);
   const commit = await resolveCommit(r, fetchImpl);
   const scan = await scanArchive(await downloadArchive(r, commit, fetchImpl), r.path);
@@ -337,7 +355,7 @@ export function removeInstalledSkill(name: string): { name: string; repo: string
 // ── Refresh ───────────────────────────────────────────────────────────────
 
 export async function refreshSkill(name: string, opts: { apply?: boolean; fetchImpl?: typeof fetch } = {}): Promise<RefreshReport> {
-  const fetchImpl = opts.fetchImpl ?? fetch;
+  const fetchImpl = githubFetch(opts.fetchImpl);
   const dir = join(importedProtocolsDir(), normalizeSkillName(name));
   const source = readInstalledSource(dir);
   if (!source) throw new Error(`"${name}" is not a skill installed from a repo (no ${SOURCE_FILE})`);

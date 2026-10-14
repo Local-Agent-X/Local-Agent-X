@@ -143,7 +143,7 @@ export function narrowProtocolToolForReview(base: ToolDefinition, ctx: ReviewPro
       if (!allowed.has(action)) {
         return refuse(`Action "${action}" is not available to the protocol review pass. Allowed: ${REVIEW_PROTOCOL_ACTIONS.join(", ")}.`);
       }
-      const inner = familyActionArgs(args);
+      const inner = familyActionArgs(args, "params");
       if (action === "propose") return proposeForReview(inner, ctx);
       if (action === "note_gap") return noteGapForReview(inner, ctx);
       if (action === "get") return getForReview(base, args, inner, signal);

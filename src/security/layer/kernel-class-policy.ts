@@ -8,6 +8,20 @@ import { evaluateShellCommandAndPaths } from "./shell-path-guard.js";
 import { getSandboxStatus } from "../../sandbox/index.js";
 import type { KernelClass } from "../../tool-registry.js";
 
+/** The command and cwd a tracked process session was started with. */
+export interface TrackedShellSession { command: string; cwd?: string }
+
+// The process session registry lives in the spawner (tools/process-session.ts),
+// which this layer must not import: the sandbox imports the security layer,
+// and the spawner imports the sandbox, so the import would close a cycle. The
+// spawner registers its lookup at load instead; until it does, a restart that
+// names no command has nothing to vet and is refused.
+let trackedShellSession: (sessionId: string) => TrackedShellSession | undefined = () => undefined;
+
+export function registerTrackedShellSessions(lookup: (sessionId: string) => TrackedShellSession | undefined): void {
+  trackedShellSession = lookup;
+}
+
 export interface KernelClassPolicyCtx {
   egressAllowlist: ReadonlySet<string>;
   egressAllowlistConfigured: boolean;
@@ -93,7 +107,48 @@ export function evaluateByKernelClass(
       // mode where bash could not. evaluateShellCommandAndPaths closes that —
       // it runs evaluateShellPaths with the SAME workspace / fileAccessMode /
       // isInAllowedPaths / sessionId the bash path uses.
-      const command = typeof args.command === "string" ? args.command : "";
+      let command = typeof args.command === "string" ? args.command : "";
+      let cwd = typeof args.cwd === "string" ? args.cwd : "";
+      // A restart reuses the tracked session's command and cwd when the call
+      // omits them, so those are what get vetted — under the policy in force
+      // now, not the one at the original start. Nothing to vet is a block, not
+      // the no-command pass-through below.
+      if (toolName === "process_restart") {
+        const sessionId = typeof args.session_id === "string" ? args.session_id.trim() : "";
+        const tracked = sessionId ? trackedShellSession(sessionId) : undefined;
+        if (tracked) {
+          command ||= tracked.command;
+          cwd ||= tracked.cwd ?? "";
+        }
+        if (!command) {
+          return {
+            allowed: false,
+            reason: sessionId
+              ? `Blocked: process_restart has no command to vet — "${sessionId}" is not a tracked session`
+              : "Blocked: process_restart has no command to vet — pass command, or the session_id of a tracked session",
+            userHint: USER_HINTS.commandShell,
+          };
+        }
+      }
+      // The spawn's working directory is a path the command opens, so it is
+      // confined like every other path the command names.
+      if (cwd) {
+        const decision = evaluateFileAccess(
+          policy.workspace,
+          policy.fileAccessMode,
+          (rp, sid) => policy.isInAllowedPaths(rp, sid),
+          "read",
+          cwd,
+          ctx.sessionId,
+        );
+        if (!decision.allowed) {
+          return {
+            allowed: false,
+            reason: `Blocked: cwd "${cwd}" is outside the ${policy.fileAccessMode} file-access boundary. ${decision.reason}`,
+            userHint: USER_HINTS.fileSystem,
+          };
+        }
+      }
       if (command) {
         return evaluateShellCommandAndPaths(command, {
           workspace: policy.workspace,

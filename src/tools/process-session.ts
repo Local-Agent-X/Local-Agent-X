@@ -14,11 +14,12 @@ import { execFileSync, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { dirname, basename, resolve, sep } from "node:path";
 import { killProcessGroup } from "../process-tree-kill.js";
-import { evaluateShellCommand } from "../security/layer/index.js";
+import { evaluateShellCommand, registerTrackedShellSessions } from "../security/layer/index.js";
 import { getSandboxMode, getSandboxStatus } from "../sandbox/index.js";
 import { spawnCagedSync } from "./caged-spawn.js";
 import { registerOwnedProcess, unregisterOwnedProcess } from "./owned-listeners.js";
 import { workspaceRoot } from "../config.js";
+import { resolveAgentPath } from "../workspace/paths.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("tools.process");
@@ -52,6 +53,12 @@ export interface ProcessSession {
 }
 
 export const SESSIONS = new Map<string, ProcessSession>();
+// A process_restart that names no command re-runs the tracked session's; the
+// security layer vets that command and cwd through this lookup.
+registerTrackedShellSessions((id) => {
+  const s = SESSIONS.get(id);
+  return s && { command: s.command, cwd: s.cwdHint };
+});
 const MAX_BUFFER_BYTES = 1 * 1024 * 1024;   // per session
 const COMPLETED_TTL_MS = 5 * 60_000;        // keep finished sessions 5 min
 const MAX_SESSIONS = 32;                     // hard cap, evict oldest finished
@@ -127,11 +134,13 @@ export function startSession(
 
   const sessionId = newSessionId();
 
-  // An explicit caller cwd (build/dev flows) wins; otherwise default to the
-  // workspace rather than inheriting the server cwd — same anchor as bash and
-  // the file tools, so a background command's relative paths resolve where the
-  // user's files are. cwdHint reuses it so process_restart respawns there.
-  const effectiveCwd = cwd || workspaceRoot();
+  // An explicit caller cwd (build/dev flows) wins, resolved the way the file
+  // tools and the security gate resolve a path (a relative cwd anchors at the
+  // workspace, never the server's own cwd); otherwise default to the workspace
+  // rather than inheriting the server cwd — same anchor as bash and the file
+  // tools, so a background command's relative paths resolve where the user's
+  // files are. cwdHint reuses it so process_restart respawns there.
+  const effectiveCwd = cwd ? resolveAgentPath(cwd) : workspaceRoot();
 
   let child: ChildProcess;
   try {

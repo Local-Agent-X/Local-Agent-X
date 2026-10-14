@@ -32,14 +32,13 @@ export function isPasteChord(keys: unknown): boolean {
 }
 
 /** The text a `computer` call would put into the foreground app. The family
- *  picks the action from the top-level `action` but runs it with
- *  familyActionArgs, where a `params` object the schema never validated
- *  overrides the flat text and keys. Read here any other way, a secret nested
- *  under `params` is typed while the gate judges the empty flat field. The
+ *  is flat, so it runs the action with familyActionArgs("flat"): the flat text
+ *  and keys, with a `params` object the schema never validated dropped. Read
+ *  here the same way, so what the gate judges is exactly what gets typed. The
  *  text is stringified as the type action stringifies it. */
 export async function computerPayload(args: Record<string, unknown>, clipboardText: () => Promise<string>): Promise<string> {
   const action = String(args.action ?? "").toLowerCase();
-  const run = familyActionArgs(args);
+  const run = familyActionArgs(args, "flat");
   if (action === "type") return String(run.text ?? "");
   if (action === "press" && isPasteChord(run.keys)) return clipboardText();
   return "";

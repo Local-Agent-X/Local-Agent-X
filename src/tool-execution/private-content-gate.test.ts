@@ -122,9 +122,9 @@ describe("a send that carries private content", () => {
     }
   });
 
-  it("a calendar invite carries its description to every attendee", async () => {
+  it("a local calendar event is not a send: its attendees are stored in calendar.json, never invited", async () => {
     readEmail();
-    expect(await verdict(ctx("calendar_create_event", { title: "Sync", start: "2026-10-02T10:00:00Z", description: STATEMENT, attendees: "guest@elsewhere.example" }))).toMatch(/guest@elsewhere\.example/);
+    expect(await verdict(ctx("calendar_create_event", { title: "Sync", start: "2026-10-02T10:00:00Z", description: STATEMENT, attendees: "guest@elsewhere.example" }))).toBeUndefined();
   });
 });
 

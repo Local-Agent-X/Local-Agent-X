@@ -124,7 +124,7 @@ describe("availability predicate — tools that may never be hidden", () => {
   it("never hides an ALWAYS_ON_TOOLS member", () => {
     const alwaysOn = [
       "issue_create", "issue_list", "issue_update", "issue_search",
-      "issue_checkout", "issue_release", "issue_request_approval",
+      "issue_checkout", "issue_release",
       "agent_whoami", "agent_team_list", "agent_wakeup",
       "project_brief_read", "project_brief_update",
       "task_create", "task_update", "task_list", "task_get",

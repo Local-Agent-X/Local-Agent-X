@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { collapseFamily } from "./collapse-family.js";
+import { collapseFamily, familyActionArgs } from "./collapse-family.js";
 import type { ToolDefinition } from "../../types.js";
 
 const inner = (name: string, required: string[] = ["x"]): ToolDefinition => ({
@@ -81,6 +81,18 @@ describe("collapseFamily", () => {
     expect(schema.required).toEqual(["action", "file_path"]);
     expect(flat.description).toContain("Second sentence");
   });
+
+  it("a flat family ignores `params` — the gate judged the flat args, so only those reach the action", async () => {
+    const flat = collapseFamily({
+      name: "office",
+      intro: "Office intro.",
+      actions: { read: inner("office_read", []) },
+      properties: { file_path: { type: "string" } },
+    });
+    const r = await flat.execute({ action: "read", file_path: "ok", params: { file_path: "/etc/x" }, _sessionId: "s" });
+    expect(JSON.parse(String(r.content)).args).toEqual({ file_path: "ok", _sessionId: "s" });
+    expect(familyActionArgs({ action: "read", params: { file_path: "/etc/x" } }, "flat")).toEqual({});
+  });
 });
 
 describe("collapsed real families", () => {
@@ -95,13 +107,16 @@ describe("collapsed real families", () => {
     const protocol = tools[0];
     const schema = protocol.parameters as { properties: { action: { enum: string[] } } };
     // The destructive actions must stay present — approval gating keys on them.
-    for (const a of ["delete", "prune", "archive_bulk", "rollback_undo", "var_delete", "install", "update"]) {
+    for (const a of ["delete", "prune", "archive_bulk", "rollback_undo", "var_delete", "install", "update", "curate"]) {
       expect(schema.properties.action.enum).toContain(a);
     }
     // The read-only half of the skills family is NOT gated: a diff is not a write.
     const { destructiveOperationReason } = await import("../../approval-decision.js");
     expect(destructiveOperationReason("protocol", { action: "install", params: { repo: "o/r" } })).toMatch(/protocol\.install/);
     expect(destructiveOperationReason("protocol", { action: "update", params: { name: "x" } })).toMatch(/protocol\.update/);
+    // curate runs the same archive + hard-delete purge as prune (curator/run.ts).
+    expect(destructiveOperationReason("protocol", { action: "curate", params: {} })).toMatch(/protocol\.curate/);
+    expect(destructiveOperationReason("protocol", { action: "curator_status", params: {} })).toBeNull();
     expect(destructiveOperationReason("protocol", { action: "refresh", params: { name: "x" } })).toBeNull();
     expect(schema.properties.action.enum.length).toBeGreaterThanOrEqual(30);
 

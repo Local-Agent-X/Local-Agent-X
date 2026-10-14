@@ -20,15 +20,12 @@ import { sessionWorkRootOf } from "../../workspace/paths.js";
 import { evaluateByKernelClass as evaluateKernelClassPolicy } from "./kernel-class-policy.js";
 import { loadLocalServicePorts, liveLocalServicePorts, loadFileAccessMode, loadInlineEvalPolicy, manualRuntimeHostPorts } from "./security-config.js";
 import { EgressPolicyState, updateSecurityJson } from "./egress-policy-state.js";
-import { fingerprintSecurityPolicy, parseJsonPathArray, restoreSecurityAllowedPaths, snapshotSecurityRuntime, type SecurityRuntimeIdentity } from "./runtime-state.js";
+import { declaredPaths, fingerprintSecurityPolicy, restoreSecurityAllowedPaths, snapshotSecurityRuntime, type SecurityRuntimeIdentity } from "./runtime-state.js";
 import { evaluateDelegatedWorktreeGate } from "./delegated-worktree-gate.js";
 
 import { createLogger } from "../../logger.js";
 const logger = createLogger("security.layer-core");
 
-// Extract a list of path strings from a JSON-array-string arg (pdf_merge.files).
-// A malformed value yields no paths — the tool's own JSON.parse then fails, so
-// nothing is opened; never throw out of the security gate.
 /**
  * Security layer that evaluates tool calls before execution.
  * Principles:
@@ -214,21 +211,29 @@ export class SecurityLayer {
       if (blocked) return blocked;
     }
 
+    // File sinks are gated DECLARATIVELY: any tool opening a caller path
+    // declares it in TOOL_PATH_ARGS, and every declared arg runs the same
+    // evaluateFileAccess gate — covering the raw fs tools AND the structured-
+    // document tools (spreadsheet/document/presentation/pdf/ocr/image/search)
+    // under ONE boundary, closing the bypass where office tools (classed
+    // "internal") reached the filesystem without ever hitting the file-access
+    // mode. The path check is a pre-check, not a route: a tool with paths AND
+    // another routing signal (extract_site_assets' url, a shell tool's
+    // command) still reaches its class gate below. Only a file-class tool has
+    // nothing further to judge.
+    const pathArgs = TOOL_PATH_ARGS[toolName];
+    const kernelClass = kernelClassForTool(toolName);
+    if (pathArgs) {
+      const gated = this.evaluatePathArgs(pathArgs, args, ctx);
+      if (!gated.allowed || kernelClass === "file") return gated;
+    }
+
     let decision: SecurityDecision;
 
     // Tools whose ARGUMENTS carry the routing signal (command, url) get an
-    // explicit case; everything else falls to kernel-class dispatch. File sinks
-    // are gated DECLARATIVELY: any tool opening a caller path declares it in
-    // TOOL_PATH_ARGS, and every declared arg runs the same evaluateFileAccess
-    // gate — covering the raw fs tools AND the structured-document tools
-    // (spreadsheet/document/presentation/pdf/ocr/image/search) under ONE
-    // boundary, closing the bypass where office tools (classed "internal")
-    // reached the filesystem without ever hitting the file-access mode.
-    const pathArgs = TOOL_PATH_ARGS[toolName];
+    // explicit case; everything else falls to kernel-class dispatch.
     if (toolName === "browser") {
       decision = this.evaluateBrowser(args);
-    } else if (pathArgs) {
-      decision = this.evaluatePathArgs(pathArgs, args, ctx);
     } else if (toolName === "bash") {
       const command = String(args.command || "");
       // 1) command-shape vetting (denylist / obfuscation / metachars), then
@@ -268,7 +273,7 @@ export class SecurityLayer {
       // to the http class and flow through the http gate (SSRF-checked if they
       // carry a url arg, allowed-internal otherwise) instead of the
       // not-in-registry deny — matching how the ARI kernel classifies them.
-      decision = this.evaluateByKernelClass(toolName, kernelClassForTool(toolName), args, ctx);
+      decision = this.evaluateByKernelClass(toolName, kernelClass, args, ctx);
     }
 
     return decision;
@@ -304,12 +309,14 @@ export class SecurityLayer {
       applicable = specs.filter((s) => !s.forActions || s.forActions.includes(action));
     }
     for (const spec of applicable) {
-      const raw = args[spec.arg];
-      const paths = spec.json
-        ? parseJsonPathArray(raw)
-        : typeof raw === "string" && raw.length > 0
-          ? [raw]
-          : [];
+      const paths = declaredPaths(args, spec);
+      if (paths === null) {
+        return {
+          allowed: false,
+          reason: `Blocked: "${spec.arg}" holds a non-string element — every path must be a string`,
+          userHint: USER_HINTS.fileSystem,
+        };
+      }
       for (const p of paths) {
         const decision = evaluateFileAccess(
           this.workspace,

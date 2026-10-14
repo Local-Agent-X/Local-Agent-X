@@ -13,7 +13,8 @@ import { withoutInternalArgs } from "../../tool-execution/internal-args.js";
  *    the top level, which keeps SecurityLayer pathArgs gating working on
  *    `args.file_path` etc. The `action` key rides along; inner tools ignore it.
  *  - `properties` omitted (protocol): a single free-form `params` object.
- *    Dispatch tolerates both `params: {...}` and flat top-level args.
+ *    Dispatch tolerates both `params: {...}` and flat top-level args. A flat
+ *    family ignores `params` entirely (familyActionArgs).
  *
  * Per-action docs are generated from the inner schemas at module init, so
  * they can't drift from the real parameters.
@@ -52,16 +53,22 @@ function firstSentence(text: string): string {
   return (m ? m[0] : text).slice(0, 160);
 }
 
+export type FamilyStyle = "flat" | "params";
+
 /**
- * The arguments a family call hands its action: nested `params` merged over
- * the flat args, so both call shapes work. `params` is the model's own object,
- * so it loses its `_` keys first: the executor's stamps in the flat args
- * (_sessionId, _operationId, …) are the only ones the action may see. A
- * wrapper that reads a family call's arguments uses this too, and passes the
- * call on as it came, because stamps moved into `params` are dropped here.
+ * The arguments a family call hands its action. A flat family's schema has no
+ * `params`, and the security gates (pathArgs, the private-content gate) judge
+ * the flat args — so a `params` object is dropped, never merged: merged, a
+ * `params.file_path` reached the inner tool while the gate had only checked
+ * the flat `file_path`. A params family merges `params` over the flat args so
+ * both call shapes work. `params` is the model's own object, so it loses its
+ * `_` keys first: the executor's stamps in the flat args (_sessionId,
+ * _operationId, …) are the only ones the action may see. A wrapper that reads
+ * a family call's arguments uses this too, and passes the call on as it came.
  */
-export function familyActionArgs(args: Record<string, unknown>): Record<string, unknown> {
+export function familyActionArgs(args: Record<string, unknown>, style: FamilyStyle): Record<string, unknown> {
   const { action: _action, params, ...rest } = args;
+  if (style === "flat") return rest;
   return params && typeof params === "object" && !Array.isArray(params)
     ? { ...rest, ...withoutInternalArgs(params as Record<string, unknown>) }
     : rest;
@@ -69,6 +76,7 @@ export function familyActionArgs(args: Record<string, unknown>): Record<string, 
 
 export function collapseFamily(opts: CollapseFamilyOpts): ToolDefinition {
   const actionNames = Object.keys(opts.actions);
+  const style: FamilyStyle = opts.properties ? "flat" : "params";
   const docs = actionNames.map((a) => {
     const inner = opts.actions[a];
     const body = opts.fullActionDocs ? inner.description : firstSentence(inner.description);
@@ -107,7 +115,7 @@ export function collapseFamily(opts: CollapseFamilyOpts): ToolDefinition {
           isError: true,
         };
       }
-      return inner.execute(familyActionArgs(args), signal);
+      return inner.execute(familyActionArgs(args, style), signal);
     },
   };
 }

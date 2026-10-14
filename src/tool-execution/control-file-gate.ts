@@ -27,7 +27,7 @@ import { resolveAgentPath } from "../workspace/paths.js";
 import { laxApprovalGatedFile } from "../security/layer/lax-control-files.js";
 import { persistenceLocationJudge, type PersistenceLocationOf } from "../security/layer/persistence-locations.js";
 import { pathIsWithin } from "../security/layer/file-access.js";
-import { parseJsonPathArray } from "../security/layer/runtime-state.js";
+import { declaredPaths } from "../security/layer/runtime-state.js";
 import { findTrashEntry } from "../trash-journal.js";
 import { restoreRef } from "../tools/restore-file-tool.js";
 
@@ -38,9 +38,10 @@ function writeTargets(ctx: ToolCallContext): Array<{ path: string; deletes: bool
   for (const spec of TOOL_PATH_ARGS[name] ?? []) {
     if (spec.action === "read") continue;
     if (spec.forActions && !spec.forActions.includes(action)) continue;
-    const value = ctx.args[spec.arg];
-    const raws = spec.json ? parseJsonPathArray(value) : typeof value === "string" && value ? [value] : [];
-    for (const raw of raws) out.push({ path: resolveAgentPath(raw, ctx.sessionId), deletes: spec.action === "delete_file" });
+    // A non-string element is refused by the file-access gate before this runs.
+    for (const raw of declaredPaths(ctx.args, spec) ?? []) {
+      out.push({ path: resolveAgentPath(raw, ctx.sessionId), deletes: spec.action === "delete_file" });
+    }
   }
   if (name === "restore_file") {
     const original = findTrashEntry(restoreRef(ctx.args), { kind: "file" })?.original;

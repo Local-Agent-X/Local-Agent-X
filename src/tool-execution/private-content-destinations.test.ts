@@ -15,9 +15,10 @@ describe("which calls are sends", () => {
   it("every egress tool and every tool whose risk is reaching a third party; not a read or a local write", () => {
     for (const name of CAPABILITY_CLASS_MEMBERS.egress) expect(sendsOffBox(name), name).toBe(true);
     const thirdParty = Object.entries(TOOLS).filter(([, e]) => e.risk === "external-comms" || e.risk === "network-write").map(([n]) => n);
-    expect(thirdParty).toContain("calendar_create_event");
+    expect(thirdParty).toContain("email_send");
     for (const name of thirdParty) expect(sendsOffBox(name), name).toBe(true);
-    for (const name of ["email_read", "read", "write", "memory_save"]) expect(sendsOffBox(name), name).toBe(false);
+    // The calendar is the local calendar.json: an event's attendees are stored, never invited.
+    for (const name of ["email_read", "read", "write", "memory_save", "calendar_create_event"]) expect(sendsOffBox(name), name).toBe(false);
   });
 
   it("every destination rule belongs to a tool the gate judges (a rule for anything else is dead)", () => {

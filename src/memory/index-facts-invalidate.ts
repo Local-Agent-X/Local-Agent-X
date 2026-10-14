@@ -1,6 +1,7 @@
 import type Database from "better-sqlite3";
 import { createLogger } from "../logger.js";
 import { isUserReported } from "./fact-provenance-label.js";
+import { tokenizeStrict } from "./text-utils.js";
 
 const logger = createLogger("memory.index-facts");
 
@@ -41,4 +42,18 @@ export function invalidateFact(
     )
     .run(at, opts.replacedBy ?? null, opts.reason ?? null, at, id);
   return r.changes > 0;
+}
+
+/** A current fact already says this: at least 80% of the new statement's words
+ *  are in one of them. Directional on purpose — a short fact the new one
+ *  merely mentions ("Odalys is the user's cousin") does not say a sailboat. */
+export function alreadySaid(content: string, candidates: Array<{ content: string }>): boolean {
+  const words = tokenizeStrict(content);
+  if (words.size === 0) return true;
+  return candidates.some((c) => {
+    const known = tokenizeStrict(c.content);
+    let shared = 0;
+    for (const w of words) if (known.has(w)) shared++;
+    return shared / words.size >= 0.8;
+  });
 }

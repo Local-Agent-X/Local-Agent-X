@@ -122,25 +122,32 @@ describe("a resolver's background guess cannot end what the user said", () => {
   const liveCount = () => (db().prepare("SELECT COUNT(*) AS n FROM facts WHERE valid_to IS NULL").get() as { n: number }).n;
   const live = (id: number) => (db().prepare("SELECT valid_to FROM facts WHERE id = ?").get(id) as { valid_to: number | null }).valid_to === null;
 
-  // A refused change saves nothing. Saving the new statement beside the old
-  // (the first version of this rule) left near-duplicates — a background
-  // "User's cousin Odalys keeps her sailboat … slip 14" beside the user's own —
-  // and a corrected slip 14 stayed in force (qwen3.6:27b at fd10f5a4).
-  it("a resolver UPDATE on a user statement ends nothing and saves nothing", async () => {
+  // A refused change ends nothing. The new statement is kept as its own fact
+  // unless a current fact already says it: kept always, the background copy of
+  // what the agent just saved became a duplicate (fd10f5a4); dropped always, a
+  // sailboat fact the resolver misjudged as a cousin update was lost (9115bd39).
+  it("a resolver UPDATE on a user statement ends nothing, and a genuinely new statement is kept", async () => {
     const story = seed('In 2014 @Odalys texted the user\'s brother "did you sell Merriweather yet"', "user_statement");
     vi.mocked(resolveFact).mockResolvedValueOnce({ op: "UPDATE", targetId: story, reason: "new cousin info" });
     const { facts } = await memory.retainSmart("- W(c=0.95) @Odalys is the user's cousin", "auto-extract");
     expect(live(story)).toBe(true);
+    expect(facts.map((f) => f.content)).toEqual(["Odalys is the user's cousin"]);
+  });
+
+  it("a refused change that only repeats a current fact saves nothing", async () => {
+    const slip = seed("@Odalys keeps her sailboat, the Kestrel Nine, at slip 14 in Port Avila", "user_statement");
+    vi.mocked(resolveFact).mockResolvedValueOnce({ op: "UPDATE", targetId: slip, reason: "new info about sailboat location" });
+    const { facts } = await memory.retainSmart("- W User's cousin @Odalys keeps her sailboat, the Kestrel Nine, at slip 14 in Port Avila", "auto-extract");
+    expect(live(slip)).toBe(true);
     expect(facts).toHaveLength(0);
     expect(liveCount()).toBe(1);
   });
 
-  it("a resolver DELETE on a user statement ends nothing and saves nothing", async () => {
+  it("a resolver DELETE on a user statement ends nothing", async () => {
     const slip = seed("@Odalys keeps the Kestrel Nine at slip 14", "user_statement");
     vi.mocked(resolveFact).mockResolvedValueOnce({ op: "DELETE", targetId: slip, reason: "contradicts" });
-    const { facts } = await memory.retainSmart("- W @Odalys moved the Kestrel Nine to slip 31", "auto-extract");
+    await memory.retainSmart("- W @Odalys moved the Kestrel Nine to slip 31", "auto-extract");
     expect(live(slip)).toBe(true);
-    expect(facts).toHaveLength(0);
   });
 
   it("a user statement the agent recorded in its own words is protected too (origin assistant)", async () => {

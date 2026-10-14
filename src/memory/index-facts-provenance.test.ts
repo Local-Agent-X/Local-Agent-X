@@ -113,29 +113,41 @@ describe("fact provenance round-trip", () => {
 // answered UPDATE on the user's Merriweather story ("new cousin info"), so
 // the story was gone before the next chat asked about it.
 describe("a resolver's background guess cannot end what the user said", () => {
-  function seed(content: string, provenance: string | null): number {
+  function seed(content: string, provenance: string | null, sourceFile = "agent-tool"): number {
     authorizeTestFactMutations(memory);
-    const [f] = memory.retain(`- E ${content}`, "agent-tool");
+    const [f] = memory.retain(`- E ${content}`, sourceFile);
     db().prepare("UPDATE facts SET provenance = ? WHERE id = ?").run(provenance, f.id!);
     return f.id!;
   }
+  const liveCount = () => (db().prepare("SELECT COUNT(*) AS n FROM facts WHERE valid_to IS NULL").get() as { n: number }).n;
   const live = (id: number) => (db().prepare("SELECT valid_to FROM facts WHERE id = ?").get(id) as { valid_to: number | null }).valid_to === null;
 
-  it("a resolver UPDATE on a user statement stores the new fact beside it, and ends nothing", async () => {
+  // A refused change saves nothing. Saving the new statement beside the old
+  // (the first version of this rule) left near-duplicates — a background
+  // "User's cousin Odalys keeps her sailboat … slip 14" beside the user's own —
+  // and a corrected slip 14 stayed in force (qwen3.6:27b at fd10f5a4).
+  it("a resolver UPDATE on a user statement ends nothing and saves nothing", async () => {
     const story = seed('In 2014 @Odalys texted the user\'s brother "did you sell Merriweather yet"', "user_statement");
     vi.mocked(resolveFact).mockResolvedValueOnce({ op: "UPDATE", targetId: story, reason: "new cousin info" });
     const { facts } = await memory.retainSmart("- W(c=0.95) @Odalys is the user's cousin", "auto-extract");
     expect(live(story)).toBe(true);
-    expect(facts).toHaveLength(1);
-    expect(facts[0].content).toBe("Odalys is the user's cousin");
+    expect(facts).toHaveLength(0);
+    expect(liveCount()).toBe(1);
   });
 
-  it("a resolver DELETE on a user statement stores the new fact instead of erasing", async () => {
+  it("a resolver DELETE on a user statement ends nothing and saves nothing", async () => {
     const slip = seed("@Odalys keeps the Kestrel Nine at slip 14", "user_statement");
     vi.mocked(resolveFact).mockResolvedValueOnce({ op: "DELETE", targetId: slip, reason: "contradicts" });
     const { facts } = await memory.retainSmart("- W @Odalys moved the Kestrel Nine to slip 31", "auto-extract");
     expect(live(slip)).toBe(true);
-    expect(facts.map((f) => f.content)).toEqual(["Odalys moved the Kestrel Nine to slip 31"]);
+    expect(facts).toHaveLength(0);
+  });
+
+  it("a user statement the agent recorded in its own words is protected too (origin assistant)", async () => {
+    const paraphrase = seed("@Odalys keeps her sailboat at slip 31", "assistant", "agent-tool:auto-model-clean-user-statement");
+    vi.mocked(resolveFact).mockResolvedValueOnce({ op: "UPDATE", targetId: paraphrase, reason: "duplicate" });
+    await memory.retainSmart("- W @Odalys keeps the Kestrel Nine at slip 14", "auto-extract");
+    expect(live(paraphrase)).toBe(true);
   });
 
   it("a row with no recorded origin is protected too", async () => {

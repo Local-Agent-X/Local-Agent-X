@@ -3,6 +3,7 @@ import type { FactKind } from "../types.js";
 import { displayContent } from "../utils.js";
 import { localDate } from "../retrieval-format.js";
 import { userAskedToForget } from "../../irreversible-tools.js";
+import { isUserReported } from "../fact-provenance-label.js";
 import { looksLikeMultiFactBlob, normalizeFactLine, splitMultiFactBlob } from "../fact-split.js";
 import { saveFactsBatch } from "./facts-batch.js";
 import { runMemoryGate, MemoryWriteBlocked } from "../write-safely.js";
@@ -362,13 +363,14 @@ export function createFactsTools(memory: MemoryIndex) {
       // Forgetting what the user told you asks them first (Peter, 2026-10-13).
       // qwen3.6:27b at 2023610d, challenged with "you made that up", had the
       // user's own message in front of it and forgot the true fact in 2 of 3
-      // runs. A fact a model wrote, and a forget the user asked for in their
-      // own words, need no card.
+      // runs. A fact a model wrote on its own account, and a forget the user
+      // asked for in their own words, need no card. "Told by the user" is
+      // isUserReported — quoted or paraphrased — not the trust origin alone.
       confirmWithUser(args: Record<string, unknown>, { userText }: { userText: string }) {
         const query = String(args.query || "").trim();
         if (!query || userAskedToForget(userText)) return null;
         const { fact } = memory.findOneFact(query);
-        if (!fact || fact.provenance === "assistant") return null;
+        if (!fact || (fact.provenance != null && !isUserReported(fact))) return null;
         return `The agent wants to forget something you told it: "${displayContent(fact).slice(0, 160)}" (recorded ${localDate(fact.timestamp)}). `
           + "Approve only if you want it forgotten.";
       },

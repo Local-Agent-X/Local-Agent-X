@@ -147,6 +147,10 @@ describe("factTrustSuffix unit mapping", () => {
 		expect(factTrustSuffix(`${TAINTED_FACT_SOURCE_PREFIX}-tool-observation`)).toContain("UNTRUSTED");
 		expect(factTrustSuffix(`${IMPORTED_FACT_SOURCE_PREFIX}import/chatgpt/1`)).toContain("source_type=import trust=untrusted");
 		expect(factTrustSuffix("agent-tool:user-statement")).toContain("reported by user");
+		// The model reported it as the user's, in its own words — was rendered "legacy".
+		expect(factTrustSuffix("agent-tool:auto-model-clean-user-statement")).toContain("reported by user, in the agent's words");
+		expect(factTrustSuffix("agent-tool:approved-model-declared-user-statement")).toContain("source_type=user_statement_paraphrased");
+		expect(factTrustSuffix("agent-tool:tainted-external-user-statement")).toContain("UNTRUSTED");
 		expect(factTrustSuffix("agent-tool:inference")).toContain("unverified inference");
 		expect(factTrustSuffix(undefined)).toContain("source_type=legacy");
 	});

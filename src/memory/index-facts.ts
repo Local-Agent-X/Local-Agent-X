@@ -7,7 +7,7 @@ import { deriveEntitySlugs, loadKnownEntitySlugs } from "./entity-derive.js";
 // GC + validity accounting moved to index-facts-purge.ts (LOC cap).
 export { purgeInvalidatedFacts, validityStats } from "./index-facts-purge.js";
 // Ending a fact's validity, and who may: index-facts-invalidate.ts (LOC cap).
-import { invalidateFact } from "./index-facts-invalidate.js";
+import { invalidateFact, resolverMayEnd } from "./index-facts-invalidate.js";
 export { invalidateFact, type InvalidationActor } from "./index-facts-invalidate.js";
 
 import { createLogger } from "../logger.js";
@@ -163,11 +163,20 @@ export async function retainSmart(
     decisions.push({ content: parsed.content, op: decision.op, targetId: decision.targetId, reason: decision.reason });
 
     if (decision.op === "NOOP") continue;
+    // A change the resolver may not make saves nothing — not even the new
+    // statement beside the old (index-facts-invalidate.ts). Kept beside it, the
+    // background copy became a near-duplicate ("User's cousin Odalys keeps her
+    // sailboat … slip 14"), update_fact then matched two facts or only one, and
+    // a corrected slip 14 stayed in force (qwen3.6:27b at fd10f5a4, 2026-10-13).
+    // Changing what the user said is the in-turn agent's call.
+    if ((decision.op === "UPDATE" || decision.op === "DELETE") && decision.targetId !== undefined
+      && !resolverMayEnd(db, decision.targetId)) {
+      logger.info(`[memory] resolver may not end fact #${decision.targetId}; nothing saved: ${decision.reason}`);
+      continue;
+    }
 
-    // A refused DELETE stores the new statement instead (ADD), so a background
-    // guess can add a fact but never erase one it may not end.
-    if (decision.op === "DELETE" && decision.targetId !== undefined
-      && invalidateFact(db, decision.targetId, { by: "resolver", reason: `deleted by resolver: ${decision.reason}` })) {
+    if (decision.op === "DELETE" && decision.targetId !== undefined) {
+      invalidateFact(db, decision.targetId, { by: "resolver", reason: `deleted by resolver: ${decision.reason}` });
       continue;
     }
 

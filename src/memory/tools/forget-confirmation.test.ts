@@ -52,6 +52,13 @@ describe("forget asks before ending something the user said", () => {
     expect(reason).toMatch(/recorded \d{4}-\d\d-\d\d/);
   });
 
+  it("asks for a user statement the agent recorded in its own words (origin assistant)", () => {
+    const id = seed("@Odalys keeps her sailboat at slip 31", "assistant");
+    (memory as unknown as { db: InstanceType<typeof Database> }).db
+      .prepare("UPDATE facts SET source_file = 'agent-tool:auto-model-clean-user-statement' WHERE id = ?").run(id);
+    expect(ask("slip 31")).toContain("something you told it");
+  });
+
   it("asks for a fact with no recorded origin too", () => {
     seed("@Dana is the user's wife", null);
     expect(ask("user's wife")).not.toBeNull();

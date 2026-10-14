@@ -9,6 +9,24 @@
 export const TAINTED_FACT_SOURCE_PREFIX = "agent-tool:tainted-external";
 export const IMPORTED_FACT_SOURCE_PREFIX = "consolidation:import-derived:UNTRUSTED:";
 
+// The model declared "the user said this" but the words are its own, so no
+// span of the user's message backs them: saved without a click on a clean
+// session, or after the user approved the save (promotion-gate.ts
+// authorizedSource). Origin stays "assistant" — that is the trust boundary.
+const PARAPHRASED_USER_STATEMENT = /^agent-tool:(?:auto-model-clean|approved-model-declared)-user-statement$/;
+
+/**
+ * The record says the user told the agent this: quoted from their message
+ * (origin user_statement), or reported by the model in its own words on a
+ * clean session. One answer for the resolver rule (index-facts-invalidate.ts)
+ * and the forget confirmation. Keying only on origin missed every paraphrase —
+ * a correction "she moved it, it's slip 31 now" saved as "Odalys keeps her
+ * sailboat at slip 31" is origin assistant (qwen3.6:27b, 2026-10-13).
+ */
+export function isUserReported(fact: { sourceFile?: string; provenance?: string | null }): boolean {
+	return fact.provenance === "user_statement" || PARAPHRASED_USER_STATEMENT.test(fact.sourceFile ?? "");
+}
+
 export function factTrustSuffix(sourceFile: string | undefined): string {
 	if (sourceFile?.startsWith(IMPORTED_FACT_SOURCE_PREFIX)) {
 		return (
@@ -39,6 +57,12 @@ export function factTrustSuffix(sourceFile: string | undefined): string {
 		return (
 			" [unverified model-declared tool observation]" +
 			" [source=retained-fact source_type=model_declared_tool_observation trust=unknown taint=unknown label=\"Unverified model-declared tool observation\"]"
+		);
+	}
+	if (sourceFile && PARAPHRASED_USER_STATEMENT.test(sourceFile)) {
+		return (
+			" [reported by user, in the agent's words]" +
+			" [source=retained-fact source_type=user_statement_paraphrased trust=unknown taint=clean label=\"User-reported fact, paraphrased\"]"
 		);
 	}
 	if (sourceFile === "agent-tool:user-statement") {

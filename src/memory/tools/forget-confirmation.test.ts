@@ -111,3 +111,33 @@ describe("through the approval phase, under the most permissive profile", () => 
     expect(c.result?.status).toBe("blocked");
   });
 });
+
+// qwen3.6:27b at 9115bd39: refused the forget, it tried update_fact with
+// "This fact was recorded in error and has been retracted by the user." —
+// a deletion by another name.
+describe("update_fact asks before changing something the user said, unless they gave the new value", () => {
+  let update: ToolDefinition;
+  beforeEach(() => { update = createFactsTools(memory).find((t) => t.name === "update_fact")! as ToolDefinition; });
+  const askUpdate = (query: string, content: string, userText: string) => update.confirmWithUser!({ query, content }, { userText });
+
+  it("asks when the replacement's new words are nowhere in the user's message", () => {
+    seed('@Odalys texted "did you sell Merriweather yet" in 2014', "user_statement");
+    const reason = askUpdate("Merriweather", "This fact was recorded in error and has been retracted by the user.", CHALLENGE);
+    expect(reason).toContain("change something you told it");
+    expect(reason).toContain("did you sell Merriweather yet");
+  });
+
+  it("runs a correction whose new value the user just gave", () => {
+    seed("@Odalys keeps the Kestrel Nine at slip 14 in Port Avila", "user_statement");
+    expect(askUpdate("slip 14", "Odalys keeps the Kestrel Nine at slip 31 in Port Avila; she moved it there in spring 2026",
+      "Actually I misspoke when I told you that — she moved it last spring, it's at slip 31 now.")).toBeNull();
+  });
+
+  it("runs a rewording that adds nothing, and any change to a fact a model wrote", () => {
+    seed("@Odalys keeps the Kestrel Nine at slip 14", "user_statement");
+    expect(askUpdate("slip 14", "Odalys keeps the Kestrel Nine at slip 14", "thanks")).toBeNull();
+    seed("@user seems to like dark mode", "assistant");
+    expect(askUpdate("dark mode", "user prefers light mode now", "ok")).toBeNull();
+  });
+});
+

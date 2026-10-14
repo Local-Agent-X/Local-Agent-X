@@ -93,6 +93,11 @@ export interface ActiveChat {
   abortController: AbortController;
   startedAt: number;
   done: boolean;
+  /** When the finished turn landed in session.messages (server clock). The
+   *  canonical run emits `done` BEFORE persisting, so a done turn is not yet
+   *  in the history a client can fetch; replay uses this to know when it is
+   *  (replayBufferedEvents). Unset until markTurnPersisted. */
+  persistedAt?: number;
 }
 
 /** Fold one delta's appended text into the ordered run list. `s` must be the
@@ -161,6 +166,15 @@ export function recordInjectRun(sessionId: string, injectId: string, text: strin
   if (!chat || chat.done) return;
   chat.runs.push({ lane: "inject", injectId, text });
   chat.runBoundary = true;
+}
+
+/** The session's finished turn is now in session.messages. Called by the chat
+ *  run right after it persists. A turn still running is never marked: a new
+ *  turn that took the session's entry in the meantime is not the one that was
+ *  persisted. */
+export function markTurnPersisted(sessionId: string): void {
+  const chat = activeChats.get(sessionId);
+  if (chat?.done) chat.persistedAt = Date.now();
 }
 
 // Active chats — keyed by sessionId.

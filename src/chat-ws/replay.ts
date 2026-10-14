@@ -4,7 +4,21 @@
 // owns only the read-side replay built from them.
 
 import type { WebSocket } from "ws";
-import { activeChats } from "./state.js";
+import { activeChats, type ActiveChat } from "./state.js";
+
+/**
+ * True when the subscriber provably already rendered this finished turn, so a
+ * replay would append it a second time (phone, field 2026-10-13: back out of a
+ * chat and return, or switch networks, right after a reply). Either fact is
+ * proof: its history was read strictly after the turn was saved (both times on
+ * the server clock; same millisecond does not count), or it received the
+ * turn's own `done`. Anything less certain replays as always: a duplicate is
+ * recoverable, a lost reply is not.
+ */
+function subscriberHoldsTurn(chat: ActiveChat, has: SubscriberHas): boolean {
+  if (has.historyAsOf !== undefined && chat.persistedAt !== undefined && chat.persistedAt < has.historyAsOf) return true;
+  return has.doneOpId !== undefined && chat.opId !== undefined && chat.opId === has.doneOpId;
+}
 
 /**
  * Replay a session's buffered events to a late/reconnecting subscriber.
@@ -56,9 +70,18 @@ import { activeChats } from "./state.js";
  * Every text-bearing frame carries envelope `_replay: true` so client-side
  * side effects keyed to live deltas (TTS) know to skip it.
  */
-export function replayBufferedEvents(ws: WebSocket, sessionId: string): void {
+/** What a re-subscribing client says it already holds (subscribe frame). */
+export interface SubscriberHas {
+  /** Server time it read the session's history (GET /api/sessions/<id> `asOf`). */
+  historyAsOf?: number;
+  /** The op of the last turn it received through `done`. */
+  doneOpId?: string;
+}
+
+export function replayBufferedEvents(ws: WebSocket, sessionId: string, has: SubscriberHas = {}): void {
   const chat = activeChats.get(sessionId);
   if (!chat) return;
+  if (chat.done && subscriberHoldsTurn(chat, has)) return;
   const send = (event: unknown) =>
     ws.send(JSON.stringify({ type: "event", sessionId, event, _replay: true }));
   for (const event of chat.events) {

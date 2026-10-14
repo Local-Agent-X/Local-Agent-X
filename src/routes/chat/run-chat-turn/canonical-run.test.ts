@@ -366,3 +366,46 @@ describe("runCanonicalChat — terminal vs recovered stream errors", () => {
 		expect(err?.message).not.toMatch(/\s{2}|\n/);
 	});
 });
+
+// The chat replay skips a finished turn for a client whose history already holds
+// it (chat-ws/replay.ts), which needs to know WHEN the turn landed in
+// session.messages. `done` goes out before the persist, so the mark must come
+// after it, from the run itself.
+describe("runCanonicalChat — marks the turn persisted for the chat replay", () => {
+	it("stamps persistedAt on the session's finished chat entry only after the turn is saved", async () => {
+		const { buildManager } = await import("../../../chat-ws/manager.js");
+		const { activeChats } = await import("../../../chat-ws/state.js");
+		const sessionId = `sess-persisted-${seq++}`;
+		const { onEvent } = buildManager().startChat(sessionId);
+		opStateByOp.set("op-mark", "succeeded");
+		runChatViaCanonical.mockImplementationOnce(async function* () {
+			yield { type: "chat_op_started", opId: "op-mark" } as ServerEvent;
+			yield { type: "stream", delta: "the reply" } as ServerEvent;
+		});
+		const session = { messages: [], updatedAt: 0 } as unknown as Session;
+		let persistedAtDone: number | undefined | "unset" = "unset";
+		const ctx = { memoryManager: { persistTurn: vi.fn(async () => {}) }, saveSession: vi.fn() };
+		await runCanonicalChat({
+			message: "hi",
+			sessionId,
+			prepared: { model: "test-model", images: [] } as never,
+			sessionTools: [],
+			session,
+			ctx: ctx as never,
+			requestRole: "owner" as never,
+			threatEngine: {} as never,
+			abortSignal: new AbortController().signal,
+			primaryEventProxy: (ev) => onEvent(ev),
+			wrappedOnEvent: (ev) => {
+				onEvent(ev);
+				if (ev.type === "done") persistedAtDone = activeChats.get(sessionId)!.persistedAt;
+			},
+			emitSse: vi.fn(),
+			getFullResponseText: () => "the reply",
+		});
+
+		expect(persistedAtDone).toBeUndefined(); // not yet saved when done went out
+		expect(ctx.saveSession).toHaveBeenCalled();
+		expect(typeof activeChats.get(sessionId)!.persistedAt).toBe("number");
+	});
+});

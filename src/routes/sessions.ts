@@ -204,10 +204,14 @@ export const handleSessionRoutes: RouteHandler = async (method, url, req, res, c
     if (!isValidSessionId(id)) { json(400, { error: "Invalid session ID" }); return true; }
     const raw = url.searchParams.get("view") === "raw";
     await ctx.flushSession(id);
+    // Read time (server clock), taken before the read: a client echoes it as
+    // subscribe's historyAsOf so the chat replay skips a turn this history
+    // already holds (chat-ws/replay.ts).
+    const asOf = Date.now();
     const session = ctx.getOrCreateSession(id);
     if (raw) { json(200, session); return true; }
     const { projectSessionForUI } = await import("../memory/session-message-log.js");
-    json(200, projectSessionForUI(session));
+    json(200, { ...projectSessionForUI(session), asOf });
     return true;
   }
 

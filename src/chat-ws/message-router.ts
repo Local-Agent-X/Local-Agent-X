@@ -79,7 +79,10 @@ export function attachMessageRouter(ctx: RouterContext): void {
       // a mid-turn reconnect doesn't append the whole partial onto the partial
       // the client already holds (duplicated bubble + corrupted persisted
       // history once promoteLiveToMessages runs).
-      replayBufferedEvents(ws, sessionId);
+      replayBufferedEvents(ws, sessionId, {
+        ...(typeof msg.historyAsOf === "number" ? { historyAsOf: msg.historyAsOf } : {}),
+        ...(typeof msg.doneOpId === "string" ? { doneOpId: msg.doneOpId } : {}),
+      });
       // Session snapshot — late subscribers (page reload, leave-and-come-back,
       // WS reconnect after server restart) get the current truth so the
       // renderer can reconcile stale UI:

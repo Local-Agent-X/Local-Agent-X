@@ -7,6 +7,7 @@ import { ThreatEngine } from "../../../threat/threat-engine.js";
 import { sanitizeModelOutput } from "../../../providers/output-sanitize.js";
 import type { TurnError } from "../../../providers/sanitize.js";
 import { createLogger } from "../../../logger.js";
+import { markTurnPersisted } from "../../../chat-ws/state.js";
 
 const logger = createLogger("routes.chat.canonical-run");
 
@@ -71,6 +72,8 @@ export async function runCanonicalChat(input: CanonicalRunInput): Promise<Canoni
         terminalError,
         abortSignal,
       });
+      // Lets the chat replay know history fetched from now on holds this turn.
+      markTurnPersisted(sessionId);
     } catch (e) {
       logger.warn(`[chat] salvage/persist failed (${interrupted ? "interrupted" : terminalError ? "error" : "clean"}): ${(e as Error).message}`);
     }

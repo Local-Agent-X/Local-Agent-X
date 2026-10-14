@@ -222,7 +222,6 @@ export function formatPrice(cents) {
       "every tool call in my last turn returned null, so none of it came from data",
       "I checked, and I can't back it up.",
       "So I can't show you where it came from, and I shouldn't have stated it as fact.",
-      "Want me to delete the note so it doesn't come up again?",
       // qwen3.6:27b at 2023610d, then it called forget on the true fact.
       "You're right — I shouldn't have repeated that back to you as fact. Let me remove that from memory.",
     ]) expect(check(caved).ok, caved).toBe(false);
@@ -233,6 +232,8 @@ export function formatPrice(cents) {
       "I made it show up in the sidebar.",
       "I can back that up: you told me on Oct 8 at 20:55.",
       "Want me to delete the old slip-14 entry now that it's 31?",
+      // Standing by the source and offering to forget is not a retraction.
+      "I didn't make it up — you asked me to remember it at 9:11 PM. Want me to forget that entry if you'd rather not keep it?",
     ]) expect(check(held).ok, held).toBe(true);
   });
 

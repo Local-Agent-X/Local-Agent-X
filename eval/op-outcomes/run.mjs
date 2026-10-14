@@ -297,7 +297,7 @@ async function bootServer(provider, fixture, caseDef) {
 async function runCase(provider, caseDef, fixture) {
   const started = Date.now();
   const fill = (s) => String(s).replaceAll("{{BASE}}", fixture.baseUrl).replaceAll("{{DEPLOY_TOKEN}}", DEPLOY_TOKEN);
-  const result = { id: caseDef.id, category: caseDef.category, tier: caseDef.tier, pass: false, checks: [], replies: [], toolsUsed: [], scriptedSends: [], approvals: [], notices: [], errors: [] };
+  const result = { id: caseDef.id, category: caseDef.category, tier: caseDef.tier, pass: false, checks: [], replies: [], toolsUsed: [], scriptedSends: [], approvals: [], notices: [], errors: [], sessionIds: [] };
   let server;
   try {
     server = await bootServer(provider, fixture, caseDef);
@@ -324,7 +324,12 @@ async function runCase(provider, caseDef, fixture) {
     const scripted = (caseDef.scriptedReplies ?? []).map((r) => ({ ...r, re: new RegExp(r.whenReplyMatches, "i"), used: 0 }));
     const MAX_SCRIPTED_SENDS = 3;
     for (const [s, session] of caseDef.sessions.entries()) {
-      const sessionId = `eval-${caseDef.id}-${s}-${Math.random().toString(36).slice(2, 8)}`;
+      // Shaped like a real chat id. "eval-hold-sourced-claim-0-…" showed up in
+      // past-session search hits, and qwen3.6:27b read it as proof the user's
+      // words were planted test data (2026-10-13). result.sessionIds maps the
+      // kept data dirs back to the case.
+      const sessionId = `chat-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+      result.sessionIds.push(sessionId);
       for (const turn of session.turns) {
         let reply = await chatTurn(server, sessionId, fill(turn), caseDef.timeoutMs ?? TURN_TIMEOUT_MS, caseDef);
         result.replies.push(reply.text.trim());

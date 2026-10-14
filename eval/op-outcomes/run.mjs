@@ -28,6 +28,7 @@ import { copyPrivateFixture, loadPrivateHoldout, privateHoldoutDir, privatePage 
 import { assertDistMatchesSource, startIsolatedServer } from "./isolated.mjs";
 import { SETUP, closeChecks, runCheck, snapshotBefore } from "./checks.mjs";
 import { argRepairCount, emittedToolCalls, fabricationAttempts, readOps, waitForIdleOps } from "./op-store.mjs";
+import { ReplyText } from "../../src/routes/chat/run-chat-turn/reply-text.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, "..", "..");
@@ -136,6 +137,7 @@ async function answerApproval(server, approvalId, approved) {
 /** One chat turn over the SSE endpoint. */
 async function chatTurn(server, sessionId, message, timeoutMs, caseDef) {
   const reply = { text: "", tools: [], error: "", approvals: [], notices: [] };
+  const replyText = new ReplyText();
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), timeoutMs);
   try {
@@ -151,10 +153,14 @@ async function chatTurn(server, sessionId, message, timeoutMs, caseDef) {
         const line = buf.slice(0, idx); buf = buf.slice(idx + 1);
         if (!line.startsWith("data:")) continue;
         let ev; try { ev = JSON.parse(line.slice(5).trim()); } catch { continue; }
+        // The reply as the user reads it (src/…/reply-text.ts): a paragraph break
+        // between the text before a tool call and the text after it.
         if (ev.type === "stream") {
-          if (typeof ev.delta === "string") reply.text += ev.delta;
-          else if (typeof ev.text === "string") reply.text = ev.text;
-        } else if (ev.type === "approval_requested" && ev.approvalId) {
+          if (typeof ev.delta === "string") replyText.append(ev.delta);
+          else if (typeof ev.text === "string") replyText.set(ev.text);
+          reply.text = replyText.value;
+        } else if (ev.type === "tool_start" || ev.type === "tool_end") replyText.toolBoundary();
+        if (ev.type === "approval_requested" && ev.approvalId) {
           const decision = decideApproval(caseDef ?? {}, ev);
           reply.approvals.push({ tool: ev.toolName, toolCallId: ev.toolCallId, ...decision });
           await answerApproval(server, ev.approvalId, decision.approved);

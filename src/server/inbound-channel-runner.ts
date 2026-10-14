@@ -1,4 +1,5 @@
 import { formatForChannel, getChannelConfig } from "../channel-formatter.js";
+import { ReplyText } from "../routes/chat/run-chat-turn/reply-text.js";
 import { persistBridgeMedia } from "../bridge-media-queue.js";
 import { getVoicePref } from "../bridge-voice/index.js";
 import { forwardBridgeMedia } from "./bridge-media-forward.js";
@@ -99,12 +100,13 @@ export function createInboundChannelRunner(deps: InboundChannelRunnerDeps) {
       (channelConfig.markdownFlavor === "plain" ? "Use plain text only. "
         : channelConfig.markdownFlavor === "whatsapp" ? "Use minimal formatting. " : "");
 
-    let text = "";
+    const text = new ReplyText();
     let opId = "";
     let error = "";
     const sink = (event: ServerEvent) => {
-      if (event.type === "stream" && "delta" in event && typeof event.delta === "string") text += event.delta;
-      else if (event.type === "stream" && "replace" in event && event.replace === true) text = event.text;
+      if (event.type === "stream" && "delta" in event && typeof event.delta === "string") text.append(event.delta);
+      else if (event.type === "stream" && "replace" in event && event.replace === true) text.set(event.text);
+      else if (event.type === "tool_start" || event.type === "tool_end") text.toolBoundary();
       else if (event.type === "chat_op_started" && typeof event.opId === "string") {
         opId = event.opId;
         if (delivery?.acquired && !bindInboundOperation(delivery.claim, opId)) {
@@ -129,7 +131,7 @@ export function createInboundChannelRunner(deps: InboundChannelRunnerDeps) {
       sessionTitle: `${definition.displayName}: ${payload.name}`,
       ingressKey: delivery?.acquired ? delivery.claim.receiptId : undefined,
     });
-    const raw = text.trim() || (error ? `Something went wrong: ${error}` : "Done.");
+    const raw = text.value.trim() || (error ? `Something went wrong: ${error}` : "Done.");
     const reply: DurableInboundReply = {
       text: formatForChannel(raw, channelType).join("\n\n"),
       speakable: raw,

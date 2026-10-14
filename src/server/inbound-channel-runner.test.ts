@@ -145,4 +145,19 @@ describe("canonical inbound channel runner", () => {
     const reply = await run("whatsapp", { from: "7", name: "P", text: "x", sessionId: "wa-7" });
     expect(reply).toEqual({ text: "clean final", speakable: "clean final" });
   });
+
+  // qwen3.6:27b eval 2026-10-13: the text before a tool call and the text after
+  // it reached the user as one run-on — "…Let me remove it.Fair point — …".
+  it("separates the text before and after a tool call, as the chat does", async () => {
+    claimInboundDelivery.mockReturnValue(null);
+    runChatTurn.mockImplementation(async ({ sseSink }) => {
+      sseSink({ type: "stream", delta: "Let me remove it." });
+      sseSink({ type: "tool_start", name: "forget" });
+      sseSink({ type: "tool_end", name: "forget" });
+      sseSink({ type: "stream", delta: "Fair point." });
+    });
+    const run = createInboundChannelRunner({ getContext: async () => context });
+    const reply = await run("whatsapp", { from: "7", name: "P", text: "x", sessionId: "wa-7" });
+    expect(reply?.text).toBe("Let me remove it.\n\nFair point.");
+  });
 });

@@ -2,6 +2,7 @@ import type { ServerContext } from "../../../server-context.js";
 import type { ServerEvent } from "../../../types.js";
 import type { PreparedAgentRequest } from "../../../agent-request/types.js";
 import { ThreatEngine } from "../../../threat/threat-engine.js";
+import { ReplyText } from "./reply-text.js";
 import { sanitizeModelOutput, stripLeakedSpecialTokensStreaming } from "../../../providers/output-sanitize.js";
 import { DIRECTIVE_VERB_RE, type SseSink } from "./types.js";
 
@@ -93,8 +94,7 @@ export async function installEventWiring(input: InstallEventWiringInput): Promis
   // when the pass changed something — so the mirror must be byte-exact, or
   // clean turns would pay a spurious replace (and the replace would clobber
   // the reducer's break/error bytes).
-  let deliveredText = "";
-  let deliveredToolsSinceText = false;
+  const delivered = new ReplyText();
 
   const wrappedOnEvent = (event: ServerEvent) => {
     if (event.type === "stream" && "delta" in event && event.delta) {
@@ -112,9 +112,7 @@ export async function installEventWiring(input: InstallEventWiringInput): Promis
       // forwarding "" would let the reducer's tool-boundary rule insert a
       // paragraph break for text that doesn't exist.
       if (stripped.length === 0) return;
-      if (deliveredToolsSinceText && deliveredText && !deliveredText.endsWith("\n")) deliveredText += "\n\n";
-      deliveredText += stripped;
-      deliveredToolsSinceText = false;
+      delivered.append(stripped);
       onEvent(stripped === event.delta ? event : { ...event, delta: stripped });
       return;
     }
@@ -122,16 +120,15 @@ export async function installEventWiring(input: InstallEventWiringInput): Promis
       // Adapter-initiated full-text replacement — rare and final-shaped, so
       // the full delivery pass is both affordable and safe here.
       const clean = sanitizeModelOutput(event.text, "delivery");
-      deliveredText = clean;
-      deliveredToolsSinceText = false;
+      delivered.set(clean);
       onEvent(clean === event.text ? event : { ...event, text: clean });
       return;
     }
     if (event.type === "tool_start" || event.type === "tool_end") {
-      deliveredToolsSinceText = true;
+      delivered.toolBoundary();
     } else if (event.type === "error" && event.message) {
       const errText = `\n\nError: ${event.message}`;
-      if (!deliveredText.endsWith(errText)) deliveredText += errText;
+      if (!delivered.value.endsWith(errText)) delivered.set(delivered.value + errText);
     } else if (event.type === "done") {
       // Turn end. The client renders the ACCUMULATED deltas — there is no
       // final full-text event (`done` carries only usage; the reducer just
@@ -139,9 +136,9 @@ export async function installEventWiring(input: InstallEventWiringInput): Promis
       // delivery pass. When it differs from what streamed, emit ONE repair
       // replace (the reducer swaps the bubble text) before done; clean turns
       // hit the identity fast path and cost nothing extra.
-      const finalText = sanitizeModelOutput(deliveredText, "delivery");
-      if (finalText !== deliveredText) {
-        deliveredText = finalText;
+      const finalText = sanitizeModelOutput(delivered.value, "delivery");
+      if (finalText !== delivered.value) {
+        delivered.set(finalText);
         onEvent({ type: "stream", replace: true, text: finalText });
       }
     }

@@ -195,6 +195,18 @@ export function repairMarkerKeys(args: Record<string, unknown>, schema: ToolSche
   return { coerced: out, fixes };
 }
 
+/** A JSON array literal, or one whose string items are missing the commas
+ *  between them — `["a." "b."]`, as qwen3.6:27b sent remember's facts. */
+function parseArrayLiteral(text: string): { value: unknown[]; repaired: boolean } | null {
+  for (const [candidate, repaired] of [[text, false], [text.replace(/(?<!\\)"\s+(?=")/g, '", '), true]] as const) {
+    try {
+      const v = JSON.parse(candidate);
+      if (Array.isArray(v)) return { value: v, repaired };
+    } catch {}
+  }
+  return null;
+}
+
 export function coerceArgs(args: Record<string, unknown>, schema: ToolSchema | undefined): CoerceResult {
   const fixes: string[] = [];
   if (!schema || !schema.properties) return { coerced: args, fixes };
@@ -243,14 +255,15 @@ export function coerceArgs(args: Record<string, unknown>, schema: ToolSchema | u
     if (want === "array" && typeof val === "string") {
       const trimmed = val.trim();
       if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
-        try {
-          const parsed = JSON.parse(trimmed);
-          if (Array.isArray(parsed)) {
-            out[key] = parsed;
-            fixes.push(`${key}:string→array`);
-            continue;
-          }
-        } catch {}
+        const parsed = parseArrayLiteral(trimmed);
+        if (parsed) {
+          out[key] = parsed.value;
+          fixes.push(`${key}:string→array${parsed.repaired ? "(missing-commas)" : ""}`);
+        }
+        // An array literal we cannot read stays a string: argument validation
+        // then refuses it and the model resends. Wrapping it as one item stored
+        // the raw literal as a single memory fact (qwen3.6:27b, 2026-10-13).
+        continue;
       }
       // Single-element array from scalar string
       out[key] = [val];

@@ -286,12 +286,29 @@ describe("coerceArgs — string → array", () => {
     expect(r.fixes).toContain("items:string→array[1]");
   });
 
-  // A "[...]"-looking string whose contents are not valid JSON falls back to
-  // the single-element wrap rather than throwing. Pin that documented behavior.
-  it("wraps an unparseable bracket-string as a single-element array", () => {
+  // A "[...]"-looking string that is not a readable array is NOT wrapped as one
+  // item any more: the wrap passed the raw literal on as data, and remember
+  // stored it as a fact (2026-10-13). It stays a string, validation refuses it,
+  // and the model resends — a visible error instead of silent garbage.
+  it("does not wrap an unparseable bracket-string; it is left for validation to refuse", () => {
     const r = coerceArgs({ items: "[not, valid]" }, schema);
-    expect(r.coerced.items).toEqual(["[not, valid]"]);
-    expect(r.fixes).toContain("items:string→array[1]");
+    expect(r.coerced.items).toBe("[not, valid]");
+    expect(r.fixes).toEqual([]);
+  });
+
+  // qwen3.6:27b, 2026-10-13: remember({facts: '["a." "b."]'}) — an array
+  // literal missing its commas — was wrapped whole and stored as ONE fact
+  // whose text was the raw literal.
+  it("reads an array literal whose string items are missing their commas", () => {
+    const r = coerceArgs({ items: `["@Odalys is Sam's cousin." "In 2014, @Odalys texted Sam's brother."]` }, schema);
+    expect(r.coerced.items).toEqual(["@Odalys is Sam's cousin.", "In 2014, @Odalys texted Sam's brother."]);
+    expect(r.fixes).toContain("items:string→array(missing-commas)");
+  });
+
+  it("leaves an unreadable array literal a string, so validation refuses it", () => {
+    const r = coerceArgs({ items: `[broken "x" y]` }, schema);
+    expect(r.coerced.items).toBe(`[broken "x" y]`);
+    expect(r.fixes).toEqual([]);
   });
 });
 

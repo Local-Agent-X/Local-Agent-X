@@ -63,6 +63,15 @@ export function describeWhen(metadata: ChunkMetadata | undefined): string | unde
   return metadata?.date;
 }
 
+/** The local calendar day a chunk's content was said: from its exact time when
+ *  known, else its stored day; undefined when it has neither. Date filters
+ *  compare this — the model asks in local days (the prompt's "Today is …"),
+ *  and the stored `date` is the UTC day, a day ahead every evening. */
+export function chunkLocalDay(metadata: ChunkMetadata | undefined): string | undefined {
+  const t = metadata?.datetime ? Date.parse(metadata.datetime) : NaN;
+  return Number.isNaN(t) ? metadata?.date : localDate(t);
+}
+
 /** A search hit's excerpt note: shown only when the snippet was cut, saying
  *  what part is shown and how to read the rest. */
 export function excerptNote(r: { snippetWindow?: { start: number; end: number; total: number }; provenance?: MemoryProvenance }): string {

@@ -6,6 +6,7 @@ import {
 } from "../search-helpers.js";
 import { parseDateRange, dateInRange } from "../date-parser.js";
 import { slugify } from "../utils.js";
+import { chunkLocalDay } from "../retrieval-format.js";
 
 const IMPORT_SOURCE_TYPES = new Set([
   "import", "chatgpt-import", "claude-import", "codex-import", "slack-import",
@@ -91,15 +92,28 @@ export function postProcess(
     });
   }
 
-  if (options?.project || options?.sourceType || options?.dateFrom || options?.dateTo) {
+  if (options?.project || options?.sourceType) {
     results = results.filter((r) => {
       const meta = r.metadata;
       if (!meta) return false;
       if (options.project && meta.project !== options.project) return false;
       if (options.sourceType && meta.source_type !== options.sourceType) return false;
-      if (options.dateFrom && (!meta.date || meta.date < options.dateFrom)) return false;
-      if (options.dateTo && (!meta.date || meta.date > options.dateTo)) return false;
       return true;
+    });
+  }
+
+  // Explicit date_from / date_to compare each hit's LOCAL day, and keep a hit
+  // with no date (an entity page holds facts from many days) — as the
+  // query-parsed range above does. Comparing the stored UTC day, and dropping
+  // every undated hit, returned 0 for "today" while the user's message and
+  // its fact were both indexed (qwen3.6:27b eval, 2026-10-13).
+  if (options?.dateFrom || options?.dateTo) {
+    const from = options.dateFrom?.slice(0, 10);
+    const to = options.dateTo?.slice(0, 10);
+    results = results.filter((r) => {
+      const day = chunkLocalDay(r.metadata);
+      if (!day) return true;
+      return (!from || day >= from) && (!to || day <= to);
     });
   }
 

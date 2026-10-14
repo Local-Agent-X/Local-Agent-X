@@ -178,3 +178,31 @@ describe("hybrid search: a weak vector match never lowers an exact keyword hit",
     expect(hit.score).toBeCloseTo(0.7 * 0.95 + 0.3 * 0.9, 5);
   });
 });
+
+describe("explicit date filters read local days and keep undated hits", () => {
+  it("date_from/date_to = today finds this evening's message and the entity page (qwen3.6:27b, 2026-10-13)", async () => {
+    const savedTz = process.env.TZ;
+    process.env.TZ = "America/Chicago";
+    try {
+      const said = { id: 21, path: "sessions/chat-0.jsonl", source: "session", startLine: 1, endLine: 2, hash: "", score: 0.9,
+        text: '[user] Remember this: in 2014 my cousin Odalys texted my brother "did you sell Merriweather yet"',
+        metadata: { session_id: "chat-0", date: "2026-10-14", datetime: "2026-10-14T01:05:00.000Z" } };
+      const page = { id: 22, path: "memory/bank/entities/odalys.md", source: "entity", startLine: 1, endLine: 4, hash: "", score: 0.9,
+        text: "# Odalys\n- In 2014 Odalys texted the user's brother: did you sell Merriweather yet" };
+      vi.mocked(searchKeyword).mockReturnValue([said, page] as never);
+      vi.mocked(searchVectorOffThread).mockResolvedValue([]);
+      const hits = await searchInIndex(makeDeps(), "cousin odalys texted brother 2014 merriweather", {
+        maxResults: 5, minScore: 0.1, crossSession: true, dateFrom: "2026-10-13", dateTo: "2026-10-13",
+      });
+      expect(hits.map((h) => h.path).sort()).toEqual(["memory/bank/entities/odalys.md", "sessions/chat-0.jsonl"]);
+      const yesterday = await searchInIndex(makeDeps(), "cousin odalys texted brother 2014 merriweather", {
+        maxResults: 5, minScore: 0.1, crossSession: true, dateTo: "2026-10-12",
+      });
+      expect(yesterday.map((h) => h.path)).toEqual(["memory/bank/entities/odalys.md"]);
+    } finally {
+      process.env.TZ = savedTz;
+      vi.mocked(searchKeyword).mockReset();
+      vi.mocked(searchVectorOffThread).mockReset();
+    }
+  });
+});

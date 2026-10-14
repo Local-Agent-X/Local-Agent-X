@@ -89,3 +89,26 @@ describe("malformed args → corrective names the failing field", () => {
     expect(collectArgViolations({ path: "x", count: 1, mode: "a" }, schema)).toEqual([]);
   });
 });
+
+describe("a failed call is told exactly what to send", () => {
+  // qwen3.6:27b's first update_fact failed in 9 of 9 corrections (2026-10-13):
+  // it guessed old_content/new_content, old_string/new_string, old_fact/new_fact.
+  it("names the fields the tool does not take, and its fields with the required ones described", async () => {
+    const { expectedArgsHint } = await import("./arg-validation.js");
+    const { createFactsTools } = await import("../memory/tools/facts.js");
+    const updateFact = createFactsTools({} as never).find((t) => t.name === "update_fact")!;
+    const schema = updateFact.parameters as Parameters<typeof expectedArgsHint>[1];
+    const hint = expectedArgsHint({ old_content: "slip 14", new_content: "slip 31", _sessionId: "s" }, schema);
+    expect(hint).toContain('does not take "old_content", "new_content"');
+    expect(hint).not.toContain("_sessionId");
+    expect(hint).toMatch(/query \(required: Substring of the existing fact/);
+    expect(hint).toMatch(/content \(required: The corrected fact/);
+    expect(hint).toContain("provenance");
+  });
+
+  it("says nothing about unknown fields when there are none", async () => {
+    const { expectedArgsHint } = await import("./arg-validation.js");
+    expect(expectedArgsHint({ query: "x" }, { properties: { query: { type: "string" }, content: { type: "string" } }, required: ["query", "content"] }))
+      .toBe("It takes: query (required); content (required). ");
+  });
+});

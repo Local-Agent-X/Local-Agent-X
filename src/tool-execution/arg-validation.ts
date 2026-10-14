@@ -75,6 +75,31 @@ export function lookupTool(ctx: ToolCallContext): PhaseOutcome {
 }
 
 /**
+ * What a failed call should have sent: the fields it sent that the tool does
+ * not take, and the tool's fields — required ones with their description. A
+ * bare `missing required field "content"` left qwen3.6:27b to guess again:
+ * update_fact's first call failed in 9 of 9 corrections over four batches
+ * (old_content/new_content, old_string/new_string, old_fact/new_fact), costing
+ * a full round each (~20 s), 2026-10-13. Unknown fields alone never fail a call.
+ */
+export function expectedArgsHint(
+  args: Record<string, unknown>,
+  schema: { properties?: Record<string, { type?: string; description?: string }>; required?: string[] } | undefined,
+): string {
+  if (!schema?.properties) return "";
+  const props = schema.properties;
+  const unknown = Object.keys(args).filter((k) => !k.startsWith("_") && !(k in props));
+  const required = new Set(schema.required ?? []);
+  const fields = Object.keys(props).map((k) => {
+    if (!required.has(k)) return k;
+    const d = props[k].description;
+    return `${k} (required${d ? `: ${d.length > 90 ? `${d.slice(0, 90)}…` : d}` : ""})`;
+  });
+  return (unknown.length ? `This tool does not take ${unknown.map((k) => `"${k}"`).join(", ")}. ` : "")
+    + `It takes: ${fields.join("; ")}. `;
+}
+
+/**
  * Collect per-field schema violations (required[], top-level type, enum) for a
  * tool call's args. Pure + exported so the structured-corrective contract — the
  * specific failing field, not a bare "invalid arguments" — is unit-testable.
@@ -131,7 +156,7 @@ export async function validateArgs(ctx: ToolCallContext): Promise<PhaseOutcome> 
   if (errs.length === 0) return CONTINUE;
 
   const result: ToolResult = {
-    content: `Invalid arguments for ${tc.name}: ${errs.join("; ")}. Fix and retry.`,
+    content: `Invalid arguments for ${tc.name}: ${errs.join("; ")}. ${expectedArgsHint(ctx.args as Record<string, unknown>, schema)}Fix and retry.`,
     isError: true,
     status: "error",
     metadata: { recovery: "Schema validation failed — fix the listed fields and retry. This is NOT a policy denial; the tool itself is available." },

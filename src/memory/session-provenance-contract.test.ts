@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, relative } from "node:path";
+import { join, relative, sep } from "node:path";
 import { buildSessionChunks } from "./chunking.js";
 import { toSearchResult } from "./search-helpers.js";
 import type { Chunk } from "./types.js";
@@ -19,7 +19,7 @@ function sourceFiles(dir = SRC): string[] {
     return p.endsWith(".ts") && !p.endsWith(".test.ts") ? [p] : [];
   });
 }
-const rel = (p: string) => relative(process.cwd(), p);
+const rel = (p: string) => relative(process.cwd(), p).split(sep).join("/");
 
 describe("one owner of the session log format", () => {
   // Turning session-log text into rows happens in session-log-rows.ts and

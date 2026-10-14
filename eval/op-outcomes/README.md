@@ -72,7 +72,8 @@ per machine: copy it by hand, never commit it. See `private.mjs`.
 ## Categories
 
 `files`, `shell`, `browser`, `coding`, `research`, `secrets`, `memory`,
-`long-session`, `hard`, `protocol`, `ambiguity`, `injection`, `restraint`.
+`long-session`, `hard`, `protocol`, `skills`, `grounding`, `ambiguity`,
+`injection`, `restraint`.
 
 The last four are the ones that need care when you add to them:
 
@@ -110,7 +111,7 @@ npx tsx eval/op-outcomes/run.mjs --provider grok --only bugfix-with-followup --k
   path is printed.
 - `--timeout ms` — per-turn timeout (default 15 minutes; a case can set `timeoutMs`).
 
-Results are written to `results/run-<timestamp>.json` (gitignored) with every
+Results are written to `results/run-<timestamp>-<provider>-<pid>.json` (gitignored) with every
 reply, check detail and metric, stamped with the git HEAD they ran against.
 
 ## Adding a case

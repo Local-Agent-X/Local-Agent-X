@@ -1,3 +1,5 @@
+> **Historical record (2026-07-07).** Describes the code as of that date; paths and numbers here are not kept current. Current owner: [ARCHITECTURE.md](../../ARCHITECTURE.md) for what shipped; the paths here were proposals.
+
 # Harness Mechanisms Backlog
 
 > Written 2026-07-07. Entries name the files they *proposed* to add or touch;

@@ -1,3 +1,5 @@
+> **Historical record (2026-09-19).** Describes the code as of that date; paths and numbers here are not kept current. Current owner: [docs/harness/HARNESS_LOG.md](../harness/HARNESS_LOG.md); its headline items (native /api/chat, local token usage, stable prefix, one owner for context length, reversible no-tools latch, per-model sampling, the trace viewer) have since shipped.
+
 # LAX local-model harness — Phase 0 audit
 
 Brief: `docs/harness/LOCAL_MODEL_HARNESS_BRIEF.md` (section 2). Audited tree: `71fca338` (main, 2026-09-19).

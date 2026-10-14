@@ -1,3 +1,5 @@
+> **Historical record (2026-09-19).** A per-area note of the Phase 0 harness audit; paths and line numbers are as of that date. Current owner: [docs/harness/HARNESS_LOG.md](../../harness/HARNESS_LOG.md).
+
 # Runtime facts — established with real requests on 2026-09-19
 
 Runtime: Ollama 0.34.2 (Windows app; docs read at git tag v0.34.2). GPU: RTX 5090, 32 GB. No `OLLAMA_*`

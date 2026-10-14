@@ -1,3 +1,5 @@
+> **Historical record (2026-09-19).** A per-area note of the Phase 0 harness audit; paths and line numbers are as of that date. Current owner: [docs/harness/HARNESS_LOG.md](../../harness/HARNESS_LOG.md).
+
 # Audit: Ari Kernel integration and the trust channels
 
 Read-only audit, repo `C:\Users\peter\local-agent-x` @ 71fca338. Every claim is VERIFIED (read the cited lines) unless marked INFERRED or UNKNOWN. Lines are 1-indexed, paths relative to the repo root.

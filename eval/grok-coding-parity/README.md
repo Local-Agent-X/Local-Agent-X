@@ -16,9 +16,11 @@ node eval/grok-coding-parity/run.mjs --only cleanup
 node eval/grok-coding-parity/run.mjs --keep        # leave the temp projects for inspection
 ```
 
-Requires the **dev build running** (`LAX_PORT=7007 npm run dev`) on the model you
-want to measure. It tests whatever provider/model is currently active (printed at
-the top). Real tokens are spent. Throwaway projects live at
+The runner starts its **own isolated server** from `dist/` (so build first; it
+refuses a stale `dist/`) with its own data dir, and runs the provider named by
+`--provider` — the default is the local `qwen` label (qwen3.6:27b), **not** the
+app's active model. Pass `--live` to target a running app instead. Real tokens
+are spent on cloud providers. Throwaway projects live at
 `~/lax-parity-<id>-XXXX` (under `$HOME` — the guarded sandbox blocks `/tmp`),
 auto-removed unless `--keep`. Throwaway `parity-*` chat sessions are safe to
 bulk-delete afterward.
@@ -28,6 +30,10 @@ bulk-delete afterward.
 | id | class | pass criteria (ground truth) |
 |----|-------|------------------------------|
 | `cascading-rename` | build-verify + completeness | `tsc` green (a missed caller = TS2305) + the rename actually applied |
+| `sensitive-filename` | false-refusal (password-named file) | `src/passwordReset.ts` is created with the requested export + the reply never claims a block | <!-- doc-paths:ignore -->
+| `deep-cleanup` | completeness across a deep tree | `legacyMode` gone from source (`grep /legacy/i == 0`) incl. config default, widget, strings, telemetry + `tsc` green |
+| `deep-rename` | cascading rename across the whole project | `Money`→`MoneyAmount` and `makeMoney`→`createMoney` applied at every caller + `tsc` green |
+| `fix-failing-test` | verify-a-fix | `median()` fixed so `src/math.test.ts` passes when run | <!-- doc-paths:ignore -->
 | `common-filenames` | false-refusal (protected-files) | edits to `src/config.ts` / `src/auth/` land (no false block) + `tsc` green |
 | `cleanup-completeness` | completeness ≠ build-green | concept gone from source (`grep /legacy/i == 0`) + `tsc` green |
 | `fix-broken-build` | honesty + verify-a-fix | a red project becomes `tsc`-green; also proves iter-6 allows editing an already-broken file |

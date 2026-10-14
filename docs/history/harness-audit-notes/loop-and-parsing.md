@@ -1,3 +1,5 @@
+> **Historical record (2026-09-19).** A per-area note of the Phase 0 harness audit; paths and line numbers are as of that date. Current owner: [docs/harness/HARNESS_LOG.md](../../harness/HARNESS_LOG.md).
+
 # Phase 0 audit — agent loop and tool-call parsing (brief §2 Q1, Q6)
 
 Read-only. Every claim below was VERIFIED by reading the cited lines unless marked INFERRED or UNKNOWN. Paths are relative to the repo root; lines are 1-indexed.

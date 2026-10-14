@@ -10,7 +10,7 @@
  * spills layers to system RAM silently — HTTP 200, no warning. qwen3.6:27b at
  * its native 262,144 on a 32 GB card: 33.2 GB total, 86% on GPU, decode
  * 74 -> 19.5 tok/s; at 131,072 it is fully resident at 24.8 GB
- * (docs/harness/audit-notes/runtime-facts.md, measured 2026-09-19).
+ * (docs/history/harness-audit-notes/runtime-facts.md, measured 2026-09-19).
  *
  * The KV-per-token formula mirrors what Ollama itself uses to predict a load
  * (llm/llama_server.go PredictServerVRAM, ollama@16b4376a lines 2788-2804:

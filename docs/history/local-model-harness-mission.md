@@ -1,3 +1,5 @@
+> **Historical record (2026-09-17).** Describes the code as of that date; paths and numbers here are not kept current. Current owner: the running ledger [docs/harness/HARNESS_LOG.md](../harness/HARNESS_LOG.md) and the two briefs in [docs/harness/](../harness/); every "open" item listed here was closed by EXP-1…36.
+
 # LAX — Local Model Harness Stabilization Mission
 
 You are working in the Local Agent X (LAX) repo at `C:\Users\peter\local-agent-x`. Your job is

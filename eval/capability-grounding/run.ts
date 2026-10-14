@@ -70,7 +70,7 @@ async function main(): Promise<void> {
       common.includes("[HARNESS NOTE: FILE ACCESS]") && common.includes("Mode: COMMON.") && common.includes("Documents") && common.includes("Settings"));
 
     // The live read-mode → block composition build-system-prompt.ts performs.
-    const { loadFileAccessMode } = await import("../../src/security/security-config.js");
+    const { loadFileAccessMode } = await import("../../src/security/layer/security-config.js");
     setMode("unrestricted");
     check("fix2-live", "security.json mode=unrestricted → loadFileAccessMode reads it → unrestricted block",
       loadFileAccessMode() === "unrestricted" &&

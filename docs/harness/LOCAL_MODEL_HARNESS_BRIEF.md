@@ -21,7 +21,7 @@ Three rules that override everything else in this document:
 ## 1. How to work
 
 - **Discover, don't assume.** Read the actual agent loop, prompt assembly, tool definitions, model adapter(s), context handling, the missions/protocols system, and the Ari Kernel integration before proposing anything. Confirm which local runtime(s) LAX talks to (Ollama, LM Studio, llama.cpp server, vLLM, MLX, something else) and what the adapter actually sends on the wire.
-- **Audit before code.** Write `docs/harness/AUDIT.md` (Phase 0) and stop to show it to the user with a proposed order of attack. No application code changes before that review.
+- **Audit before code.** Phase 0 is done: the audit was written 2026-09-19 and reviewed; it is kept as [docs/history/harness-audit.md](../history/harness-audit.md) and most of its headline items have since shipped (see HARNESS_LOG). New mechanisms still start from a written audit of the code they touch.
 - **Small, reviewable commits.** The app must build and run at every commit. New behavior goes behind feature flags or capability-profile fields; defaults change only after the eval says so.
 - **Every change is an experiment.** Baseline → change → re-run eval → keep or revert. Log every experiment in `docs/harness/HARNESS_LOG.md` using the template in Appendix B, including the ones that failed.
 - **Verify against reality, not memory.** Runtime features (structured output, grammar support, tool-call formats, context parameters, thinking modes) change fast. Check the installed runtime's version and docs, then confirm behavior with a real request before building on it. When the runtime returns metadata (prompt token counts, eval counts), use it to prove a setting actually took effect.
@@ -50,7 +50,7 @@ Expect to end up with roughly these pieces, wherever they fit in the current str
 
 ## 2. Phase 0 — Audit
 
-Produce `docs/harness/AUDIT.md` answering each of these with file paths and line references:
+Done 2026-09-19 — the record is [docs/history/harness-audit.md](../history/harness-audit.md). The questions it answered, kept here because a new mechanism's audit asks the same ones:
 
 1. **Agent loop.** Where is the plan/act/observe cycle? How does a turn end? What stops generation after a tool call? Can the model keep writing after a tool call and fabricate the observation?
 2. **Model adapter.** For each runtime supported: what request is actually sent (chat template handling, tool schema format, context length parameter, sampling params, stop sequences, streaming, keep-alive)? What does the runtime default to for every parameter LAX omits?
@@ -249,7 +249,10 @@ All of this trades wall time for success rate. Report both; let profiles choose 
 > **Superseded 2026-09-26 by [`MODEL_AUTO_ADAPT_BRIEF.md`](MODEL_AUTO_ADAPT_BRIEF.md).** Settings are
 > derived by rule from what the runtime reports and a first-use self-check measures, not hand-written per
 > model; the profiles below become test references and an escape hatch. The schema remains the shape a
-> derived or learned profile fills in.
+> derived or learned profile fills in. **As of 2026-10-13 that plan is only partly built** (context sizing
+> and native chat shipped; derivation and learning did not): `config/model-profiles/*.json` read by
+> `src/local-runtimes/model-profile.ts` is still how settings are chosen, and certification is manual
+> (`routes/settings/local-runtimes.ts`).
 
 Everything above is driven by one per-model profile so the harness adapts instead of assuming. The schema and loader are built in Phase 1 (3.6); this phase adds auto-probe and tier assignment. Suggested shape (adjust field names to the codebase's conventions):
 
@@ -388,12 +391,12 @@ Check every item during the audit. Each one has silently ruined a local agent so
 
 ## Appendix D — Prompts to paste into Claude Code
 
-**Kickoff (first session, after saving this file at `docs/harness/LOCAL_MODEL_HARNESS_BRIEF.md`):**
+**Kickoff (used 2026-09-19; Phase 0 is done — kept for the record, do not run it again):**
 
 ```
 Read docs/harness/LOCAL_MODEL_HARNESS_BRIEF.md in full before doing anything else. It is the spec for making LAX get frontier-level results out of local models by making the harness do everything the model doesn't have to.
 
-Do Phase 0 only. Explore the codebase — agent loop, model adapters, tool definitions, prompt assembly, context handling, tool-call parsing, loop/stall handling, missions/protocols, Ari Kernel integration, logging, tests — and write docs/harness/AUDIT.md answering every question in section 2 with file paths and line references. Go through the Appendix C footgun checklist item by item and mark each one confirmed / not present / unknown. Where an answer depends on runtime behavior (default context length, structured output support, chat template, stop handling), verify it against the installed runtime version with a real request instead of assuming.
+Do Phase 0 only. Explore the codebase — agent loop, model adapters, tool definitions, prompt assembly, context handling, tool-call parsing, loop/stall handling, missions/protocols, Ari Kernel integration, logging, tests — and write docs/history/harness-audit.md answering every question in section 2 with file paths and line references. Go through the Appendix C footgun checklist item by item and mark each one confirmed / not present / unknown. Where an answer depends on runtime behavior (default context length, structured output support, chat template, stop handling), verify it against the installed runtime version with a real request instead of assuming.
 
 Finish the audit with the ranked top-10 list from section 2 and a proposed order of attack for Phases 1 and 2. Then stop and show me. Do not change application code until I've reviewed the audit.
 ```
@@ -401,7 +404,7 @@ Finish the audit with the ranked top-10 list from section 2 and a proposed order
 **Continuation (every later session):**
 
 ```
-Read docs/harness/LOCAL_MODEL_HARNESS_BRIEF.md, docs/harness/AUDIT.md, and docs/harness/HARNESS_LOG.md. In a few lines, tell me where we are: last experiment, current metrics vs baseline on both test models, and the next planned change.
+Read docs/harness/LOCAL_MODEL_HARNESS_BRIEF.md, docs/history/harness-audit.md, and docs/harness/HARNESS_LOG.md. In a few lines, tell me where we are: last experiment, current metrics vs baseline on both test models, and the next planned change.
 
 Then continue with the next item in the plan: implement it behind a flag or profile field, run `smoke` while iterating, then `full` on both test models before any keep decision, log the experiment, and keep or revert based on the numbers. Never run or inspect the holdout except at a phase boundary. Stop and check in when you hit a product decision, a kernel policy conflict, or any change that regresses the injection or restraint gates.
 ```

@@ -1,9 +1,11 @@
 # compaction-fidelity eval
 
 Measures whether the harness's **real** context compaction preserves load-bearing
-facts when it summarizes old turns. Compaction runs every turn during long
-sessions ([`compactIfNeededWithLLM`](../../src/context-manager/compaction.ts)); if
-its LLM summary silently drops a constraint, a user fact, or a decision, the
+facts when it summarizes old turns. Compaction runs between turns during long
+sessions ([`turn-loop/compact-history.ts`](../../src/canonical-loop/turn-loop/compact-history.ts)
+calling `summarizeOldMessages` in
+[`src/context-manager/compaction.ts`](../../src/context-manager/compaction.ts));
+if its LLM summary silently drops a constraint, a user fact, or a decision, the
 agent regresses mid-task with no signal. This eval is that signal.
 
 ## How it works
@@ -29,17 +31,20 @@ verbatim in the compacted output.
 
 ## Run
 
-Requires the dev build running (`npm run dev`) with the desktop app quit (it owns
-port 7007). The summary routes through your configured provider's background
-model, so it spends a small number of tokens per case.
+The runner starts its own isolated server from `dist/` (build first) on the
+provider named by `--provider` (default: the local `qwen` label); `--live`
+targets a running app instead. The summary runs on the working chat model
+(the `review` role), so it spends a small number of tokens per case.
 
 ```
 npm run eval:compaction
 node eval/compaction-fidelity/run.mjs --only constraints --filler 30
+node eval/compaction-fidelity/run.mjs --provider grok
 ```
 
 `--only <id-substring|category>` filters cases; `--filler <n>` sets how many
-innocuous turns bury the fact (default 24).
+innocuous turns bury the fact (default 24); `--provider <label>` picks the
+providers.json entry; `--live` uses the running app.
 
 ## Updating the baseline
 

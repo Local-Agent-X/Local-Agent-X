@@ -75,19 +75,15 @@ verify-gate middlewares in `src/canonical-loop/middlewares/`.)
 When the task reads as a codebase-wide sweep **and** the model wraps up
 tool-lessly **and** it never ran `grep`/`glob` this op, it injects one forced
 nudge to enumerate the full surface before finishing. Gated three ways,
-fire-once, all lanes; mirrors the existing `tool-search-nudge` pattern (no new
-subsystem, no LLM call, no prompt bloat).
+fire-once, all lanes; no LLM call, no prompt bloat.
 
-## AFTER — with broad-sweep-nudge live (PENDING)
+## AFTER — the wording-based nudge was removed
 
-| | **Grok-4.3 + nudge** |
-|---|---|
-| Files / score | _(to run: rebuild + restart LAX, re-run the prompt on `69df058`)_ |
-
-**Hypothesis:** Grok goes 3 → a real sweep once the nudge forces enumeration. If
-it nudges but Grok *still* under-delivers, the nudge needs teeth — escalate into
-the force-another-turn path (`open-steps` / `premature-completion`) instead of a
-one-shot message.
+`broad-sweep-nudge` (and the `tool-search-nudge` it mirrored) were removed in
+4a5a4cb6, when the guards that keyed on wording were folded into a shared nudge
+budget; the behavior this eval measures is now carried by `open-steps` and
+`verify-gate`, which force another turn instead of sending a one-shot message.
+The AFTER measurement should be taken against those, on a current build.
 
 ## Cross-harness axis — same model, different harness
 

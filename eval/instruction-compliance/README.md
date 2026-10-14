@@ -25,8 +25,10 @@ node eval/instruction-compliance/run.mjs --keep         # leave the temp project
 npm run eval:instruction-compliance                     # same as the first form
 ```
 
-Requires the **dev build running** (`npm run dev`) on the model you want to
-measure. Real tokens are spent. Throwaway projects live at
+The runner starts its **own isolated server** from `dist/` (build first) and
+runs the provider named by `--provider` — default the local `qwen` label, not
+the app's active model; `--live` targets a running app. Real tokens are spent
+on cloud providers. Throwaway projects live at
 `~/lax-icomp-<id>-XXXX` (under `$HOME` — the guarded sandbox blocks `/tmp`),
 auto-removed unless `--keep`. Throwaway `icomp-*` chat sessions are safe to
 bulk-delete afterward.
@@ -40,17 +42,12 @@ bulk-delete afterward.
 | `read-before-answer` | positive | a `read`/`grep`/`glob` whose **args** reference the named file (or a bash command reading it) appears in the trace + a substantive answer |
 | `no-over-block` | **negative, must-pass** | NO constraint present: the edit lands + `tsc` green + the reply never claims a block |
 
-## Eval-first: expected reds
+## Exit code
 
-The three **positive** scenarios stay **RED until constraint enforcement
-lands** — that is the point of building the eval first, and the runner
-annotates them `(expected red until enforcement lands)`. They are reported as
-red, never faked green.
-
-The **negative** scenario is the fail-open invariant and **must pass from day
-one** — before, during, and after enforcement. It is the only thing that gates
-the exit code: a red there means enforcement over-blocked a task with no
-constraint, and the run exits 1.
+Every scenario gates the run. A red **positive** scenario prints
+`COMPLIANCE REGRESSION` and exits 1 (constraint enforcement has landed; there
+are no "expected reds" any more). A red **negative** scenario means enforcement
+over-blocked a task with no constraint, and also exits 1.
 
 The pure scoring logic (trace helpers, per-scenario `check()`) is covered by
 `test/instruction-compliance-eval.test.ts`, which runs without a server.

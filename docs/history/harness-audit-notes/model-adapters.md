@@ -1,3 +1,5 @@
+> **Historical record (2026-09-19).** A per-area note of the Phase 0 harness audit; paths and line numbers are as of that date. Current owner: [docs/harness/HARNESS_LOG.md](../../harness/HARNESS_LOG.md).
+
 # Phase 0 audit — Model adapters (brief §2 Q2): what LAX puts on the wire to local runtimes
 
 Read-only. Every claim below is VERIFIED by reading unless marked INFERRED/UNKNOWN. Paths are repo-relative, lines 1-indexed.

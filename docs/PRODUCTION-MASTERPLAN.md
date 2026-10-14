@@ -72,7 +72,7 @@ must work.*
   registered (good, added in `d24744c` after `search_past_sessions` was not).
   Nothing proves a registered tool returns a non-error result on a fresh
   install with a real provider.
-- The harness ledger (`eval/HARNESS_LEDGER.md`, H-001 to H-034) and the
+- The harness ledger (`docs/history/harness-ledger.md`, H-001 to H-034) and the
   failure manifest (`eval/op-outcomes/failure-manifest.md`) are the real bug
   tracker. The pattern is consistent: a tool fails in a way the model cannot
   work around (`select` demanded a CSS selector; `read /tmp` not mapped; a
@@ -186,7 +186,7 @@ Goal: a green `main` that cannot go red silently.
    whole suite on both OSes, desktop tests, replay. Today everything runs on
    every push and takes up to an hour, which is why red is tolerated.
 5. **Open the board.** Turn `docs/known-issues.md`, the OPEN rows of
-   `eval/HARNESS_LEDGER.md` (H-019, H-020, H-022), the open proposal
+   `docs/history/harness-ledger.md` (H-019, H-020, H-022), the open proposal
    (`taint-scoped-to-data-flow`), and the failure-manifest OPEN rows (G2, P1)
    into GitHub issues with labels `session-health`, `tool-reliability`,
    `gate`, `installer`, `experimental`. Delete the doc entries as they move.
@@ -469,7 +469,7 @@ One line per closed item, newest first, with the commit that closed it.
   lanes and PR-only). Two exploitable weaknesses are private draft security
   advisories, published once fixed: the shell-cage bypass through build and
   hook runners (high) and the op-store lock (low). Still to migrate:
-  `docs/known-issues.md`, the OPEN rows of `eval/HARNESS_LEDGER.md` and the
+  `docs/known-issues.md`, the OPEN rows of `docs/history/harness-ledger.md` and the
   failure-manifest rows.
 
 - **2026-10-01, Phase 0 item 3, first half: branch protection is on for

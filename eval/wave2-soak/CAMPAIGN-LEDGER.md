@@ -4,7 +4,7 @@ Goal: ship C1 (anchor+estimate token counting), B2 (compaction circuit breaker),
 E9 (read dedup + external-change diffs), D2 (end-of-turn extraction coalescing)
 as independent, verified, committed-to-main chunks. Never push.
 
-Spec: docs/harness-mechanisms-backlog.md (commit 48d31714). Rules: no AI
+Spec: docs/history/harness-mechanisms-backlog.md (commit 48d31714). Rules: no AI
 fingerprints in commits, files <400 LOC, verify with `npm run build` (includes
 codebase-map freshness — run `npm run docs:map` after adding files), tests
 mandatory, no new parallel files where a canonical owner exists.

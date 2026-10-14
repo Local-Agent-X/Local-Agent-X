@@ -1,3 +1,5 @@
+> **Historical record (2026-09-19).** A per-area note of the Phase 0 harness audit; paths and line numbers are as of that date. Current owner: [docs/harness/HARNESS_LOG.md](../../harness/HARNESS_LOG.md).
+
 # Loop guards, stall handling, missions/protocols — Phase 0 audit (brief §2 Q7, Q8)
 
 Read-only audit of `C:\Users\peter\local-agent-x` on 2026-09-19. Lines are 1-indexed, repo-relative. Every claim is VERIFIED by reading the cited line unless marked INFERRED or UNKNOWN.

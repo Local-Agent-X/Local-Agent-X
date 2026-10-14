@@ -1,3 +1,5 @@
+> **Historical record (2026-09-18).** Describes the code as of that date; paths and numbers here are not kept current. Current owner: [docs/harness/HARNESS_LOG.md](../harness/HARNESS_LOG.md), where the campaign continued.
+
 # Harness ledger — local models
 
 One entry per issue. Classification: HARNESS (fix), MODEL (document), EVAL (fix the rig,

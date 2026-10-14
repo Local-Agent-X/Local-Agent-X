@@ -1,3 +1,5 @@
+> **Historical record (2026-09-17).** Describes the code as of that date; paths and numbers here are not kept current. Current owner: [docs/harness/HARNESS_LOG.md](../harness/HARNESS_LOG.md); the model order, classifier table and timeout budgets here were all superseded.
+
 # Harness baseline — local models (Phase 0)
 
 > Superseded 2026-09-19 by `docs/harness/AUDIT.md` (Phase 0 of `docs/harness/LOCAL_MODEL_HARNESS_BRIEF.md`). The measured muse numbers below still stand; the `resolveBackgroundModel` order and the classifier-site table are out of date (H-030 removed auto-selection; review calls run on the worker).

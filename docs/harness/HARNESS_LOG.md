@@ -1,8 +1,8 @@
 # Harness experiment log
 
-Spec: `docs/harness/LOCAL_MODEL_HARNESS_BRIEF.md`. Audit: `docs/harness/AUDIT.md`. Every change to the harness is an
+Spec: `docs/harness/LOCAL_MODEL_HARNESS_BRIEF.md`. Audit: `docs/history/harness-audit.md`. Every change to the harness is an
 experiment recorded here with the Appendix B template, including the ones that failed. Runtime facts and the Phase 0
-measurements live in `docs/harness/audit-notes/runtime-facts.md` and `docs/harness/phase0-evidence/`.
+measurements live in `docs/history/harness-audit-notes/runtime-facts.md` and `docs/harness/phase0-evidence/`.
 
 ## Decisions on record
 

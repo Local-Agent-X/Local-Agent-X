@@ -38,7 +38,9 @@ export const currentDocs = [
   "docs/PRODUCTION-MASTERPLAN.md",
   "docs/proposals/shell-sandbox-reuse-plan.md",
   "docs/proposals/taint-scoped-to-data-flow.md",
-  "docs/agent-prompts/local-model-harness.md",
+  "docs/harness/README.md",
+  "docs/harness/LOCAL_MODEL_HARNESS_BRIEF.md",
+  "docs/harness/MODEL_AUTO_ADAPT_BRIEF.md",
   // Eval harness guides
   "eval/capability-grounding/README.md",
   "eval/compaction-fidelity/README.md",

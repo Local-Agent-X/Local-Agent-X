@@ -3,26 +3,26 @@
 Code defects (not doc bugs) surfaced by the docs-sync audit. Each is verified
 against source. Remove an entry when its fix lands.
 
-> Tracked here because the repo has no GitHub issue tooling configured locally
-> (`gh` not installed). Convert to GitHub issues if/when preferred.
+> Tracked here rather than as GitHub issues so the record ships with the code;
+> the follow-up tracker on GitHub holds the externally visible ones.
 
 Six of the original seven were fixed on 2026-06-04 (stale comments in
 self-edit-sandbox / ari-kernel / catalog / resampler; dangling arikernel
 `LICENSE.md` metadata; sovits torch pin — which turned out to be a real
 cu126/2.5.1 wheel mismatch, now unified to 2.6.0; and `LAX_FORCE_CPU_TORCH` is
-now honored by the sovits installers). The structural item below remains.
+now honored by the sovits installers). The items below remain.
 
 ## Lite voice sidecar is GPU-only; the CI "cpu" voice artifacts are mislabeled or CPU-unverified
 
 - **Where:** [python/voice/requirements.txt](../python/voice/requirements.txt),
-  [python/chatterbox/install.ps1:58](../python/chatterbox/install.ps1#L58),
-  [.github/workflows/build-voice-artifacts.yml:96](../.github/workflows/build-voice-artifacts.yml#L96)
+  [python/chatterbox/install.ps1:73](../python/chatterbox/install.ps1#L73),
+  [.github/workflows/build-voice-artifacts.yml:103](../.github/workflows/build-voice-artifacts.yml#L103)
   (`build-lite`, `build-chatterbox`)
 - **What:** The lite sidecar is GPU-only by design — `voice/requirements.txt`
   hard-pins `onnxruntime-gpu==1.20.1` + `nvidia-cublas-cu12` / `nvidia-cudnn-cu12`
   ("voice **GPU** sidecar … all assume CUDA 12.x"). chatterbox installs
   `chatterbox-streaming --extra-index-url …/cu128` but *does* honor
-  `LAX_FORCE_CPU_TORCH` (`chatterbox/install.ps1:58`) — under it the installer
+  `LAX_FORCE_CPU_TORCH` (`chatterbox/install.ps1:73`) — under it the installer
   keeps chatterbox's pinned CPU torch and skips the CUDA override, so the
   chatterbox `-cpu-` artifact is at least torch-CPU (full CPU operation is
   still unverified). The **lite** installer has no CPU code path:

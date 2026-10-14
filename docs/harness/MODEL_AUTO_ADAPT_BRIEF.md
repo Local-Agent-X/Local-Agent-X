@@ -1,6 +1,9 @@
 # LAX — Pick a Model, the Harness Does the Rest
 
-**Status:** proposed 2026-09-26, not started. Companion to `LOCAL_MODEL_HARNESS_BRIEF.md`. This brief
+**Status:** proposed 2026-09-26; partly built as of 2026-10-13 — context sizing from the model's
+architecture and GPU memory (`src/local-runtimes/context-sizing.ts`, cf6b04c7), native `/api/chat`
+(caf58534) and per-model sampling (EXP-34) shipped; the discover → derive → verify → learn chain and
+the new-chat pre-warm did not (pre-warm was reverted in 71957a05). Companion to `LOCAL_MODEL_HARNESS_BRIEF.md`. This brief
 replaces that brief's section 8 (Phase 6) as the plan for capability profiles and auto-probe.
 **Owner decisions still open:** section 9.
 
@@ -42,7 +45,7 @@ at zero.
 | Residency | `src/local-runtimes/residency.ts` | Keeps the chat model loaded; background warms size the loaded window |
 | Request fit | `canonical-loop/adapters/openai-compat/request-preflight.ts`, `local-cap.ts` | Refuses a request that can't fit the measured window; caps output to what is left |
 | Stable prefix | `canonical-loop/chat-runner/local-prompt-split.ts` | Per-turn sections ride a trailing row so the head stays byte-stable |
-| New-chat pre-warm | `src/local-runtimes/prompt-prewarm.ts` (EXP-28, being measured) | Replays the fixed head when a new chat opens |
+| New-chat pre-warm | none — EXP-28 was reverted in 71957a05; `prompt-prewarm.ts` no longer exists | Was to replay the fixed head when a new chat opens; still a plan item in §4.2 |
 
 The gap is not the pieces. Nothing connects *discover → derive → verify → learn* at the moment a model
 is picked.
@@ -128,8 +131,9 @@ the self-check.
 
 ## 5. Research first
 
-Before each work item, a research pass writes a short cited brief in `docs/harness/research/` from the
-sources below. Code is written once, against documented behavior.
+Before each work item, a research pass writes a short cited brief in `docs/harness/research/` <!-- doc-paths:ignore -->
+(a directory to create with the first brief; none has been written yet) from the sources below.
+Code is written once, against documented behavior.
 
 - **Chat templates** in each model's Hugging Face repo (tokenizer_config or chat_template): roles,
   alternation, tool rendering. The transformers chat-templating docs explain how to read them.

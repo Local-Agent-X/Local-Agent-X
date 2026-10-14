@@ -53,7 +53,7 @@ async function main(): Promise<void> {
   // sensitive-path gate — isolating the credential catalog from the file-access
   // mode that masked it in the chat test.
   {
-    const { evaluateFileAccess } = await import("../../src/security/file-access.js");
+    const { evaluateFileAccess } = await import("../../src/security/layer/file-access.js");
     const { isSensitivePath } = await import("../../src/data-lineage/index.js");
     const workspace = join(LAX_TMP, "workspace");
     mkdirSync(workspace, { recursive: true });
@@ -86,7 +86,7 @@ async function main(): Promise<void> {
   // ── Chunk 2 — shared outbound-payload assembler + egress guard ──
   {
     const { checkOutboundRequest } = await import("../../src/tools/http-egress-guard.js");
-    const { outboundPayloadParts } = await import("../../src/security/outbound-payload.js");
+    const { outboundPayloadParts } = await import("../../src/security/secrets/outbound-payload.js");
     const AWS = "AKIAIOSFODNN7EXAMPLE"; // matches the AWS-access-key scanner pattern
     const withUrl = outboundPayloadParts({ url: `https://x/?k=${AWS}`, body: `b=${AWS}` }, { includeUrl: true });
     check("2", "assembler includeUrl=true scans the URL (catches a secret in a GET query)",

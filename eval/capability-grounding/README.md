@@ -24,8 +24,9 @@ artifacts directly, with no LLM:
 | `fix2-live` | The read-mode → block composition `build-system-prompt.ts` performs: a written `security.json` mode flows through `loadFileAccessMode()` into the matching block |
 | `fix2-wiring` | The block is concatenated into BOTH prompt-assembly branches (sub-agent override + base), so sub-agents are grounded too |
 
-The reactive backstop (refuse-without-attempt → grounding nudge) is covered by
-`src/agent-guards/loop-detection.test.ts`, not this battery.
+There is no reactive refuse-without-attempt backstop any more: the
+`false-refusal` middleware was removed in 4a5a4cb6 with the other wording-based
+guards. Grounding is the prompt block this battery checks.
 
 Exit 0 = all passed, exit 1 = a regression. Run before shipping prompt or
 file-access changes.

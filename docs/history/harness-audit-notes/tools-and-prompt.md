@@ -1,3 +1,5 @@
+> **Historical record (2026-09-19).** A per-area note of the Phase 0 harness audit; paths and line numbers are as of that date. Current owner: [docs/harness/HARNESS_LOG.md](../../harness/HARNESS_LOG.md).
+
 # Tool surface and prompt assembly — Phase 0 audit (brief §2, Q3 + Q4)
 
 Repo `C:\Users\peter\local-agent-x` @ 71fca338 (dirty tree, untracked only). Read-only. Measurements come from two scratch scripts beside this file (`measure-tools.mjs`, `measure-rag-inflation.mjs`; outputs `measure-tools.out.json`, `measure-rag-inflation.out.txt`), run with `npx tsx` from the repo root and `LAX_DATA_DIR` pointed at `audit/laxdata` — `~/.lax/config.json` mtime stayed 2026-09-07, so nothing live was touched. Tags: **V** = verified by reading or measuring, **I** = inferred, **U** = unknown (with what settles it).

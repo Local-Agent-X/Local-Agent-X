@@ -1,3 +1,5 @@
+> **Historical record (2026-09-19).** A per-area note of the Phase 0 harness audit; paths and line numbers are as of that date. Current owner: [docs/harness/HARNESS_LOG.md](../../harness/HARNESS_LOG.md).
+
 # Phase 0 audit — observability, tests, evals (brief §2 Q10, Q11)
 
 Read-only. Paths are repo-relative, lines 1-indexed. VERIFIED = read the code; INFERRED = concluded from evidence; UNKNOWN = not established. Nothing was run.

@@ -1,25 +1,12 @@
-import type { ToolDefinition, ToolResult } from "../types.js";
-import { saveConnectorManifest, parseManifest, type ConnectorManifest } from "../routes/connector-proxy.js";
+import type { ServerEvent, ToolDefinition, ToolResult } from "../types.js";
+import { saveConnectorManifest, parseManifest, referencedSecrets } from "../routes/connector-proxy.js";
 import { getSecretsStoreSingleton } from "../secrets.js";
+import { gateSecretDestinations } from "../secret-destination-gate.js";
 
 const NAME_RE = /^[a-z0-9][a-z0-9_-]*$/;
 
 function ok(content: string): ToolResult { return { content }; }
 function err(content: string): ToolResult { return { content, isError: true }; }
-
-/** Vault secret names a manifest's auth references — so we can warn when one
- *  isn't stored yet (the connector 401s at call time without it). */
-function referencedSecrets(auth: ConnectorManifest["auth"]): string[] {
-  const names = new Set<string>();
-  if (auth.type === "bearer" || auth.type === "header") names.add(auth.secret);
-  else if (auth.type === "signed") {
-    names.add(auth.secret);
-    for (const tmpl of Object.values(auth.headers ?? {})) {
-      for (const m of tmpl.matchAll(/\{vault:([^}]+)\}/g)) names.add(m[1]);
-    }
-  }
-  return [...names];
-}
 
 /**
  * connector_create — the sanctioned way to define an external-API connector.
@@ -36,6 +23,7 @@ export const connectorCreateTool: ToolDefinition = {
   description:
     "Define a connector so an app or dashboard can reach an external API through the same-origin proxy /api/connectors/<name> — the app sandbox's CSP blocks direct cross-origin fetch, and core LAX must never be edited to add an integration. Writes a validated manifest behind the proxy gate. " +
     "auth: {type:'none'} for a keyless public API; {type:'bearer',secret:'NAME'} or {type:'header',header:'X-Api-Key',secret:'NAME'} for a single key (store it first with request_secret and pass its NAME, never the value); {type:'signed',...} for HMAC-signed APIs. " +
+    "A stored secret is bound to the upstreams it may reach: binding it to a new upstream asks the user once in the chat (a yes is kept), unless this session captured the secret, an op_submit_async run pre-blessed it, or the upstream is the secret's own recorded site; a declined create writes nothing. The proxy re-checks that binding on every request, so editing the manifest file cannot widen it. " +
     "allow is a non-empty list of exact \"METHOD /path\" entries (trailing /* matches a subtree) — only these forward. " +
     "From the app, call /api/connectors/<name>/<path> with header Authorization: 'Bearer ' + window.__LAX_CONNECTOR_TOKEN__.",
   parameters: {
@@ -65,10 +53,25 @@ export const connectorCreateTool: ToolDefinition = {
     const parsed = parseManifest(JSON.stringify(manifest));
     if (!parsed.ok) return err(`Invalid connector manifest: ${parsed.error}`);
 
+    // Every stored secret the manifest binds must be allowed at the upstream
+    // before the manifest exists (ADR 0005); the proxy re-runs the same ladder.
+    const secrets = getSecretsStoreSingleton();
+    const referenced = referencedSecrets(parsed.manifest.auth);
+    const stored = referenced.filter(n => secrets?.has(n));
+    if (secrets && stored.length > 0) {
+      const gate = await gateSecretDestinations(stored, {
+        store: secrets, destination: parsed.manifest.upstream, sessionId: String(args._sessionId ?? ""),
+        toolName: "connector_create",
+        toolCallId: args._toolCallId ? String(args._toolCallId) : undefined,
+        onEvent: args._onEvent as ((event: ServerEvent) => void) | undefined,
+        purpose: (n) => `Send ${n} to ${parsed.manifest.upstream} through connector "${name}"`,
+      });
+      if (!gate.allowed) return gate.result;
+    }
+
     saveConnectorManifest(name, parsed.manifest);
 
-    const secrets = getSecretsStoreSingleton();
-    const missing = referencedSecrets(parsed.manifest.auth).filter(n => !secrets?.has(n));
+    const missing = referenced.filter(n => !secrets?.has(n));
     const warn = missing.length
       ? `\nReferenced vault secret(s) not stored yet: ${missing.join(", ")} — call request_secret for each before the connector will authenticate.`
       : "";

@@ -64,9 +64,9 @@ export const handleSecretsRoutes: RouteHandler = async (method, url, req, res, c
     if (value === undefined) { json(404, { error: "Not found" }); return true; }
     json(200, { name, value }); return true;
   }
-  // Approve a specific {secret, origin} pair for automated fill by
-  // browser_fill_from_secret. This is the first-use approval gate: the agent
-  // fills fine once the user clicks "Approve" in the Secrets UI for an origin.
+  // Approve a specific {secret, destination} pair: the same record every
+  // emitter's gate reads (SecretsStore.destinationDecision, ADR 0005), so a
+  // fill, an http_request or a connector at that origin no longer asks.
   // Approvals persist in the vault entry and survive restarts.
   if (method === "POST" && url.pathname.match(/^\/api\/secrets\/[^/]+\/approve-origin$/)) {
     const name = decodeURIComponent(url.pathname.split("/")[3]);
@@ -77,7 +77,7 @@ export const handleSecretsRoutes: RouteHandler = async (method, url, req, res, c
     // Normalize to canonical origin form (scheme://host[:port]); reject anything we can't parse.
     let origin: string;
     try { origin = new URL(originRaw).origin; } catch { json(400, { error: "origin must be a full URL" }); return true; }
-    const ok = ctx.secretsStore.approveFill(name, origin);
+    const ok = ctx.secretsStore.approveDestination(name, origin);
     if (!ok) { json(404, { error: "Secret not found" }); return true; }
     // From the secret card (it sends the chat): the page the agent's browser is
     // on right now is where this login is about to be filled. When it is
@@ -86,17 +86,17 @@ export const handleSecretsRoutes: RouteHandler = async (method, url, req, res, c
     // saved the login is not asked again for it. Another site never is.
     const page = typeof body.sessionId === "string" ? lastBrowserPageUrl(body.sessionId) : "";
     const pageOrigin = page && sameSite(page, origin) ? new URL(page).origin : null;
-    if (pageOrigin && pageOrigin !== origin) ctx.secretsStore.approveFill(name, pageOrigin);
+    if (pageOrigin && pageOrigin !== origin) ctx.secretsStore.approveDestination(name, pageOrigin);
     ctx.broadcastAll({ type: "settings_changed", settings: { secrets: true } });
     json(200, { ok: true, name, origin, ...(pageOrigin && pageOrigin !== origin ? { alsoApproved: pageOrigin } : {}) }); return true;
   }
-  // Revoke a previously-granted fill approval for a specific origin.
+  // Revoke a previously-granted destination approval.
   if (method === "DELETE" && url.pathname.match(/^\/api\/secrets\/[^/]+\/approvals\/.+$/)) {
     const parts = url.pathname.split("/");
     const name = decodeURIComponent(parts[3]);
     const origin = decodeURIComponent(parts.slice(5).join("/"));
     if (!/^[A-Z0-9_]{1,64}$/i.test(name)) { json(400, { error: "Invalid secret name" }); return true; }
-    const removed = ctx.secretsStore.revokeFillApproval(name, origin);
+    const removed = ctx.secretsStore.revokeDestinationApproval(name, origin);
     json(200, { ok: true, removed }); return true;
   }
   if (method === "DELETE" && url.pathname.startsWith("/api/secrets/")) {

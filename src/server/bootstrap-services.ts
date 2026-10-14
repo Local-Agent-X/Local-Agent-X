@@ -306,6 +306,12 @@ export async function bootstrapServices(config: LAXConfig): Promise<Bootstrapped
   secretsStoreRef.value = secretsStore;
   const { setSecretsStoreSingleton } = await import("../secrets.js");
   setSecretsStoreSingleton(secretsStore);
+  if (secretsStore.destinationSeedPending) {
+    const { seedConnectorDestinationApprovals } = await import("../routes/connector-destination-seed.js");
+    const seeded = seedConnectorDestinationApprovals(secretsStore);
+    secretsStore.markDestinationSeedDone();
+    logger.info(`[secrets] destination approvals: carried over ${seeded} connector binding(s) from the version-1 vault`);
+  }
   _t();
 
   // Background, NOT awaited — the Ollama tags-check + model pull here can take

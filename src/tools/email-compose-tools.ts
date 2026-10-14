@@ -1,6 +1,8 @@
 import { createTransport } from "nodemailer";
-import type { ToolDefinition, ToolResult } from "../types.js";
+import type { ServerEvent, ToolDefinition, ToolResult } from "../types.js";
 import { vault, writeEmailJson } from "./email-config.js";
+import { getSecretsStoreSingleton } from "../secrets.js";
+import { gateSecretDestination } from "../secret-destination-gate.js";
 
 export const emailDraft: ToolDefinition = {
   name: "email_draft",
@@ -33,6 +35,7 @@ export const emailSetup: ToolDefinition = {
     "Pass `smtp_secret_name` to point at any existing vault entry (e.g. user already saved 'FASTMAIL'); defaults to 'SMTP_PASS'. " +
     "Same for `imap_secret_name` (defaults to 'IMAP_PASS'). " +
     "If the chosen secret is missing, this returns an error explaining how to capture one with browser_capture_to_secret. " +
+    "A vault password is bound to the mail hosts it may reach: the first setup against a new smtp://host:port (or imap://host:port) asks the user once in the chat, before any connection, and a yes is kept; this session's own capture or an op_submit_async pre-bless skips the ask. A declined setup connects to nothing and writes nothing. " +
     "For Fastmail: host=smtp.fastmail.com, port=465 (SSL) or 587 (STARTTLS), user=your Fastmail email, from=same.",
   parameters: {
     type: "object",
@@ -73,6 +76,22 @@ export const emailSetup: ToolDefinition = {
           "4. Then call email_setup again.",
         isError: true,
       };
+    }
+
+    // The password reaches these hosts (verify now, every send and read later):
+    // each pair must be allowed by the vault's ladder first (ADR 0005).
+    const store = getSecretsStoreSingleton()!;
+    const bindings: Array<[string, string]> = [[smtpSecretName, `smtp://${smtpHost}:${smtpPort}`]];
+    if (imapHost && imapSecretName && store.has(imapSecretName)) bindings.push([imapSecretName, `imap://${imapHost}:${imapPort}`]);
+    for (const [secretName, destination] of bindings) {
+      const gate = await gateSecretDestination({
+        store, name: secretName, destination, sessionId: String(args._sessionId ?? ""),
+        purpose: `Send the ${secretName} password to ${destination} as the mail login for ${secretName === smtpSecretName ? smtpUser : imapUser}`,
+        toolName: "email_setup",
+        toolCallId: args._toolCallId ? String(args._toolCallId) : undefined,
+        onEvent: args._onEvent as ((event: ServerEvent) => void) | undefined,
+      });
+      if (!gate.allowed) return gate.result;
     }
 
     if (verify) {

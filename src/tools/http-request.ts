@@ -4,6 +4,8 @@ import type { ToolDefinition } from "../types.js";
 import { wrapExternalContent } from "../sanitize.js";
 import { findInBody } from "./paginate-body.js";
 import type { SecretsStore } from "../secrets.js";
+import type { ServerEvent } from "../types.js";
+import { gateSecretDestinations, referencedSecretNames } from "../secret-destination-gate.js";
 import { ok, err } from "./result-helpers.js";
 import { capWithSpill } from "./result-spill.js";
 import { checkOutboundRequest } from "./http-egress-guard.js";
@@ -20,10 +22,24 @@ import {
   BROWSER_USER_AGENT,
 } from "./web-egress.js";
 
-/** A request header that carries a credential. */
-function isCredentialHeader(name: string): boolean {
+const CREDENTIAL_HEADERS = new Set(["authorization", "proxy-authorization", "cookie", "api-key", "private-token"]);
+
+/** A request header that carries a credential: the named ones and anything
+ *  ending in -token or -key (x-api-key, x-auth-key, x-api-token, …). An
+ *  Idempotency-Key is a retry handle, not a credential. */
+export function isCredentialHeader(name: string): boolean {
   const n = name.toLowerCase();
-  return n === "authorization" || n === "proxy-authorization" || n === "cookie" || n === "x-api-key" || /^x-[a-z0-9-]*token$/.test(n);
+  if (CREDENTIAL_HEADERS.has(n)) return true;
+  if (n.endsWith("idempotency-key")) return false;
+  return /-(token|key)$/.test(n);
+}
+
+/** A redirect to an origin where a bound secret is not approved: the hop is
+ *  never sent, so neither the body nor a credential header reaches it. */
+class SecretRedirectStopped extends Error {
+  constructor(readonly location: string, readonly names: string[]) {
+    super(`Redirected to ${new URL(location).origin}, where ${names.map((n) => `{{${n}}}`).join(", ")} is not approved. The request was not followed there and nothing was re-sent.`);
+  }
 }
 
 export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
@@ -45,8 +61,11 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
     },
     description:
       "Make a full HTTP request to any API. Supports all methods, custom headers, authentication, and request bodies. " +
-      "Use {{SECRET_NAME}} syntax in header values to securely inject stored secrets (e.g. \"Authorization\": \"Bearer {{GITHUB_TOKEN}}\"). " +
+      "Use {{SECRET_NAME}} syntax in header values or the body to inject stored secrets server-side (e.g. \"Authorization\": \"Bearer {{GITHUB_TOKEN}}\"); you never see the value. " +
       "Use request_secret first if the needed secret isn't stored yet. " +
+      "A secret is bound to the hosts it may reach: its first use at a new origin asks the user once in the chat (a yes is kept for that secret and origin), " +
+      "unless this session captured the secret, an op_submit_async run pre-blessed it, or the origin is the secret's own recorded site. A declined request returns status declined. " +
+      "A redirect to another origin is not followed while a secret in the request is unapproved there; re-issue against that host to be asked. " +
       "Use this to integrate with external services (GitHub, Slack, Jira, Linear, Discord, REST/GraphQL APIs, etc.). " +
       "You can also replay an API endpoint that the in-app browser surfaced via read_network (the browser's 'API/data endpoints observed' list) to fetch a page's data directly — those URLs are path-only, so add back any needed query params and verify the response.",
     parameters: {
@@ -115,25 +134,39 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
       // every route the agent role is denied (rbac-agent-denials.ts).
       const ownServer = await reachesOwnServer(url);
       const dropped: string[] = [];
+      const rawHeaders: Array<[string, string]> = [];
       if (args.headers && typeof args.headers === "object") {
         for (const [key, value] of Object.entries(args.headers as Record<string, unknown>)) {
           if (ownServer && isCredentialHeader(key)) {
             dropped.push(key);
             continue;
           }
-          let resolved = String(value);
-          if (secrets) {
-            const missing = secrets.findMissing(resolved);
-            if (missing.length > 0) {
-              return err(
-                `Missing secrets: ${missing.join(", ")}. Use request_secret to ask the user for these credentials first.`
-              );
-            }
-            resolved = secrets.resolve(resolved);
-          }
-          headers[String(key)] = resolved;
+          rawHeaders.push([String(key), String(value)]);
         }
       }
+      let bodyStr = args.body ? String(args.body) : undefined;
+      // Every secret bound into this request must be allowed at its destination
+      // (ADR 0005) before a single placeholder is resolved.
+      const sessionId = String(args._sessionId ?? "");
+      const boundNames = secrets ? referencedSecretNames([...rawHeaders.map(([, v]) => v), bodyStr ?? ""].join("\n")) : [];
+      if (secrets && boundNames.length > 0) {
+        const missing = boundNames.filter((name) => !secrets.has(name));
+        if (missing.length > 0) {
+          return err(`Missing secrets: ${missing.join(", ")}. Use request_secret to ask the user for these credentials first.`);
+        }
+        const gate = await gateSecretDestinations(boundNames, {
+          store: secrets, destination: url, sessionId, toolName: "http_request",
+          toolCallId: args._toolCallId ? String(args._toolCallId) : undefined,
+          onEvent: args._onEvent as ((event: ServerEvent) => void) | undefined,
+          purpose: (name) => `Send ${name} to ${new URL(url).host} (${method} ${url})`,
+        });
+        if (!gate.allowed) return gate.result;
+      }
+      /** The bound secrets the ladder does not allow at a redirect target. */
+      const unapprovedAt = (location: string): string[] =>
+        boundNames.filter((name) => secrets!.destinationDecision(name, location, { sessionId }) === "ask");
+      for (const [key, value] of rawHeaders) headers[key] = secrets ? secrets.resolve(value) : value;
+      if (bodyStr && secrets) bodyStr = secrets.resolve(bodyStr);
       const droppedNote = dropped.length === 0 ? "" :
         `\n\n[Dropped the ${dropped.join(", ")} header${dropped.length === 1 ? "" : "s"} you supplied: a request to ` +
         `Local Agent X's own server always runs as the agent, with the agent's own credential. If the server ` +
@@ -143,17 +176,6 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
         ["idempotency-key", "x-idempotency-key"].includes(key.toLowerCase()),
       )) {
         headers["Idempotency-Key"] = String(args.idempotency_key);
-      }
-
-      let bodyStr = args.body ? String(args.body) : undefined;
-      if (bodyStr && secrets) {
-        const missing = secrets.findMissing(bodyStr);
-        if (missing.length > 0) {
-          return err(
-            `Missing secrets in body: ${missing.join(", ")}. Use request_secret to ask the user for these credentials first.`
-          );
-        }
-        bodyStr = secrets.resolve(bodyStr);
       }
 
       // Combine the turn's cancellation signal (from tool-runner, so a user
@@ -203,6 +225,11 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
 
             const redirectHeaders = { ...headers };
             if (origOrigin !== newOrigin) {
+              // A bound secret follows a redirect only where the ladder allows
+              // it; otherwise the hop is not sent (the model can re-issue the
+              // request against the new host, which then asks).
+              const unapproved = unapprovedAt(location);
+              if (unapproved.length > 0) throw new SecretRedirectStopped(location, unapproved);
               for (const key of Object.keys(redirectHeaders)) {
                 if (isCredentialHeader(key)) delete redirectHeaders[key];
               }
@@ -324,6 +351,16 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
         };
         return res.ok ? ok(output, meta) : err(output, meta);
       } catch (e) {
+        if (e instanceof SecretRedirectStopped) {
+          return err(`${e.message}${droppedNote}`, {
+            url,
+            method,
+            blocked_url: e.location,
+            duration_ms: Date.now() - startMs,
+            recovery: `Re-issue the request against ${e.location} if that host should have ${e.names.map((n) => `{{${n}}}`).join(", ")}; the user is asked once and a yes is kept.`,
+            ...droppedMeta,
+          });
+        }
         if (e instanceof EgressRedirectBlocked) {
           return err(`${e.message}${droppedNote}`, {
             url,

@@ -32,8 +32,8 @@ export const TOOL_POLICIES_NETWORK: Record<string, ToolPolicyEntry> = {
   // tool result carries only {name, service, length}. That is a local write, not a
   // credential-exposure risk, so it is "workspace-write" (auto-allowed like any
   // local write) rather than "secrets" (which gates the exfiltration-capable
-  // fill_from_secret / request_secret). Overwrite integrity is guarded inside the
-  // tool (confirm only when the name already exists), not by a blanket prompt.
+  // fill_from_secret / request_secret). A name that already exists is refused
+  // inside the tool (the model never overwrites a record), not by a prompt.
   browser_capture_to_secret: { kernel: "secret-vault", risk: "workspace-write", rules: [{ id: "allow-browser-capture-to-secret", decision: "allow", reason: "Capture page value into encrypted vault (value never enters model context)", priority: 50 }] },
   browser_fill_from_secret:  { kernel: "secret-vault", risk: "secrets", rules: [{ id: "allow-browser-fill-from-secret", decision: "allow", reason: "Fill vault value into page input (origin-bound, selector-whitelisted, approval-gated)", priority: 50 }] },
   http_request: {

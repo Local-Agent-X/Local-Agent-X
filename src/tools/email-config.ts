@@ -237,5 +237,14 @@ export function getImapConfig(): { host: string; port: number; user: string; pas
     const missing = [!host && "IMAP_HOST", !user && "IMAP_USER", !pass && "IMAP_PASS"].filter(Boolean);
     return `Email reading not configured. Go to Settings → Connected APIs → Email (SMTP/IMAP) to set up, or set env vars: ${missing.join(", ")}`;
   }
-  return { host, port: Number(env("IMAP_PORT")) || 993, user, pass };
+  const port = Number(env("IMAP_PORT")) || 993;
+  // The password leaves the machine on every session open, so the vault's
+  // destination ladder (ADR 0005) runs here too. A read tool has no approval
+  // card to raise; email_setup is where the user approves the host.
+  const secretName = resolvePasswordSecretName("IMAP");
+  const store = getSecretsStoreSingleton();
+  if (store?.has(secretName) && store.destinationDecision(secretName, `imap://${host}:${port}`) === "ask") {
+    return `The vault secret "${secretName}" is not approved for imap://${host}:${port}. Run email_setup with that host (the user approves it once); reading is refused until then.`;
+  }
+  return { host, port, user, pass };
 }

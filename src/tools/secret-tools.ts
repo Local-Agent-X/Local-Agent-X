@@ -23,7 +23,9 @@ export function createSecretTools(
     compactDescription:
       "Ask the user for an API key, token or website password through a secure prompt; stored encrypted, never in the chat. Use it instead of asking them to type a credential to you.",
     description:
-      "Request an API key, token or website password from the user via a secure input prompt. The secret is stored encrypted and never appears in chat. If the secret already exists, it will confirm availability without re-prompting.",
+      "Request an API key, token or website password from the user via a secure input prompt. The secret is stored encrypted and never appears in chat. " +
+      "A name that already exists is not re-prompted or replaced: the reply names that record's service and account so you can use it, or request a distinct name (e.g. GITHUB_TOKEN_<ACCOUNT>) for another account on the same platform. " +
+      "A stored secret is bound to the destinations it may reach: its first use at a new host (http_request, connector_create, email_setup) or page (browser_fill_from_secret) asks the user once, and a yes is kept.",
     parameters: {
       type: "object",
       properties: {
@@ -60,10 +62,14 @@ export function createSecretTools(
         return err("Secret name is required.");
       }
 
-      // If secret already exists, just confirm
-      if (secrets.has(name)) {
+      // A stored name is never re-prompted or replaced from here (ADR 0005):
+      // say what it is, so the model can use it or pick a distinct name.
+      const existing = secrets.getMeta(name);
+      if (existing) {
+        const what = [existing.service && `service: ${existing.service}`, existing.account && `account: ${existing.account}`].filter(Boolean).join(", ");
         return ok(
-          `Secret "${name}" is already stored and available. You can use it in http_request headers as {{${name}}}.`
+          `Secret "${name}" is already stored${what ? ` (${what})` : ""} and is not replaced from here. ` +
+          `Use it as {{${name}}} in http_request headers; if you need a credential for a different account on the same platform, request it under a distinct name such as ${name}_<ACCOUNT>.`
         );
       }
 
@@ -103,7 +109,8 @@ export function createSecretTools(
       "SoundCloud (SOUNDCLOUD_CLIENT_ID + SOUNDCLOUD_CLIENT_SECRET). " +
       "You can also batch credentials for DIFFERENT services in one call when the user says they want to provide several at once " +
       "(e.g. 'here's my Google API and SoundCloud API') — the modal groups fields by service automatically. " +
-      "Already-stored secrets are skipped automatically. If everything is already stored, no prompt is shown.",
+      "Already-stored secrets are skipped automatically, never replaced; if everything is already stored, no prompt is shown. " +
+      "A stored secret is bound to the destinations it may reach: its first use at a new host or page asks the user once, and a yes is kept.",
     parameters: {
       type: "object",
       properties: {
@@ -173,9 +180,10 @@ export function createSecretTools(
     compactDescription:
       "List the NAMES of stored secrets (never the values), so you can tell whether a credential already exists before requesting one. Use it before assuming you need to ask.",
     description:
-      "List the names and services of all stored secrets (API keys, tokens). " +
+      "List the names, services and accounts of all stored secrets (API keys, tokens, website logins). " +
       "Does NOT reveal secret values — only names so you know what's available. " +
-      "Use this to check if a secret exists before requesting it or using {{SECRET_NAME}} in http_request.",
+      "Use this to check if a secret exists before requesting it or using {{SECRET_NAME}} in http_request. " +
+      "Each secret is bound to the destinations it may reach: the first use at a new host or page asks the user once (a yes is kept); a secret captured in this session is not asked about.",
     parameters: {
       type: "object",
       properties: {},

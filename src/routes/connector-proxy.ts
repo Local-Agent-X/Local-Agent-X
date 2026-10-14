@@ -144,6 +144,19 @@ export function parseManifest(raw: string): { ok: true; manifest: ConnectorManif
   };
 }
 
+/** The vault secret names a manifest's auth sends upstream. */
+export function referencedSecrets(auth: ConnectorManifest["auth"]): string[] {
+  const names = new Set<string>();
+  if (auth.type === "bearer" || auth.type === "header") names.add(auth.secret);
+  else if (auth.type === "signed") {
+    names.add(auth.secret);
+    for (const tmpl of Object.values(auth.headers ?? {})) {
+      for (const m of tmpl.matchAll(/\{vault:([^}]+)\}/g)) names.add(m[1]);
+    }
+  }
+  return [...names];
+}
+
 /** True when `method` + `path` matches an allow entry ("METHOD /p" exact, "METHOD /p/*" subtree). */
 export function matchAllow(allow: string[], method: string, path: string): boolean {
   for (const entry of allow) {
@@ -277,6 +290,20 @@ export const handleConnectorProxyRoutes: RouteHandler = async (method, url, req,
 
   if (!matchAllow(manifest.allow, method, upstreamPath)) {
     json(403, { error: `${method} ${upstreamPath} is not in connector "${name}"'s allow list.`, allow: manifest.allow });
+    return true;
+  }
+
+  // The same ladder connector_create ran, re-run against the manifest on disk
+  // (ADR 0005): an edited upstream cannot widen where a secret may go.
+  const store = getSecretsStoreSingleton();
+  const unapproved = referencedSecrets(manifest.auth)
+    .filter((n) => store?.has(n) && store.destinationDecision(n, manifest.upstream) === "ask");
+  if (unapproved.length > 0) {
+    json(403, {
+      error: `Vault secret ${unapproved.map((n) => `"${n}"`).join(", ")} is not approved for ${manifest.upstream} (connector "${name}"). ` +
+        `Re-create the connector with connector_create, which asks the user, or approve that origin for the secret in Settings → Secrets.`,
+      code: "SECRET_DESTINATION",
+    });
     return true;
   }
 

@@ -4,6 +4,8 @@ import { getOrCreateMasterKey, type KeychainProvider } from "./keychain.js";
 import { isEmailAddress, registerRedactedSecretValue } from "./security/secrets/index.js";
 import { deriveOrigin, decrypt, encryptSecretsFile } from "./secrets-crypto.js";
 import { atomicWriteFileSync } from "./util/json-store.js";
+import { getActivePreBlessedSecrets } from "./ops/pre-bless.js";
+import { decideDestination, normalizeDestination, type DestinationDecision } from "./secret-destinations.js";
 import type {
   SecretEntry,
   SecretMetadata,
@@ -19,6 +21,9 @@ const logger = createLogger("secrets");
 // identical after the crypto/type split.
 export { deriveOrigin } from "./secrets-crypto.js";
 export type { SecretMetadata, SecretMetaView } from "./secrets-types.js";
+
+export { normalizeDestination } from "./secret-destinations.js";
+export type { DestinationDecision } from "./secret-destinations.js";
 
 /**
  * Canonical secret-name normalization: SCREAMING_SNAKE_CASE, non-alphanumerics
@@ -64,8 +69,8 @@ export class SecretsStore {
    * case the user later restores the right master key (e.g. recovers
    * master.dpapi from backup) and reboots the server.
    *
-   * Without this, any save() (triggered by `set` / `delete` / `approveFill`
-   * / `revokeFillApproval`) would silently overwrite undecryptable
+   * Without this, any save() (triggered by `set` / `delete` / `approveDestination`
+   * / `revokeDestinationApproval`) would silently overwrite undecryptable
    * entries with only the survivors — which is exactly the wipe pattern
    * that lost a user's API keys after the 2026-05-09 master-key rotation
    * incident documented in keychain.ts:217-228.
@@ -100,6 +105,7 @@ export class SecretsStore {
       logger.error(`[secrets] CRITICAL: Failed to parse ${this.filePath}: ${(e as Error).message}. Existing secrets are unreadable. Restore from backup before adding new secrets or they will overwrite the file.`);
       return;
     }
+    this.destinationSeedPending = raw.version === 1;
 
     let okCount = 0;
     let failCount = 0;
@@ -122,7 +128,7 @@ export class SecretsStore {
           notes: entry.notes,
           origin: entry.origin ?? deriveOrigin(entry.url),
           createdBySession: entry.createdBySession,
-          approvedFills: entry.approvedFills,
+          approvedDestinations: entry.approvedDestinations ?? entry.approvedFills,
           addedAt: entry.addedAt,
           updatedAt: entry.updatedAt,
         });
@@ -187,6 +193,9 @@ export class SecretsStore {
     const existing = this.secrets.get(name);
     const metaObj: SecretMetadata = typeof meta === "string" ? { service: meta } : (meta || {});
     const url = metaObj.url ?? existing?.url;
+    // A new login URL moves the secret to that site; the same URL keeps a capture's origin.
+    const movedTo = metaObj.url !== undefined && metaObj.url !== existing?.url ? deriveOrigin(metaObj.url) : undefined;
+    const origin = metaObj.origin ?? movedTo ?? existing?.origin ?? deriveOrigin(url);
     const nextSecrets = new Map(this.secrets);
     nextSecrets.set(name, {
       name,
@@ -195,9 +204,10 @@ export class SecretsStore {
       account: metaObj.account ?? existing?.account,
       url,
       notes: metaObj.notes ?? existing?.notes,
-      origin: metaObj.origin ?? existing?.origin ?? deriveOrigin(url),
+      origin,
       createdBySession: metaObj.createdBySession ?? existing?.createdBySession,
-      approvedFills: existing?.approvedFills,
+      // A replaced secret keeps its destinations only on its own origin (ADR 0005).
+      approvedDestinations: existing && existing.origin === origin ? existing.approvedDestinations : undefined,
       addedAt: existing?.addedAt || Date.now(),
       updatedAt: Date.now(),
     });
@@ -253,18 +263,7 @@ export class SecretsStore {
    *  surfaces. UIs that want to surface "you have dead entries to clean
    *  up" should call `listQuarantined()` separately. */
   list(): SecretMetaView[] {
-    return Array.from(this.secrets.values()).map(({ name, service, account, url, notes, origin, createdBySession, approvedFills, addedAt, updatedAt }) => ({
-      name,
-      service,
-      account,
-      url,
-      notes,
-      origin,
-      createdBySession,
-      approvedFills,
-      addedAt,
-      updatedAt,
-    }));
+    return Array.from(this.secrets.values()).map(metaView);
   }
 
   /** List metadata for entries that failed to decrypt at load. The
@@ -273,10 +272,7 @@ export class SecretsStore {
    *  show these in a distinct "needs attention" section so the user
    *  knows which secrets to re-add or recover. */
   listQuarantined(): SecretMetaView[] {
-    return this.quarantined.map(({ name, service, account, url, notes, origin, createdBySession, approvedFills, addedAt, updatedAt }) => ({
-      name, service, account, url, notes, origin,
-      createdBySession, approvedFills, addedAt, updatedAt,
-    }));
+    return this.quarantined.map((entry) => metaView({ ...entry, approvedDestinations: entry.approvedDestinations ?? entry.approvedFills }));
   }
 
   /** Whether the stored value is an email address (a login name, not a
@@ -289,54 +285,56 @@ export class SecretsStore {
   /** Read metadata for a single secret (never exposes the value). */
   getMeta(name: string): SecretMetaView | undefined {
     const e = this.secrets.get(name);
-    if (!e) return undefined;
-    return {
-      name: e.name,
-      service: e.service,
-      account: e.account,
-      url: e.url,
-      notes: e.notes,
-      origin: e.origin,
-      createdBySession: e.createdBySession,
-      approvedFills: e.approvedFills,
-      addedAt: e.addedAt,
-      updatedAt: e.updatedAt,
-    };
+    return e && metaView(e);
   }
 
-  /** Record that the user has approved filling a given secret on a given origin.
+  /** Record that the user approved sending a secret to a destination.
    *  No-op if already approved; persists on first approval. */
-  approveFill(name: string, origin: string): boolean {
+  approveDestination(name: string, destination: string): boolean {
     const entry = this.secrets.get(name);
-    if (!entry) return false;
-    const normalized = deriveOrigin(origin) ?? origin;
-    if (!entry.approvedFills) entry.approvedFills = [];
-    if (entry.approvedFills.some((a) => a.origin === normalized)) return true;
-    entry.approvedFills.push({ origin: normalized, approvedAt: Date.now() });
+    const key = normalizeDestination(destination);
+    if (!entry || !key) return false;
+    if (!entry.approvedDestinations) entry.approvedDestinations = [];
+    if (entry.approvedDestinations.some((a) => a.origin === key)) return true;
+    entry.approvedDestinations.push({ origin: key, approvedAt: Date.now() });
     entry.updatedAt = Date.now();
     this.save();
     return true;
   }
 
-  /** Remove an origin from a secret's approved-fills list. */
-  revokeFillApproval(name: string, origin: string): boolean {
+  /** Remove a destination from a secret's approved list. */
+  revokeDestinationApproval(name: string, destination: string): boolean {
     const entry = this.secrets.get(name);
-    if (!entry || !entry.approvedFills) return false;
-    const normalized = deriveOrigin(origin) ?? origin;
-    const before = entry.approvedFills.length;
-    entry.approvedFills = entry.approvedFills.filter((a) => a.origin !== normalized);
-    if (entry.approvedFills.length === before) return false;
+    const kept = entry?.approvedDestinations?.filter((a) => a.origin !== normalizeDestination(destination)) ?? [];
+    if (!entry?.approvedDestinations || kept.length === entry.approvedDestinations.length) return false;
+    entry.approvedDestinations = kept;
     entry.updatedAt = Date.now();
     this.save();
     return true;
   }
 
-  /** Check whether a secret has been user-approved for fill at a given origin. */
-  isFillApproved(name: string, origin: string): boolean {
+  /** Whether the user approved sending a secret to a destination. */
+  isDestinationApproved(name: string, destination: string): boolean {
+    const key = normalizeDestination(destination);
+    return !!key && !!this.secrets.get(name)?.approvedDestinations?.some((a) => a.origin === key);
+  }
+
+  /** The ladder every emitter runs before a secret leaves the machine (ADR 0005); "ask" means the user decides. */
+  destinationDecision(name: string, destination: string, ctx: { sessionId?: string } = {}): DestinationDecision {
     const entry = this.secrets.get(name);
-    if (!entry || !entry.approvedFills) return false;
-    const normalized = deriveOrigin(origin) ?? origin;
-    return entry.approvedFills.some((a) => a.origin === normalized);
+    const key = normalizeDestination(destination);
+    if (!entry || !key) return "ask";
+    return decideDestination(entry, key, { sessionId: ctx.sessionId, preBlessed: getActivePreBlessedSecrets().has(name) });
+  }
+
+  /** True once per install: the secrets file predates destination approvals
+   *  (version 1), so bindings the user already set up (connector manifests)
+   *  must be seeded as approved before the gate starts refusing them. */
+  destinationSeedPending = false;
+
+  markDestinationSeedDone(): void {
+    this.destinationSeedPending = false;
+    this.save();
   }
 
   /** Resolve {{SECRET_NAME}} placeholders in a string. Returns the resolved string. */
@@ -365,6 +363,11 @@ export class SecretsStore {
     this.secrets.clear();
     this.availabilityListeners.clear();
   }
+}
+
+function metaView(e: Omit<SecretEntry, "value">): SecretMetaView {
+  const { name, service, account, url, notes, origin, createdBySession, approvedDestinations, addedAt, updatedAt } = e;
+  return { name, service, account, url, notes, origin, createdBySession, approvedDestinations, addedAt, updatedAt };
 }
 
 // Module-level singleton so modules that aren't built as factories (e.g.

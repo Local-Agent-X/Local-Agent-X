@@ -87,3 +87,40 @@ describe("email-config vault() reads the singleton bootstrap actually sets", () 
     }
   });
 });
+
+describe("getImapConfig runs the vault's destination ladder for the IMAP host", () => {
+  let dir: string;
+  let prevDataDir: string | undefined;
+  beforeEach(() => {
+    prevDataDir = process.env.LAX_DATA_DIR;
+    dir = mkdtempSync(join(tmpdir(), "lax-imap-gate-"));
+    process.env.LAX_DATA_DIR = dir;
+    process.env.IMAP_HOST = "imap.fastmail.com";
+    process.env.IMAP_USER = "me@fastmail.com";
+    process.env.IMAP_PORT = "993";
+  });
+  afterEach(() => {
+    if (prevDataDir === undefined) delete process.env.LAX_DATA_DIR;
+    else process.env.LAX_DATA_DIR = prevDataDir;
+    delete process.env.IMAP_HOST; delete process.env.IMAP_USER; delete process.env.IMAP_PORT;
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("refuses a read until the IMAP host is approved for the password secret, then returns the config", async () => {
+    const secrets = await import("../secrets.js");
+    const { getImapConfig } = await import("./email-config.js");
+    const store = new secrets.SecretsStore(dir);
+    secrets.setSecretsStoreSingleton(store);
+    store.set("IMAP_PASS", "imap-password-value-0123456789", { origin: "https://app.fastmail.com" });
+
+    const refused = getImapConfig();
+    expect(typeof refused).toBe("string");
+    expect(String(refused)).toContain("imap://imap.fastmail.com:993");
+    expect(String(refused)).toContain("email_setup");
+
+    store.approveDestination("IMAP_PASS", "imap://imap.fastmail.com:993");
+    const cfg = getImapConfig();
+    expect(typeof cfg).toBe("object");
+    expect((cfg as { host: string }).host).toBe("imap.fastmail.com");
+  });
+});

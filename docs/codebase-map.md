@@ -12,7 +12,7 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 67 top-level dirs · 67 live · 0 with no live importer · 1736 non-test source files · 0 god files (>400 LOC).
+**Totals:** 67 top-level dirs · 67 live · 0 with no live importer · 1737 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -20,12 +20,12 @@ over 400 LOC (the source-hygiene ceiling).
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 141 | 27 | XL |  |
 | `src/security/` | 113 | 45 | XL |  |
-| `src/tools/` | 97 | 207 | XL |  |
+| `src/tools/` | 98 | 207 | XL |  |
 | `src/canonical-loop/` | 75 | 256 | XL |  |
 | `src/providers/` | 67 | 26 | XL |  |
 | `src/workspace/` | 60 | 3 | M |  |
 | `src/memory/` | 51 | 137 | XL |  |
-| `src/browser/` | 44 | 86 | XL |  |
+| `src/browser/` | 45 | 86 | XL |  |
 | `src/data-lineage/` | 41 | 11 | L |  |
 | `src/local-runtimes/` | 38 | 25 | XL |  |
 | `src/util/` | 38 | 3 | S |  |
@@ -59,8 +59,8 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/ari-kernel/` | 10 | 12 | L |  |
 | `src/integrations/` | 10 | 15 | M |  |
 | `src/persistence/` | 10 | 2 | S |  |
+| `src/routes/` | 10 | 91 | XL |  |
 | `src/autopilot/` | 9 | 14 | L |  |
-| `src/routes/` | 9 | 90 | XL |  |
 | `src/screen-stream/` | 9 | 8 | L |  |
 | `src/sync/` | 9 | 21 | L |  |
 | `src/bridge-voice/` | 8 | 5 | M |  |
@@ -183,6 +183,8 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/sanitize.ts` | M |
 | `src/screen-capture-mac.ts` | S |
 | `src/screen-capture.ts` | M |
+| `src/secret-destination-gate.ts` | S |
+| `src/secret-destinations.ts` | S |
 | `src/secrets-crypto.ts` | S |
 | `src/secrets-types.ts` | S |
 | `src/secrets.ts` | M |

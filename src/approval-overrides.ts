@@ -32,9 +32,9 @@ export interface AlwaysAskSite {
 
 export const ALWAYS_ASK_SITES: readonly AlwaysAskSite[] = [
   {
-    file: "browser/secret-fill.ts",
-    what: "the first vault fill of a stored login on an origin it is not yet approved for (including another page of the site it was saved for)",
-    why: "Which pages a stored password may be typed into is the user's own rule, kept per secret in the vault (approvedFills). It was a hard Settings approval before the in-chat card existed; a permissive profile auto-approving it would let a login be filled on any page of a big shared site (sites.google.com under google.com) with no one asked.",
+    file: "secret-destination-gate.ts",
+    what: "the first use of a vault secret at a destination it is not yet approved for — a browser fill on another page of its site, an http_request or connector to a new host, an SMTP/IMAP host at email setup",
+    why: "Where a stored secret may be sent is the user's own rule, kept per secret in the vault (approvedDestinations, ADR 0005). It was a hard Settings approval before the in-chat card existed; a permissive profile auto-approving it would let a key be posted to any host a page or an email named, or a login filled on any page of a big shared site (sites.google.com under google.com), with no one asked.",
   },
   {
     file: "tool-execution/protected-setting-gate.ts",

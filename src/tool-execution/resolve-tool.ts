@@ -34,6 +34,9 @@ export const SESSION_SCOPED_TOOLS = new Set([
   // http_request's own outbound check vouches for IDs the destination's site
   // showed this session (site-provenance.ts vouchedFor), as the egress gate does.
   "http_request",
+  // connector_create and email_setup run the secret destination ladder, whose
+  // same-session rung is keyed on the trusted session.
+  "connector_create", "email_setup",
   "agent_spawn", "browser_capture_to_secret", "browser_fill_from_secret",
   "session_status", "request_secret", "request_secrets",
   // show_unblock_control reads THIS session's taint registry; the trusted
@@ -280,12 +283,17 @@ async function injectSessionState(ctx: ToolCallContext): Promise<PhaseOutcome> {
 
   // Inject onEvent for tools that need to stream events. exit_plan_mode
   // needs it to raise the plan-approval card under enforced plan mode (plus
-  // the tool-call id so the card resolves against the right call).
+  // the tool-call id so the card resolves against the right call);
+  // http_request, connector_create and email_setup raise the secret
+  // destination card (secret-destination-gate.ts) the same way.
   if (
     tc.name === "request_secret" ||
     tc.name === "request_secrets" ||
     tc.name === "browser" ||
     tc.name === "browser_fill_from_secret" ||
+    tc.name === "http_request" ||
+    tc.name === "connector_create" ||
+    tc.name === "email_setup" ||
     tc.name === "voice_visual" ||
     tc.name === "build_app" ||
     tc.name === "exit_plan_mode"

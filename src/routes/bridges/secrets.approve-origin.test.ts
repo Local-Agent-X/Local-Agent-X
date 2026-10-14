@@ -12,11 +12,11 @@ async function approve(body: unknown) {
   const req = Readable.from([Buffer.from(JSON.stringify(body))]) as Readable & { headers: Record<string, string> };
   req.headers = {};
   const res = { statusCode: 0, body: "", setHeader() {}, writeHead(s: number) { res.statusCode = s; return res; }, end(c?: string) { if (c) res.body = c; return res; } };
-  const secretsStore = { approveFill: vi.fn(() => true) };
+  const secretsStore = { approveDestination: vi.fn(() => true) };
   const broadcastAll = vi.fn();
   await handleSecretsRoutes("POST", new URL("http://127.0.0.1/api/secrets/TWILIO_PASSWORD/approve-origin"),
     req as never, res as never, { secretsStore, broadcastAll } as never, "operator");
-  return { res, approved: secretsStore.approveFill.mock.calls.map((c: unknown[]) => c[1]), broadcastAll };
+  return { res, approved: secretsStore.approveDestination.mock.calls.map((c: unknown[]) => c[1]), broadcastAll };
 }
 
 afterEach(() => _clearSiteProvenance());

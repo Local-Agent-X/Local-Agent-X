@@ -10,12 +10,11 @@
 //      username/current-password/new-password. Refuses arbitrary elements.
 //   2. Origin binding — the current page's origin must match the secret's
 //      recorded origin (from capture or user-entered login URL). No override.
-//   3. Approval ladder — the call must satisfy AT LEAST one of:
-//      (a) Same-session provenance: this session captured the secret.
-//      (b) User-saved approval for {secret, origin} in the vault.
-//      (c) Operation pre-bless: user passed pre_blessed_secrets to
-//          op_submit_async this run.
-//      Otherwise returns an error asking for approval. Never silently proceeds.
+//   3. Approval ladder — SecretsStore.destinationDecision, the one every
+//      emitter runs (ADR 0005): the secret's own recorded origin; the session
+//      that captured it; an operation the user pre-blessed it for; a pair the
+//      user approved. Otherwise the user is asked in the chat, once per origin,
+//      and a yes is kept. Never silently proceeds on a sibling origin.
 //   4. Post-fill redaction — the plaintext value is registered with
 //      registerRedactedSecretValue so subsequent snapshots / extracts /
 //      evaluate outputs scrub it before reaching the LLM.
@@ -26,16 +25,14 @@
 // and length only; no value, no echo, no truncated prefix.
 
 import type { ToolDefinition, ToolResult } from "../types.js";
-import type { SecretsStore } from "../secrets.js";
+import type { DestinationDecision, SecretsStore } from "../secrets.js";
 import { deriveOrigin, normalizeSecretName } from "../secrets.js";
 import { getSecretBrowserOps } from "./index.js";
 import { withEmulationNotice } from "../tools/browser-tools/emulation-banner.js";
 import { registerRedactedSecretValue } from "../sanitize.js";
-import { getActivePreBlessedSecrets } from "../ops/pre-bless.js";
 import type { SecretElementDescriptor, SecretFillOutcome } from "./secret-ops.js";
 import { sameSite } from "./registrable-domain.js";
-import { getApprovalManager } from "../approval-manager.js";
-import { declined } from "../tools/result-helpers.js";
+import { requestSecretDestinationApproval } from "../secret-destination-gate.js";
 import type { ServerEvent } from "../types.js";
 
 import { createLogger } from "../logger.js";
@@ -80,8 +77,8 @@ export function createBrowserSecretFillTool(
       "(CDP-driven pages don't count as user gestures, so Chrome's password manager often won't fire).\n\n" +
       "GUARDRAILS (all enforced server-side):\n" +
       " • Field must be <input type=\"password\"> or have autocomplete=username|email|current-password|new-password; a stored email address may also fill a plain text/email box.\n" +
-      " • Current page origin MUST match the secret's recorded origin — no cross-origin fill, ever.\n" +
-      " • First use of a given {secret, origin} pair requires user approval UNLESS this session captured the secret itself OR the user pre-blessed it via op_submit_async(pre_blessed_secrets). If denied, the error tells you exactly how to get approval.\n\n" +
+      " • The page must be the secret's recorded origin or another page of that same site — never another site.\n" +
+      " • The first fill on a page that is not the secret's recorded origin asks the user once in the chat (a yes is kept for that origin), unless this session captured the secret or an op_submit_async run pre-blessed it; on a sibling page of the site, only the user's own yes counts. A declined fill returns status declined.\n\n" +
       "After a successful fill the plaintext value is added to the snapshot/extract redaction list — it can't leak back to you via subsequent tool output.\n\n" +
       "Pass `ref` (from a browser.snapshot) OR `selector` (CSS). Prefer ref.",
     parameters: {
@@ -216,59 +213,33 @@ export function createBrowserSecretFillTool(
         );
       }
 
-      // --- Guardrail 3: approval ladder ---
-      const sameSession = sameOrigin && !!(meta.createdBySession && sessionId && meta.createdBySession === sessionId);
-      const userApproved = secretsStore.isFillApproved(name, currentOrigin);
-      const preBlessed = sameOrigin && getActivePreBlessedSecrets().has(name);
-
+      // --- Guardrail 3: approval ladder (the shared one, ADR 0005) ---
       // An email address is an account name, not a credential (known-secrets.ts):
       // where it may be typed is not a decision to ask the user about. It still
       // goes only to its own site (above).
       const accountName = secretsStore.holdsEmailAddress(name);
-      let gateOutcome: "account-name" | "session" | "approved" | "pre_bless" | "asked" | "denied" =
-        accountName ? "account-name" :
-        sameSession ? "session" :
-        userApproved ? "approved" :
-        preBlessed ? "pre_bless" :
-        "denied";
+      const ladder = secretsStore.destinationDecision(name, currentOrigin, { sessionId });
+      // A sibling origin is never filled silently: only the user's own yes for
+      // that pair skips the ask there.
+      const decision = !sameOrigin && (ladder === "session" || ladder === "pre_bless") ? "ask" : ladder;
+      let gateOutcome: "account-name" | "asked" | DestinationDecision = accountName ? "account-name" : decision;
 
       // Not yet approved here: ask the user in the chat, once per origin,
       // instead of sending them to Settings mid-login.
-      const onEvent = args._onEvent as ((event: ServerEvent) => void) | undefined;
-      if (gateOutcome === "denied" && onEvent) {
-        const asked = await getApprovalManager().requestApprovalDetailed({
+      if (gateOutcome === "ask") {
+        const asked = await requestSecretDestinationApproval({
+          store: secretsStore, name, destination: currentOrigin, sessionId,
+          purpose: `Fill ${name} into the form on ${currentOrigin}${sameOrigin ? "" : ` (it was saved for ${secretOrigin})`}`,
           toolName: "browser_fill_from_secret",
-          toolCallId: String(args._toolCallId || `secret-fill-${name}`),
-          sessionId,
-          context: `Fill ${name} into the form on ${currentOrigin}${sameOrigin ? "" : ` (it was saved for ${secretOrigin})`}. ` +
-            `The value goes from the vault straight to the page; the agent never sees it.`,
-          args: { name, origin: currentOrigin },
-          alwaysAsk: true,
-          emit: onEvent,
+          toolCallId: args._toolCallId ? String(args._toolCallId) : undefined,
+          onEvent: args._onEvent as ((event: ServerEvent) => void) | undefined,
         });
-        if (!asked.approved) {
-          auditLog({ event: "fill_denied", secret: name, reason: "user_declined", origin: currentOrigin, session: sessionId });
-          return declined(
-            `The user did not approve filling "${name}" on ${currentOrigin}.`,
-            { recovery: "Ask the user to sign in themselves, and continue with the rest of the request." },
-          );
+        if (!asked.allowed) {
+          if (asked.result.status === "declined") auditLog({ event: "fill_denied", secret: name, reason: "user_declined", origin: currentOrigin, session: sessionId });
+          else auditLog({ event: "fill_denied", secret: name, reason: "first_use_approval_required", origin: currentOrigin, session: sessionId });
+          return asked.result;
         }
-        secretsStore.approveFill(name, currentOrigin);
         gateOutcome = "asked";
-      }
-
-      if (gateOutcome === "denied") {
-        auditLog({
-          event: "fill_denied", secret: name, reason: "first_use_approval_required",
-          origin: currentOrigin, session: sessionId,
-        });
-        return err(
-          `First-use approval required for secret "${name}" on ${currentOrigin}. ` +
-          `This secret was not captured by the current session and has not been pre-approved. ` +
-          `How to proceed: (a) Ask the user to open Settings → Secrets → "${name}" and approve "${currentOrigin}" (one-click, persists). ` +
-          `Or (b) if this is part of a delegated op, re-submit it with op_submit_async(..., pre_blessed_secrets: ["${name}"]) — the user must authorize that list explicitly. ` +
-          `Do NOT re-try this call until one of those is done; you will just hit the same error.`
-        );
       }
 
       // --- Fetch value + perform the fill ---
@@ -335,6 +306,7 @@ export function createBrowserSecretFillTool(
 
       const gateExplain =
         gateOutcome === "account-name" ? "an email address: an account name, not a credential" :
+        gateOutcome === "origin" ? "approved (the site this secret was saved for)" :
         gateOutcome === "session" ? "approved (same session captured this secret)" :
         gateOutcome === "approved" ? "approved (user-saved approval for this origin)" :
         gateOutcome === "asked" ? "approved by the user just now for this origin" :

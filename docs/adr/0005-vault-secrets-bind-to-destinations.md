@@ -45,6 +45,20 @@ that emits a secret consults that set through one gate.
   operation pre-blessed it → allowed; user approved this pair → allowed;
   otherwise → ask. "Ask" raises the existing approval card (the one the fill
   gate raises), and a yes persists the pair.
+  The session and pre-bless rungs are **site-conditioned**, as they are in
+  the browser gate: they apply only when the secret has no recorded origin,
+  or the destination is on the same site as the recorded origin. A secret
+  captured from github.com this session may go to api.github.com without a
+  card; it may not go to a host the model chose on another site.
+- **Existing bindings carry over.** Connector manifests written before this
+  gate existed bound a secret to an upstream with the user's knowledge. On
+  the one-time migration of the secrets file to its new version, each
+  manifest's (secret, upstream) pair is recorded as an approved destination,
+  so nothing the user had already set up starts failing.
+- **Reads consult it too.** `email_read` and the other IMAP readers run the
+  gate for `imap://host:port` on every session open; a decision of "ask"
+  there is a refusal that names `email_setup` as the place to approve the
+  host, since a read tool has no approval card to raise.
 - **Every emitter calls it.** `browser_fill_from_secret` (as today, through
   the shared ladder), `http_request` (the initial URL and every redirect hop
   that changes origin, before the body is re-sent), `connector_create` (the

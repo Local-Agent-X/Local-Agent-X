@@ -39,6 +39,33 @@ describe("a website login through the vault", () => {
     expect(events[0]).toMatchObject({ type: "secrets_request", secrets: [{ url: "https://www.twilio.com/login" }, { url: "https://www.twilio.com/login" }] });
   });
 
+  // The model creates, never replaces (ADR 0005): a stored name is described,
+  // not re-prompted, and a second account on the platform is a distinct name.
+  it("request_secret does not re-prompt a stored name; it says what it is and asks for a distinct name for another account", async () => {
+    store.set("GITHUB_TOKEN", "ghp-work", { service: "GitHub", account: "work@example.com" });
+    const events: ServerEvent[] = [];
+    const res = await tool("request_secret", events).execute({ name: "GITHUB_TOKEN", service: "GitHub", reason: "Push a repo" });
+    expect(events).toEqual([]);
+    expect(res.isError).toBeFalsy();
+    expect(res.content).toContain("already stored (service: GitHub, account: work@example.com)");
+    expect(res.content).toContain("not replaced");
+    expect(res.content).toContain("GITHUB_TOKEN_<ACCOUNT>");
+    expect(res.content).not.toContain("ghp-work");
+    expect(store.get("GITHUB_TOKEN")).toBe("ghp-work");
+  });
+
+  it("two accounts on one platform coexist under distinct names", async () => {
+    store.set("GITHUB_TOKEN", "ghp-work", { service: "GitHub", account: "work@example.com" });
+    const events: ServerEvent[] = [];
+    await tool("request_secret", events).execute({ name: "GITHUB_TOKEN_PERSONAL", service: "GitHub", reason: "Push to my own repo" });
+    expect(events).toEqual([{ type: "secret_request", name: "GITHUB_TOKEN_PERSONAL", service: "GitHub", reason: "Push to my own repo" }]);
+    store.set("GITHUB_TOKEN_PERSONAL", "ghp-home", { service: "GitHub", account: "me@example.com" });
+    const list = await tool("list_secrets", []).execute({});
+    expect(list.content).toContain("GITHUB_TOKEN (GitHub) [work@example.com]");
+    expect(list.content).toContain("GITHUB_TOKEN_PERSONAL (GitHub) [me@example.com]");
+    expect(store.resolve("{{GITHUB_TOKEN}}:{{GITHUB_TOKEN_PERSONAL}}")).toBe("ghp-work:ghp-home");
+  });
+
   it("list_secrets shows a saved login's site and points to the vault fill, and an API key to a placeholder", async () => {
     store.set("TWILIO_PASSWORD", "pw-value", { url: "https://www.twilio.com/login" });
     store.set("OPENWEATHER_KEY", "key-value");

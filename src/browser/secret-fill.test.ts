@@ -40,7 +40,8 @@ let currentOps: SecretBrowserOps;
 let elementDescriptor = { found: true, tag: "input", type: "password", autocomplete: "current-password" };
 let holdsEmail = false;
 let pageOrigin = "https://example.com";
-let fillApproved = true;
+// What the vault's ladder (SecretsStore.destinationDecision) answers.
+let ladder: DestinationDecision = "approved";
 
 vi.mock("./index.js", () => ({
   getSecretBrowserOps: () => currentOps,
@@ -58,11 +59,6 @@ vi.mock("../approval-manager.js", () => ({
   }),
 }));
 
-// Pre-bless: always empty (don't take that gate).
-vi.mock("../ops/pre-bless.js", () => ({
-  getActivePreBlessedSecrets: () => new Set<string>(),
-}));
-
 // Capture redaction registrations (and assert secret IS handed to the redactor —
 // that's the GOOD path; redaction registry is internal and never leaks).
 vi.mock("../sanitize.js", () => ({
@@ -72,7 +68,7 @@ vi.mock("../sanitize.js", () => ({
 // ───────────────────────── imports after mocks ─────────────────────────
 import { createBrowserSecretFillTool } from "./secret-fill.js";
 import { EMULATION_PRESETS, setSessionEmulation, _resetSessionEmulationForTest } from "./emulation.js";
-import type { SecretsStore } from "../secrets.js";
+import type { DestinationDecision, SecretsStore } from "../secrets.js";
 import type { SecretBrowserOps, SecretFillOutcome } from "./secret-ops.js";
 
 const ORIGIN = "https://example.com";
@@ -107,8 +103,8 @@ function buildStore(): SecretsStore {
       updatedAt: 0,
     })),
     get: vi.fn(() => SECRET_VALUE),
-    isFillApproved: vi.fn(() => fillApproved),
-    approveFill: vi.fn(() => true),
+    destinationDecision: vi.fn(() => ladder),
+    approveDestination: vi.fn(() => true),
     holdsEmailAddress: vi.fn(() => holdsEmail),
   } as unknown as SecretsStore;
 }
@@ -129,7 +125,7 @@ beforeEach(() => {
   elementDescriptor = { found: true, tag: "input", type: "password", autocomplete: "current-password" };
   holdsEmail = false;
   pageOrigin = ORIGIN;
-  fillApproved = true;
+  ladder = "approved";
   approvals.answer = true;
   approvals.asked.length = 0;
   vi.clearAllMocks();
@@ -286,7 +282,9 @@ describe("browser_fill_from_secret — a login email into an unmarked box", () =
 
 // Twilio signs in at login.twilio.com for a login saved on www.twilio.com. A
 // sibling origin of the same site is filled once the user approves it in the
-// chat; another site never is, and nothing is filled silently.
+// chat; another site never is, and nothing is filled silently. The ladder is
+// the vault's (SecretsStore.destinationDecision, ADR 0005) and the card is the
+// shared one (secret-destination-gate.ts).
 describe("browser_fill_from_secret — where a login may be filled", () => {
   const emit = () => undefined;
   const fill = (store = buildStore()) =>
@@ -294,20 +292,21 @@ describe("browser_fill_from_secret — where a login may be filled", () => {
 
   it("asks the user, in the chat, before the first fill on another page of the same site", async () => {
     pageOrigin = "https://login.example.com";
-    fillApproved = false;
+    ladder = "ask";
     currentOps = buildOps({ outcome: { kind: "landed" } });
     const store = buildStore();
     const result = await fill(store);
     expect(result.isError).not.toBe(true);
     expect(approvals.asked).toHaveLength(1);
     expect(approvals.asked[0].context).toContain("saved for https://example.com");
-    expect(store.approveFill).toHaveBeenCalledWith(SECRET_NAME, "https://login.example.com");
+    expect(store.destinationDecision).toHaveBeenCalledWith(SECRET_NAME, "https://login.example.com", { sessionId: "other-session" });
+    expect(store.approveDestination).toHaveBeenCalledWith(SECRET_NAME, "https://login.example.com");
     assertNoSecretLeak([result.content, approvals.asked[0].context, ...auditCalls]);
   });
 
   it("fills nothing when the user says no", async () => {
     pageOrigin = "https://login.example.com";
-    fillApproved = false;
+    ladder = "ask";
     approvals.answer = false;
     currentOps = buildOps({ outcome: { kind: "landed" } });
     const result = await fill();
@@ -324,12 +323,36 @@ describe("browser_fill_from_secret — where a login may be filled", () => {
     expect(approvals.asked).toHaveLength(0);
   });
 
-  it("asks before the first fill on the secret's own origin too, instead of sending the user to Settings", async () => {
-    fillApproved = false;
+  it("fills on the secret's own recorded origin without asking", async () => {
+    ladder = "origin";
     currentOps = buildOps({ outcome: { kind: "landed" } });
     const result = await fill();
     expect(result.isError).not.toBe(true);
-    expect(approvals.asked).toHaveLength(1);
+    expect(result.content).toContain("the site this secret was saved for");
+    expect(approvals.asked).toHaveLength(0);
+  });
+
+  it("a sibling page is never filled silently: this session's capture or a pre-bless still asks there", async () => {
+    pageOrigin = "https://login.example.com";
+    currentOps = buildOps({ outcome: { kind: "landed" } });
+    for (const rung of ["session", "pre_bless"] as const) {
+      approvals.asked.length = 0;
+      ladder = rung;
+      const result = await fill();
+      expect(result.isError, rung).not.toBe(true);
+      expect(approvals.asked, rung).toHaveLength(1);
+    }
+  });
+
+  it("without a way to ask, the refusal says where the user approves it", async () => {
+    pageOrigin = "https://login.example.com";
+    ladder = "ask";
+    currentOps = buildOps({ outcome: { kind: "landed" } });
+    const result = await createBrowserSecretFillTool(buildStore(), () => "other-session").execute({ name: SECRET_NAME, selector: "#pw" });
+    expect(result.isError).toBe(true);
+    expect(result.content).toContain("First-use approval required");
+    expect(result.metadata?.recovery).toContain("Settings → Secrets");
+    expect(approvals.asked).toHaveLength(0);
   });
 });
 
@@ -355,7 +378,7 @@ describe("browser_fill_from_secret — by snapshot ref", () => {
 describe("browser_fill_from_secret — a login email needs no approval", () => {
   it("fills an email address on its site without asking", async () => {
     holdsEmail = true;
-    fillApproved = false;
+    ladder = "ask";
     elementDescriptor = { found: true, tag: "input", type: "text", autocomplete: "" };
     currentOps = buildOps({ outcome: { kind: "landed" } });
     const result = await createBrowserSecretFillTool(buildStore(), () => "other-session").execute({ name: SECRET_NAME, selector: "#email", _onEvent: () => undefined });

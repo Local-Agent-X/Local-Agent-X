@@ -80,11 +80,11 @@ export function encryptSecretsFile(
     notes: secret.notes,
     origin: secret.origin,
     createdBySession: secret.createdBySession,
-    approvedFills: secret.approvedFills,
+    approvedDestinations: secret.approvedDestinations,
     addedAt: secret.addedAt,
     updatedAt: secret.updatedAt,
     encrypted: encrypt(secret.value, key),
   }));
   const liveNames = new Set(live.map((entry) => entry.name));
-  return { version: 1, secrets: [...live, ...quarantined.filter((entry) => !liveNames.has(entry.name))] };
+  return { version: 2, secrets: [...live, ...quarantined.filter((entry) => !liveNames.has(entry.name))] };
 }

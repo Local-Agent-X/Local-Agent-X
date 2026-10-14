@@ -89,6 +89,20 @@ export async function performEscalation(
   if (!target.ok) return { ok: false, message: target.message, woken: false };
   const resolved = target.value;
 
+  // A 'normal' escalation to an agent IS the issue comment: that is the only
+  // record the target reads on its next wake (agent_whoami lists comments on
+  // its issues). Without an anchor issue the event below reaches the chat UI
+  // and no agent — refuse rather than report a record that was never left.
+  if (resolved !== "user" && urgency === "normal" && !issue) {
+    return {
+      ok: false,
+      woken: false,
+      message:
+        `agent_escalate: a 'normal' escalation to ${resolved.templateName} needs an issueId — the record is left as a ` +
+        `comment on that issue, which they read on their next wake. Pass the issueId you share with them, or use urgency 'high' to wake them now.`,
+    };
+  }
+
   // ── Side-effects ──────────────────────────────────────────────────
   const summary = context.length > 120 ? `${context.slice(0, 117)}...` : context;
 

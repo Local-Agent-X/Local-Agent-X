@@ -58,7 +58,7 @@ describe("delegated runtime admission is submission-atomic", () => {
     await expect(submit()).rejects.toThrow("runtime admission failed");
     expect(fixture.entry).not.toHaveBeenCalled();
     expect(fixture.track).not.toHaveBeenCalled();
-    expect(RECENT_SUBMITS.has("atomic-session")).toBe(false);
+    expect(RECENT_SUBMITS.size).toBe(0);
   });
 
   it("keeps every failed batch item invisible to the scheduler and session bridge", async () => {

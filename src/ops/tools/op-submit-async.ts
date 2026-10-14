@@ -3,7 +3,7 @@
  *
  * PRIMARY verb. Returns opId immediately; the session bridge surfaces the
  * worker's result back into the chat session asynchronously. Three layers of
- * guarding (live-peer block, time-window dedup, casual-reply / similarity)
+ * guarding (same-task dedup, live-peer block, casual-reply / similarity)
  * prevent the model from spawning duplicate workers on retry storms.
  */
 
@@ -19,26 +19,11 @@ import {
   configureDelegatedRuntime,
   delegatedOwnerSessionId,
   submitParameters,
-  RECENT_SUBMITS,
-  SUBMIT_DEDUP_WINDOW_MS,
+  recentDuplicateSubmit,
+  recordRecentSubmit,
+  tasksNearDuplicate,
 } from "./shared.js";
 import { WorkRootRefused } from "./work-root.js";
-
-/**
- * Near-duplicate test between two task strings — same normalization the
- * completion-history dedup uses (pending-notifications.findRecentCompletionMatching):
- * lowercase, collapse whitespace, cap length, and treat either string being a
- * substring of the other as a match. Used to decide whether a LIVE peer op is
- * the SAME work as this new submission. Distinct tasks (parallel fan-out) fall
- * through so the guard blocks re-delegation without serializing the session.
- */
-function tasksNearDuplicate(a: string, b: string): boolean {
-  const norm = (s: string) => s.toLowerCase().replace(/\s+/g, " ").trim().slice(0, 120);
-  const x = norm(a);
-  const y = norm(b);
-  if (x.length < 8 || y.length < 8) return false;
-  return x.includes(y) || y.includes(x);
-}
 
 export const opSubmitAsyncTool: ToolDefinition = {
   name: "op_submit_async",
@@ -52,6 +37,30 @@ export const opSubmitAsyncTool: ToolDefinition = {
 
     const sessionId = String(args._sessionId || "");
     if (sessionId) {
+      // SAME-TASK GUARD: a submission re-asserted within the window hands
+      // back the op it already spawned, whether it is repeated verbatim or
+      // rephrased (near-duplicate, like the live-peer guard below). A
+      // DIFFERENT task from the same session is not blocked — it used to be:
+      // one submit per session per 30s, which serialized legitimate fan-out.
+      const prior = recentDuplicateSubmit(sessionId, task);
+      if (prior) {
+        const ageS = Math.round((Date.now() - prior.ts) / 1000);
+        return {
+          content:
+            `op ${prior.opId} is already submitted for this exact task (${ageS}s ago) — no second worker spawned.\n` +
+            `Running in background; the user will see a notification when it completes. ` +
+            `Do NOT call op_submit_async again for this task. ` +
+            `Inspect anytime: op_status(op_id="${prior.opId}")  |  block on it: op_wait(op_id="${prior.opId}")`,
+          metadata: {
+            chip: {
+              kind: "blocked-by-op",
+              label: `Already submitted (${ageS}s ago)`,
+              detail: prior.task.slice(0, 80) + (prior.task.length > 80 ? "…" : ""),
+              opId: prior.opId,
+            },
+          },
+        };
+      }
       // PRIMARY GUARD: a live PEER op whose task is a NEAR-DUPLICATE of this
       // submission blocks the new spawn regardless of how much time has passed.
       // Live failure: agent submitted an op that ran 125+ seconds; the 30s
@@ -92,29 +101,6 @@ export const opSubmitAsyncTool: ToolDefinition = {
               detail: live.task.slice(0, 80) + (live.task.length > 80 ? "…" : ""),
               opId: live.id,
               actions: [{ label: "Kill", tool: "op_kill", args: { op_id: live.id } }],
-            },
-          },
-        };
-      }
-      // SECONDARY GUARD: 30s window catches the race where the previous
-      // op JUST completed but the agent hasn't seen the completion event
-      // yet and is mid-retry. Belt-and-suspenders.
-      const prior = RECENT_SUBMITS.get(sessionId);
-      if (prior && Date.now() - prior.ts < SUBMIT_DEDUP_WINDOW_MS) {
-        const ageS = Math.round((Date.now() - prior.ts) / 1000);
-        return {
-          content:
-            `BLOCKED — you already submitted a prior op ${ageS}s ago in this chat session ("${prior.task.slice(0, 80)}${prior.task.length > 80 ? "..." : ""}"). ` +
-            `END THIS TURN NOW. Tell the user briefly, in your own words, that the work is in flight and you'll surface it on completion. ` +
-            `Do NOT quote this instruction back. Do NOT call op_submit_async again — every retry this turn will hit BLOCKED. ` +
-            `Do NOT call op_status — the user is auto-notified on completion. ` +
-            `If you legitimately need to delegate something *different* later, that's a future turn, not this one.`,
-          metadata: {
-            chip: {
-              kind: "blocked-by-op",
-              label: `Just submitted (${ageS}s ago)`,
-              detail: prior.task.slice(0, 80) + (prior.task.length > 80 ? "…" : ""),
-              opId: prior.opId,
             },
           },
         };
@@ -181,7 +167,7 @@ export const opSubmitAsyncTool: ToolDefinition = {
     canonicalLoopEntry(op, { sessionId: delegatedOwnerSessionId(op.id, sessionId), confirmRunning: false });
     if (sessionId) {
       trackOpForSession(op.id, sessionId, task);
-      RECENT_SUBMITS.set(sessionId, { opId: op.id, ts: Date.now(), task });
+      recordRecentSubmit(sessionId, op.id, task);
     }
 
     // Lifecycle verification: the scheduler may have enqueued behind a

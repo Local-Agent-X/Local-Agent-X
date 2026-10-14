@@ -371,27 +371,21 @@ export function setUserScalarField(existing: string, field: string, value: strin
         return lines.join("\n");
       }
     }
-    // No existing bullet for this field — insert one after the first
-    // top-level heading. If we can't find one, fall through to fresh-file
-    // path below.
+    // No existing bullet for this field — insert one under the first
+    // top-level heading, or at the top of a heading-less file. The bullet
+    // sits with the first scalars of that block when they exist, not
+    // floating between the heading and an HTML comment block.
     const headingIdx = lines.findIndex((l) => /^#\s+/.test(l));
-    if (headingIdx >= 0) {
-      // Find the first non-comment, non-blank line after the heading to
-      // anchor the insertion. We want the bullet to sit with other
-      // scalars when they exist, not floating between heading and an
-      // HTML comment block.
-      let insertAt = headingIdx + 1;
-      let firstBulletIdx = -1;
-      for (let i = headingIdx + 1; i < lines.length; i++) {
-        if (/^#{1,6}\s/.test(lines[i])) break;
-        if (SCALAR.test(lines[i])) { firstBulletIdx = i; break; }
-      }
-      if (firstBulletIdx >= 0) insertAt = firstBulletIdx;
-      lines.splice(insertAt, 0, `- ${fieldDisplay}: ${valueClean}`);
-      return lines.join("\n");
+    const blockStart = headingIdx >= 0 ? headingIdx + 1 : 0;
+    let insertAt = blockStart;
+    for (let i = blockStart; i < lines.length; i++) {
+      if (/^#{1,6}\s/.test(lines[i])) break;
+      if (SCALAR.test(lines[i])) { insertAt = i; break; }
     }
+    const bullet = `- ${fieldDisplay}: ${valueClean}`;
+    lines.splice(insertAt, 0, ...(headingIdx >= 0 ? [bullet] : ["# About Me", "", bullet, ""]));
+    return lines.join("\n");
   }
 
-  // Fresh file or no heading found — minimal valid structure.
   return `# About Me\n\n- ${fieldDisplay}: ${valueClean}\n`;
 }

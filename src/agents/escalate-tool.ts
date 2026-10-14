@@ -49,15 +49,16 @@ export const agentEscalate: ToolDefinition = {
     "(auto-promotes to 'user' when you have no manager); 'user' surfaces " +
     "to the chat UI as a notification; an explicit agentId wakes that " +
     "agent directly. Urgency 'high' wakes the target out-of-cycle in " +
-    "addition to leaving a record; 'normal' leaves a record they'll see " +
-    "on their next wake.",
+    "addition to leaving a record; 'normal' leaves a record as a comment on " +
+    "`issueId` that they'll see on their next wake — so an agent target with " +
+    "'normal' requires issueId.",
   parameters: {
     type: "object",
     properties: {
       to: { type: "string", description: "'manager' | 'user' | <agentId>" },
       context: { type: "string", description: "What this is about — situation summary, what you need from them." },
-      urgency: { type: "string", enum: ["normal", "high"], description: "'high' wakes target now; 'normal' leaves a record." },
-      issueId: { type: "string", description: "Optional — anchor the escalation to an issue for audit trail." },
+      urgency: { type: "string", enum: ["normal", "high"], description: "'high' wakes target now; 'normal' leaves a record on issueId." },
+      issueId: { type: "string", description: "Issue to anchor the escalation to (audit comment). Required when urgency is 'normal' and the target is an agent; optional for 'user' or 'high'." },
     },
     required: ["to", "context", "urgency"],
   },

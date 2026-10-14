@@ -131,6 +131,17 @@ export function getProgress(executionId: string): ProtocolProgress | undefined {
   return executions.get(executionId);
 }
 
+/** A detached copy of an execution's progress — what a rollback snapshot keeps. */
+export function snapshotProgress(executionId: string): ProtocolProgress | null {
+  const prog = executions.get(executionId);
+  return prog ? structuredClone(prog) : null;
+}
+
+/** Put a snapshot's progress back as the execution's live state. */
+export function restoreProgress(snapshot: ProtocolProgress): void {
+  executions.set(snapshot.executionId, structuredClone(snapshot));
+}
+
 export function getAllExecutions(): ProtocolProgress[] {
   return Array.from(executions.values());
 }

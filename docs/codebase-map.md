@@ -18,10 +18,10 @@ over 400 LOC (the source-hygiene ceiling).
 
 | Directory | Importers | Files | Size | God files |
 |---|--:|--:|:--:|--:|
-| `src/ops/` | 142 | 28 | XL |  |
+| `src/ops/` | 143 | 28 | XL |  |
 | `src/security/` | 115 | 45 | XL |  |
 | `src/tools/` | 98 | 208 | XL |  |
-| `src/canonical-loop/` | 76 | 257 | XL |  |
+| `src/canonical-loop/` | 77 | 257 | XL |  |
 | `src/providers/` | 67 | 26 | XL |  |
 | `src/workspace/` | 66 | 3 | M |  |
 | `src/memory/` | 51 | 137 | XL |  |
@@ -60,9 +60,9 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/integrations/` | 10 | 15 | M |  |
 | `src/persistence/` | 10 | 2 | S |  |
 | `src/routes/` | 10 | 91 | XL |  |
+| `src/sync/` | 10 | 21 | L |  |
 | `src/autopilot/` | 9 | 14 | L |  |
 | `src/screen-stream/` | 9 | 8 | L |  |
-| `src/sync/` | 9 | 21 | L |  |
 | `src/bridge-voice/` | 8 | 5 | M |  |
 | `src/telegram-bridge/` | 8 | 6 | M |  |
 | `src/auto-build/` | 7 | 52 | XL |  |

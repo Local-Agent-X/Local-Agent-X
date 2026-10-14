@@ -39,7 +39,7 @@ export function memoryReindexTool() {
           if (!(VALID_SOURCES as readonly string[]).includes(source)) {
             return { content: `BLOCKED: unknown source "${source}". Valid: ${VALID_SOURCES.join(", ")}, all`, isError: true };
           }
-          const added = await ui.reindexStore(source as IndexSource);
+          const added = await ui.reindexStore(source as IndexSource, { force });
           return { content: JSON.stringify({ ok: true, source, chunksAdded: added }, null, 2) };
         }
       } catch (e) {

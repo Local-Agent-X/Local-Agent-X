@@ -353,6 +353,18 @@ describe("opResume — public API surface", () => {
     expect(pausedToQueued!.seq).toBeGreaterThan(events[idxOf("resume_requested")].seq);
   });
 
+  it("withdraws a pause that has not landed yet — the op keeps running instead of pausing later for nobody", async () => {
+    const op = mkOp("resume-withdraws-pending-pause");
+    canonicalLoopEntry(op);
+    expect(opPause(op.id, "actor").ok).toBe(true);
+    expect(readOp(op.id)?.canonical?.pauseRequestedAt).toBeTruthy();
+
+    const r = opResume(op.id, "actor");
+    expect(r.ok).toBe(true);
+    expect(readOp(op.id)?.canonical?.pauseRequestedAt).toBeNull();
+    expect(readOp(op.id)?.canonical?.state).not.toBe("paused");
+  });
+
   it("returns not_paused for ops that are not paused", async () => {
     const op = mkOp("resume-not-paused");
     canonicalLoopEntry(op);

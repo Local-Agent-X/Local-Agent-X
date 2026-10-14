@@ -4,7 +4,6 @@ export interface FieldAgent extends AgencyAgent {
   output: string[];
   streamCallback?: (agentId: string, chunk: string) => void;
   abortController?: AbortController;
-  pauseSignal?: { paused: boolean; resume?: () => void };
   startedAt: number;
   tokensUsed: number;
   messageQueue: string[];

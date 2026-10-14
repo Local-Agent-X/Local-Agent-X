@@ -49,24 +49,48 @@ export function findFacts(
   return rows.map(r => ({ id: r.id, content: r.content, entities: JSON.parse(r.entities || "[]") }));
 }
 
+function forgetChunksWhere(
+  db: InstanceType<typeof Database>,
+  hasFts: boolean,
+  hasVec: boolean,
+  pathClause: "path LIKE ?" | "path = ?",
+  pathArg: string
+): number {
+  const run = db.transaction(() => {
+    const chunks = db.prepare(`SELECT id, hash FROM chunks WHERE ${pathClause}`).all(pathArg) as Array<{ id: number; hash: string }>;
+    for (const c of chunks) {
+      if (hasFts) try { db.prepare("DELETE FROM chunks_fts WHERE rowid = ?").run(c.id); } catch {}
+      if (hasVec) try { db.prepare("DELETE FROM chunks_vec WHERE chunk_id = ?").run(c.id); } catch {}
+      try { db.prepare("DELETE FROM embedding_cache WHERE hash = ?").run(c.hash); } catch {}
+    }
+    db.prepare(`DELETE FROM chunks WHERE ${pathClause}`).run(pathArg);
+    db.prepare(`DELETE FROM files WHERE ${pathClause}`).run(pathArg);
+    return chunks.length;
+  });
+  return run();
+}
+
+/** Delete every chunk whose path CONTAINS `pathPattern` (the documented
+ *  `path` pattern scope — 'import/chatgpt' clears a whole import source). */
 export function forgetChunks(
   db: InstanceType<typeof Database>,
   hasFts: boolean,
   hasVec: boolean,
   pathPattern: string
 ): number {
-  const run = db.transaction(() => {
-    const chunks = db.prepare("SELECT id, hash FROM chunks WHERE path LIKE ?").all(`%${pathPattern}%`) as Array<{ id: number; hash: string }>;
-    for (const c of chunks) {
-      if (hasFts) try { db.prepare("DELETE FROM chunks_fts WHERE rowid = ?").run(c.id); } catch {}
-      if (hasVec) try { db.prepare("DELETE FROM chunks_vec WHERE chunk_id = ?").run(c.id); } catch {}
-      try { db.prepare("DELETE FROM embedding_cache WHERE hash = ?").run(c.hash); } catch {}
-    }
-    db.prepare("DELETE FROM chunks WHERE path LIKE ?").run(`%${pathPattern}%`);
-    db.prepare("DELETE FROM files WHERE path LIKE ?").run(`%${pathPattern}%`);
-    return chunks.length;
-  });
-  return run();
+  return forgetChunksWhere(db, hasFts, hasVec, "path LIKE ?", `%${pathPattern}%`);
+}
+
+/** Delete the chunks of exactly ONE indexed path — a search hit's path.
+ *  Never widens to siblings that merely contain it (`notes/a.md.bak`,
+ *  `x/notes/a.md`). */
+export function forgetChunksAtPath(
+  db: InstanceType<typeof Database>,
+  hasFts: boolean,
+  hasVec: boolean,
+  path: string
+): number {
+  return forgetChunksWhere(db, hasFts, hasVec, "path = ?", path);
 }
 
 export function forgetConversation(

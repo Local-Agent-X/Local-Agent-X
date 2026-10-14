@@ -9,7 +9,14 @@ import { existsSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { ok, err } from "./shared.js";
 import { workspacePath } from "../../config.js";
+import { getLaxDir } from "../../lax-data-dir.js";
 import { reloadSettings, saveSettings } from "../../settings.js";
+import { clearPinTombstone, pinTombstonePaths, tombstonePin } from "../../sync/pin-tombstones.js";
+
+// Same tombstone stores the /api/sidebar/pins route writes: an unpin must
+// survive the next sync pull from a machine that still has the pin, and a
+// re-pin is the "I changed my mind" signal that clears it.
+const tombstones = () => pinTombstonePaths(getLaxDir(), resolve(getLaxDir(), "sync-repo"));
 
 // One loose-match rule shared by pin (app-folder lookup) and unpin (pin
 // lookup): equal, or either side contains the other, case-insensitively. Both
@@ -99,6 +106,7 @@ export const sidebarPin: ToolDefinition = {
     pins.push({ name, icon, url: pageUrl });
     settings.sidebarPins = pins;
     saveSettings(settings);
+    clearPinTombstone(tombstones(), name);
 
     // Notify connected clients
     try { const { broadcastAll } = await import("../../chat-ws/index.js"); broadcastAll({ type: "sidebar_pins_changed", pins }); } catch {}
@@ -130,6 +138,7 @@ export const sidebarUnpin: ToolDefinition = {
       const removed = currentPins.map(p => p.name).join(", ");
       settings.sidebarPins = [];
       saveSettings(settings);
+      for (const p of currentPins) tombstonePin(tombstones(), p.name);
       try { const { broadcastAll } = await import("../../chat-ws/index.js"); broadcastAll({ type: "sidebar_pins_changed", pins: [] }); } catch {}
       return ok(`Removed all pins from the sidebar: ${removed}`);
     }
@@ -154,6 +163,7 @@ export const sidebarUnpin: ToolDefinition = {
     const pins = currentPins.filter(p => p.name !== targetName);
     settings.sidebarPins = pins;
     saveSettings(settings);
+    tombstonePin(tombstones(), targetName);
 
     try { const { broadcastAll } = await import("../../chat-ws/index.js"); broadcastAll({ type: "sidebar_pins_changed", pins }); } catch {}
 

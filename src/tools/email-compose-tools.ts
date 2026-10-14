@@ -1,6 +1,6 @@
 import { createTransport } from "nodemailer";
 import type { ServerEvent, ToolDefinition, ToolResult } from "../types.js";
-import { vault, writeEmailJson } from "./email-config.js";
+import { getSmtpFrom, vault, writeEmailJson } from "./email-config.js";
 import { getSecretsStoreSingleton } from "../secrets.js";
 import { gateSecretDestination } from "../secret-destination-gate.js";
 
@@ -20,7 +20,7 @@ export const emailDraft: ToolDefinition = {
     const to = String(args.to);
     const subject = String(args.subject);
     const body = String(args.body);
-    const from = process.env.SMTP_FROM || "(not configured — set SMTP_FROM)";
+    const from = getSmtpFrom() || "(not configured — run email_setup)";
     const draft = `From: ${from}\nTo: ${to}\nSubject: ${subject}\n\n${body}`;
     return { content: draft, metadata: { status: "draft", to, subject } };
   },

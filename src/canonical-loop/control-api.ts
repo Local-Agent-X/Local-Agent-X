@@ -243,7 +243,7 @@ export function opPause(opId: string, actor: string): ControlResult {
 }
 
 /**
- * Resume a paused op (PRD §13).
+ * Resume a paused op (PRD §13), or withdraw a pause that has not landed yet.
  *
  * Synchronous: emits `resume_requested`, transitions paused→queued (which
  * emits `state_changed`), then enqueues the op + pumps the scheduler so
@@ -257,14 +257,23 @@ export function opResume(opId: string, actor: string): ControlResult {
   }
   const op = readOp(opId);
   if (!op) return { ok: false, code: "unknown_op", message: `no op with id ${opId}` };
+  const now = new Date().toISOString();
   if (op.canonical?.state !== "paused") {
+    // A resume that outruns the pause (requested, not yet landed at the turn
+    // boundary) withdraws the request: the op keeps running instead of
+    // pausing later with nobody left to resume it.
+    if (op.canonical?.pauseRequestedAt) {
+      writeSignalColumn(opId, op, (c) => { c.pauseRequestedAt = null; });
+      emit(opId, "resume_requested", { actor });
+      publishSignal({ kind: "resume", opId, actor, ts: now });
+      return { ok: true };
+    }
     return {
       ok: false,
       code: "not_paused",
       message: `op ${opId} is in state '${op.canonical?.state ?? "<unset>"}', not 'paused'`,
     };
   }
-  const now = new Date().toISOString();
   emit(opId, "resume_requested", { actor });
   publishSignal({ kind: "resume", opId, actor, ts: now });
   if (op.canonical) op.canonical.suspension = null;

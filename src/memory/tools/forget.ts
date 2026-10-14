@@ -139,9 +139,12 @@ export function createForgetTool(memory: MemoryIndex) {
           results.push(`Would delete ${searchResults.length} matching memory chunk(s):`);
           searchResults.slice(0, 10).forEach(r => results.push(`  - [${r.source}] ${r.snippet.slice(0, 60)}`));
         } else {
+          // Exactly the paths that matched. A hit's path is a whole indexed
+          // file (or import conversation); a substring delete would also
+          // take `<path>.bak` and `<dir>/<path>` siblings the query never hit.
           let deleted = 0;
-          for (const r of searchResults) {
-            deleted += memory.forgetChunks(r.path);
+          for (const path of new Set(searchResults.map(r => r.path))) {
+            deleted += memory.forgetChunksAtPath(path);
           }
           results.push(`Deleted ${deleted} chunk(s) matching "${query}"`);
         }

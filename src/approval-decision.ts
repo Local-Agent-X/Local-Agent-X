@@ -312,7 +312,7 @@ const DESTRUCTIVE_TOOL_ACTIONS: Record<string, Record<string, string>> = {
     delete: "deletes a saved protocol",
     prune: "bulk-archives unused protocols",
     archive_bulk: "bulk-archives protocols",
-    rollback_undo: "rolls workspace state back to a snapshot",
+    rollback_undo: "rewinds a protocol execution to an earlier step snapshot",
     var_delete: "deletes a stored protocol variable",
     install: "downloads skills from a repo and writes them into the workspace",
     update: "overwrites an installed skill with its upstream version",

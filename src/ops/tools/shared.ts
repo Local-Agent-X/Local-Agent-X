@@ -280,15 +280,47 @@ export const submitParameters = {
   required: ["task"],
 };
 
-// Per-session dedup window. Anthropic's MCP-bridge tool loop (and to a lesser
+// Same-task dedup window. Anthropic's MCP-bridge tool loop (and to a lesser
 // extent every model under tool-use pressure) sometimes re-asserts a delegation
-// 3-5 times in one turn — usually with slightly different task phrasing each
-// time, so a per-task-string dedup misses them. We dedup at the SESSION level:
-// one op_submit_async per session per window, period. If the supervisor needs
-// truly-parallel ops, it can submit again after the window or after the prior
-// op completes. 30s comfortably covers one chat turn end-to-end.
-export const RECENT_SUBMITS = new Map<string, { opId: string; ts: number; task: string }>();
+// 3-5 times in one turn, usually rephrased a little each time. A submission
+// that is a near-duplicate of one this session made inside the window gets
+// the existing opId back instead of a second worker; a DIFFERENT task from
+// the same session is parallel fan-out and goes through. (While the first op
+// is still live, the peer guard in op-submit-async.ts catches the same thing
+// with no time limit.) 30s comfortably covers one chat turn end-to-end.
+export interface RecentSubmit { opId: string; ts: number; task: string }
+export const RECENT_SUBMITS = new Map<string, RecentSubmit[]>();
 export const SUBMIT_DEDUP_WINDOW_MS = 30_000;
+
+/**
+ * Near-duplicate test between two task strings — same normalization the
+ * completion-history dedup uses (pending-notifications.findRecentCompletionMatching):
+ * lowercase, collapse whitespace, cap length, and treat either string being a
+ * substring of the other as a match. Distinct tasks fall through.
+ */
+export function tasksNearDuplicate(a: string, b: string): boolean {
+  const norm = (s: string) => s.toLowerCase().replace(/\s+/g, " ").trim().slice(0, 120);
+  const x = norm(a);
+  const y = norm(b);
+  if (x.length < 8 || y.length < 8) return false;
+  return x.includes(y) || y.includes(x);
+}
+
+/** The session's in-window submission that `task` re-asserts, if any.
+ *  Expired entries are dropped here, so the map is bounded by the window. */
+export function recentDuplicateSubmit(sessionId: string, task: string): RecentSubmit | undefined {
+  const now = Date.now();
+  const live = (RECENT_SUBMITS.get(sessionId) ?? []).filter((e) => now - e.ts < SUBMIT_DEDUP_WINDOW_MS);
+  if (live.length === 0) RECENT_SUBMITS.delete(sessionId);
+  else RECENT_SUBMITS.set(sessionId, live);
+  return live.find((e) => tasksNearDuplicate(e.task, task));
+}
+
+export function recordRecentSubmit(sessionId: string, opId: string, task: string): void {
+  const entries = RECENT_SUBMITS.get(sessionId) ?? [];
+  entries.push({ opId, ts: Date.now(), task });
+  RECENT_SUBMITS.set(sessionId, entries);
+}
 
 // Polling-loop guard for op_status / op_wait. The chat agent kept calling
 // op_status on the same op_id 16 times in one turn waiting for a long-running

@@ -117,6 +117,33 @@ describe("UniversalIndex.backfillAll idempotency", () => {
   });
 });
 
+describe("UniversalIndex.reindexStore force", () => {
+  it("re-inserts the named store's chunks under force and only that store's", async () => {
+    writeFileSync(
+      join(tempDir, "memory", "bank", "entities", "alice.md"),
+      "# Alice\n\n## Facts\n\n- Alice picks oat milk over almond.\n",
+      "utf-8",
+    );
+    writeFileSync(
+      join(tempDir, "memory", "session-summaries", "chat-test.md"),
+      "# Chat Test\n\n## Key Exchanges\n\n- User: tell me about glasses\n",
+      "utf-8",
+    );
+    await ui.backfillAll();
+    const summaryRows = () => (memory["db"]
+      .prepare("SELECT COUNT(*) AS n FROM chunks WHERE source = 'session-summary'")
+      .get() as { n: number }).n;
+    const before = summaryRows();
+    expect(before).toBeGreaterThan(0);
+
+    // Without force the content-hash dedup finds nothing new; the tool's
+    // `force` used to be dropped on the floor for a named source.
+    expect(await ui.reindexStore("entity")).toBe(0);
+    expect(await ui.reindexStore("entity", { force: true })).toBeGreaterThan(0);
+    expect(summaryRows()).toBe(before);
+  });
+});
+
 describe("Cross-source search", () => {
   it("returns results tagged with the right source per store", async () => {
     writeFileSync(

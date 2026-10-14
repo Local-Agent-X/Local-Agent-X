@@ -206,19 +206,23 @@ export class UniversalIndex {
       this,
       {
         force: opts?.force,
-        // Force mode: clear path-level idempotency by wiping each file's
-        // chunks. The per-file indexers then re-insert from scratch. (Cheap
-        // on the embedding side because embedding_cache hits by content_hash.)
-        forceClear: () => {
-          try {
-            this.memory["db"].exec(`DELETE FROM chunks WHERE source IN ('entity','daily-log','mind','session-summary','session','personality')`);
-          } catch (e) { logger.warn("[universal-index] force-clear failed:", (e as Error).message); }
-        },
+        forceClear: () => this.clearStoreChunks(["entity", "daily-log", "mind", "session-summary", "session", "personality"]),
       },
     );
   }
 
-  async reindexStore(source: CanonicalSource): Promise<number> {
+  // Force mode: clear path-level idempotency by wiping the stores' chunks.
+  // The per-file indexers then re-insert from scratch. (Cheap on the
+  // embedding side because embedding_cache hits by content_hash.)
+  private clearStoreChunks(sources: CanonicalSource[]): void {
+    const marks = sources.map(() => "?").join(",");
+    try {
+      this.memory["db"].prepare(`DELETE FROM chunks WHERE source IN (${marks})`).run(...sources);
+    } catch (e) { logger.warn("[universal-index] force-clear failed:", (e as Error).message); }
+  }
+
+  async reindexStore(source: CanonicalSource, opts?: { force?: boolean }): Promise<number> {
+    if (opts?.force) this.clearStoreChunks([source]);
     let added = 0;
     switch (source) {
       case "entity": {

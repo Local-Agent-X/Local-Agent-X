@@ -236,12 +236,18 @@ describe("agent_escalate to:<agentId>", () => {
     expect(driverCalls).toHaveLength(0);
   });
 
-  it("urgency:'normal' leaves a record, no wake call", async () => {
+  it("urgency:'normal' leaves the record on the anchor issue, no wake call", async () => {
+    const issue = IssueStore.getInstance().create({
+      title: "shared", description: "", assignee: managerTpl.id, status: "open",
+      priority: "medium", projectId: project.id, createdBy: "test",
+    });
+    createdIssues.push(issue);
     const sessionId = attachCaller(workerTpl.id);
     const result = await agentEscalate.execute({
       to: managerTpl.id,
       context: "FYI when you get a chance",
       urgency: "normal",
+      issueId: issue.id,
       _sessionId: sessionId,
     });
     expect(result.isError).toBeFalsy();
@@ -249,6 +255,25 @@ describe("agent_escalate to:<agentId>", () => {
     expect(escalationEvents).toHaveLength(1);
     expect(escalationEvents[0].urgency).toBe("normal");
     expect(escalationEvents[0].to).toBe(managerTpl.id);
+    const comments = IssueStore.getInstance().get(issue.id)!.comments;
+    expect(comments[comments.length - 1].content).toMatch(/Escalated to .* \(normal\)/);
+  });
+
+  it("urgency:'normal' with no issueId is refused — there is no record the agent would ever read", async () => {
+    // It used to return "Escalated ... (normal — record only)" having emitted
+    // a UI-only event: the target agent never saw anything.
+    const sessionId = attachCaller(workerTpl.id);
+    const result = await agentEscalate.execute({
+      to: managerTpl.id,
+      context: "FYI when you get a chance",
+      urgency: "normal",
+      _sessionId: sessionId,
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content).toMatch(/issueId/);
+    expect(result.content).toMatch(/urgency 'high'/);
+    expect(driverCalls).toHaveLength(0);
+    expect(escalationEvents).toHaveLength(0);
   });
 
   it("urgency:'high' invokes the target agent through the canonical path", async () => {

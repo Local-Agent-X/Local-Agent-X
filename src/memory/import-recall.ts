@@ -96,6 +96,29 @@ export function recallImportsByDate(
   return entries;
 }
 
+/** Is `path` an import/<format>/<id> virtual path — addressable only through
+ *  the chunk store, never the memory dir. */
+export function isImportPath(path: string): boolean {
+  return path.startsWith("import/");
+}
+
+/**
+ * The full text of one imported conversation by its virtual path, chunks in
+ * their original order. This is how memory_get opens the `import/…` paths that
+ * memory_search / memory_recall hand out: there is no file behind them. Null
+ * when nothing is indexed at that path.
+ */
+export function readImportConversation(
+  db: InstanceType<typeof Database>,
+  path: string,
+): string | null {
+  const rows = db
+    .prepare("SELECT text FROM chunks WHERE path = ? ORDER BY start_line ASC, id ASC")
+    .all(path) as Array<{ text: string | null }>;
+  if (rows.length === 0) return null;
+  return rows.map((r) => (r.text || "").trim()).filter(Boolean).join("\n\n");
+}
+
 /**
  * Imported-history dates within `windowDays` of `target`, deduped and sorted.
  * Lets an empty-date answer point at nearby IMPORT days (not just the agent's

@@ -11,6 +11,10 @@ import { AgencyMessageBus } from "./message-bus.js";
 import { appendTraceEvent } from "../agents/run-trace.js";
 import { pushCompletionToParent } from "./handler-completion.js";
 import { pushInject } from "../agent-loop/inject-queue.js";
+import { isTerminalCanonicalState, opPause, opResume } from "../canonical-loop/index.js";
+import { readOp } from "../ops/op-store.js";
+import { listOpsForSession } from "../ops/session-bridge.js";
+import type { Op } from "../ops/types.js";
 import { createLogger } from "../logger.js";
 import { formatAgentDisplayName } from "./agent-display-name.js";
 
@@ -194,7 +198,6 @@ export class Handler {
    *  run-scoped handles and evicts oldest-first past the cap. */
   private retire(agent: FieldAgent): void {
     agent.abortController = undefined;
-    agent.pauseSignal = undefined;
     agent.streamCallback = undefined;
     this.retired.set(agent.id, agent);
     for (const oldest of this.retired.keys()) {
@@ -235,15 +238,30 @@ export class Handler {
 
   // -- Pause / Resume -------------------------------------------------------
 
+  /** The canonical op driving this run. agent_spawn ops are tracked under the
+   *  run's session (handler-events.ts: runSessionId ?? agent-<id>), the same
+   *  bucket redirect/inject use; delegated children an agent submits share
+   *  the session but carry their own op type. */
+  private liveOpForAgent(agent: FieldAgent): Op | null {
+    const sessionId = agent.runSessionId ?? `agent-${agent.id}`;
+    for (const id of listOpsForSession(sessionId)) {
+      const op = readOp(id);
+      const state = op?.canonical?.state;
+      if (op?.type === "agent_spawn" && state && !isTerminalCanonicalState(state)) return op;
+    }
+    return null;
+  }
+
+  /** Pause lands at the op's next turn boundary (after the in-flight tool
+   *  dispatch commits) — the canonical loop's own soft pause, not a flag. */
   pauseAgent(agentId: string): void {
     const agent = this.agents.get(agentId);
     if (!agent) throw new Error(`Agent ${agentId} not found`);
+    const op = this.liveOpForAgent(agent);
+    if (!op) throw new Error(`Agent ${agentId} has no running operation to pause`);
+    const result = opPause(op.id, `agent_pause:${agentId}`);
+    if (!result.ok) throw new Error(result.message);
 
-    if (agent.pauseSignal) {
-      agent.pauseSignal.paused = true;
-    } else {
-      agent.pauseSignal = { paused: true };
-    }
     agent.status = "waiting";
     agent.output.push("[paused]");
 
@@ -255,13 +273,11 @@ export class Handler {
   resumeAgent(agentId: string): void {
     const agent = this.agents.get(agentId);
     if (!agent) throw new Error(`Agent ${agentId} not found`);
+    const op = this.liveOpForAgent(agent);
+    if (!op) throw new Error(`Agent ${agentId} has no operation to resume`);
+    const result = opResume(op.id, `agent_resume:${agentId}`);
+    if (!result.ok) throw new Error(result.message);
 
-    if (agent.pauseSignal) {
-      agent.pauseSignal.paused = false;
-      if (agent.pauseSignal.resume) {
-        agent.pauseSignal.resume();
-      }
-    }
     agent.status = "working";
     agent.output.push("[resumed]");
 
@@ -278,10 +294,6 @@ export class Handler {
 
     if (agent.abortController) {
       agent.abortController.abort();
-    }
-    if (agent.pauseSignal) {
-      agent.pauseSignal.paused = false;
-      if (agent.pauseSignal.resume) agent.pauseSignal.resume();
     }
 
     agent.status = "failed";

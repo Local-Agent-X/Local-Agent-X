@@ -4,6 +4,7 @@
 
 import type { Protocol, ProtocolStep } from "../protocols/index.js";
 import type { ToolDefinition } from "../types.js";
+import { authorProtocol } from "./authoring.js";
 
 export interface ProtocolTemplate {
   id: string;
@@ -153,7 +154,9 @@ export function createTemplateTools(): ToolDefinition[] {
     },
     {
       name: "protocol_from_template",
-      description: "Create a new protocol from a template.",
+      description:
+        "Create and save a new custom protocol from a template — the same catalog write as protocol(action:'create'), " +
+        "so it is listed, loadable with protocol(action:'get'), and refused when a near-duplicate already exists.",
       parameters: {
         type: "object",
         properties: {
@@ -167,14 +170,36 @@ export function createTemplateTools(): ToolDefinition[] {
       },
       async execute(args) {
         const template = getTemplate(String(args.templateId));
-        if (!template) return { content: `Template "${args.templateId}" not found.` };
+        if (!template) return { content: `Template "${args.templateId}" not found.`, isError: true };
         const protocol = protocolFromTemplate(template, {
           name: String(args.name),
           description: args.description ? String(args.description) : undefined,
           triggers: args.triggers as string[] | undefined,
           extraRules: args.extraRules as string[] | undefined,
         });
-        return { content: `Created protocol "${protocol.name}" from ${template.id} template with ${protocol.steps.length} steps.` };
+        try {
+          const result = await authorProtocol({
+            name: protocol.name,
+            description: protocol.description,
+            triggers: protocol.triggers,
+            steps: protocol.steps,
+            rules: protocol.rules,
+            category: template.category,
+            sessionId: typeof args._sessionId === "string" ? args._sessionId : undefined,
+          });
+          if (!result.ok) {
+            return {
+              content:
+                `Refused: protocol "${protocol.name}" is too similar to existing "${result.duplicate.name}" ` +
+                `(cosine similarity ${result.duplicate.similarity.toFixed(2)}). Use protocol(action:'edit') on it, ` +
+                `or protocol(action:'create') with \`supersedes\` to replace it.`,
+              isError: true,
+            };
+          }
+          return { content: `Created protocol "${result.protocol.name}" from ${template.id} template with ${result.protocol.steps.length} steps.` };
+        } catch (e) {
+          return { content: (e as Error).message, isError: true };
+        }
       },
     },
   ];

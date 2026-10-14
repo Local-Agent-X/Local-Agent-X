@@ -284,6 +284,8 @@ export class MemoryIndex extends MemoryFactsBase {
     return Forget.forgetChunks(this.db, this.hasFts, this.hasVec, pathPattern);
   }
 
+  forgetChunksAtPath(path: string): number { return Forget.forgetChunksAtPath(this.db, this.hasFts, this.hasVec, path); }
+
   forgetConversation(conversationId: string): number {
     return Forget.forgetConversation(this.db, this.hasFts, this.hasVec, conversationId);
   }
@@ -304,16 +306,14 @@ export class MemoryIndex extends MemoryFactsBase {
     return Atlas.getChunk(this.db, id);
   }
 
-  // Date-scoped recall of imported conversation history (chunks tagged
-  // metadata.source_type='import'). recallByTime/daily-logs don't cover imports,
-  // so memory_recall's date branch pulls these too — see import-recall.ts.
-  recallImportsByDate(since: Date, until?: Date) {
-    return ImportRecall.recallImportsByDate(this.db, since, until);
-  }
+  // Imported conversation history lives only in chunks (metadata.source_type
+  // ='import'): date-scoped recall for memory_recall's date branch, and the
+  // whole conversation by its import/… path for memory_get — see import-recall.ts.
+  recallImportsByDate(since: Date, until?: Date) { return ImportRecall.recallImportsByDate(this.db, since, until); }
 
-  listNearbyImportDates(target: Date, windowDays = 12): string[] {
-    return ImportRecall.listNearbyImportDates(this.db, target, windowDays);
-  }
+  listNearbyImportDates(target: Date, windowDays = 12): string[] { return ImportRecall.listNearbyImportDates(this.db, target, windowDays); }
+
+  readImportConversation(path: string): string | null { return ImportRecall.readImportConversation(this.db, path); }
 
   // ── Search ──
 

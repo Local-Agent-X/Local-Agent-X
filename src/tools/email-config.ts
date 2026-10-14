@@ -191,6 +191,12 @@ export function getOwnEmailAddresses(): string[] {
   return [...out];
 }
 
+/** The From address email_send puts on outgoing mail — the email_setup /
+ *  Settings-stored value, env fallback. Read-only (no vault). */
+export function getSmtpFrom(): string | undefined {
+  return env("SMTP_FROM");
+}
+
 export function getSmtpConfig(): { host: string; port: number; user: string; pass: string; from: string } | string {
   const host = env("SMTP_HOST");
   const user = env("SMTP_USER");

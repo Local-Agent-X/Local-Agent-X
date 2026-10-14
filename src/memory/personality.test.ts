@@ -269,6 +269,17 @@ describe("setUserScalarField", () => {
     expect(setUserScalarField("   \n", "Name", "Alex")).toBe("# About Me\n\n- Name: Alex\n");
   });
 
+  it("keeps every existing line when the file has no top-level heading", () => {
+    // A hand-written USER.md with sections only used to be replaced by a
+    // fresh "# About Me" block: one set_user_field wiped the whole profile.
+    const input = "## Family & People\n- Partner: Sam\n\n## Workflow\nLikes short answers.\n";
+    const out = setUserScalarField(input, "Name", "Alex");
+    expect(out).toContain("- Name: Alex");
+    expect(out).toContain("- Partner: Sam");
+    expect(out).toContain("## Workflow\nLikes short answers.");
+    expect(out.startsWith("# About Me\n")).toBe(true);
+  });
+
   it("clears the field when value is empty (preserves the bullet)", () => {
     const input = "# About Me\n\n- Name: Alex\n";
     const out = setUserScalarField(input, "Name", "");

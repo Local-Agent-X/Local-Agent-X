@@ -36,7 +36,7 @@ export function createHandlerTools(): ToolDefinition[] {
     },
     {
       name: "agent_pause",
-      description: "Pause a running agent's execution.",
+      description: "Pause a running agent's execution. Takes effect at the agent's next turn boundary (its in-flight tool call finishes first); agent_resume continues it.",
       parameters: {
         type: "object",
         properties: {

@@ -10,18 +10,19 @@
  * that never trashed anything.
  *
  * The discriminator is the SESSION ID, not the op type. Op type alone is
- * wrong: op_submit_async runs AND tracks its delegated ops under the
- * ORIGINATING chat session (ops/tools/shared.ts delegatedRuntimeSessionId =
- * originatingSessionId || opId), and chat-turn delete_file trashes into that
- * same per-session scope — so a background op completing BETWEEN turns finds
- * no live chat_turn peer and would close the CHAT session's scope, silently
- * downgrading chat trash from the 30-day retention window to the 24h
- * closed-TTL. A user-surface session's scope (chat, ide-, cron-, telegram/
- * whatsapp bridges, voice) is therefore NEVER auto-closed, whatever op
- * traffic it carries — it rides safe-delete's ordinary retention. Only
- * isWorkerScopedSession sessions close. (Unattended delegated ops with no
- * originating session run under their op id and are never tracked in the
- * session map, so they too fall to the retention backstop.)
+ * wrong: op_submit_async TRACKS its delegated ops under the ORIGINATING chat
+ * session (ops/tools/shared.ts delegatedOwnerSessionId = originatingSessionId
+ * || opId), and chat-turn delete_file trashes into that session's scope — so
+ * a background op completing BETWEEN turns finds no live chat_turn peer and
+ * would close the CHAT session's scope, silently downgrading chat trash from
+ * the 30-day retention window to the 24h closed-TTL. A user-surface session's
+ * scope (chat, ide-, cron-, telegram/whatsapp bridges, voice) is therefore
+ * NEVER auto-closed, whatever op traffic it carries — it rides safe-delete's
+ * ordinary retention. Only isWorkerScopedSession sessions close. (A delegated
+ * worker's OWN tool runtime runs under its op id — a build worker's
+ * delete_file trashes into an `op_…` scope, which is not worker-family by
+ * prefix and is never tracked in the session map, so it falls to the
+ * retention backstop like an unattended op.)
  *
  * The interactive-host-op check is a belt on top: even for a worker-family
  * session, a chat_turn/voice_turn terminal is one reply turn ending, never a

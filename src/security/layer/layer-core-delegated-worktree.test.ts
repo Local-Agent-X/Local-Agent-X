@@ -6,6 +6,7 @@ import { CAN_CREATE_DIRECTORY_LINK } from "../../symlink-capabilities.test-helpe
 import { SecurityLayer } from "./layer-core.js";
 import { blockedSelfVerifyGuidance } from "../../tool-execution/shell-block-guidance.js";
 import { unattendedShellBlock } from "../../tool-execution/unattended-shell-gate.js";
+import { clearSessionWorkRoot, setSessionWorkRoot } from "../../workspace/paths.js";
 
 // The delegated-shell gate reads getSandboxStatus().confined / .delegatedShellAllowed;
 // mock ONLY that export (spread the rest of the real module) so we can pin
@@ -147,6 +148,57 @@ describe("delegated worktree gate — canonical classification + work-root provi
       sessionId: "agent-sym",
     });
     expect(d.allowed, d.reason).toBe(true);
+  });
+});
+
+// A build worker submitted with a work root (ops/tools/shared.ts
+// configureDelegatedRuntime): the root is an allowed path on its SecurityLayer
+// AND the session's registered work root, both under the op id. The existing
+// gate — not a new check — is what confines it.
+describe("build worker confined to its work root under the op id", () => {
+  const OP = "op_build_worker_gate";
+  // A sibling of the workspace: inside the repo but not user content, so the
+  // gate requires isolation and the allowed path is what grants it.
+  const ROOT = join(WORKSPACE_ROOT, "proj");
+  const delegated = (sec: SecurityLayer, toolName: string, args: Record<string, unknown>) =>
+    sec.evaluate({ toolName, args, sessionId: OP, callContext: "delegated" });
+  const withWorkRoot = (fn: (sec: SecurityLayer) => void, registerRoot = true) => {
+    mkdirSync(ROOT, { recursive: true });
+    const sec = makeLayer();
+    sec.addAllowedPath(ROOT, OP);
+    if (registerRoot) setSessionWorkRoot(OP, ROOT);
+    try { fn(sec); } finally { clearSessionWorkRoot(OP); sec.removeAllowedPath(ROOT, OP); }
+  };
+
+  it("a write inside the work root passes; the same write under the parent chat's session is refused", () => {
+    withWorkRoot((sec) => {
+      expect(delegated(sec, "write", { path: join(ROOT, "src", "index.ts"), content: "x" }).allowed).toBe(true);
+      expect(delegated(sec, "edit", { path: join(ROOT, "README.md"), old_string: "a", new_string: "b" }).allowed).toBe(true);
+      const parent = sec.evaluate({ toolName: "write", args: { path: join(ROOT, "src", "index.ts"), content: "x" }, sessionId: "chat-parent", callContext: "delegated" });
+      expect(parent.allowed).toBe(false);
+    });
+  });
+
+  it("a write outside the work root is refused", () => {
+    withWorkRoot((sec) => {
+      const d = delegated(sec, "write", { path: join(WORKSPACE_ROOT, "src", "index.ts"), content: "x" });
+      expect(d.allowed).toBe(false);
+      expect(delegated(sec, "delete_file", { path: join(WORKSPACE_ROOT, "src", "index.ts") }).allowed).toBe(false);
+    });
+  });
+
+  it("bash passes on an unconfined host only because the work root scopes the run", () => {
+    setHostFallback();
+    withWorkRoot((sec) => {
+      expect(delegated(sec, "bash", { command: "npm test" }).allowed).toBe(true);
+      expect(unattendedShellBlock("bash", "delegated", OP)).toBeNull();
+    });
+    withWorkRoot((sec) => {
+      const d = delegated(sec, "bash", { command: "npm test" });
+      expect(d.allowed).toBe(false);
+      expect(d.reason).toMatch(/scoped work root/);
+      expect(unattendedShellBlock("bash", "delegated", OP)).not.toBeNull();
+    }, false);
   });
 });
 

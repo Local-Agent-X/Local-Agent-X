@@ -68,6 +68,10 @@ export interface ContextPack {
     authSource?: CredentialSource;
     /** Caller-declared target pin. Absence means preference/default, not a pin. */
     targetPin?: TargetPin;
+    /** Build-lane mutation scope: the one directory the worker's write family
+     *  and shell are confined to (ops/tools/work-root.ts). Absent on the
+     *  read-only lanes. */
+    workRoot?: string;
   };
   /** Content-free prompt sizing captured before dispatch and persisted with the op. */
   promptTelemetry?: PromptTelemetry;
@@ -192,7 +196,14 @@ export interface ExactDelegatedRuntimeDescriptor {
   runtime: DelegatedProviderRuntime;
   target: DelegatedRuntimeTarget;
   capabilitySnapshot?: PersistedTargetCapabilitySnapshot;
+  /** The worker's tool-runtime session: the key its allowed paths, work root,
+   *  `_sessionId` stamp, approvals and lineage registries live under. For an
+   *  op_submit worker this is the op id. */
   sessionId?: string;
+  /** The conversation that submitted the worker — where its progress, cards
+   *  and completion route, and the session `canonical.sessionId` carries.
+   *  Absent for an unattended submission (then `sessionId` is both). */
+  parentSessionId?: string;
   surface?: DelegatedRuntimeSurface;
   integrity: { scheme: "hmac-sha256-v1"; mac: string };
 }

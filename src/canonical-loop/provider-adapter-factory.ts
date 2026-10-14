@@ -79,7 +79,15 @@ function identityMismatch(code: string): never {
   throw new RuntimeIdentityMismatchError(code);
 }
 
-type RuntimeIdentity = Omit<ExactDelegatedRuntimeDescriptor, "kind" | "adapter" | "sessionId" | "surface" | "integrity">;
+type RuntimeIdentity = Omit<ExactDelegatedRuntimeDescriptor, "kind" | "adapter" | "sessionId" | "parentSessionId" | "surface" | "integrity">;
+
+/** The session an op's record binds to (`canonical.sessionId`): the submitting
+ *  conversation when the descriptor names one, else the worker's own runtime
+ *  session. Recovery and backend eligibility compare against THIS, so a worker
+ *  whose tool runtime runs under its op id still matches its parent-bound record. */
+export function descriptorOwnerSessionId(descriptor: Pick<ExactDelegatedRuntimeDescriptor, "sessionId" | "parentSessionId">): string | undefined {
+  return descriptor.parentSessionId ?? descriptor.sessionId;
+}
 
 export interface ResolvedProviderRuntime {
   identity: RuntimeIdentity;
@@ -238,6 +246,7 @@ export function assertExactDelegatedRuntime(value: unknown): asserts value is Ex
   if (!isProviderId(d.provider) || !isProviderId(d.credentialProvider) || typeof d.model !== "string" || !d.model.trim()) throw new Error("invalid delegated provider/model identity");
   if (!isCredentialSource(d.authSource) || !isRuntime(d.runtime)) throw new Error("invalid delegated credential/runtime identity");
   if (d.sessionId !== undefined && typeof d.sessionId !== "string") throw new Error("invalid delegated session identity");
+  if (d.parentSessionId !== undefined && typeof d.parentSessionId !== "string") throw new Error("invalid delegated parent session identity");
   if (d.integrity?.scheme !== "hmac-sha256-v1" || !isFingerprint(d.integrity.mac)) throw new Error("invalid delegated runtime integrity metadata");
   if (d.surface !== undefined) assertSurface(d.surface);
   if (!isTarget(d.target)) throw new Error("invalid delegated runtime target");

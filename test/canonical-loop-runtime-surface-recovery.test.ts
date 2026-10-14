@@ -66,6 +66,7 @@ import {
 import { verifyDelegatedRuntimeIntegrity, sealDelegatedRuntime } from "../src/canonical-loop/runtime-integrity.js";
 import { readOp, writeOp } from "../src/ops/op-store.js";
 import { sessionWorkRootOf } from "../src/workspace/paths.js";
+import { _resetSessionOwnerRegistry, resolveBrowserSessionId } from "../src/browser/session-owner-registry.js";
 import type { DelegatedRuntimeSurface, Op } from "../src/ops/types.js";
 
 let dataDir: string;
@@ -81,7 +82,7 @@ function tool(name: string): ToolDefinition {
   };
 }
 
-function recoveredOp(surface: DelegatedRuntimeSurface): Op {
+function recoveredOp(surface: DelegatedRuntimeSurface, identity: { sessionId: string; parentSessionId?: string } = { sessionId: "session-recovered" }): Op {
   const op = {
     id: "op_runtime_surface_recovery",
     type: "freeform",
@@ -94,7 +95,7 @@ function recoveredOp(surface: DelegatedRuntimeSurface): Op {
     createdAt: new Date().toISOString(),
     attemptCount: 1,
     model: "exact-model",
-    canonical: { state: "queued", flagValue: true, sessionId: "session-recovered" },
+    canonical: { state: "queued", flagValue: true, sessionId: identity.parentSessionId ?? identity.sessionId },
     contextPack: {},
   } as Op;
   op.runtimeDescriptor = sealDelegatedRuntime(op.id, {
@@ -106,7 +107,7 @@ function recoveredOp(surface: DelegatedRuntimeSurface): Op {
     model: "exact-model",
     runtime: "codex",
     target: { kind: "provider-registry", endpointFingerprint: "a".repeat(64) },
-    sessionId: "session-recovered",
+    ...identity,
     surface,
   });
   return op;
@@ -126,6 +127,7 @@ beforeEach(() => {
 
 afterEach(() => {
   mocks.cleanup?.();
+  _resetSessionOwnerRegistry();
   if (priorDataDir === undefined) delete process.env.LAX_DATA_DIR;
   else process.env.LAX_DATA_DIR = priorDataDir;
   rmSync(dataDir, { recursive: true, force: true });
@@ -225,6 +227,68 @@ describe("recovered delegated runtime surface", () => {
     mocks.cleanup?.();
     mocks.cleanup = null;
     expect(sessionWorkRootOf("session-recovered")).toBeUndefined();
+  });
+
+  // An op_submit worker: tool runtime keyed by its op id, record bound to the
+  // submitting chat. Recovery must restore the work root and the allowed path
+  // under the OP id, route progress to the chat, and re-bind the browser owner.
+  it("restores a build worker under its op id while routing progress to the parent chat", () => {
+    const read = tool("read");
+    const write = tool("write");
+    mocks.tools.set(read.name, read);
+    mocks.tools.set(write.name, write);
+    const surface: DelegatedRuntimeSurface = {
+      kind: "agent-runner",
+      systemPrompt: "resume the build",
+      tools: [{ name: read.name, fingerprint: toolFingerprint(read) }, { name: write.name, fingerprint: toolFingerprint(write) }],
+      security: {
+        workspace: "C:\\workspace",
+        fileAccessMode: "workspace",
+        inlineEvalPolicy: "refuse",
+        allowedPaths: [{ sessionId: "op_runtime_surface_recovery", path: workRoot }],
+        sessionWorkRoot: workRoot,
+        configFingerprint: "f".repeat(64),
+      },
+      threatEngine: false,
+      rbac: false,
+      callContext: "delegated",
+    };
+    const op = recoveredOp(surface, { sessionId: "op_runtime_surface_recovery", parentSessionId: "session-parent" });
+    writeOp(op);
+
+    expect(rehydrateAgentRuntimeSurface(op, surface)).toBe("resume the build");
+    expect(sessionWorkRootOf("op_runtime_surface_recovery")).toBeTruthy();
+    expect(sessionWorkRootOf("session-parent")).toBeUndefined();
+    const options = mocks.dispatcherOptions as { sessionId: string; onEvent: (event: unknown) => void };
+    expect(options.sessionId).toBe("op_runtime_surface_recovery");
+    options.onEvent({ type: "agent_progress", text: "writing" });
+    expect(mocks.broadcasts).toEqual([{ sessionId: "session-parent", event: { type: "agent_progress", text: "writing" } }]);
+    expect(resolveBrowserSessionId("op_runtime_surface_recovery")).toBe("session-parent");
+    mocks.cleanup?.();
+    mocks.cleanup = null;
+    expect(sessionWorkRootOf("op_runtime_surface_recovery")).toBeUndefined();
+  });
+
+  it("refuses an allowed path claimed for the parent session on a worker keyed by its op id", () => {
+    const read = tool("read");
+    mocks.tools.set(read.name, read);
+    const surface: DelegatedRuntimeSurface = {
+      kind: "agent-runner",
+      systemPrompt: "resume exactly",
+      tools: [{ name: read.name, fingerprint: toolFingerprint(read) }],
+      security: {
+        workspace: "C:\\workspace",
+        fileAccessMode: "workspace",
+        inlineEvalPolicy: "refuse",
+        allowedPaths: [{ sessionId: "session-parent", path: workRoot }],
+        configFingerprint: "f".repeat(64),
+      },
+      threatEngine: false,
+      rbac: false,
+      callContext: "delegated",
+    };
+    const op = recoveredOp(surface, { sessionId: "op_runtime_surface_recovery", parentSessionId: "session-parent" });
+    expect(() => rehydrateAgentRuntimeSurface(op, surface)).toThrow("cross_session_authority");
   });
 
   it("keeps the prior signed tool surface when resealing cannot verify integrity", () => {

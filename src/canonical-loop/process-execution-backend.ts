@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { getRuntimeConfig } from "../config.js";
 import type { ExactDelegatedRuntimeDescriptor, Op } from "../ops/types.js";
 import { unifiedRegistry } from "../tools/registry.js";
+import { descriptorOwnerSessionId } from "./provider-adapter-factory.js";
 import type {
   ExecutionBackend,
   ExecutionBackendStartRequest,
@@ -77,7 +78,7 @@ export class ProcessExecutionBackend implements ExecutionBackend {
       && descriptor.surface?.kind === "agent-runner"
       && descriptor.surface.tools.every(saved =>
         unifiedRegistry.getEntry(saved.name)?.workerReconstructible === true)
-      && op.canonical?.sessionId === descriptor.sessionId
+      && op.canonical?.sessionId === descriptorOwnerSessionId(descriptor)
       && op.type !== "chat_turn"
       && op.type !== "voice_turn"
       && !op.type.startsWith("app_build")

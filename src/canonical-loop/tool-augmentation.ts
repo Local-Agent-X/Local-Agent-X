@@ -38,10 +38,20 @@ import type { ToolDefinition } from "../types.js";
 import type { CallContext } from "../tool-execution/context.js";
 import { unifiedRegistry } from "../tools/registry.js";
 import { registerToolsForOp } from "./runtime.js";
-import { isDeniedForDelegatedWorker } from "../ops/tools/delegated-toolset.js";
+import { isDeniedForDelegatedWorker, type DelegatedBelt } from "../ops/tools/delegated-toolset.js";
+import { readOp } from "../ops/op-store.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("canonical-loop.tool-augmentation");
+
+/** The belt the op was spawned with, read from its record: lane plus the
+ *  build lane's work root. Both are durable on the op, so the denylist
+ *  answers the same at augmentation as it did at spawn. */
+function beltForOp(opId: string): DelegatedBelt | undefined {
+  const op = readOp(opId);
+  if (!op || op.lane === "agent") return undefined;
+  return { lane: op.lane, workRoot: op.contextPack?.routing?.workRoot };
+}
 
 /** The one admission path. Returns the tools newly added to `toolMap`. */
 function admit(
@@ -53,11 +63,12 @@ function admit(
   via: string,
 ): ToolDefinition[] {
   const discovered: ToolDefinition[] = [];
+  const belt = callContext === "delegated" ? beltForOp(opId) : undefined;
   for (const name of names) {
     if (!name || toolMap.has(name) || discovered.some((t) => t.name === name)) continue;
     // Denylist holds at AUGMENTATION time, not just spawn time: a delegated
     // worker must not search — or name — its way back to a denied tool.
-    if (callContext === "delegated" && isDeniedForDelegatedWorker(name)) {
+    if (callContext === "delegated" && isDeniedForDelegatedWorker(name, belt)) {
       logger.warn(`[augment] blocked denied tool '${name}' for delegated worker op=${opId.slice(0, 12)} (${via})`);
       continue;
     }

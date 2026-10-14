@@ -23,14 +23,15 @@ import {
 import { SecurityLayer } from "../../security/index.js";
 import { loadFileAccessModeAtLeast } from "../../security/layer/index.js";
 import { loadToolPolicy } from "../../tool-policy/index.js";
-import { DELEGATED_WORKER_PROMPT } from "../../server/background-jobs/prompts.js";
+import { delegatedWorkerPrompt } from "../../server/background-jobs/prompts.js";
 import { buildContextPack } from "../context-pack-builder.js";
 import { getRetryPolicy } from "../heartbeat.js";
 import { newOpId } from "../op-store.js";
 import { delegationFrom } from "../delegation.js";
 import { broadcastToSession, readRecentSessionMessages } from "../session-bridge.js";
 import { delegatedToolsetForOp } from "./delegated-toolset.js";
-import { resolveAgentPath } from "../../workspace/paths.js";
+import { resolveSubmittedWorkRoot } from "./work-root.js";
+import { clearSessionWorkRoot, resolveAgentPath, setSessionWorkRoot } from "../../workspace/paths.js";
 import type { Op, OpLane, OpVisibility } from "../types.js";
 
 export interface SubmitArgs {
@@ -43,6 +44,7 @@ export interface SubmitArgs {
   scope_hint?: string;
   memory_query?: string;
   lane?: OpLane;
+  work_root?: string;
   preferred_provider?: string;
   max_iterations?: number;
   max_wall_time_ms?: number;
@@ -54,12 +56,21 @@ export interface SubmitArgs {
  * Resolve and pin the exact provider/model/runtime before persistence, then
  * install the matching per-op factory. Recovery can rebuild this identity
  * without consulting whatever provider settings happen to exist later.
+ *
+ * Two session ids, deliberately: the worker's TOOL RUNTIME runs under its
+ * own op id — its allowed paths, work root, `_sessionId` stamp, approvals,
+ * taint and trash scope are keyed there — while `parentSessionId` (the
+ * submitting conversation, "" when unattended) is where progress routes and
+ * what the op record binds to. Registering a build worker's work root under
+ * the parent's id would re-anchor the parent chat's own file tools for the
+ * worker's lifetime; app-build ops (tools/build-app-runtime.ts) split the
+ * ids the same way. canonical-loop/delegated-session-lineage.ts carries what
+ * must still cross between them (browser ownership, lineage at terminal).
  */
 export async function configureDelegatedRuntime(
   op: Op,
-  sessionId: string,
+  parentSessionId: string,
 ): Promise<void> {
-  if (!sessionId) throw new Error("delegated runtime session id is required");
   const dataDir = getLaxDir();
   const resolved = await resolveProvider(
     getRuntimeConfig(),
@@ -86,62 +97,84 @@ export async function configureDelegatedRuntime(
   // rebuilds tools/dispatcher from it after a restart or in a process worker.
   // "agent"-lane ops (none reach this path today) fall back to the read-only
   // interactive belt rather than failing the submission.
+  const workRoot = op.contextPack.routing.workRoot;
   const tools = delegatedToolsetForOp(
     op.lane === "build" ? "build" : op.lane === "background" ? "background" : "interactive",
+    { workRoot },
   );
+  const systemPrompt = delegatedWorkerPrompt(workRoot);
   // Same construction recovery performs: a fresh SecurityLayer over the
   // configured workspace (file-access honors the user's global setting,
   // floored at "workspace" — the cron background-job posture) and the live
   // on-disk tool policy.
   const security = new SecurityLayer(getRuntimeConfig().workspace, loadFileAccessModeAtLeast("workspace"));
   const toolPolicy = loadToolPolicy(dataDir);
+  // The build lane's mutation scope, registered BEFORE the surface is built
+  // so recovery restores both (runtimeIdentity captures the allowed path,
+  // the surface the work root). Keyed by the worker's own session (op.id):
+  // the allowed path dies with this SecurityLayer instance, the work root is
+  // cleared at terminal (state-machine.ts finalizeTerminalState).
+  if (workRoot) {
+    security.addAllowedPath(workRoot, op.id);
+    setSessionWorkRoot(op.id, workRoot);
+  }
   const surfaceOptions = {
-    systemPrompt: DELEGATED_WORKER_PROMPT,
+    systemPrompt,
     tools,
     security,
     toolPolicy,
     callContext: "delegated" as const,
   };
-  op.runtimeDescriptor = sealDelegatedRuntime(op.id, {
-    kind: "delegated-op",
-    adapter: "provider-exact",
-    ...runtime.identity,
-    authSource,
-    sessionId,
-    surface: buildAgentRuntimeSurface(surfaceOptions, sessionId),
-  });
-  op.model = runtime.identity.model;
-  // buildOpFromArgs built the pack before the credential was known. Stamp the
-  // resolved source now: cost-recording.ts books the ledger row under it and
-  // checkpoint-stop.ts judges the spend ceiling by it (undefined bills as real
-  // spend). src/ops/context-pack-auth-source.test.ts pins this stamp.
-  op.contextPack.routing.authSource = authSource;
-  const factory = await createProviderAdapterFactory(op.runtimeDescriptor, {
-    apiKey,
-    authSource,
-    customBaseURL: resolved.customBaseURL,
-    sessionId: sessionId || undefined,
-    systemPrompt: DELEGATED_WORKER_PROMPT,
-    // Recovery derives this from surface.kind === "agent-runner"; set it here
-    // too so first-run and recovered turns force tools identically.
-    requireToolOnFirstTurn: true,
-  });
-  registerAdapterForOp(op.id, factory);
-  // First-run in-process registration: dispatcher + tool list are live
-  // immediately (recovery rehydrates the same runtime from the surface).
-  installOpToolRuntime(op, {
-    tools,
-    security,
-    toolPolicy,
-    sessionId,
-    callContext: "delegated",
-    onEvent: event => broadcastToSession(sessionId, event),
-  });
+  try {
+    op.runtimeDescriptor = sealDelegatedRuntime(op.id, {
+      kind: "delegated-op",
+      adapter: "provider-exact",
+      ...runtime.identity,
+      authSource,
+      sessionId: op.id,
+      ...(parentSessionId ? { parentSessionId } : {}),
+      surface: buildAgentRuntimeSurface(surfaceOptions, op.id),
+    });
+    op.model = runtime.identity.model;
+    // buildOpFromArgs built the pack before the credential was known. Stamp the
+    // resolved source now: cost-recording.ts books the ledger row under it and
+    // checkpoint-stop.ts judges the spend ceiling by it (undefined bills as real
+    // spend). src/ops/context-pack-auth-source.test.ts pins this stamp.
+    op.contextPack.routing.authSource = authSource;
+    const factory = await createProviderAdapterFactory(op.runtimeDescriptor, {
+      apiKey,
+      authSource,
+      customBaseURL: resolved.customBaseURL,
+      sessionId: op.id,
+      systemPrompt,
+      // Recovery derives this from surface.kind === "agent-runner"; set it here
+      // too so first-run and recovered turns force tools identically.
+      requireToolOnFirstTurn: true,
+    });
+    registerAdapterForOp(op.id, factory);
+    // First-run in-process registration: dispatcher + tool list are live
+    // immediately (recovery rehydrates the same runtime from the surface).
+    const ownerSessionId = delegatedOwnerSessionId(op.id, parentSessionId);
+    installOpToolRuntime(op, {
+      tools,
+      security,
+      toolPolicy,
+      sessionId: op.id,
+      ...(parentSessionId ? { parentSessionId } : {}),
+      callContext: "delegated",
+      onEvent: event => broadcastToSession(ownerSessionId, event),
+    });
+  } catch (e) {
+    if (workRoot) clearSessionWorkRoot(op.id);
+    throw e;
+  }
 }
 
-/** Every recoverable delegated op needs a durable session identity, including
- * unattended submissions that have no originating chat session. */
-export function delegatedRuntimeSessionId(opId: string, originatingSessionId: string): string {
+/** The session an op's record binds to (`canonical.sessionId`, the session
+ * bridge, the cost ledger): the submitting conversation, or the op's own id
+ * for an unattended submission. NOT the worker's tool-runtime session — that
+ * is always op.id (configureDelegatedRuntime). */
+export function delegatedOwnerSessionId(opId: string, originatingSessionId: string): string {
   return originatingSessionId || opId;
 }
 
@@ -167,6 +200,9 @@ export async function buildOpFromArgs(rawArgs: Record<string, unknown>): Promise
   const preferredProvider = typeof args.preferred_provider === "string"
     ? args.preferred_provider
     : undefined;
+  // Vetted before the pack is built so a refused build submission costs
+  // nothing (no AGENTS.md walk, no memory search). Throws WorkRootRefused.
+  const workRoot = resolveSubmittedWorkRoot(args.work_root, lane, sessionId || undefined);
 
   const contextPack = await buildContextPack({
     description: task,
@@ -196,6 +232,10 @@ export async function buildOpFromArgs(rawArgs: Record<string, unknown>): Promise
     ? Array.from(new Set(args.pre_blessed_secrets.map((n) => normalizeSecretName(String(n))).filter(Boolean)))
     : [];
   if (preBlessed.length) contextPack.secrets.preBlessed = preBlessed;
+  // Durable on the op record: configureDelegatedRuntime registers it, the
+  // belt chooser and augmentation denylist read it, and the AGENTS panel can
+  // show where the worker was allowed to write.
+  if (workRoot) contextPack.routing.workRoot = workRoot;
 
   return {
     id: newOpId(`op_${opType}`),
@@ -229,7 +269,8 @@ export const submitParameters = {
     context_files: { type: "array", items: { type: "string" }, description: "File paths to pre-load into the worker's context." },
     scope_hint: { type: "string", description: "File or directory hint for AGENTS.md walking + context bootstrapping." },
     memory_query: { type: "string", description: "If set, pre-fetch memory hits matching this query." },
-    lane: { type: "string", enum: ["interactive", "build", "background"], description: "Which lane to schedule on. CHOOSE EXPLICITLY — do not omit. interactive: pure reasoning, Q&A, summarization, research synthesis, status checks, planning, reviewing, explaining, non-mutating analysis (the worker does NOT touch files, run builds, or change repo state). build: code edits, app builds, file writes, repo changes, long implementation, shell/test work, anything that mutates the workspace. background: scheduled / low-priority recurring jobs. If unsure, prefer 'interactive' for any read-only / advisory task and 'build' for any task that produces or modifies artifacts. Fallback when omitted is 'build' for safety, but you should still pick explicitly." },
+    lane: { type: "string", enum: ["interactive", "build", "background"], description: "Which lane to schedule on. CHOOSE EXPLICITLY — do not omit. interactive: pure reasoning, Q&A, summarization, research synthesis, status checks, planning, reviewing, explaining, non-mutating analysis — the worker gets read/search/web tools only and can NOT write files or run commands. build: code edits, app builds, file writes, refactors, shell/test work, anything that mutates files — the worker gets write/edit/multi_edit/edit_lines/delete_file/restore_file and bash, confined to `work_root` (name the project folder; omitted = your own work root, else the whole workspace). background: scheduled / low-priority recurring jobs (read-only belt). If unsure, prefer 'interactive' for any read-only / advisory task and 'build' (with work_root) for any task that produces or modifies files. Fallback when omitted is 'build'." },
+    work_root: { type: "string", description: "Build lane: the ONE existing directory the worker may write to and run commands in — e.g. 'apps/<name>' (workspace-relative) or an absolute path. Name the project folder so the worker cannot touch anything else; omitted, the worker gets your own work root (an IDE / project session), else the whole workspace. Must be inside the workspace (or inside your own project root when you have one); anything else is refused. The worker's relative paths and its bash cwd anchor here, and writes outside it are blocked. Ignored on the other lanes." },
     preferred_provider: { type: "string", description: "Optional provider id (e.g., 'httpKeyOpenAi', 'cliOauthAnthropic')." },
     max_iterations: { type: "number", description: "Cap on agent iterations. Default 30." },
     max_wall_time_ms: { type: "number", description: "Hard wall-time cap. Default 900000 (15 min)." },

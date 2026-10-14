@@ -11,7 +11,7 @@
 //
 //   1. THE OP ID → chat vs delegated. Delegated/cron/build workers inherit the
 //      originating chat session id (ops/tools/shared.ts
-//      delegatedRuntimeSessionId), so marking by session id alone lets a
+//      delegatedOwnerSessionId), so marking by session id alone lets a
 //      BACKGROUND op hold the user's chat lock for its whole life — refusing
 //      the user's next message to protect a turn replacing would never have
 //      touched.
@@ -325,7 +325,7 @@ describe("dispatchTools feeds the session turn lock", () => {
   });
 
   it("a DELEGATED background op never marks the chat session it inherited", async () => {
-    // delegatedRuntimeSessionId(opId, sessionId) returns the ORIGINATING chat
+    // delegatedOwnerSessionId(opId, sessionId) returns the ORIGINATING chat
     // session for any op submitted from a chat turn, and that id is what the
     // worker's runtime is built with. So the background op below carries the
     // user's session id verbatim — the exact shape that poisoned innocent turns.

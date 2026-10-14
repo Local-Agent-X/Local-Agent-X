@@ -275,7 +275,7 @@ export function evaluateFileAccess(
       // touch these. SYSTEM_DIR_PATTERNS is the SHARED authority (also the shell
       // rm catastrophic floor) so "system directory" means the same thing for
       // writes and deletes.
-      if (action === "write" || action === "edit") {
+      if (changesFile(action)) {
         for (const sysDir of SYSTEM_DIR_PATTERNS) {
           if (sysDir.test(realPath)) {
             return { allowed: false, reason: `Blocked: cannot write to system directory even in unrestricted mode`, userHint: USER_HINTS.fileSystem };
@@ -291,8 +291,10 @@ export function evaluateFileAccess(
       }
       // Reads: allowed everywhere
     } else {
-      // Workspace + Common modes: block writes outside workspace (allow worktree paths)
-      if (action === "write" || action === "edit") {
+      // Workspace + Common modes: block writes outside workspace (allow worktree
+      // paths). A delete_file is a write under another spelling: the read
+      // branch below let it reach anything readable in these modes.
+      if (changesFile(action)) {
         const inWt = allowedPathCheck(realPath, sessionId);
         if (!inWt) return { allowed: false, reason: "Blocked: cannot write files outside workspace directory", userHint: USER_HINTS.fileSystem };
       }
@@ -328,9 +330,9 @@ export function evaluateFileAccess(
     }
   }
 
-  // Block writes/edits to core agent files — CODE ENFORCED, not just documented
-  // Even if the AI is prompt-injected, it CANNOT weaken its own security
-  if (action === "write" || action === "edit") {
+  // Block writes/edits/deletes to core agent files — CODE ENFORCED, not just
+  // documented. Even if the AI is prompt-injected, it CANNOT weaken its own security
+  if (changesFile(action)) {
     // Credential/secret files — sensitive in ANY project, so matched by pattern
     // everywhere (unanchored). The platform's ENGINE SOURCE (src/security.ts,
     // src/auth.ts, src/codex-client.ts, …) is deliberately NOT listed here: a

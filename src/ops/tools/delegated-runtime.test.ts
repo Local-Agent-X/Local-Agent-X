@@ -1,11 +1,14 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Op } from "../types.js";
+import { clearSessionWorkRoot, sessionWorkRootOf } from "../../workspace/paths.js";
 
 const fixture = vi.hoisted(() => ({
   register: vi.fn(),
   factory: vi.fn(() => ({ name: "exact-factory" })),
   createFactory: vi.fn(),
   installRuntime: vi.fn(),
+  beltCalls: [] as Array<{ lane: string; workRoot?: string }>,
+  allowed: [] as Array<{ path: string; sessionId?: string }>,
 }));
 
 vi.mock("../../config.js", () => ({ getRuntimeConfig: () => ({ workspace: "C:/tmp/lax/workspace" }) }));
@@ -46,6 +49,7 @@ vi.mock("../../canonical-loop/runtime-integrity.js", () => ({
 vi.mock("../../security/index.js", () => ({
   SecurityLayer: class {
     constructor(public workspace: string, public fileAccessMode: string) {}
+    addAllowedPath(path: string, sessionId?: string) { fixture.allowed.push({ path, sessionId }); }
   },
 }));
 vi.mock("../../security/layer/index.js", () => ({
@@ -55,21 +59,24 @@ vi.mock("../../tool-policy/index.js", () => ({
   loadToolPolicy: () => ({ runtimeFingerprint: () => "4".repeat(64) }),
 }));
 vi.mock("./delegated-toolset.js", () => ({
-  delegatedToolsetForOp: (lane: string) => [{
-    name: `read-${lane}`,
-    description: "read a file",
-    parameters: { type: "object" },
-    execute: async () => ({ content: "" }),
-  }],
+  delegatedToolsetForOp: (lane: string, opts: { workRoot?: string } = {}) => {
+    fixture.beltCalls.push({ lane, workRoot: opts.workRoot });
+    return [{
+      name: `read-${lane}`,
+      description: "read a file",
+      parameters: { type: "object" },
+      execute: async () => ({ content: "" }),
+    }];
+  },
 }));
 // Faithful-shape fake: mirrors what the real buildAgentRuntimeSurface derives
 // from its inputs, so the assertions below pin what shared.ts PASSES (system
-// prompt, toolset, call context) — the real derivation is covered by the
-// agent-runner suites.
+// prompt, toolset, call context, session key) — the real derivation is
+// covered by the agent-runner suites.
 vi.mock("../../canonical-loop/agent-runner/runtime-surface.js", () => ({
   buildAgentRuntimeSurface: (
     options: { systemPrompt: string; tools: Array<{ name: string }>; callContext?: string },
-    _sessionId: string,
+    sessionId: string,
   ) => ({
     kind: "agent-runner",
     systemPrompt: options.systemPrompt,
@@ -79,6 +86,7 @@ vi.mock("../../canonical-loop/agent-runner/runtime-surface.js", () => ({
       fileAccessMode: "workspace",
       inlineEvalPolicy: "refuse",
       allowedPaths: [],
+      ...(sessionWorkRootOf(sessionId) ? { sessionWorkRoot: sessionWorkRootOf(sessionId) } : {}),
       configFingerprint: "3".repeat(64),
     },
     toolPolicyFingerprint: "4".repeat(64),
@@ -90,16 +98,23 @@ vi.mock("../../canonical-loop/agent-runner/runtime-surface.js", () => ({
 }));
 
 fixture.createFactory.mockResolvedValue(fixture.factory);
-const { configureDelegatedRuntime, delegatedRuntimeSessionId } = await import("./shared.js");
-const { DELEGATED_WORKER_PROMPT } = await import("../../server/background-jobs/prompts.js");
+const { configureDelegatedRuntime, delegatedOwnerSessionId } = await import("./shared.js");
+const { DELEGATED_WORKER_PROMPT, delegatedBuildWorkerPrompt } = await import("../../server/background-jobs/prompts.js");
+
+afterEach(() => {
+  fixture.beltCalls.length = 0;
+  fixture.allowed.length = 0;
+  fixture.installRuntime.mockClear();
+  fixture.createFactory.mockClear();
+});
 
 describe("configureDelegatedRuntime", () => {
-  it("uses the op id as the durable session identity for unattended submissions", () => {
-    expect(delegatedRuntimeSessionId("op-unattended", "")).toBe("op-unattended");
-    expect(delegatedRuntimeSessionId("op-attended", "chat-session")).toBe("chat-session");
+  it("binds the op record to the submitting session, or to the op itself when unattended", () => {
+    expect(delegatedOwnerSessionId("op-unattended", "")).toBe("op-unattended");
+    expect(delegatedOwnerSessionId("op-attended", "chat-session")).toBe("chat-session");
   });
 
-  it("stamps and registers one authoritative provider/model/runtime identity", async () => {
+  it("stamps and registers one authoritative provider/model/runtime identity under the op's own session", async () => {
     const op = {
       id: "op-configure-exact",
       lane: "interactive",
@@ -119,7 +134,10 @@ describe("configureDelegatedRuntime", () => {
       model: "nondefault-local-model",
       runtime: "openai-compat",
       target: { kind: "local-config", endpointFingerprint: "1".repeat(64) },
-      sessionId: "session-exact",
+      // The worker's tool runtime is keyed by its op id; the submitting chat
+      // is carried separately so progress still routes there.
+      sessionId: "op-configure-exact",
+      parentSessionId: "session-exact",
       integrity: { scheme: "hmac-sha256-v1", mac: "0".repeat(64) },
     });
     // The descriptor now carries a durable surface — sealed IN the MAC — so
@@ -132,22 +150,64 @@ describe("configureDelegatedRuntime", () => {
     const tools = (surface as { tools: Array<{ name: string }> }).tools;
     expect(tools.length).toBeGreaterThan(0);
     expect(tools[0].name).toBe("read-interactive");
+    expect(fixture.beltCalls).toEqual([{ lane: "interactive", workRoot: undefined }]);
+    expect(fixture.allowed).toEqual([]);
     expect(fixture.createFactory).toHaveBeenCalledWith(op.runtimeDescriptor, {
       apiKey: "resolved-target-key",
       authSource: "sentinel",
       customBaseURL: undefined,
-      sessionId: "session-exact",
+      sessionId: "op-configure-exact",
       systemPrompt: DELEGATED_WORKER_PROMPT,
       requireToolOnFirstTurn: true,
     });
     expect(fixture.register).toHaveBeenCalledWith(op.id, fixture.factory);
-    // First-run in-process turns get a live dispatcher + tool list at once.
+    // First-run in-process turns get a live dispatcher + tool list at once,
+    // keyed by the op's session, with the parent threaded explicitly.
     expect(fixture.installRuntime).toHaveBeenCalledTimes(1);
     const [installedOp, installedOpts] = fixture.installRuntime.mock.calls[0];
     expect(installedOp).toBe(op);
-    expect(installedOpts).toMatchObject({ sessionId: "session-exact", callContext: "delegated" });
+    expect(installedOpts).toMatchObject({ sessionId: "op-configure-exact", parentSessionId: "session-exact", callContext: "delegated" });
     expect(installedOpts.tools.map((t: { name: string }) => t.name)).toEqual(["read-interactive"]);
     const durableState = JSON.stringify({ descriptor: op.runtimeDescriptor, telemetry: op.contextPack.promptTelemetry });
     expect(durableState).not.toContain("resolved-target-key");
+  });
+
+  it("an unattended submission carries no parent and routes nowhere else", async () => {
+    const op = {
+      id: "op-unattended-exact",
+      lane: "background",
+      contextPack: { routing: { lane: "background" } },
+    } as Op;
+
+    await configureDelegatedRuntime(op, "");
+
+    const descriptor = op.runtimeDescriptor as unknown as Record<string, unknown>;
+    expect(descriptor.sessionId).toBe("op-unattended-exact");
+    expect("parentSessionId" in descriptor).toBe(false);
+    const [, installedOpts] = fixture.installRuntime.mock.calls[0];
+    expect("parentSessionId" in installedOpts).toBe(false);
+  });
+
+  it("a build worker's work root is registered under the op id before the surface is built, and the build prompt is sealed", async () => {
+    const workRoot = "C:/tmp/lax/workspace/apps/proj";
+    const op = {
+      id: "op-build-exact",
+      lane: "build",
+      contextPack: { routing: { lane: "build", workRoot } },
+    } as Op;
+    try {
+      await configureDelegatedRuntime(op, "session-build");
+
+      expect(fixture.beltCalls).toEqual([{ lane: "build", workRoot }]);
+      expect(fixture.allowed).toEqual([{ path: workRoot, sessionId: "op-build-exact" }]);
+      expect(sessionWorkRootOf("op-build-exact")).toBeTruthy();
+      expect(sessionWorkRootOf("session-build")).toBeUndefined();
+      const surface = (op.runtimeDescriptor as unknown as { surface: { systemPrompt: string; security: { sessionWorkRoot?: string } } }).surface;
+      expect(surface.systemPrompt).toBe(delegatedBuildWorkerPrompt(workRoot));
+      expect(surface.security.sessionWorkRoot).toBe(sessionWorkRootOf("op-build-exact"));
+      expect(fixture.createFactory.mock.calls[0][1]).toMatchObject({ systemPrompt: delegatedBuildWorkerPrompt(workRoot) });
+    } finally {
+      clearSessionWorkRoot("op-build-exact");
+    }
   });
 });

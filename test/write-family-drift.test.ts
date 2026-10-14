@@ -4,6 +4,7 @@ import { CAPABILITY_CLASS_MEMBERS } from "../src/tool-registry.js";
 import { WORKTREE_REQUIRED_TOOLS } from "../src/security/layer/index.js";
 import { EDIT_TOOLS } from "../src/agent-guards/verify-gate.js";
 import { allTools } from "../src/tools/registry-build.js";
+import { BUILD_MUTATION_TOOLS } from "../src/ops/tools/delegated-toolset.js";
 
 // A new edit-family tool must join every capability set that gates the write
 // class BY NAME, or the class fails open under the new spelling: a
@@ -38,6 +39,16 @@ describe("write-family capability-set drift", () => {
   it("every workspace-write file tool triggers the verify (build-nudge) gate", () => {
     const missing = writeFamily.filter((t) => !EDIT_TOOLS.has(t));
     expect(missing, `source edits via these tools never nudge a build: ${missing.join(", ")}`).toEqual([]);
+  });
+
+  // The build worker's belt grants no authority of its own: every tool it
+  // adds must be one the delegated worktree gate inspects, or a worker would
+  // mutate outside its work root under that spelling.
+  it("every build-worker mutation tool requires worktree isolation for delegated agents", () => {
+    const missing = BUILD_MUTATION_TOOLS.filter((t) => !WORKTREE_REQUIRED_TOOLS.has(t));
+    expect(missing, `a build worker could mutate ungated via: ${missing.join(", ")}`).toEqual([]);
+    const registered = new Set(allTools.map((t) => t.name));
+    expect(BUILD_MUTATION_TOOLS.filter((t) => !registered.has(t))).toEqual([]);
   });
 
   it("every workspace-write file tool is actually registered in allTools", () => {

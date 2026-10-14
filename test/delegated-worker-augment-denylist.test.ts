@@ -18,14 +18,27 @@
  * constructed) — each test registers exactly the tools it needs and
  * unregisters them afterwards.
  */
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Audience, ToolDefinition } from "../src/types.js";
+import type { Op } from "../src/ops/types.js";
 import { unifiedRegistry } from "../src/tools/registry.js";
 import { augmentFromToolSearch } from "../src/canonical-loop/tool-augmentation.js";
 import { getToolsForOp, unregisterToolsForOp } from "../src/canonical-loop/runtime.js";
+import { writeOp } from "../src/ops/op-store.js";
 
 const registered: string[] = [];
 const ops: string[] = [];
+let priorDataDir: string | undefined;
+let dataDir: string;
+
+beforeEach(() => {
+  priorDataDir = process.env.LAX_DATA_DIR;
+  dataDir = mkdtempSync(join(tmpdir(), "augment-denylist-"));
+  process.env.LAX_DATA_DIR = dataDir;
+});
 
 function mkTool(name: string): ToolDefinition {
   return {
@@ -56,7 +69,35 @@ function toolSearchResult(names: string[]): string {
 afterEach(() => {
   for (const name of registered.splice(0)) unifiedRegistry.unregister(name);
   for (const opId of ops.splice(0)) unregisterToolsForOp(opId);
+  if (priorDataDir === undefined) delete process.env.LAX_DATA_DIR;
+  else process.env.LAX_DATA_DIR = priorDataDir;
+  rmSync(dataDir, { recursive: true, force: true });
 });
+
+/** A persisted delegated op record: the belt (lane + work root) augmentation
+ *  reads is the op's own, durable on disk. */
+function persistOp(opId: string, lane: Op["lane"], workRoot?: string): void {
+  writeOp({
+    id: opId,
+    type: "freeform",
+    task: "t",
+    lane,
+    retryPolicy: { maxRecoveryAttempts: 0, backoffMs: [] },
+    ownerId: "local-user",
+    visibility: "private",
+    status: "running",
+    createdAt: new Date().toISOString(),
+    attemptCount: 0,
+    contextPack: {
+      task: { description: "t", successCriteria: [], constraints: [], notWhatToRedo: [] },
+      context: { recentTurns: [], referencedFiles: [], memoryHits: [], agentsRules: "" },
+      capabilities: {},
+      budget: { maxIterations: 1, maxTokens: 0, maxWallTimeMs: 1, maxSelfEditCalls: 0 },
+      routing: { lane, ...(workRoot ? { workRoot } : {}) },
+      secrets: { allowed: [] },
+    },
+  });
+}
 
 describe("augmentFromToolSearch delegated denylist", () => {
   // A denied tool (op_submit_async — unbounded fan-out) and a benign
@@ -90,6 +131,37 @@ describe("augmentFromToolSearch delegated denylist", () => {
     expect(augmentedNames).toContain(ALLOWED);
     // And is re-registered on the op so the next request schema includes it.
     expect(getToolsForOp(opId).map((t) => t.name)).toEqual([ALLOWED]);
+  });
+
+  it("a build worker with a work root may re-acquire its mutation belt, and nothing else that is denied", () => {
+    registerAll([DENIED, ALLOWED, "write", "bash", "bulk_replace", "mission_schedule_create"]);
+    const opId = "op_delegated_build_0001";
+    ops.push(opId);
+    persistOp(opId, "build", "C:/ws/apps/proj");
+    const toolMap = new Map<string, ToolDefinition>();
+
+    augmentFromToolSearch(
+      toolSearchResult([DENIED, "write", "bash", "bulk_replace", "mission_schedule_create", ALLOWED]),
+      opId,
+      toolMap,
+      undefined,
+      "delegated",
+    );
+
+    expect([...toolMap.keys()].sort()).toEqual(["bash", ALLOWED, "write"].sort());
+    expect(getToolsForOp(opId).map((t) => t.name).sort()).toEqual(["bash", ALLOWED, "write"].sort());
+  });
+
+  it("a build worker WITHOUT a work root stays read-only at augmentation time", () => {
+    registerAll([ALLOWED, "write", "bash"]);
+    const opId = "op_delegated_build_0002";
+    ops.push(opId);
+    persistOp(opId, "build");
+    const toolMap = new Map<string, ToolDefinition>();
+
+    augmentFromToolSearch(toolSearchResult(["write", "bash", ALLOWED]), opId, toolMap, undefined, "delegated");
+
+    expect([...toolMap.keys()]).toEqual([ALLOWED]);
   });
 
   it("leaves discovery unfiltered for non-delegated context ('api')", () => {

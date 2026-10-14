@@ -34,7 +34,7 @@ import { withoutInternalArgs } from "../../tool-execution/internal-args.js";
 import {
   buildOpFromArgs,
   configureDelegatedRuntime,
-  delegatedRuntimeSessionId,
+  delegatedOwnerSessionId,
   submitParameters,
 } from "./shared.js";
 
@@ -110,7 +110,7 @@ async function runDependencyBatch(
   }
 
   for (const op of ops) {
-    await configureDelegatedRuntime(op, delegatedRuntimeSessionId(op.id, sessionId));
+    await configureDelegatedRuntime(op, sessionId);
   }
 
   const localIds = new Set(ops.map((op) => op.id));
@@ -127,9 +127,9 @@ async function runDependencyBatch(
   }
 
   const startedAt = new Map<string, number>();
-  const runtimeSessionIds = ordered.map(op => delegatedRuntimeSessionId(op.id, sessionId));
+  const ownerSessionIds = ordered.map(op => delegatedOwnerSessionId(op.id, sessionId));
   const admissionStartedAt = Date.now();
-  admitDependencyBatch(ordered, runtimeSessionIds);
+  admitDependencyBatch(ordered, ownerSessionIds);
   for (const op of ordered) {
     startedAt.set(op.id, admissionStartedAt);
     if (sessionId) trackOpForSession(op.id, sessionId, op.task);
@@ -175,11 +175,10 @@ async function runOneTask(
   }
   try {
     const op = await buildOpFromArgs(taskArgs(rawTask, sessionId, operationId));
-    const runtimeSessionId = delegatedRuntimeSessionId(op.id, sessionId);
-    await configureDelegatedRuntime(op, runtimeSessionId);
+    await configureDelegatedRuntime(op, sessionId);
 
     const startMs = Date.now();
-    canonicalLoopEntry(op, { sessionId: runtimeSessionId });
+    canonicalLoopEntry(op, { sessionId: delegatedOwnerSessionId(op.id, sessionId) });
     if (sessionId) trackOpForSession(op.id, sessionId, task);
     const result = await awaitCanonicalOp(op.id, PER_OP_TIMEOUT_MS);
     const wallMs = Date.now() - startMs;

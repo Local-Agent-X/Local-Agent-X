@@ -18,6 +18,8 @@
 | `op-store.ts` layout | `src/canonical-loop/runtime-failover.ts`, `src/routes/chat/run-chat-turn/canonical-run.ts` | `op-store.test.ts` |
 | `session-bridge.ts` | `src/canonical-loop/session-bridge-observer.ts` | none |
 | `context-pack-builder.ts` | `src/self-edit/agents-rules.ts` (same AGENTS.md walk), `tools/delegated-toolset.ts` | `context-pack-builder.test.ts` |
+| `tools/delegated-toolset.ts` (the worker belt, `BUILD_MUTATION_TOOLS`) | `src/canonical-loop/tool-augmentation.ts` (same denylist at tool_search time), `src/server/background-jobs/prompts.ts` (the belt the prompt describes), `tools/work-root.ts` (what unlocks the build belt) | `tools/delegated-toolset.test.ts`, `test/delegated-worker-augment-denylist.test.ts`, `test/write-family-drift.test.ts` |
+| `tools/shared.ts` session split (`sessionId: op.id` vs `parentSessionId`) | `src/canonical-loop/agent-runner/runtime-surface.ts` (recovery), `src/canonical-loop/delegated-session-lineage.ts`, `src/canonical-loop/runtime.ts` (`descriptorOwnerSessionId`) | `tools/delegated-runtime.test.ts`, `test/delegated-worker-toolset-e2e.test.ts` |
 | `redactor.ts` | `event-log.ts` | `event-log.test.ts` |
 
 ## Tests

@@ -159,6 +159,31 @@ describe("OP-4 — lost-registration discriminator (attemptCount, not disk turn)
     expect(factory).not.toBe(lostRegistrationAdapterFactory);
   });
 
+  it("rehydrates an op_submit worker whose tool runtime is keyed by its op id and whose record binds to the parent chat", () => {
+    const op = makeOp({ lane: "build", attemptCount: 1, model: "gpt-5.5", canonical: { sessionId: "session-chat" } });
+    const identity = {
+      kind: "delegated-op" as const,
+      adapter: "provider-exact" as const,
+      provider: "codex" as const,
+      credentialProvider: "codex" as const,
+      authSource: "oauth" as const,
+      model: "gpt-5.5",
+      runtime: "codex" as const,
+      target: codexTarget(),
+      sessionId: op.id,
+    };
+    op.runtimeDescriptor = sealDelegatedRuntime(op.id, { ...identity, parentSessionId: "session-chat" });
+    expect(rehydrateRecoveredRuntime(op)).toBe(true);
+    expect(resolveAdapterFactory(op)).not.toBe(lostRegistrationAdapterFactory);
+
+    // The parent binding is part of the sealed identity: a record whose session
+    // disagrees with it fails closed, as a swapped session always did.
+    const swapped = makeOp({ lane: "build", attemptCount: 1, model: "gpt-5.5", canonical: { sessionId: "session-other" } });
+    swapped.runtimeDescriptor = sealDelegatedRuntime(swapped.id, { ...identity, sessionId: swapped.id, parentSessionId: "session-chat" });
+    expect(rehydrateRecoveredRuntime(swapped)).toBe(false);
+    expect(resolveAdapterFactory(swapped)).toBe(lostRegistrationAdapterFactory);
+  });
+
   it("rejects a persisted model that disagrees with the operation model", () => {
     const op = makeOp({
       attemptCount: 1,

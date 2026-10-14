@@ -19,7 +19,7 @@ import { atomicWriteFileSync } from "../server-utils.js";
 import type { Adapter, AdapterReport, ToolDescriptor, TurnInput, TurnResult } from "./adapter-contract.js";
 import { NotConfiguredToolDispatcher, type ToolDispatcher } from "./tool-dispatch.js";
 import type { CanonicalLane } from "./types.js";
-import { assertExactDelegatedRuntime } from "./provider-adapter-factory.js";
+import { assertExactDelegatedRuntime, descriptorOwnerSessionId } from "./provider-adapter-factory.js";
 import { createRecoveredAdapterFactory, markRuntimeReconstructionTerminal } from "./runtime-reconstruction.js";
 import { readLatestOpTurn } from "./store.js";
 import { verifyDelegatedRuntimeIntegrity } from "./runtime-integrity.js";
@@ -216,7 +216,7 @@ export function rehydrateRecoveredRuntime(op: Op): boolean {
     descriptor = op.runtimeDescriptor;
     assertExactDelegatedRuntime(descriptor);
     if (op.model !== descriptor.model) throw new Error("operation model does not match persisted runtime identity");
-    if (!descriptor.sessionId || op.canonical?.sessionId !== descriptor.sessionId) throw new Error("operation session does not match persisted runtime identity");
+    if (!descriptor.sessionId || op.canonical?.sessionId !== descriptorOwnerSessionId(descriptor)) throw new Error("operation session does not match persisted runtime identity");
     const prior = readLatestOpTurn(op.id);
     const adapterIdentity = adapterIdentityForRuntime(descriptor.runtime);
     if (prior && (prior.providerState.adapterName !== adapterIdentity.name
@@ -243,7 +243,7 @@ function hasExactDelegatedRuntime(op: Op): boolean {
     assertExactDelegatedRuntime(op.runtimeDescriptor);
     return op.model === op.runtimeDescriptor.model
       && !!op.runtimeDescriptor.sessionId
-      && op.canonical?.sessionId === op.runtimeDescriptor.sessionId;
+      && op.canonical?.sessionId === descriptorOwnerSessionId(op.runtimeDescriptor);
   } catch {
     return false;
   }

@@ -6,7 +6,7 @@
  * headless synthetic runs). A user-surface session (chat, ide-, cron-,
  * bridges, voice) NEVER has its scope auto-closed, whatever op traffic it
  * carries — op_submit_async tracks delegated ops under the ORIGINATING chat
- * session (delegatedRuntimeSessionId = originating || opId), so an op-type
+ * session (delegatedOwnerSessionId = originating || opId), so an op-type
  * discriminator alone would let a background op completing BETWEEN turns
  * close the chat's scope (skeptic Q2d) and downgrade chat trash from the
  * 30-day retention to the 24h closed-TTL. Plus the wiring:
@@ -141,7 +141,7 @@ describe("trash-scope-observer — a worker session's last op closes its scope (
 describe("trash-scope-observer — user-surface scopes are NEVER auto-closed (skeptic Q2d)", () => {
   it("REGRESSION Q2d: a delegated op completing BETWEEN chat turns leaves the chat scope open", () => {
     // op_submit_async tracks the op under the ORIGINATING chat session
-    // (ops/tools/shared.ts delegatedRuntimeSessionId → originatingSessionId),
+    // (ops/tools/shared.ts delegatedOwnerSessionId → originatingSessionId),
     // and chat-turn delete_file trashed into that same scope. Between turns
     // there is no live chat_turn peer — pre-fix this closed the CHAT scope
     // and silently downgraded chat trash to the 24h closed-TTL.

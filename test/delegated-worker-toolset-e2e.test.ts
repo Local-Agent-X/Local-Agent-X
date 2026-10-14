@@ -118,7 +118,10 @@ import { buildTurnInput } from "../src/canonical-loop/turn-loop/build-input.js";
 import { NotConfiguredToolDispatcher } from "../src/canonical-loop/tool-dispatch.js";
 import { unifiedRegistry } from "../src/tools/registry.js";
 import { writeOp } from "../src/ops/op-store.js";
-import { DELEGATED_WORKER_PROMPT } from "../src/server/background-jobs/prompts.js";
+import { DELEGATED_WORKER_PROMPT, delegatedBuildWorkerPrompt } from "../src/server/background-jobs/prompts.js";
+import { BUILD_MUTATION_TOOLS } from "../src/ops/tools/delegated-toolset.js";
+import { clearSessionWorkRoot, realpathDeep, sessionWorkRootOf } from "../src/workspace/paths.js";
+import { _resetSessionOwnerRegistry, resolveBrowserSessionId } from "../src/browser/session-owner-registry.js";
 
 const SESSION_ID = "session-delegated-e2e";
 
@@ -130,6 +133,8 @@ const SESSION_ID = "session-delegated-e2e";
 const BELT = ["read", "glob", "grep", "web_search", "web_fetch", "tool_search", "view_image"];
 const MUST_CONTAIN = ["read", "web_search", "tool_search"];
 const DENIED = ["op_submit", "op_submit_async", "agent_spawn", "write", "edit", "bash", "mission_schedule_create"];
+// The rest of the build belt, registered so the build case can resolve all of it.
+const BUILD_EXTRA = BUILD_MUTATION_TOOLS.filter((name) => !DENIED.includes(name));
 
 const registered: string[] = [];
 let seq = 0;
@@ -160,10 +165,19 @@ function makeDelegatedOp(): Op {
     retryPolicy: { maxRecoveryAttempts: 2, backoffMs: [1] },
     model: "nondefault-local-model",
     contextPack: { routing: { lane: "interactive", preferredProvider: "local" } },
-    // canonical.sessionId must equal the sealed descriptor's sessionId for the
-    // recovery identity check (runtime.ts rehydrateRecoveredRuntime) to pass.
+    // canonical.sessionId is the SUBMITTING chat: the sealed descriptor carries
+    // it as parentSessionId, which is what the recovery identity check
+    // (runtime.ts rehydrateRecoveredRuntime) compares the record against.
     canonical: { sessionId: SESSION_ID, state: "queued", flagValue: true },
   } as unknown as Op;
+}
+
+function makeBuildOp(workRoot: string): Op {
+  const op = makeDelegatedOp();
+  op.id = `op_build_${seq++}`;
+  op.lane = "build";
+  op.contextPack.routing = { lane: "build", preferredProvider: "local", workRoot };
+  return op;
 }
 
 beforeEach(() => {
@@ -175,7 +189,7 @@ beforeEach(() => {
   // the surface is built AND before it is recovered — the same buildToolRegistry
   // -first ordering the runtime-surface recovery test relies on (rehydrate
   // re-resolves each tool from unifiedRegistry and re-checks its fingerprint).
-  for (const name of [...BELT, ...DENIED]) {
+  for (const name of [...BELT, ...DENIED, ...BUILD_EXTRA]) {
     unifiedRegistry.register(mkTool(name));
     registered.push(name);
   }
@@ -183,6 +197,7 @@ beforeEach(() => {
 
 afterEach(() => {
   resetCanonicalRuntime();
+  _resetSessionOwnerRegistry();
   for (const name of registered.splice(0)) unifiedRegistry.unregister(name);
   if (priorDataDir === undefined) delete process.env.LAX_DATA_DIR;
   else process.env.LAX_DATA_DIR = priorDataDir;
@@ -283,5 +298,49 @@ describe("delegated-worker toolset — end-to-end integration seam", () => {
     expect(rebuiltPrompt).toBe(DELEGATED_WORKER_PROMPT);
     expect(getToolsForOp(op.id).map(t => t.name).sort()).toEqual(beltAtSpawn);
     expect(getToolDispatcher(op.id)).not.toBeInstanceOf(NotConfiguredToolDispatcher);
+  });
+
+  it("seals the worker's tool runtime under its op id, with the submitting chat carried as the parent", async () => {
+    const op = makeDelegatedOp();
+    await configureDelegatedRuntime(op, SESSION_ID);
+    const descriptor = op.runtimeDescriptor;
+    expect(descriptor?.kind === "delegated-op" && descriptor.adapter === "provider-exact" && descriptor.sessionId).toBe(op.id);
+    expect(descriptor?.kind === "delegated-op" && descriptor.adapter === "provider-exact" && descriptor.parentSessionId).toBe(SESSION_ID);
+    // The worker drives the submitting chat's browser, not a fresh one.
+    expect(resolveBrowserSessionId(op.id)).toBe(SESSION_ID);
+  });
+
+  it("a build worker gets the mutation belt confined to its work root, durable across a simulated restart under its op id", async () => {
+    const workRoot = mkdtempSync(join(workspaceDir, "proj-"));
+    const op = makeBuildOp(workRoot);
+    try {
+      await configureDelegatedRuntime(op, SESSION_ID);
+
+      const names = getToolsForOp(op.id).map(t => t.name);
+      for (const t of [...MUST_CONTAIN, ...BUILD_MUTATION_TOOLS]) expect(names, t).toContain(t);
+      for (const t of ["op_submit", "op_submit_async", "agent_spawn", "mission_schedule_create"]) expect(names).not.toContain(t);
+      // Confinement state lives under the OP id, never the parent chat's.
+      expect(sessionWorkRootOf(op.id)).toBe(realpathDeep(workRoot));
+      expect(sessionWorkRootOf(SESSION_ID)).toBeUndefined();
+      const surface = op.runtimeDescriptor?.kind === "delegated-op" ? op.runtimeDescriptor.surface : undefined;
+      expect(surface?.systemPrompt).toBe(delegatedBuildWorkerPrompt(workRoot));
+      expect(surface?.security.sessionWorkRoot).toBe(realpathDeep(workRoot));
+      expect(surface?.security.allowedPaths.map(e => e.sessionId)).toEqual(Array(surface?.security.allowedPaths.length).fill(op.id));
+      expect(surface?.security.allowedPaths.some(e => e.path === realpathDeep(workRoot))).toBe(true);
+      expect(() => verifyDelegatedRuntimeIntegrity(op)).not.toThrow();
+
+      // Restart: every in-memory registration dies, the work root with it.
+      resetCanonicalRuntime();
+      clearSessionWorkRoot(op.id);
+      expect(sessionWorkRootOf(op.id)).toBeUndefined();
+
+      expect(rehydrateRecoveredRuntime(op)).toBe(true);
+      expect(rehydrateAgentRuntimeSurface(op, surface!)).toBe(delegatedBuildWorkerPrompt(workRoot));
+      expect(sessionWorkRootOf(op.id)).toBe(realpathDeep(workRoot));
+      expect(sessionWorkRootOf(SESSION_ID)).toBeUndefined();
+      for (const t of BUILD_MUTATION_TOOLS) expect(getToolsForOp(op.id).map(x => x.name)).toContain(t);
+    } finally {
+      clearSessionWorkRoot(op.id);
+    }
   });
 });

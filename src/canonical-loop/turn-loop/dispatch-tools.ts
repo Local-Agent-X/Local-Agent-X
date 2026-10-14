@@ -14,9 +14,10 @@
 // has to know whether the user's live turn is mid-side-effect before letting a
 // second message abort it. This is the only seam with all three inputs:
 //   - the op id, so a DELEGATED background worker can be told apart from the
-//     user's own chat turn. Workers inherit the originating chat session id
-//     (ops/tools/shared.ts delegatedRuntimeSessionId), so keying on the session
-//     alone would let a background op hold the user's chat lock for its life;
+//     user's own chat turn. A worker's record binds to the originating chat
+//     session (ops/tools/shared.ts delegatedOwnerSessionId → canonical.sessionId),
+//     so keying on the session alone would let a background op hold the user's
+//     chat lock for its life;
 //   - the tool names, for the refusal message and session_status;
 //   - the args, without which http_request / browser / pdf all read as
 //     non-committing and the feature misses the case it exists for.
@@ -83,8 +84,8 @@ const NEVER_LANDED: ReadonlySet<ToolDispatchStatus> =
  *
  *  Only the interactive HOST op — the chat or voice turn the user is waiting on
  *  — owns a session turn lock. Delegated, cron, build and self-edit workers all
- *  inherit the originating chat session id (ops/tools/shared.ts
- *  delegatedRuntimeSessionId returns `originatingSessionId || opId`), so a
+ *  bind their record to the originating chat session (ops/tools/shared.ts
+ *  delegatedOwnerSessionId returns `originatingSessionId || opId`), so a
  *  background op that marked by session id alone would hold the user's chat
  *  lock for its whole life — refusing the user's next message to protect a turn
  *  that replacing would never have touched. `isInteractiveHostOpType` plus "no

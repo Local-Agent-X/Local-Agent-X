@@ -127,8 +127,8 @@ export function recordCommittedLearningOutcome(
 export function requestSkillReviewForOp(op: Op, sessionId: string, turnIdx: number): void {
   if (!sessionId) return;
   // R2: reviews are for USER-FACING conversations only. Delegated, cron, dream,
-  // self-edit and build workers all inherit the parent chat session id
-  // (ops/tools/shared.ts delegatedRuntimeSessionId), and chunk D's queue
+  // self-edit and build workers all bind their record to the parent chat session
+  // (ops/tools/shared.ts delegatedOwnerSessionId), and chunk D's queue
   // coalesces per SESSION — so an unfiltered trigger lets a background worker's
   // machine transcript overwrite the user's real conversation under the same
   // key, and stamps the resulting protocol with provenance pointing at a

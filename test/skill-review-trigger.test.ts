@@ -377,7 +377,7 @@ describe("skill-review trigger — user-facing ops only", () => {
     "does NOT queue for a delegated/background op of type %s",
     async (type) => {
       // Delegated ops inherit the PARENT chat session id
-      // (ops/tools/shared.ts delegatedRuntimeSessionId), and chunk D's queue
+      // (ops/tools/shared.ts delegatedOwnerSessionId), and chunk D's queue
       // coalesces per session — so this would overwrite the user's real
       // conversation with a machine worker transcript, and buy a main-model
       // review of it.

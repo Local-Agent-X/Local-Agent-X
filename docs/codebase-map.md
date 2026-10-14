@@ -12,25 +12,25 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 67 top-level dirs · 67 live · 0 with no live importer · 1737 non-test source files · 0 god files (>400 LOC).
+**Totals:** 67 top-level dirs · 67 live · 0 with no live importer · 1740 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | God files |
 |---|--:|--:|:--:|--:|
-| `src/ops/` | 141 | 27 | XL |  |
-| `src/security/` | 113 | 45 | XL |  |
-| `src/tools/` | 98 | 207 | XL |  |
-| `src/canonical-loop/` | 75 | 256 | XL |  |
+| `src/ops/` | 142 | 28 | XL |  |
+| `src/security/` | 115 | 45 | XL |  |
+| `src/tools/` | 98 | 208 | XL |  |
+| `src/canonical-loop/` | 76 | 257 | XL |  |
 | `src/providers/` | 67 | 26 | XL |  |
-| `src/workspace/` | 60 | 3 | M |  |
+| `src/workspace/` | 66 | 3 | M |  |
 | `src/memory/` | 51 | 137 | XL |  |
-| `src/browser/` | 45 | 86 | XL |  |
-| `src/data-lineage/` | 41 | 11 | L |  |
+| `src/browser/` | 46 | 86 | XL |  |
+| `src/data-lineage/` | 42 | 11 | L |  |
 | `src/local-runtimes/` | 38 | 25 | XL |  |
 | `src/util/` | 38 | 3 | S |  |
 | `src/auth/` | 37 | 11 | L |  |
-| `src/session/` | 36 | 7 | L |  |
+| `src/session/` | 37 | 7 | L |  |
 | `src/threat/` | 35 | 12 | L |  |
 | `src/tool-policy/` | 31 | 20 | L |  |
 | `src/agency/` | 27 | 20 | XL |  |
@@ -152,6 +152,7 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/model-tiers.ts` | S |
 | `src/mutation-lock.ts` | S |
 | `src/ollama-cloud.ts` | S |
+| `src/os-trash.ts` | S |
 | `src/ota-extract.ts` | S |
 | `src/ota-rolling-pointer.ts` | S |
 | `src/ota-update-state.ts` | S |
@@ -205,7 +206,7 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/tool-tracker.ts` | M |
 | `src/tools.ts` | S |
 | `src/trash-journal.ts` | S |
-| `src/trash-restore.ts` | S |
+| `src/trash-restore.ts` | M |
 | `src/tts-stream.ts` | S |
 | `src/types.ts` | M |
 | `src/update-extracted-validation.ts` | S |

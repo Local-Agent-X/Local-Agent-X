@@ -18,6 +18,8 @@ import { bridgeOpCancelToToolSignal, type ToolCancelBridge } from "../cancel-han
 import { makeChatToolDispatcher } from "../chat-tool-dispatcher.js";
 import { registerRuntimeCleanupForOp, registerToolDispatcherForOp, registerToolsForOp } from "../runtime.js";
 import { sealDelegatedRuntime, verifyDelegatedRuntimeIntegrity } from "../runtime-integrity.js";
+import { descriptorOwnerSessionId } from "../provider-adapter-factory.js";
+import { bindDelegatedSessionLineage } from "../delegated-session-lineage.js";
 import type { CanonicalAgentOptions } from "./types.js";
 import { RuntimeSurfaceMismatchError, runtimeSurfaceMismatch } from "./runtime-surface-error.js";
 
@@ -53,7 +55,12 @@ export interface OpToolRuntimeOptions {
   threatEngine?: ThreatEngine;
   rbac?: RBACManager;
   callerRole?: Role;
+  /** The worker's tool-runtime session (allowed paths, work root, `_sessionId`). */
   sessionId: string;
+  /** The submitting conversation, when the worker has one: it owns the
+   *  worker's browser tabs and receives its lineage at terminal
+   *  (delegated-session-lineage.ts). The caller routes `onEvent` there. */
+  parentSessionId?: string;
   callContext: CallContext;
   runId?: string;
   onEvent?: (event: ServerEvent) => void;
@@ -74,6 +81,7 @@ export interface OpToolRuntimeOptions {
  */
 export function installOpToolRuntime(op: Op, opts: OpToolRuntimeOptions): ToolCancelBridge {
   const cancelBridge = bridgeOpCancelToToolSignal(op.id, opts.signal);
+  bindDelegatedSessionLineage(opts.sessionId, opts.parentSessionId);
   registerToolDispatcherForOp(op.id, makeChatToolDispatcher({
     tools: opts.tools,
     security: opts.security,
@@ -123,8 +131,13 @@ export function rehydrateAgentRuntimeSurface(op: Op, surface: DelegatedRuntimeSu
   if (security.runtimePolicyFingerprint() !== surface.security.configFingerprint) {
     runtimeSurfaceMismatch("security_policy_changed");
   }
-  const sessionId = op.runtimeDescriptor?.kind === "delegated-op" ? op.runtimeDescriptor.sessionId : undefined;
+  const descriptor = op.runtimeDescriptor?.kind === "delegated-op" ? op.runtimeDescriptor : undefined;
+  const sessionId = descriptor?.sessionId;
   if (!sessionId) runtimeSurfaceMismatch("session_identity_missing");
+  // Progress routes to the conversation that owns the op; the security key
+  // stays the worker's own session (the two differ for an attended worker).
+  const parentSessionId = descriptor?.adapter === "provider-exact" ? descriptor.parentSessionId : undefined;
+  const ownerSessionId = descriptorOwnerSessionId({ sessionId, parentSessionId }) ?? sessionId;
   if (surface.security.allowedPaths.some(entry => entry.sessionId !== "_global" && entry.sessionId !== sessionId)) {
     runtimeSurfaceMismatch("cross_session_authority");
   }
@@ -153,7 +166,9 @@ export function rehydrateAgentRuntimeSurface(op: Op, surface: DelegatedRuntimeSu
     },
     threatEngine: threatEngine ? { state: threatEngine.snapshot() } : false,
   }));
-  try { registerToolDispatcherForOp(op.id, makeChatToolDispatcher({
+  try {
+  bindDelegatedSessionLineage(sessionId, parentSessionId);
+  registerToolDispatcherForOp(op.id, makeChatToolDispatcher({
     tools,
     security,
     toolPolicy: policy,
@@ -165,7 +180,7 @@ export function rehydrateAgentRuntimeSurface(op: Op, surface: DelegatedRuntimeSu
     opId: op.id,
     runId: surface.runId,
     signal: cancelBridge.signal,
-    onEvent: event => broadcastToSession(sessionId, event),
+    onEvent: event => broadcastToSession(ownerSessionId, event),
     onToolsAugmented: augmented => persistRuntimeSurface(op, current => ({
       ...current,
       tools: augmented.map(tool => ({ name: tool.name, fingerprint: toolFingerprint(tool) })),

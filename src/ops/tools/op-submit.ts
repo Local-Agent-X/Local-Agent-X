@@ -13,9 +13,10 @@ import { trackOpForSession } from "../session-bridge.js";
 import {
   buildOpFromArgs,
   configureDelegatedRuntime,
-  delegatedRuntimeSessionId,
+  delegatedOwnerSessionId,
   submitParameters,
 } from "./shared.js";
+import { WorkRootRefused } from "./work-root.js";
 import { formatAwaitedOpResult } from "./op-result-summary.js";
 
 export const opSubmitTool: ToolDefinition = {
@@ -28,11 +29,16 @@ export const opSubmitTool: ToolDefinition = {
     if (!task) return { content: "op_submit requires a 'task' description.", isError: true };
 
     const sessionId = String(args._sessionId || "");
-    const op = await buildOpFromArgs(args);
-    const runtimeSessionId = delegatedRuntimeSessionId(op.id, sessionId);
-    await configureDelegatedRuntime(op, runtimeSessionId);
+    let op;
+    try {
+      op = await buildOpFromArgs(args);
+    } catch (e) {
+      if (e instanceof WorkRootRefused) return { content: e.message, isError: true };
+      throw e;
+    }
+    await configureDelegatedRuntime(op, sessionId);
     const startMs = Date.now();
-    canonicalLoopEntry(op, { sessionId: runtimeSessionId });
+    canonicalLoopEntry(op, { sessionId: delegatedOwnerSessionId(op.id, sessionId) });
     if (sessionId) trackOpForSession(op.id, sessionId, task);
     const result = await awaitCanonicalOp(op.id, 30 * 60 * 1000);
     const wallMs = Date.now() - startMs;

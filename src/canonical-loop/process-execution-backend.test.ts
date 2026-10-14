@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it, vi } from "vitest";
-import type { Op } from "../ops/types.js";
+import type { ExactDelegatedRuntimeDescriptor, Op } from "../ops/types.js";
 import type { ExecutionPlacement } from "./types.js";
 
 const priorDataDir = process.env.LAX_DATA_DIR;
@@ -332,6 +332,16 @@ describe("process execution backend handoff", () => {
       mutate(candidate);
       expect(ProcessExecutionBackend.isEligible(candidate)).toBe(false);
     }
+  });
+
+  it("an op_submit worker keyed by its op id stays eligible when its parent binding matches the record", () => {
+    const worker = makeOp("split");
+    const descriptor = worker.runtimeDescriptor as ExactDelegatedRuntimeDescriptor;
+    descriptor.parentSessionId = descriptor.sessionId;
+    descriptor.sessionId = worker.id;
+    expect(ProcessExecutionBackend.isEligible(worker)).toBe(true);
+    descriptor.parentSessionId = "other";
+    expect(ProcessExecutionBackend.isEligible(worker)).toBe(false);
   });
 
   it("relays durable cancellation and approval resolution without a new ask", async () => {

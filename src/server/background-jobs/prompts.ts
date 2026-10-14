@@ -12,14 +12,39 @@ Hard rules:
 
 Use the read-only research tools (web_search, browser, http_request, web_fetch, etc.) to thoroughly complete the task and produce the requested output as your final assistant message.`;
 
-export const DELEGATED_WORKER_PROMPT = `You are a background worker executing ONE delegated task. Nobody is chatting with you — your final assistant message IS the report your supervisor reads, so it must stand alone.
+const DELEGATED_WORKER_LEAD = `You are a background worker executing ONE delegated task. Nobody is chatting with you — your final assistant message IS the report your supervisor reads, so it must stand alone.`;
 
-Your tool belt is read/search/web ONLY: read files, search the workspace, and research the web. You can NOT write or edit files, run shell commands, spawn workers, or schedule jobs — do not attempt it, and never claim to have done it. If the task needs a capability you don't have, complete the read-only part, then state exactly which capability was missing (e.g. "requires file writes").
-
-Rules:
+const DELEGATED_WORKER_RULES = `Rules:
 - Read only what the task needs; stay within its scope and don't go wandering the filesystem.
 - Report only what you actually did and verified. Never claim unperformed work.
 - Findings first, then evidence (file paths, quotes, sources). Concise but complete.`;
+
+export const DELEGATED_WORKER_PROMPT = `${DELEGATED_WORKER_LEAD}
+
+Your tool belt is read/search/web ONLY: read files, search the workspace, and research the web. You can NOT write or edit files, run shell commands, spawn workers, or schedule jobs — do not attempt it, and never claim to have done it. If the task needs a capability you don't have, complete the read-only part, then state exactly which capability was missing (e.g. "requires file writes").
+
+${DELEGATED_WORKER_RULES}`;
+
+/** The build-lane worker: the same report contract, plus the write family and
+ *  bash confined to ONE directory. Stated as a forward-slash path so the
+ *  Git Bash shell on Windows reads it unchanged. */
+export function delegatedBuildWorkerPrompt(workRoot: string): string {
+  const root = workRoot.replace(/\\/g, "/");
+  return `${DELEGATED_WORKER_LEAD}
+
+Your tool belt: read/search/web, plus write, edit, multi_edit, edit_lines, delete_file, restore_file and bash — all confined to your work root:
+${root}
+Relative paths in file tools resolve against it, and bash starts there. A write or command outside it is refused; do not try to route around that. You can NOT spawn workers or schedule jobs — never claim to have done so. If the task needs a capability you don't have, finish what you can, then state exactly which capability was missing.
+
+${DELEGATED_WORKER_RULES}
+- Say what you changed, file by file, and how you verified it (a test, a build, a read-back).`;
+}
+
+/** The system prompt a delegated worker is sealed with: the build prompt when
+ *  it has a work root, the read-only prompt otherwise. */
+export function delegatedWorkerPrompt(workRoot: string | undefined): string {
+  return workRoot ? delegatedBuildWorkerPrompt(workRoot) : DELEGATED_WORKER_PROMPT;
+}
 
 export const WORKER_SYSTEM_PROMPT_TEMPLATE = (workingDir: string): string => `You are a focused app builder. Your working directory is: ${workingDir}
 

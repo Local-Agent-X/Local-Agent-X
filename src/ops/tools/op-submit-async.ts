@@ -17,11 +17,12 @@ import { trackOpForSession, listOpsForSession } from "../session-bridge.js";
 import {
   buildOpFromArgs,
   configureDelegatedRuntime,
-  delegatedRuntimeSessionId,
+  delegatedOwnerSessionId,
   submitParameters,
   RECENT_SUBMITS,
   SUBMIT_DEDUP_WINDOW_MS,
 } from "./shared.js";
+import { WorkRootRefused } from "./work-root.js";
 
 /**
  * Near-duplicate test between two task strings — same normalization the
@@ -162,17 +163,22 @@ export const opSubmitAsyncTool: ToolDefinition = {
       }
     }
 
-    const op = await buildOpFromArgs(args);
+    let op;
+    try {
+      op = await buildOpFromArgs(args);
+    } catch (e) {
+      if (e instanceof WorkRootRefused) return { content: e.message, isError: true };
+      throw e;
+    }
 
     // Resolve once and persist the exact provider/model/runtime identity.
     // Every provider gets a per-op factory; restart recovery never substitutes
     // the current lane default or newly-selected settings.
-    const runtimeSessionId = delegatedRuntimeSessionId(op.id, sessionId);
-    await configureDelegatedRuntime(op, runtimeSessionId);
+    await configureDelegatedRuntime(op, sessionId);
     // Suppress the background probe inside canonicalLoopEntry — we're
     // doing the same wait synchronously here so the model gets a truthful
     // "is it running yet?" answer in the tool return.
-    canonicalLoopEntry(op, { sessionId: runtimeSessionId, confirmRunning: false });
+    canonicalLoopEntry(op, { sessionId: delegatedOwnerSessionId(op.id, sessionId), confirmRunning: false });
     if (sessionId) {
       trackOpForSession(op.id, sessionId, task);
       RECENT_SUBMITS.set(sessionId, { opId: op.id, ts: Date.now(), task });

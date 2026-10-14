@@ -39,6 +39,7 @@ import {
   unregisterOpBaselineTokens,
 } from "./runtime.js";
 import { clearSessionWorkRoot } from "../workspace/paths.js";
+import { releaseDelegatedSessionLineage } from "./delegated-session-lineage.js";
 import {
   prepareCanonicalLearnedOutcome, commitCanonicalLearnedOutcome, recordCanonicalLearningOutcome,
 } from "./learned-effectiveness.js";
@@ -210,6 +211,7 @@ function finalizeTerminalState(op: Op, to: CanonicalState): void {
   unregisterToolsForOp(op.id);
   unregisterOpBaselineTokens(op.id);
   clearSessionWorkRoot(op.id);
+  releaseDelegatedSessionLineage(op);
   getHookEngine().fireDetached({
     event: "Stop",
     opId: op.id,

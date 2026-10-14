@@ -107,6 +107,42 @@ describe("openValidatedRead / readValidatedFile — R4-19 symlink-swap TOCTOU", 
   });
 });
 
+// delete_file's policy action is "delete_file", not "write"/"edit". The mode
+// confinement, the system-directory floor and the core-protected-file patterns
+// each named the two write spellings and let a delete reach anything readable:
+// a repo-source file in common mode, ~/Downloads, a workspace .env.
+describe("delete_file is confined exactly like a write", () => {
+  const sibling = join(ROOT, "src", "index.ts");
+  beforeAll(() => {
+    mkdirSync(dirname(sibling), { recursive: true });
+    writeFileSync(sibling, "x");
+    writeFileSync(join(WORKSPACE, ".env"), "SECRET=1\n");
+  });
+
+  it("outside the workspace in workspace and common modes: refused unless an allowed path covers it", () => {
+    for (const mode of ["workspace", "common"] as const) {
+      const denied = evaluateFileAccess(WORKSPACE, mode, () => false, "delete_file", sibling);
+      expect(denied.allowed, mode).toBe(false);
+      expect(denied.reason).toMatch(/outside workspace/);
+      expect(evaluateFileAccess(WORKSPACE, mode, () => true, "delete_file", sibling).allowed, `${mode} allowed path`).toBe(true);
+    }
+  });
+
+  it("inside the workspace: allowed, except the core-protected patterns", () => {
+    expect(evaluateFileAccess(WORKSPACE, "workspace", () => false, "delete_file", join(WORKSPACE, "plain.txt")).allowed).toBe(true);
+    const env = evaluateFileAccess(WORKSPACE, "unrestricted", () => false, "delete_file", join(WORKSPACE, ".env"));
+    expect(env.allowed).toBe(false);
+    expect(env.reason).toMatch(/protected platform file/);
+  });
+
+  it("unrestricted mode still floors system directories for a delete", () => {
+    const sys = process.platform === "win32" ? "C:\\Windows\\System32\\drivers\\etc\\hosts" : "/etc/hosts";
+    const d = evaluateFileAccess(WORKSPACE, "unrestricted", () => false, "delete_file", sys);
+    expect(d.allowed).toBe(false);
+    expect(d.reason).toMatch(/system directory/);
+  });
+});
+
 describe("app's OWN at-rest secret files under .lax (R4-04/R4-05)", () => {
   // The app's key/seed files (audit-key, audit-key.enc, secrets.salt) must be
   // both read-blocked AND write-blocked, derived from the canonical

@@ -23,7 +23,11 @@ import { asRecalledData } from "../context/system-prompt-builder.js";
 
 const REF = /\bref: ([A-Za-z0-9]+)/g;
 
-const ROW_LEAD = "Recalled memory for the user's message above — retrieved by the app at the time, not written by the user.";
+// Where the entries come from is said here too: replies placed a message from
+// an earlier chat "in this same chat" when only the row sat in this one
+// (qwen3.6:27b, 2026-10-13).
+const ROW_LEAD = "Recalled memory for the user's message above — retrieved by the app at the time, not written by the user. "
+  + "Entries marked PAST SESSION come from earlier, separate chats; each says its own session and date.";
 
 /** Entry refs the chat's saved recall rows already carry. */
 export function carriedRecallRefs(history: readonly ChatCompletionMessageParam[]): Set<string> {

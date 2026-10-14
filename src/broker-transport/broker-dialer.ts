@@ -90,6 +90,12 @@ export abstract class BrokerDialer {
   private peerPresent = false;
   private started = false;
   private graceTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Local candidates the peer found before its offer went out. The phone rejects a
+   *  candidate that arrives ahead of the offer (no remote description yet), so it never
+   *  learns our addresses: invisible on Wi-Fi, where our checks reach it directly, fatal
+   *  on cellular, where nothing gets through unless it knows us (field 2026-10-13). */
+  private offerSent = false;
+  private heldIce: DialerIceCandidate[] = [];
 
   constructor(opts: BrokerDialerOptions = {}) {
     this.onClosedCb = opts.onClosed;
@@ -129,11 +135,22 @@ export abstract class BrokerDialer {
   // ── outbound helpers for subclasses ──────────────────────────────────────────────
 
   protected sendOffer(sdp: string): void {
-    if (!this.stopped) this.client.sendSignal({ kind: "offer", sdp });
+    if (this.stopped) return;
+    this.client.sendSignal({ kind: "offer", sdp });
+    this.offerSent = true;
+    const held = this.heldIce;
+    this.heldIce = [];
+    for (const candidate of held) this.client.sendSignal(iceSignal(candidate));
   }
 
+  /** Trickle a local candidate — never ahead of this peer's offer. */
   protected sendIce(candidate: DialerIceCandidate): void {
-    if (!this.stopped) this.client.sendSignal(iceSignal(candidate));
+    if (this.stopped) return;
+    if (!this.offerSent) {
+      this.heldIce.push(candidate);
+      return;
+    }
+    this.client.sendSignal(iceSignal(candidate));
   }
 
   // ── shared inbound lifecycle ─────────────────────────────────────────────────────
@@ -191,6 +208,9 @@ export abstract class BrokerDialer {
     if (this.iceServers.length === 0 && !force) return;
     this.started = true;
     this.clearGrace();
+    // A new peer: its candidates wait for its own offer.
+    this.offerSent = false;
+    this.heldIce = [];
     try {
       const result = this.onStart();
       if (result) result.catch((e: unknown) => this.failStart(e));

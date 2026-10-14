@@ -145,6 +145,60 @@ describe("BrokerVoiceDialer — signaling", () => {
   });
 });
 
+// werift trickles candidates while it builds the offer. The phone rejects any that
+// arrive before the offer, so it never learns our addresses and cannot connect off
+// Wi-Fi (field 2026-10-13). No candidate may reach the broker ahead of its offer.
+describe("BrokerVoiceDialer — candidate ordering", () => {
+  class TricklingPeer extends FakePeer {
+    override createOffer(): Promise<string> {
+      this.handlers.onLocalIce({ candidate: "early-host", sdpMid: "0", sdpMLineIndex: 0 });
+      this.handlers.onLocalIce({ candidate: "early-relay", sdpMid: "0", sdpMLineIndex: 0 });
+      return Promise.resolve("VOICE_OFFER");
+    }
+  }
+
+  function makeTricklingDialer() {
+    const socket = new FakeSocket();
+    const peers: TricklingPeer[] = [];
+    new BrokerVoiceDialer({
+      socket,
+      sessionFactory: (): VoiceSession => new FakeSession(),
+      createPeer: (h, ice, onCtrl) => {
+        const p = new TricklingPeer(h, ice, onCtrl);
+        peers.push(p);
+        return Promise.resolve(p);
+      },
+    });
+    return { socket, peers };
+  }
+
+  const signalKinds = (socket: FakeSocket) =>
+    socket.sentFrames.filter((f) => f.type === "signal").map((f) => `${f.signal!.kind}${f.signal!.candidate ? `:${String(f.signal!.candidate)}` : ""}`);
+
+  it("holds candidates found while the offer is built and sends them right after it", async () => {
+    const { socket, peers } = makeTricklingDialer();
+    socket.deliver({ type: "peer-joined" });
+    socket.deliver({ type: "ice-servers", iceServers: [{ urls: "turn:x", username: "u", credential: "c" }], ttlSeconds: 300 });
+    await flush();
+    peers[0]!.handlers.onLocalIce({ candidate: "late-srflx", sdpMid: "0", sdpMLineIndex: 0 });
+    expect(signalKinds(socket)).toEqual(["offer", "ice:early-host", "ice:early-relay", "ice:late-srflx"]);
+  });
+
+  it("a rebuilt peer's candidates wait for ITS offer, not the previous one", async () => {
+    const { socket } = makeTricklingDialer();
+    socket.deliver({ type: "peer-joined" });
+    socket.deliver({ type: "ice-servers", iceServers: [{ urls: "turn:x", username: "u", credential: "c" }], ttlSeconds: 300 });
+    await flush();
+    socket.sent.length = 0;
+    // The phone switches networks: it leaves and rejoins, and the desktop rebuilds.
+    socket.deliver({ type: "peer-left" });
+    socket.deliver({ type: "peer-joined" });
+    socket.deliver({ type: "ice-servers", iceServers: [{ urls: "turn:y", username: "u", credential: "c" }], ttlSeconds: 300 });
+    await flush();
+    expect(signalKinds(socket)).toEqual(["offer", "ice:early-host", "ice:early-relay"]);
+  });
+});
+
 describe("BrokerVoiceDialer — lifecycle", () => {
   it("rebuilds the peer on peer-left (closes the stale peer, keeps the socket)", async () => {
     const { socket, peers } = makeDialer();

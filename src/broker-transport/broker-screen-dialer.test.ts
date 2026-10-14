@@ -250,11 +250,26 @@ describe("BrokerScreenDialer — outbound session → broker / control", () => {
 
   it("relays the session's rtc_ice as a broker ice signal, coercing undefined → null", () => {
     const { socket, getOpts } = makeDialer();
+    getOpts().send(buildOffer("rtc-x", "OFFER_SDP"));
     getOpts().send(buildIce("rtc-x", { candidate: "host" })); // no sdpMid/sdpMLineIndex
     expect(socket.sentFrames).toContainEqual({
       type: "signal",
       signal: { kind: "ice", candidate: "host", sdpMid: null, sdpMLineIndex: null },
     });
+  });
+
+  // werift trickles candidates while the session builds its offer. The phone rejects
+  // any that arrive before the offer, so it never learns our addresses and cannot
+  // connect off Wi-Fi (field 2026-10-13). They wait, then follow the offer in order.
+  it("never sends a candidate ahead of the offer: early ones are held and follow it", () => {
+    const { socket, getOpts } = makeDialer();
+    getOpts().send(buildIce("rtc-x", { candidate: "early-host", sdpMid: "0", sdpMLineIndex: 0 }));
+    getOpts().send(buildIce("rtc-x", { candidate: "early-relay", sdpMid: "0", sdpMLineIndex: 0 }));
+    expect(socket.sentFrames.filter((f) => f.type === "signal")).toEqual([]);
+    getOpts().send(buildOffer("rtc-x", "OFFER_SDP"));
+    getOpts().send(buildIce("rtc-x", { candidate: "late-srflx", sdpMid: "0", sdpMLineIndex: 0 }));
+    expect(socket.sentFrames.filter((f) => f.type === "signal").map((f) => f.signal!.candidate ?? f.signal!.kind))
+      .toEqual(["offer", "early-host", "early-relay", "late-srflx"]);
   });
 
   it("routes app-control (displays/focus/error/closed) to the ControlChannel, NOT the broker", () => {

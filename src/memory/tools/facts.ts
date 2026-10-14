@@ -63,6 +63,10 @@ function authorizedSource(provenance: FactProvenance, promotion: MemoryPromotion
   return `agent-tool:${grant}-${provenance.replace("_", "-")}`;
 }
 
+/** The user message this call answers, stamped by the server (resolve-tool.ts
+ *  USER_MESSAGE_SOURCED_TOOLS); never taken from anything the model wrote. */
+const trustedMessageId = (args: Record<string, unknown>) => (typeof args._userMessageId === "string" ? args._userMessageId : undefined);
+
 function formatToolError(prefix: string, result: { error?: string; matches?: number; preview?: string[] }): string {
   let msg = `${prefix}: ${result.error ?? "unknown error"}`;
   if (result.preview && result.preview.length > 0) {
@@ -193,6 +197,7 @@ export function createFactsTools(memory: MemoryIndex) {
               confidence,
               sourceFile: authorizedSource(provenance, promotion),
               promotion,
+              sourceMessageId: trustedMessageId(args),
             });
             if (!result.ok) {
               return { content: formatToolError("remember failed", result), isError: true };
@@ -220,6 +225,7 @@ export function createFactsTools(memory: MemoryIndex) {
           const results = saveFactsBatch(memory, derived.facts, derived.contexts, {
             kind,
             confidence,
+            sourceMessageId: trustedMessageId(args),
             sourceFile: authorizedSource(provenance, promotion),
             target,
           });
@@ -320,6 +326,7 @@ export function createFactsTools(memory: MemoryIndex) {
             confidence,
             sourceFile: authorizedSource(provenance, promotion),
             promotion,
+            sourceMessageId: trustedMessageId(args),
           });
           if (!result.ok) {
             return { content: formatToolError("update_fact failed", result), isError: true };

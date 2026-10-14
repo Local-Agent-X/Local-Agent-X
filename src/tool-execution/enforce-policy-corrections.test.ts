@@ -97,7 +97,7 @@ describe("a failed call is told exactly what to send", () => {
     const { expectedArgsHint } = await import("./arg-validation.js");
     const { createFactsTools } = await import("../memory/tools/facts.js");
     const updateFact = createFactsTools({} as never).find((t) => t.name === "update_fact")!;
-    const schema = updateFact.parameters as Parameters<typeof expectedArgsHint>[1];
+    const schema = updateFact.parameters as unknown as Parameters<typeof expectedArgsHint>[1];
     const hint = expectedArgsHint({ old_content: "slip 14", new_content: "slip 31", _sessionId: "s" }, schema);
     expect(hint).toContain('does not take "old_content", "new_content"');
     expect(hint).not.toContain("_sessionId");

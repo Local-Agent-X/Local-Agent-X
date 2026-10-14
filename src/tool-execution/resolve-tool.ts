@@ -14,6 +14,7 @@ import { getRiskLevel, buildApprovalContext } from "./approval-context.js";
 import { ARI_ACTION_MAP } from "./enforce-policy.js";
 import { sessionWorkRootOf } from "../workspace/paths.js";
 import { STATEFUL_LIVE_STATE_TOOLS } from "./stateful-tools.js";
+import { readOpMessages } from "../canonical-loop/index.js";
 import { READ_DEDUP_STUB_LEAD } from "./read-dedup-evidence.js";
 import { isInternalArgKey } from "./internal-args.js";
 import { createLogger } from "../logger.js";
@@ -106,6 +107,21 @@ const OPERATION_SCOPED_TOOLS = new Set([
   "protocol", "protocol_get", "show_unblock_control", "ask_user",
   "agent_spawn", "op_submit", "op_submit_async", "op_submit_batch",
 ]);
+
+// Memory writes that record the user message they answered (facts.source_message_id),
+// so a fact can point at the exact words it came from.
+const USER_MESSAGE_SOURCED_TOOLS = new Set(["remember", "update_fact"]);
+
+/** The latest user-authored row of this operation — the message the call answers. */
+export function latestUserMessageId(operationId: string): string | undefined {
+  const rows = readOpMessages(operationId);
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const r = rows[i];
+    const kind = (r.content as { kind?: unknown } | null)?.kind;
+    if (r.role === "user" && kind === undefined) return r.messageId;
+  }
+  return undefined;
+}
 
 const SESSION_REPEAT_SKIP_TOOLS = new Set([
   "request_secret", "request_secrets",
@@ -234,6 +250,10 @@ async function injectSessionState(ctx: ToolCallContext): Promise<PhaseOutcome> {
   }
   if (OPERATION_SCOPED_TOOLS.has(tc.name)) {
     args._operationId = ctx.operationId;
+  }
+  if (USER_MESSAGE_SOURCED_TOOLS.has(tc.name) && ctx.operationId) {
+    const id = latestUserMessageId(ctx.operationId);
+    if (id) args._userMessageId = id;
   }
   // create_chart writes `<file_path>.png` when the suffix is missing. Name the
   // real output here, before the path gate and the artifact pre-stat, so every

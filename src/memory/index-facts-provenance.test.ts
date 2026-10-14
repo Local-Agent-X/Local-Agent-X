@@ -195,3 +195,24 @@ describe("a saved fact is searchable as soon as it is saved", () => {
     expect(hits.some((r) => r.snippet.includes("slip 14"))).toBe(false);
   });
 });
+
+describe("a fact records the user message it was saved from (schema v19)", () => {
+  it("remember stores the server-stamped message id, and memory_recall shows it", async () => {
+    const content = "User's cousin Odalys texted their brother did you sell Merriweather yet";
+    const args: Record<string, unknown> = { content, provenance: "user_statement", _userMessageId: "um-op_x-0-2" };
+    const request = describeMemoryPromotionRequest("remember", args, "default");
+    stampTrustedUserPromotion(args, request!, { userMessage: content, evidenceSpan: content });
+    const remember = createFactsTools(memory).find((t) => t.name === "remember")!;
+    expect((await remember.execute(args)).isError).toBeFalsy();
+    const row = db().prepare("SELECT source_message_id FROM facts WHERE content LIKE '%Merriweather%'").get() as { source_message_id: string };
+    expect(row.source_message_id).toBe("um-op_x-0-2");
+    const out = await memoryRecallTool(memory).execute({ kind: "observation" });
+    expect(out.content).toContain("from message um-op_x-0-2");
+  });
+
+  it("a fact saved with no user message has none", () => {
+    authorizeTestFactMutations(memory);
+    const r = memory.rememberFact("@Dana likes tea", { kind: "world" });
+    expect(r.fact!.sourceMessageId ?? null).toBeNull();
+  });
+});

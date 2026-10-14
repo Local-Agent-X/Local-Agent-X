@@ -26,7 +26,7 @@ export function saveFactsBatch(
   memory: MemoryIndex,
   facts: string[],
   contexts: MemoryPromotionContext[],
-  opts: { kind?: FactKind; confidence: number; sourceFile: string; target: string },
+  opts: { kind?: FactKind; confidence: number; sourceFile: string; target: string; sourceMessageId?: string },
 ): BatchFactResult[] {
   return facts.map((fact, i) => {
     if (i >= MAX_FACTS_PER_CALL) {
@@ -44,6 +44,7 @@ export function saveFactsBatch(
         confidence: opts.confidence,
         sourceFile: opts.sourceFile,
         promotion,
+        sourceMessageId: opts.sourceMessageId,
       });
       if (!result.ok) {
         return { fact, status: "skipped" as const, detail: `not saved (${result.error ?? "unknown error"})` };

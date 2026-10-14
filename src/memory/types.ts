@@ -319,6 +319,8 @@ export interface RetainedFact {
   invalidationReason?: string | null;
   /** Promotion origin at write time; null = written before schema v12 (unknown). */
   provenance?: MemoryContentOrigin | null;
+  /** The user message this fact was saved while answering (schema v19). */
+  sourceMessageId?: string | null;
 }
 
 export interface EntityPage {

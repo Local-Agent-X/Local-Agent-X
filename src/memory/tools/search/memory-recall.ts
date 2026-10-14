@@ -129,7 +129,9 @@ export function memoryRecallTool(memory: MemoryIndex) {
             // Rows written before schema v12 have no persisted origin — omit
             // rather than printing a fabricated one.
             const origin = f.provenance ? `, origin=${f.provenance}` : "";
-            return `[${i + 1}] [${f.kind}]${conf}${ents} ${f.content} — ${date} (${f.sourceFile}#L${f.sourceLine}${origin})`;
+            // The exact message it was saved from: search_past_sessions(message_id) reads it.
+            const from = f.sourceMessageId ? `, from message ${f.sourceMessageId}` : "";
+            return `[${i + 1}] [${f.kind}]${conf}${ents} ${f.content} — ${date} (${f.sourceFile}#L${f.sourceLine}${origin}${from})`;
           })
           .join("\n");
         sections.push(`Retained facts (${facts.length}):\n${formatted}`);

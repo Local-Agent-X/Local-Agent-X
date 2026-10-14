@@ -93,9 +93,10 @@ export abstract class MemoryFactsBase {
 
   rememberFact(
     content: string,
-    opts?: { kind?: FactKind; confidence?: number; sourceFile?: string; promotion?: MemoryPromotionContext }
+    opts?: { kind?: FactKind; confidence?: number; sourceFile?: string; promotion?: MemoryPromotionContext; sourceMessageId?: string }
   ): FactsMutate.OneFactResult {
     const result = FactsMutate.rememberFact(this.db, this.hasFts, content, opts);
+    if (result.fact) this.recordSourceMessage(result.fact, opts?.sourceMessageId);
     if (result.fact) this.refreshEntityPages([result.fact]);
     return result;
   }
@@ -103,9 +104,10 @@ export abstract class MemoryFactsBase {
   updateFact(
     query: string,
     newContent: string,
-    opts?: { kind?: FactKind; confidence?: number; sourceFile?: string; promotion?: MemoryPromotionContext }
+    opts?: { kind?: FactKind; confidence?: number; sourceFile?: string; promotion?: MemoryPromotionContext; sourceMessageId?: string }
   ): FactsMutate.OneFactResult {
     const result = FactsMutate.updateFact(this.db, this.hasFts, query, newContent, opts);
+    if (result.fact) this.recordSourceMessage(result.fact, opts?.sourceMessageId);
     if (result.fact) this.refreshEntityPages([result.fact, ...this.factsById([result.oldFactId])]);
     return result;
   }
@@ -143,6 +145,14 @@ export abstract class MemoryFactsBase {
         (s) => { this.reindexThroughUniversal("entity", s).catch(() => {}); }, slug, recent);
     }
     return facts;
+  }
+
+  /** The user message an agent save answered (schema v19), on the row and
+   *  the returned fact. Absent for writes no user message produced. */
+  private recordSourceMessage(fact: RetainedFact, messageId: string | undefined): void {
+    if (!messageId || fact.id === undefined) return;
+    this.db.prepare("UPDATE facts SET source_message_id = ? WHERE id = ?").run(messageId, fact.id);
+    fact.sourceMessageId = messageId;
   }
 
   private factsById(ids: Array<number | undefined>): RetainedFact[] {

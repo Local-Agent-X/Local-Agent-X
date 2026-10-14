@@ -194,6 +194,7 @@ export function rowToFact(row: Record<string, unknown>): RetainedFact {
     invalidatedBy: (row.invalidated_by as number | null) ?? null,
     invalidationReason: (row.invalidation_reason as string | null) ?? null,
     provenance: (row.provenance as MemoryContentOrigin | null) ?? null,
+    sourceMessageId: (row.source_message_id as string | null) ?? null,
   };
 }
 

@@ -12,7 +12,7 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 67 top-level dirs · 67 live · 0 with no live importer · 1740 non-test source files · 0 god files (>400 LOC).
+**Totals:** 67 top-level dirs · 67 live · 0 with no live importer · 1741 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -62,7 +62,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/routes/` | 10 | 91 | XL |  |
 | `src/sync/` | 10 | 21 | L |  |
 | `src/autopilot/` | 9 | 14 | L |  |
-| `src/screen-stream/` | 9 | 8 | L |  |
+| `src/screen-stream/` | 9 | 9 | L |  |
 | `src/bridge-voice/` | 8 | 5 | M |  |
 | `src/telegram-bridge/` | 8 | 6 | M |  |
 | `src/auto-build/` | 7 | 52 | XL |  |

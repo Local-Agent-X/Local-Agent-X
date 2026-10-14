@@ -16,6 +16,7 @@ import type {
 import type { RtcIceCandidate } from "./protocol.js";
 import { VP8_PAYLOAD_TYPE, VP8_CLOCK_RATE } from "./ffmpeg-capture.js";
 import { createLogger } from "../logger.js";
+import { watchPeerDiagnostics, logChannelState, type PeerDiagnostics } from "./peer-diagnostics.js";
 
 const logger = createLogger("screen-stream.peer");
 
@@ -90,6 +91,7 @@ export class ScreenPeer {
    *  masse on teardown. */
   private readonly channels: WeriftDataChannel[] = [];
   private closed = false;
+  private readonly diagnostics: PeerDiagnostics;
 
   /**
    * Build a peer. Async because werift is imported lazily (see loadWerift) —
@@ -126,13 +128,16 @@ export class ScreenPeer {
     // undefined and falls back to the optional operator STUN url (env), as before.
     const stun = process.env.LAX_RTC_STUN?.trim();
     const servers: IceServerConfig[] = iceServers ?? (stun ? [{ urls: stun }] : []);
+    const weriftServers = servers.flatMap(toWeriftIceServers);
     this.pc = new RTCPeerConnection({
       // werift's RTCIceServer takes a SINGLE url per entry; the standard/broker shape
       // allows an array, so flatten array `urls` into one entry each.
-      iceServers: servers.flatMap(toWeriftIceServers),
+      iceServers: weriftServers,
       // The desktop only SENDS video; advertise VP8 to match the ffmpeg encoder.
       codecs: { video: [useVP8({ payloadType: VP8_PAYLOAD_TYPE, clockRate: VP8_CLOCK_RATE })] },
     });
+
+    this.diagnostics = watchPeerDiagnostics(this.pc, "phone", weriftServers.map((s) => s.urls));
 
     this.track = new MediaStreamTrack({ kind: "video" });
     this.pc.addTransceiver(this.track, { direction: "sendonly" });
@@ -180,6 +185,7 @@ export class ScreenPeer {
     };
     let surfaced = false;
     dc.stateChanged.subscribe((state) => {
+      logChannelState("phone", label, state);
       if (state === "open" && !surfaced) {
         surfaced = true;
         onReady(transport);
@@ -204,6 +210,7 @@ export class ScreenPeer {
 
   /** Apply a trickled ICE candidate from the phone. */
   async addRemoteIce(candidate: RtcIceCandidate): Promise<void> {
+    this.diagnostics.noteRemoteCandidate(candidate.candidate);
     await this.pc.addIceCandidate({
       candidate: candidate.candidate,
       sdpMid: candidate.sdpMid ?? undefined,

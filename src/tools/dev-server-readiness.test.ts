@@ -58,13 +58,12 @@ describe("reclaimTargets", () => {
   });
 });
 
+// This process's identity is passed in rather than stubbed onto `process`:
+// redefining process.ppid does not take on every Node build, and a fallback
+// that then fails to spare the parent reads as a product bug it is not.
 describe("reclaimPort", () => {
-  const realPid = process.pid;
-  const realPpid = process.ppid;
   let session: ProcessSession;
   beforeEach(() => {
-    Object.defineProperty(process, "pid", { value: SELF, configurable: true });
-    Object.defineProperty(process, "ppid", { value: PARENT, configurable: true });
     seam.procs = TABLE;
     seam.tableFails = false;
     seam.killed = [];
@@ -73,13 +72,11 @@ describe("reclaimPort", () => {
   });
   afterEach(() => {
     SESSIONS.delete(session.sessionId);
-    Object.defineProperty(process, "pid", { value: realPid, configurable: true });
-    Object.defineProperty(process, "ppid", { value: realPpid, configurable: true });
   });
 
   it("kills only the holders reclaimTargets allows and reports them", () => {
     seam.holders = [SELF, 1101, 1202, 3001];
-    expect(reclaimPort(5180)).toEqual([1202, 3001]);
+    expect(reclaimPort(5180, SELF, PARENT)).toEqual([1202, 3001]);
     expect(seam.killed).toEqual([1202, 3001]);
   });
 
@@ -87,19 +84,19 @@ describe("reclaimPort", () => {
     session.exitedAt = Date.now();
     seam.procs = TABLE.filter((p) => p.pid !== 1200);
     seam.holders = [1202];
-    expect(reclaimPort(5180)).toEqual([1202]);
+    expect(reclaimPort(5180, SELF, PARENT)).toEqual([1202]);
   });
 
   it("does not read the process table when nothing holds the port", () => {
     seam.holders = [];
     seam.tableFails = true;
-    expect(reclaimPort(5180)).toEqual([]);
+    expect(reclaimPort(5180, SELF, PARENT)).toEqual([]);
     expect(seam.killed).toEqual([]);
   });
 
   it("falls back to sparing only this process and its parent when the table cannot be read", () => {
     seam.holders = [SELF, PARENT, 1101, 3001];
     seam.tableFails = true;
-    expect(reclaimPort(5180)).toEqual([1101, 3001]);
+    expect(reclaimPort(5180, SELF, PARENT)).toEqual([1101, 3001]);
   });
 });

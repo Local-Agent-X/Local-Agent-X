@@ -174,7 +174,7 @@ function trackedSessionPids(): Set<number> {
  * dev-server lifecycle and process_restart both come here, so the exclusions
  * in reclaimTargets hold for both. Returns the pids killed.
  */
-export function reclaimPort(port: number): number[] {
+export function reclaimPort(port: number, self = process.pid, parent = process.ppid): number[] {
   const holders = pidsOnPort(port);
   if (holders.length === 0) return [];
   let procs: Proc[] = [];
@@ -183,7 +183,7 @@ export function reclaimPort(port: number): number[] {
   } catch (e) {
     logger.warn(`[dev-server] process table unavailable while reclaiming port ${port}; only this process and its parent are spared: ${(e as Error).message}`);
   }
-  const targets = reclaimTargets(holders, procs, trackedSessionPids());
+  const targets = reclaimTargets(holders, procs, trackedSessionPids(), self, parent);
   for (const pid of targets) killProcessGroupSync(pid);
   return targets;
 }

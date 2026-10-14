@@ -55,7 +55,7 @@ import { setMiddlewareStack, _resetMiddlewareStack } from "../src/canonical-loop
 import { repeatOutputMiddleware } from "../src/canonical-loop/middlewares/repeat-output.js";
 import { createInstructionLedgerMiddleware } from "../src/canonical-loop/middlewares/instruction-ledger.js";
 import { isHarnessAuthoredTask } from "../src/canonical-loop/middlewares/types.js";
-import { extractConstraints, phraseGate } from "../src/canonical-loop/instruction-ledger/extract.js";
+import { phraseGate } from "../src/canonical-loop/instruction-ledger/extract.js";
 import { buildSelfEditPrompt } from "../src/self-edit/prompt.js";
 import { ToolBlocked, assertToolCallAllowed } from "../src/tool-execution/pre-dispatch.js";
 import { newOpId } from "../src/ops/op-store.js";
@@ -350,17 +350,20 @@ function preDispatchProbe(
   };
 }
 
-/** The REAL extractor with its LLM confirm stubbed to null — the genuine
- *  phrase-gate + deterministic strong tier, which is what actually bricked the
- *  surgeon (the ban survived an LLM outage). Mirrors instruction-ledger.test.ts. */
-const offlineExtract = (msg: string) => extractConstraints(msg, async () => null);
-
 const SURGEON_TOOL_CALLS = [
   { name: "write", args: { path: "src/x.ts", content: "x" } },
   { name: "edit", args: { path: "src/x.ts", old_string: "a", new_string: "b" } },
   { name: "bash", args: { command: "sed -i 's/a/b/' src/x.ts" } },
 ] as const;
 
+// The two runs below differ in ONE bit — the provenance stamp — and share the
+// extractor: the documented factory seam handing back the ban the surgeon's
+// prose strong-extracts (proven real just above). The REAL deterministic tier
+// is not driven here on purpose: the same prose also quotes AGENTS.md, whose
+// imperative rules ("Add a doc to that list…") read to the edit-directive veto
+// as the user asking for an edit, so what that tier records for this text
+// depends on the wording of a rules file — the hazard the stamp exists to
+// close, and not a thing a contract may hinge on.
 describe("E1 headline fix — the self_edit surgeon is no longer denied by the rules file it quotes", () => {
   it("the hazard is real: the surgeon's own prompt strong-extracts a workspace-write ban", async () => {
     const gate = phraseGate(await buildSelfEditPrompt("fix the wedge in the scheduler", ""));
@@ -370,7 +373,7 @@ describe("E1 headline fix — the self_edit surgeon is no longer denied by the r
   it("BEFORE (unstamped): the ledger records the ban and pre-dispatch hard-denies write/edit/bash", async () => {
     const seen = new Map<string, string | null>();
     setMiddlewareStack([
-      createInstructionLedgerMiddleware(offlineExtract),
+      createInstructionLedgerMiddleware(banWorkspaceWrite),
       preDispatchProbe(SURGEON_TOOL_CALLS, seen),
     ]);
     const op = mkOp("selfedit_before", {
@@ -387,7 +390,7 @@ describe("E1 headline fix — the self_edit surgeon is no longer denied by the r
   it("AFTER (harness-stamped): the ledger stays empty and all three tools dispatch", async () => {
     const seen = new Map<string, string | null>();
     setMiddlewareStack([
-      createInstructionLedgerMiddleware(offlineExtract),
+      createInstructionLedgerMiddleware(banWorkspaceWrite),
       preDispatchProbe(SURGEON_TOOL_CALLS, seen),
     ]);
     const op = mkOp("selfedit_after", {

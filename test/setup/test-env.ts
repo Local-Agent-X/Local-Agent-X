@@ -13,8 +13,12 @@ import { afterAll } from "vitest";
 // setup file, which runs before each test file — is the ONE seam that gives
 // every fixture (and every child process that inherits the env) a canonical,
 // symlink-free temp root. Windows spells the variable TMP/TEMP; set all three.
+// The native resolver, not the JS one: on a Windows runner TEMP is spelled
+// with an 8.3 short name (C:\Users\RUNNER~1\…), which only the OS expands —
+// product code canonicalizes with realpathSync.native, so a fixture rooted in
+// the short form compared unequal to the long form the product returned.
 try {
-  const canonicalTmp = realpathSync(tmpdir());
+  const canonicalTmp = realpathSync.native(tmpdir());
   process.env.TMPDIR = canonicalTmp;
   process.env.TMP = canonicalTmp;
   process.env.TEMP = canonicalTmp;

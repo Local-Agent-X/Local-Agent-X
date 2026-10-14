@@ -47,7 +47,7 @@ describe("versioned source release contract", () => {
       "scripts/build-ari.js",
       "scripts/prebuild-dist.mjs",
       "packages/arikernel/core/package.json",
-      "config/tools.json",
+      "config/agent-rules.md",
       "public/app.html",
     ];
 

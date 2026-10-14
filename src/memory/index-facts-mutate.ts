@@ -3,6 +3,7 @@ import type { FactKind, RetainedFact } from "./types.js";
 import { DEFAULT_MEMORY_CONFIG } from "./types.js";
 import { rowToFact, slugify } from "./utils.js";
 import { retain, invalidateFact } from "./index-facts.js";
+import { isUserReported } from "./fact-provenance-label.js";
 import { findContradictions } from "./contradiction-sweep.js";
 
 import { createLogger } from "../logger.js";
@@ -122,6 +123,15 @@ function autoInvalidateContradicting(
   const pairs = findContradictions(items);
   for (const p of pairs) {
     if (p.drop === newId) continue; // never invalidate the fact we just inserted
+    // A heuristic, not a decision: word overlap plus a negation word anywhere.
+    // It may end a fact the user told the agent only between two preference
+    // rules ("always greet in Spanish" → "no Spanish greetings"), where the
+    // newer rule is the user's intent. Saving "In 2014, Odalys texted … and
+    // never explained" ended "Odalys is Sam's cousin." (overlap 0.67) in two
+    // qwen3.6:27b runs at 9115bd39 — "never" read as a negation of the other.
+    const dropped = candidates.find((c) => c.id === p.drop);
+    if (dropped && (dropped.provenance == null || isUserReported(dropped))
+      && !(dropped.kind === "opinion" && newFact.kind === "opinion")) continue;
     invalidateFact(db, p.drop, {
       by: "agent",
       reason: `superseded by remember #${newId}: auto-detected contradiction (overlap=${p.overlap.toFixed(2)})`,

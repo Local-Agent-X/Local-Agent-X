@@ -271,3 +271,28 @@ describe("rememberFact exclusive-slot supersede", () => {
     expect(validTo(rStop.fact!.id!)).toBeNull();
   });
 });
+
+// qwen3.6:27b at 9115bd39: saving the story ended the cousin fact — "never
+// explained" read as a negation, overlap 0.67. Both were the user's words.
+describe("the contradiction pass does not end a fact the user told the agent on word overlap", () => {
+  function userSaid(content: string, kind: "world" | "experience" | "opinion") {
+    const r = memory.rememberFact(content, { kind });
+    const db = (memory as unknown as { db: { prepare(sql: string): { run(...a: unknown[]): unknown } } }).db;
+    db.prepare("UPDATE facts SET provenance = 'user_statement' WHERE id = ?").run(r.fact!.id);
+    return r.fact!.id!;
+  }
+  const isLive = (id: number) => memory.recallByEntity("odalys").some((f) => f.id === id)
+    || memory.recallByEntity("alex").some((f) => f.id === id);
+
+  it("a story with 'never' in it leaves the user's other fact about the same person in force", () => {
+    const cousin = userSaid("@Odalys is Sam's cousin.", "experience");
+    userSaid("In 2014, @Odalys texted Sam's brother four words and never explained what she meant.", "experience");
+    expect(isLive(cousin)).toBe(true);
+  });
+
+  it("a newer preference rule from the user still replaces the older one", () => {
+    const old = userSaid("always greet in Spanish @alex", "opinion");
+    userSaid("no Spanish greetings @alex", "opinion");
+    expect(isLive(old)).toBe(false);
+  });
+});

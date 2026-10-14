@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
+import { platformRoot } from "../platform-root.js";
 import { loadSettings } from "../settings.js";
 import { SecurityLayer } from "../security/index.js";
 import { loadToolPolicy } from "../tool-policy/index.js";
@@ -262,7 +263,7 @@ export async function bootstrapServices(config: LAXConfig): Promise<Bootstrapped
   }).catch((e) => logger.warn(`[protocols] init failed: ${(e as Error).message}`));
   _t();
   _t = _bsT("dirs+toolPolicy+rbac");
-  const publicDir = join(import.meta.dirname || ".", "..", "..", "public");
+  const publicDir = join(platformRoot(), "public");
   const dataDir = getLaxDir();
   for (const d of ["apps", "images", "videos", "missions"]) mkdirSync(join(resolve(config.workspace), d), { recursive: true });
   mkdirSync(join(dataDir, "uploads"), { recursive: true });

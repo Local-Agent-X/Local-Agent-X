@@ -13,7 +13,8 @@
  * text (`<tool_use>...`, `Tool use: build_app`, `//gpu_dispatch:builder`).
  */
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { getLaxDir } from "../lax-data-dir.js";
 import { createLogger } from "../logger.js";
 import { isCredentialKey } from "../mcp-client/child-env.js";
@@ -67,7 +68,10 @@ export interface McpConfigInput {
  * cmdlines. ONE resolver so spawn and reap can't disagree on where the bridge is.
  */
 export function mcpBridgeBasePath(): string {
-  return resolve(import.meta.dirname || ".", "..", "mcp-bridge");
+  // The RUNNING tree (src/ or dist/), so anchored to this module's own URL
+  // rather than platformRoot(); the dirname meta field is undefined under a
+  // CJS interop load and would have made this cwd-relative.
+  return resolve(dirname(fileURLToPath(import.meta.url)), "..", "mcp-bridge");
 }
 
 /**

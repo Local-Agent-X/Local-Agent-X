@@ -20,15 +20,16 @@
  */
 import { existsSync, readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { z } from "zod";
 import { getLaxDir } from "../lax-data-dir.js";
 import { createLogger } from "../logger.js";
+import { platformRoot } from "../platform-root.js";
 import type { ModelTier } from "../model-tiers.js";
 
 const logger = createLogger("local-runtimes.model-profile");
 
-const BUNDLED_DIR = resolve(import.meta.dirname || ".", "..", "..", "config", "model-profiles");
+const BUNDLED_DIR = join(platformRoot(), "config", "model-profiles");
 export const USER_PROFILE_SUBDIR = "model-profiles";
 
 /** Null means "leave it to the runtime and the Modelfile". */

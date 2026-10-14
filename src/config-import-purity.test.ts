@@ -59,3 +59,26 @@ describe("config.ts import purity", () => {
     expect(typeof mod.initConfig).toBe("function");
   });
 });
+
+// The schema's systemPrompt default is read from config/system-prompt.md
+// when a config is parsed without one, never when the schema module loads:
+// an import-time read ran through whichever config-loader instance the
+// importer happened to resolve (a second, cwd-relative one under tsx) and
+// logged a spurious "could not read system-prompt.md" on every eval run.
+describe("config-schema.ts import purity", () => {
+  afterEach(() => vi.doUnmock("./config-loader.js"));
+
+  it("importing the schema reads no prompt; parsing a config without one does", async () => {
+    const loadSystemPrompt = vi.fn(() => "PROMPT FROM DISK");
+    vi.doMock("./config-loader.js", () => ({ loadSystemPrompt }));
+    vi.resetModules();
+
+    const { configSchema } = await import("./config-schema.js");
+    expect(loadSystemPrompt).not.toHaveBeenCalled();
+
+    expect(configSchema.parse({}).systemPrompt).toBe("PROMPT FROM DISK");
+    expect(loadSystemPrompt).toHaveBeenCalledTimes(1);
+    expect(configSchema.parse({ systemPrompt: "mine" }).systemPrompt).toBe("mine");
+    expect(loadSystemPrompt).toHaveBeenCalledTimes(1);
+  });
+});

@@ -4,9 +4,11 @@
 import { z } from "zod";
 import { loadSystemPrompt } from "./config-loader.js";
 
-// System prompt is loaded from config/system-prompt.md.
+// System prompt is loaded from config/system-prompt.md when a config is
+// parsed without one — not at import, so importing the schema reads nothing.
 // Falls back to a minimal prompt if the file is missing.
-const DEFAULT_SYSTEM_PROMPT = loadSystemPrompt() || "You are a personal AI companion running inside Local Agent X. Use your tools to help the user.";
+const defaultSystemPrompt = () =>
+  loadSystemPrompt() || "You are a personal AI companion running inside Local Agent X. Use your tools to help the user.";
 
 export const configSchema = z.object({
   port: z.number().int().min(1).max(65535).default(7007),
@@ -38,7 +40,7 @@ export const configSchema = z.object({
    *  Clamped to [1,12]; 12 = agency MAX_CONCURRENT_WORKTREES, and the
    *  scheduler's agent-lane cap throttles the underlying workers further. */
   maxConcurrentChunks: z.number().int().min(1).max(12).default(1),
-  systemPrompt: z.string().default(DEFAULT_SYSTEM_PROMPT),
+  systemPrompt: z.string().default(defaultSystemPrompt),
   profile: z.enum(["home", "dev", "enterprise"]).default("home"),
   toolApproval: z.enum(["auto", "confirm-risky", "confirm-all"]).default("auto"),
   learningMode: z.enum(["assisted", "autonomous"]).default("assisted"),

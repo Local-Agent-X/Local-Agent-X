@@ -16,17 +16,17 @@ import { handleWatcherErrors } from "./util/watcher-errors.js";
 import { join, resolve, normalize, isAbsolute, relative } from "node:path";
 
 import { createLogger } from "./logger.js";
+import { platformRoot } from "./platform-root.js";
 import type { PromptPriority, PromptSection } from "./context/system-prompt-builder.js";
 const logger = createLogger("config-loader");
-
-const CONFIG_DIR = resolve(join(import.meta.dirname || ".", "..", "config"));
 
 // The platform's own install/repo root — the parent of config/. Self-protection
 // is anchored HERE: only files inside this tree can be protected. Without the
 // anchor, entries like "src/index.ts" / "src/types.ts" / "src/config.ts" matched
 // by path-suffix and wrongly blocked a model from editing an unrelated user
 // project that happens to use the same (extremely common) filenames.
-const PLATFORM_ROOT = resolve(CONFIG_DIR, "..");
+const PLATFORM_ROOT = platformRoot();
+const CONFIG_DIR = join(PLATFORM_ROOT, "config");
 
 // ── Cached values ──
 

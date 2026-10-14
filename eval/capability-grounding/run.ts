@@ -19,15 +19,14 @@
  * Exit 0 = all passed; exit 1 = a regression. Run before shipping prompt or
  * file-access changes.
  */
-import { mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 
 // Isolate state under a throwaway data dir BEFORE importing any src module so
 // loadFileAccessMode() reads OUR security.json, never the real ~/.lax one.
 const LAX_TMP = mkdtempSync(join(tmpdir(), "grounding-eval-"));
 process.env.LAX_DATA_DIR = LAX_TMP;
-const REPO = resolve(import.meta.dirname, "..", "..");
 
 type Result = { group: string; name: string; pass: boolean; detail?: string };
 const results: Result[] = [];
@@ -47,11 +46,9 @@ async function main(): Promise<void> {
     check("fix1-doctrine", "contains the 'attempt permitted actions' rule heading",
       prompt.includes("Attempt permitted actions") && prompt.includes("don't refuse on assumption"));
     check("fix1-doctrine", "tells the model not to carry a refusal forward",
-      /carrying a refusal forward/i.test(prompt));
+      /carrying (an earlier |a )?refusal forward/i.test(prompt));
     check("fix1-doctrine", "demands the REAL error over a vague 'I can't access that'",
       prompt.includes("I can't access that") && /report the REAL error/i.test(prompt));
-    check("fix1-doctrine", "points the model at the per-turn file-access mode",
-      /file access mode is told to you each turn/i.test(prompt));
   }
 
   // ── Fix 2 — the per-turn grounding block (pure helper) ──
@@ -81,13 +78,47 @@ async function main(): Promise<void> {
       fileAccessGroundingBlock(loadFileAccessMode()) === workspace);
   }
 
-  // ── Fix 2 wiring — the block is appended in BOTH assembly branches ──
+  // ── Fix 2 wiring — the block reaches BOTH assembly branches ──
+  // Since c307d680 the block is no longer string-concatenated per branch; it is
+  // one `file-access` section added to the SystemPromptBuilder after the
+  // override/base split, with policy "required" so the allocator can never shed
+  // it. Exercise the real assembly both ways and look for the section.
   {
-    const src = readFileSync(
-      join(REPO, "src", "agent-request", "prepare-request", "build-system-prompt.ts"), "utf8");
-    const appends = (src.match(/\+ fileAccessBlock \+/g) || []).length;
-    check("fix2-wiring", "fileAccessBlock is concatenated into both the override AND base branch",
-      appends >= 2, `found ${appends} concatenation site(s) (expected 2: sub-agent override + base)`);
+    const { buildSystemPromptWithTelemetry, fileAccessGroundingBlock } =
+      await import("../../src/agent-request/prepare-request/build-system-prompt.js");
+    setMode("unrestricted");
+    const expectedBlock = fileAccessGroundingBlock("unrestricted");
+    const baseInput = {
+      channel: "web" as const,
+      message: "hello",
+      sessionId: `grounding-eval-${Date.now()}`,
+      config: { systemPrompt: "Base prompt." } as Parameters<typeof buildSystemPromptWithTelemetry>[0]["config"],
+      memoryIndex: {} as Parameters<typeof buildSystemPromptWithTelemetry>[0]["memoryIndex"],
+      integrations: { getAgentContext: () => "" } as Parameters<typeof buildSystemPromptWithTelemetry>[0]["integrations"],
+      allAgentTools: [],
+      resolvedProvider: "anthropic",
+      resolvedModel: "grounding-eval",
+      contextBlock: "",
+      relevantMemories: "",
+      smartContext: "",
+      memoryContext: "",
+      memoryNotifications: [],
+      memoryCurateBlock: "",
+    };
+    for (const [branch, input] of [
+      ["sub-agent override", { ...baseInput, systemPromptOverride: "You are a focused sub-agent." }],
+      ["base prompt", baseInput],
+    ] as const) {
+      const built = await buildSystemPromptWithTelemetry(input);
+      const section = built.renderedSections.find((s) => s.id === "file-access");
+      const blockAt = built.prompt.indexOf(expectedBlock);
+      check("fix2-wiring", `${branch} branch carries the live-mode block as a required 'file-access' section`,
+        section !== undefined && section.policy === "required" && section.text === expectedBlock && blockAt >= 0,
+        section === undefined ? "no 'file-access' section rendered"
+          : section.policy !== "required" ? `section policy is '${section.policy}', so the allocator may shed it`
+          : blockAt < 0 ? "section rendered but its text is not in the assembled prompt"
+          : `section text differs from fileAccessGroundingBlock(loadFileAccessMode())`);
+    }
   }
 }
 

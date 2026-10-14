@@ -22,7 +22,7 @@ artifacts directly, with no LLM:
 | `fix1-doctrine` | The constitutional "attempt permitted actions — don't refuse on assumption" rule is live in `loadSystemPrompt()` (the hot-reloaded source) |
 | `fix2-block` | `fileAccessGroundingBlock(mode)` states the active policy for each mode (unrestricted = "ANY file"; workspace = blocked BY POLICY, not a missing tool; common = names the content folders + Settings) |
 | `fix2-live` | The read-mode → block composition `build-system-prompt.ts` performs: a written `security.json` mode flows through `loadFileAccessMode()` into the matching block |
-| `fix2-wiring` | The block is concatenated into BOTH prompt-assembly branches (sub-agent override + base), so sub-agents are grounded too |
+| `fix2-wiring` | Real assembly through `buildSystemPromptWithTelemetry` in BOTH branches (sub-agent override + base) renders the live-mode block as a `required` `file-access` section, so sub-agents are grounded too and the allocator can never shed it |
 
 There is no reactive refuse-without-attempt backstop any more: the
 `false-refusal` middleware was removed in 4a5a4cb6 with the other wording-based

@@ -173,7 +173,7 @@ export const RULES: Record<RuleId, Rule> = {
     channels: [
       { kind: "nudge", id: WIRE_FORMAT_NUDGE_ID },
       { kind: "rider", id: CHAT_RIDER_IDS.toolCallRequired },
-      { kind: "rider", id: "local-model-rider" },
+      { kind: "rider", id: "model-family-rider" },
     ],
   },
 

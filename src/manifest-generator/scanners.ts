@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 import { ROOT, CONFIG_DIR } from "./paths.js";
@@ -28,30 +28,56 @@ export function scanSettingsTabs(): TabEntry[] {
     { name: "AI & Models", id: "stab-ai", description: "Provider selection (xAI, Gemini, OpenAI, Anthropic, local), temperature, max iterations" },
     { name: "Memory", id: "stab-memory", description: "Embedding provider, reranking, conversation import, consolidation" },
     { name: "Media", id: "stab-image", description: "Image/video generation, speech-to-text (Whisper), text-to-speech (Kokoro/Piper)" },
-    { name: "Security", id: "stab-security", description: "Tool policy toggles (bash, HTTP, browser), file access modes, approval settings" },
+    { name: "Security", id: "stab-security", description: "Tool policy toggles (bash, HTTP, browser), file access modes, approval settings, developer mode" },
+    { name: "Secrets", id: "stab-secrets", description: "The vault: stored credentials, their services and approved destinations" },
     { name: "Communication", id: "stab-whatsapp", description: "WhatsApp Bridge QR connect, Telegram bot setup" },
-    { name: "Integrations", id: "stab-integrations", description: "Connected APIs & custom integration manager" },
+    { name: "Mobile", id: "stab-mobile", description: "Phone pairing for remote screen, voice and control" },
+    { name: "Tools & Integrations", id: "stab-integrations", description: "Connected APIs, MCP servers & custom integration manager" },
+    { name: "Protocols", id: "stab-protocols", description: "Saved and learned protocols (reusable workflows)" },
+    { name: "Appearance", id: "stab-appearance", description: "Theme and layout" },
+    { name: "Usage", id: "stab-usage", description: "Token and cost usage" },
+    { name: "HQ", id: "stab-hq", description: "Agent headquarters settings" },
     { name: "Sync", id: "stab-sync", description: "GitHub memory sync, frequency settings, workspace sync" },
   ];
 }
 
 export function scanAgentTabs(): TabEntry[] {
   return [
+    { name: "Dashboard", id: "agents-tab-dashboard", description: "Active runs and their progress" },
     { name: "Team", id: "agents-tab-team", description: "Agent roster — spawn, hire, view status of all agents" },
     { name: "Org Chart", id: "agents-tab-orgchart", description: "Visual hierarchy of agent teams and reporting structure" },
-    { name: "Inbox", id: "agents-tab-inbox", description: "Agent proposals and messages awaiting review" },
     { name: "Issues", id: "agents-tab-issues", description: "Issue tracking with status workflow" },
     { name: "Templates", id: "agents-tab-templates", description: "Agent template library for reusable roles" },
     { name: "History", id: "agents-tab-history", description: "Agent run history with filtering by status" },
   ];
 }
 
+// The directories that define tools. The manifest is generated at config load,
+// before the tool registry exists, so the catalog is read from source: every
+// `name: "…"` with a description in these trees. Collapsed-family members
+// (computer_click, protocol_get) appear beside their parent; that is the
+// catalog's grain, not the per-turn schema's.
+const TOOL_SOURCE_DIRS = [
+  "src/tools", "src/memory/tools", "src/ops/tools", "src/protocols", "src/agents",
+  "src/agency", "src/cron", "src/auto-build", "src/autopilot", "src/browser",
+];
+
+function toolSourceFiles(dir: string, out: string[] = []): string[] {
+  let entries: string[];
+  try { entries = readdirSync(dir); } catch { return out; }
+  for (const entry of entries) {
+    const p = join(dir, entry);
+    if (statSync(p).isDirectory()) toolSourceFiles(p, out);
+    else if (p.endsWith(".ts") && !p.endsWith(".test.ts")) out.push(p);
+  }
+  return out;
+}
+
 export function scanTools(): ToolSummary[] {
   const tools: ToolSummary[] = [];
-  const toolFiles = ["src/tools.ts", "src/memory/tools.ts", "src/browser-tools.ts", "src/operations/tools.ts", "src/app-tools.ts"];
+  const toolFiles = TOOL_SOURCE_DIRS.flatMap((dir) => toolSourceFiles(join(ROOT, dir)));
 
-  for (const relPath of toolFiles) {
-    const filePath = join(ROOT, relPath);
+  for (const filePath of toolFiles) {
     try {
       const content = readFileSync(filePath, "utf-8");
       // Match tool definitions: { name: "xxx", description: "yyy", readOnly: true/false }

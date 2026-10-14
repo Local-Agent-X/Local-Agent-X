@@ -86,7 +86,7 @@ export function taintedShellBlockReason(
     overlap.length > 0
       ? `the command text carries bytes from a tainted source (${[...new Set(overlap.map((o) => o.source))].join(", ")})`
       : `the command carries secret-shaped content (${secret.kinds.join(", ")})`;
-  return `Shell is blocked for this command: ${evidence}, and running it while the session is tainted (${hit.join(", ")}) is an exfiltration risk, so THIS command stays denied. This does NOT block your file edits (read/write/edit), the build/verify typecheck, or benign shell commands that don't carry the tainted/secret data — keep using those to make progress. If this was intended and safe, ask the user to clear it in Settings (declassify). The lock resets on your next turn.`;
+  return `Shell is blocked for this command: ${evidence}, and running it while the session is tainted (${hit.join(", ")}) is an exfiltration risk, so THIS command stays denied. This does NOT block your file edits (read/write/edit), the build/verify typecheck, or benign shell commands that don't carry the tainted/secret data — keep using those to make progress. If this was intended and safe, the user can clear it with the "Declassify & retry" button on this result's card in the chat; nothing in Settings does it. The taint lasts for the rest of this session otherwise.`;
 }
 
 /**

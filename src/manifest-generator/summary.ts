@@ -30,7 +30,7 @@ export function securitySettingsLine(): string {
 export function userOnlyControlsLine(): string {
   const places = [...new Set(AGENT_DENIED_ROUTES.map((r) => r.place))];
   const named = places.map((p) => `${p.split(" → ").pop()} (${p})`).join("; ");
-  return `- **The user's alone** (no tool or route of yours changes these; when asked, say it is theirs to change and where, and do not look for another way): ${named}.`;
+  return `- **The user's alone through the UI** (no API route of yours changes these): ${named}. Where a dedicated tool exists, it may act on the user's explicit request — \`setting\` for a security field the user asks you to change (widening asks them to confirm), \`request_secret\` for a secret, \`mcp_add_server\` for an MCP server. Without one, say it is theirs to change and where, and do not look for another way.`;
 }
 
 const require = createRequire(import.meta.url);
@@ -81,7 +81,7 @@ export function getManifestSummary(): string {
     `### API Routes: ${manifest.apiRoutes.length} endpoints — call via http_request when no dedicated tool fits`,
     ...summarizeRoutesByResource(manifest.apiRoutes),
     "",
-    "NEVER use the `browser` tool on your own app ({{APP_URL}}) — that opens a separate browser the user can't see. The three lanes (setting tool / self_edit / browser) are in your Invariants.",
+    "NEVER drive your own app ({{APP_URL}}) with the `browser` tool — use `setting`, the dedicated tools and your API routes instead. The three lanes (setting tool / self_edit / browser) are in your Invariants.",
     "",
     "### Common Operations",
     "- **Change an app setting** (theme, provider, model, temperature, reasoning effort, …): the `setting` tool with that field. It checks the value, applies it, and updates every open window",
@@ -91,10 +91,10 @@ export function getManifestSummary(): string {
     "- **Spawn agents**: use `agent_spawn` tool (calls API internally)",
     "- **Connect WhatsApp**: `http_request` → `POST {{APP_URL}}/api/whatsapp/connect`",
     "- **Connect Telegram**: `http_request` → `POST {{APP_URL}}/api/telegram/connect`",
-    "- **Schedule recurring tasks**: `http_request` → `POST {{APP_URL}}/api/cron`",
+    "- **Schedule recurring tasks**: the `mission_schedule_create` tool (list/update/toggle/delete siblings)",
     "- **Build a standalone app**: use `build_app` tool — creates in `workspace/apps/{name}/`",
     "- **Pin/unpin sidebar**: use `sidebar_pin` / `sidebar_unpin` tools",
-    "- **Clear sidebar Conversations list**: use `sidebar_clear` (frontend-only; do NOT call `http_request DELETE /api/sessions` — that destroys backend session data)",
+    "- **Clear sidebar Conversations list**: use `sidebar_clear` (frontend-only; `http_request DELETE /api/sessions` deletes nothing and does not clear the sidebar)",
     "- **Turn a tool family on or off**: the `setting` tool (`enableShell`, `enableHttp`, `enableBrowser`, `enableComputerControl`)",
     "",
     "**IMPORTANT**: Before creating anything new, check this map. If it already exists, USE the existing feature via its API route.",

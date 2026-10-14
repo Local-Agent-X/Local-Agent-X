@@ -114,7 +114,7 @@ export const FOLLOW_THROUGH_LOCAL =
 
 const BASE_LOCAL_RIDER =
   `\n\n[LOCAL MODEL RIDER — concrete rules, follow strictly]\n` +
-  `1. **TOOL CALLS USE THE NATIVE MECHANISM ONLY.** Never write tool-call syntax in your reply text — no XML-style tags, bracket blocks, or JSON envelopes (\`<tool_call>\`, \`<execute_tool>\`, \`[TOOL_REQUEST]\`). Typed-out syntax runs NOTHING. If you cannot make a native tool call, say what you would do in plain language.\n` +
+  `1. **TOOL CALLS USE THE NATIVE MECHANISM ONLY.** Never write tool-call syntax in your reply text — no XML-style tags, bracket blocks, or JSON envelopes (\`<tool_call>\`, \`<execute_tool>\`, \`[TOOL_REQUEST]\`). Typed-out syntax is not a tool call: it is shown to the user as text, or at best salvaged unreliably. If you cannot make a native tool call, say so and ask the user how to proceed.\n` +
   `2. **CALL OR ANSWER — NEVER NARRATE.** "I will now use the web_search tool" is not a tool call. Either actually call the tool, or answer directly. Prose about a tool runs nothing.\n` +
   `3. **NO CONTROL TOKENS OR REASONING TAGS.** Chat-template markers and thinking tags (\`<thought>\`, \`<think>\`, role/end-of-turn tokens) are machinery — they must never appear in your reply.\n` +
   `4. **ANSWER ONCE, THEN STOP.** One complete, self-contained reply. Do not restate it or loop on the same sentences — when the answer is done, end the message.\n`;

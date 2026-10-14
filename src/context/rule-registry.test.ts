@@ -1,4 +1,6 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { RULES, allRules, channelIsDelivered, deliveredChannels, type RuleId } from "./rule-registry.js";
 import { WIRE_FORMAT_NUDGE_ID } from "../canonical-loop/public/nudge-ids.js";
 import { CHAT_RIDER_IDS } from "../routes/chat/system-prompt-augmentations.js";
@@ -50,5 +52,28 @@ describe("channel delivery", () => {
     const rule = RULES["long-running-process-uses-process-start"];
     expect(deliveredChannels(rule, new Set<string>()).map((c) => c.kind)).toEqual(["error-message"]);
     expect(deliveredChannels(rule, included)).toHaveLength(2);
+  });
+});
+
+// A rider channel is counted as delivered on every profile (channelIsDelivered
+// never checks it), so a misspelled rider id was invisible to the coverage
+// test: "local-model-rider" sat in the registry for weeks while the section is
+// "model-family-rider". The id must be one the prompt pipeline actually emits.
+describe("rider channel ids name a rider the pipeline emits", () => {
+  it("every rider id is a chat rider or one of the two prepare-request riders", () => {
+    const chatRiderIds = Object.values(CHAT_RIDER_IDS);
+    const prepareRequestSource = readFileSync(
+      join(process.cwd(), "src/agent-request/prepare-request/build-system-prompt.ts"), "utf-8",
+    );
+    const prepareRequestRiderIds = [...prepareRequestSource.matchAll(/\["([a-z-]+-rider)", "/g)].map((m) => m[1]);
+    expect(prepareRequestRiderIds).toEqual(expect.arrayContaining(["provider-rider", "model-family-rider"]));
+    const known = new Set([...chatRiderIds, ...prepareRequestRiderIds]);
+    const unknown: string[] = [];
+    for (const rule of allRules()) {
+      for (const channel of rule.channels) {
+        if (channel.kind === "rider" && !known.has(channel.id)) unknown.push(`${rule.id} → ${channel.id}`);
+      }
+    }
+    expect(unknown, `rider ids no section emits: ${unknown.join(", ")}`).toEqual([]);
   });
 });

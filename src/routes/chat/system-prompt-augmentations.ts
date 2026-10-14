@@ -67,9 +67,9 @@ export async function augmentSystemPrompt(
       }).join("\n");
       const parallelContext =
         `\n\n[PARALLEL CONTEXT — ${activeOpIds.length} background worker${activeOpIds.length === 1 ? "" : "s"} active]\n` +
-        `These workers are already running in separate processes for the user. You can SEE their progress streaming into the same chat. Do NOT try to do their work — they're already on it.\n\n` +
+        `These workers are already running for the user. Their progress is NOT in your context — read it with op_status / agent_status when asked. Do NOT try to do their work — they're already on it.\n\n` +
         `Active:\n${taskLines}\n\n` +
-        `Respond to the user's CURRENT message normally. If they're asking something unrelated to the worker(s), answer it. If they're asking about a worker's status, you can refer to what you've seen in its progress stream. If they're giving feedback for a worker, that's already auto-routed via the redirect classifier — you don't need to handle it here. Speak naturally about the parallel context — like JARVIS would when Tony talks to him while a build is in progress.`;
+        `Respond to the user's CURRENT message normally. If they're asking something unrelated to the worker(s), answer it. If they're asking about a worker's status, check it with op_status / agent_status and report what it says. If they're giving feedback or new instructions for a worker, relay them with agent_redirect / op_redirect — nothing routes them automatically. Speak naturally about the parallel context — like JARVIS would when Tony talks to him while a build is in progress.`;
       appendSystemPromptSection(prepared, {
         id: CHAT_RIDER_IDS.parallelContext,
         label: "Parallel Context",

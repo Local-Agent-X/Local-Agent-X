@@ -44,7 +44,7 @@ export function buildVoiceTail(visualsEnabled: boolean): string {
     "to the screen — not for unrelated questions.\n" +
     "• Opening or using a website (\"open google\", \"pull up youtube\", \"search " +
     "X\", \"go to my email\"): use the browser tool. It opens and drives the " +
-    "agent's OWN visible Chrome window — yours to control, so you can keep " +
+    "agent's OWN visible browser window (the in-app view by default) — yours to control, so you can keep " +
     "going (\"open google\" then \"search it for X\" works). It is NOT the user's " +
     "everyday browser. Do the action, then say one short line about what you " +
     "see. Never claim you opened or did something the browser tool didn't " +

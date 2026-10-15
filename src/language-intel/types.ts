@@ -22,6 +22,19 @@ export interface SymbolLocation {
    *  position is a declaration NAME or another occurrence. Optional — query
    *  inputs don't carry it. */
   kind?: "declaration" | "occurrence";
+  /** Set on declaration results: true for a module-level declaration (a
+   *  function, class, interface, type, enum or variable at the top of a file),
+   *  false for a parameter, local or member of the same name. */
+  topLevel?: boolean;
+}
+
+/** One exported module-level declaration. 1-based line. */
+export interface ExportedDeclaration {
+  name: string;
+  /** function | class | interface | type | enum | variable */
+  kind: string;
+  file: string;
+  line: number;
 }
 
 /** One reference (or definition) site for a symbol. 1-based line/column. */
@@ -61,5 +74,9 @@ export interface LanguageIntelProvider {
     symbolName: string,
     opts?: { limit?: number },
   ): Promise<SymbolLocation[]>;
+  /** Every exported module-level declaration under `root`, from a pure parse
+   *  (no type-check): what "does a function named X already exist" and a
+   *  same-name-in-two-files check are answered from. */
+  listExportedDeclarations(root: string): Promise<ExportedDeclaration[]>;
   dispose(): void;
 }

@@ -7,10 +7,10 @@
 // the file. Unsupported languages answer empty ([] everywhere) — callers own
 // their fallbacks (grep, etc.); this subsystem never guesses.
 
-import type { FileDiagnostic, LanguageIntelProvider, ReferenceHit, SymbolLocation } from "./types.js";
+import type { ExportedDeclaration, FileDiagnostic, LanguageIntelProvider, ReferenceHit, SymbolLocation } from "./types.js";
 import { TsLanguageIntelProvider } from "./ts-provider.js";
 
-export type { FileDiagnostic, LanguageIntelProvider, ReferenceHit, SymbolLocation } from "./types.js";
+export type { ExportedDeclaration, FileDiagnostic, LanguageIntelProvider, ReferenceHit, SymbolLocation } from "./types.js";
 
 export interface LanguageIntel {
   supports(file: string): boolean;
@@ -18,6 +18,7 @@ export interface LanguageIntel {
   findDefinition(loc: SymbolLocation): Promise<ReferenceHit[]>;
   getDiagnostics(files: string[]): Promise<FileDiagnostic[]>;
   findSymbolPositions(root: string, symbolName: string, opts?: { limit?: number }): Promise<SymbolLocation[]>;
+  listExportedDeclarations(root: string): Promise<ExportedDeclaration[]>;
   dispose(): void;
 }
 
@@ -62,6 +63,12 @@ export function getLanguageIntel(): LanguageIntel {
         if (out.length >= limit) break;
         out.push(...(await provider.findSymbolPositions(root, symbolName, { limit: limit - out.length })));
       }
+      return out;
+    },
+
+    listExportedDeclarations: async (root) => {
+      const out: ExportedDeclaration[] = [];
+      for (const provider of ensureProviders()) out.push(...(await provider.listExportedDeclarations(root)));
       return out;
     },
 

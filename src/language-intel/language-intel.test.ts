@@ -63,7 +63,7 @@ describe("language-intel", () => {
     const aFile = join(dir, "a.ts");
 
     // Declaration first: "export function " is 16 chars → column 17.
-    expect(positions[0]).toEqual({ file: aFile, line: 2, column: 17, kind: "declaration" });
+    expect(positions[0]).toEqual({ file: aFile, line: 2, column: 17, kind: "declaration", topLevel: true });
 
     // The comment (L1) and string-literal (L3) mentions are not AST
     // identifiers and must not appear.
@@ -74,6 +74,21 @@ describe("language-intel", () => {
     // The b.ts import + call site show up as non-declaration occurrences.
     const bLines = positions.filter((p) => p.file === join(dir, "b.ts")).map((p) => p.line);
     expect(bLines).toContain(3);
+  });
+
+  it("findSymbolPositions marks a same-named parameter as not top-level", async () => {
+    writeFileSync(join(dir, "c.ts"), "export function wrap(greetUser: string): string { return greetUser; }\n");
+    const positions = await getLanguageIntel().findSymbolPositions(dir, "greetUser");
+    const decls = positions.filter((p) => p.kind === "declaration");
+    expect(decls.find((p) => p.file === join(dir, "a.ts"))?.topLevel).toBe(true);
+    expect(decls.find((p) => p.file === join(dir, "c.ts"))?.topLevel).toBe(false);
+  });
+
+  it("listExportedDeclarations lists exported module-level names, not locals or unexported ones", async () => {
+    writeFileSync(join(dir, "c.ts"), "function hidden(): void {}\nexport interface Shape { n: number }\nexport type Id = string;\n");
+    const decls = await getLanguageIntel().listExportedDeclarations(dir);
+    const byName = Object.fromEntries(decls.map((d) => [d.name, `${d.kind}@${d.file.endsWith("a.ts") ? "a" : d.file.endsWith("b.ts") ? "b" : "c"}:${d.line}`]));
+    expect(byName).toEqual({ greetUser: "function@a:2", greeting: "variable@b:3", Shape: "interface@c:2", Id: "type@c:3" });
   });
 
   it("findSymbolPositions honors opts.limit", async () => {

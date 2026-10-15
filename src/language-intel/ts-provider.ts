@@ -8,7 +8,7 @@
 import { readdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import ts from "typescript";
-import type { FileDiagnostic, LanguageIntelProvider, ReferenceHit, SymbolLocation } from "./types.js";
+import type { ExportedDeclaration, FileDiagnostic, LanguageIntelProvider, ReferenceHit, SymbolLocation } from "./types.js";
 import { TS_FAMILY_EXT_RE } from "./types.js";
 import { TsProject, disposeAllProjects, getProjectForFile } from "./ts-project.js";
 
@@ -168,10 +168,11 @@ function collectSymbolHits(
     if (ts.isIdentifier(node) && node.text === symbolName) {
       const { line, character } = sf.getLineAndCharacterOfPosition(node.getStart(sf));
       if (isDeclarationName(node)) {
-        const hit: SymbolLocation = { file, line: line + 1, column: character + 1, kind: "declaration" };
+        const topLevel = isTopLevelDeclarationName(node);
+        const hit: SymbolLocation = { file, line: line + 1, column: character + 1, kind: "declaration", topLevel };
         // Two-tier ranking: module-level declarations outrank parameters/
         // locals/members, whatever the alphabetical walk order was.
-        const bucket = isTopLevelDeclarationName(node) ? topLevelDeclarations : otherDeclarations;
+        const bucket = topLevel ? topLevelDeclarations : otherDeclarations;
         if (bucket.length < limit) bucket.push(hit);
       } else if (occurrences.length < limit) {
         occurrences.push({ file, line: line + 1, column: character + 1, kind: "occurrence" });
@@ -253,6 +254,31 @@ export class TsLanguageIntelProvider implements LanguageIntelProvider {
       collectSymbolHits(file, symbolName, topLevelDeclarations, otherDeclarations, occurrences, limit);
     }
     return [...topLevelDeclarations, ...otherDeclarations, ...occurrences].slice(0, limit);
+  }
+
+  async listExportedDeclarations(root: string): Promise<ExportedDeclaration[]> {
+    const out: ExportedDeclaration[] = [];
+    for (const file of walkScriptFiles(resolve(root))) {
+      const text = ts.sys.readFile(file);
+      if (text === undefined) continue;
+      const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, /*setParentNodes*/ false);
+      for (const st of sf.statements) {
+        if (!ts.canHaveModifiers(st) || !ts.getModifiers(st)?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword)) continue;
+        const line = (node: ts.Node): number => sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1;
+        if (ts.isVariableStatement(st)) {
+          for (const d of st.declarationList.declarations) {
+            if (ts.isIdentifier(d.name)) out.push({ name: d.name.text, kind: "variable", file, line: line(d) });
+          }
+          continue;
+        }
+        const kind = ts.isFunctionDeclaration(st) ? "function" : ts.isClassDeclaration(st) ? "class"
+          : ts.isInterfaceDeclaration(st) ? "interface" : ts.isTypeAliasDeclaration(st) ? "type"
+            : ts.isEnumDeclaration(st) ? "enum" : null;
+        const name = kind ? (st as ts.DeclarationStatement).name : undefined;
+        if (kind && name && ts.isIdentifier(name)) out.push({ name: name.text, kind, file, line: line(st) });
+      }
+    }
+    return out;
   }
 
   dispose(): void {

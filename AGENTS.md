@@ -15,6 +15,9 @@ oversized files). When a number in prose disagrees with the map, the map wins.
 | Build, with every static check in front of it | `npm run build` |
 | Unit tests (vitest; use PowerShell on Windows) | `npm run test:unit` |
 | Regenerate the codebase map after adding or moving a module | `npm run docs:map` |
+| Who imports a file or module, file by file | `npm run deps -- <path>` |
+| Who uses a function, class, type or member (the compiler's answer, via `src/language-intel/`) | `npm run refs -- <Name>` (or `<file>#<Name>`, `<file>:<line>`) |
+| Exported names declared in more than one file | `npm run refs -- --duplicates` |
 | Regenerate `docs/agent-capabilities.md` after an audience change | `npm run docs:generated` |
 
 ## Directory boundaries
@@ -38,11 +41,12 @@ pinned at `/apps/calendar/`, not `public/calendar.html`. <!-- doc-paths:ignore -
 - **No `require()`**; the package is ESM (`check:no-require`). Import source with the `.js` suffix; never import from `dist/`.
 - **The codebase map must be current** (`check:codebase-map`).
 - **Every path named in a current doc exists** (`check:doc-paths` over `scripts/current-docs.mjs`). Add a doc to that list when agents are pointed at it; move finished plans to `docs/history/`.
+- **Every module under `src/` has an owner on record** (`check:module-owners`): its own `AGENTS.md`, or a row in ARCHITECTURE.md's subsystem map saying what it owns and what it doesn't. A new module needs one before the build passes; that row is where a duplicate of an existing module gets noticed.
 
 ## Code rules (checked by review)
 
 - **Read before edit.** Never change code you haven't opened.
-- **Extend the owner.** Find the module that owns the concern (ARCHITECTURE.md) before writing a new one. No parallel implementations, no compat shims for removed features.
+- **Extend the owner.** Find the module that owns the concern (ARCHITECTURE.md) before writing a new one, and run `npm run refs -- <Name>` for the name you'd give a new function. No parallel implementations, no compat shims for removed features.
 - **Keep the diff on the task.** No comments, types, or cleanups in code you didn't need to touch. No error handling for cases that can't happen.
 - **No AI-vendor or tool attribution in code comments.** It belongs in commit metadata.
 - **Light theme is the default.**

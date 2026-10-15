@@ -25,6 +25,7 @@
  *
  *   Regenerate:  npm run docs:map        (node scripts/gen-codebase-map.mjs)
  *   Verify:      npm run check:codebase-map   (--check; runs inside npm build)
+ *   Who imports: npm run deps -- <file or dir>   (--deps; prints, writes nothing)
  */
 import { readFileSync, writeFileSync, readdirSync, statSync } from "node:fs";
 import { join, dirname, relative, resolve, sep } from "node:path";
@@ -106,6 +107,60 @@ const topDirs = readdirSync(SRC_ROOT)
   .sort();
 
 const allFiles = walk(SRC_ROOT).filter((p) => isSource(p.split(sep).pop()));
+
+// ── --deps <path>: who imports a file or directory, file by file ───────────
+// The map's per-directory counts answer "how wired-in is this module"; this
+// answers "who exactly would a change here reach". Same specifier scan as the
+// map, resolved to files (ESM `.js` specifiers land on their `.ts` source).
+const depsIdx = process.argv.indexOf("--deps");
+if (depsIdx >= 0) {
+  const target = resolve(REPO_ROOT, process.argv[depsIdx + 1] ?? "");
+  const inside = (p) => p === target || p.startsWith(target + sep);
+  const resolveFile = (fromFile, spec) => {
+    if (!spec.startsWith(".")) return null;
+    const base = resolve(dirname(fromFile), spec);
+    const stem = base.replace(/\.(m|c)?jsx?$/, "");
+    for (const c of [base, `${stem}.ts`, `${stem}.tsx`, join(base, "index.ts"), join(base, "index.tsx")]) {
+      try { if (statSync(c).isFile()) return c; } catch { /* not this candidate */ }
+    }
+    return null;
+  };
+  const posixRel = (p) => relative(REPO_ROOT, p).split(sep).join("/");
+  const unit = (p) => { const parts = relative(SRC_ROOT, p).split(sep); return parts.length > 1 ? parts[0] : "(src root)"; };
+  const importers = new Map();
+  const usesFrom = new Map();
+  let testImporters = 0;
+  for (const abs of allFiles) {
+    const test = isTest(abs.split(sep).pop());
+    for (const spec of importSpecs(readFileSync(abs, "utf-8"))) {
+      const hit = resolveFile(abs, spec);
+      if (!hit) continue;
+      if (inside(hit) && !inside(abs)) {
+        if (test) { testImporters += 1; continue; }
+        const u = unit(abs);
+        if (!importers.has(u)) importers.set(u, new Set());
+        importers.get(u).add(posixRel(abs));
+      } else if (inside(abs) && !inside(hit) && !test) {
+        const u = unit(hit);
+        if (!usesFrom.has(u)) usesFrom.set(u, new Set());
+        usesFrom.get(u).add(posixRel(hit));
+      }
+    }
+  }
+  const print = (title, m) => {
+    const total = [...m.values()].reduce((n, s) => n + s.size, 0);
+    console.log(`\n## ${title} (${total} files across ${m.size} modules)`);
+    for (const [u, s] of [...m].sort((a, b) => b[1].size - a[1].size || a[0].localeCompare(b[0]))) {
+      console.log(`\n${u}/ (${s.size})`);
+      for (const p of [...s].sort()) console.log(`  ${p}`);
+    }
+  };
+  console.log(`# Dependencies of ${posixRel(target)} (non-test files; static and dynamic imports; ${testImporters} test-file imports not listed)`);
+  print("Imported by", importers);
+  print("Imports from", usesFrom);
+  console.log("\nFor one function, class or type rather than a whole file: npm run refs -- <Name>");
+  process.exit(0);
+}
 
 // Per-dir aggregates.
 const dirData = new Map(

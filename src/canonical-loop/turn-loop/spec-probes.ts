@@ -27,6 +27,7 @@
 import { writeFileSync, unlinkSync, readFileSync } from "node:fs";
 import { dirname, join, basename, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
+import { createRequire } from "node:module";
 import { opEditedSourcePaths } from "../middlewares/verify-gate.js";
 import { firstUserMessageText } from "../store.js";
 import { getSessionForOp } from "../../ops/session-bridge.js";
@@ -93,7 +94,43 @@ const EXT: Record<ProbeLanguage, string> = { python: "py", node: "mjs", shell: "
 // bytecode — if the model edits the solution and re-claims done within the pyc's
 // mtime+size invalidation window, the probe would re-run the OLD code and
 // false-red-nag a solution that was just corrected. -B sidesteps both.
-const RUNNER: Record<ProbeLanguage, string> = { python: "python3 -B", node: "node", shell: "sh" };
+//
+// Node probes run under tsx (a runtime dependency): an app's logic is usually
+// TypeScript, and plain `node` can't load a .ts module, so every probe of a TS
+// project came back INVALID and was thrown away (2026-10-14). tsx runs plain JS
+// unchanged. Forward slashes keep the quoted path intact in the shell.
+const TSX_CLI = (() => {
+  try {
+    return createRequire(import.meta.url).resolve("tsx/cli").replace(/\\/g, "/");
+  } catch {
+    return null;
+  }
+})();
+const RUNNER: Record<ProbeLanguage, string> = {
+  python: "python3 -B",
+  node: TSX_CLI ? `node "${TSX_CLI}"` : "node",
+  shell: "sh",
+};
+
+const JS_FAMILY_RE = /\.(?:[cm]?[jt]s|[jt]sx)$/i;
+const UI_MODULE_RE = /\.[jt]sx$/i;
+const ASSET_IMPORT_RE = /\bimport\s+(?:[^'"]*?\bfrom\s+)?['"][^'"]+\.(?:css|scss|sass|less|svg|png|jpe?g|gif|webp|avif|woff2?)(?:\?[^'"]*)?['"]/;
+
+/** The edited files a probe can load, or [] when none can. In a JS/TS project only
+ *  plain modules qualify: a component (.jsx/.tsx) or a module that imports styles or
+ *  assets needs the app's bundler, so a probe of it can only come back INVALID. Any
+ *  other project keeps every edited file (python and shell probes load what they load). */
+export function probeTargets(absPaths: readonly string[]): string[] {
+  if (!absPaths.some((p) => JS_FAMILY_RE.test(p))) return [...absPaths];
+  return absPaths.filter((p) => {
+    if (!JS_FAMILY_RE.test(p) || UI_MODULE_RE.test(p)) return false;
+    try {
+      return !ASSET_IMPORT_RE.test(readFileSync(p, "utf-8"));
+    } catch {
+      return false;
+    }
+  });
+}
 
 export type ProbeVerdict = "pass" | "red" | "invalid";
 
@@ -122,7 +159,7 @@ export function classifyProbeRun(status: ToolResultStatus, output: string): Prob
  * gate runs between turns and deletes the file immediately, so the model never
  * sees it (can't overfit to it) and nothing is left in the tree.
  */
-async function defaultExec(probe: OracleProbe, solutionDir: string, opId: string, signal?: AbortSignal): Promise<{ verdict: ProbeVerdict; output: string }> {
+export async function runProbe(probe: OracleProbe, solutionDir: string, opId: string, signal?: AbortSignal): Promise<{ verdict: ProbeVerdict; output: string }> {
   const fileName = `.lax-probe-${randomUUID().slice(0, 8)}.${EXT[probe.language]}`;
   const probePath = join(solutionDir, fileName);
   // The probe may create files while it runs (a deletion task's probe builds
@@ -261,7 +298,11 @@ export async function runSpecProbeGate(op: Op, opts: SpecProbeOptions = {}): Pro
   const raw = opts.editedPaths ?? opEditedSourcePaths(op.id);
   if (raw.length === 0) return NO_RETRY;
   const sessionId = getSessionForOp(op.id);
-  const abs = raw.map((p) => resolveAgentPath(p, sessionId));
+  const abs = probeTargets(raw.map((p) => resolveAgentPath(p, sessionId)));
+  if (abs.length === 0) {
+    logger.info(`op=${op.id} edited only UI components / bundler-loaded modules — no module a probe can load, gate not applicable`);
+    return NO_RETRY;
+  }
   const solutionDir = primaryEditDir(abs);
   if (!solutionDir) return NO_RETRY;
   // A throwaway helper written at the workspace root (a deletion task's
@@ -293,7 +334,7 @@ export async function runSpecProbeGate(op: Op, opts: SpecProbeOptions = {}): Pro
   }
   if (!probe) return NO_RETRY;
 
-  const exec = opts.exec ?? ((p: OracleProbe, dir: string, signal?: AbortSignal) => defaultExec(p, dir, op.id, signal));
+  const exec = opts.exec ?? ((p: OracleProbe, dir: string, signal?: AbortSignal) => runProbe(p, dir, op.id, signal));
   const run = await exec(probe, solutionDir, opts.signal);
   logger.info(`op=${op.id} ran ${probe.language} spec-probe in ${solutionDir} → ${run.verdict} (retry ${getSpecProbeRetries(op.id)})`);
   // Opt-in diagnostic: on a non-pass verdict, dump the probe the active model
@@ -307,7 +348,9 @@ export async function runSpecProbeGate(op: Op, opts: SpecProbeOptions = {}): Pro
   if (run.verdict === "invalid") {
     // The probe couldn't validly exercise the code (mis-guessed API, wouldn't
     // load). Discard it so it never nudges — and forget it, so we don't re-run
-    // the same dud on the next done-claim.
+    // the same dud on the next done-claim. Logged at warn with the cause: a gate
+    // that silently never works (every TS probe, before tsx) must show up.
+    logger.warn(`op=${op.id} spec-probe INVALID, discarded: ${run.output.trim().split("\n").find((l) => l.trim()) ?? "(no output)"}`.slice(0, 300));
     PROBE_CACHE.set(op.id, null);
     return NO_RETRY;
   }

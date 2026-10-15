@@ -49,7 +49,7 @@ export function probeLanguageFor(fileList: readonly string[]): ProbeLanguage {
 
 const INTERP_NOTE: Record<ProbeLanguage, string> = {
   python: "a Python 3 script (run with `python3 probe.py`); import the solution module by the name implied by the file list",
-  node: "a Node.js script (run with `node probe.mjs`, ESM); import the solution by the path implied by the file list",
+  node: "a Node.js ESM script (`probe.mjs`, run under tsx, so a TypeScript solution file imports directly); import the solution by the path implied by the file list",
   shell: "a POSIX shell script (run with `sh probe.sh`); invoke the built artifact / CLI and assert on its output",
 };
 

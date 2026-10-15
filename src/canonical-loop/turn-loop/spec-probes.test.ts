@@ -9,6 +9,7 @@ import {
   getSpecProbeRetries,
   clearSpecProbeStateForOp,
   _resetSpecProbeState,
+  probeTargets,
   type ProbeVerdict,
 } from "./spec-probes.js";
 import type { OracleProbe } from "../../classifiers/oracle-probe-gen.js";

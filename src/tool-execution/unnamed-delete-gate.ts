@@ -140,9 +140,9 @@ export function deleteTargetsOf(tc: { name: string; arguments: string }, tools?:
 }
 
 /** A delete_file target that is an existing folder: its file count, else null. */
-function folderTarget(path: string): string | null {
+function folderTarget(path: string, sessionId: string | undefined): string | null {
   try {
-    const abs = resolveAgentPath(path);
+    const abs = resolveAgentPath(path, sessionId);
     return statSync(abs).isDirectory() ? folderFileCount(abs) : null;
   } catch {
     return null;
@@ -171,24 +171,24 @@ export interface UnnamedDeleteScope {
 
 /** Did this session's agent create the file with one of its file tools? */
 function agentCreated(sessionId: string, path: string): boolean {
-  try { return isTaskArtifact(sessionId, resolveAgentPath(path)); } catch { return false; /* unresolvable path: not provably the agent's */ }
+  try { return isTaskArtifact(sessionId, resolveAgentPath(path, sessionId)); } catch { return false; /* unresolvable path: not provably the agent's */ }
 }
 
 /** A delete_file target with nothing on disk deletes nothing: the tool answers
  *  "not found", so there is nothing to ask about. Live 2026-09-26: a card asked
  *  the user to approve deleting a probe file the agent's own `rm` had already
  *  removed. An unresolvable path is not provably absent and still asks. */
-function absent(path: string): boolean {
-  try { return !existsSync(resolveAgentPath(path)); } catch { return false; }
+function absent(path: string, sessionId: string | undefined): boolean {
+  try { return !existsSync(resolveAgentPath(path, sessionId)); } catch { return false; }
 }
 
 /** Was the file created after `since`? Linux is excluded: where a filesystem has
  *  no birth time, Node may report the change time instead, which would make an
  *  old file edited this request look new. */
-function createdSince(path: string, since: number): boolean {
+function createdSince(path: string, since: number, sessionId: string | undefined): boolean {
   if (process.platform === "linux") return false;
   try {
-    const { birthtimeMs } = statSync(resolveAgentPath(path));
+    const { birthtimeMs } = statSync(resolveAgentPath(path, sessionId));
     return birthtimeMs > 0 && birthtimeMs >= since;
   } catch {
     return false; /* gone or unresolvable: nothing to prove new */
@@ -218,13 +218,13 @@ export function unnamedDeletes(
   const trusted = !!scope.sessionId && !scope.untrustedSession;
   for (const tc of toolCalls) {
     for (const path of deleteTargetsOf(tc, scope.tools)) {
-      if (tc.name === GATED_DELETE_TOOL && absent(path)) continue;
-      const folderFiles = tc.name === GATED_DELETE_TOOL ? folderTarget(path) : null;
+      if (tc.name === GATED_DELETE_TOOL && absent(path, scope.sessionId)) continue;
+      const folderFiles = tc.name === GATED_DELETE_TOOL ? folderTarget(path, scope.sessionId) : null;
       if (folderFiles !== null) out.push({ id: tc.id, path, folderFiles });
       else if (userNamedFile(userText, path)) continue;
       else if (trusted && agentCreated(scope.sessionId!, path)) own.push({ id: tc.id, path });
       else if (trusted && tc.name === GATED_DELETE_TOOL && scope.requestStartedAt !== undefined
-        && createdSince(path, scope.requestStartedAt)) noticed.push({ id: tc.id, path, notice: true });
+        && createdSince(path, scope.requestStartedAt, scope.sessionId)) noticed.push({ id: tc.id, path, notice: true });
       else out.push({ id: tc.id, path });
     }
   }

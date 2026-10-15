@@ -8,13 +8,14 @@
 - Never call a tool's `execute` from outside this module: the gates in `pre-dispatch.ts` and `enforce-policy.ts` are what make policy, Ari, approval and RBAC apply.
 - Gate order in `enforce-policy.ts` (`securityAndValidationGates`) is load-bearing: name resolution runs before the kernel, so an unknown name reads as "not a tool", not as a kernel fault.
 - A kernel-gated tool with no `ARI_ACTION_MAP` row falls through to action `exec`, which the kernel schema rejects — a hard block under `ariRequired`.
-- Model-supplied `_`-prefixed args are dropped (`internal-args.ts`); only `SESSION_SCOPED_TOOLS` get the trusted `_sessionId`, only `OPERATION_SCOPED_TOOLS` get `_operationId`.
+- Model-supplied `_`-prefixed args are dropped (`internal-args.ts`); only `SESSION_SCOPED_TOOLS` get the trusted `_sessionId` (every tool with policy `pathArgs` is in it automatically), only `OPERATION_SCOPED_TOOLS` get `_operationId`.
+- A tool path argument is resolved with the call's session everywhere it is resolved: the file-access gate (`ctx.sessionId`), the tool (`sessionIdOf(args)`), and every check here about the same file (freshness, read-dedup, task-artifact pre-stat, the delete gates). Otherwise a work-rooted session gates `<workRoot>/x` and opens `<workspace>/x`. Guards: `agent-path-session.test.ts` (source scan), `test/work-root-gate-sink-parity.test.ts`.
 
 ## Coupled to
 | If you change | Also check | Guard |
 |---|---|---|
 | `ARI_ACTION_MAP` (`ari-action-map.ts`) | `HOST_CAPABILITY_MANIFEST` in `src/ari-kernel/manifest.ts` | `ari-action-map.test.ts` |
-| `SESSION_SCOPED_TOOLS` (`resolve-tool.ts`) | every tool body reading `_sessionId` | `session-scoped-tools.test.ts` |
+| `SESSION_SCOPED_TOOLS` (`resolve-tool.ts`) | every tool body reading `_sessionId` or calling `sessionIdOf(args)`; `TOOL_PATH_ARGS` | `session-scoped-tools.test.ts` |
 | `OPERATION_SCOPED_TOOLS` (`resolve-tool.ts`) | every tool body reading `_operationId` | none |
 | `DEFAULT_TIMEOUTS` (`tool-timeout.ts`) | tools not listed get `DEFAULT_FALLBACK` | `tool-timeout.test.ts` |
 | kill-switch table (`kill-switch-gates.ts`) | `FLIPPABLE_SETTINGS` in `src/settings-schema.ts` | `kill-switch-gates.test.ts` |

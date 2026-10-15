@@ -107,9 +107,9 @@ describe("sql tools taint their data output", () => {
 // now goes through the canonical resolver the file tools and the gate use.
 describe("sql tools resolve a relative database path against the workspace", () => {
   it("resolvePath is the canonical agent-path resolver", () => {
-    expect(resolvePath("workspace/data.db")).toBe(resolveAgentPath("data.db"));
-    expect(resolvePath("data.db")).toBe(resolveAgentPath("data.db"));
-    expect(resolvePath("~/x.db")).toBe(resolveAgentPath("~/x.db"));
+    expect(resolvePath("workspace/data.db", undefined)).toBe(resolveAgentPath("data.db"));
+    expect(resolvePath("data.db", undefined)).toBe(resolveAgentPath("data.db"));
+    expect(resolvePath("~/x.db", undefined)).toBe(resolveAgentPath("~/x.db"));
   });
 
   it("opens the workspace file the example names", async () => {

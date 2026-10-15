@@ -1,6 +1,7 @@
 import { writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { sessionIdOf } from "../../workspace/paths.js";
 import type { ToolDefinition, ToolResult } from "../../types.js";
 import { canonicalFetch } from "../web-egress.js";
 import { createLogger } from "../../logger.js";
@@ -20,7 +21,8 @@ async function generateViaXaiVideo(
   prompt: string,
   apiKey: string,
   duration: number,
-  referenceImageUrls?: string[],
+  referenceImageUrls: string[] | undefined,
+  sessionId: string | undefined,
 ): Promise<ToolResult> {
   const headers = { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` };
 
@@ -34,7 +36,7 @@ async function generateViaXaiVideo(
   for (const raw of referenceImageUrls || []) {
     const u = (raw || "").trim();
     if (!u) continue;
-    const local = resolveLocalImagePath(u);
+    const local = resolveLocalImagePath(u, sessionId);
     if (local) {
       const { url, source } = fileToBase64Ref(local);
       refs.push({ url });
@@ -223,7 +225,7 @@ export const generateVideoTool: ToolDefinition = {
           if (!refs) refs = [t];
         }
         const dur = Number(args.duration) || 8;
-        return await generateViaXaiVideo(prompt, apiKey, dur, refs);
+        return await generateViaXaiVideo(prompt, apiKey, dur, refs, sessionIdOf(args));
       } catch (e) {
         // Fall through to local CogVideoX on xAI failure — gives the user
         // a working fallback if SuperGrok hits the 403 allowlist gate.

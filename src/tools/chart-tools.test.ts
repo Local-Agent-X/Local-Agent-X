@@ -37,10 +37,10 @@ describe("create_chart", () => {
   });
 
   it("a relative path lands under the workspace, through the canonical resolver, with .png on the NAME before resolving", () => {
-    expect(chartOutPath("charts/rev")).toBe(resolveAgentPath("charts/rev.png"));
-    expect(chartOutPath("workspace/charts/rev.png")).toBe(resolve(workspaceRoot(), "charts", "rev.png"));
-    expect(chartOutPath("rev.PNG")).toBe(resolveAgentPath("rev.PNG"));
-    expect(chartOutPath("~/rev")).toBe(resolveAgentPath("~/rev.png"));
+    expect(chartOutPath("charts/rev", undefined)).toBe(resolveAgentPath("charts/rev.png"));
+    expect(chartOutPath("workspace/charts/rev.png", undefined)).toBe(resolve(workspaceRoot(), "charts", "rev.png"));
+    expect(chartOutPath("rev.PNG", undefined)).toBe(resolveAgentPath("rev.PNG"));
+    expect(chartOutPath("~/rev", undefined)).toBe(resolveAgentPath("~/rev.png"));
   });
 
   it("the dispatcher appends .png to the arg before the path gate sees it, so the gated name is the written name", async () => {
@@ -53,7 +53,7 @@ describe("create_chart", () => {
     });
     expect((await resolvePhase(ctx)).kind).toBe("continue");
     expect(ctx.args.file_path).toBe("charts/rev.png");
-    expect(chartOutPath(String(ctx.args.file_path))).toBe(chartOutPath("charts/rev"));
+    expect(chartOutPath(String(ctx.args.file_path), undefined)).toBe(chartOutPath("charts/rev", undefined));
   });
 
   it("errors on malformed series JSON", async () => {

@@ -313,13 +313,13 @@ describe("bridge OUTPUT-byte forward scan (R4-12b: the bytes shipped off-box re-
   it("a video path resolving to a secret-shaped file is refused by checkAttachmentPaths", () => {
     const vid = join(tmp, "clip.mp4");
     writeFileSync(vid, "-----BEGIN OPENSSH PRIVATE KEY-----\nnotreal\n");
-    expect(checkAttachmentPaths("bridge:test video forward", [vid])).not.toBeNull();
+    expect(checkAttachmentPaths("bridge:test video forward", [vid], undefined)).not.toBeNull();
   });
 
   it("a genuinely benign video path passes checkAttachmentPaths", () => {
     const vid = join(tmp, "ok.mp4");
     writeFileSync(vid, "\x00\x00\x00\x18ftypmp42 plain video bytes, no credentials\n");
-    expect(checkAttachmentPaths("bridge:test video forward", [vid])).toBeNull();
+    expect(checkAttachmentPaths("bridge:test video forward", [vid], undefined)).toBeNull();
   });
 
   // Regression: a benign binary image (PNG) decoded as utf-8 is high-entropy noise
@@ -331,7 +331,7 @@ describe("bridge OUTPUT-byte forward scan (R4-12b: the bytes shipped off-box re-
     // skip (not a benign payload) is what clears the image below.
     const asText = join(tmp, "leak.txt");
     writeFileSync(asText, `key=${entropyBlob}`);
-    expect(checkAttachmentPaths("view_image", [asText])).not.toBeNull();
+    expect(checkAttachmentPaths("view_image", [asText], undefined)).not.toBeNull();
 
     // Same bytes inside a real binary image: PNG signature + IHDR length carry NUL
     // bytes in the head, so the file is detected as binary and the text scan skips.
@@ -340,6 +340,6 @@ describe("bridge OUTPUT-byte forward scan (R4-12b: the bytes shipped off-box re-
       Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d]),
       Buffer.from(entropyBlob),
     ]));
-    expect(checkAttachmentPaths("view_image", [png])).toBeNull();
+    expect(checkAttachmentPaths("view_image", [png], undefined)).toBeNull();
   });
 });

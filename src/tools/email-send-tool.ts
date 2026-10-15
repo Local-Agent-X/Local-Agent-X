@@ -4,7 +4,8 @@ import { basename } from "node:path";
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { canonicalizeAttachmentPath } from "./http-egress-guard.js";
 import { recentlyDone, markDone, fingerprintOf, describeAge } from "./idempotency.js";
-import { EMAIL_SEND_WINDOW_MS, getSmtpConfig, resolvePath } from "./email-config.js";
+import { EMAIL_SEND_WINDOW_MS, getSmtpConfig } from "./email-config.js";
+import { resolveAgentPath, sessionIdOf } from "../workspace/paths.js";
 import { htmlToText } from "./email-body-render.js";
 
 /** A reply prefix already on the subject. Only the `Re:` family is matched:
@@ -209,8 +210,8 @@ export const emailSend: ToolDefinition = {
             // (canonicalizeAttachmentPath: tilde-expand â†’ resolve â†’ realpathDeep),
             // so a symlink can't be checked-as-innocent then read-as-secret. The
             // filename keeps the user-facing basename of the supplied path.
-            const abs = canonicalizeAttachmentPath(p);
-            return { filename: basename(resolvePath(p)), content: await readFile(abs) };
+            const abs = canonicalizeAttachmentPath(p, sessionIdOf(args));
+            return { filename: basename(resolveAgentPath(p, sessionIdOf(args))), content: await readFile(abs) };
           }),
         );
       }

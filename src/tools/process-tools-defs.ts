@@ -22,6 +22,7 @@ import { getSandboxStatus, SANDBOX_PROOF_PENDING_RETRY } from "../sandbox/index.
 import { awaitCageReady } from "./caged-spawn.js";
 import { reclaimPort } from "./dev-server-readiness.js";
 import { ok, err, running } from "./result-helpers.js";
+import { sessionIdOf } from "../workspace/paths.js";
 import {
   SESSIONS,
   gcSessions,
@@ -65,7 +66,7 @@ export const processStartTool: ToolDefinition = {
       return err(`process_start: ${(e as Error).message}`);
     }
     if (abortSignal?.aborted) return err("process_start: aborted before the command started.");
-    const res = startSession(command, cwd, env);
+    const res = startSession(command, cwd, env, sessionIdOf(args));
     if ("error" in res) return err(`process_start: spawn failed: ${res.error}`);
     const { session } = res;
 
@@ -238,7 +239,7 @@ export const processRestartTool: ToolDefinition = {
       }
     }
 
-    const res = startSession(command, cwd, env);
+    const res = startSession(command, cwd, env, sessionIdOf(args));
     if ("error" in res) return err(`process_restart: spawn failed: ${res.error}`);
     const { session } = res;
 

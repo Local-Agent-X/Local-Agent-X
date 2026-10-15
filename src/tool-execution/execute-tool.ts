@@ -296,6 +296,6 @@ export async function executeToolCalls(
     i++;
   }
 
-  announceNoticedDeletes(noticed, results, onEvent);
+  announceNoticedDeletes(noticed, results, onEvent, sessionId);
   return results;
 }

@@ -11,7 +11,7 @@ import { acquireImages, imageAltText, IMAGES_PARAM_SCHEMA, type AcquiredImage, t
 import { verifyWriteLanded } from "./verify.js";
 // Resolve caller paths the SAME way SecurityLayer's file-access gate does
 // (workspace anchored, no ~ expansion) so the gated path == the opened path.
-import { resolveAgentPath as resolvePath } from "../workspace/paths.js";
+import { resolveAgentPath as resolvePath, sessionIdOf } from "../workspace/paths.js";
 import { readValidatedFile } from "../security/layer/index.js";
 import { resolveOfficeTheme, half, brandAuthor, brandFooter, type OfficeTheme, THEME_PARAM_SCHEMA } from "./shared/office-theme.js";
 import { acquireBrandLogo, logoSize } from "./shared/office-brand.js";
@@ -182,7 +182,7 @@ const documentCreate: ToolDefinition = {
   },
   async execute(args) {
     try {
-      const filePath = resolvePath(String(args.file_path));
+      const filePath = resolvePath(String(args.file_path), sessionIdOf(args));
       const content = String(args.content);
       const title = args.title ? String(args.title) : undefined;
       const theme = resolveOfficeTheme(args.theme);
@@ -216,7 +216,7 @@ const documentRead: ToolDefinition = {
   },
   async execute(args) {
     try {
-      const filePath = resolvePath(String(args.file_path));
+      const filePath = resolvePath(String(args.file_path), sessionIdOf(args));
       // Read the VALIDATED canonical inode (realpath + O_NOFOLLOW leaf) and feed
       // mammoth the bytes, so a symlink swapped in after the gate (R4-19) is
       // rejected rather than extracted.
@@ -254,7 +254,7 @@ const documentEdit: ToolDefinition = {
   },
   async execute(args) {
     try {
-      const filePath = resolvePath(String(args.file_path));
+      const filePath = resolvePath(String(args.file_path), sessionIdOf(args));
       const find = String(args.find);
       const replace = String(args.replace);
 
@@ -300,8 +300,8 @@ const documentTemplate: ToolDefinition = {
   },
   async execute(args) {
     try {
-      const templatePath = resolvePath(String(args.template_path));
-      const outputPath = resolvePath(String(args.output_path));
+      const templatePath = resolvePath(String(args.template_path), sessionIdOf(args));
+      const outputPath = resolvePath(String(args.output_path), sessionIdOf(args));
       let vars: Record<string, string>;
 
       try {

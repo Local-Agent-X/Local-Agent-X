@@ -4,7 +4,7 @@ import type { ToolDefinition, ToolResult } from "../types.js";
 import { acquireImages, AllImagesFailedError, IMAGES_PARAM_SCHEMA, type AcquireOutcome, type ImageSpec } from "./shared/image-acquire.js";
 // Resolve caller paths the SAME way SecurityLayer's file-access gate does
 // (workspace anchored, no ~ expansion) so the gated path == the opened path.
-import { resolveAgentPath as resolvePath } from "../workspace/paths.js";
+import { resolveAgentPath as resolvePath, sessionIdOf } from "../workspace/paths.js";
 import { resolveOfficeTheme, brandAuthor, brandFooter, THEME_PARAM_SCHEMA } from "./shared/office-theme.js";
 import { acquireBrandLogo } from "./shared/office-brand.js";
 import { applySlide, appendImageSlides, type SlideSpec, type SlideBrand } from "./shared/pptx-render.js";
@@ -83,7 +83,7 @@ const presentationCreate: ToolDefinition = {
   },
   async execute(args) {
     try {
-      const fp = resolvePath(args.file_path as string);
+      const fp = resolvePath(args.file_path as string, sessionIdOf(args));
       const slides = JSON.parse(args.slides as string) as SlideSpec[];
       if (!slides.length) return err("slides array is empty");
       const theme = resolveOfficeTheme(args.theme);
@@ -155,7 +155,7 @@ const presentationAddSlide: ToolDefinition = {
       const specs = (args.images as ImageSpec[] | undefined) ?? [];
       const acquired = await acquireImages(specs);
       const brand: SlideBrand = { logo: (await acquireBrandLogo(theme)) ?? undefined, footer: brandFooter(theme) || undefined };
-      const outPath = addSlideOutPath(resolvePath(args.file_path as string), pos);
+      const outPath = addSlideOutPath(resolvePath(args.file_path as string, sessionIdOf(args)), pos);
       ensureDir(outPath);
       const pptx = await makePptx();
       if (args.title) pptx.title = args.title as string;
@@ -199,7 +199,7 @@ const presentationFromOutline: ToolDefinition = {
   },
   async execute(args) {
     try {
-      const fp = resolvePath(args.file_path as string);
+      const fp = resolvePath(args.file_path as string, sessionIdOf(args));
       const slides = outlineToSlides(args.outline as string);
       if (!slides.length) return err("Outline produced no slides");
       const theme = resolveOfficeTheme(args.theme);
@@ -267,7 +267,7 @@ const presentationEdit: ToolDefinition = {
   },
   async execute(args) {
     try {
-      const fp = resolvePath(args.file_path as string);
+      const fp = resolvePath(args.file_path as string, sessionIdOf(args));
       const ops = JSON.parse(args.operations as string) as EditOp[];
       if (!Array.isArray(ops) || ops.length === 0) return err("operations array is empty");
 

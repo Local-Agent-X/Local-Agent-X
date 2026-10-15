@@ -124,6 +124,7 @@ export function announceNoticedDeletes(
   noticed: readonly NoticedDelete[],
   results: readonly ChatCompletionMessageParam[],
   onEvent: ((event: ServerEvent) => void) | undefined,
+  sessionId: string | undefined,
 ): void {
   if (!onEvent || noticed.length === 0) return;
   const deleted = noticed.filter((n) => {
@@ -133,7 +134,7 @@ export function announceNoticedDeletes(
   if (deleted.length === 0) return;
   onEvent({
     type: "delete_notice",
-    files: deleted.map((n) => resolveAgentPath(n.path)),
+    files: deleted.map((n) => resolveAgentPath(n.path, sessionId)),
     toolCallIds: deleted.map((n) => n.id),
   });
 }

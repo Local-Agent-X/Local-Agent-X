@@ -199,7 +199,7 @@ export function evaluateByKernelClass(
           policy.fileAccessMode,
           (rp, sid) => policy.isInAllowedPaths(rp, sid),
           action,
-          resolveSqlDbPath(rawDb),
+          resolveSqlDbPath(rawDb, ctx.sessionId),
           ctx.sessionId,
         );
       }

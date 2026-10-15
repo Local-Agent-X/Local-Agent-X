@@ -25,6 +25,7 @@ import { collapseFamily } from "../tools/shared/collapse-family.js";
 import { resolveNotifyTarget } from "../restart-notify.js";
 import { buildMessagingSessionId } from "../session/channel-registry.js";
 import { resolvePhase, SESSION_SCOPED_TOOLS } from "./resolve-tool.js";
+import { TOOL_PATH_ARGS } from "../tool-registry.js";
 import { createContext } from "./context.js";
 
 // The set boot registers: the static catalog, every plugin, and the two paths
@@ -52,10 +53,10 @@ async function registeredTools(): Promise<ToolDefinition[]> {
   return tools;
 }
 
-// A property read, not a mention: execute bodies keep their comments, and a
-// comment naming the key reads nothing.
+// A property read or a sessionIdOf(args) call, not a mention: execute bodies
+// keep their comments, and a comment naming the key reads nothing.
 function readsSessionId(tool: ToolDefinition): boolean {
-  return /\._sessionId\b/.test(String(tool.execute));
+  return /\._sessionId\b|\bsessionIdOf\(/.test(String(tool.execute));
 }
 
 async function stampedArgs(name: string, sessionId: string, args: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -76,6 +77,15 @@ describe("every tool that reads the trusted session is stamped with it", () => {
     // The scan has to see the readers it is guarding, or it proves nothing.
     expect(readers).toEqual(expect.arrayContaining(["op_kill", "op_submit_batch", "read_my_logs", "self_edit"]));
     expect(readers.filter((name) => !SESSION_SCOPED_TOOLS.has(name))).toEqual([]);
+  });
+
+  it("every tool whose paths the file-access gate judges receives the session the gate resolved them with", async () => {
+    const gated = Object.keys(TOOL_PATH_ARGS);
+    expect(gated).toEqual(expect.arrayContaining(["view_image", "ocr", "document", "create_chart", "memory_ingest", "email_send"]));
+    for (const name of gated) {
+      const args = await stampedArgs(name, "path-gated-session", { _sessionId: "someone-else" });
+      expect(args._sessionId, name).toBe("path-gated-session");
+    }
   });
 
   it("a collapsed family is stamped under its own name when an inner action reads the session", () => {

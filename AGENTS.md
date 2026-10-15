@@ -76,7 +76,7 @@ tool, fails the build. The other steps are covered by the tests named.
 4. `ARI_ACTION_MAP` in `src/tool-execution/ari-action-map.ts` for `file` / `http` / `retrieval` kernel classes (`ari-action-map.test.ts`).
 5. Capability sets in `src/tool-registry.ts` as applicable: `EGRESS_TOOLS`, `SENSITIVE_READ_TOOLS`, `WORKSPACE_WRITE_TOOLS`, `SHELL_TOOLS`.
 6. If destructive: `src/tools/undo-pairs.ts` and `src/irreversible-tools.ts`. If publish-shaped: `src/publish-operation.ts`.
-7. If it reads `_sessionId`: `SESSION_SCOPED_TOOLS` in `src/tool-execution/resolve-tool.ts`. Optional: `DEFAULT_TIMEOUTS` in `tool-timeout.ts` (fallback 120 s), `compactDescription` for small models.
+7. If it reads `_sessionId` and has no policy `pathArgs` (those are stamped automatically): `SESSION_SCOPED_TOOLS` in `src/tool-execution/resolve-tool.ts`. Optional: `DEFAULT_TIMEOUTS` in `tool-timeout.ts` (fallback 120 s), `compactDescription` for small models.
 
 ## When in doubt
 

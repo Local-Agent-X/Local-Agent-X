@@ -80,7 +80,7 @@ export function probeEgressGuard(ctx: ToolCallContext): EgressBlocker | null {
   const { text, attachmentPaths } = egressPayload(tc.name, args as Record<string, unknown>);
   // Sensitive-attachment check (Spec F): a sink that reads+sends a file path.
   if (attachmentPaths.length > 0) {
-    const att = checkAttachmentPaths(tc.name, attachmentPaths);
+    const att = checkAttachmentPaths(tc.name, attachmentPaths, ctx.sessionId);
     if (att) {
       return {
         layer: "egress-guard", label: "egress guard", reason: att.message,

@@ -14,7 +14,7 @@ import { acquireImages, IMAGES_PARAM_SCHEMA, type ImageSpec } from "./shared/ima
 import { verifyWriteLanded } from "./verify.js";
 // Resolve caller paths the SAME way SecurityLayer's file-access gate does
 // (workspace anchored, no ~ expansion) so the gated path == the opened path.
-import { resolveAgentPath as resolvePath } from "../workspace/paths.js";
+import { resolveAgentPath as resolvePath, sessionIdOf } from "../workspace/paths.js";
 import { openValidatedRead } from "../security/layer/index.js";
 import { resolveOfficeTheme, brandAuthor, brandFooter, THEME_PARAM_SCHEMA } from "./shared/office-theme.js";
 import { cleanText } from "./shared/office-md.js";
@@ -100,7 +100,7 @@ const spreadsheetRead: ToolDefinition = {
   },
   async execute(args) {
     try {
-      const wb = await openWorkbook(resolvePath(args.file_path as string));
+      const wb = await openWorkbook(resolvePath(args.file_path as string, sessionIdOf(args)));
       const ws = getSheet(wb, args.sheet as string | undefined);
       let headers: string[] = [];
       const rows: string[][] = [];
@@ -161,7 +161,7 @@ const spreadsheetWrite: ToolDefinition = {
   },
   async execute(args) {
     try {
-      const filePath = resolvePath(args.file_path as string);
+      const filePath = resolvePath(args.file_path as string, sessionIdOf(args));
       const sheetName = (args.sheet as string) || "Sheet1";
       const parsed: Record<string, unknown>[] = JSON.parse(args.data as string);
       if (!Array.isArray(parsed)) return fail("data must be a JSON array");
@@ -253,7 +253,7 @@ const spreadsheetEdit: ToolDefinition = {
   },
   async execute(args) {
     try {
-      const filePath = resolvePath(args.file_path as string);
+      const filePath = resolvePath(args.file_path as string, sessionIdOf(args));
       const wb = await openWorkbook(filePath);
       const ws = getSheet(wb, args.sheet as string | undefined);
       const cell = ws.getCell(args.cell as string);
@@ -293,7 +293,7 @@ const spreadsheetQuery: ToolDefinition = {
   },
   async execute(args) {
     try {
-      const wb = await openWorkbook(resolvePath(args.file_path as string));
+      const wb = await openWorkbook(resolvePath(args.file_path as string, sessionIdOf(args)));
       const ws = getSheet(wb, args.sheet as string | undefined);
       const headers: string[] = [];
       const matched: string[][] = [];

@@ -12,6 +12,7 @@ import { getRuntimeConfig } from "../../config.js";
 import { loadSettings } from "../../settings.js";
 import type { SecretsStore } from "../../secrets.js";
 import { resolveCredential } from "../../auth/resolve.js";
+import { resolveAgentPath } from "../../workspace/paths.js";
 
 export function ok(content: string): ToolResult { return { content }; }
 export function err(content: string): ToolResult { return { content, isError: true }; }
@@ -139,16 +140,20 @@ export const PROMPT_REFS_EARLIER_IMAGE = /\b(this|the|her|him|they|that)\s+(phot
 
 /** Resolve a model/user-supplied image reference to an absolute LOCAL file
  *  path, or null for external URLs / unknown shapes. Accepts a direct
- *  filesystem path, the chat tool-result URL (/images/foo.png), the upload
+ *  path (resolved with the calling session, as the file-access gate resolved
+ *  it), the chat tool-result URL (/images/foo.png), the upload
  *  URL (/uploads/foo.png), the workspace-relative paths Grok sometimes echoes
  *  (workspace/images|uploads/foo.png), and a bare image filename it
  *  hallucinates — checking workspace/images first, then uploads. xAI's
  *  backend can't reach 127.0.0.1 loopback URLs, so callers inline locals as
  *  base64 via imageFileToDataUrl(). */
-export function resolveLocalImagePath(u: string): string | null {
+export function resolveLocalImagePath(u: string, sessionId: string | undefined): string | null {
   const s = (u || "").trim();
   if (!s) return null;
-  try { if (existsSync(s) && statSync(s).isFile()) return resolve(s); } catch { /* not a direct path */ }
+  try {
+    const direct = resolveAgentPath(s, sessionId);
+    if (existsSync(direct) && statSync(direct).isFile()) return direct;
+  } catch { /* not a direct path */ }
   const m =
     s.match(/(?:^\/images\/|^workspace\/images\/)([A-Za-z0-9._-]+)/) ||
     s.match(/(?:^\/uploads\/|^workspace\/uploads\/)([A-Za-z0-9._-]+)/) ||

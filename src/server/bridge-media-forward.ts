@@ -66,7 +66,7 @@ export async function forwardBridgeMedia(opts: ForwardOptions): Promise<boolean>
       const absolute = resolve(path);
       if (!seenImages.has(absolute)) {
         seenImages.add(absolute);
-        const blocked = checkAttachmentPaths(`bridge:${opts.platform} image forward`, [absolute]);
+        const blocked = checkAttachmentPaths(`bridge:${opts.platform} image forward`, [absolute], undefined);
         if (blocked) {
           await notifyMediaBlocked(opts, "it was blocked by the outbound security gate");
         } else {
@@ -91,7 +91,7 @@ export async function forwardBridgeMedia(opts: ForwardOptions): Promise<boolean>
       const absolute = resolve(path);
       if (!seenVideos.has(absolute)) {
         seenVideos.add(absolute);
-        const blocked = checkAttachmentPaths(`bridge:${opts.platform} video forward`, [absolute]);
+        const blocked = checkAttachmentPaths(`bridge:${opts.platform} video forward`, [absolute], undefined);
         if (blocked) {
           await notifyMediaBlocked(opts, "it was blocked by the outbound security gate");
         } else {

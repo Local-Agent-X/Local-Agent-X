@@ -106,17 +106,17 @@ export function deletedPathsOf(command: string): string[] {
 }
 
 /** The targets a finished shell delete left behind. */
-export function stillPresentAfterDelete(command: string): string[] {
+export function stillPresentAfterDelete(command: string, sessionId: string | undefined): string[] {
   return deletedPathsOf(command).filter((p) => {
-    try { return existsSync(resolveAgentPath(p)); } catch { return false; /* unresolvable: make no claim */ }
+    try { return existsSync(resolveAgentPath(p, sessionId)); } catch { return false; /* unresolvable: make no claim */ }
   });
 }
 
 /** An `ok` shell result whose delete targets are still there becomes an error
  *  that says so; anything else is returned unchanged. */
-export function checkShellDeleteHappened(command: string, result: ToolResult): ToolResult {
+export function checkShellDeleteHappened(command: string, result: ToolResult, sessionId: string | undefined): ToolResult {
   if (result.isError || typeof result.content !== "string") return result;
-  const left = stillPresentAfterDelete(command);
+  const left = stillPresentAfterDelete(command, sessionId);
   if (left.length === 0) return result;
   const mangledCmd = /\bcmd(\.exe)?\s+\/c\b/i.test(command) && /Microsoft Windows \[Version/.test(result.content);
   const why = mangledCmd

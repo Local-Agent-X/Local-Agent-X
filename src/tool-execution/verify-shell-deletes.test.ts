@@ -39,7 +39,7 @@ describe("checkShellDeleteHappened", () => {
     const cache = join(dir, "build-cache");
     mkdirSync(cache, { recursive: true });
     const banner = "Microsoft Windows [Version 10.0.26200.9457]\r\n(c) Microsoft Corporation. All rights reserved.";
-    const r = checkShellDeleteHappened(`cmd /c rd /s /q ${cache}`, ok(banner));
+    const r = checkShellDeleteHappened(`cmd /c rd /s /q ${cache}`, ok(banner), undefined);
     expect(r.isError).toBe(true);
     expect(r.status).toBe("error");
     expect(r.content).toMatch(/^NOT DELETED: the command exited 0, but .*build-cache still exists/);
@@ -52,15 +52,15 @@ describe("checkShellDeleteHappened", () => {
     writeFileSync(gone, "x");
     rmSync(gone);
     const before = ok("");
-    expect(checkShellDeleteHappened(`rm ${gone}`, before)).toBe(before);
+    expect(checkShellDeleteHappened(`rm ${gone}`, before, undefined)).toBe(before);
   });
 
   it("an error result and a non-delete command are untouched", () => {
     const kept = join(dir, "kept.txt");
     writeFileSync(kept, "x");
     const failed = { content: "rm: permission denied", isError: true };
-    expect(checkShellDeleteHappened(`rm ${kept}`, failed)).toBe(failed);
+    expect(checkShellDeleteHappened(`rm ${kept}`, failed, undefined)).toBe(failed);
     const listing = ok("kept.txt");
-    expect(checkShellDeleteHappened(`ls ${dir}`, listing)).toBe(listing);
+    expect(checkShellDeleteHappened(`ls ${dir}`, listing, undefined)).toBe(listing);
   });
 });

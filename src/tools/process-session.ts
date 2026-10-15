@@ -103,6 +103,7 @@ export function startSession(
   command: string,
   cwd?: string,
   env?: Record<string, string>,
+  callSessionId?: string,
 ): { session: ProcessSession } | { error: string } {
   // Same command vetting bash gets: denylist + metachar/obfuscation scan.
   // process_start spawns through /bin/bash -c (or powershell -Command), so an
@@ -135,12 +136,13 @@ export function startSession(
   const sessionId = newSessionId();
 
   // An explicit caller cwd (build/dev flows) wins, resolved the way the file
-  // tools and the security gate resolve a path (a relative cwd anchors at the
-  // workspace, never the server's own cwd); otherwise default to the workspace
+  // tools and the security gate resolve a path, with the calling agent session the
+  // gate used (a relative cwd anchors at the workspace or that session's work root,
+  // never the server's own cwd); otherwise default to the workspace
   // rather than inheriting the server cwd — same anchor as bash and the file
   // tools, so a background command's relative paths resolve where the user's
   // files are. cwdHint reuses it so process_restart respawns there.
-  const effectiveCwd = cwd ? resolveAgentPath(cwd) : workspaceRoot();
+  const effectiveCwd = cwd ? resolveAgentPath(cwd, callSessionId) : workspaceRoot();
 
   let child: ChildProcess;
   try {

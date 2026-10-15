@@ -6,7 +6,7 @@
 import { existsSync } from "node:fs";
 import type { ToolResult } from "../../types.js";
 import { resolveSerial, installApk, launchApp, listApps, reversePort, openUrl } from "../../android/index.js";
-import { resolveAgentPath } from "../../workspace/paths.js";
+import { resolveAgentPath, sessionIdOf } from "../../workspace/paths.js";
 import { ok, err } from "../result-helpers.js";
 
 export async function handleInstallApk(args: Record<string, unknown>): Promise<ToolResult> {
@@ -14,7 +14,7 @@ export async function handleInstallApk(args: Record<string, unknown>): Promise<T
   if (!rawPath) return err("'apk_path' is required for install_apk.");
   // Must match the path evaluateFileAccess (tool-policies.apps.ts pathArgs)
   // re-derived from the same raw arg — resolveAgentPath is that canonical step.
-  const apkPath = resolveAgentPath(rawPath);
+  const apkPath = resolveAgentPath(rawPath, sessionIdOf(args));
   if (!existsSync(apkPath)) return err(`APK not found at "${apkPath}".`);
   const serial = await resolveSerial(args.device ? String(args.device) : undefined);
   const output = await installApk(serial, apkPath);

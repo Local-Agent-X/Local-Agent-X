@@ -1,7 +1,7 @@
 import Database from "better-sqlite3";
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { wrapExternalContent } from "../sanitize.js";
-import { resolveAgentPath } from "../workspace/paths.js";
+import { resolveAgentPath, sessionIdOf } from "../workspace/paths.js";
 
 // Exported so the SecurityLayer gates the EXACT path these tools open
 // (kernel-class-policy.ts). The canonical resolver the file tools use: a
@@ -9,8 +9,8 @@ import { resolveAgentPath } from "../workspace/paths.js";
 // same place), "~" is the home dir. It used to resolve against the server's
 // cwd, so the documented "workspace/data.db" named a file under the install
 // dir on the desktop, where the workspace lives elsewhere.
-export function resolvePath(p: string): string {
-  return resolveAgentPath(p);
+export function resolvePath(p: string, sessionId: string | undefined): string {
+  return resolveAgentPath(p, sessionId);
 }
 
 const PATH_DOC = "Path to the .db/.sqlite file — relative to the workspace, or absolute; ~ is your home.";
@@ -63,7 +63,7 @@ const sqlQuery: ToolDefinition = {
     required: ["database", "query"],
   },
   async execute(args: Record<string, unknown>): Promise<ToolResult> {
-    const dbPath = resolvePath(String(args.database));
+    const dbPath = resolvePath(String(args.database), sessionIdOf(args));
     const query = String(args.query);
     const readonly = args.readonly !== false;
 
@@ -115,7 +115,7 @@ const sqlSchema: ToolDefinition = {
     required: ["database"],
   },
   async execute(args: Record<string, unknown>): Promise<ToolResult> {
-    const dbPath = resolvePath(String(args.database));
+    const dbPath = resolvePath(String(args.database), sessionIdOf(args));
     const table = args.table ? String(args.table) : undefined;
 
     let db: ReturnType<typeof Database> | undefined;
@@ -179,7 +179,7 @@ const sqlExplain: ToolDefinition = {
     required: ["database", "query"],
   },
   async execute(args: Record<string, unknown>): Promise<ToolResult> {
-    const dbPath = resolvePath(String(args.database));
+    const dbPath = resolvePath(String(args.database), sessionIdOf(args));
     const query = String(args.query);
 
     let db: ReturnType<typeof Database> | undefined;

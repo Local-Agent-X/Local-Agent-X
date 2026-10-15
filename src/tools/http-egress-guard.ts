@@ -18,8 +18,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { containsNulByte } from "../binary-sniff.js";
-import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { scanForSecrets, decodedPayloadViews } from "../security/secrets/index.js";
 import { outboundPayloadParts } from "../security/secrets/index.js";
 import { matchEgressList } from "../security/layer/index.js";
@@ -29,6 +28,7 @@ import { getLaxDir } from "../lax-data-dir.js";
 import { getOwnEmailAddresses } from "./email-config.js";
 import { isSensitiveAttachmentPath } from "../data-lineage/index.js";
 import { realpathDeep } from "../security/layer/index.js";
+import { resolveAgentPath } from "../workspace/paths.js";
 import { unvouchedSecretMatches } from "../browser/site-provenance.js";
 
 let trustedDestinationsCache: { fingerprint: number; set: Set<string> } | null = null;
@@ -276,19 +276,18 @@ function hasSensitiveEgressData(text: string): boolean {
 const ATTACHMENT_SCAN_CAP = 256 * 1024;
 
 /**
- * Canonicalize an attachment path the SAME way the email tool's resolvePath
- * does (tilde-expand → resolve), then follow every symlink segment via
- * realpathDeep. Used by BOTH the guard (check) and the email tool (read) so the
- * checked inode IS the read inode — no check-path/read-path divergence.
+ * Canonicalize an attachment path with the canonical agent-path resolver and
+ * the calling session — the resolution the file-access gate judged — then
+ * follow every symlink segment via realpathDeep. Used by BOTH the guard (check)
+ * and the email tool (read) so the checked inode IS the read inode — no
+ * check-path/read-path divergence. A relative path used to resolve against the
+ * server's cwd, so the gate approved one file and the guard scanned and the
+ * tool sent another.
  *
  * Throws on ELOOP (a symlink cycle is an attack) so callers fail closed.
  */
-export function canonicalizeAttachmentPath(p: string): string {
-  let abs: string;
-  if (p === "~") abs = homedir();
-  else if (p.startsWith("~/") || p.startsWith("~\\")) abs = resolve(homedir(), p.slice(2));
-  else abs = resolve(p);
-  return realpathDeep(abs);
+export function canonicalizeAttachmentPath(p: string, sessionId: string | undefined): string {
+  return realpathDeep(resolveAgentPath(p, sessionId));
 }
 
 /**
@@ -314,12 +313,12 @@ function isProbablyBinary(buf: Buffer): boolean {
   return containsNulByte(buf);
 }
 
-export function checkAttachmentPaths(sink: string, paths: readonly string[]): GuardBlock | null {
+export function checkAttachmentPaths(sink: string, paths: readonly string[], sessionId: string | undefined): GuardBlock | null {
   const offending: string[] = [];
   for (const p of paths) {
     let real: string;
     try {
-      real = canonicalizeAttachmentPath(p);
+      real = canonicalizeAttachmentPath(p, sessionId);
     } catch (e) {
       // ELOOP (symlink cycle) — realpathDeep only rethrows this. Treat as an
       // attack and refuse the attachment rather than letting the read follow it.

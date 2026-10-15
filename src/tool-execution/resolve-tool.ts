@@ -14,6 +14,7 @@ import { blocked } from "../tools/result-helpers.js";
 import { getRiskLevel, buildApprovalContext } from "./approval-context.js";
 import { ARI_ACTION_MAP } from "./enforce-policy.js";
 import { sessionWorkRootOf } from "../workspace/paths.js";
+import { TOOL_PATH_ARGS } from "../tool-registry.js";
 import { STATEFUL_LIVE_STATE_TOOLS } from "./stateful-tools.js";
 import { readOpMessages } from "../canonical-loop/index.js";
 import { READ_DEDUP_STUB_LEAD } from "./read-dedup-evidence.js";
@@ -80,21 +81,16 @@ export const SESSION_SCOPED_TOOLS = new Set([
   // derives runId/principal from trusted context (arikernel-bridge.ts), not
   // from forged model-supplied `_runId`/`_principalId`.
   "ari_file", "ari_http", "ari_database", "ari_retrieval", "ari_sqlite",
-  // Path-taking file tools: sessionIdOf(args) feeds resolveAgentPath so a
-  // session with a registered work root (auto-build chunk workers) anchors
-  // relative paths there. Without the stamp the work-root registry is dead
-  // code — the resolver never learns which session is calling (live failure
-  // 2026-07-02: worker's relative read resolved to the workspace parent).
-  "read", "write", "edit", "multi_edit", "edit_lines", "bulk_replace", "delete_file", "glob", "grep",
-  "structural_search", // searchRoot(args) is session-anchored like grep's
-  // restore_file resolves the task-trash scope FROM the trusted _sessionId
-  // (the scope is per-session); without the stamp there is no scope at all.
-  "restore_file",
-  // The media tools resolve their path through resolveMediaPath with the
-  // session the gate resolved it with, so a work-rooted session opens the path
-  // that was gated; send_video also reads the channel off the session for its
-  // per-channel size cap (media-send-tools.ts).
-  "send_image", "send_video", "send_file", "transcribe_media", "read_video_frames",
+  // The file-access gate judges process_start/_restart's cwd and the sql_*
+  // database path with the call's session (kernel-class-policy.ts); the tool
+  // resolves the same argument with this stamp.
+  "process_start", "process_restart", "sql_query", "sql_schema", "sql_explain",
+  // Every tool whose path arguments the file-access gate judges: the gate
+  // resolved each one with this call's session, so the tool resolves it with
+  // the same one (sessionIdOf(args)). Without the stamp a work-rooted session
+  // (auto-build chunk worker, IDE project) gates <workRoot>/x and opens
+  // <workspace>/x (live failure 2026-07-02: a worker's relative read).
+  ...Object.keys(TOOL_PATH_ARGS),
 ]);
 
 // `protocol` is the model-facing collapsed family; the inner name stays for

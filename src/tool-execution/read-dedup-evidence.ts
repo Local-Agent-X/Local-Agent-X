@@ -16,23 +16,23 @@ export const READ_DEDUP_STUB_LEAD = "Unchanged since this session last read it";
 
 type WireCall = { id: string; function: { name: string; arguments: string } };
 
-function samePath(rawArgs: string, resolved: string): boolean {
+function samePath(rawArgs: string, resolved: string, sessionId: string | undefined): boolean {
   try {
     const args = JSON.parse(rawArgs) as { path?: unknown };
-    return typeof args.path === "string" && resolveAgentPath(args.path) === resolved;
+    return typeof args.path === "string" && resolveAgentPath(args.path, sessionId) === resolved;
   } catch {
     return false;
   }
 }
 
 /** True when `messages` hold a successful, non-stub read result for `resolved`. */
-export function readContentInView(messages: ChatCompletionMessageParam[] | undefined, resolved: string): boolean {
+export function readContentInView(messages: ChatCompletionMessageParam[] | undefined, resolved: string, sessionId: string | undefined): boolean {
   if (!messages) return false;
   const readIds = new Set<string>();
   for (const m of messages) {
     if (m.role === "assistant") {
       const calls = (m as unknown as { tool_calls?: WireCall[] }).tool_calls ?? [];
-      for (const c of calls) if (c.function?.name === "read" && samePath(c.function.arguments, resolved)) readIds.add(c.id);
+      for (const c of calls) if (c.function?.name === "read" && samePath(c.function.arguments, resolved, sessionId)) readIds.add(c.id);
       continue;
     }
     if (m.role !== "tool") continue;

@@ -263,8 +263,9 @@ export function sessionWorkRootOf(sessionId: string | undefined): string | undef
 }
 
 /** The tool-executor-injected session id from a tool's args, if present.
- *  File tools pass this into resolveAgentPath so a session with a
- *  registered work root gets its relative paths anchored there. */
+ *  A tool passes this into resolveAgentPath for every path argument: the
+ *  file-access gate resolved the same argument with the call's session, so a
+ *  session with a registered work root anchors it there on both sides. */
 export function sessionIdOf(args: Record<string, unknown>): string | undefined {
   return typeof args._sessionId === "string" && args._sessionId ? args._sessionId : undefined;
 }

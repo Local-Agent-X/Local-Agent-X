@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import type { ToolDefinition, ToolResult } from "../types.js";
-import { resolveAgentPath as resolvePath } from "../workspace/paths.js";
+import { resolveAgentPath as resolvePath, sessionIdOf } from "../workspace/paths.js";
 import { workspaceRoot } from "../config.js";
 import { evaluateFileAccess, loadFileAccessMode } from "../security/layer/index.js";
 import { docKind, extractStructure, renderThumbnail } from "./shared/office-preview.js";
@@ -31,7 +31,7 @@ const previewDocument: ToolDefinition = {
   },
   async execute(args): Promise<ToolResult> {
     try {
-      const fp = resolvePath(String(args.file_path));
+      const fp = resolvePath(String(args.file_path), sessionIdOf(args));
       if (!existsSync(fp)) return { content: `File not found: ${fp}`, isError: true };
       const kind = docKind(fp);
       if (kind === "unknown") return { content: `Unsupported file type for preview: ${fp}`, isError: true };

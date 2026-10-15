@@ -98,7 +98,7 @@ export const runSandboxedPhase: Phase = async (ctx) => {
     // Path resolution / freshness is best-effort: a malformed path is the
     // tool's job to report, not ours to crash on, so swallow and fall through.
     let resolved: string | null = null;
-    try { resolved = resolveAgentPath(args.path); } catch { /* let the tool handle it */ }
+    try { resolved = resolveAgentPath(args.path, sessionId); } catch { /* let the tool handle it */ }
     const fresh = resolved ? checkFreshness(sessionId, resolved) : "ok";
     if (resolved && fresh !== "ok") {
       ctx.result = blocked(
@@ -128,8 +128,8 @@ export const runSandboxedPhase: Phase = async (ctx) => {
       args.offset === undefined && args.limit === undefined && !args.include_imports &&
       isAbsolute(args.path)) {
     let resolved: string | null = null;
-    try { resolved = resolveAgentPath(args.path); } catch { /* let the tool handle it */ }
-    if (resolved && unchangedSinceSeen(sessionId, resolved) && readContentInView(getModelView(ctx.operationId) ?? ctx.priorMessages, resolved)) {
+    try { resolved = resolveAgentPath(args.path, sessionId); } catch { /* let the tool handle it */ }
+    if (resolved && unchangedSinceSeen(sessionId, resolved) && readContentInView(getModelView(ctx.operationId) ?? ctx.priorMessages, resolved, sessionId)) {
       ctx.result = ok(
         `${READ_DEDUP_STUB_LEAD}: ${resolved} (content-hash verified). ` +
         `Your existing view of this file is still current, so the re-read was skipped. ` +
@@ -178,7 +178,7 @@ export const runSandboxedPhase: Phase = async (ctx) => {
     // An exit code says the shell ran, not that the delete happened: a delete
     // whose targets are still there is reported as not done (verify-shell-deletes.ts).
     if (ctx.result && GATED_SHELL_TOOLS.has(tc.name) && typeof args.command === "string") {
-      ctx.result = checkShellDeleteHappened(args.command, ctx.result);
+      ctx.result = checkShellDeleteHappened(args.command, ctx.result, sessionId);
     }
   } catch (e) {
     const reconciliation = runner.reconcile(e);
@@ -203,7 +203,7 @@ export const runSandboxedPhase: Phase = async (ctx) => {
     // writes/edits pass no view — the session knows the whole resulting file,
     // and re-recording refreshes the diff snapshot to the post-edit bytes.
     const view = tc.name === "read" ? seenViewFromReadResult(args, result.metadata) : undefined;
-    try { recordFileSeen(sessionId, resolveAgentPath(args.path), view); } catch { /* freshness is best-effort */ }
+    try { recordFileSeen(sessionId, resolveAgentPath(args.path, sessionId), view); } catch { /* freshness is best-effort */ }
   }
   if (sessionId && createdArtifactTarget && statusOf(result) === "ok") {
     // The file did not exist pre-execute and the create-class call succeeded:

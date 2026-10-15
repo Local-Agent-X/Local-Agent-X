@@ -6,7 +6,7 @@ import { ok, err } from "./result-helpers.js";
 import { createLogger } from "../logger.js";
 import { canonicalFetch, EgressRedirectBlocked } from "./web-egress.js";
 import { workspaceRoot } from "../config.js";
-import { resolveAgentPath, realpathDeep } from "../workspace/paths.js";
+import { resolveAgentPath, realpathDeep, sessionIdOf } from "../workspace/paths.js";
 import { confineToDir, writeValidatedFile } from "../security/layer/index.js";
 
 const logger = createLogger("tools.asset-tools");
@@ -109,8 +109,8 @@ function fetchPinned(url: string, accept: string, ms: number) {
 // <install>/assets, and output_dir "public" dropped files into the shipped UI).
 // Resolved like every file tool's path, then through links and junctions, so
 // the folder the files land in is the folder checked.
-function workspaceOutputDir(p: string): string {
-  const dir = confineToDir(workspaceRoot(), resolveAgentPath(p));
+function workspaceOutputDir(p: string, sessionId: string | undefined): string {
+  const dir = confineToDir(workspaceRoot(), resolveAgentPath(p, sessionId));
   if (!dir) throw new Error(`output_dir must be inside the workspace (${workspaceRoot()}). Got: ${p}`);
   return dir;
 }
@@ -193,7 +193,7 @@ export const extractSiteAssetsTool: ToolDefinition = {
     );
 
     let outDir: string;
-    try { outDir = workspaceOutputDir(outputDir); }
+    try { outDir = workspaceOutputDir(outputDir, sessionIdOf(args)); }
     catch (e) { return err((e as Error).message); }
     if (!existsSync(outDir)) mkdirSync(outDir, { recursive: true });
 

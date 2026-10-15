@@ -8,7 +8,7 @@ import { existsSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { mkdirSync } from "node:fs";
 import type { ToolDefinition, ToolResult } from "../types.js";
-import { resolveAgentPath as resolvePath } from "../workspace/paths.js";
+import { resolveAgentPath as resolvePath, sessionIdOf } from "../workspace/paths.js";
 import { acquireImages, IMAGES_PARAM_SCHEMA, type ImageSpec } from "./shared/image-acquire.js";
 import { deckFromTemplate, type TemplateSlide } from "./shared/pptx-template.js";
 import { addImageSlide } from "./shared/pptx-edit.js";
@@ -57,8 +57,8 @@ export const presentationFromTemplate: ToolDefinition = {
   },
   async execute(args) {
     try {
-      const templatePath = resolvePath(args.template_path as string);
-      const fp = resolvePath(args.file_path as string);
+      const templatePath = resolvePath(args.template_path as string, sessionIdOf(args));
+      const fp = resolvePath(args.file_path as string, sessionIdOf(args));
       if (templatePath.toLowerCase() === fp.toLowerCase()) return err("file_path must differ from template_path — from_template writes a new deck and never overwrites the template");
       if (!existsSync(templatePath)) return err(`${templatePath} does not exist — template_path must be an existing .pptx`);
       const keep = parseKeep(args.keep_slides);

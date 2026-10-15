@@ -1,6 +1,7 @@
 import { writeFileSync, readFileSync, mkdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import type { ToolDefinition, ToolResult } from "../../types.js";
+import { sessionIdOf } from "../../workspace/paths.js";
 import { canonicalFetch } from "../web-egress.js";
 import {
   ok, err, okWithImage, resolveMediaProvider, resolveLocalImagePath,
@@ -18,7 +19,7 @@ function mimeFromExt(path: string): string {
 
 /** Resolve an image reference (data URL, local path/URL, or remote http URL)
  *  into bytes + mime. Returns null if it can't be loaded. */
-async function loadImage(ref: string): Promise<LoadedImage | null> {
+async function loadImage(ref: string, sessionId: string | undefined): Promise<LoadedImage | null> {
   const s = (ref || "").trim();
   if (!s) return null;
 
@@ -28,7 +29,7 @@ async function loadImage(ref: string): Promise<LoadedImage | null> {
     return { buf: Buffer.from(data[2], "base64"), mime, filename: `image.${EXT_FOR_MIME[mime] || "png"}`, source: "inline data URL" };
   }
 
-  const local = resolveLocalImagePath(s);
+  const local = resolveLocalImagePath(s, sessionId);
   if (local) {
     const mime = mimeFromExt(local);
     return { buf: readFileSync(local), mime, filename: `image.${EXT_FOR_MIME[mime] || "png"}`, source: local };
@@ -200,12 +201,13 @@ export const editImageTool: ToolDefinition = {
     if (!prompt.trim()) return err("Prompt is required — describe the change to make.");
 
     const imageRef = typeof args.image === "string" ? args.image.trim() : "";
-    let image = imageRef ? await loadImage(imageRef) : null;
+    const sessionId = sessionIdOf(args);
+    let image = imageRef ? await loadImage(imageRef, sessionId) : null;
     // Fall back to the most recent local image when none was passed (or the one
     // passed couldn't load) and the prompt clearly refers to an earlier image.
     if (!image && (!imageRef || PROMPT_REFS_EARLIER_IMAGE.test(prompt))) {
       const recent = findRecentLocalImage();
-      if (recent) image = await loadImage(recent);
+      if (recent) image = await loadImage(recent, sessionId);
     }
     if (!image) {
       return err(imageRef
@@ -214,7 +216,7 @@ export const editImageTool: ToolDefinition = {
     }
 
     const maskRef = typeof args.mask === "string" ? args.mask.trim() : "";
-    const mask = maskRef ? await loadImage(maskRef) : null;
+    const mask = maskRef ? await loadImage(maskRef, sessionId) : null;
     if (maskRef && !mask) return err(`Could not load the mask image: ${maskRef}`);
 
     const size = typeof args.size === "string" && args.size.trim() ? args.size.trim() : "auto";

@@ -248,13 +248,13 @@ describe.skipIf(process.platform === "linux")("files this request created", asyn
     const noticed = await preauthorizeUnnamedDeletes({ ...scope, toolCalls: [del("r1", p)] });
     expect(requests).toHaveLength(0);
     expect(takeUnnamedDeleteDecision("r1")).toBeUndefined();
-    announceNoticedDeletes(noticed, [{ role: "tool", tool_call_id: "r1", content: "[ok] moved to the trash" }], sink);
+    announceNoticedDeletes(noticed, [{ role: "tool", tool_call_id: "r1", content: "[ok] moved to the trash" }], sink, undefined);
     expect(events).toEqual([{ type: "delete_notice", files: [p], toolCallIds: ["r1"] }]);
   });
 
   it("a delete that failed announces nothing", async () => {
     const noticed = await preauthorizeUnnamedDeletes({ ...scope, toolCalls: [del("r2", made("ns_tmp.txt"))] });
-    announceNoticedDeletes(noticed, [{ role: "tool", tool_call_id: "r2", content: "[error] could not move" }], sink);
+    announceNoticedDeletes(noticed, [{ role: "tool", tool_call_id: "r2", content: "[error] could not move" }], sink, undefined);
     expect(events).toHaveLength(0);
   });
 

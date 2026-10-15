@@ -1,4 +1,3 @@
-import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { writeFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
 import { getLaxDir } from "../lax-data-dir.js";
@@ -12,12 +11,6 @@ import { getSecretsStoreSingleton } from "../secrets.js";
 // or a separate-turn nudge, short enough that a deliberate human
 // "actually send a second identical follow-up" works after the window.
 export const EMAIL_SEND_WINDOW_MS = 5 * 60 * 1000;
-
-export function resolvePath(p: string): string {
-  if (p.startsWith("~/") || p.startsWith("~\\")) return resolve(homedir(), p.slice(2));
-  if (p === "~") return homedir();
-  return resolve(p);
-}
 
 // Load email config from ~/.lax/email.json (set via Connected APIs UI) or env vars
 function loadEmailJson(): Record<string, string> {

@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { ToolDefinition, ToolResult } from "../types.js";
-import { resolveAgentPath } from "../workspace/paths.js";
+import { resolveAgentPath, sessionIdOf } from "../workspace/paths.js";
 import { resolveOfficeTheme, THEME_PARAM_SCHEMA } from "./shared/office-theme.js";
 import { renderChartPng, isValidChart, type ChartSpec, type ChartType } from "./shared/office-chart.js";
 import { verifyWriteLanded } from "./verify.js";
@@ -16,8 +16,8 @@ import { verifyWriteLanded } from "./verify.js";
 // resolver the gate uses (workspace-anchored, "workspace/" prefix stripped, ~
 // expanded). Exported because the task-artifact recording hook
 // (tool-execution/create-target-path.ts) must pre-stat the SAME output path.
-export function chartOutPath(p: string): string {
-  return resolveAgentPath(/\.png$/i.test(p) ? p : `${p}.png`);
+export function chartOutPath(p: string, sessionId: string | undefined): string {
+  return resolveAgentPath(/\.png$/i.test(p) ? p : `${p}.png`, sessionId);
 }
 
 const chartCreate: ToolDefinition = {
@@ -56,7 +56,7 @@ const chartCreate: ToolDefinition = {
 
       const theme = resolveOfficeTheme(args.theme);
       const png = await renderChartPng(spec, theme, { W: Number(args.width) || 760, H: Number(args.height) || 460 });
-      const fp = chartOutPath(String(args.file_path));
+      const fp = chartOutPath(String(args.file_path), sessionIdOf(args));
       mkdirSync(dirname(fp), { recursive: true });
       await writeFile(fp, png);
       const v = verifyWriteLanded(fp, { minBytes: 100 });

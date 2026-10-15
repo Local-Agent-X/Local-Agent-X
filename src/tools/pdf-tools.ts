@@ -9,7 +9,7 @@ import { acquireImages, IMAGES_PARAM_SCHEMA, type ImageSpec } from "./shared/ima
 import { verifyWriteLanded } from "./verify.js";
 // Resolve caller paths the SAME way SecurityLayer's file-access gate does
 // (workspace anchored, no ~ expansion) so the gated path == the opened path.
-import { resolveAgentPath as resolvePath } from "../workspace/paths.js";
+import { resolveAgentPath as resolvePath, sessionIdOf } from "../workspace/paths.js";
 import { readValidatedFile } from "../security/layer/index.js";
 import { resolveOfficeTheme, brandAuthor, brandFooter, type OfficeTheme, THEME_PARAM_SCHEMA } from "./shared/office-theme.js";
 import { acquireBrandLogo, logoSize } from "./shared/office-brand.js";
@@ -61,7 +61,7 @@ const pdfRead: ToolDefinition = {
   },
   async execute(args) {
     try {
-      const filePath = resolvePath(args.file_path as string);
+      const filePath = resolvePath(args.file_path as string, sessionIdOf(args));
       // Read the VALIDATED canonical inode (realpath + O_NOFOLLOW leaf) so a
       // symlink swapped in after the gate (R4-19) is rejected, not parsed.
       const buf = readValidatedFile(filePath);
@@ -179,7 +179,7 @@ const pdfCreate: ToolDefinition = {
       doc.end();
 
       const buf = await done;
-      const filePath = resolvePath(args.file_path as string);
+      const filePath = resolvePath(args.file_path as string, sessionIdOf(args));
       await mkdir(dirname(filePath), { recursive: true });
       await writeFile(filePath, buf);
       const verified = verifyWriteLanded(filePath, { minBytes: 100, mustContain: "%PDF-" });
@@ -209,7 +209,7 @@ const pdfMerge: ToolDefinition = {
   },
   async execute(args) {
     try {
-      const paths: string[] = (JSON.parse(args.files as string) as string[]).map(p => resolvePath(p));
+      const paths: string[] = (JSON.parse(args.files as string) as string[]).map(p => resolvePath(p, sessionIdOf(args)));
       if (!Array.isArray(paths) || paths.length === 0) return fail("files must be a non-empty JSON array of paths");
 
       const merged = await PDFLibDocument.create();
@@ -222,7 +222,7 @@ const pdfMerge: ToolDefinition = {
         for (const page of copied) merged.addPage(page);
       }
 
-      const outPath = resolvePath(args.output_path as string);
+      const outPath = resolvePath(args.output_path as string, sessionIdOf(args));
       const outBytes = await merged.save();
       await mkdir(dirname(outPath), { recursive: true });
       await writeFile(outPath, outBytes);
@@ -247,7 +247,7 @@ const pdfExtractTables: ToolDefinition = {
   },
   async execute(args) {
     try {
-      const filePath = resolvePath(args.file_path as string);
+      const filePath = resolvePath(args.file_path as string, sessionIdOf(args));
       // Read the VALIDATED canonical inode (realpath + O_NOFOLLOW leaf) so a
       // symlink swapped in after the gate (R4-19) is rejected, not parsed.
       const buf = readValidatedFile(filePath);

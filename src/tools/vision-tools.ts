@@ -3,7 +3,7 @@ import type { ToolDefinition } from "../types.js";
 import { createLogger } from "../logger.js";
 // Resolve caller paths the SAME way SecurityLayer's file-access gate does
 // (workspace anchored, no ~ expansion) so the gated path == the opened path.
-import { resolveAgentPath } from "../workspace/paths.js";
+import { resolveAgentPath, sessionIdOf } from "../workspace/paths.js";
 import { openValidatedRead, readValidatedFile } from "../security/layer/index.js";
 import { ALLOWED_MIME } from "./shared/image-acquire.js";
 import { detectMime } from "./shared/image-binary-meta.js";
@@ -32,7 +32,7 @@ export const viewImageTool: ToolDefinition = {
   async execute(args) {
     const { existsSync } = await import("node:fs");
 
-    const filePath = resolveAgentPath(String(args.path));
+    const filePath = resolveAgentPath(String(args.path), sessionIdOf(args));
     if (!existsSync(filePath)) return { content: `File not found: ${filePath}`, isError: true };
 
     const ext = filePath.split(".").pop()?.toLowerCase() || "";
@@ -252,7 +252,7 @@ export const ocrTool: ToolDefinition = {
   },
   async execute(args) {
     try {
-      const filePath = resolveAgentPath(String(args.path));
+      const filePath = resolveAgentPath(String(args.path), sessionIdOf(args));
       if (!existsSync(filePath)) return { content: `File not found: ${filePath}`, isError: true };
       // Bind to the validated canonical inode (realpath + O_NOFOLLOW leaf) and
       // hand the OCR engine that canonical path, so a symlink swapped in after

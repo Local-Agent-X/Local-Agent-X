@@ -12,7 +12,7 @@
 import type { ToolCallContext } from "./context.js";
 import { hasCapability, type ToolRisk } from "../tool-registry.js";
 import { classifyToolRisk } from "../autonomy/risk.js";
-import { egressPayload } from "./egress-gates.js";
+import { egressPayload } from "./egress-payload.js";
 import { addressesIn } from "../data-lineage/private-content.js";
 import { computerPayload, queryForegroundApp, readClipboardText, type ForegroundApp } from "./private-content-computer.js";
 

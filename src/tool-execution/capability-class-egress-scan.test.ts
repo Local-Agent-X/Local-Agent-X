@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { CAN_CREATE_FILE_SYMLINK } from "../symlink-capabilities.test-helper.js";
 import { egressGuardGate, canaryEgressGate } from "./enforce-policy.js";
-import { egressPayload } from "./egress-gates.js";
+import { egressPayload } from "./egress-payload.js";
 import { checkAttachmentPaths } from "../tools/http-egress-guard.js";
 import { scanForSecrets, registerRedactedSecretValue, unregisterRedactedSecretValue } from "../security/secrets/index.js";
 import { generateCanaries, registerSessionCanaries, clearSessionCanaries, _setCanaryAuditTrail } from "../threat/canaries.js";

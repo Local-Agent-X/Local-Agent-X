@@ -16,7 +16,7 @@ import { checkEgressTaintWithPayload, detectSecretsInOutput } from "../data-line
 import { payloadFingerprints } from "../data-lineage/fingerprint.js";
 import { hasCapability } from "../tool-registry.js";
 import { deriveAriAction } from "./ari-action-map.js";
-import { egressPayload } from "./egress-gates.js";
+import { egressPayload } from "./egress-payload.js";
 
 /**
  * The kernel's taint vocabulary is only "web" | "rag" | "user-provided"
@@ -58,7 +58,7 @@ export function outboundIsTaintFree(
   // downstream; this predicate only clears what it can read.
   if (attachmentPaths.length > 0) return false;
   // Nothing to carry: a click/act with no payload cannot exfiltrate, exactly as
-  // a mouse move cannot (see the `computer` case in egressPayload). Provably
+  // a mouse move cannot (see LOCAL_CONTROL_ARGS in egress-payload.ts). Provably
   // clean, not merely unproven.
   if (text.trim() === "") return true;
   // Too short to be provable. Overlap is detected on SHINGLE_WIDTH-character

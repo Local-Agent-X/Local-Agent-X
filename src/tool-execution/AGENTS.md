@@ -18,6 +18,7 @@
 | `OPERATION_SCOPED_TOOLS` (`resolve-tool.ts`) | every tool body reading `_operationId` | none |
 | `DEFAULT_TIMEOUTS` (`tool-timeout.ts`) | tools not listed get `DEFAULT_FALLBACK` | `tool-timeout.test.ts` |
 | kill-switch table (`kill-switch-gates.ts`) | `FLIPPABLE_SETTINGS` in `src/settings-schema.ts` | `kill-switch-gates.test.ts` |
+| `LOCAL_CONTROL_ARGS` (`egress-payload.ts`) | every outbound scan skips those args; the taint floor and `taint-scope.ts` read "nothing to carry" from them | `egress-payload.test.ts` |
 | gate order (`pre-dispatch.ts`, `enforce-policy.ts`) | both dispatch callers (chat path, arikernel executors) | `gate-order.test.ts`, `pre-dispatch-matrix.test.ts` |
 
 ## Tests

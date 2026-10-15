@@ -1,8 +1,9 @@
 // Egress-class policy gates: outbound-secret scan, data-lineage taint floor, and
 // canary tripwire. All three key on hasCapability(name, "egress") and share the
-// egressPayload extractor, so each off-box sink (http_request/ari_http/email_send/
-// clipboard_write/process_start/browser/...) is scanned identically. Sequenced by
-// the enforce-policy orchestrator; ORDER is load-bearing and lives there.
+// egressPayload extractor (egress-payload.ts), so each off-box sink
+// (http_request/ari_http/email_send/clipboard_write/process_start/browser/...) is
+// scanned identically. Sequenced by the enforce-policy orchestrator; ORDER is
+// load-bearing and lives there.
 //
 // SC-10: the three gates used to run in sequence and each return its OWN
 // first-deny, so a request denied by more than one layer surfaced one blocker per
@@ -19,8 +20,9 @@ import { USER_HINTS, type BlockAction, type ToolResult } from "../types.js";
 import { checkEgressTaintWithPayload } from "../data-lineage/index.js";
 import { checkCanariesInPayload, recordCanaryExfilAudit } from "../threat/canaries.js";
 import { hasCapability } from "../tool-registry.js";
-import { checkOutboundRequest, checkOutboundPayload, checkOutboundEmail, checkAttachmentPaths } from "../tools/http-egress-guard.js";
+import { checkOutboundRequest, checkOutboundPayload, checkOutboundEmail, checkAttachmentPaths, isTrustedDestination } from "../tools/http-egress-guard.js";
 import { vouchedFor } from "../browser/site-provenance.js";
+import { egressPayload } from "./egress-payload.js";
 import type { PhaseOutcome, ToolCallContext } from "./context.js";
 import { terminate, CONTINUE } from "./context.js";
 
@@ -50,91 +52,6 @@ export interface EgressBlocker {
   clearable?: "declassify";
   /** A user-clickable way out (allow a host for web access); see SecurityDecision.action. */
   action?: BlockAction;
-}
-
-// Extract the OUTBOUND payload an egress-class sink would emit, so the secret
-// scan covers every channel (not just http body). Returns the scannable text +
-// any file paths the sink would attach. Keyed by tool name because each sink
-// carries its payload in differently-named args.
-// Exported so a chunk that adds a payload-bearing parameter to an egress-capable
-// tool can pin, directly, that the new field reaches the scan (campaign E5).
-export function egressPayload(name: string, args: Record<string, unknown>): { text: string; attachmentPaths: string[] } {
-  const parts: string[] = [];
-  const attachmentPaths: string[] = [];
-  const push = (v: unknown) => { if (v != null && v !== "") parts.push(String(v)); };
-  // A model-supplied reference-image / video path that names a LOCAL file is a
-  // candidate sensitive attachment (its bytes get shipped off-box). Remote
-  // http(s)/data: refs aren't local-file reads, so skip them here.
-  const pushLocalFile = (v: unknown, into: string[]) => {
-    if (typeof v !== "string" || v === "") return;
-    if (/^(https?:|data:)/i.test(v)) return;
-    into.push(v);
-  };
-  switch (name) {
-    case "http_request":
-    case "ari_http":
-      // The URL leaves the machine on every method, GET included: a tainted
-      // byte in the path or query is carried out exactly like one in the body.
-      push(args.url);
-      push(args.body);
-      if (args.headers && typeof args.headers === "object") {
-        for (const v of Object.values(args.headers as Record<string, unknown>)) push(v);
-      }
-      break;
-    case "email_send":
-      // EVERY field that leaves the box: recipients (bcc is still a real
-      // delivery address, merely hidden from the visible headers) and both body
-      // parts (a secret rendered only in the HTML alternative egresses exactly
-      // like one in the plain text).
-      push(args.to); push(args.cc); push(args.bcc); push(args.subject); push(args.body); push(args.html);
-      if (args.attachments) {
-        try {
-          const paths = JSON.parse(String(args.attachments));
-          if (Array.isArray(paths)) for (const p of paths) attachmentPaths.push(String(p));
-        } catch { /* malformed attachments JSON — the tool will reject it */ }
-      }
-      break;
-    case "clipboard_write":
-      push(args.text);
-      break;
-    case "calendar_create_event":
-      // An invite carries its title, description and location to every
-      // attendee; the attendee list itself names who receives it.
-      push(args.title); push(args.description); push(args.location); push(args.attendees);
-      break;
-    case "computer":
-      // The `computer` family's ONLY exfil channel is the text it types
-      // (action:"type"); mouse move/click/drag and key chords carry no data.
-      push(args.text);
-      break;
-    case "process_start":
-      push(args.command);
-      if (Array.isArray(args.args)) for (const a of args.args) push(a);
-      break;
-    default:
-      // browser navigation/fetch + other egress synonyms: scan url + any
-      // model-supplied data payload generically. Off-box sinks that ride their
-      // payload in a non-url arg (web_search query/queries[], generate_image/
-      // generate_video prompt) are scanned the same way, and local files that
-      // get shipped off-box (generate_video reference_image, edit_image
-      // image/mask, send_video path) are routed through the sensitive-attachment
-      // check — edit_image inlines the source file as base64, so a secret path
-      // passed as `image` would exfiltrate without this.
-      push(args.url); push(args.body); push(args.data); push(args.value); push(args.text);
-      push(args.query); push(args.prompt);
-      // browser evaluate: the script runs in the page and can send anything it
-      // embeds (fetch, beacon, a form post), so its source is outbound payload.
-      // Without it the script read as empty and was cleared as "nothing to carry".
-      push(args.script);
-      if (Array.isArray(args.queries)) for (const q of args.queries) push(q);
-      pushLocalFile(args.reference_image, attachmentPaths);
-      if (Array.isArray(args.reference_images)) for (const r of args.reference_images) pushLocalFile(r, attachmentPaths);
-      pushLocalFile(args.image, attachmentPaths);
-      pushLocalFile(args.mask, attachmentPaths);
-      pushLocalFile(args.path, attachmentPaths);
-      break;
-  }
-  return { text: parts.join("\n"), attachmentPaths };
 }
 
 // Build the single-gate ToolResult for one blocker. Reproduces the exact
@@ -180,12 +97,15 @@ export function probeEgressGuard(ctx: ToolCallContext): EgressBlocker | null {
   let block: { message: string; meta: Record<string, unknown>; confirmable?: boolean } | null = null;
   const vouched = vouchedFor(tc.name, args as Record<string, unknown>, ctx.sessionId ?? "");
   if (tc.name === "http_request" || tc.name === "ari_http") {
+    const url = String(args.url ?? "");
+    // The request scan reads url, body and headers; every other argument is
+    // scanned with them, under the same destination allowlist.
     block = checkOutboundRequest({
-      url: String(args.url ?? ""),
+      url,
       method: String(args.method ?? "POST").toUpperCase(),
       body: args.body,
       headers: args.headers,
-    }, vouched);
+    }, vouched) ?? (isTrustedDestination(url) ? null : checkOutboundPayload(tc.name, text, vouched));
   } else if (tc.name === "email_send") {
     block = checkOutboundEmail(
       {

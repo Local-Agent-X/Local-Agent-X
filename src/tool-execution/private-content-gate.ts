@@ -34,7 +34,7 @@ import {
   type Destination, type PrivateGateDeps,
 } from "./private-content-destinations.js";
 import { UnreadableClipboardError } from "./private-content-computer.js";
-import { egressPayload } from "./egress-gates.js";
+import { egressPayload } from "./egress-payload.js";
 import { personalDocumentPath } from "./private-read-record.js";
 
 export type { PrivateGateDeps } from "./private-content-destinations.js";

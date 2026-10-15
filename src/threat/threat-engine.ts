@@ -32,7 +32,7 @@ import { classifyData, stripExternalUntrusted, type DataLabel } from "./classifi
 import { CryptoAuditTrail, getSharedAuditTrail } from "./audit-trail.js";
 import { THREAT_SCORES, ThreatScorer, type ThreatLevel, type ThreatScorerState } from "./scoring.js";
 import { readThreatScorerOptions } from "./scorer-options.js";
-import { ToolChainAnalyzer, type ToolChainState } from "./tool-chain.js";
+import { ToolChainAnalyzer, type SendClearance, type ToolChainState } from "./tool-chain.js";
 import { restoreLastBlockedFingerprint } from "./consent-store.js";
 import { emitPreScoreChainAudit } from "./threat-audit-events.js";
 
@@ -169,7 +169,8 @@ export class ThreatEngine {
     toolName: string,
     args: Record<string, unknown>,
     result: string,
-    allowed: boolean
+    allowed: boolean,
+    clearance?: SendClearance,
   ): {
     blocked: boolean;
     reason?: string;
@@ -193,7 +194,7 @@ export class ThreatEngine {
     const alreadyRestricted = this.scorer.isRestricted();
 
     // Chain analysis (exfiltration + loop detection)
-    const chainResult = this.chain.recordAndAnalyze(toolName, args, classification);
+    const chainResult = this.chain.recordAndAnalyze(toolName, args, classification, clearance);
 
     // Pre-score audit events (blocked-by-other-layer / staging observability /
     // consent-allowed exfil) — emitted but NEVER scored. See threat-audit-events.ts

@@ -24,6 +24,7 @@ import { resolveOutputReserve } from "../context-manager/output-reserve.js";
 import { readOp } from "../ops/op-store.js";
 import { resolveOpModel } from "../canonical-loop/public/op-facts.js";
 import { STAGE_RECOVERY } from "./stage-recovery.js";
+import { isTrustedSend } from "../tools/http-egress-guard.js";
 
 type ToolResultWithImage = ToolResult & {
   _image?: { path: string; question: string; mime: string; b64: string };
@@ -101,7 +102,13 @@ function evaluateThreat(ctx: ToolCallContext): void {
   const { threatEngine, tc, args } = ctx;
   if (!threatEngine) return;
   const result = ctx.result!;
-  const threat = threatEngine.evaluateToolResult(tc.name, args, result.content, ctx.allowed);
+  // The outbound guard already judged this send before it ran; the two
+  // reasons it passes one that are the user's call carry over, so the
+  // engine does not re-judge them as exfiltration.
+  const threat = threatEngine.evaluateToolResult(tc.name, args, result.content, ctx.allowed, {
+    trustedDestination: isTrustedSend(tc.name, args),
+    approvedByUser: ctx.approvedByUser === true,
+  });
   if (threat.blocked) {
     ctx.result = {
       content: threatBlockMessage(threat.reason, !!threat.loop),

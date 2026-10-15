@@ -204,6 +204,34 @@ export function isTrustedEmailRecipient(addr: string, own: ReadonlySet<string>):
   return !!domain && matchEgressList(domain, hostEntries);
 }
 
+type EmailRecipients = { to?: string; cc?: string; bcc?: string };
+
+function sortRecipients(recipients: EmailRecipients): { addrs: string[]; untrusted: string[] } {
+  const addrs = [
+    ...parseRecipientAddresses(recipients.to ?? ""),
+    ...parseRecipientAddresses(recipients.cc ?? ""),
+    ...parseRecipientAddresses(recipients.bcc ?? ""),
+  ];
+  const own = new Set(getOwnEmailAddresses());
+  return { addrs, untrusted: addrs.filter((a) => !isTrustedEmailRecipient(a, own)) };
+}
+
+/**
+ * Whether this send goes only to destinations the user trusts, the way the
+ * guard below judges them: an http request's host on the allowlist, an
+ * email whose every recipient is the user's own address or allowlisted. The
+ * other off-box channels have no allowlist, so none of their sends is
+ * trusted. The threat engine reads it after the call ran, so a send the guard
+ * cleared for its destination is not re-judged as exfiltration.
+ */
+export function isTrustedSend(toolName: string, args: Record<string, unknown>): boolean {
+  if (toolName === "http_request" || toolName === "ari_http") return isTrustedDestination(String(args.url ?? ""));
+  if (toolName !== "email_send") return false;
+  const str = (v: unknown) => (v == null ? "" : String(v));
+  const { addrs, untrusted } = sortRecipients({ to: str(args.to), cc: str(args.cc), bcc: str(args.bcc) });
+  return addrs.length > 0 && untrusted.length === 0;
+}
+
 /**
  * Destination-aware outbound scan for email_send — the email analogue of
  * {@link checkOutboundRequest}. Unlike the destination-less
@@ -218,7 +246,7 @@ export function isTrustedEmailRecipient(addr: string, own: ReadonlySet<string>):
  * still exfiltration.
  */
 export function checkOutboundEmail(
-  recipients: { to?: string; cc?: string; bcc?: string },
+  recipients: EmailRecipients,
   text: string,
 ): GuardBlock | null {
   if (!text) return null;
@@ -226,13 +254,7 @@ export function checkOutboundEmail(
   const financial = loadDataEgressGuard() && hasSensitiveEgressData(text);
   if (scan.clean && !financial) return null;
 
-  const addrs = [
-    ...parseRecipientAddresses(recipients.to ?? ""),
-    ...parseRecipientAddresses(recipients.cc ?? ""),
-    ...parseRecipientAddresses(recipients.bcc ?? ""),
-  ];
-  const own = new Set(getOwnEmailAddresses());
-  const untrusted = addrs.filter((a) => !isTrustedEmailRecipient(a, own));
+  const { addrs, untrusted } = sortRecipients(recipients);
   if (addrs.length > 0 && untrusted.length === 0) return null;
 
   const kinds = scan.clean ? "" : [...new Set(scan.matches.map((m) => m.pattern))].join(", ");

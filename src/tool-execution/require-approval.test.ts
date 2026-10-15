@@ -79,6 +79,21 @@ describe("requireApprovalPhase — unattended runs", () => {
 
     expect(outcome.kind).toBe("continue");
     expect(events.filter((e) => e.type === "approval_requested")).toHaveLength(1);
+    // The yes is recorded on the call, for the post-call threat analysis.
+    expect(ctx.approvedByUser).toBe(true);
+  });
+
+  it("records no approval on a call the user declined", async () => {
+    const ctx = makeCtx({
+      name: "email_send",
+      sessionId: pinned("Power"),
+      callContext: "local",
+      args: { to: "x@evil.example", body: "b" },
+      policyApprovalReason: "the message carries secret-shaped content",
+      onEvent: (e) => { if (e.type === "approval_requested") getApprovalManager().resolveApproval(e.approvalId, false); },
+    });
+    expect((await requireApprovalPhase(ctx)).kind).toBe("halt");
+    expect(ctx.approvedByUser).toBeUndefined();
   });
 
   it("does not bypass a profile hard deny when policy asks for approval", async () => {

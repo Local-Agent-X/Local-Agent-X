@@ -322,6 +322,7 @@ export const requireApprovalPhase: Phase = async (ctx) => {
     emit: ctx.onEvent,
   });
   if (outcome.approved) {
+    ctx.approvedByUser = true;
     if (promotion) {
       if (!outcome.grantId) throw new Error("approved memory promotion missing canonical grant id");
       stampApprovedMemoryPromotion(ctx.args, promotion, outcome.grantId);

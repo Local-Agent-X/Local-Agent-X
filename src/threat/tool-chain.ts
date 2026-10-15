@@ -33,6 +33,19 @@ function hashToolCall(name: string, args: Record<string, unknown>): string {
   return createHash("sha256").update(`${name}:${JSON.stringify(args)}`).digest("hex").slice(0, 16);
 }
 
+/**
+ * Why the outbound guard let this send through before it ran, for the two
+ * reasons that are the user's own decision: the destination is one the user
+ * trusts (their own address, or the allowlist in Settings → Security → Web
+ * access), or the user approved this call on its card. Either way the send is
+ * what the user chose, so a secret in it is audited, not scored as
+ * exfiltration (tool-execution/audit-tool-call.ts supplies it).
+ */
+export interface SendClearance {
+  trustedDestination: boolean;
+  approvedByUser: boolean;
+}
+
 function describeSink(sink: DataAccess): string {
   return sink.target ? `${sink.type} to ${sink.target.slice(0, 50)}` : sink.type;
 }
@@ -63,7 +76,8 @@ export class ToolChainAnalyzer {
   recordAndAnalyze(
     toolName: string,
     args: Record<string, unknown>,
-    resultClassification: DataClassification
+    resultClassification: DataClassification,
+    clearance?: SendClearance,
   ): {
     blocked: boolean;
     reason?: string;
@@ -118,6 +132,9 @@ export class ToolChainAnalyzer {
         if (fp && isLearned(fp)) {
           return { blocked: false, allowedByConsent: `learned-pattern:${fp}`, exfil };
         }
+        const cleared = clearance?.approvedByUser ? "user-approved-send"
+          : clearance?.trustedDestination ? "trusted-destination" : null;
+        if (cleared) return { blocked: false, allowedByConsent: cleared, exfil };
         // Layer A: per-turn consent (chat attachments + directive verbs).
         if (this.isUserConsentActive()) {
           return { blocked: false, allowedByConsent: this.userConsentReason || "user-consent-active", exfil };

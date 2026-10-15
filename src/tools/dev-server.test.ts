@@ -470,7 +470,7 @@ describe("waitForBackend — a crash is reported when it happens, not after the 
       s.exitedAt = Date.now();
       markExited();
       await Promise.resolve();
-      s.stderr = "late boom";
+      (s as { stderr: string }).stderr = "late boom";
       child.emit("close");
       expect(await pending).toEqual({ status: "crashed", code: 7, signal: null, output: "late boom" });
     } finally {

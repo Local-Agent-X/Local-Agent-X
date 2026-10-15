@@ -32,6 +32,17 @@ describe("secret_env arguments", () => {
     expect(ok.scrub(`Authorization: Bearer ${VAULT.SUPABASE_TOKEN}`)).toBe("Authorization: Bearer [secret SUPABASE_TOKEN]");
     expect(resolveSecretEnv({ X: "NOT_STORED" })).toEqual({ missing: ["NOT_STORED"] });
   });
+
+  it("an open-ended read also masks a value the text stops partway through", () => {
+    const ok = resolveSecretEnv({ SUPABASE_ACCESS_TOKEN: "SUPABASE_TOKEN" });
+    if ("missing" in ok) throw new Error("unexpected missing");
+    const value = VAULT.SUPABASE_TOKEN;
+    expect(ok.scrubOpenEnded(`token=${value.slice(0, 20)}`)).toBe("token=[secret SUPABASE_TOKEN]");
+    expect(ok.scrubOpenEnded(`a ${value} b ${value.slice(0, 9)}`)).toBe("a [secret SUPABASE_TOKEN] b [secret SUPABASE_TOKEN]");
+    // A few leading characters say nothing about the value and stay as printed.
+    expect(ok.scrubOpenEnded("version sbp")).toBe("version sbp");
+    expect(ok.scrubOpenEnded("all done\n")).toBe("all done\n");
+  });
 });
 
 describe("bash with secret_env", () => {

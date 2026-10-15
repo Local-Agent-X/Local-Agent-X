@@ -8,6 +8,7 @@ import { USER_HINTS, type ToolResult } from "../types.js";
 import { hasCapability } from "../tool-registry.js";
 import { findTaintInPayload, detectSecretsInOutput } from "../data-lineage/index.js";
 import { scanForSecrets } from "../security/secrets/index.js";
+import { storedSecretRoute } from "./stored-secret-route.js";
 
 // Kernel taint sources that @arikernel/core's deny-tainted-shell rule treats as
 // untrusted content (its `match.taintSources`). Mirrored here so LAX can PRE-EMPT
@@ -107,9 +108,8 @@ export function knownSecretShellBlockReason(toolName: string, args: unknown): st
   if (hits === 0) return null;
   return (
     `Shell is blocked for this command: it carries a stored secret value (${hits} occurrence${hits === 1 ? "" : "s"}, plain or encoded) — ` +
-    `a value the vault holds or one that was masked out of an earlier tool result. Credentials never go on a command line: ` +
-    `pass the stored secret to the process with the secret_env argument, or use a {{SECRET_NAME}} placeholder in http_request. ` +
-    `Other commands are not affected.`
+    `a value the vault holds or one that was masked out of an earlier tool result. Credentials never go on a command line. ` +
+    `${storedSecretRoute(toolName)} Other commands are not affected.`
   );
 }
 
@@ -127,7 +127,7 @@ export function knownSecretShellBlock(toolName: string, args: unknown): ToolResu
       layer: "egress-guard",
       blocked_by: "outbound-secret-scan",
       secret_kinds: "Known Secret Value",
-      recovery: "Remove the secret value from the command. Expose a stored secret to the process with secret_env, or use a {{SECRET_NAME}} placeholder in http_request.",
+      recovery: `Remove the secret value from the command. ${storedSecretRoute(toolName)}`,
       userHint: USER_HINTS.outboundContent,
     },
   };

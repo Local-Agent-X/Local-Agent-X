@@ -36,6 +36,32 @@ describe("egressGuardGate — outbound secret scan + sensitive attachment (every
     expect(egressGuardGate(ctx).kind).toBe("halt");
   });
 
+  // The recovery names the route the blocked tool has. A {{NAME}} placeholder
+  // resolves only in http_request, so it was a dead end for these two.
+  it.each(["process_start", "process_restart"])("blocks a hardcoded key in %s env and points at secret_env", (tool) => {
+    const ctx = makeCtx(tool, { command: "npx supabase functions deploy", env: { SUPABASE_ACCESS_TOKEN: SECRET } }, sessionId);
+    expect(egressGuardGate(ctx).kind).toBe("halt");
+    const recovery = String(ctx.result?.metadata?.recovery);
+    expect(recovery).toMatch(/secret_env: \{ "ENV_VAR": "SECRET_NAME" \}/);
+    expect(recovery).not.toContain("{{SECRET_NAME}}");
+  });
+
+  it("blocks a raw key in connector_create auth and points at the vault-name reference", () => {
+    const ctx = makeCtx("connector_create", {
+      name: "acme", upstream: "https://api.acme.example", auth: { type: "bearer", token: SECRET }, allow: ["GET /v1/items"],
+    }, sessionId);
+    expect(egressGuardGate(ctx).kind).toBe("halt");
+    const recovery = String(ctx.result?.metadata?.recovery);
+    expect(recovery).toContain("auth: {type:'bearer', secret:'NAME'}");
+    expect(recovery).not.toContain("{{SECRET_NAME}}");
+  });
+
+  it("an http-shaped sink keeps the {{SECRET_NAME}} placeholder recovery", () => {
+    const ctx = makeCtx("clipboard_write", { text: `token=${SECRET}` }, sessionId);
+    egressGuardGate(ctx);
+    expect(String(ctx.result?.metadata?.recovery)).toContain("{{SECRET_NAME}}");
+  });
+
   it("routes a hardcoded secret in an email_send body to interactive approval (confirmable downgrade)", () => {
     // Since 7c23e4a5 email_send is recipient-aware (checkOutboundEmail): a
     // secret-bearing payload to an UNKNOWN recipient is a CONFIRMABLE block —

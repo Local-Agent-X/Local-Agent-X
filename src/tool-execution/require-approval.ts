@@ -148,7 +148,7 @@ export const requireApprovalPhase: Phase = async (ctx) => {
     publishOverridden = gate.overridden;
   }
 
-  // A vault secret handed to a command (bash secret_env) is the profile's
+  // A vault secret handed to a command (secret_env) is the profile's
   // `secrets` rule, decided before any fast path (secret-env-approval.ts).
   const secretUse = await secretEnvGate(ctx);
   if (secretUse.kind === "blocked") return terminate(ctx, { rendered: "model", result: secretUse.result, allowed: false });

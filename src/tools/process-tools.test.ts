@@ -52,6 +52,12 @@ vi.mock("../sandbox/win-cage-grants.js", async (importOriginal) => {
     },
   };
 });
+// The vault a secret_env reads from.
+const vault = vi.hoisted(() => ({ LAX_TEST_TOKEN: "laxtok_7Qm2Xv9Lp4Rz8Kd3Wn6Tb1Hy5Jc0Fs" } as Record<string, string>));
+vi.mock("../secrets.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../secrets.js")>()),
+  getSecretsStoreSingleton: () => ({ get: (name: string) => vault[name] }),
+}));
 // A guarded start asks for the egress proxy's route; these tests start no proxy.
 vi.mock("./shell-proxy-env.js", () => ({ shellProxyEnv: async () => ({}), shellProxyEnvSync: () => ({}) }));
 // The port: who holds it, and what the shared reclaim reports killing. Nothing
@@ -362,4 +368,79 @@ describe("process_* on a proven Windows cage whose grants are still being made",
     expect(String(res.content)).toMatch(/Settings → Security to try again; restarting the app also retries it\. Nothing was stopped or started\.$/);
     expect(await isRunning(oldId)).toBe(true);
   }, 20_000);
+});
+
+// secret_env: a stored key reaches the background process's environment, and
+// nothing the model reads back about that process carries the value.
+describe("process_start / process_restart with secret_env", () => {
+  const VALUE = vault.LAX_TEST_TOKEN;
+  const PRINT = `"${nodeExecutable}" -e "console.log('tok=' + process.env.LAX_T)"`;
+  const PRINT_AND_STAY = `"${nodeExecutable}" -e "console.log('tok=' + process.env.LAX_T); setInterval(()=>{},1000)"`;
+  const SECRET_ENV = { LAX_T: "LAX_TEST_TOKEN" };
+
+  async function outputOf(id: string, want: RegExp, timeoutMs = 8000): Promise<ToolResult> {
+    const deadline = Date.now() + timeoutMs;
+    let r = await processStatusTool.execute({ session_id: id });
+    while (!want.test(String(r.content)) && Date.now() < deadline) {
+      await new Promise((res) => setTimeout(res, 100));
+      r = await processStatusTool.execute({ session_id: id });
+    }
+    return r;
+  }
+
+  it("puts the value in the child's environment, and every read-back shows [secret NAME]", async () => {
+    const started = await processStartTool.execute({ command: PRINT, secret_env: SECRET_ENV });
+    const id = sessionIdOf(started);
+    spawned.add(id);
+    expect(started.isError).toBeFalsy();
+    expect(JSON.stringify(started)).not.toContain(VALUE);
+
+    const status = await outputOf(id, /tok=/);
+    expect(String(status.content)).toContain("tok=[secret LAX_TEST_TOKEN]");
+    expect(JSON.stringify(status)).not.toContain(VALUE);
+    // The session's own buffers are what the dev-server crash and readiness
+    // reports read; they are scrubbed too. Only the names are kept.
+    const session = SESSIONS.get(id)!;
+    expect(session.stdout).toContain("tok=[secret LAX_TEST_TOKEN]");
+    expect(session.stdout + session.stderr).not.toContain(VALUE);
+    expect(session.secretEnv).toEqual(SECRET_ENV);
+    expect(JSON.stringify(session.envHint ?? {})).not.toContain(VALUE);
+  }, 20_000);
+
+  it("an unchanged restart re-reads the same secret; a new command does not inherit it", async () => {
+    const first = sessionIdOf(await processStartTool.execute({ command: PRINT_AND_STAY, secret_env: SECRET_ENV }));
+    spawned.add(first);
+    expect(String((await outputOf(first, /tok=/)).content)).toContain("tok=[secret LAX_TEST_TOKEN]");
+
+    const respawn = await processRestartTool.execute({ session_id: first });
+    const second = sessionIdOf(respawn);
+    spawned.add(second);
+    expect(JSON.stringify(respawn)).not.toContain(VALUE);
+    expect(String((await outputOf(second, /tok=/)).content)).toContain("tok=[secret LAX_TEST_TOKEN]");
+
+    const changed = sessionIdOf(await processRestartTool.execute({ session_id: second, command: PRINT }));
+    spawned.add(changed);
+    expect(String((await outputOf(changed, /tok=/)).content)).toContain("tok=undefined");
+  }, 30_000);
+
+  it("a secret that is not stored stops the call, names it and says how to get it", async () => {
+    const before = SESSIONS.size;
+    const r = await processStartTool.execute({ command: PRINT, secret_env: { LAX_T: "NOT_STORED" } });
+    expect(r.isError).toBe(true);
+    expect(String(r.content)).toMatch(/process_start: secret_env: not in the vault: NOT_STORED.*request_secrets/);
+    expect(SESSIONS.size).toBe(before);
+
+    const restart = await processRestartTool.execute({ command: PRINT, secret_env: { LAX_T: "NOT_STORED" } });
+    expect(String(restart.content)).toMatch(/NOT_STORED.*Nothing was stopped or started/);
+  });
+
+  it("a malformed secret_env stops the call and says what to fix", async () => {
+    const asList = await processStartTool.execute({ command: PRINT, secret_env: ["LAX_TEST_TOKEN"] });
+    expect(String(asList.content)).toMatch(/secret_env must be an object/);
+    const badEnv = await processStartTool.execute({ command: PRINT, secret_env: { "BAD-NAME": "LAX_TEST_TOKEN" } });
+    expect(String(badEnv.content)).toMatch(/not a valid environment variable name/);
+    const rawValue = await processRestartTool.execute({ command: PRINT, secret_env: { LAX_T: VALUE } });
+    expect(String(rawValue.content)).toMatch(/must name a stored secret/);
+    expect(String(rawValue.content)).not.toContain(VALUE);
+  });
 });

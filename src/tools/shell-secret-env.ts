@@ -1,5 +1,6 @@
 /**
- * Vault secrets handed to ONE shell command as environment variables.
+ * Vault secrets handed to ONE command as environment variables: a bash call,
+ * or a background process (process_start / process_restart).
  *
  * A CLI that authenticates from its environment (`SUPABASE_ACCESS_TOKEN` for
  * the supabase CLI, `GH_TOKEN` for gh) had no route to a vault secret: a
@@ -9,7 +10,8 @@
  *
  * `secret_env: { SUPABASE_ACCESS_TOKEN: "SUPABASE_FULL_TOKEN" }` puts the value
  * in the child's environment only — never the command text — and anything the
- * command prints has it replaced by `[secret NAME]` before the model sees it.
+ * command prints has it replaced by `[secret NAME]` before the model sees it
+ * (a background process's buffers are scrubbed on every read, process-session.ts).
  * Whether the call needs the user's yes is the profile's `secrets` rule
  * (tool-execution/secret-env-approval.ts).
  */
@@ -18,6 +20,11 @@ import { registerRedactedSecretValue, vaultSecretSource } from "../security/secr
 
 /** Environment variable name → vault secret name. */
 export type SecretEnv = Record<string, string>;
+
+/** Every tool that takes secret_env. Its approval card (secretEnvGate) and the
+ *  outbound-block recovery that points at it key on this one set; a tool that
+ *  declares the parameter without being listed fails shell-secret-env.test.ts. */
+export const SECRET_ENV_TOOLS: ReadonlySet<string> = new Set(["bash", "process_start", "process_restart"]);
 
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const SECRET_NAME = /^[A-Z][A-Z0-9_]*$/;
@@ -50,6 +57,18 @@ export function secretEnvProgram(command: string): string {
 export interface ResolvedSecretEnv {
   env: Record<string, string>;
   scrub: (text: string) => string;
+  /** scrub, plus a value cut off at the end of the text: output read while the
+   *  process is still writing, or clipped at a buffer cap, can stop mid-value. */
+  scrubOpenEnded: (text: string) => string;
+}
+
+// A cut-off value shorter than this is left alone: a few leading characters say
+// nothing about the secret, and masking them would garble ordinary output.
+const MIN_CUT_OFF = 4;
+
+/** The refusal for secrets the vault does not hold, in one wording for every tool. */
+export function missingSecretEnvMessage(missing: string[]): string {
+  return `secret_env: not in the vault: ${missing.join(", ")}. Ask the user for it with request_secrets, then retry.`;
 }
 
 /** Read the named secrets from the vault. Missing ones are reported by name. */
@@ -66,8 +85,15 @@ export function resolveSecretEnv(secretEnv: SecretEnv): ResolvedSecretEnv | { mi
     registerRedactedSecretValue(value, vaultSecretSource(secretName));
   }
   if (missing.length > 0) return { missing };
-  return {
-    env,
-    scrub: (text) => values.reduce((t, { name, value }) => t.split(value).join(`[secret ${name}]`), text),
+  const scrub = (text: string): string => values.reduce((t, { name, value }) => t.split(value).join(`[secret ${name}]`), text);
+  const scrubOpenEnded = (text: string): string => {
+    const t = scrub(text);
+    for (const { name, value } of values) {
+      for (let n = Math.min(value.length - 1, t.length); n >= MIN_CUT_OFF; n--) {
+        if (t.endsWith(value.slice(0, n))) return `${t.slice(0, -n)}[secret ${name}]`;
+      }
+    }
+    return t;
   };
+  return { env, scrub, scrubOpenEnded };
 }

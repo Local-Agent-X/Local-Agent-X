@@ -32,19 +32,33 @@ import {
   tailLines,
   sleep,
 } from "./process-session.js";
+import { missingSecretEnvMessage, resolveSecretEnv, secretEnvOf, type ResolvedSecretEnv, type SecretEnv } from "./shell-secret-env.js";
+
+const SECRET_ENV_PARAM = {
+  type: "object",
+  description: "Vault secrets for the process as environment variables: { ENV_VAR: SECRET_NAME }, e.g. { \"SUPABASE_ACCESS_TOKEN\": \"SUPABASE_TOKEN\" }. The value goes into the process environment only and is scrubbed from everything process_status returns. Never put a credential in env or the command.",
+};
+
+/** The vault values for a call's secret_env, read now. A string is the refusal. */
+function sessionSecrets(names: SecretEnv | null): { names: SecretEnv; resolved: ResolvedSecretEnv } | undefined | string {
+  if (!names) return undefined;
+  const resolved = resolveSecretEnv(names);
+  return "missing" in resolved ? missingSecretEnvMessage(resolved.missing) : { names, resolved };
+}
 
 // ── process_start ────────────────────────────────────────────────────────
 
 export const processStartTool: ToolDefinition = {
   name: "process_start",
   description:
-    "Start a long-running shell command as a background session. Returns a session_id immediately; the command continues to run. Use process_status to poll for output and exit code, process_kill to terminate. Prefer this over bash for any command that may take more than a few seconds (ollama pull, npm install, training jobs, downloads). Bash is synchronous and will time out or return empty stdout for TTY-only progress.",
+    "Start a long-running shell command as a background session. Returns a session_id immediately; the command continues to run. Use process_status to poll for output and exit code, process_kill to terminate. Prefer this over bash for any command that may take more than a few seconds (ollama pull, npm install, training jobs, downloads). Bash is synchronous and will time out or return empty stdout for TTY-only progress. A stored key goes in secret_env, never in env or the command.",
   parameters: {
     type: "object",
     properties: {
       command: { type: "string", description: "Shell command to run." },
       cwd: { type: "string", description: "Working directory (optional)." },
       env: { type: "object", description: "Extra env vars (optional)." },
+      secret_env: SECRET_ENV_PARAM,
     },
     required: ["command"],
   },
@@ -55,6 +69,9 @@ export const processStartTool: ToolDefinition = {
 
     const cwd = typeof args.cwd === "string" ? args.cwd : undefined;
     const env = args.env as Record<string, string> | undefined;
+    let secrets;
+    try { secrets = sessionSecrets(secretEnvOf(args)); } catch (e) { return err(`process_start: ${(e as Error).message}`); }
+    if (typeof secrets === "string") return err(`process_start: ${secrets}`);
 
     // startSession cannot wait for a Windows cage still proving its fence or
     // still being granted the workspace, and would refuse; this tool can, so
@@ -66,7 +83,7 @@ export const processStartTool: ToolDefinition = {
       return err(`process_start: ${(e as Error).message}`);
     }
     if (abortSignal?.aborted) return err("process_start: aborted before the command started.");
-    const res = startSession(command, cwd, env, sessionIdOf(args));
+    const res = startSession(command, cwd, env, sessionIdOf(args), secrets);
     if ("error" in res) return err(`process_start: spawn failed: ${res.error}`);
     const { session } = res;
 
@@ -181,6 +198,7 @@ export const processRestartTool: ToolDefinition = {
       port: { type: "number", description: "TCP port to reclaim before starting (optional)." },
       cwd: { type: "string", description: "Working directory (optional)." },
       env: { type: "object", description: "Extra env vars (optional)." },
+      secret_env: { ...SECRET_ENV_PARAM, description: `${SECRET_ENV_PARAM.description} Restarting a session_id with no other change reuses its secret_env.` },
     },
     required: [],
   },
@@ -190,6 +208,8 @@ export const processRestartTool: ToolDefinition = {
     let command = typeof args.command === "string" ? args.command.trim() : "";
     let cwd = typeof args.cwd === "string" ? args.cwd : undefined;
     let env = args.env as Record<string, string> | undefined;
+    let secretEnv;
+    try { secretEnv = secretEnvOf(args); } catch (e) { return err(`process_restart: ${(e as Error).message} Nothing was stopped or started.`); }
 
     // Before anything is killed: a cage still proving its fence after the wait,
     // or one whose grants failed, would refuse the new start, leaving the old
@@ -207,9 +227,14 @@ export const processRestartTool: ToolDefinition = {
 
     // Replace a tracked session: inherit its command/cwd/env, kill it, wait.
     const oldSessionId = typeof args.session_id === "string" ? args.session_id.trim() : "";
-    if (oldSessionId) {
-      const old = SESSIONS.get(oldSessionId);
-      if (!old) return err(`process_restart: no such session "${oldSessionId}"`);
+    const old = oldSessionId ? SESSIONS.get(oldSessionId) : undefined;
+    if (oldSessionId && !old) return err(`process_restart: no such session "${oldSessionId}"`);
+    // Only an unchanged respawn reuses the session's secret_env: the user okayed
+    // that program with those secrets, so a new command, cwd or env names it again.
+    if (old && !secretEnv && !command && cwd === undefined && env === undefined) secretEnv = old.secretEnv ?? null;
+    const secrets = sessionSecrets(secretEnv);
+    if (typeof secrets === "string") return err(`process_restart: ${secrets} Nothing was stopped or started.`);
+    if (old) {
       if (!command) command = old.command;
       if (cwd === undefined) cwd = old.cwdHint;
       if (env === undefined) env = old.envHint;
@@ -239,7 +264,7 @@ export const processRestartTool: ToolDefinition = {
       }
     }
 
-    const res = startSession(command, cwd, env, sessionIdOf(args));
+    const res = startSession(command, cwd, env, sessionIdOf(args), secrets);
     if ("error" in res) return err(`process_restart: spawn failed: ${res.error}`);
     const { session } = res;
 

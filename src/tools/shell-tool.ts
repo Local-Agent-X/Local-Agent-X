@@ -5,7 +5,7 @@ import { detectTargetShell, translateForShell, powershellCmdletHint, quotedGlobH
 import { resolveWindowsShell, recordAvSuspectKill, isLikelyAvKill } from "./shell-env.js";
 import { runCaged, type CagedOutput } from "./caged-spawn.js";
 import { workspaceRoot } from "../config.js";
-import { resolveSecretEnv, secretEnvOf } from "./shell-secret-env.js";
+import { missingSecretEnvMessage, resolveSecretEnv, secretEnvOf } from "./shell-secret-env.js";
 import { vendorDriftHint } from "../protocols/vendor-drift.js";
 
 export const bashTool: ToolDefinition = {
@@ -60,7 +60,7 @@ export const bashTool: ToolDefinition = {
     try { secretEnv = secretEnvOf(args); } catch (e) { return err((e as Error).message); }
     const secrets = secretEnv ? resolveSecretEnv(secretEnv) : null;
     if (secrets && "missing" in secrets) {
-      return err(`secret_env: not in the vault: ${secrets.missing.join(", ")}. Ask the user for it with request_secrets, then retry.`);
+      return err(missingSecretEnvMessage(secrets.missing));
     }
     const scrub = secrets ? secrets.scrub : (text: string) => text;
 

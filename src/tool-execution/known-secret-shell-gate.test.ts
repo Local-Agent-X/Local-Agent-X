@@ -7,7 +7,7 @@
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { executeToolCalls } from "./execute-tool.js";
-import { knownSecretShellBlockReason } from "./shell-block-guidance.js";
+import { knownSecretShellBlock, knownSecretShellBlockReason } from "./shell-block-guidance.js";
 import { setAriRequired } from "../ari-kernel/state.js";
 import { registerRedactedSecretValue, unregisterRedactedSecretValue, scanForSecrets } from "../security/secrets/index.js";
 import type { ToolDefinition, ToolResult } from "../types.js";
@@ -33,6 +33,14 @@ describe("knownSecretShellBlockReason", () => {
     expect(knownSecretShellBlockReason("process_start", { command: "deploy", args: [`--token=${STORED}`] })).not.toBeNull();
     expect(knownSecretShellBlockReason("bash", { command: "npm test" })).toBeNull();
     expect(knownSecretShellBlockReason("write", { path: "/tmp/x", content: STORED })).toBeNull();
+  });
+
+  it("points a tool that takes secret_env at it, and one that does not at http_request", () => {
+    const recovery = (tool: string) => String(knownSecretShellBlock(tool, { command: `deploy --token=${STORED}` })?.metadata?.recovery);
+    expect(recovery("process_start")).toContain("secret_env");
+    expect(recovery("bash")).toContain("secret_env");
+    expect(recovery("app_serve_backend")).not.toContain("secret_env");
+    expect(recovery("app_serve_backend")).toContain("{{SECRET_NAME}}");
   });
 });
 

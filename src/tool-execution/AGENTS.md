@@ -21,6 +21,7 @@
 | kill-switch table (`kill-switch-gates.ts`) | `FLIPPABLE_SETTINGS` in `src/settings-schema.ts` | `kill-switch-gates.test.ts` |
 | `DECLARED_DESTINATIONS` (`send-destinations.ts`) | the private-content gate's destinations and the "always allow" scope of every send (`src/approval-decision.ts`) | `private-content-destinations.test.ts`, `src/approval-grant-scope.test.ts` |
 | `LOCAL_CONTROL_ARGS` (`egress-payload.ts`) | every outbound scan skips those args; the taint floor and `taint-scope.ts` read "nothing to carry" from them | `egress-payload.test.ts` |
+| `SECRET_ENV_TOOLS` (`src/tools/shell-secret-env.ts`) | the `use_secret` card (`secret-env-approval.ts`) and the outbound-secret recovery (`stored-secret-route.ts`) cover exactly those tools | `src/tools/tool-registration-completeness.test.ts`, `secret-env-approval.test.ts` |
 | gate order (`pre-dispatch.ts`, `enforce-policy.ts`) | both dispatch callers (chat path, arikernel executors) | `gate-order.test.ts`, `pre-dispatch-matrix.test.ts` |
 
 ## Tests

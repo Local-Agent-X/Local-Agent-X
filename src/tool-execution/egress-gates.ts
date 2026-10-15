@@ -23,6 +23,7 @@ import { hasCapability } from "../tool-registry.js";
 import { checkOutboundRequest, checkOutboundPayload, checkOutboundEmail, checkAttachmentPaths, isTrustedDestination } from "../tools/http-egress-guard.js";
 import { vouchedFor } from "../browser/site-provenance.js";
 import { egressPayload } from "./egress-payload.js";
+import { outboundSecretRecovery } from "./stored-secret-route.js";
 import type { PhaseOutcome, ToolCallContext } from "./context.js";
 import { terminate, CONTINUE } from "./context.js";
 
@@ -121,7 +122,7 @@ export function probeEgressGuard(ctx: ToolCallContext): EgressBlocker | null {
   if (!block) return null;
   return {
     layer: "egress-guard", label: "egress guard", reason: block.message,
-    recovery: "Use {{SECRET_NAME}} placeholders instead of hardcoded credentials, or remove the secret from the outbound payload. Only if the destination legitimately needs credentials, ask the user to allow its host in Settings → Security → Web access.",
+    recovery: outboundSecretRecovery(tc.name),
     userHint: USER_HINTS.outboundContent, meta: block.meta,
     confirmable: block.confirmable,
   };

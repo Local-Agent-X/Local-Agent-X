@@ -33,6 +33,7 @@ import { auditKernelCoverage } from "../ari-kernel/coverage.js";
 import { TOOL_PATH_ARGS } from "../tool-registry.js";
 import { TOOL_POLICIES } from "../tool-policy/tool-policies.data.js";
 import { matchGlob } from "../tool-policy/matchers.js";
+import { SECRET_ENV_TOOLS } from "./shell-secret-env.js";
 
 let tools: Map<string, ToolDefinition>;
 let names: string[];
@@ -156,6 +157,17 @@ describe("every tool whose defining file reaches the network is an off-box sink"
   it("every exemption names a live tool that is not already marked", () => {
     const stale = Object.keys(EGRESS_EXEMPT).filter((name) => !tools.has(name) || TOOL_POLICIES[name]?.offBoxFetch === true);
     expect(stale, `EGRESS_EXEMPT entries that no longer apply: ${stale.join(", ")}`).toEqual([]);
+  });
+});
+
+// The approval card for a vault secret handed to a process (secretEnvGate) and
+// the block recovery that points at secret_env key on SECRET_ENV_TOOLS. A tool
+// that declares the parameter without being listed would hand over the secret
+// with no card.
+describe("every tool that takes secret_env is in SECRET_ENV_TOOLS", () => {
+  it("declares it exactly when listed", () => {
+    const declaring = names.filter((name) => "secret_env" in propsOf(tools.get(name)));
+    expect(declaring, "add the tool to SECRET_ENV_TOOLS in src/tools/shell-secret-env.ts").toEqual([...SECRET_ENV_TOOLS].sort());
   });
 });
 

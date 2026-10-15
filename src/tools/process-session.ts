@@ -20,6 +20,7 @@ import { spawnCagedSync } from "./caged-spawn.js";
 import { registerOwnedProcess, unregisterOwnedProcess } from "./owned-listeners.js";
 import { workspaceRoot } from "../config.js";
 import { resolveAgentPath } from "../workspace/paths.js";
+import type { ResolvedSecretEnv, SecretEnv } from "./shell-secret-env.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("tools.process");
@@ -30,6 +31,9 @@ export interface ProcessSession {
   /** cwd/env the session was started with, so process_restart can reuse them. */
   cwdHint?: string;
   envHint?: Record<string, string>;
+  /** The secret_env it was started with: names only, never values — those
+   *  live in the child's environment and are re-read from the vault on restart. */
+  secretEnv?: SecretEnv;
   pid: number | null;
   child: ChildProcess | null;
   startedAt: number;
@@ -44,8 +48,10 @@ export interface ProcessSession {
    *  recorded — so a waiter reacts to the death itself instead of finding it on
    *  its next poll, which a blocking port probe can delay by seconds. */
   exited: Promise<void>;
-  stdout: string;
-  stderr: string;
+  /** What the process printed, any secret_env value already replaced by
+   *  `[secret NAME]`: every reader gets the scrubbed text, whoever it is. */
+  readonly stdout: string;
+  readonly stderr: string;
   truncated: boolean;
   /** Bytes read past the per-session cap. Reported in metadata so the
    *  model knows output is being clipped. */
@@ -59,6 +65,15 @@ registerTrackedShellSessions((id) => {
   const s = SESSIONS.get(id);
   return s && { command: s.command, cwd: s.cwdHint };
 });
+
+/** The command a call will run: its own, or the tracked session's that a
+ *  process_restart naming none re-runs. Empty when there is neither. */
+export function spawnCommandOf(args: Record<string, unknown>): string {
+  const own = typeof args.command === "string" ? args.command.trim() : "";
+  if (own) return own;
+  const id = typeof args.session_id === "string" ? args.session_id.trim() : "";
+  return (id && SESSIONS.get(id)?.command) || "";
+}
 const MAX_BUFFER_BYTES = 1 * 1024 * 1024;   // per session
 const COMPLETED_TTL_MS = 5 * 60_000;        // keep finished sessions 5 min
 const MAX_SESSIONS = 32;                     // hard cap, evict oldest finished
@@ -97,13 +112,15 @@ function newSessionId(): string {
  * later `process.kill(-pid)` tree-kills any grandchild like a node server),
  * and wire up stdout/stderr/exit capture. Shared by process_start and
  * process_restart so there's exactly one spawn path. Returns the live
- * session, or an error string if spawn threw synchronously.
+ * session, or an error string if spawn threw synchronously. `secrets`, a
+ * resolved secret_env, is laid over `env` for the spawn and nowhere else.
  */
 export function startSession(
   command: string,
   cwd?: string,
   env?: Record<string, string>,
   callSessionId?: string,
+  secrets?: { names: SecretEnv; resolved: ResolvedSecretEnv },
 ): { session: ProcessSession } | { error: string } {
   // Same command vetting bash gets: denylist + metachar/obfuscation scan.
   // process_start spawns through /bin/bash -c (or powershell -Command), so an
@@ -155,18 +172,24 @@ export function startSession(
     // tree, and detached would risk a stray console. Pipes are unaffected.
     // The spawn refuses, retryably, while the Windows cage is still proving its
     // fence; this path cannot wait for it, so that refusal is the error returned.
-    child = spawnCagedSync(command, { cwd: effectiveCwd, env, detached: process.platform !== "win32" });
+    const spawnEnv = secrets ? { ...env, ...secrets.resolved.env } : env;
+    child = spawnCagedSync(command, { cwd: effectiveCwd, env: spawnEnv, detached: process.platform !== "win32" });
     child.unref();
   } catch (e) {
     return { error: (e as Error).message };
   }
 
   let markExited!: () => void;
+  // The raw buffers stay in this closure. The session hands out only the
+  // scrubbed view, which also masks a value the stream has printed part of.
+  const raw = { stdout: "", stderr: "" };
+  const view = secrets ? secrets.resolved.scrubOpenEnded : (text: string) => text;
   const session: ProcessSession = {
     sessionId,
     command,
     cwdHint: effectiveCwd,
     envHint: env,
+    secretEnv: secrets?.names,
     pid: child.pid ?? null,
     child,
     startedAt: Date.now(),
@@ -174,8 +197,8 @@ export function startSession(
     exitCode: null,
     exitSignal: null,
     exited: new Promise<void>((r) => { markExited = r; }),
-    stdout: "",
-    stderr: "",
+    get stdout() { return view(raw.stdout); },
+    get stderr() { return view(raw.stderr); },
     truncated: false,
     totalBytes: 0,
   };
@@ -186,31 +209,23 @@ export function startSession(
 
   child.stdout?.setEncoding("utf-8");
   child.stderr?.setEncoding("utf-8");
-  child.stdout?.on("data", (chunk: string) => {
+  const capture = (stream: "stdout" | "stderr") => (chunk: string) => {
     session.totalBytes += chunk.length;
-    if (session.stdout.length + chunk.length <= MAX_BUFFER_BYTES) {
-      session.stdout += chunk;
+    if (raw[stream].length + chunk.length <= MAX_BUFFER_BYTES) {
+      raw[stream] += chunk;
     } else {
       session.truncated = true;
-      const room = MAX_BUFFER_BYTES - session.stdout.length;
-      if (room > 0) session.stdout += chunk.slice(0, room);
+      const room = MAX_BUFFER_BYTES - raw[stream].length;
+      if (room > 0) raw[stream] += chunk.slice(0, room);
     }
-  });
-  child.stderr?.on("data", (chunk: string) => {
-    session.totalBytes += chunk.length;
-    if (session.stderr.length + chunk.length <= MAX_BUFFER_BYTES) {
-      session.stderr += chunk;
-    } else {
-      session.truncated = true;
-      const room = MAX_BUFFER_BYTES - session.stderr.length;
-      if (room > 0) session.stderr += chunk.slice(0, room);
-    }
-  });
+  };
+  child.stdout?.on("data", capture("stdout"));
+  child.stderr?.on("data", capture("stderr"));
   child.on("error", (e) => {
     logger.warn(`session ${sessionId} spawn error: ${e.message}`);
     session.exitCode = -1;
     session.exitedAt = Date.now();
-    session.stderr += `\n[spawn error] ${e.message}`;
+    raw.stderr += `\n[spawn error] ${e.message}`;
     unregisterOwnedProcess(child.pid);
     markExited();
   });

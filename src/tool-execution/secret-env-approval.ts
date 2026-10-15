@@ -1,6 +1,7 @@
 /**
- * Handing a vault secret to a shell command (bash `secret_env`) is the
- * profile's `secrets` risk class: Safe refuses, Normal and Power ask once per
+ * Handing a vault secret to a command (`secret_env` on any tool in
+ * SECRET_ENV_TOOLS: bash, process_start, process_restart) is the profile's
+ * `secrets` risk class: Safe refuses, Normal and Power ask once per
  * program and secret ("always allow" covers exactly that pair, see
  * computeArgsFingerprint's `use_secret`), Autonomous runs it. Peter,
  * 2026-09-26: "A is the right pick for power users … c behavior when users
@@ -13,7 +14,8 @@
  */
 import { USER_HINTS, type ToolResult } from "../types.js";
 import { decisionDenies, decisionRequiresPrompt, getApprovalManager, getRiskDecision, type ApprovalDenyReason } from "../approval-manager.js";
-import { secretEnvOf, secretEnvProgram } from "../tools/shell-secret-env.js";
+import { SECRET_ENV_TOOLS, secretEnvOf, secretEnvProgram } from "../tools/shell-secret-env.js";
+import { spawnCommandOf } from "../tools/process-session.js";
 import type { ToolCallContext } from "./context.js";
 
 export const SECRET_USE_TOOL = "use_secret";
@@ -24,7 +26,7 @@ export type SecretEnvGate =
   | { kind: "denied"; reason: ApprovalDenyReason | undefined };
 
 export async function secretEnvGate(ctx: ToolCallContext): Promise<SecretEnvGate> {
-  if (ctx.tc.name !== "bash") return { kind: "continue" };
+  if (!SECRET_ENV_TOOLS.has(ctx.tc.name)) return { kind: "continue" };
   let secretEnv;
   try { secretEnv = secretEnvOf(ctx.args); } catch { return { kind: "continue" }; /* the tool reports the malformed arg */ }
   if (!secretEnv) return { kind: "continue" };
@@ -45,7 +47,7 @@ export async function secretEnvGate(ctx: ToolCallContext): Promise<SecretEnvGate
       "Send the secret with http_request and a {{SECRET_NAME}} placeholder if that fits; otherwise report the command as waiting for the user. Continue with the rest of the request.");
   }
 
-  const command = String(ctx.args.command ?? "");
+  const command = spawnCommandOf(ctx.args);
   const program = secretEnvProgram(command);
   const outcome = await getApprovalManager().requestApprovalDetailed({
     toolName: SECRET_USE_TOOL,

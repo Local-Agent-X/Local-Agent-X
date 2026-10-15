@@ -1,5 +1,7 @@
 // Handing a vault secret to a command follows the profile's `secrets` rule:
 // Safe refuses, Normal/Power ask once per program and secret, Autonomous runs.
+// The same for every tool that takes secret_env: bash and the background
+// process tools.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ToolCallContext } from "./context.js";
 
@@ -14,9 +16,11 @@ vi.mock("../approval-manager.js", () => ({
 
 const { secretEnvGate } = await import("./secret-env-approval.js");
 const { computeArgsFingerprint } = await import("../approval-decision.js");
+const { SESSIONS } = await import("../tools/process-session.js");
+type TrackedSession = Parameters<typeof SESSIONS.set>[1];
 
-const ctx = (over: Partial<ToolCallContext> = {}): ToolCallContext => ({
-  tc: { id: "c1", name: "bash", arguments: "{}" },
+const ctxFor = (tool: string) => (over: Partial<ToolCallContext> = {}): ToolCallContext => ({
+  tc: { id: "c1", name: tool, arguments: "{}" },
   args: { command: "npx supabase functions deploy food-search", secret_env: { SUPABASE_ACCESS_TOKEN: "SUPABASE_TOKEN" } },
   callContext: "local",
   sessionId: "s",
@@ -26,7 +30,9 @@ const ctx = (over: Partial<ToolCallContext> = {}): ToolCallContext => ({
 
 beforeEach(() => { requests.length = 0; state.rule = "ask"; state.answer = { approved: true }; });
 
-describe("secretEnvGate", () => {
+describe.each(["bash", "process_start", "process_restart"])("secretEnvGate on %s", (tool) => {
+  const ctx = ctxFor(tool);
+
   it("ask (Normal, Power): one card naming the program and the secret, never the value, and 'always allow' is offered", async () => {
     expect(await secretEnvGate(ctx())).toEqual({ kind: "continue" });
     expect(requests).toHaveLength(1);
@@ -54,10 +60,28 @@ describe("secretEnvGate", () => {
     expect(requests).toHaveLength(0);
   });
 
-  it("a call without secret_env, or another tool, is not its business", async () => {
+  it("a call without secret_env is not its business", async () => {
     expect(await secretEnvGate(ctx({ args: { command: "ls" } }))).toEqual({ kind: "continue" });
-    expect(await secretEnvGate(ctx({ tc: { id: "c2", name: "read", arguments: "{}" } }))).toEqual({ kind: "continue" });
     expect(requests).toHaveLength(0);
+  });
+});
+
+describe("secretEnvGate", () => {
+  it("a tool that does not take secret_env is not its business", async () => {
+    expect(await secretEnvGate(ctxFor("read")())).toEqual({ kind: "continue" });
+    expect(await secretEnvGate(ctxFor("http_request")())).toEqual({ kind: "continue" });
+    expect(requests).toHaveLength(0);
+  });
+
+  it("a process_restart naming no command asks about the tracked session's program", async () => {
+    SESSIONS.set("px-tracked-secret", { sessionId: "px-tracked-secret", command: "gh run watch" } as TrackedSession);
+    try {
+      const ctx = ctxFor("process_restart")({ args: { session_id: "px-tracked-secret", secret_env: { GH_TOKEN: "GITHUB_TOKEN" } } });
+      expect(await secretEnvGate(ctx)).toEqual({ kind: "continue" });
+      expect(requests[0]).toMatchObject({ args: { program: "gh", secrets: ["GITHUB_TOKEN"] } });
+    } finally {
+      SESSIONS.delete("px-tracked-secret");
+    }
   });
 
   it("an 'always allow' covers this program with these secrets only", () => {

@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProviderRequest, StreamChunk } from "../adapter/types.js";
 import { OllamaNativeAdapter, thinkValue } from "./ollama-native.js";
 import { hasNoToolSupport, hasParamUnsupported } from "../types.js";
-import { classify } from "../../errors/classifier.js";
+import { classify } from "../../resilience-policy.js";
 import { _resetContextSizingForTests, ensureContextDecision } from "../../local-runtimes/context-sizing.js";
 import { ContextSizingStore } from "../../local-runtimes/context-sizing-store.js";
 import { _resetModelProfilesForTests } from "../../local-runtimes/model-profile.js";
@@ -202,7 +202,7 @@ describe("OllamaNativeAdapter errors", () => {
     responses.push(() => new Response(JSON.stringify({ error: "the input exceeds the context length of the model" }), { status: 400 }));
     const chunks = await collect(req());
     expect(chunks).toEqual([{ type: "error", message: "400 the input exceeds the context length of the model", statusCode: 400 }]);
-    expect(classify(new Error((chunks[0] as { message: string }).message)).reason).toBe("context_overflow");
+    expect(classify(new Error((chunks[0] as { message: string }).message))).toBe("contextOverflow");
   });
 
   it("surfaces an in-stream error line", async () => {

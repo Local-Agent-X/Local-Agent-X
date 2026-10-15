@@ -27,7 +27,7 @@ import { clearOverflowAttempts } from "./adapter-throw-recovery.js";
 import { compactHistory } from "./compact-history.js";
 import { clearSummaryCache } from "./compact-summary-cache.js";
 import { CONTEXT_WINDOW_EXCEEDED_CODE } from "../adapter-contract.js";
-import { classify } from "../../errors/classifier.js";
+import { classify } from "../../resilience-policy.js";
 import { getContextStatus } from "../../context-manager/status.js";
 import { summarizeOldMessages } from "../../context-manager/compaction.js";
 import type { Op } from "../../ops/types.js";
@@ -48,7 +48,7 @@ describe("the adapter's own over-window refusal is recovered, not terminal", () 
   beforeEach(() => clearOverflowAttempts("op-preflight"));
 
   it("is not recognizable by its wording — which is why the code has to carry it", () => {
-    expect(classify(PREFLIGHT_MESSAGE).recovery).not.toBe("compress");
+    expect(classify(PREFLIGHT_MESSAGE)).not.toBe("contextOverflow");
   });
 
   it("routes the preflight code to compact-and-retry", () => {

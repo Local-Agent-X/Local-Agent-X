@@ -7,7 +7,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { isEmptyResultText } from "../src/errors/classifier.js";
+import { isEmptyResultText } from "../src/agent-guards/dead-end.js";
 
 describe("isEmptyResultText — empty tool-result detection", () => {
   it("matches glob's empty output (was the gap)", () => {

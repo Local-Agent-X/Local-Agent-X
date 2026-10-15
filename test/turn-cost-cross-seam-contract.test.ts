@@ -57,7 +57,7 @@ import { classifyStepEffort, MECHANICAL_TOOLS } from "../src/canonical-loop/step
 import { buildTurnInput } from "../src/canonical-loop/turn-loop/build-input.js";
 import { appendOpMessage } from "../src/canonical-loop/store.js";
 import { opDir } from "../src/ops/event-log.js";
-import { isEmptyResultText } from "../src/errors/classifier.js";
+import { isEmptyResultText } from "../src/agent-guards/dead-end.js";
 import type { ToolResult, ToolDispatchStatus } from "../src/types.js";
 import type { CanonicalMessage } from "../src/canonical-loop/contract-types.js";
 import type { Op } from "../src/ops/types.js";

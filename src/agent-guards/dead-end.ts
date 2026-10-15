@@ -3,18 +3,22 @@
 // 0 matches, grep 50 more files, 0 matches...), nudge the agent to step
 // back and reconsider which tool matches the goal.
 
-import { isEmptyResultText } from "../errors/index.js";
-
 export interface DeadEndState { consecutive: number; lastWasEmpty: boolean }
 
 export function createDeadEndState(): DeadEndState {
   return { consecutive: 0, lastWasEmpty: false };
 }
 
-// "0 results" patterns owned by src/errors/classifier.ts. Progress-style
-// empty stays here because it's specific to long-running search ops, not
-// a general error pattern.
+/** A tool result that is effectively "no data". */
+const EMPTY_RESULT_RE = /^\s*(\(no output\)|\[\]|\{\}|null|none|No results?|0 results?|Nothing found|No matches|No files matched?|No relevant memor|Command failed)/i;
+
+// Progress-style empty, specific to long-running search ops.
 const PROGRESS_EMPTY_RE = /Searched\s+\d+\s+files?,\s*0\s+results?/i;
+
+/** Whether a tool result's text says it found nothing. */
+export function isEmptyResultText(text: string): boolean {
+  return EMPTY_RESULT_RE.test(text);
+}
 
 /** Scan a tool result for "empty" signals and update dead-end state. */
 export function checkDeadEnd(
@@ -25,8 +29,6 @@ export function checkDeadEnd(
   // Trim to first 400 chars — that's where "no output" / "0 results" land
   const head = (toolResult || "").slice(0, 400);
   const tail = (toolResult || "").slice(-800);
-  // EMPTY_RESULT_RE moved to src/errors/classifier.ts (single owner).
-  // Use the dedicated isEmptyResultText helper.
   const isEmpty =
     head.trim().length === 0 ||
     isEmptyResultText(head) ||

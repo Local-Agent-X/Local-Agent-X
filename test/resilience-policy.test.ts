@@ -59,6 +59,23 @@ describe("classify", () => {
     expect(classify({ status: 500 })).toBe("overload");
   });
 
+  // Both major providers ship overflow as HTTP 400, and an older pattern
+  // matched neither real message shape: the overflow read as a bad request and
+  // the op died instead of compacting and resending.
+  it("flags context overflow from the providers' real messages", () => {
+    expect(classify(Object.assign(new Error("prompt is too long: 214315 tokens > 200000 maximum"), { status: 400 }))).toBe("contextOverflow");
+    expect(classify(Object.assign(
+      new Error("This model's maximum context length is 128000 tokens. However, your messages resulted in 131201 tokens."),
+      { status: 400 },
+    ))).toBe("contextOverflow");
+    expect(classify(Object.assign(new Error("Request Entity Too Large"), { status: 413 }))).toBe("contextOverflow");
+  });
+
+  it("a plain bad request is not an overflow, and an overflow is not retried as sent", () => {
+    expect(classify(Object.assign(new Error("bad request: invalid tool schema"), { status: 400 }))).not.toBe("contextOverflow");
+    expect(isRetryable(new Error("prompt is too long: 214315 tokens > 200000 maximum"))).toBe(false);
+  });
+
   it("returns unknown for caller-fault / unrecognized errors", () => {
     expect(classify(new Error("400 Bad Request: missing field"))).toBe("unknown");
     expect(classify("")).toBe("unknown");

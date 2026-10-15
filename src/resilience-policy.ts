@@ -1,5 +1,6 @@
 // ResiliencePolicy — the single seam for "is this error retryable, and how
-// hard should we back off?" Owns error classification, retryability (error
+// hard should we back off?" Owns error classification (including context
+// overflow, which the turn loop answers with compaction), retryability (error
 // category + explicit tool effect eligibility), the backoff curve, and the circuit
 // thresholds. Executors stay thin: auto-retry.ts runs the loop, circuit-
 // breaker.ts runs the state machine — both read their policy from here.
@@ -15,6 +16,7 @@ export type ErrorCategory =
   | "rateLimit"
   | "overload"
   | "contentFilter"
+  | "contextOverflow"
   | "unknown";
 
 // ── Circuit-breaker thresholds (the state machine in circuit-breaker.ts
@@ -97,6 +99,17 @@ const PATTERNS: Array<{ category: ErrorCategory; tests: Test[] }> = [
     tests: [
       (msg) => /overload|service unavailable|\b500\b|\b502\b|\b503\b|\b504\b|\b529\b|gateway|internal server error|capacity/i.test(msg),
       (_m, code) => code !== undefined && code >= 500 && code < 600,
+    ],
+  },
+  {
+    // The request is bigger than the model's window. Providers ship it as HTTP
+    // 400 (Anthropic "prompt is too long: X tokens > Y maximum", OpenAI "This
+    // model's maximum context length is ..."), so the wording decides, ahead of
+    // "model". Not retryable as sent: the turn loop compacts, then resends.
+    category: "contextOverflow",
+    tests: [
+      (msg) => /\b(payload too large|request entity too large|max(_|imum)? tokens?|content too long|prompt is too long|maximum context length|context (length|window)\b.{0,60}\bexceed|exceeds?\b.{0,60}\bcontext (length|window)|input is too long)\b/i.test(msg),
+      (_m, code) => code === 413,
     ],
   },
   {

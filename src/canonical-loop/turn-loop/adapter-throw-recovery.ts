@@ -18,7 +18,7 @@ import type { DriveTurnResult } from "./types.js";
 import { emit, publishStreamChunk } from "../event-emitter.js";
 import { transitionOp } from "../state-machine.js";
 import { appendNudgeAsUserMessage } from "./nudges.js";
-import { classify } from "../../errors/classifier.js";
+import { classify } from "../../resilience-policy.js";
 import { forceCompactNext } from "./compact-history.js";
 
 const adapterThrowStreaks = new Map<string, number>();
@@ -75,7 +75,7 @@ export function recoverAdapterThrow(op: Op, e: unknown, turnIdx: number): DriveT
   // Over-window errors get the compaction recovery, not the resume-nudge: the
   // nudge ADDS tokens to a context the provider just rejected as too big, so
   // the generic path can never succeed for this class.
-  if (classify(e).recovery === "compress") {
+  if (classify(e) === "contextOverflow") {
     const recovered = recoverContextOverflow(op, message, turnIdx);
     if (recovered) return recovered;
   }

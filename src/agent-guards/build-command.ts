@@ -11,6 +11,7 @@
 // assumed absolute (build-verify resolves them before calling in).
 
 import { dirname, relative } from "node:path";
+import { isSolutionTsconfig } from "../language-intel/tsconfig-layout.js";
 
 /** Minimal filesystem surface the detector needs. */
 export interface FsProbe {
@@ -175,25 +176,10 @@ function hasScript(pkg: unknown, name: string): boolean {
   return typeof scripts?.[name] === "string";
 }
 
-/**
- * A "solution" tsconfig delegates all compilation to referenced projects and
- * lists no files of its own — the standard Vite/CRA-TS layout, where the root
- * `tsconfig.json` is `{ "files": [], "references": [tsconfig.app.json, …] }`.
- * `tsc --noEmit` against it compiles ZERO files, so the type-check silently
- * passes a broken app (a real Vite build reported 7 errors that this gate had
- * green-lit). Build mode (`tsc -b`) follows the references and checks the real
- * projects. Detect the layout so the gate picks the right mode.
- */
-function isSolutionTsconfig(cfg: unknown): boolean {
-  const c = cfg as { references?: unknown; files?: unknown; include?: unknown } | null;
-  if (!c || !Array.isArray(c.references) || c.references.length === 0) return false;
-  const noOwnFiles = !Array.isArray(c.files) || c.files.length === 0;
-  const noInclude = !Array.isArray(c.include) || c.include.length === 0;
-  return noOwnFiles && noInclude;
-}
-
-/** The tsc type-check command for a dir holding a tsconfig — build mode for a
- *  references-only solution config (else `--noEmit` is a no-op), plain
+/** The tsc type-check command for a dir holding a tsconfig. A solution tsconfig
+ *  (language-intel/tsconfig-layout.ts) gets build mode: `tsc --noEmit` against it
+ *  compiles ZERO files and silently passes a broken app (a real Vite build reported 7
+ *  errors this gate had green-lit), while `tsc -b` follows the references. Plain
  *  `--noEmit` otherwise. Prefers the locally-installed binary (no network). */
 function tscCheckCommand(dir: string, fs: FsProbe): BuildCommand {
   const localTsc = joinPath(dir, "node_modules/.bin/tsc");

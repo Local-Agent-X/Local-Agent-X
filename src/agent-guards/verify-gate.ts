@@ -237,8 +237,8 @@ const NUDGE_NEVER_VERIFIED =
   "You edited source files this run but haven't run the project's build, " +
   "type-check, or tests since the last change. Compiling or saving is not " +
   "the same as working — verify before you finish: run the project's " +
-  "build/type-check/tests (e.g. the build or test script in package.json, " +
-  "`tsc --noEmit`, `python -m unittest`, `pytest`, `cargo test`, `go test`) and fix anything it " +
+  "build/type-check/tests (e.g. the typecheck, build or test script in package.json, " +
+  "`python -m unittest`, `pytest`, `cargo test`, `go test`) and fix anything it " +
   "surfaces. If you genuinely can't run it from here, say so explicitly " +
   "instead of reporting the work as done.";
 
@@ -250,7 +250,7 @@ const NUDGE_NEVER_VERIFIED_LSP_CLEAN =
   "Your edited files' types check clean, but run the build/tests — type-clean " +
   "isn't run-clean. You edited source files this run and no build, type-check, " +
   "or test has run since the last change: run the project's build/type-check/tests " +
-  "(e.g. the build or test script in package.json, `tsc --noEmit`, `pytest`, " +
+  "(e.g. the typecheck, build or test script in package.json, `pytest`, " +
   "`cargo test`, `go test`) and fix anything it surfaces. If you genuinely can't " +
   "run it from here, say so explicitly instead of reporting the work as done.";
 

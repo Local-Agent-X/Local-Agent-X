@@ -182,3 +182,45 @@ describe("language-intel", () => {
     expect(hits).toEqual([]); // clamped to EOF, where no symbol lives
   });
 });
+
+// A Vite app's root tsconfig.json is a solution: no files of its own, references to
+// tsconfig.app.json (the app, with `jsx`) and tsconfig.node.json. The service used
+// to check every file under the root config, so importing a .tsx module raised
+// TS6142 ("--jsx is not set") on a project `tsc -b` builds clean, and the build
+// worker was told to fix errors that did not exist (2026-10-14).
+describe("language-intel — solution tsconfig (Vite layout)", () => {
+  let app = "";
+  beforeEach(() => {
+    app = realpathSync(mkdtempSync(join(tmpdir(), "language-intel-vite-")));
+    mkdirSync(join(app, "src"));
+    writeFileSync(join(app, "tsconfig.json"), JSON.stringify({
+      files: [],
+      references: [{ path: "./tsconfig.app.json" }, { path: "./tsconfig.node.json" }],
+    }));
+    writeFileSync(join(app, "tsconfig.app.json"), JSON.stringify({
+      compilerOptions: { target: "ES2022", module: "ESNext", moduleResolution: "bundler", jsx: "preserve", strict: true, noEmit: true },
+      include: ["src"],
+    }));
+    writeFileSync(join(app, "tsconfig.node.json"), JSON.stringify({
+      compilerOptions: { target: "ES2022", module: "ESNext", moduleResolution: "bundler", strict: true, noEmit: true },
+      include: ["vite.config.ts"],
+    }));
+    writeFileSync(join(app, "src", "App.tsx"), "export function App(): null {\n  return null;\n}\n");
+    writeFileSync(join(app, "src", "main.ts"), 'import { App } from "./App";\nApp();\n');
+  });
+  afterEach(() => {
+    disposeLanguageIntel();
+    rmSync(app, { recursive: true, force: true });
+  });
+
+  it("checks an app file under the referenced project that owns it, not the root", async () => {
+    const diags = await getLanguageIntel().getDiagnostics([join(app, "src", "main.ts"), join(app, "src", "App.tsx")]);
+    expect(diags.map((d) => d.code)).toEqual([]);
+  });
+
+  it("still reports a real error in that project", async () => {
+    writeFileSync(join(app, "src", "main.ts"), 'import { App } from "./App";\nconst n: number = App();\n');
+    const diags = await getLanguageIntel().getDiagnostics([join(app, "src", "main.ts")]);
+    expect(diags.map((d) => d.code)).toEqual([2322]);
+  });
+});

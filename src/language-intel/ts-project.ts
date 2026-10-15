@@ -21,6 +21,7 @@ import { existsSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import ts from "typescript";
 import { TS_FAMILY_EXT_RE } from "./types.js";
+import { isSolutionTsconfig, referencePaths } from "./tsconfig-layout.js";
 
 const MAX_PROJECTS = 4;
 const IDLE_DISPOSE_MS = 5 * 60_000;
@@ -171,6 +172,39 @@ function findTsconfig(dir: string): string | null {
   }
 }
 
+const normCase = (p: string): string => (process.platform === "win32" ? resolve(p).toLowerCase() : resolve(p));
+
+/** The tsconfig that governs `file`, picked the way TypeScript's own editor service
+ *  picks it: the nearest tsconfig.json when it includes the file, else the project it
+ *  references (depth-first) that does, else the nearest one. A Vite root tsconfig.json
+ *  is a solution that includes nothing itself; the app's files belong to
+ *  tsconfig.app.json, and only that config carries `jsx` and the app's settings. */
+function owningTsconfig(file: string): string | null {
+  const nearest = findTsconfig(dirname(file));
+  if (nearest === null) return null;
+  const target = normCase(file);
+  const seen = new Set<string>();
+  const visit = (configPath: string): string | null => {
+    const key = normCase(configPath);
+    if (seen.has(key)) return null;
+    seen.add(key);
+    const read = ts.readConfigFile(configPath, ts.sys.readFile);
+    if (read.config === undefined) return null;
+    if (!isSolutionTsconfig(read.config)) {
+      const parsed = ts.parseJsonConfigFileContent(read.config, ts.sys, dirname(configPath));
+      if (parsed.fileNames.some((f) => normCase(f) === target)) return configPath;
+    }
+    for (const ref of referencePaths(read.config)) {
+      const abs = resolve(dirname(configPath), ref);
+      const refConfig = existsSync(abs) && statSync(abs).isDirectory() ? join(abs, "tsconfig.json") : abs;
+      const owner = existsSync(refConfig) ? visit(refConfig) : null;
+      if (owner !== null) return owner;
+    }
+    return null;
+  };
+  return visit(nearest) ?? nearest;
+}
+
 function createProject(configPath: string | null, fallbackDir: string): TsProject {
   if (configPath === null) return new TsProject(resolve(fallbackDir), DEFAULT_OPTIONS, []);
   const read = ts.readConfigFile(configPath, ts.sys.readFile);
@@ -191,9 +225,11 @@ function slotIsStale(slot: ProjectSlot, configPath: string | null): boolean {
 
 function acquire(configPath: string | null, fallbackDir: string): TsProject {
   // Namespaced keys: a no-tsconfig project keyed by directory must never
-  // collide with the project created once a tsconfig.json appears there.
+  // collide with the project created once a tsconfig.json appears there; a
+  // config project is keyed by the file itself, since a solution tsconfig.json
+  // and the tsconfig.app.json beside it are different projects.
   const key =
-    configPath !== null ? `cfg:${dirname(resolve(configPath))}` : `dir:${resolve(fallbackDir)}`;
+    configPath !== null ? `cfg:${resolve(configPath)}` : `dir:${resolve(fallbackDir)}`;
   let slot = projects.get(key);
   if (slot !== undefined && slotIsStale(slot, configPath !== null ? resolve(configPath) : null)) {
     disposeProject(key);
@@ -246,11 +282,11 @@ function disposeProject(key: string): void {
   projects.delete(key);
 }
 
-/** The (cached) service governing `file` — nearest tsconfig, else default
- *  config over the file's directory. */
+/** The (cached) service governing `file`: its owning tsconfig (owningTsconfig), else
+ *  default config over the file's directory. */
 export function getProjectForFile(file: string): TsProject {
-  const dir = dirname(resolve(file));
-  return acquire(findTsconfig(dir), dir);
+  const abs = resolve(file);
+  return acquire(owningTsconfig(abs), dirname(abs));
 }
 
 /** Dispose every live service. For tests and process shutdown. */

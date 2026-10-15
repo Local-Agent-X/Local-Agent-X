@@ -1,15 +1,13 @@
-// VENDORED from agentxos/packages/client/src/socket-adapter.ts — DO NOT HAND-EDIT.
-// Re-sync on a protocol bump. Only change vs. upstream: the protocol import path.
-//
 // The injected socket seam. BrokerClient is transport-agnostic: it never imports a
 // real WebSocket (browser), `ws` (Node), or react-native's WebSocket — each repo
-// wraps ITS socket in this tiny adapter and hands it in. The desktop's concrete
-// `ws`-backed implementation lives in ../ws-socket-adapter.ts.
+// wraps ITS socket in this tiny adapter and hands it in. That is what lets the whole
+// state machine unit-test offline against a fake (deliverable §A: "PURE state machine
+// over an injected socket").
 //
-// Lifecycle the adapter owns: the caller has ALREADY opened the socket to the connect
-// URL (see buildConnectUrl) before constructing BrokerClient. The adapter then routes
-// inbound text frames into onMessage and the socket close into onClose, and lets
-// BrokerClient push outbound text via send() / hang up via close().
+// Lifecycle the adapter owns: the caller has ALREADY opened the socket to the
+// connect URL (see buildConnectUrl) before constructing BrokerClient. The adapter
+// then routes inbound text frames into onMessage and the socket close into onClose,
+// and lets BrokerClient push outbound text via send() / hang up via close().
 
 import type { ClientFrame } from "./protocol.js";
 

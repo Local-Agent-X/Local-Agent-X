@@ -1,0 +1,57 @@
+{
+  "repo": "Local-Agent-X/agentxos",
+  "files": {
+    "protocol.ts": {
+      "upstream": "packages/protocol/src/index.ts",
+      "sha256": "ae1e4b3feb5213c11267a6802ce2e7f64e79ce109edd077ee95aeb9bc266d040"
+    },
+    "guards.ts": {
+      "upstream": "packages/protocol/src/guards.ts",
+      "sha256": "9d5e9d517530b5fae29a24a7af65dd7aebc69280df3c91d6afef5b387a04bda1"
+    },
+    "link.ts": {
+      "upstream": "packages/protocol/src/link.ts",
+      "sha256": "8a299465af276ab74e299caba17ac36d9c383657fc727faaa56d64cce5e1b0e7"
+    },
+    "control.ts": {
+      "upstream": "packages/protocol/src/control.ts",
+      "sha256": "4be998bbf4a6acc4c4865ca576832a6dcde0b140d872f64d7228e42437d3941a"
+    },
+    "tunnel.ts": {
+      "upstream": "packages/protocol/src/tunnel.ts",
+      "sha256": "a0ac1f5f32fccde65156022b3e2114d8b695b9576f0b4dfe76b848611fc8e20e"
+    },
+    "chat.ts": {
+      "upstream": "packages/protocol/src/chat.ts",
+      "sha256": "389651f5844aca2c7d3a111126004d402778d23fcb69cae4752e10a2e414e2d3"
+    },
+    "approval.ts": {
+      "upstream": "packages/protocol/src/approval.ts",
+      "sha256": "23480f478a6ca369bb5e1b5cfad0037cbf71404627c3536e6a3afd663bfe7e13"
+    },
+    "voice.ts": {
+      "upstream": "packages/protocol/src/voice.ts",
+      "sha256": "712eef27848a08adb30c63c0127016229cdaf715dffd482ae108f3b01cd586e0"
+    },
+    "broker-client.ts": {
+      "upstream": "packages/client/src/broker-client.ts",
+      "sha256": "7195b8a4fb597ed9522cc96e4c1b8172ae9c96b14f41c271de9790624a2e9178"
+    },
+    "connect-url.ts": {
+      "upstream": "packages/client/src/connect-url.ts",
+      "sha256": "fa9d0ad5ad2e99e4e244d0f20d63c928bc7ce12fb202bb6debd6cd018ffc23c5"
+    },
+    "parse-server-frame.ts": {
+      "upstream": "packages/client/src/parse-server-frame.ts",
+      "sha256": "0023c6fa6380bb3448183314599e637466a33cdade4f01a57311bfee4a19171a"
+    },
+    "socket-adapter.ts": {
+      "upstream": "packages/client/src/socket-adapter.ts",
+      "sha256": "b048b374dcd28373a592fd53197d1cf85fb4c812d1a6e3111ce8857200947d34"
+    },
+    "index.ts": {
+      "upstream": "packages/client/src/index.ts",
+      "sha256": "eced5c052cba537b8c031bc1649afe6b7eed84c9bc92184fcc069450b60bd19e"
+    }
+  }
+}

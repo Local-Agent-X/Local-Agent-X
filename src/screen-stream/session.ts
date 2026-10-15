@@ -31,6 +31,7 @@ import {
 } from "./protocol.js";
 import { ScreenInputController, describeDisplays } from "./screen-input.js";
 import { queryEditableFocus } from "./focus-watch.js";
+import { DATA_CHANNEL } from "../broker-transport/vendor/protocol.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("screen-stream.session");
@@ -224,9 +225,9 @@ export class ScreenSession {
       // The broker peer multiplexes screen + chat + http over ONE connection: open the
       // `chat` and `http` channels alongside `control` when the dialer wants them.
       const extra: Array<{ label: string; onReady: (t: ControlTransport) => void }> = [];
-      if (this.opts.onChatTransport) extra.push({ label: "chat", onReady: this.opts.onChatTransport });
-      if (this.opts.onHttpTransport) extra.push({ label: "http", onReady: this.opts.onHttpTransport });
-      if (this.opts.onProjectionTransport) extra.push({ label: "projection", onReady: this.opts.onProjectionTransport });
+      if (this.opts.onChatTransport) extra.push({ label: DATA_CHANNEL.chat, onReady: this.opts.onChatTransport });
+      if (this.opts.onHttpTransport) extra.push({ label: DATA_CHANNEL.http, onReady: this.opts.onHttpTransport });
+      if (this.opts.onProjectionTransport) extra.push({ label: DATA_CHANNEL.projection, onReady: this.opts.onProjectionTransport });
       const extraChannels = extra.length > 0 ? extra : undefined;
       const peer = await ScreenPeer.create(
         {

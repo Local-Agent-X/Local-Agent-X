@@ -1,30 +1,25 @@
 import { describe, it, expect } from "vitest";
-import { sendFramed, MAX_CHUNK_CHARS, HttpTunnelBridge } from "../src/broker-transport/http-tunnel-bridge.js";
+import { HttpTunnelBridge } from "../src/broker-transport/http-tunnel-bridge.js";
+import { MAX_CHUNK_CHARS, splitFramed } from "../src/broker-transport/vendor/protocol.js";
 
 // A WebRTC data channel caps a single message at ~64KB; a large response (a Vite
 // dev module like react-dom is ~800KB) sent whole never reaches the phone → the
-// app white-screens. sendFramed splits oversized payloads into ordered chunks
-// the phone rejoins by id; small payloads stay a single unwrapped frame.
-function fakeTransport() {
-  const sent: string[] = [];
-  return { sent, send: (t: string) => sent.push(t) };
-}
+// app white-screens. splitFramed (the shared agentxos contract) splits oversized
+// payloads into ordered chunks the phone rejoins by id; small payloads stay a
+// single unwrapped frame.
 
-describe("sendFramed — chunking for the 64KB data-channel cap", () => {
+describe("splitFramed — chunking for the 64KB data-channel cap", () => {
   it("sends a small payload as ONE unwrapped frame (REST path byte-for-byte unchanged)", () => {
-    const t = fakeTransport();
     const payload = '{"t":"res","id":"1","status":200,"body":"ok"}';
-    sendFramed(t, "1", payload);
-    expect(t.sent).toEqual([payload]);
+    expect(splitFramed("1", payload)).toEqual([payload]);
   });
 
   it("splits a large payload into ordered chunks that rejoin to the original", () => {
     const payload = "Y".repeat(MAX_CHUNK_CHARS * 3 + 17); // 3 full chunks + a remainder
-    const t = fakeTransport();
-    sendFramed(t, "42", payload);
+    const sent = splitFramed("42", payload);
 
-    expect(t.sent.length).toBe(4);
-    const frames = t.sent.map((s) => JSON.parse(s) as { t: string; id: string; i: number; n: number; b: string });
+    expect(sent.length).toBe(4);
+    const frames = sent.map((s) => JSON.parse(s) as { t: string; id: string; i: number; n: number; b: string });
     for (const f of frames) {
       expect(f.t).toBe("chunk");
       expect(f.id).toBe("42");
@@ -36,9 +31,7 @@ describe("sendFramed — chunking for the 64KB data-channel cap", () => {
   });
 
   it("uses ceil(len / MAX_CHUNK_CHARS) chunks on an exact boundary", () => {
-    const t = fakeTransport();
-    sendFramed(t, "x", "Z".repeat(MAX_CHUNK_CHARS * 2));
-    expect(t.sent.length).toBe(2);
+    expect(splitFramed("x", "Z".repeat(MAX_CHUNK_CHARS * 2)).length).toBe(2);
   });
 });
 

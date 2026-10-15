@@ -14,6 +14,7 @@ import type {
   RTCIceCandidate,
 } from "werift";
 import type { RtcIceCandidate } from "./protocol.js";
+import { DATA_CHANNEL } from "../broker-transport/vendor/protocol.js";
 import { VP8_PAYLOAD_TYPE, VP8_CLOCK_RATE } from "./ffmpeg-capture.js";
 import { createLogger } from "../logger.js";
 import { watchPeerDiagnostics, logChannelState, type PeerDiagnostics } from "./peer-diagnostics.js";
@@ -154,7 +155,7 @@ export class ScreenPeer {
     // Broker transport only: open the control data channel (input + display/focus
     // hints) plus any extra named channels (chat, apps). They MUST be created before
     // createOffer so they are negotiated in the SDP. The tailnet path supplies none.
-    if (onControlReady) this.setupDataChannel("control", onControlReady);
+    if (onControlReady) this.setupDataChannel(DATA_CHANNEL.control, onControlReady);
     if (extraChannels) for (const ch of extraChannels) this.setupDataChannel(ch.label, ch.onReady);
   }
 

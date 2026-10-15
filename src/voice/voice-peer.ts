@@ -31,6 +31,7 @@ import { OutboundAudio, OPUS_PAYLOAD_TYPE } from "./voice-rtp-audio.js";
 // cross-subsystem. Voice uses them only on the BROKER path (a control data channel +
 // broker-minted ICE); the tailnet path passes neither and is byte-for-byte unchanged.
 import type { ControlTransport, IceServerConfig } from "../screen-stream/peer.js";
+import { DATA_CHANNEL } from "../broker-transport/vendor/protocol.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("voice.peer");
@@ -141,7 +142,7 @@ export class VoicePeer {
 
     // Broker path only: open the `voice` control data channel BEFORE the offer so it's
     // negotiated in the SDP. The tailnet path passes no onControlReady → no channel.
-    if (onControlReady) this.setupDataChannel("voice", onControlReady);
+    if (onControlReady) this.setupDataChannel(DATA_CHANNEL.voice, onControlReady);
 
     this.outbound = new OutboundAudio(
       { RtpPacket: this.werift.RtpPacket, RtpHeader: this.werift.RtpHeader },

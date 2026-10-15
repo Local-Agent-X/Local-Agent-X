@@ -26,6 +26,7 @@ oversized files). When a number in prose disagrees with the map, the map wins.
 | `public/` | yes | Shipped UI chrome, identical on every install. Never put a user page here. |
 | `workspace/` | **no** | Per-machine user data: built apps, files. Served at `/apps/<name>/` from `workspace/apps/<name>/`. Never `rm -rf` in it. |
 | `packages/arikernel/` | yes | Vendored security kernel. Hands off unless fixing a specific Ari bug. |
+| `src/broker-transport/vendor/` | yes | The phone↔desktop wire contract, copied from agentxos. Never hand-edit: change agentxos, then `scripts/check-vendor-sync.mjs --sync` (`vendor/README.md`). |
 | `dist/` | no | Build output. Never hand-edit. |
 
 A user page ("build me a calendar") is `workspace/apps/calendar/index.html`

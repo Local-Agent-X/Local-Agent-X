@@ -14,6 +14,7 @@
 import type { ControlTransport } from "../screen-stream/peer.js";
 import type { VoiceSession, VoiceSessionFactory } from "../voice/audio-ws.js";
 import { createPeerAudioRouter, type PeerAudioRouter, type PeerAudioSink } from "../voice/voice-peer-session.js";
+import { parseVoiceControl, type VoiceHelloFrame } from "./vendor/protocol.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("broker-transport.voice");
@@ -83,49 +84,37 @@ export class VoiceBridge implements VoiceChannel {
 
   private handle(text: string): void {
     if (this.closed || !this.transport) return;
-    let msg: Record<string, unknown>;
+    let frame;
     try {
-      const raw = JSON.parse(text) as unknown;
-      if (typeof raw !== "object" || raw === null) return;
-      msg = raw as Record<string, unknown>;
+      frame = parseVoiceControl(JSON.parse(text));
     } catch {
       return; // non-JSON noise on the channel
     }
-    switch (msg["type"]) {
+    switch (frame?.type) {
       case "hello":
-        this.onHello(msg);
+        this.onHello(frame);
         break;
       case "eos":
         this.session?.onEndOfSpeech?.();
         break;
-      case "transcript": {
-        const t = msg["text"];
-        if (typeof t === "string" && t.length > 0) this.session?.onTranscript?.(t, msg["isFinal"] !== false);
+      case "transcript":
+        this.session?.onTranscript?.(frame.text, frame.isFinal !== false);
         break;
-      }
       case "voice_settings":
-        this.session?.onVoiceSettings?.({
-          voice: typeof msg["voice"] === "string" ? (msg["voice"] as string) : undefined,
-          speed: typeof msg["speed"] === "number" ? (msg["speed"] as number) : undefined,
-        });
+        this.session?.onVoiceSettings?.({ voice: frame.voice, speed: frame.speed });
         break;
       case "bye":
         this.endSession();
         break;
-      default:
-        break; // unknown control frame — ignore
     }
   }
 
   /** First `hello` on this channel opens the voice session (mirrors audio-ws.ts). A
    *  second hello (a phone resend) is a no-op so we never double-open. */
-  private onHello(msg: Record<string, unknown>): void {
+  private onHello(hello: VoiceHelloFrame): void {
     const channel = this.transport;
     if (!channel || this.session) return;
-    const sessionId = typeof msg["sessionId"] === "string" ? (msg["sessionId"] as string) : "";
-    if (!sessionId) return;
-    const mode: "chat" | "dictate" = msg["mode"] === "dictate" ? "dictate" : "chat";
-    const clientStt = msg["clientStt"] === true;
+    const { sessionId, mode, clientStt } = hello;
     const sendRaw = (event: Record<string, unknown>): void => channel.send(JSON.stringify(event));
     this.session = this.deps.sessionFactory({
       sessionId,

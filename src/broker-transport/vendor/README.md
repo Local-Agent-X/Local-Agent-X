@@ -1,27 +1,36 @@
-# vendor/ — agentxos broker signaling client (DO NOT HAND-EDIT)
+# vendor/ — the agentxos wire protocol and broker client (never hand-edit)
 
-These files are a **verbatim copy** of the shared client from the `agentxos` repo:
+These files are a copy of the `agentxos` repo's `packages/protocol` and
+`packages/client`. `UPSTREAM.json` maps each one to its upstream file and records a
+hash of its code. The phone (`agentxos-mobile`, `app/src/agentxos/`) vendors the same
+files, so this folder is where the desktop and the phone agree on every message they
+exchange:
 
-| here | upstream (agentxos) |
-| --- | --- |
-| `protocol.ts` | `packages/protocol/src/index.ts` |
-| `broker-client.ts` | `packages/client/src/broker-client.ts` |
-| `connect-url.ts` | `packages/client/src/connect-url.ts` |
-| `parse-server-frame.ts` | `packages/client/src/parse-server-frame.ts` |
-| `socket-adapter.ts` | `packages/client/src/socket-adapter.ts` |
-| `index.ts` | `packages/client/src/index.ts` |
+| Contract | File |
+|---|---|
+| Broker WebSocket, protocol version, compatibility rule | `protocol.ts` |
+| Data-channel labels, ICE grace | `link.ts` |
+| Live-screen control: input up, display hints down | `control.ts` |
+| HTTP tunnel frames, body cap, chunking | `tunnel.ts` |
+| Chat frames and the events the phone reads | `chat.ts` |
+| Voice control plane | `voice.ts` |
+| Broker signaling client | `broker-client.ts`, `connect-url.ts`, `parse-server-frame.ts`, `socket-adapter.ts`, `index.ts` |
 
-The **only** change vs. upstream is import specifiers: upstream uses `.ts`
-extensions and the `@agentxos/protocol` package alias (for `node --test`
-type-stripping); this repo is Node16 ESM, so every relative import here uses a
-`.js` extension and points at `./protocol.js` instead of the package alias.
+## Changing a contract
 
-The integration guide (`agentxos/docs/integration-lax-mobile.md`) deliberately
-keeps this client small + dependency-free + secret-free so it can be copied into
-both client repos rather than published. Re-sync from upstream when the broker
-protocol version bumps (`BROKER_PROTOCOL_VERSION`); keep the diff to import paths
-only.
+1. Change it in agentxos, following the compatibility rule at the top of
+   `packages/protocol/src/index.ts`. Within a protocol version, only add.
+2. `AGENTXOS_DIR=<agentxos checkout> node scripts/check-vendor-sync.mjs --sync` copies
+   every file here, adapting import specifiers to this repo's Node16 ESM (`.js`
+   suffixes; the protocol package becomes `./protocol.js`), and records the hashes.
+3. Re-sync the phone the same way (`app/scripts/check-vendor-sync.mjs --sync`).
 
-The desktop-specific glue — the real `ws`-backed `SocketAdapter` and the dialer
-that drives a `ScreenSession` from broker presence — lives **one level up** in
-`../`, not here, so this copy stays a clean mirror.
+`npm run build` runs `check:vendor-sync`. It fails when a file's code no longer matches
+its recorded hash and, when an agentxos checkout is found, when it no longer matches
+upstream. Comments and formatting don't count; code does.
+
+`src/broker-transport/chat-contract.test.ts` checks at compile time that every chat
+event the desktop emits under a type the phone reads fits `chat.ts`.
+
+The desktop-side glue (the `ws`-backed `SocketAdapter`, the dialers, the bridges) lives
+one level up in `../`, not here.

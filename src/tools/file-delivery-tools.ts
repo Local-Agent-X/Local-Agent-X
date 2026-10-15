@@ -20,6 +20,7 @@ import { openValidatedRead, readValidatedFile } from "../security/layer/index.js
 import { getLaxDir } from "../lax-data-dir.js";
 import { sessionIdOf } from "../workspace/paths.js";
 import { resolveMediaPath } from "./shared/media-path.js";
+import { TUNNEL_MAX_BODY_BYTES } from "../broker-transport/vendor/protocol.js";
 
 const logger = createLogger("tools.file-delivery");
 
@@ -41,10 +42,10 @@ export const DOC_MIME: Record<string, string> = {
   json: "application/json",
 };
 
-/** The phone tunnel caps a response body at 8MB (http-tunnel-bridge MAX_BODY —
- *  oversize now 413s instead of truncating). Staging still succeeds above it so
- *  the web client can fetch, but the result warns the phone can't. */
-const PHONE_LIMIT_MB = 8;
+/** The phone tunnel's response-body cap (oversize 413s instead of truncating).
+ *  Staging still succeeds above it so the web client can fetch, but the result
+ *  warns the phone can't. */
+const PHONE_LIMIT_MB = TUNNEL_MAX_BODY_BYTES / (1024 * 1024);
 /** Hard cap — same ceiling as send_video's Telegram limit. */
 const MAX_SIZE_MB = 50;
 

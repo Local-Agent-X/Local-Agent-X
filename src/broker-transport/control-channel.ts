@@ -13,18 +13,15 @@
 // the peer is ready. NullControlChannel is the inert fallback (view-only).
 
 import type { ControlTransport } from "../screen-stream/peer.js";
-import { parseScreenInputEvent } from "../screen-stream/protocol.js";
-import type { RtcOutboundFrame, ScreenInputEvent } from "../screen-stream/protocol.js";
+import { parsePhoneControl } from "./vendor/protocol.js";
+import type { DesktopControlFrame, ScreenInputEvent } from "./vendor/protocol.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("broker-transport.control");
 
 /** The desktop → phone control frames (everything the session emits that is NOT
  *  WebRTC signaling). Offer/ICE are signaling and go to the broker; these do not. */
-export type ControlOutbound = Extract<
-  RtcOutboundFrame,
-  { type: "rtc_displays" } | { type: "rtc_focus" } | { type: "rtc_error" } | { type: "rtc_closed" }
->;
+export type ControlOutbound = DesktopControlFrame;
 
 /** A screen-capture command the phone sends over the control channel on the PERSISTENT
  *  broker peer: the peer stays up for chat, so the phone asks to START capture when it
@@ -95,9 +92,8 @@ export class DataChannelControl implements ControlChannel {
     this.outboundQueue.length = 0;
   }
 
-  /** Parse one inbound data-channel message. The phone sends the same rtc_input frame
-   *  it used over /ws/chat; we validate the event with the existing parser (one source
-   *  of truth) and drop anything else — never inject an unvalidated event. */
+  /** Parse one inbound data-channel message with the shared contract's parser, which
+   *  validates the input event; anything else is dropped, never injected. */
   private handleInbound(text: string): void {
     let raw: unknown;
     try {
@@ -105,26 +101,17 @@ export class DataChannelControl implements ControlChannel {
     } catch {
       return; // non-JSON noise on the channel — ignore
     }
-    if (!raw || typeof raw !== "object") return;
-    const msg = raw as Record<string, unknown>;
-    switch (msg.type) {
-      case "rtc_input": {
-        const event = parseScreenInputEvent(msg.event);
-        if (event && this.inputHandler) this.inputHandler(event);
+    const frame = parsePhoneControl(raw);
+    switch (frame?.type) {
+      case "rtc_input":
+        this.inputHandler?.(frame.event);
         return;
-      }
-      case "screen_open": {
-        const cmd: ScreenCommand =
-          typeof msg.monitor === "number" ? { kind: "open", monitor: msg.monitor } : { kind: "open" };
-        this.screenHandler?.(cmd);
+      case "screen_open":
+        this.screenHandler?.(frame.monitor === undefined ? { kind: "open" } : { kind: "open", monitor: frame.monitor });
         return;
-      }
-      case "screen_close": {
+      case "screen_close":
         this.screenHandler?.({ kind: "close" });
         return;
-      }
-      default:
-        return; // unknown frame on the control channel — drop, never inject
     }
   }
 }

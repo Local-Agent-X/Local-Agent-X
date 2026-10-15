@@ -1,22 +1,26 @@
-// WebRTC signaling protocol for the live-screen feature (product flow 6).
+// The live-screen session's signaling vocabulary on the desktop.
 //
-// These frames ride the EXISTING authenticated /ws/chat socket (architecture:
-// "signaling over /ws/chat"); they are NOT a new endpoint. The chat upgrade gate
-// already device-token / operator gates the connection, so signaling inherits
-// that auth — no parallel auth surface (constitution §8).
+// The rtc_start / rtc_answer / rtc_offer / rtc_ice / rtc_stop frames are this side's
+// own. Over the broker, broker-transport/broker-screen-dialer.ts translates them to and
+// from the broker's signals; only a device socket on /ws/chat (index.ts) carries them
+// as written. What reaches the phone over the broker peer, the remote-input event and
+// the display, focus, error and closed frames on the control channel, is the shared
+// agentxos contract (broker-transport/vendor/control.ts), re-exported here.
 //
-// The mobile app mirrors these exact shapes in app/src/screen/protocol.ts. Keep
-// the two in sync: the desktop is the OFFERER (it owns the screen), the phone is
-// the ANSWERER (it consumes the track).
-//
-// Wire direction:
 //   phone → desktop:  rtc_start, rtc_answer{sdp}, rtc_ice{candidate}, rtc_stop
 //   desktop → phone:  rtc_offer{sdp},  rtc_ice{candidate}, rtc_error{message}, rtc_closed{reason}
-//
-// Transport note: both peers are on the Tailscale tailnet, so host ICE candidates
-// over the tailnet interface connect directly. STUN is OPTIONAL (only needed if a
-// peer can't see its own tailnet address); no TURN relay is required for the
-// prototype — there is no NAT to traverse on the tailnet (constitution §6).
+
+import type {
+  RtcClosedFrame,
+  RtcDisplaysFrame,
+  RtcErrorFrame,
+  RtcFocusFrame,
+  ScreenInputEvent,
+} from "../broker-transport/vendor/protocol.js";
+import { parseScreenInputEvent } from "../broker-transport/vendor/protocol.js";
+
+export { buildClosed, buildDisplays, buildError, buildFocus, parseScreenInputEvent } from "../broker-transport/vendor/protocol.js";
+export type { RtcClosedFrame, RtcDisplaysFrame, RtcErrorFrame, RtcFocusFrame, ScreenInputEvent };
 
 /** Minimal SDP description shape exchanged in offer/answer (RTCSessionDescription subset). */
 export interface RtcSdp {
@@ -62,20 +66,6 @@ export interface RtcStopFrame {
   rtcId: string;
 }
 
-/** One remote-control action the phone drives. Coordinates are NORMALIZED to the
- *  captured screen (0..1) so the phone never needs the desktop's pixel size — the
- *  desktop scales by the live monitor's dimensions. `move` is absolute (direct-
- *  touch); `moveBy` is a relative nudge (trackpad). `down`/`up` bracket a drag. */
-export type ScreenInputEvent =
-  | { kind: "move"; x: number; y: number }
-  | { kind: "moveBy"; dx: number; dy: number }
-  | { kind: "click"; button?: "left" | "right"; double?: boolean }
-  | { kind: "down"; button?: "left" | "right" }
-  | { kind: "up"; button?: "left" | "right" }
-  | { kind: "scroll"; dx: number; dy: number }
-  | { kind: "text"; text: string }
-  | { kind: "key"; keys: string[] };
-
 /** Phone drives the desktop mouse/keyboard. Gated by enableRemoteControl AND the
  *  OS input grant on the desktop side — never trusted blindly here. */
 export interface RtcInputFrame {
@@ -98,40 +88,6 @@ export interface RtcDesktopIceFrame {
   type: "rtc_ice";
   rtcId: string;
   candidate: RtcIceCandidate;
-}
-
-/** A session error the phone surfaces as an actionable message (constitution §12). */
-export interface RtcErrorFrame {
-  type: "rtc_error";
-  rtcId: string;
-  message: string;
-}
-
-/** Desktop closed the session (stop / disconnect / revoke) — never a silent hang. */
-export interface RtcClosedFrame {
-  type: "rtc_closed";
-  rtcId: string;
-  reason: string;
-}
-
-/** Desktop reports how many monitors exist, which is live, and the live monitor's
- *  pixel size. count drives swipe-between-screens; width/height let the phone
- *  letterbox-correct so direct-touch maps to the right desktop point. */
-export interface RtcDisplaysFrame {
-  type: "rtc_displays";
-  rtcId: string;
-  count: number;
-  active: number;
-  width: number;
-  height: number;
-}
-
-/** Desktop tells the phone whether a text-editable element is focused, so it can
- *  raise/dismiss the soft keyboard automatically (tap a text field → keyboard). */
-export interface RtcFocusFrame {
-  type: "rtc_focus";
-  rtcId: string;
-  editable: boolean;
 }
 
 /** Every signaling frame the phone sends (desktop receives + routes). */
@@ -168,59 +124,6 @@ export function buildOffer(rtcId: string, sdp: string): RtcOfferFrame {
 
 export function buildIce(rtcId: string, candidate: RtcIceCandidate): RtcDesktopIceFrame {
   return { type: "rtc_ice", rtcId, candidate };
-}
-
-export function buildError(rtcId: string, message: string): RtcErrorFrame {
-  return { type: "rtc_error", rtcId, message };
-}
-
-export function buildClosed(rtcId: string, reason: string): RtcClosedFrame {
-  return { type: "rtc_closed", rtcId, reason };
-}
-
-export function buildDisplays(
-  rtcId: string,
-  count: number,
-  active: number,
-  width: number,
-  height: number,
-): RtcDisplaysFrame {
-  return { type: "rtc_displays", rtcId, count, active, width, height };
-}
-
-export function buildFocus(rtcId: string, editable: boolean): RtcFocusFrame {
-  return { type: "rtc_focus", rtcId, editable };
-}
-
-/** Validate an untrusted input-event payload from the phone. Returns null for
- *  anything malformed so the session drops it instead of injecting garbage. */
-export function parseScreenInputEvent(raw: unknown): ScreenInputEvent | null {
-  if (!raw || typeof raw !== "object") return null;
-  const e = raw as Record<string, unknown>;
-  const num = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
-  const button = e.button === "right" ? "right" : "left";
-  switch (e.kind) {
-    case "move":
-      return num(e.x) && num(e.y) ? { kind: "move", x: e.x, y: e.y } : null;
-    case "moveBy":
-      return num(e.dx) && num(e.dy) ? { kind: "moveBy", dx: e.dx, dy: e.dy } : null;
-    case "click":
-      return { kind: "click", button, double: e.double === true };
-    case "down":
-      return { kind: "down", button };
-    case "up":
-      return { kind: "up", button };
-    case "scroll":
-      return num(e.dx) && num(e.dy) ? { kind: "scroll", dx: e.dx, dy: e.dy } : null;
-    case "text":
-      return typeof e.text === "string" && e.text.length > 0 ? { kind: "text", text: e.text } : null;
-    case "key":
-      return Array.isArray(e.keys) && e.keys.every((k) => typeof k === "string") && e.keys.length > 0
-        ? { kind: "key", keys: e.keys as string[] }
-        : null;
-    default:
-      return null;
-  }
 }
 
 /** Parse + validate an inbound frame; returns null for anything malformed so the

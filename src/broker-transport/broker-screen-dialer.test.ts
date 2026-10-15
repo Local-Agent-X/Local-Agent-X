@@ -5,7 +5,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { BrokerScreenDialer, type ScreenSessionLike } from "./broker-screen-dialer.js";
-import { ICE_GRACE_MS } from "./broker-dialer.js";
+import { ICE_GRACE_MS } from "./vendor/protocol.js";
 import type { SocketAdapter, CloseReason } from "./vendor/socket-adapter.js";
 import { DataChannelControl, type ControlChannel, type ControlOutbound, type ScreenCommand } from "./control-channel.js";
 import type { ScreenSessionOptions } from "../screen-stream/session.js";

@@ -12,6 +12,7 @@
 
 import { BrokerClient } from "./vendor/broker-client.js";
 import type { BrokerErrorCode, IceServer, RtcSignal } from "./vendor/protocol.js";
+import { ICE_GRACE_MS } from "./vendor/protocol.js";
 import type { SocketAdapter } from "./vendor/socket-adapter.js";
 import { iceSignal, type DialerIceCandidate } from "./ice-signal.js";
 import { createLogger } from "../logger.js";
@@ -29,17 +30,6 @@ const TERMINAL_AUTH_CODES = new Set<BrokerErrorCode>([
   "subscription_inactive",
 ]);
 
-/** How long to wait after `peer-present` for the broker's `ice-servers` frame before
- *  starting anyway. A TURN-configured broker mints + sends ice-servers once both peers are
- *  present, so it normally arrives first; a TURN-less broker never sends it, so we must not
- *  wait forever (that would be a silent hang).
- *
- *  Measured against the live broker: a WARM mint lands in 20-100ms, but the COLD one (first
- *  connect after a restart — exactly when a user tests) took 3.17s and blew the old 2s
- *  window, starting the session with no relay. Under event-loop pressure the timer itself
- *  fired ~1s late on top of that. 8s clears both with margin; the only cost is that a
- *  genuinely TURN-less broker waits longer before its host/STUN-only start. */
-export const ICE_GRACE_MS = 8000;
 
 /** An IceServer's urls field is a single string or a list; normalize to a list. */
 function urlsOf(server: IceServer): string[] {

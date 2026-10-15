@@ -1,11 +1,16 @@
-// VENDORED from agentxos/packages/client/src/parse-server-frame.ts — DO NOT HAND-EDIT.
-// Re-sync on a protocol bump. Only change vs. upstream: the protocol import path.
+// Boundary validation for broker → client frames. The protocol package validates
+// the client → broker direction (parseClientFrame); this is the mirror the CLIENT
+// needs — it consumes ServerFrames over an untrusted socket, so each one is parsed
+// and narrowed before BrokerClient acts on it. The broker is trusted (constitution
+// §7 says assume the PROTOCOL is public, not that the peer is malicious), but we
+// still validate defensively so a malformed or truncated frame surfaces as a clean
+// no-op rather than crashing the live-screen client.
 //
-// Boundary validation for broker → client frames. The protocol package validates the
-// client → broker direction (parseClientFrame); this is the mirror the CLIENT needs —
-// it consumes ServerFrames over an untrusted socket, so each one is parsed and
-// narrowed before BrokerClient acts on it.
-
+// parseRtcSignal / isDeviceRole are REUSED from @agentxos/protocol so there is one
+// source of truth for the signal + role shapes. Cross-package VALUE imports go by
+// relative path so this file type-strips and runs under `node --test` with no
+// workspace resolution (same convention the broker's gate.ts uses for the data
+// package). Production (tsc/wrangler) maps the alias to the same module.
 import { isDeviceRole, parseRtcSignal } from "./protocol.js";
 import type { BrokerErrorCode, IceServer, ServerFrame } from "./protocol.js";
 
@@ -15,14 +20,8 @@ function asRecord(raw: unknown): Record<string, unknown> | null {
 }
 
 // The closed set of gate/auth error codes the broker can send. Kept in sync with
-// protocol.ts's BrokerErrorCode (SHARED ANCHOR there). An unknown code from a future
-// broker is rejected here rather than passed through as a bogus string.
-//
-// Accept EVERY code the protocol's BrokerErrorCode defines, including `not_entitled`.
-// The current broker maps beta gate-(a) failures onto `subscription_inactive` (gate.ts),
-// so it doesn't emit `not_entitled` yet — but accepting it is correct forward-compat: a
-// future broker can emit it without dropping the frame here (which would hang the UI).
-// Kept in sync with protocol.ts's BrokerErrorCode (SHARED ANCHOR there).
+// @agentxos/protocol's BrokerErrorCode (SHARED ANCHOR there). An unknown code from
+// a future broker is rejected here rather than passed through as a bogus string.
 const ERROR_CODES: readonly BrokerErrorCode[] = [
   "bad_frame",
   "role_taken",

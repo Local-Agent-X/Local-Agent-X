@@ -1,22 +1,31 @@
-// ───────────────────────────────────────────────────────────────────────────
-// VENDORED from agentxos/packages/protocol/src/index.ts — DO NOT HAND-EDIT.
-// Re-sync from that file when the broker protocol version bumps (constitution §5:
-// the wire contract is deliberately small + stable so this copy stays cheap). The
-// only change vs. upstream is import specifiers (none here) — the source is pure.
-//
-// LATENT NOTE: BrokerErrorCode below includes `not_entitled`, but the broker's
-// gate (workers/broker/src/gate.ts denyCode) currently only ever emits
-// `subscription_inactive` / `not_paired`, and vendor/parse-server-frame.ts's
-// allowlist omits `not_entitled` to match. If the broker is ever changed to send
-// `not_entitled`, add it to that allowlist here too or the client will drop it.
-// ───────────────────────────────────────────────────────────────────────────
-
 // Wire contract shared by the broker, the desktop client, and the phone client.
 // Kept deliberately small and stable so the two pre-existing client repos can
 // copy/import it cheaply (see spec/constitution.md §5). The broker relays the
 // WebRTC signaling opaquely — media is end-to-end encrypted and never inspected.
 
+//
+// Two contracts live in this package:
+//   - the broker WebSocket (this file): what each device and the broker exchange;
+//   - device to device, over the peer the broker introduced (link.ts, control.ts,
+//     tunnel.ts, chat.ts, voice.ts): the broker never sees these frames.
+//
+// COMPATIBILITY RULE. Phones and desktops update on their own schedules, so any build
+// in the field may talk to any other. Within one BROKER_PROTOCOL_VERSION a change may
+// only ADD: a new optional field, a new frame or event type, a new enum value the
+// receiver can ignore. Renaming or removing a field, frame, type or channel label,
+// making an optional field required, or changing what a value means needs a version
+// bump and a plan for the builds still running the old version. compat.test.ts holds
+// frames exactly as shipped builds send them; they must keep parsing. Add fixtures
+// when a frame gains a field; never edit or delete one within a version.
+
 export const BROKER_PROTOCOL_VERSION = 1;
+
+export * from "./link.js";
+export * from "./control.js";
+export * from "./tunnel.js";
+export * from "./chat.js";
+export * from "./approval.js";
+export * from "./voice.js";
 
 export type DeviceRole = "desktop" | "phone";
 
@@ -40,7 +49,16 @@ export type IceServer = {
 export type ClientFrame = { type: "signal"; signal: RtcSignal };
 
 // SHARED ANCHOR: clients import this. Only ever ADD codes — never rename/remove
-// existing ones, or a deployed client's matcher breaks.
+// existing ones, or a deployed client's matcher breaks. The chunk-3 additions
+// (`unauthorized`, `subscription_inactive`, `not_paired`) are the two-gate
+// refusals the broker sends before any rendezvous attach (constitution §8/§16).
+// The chunk-6 addition (`turn_unavailable`) reports a failed TURN-credential mint to
+// both peers — an actionable error, never a silent dead relay path (§16).
+// The chunk-10 addition (`not_entitled`) is gate (a)'s refusal under the invite-only
+// BETA model: the account has NEITHER beta access NOR an active subscription, so it
+// is not entitled to connect — redeem an invite (or subscribe) to gain access (§16).
+// It is ADD-only: the existing `subscription_inactive` still covers the inactive/
+// expired-subscription cases, so deployed clients keep matching those unchanged.
 export type BrokerErrorCode =
   | "bad_frame"
   | "role_taken"
@@ -52,7 +70,10 @@ export type BrokerErrorCode =
   | "turn_unavailable"
   | "not_entitled";
 
-// SHARED ANCHOR: clients match on `type`. Only ever ADD variants.
+// SHARED ANCHOR: clients match on `type`. Only ever ADD variants — never rename/
+// remove existing ones, or a deployed client's matcher breaks. The chunk-6 addition
+// (`ice-servers`) carries the broker-minted ICE config (STUN + short-lived TURN) to
+// each peer once both are present and gated (constitution §9/§10, product flow 5).
 /** broker → client */
 export type ServerFrame =
   | { type: "joined"; role: DeviceRole; peerPresent: boolean }
@@ -69,6 +90,7 @@ export function isDeviceRole(v: unknown): v is DeviceRole {
 // Boundary validation: frames arrive over the wire as untrusted JSON, so each
 // field is checked before it is trusted (constitution: validate at boundaries).
 function asRecord(raw: unknown): Record<string, unknown> | null {
+  // narrowing an untrusted JSON value to an index signature for field checks
   return typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>) : null;
 }
 

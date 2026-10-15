@@ -1,26 +1,30 @@
-// VENDORED from agentxos/packages/client/src/broker-client.ts — DO NOT HAND-EDIT.
-// Re-sync on a protocol bump. Only change vs. upstream: the import paths (./*.js and
-// ./protocol.js instead of @agentxos/protocol).
-//
-// BrokerClient — the shared, transport-agnostic broker SIGNALING client. It REPLACES
-// the tailnet /ws/chat rtc_* signaling: instead of passing offer/answer/ICE over the
-// chat socket, each side pumps them through this client, which wraps them in the
-// broker's ClientFrame/ServerFrame contract and drives the gated rendezvous lifecycle.
+// BrokerClient — the shared, transport-agnostic broker SIGNALING client both the
+// desktop (Local-Agent-X) and mobile (agentxos-mobile) repos plug their existing
+// WebRTC layer into. It REPLACES the tailnet /ws/chat rtc_* signaling: instead of
+// passing offer/answer/ICE over the chat socket, each side pumps them through this
+// client, which wraps them in the broker's ClientFrame/ServerFrame contract and
+// drives the gated rendezvous lifecycle (spec/product.md flow 4; architecture
+// "Transport"). See docs/integration-lax-mobile.md for the old→new wiring.
 //
 // It is a PURE state machine over two injected seams — a SocketAdapter (already
-// connected to the broker connect URL) and a set of RTC hooks — so it carries NO real
-// WebSocket / RTCPeerConnection types. It does NOT open the socket or speak WebRTC; it
-// routes frames and tells the host app what to do via hooks.
+// connected to the broker connect URL) and a set of RTC hooks — so it carries NO
+// real WebSocket / RTCPeerConnection / Cloudflare / React-Native types and unit
+// tests entirely offline (deliverable §A). It does NOT open the socket or speak
+// WebRTC itself; it routes frames and tells the host app what to do via hooks.
 //
-// Lifecycle: connecting → joined → peer-present → closed | error
-// Gate/auth errors and the broker's 4401/4403 closes are TERMINAL and surfaced via
-// onError — never a silent hang (constitution §16).
+// Lifecycle (string-literal union, no enum — erasable TS):
+//   connecting → joined → peer-present → closed | error
+// Inbound frames are validated at the boundary (parseServerFrame) before they move
+// the machine. Gate/auth errors and the broker's 4401/4403 closes are TERMINAL and
+// surfaced via onError — never a silent hang (constitution §16).
 
-import type { BrokerErrorCode, IceServer, RtcSignal, ServerFrame } from "./protocol.js";
+import type { IceServer, RtcSignal, ServerFrame } from "./protocol.js";
+import type { BrokerErrorCode } from "./protocol.js";
 import { parseServerFrame } from "./parse-server-frame.js";
 import { serializeClientFrame, type SocketAdapter } from "./socket-adapter.js";
 
-/** Observable lifecycle state. A string-literal union (not an enum). */
+/** Observable lifecycle state. A string-literal union (not an enum) so it erases
+ *  cleanly under Node 24 type-stripping and matches the codebase's style. */
 export type BrokerClientState = "connecting" | "joined" | "peer-present" | "closed" | "error";
 
 /** The broker WebSocket close codes the client treats as terminal gate/auth
@@ -37,7 +41,8 @@ export interface BrokerClientHooks {
    *  the inbound half of what the old rtc_offer/rtc_answer/rtc_ice frames did. */
   onSignal?(signal: RtcSignal): void;
   /** Apply the broker-minted ICE config (STUN + short-lived TURN) to the peer
-   *  connection. `ttlSeconds` is when the TURN credential expires (re-dial after). */
+   *  connection. `ttlSeconds` is when the TURN credential expires (re-dial after).
+   *  Replaces the tailnet-implicit connectivity (architecture "Transport"). */
   onIceServers?(iceServers: IceServer[], ttlSeconds: number): void;
   /** The peer (the other device) is now present in the rendezvous — the offerer
    *  can begin negotiation. Fires on `joined{peerPresent:true}` or `peer-joined`. */
@@ -49,7 +54,8 @@ export interface BrokerClientHooks {
    *  timeout). Terminal for this client — the host should RECONNECT (build a new one). */
   onClosed?(): void;
   /** An actionable gate/auth/transport error. `code` is the broker's BrokerErrorCode
-   *  or a synthetic code for a terminal close; `message` is user-facing copy (§16). */
+   *  (unauthorized / subscription_inactive / not_paired / turn_unavailable / …) or a
+   *  synthetic code for a terminal close; `message` is user-facing copy (§16). */
   onError?(code: BrokerErrorCode, message: string): void;
   /** Optional observability: every state transition. */
   onStateChange?(state: BrokerClientState): void;
@@ -83,7 +89,8 @@ export class BrokerClient {
   }
 
   /** Wrap a local offer/answer/ICE in a ClientFrame and send it to the broker,
-   *  which relays it verbatim to the peer. No-op once terminal. */
+   *  which relays it verbatim to the peer. This is the outbound half of the old
+   *  rtc_offer/rtc_answer/rtc_ice send. No-op once terminal (nothing to relay). */
   sendSignal(signal: RtcSignal): void {
     if (this.terminal) return;
     this.socket.send(serializeClientFrame({ type: "signal", signal }));
@@ -113,6 +120,8 @@ export class BrokerClient {
   private dispatch(frame: ServerFrame): void {
     switch (frame.type) {
       case "joined":
+        // We are in the rendezvous. If the peer is already here, jump straight to
+        // peer-present (the desktop that arrived second sees this).
         this.transition("joined");
         if (frame.peerPresent) this.peerPresent();
         break;
@@ -120,6 +129,8 @@ export class BrokerClient {
         this.peerPresent();
         break;
       case "peer-left":
+        // Peer dropped but the rendezvous is still open (it may rejoin). Fall back
+        // to `joined`; the host tears its live session down via onPeerLeft.
         if (this.state === "peer-present") this.transition("joined");
         this.hooks.onPeerLeft?.();
         break;
@@ -155,9 +166,10 @@ export class BrokerClient {
       return;
     }
     // A non-auth close is a TRANSPORT DROP of OUR socket (network change like
-    // wifi→cellular, broker restart, idle timeout). Latch terminal FIRST (so the dialer's
-    // client.stop() in teardown is a safe no-op), then fire onClosed so the host
-    // RECONNECTS. DISTINCT from onPeerLeft (the other peer left but our socket is fine).
+    // wifi→cellular, broker restart, idle timeout). Latch terminal FIRST (so a host's
+    // stop() in teardown is a safe no-op), then fire onClosed so the host RECONNECTS
+    // (a fresh socket + peer). This is DISTINCT from onPeerLeft (the other peer left but
+    // our socket is fine) — conflating them caused a network switch to silently die.
     this.transition("closed");
     this.terminal = true;
     this.hooks.onClosed?.();

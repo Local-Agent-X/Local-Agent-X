@@ -7,63 +7,18 @@
 // access. The loopback request carries the operator token only to satisfy local auth; the
 // allowlist is the security boundary (see device-paths.ts).
 //
+// The frames, the body cap and the chunking that fits a large response under the data
+// channel's per-message cap are the shared agentxos contract (vendor/tunnel.ts).
+//
 // Pure over an injected loopback resolver + fetch so it unit-tests with fakes.
 
 import type { ControlTransport } from "../screen-stream/peer.js";
 import { isDeviceAllowedPath } from "./device-paths.js";
+import { TUNNEL_MAX_BODY_BYTES, parseTunnelRequest, splitFramed } from "./vendor/protocol.js";
+import type { TunnelRequest, TunnelResponse } from "./vendor/protocol.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("broker-transport.http-tunnel");
-
-/** Cap on a proxied body in either direction (app docs/state/lists are small). */
-const MAX_BODY = 8 * 1024 * 1024;
-
-// WebRTC data channels cap a single message at ~64KB. A large response — a Vite
-// dev module like react-dom is ~800KB — sent whole never reaches the phone (the
-// send fails on the cap → white screen). Split the framed JSON into ordered
-// chunks the phone reassembles by id. 12K chars ⇒ ≤48KB UTF-8 (4 bytes/char
-// worst case), safely under the cap. A small message sends as one frame, so the
-// common REST path is byte-for-byte unchanged.
-export const MAX_CHUNK_CHARS = 12_288;
-
-/** Send a framed payload, splitting it into `{t:"chunk",id,i,n,b}` frames when it
- *  exceeds the data-channel message cap. The phone joins chunks of the same id in
- *  order. Pure over a `{send}` sink so it unit-tests with a fake transport. */
-export function sendFramed(transport: { send(text: string): void }, id: string, payload: string): void {
-  if (payload.length <= MAX_CHUNK_CHARS) { transport.send(payload); return; }
-  const n = Math.ceil(payload.length / MAX_CHUNK_CHARS);
-  for (let i = 0; i < n; i += 1) {
-    const b = payload.slice(i * MAX_CHUNK_CHARS, (i + 1) * MAX_CHUNK_CHARS);
-    transport.send(JSON.stringify({ t: "chunk", id, i, n, b }));
-  }
-}
-
-/** Phone → desktop: one framed HTTP request. */
-interface TunnelRequest {
-  t: "req";
-  id: string;
-  method: string;
-  path: string; // pathname + search, e.g. /api/apps?x=1
-  headers?: Record<string, string>;
-  body?: string;
-  /** The phone signals it can REASSEMBLE chunked responses. Only then does the
-   *  desktop split a large response — an older app build that lacks reassembly
-   *  keeps getting whole frames (its prior behavior), so this can't regress it. */
-  chunked?: boolean;
-}
-
-/** Desktop → phone: the framed response. `body` is the HTTP body; `enc` says how it's
- *  encoded — utf8 text (JSON/HTML/CSS/JS) or base64 for binary media (images/fonts), so
- *  the phone can serve an app's real assets over the tunnel. Absent `enc` ⇒ utf8 (the
- *  prior wire shape, so existing text consumers see byte-identical frames). */
-interface TunnelResponse {
-  t: "res";
-  id: string;
-  status: number;
-  headers?: Record<string, string>;
-  enc?: "utf8" | "base64";
-  body: string;
-}
 
 /** Content-types served as utf8 text; everything else is base64-framed as binary. Covers
  *  the document + the asset kinds an agent-built app references (CSS/JS/SVG/JSON). */
@@ -124,20 +79,20 @@ export class HttpTunnelBridge implements HttpChannel {
 
   private async handle(text: string): Promise<void> {
     if (this.closed || !this.transport) return;
-    let req: TunnelRequest;
+    let req: TunnelRequest | null;
     try {
-      const raw = JSON.parse(text) as { t?: unknown };
-      if (raw?.t !== "req") return; // not a request frame — ignore
-      req = raw as TunnelRequest;
+      req = parseTunnelRequest(JSON.parse(text));
     } catch {
       return; // non-JSON noise
     }
+    if (req === null) return; // not a well-formed request frame — ignore
     const res = await this.proxy(req);
     if (!this.closed && this.transport) {
       // Only chunk for a phone that advertised reassembly support (req.chunked);
       // otherwise send the whole frame as before — backward-compatible.
-      if (req.chunked) sendFramed(this.transport, res.id, JSON.stringify(res));
-      else this.transport.send(JSON.stringify(res));
+      const payload = JSON.stringify(res);
+      if (req.chunked) for (const message of splitFramed(res.id, payload)) this.transport.send(message);
+      else this.transport.send(payload);
     }
   }
 
@@ -164,16 +119,16 @@ export class HttpTunnelBridge implements HttpChannel {
         // Oversize is an ERROR, not a truncation: a sliced body parses as a
         // corrupt payload with a 200 status, which is strictly worse than a
         // clean failure the phone can surface ("file too large").
-        if (text.length > MAX_BODY) {
-          return { t: "res", id: req.id, status: 413, body: `response too large for the tunnel (${text.length} bytes, limit ${MAX_BODY})` };
+        if (text.length > TUNNEL_MAX_BODY_BYTES) {
+          return { t: "res", id: req.id, status: 413, body: `response too large for the tunnel (${text.length} bytes, limit ${TUNNEL_MAX_BODY_BYTES})` };
         }
         return { t: "res", id: req.id, status: r.status, headers, body: text };
       }
       // Binary asset (image/font/document): base64-frame it so it survives the
       // JSON wire. Same oversize rule — a truncated xlsx is a corrupt xlsx.
       const bytes = Buffer.from(await r.arrayBuffer());
-      if (bytes.length > MAX_BODY) {
-        return { t: "res", id: req.id, status: 413, body: `response too large for the tunnel (${bytes.length} bytes, limit ${MAX_BODY})` };
+      if (bytes.length > TUNNEL_MAX_BODY_BYTES) {
+        return { t: "res", id: req.id, status: 413, body: `response too large for the tunnel (${bytes.length} bytes, limit ${TUNNEL_MAX_BODY_BYTES})` };
       }
       return {
         t: "res",

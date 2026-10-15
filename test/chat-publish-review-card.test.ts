@@ -32,7 +32,7 @@ function load() {
 	g.makeApprovalCard = (new Function(src("chat-tool-cards.js") + "\nreturn { makeApprovalCard };")() as Record<string, unknown>).makeApprovalCard;
 	g.applyPublishReview = (new Function(src("chat-render-publish-review.js") + "\nreturn { applyPublishReview };")() as Record<string, unknown>).applyPublishReview;
 	renderApproval = (new Function(src("chat-render-approvals.js") + "\nreturn { renderApproval };")() as { renderApproval: RenderApproval }).renderApproval;
-	for (const f of ["chat-stream-blocks.js", "chat-stream-reducer.js", "chat-stream-admit.js", "chat-stream-store.js", "chat-stream-finalize.js"]) new Function(src(f))();
+	for (const f of ["agentxos-timeline.js", "chat-stream-blocks.js", "chat-stream-reducer.js", "chat-stream-admit.js", "chat-stream-store.js", "chat-stream-finalize.js"]) new Function(src(f))();
 	store = (g.window as { ChatStreamStore: Store }).ChatStreamStore;
 	g.ChatStreamStore = store;
 }

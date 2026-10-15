@@ -46,7 +46,12 @@ export type VoiceServerEvent =
   | { type: "tts_interrupt" }
   | { type: "tts_idle" }
   | { type: "playback_complete" }
+  /** The turn or the voice stack failed; the call can't go on as it was. */
   | { type: "agent_error" | "voice_error"; message: string }
+  /** One stage failed and the call goes on: speech synthesis (tts), live transcription
+   *  (stt), or the final transcription of an utterance (whisper, so that utterance is
+   *  lost). Show it; don't end the call. */
+  | { type: "tts_error" | "stt_error" | "whisper_error"; message: string }
   /** Decoration only: morph the voice visual, hold, return. */
   | { type: "visual"; kind: VoiceVisualKind; value: string; durationMs?: number };
 
@@ -126,6 +131,10 @@ export function parseVoiceEvent(raw: unknown): VoiceServerEvent | null {
       return { type: msg.type };
     case "agent_error":
     case "voice_error":
+      return { type: msg.type, message: asString(msg.message) ?? "The voice pipeline hit an error." };
+    case "tts_error":
+    case "stt_error":
+    case "whisper_error":
       return { type: msg.type, message: asString(msg.message) ?? "The voice pipeline hit an error." };
     case "visual": {
       const kind = msg.kind;

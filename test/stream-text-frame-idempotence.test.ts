@@ -43,6 +43,7 @@ function loadClientStore(): Store {
   // Load order mirrors app.html: blocks and reducer both publish onto window
   // before the store core reads them.
   const src = [
+    read("agentxos-timeline.js"),
     read("chat-stream-blocks.js"),
     read("chat-stream-reducer.js"),
     read("chat-stream-admit.js"),

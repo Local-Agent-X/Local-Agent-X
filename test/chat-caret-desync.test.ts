@@ -49,6 +49,7 @@ beforeEach(() => {
 	// its internal Map + subscriber set start empty, while the split reducer and
 	// finalizer match the browser's production wiring.
 	for (const file of [
+		"agentxos-timeline.js",
 		"chat-stream-blocks.js",
 		"chat-stream-reducer.js",
 		"chat-stream-admit.js",

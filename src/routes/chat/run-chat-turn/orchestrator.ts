@@ -66,13 +66,16 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<void> {
   const emitSse = (event: ServerEvent) => { if (sseSink) sseSink(event); };
 
   // Stamp the chat's current project onto the session so agent_* tool
-  // calls auto-scope. Frontend includes projectId on each request when
-  // the chat is nested under a project; absent = global catalog.
-  try {
-    const { setSessionProject } = await import("../../../session/project.js");
-    setSessionProject(sessionId, typeof projectId === "string" ? projectId : null);
-  } catch (e) {
-    logger.warn(`[chat] failed to set session project: ${(e as Error).message}`);
+  // calls auto-scope. A string files the session under that project and null
+  // takes it out of one; undefined (the caller carried no project) keeps the
+  // session's project, which getOrCreateSession seeds from the durable field.
+  if (projectId !== undefined) {
+    try {
+      const { setSessionProject } = await import("../../../session/project.js");
+      setSessionProject(sessionId, typeof projectId === "string" ? projectId : null);
+    } catch (e) {
+      logger.warn(`[chat] failed to set session project: ${(e as Error).message}`);
+    }
   }
 
   const approve = await handleApproveCommand(message, sessionId, sseSink);
@@ -106,8 +109,9 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<void> {
   // Persist the chat→project link onto the durable session so it survives
   // client-side sync and seeds future cold loads. The in-memory map (set
   // above) is the live read surface; this is its durable backing. Mirror the
-  // request exactly — a chat moved out of a project clears it.
-  {
+  // request exactly — a chat moved out of a project clears it; a request that
+  // carried no project leaves it.
+  if (projectId !== undefined) {
     const pid = typeof projectId === "string" && projectId ? projectId : undefined;
     if (session.projectId !== pid) { session.projectId = pid; void ctx.saveSession(session); }
   }

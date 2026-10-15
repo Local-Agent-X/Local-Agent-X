@@ -13,6 +13,7 @@
 // ws://127.0.0.1:<port>/ws/chat with the operator token.
 
 import type { ControlTransport } from "../screen-stream/peer.js";
+import { ChunkedLink } from "./vendor/protocol.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("broker-transport.chat-bridge");
@@ -74,6 +75,11 @@ export class NullChatChannel implements ChatChannel {
  *   loopback → data channel   (the server's event/active_chats frames)
  * Frames the phone sends before the loopback ws finishes connecting are BUFFERED and
  * flushed on open, so the first message after pairing isn't lost.
+ *
+ * A frame bigger than one data-channel message (~64 KB: a long tool result, a session
+ * snapshot, a photo the phone attached) travels in chunks, both ways, once the phone on
+ * this channel has said it can join them (vendor/chunks.ts). The loopback socket only
+ * ever sees whole frames.
  */
 export class ChatBridge implements ChatChannel {
   private transport: ControlTransport | null = null;
@@ -93,6 +99,8 @@ export class ChatBridge implements ChatChannel {
     this.transport = transport;
     const socket = this.deps.openLoopback();
     this.socket = socket;
+    const chunks = new ChunkedLink(); // per channel: the phone behind a new one may be another build
+    transport.send(chunks.hello());
 
     socket.onOpen(() => {
       if (this.socket !== socket) return; // a stale socket's late open — ignore
@@ -101,7 +109,8 @@ export class ChatBridge implements ChatChannel {
       this.pending.length = 0;
     });
     socket.onMessage((text) => {
-      if (!this.closed && this.socket === socket) transport.send(text); // server event → phone
+      if (this.closed || this.socket !== socket) return;
+      for (const part of chunks.outgoing(text)) transport.send(part); // server event → phone
     });
     socket.onClose(() => {
       // The loopback dropped. Identity-check so a stale socket's late close doesn't null a
@@ -112,7 +121,10 @@ export class ChatBridge implements ChatChannel {
       if (!this.closed) logger.warn("[broker-transport] chat loopback closed");
     });
 
-    transport.onMessage((text) => this.toServer(text)); // phone frame → server
+    transport.onMessage((text) => {
+      const whole = chunks.incoming(text); // null: the phone's hello, or part of a frame
+      if (whole !== null) this.toServer(whole); // phone frame → server
+    });
     // The chat data channel closed (the peer is rebuilding after a reconnect). Drop the
     // loopback but stay re-attachable — NOT a full close (that's the dialer-stop path).
     transport.onClose(() => this.detach());

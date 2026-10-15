@@ -64,6 +64,7 @@ vi.mock("./canonical-run.js", () => ({ runCanonicalChat }));
 import { runChatTurn } from "./orchestrator.js";
 import { preparePerTurnRequest } from "./prepare-and-route.js";
 import { routeMessage } from "../../../routing/index.js";
+import { setSessionProject } from "../../../session/project.js";
 import { getTurnRegistry, releaseTurn, getActiveTurn } from "../../../session/turn-lock.js";
 
 const SESSION = "sess-ct2-refusal";
@@ -75,6 +76,7 @@ const SESSION_TRUTH = "sess-turn-provider-truth";
 const SESSION_LOCAL = "sess-local-only-reroute";
 const SESSION_REFUSED = "sess-refused-turn-no-claim";
 const SESSION_BRIDGE = "sess-bridge-remedy";
+const SESSION_PROJECT = "sess-project-filing";
 
 afterEach(() => {
   releaseTurn(SESSION);
@@ -86,6 +88,7 @@ afterEach(() => {
   releaseTurn(SESSION_LOCAL);
   releaseTurn(SESSION_REFUSED);
   releaseTurn(SESSION_BRIDGE);
+  releaseTurn(SESSION_PROJECT);
   vi.clearAllMocks();
 });
 
@@ -453,5 +456,34 @@ describe("orchestrator orphaned-ActiveChat net", () => {
       expect(call[1]).toBe(token);
       expect(call[2]).toBe("");
     }
+  });
+});
+
+/**
+ * Project filing. A request that carries no project (the phone, the App IDE, a turn
+ * an inject started) must leave the chat where it is: treating the absence as null
+ * took the chat out of its project on every message from the phone.
+ */
+describe("orchestrator project filing", () => {
+  const run = (ctx: unknown, projectId: unknown) =>
+    runChatTurn({ sessionId: SESSION_PROJECT, message: "hi", attachments: [], projectId, ctx: ctx as never, requestRole: "operator", sseSink: null });
+
+  it("keeps the session's project when the request carried none", async () => {
+    const { ctx, session } = makeCtx(() => {});
+    (session as { projectId?: string }).projectId = "proj-1";
+    await run(ctx, undefined);
+    expect(session.projectId).toBe("proj-1");
+    expect(setSessionProject).not.toHaveBeenCalled();
+  });
+
+  it("null takes the session out of its project; a string files it", async () => {
+    const { ctx, session } = makeCtx(() => {});
+    (session as { projectId?: string }).projectId = "proj-1";
+    await run(ctx, null);
+    expect(session.projectId).toBeUndefined();
+    expect(setSessionProject).toHaveBeenCalledWith(SESSION_PROJECT, null);
+    releaseTurn(SESSION_PROJECT);
+    await run(ctx, "proj-2");
+    expect(session.projectId).toBe("proj-2");
   });
 });

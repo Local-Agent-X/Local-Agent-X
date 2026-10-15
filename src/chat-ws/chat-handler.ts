@@ -10,6 +10,10 @@ export interface ChatFrameMeta {
   /** Frame-claimed origin, validated by parseFrameOrigin — today only the
    *  broker bridge's "mobile" stamp. Absent = the default surface ("web"). */
   channel?: ChannelId;
+  /** The frame's project: a string files the session under it, null takes it out.
+   *  Absent when the frame carried none (the phone, the App IDE): the session keeps
+   *  the project it has. */
+  projectId?: string | null;
 }
 
 export type ChatHandler = (sessionId: string, message: string, attachments: unknown[], meta?: ChatFrameMeta) => void;

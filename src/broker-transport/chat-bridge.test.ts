@@ -5,6 +5,9 @@
 import { describe, it, expect } from "vitest";
 import { ChatBridge, stampMobileOrigin, type LoopbackChatSocket } from "./chat-bridge.js";
 import type { ControlTransport } from "../screen-stream/peer.js";
+import { MAX_CHUNK_CHARS } from "./vendor/protocol.js";
+
+const HELLO = { type: "link_hello", chunks: true };
 
 class FakeTransport implements ControlTransport {
   sent: string[] = [];
@@ -131,8 +134,37 @@ describe("ChatBridge", () => {
 
     loopback.serverSend({ type: "event", sessionId: "s1", event: { kind: "token", text: "yo" } });
     expect(transport.sent.map((s) => JSON.parse(s))).toEqual([
+      HELLO,
       { type: "event", sessionId: "s1", event: { kind: "token", text: "yo" } },
     ]);
+  });
+
+  it("sends a big server frame whole to a phone that never said hello (an older build)", () => {
+    const { loopback, bridge, transport } = setup();
+    bridge.attach(transport);
+    loopback.open();
+    const big = { type: "session_snapshot", sessionId: "s1", blob: "z".repeat(MAX_CHUNK_CHARS * 2) };
+    loopback.serverSend(big);
+    expect(transport.sent.map((s) => JSON.parse(s))).toEqual([HELLO, big]);
+  });
+
+  it("chunks big server frames once the phone said hello, and joins the phone's chunks", () => {
+    const { loopback, bridge, transport } = setup();
+    bridge.attach(transport);
+    loopback.open();
+    transport.emit(HELLO);
+    expect(loopback.sent).toEqual([]); // the hello is the link's, not the server's
+
+    const big = { type: "event", sessionId: "s1", event: { type: "tool_end", result: "r".repeat(MAX_CHUNK_CHARS * 2) } };
+    loopback.serverSend(big);
+    const parts = transport.sent.slice(1).map((s) => JSON.parse(s) as { t: string; b: string });
+    expect(parts.length).toBe(3);
+    expect(JSON.parse(parts.map((p) => p.b).join(""))).toEqual(big);
+
+    const photo = JSON.stringify({ type: "chat", sessionId: "s1", message: "see", attachments: [{ dataUrl: "d".repeat(MAX_CHUNK_CHARS * 2) }] });
+    const n = Math.ceil(photo.length / MAX_CHUNK_CHARS);
+    for (let i = 0; i < n; i += 1) transport.emit({ t: "chunk", id: "c1", i, n, b: photo.slice(i * MAX_CHUNK_CHARS, (i + 1) * MAX_CHUNK_CHARS) });
+    expect(loopback.sentFrames).toEqual([{ ...JSON.parse(photo), origin: "mobile" }]);
   });
 
   it("closes the loopback when the data channel closes", () => {

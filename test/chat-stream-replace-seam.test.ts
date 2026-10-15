@@ -2,19 +2,20 @@
 //
 // Cross-seam contract for the lane `replace` rule (2026-09-03).
 //
-// The rule is implemented twice by necessity — once in browser JS for the
-// live client's block timeline (public/js/chat-stream-blocks.js
-// replaceBlockLane) and once in TS for the server's replay runs
-// (src/chat-ws/state.ts replaceRunLane). A live client applies the replace to
-// its blocks; a client that reconnects a moment later rebuilds the same turn
-// from the runs. If the two rules drift, the same turn renders differently
-// depending on whether the socket happened to blip — the exact class of
-// silent seam regression that let the "wall of thinking" bug (every Thinking
-// chip stacked at the top of the bubble, one slab of answer underneath) exist
-// on the replace path while the delta path was correct.
+// The rule itself lives once, in the shared agentxos contract
+// (src/broker-transport/vendor/timeline.ts, its cases in agentxos timeline.test.ts).
+// Two callers wire it to different item shapes: the server's replay runs
+// (src/chat-ws/state.ts replaceRunLane) and the live web client's blocks
+// (public/js/chat-stream-blocks.js replaceBlockLane, via the generated
+// public/js/agentxos-timeline.js). A live client applies the replace to its blocks;
+// a client that reconnects a moment later rebuilds the same turn from the runs. If
+// the wiring drifts, the same turn renders differently depending on whether the
+// socket happened to blip: the "wall of thinking" bug (every Thinking chip stacked
+// at the top of the bubble, one slab of answer underneath) lived on exactly that
+// seam.
 //
-// This test drives one scripted turn through BOTH implementations and asserts
-// the resulting timelines are identical.
+// This test drives one scripted turn through BOTH callers and asserts the
+// resulting timelines are identical.
 import { describe, it, expect, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -38,7 +39,7 @@ interface Store {
 let ChatStreamStore: Store;
 
 beforeEach(() => {
-  for (const f of ["chat-stream-blocks.js", "chat-stream-reducer.js", "chat-stream-admit.js", "chat-stream-store.js", "chat-stream-finalize.js"]) {
+  for (const f of ["agentxos-timeline.js", "chat-stream-blocks.js", "chat-stream-reducer.js", "chat-stream-admit.js", "chat-stream-store.js", "chat-stream-finalize.js"]) {
     // eslint-disable-next-line no-new-func
     new Function(readFileSync(join(here, "../public/js/" + f), "utf8"))();
   }

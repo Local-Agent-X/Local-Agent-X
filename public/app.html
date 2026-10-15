@@ -1666,8 +1666,10 @@
      scripts were isolated — left ChatStreamStore permanently undefined.
      Split order: blocks (timeline helpers) → reducer (applyEvent switch) →
      core (state maps, exports _ChatStreamState) → approvals (attaches onto
-     the exported object). -->
-<script src="/js/chat-stream-blocks.js?v=v2"></script>
+     the exported object). agentxos-timeline.js (generated) carries the shared
+     lane-replace rule the blocks call. -->
+<script src="/js/agentxos-timeline.js?v=v1"></script>
+<script src="/js/chat-stream-blocks.js?v=v3"></script>
 <script src="/js/chat-stream-reducer.js?v=v3"></script>
 <!-- Frame admission (which frames may mutate an entry) is its own module for
      the 400-LOC gate; the store core delegates to it. -->

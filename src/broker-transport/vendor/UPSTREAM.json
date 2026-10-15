@@ -3,7 +3,7 @@
   "files": {
     "protocol.ts": {
       "upstream": "packages/protocol/src/index.ts",
-      "sha256": "ae1e4b3feb5213c11267a6802ce2e7f64e79ce109edd077ee95aeb9bc266d040"
+      "sha256": "b23d508e4dff4c34d75f8fb1c9c4a7e5010f3e4ad4fa5a088b7830b0a0382650"
     },
     "guards.ts": {
       "upstream": "packages/protocol/src/guards.ts",
@@ -19,11 +19,11 @@
     },
     "tunnel.ts": {
       "upstream": "packages/protocol/src/tunnel.ts",
-      "sha256": "a0ac1f5f32fccde65156022b3e2114d8b695b9576f0b4dfe76b848611fc8e20e"
+      "sha256": "f5c9955094f138437d37b76bad7e9bcf9a924d059cd67e223fb45003ab7c0e6e"
     },
     "chat.ts": {
       "upstream": "packages/protocol/src/chat.ts",
-      "sha256": "389651f5844aca2c7d3a111126004d402778d23fcb69cae4752e10a2e414e2d3"
+      "sha256": "1c367c2494dd7388a8f673d2f6e4eed93f13827240ece620c45b6be9f137a36d"
     },
     "approval.ts": {
       "upstream": "packages/protocol/src/approval.ts",
@@ -31,7 +31,7 @@
     },
     "voice.ts": {
       "upstream": "packages/protocol/src/voice.ts",
-      "sha256": "712eef27848a08adb30c63c0127016229cdaf715dffd482ae108f3b01cd586e0"
+      "sha256": "6205ec3201f2c0c2cb1a29556e8b38aa2579ecad4fc439735ee81d920392fbba"
     },
     "broker-client.ts": {
       "upstream": "packages/client/src/broker-client.ts",
@@ -52,6 +52,14 @@
     "index.ts": {
       "upstream": "packages/client/src/index.ts",
       "sha256": "eced5c052cba537b8c031bc1649afe6b7eed84c9bc92184fcc069450b60bd19e"
+    },
+    "chunks.ts": {
+      "upstream": "packages/protocol/src/chunks.ts",
+      "sha256": "60c65c8014aec52f2fde3d51a6d8cdf1b5bbb05d1f410f1c9c0e59b64ba74229"
+    },
+    "timeline.ts": {
+      "upstream": "packages/protocol/src/timeline.ts",
+      "sha256": "a57f4036f12a685a10d7f74a1ea913f19d3f76e29ef8528e89490175edc34c01"
     }
   }
 }

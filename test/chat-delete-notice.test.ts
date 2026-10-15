@@ -63,7 +63,7 @@ describe("the delete notice on a turn", () => {
 
 describe("the notice rides the stream store onto the saved row", () => {
 	it("delete_notice lands on the turn once, and finalize keeps the same objects on the message", () => {
-		for (const f of ["chat-stream-blocks.js", "chat-stream-reducer.js", "chat-stream-admit.js", "chat-stream-store.js", "chat-stream-finalize.js"]) {
+		for (const f of ["agentxos-timeline.js", "chat-stream-blocks.js", "chat-stream-reducer.js", "chat-stream-admit.js", "chat-stream-store.js", "chat-stream-finalize.js"]) {
 			new Function(src(f))();
 		}
 		const store = (g.window as { ChatStreamStore: Record<string, (...a: unknown[]) => unknown> }).ChatStreamStore;

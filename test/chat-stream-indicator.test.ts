@@ -133,6 +133,7 @@ beforeEach(() => {
 	// subscriber sets start empty.
 	// eslint-disable-next-line no-new-func
 	new Function(read(
+		"agentxos-timeline.js",
 		"chat-stream-blocks.js",
 		"chat-stream-reducer.js",
 		"chat-stream-admit.js",

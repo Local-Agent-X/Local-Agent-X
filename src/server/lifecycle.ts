@@ -107,12 +107,11 @@ export function wireWsChat(deps: {
     try {
       const { runChatTurn } = await import("../routes/chat/run-chat-turn.js");
       const ctx = buildCtx();
-      // The WS frame's projectId was stamped onto the session map by
-      // message-router.handleChat before this handler ran. Pass it through —
-      // hardcoding null here cleared the binding and dropped project scope on
-      // every WS spawn (agent_* ran on the global model, not the project's
-      // per-project override).
-      const { getSessionProject } = await import("../session/project.js");
+      // Pass the frame's projectId through as the frame gave it: undefined when
+      // it carried none (the phone, the App IDE, a turn an inject started), which
+      // keeps the session's project. Hardcoding null here cleared the binding and
+      // dropped project scope on every WS spawn (agent_* ran on the global model,
+      // not the project's per-project override).
       await runChatTurn({
         sessionId,
         message,
@@ -120,7 +119,7 @@ export function wireWsChat(deps: {
         // already auth'd the client). The shape matches the HTTP schema —
         // [{name, url, isImage}] — but is typed `any[]` upstream in chat-ws.
         attachments: (attachments || []) as Array<{ name: string; url: string; isImage: boolean }>,
-        projectId: getSessionProject(sessionId) ?? null,
+        projectId: meta?.projectId,
         ctx,
         requestRole: "operator",
         sseSink: null,

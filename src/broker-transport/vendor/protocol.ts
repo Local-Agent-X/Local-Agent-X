@@ -22,10 +22,12 @@ export const BROKER_PROTOCOL_VERSION = 1;
 
 export * from "./link.js";
 export * from "./control.js";
+export * from "./chunks.js";
 export * from "./tunnel.js";
 export * from "./chat.js";
 export * from "./approval.js";
 export * from "./voice.js";
+export * from "./timeline.js";
 
 export type DeviceRole = "desktop" | "phone";
 

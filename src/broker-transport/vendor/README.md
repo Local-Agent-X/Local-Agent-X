@@ -11,8 +11,11 @@ exchange:
 | Broker WebSocket, protocol version, compatibility rule | `protocol.ts` |
 | Data-channel labels, ICE grace | `link.ts` |
 | Live-screen control: input up, display hints down | `control.ts` |
-| HTTP tunnel frames, body cap, chunking | `tunnel.ts` |
+| Splitting frames over the data-channel cap, and the chat link hello | `chunks.ts` |
+| HTTP tunnel frames, body cap | `tunnel.ts` |
 | Chat frames and the events the phone reads | `chat.ts` |
+| Approvals on the chat channel | `approval.ts` |
+| How a `replace` frame rewrites a turn's timeline | `timeline.ts` |
 | Voice control plane | `voice.ts` |
 | Broker signaling client | `broker-client.ts`, `connect-url.ts`, `parse-server-frame.ts`, `socket-adapter.ts`, `index.ts` |
 
@@ -28,6 +31,10 @@ exchange:
 `npm run build` runs `check:vendor-sync`. It fails when a file's code no longer matches
 its recorded hash and, when an agentxos checkout is found, when it no longer matches
 upstream. Comments and formatting don't count; code does.
+
+The web client loads classic scripts, so it gets `timeline.ts` as the generated
+`public/js/agentxos-timeline.js` (`node scripts/gen-browser-timeline.mjs`; the build
+fails while it is stale). Regenerate it after a re-sync that changes `timeline.ts`.
 
 `src/broker-transport/chat-contract.test.ts` checks at compile time that every chat
 event the desktop emits under a type the phone reads fits `chat.ts`.

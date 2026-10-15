@@ -3,10 +3,7 @@
 // allowlist, and frames the response back, split into chunks when it is large.
 
 import { asNumber, asRecord, asString, asStringMap } from "./guards.js";
-
-/** A data channel carries at most ~64 KB per message. 12K characters is at most 48 KB
- *  of UTF-8 (4 bytes per character worst case), safely under it. */
-export const MAX_CHUNK_CHARS = 12_288;
+import { parseChunk, type ChunkFrame } from "./chunks.js";
 
 /** The largest body the desktop proxies in either direction. */
 export const TUNNEL_MAX_BODY_BYTES = 8 * 1024 * 1024;
@@ -32,9 +29,6 @@ export type TunnelResponse = {
   enc?: "utf8" | "base64";
   body: string;
 };
-
-/** Desktop → phone: slice `i` of `n` of a serialized TunnelResponse. */
-export type TunnelChunk = { t: "chunk"; id: string; i: number; n: number; b: string };
 
 export function buildTunnelRequest(
   id: string,
@@ -65,64 +59,20 @@ export function parseTunnelRequest(raw: unknown): TunnelRequest | null {
   return req;
 }
 
-/** A frame from the desktop, as the phone reads it: a whole response or one chunk. */
-export function parseTunnelInbound(raw: unknown): TunnelResponse | TunnelChunk | null {
+/** A frame from the desktop, as the phone reads it: a whole response or one chunk of
+ *  one (chunks.ts). */
+export function parseTunnelInbound(raw: unknown): TunnelResponse | ChunkFrame | null {
+  const chunk = parseChunk(raw);
+  if (chunk !== null) return chunk;
   const msg = asRecord(raw);
-  if (msg === null) return null;
+  if (msg === null || msg.t !== "res") return null;
   const id = asString(msg.id);
-  if (id === null) return null;
-  if (msg.t === "chunk") {
-    const i = asNumber(msg.i);
-    const n = asNumber(msg.n);
-    const b = asString(msg.b);
-    return i !== null && n !== null && b !== null && Number.isInteger(i) && Number.isInteger(n) && i >= 0 && i < n
-      ? { t: "chunk", id, i, n, b }
-      : null;
-  }
-  if (msg.t !== "res") return null;
   const status = asNumber(msg.status);
   const body = asString(msg.body);
-  if (status === null || body === null) return null;
+  if (id === null || status === null || body === null) return null;
   const res: TunnelResponse = { t: "res", id, status, body };
   const headers = asStringMap(msg.headers);
   if (headers !== null) res.headers = headers;
   if (msg.enc === "utf8" || msg.enc === "base64") res.enc = msg.enc;
   return res;
-}
-
-/** The messages to send for one serialized frame: itself when it fits, else chunks. */
-export function splitFramed(id: string, payload: string): string[] {
-  if (payload.length <= MAX_CHUNK_CHARS) return [payload];
-  const n = Math.ceil(payload.length / MAX_CHUNK_CHARS);
-  const out: string[] = [];
-  for (let i = 0; i < n; i += 1) {
-    const chunk: TunnelChunk = { t: "chunk", id, i, n, b: payload.slice(i * MAX_CHUNK_CHARS, (i + 1) * MAX_CHUNK_CHARS) };
-    out.push(JSON.stringify(chunk));
-  }
-  return out;
-}
-
-/** Joins the chunks of each id, in any arrival order; a repeated slice is ignored. */
-export class ChunkAssembler {
-  private readonly open = new Map<string, { parts: Array<string | undefined>; got: number }>();
-
-  /** The joined payload once the last slice of its id arrives, else null. */
-  accept(chunk: TunnelChunk): string | null {
-    let buf = this.open.get(chunk.id);
-    if (buf === undefined) {
-      buf = { parts: new Array<string | undefined>(chunk.n), got: 0 };
-      this.open.set(chunk.id, buf);
-    }
-    if (chunk.i >= buf.parts.length || buf.parts[chunk.i] !== undefined) return null;
-    buf.parts[chunk.i] = chunk.b;
-    buf.got += 1;
-    if (buf.got < buf.parts.length) return null;
-    this.open.delete(chunk.id);
-    return buf.parts.join("");
-  }
-
-  /** Drop every partial payload (the channel closed). */
-  clear(): void {
-    this.open.clear();
-  }
 }

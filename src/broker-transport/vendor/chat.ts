@@ -91,13 +91,15 @@ export type ChatAttachment = {
   dataUrl: string | null;
 };
 
-/** A user message. `projectId` files the session under a project; null unfiles it. */
+/** A user message. `projectId` files the session under a project and null takes it
+ *  out of one; leave it out to keep the session where it is (a client with no project
+ *  UI must, or every message it sends unfiles the chat). */
 export type ChatSendFrame = {
   type: "chat";
   sessionId: string;
   message: string;
   attachments: ChatAttachment[];
-  projectId: string | null;
+  projectId?: string | null;
 };
 
 /** Subscribe to a session's events. The optional fields say what the client already

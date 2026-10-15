@@ -221,13 +221,18 @@ async function handleChat(ctx: RouterContext, sessionId: string, msg: Record<str
     return;
   }
   // Stamp the chat's current project onto the session so agent_* tool
-  // calls auto-scope. The frontend includes projectId on each chat
-  // message when the chat is nested under a project.
-  try {
-    const { setSessionProject } = await import("../session/project.js");
-    setSessionProject(sessionId, typeof msg.projectId === "string" ? msg.projectId : null);
-  } catch (e) {
-    logger.warn(`[ws-chat] failed to set session project: ${(e as Error).message}`);
+  // calls auto-scope. The web client sends projectId on every chat message
+  // (null when the chat is in no project). A client with no project UI
+  // leaves it out, and then the session keeps the project it has: treating
+  // the absence as null unfiled the chat on every phone message.
+  const projectMeta = "projectId" in msg ? { projectId: typeof msg.projectId === "string" ? msg.projectId : null } : {};
+  if ("projectId" in projectMeta) {
+    try {
+      const { setSessionProject } = await import("../session/project.js");
+      setSessionProject(sessionId, projectMeta.projectId);
+    } catch (e) {
+      logger.warn(`[ws-chat] failed to set session project: ${(e as Error).message}`);
+    }
   }
   // Stamp the IDE app's dir as the session work root, the same way and for the
   // same reason as projectId above: the App IDE frame carries appId, and
@@ -248,7 +253,7 @@ async function handleChat(ctx: RouterContext, sessionId: string, msg: Record<str
   // arbitrary origin claims from other clients are dropped, not trusted.
   const { parseFrameOrigin } = await import("../channel-context.js");
   const origin = parseFrameOrigin(msg.origin);
-  if (handler) handler(sessionId, _msgText, _atts, origin ? { channel: origin } : undefined);
+  if (handler) handler(sessionId, _msgText, _atts, { ...(origin ? { channel: origin } : {}), ...projectMeta });
 }
 
 async function handleApprovalResponse(ws: WebSocket, msg: Record<string, unknown>): Promise<void> {

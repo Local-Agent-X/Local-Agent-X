@@ -184,6 +184,7 @@ beforeEach(() => {
 	// harness exercises the same reducer, finalizer, and approval extensions as
 	// production. The core IIFE's internal Map has no reset hook.
 	for (const file of [
+		"agentxos-timeline.js",
 		"chat-stream-blocks.js",
 		"chat-stream-reducer.js",
 		"chat-stream-admit.js",

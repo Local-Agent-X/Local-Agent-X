@@ -28,6 +28,8 @@ export interface RunChatTurnArgs {
    *  through from the WS frame. Loose-typed because the canonical
    *  prepareAgentRequest accepts arbitrary attachment shapes. */
   attachments: Array<{ name: string; url: string; isImage: boolean }>;
+  /** A string files the session under that project, null takes it out of one,
+   *  undefined keeps the project the session has. */
   projectId: unknown;
   ctx: ServerContext;
   requestRole: Role;

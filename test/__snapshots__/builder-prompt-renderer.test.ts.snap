@@ -21,13 +21,14 @@ RULES:
 - Create PROJECT.md with app description and status
 - Pick ONE emoji that best represents this app and write JUST that emoji (nothing else) to a file named .icon in /abs/workspace/apps/todo-app/ — it becomes the app's launcher icon on the phone home screen. Avoid generic glyphs (📦/📁/📄)
 - For single-page apps: put everything in index.html (inline CSS/JS is fine)
-- Make it look designed, not just functional — follow the DESIGN SYSTEM and CRAFT rules below exactly
+- Make it look designed, not just functional — follow the DESIGN SYSTEM and CRAFT rules below exactly, except where the Instructions above ask for a different look (the DESIGN SYSTEM's PRECEDENCE line)
 - Building something that isn't a web page — a Rust/Go/C/C++/native program, a CLI, anything needing a real compiler or runtime? Actually build and RUN it with its real toolchain via bash (e.g. \`cargo run\`, \`go run .\`, \`cc main.c && ./a.out\`), and make index.html show the REAL output it produced — embed the generated image/file, or the captured real stdout. Do NOT reimplement the program in browser JavaScript and present that as its result.
 - Never claim a preview "matches", is "identical to", or is "the same as" a program's real output unless you actually ran that program and are showing its real output. If you genuinely can't run the toolchain in this sandbox, say so plainly and show only what you verified — an honest "couldn't compile/run it here" beats a fabricated match.
 - The app will be served at http://127.0.0.1:7007/apps/todo-app/index.html
 - Do NOT ask questions — just build it based on the instructions
 
 DESIGN SYSTEM — Modern Web App. Implement these EXACT values; do not substitute your own colors, fonts, or sizes:
+PRECEDENCE: the user's own request outranks this design system. Where the request names part of the look — a color, a font, light or dark mode, a style, a reference site — build what the user asked for, for that part, and use this system's exact values for everything the request leaves open.
 Color tokens (EXACT). Put \`color-scheme: light dark\` on :root and define each token once — every value is a light-dark() pair, so the app ships BOTH themes from one definition:
   --bg: light-dark(oklch(0.99 0.003 250), oklch(0.16 0.012 250));
   --bg-subtle: light-dark(oklch(0.975 0.005 250), oklch(0.19 0.014 250));
@@ -124,7 +125,7 @@ RULES:
 - Create PROJECT.md with app description and status
 - Pick ONE emoji that best represents this app and write JUST that emoji (nothing else) to a file named .icon in /abs/workspace/apps/trading-bot/ — it becomes the app's launcher icon on the phone home screen. Avoid generic glyphs (📦/📁/📄)
 - For single-page apps: put everything in index.html (inline CSS/JS is fine)
-- Make it look designed, not just functional — follow the DESIGN SYSTEM and CRAFT rules below exactly
+- Make it look designed, not just functional — follow the DESIGN SYSTEM and CRAFT rules below exactly, except where the Instructions above ask for a different look (the DESIGN SYSTEM's PRECEDENCE line)
 - Building something that isn't a web page — a Rust/Go/C/C++/native program, a CLI, anything needing a real compiler or runtime? Actually build and RUN it with its real toolchain via bash (e.g. \`cargo run\`, \`go run .\`, \`cc main.c && ./a.out\`), and make index.html show the REAL output it produced — embed the generated image/file, or the captured real stdout. Do NOT reimplement the program in browser JavaScript and present that as its result.
 - Never claim a preview "matches", is "identical to", or is "the same as" a program's real output unless you actually ran that program and are showing its real output. If you genuinely can't run the toolchain in this sandbox, say so plainly and show only what you verified — an honest "couldn't compile/run it here" beats a fabricated match.
 - The app will be served at http://127.0.0.1:7007/apps/trading-bot/index.html
@@ -200,13 +201,14 @@ RULES:
 - Create PROJECT.md with app description and status
 - Pick ONE emoji that best represents this app and write JUST that emoji (nothing else) to a file named .icon in /abs/workspace/apps/initech/ — it becomes the app's launcher icon on the phone home screen. Avoid generic glyphs (📦/📁/📄)
 - For single-page apps: put everything in index.html (inline CSS/JS is fine)
-- Make it look designed, not just functional — follow the DESIGN SYSTEM and CRAFT rules below exactly
+- Make it look designed, not just functional — follow the DESIGN SYSTEM and CRAFT rules below exactly, except where the Instructions above ask for a different look (the DESIGN SYSTEM's PRECEDENCE line)
 - Building something that isn't a web page — a Rust/Go/C/C++/native program, a CLI, anything needing a real compiler or runtime? Actually build and RUN it with its real toolchain via bash (e.g. \`cargo run\`, \`go run .\`, \`cc main.c && ./a.out\`), and make index.html show the REAL output it produced — embed the generated image/file, or the captured real stdout. Do NOT reimplement the program in browser JavaScript and present that as its result.
 - Never claim a preview "matches", is "identical to", or is "the same as" a program's real output unless you actually ran that program and are showing its real output. If you genuinely can't run the toolchain in this sandbox, say so plainly and show only what you verified — an honest "couldn't compile/run it here" beats a fabricated match.
 - The app will be served at http://127.0.0.1:7007/apps/initech/index.html
 - Do NOT ask questions — just build it based on the instructions
 
 DESIGN SYSTEM — Marketing Landing Page. Implement these EXACT values; do not substitute your own colors, fonts, or sizes:
+PRECEDENCE: the user's own request outranks this design system. Where the request names part of the look — a color, a font, light or dark mode, a style, a reference site — build what the user asked for, for that part, and use this system's exact values for everything the request leaves open.
 Color tokens (EXACT). Put \`color-scheme: light dark\` on :root and define each token once — every value is a light-dark() pair, so the app ships BOTH themes from one definition:
   --bg: light-dark(oklch(0.99 0.004 40), oklch(0.15 0.012 30));
   --bg-subtle: light-dark(oklch(0.97 0.007 40), oklch(0.18 0.014 30));
@@ -306,13 +308,14 @@ RULES:
 - Create PROJECT.md with app description and status
 - Pick ONE emoji that best represents this app and write JUST that emoji (nothing else) to a file named .icon in /abs/workspace/apps/biz/ — it becomes the app's launcher icon on the phone home screen. Avoid generic glyphs (📦/📁/📄)
 - For single-page apps: put everything in index.html (inline CSS/JS is fine)
-- Make it look designed, not just functional — follow the DESIGN SYSTEM and CRAFT rules below exactly
+- Make it look designed, not just functional — follow the DESIGN SYSTEM and CRAFT rules below exactly, except where the Instructions above ask for a different look (the DESIGN SYSTEM's PRECEDENCE line)
 - Building something that isn't a web page — a Rust/Go/C/C++/native program, a CLI, anything needing a real compiler or runtime? Actually build and RUN it with its real toolchain via bash (e.g. \`cargo run\`, \`go run .\`, \`cc main.c && ./a.out\`), and make index.html show the REAL output it produced — embed the generated image/file, or the captured real stdout. Do NOT reimplement the program in browser JavaScript and present that as its result.
 - Never claim a preview "matches", is "identical to", or is "the same as" a program's real output unless you actually ran that program and are showing its real output. If you genuinely can't run the toolchain in this sandbox, say so plainly and show only what you verified — an honest "couldn't compile/run it here" beats a fabricated match.
 - The app will be served at http://127.0.0.1:7007/apps/biz/index.html
 - Do NOT ask questions — just build it based on the instructions
 
 DESIGN SYSTEM — Marketing Landing Page. Implement these EXACT values; do not substitute your own colors, fonts, or sizes:
+PRECEDENCE: the user's own request outranks this design system. Where the request names part of the look — a color, a font, light or dark mode, a style, a reference site — build what the user asked for, for that part, and use this system's exact values for everything the request leaves open.
 Color tokens (EXACT). Put \`color-scheme: light dark\` on :root and define each token once — every value is a light-dark() pair, so the app ships BOTH themes from one definition:
   --bg: light-dark(oklch(0.99 0.004 40), oklch(0.15 0.012 30));
   --bg-subtle: light-dark(oklch(0.97 0.007 40), oklch(0.18 0.014 30));

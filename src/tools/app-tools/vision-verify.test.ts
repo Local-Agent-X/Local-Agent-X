@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import type { DispatchOptions } from "../../llm-dispatch.js";
 import { visionVerdictForScreenshot } from "./vision-verify.js";
+import { DESIGN_PRECEDENCE, selectDesignBrief } from "../design-brief.js";
 
 const PNG = "iVBORw0KGgoFAKE=";
 
@@ -74,17 +75,29 @@ describe("visionVerdictForScreenshot — mandated design spec", () => {
     const dispatch = vi.fn(async (opts: DispatchOptions) => { seen = opts.prompt; return '{"ok":true,"reason":"ok","design":{"score":2,"issues":["accent is red, spec mandates #2563eb"]}}'; });
     const spec = "Palette (exact): --accent #2563eb · font: Inter";
     const v = await visionVerdictForScreenshot(PNG, "a todo app", { dispatch }, spec);
-    expect(seen).toContain("MANDATED DESIGN SYSTEM");
+    expect(seen).toContain("3) DESIGN SYSTEM");
     expect(seen).toContain("--accent #2563eb");
-    expect(seen).toContain("Weight adherence to this spec HEAVILY");
+    expect(seen).toContain("weight adherence to this spec HEAVILY");
     expect(v?.design?.score).toBe(2);
+  });
+
+  it("scores the user's stated look against the user's words, not the house system", async () => {
+    // A habit tracker asked for "dark green": the keyword-picked archetype has a
+    // blue accent, and a judge told the blue was REQUIRED would mark the build
+    // down for doing what the user asked.
+    let seen = "";
+    const dispatch = vi.fn(async (opts: DispatchOptions) => { seen = opts.prompt; return '{"ok":true,"reason":"ok"}'; });
+    await visionVerdictForScreenshot(PNG, "a habit tracker in dark green", { dispatch }, selectDesignBrief("a habit tracker").brief);
+    expect(seen).toContain(DESIGN_PRECEDENCE);
+    expect(seen).toMatch(/judge the render against the user's words and never count a departure from the system there/);
+    expect(seen).not.toMatch(/REQUIRED to implement|MANDATED/);
   });
 
   it("omits the mandated-spec section when no spec is given (generic scoring)", async () => {
     let seen = "";
     const dispatch = vi.fn(async (opts: DispatchOptions) => { seen = opts.prompt; return '{"ok":true,"reason":"ok"}'; });
     await visionVerdictForScreenshot(PNG, "a todo app", { dispatch });
-    expect(seen).not.toContain("MANDATED DESIGN SYSTEM");
+    expect(seen).not.toContain("DESIGN SYSTEM");
   });
 });
 

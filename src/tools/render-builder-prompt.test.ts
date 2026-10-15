@@ -9,6 +9,7 @@ import {
   UPDATE_CONTEXT_FILE_CAP,
   type BuilderPromptInput,
 } from "./render-builder-prompt.js";
+import { DESIGN_PRECEDENCE } from "./design-brief.js";
 
 /** Minimal valid per-build input; the prompt is the only field the design
  *  seam keys off, so tests vary just that. */
@@ -32,6 +33,12 @@ describe("renderPerBuildContext — design-brief seam", () => {
     expect(out).toContain("gain/loss");
     // Prove specificity: the fintech render must NOT carry the portfolio brief.
     expect(out).not.toContain("DESIGN SYSTEM — Creative Portfolio");
+  });
+
+  it("the builder's rules defer to the user's stated look, and the brief carries the precedence", () => {
+    const out = renderPerBuildContext(inputFor("a fintech trading dashboard in dark green"));
+    expect(out).toMatch(/exactly, except where the Instructions above ask for a different look/);
+    expect(out).toContain(DESIGN_PRECEDENCE);
   });
 
   it("flows creative-portfolio guidance for a photographer portfolio prompt", () => {

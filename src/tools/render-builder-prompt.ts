@@ -227,7 +227,7 @@ RULES:
 ${starterLine}${updateRules}- Create PROJECT.md with app description and status
 - Pick ONE emoji that best represents this app and write JUST that emoji (nothing else) to a file named .icon in ${appDir}/ — it becomes the app's launcher icon on the phone home screen. Avoid generic glyphs (📦/📁/📄)
 - For single-page apps: put everything in index.html (inline CSS/JS is fine)
-- Make it look designed, not just functional — follow the DESIGN SYSTEM and CRAFT rules below exactly
+- Make it look designed, not just functional — follow the DESIGN SYSTEM and CRAFT rules below exactly, except where the Instructions above ask for a different look (the DESIGN SYSTEM's PRECEDENCE line)
 ${NATIVE_BUILD_RULE_LINES.join("\n")}${tierBlock}
 - The app will be served at ${appUrl}
 - Do NOT ask questions — just build it based on the instructions

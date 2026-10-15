@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { DESIGN_ANTI_PATTERNS, DESIGN_CRAFT, DESIGN_TECHNIQUES, selectDesignBrief } from "./design-brief.js";
+import { DESIGN_ANTI_PATTERNS, DESIGN_CRAFT, DESIGN_PRECEDENCE, DESIGN_TECHNIQUES, selectDesignBrief } from "./design-brief.js";
 
 describe("selectDesignBrief — archetype classification", () => {
   const cases: Array<[string, string]> = [
@@ -81,6 +81,17 @@ describe("selectDesignBrief — brief content", () => {
       // The old hedge must be gone.
       expect(brief).not.toMatch(/illustrative|may replace|never a mandate|Example (accent|anchor|CTA|statement):/i);
     }
+  });
+
+  it("puts the user's own request for a look above the archetype, in every brief", () => {
+    // The archetype is keyword-picked, so it is a house default: a request for a
+    // dark-green habit tracker must not be overruled by the archetype's accent.
+    for (const p of ["fintech app", "analytics dashboard", "a habit tracker in dark green", ""]) {
+      const { brief } = selectDesignBrief(p);
+      expect(brief).toContain(DESIGN_PRECEDENCE);
+      expect(brief.indexOf(DESIGN_PRECEDENCE)).toBeLessThan(brief.indexOf("Color tokens"));
+    }
+    expect(DESIGN_PRECEDENCE).toMatch(/user's own request outranks/);
   });
 
   it("carries product-forward guidance for a storefront", () => {

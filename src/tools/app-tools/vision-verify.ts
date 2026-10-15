@@ -79,16 +79,19 @@ export async function visionVerdictForScreenshot(
     "Rate `score` from 0 to 5 as an integer, where 5 is polished and intentional and 0 is crude or unstyled. Judge only what is visible against general design and accessibility principles: legible text contrast, a clear visual hierarchy, comfortable and deliberate spacing, real iconography rather than emoji standing in for UI controls, and a layout that reads as designed rather than a default template or an overflowing/broken responsive grid.",
     "Also rate each axis 0–5 as an integer in `dimensions`: `hierarchy` — is there a clear type/size hierarchy with one dominant title and headings distinct from body, or does everything look the same size? `spacing` — consistent rhythm, comfortable padding, content aligned to a grid, or cramped/ragged/arbitrary gaps? `color` — a coherent, deliberate palette with sufficient contrast, or a generic template look? `states` — does it read as designed real content with proper affordances (buttons look clickable, a real empty state rather than a bare void), or an unstyled data dump? The overall `score` should broadly reflect these axes.",
     "List each concrete, visible problem in `issues` as one short phrase (for example: low text contrast, emoji used as icons, generic unstyled look, no visual hierarchy or cramped spacing, content overflow or broken responsive layout). Use an empty list when nothing is wrong.",
-    // When the build MANDATED an exact design system, adherence to it is the
-    // heaviest factor in the score — a render that ignores the required palette
-    // or font is off-spec however tidy it looks. The judge names the specific
-    // deviation so the design-verify refine nudge is actionable, not vague.
+    // When the build was given an exact design system, adherence to it is the
+    // heaviest factor in the score — a render that ignores the palette or font
+    // is off-spec however tidy it looks — except where the user's request named
+    // the look itself (the spec's own PRECEDENCE line): there the user's words
+    // are the spec, and matching them must never cost points. The judge names
+    // the specific deviation so the design-verify refine nudge is actionable.
     ...(designSpec
       ? [
           "",
-          "3) MANDATED DESIGN SYSTEM — the build was REQUIRED to implement these EXACT values:",
+          "3) DESIGN SYSTEM — the build was given these EXACT values:",
           designSpec,
-          "Weight adherence to this spec HEAVILY in the design `score`: a render that ignores the required palette, substitutes a different font, or drops the specified spacing/radius is off-spec and scores low even if it looks otherwise clean. For each visible deviation add a concrete `issues` entry naming the mismatch (e.g. \"accent is red, spec mandates #2563eb\", \"used a serif; spec mandates the sans stack\", \"flat cards, spec mandates the elevation shadow\").",
+          "The app description above is the user's own request, and its PRECEDENCE line applies to you too. For any part of the look the description names (a color, a font, light or dark mode, a style), judge the render against the user's words and never count a departure from the system there as a deviation; a render that ignored the user's stated look is the deviation.",
+          "For everything the description leaves open, weight adherence to this spec HEAVILY in the design `score`: a render that ignores the palette, substitutes a different font, or drops the specified spacing/radius is off-spec and scores low even if it looks otherwise clean. For each visible deviation add a concrete `issues` entry naming the mismatch (e.g. \"accent is red, spec says the --accent token\", \"used a serif; spec gives the sans stack\", \"flat cards, spec gives the elevation shadow\", \"light theme, user asked for dark\").",
         ]
       : []),
   ].join("\n");

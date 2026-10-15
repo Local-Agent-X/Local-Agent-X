@@ -16,8 +16,9 @@
  * mood prose: a full palette, an exact font stack + type scale, and exact
  * radius/shadow/spacing. Vague guidance ("a modern sans", "navy or slate") lets
  * a model with no visual taste fill the gaps with slop; exact tokens give it a
- * real system to implement. The brief is a MANDATE — the builder implements the
- * values, it does not "pick something similar".
+ * real system to implement. The brief is a MANDATE over the builder's own taste
+ * — it implements the values, it does not "pick something similar" — but not
+ * over the user's: an explicit request for a look wins (DESIGN_PRECEDENCE).
  */
 import { ARCHETYPES, NEUTRAL_ARCHETYPE } from "./design-systems.js";
 import { PALETTES, TOKEN_CSS_NAMES, type PaletteId, type PaletteTokens } from "./design-palettes.js";
@@ -148,10 +149,22 @@ function renderPalette(id: PaletteId): string {
   ].join("\n");
 }
 
-/** Compose an archetype's exact system into an injectable, mandatory brief. */
+/**
+ * Who wins when the user asked for a look and the archetype says otherwise.
+ * The archetype is picked by keyword, so it is the house default, never the
+ * user's choice: "a habit tracker in dark green" must ship dark green even when
+ * the archetype's accent is blue. Stated once, inside the brief, so every
+ * consumer of the brief (the builder prompt, the design guard's nudge, the
+ * vision judge's spec) carries the same rule.
+ */
+export const DESIGN_PRECEDENCE =
+  "PRECEDENCE: the user's own request outranks this design system. Where the request names part of the look — a color, a font, light or dark mode, a style, a reference site — build what the user asked for, for that part, and use this system's exact values for everything the request leaves open.";
+
+/** Compose an archetype's exact system into an injectable brief. */
 function renderBrief(a: DesignArchetype): string {
   return [
     `DESIGN SYSTEM — ${a.name}. Implement these EXACT values; do not substitute your own colors, fonts, or sizes:`,
+    DESIGN_PRECEDENCE,
     renderPalette(a.palette),
     `Typography: ${a.typography}`,
     a.geometry,

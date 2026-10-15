@@ -136,7 +136,7 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/harness-rows.ts` | S |
 | `src/harness-text.ts` | S |
 | `src/index.ts` | M |
-| `src/injection-patterns.ts` | S |
+| `src/injection-patterns.ts` | M |
 | `src/injection-views.ts` | S |
 | `src/irreversible-tools.ts` | S |
 | `src/keychain.ts` | M |

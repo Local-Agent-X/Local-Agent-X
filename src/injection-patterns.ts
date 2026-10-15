@@ -1,6 +1,7 @@
 /**
  * Static injection-pattern / homoglyph / scaffolding catalog for the
- * content-sanitization guard. Pure data, no logic. The detection and scoring
+ * content-sanitization guard. Pure data, plus the builders that compile its
+ * tag-name lists into patterns. The detection and scoring
  * engine lives in sanitize.ts and consumes these tables. Split out so the
  * pattern/score catalog can be reviewed in isolation from the engine that
  * applies it; a change here is a security-sensitive change to what gets
@@ -145,19 +146,34 @@ export const CONTROL_CHARS = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/g;
 // tool results (e.g. from a malicious web page or evaluate() call) are
 // interpreted as real protocol frames by some models (Anthropic in particular).
 // Strip the whole block — tag + content — before it reaches the model.
+//
+// Every named-tag pattern is compiled from its name list by the two builders
+// below, never hand-assembled, so a list and its regex cannot drift apart.
+// sanitize.tag-families.test.ts proves each name in each list is stripped in
+// every form the entry point claims.
 
-const SYSTEM_INJECTION_TAG_NAMES = [
+/** `<name>` / `</name>` for any name in the list, attributes allowed after whitespace. */
+function tagToken(names: readonly string[], slash: "" | "\\/" | "\\/?"): string {
+  const alternation = names.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+  return `<${slash}(?:${alternation})(?:\\s[^>]*)?>`;
+}
+
+/** A lone opening or closing tag of the family. */
+function loneTagPattern(names: readonly string[], flags: string): RegExp {
+  return new RegExp(tagToken(names, "\\/?"), flags);
+}
+
+/** An opening tag through the nearest closing tag of the family, content included. */
+function pairedTagPattern(names: readonly string[], flags: string): RegExp {
+  return new RegExp(`${tagToken(names, "")}[\\s\\S]*?${tagToken(names, "\\/")}`, flags);
+}
+
+export const SYSTEM_INJECTION_TAG_NAMES: readonly string[] = [
   "system-reminder", "system", "human", "assistant", "user", "admin", "operator",
 ];
-export const SYSTEM_INJECTION_TAG_RE = new RegExp(
-  `<(${SYSTEM_INJECTION_TAG_NAMES.join("|")})(\\s[^>]*)?>([\\s\\S]*?)<\\/(${SYSTEM_INJECTION_TAG_NAMES.join("|")})>`,
-  "gi"
-);
+export const SYSTEM_INJECTION_TAG_RE = pairedTagPattern(SYSTEM_INJECTION_TAG_NAMES, "gi");
 // Also strip lone opening/closing tags (no content) — e.g. </system> alone
-export const SYSTEM_INJECTION_LONE_TAG_RE = new RegExp(
-  `<\\/?( ${SYSTEM_INJECTION_TAG_NAMES.join("|")})(\\s[^>]*)?>`,
-  "gi"
-);
+export const SYSTEM_INJECTION_LONE_TAG_RE = loneTagPattern(SYSTEM_INJECTION_TAG_NAMES, "gi");
 
 // ── Pseudo-pipe tag (chat-template / glyph header spoofs) ──
 // Tokens like <|im_start|>, <|system|>, or glyph headers (<|…PLINIVS…|>) mimic a
@@ -189,8 +205,10 @@ export const LEET_MAP: Record<string, string> = {
 // Anchored, tight regexes only; err toward leaving real prose in over false-
 // stripping (a false strip loses a real fact).
 
+export const HARNESS_SCAFFOLD_TAG_NAMES: readonly string[] = ["system-reminder"];
+
 export const HARNESS_SCAFFOLD_PATTERNS: RegExp[] = [
-  /<system-reminder>[\s\S]*?<\/system-reminder>/gi,
+  pairedTagPattern(HARNESS_SCAFFOLD_TAG_NAMES, "gi"),
   /^\s*SYSTEM:\s*You have called[\s\S]*?(?:\n\n|$)/gim,
   /you have called \w+ \d+ times[\s\S]*?(?:final output\.?|$)/gi,
   /stop searching and produce your final output\.?/gi,

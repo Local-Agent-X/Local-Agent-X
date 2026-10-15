@@ -415,7 +415,7 @@ describe("what the untrusted-content wrapper does to the document", () => {
     const edited: string[] = [];
     for (let code = 0; code <= 0xffff; code++) {
       const lit = literal(String.fromCharCode(code));
-      if (normalizeHomoglyphs(stripSystemInjectionTags(stripControlChars(lit))) !== lit) edited.push(`U+${code.toString(16).padStart(4, "0")}`);
+      if (stripSystemInjectionTags(normalizeHomoglyphs(stripControlChars(lit))) !== lit) edited.push(`U+${code.toString(16).padStart(4, "0")}`);
       if (JSON.parse(lit) !== String.fromCharCode(code)) edited.push(`U+${code.toString(16).padStart(4, "0")} does not parse back`);
     }
     expect(edited).toEqual([]);

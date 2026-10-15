@@ -54,12 +54,24 @@ export function stripHtmlComments(s: string): string {
  * - Nested boundary detection
  */
 
-/** Strip pseudo-system XML tags that could hijack model behavior when embedded in tool results. */
+/**
+ * Strip pseudo-system XML tags that could hijack model behavior when embedded
+ * in tool results. Loops to a fixpoint because removing a lone tag can splice
+ * its neighbors into a new one (`<sys</system>tem>`). Every changing pass
+ * removes at least one `<`, so the loop terminates. Expects ASCII angle
+ * brackets: run normalizeHomoglyphs first.
+ */
 export function stripSystemInjectionTags(text: string): string {
-  let result = text.replace(SYSTEM_INJECTION_TAG_RE, "[CONTENT-STRIPPED]");
-  result = result.replace(SYSTEM_INJECTION_LONE_TAG_RE, "");
-  result = result.replace(PSEUDO_PIPE_TAG_RE, "[CONTENT-STRIPPED]");
-  return result;
+  let out = text;
+  let prev: string;
+  do {
+    prev = out;
+    out = out
+      .replace(SYSTEM_INJECTION_TAG_RE, "[CONTENT-STRIPPED]")
+      .replace(SYSTEM_INJECTION_LONE_TAG_RE, "")
+      .replace(PSEUDO_PIPE_TAG_RE, "[CONTENT-STRIPPED]");
+  } while (out !== prev);
+  return out;
 }
 
 // Derived scan views (leetspeak/dot-stripped) live in injection-views.ts —
@@ -213,20 +225,19 @@ export function wrapExternalContent(
   // they never appear in detection warnings, metadata, or the wrapped payload.
   let sanitized = redactKnownSecrets(content);
 
-  // Step 1: Strip control characters and invisible chars
-  sanitized = stripControlChars(sanitized);
+  // Step 1: Strip control characters and invisible chars, then fold Unicode
+  // homoglyphs to ASCII. Both run before any tag or marker matching: a
+  // lookalike-bracket tag folded AFTER stripping would come out as a live one.
+  sanitized = normalizeHomoglyphs(stripControlChars(sanitized));
 
-  // Step 1.5: Strip pseudo-system tags before they reach the model
+  // Step 2: Strip pseudo-system tags before they reach the model
   sanitized = stripSystemInjectionTags(sanitized);
 
-  // Step 2: Neutralize any existing boundary-like markers (prevents spoofing)
+  // Step 3: Neutralize any existing boundary-like markers (prevents spoofing)
   sanitized = sanitized.replace(/<<<\s*EXTERNAL/gi, "[[MARKER_SANITIZED]]");
   sanitized = sanitized.replace(/<<<\s*END_EXTERNAL/gi, "[[MARKER_SANITIZED]]");
   sanitized = sanitized.replace(/<<<\s*UNTRUSTED/gi, "[[MARKER_SANITIZED]]");
   sanitized = sanitized.replace(/\[\[MARKER_SANITIZED\]\]/g, "");
-
-  // Step 3: Normalize Unicode homoglyphs that could spoof XML/boundary tags
-  sanitized = normalizeHomoglyphs(sanitized);
 
   // Step 4: Detect and flag injection attempts (non-blocking, just annotates)
   const injections = detectInjection(sanitized);

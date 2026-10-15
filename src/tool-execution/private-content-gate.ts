@@ -29,10 +29,8 @@ import { isTrustedDestination, isTrustedEmailRecipient } from "../tools/http-egr
 import { getOwnEmailAddresses } from "../tools/email-config.js";
 import { currentHumanText } from "./unnamed-delete-gate.js";
 import { registrableDomain } from "../browser/registrable-domain.js";
-import {
-  describeDestination, destinationKey, destinationsOf, payloadOf, sendsOffBox,
-  type Destination, type PrivateGateDeps,
-} from "./private-content-destinations.js";
+import { destinationsOf, payloadOf, sendsOffBox, type PrivateGateDeps } from "./private-content-destinations.js";
+import { describeDestination, destinationKey, type Destination } from "./send-destinations.js";
 import { UnreadableClipboardError } from "./private-content-computer.js";
 import { egressPayload } from "./egress-payload.js";
 import { personalDocumentPath } from "./private-read-record.js";
@@ -77,6 +75,8 @@ function chosenDestination(d: Destination, j: Judge): boolean {
   switch (d.kind) {
     case "email": return isTrustedEmailRecipient(d.address, j.own) || j.addresses.has(d.address);
     case "site": return isTrustedDestination(d.url) || namedSite(j.words, d.host);
+    // The tool sends only to chats the user authorized in Settings.
+    case "chat": return true;
     default: return false;
   }
 }

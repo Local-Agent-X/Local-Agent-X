@@ -22,6 +22,7 @@ import { classifyToolRisk } from "./autonomy/risk.js";
 import { irreversibleToolReason } from "./irreversible-tools.js";
 import { hasCapability, TOOL_PATH_ARGS } from "./tool-registry.js";
 import { declaredPaths } from "./security/layer/runtime-state.js";
+import { declaredDestinations, destinationKey } from "./tool-execution/send-destinations.js";
 
 // Profile name cached 1s — same shape as the prior approvalMode cache.
 // loadProfileName() reads ~/.lax/autonomy-profile.json on miss.
@@ -107,12 +108,22 @@ export const WHOLE_TOOL_GRANTS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Egress tools whose `url` is the whole destination: a grant names the host,
- * and the method, headers and body sent there are its payload. Keyed on the
- * tool, never on a `url` argument being present — a model can add an unused
- * `url` to any call, and that must not turn the rest of it into payload.
+ * Who a send reaches, as its arguments name it (send-destinations.ts), when
+ * every recipient can be named the same way twice; null otherwise. Keyed on
+ * the tool's declared rule, never on an argument being present — a model can
+ * add an unused `url` or `to` to any call, and that must not turn the rest of
+ * it into payload.
  */
-export const HOST_SCOPED_GRANTS: ReadonlySet<string> = new Set(["http_request", "web_fetch", "ari_http"]);
+/** The scope entry naming a send's recipients. `_`-prefixed, so no argument
+ *  the model passes can collide with it (those never enter the scope). */
+const RECIPIENTS = "_recipients";
+
+function recipientsOf(tool: string, args: Record<string, unknown>): string[] | null {
+  const destinations = declaredDestinations(tool, args);
+  if (!destinations) return null;
+  const keys = destinations.map(destinationKey);
+  return keys.every((k): k is string => k !== null) ? [...new Set(keys)].sort() : null;
+}
 
 /** The command a grant names: leading env-var assignments dropped, whitespace
  *  collapsed. A token split, not a regex: `/^(\s*\w+=\S+\s+)+/` backtracks
@@ -122,14 +133,6 @@ function canonicalCommand(raw: string): string {
   let i = 0;
   while (i < tokens.length && /^\w+=\S+$/.test(tokens[i])) i++;
   return tokens.slice(i).join(" ");
-}
-
-function hostOf(url: string): string {
-  try {
-    return new URL(url).host;
-  } catch {
-    return url;
-  }
 }
 
 function stableJson(value: unknown): string {
@@ -147,11 +150,14 @@ function stableJson(value: unknown): string {
  * from what the arguments mean, as the tool table declares it:
  *   - a declared path argument (TOOL_PATH_ARGS) counts by its directory;
  *   - a shell-class tool's `command` counts as the canonical command;
- *   - an egress tool's `url` counts as its host;
+ *   - a send counts by who receives it: its email recipients, its site, the
+ *     authorized chat, its service (recipientsOf);
  *   - every other argument counts exactly.
  * A file-mutating tool (workspace-write) is scoped by its paths alone, and a
- * HOST_SCOPED_GRANTS tool by its host alone: what they write or send there is
- * the payload, so one grant covers a directory or a host, never more.
+ * send by its paths and recipients alone: what they write or send there is
+ * the payload, so one grant covers a directory or a recipient, never more.
+ * A send to a recipient that cannot be named twice (an address the check
+ * could not read) is scoped by every argument.
  * Internal `_` arguments are not the model's and never count. Only
  * WHOLE_TOOL_GRANTS get "*". Pure: the same call always yields the same key.
  */
@@ -194,11 +200,12 @@ export function computeArgsFingerprint(
   if (hasCapability(tool, "shell") && typeof args.command === "string") {
     scope.command = canonicalCommand(args.command);
   }
-  if (hasCapability(tool, "egress") && typeof args.url === "string") scope.url = hostOf(args.url);
-  if (hasCapability(tool, "workspace-write") || HOST_SCOPED_GRANTS.has(tool)) {
-    const kept = new Set(["action", "url", ...specs.map((s) => s.arg)]);
+  const recipients = recipientsOf(tool, args);
+  if (recipients || hasCapability(tool, "workspace-write")) {
+    const kept = new Set(["action", ...specs.map((s) => s.arg)]);
     for (const k of Object.keys(scope)) if (!kept.has(k)) delete scope[k];
   }
+  if (recipients) scope[RECIPIENTS] = recipients;
   return stableJson(scope);
 }
 

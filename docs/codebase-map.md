@@ -12,7 +12,7 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 66 top-level dirs · 66 live · 0 with no live importer · 1761 non-test source files · 0 god files (>400 LOC).
+**Totals:** 66 top-level dirs · 66 live · 0 with no live importer · 1762 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -42,7 +42,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/app-runtime/` | 23 | 12 | L |  |
 | `src/chat-ws/` | 23 | 21 | L |  |
 | `src/sandbox/` | 23 | 14 | L |  |
-| `src/tool-execution/` | 22 | 66 | XL |  |
+| `src/tool-execution/` | 23 | 67 | XL |  |
 | `src/orchestrator/` | 20 | 24 | L |  |
 | `src/protocols/` | 19 | 52 | XL |  |
 | `src/agents/` | 17 | 13 | L |  |

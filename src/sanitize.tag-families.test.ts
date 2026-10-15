@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { wrapExternalContent, stripHarnessScaffolding, normalizeHomoglyphs } from "./sanitize.js";
+import { wrapExternalContent, stripHarnessScaffolding, normalizeHomoglyphs, detectInjection } from "./sanitize.js";
 import { SYSTEM_INJECTION_TAG_NAMES, HARNESS_SCAFFOLD_TAG_NAMES } from "./injection-patterns.js";
 
 // Every name in every tag-family list, in every spelling its entry point
@@ -73,6 +73,19 @@ describe("wrapExternalContent strips every system-injection tag name in every cl
       it("leaves tags whose name only shares a prefix or suffix", () => {
         expect(wrappedContent(`before <${name}x> <x${name}> after`)).toBe(`before <${name}x> <x${name}> after`);
       });
+    });
+  }
+});
+
+describe("detectInjection flags every stripped tag name in every form the stripper removes", () => {
+  const flagged = (text: string) => detectInjection(text).some((d) => d.label === "system-xml");
+  for (const name of SYSTEM_INJECTION_TAG_NAMES) {
+    it(`flags ${name}`, () => {
+      const missed = loneForms(name).filter(([, tag]) => !flagged(`before ${tag} after`)).map(([form]) => form);
+      expect(missed).toEqual([]);
+    });
+    it(`does not flag a tag that only shares ${name}'s prefix or suffix`, () => {
+      expect(flagged(`<${name}x> <x${name}>`)).toBe(false);
     });
   }
 });

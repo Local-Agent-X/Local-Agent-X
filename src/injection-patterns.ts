@@ -8,6 +8,40 @@
  * flagged as prompt injection.
  */
 
+// ── System-tag injection stripping ──
+// Tags like <system-reminder>, <system>, <human>, <assistant> embedded in
+// tool results (e.g. from a malicious web page or evaluate() call) are
+// interpreted as real protocol frames by some models (Anthropic in particular).
+// Strip the whole block — tag + content — before it reaches the model.
+//
+// Every named-tag pattern is compiled from its name list by the two builders
+// below, never hand-assembled, so a list and its regex cannot drift apart.
+// sanitize.tag-families.test.ts proves each name in each list is stripped in
+// every form the entry point claims.
+
+/** `<name>` / `</name>` for any name in the list, attributes allowed after whitespace. */
+function tagToken(names: readonly string[], slash: "" | "\\/" | "\\/?"): string {
+  const alternation = names.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+  return `<${slash}(?:${alternation})(?:\\s[^>]*)?>`;
+}
+
+/** A lone opening or closing tag of the family. */
+function loneTagPattern(names: readonly string[], flags: string): RegExp {
+  return new RegExp(tagToken(names, "\\/?"), flags);
+}
+
+/** An opening tag through the nearest closing tag of the family, content included. */
+function pairedTagPattern(names: readonly string[], flags: string): RegExp {
+  return new RegExp(`${tagToken(names, "")}[\\s\\S]*?${tagToken(names, "\\/")}`, flags);
+}
+
+export const SYSTEM_INJECTION_TAG_NAMES: readonly string[] = [
+  "system-reminder", "system", "human", "assistant", "user", "admin", "operator",
+];
+export const SYSTEM_INJECTION_TAG_RE = pairedTagPattern(SYSTEM_INJECTION_TAG_NAMES, "gi");
+// Also strip lone opening/closing tags (no content) — e.g. </system> alone
+export const SYSTEM_INJECTION_LONE_TAG_RE = loneTagPattern(SYSTEM_INJECTION_TAG_NAMES, "gi");
+
 // ── Suspicious patterns (prompt injection indicators) ──
 
 export const INJECTION_PATTERNS: Array<{ pattern: RegExp; score: number; label: string }> = [
@@ -23,7 +57,9 @@ export const INJECTION_PATTERNS: Array<{ pattern: RegExp; score: number; label: 
   // weak persistent/always directives accumulate past the cumulative threshold.
   { pattern: /system\s*(prompt|message|override|command)/i, score: 0.85, label: "system-spoof" },
   { pattern: /\[system\s*(message)?\]/i, score: 0.85, label: "system-tag" },
-  { pattern: /<\/?system>/i, score: 0.85, label: "system-xml" },
+  // A protocol-frame tag is flagged under exactly the names that are stripped,
+  // in every form the stripper matches (attributes, either slash).
+  { pattern: loneTagPattern(SYSTEM_INJECTION_TAG_NAMES, "i"), score: 0.85, label: "system-xml" },
   // Decorated authority markers: ###ADMIN###, ===SYSTEM===, **ROOT** — the
   // decoration must appear on BOTH sides so a markdown heading ("### Admin")
   // stays clean.
@@ -141,39 +177,6 @@ export const INVISIBLE_CHARS = /[\u200B\u200C\u200D\u200E\u200F\uFEFF\u2060\u206
 // Unicode control characters
 export const CONTROL_CHARS = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/g;
 
-// ── System-tag injection stripping ──
-// Tags like <system-reminder>, <system>, <human>, <assistant> embedded in
-// tool results (e.g. from a malicious web page or evaluate() call) are
-// interpreted as real protocol frames by some models (Anthropic in particular).
-// Strip the whole block — tag + content — before it reaches the model.
-//
-// Every named-tag pattern is compiled from its name list by the two builders
-// below, never hand-assembled, so a list and its regex cannot drift apart.
-// sanitize.tag-families.test.ts proves each name in each list is stripped in
-// every form the entry point claims.
-
-/** `<name>` / `</name>` for any name in the list, attributes allowed after whitespace. */
-function tagToken(names: readonly string[], slash: "" | "\\/" | "\\/?"): string {
-  const alternation = names.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
-  return `<${slash}(?:${alternation})(?:\\s[^>]*)?>`;
-}
-
-/** A lone opening or closing tag of the family. */
-function loneTagPattern(names: readonly string[], flags: string): RegExp {
-  return new RegExp(tagToken(names, "\\/?"), flags);
-}
-
-/** An opening tag through the nearest closing tag of the family, content included. */
-function pairedTagPattern(names: readonly string[], flags: string): RegExp {
-  return new RegExp(`${tagToken(names, "")}[\\s\\S]*?${tagToken(names, "\\/")}`, flags);
-}
-
-export const SYSTEM_INJECTION_TAG_NAMES: readonly string[] = [
-  "system-reminder", "system", "human", "assistant", "user", "admin", "operator",
-];
-export const SYSTEM_INJECTION_TAG_RE = pairedTagPattern(SYSTEM_INJECTION_TAG_NAMES, "gi");
-// Also strip lone opening/closing tags (no content) — e.g. </system> alone
-export const SYSTEM_INJECTION_LONE_TAG_RE = loneTagPattern(SYSTEM_INJECTION_TAG_NAMES, "gi");
 
 // ── Pseudo-pipe tag (chat-template / glyph header spoofs) ──
 // Tokens like <|im_start|>, <|system|>, or glyph headers (<|…PLINIVS…|>) mimic a

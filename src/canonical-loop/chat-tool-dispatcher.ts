@@ -32,7 +32,8 @@ import { isDeniedForDelegatedWorker } from "../ops/tools/delegated-toolset.js";
 import { enqueueBridgeMedia } from "../bridge-media-queue.js";
 import { createLogger } from "../logger.js";
 import type { CallContext } from "../tool-execution/context.js";
-import { augmentByName, augmentFromToolSearch } from "./tool-augmentation.js";
+import { augmentByName, augmentFromToolSearch, canCallByName } from "./tool-augmentation.js";
+import { noteUnavailableTools } from "./unavailable-tool-hint.js";
 
 const logger = createLogger("canonical-loop.chat-tool-dispatcher");
 
@@ -257,7 +258,7 @@ function shapeCallResult(
     };
   }
 
-  const content = typeof toolMsg.content === "string"
+  const rendered = typeof toolMsg.content === "string"
     ? toolMsg.content
     : JSON.stringify(toolMsg.content);
 
@@ -279,9 +280,14 @@ function shapeCallResult(
   // user decline, and a timeout are different signals to the ledger /
   // telemetry / checkpoints. The only collapse is `running` → "ok":
   // the START succeeded, the work continues async.
-  const envStatus = parseStatusHeader(content);
+  const envStatus = parseStatusHeader(rendered);
   const canonicalStatus: ToolDispatchResult["status"] =
     envelopeStatusToDispatchStatus(envStatus);
+  // A refusal's advice, checked against the tools this run can call
+  // (unavailable-tool-hint.ts): "use delete_file" to a worker without it fails twice.
+  const content = canonicalStatus === "ok"
+    ? rendered
+    : noteUnavailableTools(rendered, (n) => unifiedRegistry.get(n) !== undefined, (n) => canCallByName(n, opts.opId, toolMap, opts.callContext));
 
   // Video/large media rides a file path on the tool message (set by
   // shapeMsg). Carry it onto the result envelope so bridge handlers can

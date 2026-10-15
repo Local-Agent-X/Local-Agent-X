@@ -53,6 +53,25 @@ function beltForOp(opId: string): DelegatedBelt | undefined {
   return { lane: op.lane, workRoot: op.contextPack?.routing?.workRoot };
 }
 
+/** A registered tool this caller's belt forbids (a delegated worker's denylist). */
+function deniedForCaller(name: string, callContext: CallContext | undefined, belt: DelegatedBelt | undefined): boolean {
+  return callContext === "delegated" && isDeniedForDelegatedWorker(name, belt);
+}
+
+/** Whether a call to `name` would run for this op: the tool is already offered, or it
+ *  is registered and the caller may load it by name (the rule `admit` applies). Read
+ *  only. Refusal hints use it so they never send the model to a tool it can't call. */
+export function canCallByName(
+  name: string,
+  opId: string | undefined,
+  toolMap: ReadonlyMap<string, ToolDefinition>,
+  callContext: CallContext | undefined,
+): boolean {
+  if (toolMap.has(name)) return true;
+  if (!opId || !unifiedRegistry.get(name)) return false;
+  return !deniedForCaller(name, callContext, callContext === "delegated" ? beltForOp(opId) : undefined);
+}
+
 /** The one admission path. Returns the tools newly added to `toolMap`. */
 function admit(
   names: readonly string[],
@@ -68,7 +87,7 @@ function admit(
     if (!name || toolMap.has(name) || discovered.some((t) => t.name === name)) continue;
     // Denylist holds at AUGMENTATION time, not just spawn time: a delegated
     // worker must not search — or name — its way back to a denied tool.
-    if (callContext === "delegated" && isDeniedForDelegatedWorker(name, belt)) {
+    if (deniedForCaller(name, callContext, belt)) {
       logger.warn(`[augment] blocked denied tool '${name}' for delegated worker op=${opId.slice(0, 12)} (${via})`);
       continue;
     }

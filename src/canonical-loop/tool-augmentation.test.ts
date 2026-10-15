@@ -8,7 +8,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ToolDefinition } from "../types.js";
 import { unifiedRegistry } from "../tools/registry.js";
-import { augmentByName, augmentFromToolSearch } from "./tool-augmentation.js";
+import { augmentByName, augmentFromToolSearch, canCallByName } from "./tool-augmentation.js";
 
 function tool(name: string): ToolDefinition {
   return { name, description: `${name} does a thing.`, parameters: { type: "object", properties: {} }, execute: async () => ({ content: "" }) } as unknown as ToolDefinition;
@@ -55,6 +55,18 @@ describe("augmentByName — a call to a tool the schema does not carry", () => {
     // A read-only tool is fine.
     expect(augmentByName("grep", opId(), toolMap, undefined, "delegated")).toBe(true);
     expect([...toolMap.keys()]).toEqual(["read", "grep"]);
+  });
+});
+
+describe("canCallByName answers what augmentByName would do, without loading anything", () => {
+  it("offered, loadable, denied and unknown names", () => {
+    const toolMap = new Map([["read", tool("read")]]);
+    expect(canCallByName("read", opId(), toolMap, "delegated")).toBe(true);
+    expect(canCallByName("grep", opId(), toolMap, "delegated")).toBe(true);
+    expect(canCallByName("delete_file", opId(), toolMap, "delegated")).toBe(false);
+    expect(canCallByName("delete_file", opId(), toolMap, "local")).toBe(true);
+    expect(canCallByName("nope", opId(), toolMap, "local")).toBe(false);
+    expect([...toolMap.keys()]).toEqual(["read"]);
   });
 });
 

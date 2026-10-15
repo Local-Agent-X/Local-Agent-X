@@ -10,10 +10,16 @@
  *      away). A changed hash fails: change agentxos upstream and re-sync instead.
  *   2. Upstream moving on. When an agentxos checkout is found ($AGENTXOS_DIR, else the
  *      `agentxos` folder next to this repo), each file's code must equal its upstream
- *      file's code. Without a checkout (CI) this half is skipped, loudly.
+ *      file's code, and every module of the protocol package must be vendored: a new
+ *      upstream file is part of the contract once index.ts exports it. Without a
+ *      checkout (CI) this half is skipped, loudly.
+ *   3. A missing module. Every relative import in a vendored file must name a vendored
+ *      file, so an index that exports a module the copy lacks fails even without a
+ *      checkout.
  *
  *   --sync   copy every file from upstream (adapting import specifiers to Node16 ESM),
- *            then record the hashes. The only way vendor/ should change.
+ *            adding protocol modules new upstream, then record the hashes. The only
+ *            way vendor/ should change.
  *   --write  record the hashes of the files as they are.
  * Runs in `npm run build` (check:vendor-sync).
  */
@@ -64,14 +70,26 @@ function findUpstream() {
   return candidates.find((dir) => existsSync(join(dir, "packages", "protocol"))) ?? null;
 }
 
+const PROTOCOL_SRC = "packages/protocol/src";
+
+/** The protocol package's modules upstream, other than its index (vendored as protocol.ts). */
+function upstreamProtocolModules(dir) {
+  return readdirSync(join(dir, PROTOCOL_SRC)).filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts") && f !== "index.ts");
+}
+
 const manifest = JSON.parse(readFileSync(manifestPath, "utf-8"));
 const upstreamDir = findUpstream();
 const errors = [];
+const vendoredUpstreams = () => new Set(Object.values(manifest.files).map((entry) => entry.upstream));
 
 if (sync) {
   if (!upstreamDir) {
     console.error("check-vendor-sync --sync: no agentxos checkout found; set AGENTXOS_DIR");
     process.exit(1);
+  }
+  const known = vendoredUpstreams();
+  for (const f of upstreamProtocolModules(upstreamDir)) {
+    if (!known.has(`${PROTOCOL_SRC}/${f}`)) manifest.files[f] = { upstream: `${PROTOCOL_SRC}/${f}`, sha256: "" };
   }
   for (const [file, entry] of Object.entries(manifest.files)) {
     const up = join(upstreamDir, entry.upstream);
@@ -97,7 +115,20 @@ for (const [file, entry] of Object.entries(manifest.files)) {
   }
 }
 
+for (const [file] of Object.entries(manifest.files)) {
+  const local = join(vendorDir, file);
+  if (!existsSync(local)) continue;
+  for (const [, spec] of readFileSync(local, "utf-8").matchAll(/(?:from\s*|import\s*\(\s*)["'](\.\/[^"']+)["']/g)) {
+    const target = spec.slice(2).replace(/\.(ts|js)$/, "") + ".ts";
+    if (!manifest.files[target]) errors.push(`src/broker-transport/vendor/${file} imports ${spec}, which is not vendored: run --sync`);
+  }
+}
+
 if (upstreamDir) {
+  const known = vendoredUpstreams();
+  for (const f of upstreamProtocolModules(upstreamDir)) {
+    if (!known.has(`${PROTOCOL_SRC}/${f}`)) errors.push(`upstream ${PROTOCOL_SRC}/${f} is not vendored: run --sync`);
+  }
   for (const [file, entry] of Object.entries(manifest.files)) {
     const up = join(upstreamDir, entry.upstream);
     const local = join(vendorDir, file);

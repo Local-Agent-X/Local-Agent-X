@@ -12,16 +12,16 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 67 top-level dirs · 67 live · 0 with no live importer · 1758 non-test source files · 0 god files (>400 LOC).
+**Totals:** 67 top-level dirs · 67 live · 0 with no live importer · 1761 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | God files |
 |---|--:|--:|:--:|--:|
-| `src/ops/` | 155 | 29 | XL |  |
+| `src/ops/` | 156 | 29 | XL |  |
 | `src/security/` | 117 | 45 | XL |  |
 | `src/tools/` | 101 | 208 | XL |  |
-| `src/canonical-loop/` | 78 | 258 | XL |  |
+| `src/canonical-loop/` | 79 | 259 | XL |  |
 | `src/providers/` | 67 | 26 | XL |  |
 | `src/workspace/` | 66 | 3 | M |  |
 | `src/memory/` | 51 | 139 | XL |  |
@@ -40,7 +40,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/context-manager/` | 24 | 13 | L |  |
 | `src/agent-request/` | 23 | 15 | L |  |
 | `src/app-runtime/` | 23 | 12 | L |  |
-| `src/chat-ws/` | 23 | 20 | L |  |
+| `src/chat-ws/` | 23 | 21 | L |  |
 | `src/sandbox/` | 23 | 14 | L |  |
 | `src/tool-execution/` | 22 | 65 | XL |  |
 | `src/orchestrator/` | 20 | 24 | L |  |
@@ -54,15 +54,15 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/voice/` | 13 | 74 | XL |  |
 | `src/whatsapp-bridge/` | 12 | 8 | L |  |
 | `src/agent-guards/` | 11 | 11 | L |  |
+| `src/broker-transport/` | 11 | 38 | XL |  |
 | `src/cron/` | 11 | 9 | L |  |
 | `src/agent-loop/` | 10 | 1 | S |  |
 | `src/ari-kernel/` | 10 | 12 | L |  |
-| `src/broker-transport/` | 10 | 37 | XL |  |
+| `src/autopilot/` | 10 | 14 | L |  |
 | `src/integrations/` | 10 | 15 | M |  |
 | `src/persistence/` | 10 | 2 | S |  |
 | `src/routes/` | 10 | 91 | XL |  |
 | `src/sync/` | 10 | 21 | L |  |
-| `src/autopilot/` | 9 | 14 | L |  |
 | `src/screen-stream/` | 9 | 11 | L |  |
 | `src/bridge-voice/` | 8 | 5 | M |  |
 | `src/telegram-bridge/` | 8 | 6 | M |  |

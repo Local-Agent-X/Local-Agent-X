@@ -3,7 +3,7 @@
   "files": {
     "protocol.ts": {
       "upstream": "packages/protocol/src/index.ts",
-      "sha256": "b23d508e4dff4c34d75f8fb1c9c4a7e5010f3e4ad4fa5a088b7830b0a0382650"
+      "sha256": "0689a8fd06078ef6630fe7b7dc328aa3a1a00b32e96ec2a6886834180f30f347"
     },
     "guards.ts": {
       "upstream": "packages/protocol/src/guards.ts",
@@ -60,6 +60,10 @@
     "timeline.ts": {
       "upstream": "packages/protocol/src/timeline.ts",
       "sha256": "a57f4036f12a685a10d7f74a1ea913f19d3f76e29ef8528e89490175edc34c01"
+    },
+    "workers.ts": {
+      "upstream": "packages/protocol/src/workers.ts",
+      "sha256": "85de88d912e850a7db93d527e1c5fa351c5bca57b45d117c35023f33be671e63"
     }
   }
 }

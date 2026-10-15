@@ -190,7 +190,10 @@ export type ServerEvent =
   // (lifecycle markers, errors) and for ops that don't emit canonical turns.
   // `model` (optional) rides on the same turn_committed relay: the model that
   // served the round, for the panel's Model column. Set-once on the client.
-  | { type: "bg_op_progress"; opId: string; line: string; totalTokens?: number; model?: string }
+  // `status` (optional) moves the card to a suspended state — paused, blocked
+  // (waiting on something) or stalled — and `resumable` says it can be resumed;
+  // a worker that goes back to work sends bg_op_started again.
+  | { type: "bg_op_progress"; opId: string; line: string; totalTokens?: number; model?: string; status?: "paused" | "blocked" | "stalled"; resumable?: boolean }
   // `headless` (optional) marks a completion whose originating session is a
   // headless background one (the ONE predicate: chat-ws/state.ts
   // isHeadlessSession — dream-/skill-review-/eval_). Stamped server-side so

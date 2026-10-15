@@ -233,7 +233,7 @@ export {
 } from "./adapters/codex.js";
 
 export { listActiveCanonicalOps, type ActiveCanonicalOp } from "./active-ops.js";
-
+export { listLiveWorkers, type LiveWorker } from "./live-workers.js";
 export { awaitCanonicalOp, awaitOpRunning, type AwaitRunningResult } from "./await-op.js";
 
 export {

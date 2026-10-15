@@ -33,7 +33,7 @@
  */
 import { broadcastToSession, getSessionForOp, getTaskForOp, releaseOpFromSession, proactiveSpeakToSession, getSessionPersister } from "../ops/session-bridge.js";
 import { isHeadlessSession } from "../chat-ws/broadcast.js";
-import { isDispatchFailure } from "./types.js";
+import { suspendedWorkerStatus, turnProgressLine } from "./live-workers.js";
 import { pushPendingNotification } from "../ops/pending-notifications.js";
 import { scheduleIdleNudge } from "../ops/idle-nudge.js";
 
@@ -163,19 +163,13 @@ function recordCanonicalEventWithSink(
             ...(typeof op?.startedAt === "string" ? { startedAt: op.startedAt } : {}),
           } as ServerEvent);
         } else if (to === "paused") {
-          const suspension = op?.canonical?.suspension;
-          const status = suspension?.reason === "blocked"
-            ? "blocked"
-            : suspension?.reason === "stalled"
-              ? "stalled"
-              : "paused";
           if (emitBrowser) emitBrowser(sessionId, {
             type: "bg_op_progress",
             opId: event.opId,
-            status,
-            line: suspension?.detail || "Operation paused",
+            status: suspendedWorkerStatus(op),
+            line: op?.canonical?.suspension?.detail || "Operation paused",
             resumable: true,
-          } as ServerEvent);
+          });
         } else if (to === "succeeded" || to === "failed" || to === "cancelled") {
           // A `succeeded` op that ended at an iteration checkpoint (dry
           // checkpoints / spend ceiling) is NOT done. The checkpoint's own
@@ -319,13 +313,9 @@ function recordCanonicalEventWithSink(
       }
       case "turn_committed": {
         const turnIdx = (b.turnIdx as number | undefined) ?? 0;
-        const tools = (b.tools as { tool: string; status: string }[] | undefined) ?? [];
         // Lead with what the worker actually DID this turn — the tool names,
         // each flagged if it errored — instead of an opaque message count.
-        // Bare "turn N" with no tools means a pure text/reasoning turn.
-        const summary = tools.length > 0
-          ? tools.map((t) => (isDispatchFailure(t.status) ? `${t.tool} ✗` : t.tool)).join(", ")
-          : "thinking";
+        const tools = (b.tools as { tool: string; status: string }[] | undefined) ?? [];
         // Forward the running per-op token total so the AGENTS panel can render
         // a live per-card token bar. checkpoint.ts stamps usage onto every
         // turn_committed (aggregateOpUsage across all persisted op_turns); we
@@ -336,7 +326,7 @@ function recordCanonicalEventWithSink(
         if (emitBrowser) emitBrowser(sessionId, {
           type: "bg_op_progress",
           opId: event.opId,
-          line: `✓ turn ${turnIdx} · ${summary}`,
+          line: turnProgressLine(turnIdx, tools),
           ...(typeof usage?.totalTokens === "number" ? { totalTokens: usage.totalTokens } : {}),
           ...(typeof model === "string" && model ? { model } : {}),
         } as ServerEvent);

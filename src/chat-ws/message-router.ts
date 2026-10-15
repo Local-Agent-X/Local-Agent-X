@@ -26,6 +26,7 @@ import { hasActiveTurn } from "../session/turn-lock.js";
 import { setEnforcedPlanMode, isEnforcedPlanMode } from "../canonical-loop/public/plan-ledger.js";
 import { clearSoftPlanMode } from "../tools/plan-tools.js";
 import { handleAgentRedirect, handleAgentControl } from "./agent-controls.js";
+import { sendWorkersSnapshot } from "./workers-snapshot.js";
 import { resolveDurableApproval } from "./approval-durable-resolve.js";
 import type { ScreenAttachment } from "../screen-stream/index.js";
 import { handleProcessRelayAck } from "./process-relay-router.js";
@@ -171,6 +172,11 @@ export function attachMessageRouter(ctx: RouterContext): void {
 
     if (type === "agent-control" && msg.agentId && msg.action) {
       await handleAgentControl(ws, String(msg.agentId), String(msg.action));
+      return;
+    }
+
+    if (type === "workers_list") {
+      await sendWorkersSnapshot(ws);
       return;
     }
   });

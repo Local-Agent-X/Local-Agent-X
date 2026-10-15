@@ -14,6 +14,7 @@ exchange:
 | Splitting frames over the data-channel cap, and the chat link hello | `chunks.ts` |
 | HTTP tunnel frames, body cap | `tunnel.ts` |
 | Chat frames and the events the phone reads | `chat.ts` |
+| The desktop's background jobs: events, snapshot, controls | `workers.ts` |
 | Approvals on the chat channel | `approval.ts` |
 | How a `replace` frame rewrites a turn's timeline | `timeline.ts` |
 | Voice control plane | `voice.ts` |
@@ -24,20 +25,23 @@ exchange:
 1. Change it in agentxos, following the compatibility rule at the top of
    `packages/protocol/src/index.ts`. Within a protocol version, only add.
 2. `AGENTXOS_DIR=<agentxos checkout> node scripts/check-vendor-sync.mjs --sync` copies
-   every file here, adapting import specifiers to this repo's Node16 ESM (`.js`
-   suffixes; the protocol package becomes `./protocol.js`), and records the hashes.
+   every file here, adds any protocol module new upstream, adapts import specifiers to
+   this repo's Node16 ESM (`.js` suffixes; the protocol package becomes
+   `./protocol.js`), and records the hashes.
 3. Re-sync the phone the same way (`app/scripts/check-vendor-sync.mjs --sync`).
 
 `npm run build` runs `check:vendor-sync`. It fails when a file's code no longer matches
-its recorded hash and, when an agentxos checkout is found, when it no longer matches
-upstream. Comments and formatting don't count; code does.
+its recorded hash, when a relative import names a file the copy lacks, and, when an
+agentxos checkout is found, when it no longer matches upstream or an upstream protocol
+module isn't vendored. Comments and formatting don't count; code does.
 
 The web client loads classic scripts, so it gets `timeline.ts` as the generated
 `public/js/agentxos-timeline.js` (`node scripts/gen-browser-timeline.mjs`; the build
 fails while it is stale). Regenerate it after a re-sync that changes `timeline.ts`.
 
 `src/broker-transport/chat-contract.test.ts` checks at compile time that every chat
-event the desktop emits under a type the phone reads fits `chat.ts`.
+event the desktop emits under a type the phone reads fits `chat.ts`;
+`workers-contract.test.ts` does the same for the `bg_op_*` events and `workers.ts`.
 
 The desktop-side glue (the `ws`-backed `SocketAdapter`, the dialers, the bridges) lives
 one level up in `../`, not here.

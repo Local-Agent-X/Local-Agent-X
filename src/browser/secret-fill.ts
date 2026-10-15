@@ -29,7 +29,7 @@ import type { DestinationDecision, SecretsStore } from "../secrets.js";
 import { deriveOrigin, normalizeSecretName } from "../secrets.js";
 import { getSecretBrowserOps } from "./index.js";
 import { withEmulationNotice } from "../tools/browser-tools/emulation-banner.js";
-import { registerRedactedSecretValue } from "../sanitize.js";
+import { registerRedactedSecretValue, vaultSecretSource } from "../security/secrets/index.js";
 import type { SecretElementDescriptor, SecretFillOutcome } from "./secret-ops.js";
 import { sameSite } from "./registrable-domain.js";
 import { requestSecretDestinationApproval } from "../secret-destination-gate.js";
@@ -296,7 +296,7 @@ export function createBrowserSecretFillTool(
       }
 
       // --- Guardrail 4: post-fill redaction so value can't leak back via snapshots ---
-      registerRedactedSecretValue(value);
+      registerRedactedSecretValue(value, vaultSecretSource(name));
 
       // --- Guardrail 5: audit log (success) ---
       auditLog({

@@ -10,6 +10,7 @@ import { isPlanMode, isReadOnlyCall } from "../tools/plan-tools.js";
 import { logRetry } from "../retry-telemetry.js";
 import type { Phase, PhaseOutcome, ToolCallContext } from "./context.js";
 import { terminate, CONTINUE, HALT } from "./context.js";
+import { blocked } from "../tools/result-helpers.js";
 import { getRiskLevel, buildApprovalContext } from "./approval-context.js";
 import { ARI_ACTION_MAP } from "./enforce-policy.js";
 import { sessionWorkRootOf } from "../workspace/paths.js";
@@ -294,8 +295,8 @@ async function injectSessionState(ctx: ToolCallContext): Promise<PhaseOutcome> {
         if (tc.name === "self_edit") {
           const gate = trackSelfEditCall(sessionId);
           if (!gate.allowed) {
-            const result = `User hint: ${USER_HINTS.retryExhausted}\nBLOCKED: self_edit ceiling reached for this autopilot run (${gate.count}/${gate.max}). Use direct edit/write/bash tools instead.`;
-            return terminate(ctx, { rendered: "raw", content: result, allowed: false });
+            const result = blocked(`BLOCKED: self_edit ceiling reached for this autopilot run (${gate.count}/${gate.max}).`, { layer: "autopilot", userHint: USER_HINTS.retryExhausted, recovery: "Use direct edit/write/bash tools for the rest of this run." });
+            return terminate(ctx, { rendered: "model", result, allowed: false });
           }
         }
       }
@@ -355,8 +356,8 @@ export const resolvePhase: Phase = async (ctx) => {
   // Plan mode: block non-read-only tools (session-scoped). Collapsed family
   // tools (spreadsheet/document/pdf) are judged per args.action.
   if (isPlanMode(sessionId) && !isReadOnlyCall(tc.name, ctx.args)) {
-    const result = `User hint: ${USER_HINTS.planMode}\nBLOCKED: Plan mode is active. Only read-only tools are allowed. Use exit_plan_mode to restore full access.`;
-    return terminate(ctx, { rendered: "raw", content: result, allowed: false });
+    const result = blocked("BLOCKED: Plan mode is active. Only read-only tools are allowed.", { layer: "plan-mode", userHint: USER_HINTS.planMode, recovery: "Keep to read-only tools; call exit_plan_mode when you are ready to make changes." });
+    return terminate(ctx, { rendered: "model", result, allowed: false });
   }
 
   // Protected files: block writes/deletes to core engine files that would
@@ -370,8 +371,8 @@ export const resolvePhase: Phase = async (ctx) => {
       const { isProtectedFile } = await import("../config-loader.js");
       const check = isProtectedFile(String(ctx.args.path));
       if (check.protected) {
-        const result = `User hint: ${USER_HINTS.secrets}\nBLOCKED: ${check.reason}`;
-        return terminate(ctx, { rendered: "raw", content: result, allowed: false });
+        const result = blocked(`BLOCKED: ${check.reason}`, { layer: "protected-files", userHint: USER_HINTS.secrets, recovery: "Leave this engine file as it is; if the task needs it changed, tell the user what change it needs." });
+        return terminate(ctx, { rendered: "model", result, allowed: false });
       }
     } catch {}
   }
@@ -388,7 +389,7 @@ export const resolvePhase: Phase = async (ctx) => {
   // prompt, no `tool.execute()`, no side effects.
   if (sessionId && dryRunSessions.has(sessionId)) {
     const dryRunResult = `[dry-run] tool_call captured: ${tc.name}. No side effects executed (eval mode).`;
-    return terminate(ctx, { rendered: "raw", content: dryRunResult, allowed: true });
+    return terminate(ctx, { rendered: "raw", content: dryRunResult });
   }
 
   return CONTINUE;

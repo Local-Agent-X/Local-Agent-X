@@ -17,16 +17,17 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // Captures every audit log call so we can assert the secret never appears.
 // vi.mock factories are hoisted above imports, so the captured state must
 // also be hoisted with vi.hoisted() to be in scope at factory eval time.
-const { auditCalls, loggerMock, redactedRegistrations } = vi.hoisted(() => {
+const { auditCalls, loggerMock, redactedRegistrations, redactedSources } = vi.hoisted(() => {
   const auditCalls: string[] = [];
   const redactedRegistrations: string[] = [];
+  const redactedSources: string[] = [];
   const loggerMock = {
     warn: (line: string) => { auditCalls.push(line); },
     info: (line: string) => { auditCalls.push(line); },
     error: (line: string) => { auditCalls.push(line); },
     debug: (line: string) => { auditCalls.push(line); },
   };
-  return { auditCalls, loggerMock, redactedRegistrations };
+  return { auditCalls, loggerMock, redactedRegistrations, redactedSources };
 });
 
 vi.mock("../logger.js", () => ({
@@ -60,9 +61,15 @@ vi.mock("../approval-manager.js", () => ({
 }));
 
 // Capture redaction registrations (and assert secret IS handed to the redactor —
-// that's the GOOD path; redaction registry is internal and never leaks).
-vi.mock("../sanitize.js", () => ({
-  registerRedactedSecretValue: (v: string) => { redactedRegistrations.push(v); },
+// that's the GOOD path; redaction registry is internal and never leaks). The
+// fill registers under its vault entry's source, so deleting the entry
+// withdraws the value it filled too.
+vi.mock("../security/secrets/index.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../security/secrets/index.js")>()),
+  registerRedactedSecretValue: (v: string, source?: string) => {
+    redactedRegistrations.push(v);
+    if (source) redactedSources.push(source);
+  },
 }));
 
 // ───────────────────────── imports after mocks ─────────────────────────
@@ -122,7 +129,8 @@ function assertNoSecretLeak(haystacks: Array<string | undefined>): void {
 beforeEach(() => {
   auditCalls.length = 0;
   redactedRegistrations.length = 0;
-  elementDescriptor = { found: true, tag: "input", type: "password", autocomplete: "current-password" };
+  redactedSources.length = 0;
+  elementDescriptor ={ found: true, tag: "input", type: "password", autocomplete: "current-password" };
   holdsEmail = false;
   pageOrigin = ORIGIN;
   ladder = "approved";
@@ -147,8 +155,10 @@ describe("browser_fill_from_secret — readback never leaks the secret", () => {
     // Critical: the value is not echoed back to the model.
     assertNoSecretLeak([result.content, ...auditCalls]);
 
-    // Sanity: the value WAS registered with the redactor on success.
+    // Sanity: the value WAS registered with the redactor on success, under
+    // the vault entry it came from.
     expect(redactedRegistrations).toContain(SECRET_VALUE);
+    expect(redactedSources).toEqual([`vault:${SECRET_NAME}`]);
   });
 
   it("mismatch → err, NO secret in message or logs", async () => {

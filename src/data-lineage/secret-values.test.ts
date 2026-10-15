@@ -204,3 +204,59 @@ describe("withholdSecretValues — masked values are registered and refused at e
     expect(egressGuardGate(clean).kind).toBe("continue");
   });
 });
+
+// A value of no known format, under a `value` key that names nothing: only the
+// record around it says it is a credential. None of these URLs is a secrets
+// endpoint by isSecretEndpointUrl, so before the record rule each reached the
+// model whole.
+describe("a secrets store's records are judged by their own name and type, whatever URL served them", () => {
+  const SECRET = "q8Zr2mWx9TfLk3Vb7NcPy4Hd";
+
+  it("masks a Vercel env record by its credential name, and by the type the store declares", () => {
+    expect(isSecretEndpointUrl("https://api.vercel.com/v9/projects/prj_1/env")).toBe(false);
+    const byName = maskSecretValues(`{"envs":[{"type":"plain","key":"STRIPE_SECRET_KEY","value":"${SECRET}","target":["production"]}]}`);
+    expect(byName.text).not.toContain(SECRET);
+    expect(byName.kinds).toEqual(["Credential Record"]);
+    const byType = maskSecretValues(`{"envs":[{"type":"sensitive","key":"DB_CONNECTION","value":"${SECRET}"}]}`);
+    expect(byType.text).not.toContain(SECRET);
+    expect(byType.text).toContain('"key":"DB_CONNECTION"');
+  });
+
+  it("masks an AWS SSM SecureString parameter", () => {
+    const ssm = `{"Parameter":{"Name":"/prod/payments/db","Type":"SecureString","Value":"${SECRET}","Version":3}}`;
+    const r = maskSecretValues(ssm);
+    expect(r.text).not.toContain(SECRET);
+    expect(r.text).toContain('"Name":"/prod/payments/db"');
+    expect(r.values).toEqual([SECRET]);
+  });
+
+  it("leaves a record whose name and type say nothing about a credential", () => {
+    const plain = `{"envs":[{"type":"plain","key":"NEXT_PUBLIC_SITE_NAME","value":"${SECRET}"},{"name":"release-notes","value":"${SECRET}"}]}`;
+    expect(maskSecretValues(plain).masked).toBe(0);
+  });
+
+  it("never reaches into a file read: knownOnly masks registered values only", () => {
+    expect(maskSecretValues(`{"key":"STRIPE_SECRET_KEY","value":"${SECRET}"}`, { knownOnly: true }).masked).toBe(0);
+  });
+});
+
+// Peter's ruling (2026-10-14): the entropy rules keep excluding all-lowercase
+// runs and hash-length hex, so commit ids and digests stay readable; a
+// lowercase or hex credential is caught by the NAME it sits under instead.
+describe("a lowercase or hex credential is masked by its name, a bare digest is not", () => {
+  it("masks hex and lowercase values under credential names", () => {
+    const HEX32 = "0123456789abcdef0123456789abcdef";
+    const HEX40 = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
+    const LOWER = "abcdefghijklmnopqrstuvwx";
+    for (const text of [`API_KEY=${HEX32}`, `GITHUB_TOKEN: ${HEX40}`, `{"token": "${LOWER}"}`, `{"client_secret":"${HEX32}"}`]) {
+      const r = maskSecretValues(text);
+      expect(r.masked, text).toBe(1);
+      expect(r.text, text).not.toMatch(new RegExp(`${HEX32}|${HEX40}|${LOWER}`));
+    }
+  });
+
+  it("leaves a commit id and a content digest alone", () => {
+    const text = "commit 3424062b65a5e072cf033eb02872c24db9340c3 (HEAD -> main)\nsha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    expect(maskSecretValues(text).masked).toBe(0);
+  });
+});

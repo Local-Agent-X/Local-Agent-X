@@ -1,5 +1,6 @@
 import type { RouteHandler } from "../server-context.js";
 import { jsonResponse, readBody, safeErrorMessage } from "../server-utils.js";
+import { resultFromRendered } from "../tools/result-helpers.js";
 
 // Tools deliberately NOT exposed to the MCP bridge (= the chat supervisor
 // running as claude CLI). These either block the supervisor's chat turn,
@@ -132,7 +133,9 @@ export const handleMcpRoutes: RouteHandler = async (method, url, req, res, ctx, 
 
       json(200, {
         content: content.length > 0 ? content : [{ type: "text", text: "(no output)" }],
-        isError: plainText.startsWith("BLOCKED") || plainText.startsWith("Tool execution failed"),
+        // The status header is the envelope's one rendered form; prose prefixes
+        // missed every refusal that carried a header or a user hint.
+        isError: resultFromRendered(plainText).isError === true,
       });
     } catch (e) {
       json(500, { error: safeErrorMessage(e) });

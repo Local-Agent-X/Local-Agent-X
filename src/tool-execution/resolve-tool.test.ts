@@ -197,6 +197,8 @@ describe("protected-file anti-brick gate keys on the edit family, not a name lis
       expect(ctx.allowed, name).toBe(false);
       const msg = ctx.msgs.at(-1);
       expect(String(msg?.content), name).toContain("BLOCKED");
+      expect(ctx.result?.status, name).toBe("blocked");
+      expect((msg as { _block?: { layer: string } })._block?.layer, name).toBe("protected-files");
     }
   });
 
@@ -281,6 +283,10 @@ describe("plan mode judges sql_query by its readonly flag", () => {
       expect(mutation.outcome.kind).toBe("halt");
       expect(mutation.ctx.allowed).toBe(false);
       expect(String(mutation.ctx.msgs.at(-1)?.content)).toContain("Plan mode is active");
+      // A refusal, recorded as one: the status header and the block record
+      // the event log reads, not a raw string it logs as ok.
+      expect(String(mutation.ctx.msgs.at(-1)?.content)).toMatch(/^\[blocked/);
+      expect((mutation.ctx.msgs.at(-1) as { _block?: { layer: string } })._block?.layer).toBe("plan-mode");
       expect((await sql({})).outcome.kind).toBe("continue");
       expect((await sql({ readonly: true })).outcome.kind).toBe("continue");
     } finally {

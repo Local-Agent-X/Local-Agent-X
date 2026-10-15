@@ -9,6 +9,7 @@ export {
 	knownSecretValues,
 	registerRedactedSecretValue,
 	unregisterRedactedSecretValue,
+	vaultSecretSource,
 	isAppAtRestSecretBasename,
 	APP_AT_REST_SECRET_BASENAMES,
 } from "./known-secrets.js";

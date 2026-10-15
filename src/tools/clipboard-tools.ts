@@ -157,8 +157,8 @@ const clipboardWriteFromSecret: ToolDefinition = {
       // EVER appears in subsequent tool output (snapshot, extract, page read),
       // sanitize.ts strips it before the model ingests the result.
       try {
-        const { registerRedactedSecretValue } = await import("../sanitize.js");
-        registerRedactedSecretValue(value);
+        const { registerRedactedSecretValue, vaultSecretSource } = await import("../security/secrets/index.js");
+        registerRedactedSecretValue(value, vaultSecretSource(name));
       } catch { /* redactor optional */ }
 
       await run("write", value);

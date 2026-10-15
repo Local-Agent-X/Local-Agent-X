@@ -25,6 +25,7 @@ import { askUserGates } from "./ask-user-gates.js";
 import { outboundIsTaintFree, withoutUntrustedContent } from "./taint-scope.js";
 import { kernelDenyBlocker, kernelDenyResult } from "./kernel-block.js";
 import { rewritePathForWorktree } from "./worktree-paths.js";
+import { blocked } from "../tools/result-helpers.js";
 
 export { egressGuardGate, dataLineageGate, canaryEgressGate } from "./egress-gates.js";
 // Tool lookup + arg validation live in arg-validation.ts (LOC ceiling);
@@ -173,7 +174,8 @@ async function ariKernelGate(ctx: ToolCallContext): Promise<PhaseOutcome> {
 function sessionPolicyGate(ctx: ToolCallContext): PhaseOutcome {
   const block = checkSessionPolicy(ctx.sessionId || "default", ctx.tc.name);
   if (block) {
-    return terminate(ctx, { rendered: "raw", content: `User hint: ${USER_HINTS.policy}\n${block}`, allowed: false });
+    const recovery = "Do this with a tool the session allows, or tell the user it needs this tool enabled for the session.";
+    return terminate(ctx, { rendered: "model", result: blocked(block, { layer: "session-policy", userHint: USER_HINTS.policy, recovery }), allowed: false });
   }
   return CONTINUE;
 }

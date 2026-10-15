@@ -14,7 +14,7 @@
  * (tool-execution/secret-env-approval.ts).
  */
 import { getSecretsStoreSingleton } from "../secrets.js";
-import { registerRedactedSecretValue } from "../security/secrets/known-secrets.js";
+import { registerRedactedSecretValue, vaultSecretSource } from "../security/secrets/known-secrets.js";
 
 /** Environment variable name → vault secret name. */
 export type SecretEnv = Record<string, string>;
@@ -63,7 +63,7 @@ export function resolveSecretEnv(secretEnv: SecretEnv): ResolvedSecretEnv | { mi
     if (!value) { missing.push(secretName); continue; }
     env[envName] = value;
     values.push({ name: secretName, value });
-    registerRedactedSecretValue(value);
+    registerRedactedSecretValue(value, vaultSecretSource(secretName));
   }
   if (missing.length > 0) return { missing };
   return {

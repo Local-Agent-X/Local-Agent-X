@@ -20,8 +20,9 @@
  *     locked; the registry, not session taint, is what stops the value leaving.
  *
  * Detection is the canonical catalog: credential formats, registered values,
- * and fields whose NAME is a credential's (credential-patterns.ts
- * namesCredential). Never the entropy pass: on the web a random-looking string
+ * fields whose NAME is a credential's (credential-patterns.ts
+ * namesCredential), and a store's `{name, value}` records whose name or type
+ * says the value is a credential. Never the entropy pass: on the web a random-looking string
  * is almost always an identifier (a Drive file id, a Twilio Account SID, a
  * pagination cursor), and masking one both blinded the model to it and
  * registered it, so every later call carrying that id was refused, in every
@@ -72,6 +73,34 @@ export function isSecretEndpointUrl(url: unknown): boolean {
 // names a credential (access_token, client_secret, apiKey, password).
 const JSON_STRING_FIELD_RE = /"((?:[^"\\]|\\.){1,64})"\s*:\s*"((?:[^"\\]|\\.)*)"/g;
 
+// A secrets store lists each entry as a record — Vercel `{key, value, type}`,
+// AWS SSM `{Name, Type, Value}`, Supabase `{name, value}`. The value's own key
+// names nothing; its siblings do: a name that names a credential, or a type the
+// store itself declares secret. Judged from the response, per innermost
+// object, so it holds whatever URL served it (a URL list never covers every
+// store). An object with braces inside its strings is not split this way.
+const RECORD_NAME_KEYS: ReadonlySet<string> = new Set(["name", "key"]);
+const SECRET_RECORD_TYPES: ReadonlySet<string> = new Set(["securestring", "secret", "sensitive", "encrypted"]);
+const FLAT_OBJECT_RE = /\{[^{}]*\}/g;
+
+/** Where each credential record's `value` string starts in `head`. */
+function credentialRecordValueStarts(head: string): Set<number> {
+  const starts = new Set<number>();
+  for (const obj of head.matchAll(FLAT_OBJECT_RE)) {
+    let credential = false;
+    let valueStart = -1;
+    for (const m of obj[0].matchAll(JSON_STRING_FIELD_RE)) {
+      const [field, key, raw] = m;
+      const k = key.toLowerCase();
+      if (RECORD_NAME_KEYS.has(k) && namesCredential(raw)) credential = true;
+      else if (k === "type" && SECRET_RECORD_TYPES.has(raw.toLowerCase())) credential = true;
+      else if (k === "value") valueStart = (obj.index ?? 0) + (m.index ?? 0) + field.length - 1 - raw.length;
+    }
+    if (credential && valueStart >= 0) starts.add(valueStart);
+  }
+  return starts;
+}
+
 // A value that names a place, not a credential: a URL, a host[:port], an
 // address. Secrets stores hold these next to real keys (SUPABASE_URL, a DB
 // host). They are masked like every other value the endpoint returned, but
@@ -112,21 +141,23 @@ interface Span { start: number; end: number; replacement: string; value: string 
 
 function jsonFieldSpans(head: string, endpoint: boolean): Span[] {
   const spans: Span[] = [];
+  const recordValues = credentialRecordValueStarts(head);
   for (const m of head.matchAll(JSON_STRING_FIELD_RE)) {
     const [, key, raw] = m;
+    const start = (m.index ?? 0) + m[0].length - 1 - raw.length;
     const fromEndpoint = endpoint && key === "value";
-    if (!raw || !(fromEndpoint || namesCredential(key))) continue;
+    const fromRecord = recordValues.has(start);
+    if (!raw || !(fromEndpoint || fromRecord || namesCredential(key))) continue;
     let value: string;
     try { value = JSON.parse(`"${raw}"`); } catch { continue; }
     // A value this masker already rendered (`corr****`) is shaped enough to
     // pass isSecretShaped; masking it again to `****` would throw the prefix
     // away on the seam's second pass and make the pass non-idempotent.
     if (isMaskedDisplay(value) || !isSecretShaped(value)) continue;
-    const start = (m.index ?? 0) + m[0].length - 1 - raw.length;
     spans.push({
       start, end: start + raw.length, replacement: maskForDisplay(value),
       value: LOCATOR_VALUE_RE.test(value) || value.length < MIN_REGISTERED_ENDPOINT_VALUE ? null : value,
-      kind: fromEndpoint ? "Secrets Endpoint Value" : "Credential Field",
+      kind: fromEndpoint ? "Secrets Endpoint Value" : fromRecord ? "Credential Record" : "Credential Field",
     });
   }
   return spans;

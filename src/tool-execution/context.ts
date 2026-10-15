@@ -128,13 +128,15 @@ export function createContext(input: {
 // ToolResult-shaped values.
 export function terminate(
   ctx: ToolCallContext,
+  // A refusal is never raw: it goes out as a blocked() result, so the event
+  // log, the block record and the model all read it as blocked, not "ok".
   payload:
-    | { rendered: "raw"; content: string; allowed: boolean }
+    | { rendered: "raw"; content: string }
     | { rendered: "model"; result: ToolResult; allowed: boolean },
 ): PhaseOutcome {
   if (payload.rendered === "raw") {
-    ctx.allowed = payload.allowed;
-    ctx.onEvent?.({ type: "tool_end", toolName: ctx.tc.name, toolCallId: ctx.tc.id, result: payload.content, allowed: payload.allowed, status: payload.allowed ? "ok" : "blocked" });
+    ctx.allowed = true;
+    ctx.onEvent?.({ type: "tool_end", toolName: ctx.tc.name, toolCallId: ctx.tc.id, result: payload.content, allowed: true, status: "ok" });
     ctx.msgs.push({ role: "tool", tool_call_id: ctx.tc.id, content: payload.content } as ChatCompletionMessageParam);
   } else {
     ctx.allowed = payload.allowed;

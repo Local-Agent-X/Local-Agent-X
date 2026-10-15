@@ -1,7 +1,7 @@
 import { readFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { getOrCreateMasterKey, type KeychainProvider } from "./keychain.js";
-import { isEmailAddress, registerRedactedSecretValue } from "./security/secrets/index.js";
+import { isEmailAddress, registerRedactedSecretValue, unregisterRedactedSecretValue, vaultSecretSource } from "./security/secrets/index.js";
 import { deriveOrigin, decrypt, encryptSecretsFile } from "./secrets-crypto.js";
 import { atomicWriteFileSync } from "./util/json-store.js";
 import { getActivePreBlessedSecrets } from "./ops/pre-bless.js";
@@ -118,7 +118,7 @@ export class SecretsStore {
         // the value to first be used in a browser fill / clipboard write.
         // isSecretShaped gates inside register(), so short/numeric values
         // (ports, PINs) are skipped (no false-positive egress blocks).
-        registerRedactedSecretValue(value);
+        registerRedactedSecretValue(value, vaultSecretSource(entry.name));
         this.secrets.set(entry.name, {
           name: entry.name,
           value,
@@ -219,7 +219,8 @@ export class SecretsStore {
     // "did the save actually land" — a UI that misreports a rejected save
     // (the GEMINI_API_KEY ×5 incident) is caught by this line's absence.
     logger.info(`[secrets] set "${name}" (${existing ? "updated" : "new"}, ${this.secrets.size} total)`);
-    registerRedactedSecretValue(value);
+    if (existing) unregisterRedactedSecretValue(existing.value, vaultSecretSource(name));
+    registerRedactedSecretValue(value, vaultSecretSource(name));
     this.notifyAvailability({ type: "available", name });
   }
 
@@ -228,6 +229,7 @@ export class SecretsStore {
    *  value is unrecoverable and they want the dead entry gone for good. */
   delete(name: string): boolean {
     const nextSecrets = new Map(this.secrets);
+    const deletedValue = this.secrets.get(name)?.value;
     const liveExisted = nextSecrets.delete(name);
     const nextQuarantined = this.quarantined.filter(q => q.name !== name);
     const quarantineRemoved = nextQuarantined.length < this.quarantined.length;
@@ -236,6 +238,7 @@ export class SecretsStore {
       this.save(nextSecrets, nextQuarantined);
       this.secrets = nextSecrets;
       this.quarantined = nextQuarantined;
+      if (deletedValue !== undefined) unregisterRedactedSecretValue(deletedValue, vaultSecretSource(name));
       this.notifyAvailability({ type: "deleted", name });
     }
     return existed;

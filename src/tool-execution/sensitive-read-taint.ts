@@ -47,24 +47,32 @@ const logger = createLogger("tool-execution");
 // behavior on files that merely contain credential-shaped strings.
 const PATH_GATED_READS: ReadonlySet<string> = new Set(["read", "glob", "grep", "structural_search"]);
 
+// A command's output, whichever tool hands it back: bash returns it at once,
+// the process tools return a background command's line (process_start,
+// process_restart, process_list) and its stdout/stderr (process_status). A
+// dev server printing its env is the same channel as `cat .env` in bash.
+const COMMAND_OUTPUT_TOOLS: ReadonlySet<string> = new Set([
+  "bash", "process_start", "process_restart", "process_status", "process_list",
+]);
+
 /**
  * How much of a delivered output is masked.
  *  - web_fetch / http_request bodies: credential shapes, credential-named
  *    fields, registered values, and every value a secrets endpoint served. The
  *    tools mask before their `find` filter; this is the seam's own guarantee
  *    for a result that reached here another way.
- *  - shell output and owned-source records (sql_query, email_read,
+ *  - command output and owned-source records (sql_query, email_read,
  *    memory_search, ari_* reads): the same, without the endpoint rule. No
  *    channel masks on looks alone (secret-values.ts): exfil of a random-looking
  *    token is caught at send time.
- *  - every other tool (file reads, searches, documents, process output):
- *    registered values only. A credential shape in a source file is content
- *    the model is working on; the user's stored secrets and the operator token
- *    never are, whichever tool happens to carry them.
+ *  - every other tool (file reads, searches, documents): registered values
+ *    only. A credential shape in a source file is content the model is working
+ *    on; the user's stored secrets and the operator token never are, whichever
+ *    tool happens to carry them.
  */
 function maskScope(toolName: string, args: Record<string, unknown>, isSensitiveRead: boolean): MaskOptions {
   if (toolName === "http_request" || toolName === "web_fetch") return { endpoint: isSecretEndpointUrl(args.url) };
-  if (toolName === "bash" || (isSensitiveRead && !PATH_GATED_READS.has(toolName))) return {};
+  if (COMMAND_OUTPUT_TOOLS.has(toolName) || (isSensitiveRead && !PATH_GATED_READS.has(toolName))) return {};
   return { knownOnly: true };
 }
 

@@ -60,9 +60,16 @@ export function isAppAtRestSecretBasename(basename: string): boolean {
 }
 
 // In-memory registry of secret plaintext values to detect/scrub from any
-// content heading off-box. Populated proactively from the SecretsStore on
-// load/add, and lazily by browser_fill_from_secret / clipboard_write.
-const REDACTED_SECRET_VALUES = new Set<string>();
+// content heading off-box, each with who vouches for it. A vault entry
+// registers under its own source (`vault:<name>`) and withdraws it when the
+// entry is deleted or its value replaced — the user retracting "this is a
+// secret". Everything else (the operator token, a browser fill, a clipboard
+// write, a value masked out of tool output) registers as `seen` and stays for
+// the process: once a value has been treated as a secret in one channel it is
+// one in every channel, every session. A value leaves the registry only when
+// no source still vouches for it.
+const SEEN = "seen";
+const REGISTERED = new Map<string, Set<string>>();
 
 // ── JSON-escaped renderings ──────────────────────────────────────────────
 //
@@ -195,18 +202,31 @@ export function isSecretShaped(value: string): boolean {
   return true;
 }
 
-/** Register a plaintext value to detect/redact from any outgoing content. */
-export function registerRedactedSecretValue(value: string): void {
+/** Register a plaintext value to detect/redact from any outgoing content.
+ *  `source` names who vouches for it (see REGISTERED); omitted, it is `seen`. */
+export function registerRedactedSecretValue(value: string, source = SEEN): void {
   if (value && isSecretShaped(value) && !isEmailAddress(value)) {
-    REDACTED_SECRET_VALUES.add(value);
+    const sources = REGISTERED.get(value) ?? new Set<string>();
+    sources.add(source);
+    REGISTERED.set(value, sources);
     if (!SECRET_MATCHERS.has(value)) SECRET_MATCHERS.set(value, buildMatcher(value));
   }
 }
 
-/** Clear a previously-registered value (e.g. on secret rotation or deletion). */
-export function unregisterRedactedSecretValue(value: string): void {
-  REDACTED_SECRET_VALUES.delete(value);
+/** Withdraw one source's claim on a value; the value stays registered while
+ *  any other source still vouches for it. */
+export function unregisterRedactedSecretValue(value: string, source = SEEN): void {
+  const sources = REGISTERED.get(value);
+  if (!sources) return;
+  sources.delete(source);
+  if (sources.size > 0) return;
+  REGISTERED.delete(value);
   SECRET_MATCHERS.delete(value);
+}
+
+/** The source a vault entry registers its value under. */
+export function vaultSecretSource(name: string): string {
+  return `vault:${name}`;
 }
 
 /**
@@ -215,7 +235,7 @@ export function unregisterRedactedSecretValue(value: string): void {
  * another, and de-dupe overlapping spans deterministically.
  */
 export function knownSecretValues(): string[] {
-  return [...REDACTED_SECRET_VALUES].sort((a, b) => b.length - a.length);
+  return [...REGISTERED.keys()].sort((a, b) => b.length - a.length);
 }
 
 /**
@@ -230,5 +250,5 @@ export function knownSecretMatchers(): KnownSecretMatcher[] {
 
 /** Whether any known values are registered (cheap fast-path guard). */
 export function hasKnownSecretValues(): boolean {
-  return REDACTED_SECRET_VALUES.size > 0;
+  return REGISTERED.size > 0;
 }

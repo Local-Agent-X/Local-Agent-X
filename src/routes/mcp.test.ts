@@ -84,5 +84,8 @@ describe("MCP call-context provenance", () => {
     expect(execute).not.toHaveBeenCalled();
     expect(res.body).toMatch(/effective mode.*host/i);
     expect(res.body).not.toContain("SHELL_EXECUTED");
+    // The refusal reaches the MCP client as an error: read from the result's
+    // status header, not from a "BLOCKED" prefix the rendered text never has.
+    expect(JSON.parse(res.body).isError).toBe(true);
   });
 });

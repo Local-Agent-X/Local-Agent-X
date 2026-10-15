@@ -69,4 +69,14 @@ describe("extractAgentOutput", () => {
     ];
     expect(extractAgentOutput(messages)).toContain("fetched 12 sources");
   });
+
+  it("never offers a refused call's text as the agent's output", () => {
+    const messages = [
+      { role: "user", content: "task" },
+      { role: "tool", content: "[blocked, layer=\"session-policy\"]\nBlocked by session policy (read-only): file writes disabled\nRecovery: use another tool" },
+      { role: "tool", content: "fetched 12 sources with relevant market data points" },
+    ];
+    expect(extractAgentOutput(messages)).not.toContain("Blocked by session policy");
+    expect(extractAgentOutput(messages)).toContain("fetched 12 sources");
+  });
 });

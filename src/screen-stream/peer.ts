@@ -11,8 +11,10 @@ import type {
   RTCPeerConnection as WeriftPeerConnection,
   MediaStreamTrack as WeriftMediaStreamTrack,
   RTCDataChannel as WeriftDataChannel,
+  RTCRtpSender as WeriftRtpSender,
   RTCIceCandidate,
 } from "werift";
+import type { StreamReport } from "./bitrate-ladder.js";
 import type { RtcIceCandidate } from "./protocol.js";
 import { DATA_CHANNEL } from "../broker-transport/vendor/protocol.js";
 import { VP8_PAYLOAD_TYPE, VP8_CLOCK_RATE } from "./ffmpeg-capture.js";
@@ -87,6 +89,9 @@ export interface DataChannelSpec {
 export class ScreenPeer {
   private readonly pc: WeriftPeerConnection;
   private readonly track: WeriftMediaStreamTrack;
+  private readonly sender: WeriftRtpSender;
+  /** The next RTP packet starts a new capture (see startNewStream). */
+  private newStream = true;
   /** Every data channel opened on this peer (control, plus any extra named channels
    *  like chat/apps in the broker transport). Empty on the tailnet path. Closed en
    *  masse on teardown. */
@@ -141,7 +146,7 @@ export class ScreenPeer {
     this.diagnostics = watchPeerDiagnostics(this.pc, "phone", weriftServers.map((s) => s.urls));
 
     this.track = new MediaStreamTrack({ kind: "video" });
-    this.pc.addTransceiver(this.track, { direction: "sendonly" });
+    this.sender = this.pc.addTransceiver(this.track, { direction: "sendonly" }).sender;
 
     this.pc.onIceCandidate.subscribe((candidate) => {
       if (this.closed) return;
@@ -227,10 +232,49 @@ export class ScreenPeer {
   writeRtp(packet: Buffer): void {
     if (this.closed) return;
     try {
-      this.track.writeRtp(this.werift.RtpPacket.deSerialize(packet));
+      const rtp = this.werift.RtpPacket.deSerialize(packet);
+      if (this.newStream) {
+        this.newStream = false;
+        this.sender.replaceRTP(rtp.header, true);
+      }
+      this.track.writeRtp(rtp);
     } catch {
       // Malformed/partial datagram — skip it; the stream self-heals on the next.
     }
+  }
+
+  /** A new capture is about to feed the track (ffmpeg restarted: a monitor switch, a
+   *  bitrate step, a keyframe request). Each ffmpeg starts its RTP sequence numbers and
+   *  timestamps at random values, so werift is told to carry on from where the last
+   *  one stopped; the phone's decoder then sees one stream with a short gap instead
+   *  of a jump of thousands of packets. */
+  startNewStream(): void {
+    this.newStream = true;
+  }
+
+  /** What the phone reports about the screen stream (RTCP receiver reports, about one a
+   *  second): the fraction of packets lost since the last one, and the round trip
+   *  once werift has measured it. */
+  onStreamReport(handler: (report: StreamReport) => void): void {
+    this.sender.onRtcp.subscribe((packet) => {
+      if (this.closed || !("reports" in packet)) return;
+      const mine = packet.reports.find((r) => r.ssrc === this.sender.ssrc);
+      if (!mine) return;
+      void this.sender.getStats().then((stats) => {
+        const rtt = stats.find((s) => s.type === "remote-inbound-rtp") as { roundTripTime?: number } | undefined;
+        handler({
+          fractionLost: mine.fractionLost / 256,
+          ...(rtt?.roundTripTime !== undefined ? { rttMs: rtt.roundTripTime * 1000 } : {}),
+        });
+      });
+    });
+  }
+
+  /** The phone's decoder lost its reference picture and needs a keyframe (RTCP PLI). */
+  onKeyframeRequest(handler: () => void): void {
+    this.sender.onPictureLossIndication.subscribe(() => {
+      if (!this.closed) handler();
+    });
   }
 
   /** Tear the peer down. Idempotent. */

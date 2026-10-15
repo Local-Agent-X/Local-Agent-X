@@ -18,6 +18,7 @@ import {
 } from "./signaling-machine.js";
 import { ScreenPeer, type IceServerConfig, type ControlTransport } from "./peer.js";
 import { startCapture, type CaptureHandle } from "./ffmpeg-capture.js";
+import { StreamQuality } from "./stream-quality.js";
 import {
   buildOffer,
   buildIce,
@@ -86,6 +87,11 @@ export class ScreenSession {
   private state: SignalingMachine = initialSignaling;
   private peer: ScreenPeer | null = null;
   private capture: CaptureHandle | null = null;
+  /** What the running capture was started with, so a restart repeats it. */
+  private captureTarget: { rtcId: string; monitor?: number } | null = null;
+  /** Steps the bitrate by the phone's reports; lives as long as the peer, so what it
+   *  learned about the link carries over when the live view is reopened. */
+  private quality: StreamQuality | null = null;
   /** Remote-control injector — exists only while a session is live. */
   private input: ScreenInputController | null = null;
   /** Debounced focus probe + last reported editable state (deduped to the phone). */
@@ -245,6 +251,14 @@ export class ScreenSession {
         extraChannels,
       );
       this.peer = peer;
+      const quality = new StreamQuality((kbps) => this.restartCapture(kbps));
+      this.quality = quality;
+      peer.onStreamReport((report) => {
+        if (this.capture) quality.report(report);
+      });
+      peer.onKeyframeRequest(() => {
+        if (this.capture) quality.keyframeRequested();
+      });
 
       // Tailnet (deferCapture=false): start ffmpeg now, exactly as before. Broker
       // (deferCapture=true): defer until the phone opens the live view (openScreen), so
@@ -264,12 +278,7 @@ export class ScreenSession {
     if (this.capture || !this.peer) return;
     const peer = this.peer;
 
-    const rtpPort = this.allocatePort();
-    this.capture = startCapture(
-      { monitor, rtpPort },
-      (packet) => peer.writeRtp(packet),
-      (message) => this.apply({ kind: "fail", rtcId, message }),
-    );
+    this.startEncoder(peer, rtcId, monitor, this.quality?.bitrateKbps);
 
     // Arm remote control for this session + tell the phone how many monitors
     // exist (so it offers swipe-between-screens only when there's more than one).
@@ -278,6 +287,27 @@ export class ScreenSession {
     );
     const d = await describeDisplays(monitor);
     this.opts.send(buildDisplays(rtcId, d.count, d.active, d.width, d.height));
+  }
+
+  /** Start ffmpeg feeding `peer`'s track as a new stream (see ScreenPeer.startNewStream). */
+  private startEncoder(peer: ScreenPeer, rtcId: string, monitor: number | undefined, bitrateKbps: number | undefined): void {
+    peer.startNewStream();
+    this.captureTarget = { rtcId, ...(monitor !== undefined ? { monitor } : {}) };
+    this.capture = startCapture(
+      { monitor, rtpPort: this.allocatePort(), ...(bitrateKbps !== undefined ? { bitrateKbps } : {}) },
+      (packet) => peer.writeRtp(packet),
+      (message) => this.apply({ kind: "fail", rtcId, message }),
+    );
+  }
+
+  /** Swap the running ffmpeg for one at `bitrateKbps` (StreamQuality). Remote control,
+   *  the monitor and the peer stay as they are. */
+  private restartCapture(bitrateKbps: number): void {
+    const peer = this.peer;
+    const target = this.captureTarget;
+    if (!this.capture || !peer || !target) return;
+    this.capture.stop();
+    this.startEncoder(peer, target.rtcId, target.monitor, bitrateKbps);
   }
 
   /** Stop ffmpeg + remote control but LEAVE the peer intact (broker: chat keeps flowing
@@ -289,6 +319,7 @@ export class ScreenSession {
       /* already stopped */
     }
     this.capture = null;
+    this.captureTarget = null;
     this.input = null;
     if (this.focusTimer) {
       clearTimeout(this.focusTimer);

@@ -17,6 +17,7 @@ import { createSocket, type Socket } from "node:dgram";
 import { listMonitors } from "../screen-capture.js";
 import { createLogger } from "../logger.js";
 import { ffmpegBin } from "../ffmpeg-bin.js";
+import { BITRATE_TIERS_KBPS } from "./bitrate-ladder.js";
 
 const logger = createLogger("screen-stream.ffmpeg");
 const FFMPEG = ffmpegBin();
@@ -32,6 +33,8 @@ export interface CaptureOptions {
   fps?: number;
   /** Loopback UDP port ffmpeg sends RTP to (the reader binds it). */
   rtpPort: number;
+  /** Video bitrate (bitrate-ladder.ts steps it by what the phone reports). */
+  bitrateKbps?: number;
 }
 
 export interface CaptureHandle {
@@ -52,24 +55,39 @@ function resolveTarget(monitor?: number): { x: number; y: number; width: number;
     : { x: 0, y: 0, width: 1920, height: 1080 };
 }
 
-// VP8 realtime encode → RTP tail, shared by every platform's capture input.
-// -deadline realtime + -cpu-used keep latency low; the even width/height filter
-// avoids encoder errors on odd-dimension screens.
-function encodeRtpArgs(rtpPort: number): string[] {
+/** Wider screens are scaled down to this: a phone shows the stream at about this
+ *  width, and every extra pixel is bitrate a cellular link can't carry. */
+const MAX_WIDTH = 1280;
+
+// VP8 realtime encode → RTP tail, shared by every platform's capture input. Tuned for
+// a link that may be cellular (bitrate-ladder.ts):
+//   - scale to at most MAX_WIDTH, even dimensions (libvpx rejects odd ones);
+//   - no lookahead, so a frame leaves as soon as it is encoded;
+//   - a hard cap with a half-second buffer, so a burst (scrolling, a keyframe) can't
+//     queue seconds of video in the carrier's buffers;
+//   - keyframes capped at 3x an average frame, and one every 2 s, so a lost packet
+//     costs at most ~2 s of smear; error-resilient mode limits how far damage spreads.
+function encodeRtpArgs(rtpPort: number, fps: number, bitrateKbps: number): string[] {
   return [
-    "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+    "-vf", `scale='trunc(min(${MAX_WIDTH},iw)/2)*2':-2`,
     "-pix_fmt", "yuv420p",
     "-c:v", "libvpx",
     "-deadline", "realtime",
-    "-cpu-used", "5",
-    "-b:v", "2M",
+    "-cpu-used", "8",
+    "-lag-in-frames", "0",
+    "-error-resilient", "default",
+    "-b:v", `${bitrateKbps}k`,
+    "-maxrate", `${bitrateKbps}k`,
+    "-bufsize", `${Math.round(bitrateKbps / 2)}k`,
+    "-max-intra-rate", "300",
+    "-g", String(fps * 2),
     "-payload_type", String(VP8_PAYLOAD_TYPE),
     "-f", "rtp", `rtp://127.0.0.1:${rtpPort}`,
   ];
 }
 
 /** Windows: gdigrab region capture → VP8/RTP. */
-export function buildFfmpegArgs(target: { x: number; y: number; width: number; height: number }, fps: number, rtpPort: number): string[] {
+export function buildFfmpegArgs(target: { x: number; y: number; width: number; height: number }, fps: number, rtpPort: number, bitrateKbps: number): string[] {
   return [
     "-hide_banner", "-loglevel", "error",
     "-f", "gdigrab",
@@ -78,14 +96,14 @@ export function buildFfmpegArgs(target: { x: number; y: number; width: number; h
     "-offset_y", String(Math.round(target.y)),
     "-video_size", `${Math.round(target.width)}x${Math.round(target.height)}`,
     "-i", "desktop",
-    ...encodeRtpArgs(rtpPort),
+    ...encodeRtpArgs(rtpPort, fps, bitrateKbps),
   ];
 }
 
 /** macOS: avfoundation whole-screen capture → VP8/RTP. Captures the full screen
  *  device (no region crop). Output `-r` sets the frame rate so we don't have to
  *  match an avfoundation-supported input framerate (which it often rejects). */
-export function buildMacFfmpegArgs(screenIndex: string, fps: number, rtpPort: number): string[] {
+export function buildMacFfmpegArgs(screenIndex: string, fps: number, rtpPort: number, bitrateKbps: number): string[] {
   return [
     "-hide_banner", "-loglevel", "error",
     "-f", "avfoundation",
@@ -99,7 +117,7 @@ export function buildMacFfmpegArgs(screenIndex: string, fps: number, rtpPort: nu
     "-pixel_format", "uyvy422",
     "-i", `${screenIndex}:none`,
     "-r", String(fps),
-    ...encodeRtpArgs(rtpPort),
+    ...encodeRtpArgs(rtpPort, fps, bitrateKbps),
   ];
 }
 
@@ -190,6 +208,7 @@ export function startCapture(
   captureDeviceHeld = true;
 
   const fps = options.fps ?? 15;
+  const bitrateKbps = options.bitrateKbps ?? BITRATE_TIERS_KBPS[0];
 
   const sock: Socket = createSocket("udp4");
   let proc: ChildProcessWithoutNullStreams | null = null;
@@ -235,8 +254,8 @@ export function startCapture(
     let args: string[];
     try {
       args = IS_MAC
-        ? buildMacFfmpegArgs(await avfScreenIndex(), fps, options.rtpPort)
-        : buildFfmpegArgs(resolveTarget(options.monitor), fps, options.rtpPort);
+        ? buildMacFfmpegArgs(await avfScreenIndex(), fps, options.rtpPort, bitrateKbps)
+        : buildFfmpegArgs(resolveTarget(options.monitor), fps, options.rtpPort, bitrateKbps);
     } catch (e) {
       onError(`Failed to resolve the screen to capture: ${(e as Error).message}`);
       stop();

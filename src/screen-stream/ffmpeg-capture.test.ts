@@ -8,7 +8,7 @@ import { buildFfmpegArgs, buildMacFfmpegArgs, startCapture } from "./ffmpeg-capt
 
 describe("buildFfmpegArgs (Windows gdigrab)", () => {
   it("captures the target region and packetizes VP8/RTP", () => {
-    const args = buildFfmpegArgs({ x: 10, y: 20, width: 1920, height: 1080 }, 15, 5004);
+    const args = buildFfmpegArgs({ x: 10, y: 20, width: 1920, height: 1080 }, 15, 5004, 2000);
     const line = args.join(" ");
     expect(args).toContain("gdigrab");
     expect(args).toContain("desktop");
@@ -18,9 +18,31 @@ describe("buildFfmpegArgs (Windows gdigrab)", () => {
   });
 });
 
+describe("the shared VP8 encode tail (tuned for a link that may be cellular)", () => {
+  const args = buildFfmpegArgs({ x: 0, y: 0, width: 3840, height: 2160 }, 15, 5004, 700);
+  const value = (flag: string) => args[args.indexOf(flag) + 1];
+
+  it("caps the width the phone gets, keeping even dimensions", () => {
+    expect(value("-vf")).toBe("scale='trunc(min(1280,iw)/2)*2':-2");
+  });
+
+  it("encodes at the requested bitrate with a hard cap and a half-second buffer", () => {
+    expect(value("-b:v")).toBe("700k");
+    expect(value("-maxrate")).toBe("700k");
+    expect(value("-bufsize")).toBe("350k");
+  });
+
+  it("sends each frame at once, with bounded keyframes every two seconds", () => {
+    expect(value("-lag-in-frames")).toBe("0");
+    expect(value("-g")).toBe("30");
+    expect(value("-max-intra-rate")).toBe("300");
+    expect(value("-error-resilient")).toBe("default");
+  });
+});
+
 describe("buildMacFfmpegArgs (macOS avfoundation)", () => {
   it("captures the avfoundation screen device, not gdigrab", () => {
-    const args = buildMacFfmpegArgs("3", 15, 5004);
+    const args = buildMacFfmpegArgs("3", 15, 5004, 2000);
     const line = args.join(" ");
     expect(args).toContain("avfoundation");
     expect(args).not.toContain("gdigrab");
@@ -32,7 +54,7 @@ describe("buildMacFfmpegArgs (macOS avfoundation)", () => {
   });
 
   it("pins the input to the device-native uyvy422, converting to yuv420p for the encoder", () => {
-    const args = buildMacFfmpegArgs("3", 15, 5004);
+    const args = buildMacFfmpegArgs("3", 15, 5004, 2000);
     // avfoundation rejects yuv420p as an INPUT format. With no explicit input
     // pixel format, ffmpeg negotiates yuv420p straight from the device, which
     // rejects it and the capture dies (frozen live view). Pin the device's native

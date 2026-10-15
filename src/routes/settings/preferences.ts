@@ -4,45 +4,29 @@ import { timingSafeEqual } from "node:crypto";
 import type { IncomingMessage } from "node:http";
 import type { RouteHandler } from "../../server-context.js";
 import { jsonResponse, safeParseBody, atomicWriteFileSync } from "../../server-utils.js";
-import { FLIPPABLE_SETTINGS, RUNTIME_SETTINGS, BROADCAST_KEYS, publicSchema } from "../../settings-schema.js";
+import { FLIPPABLE_SETTINGS, RUNTIME_SETTINGS, BROADCAST_KEYS, operatorOnlyRefusal, publicSchema, settingSpec } from "../../settings-schema.js";
 import { isUserOwnedSetting, strictlyTightens } from "../../settings-change-direction.js";
 import { loadSettings, saveSettings } from "../../settings.js";
 import { getRuntimeConfig } from "../../config.js";
 import { unsafeWorkspaceReason } from "../../workspace/workspace-location.js";
 
 /**
- * Keys of the settings bag that only the user changes, because each hands the
- * agent authority: the workspace is where the agent may write (and what the
- * Windows cage's sandbox account may write), the port is where the server and
- * its UI live, localRuntimes names hosts the agent's HTTP tools may then reach
- * (security-config.ts manualRuntimeHostPorts), customBaseUrl is where a custom
- * provider's API key is sent, and threat tunes how much evidence the threat
- * engine needs before it restricts a session. `where` is what the refusal
- * tells the agent to send the user to.
- */
-export const OPERATOR_ONLY_SETTINGS: ReadonlyArray<{ key: string; where: string }> = [
-  { key: "workspace", where: "Settings → Account → Server" },
-  { key: "port", where: "Settings → Account → Server" },
-  { key: "localRuntimes", where: "Settings → AI & Models → Local Runtimes" },
-  { key: "customBaseUrl", where: "Settings → AI & Models → Model Provider" },
-  { key: "threat", where: "the threat section of their settings.json" },
-];
-
-/**
  * Why a request without the operator token may not apply `body`, or null when
- * it may. Such a request is the agent's own self-call: it may change any
- * setting except the operator-only keys, and a user-owned setting only in the
- * direction that narrows it (settings-change-direction.ts).
+ * it may. Such a request is the agent's own self-call: it may change an
+ * agent-owned setting, a user-owned one only in the direction that narrows it
+ * (settings-change-direction.ts), and an operator-owned one never. Every key
+ * in `body` is declared (the route refuses the rest first).
  */
 export function agentSettingsRefusal(body: Record<string, unknown>): string | null {
-  const operatorOnly = OPERATOR_ONLY_SETTINGS.filter((s) => s.key in body);
-  if (operatorOnly.length > 0) {
-    const places = [...new Set(operatorOnly.map((s) => s.where))].join("; ");
-    return `Only the user can change ${operatorOnly.map((s) => s.key).join(", ")} (${places}). Ask them to do it there.`;
-  }
-  const widening = Object.keys(body).filter((k) => isUserOwnedSetting(k) && !strictlyTightens(k, body[k]));
+  const operatorOnly = operatorOnlyRefusal(Object.keys(body));
+  if (operatorOnly) return operatorOnly;
+  const widening = Object.keys(body).flatMap((k) => {
+    const spec = settingSpec(k);
+    return spec && spec.owner !== "agent" && isUserOwnedSetting(k) && !strictlyTightens(k, body[k]) ? [spec] : [];
+  });
   if (widening.length > 0) {
-    return `${widening.join(", ")} can only be widened by the user, in Settings. Use the \`setting\` tool, which asks the user to approve.`;
+    const places = [...new Set(widening.map((s) => s.where))].join("; ");
+    return `${widening.map((s) => s.field).join(", ")} can only be widened by the user (${places}). Use the \`setting\` tool, which asks the user to approve.`;
   }
   return null;
 }
@@ -100,6 +84,11 @@ export const handlePreferencesRoutes: RouteHandler = async (method, url, req, re
     // clobber any hand edit made directly in config.json (and picked up by the
     // watcher) with the pre-reload snapshot — the split-brain this route caused.
     const runtimeConfig = getRuntimeConfig();
+    const undeclared = Object.keys(body).filter((k) => !settingSpec(k));
+    if (undeclared.length > 0) {
+      json(400, { error: `No such setting: ${undeclared.join(", ")}. GET /api/settings/schema lists every setting and who may change it.` });
+      return true;
+    }
     if (!hasValidOperatorToken(req, runtimeConfig.authToken)) {
       const refusal = agentSettingsRefusal(body);
       if (refusal) { json(403, { error: refusal }); return true; }

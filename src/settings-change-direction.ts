@@ -2,7 +2,7 @@
  * Which way a change to a user-owned setting moves the agent's leash.
  *
  * Two kinds of setting are the user's to loosen: the protected security
- * controls (settings-schema.ts `protected: true`) and the spending caps, which
+ * controls (settings-schema.ts owner `protected`) and the spending caps, which
  * decide how much of the user's money an API key may spend. The agent may never
  * widen either on its own: the `setting` tool puts the change to the user
  * (tool-execution/protected-setting-gate.ts) and POST /api/settings refuses it

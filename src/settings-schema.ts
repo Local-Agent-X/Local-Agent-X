@@ -2,8 +2,11 @@
  * Settings source-of-truth schema.
  *
  * Single registry of every field the UI (or the agent) can flip through
- * /api/settings. Each entry says:
+ * /api/settings. POST /api/settings refuses a field that is not declared
+ * here, so a key exists only once it has an entry saying who owns it. Each
+ * entry says:
  *   - what valid values look like (zod)
+ *   - who may change it (owner), and where the user does when it is not the agent
  *   - whether the SERVER RUNTIME reads it (runtime: true) — those get
  *     mirrored to config.json + ctx.config on POST, and overlaid live
  *     into the GET response so the UI sees what the runtime actually
@@ -18,11 +21,37 @@
  * of problem from the other side. This schema is the shared answer:
  * iterate it on both the server (mirroring) and the agent (via
  * GET /api/settings/schema for field-name introspection).
+ *
+ * The entries live in one table per domain (settings-schema.controls.ts,
+ * .preferences.ts, .operator.ts); this module merges them and derives the
+ * sets every consumer reads.
  */
-import { z } from "zod";
-import { MIN_MAX_ITERATIONS, type LAXConfig } from "./types.js";
+import type { z } from "zod";
+import type { LAXConfig } from "./types.js";
+import { CONTROL_SETTINGS } from "./settings-schema.controls.js";
+import { PREFERENCE_SETTINGS } from "./settings-schema.preferences.js";
+import { OPERATOR_SETTINGS } from "./settings-schema.operator.js";
 
-export interface FlippableSetting {
+/**
+ * Who may change a setting. There is no default: an entry that does not say
+ * is a compile error, so a new key is never writable by the agent by accident.
+ *   agent        — the agent may set it itself (`setting` tool, or its own
+ *                  POST /api/settings), as may the user.
+ *   protected    — a user-owned security control. The agent may narrow it
+ *                  (settings-change-direction.ts); widening it takes the user's
+ *                  approval (tool-execution/protected-setting-gate.ts).
+ *   spending-cap — the user's money, held to the same rule as `protected`.
+ *   operator     — only the user's own Settings page (a request carrying the
+ *                  operator token): each hands the agent authority.
+ */
+export type SettingOwner = "agent" | "protected" | "spending-cap" | "operator";
+
+/** The owner, plus where in the app the user changes a setting the agent may not. */
+export type SettingOwnership =
+  | { owner: "agent" }
+  | { owner: Exclude<SettingOwner, "agent">; where: string };
+
+export type FlippableSetting = SettingOwnership & {
   /** Field name in the POST body and GET response. */
   field: string;
   /** Zod validator. POST values that fail are silently dropped — UI re-syncs on next GET. */
@@ -40,253 +69,37 @@ export interface FlippableSetting {
   runtime: boolean;
   /** Optional WS broadcast on change (cross-tab sync). */
   broadcast?: boolean;
-  /**
-   * true = user-owned security control (kill-switches, approval mode, browser
-   * mode). The agent may REQUEST a change but can never apply one on its own:
-   * the `setting` tool routes it through interactive approval, and the HTTP
-   * settings route refuses it unless the request carries a real operator token
-   * (i.e. the change came from the authenticated UI, not the agent's own
-   * loopback http_request). See isProtectedSetting().
-   */
-  protected?: boolean;
   /** Human-readable for the schema endpoint — used by the agent to pick the right field. */
   description: string;
-}
+};
 
 export const FLIPPABLE_SETTINGS: ReadonlyArray<FlippableSetting> = [
-  {
-    field: "allowRuntimeFailover",
-    validate: z.boolean(),
-    runtime: false,
-    broadcast: true,
-    description: "Explicit opt-in for autonomous cross-provider or cross-model recovery. Off by default; exact-runtime retries remain autonomous and bounded",
-  },
-  // ── Runtime-bound (server reads, must mirror to config.json) ──
-  {
-    field: "toolApproval",
-    validate: z.enum(["auto", "confirm-risky", "confirm-all"]),
-    runtime: true,
-    protected: true,
-    description: "When the AI must ask for permission before running tools. auto=never, confirm-risky=bash/write/edit, confirm-all=every tool",
-  },
-  {
-    field: "learningMode",
-    validate: z.enum(["assisted", "autonomous"]),
-    runtime: true,
-    broadcast: true,
-    protected: true,
-    description: "How newly learned skills become active. assisted waits for user review; autonomous activates qualified skills within existing permissions",
-  },
-  {
-    field: "skillReviewEnabled",
-    validate: z.boolean(),
-    runtime: true,
-    broadcast: true,
-    protected: true,
-    description: "Whether finished chat turns are reviewed in the background for reusable procedures. Off stops new learned-workflow drafts; existing ones are untouched",
-  },
-  {
-    field: "bridgeVoicePreference",
-    // Keep the "sovits"→"auto" coercion in lockstep with config-schema.ts:
-    // both parse the same persisted value, and only one accepting it means
-    // the setting flips depending on which path validated it.
-    validate: z.preprocess(
-      v => (v === "sovits" ? "auto" : v),
-      z.enum(["auto", "voxcpm", "chatterbox", "lite", "xai"]),
-    ),
-    runtime: true,
-    description: "Preferred TTS engine for Telegram/WhatsApp bridge replies. auto chooses best available (VoxCPM clone, then Chatterbox, then Lite Kokoro); xai needs the SuperGrok OAuth login",
-  },
-  {
-    field: "maxIterations",
-    validate: z.number().int().min(MIN_MAX_ITERATIONS).max(300),
-    runtime: true,
-    description: `Max tool calls per chat turn (${MIN_MAX_ITERATIONS}-300)`,
-  },
-  {
-    field: "maxSubAgents",
-    validate: z.number().int().min(1).max(20),
-    runtime: true,
-    description: "Max sub-agents (agent_spawn) running at once (1-20). Each runs a full agent loop + provider stream + tool subprocesses, so local compute scales with this",
-  },
-  {
-    field: "temperature",
-    validate: z.number().min(0).max(2),
-    runtime: true,
-    description: "LLM sampling temperature (0-2). Lower=more deterministic",
-  },
-  {
-    field: "dailyBudgetUsd",
-    validate: z.number().min(0),
-    runtime: true,
-    description: "Daily spending cap in US dollars (default $75). Applies only when you pay per call with an API key: once today's real spend reaches this amount, the agent's tool calls are blocked and the current task ends at its next checkpoint. On a subscription login the cost is shown for information only — it is not a real charge and never stops anything. Set to 0 for no cap",
-  },
-  {
-    field: "sessionBudgetUsd",
-    validate: z.number().min(0),
-    runtime: true,
-    description: "Per-session spending cap in US dollars (default $15). Applies only when you pay per call with an API key: once this session's real spend reaches this amount, the agent's tool calls are blocked and the current task ends at its next checkpoint. On a subscription login the cost is shown for information only — it is not a real charge and never stops anything. Set to 0 for no cap",
-  },
-  {
-    field: "modelDailyBudgetsUsd",
-    validate: z.record(z.number().min(0)),
-    runtime: true,
-    description: "Per-model daily USD caps on real per-call API spend, keyed by model id. A model over its cap is blocked for the rest of the day. Flat-rate subscription models are never capped",
-  },
-  {
-    field: "enableShell",
-    validate: z.boolean(),
-    runtime: true,
-    broadcast: true,
-    protected: true,
-    description: "Category kill-switch — when false, blocks ALL bash tool calls at pre-dispatch",
-  },
-  {
-    field: "enableHttp",
-    validate: z.boolean(),
-    runtime: true,
-    broadcast: true,
-    protected: true,
-    description: "Category kill-switch — when false, blocks ALL http_request and ari_http tool calls at pre-dispatch (web_fetch page reads stay on)",
-  },
-  {
-    field: "enableBrowser",
-    validate: z.boolean(),
-    runtime: true,
-    broadcast: true,
-    protected: true,
-    description: "Category kill-switch — when false, blocks ALL browser_* tool calls at pre-dispatch",
-  },
-  {
-    field: "browserMode",
-    validate: z.enum(["isolated", "continuity", "advanced-shared", "in-app"]),
-    runtime: true,
-    broadcast: true,
-    protected: true,
-    description: "Browser identity mode. in-app=dedicated installed Chrome per chat on Windows for website compatibility, or the embedded co-drivable WebContentsView on non-Windows desktop (including macOS); falls back to isolated CDP when there is no desktop window/bridge. isolated=ephemeral identity per session; continuity=persistent dedicated agent identity with one live session owner; advanced-shared=one live context shared across sessions",
-  },
-  {
-    field: "enableComputerControl",
-    validate: z.boolean(),
-    runtime: true,
-    broadcast: true,
-    protected: true,
-    description: "Category kill-switch — when false, blocks ALL computer (mouse/keyboard) tool calls at pre-dispatch. Off by default (high-risk opt-in; also needs OS Accessibility permission)",
-  },
-  {
-    field: "supervisedBrowser",
-    validate: z.boolean(),
-    runtime: true,
-    broadcast: true,
-    protected: true,
-    description: "Supervised browser mode. Off by default — the in-app browser is autonomous, so browser.evaluate runs without asking. When true, browser.evaluate requires your approval UNLESS the current page is on the trusted-origin allowlist (x.com, twitter.com, instagram.com, facebook.com, tiktok.com, linkedin.com and their subdomains). Supervision is the opt-in; you never have to turn autonomy on",
-  },
-  {
-    field: "browserSecrecy",
-    validate: z.enum(["lockdown", "guarded", "ask", "open"]),
-    runtime: true,
-    broadcast: true,
-    protected: true,
-    description: "Ordered sensitive-page read policy for the agent browser. lockdown = withhold ALL sensitive pages (administration/financial too); guarded = administration/financial readable, secret-bearing pages (password managers, account recovery, key material) silently withheld; ask (default) = secret-bearing reads require your approval; open = everything readable, with a one-time warning when a cloud model would receive page contents. Mutating actions on sensitive pages require approval below open",
-  },
-  {
-    field: "enableUiEventBus",
-    validate: z.boolean(),
-    runtime: true,
-    broadcast: true,
-    protected: true,
-    description: "UI activity context — when true, redacted user-interface activity (e.g. browser navigation while co-driving) is buffered and injected into the agent's turn context as a short digest. On by default; no field values are ever recorded",
-  },
-  {
-    field: "enableRemoteControl",
-    validate: z.boolean(),
-    runtime: true,
-    broadcast: true,
-    protected: true,
-    description: "Kill-switch for a paired phone driving mouse/keyboard over the live screen. When false, the live-screen session drops all remote input. Off by default (high-risk opt-in; also needs OS Accessibility permission)",
-  },
-  {
-    field: "localOnlyMode",
-    validate: z.boolean(),
-    runtime: true,
-    broadcast: true,
-    protected: true,
-    description: "Strict local-only mode. Allows only loopback network access and local models; blocks cloud auth, providers, web tools, remote MCP, connectors, integrations, bridges, account presence, sync, and updates",
-  },
-  {
-    field: "verifyDeliverables",
-    validate: z.boolean(),
-    runtime: true,
-    broadcast: true,
-    description: "Independent verification pass when a deliverable is built from external data (a report, spreadsheet, chart) — a background model re-checks the result against its sources. Covers work done in a chat turn as well as delegated tasks. On by default; it waits until you have stopped editing, then runs ONCE over everything that changed since the last check, so iterating on a file costs one verification and not one per save (unchanged files are never re-checked, and only one verification runs per chat at a time)",
-  },
-  {
-    field: "regressionAuditProvider",
-    validate: z.string(),
-    runtime: true,
-    broadcast: true,
-    description: "Optional second provider id (codex, anthropic, xai, openai, gemini, ollama, local) for the regression-audit completion gate — a fresh-eyes pass over every code change that checks for breakage in files the change didn't touch, unfiltered sensitive data reaching a client, error handling that masks real failures, and weakened tests. Empty (default) audits with the SAME model that wrote the change, fresh context. Set this to route the audit to a genuinely different provider instead — needs that provider already connected/credentialed; silently falls back to the same-model audit if it isn't, or if this is set to the provider you're already chatting on",
-  },
-  {
-    field: "regressionAuditModel",
-    validate: z.string(),
-    runtime: true,
-    broadcast: true,
-    description: "Model name within regressionAuditProvider (e.g. claude-opus-5, gpt-6-astra, grok-4.6). Empty = that provider's default model. Ignored when regressionAuditProvider is empty",
-  },
-
-  // ── UI-only (renderer reads settings.json directly; no runtime mirror needed) ──
-  {
-    field: "theme",
-    validate: z.enum(["light", "dark", "system"]),
-    runtime: false,
-    broadcast: true,
-    description: "Color scheme. system follows OS preference",
-  },
-  {
-    field: "provider",
-    validate: z.string().min(1),
-    runtime: false,
-    broadcast: true,
-    description: "LLM provider id (codex, anthropic, xai, gemini, cerebras, ollama, ollama-cloud, local). Switches the model picker",
-  },
-  {
-    field: "model",
-    validate: z.string().min(1),
-    runtime: false,
-    broadcast: true,
-    description: "Model name within the chosen provider (gpt-5.5, claude-opus-4-7, grok-4, etc)",
-  },
-  {
-    field: "localClassifierModel",
-    validate: z.string(),
-    runtime: false,
-    broadcast: true,
-    description: "Local model to run classifiers/background work on (e.g. llama3.2:3b). Only applies to the 'local' and 'ollama-cloud' providers, which have no declared background model. Empty = auto-pick the smallest small non-reasoning model found by the local-runtimes sweep, else fall back to your chat model. Pick a SMALL non-reasoning model: classifiers get an 8s budget and a thinking or 27B+ model burns it and silently returns no verdict",
-  },
-  {
-    field: "reasoningEffort",
-    validate: z.enum(["minimal", "low", "medium", "high", "xhigh"]),
-    runtime: false,
-    broadcast: true,
-    description: "Thinking depth for reasoning models (gpt-5.x, o-series, grok-4). minimal=fastest, xhigh=deepest (Codex only; clamped to high elsewhere). Default medium",
-  },
-  {
-    field: "developer_mode",
-    validate: z.boolean(),
-    runtime: false,
-    // Every open window shows a badge while it's on.
-    broadcast: true,
-    protected: true,
-    description: "Unlocks self_edit and autopilot on the platform's own source code. Off by default — customizations go through connectors (~/.lax/connectors), workspace apps, and settings, which all survive updates. Turning this on forks this install's core code: platform updates must then merge with the local edits.",
-  },
-  {
-    field: "preferGrokForMedia",
-    validate: z.boolean(),
-    runtime: false,
-    description: "When ON (default), generate_image/generate_video use xAI Grok Imagine whenever xAI is connected, regardless of the active chat provider. The model can still force a backend per call via the tool's `provider` arg.",
-  },
+  ...CONTROL_SETTINGS,
+  ...PREFERENCE_SETTINGS,
+  ...OPERATOR_SETTINGS,
 ];
+
+const BY_FIELD: ReadonlyMap<string, FlippableSetting> = new Map(FLIPPABLE_SETTINGS.map((s) => [s.field, s]));
+
+/** The declaration for `field`, or undefined when settings.json has no such setting. */
+export function settingSpec(field: string): FlippableSetting | undefined {
+  return BY_FIELD.get(field);
+}
+
+const fieldsOwnedBy = (owner: SettingOwner): ReadonlySet<string> =>
+  new Set(FLIPPABLE_SETTINGS.filter((s) => s.owner === owner).map((s) => s.field));
+
+/**
+ * Why the agent may not change `fields` itself, naming where the user does, or
+ * null when none of them is operator-owned. Neither its own POST
+ * /api/settings nor the `setting` tool can apply an operator setting.
+ */
+export function operatorOnlyRefusal(fields: readonly string[]): string | null {
+  const owned = fields.map(settingSpec).filter((s): s is FlippableSetting & { where: string } => s?.owner === "operator");
+  if (owned.length === 0) return null;
+  const places = [...new Set(owned.map((s) => s.where))].join("; ");
+  return `Only the user can change ${owned.map((s) => s.field).join(", ")} (${places}). Ask them to do it there.`;
+}
 
 /** Subset that needs config.json mirroring + GET overlay. */
 export const RUNTIME_SETTINGS: ReadonlyArray<FlippableSetting> = FLIPPABLE_SETTINGS.filter((s) => s.runtime);
@@ -297,9 +110,7 @@ export const BROADCAST_KEYS: ReadonlySet<string> = new Set(
 );
 
 /** User-owned security controls the agent can request but never self-apply. */
-export const PROTECTED_SETTINGS: ReadonlySet<string> = new Set(
-  FLIPPABLE_SETTINGS.filter((s) => s.protected).map((s) => s.field),
-);
+export const PROTECTED_SETTINGS: ReadonlySet<string> = fieldsOwnedBy("protected");
 
 /** True when a field is a user-owned security control (see PROTECTED_SETTINGS). */
 export function isProtectedSetting(field: string): boolean {
@@ -308,11 +119,7 @@ export function isProtectedSetting(field: string): boolean {
 
 /** The spending caps, each in USD, where 0 (or a missing per-model entry) means
  *  no cap. User-owned like the protected settings (settings-change-direction.ts). */
-export const SPENDING_CAP_SETTINGS: ReadonlySet<string> = new Set([
-  "dailyBudgetUsd",
-  "sessionBudgetUsd",
-  "modelDailyBudgetsUsd",
-]);
+export const SPENDING_CAP_SETTINGS: ReadonlySet<string> = fieldsOwnedBy("spending-cap");
 
 /**
  * One-time migration: if a user's settings.json has a runtime value that
@@ -341,10 +148,13 @@ export function migrateRuntimeSettingsFromSettingsJson(
 
 /** JSON shape returned by GET /api/settings/schema. Used by the agent (and
  *  any other client) to discover valid field names without guessing. */
-export function publicSchema(): Array<{ field: string; type: string; values?: unknown; description: string; runtime: boolean }> {
+type PublicField = { field: string; owner: SettingOwner; where?: string; type: string; values?: unknown; description: string; runtime: boolean };
+export function publicSchema(): PublicField[] {
   return FLIPPABLE_SETTINGS.map((s) => {
-    const out: { field: string; type: string; values?: unknown; description: string; runtime: boolean } = {
+    const out: PublicField = {
       field: s.field,
+      owner: s.owner,
+      ...("where" in s ? { where: s.where } : {}),
       type: "unknown",
       description: s.description,
       runtime: s.runtime,

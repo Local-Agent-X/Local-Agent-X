@@ -3,7 +3,7 @@
  * change; it may never self-apply one.
  *
  * A "user-owned control" is anything that decides what the agent is allowed to
- * do: the 13 `protected: true` settings, the file-access mode, and the tool
+ * do: the `protected`-owner settings, the file-access mode, and the tool
  * policy table. Each has more than one mutation path, and the class of bug this
  * file exists to prevent is a rule enforced at ONE seam and absent at the
  * siblings.

@@ -39,7 +39,7 @@ export const AGENT_DENIED_ROUTES: readonly AgentDeniedRoute[] = [
   // cache (local-runtimes getLocalRuntimes), not this route, which exists for
   // the operator settings UI. Keep this in sync with manualRuntimeHostPorts.
   // POST /api/settings refuses the same key from the agent
-  // (routes/settings/preferences.ts OPERATOR_ONLY_SETTINGS).
+  // (settings-schema.operator.ts).
   { prefix: "/api/local-runtimes", place: "Settings → AI & Models → Local Runtimes" },
 
   // /api/security and /api/tool-policy are SELF-GATING: they mutate the very

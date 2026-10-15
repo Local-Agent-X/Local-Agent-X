@@ -24,7 +24,7 @@ export type KillSwitchField =
   | "enableComputerControl";
 
 export interface KillSwitchGate {
-  /** FLIPPABLE_SETTINGS field this gate reads (must be protected:true there). */
+  /** FLIPPABLE_SETTINGS field this gate reads (must be owner "protected" there). */
   field: KillSwitchField;
   /** Human category name used in the reason line ("Shell Access is disabled…"). */
   label: string;

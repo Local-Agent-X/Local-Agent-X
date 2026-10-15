@@ -3,9 +3,12 @@ import { Readable } from "node:stream";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { OPERATOR_ONLY_SETTINGS, handlePreferencesRoutes } from "./preferences.js";
+import { handlePreferencesRoutes } from "./preferences.js";
 import { getConfigPath, getRuntimeConfig, loadConfig, setRuntimeConfig } from "../../config.js";
 import { platformRoot } from "../../platform-root.js";
+import { FLIPPABLE_SETTINGS, type SettingOwner } from "../../settings-schema.js";
+import { reloadSettings, settingsPath } from "../../settings.js";
+import { isUserOwnedSetting } from "../../settings-change-direction.js";
 
 vi.mock("../../chat-ws/index.js", () => ({ broadcastAll: vi.fn(() => 0) }));
 
@@ -30,6 +33,10 @@ async function call(method: string, path: string, opts: { body?: Record<string, 
 }
 
 const post = (body: Record<string, unknown>, token?: string) => call("POST", "/api/settings", { body, token });
+
+/** [field, where] for every setting one of `owners` holds. */
+const ownedBy = (...owners: SettingOwner[]): Array<[string, string]> =>
+  FLIPPABLE_SETTINGS.flatMap((s) => (s.owner !== "agent" && owners.includes(s.owner) ? [[s.field, s.where] as [string, string]] : []));
 
 const onDisk = () => JSON.parse(readFileSync(getConfigPath(), "utf-8")) as Record<string, unknown>;
 
@@ -56,10 +63,10 @@ describe("POST /api/settings from the agent", () => {
   });
 
   it("holds the keys that hand the agent authority", () => {
-    expect(OPERATOR_ONLY_SETTINGS.map((s) => s.key).sort()).toEqual(["customBaseUrl", "localRuntimes", "port", "threat", "workspace"]);
+    expect(ownedBy("operator").map(([key]) => key).sort()).toEqual(["customBaseUrl", "localRuntimes", "port", "threat", "workspace"]);
   });
 
-  it.each(OPERATOR_ONLY_SETTINGS.map((s) => [s.key, s.where]))("refuses %s and names %s", async (key, where) => {
+  it.each(ownedBy("operator"))("refuses %s and names %s", async (key, where) => {
     const value = key === "port" ? 7999 : key === "workspace" ? join(dataDir, "elsewhere") : "x";
     const before = readFileSync(getConfigPath(), "utf-8");
     const r = await post({ [key]: value });
@@ -69,9 +76,43 @@ describe("POST /api/settings from the agent", () => {
     expect(existsSync(join(dataDir, "elsewhere"))).toBe(false);
   });
 
+  it("says where the user changes every user-owned setting", () => {
+    const userOwned = ownedBy("protected", "spending-cap").map(([key]) => key);
+    expect(userOwned).toEqual(expect.arrayContaining(["enableShell", "developer_mode", "dailyBudgetUsd"]));
+    for (const key of userOwned) expect(isUserOwnedSetting(key), key).toBe(true);
+  });
+
+  // A value it cannot prove narrower counts as a widening
+  // (settings-change-direction.ts), so this one widens every user-owned field.
+  it.each(ownedBy("protected", "spending-cap"))("refuses widening %s and names %s", async (key, where) => {
+    const before = readFileSync(getConfigPath(), "utf-8");
+    const r = await post({ [key]: "widen" });
+    expect(r.status).toBe(403);
+    expect(String(r.body.error)).toContain(`${key} can only be widened by the user`);
+    expect(String(r.body.error)).toContain(where);
+    expect(readFileSync(getConfigPath(), "utf-8")).toBe(before);
+  });
+
+  it.each([
+    ["the agent", undefined],
+    ["the user's Settings page", OPERATOR],
+  ])("refuses a key no setting declares from %s, and saves nothing in the request", async (_who, token) => {
+    const before = existsSync(settingsPath()) ? readFileSync(settingsPath(), "utf-8") : "";
+    const r = await post({ theme: "dark", madeUpSetting: true }, token);
+    expect(r.status).toBe(400);
+    expect(String(r.body.error)).toContain("madeUpSetting");
+    expect(existsSync(settingsPath()) ? readFileSync(settingsPath(), "utf-8") : "").toBe(before);
+    expect(reloadSettings().madeUpSetting).toBeUndefined();
+  });
+
   it("applies an everyday setting with no card and no refusal", async () => {
     expect((await post({ theme: "light", temperature: 0.3 })).status).toBe(200);
     expect(getRuntimeConfig().temperature).toBe(0.3);
+  });
+
+  it("applies a declared UI preference the agent owns", async () => {
+    expect((await post({ palette: "bloom", ttsVoice: "am_michael" })).status).toBe(200);
+    expect(reloadSettings()).toMatchObject({ palette: "bloom", ttsVoice: "am_michael" });
   });
 
   it("switches a capability off, but cannot switch it back on", async () => {

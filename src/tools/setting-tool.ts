@@ -21,15 +21,15 @@
  * DOM without a refresh.
  */
 import { z } from "zod";
-import { FLIPPABLE_SETTINGS, RUNTIME_SETTINGS, BROADCAST_KEYS } from "../settings-schema.js";
+import { FLIPPABLE_SETTINGS, BROADCAST_KEYS, operatorOnlyRefusal, settingSpec } from "../settings-schema.js";
 import { getRuntimeConfig, saveConfig, getConfigPath } from "../config.js";
 import { loadSettings, saveSettings } from "../settings.js";
 import type { ToolDefinition } from "../types.js";
-import { ok, err } from "./result-helpers.js";
+import { ok, err, blocked } from "./result-helpers.js";
 import { verifyWriteLanded } from "./verify.js";
 
 function listKnownFields(): string {
-  return FLIPPABLE_SETTINGS.map((s) => {
+  return FLIPPABLE_SETTINGS.filter((s) => s.owner !== "operator").map((s) => {
     const def = (s.validate as unknown as { _def?: { typeName?: string; values?: unknown[] } })._def;
     if (def?.typeName === "ZodEnum" && Array.isArray(def.values)) {
       return `  - ${s.field} (${def.values.join("|")}): ${s.description}`;
@@ -69,13 +69,15 @@ export const settingTool: ToolDefinition = {
       return ok(`Valid setting fields:\n${listKnownFields()}\n\nCall again with field + value to apply a change.`);
     }
 
-    const spec = FLIPPABLE_SETTINGS.find((s) => s.field === fieldName);
+    const spec = settingSpec(fieldName);
     if (!spec) {
       return err(
         `Unknown setting field "${fieldName}". Valid fields:\n${listKnownFields()}`,
         { recovery: "Pick a field name from the list above and retry." },
       );
     }
+    const operatorOnly = operatorOnlyRefusal([fieldName]);
+    if (operatorOnly) return blocked(operatorOnly, { recovery: "Tell the user where to change it. Do not retry it another way." });
 
     const parsed = spec.validate.safeParse(args.value);
     if (!parsed.success) {

@@ -151,7 +151,7 @@ how an already-learned procedure activates.
 
 Read at `src/orchestrator/signals-meta.ts` (reconcile driver) and
 `src/routes/memory-learning.ts` (returned to the UI). Declared `runtime`,
-`protected`, `broadcast` in `src/settings-schema.ts`.
+`broadcast` and owner `protected` in `src/settings-schema.controls.ts`.
 
 ## Safety invariants (enforced in code)
 

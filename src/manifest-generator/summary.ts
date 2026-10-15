@@ -13,7 +13,7 @@ import { AGENT_DENIED_ROUTES } from "../rbac-agent-denials.js";
  * toggle endpoint (2026-07-20). Exported for the contract test.
  */
 export function securitySettingsLine(): string {
-  const fields = FLIPPABLE_SETTINGS.filter((s) => s.protected).map((s) => s.field).join("/");
+  const fields = FLIPPABLE_SETTINGS.filter((s) => s.owner === "protected").map((s) => s.field).join("/");
   return (
     `- **Security settings** (${fields}) and **spending caps** (${[...SPENDING_CAP_SETTINGS].join("/")}): when the user asks you to change one, use the \`setting\` tool with that field. ` +
     `A change that only narrows what you may do or spend (a capability off, a cap lowered) applies at once; one that widens it asks the user to approve first. ` +

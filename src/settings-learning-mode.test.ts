@@ -9,7 +9,7 @@ describe("learning mode settings contract", () => {
 
   it("is runtime-bound, broadcast, and user-protected", () => {
     const setting = FLIPPABLE_SETTINGS.find((entry) => entry.field === "learningMode");
-    expect(setting).toMatchObject({ runtime: true, broadcast: true, protected: true });
+    expect(setting).toMatchObject({ runtime: true, broadcast: true, owner: "protected" });
     expect(isProtectedSetting("learningMode")).toBe(true);
     expect(setting?.validate.safeParse("autonomous").success).toBe(true);
     expect(setting?.validate.safeParse("silent").success).toBe(false);
@@ -24,7 +24,7 @@ describe("skill review settings contract", () => {
 
   it("is runtime-bound, broadcast, and user-protected", () => {
     const setting = FLIPPABLE_SETTINGS.find((entry) => entry.field === "skillReviewEnabled");
-    expect(setting).toMatchObject({ runtime: true, broadcast: true, protected: true });
+    expect(setting).toMatchObject({ runtime: true, broadcast: true, owner: "protected" });
     expect(isProtectedSetting("skillReviewEnabled")).toBe(true);
     expect(setting?.validate.safeParse(false).success).toBe(true);
     expect(setting?.validate.safeParse("off").success).toBe(false);

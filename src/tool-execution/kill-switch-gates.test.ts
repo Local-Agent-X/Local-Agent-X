@@ -4,7 +4,7 @@
  * one gate's recovery text omitted the `setting` affordance):
  *
  *  1. Every gate's recovery names the `setting` tool AND its exact field.
- *  2. Every gate's field exists in FLIPPABLE_SETTINGS as protected:true
+ *  2. Every gate's field exists in FLIPPABLE_SETTINGS with owner "protected"
  *     (so "call `setting`" is safe advice — flips route through approval).
  *  3. Every "Category kill-switch" setting in the schema has a gate here —
  *     a new kill-switch setting cannot ship without a dispatch gate + affordance.
@@ -67,7 +67,7 @@ describe("kill-switch gate registry contract", () => {
     for (const gate of KILL_SWITCH_GATES) {
       const spec = FLIPPABLE_SETTINGS.find((s) => s.field === gate.field);
       expect(spec, `${gate.field} must exist in FLIPPABLE_SETTINGS`).toBeDefined();
-      expect(spec!.protected, `${gate.field} must be protected (approval-routed)`).toBe(true);
+      expect(spec!.owner, `${gate.field} must be protected (approval-routed)`).toBe("protected");
       expect(spec!.runtime, `${gate.field} must be runtime-mirrored`).toBe(true);
     }
   });

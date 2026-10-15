@@ -1,7 +1,7 @@
 /**
  * The consent gate for user-owned controls.
  *
- * A "protected" setting (settings-schema.ts `protected: true`) is the user's
+ * A "protected" setting (settings-schema.ts owner `protected`) is the user's
  * leash on the agent: the tool kill-switches, the approval mode, browser
  * identity/secrecy, remote control, strict local-only mode, and developer_mode.
  * The spending caps are the user's leash on the agent's spending. The

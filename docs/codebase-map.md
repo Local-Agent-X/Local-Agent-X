@@ -50,8 +50,8 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/autonomy/` | 14 | 4 | M |  |
 | `src/cognition/` | 14 | 34 | XL |  |
 | `src/server/` *(entrypoint)* | 14 | 57 | XL |  |
+| `src/voice/` | 14 | 74 | XL |  |
 | `src/self-edit/` | 13 | 19 | L |  |
-| `src/voice/` | 13 | 74 | XL |  |
 | `src/whatsapp-bridge/` | 12 | 8 | L |  |
 | `src/agent-guards/` | 11 | 11 | L |  |
 | `src/broker-transport/` | 11 | 38 | XL |  |
@@ -192,7 +192,10 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/server-context.ts` | S |
 | `src/server-utils.ts` | M |
 | `src/settings-change-direction.ts` | S |
-| `src/settings-schema.ts` | M |
+| `src/settings-schema.controls.ts` | M |
+| `src/settings-schema.operator.ts` | S |
+| `src/settings-schema.preferences.ts` | S |
+| `src/settings-schema.ts` | S |
 | `src/settings.ts` | S |
 | `src/slash-commands.ts` | S |
 | `src/startup-integrity.ts` | S |

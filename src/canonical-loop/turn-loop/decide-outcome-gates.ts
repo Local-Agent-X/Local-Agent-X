@@ -53,6 +53,7 @@ import {
 import { runToolIntentGate } from "./tool-intent-gate.js";
 import { runFailedCallGate } from "./failed-call-gate.js";
 import { earnedDoneNudge } from "../middlewares/open-steps.js";
+import { OP_TYPE } from "../../ops/op-types.js";
 
 /** The gate contract lives in its own leaf module (no gate, no table) so the
  *  definition modules and this one cannot form an import cycle. Re-exported
@@ -210,7 +211,7 @@ const lateInjectGate: CompletionGate = {
 const frameworkServeGate: CompletionGate = {
   name: "framework-serve",
   async evaluate({ op, turnIdx }) {
-    if (op.type !== "app_build" || !op.appUrl) return CONTINUE; // APP_BUILD_OP_TYPE
+    if (op.type !== OP_TYPE.appBuild || !op.appUrl) return CONTINUE;
     const appName = op.appUrl.match(/\/apps\/([^/]+)\//)?.[1];
     if (!appName) return CONTINUE;
     try {

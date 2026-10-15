@@ -23,6 +23,7 @@ import {
   type ProcessClaimIdentity,
   type ProcessExecutionClaim,
 } from "./process-execution-claim.js";
+import { OP_TYPE, DELEGATED_OP_LABEL } from "../ops/op-types.js";
 
 export const PROCESS_EXECUTION_BACKEND_ID = "local-process";
 export const PROCESS_EXECUTION_TARGET_ID = "canonical-worker-process-v1";
@@ -79,10 +80,12 @@ export class ProcessExecutionBackend implements ExecutionBackend {
       && descriptor.surface.tools.every(saved =>
         unifiedRegistry.getEntry(saved.name)?.workerReconstructible === true)
       && op.canonical?.sessionId === descriptorOwnerSessionId(descriptor)
-      && op.type !== "chat_turn"
-      && op.type !== "voice_turn"
-      && !op.type.startsWith("app_build")
-      && !op.type.startsWith("build_app");
+      && op.type !== OP_TYPE.chatTurn
+      && op.type !== OP_TYPE.voiceTurn
+      // The app-build family (app_build, app_builder, and labels derived from them)
+      // needs the in-process runtime: dev servers, the app registry.
+      && !op.type.startsWith(OP_TYPE.appBuild)
+      && !op.type.startsWith(DELEGATED_OP_LABEL.buildApp);
   }
 
   place(_op: Op): { targetId: string; disposition: "ready" } {

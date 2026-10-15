@@ -45,7 +45,7 @@
  * verification-trigger-chat.test.ts.
  *
  * The verification op is a NORMAL background op, deliberately NOT in
- * session-bridge-observer's SIDEBAR_SUPPRESSED_OP_TYPES: it nests under its
+ * session-bridge-extractors.ts's SIDEBAR_SUPPRESSED_OP_TYPES: it nests under its
  * parent in the AGENTS panel (parentOpId), and a SUCCEEDED verdict rides the
  * ordinary bg_op_completed → pending-notifications channel so the agent
  * narrates it next turn (spoken as a headline, not a table — see

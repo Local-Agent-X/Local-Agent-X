@@ -56,8 +56,9 @@ import { selectDesignBrief } from "./design-brief.js";
 import { recordDesignSpec } from "../canonical-loop/index.js";
 import { registerAppBuildRuntime } from "./build-app-runtime.js";
 import { cliBuildDeveloperModeRefusal } from "./build-app-cli-gate.js";
+import { OP_TYPE } from "../ops/op-types.js";
 
-export const APP_BUILD_OP_TYPE = "app_build";
+export const APP_BUILD_OP_TYPE = OP_TYPE.appBuild;
 export const BUILD_APP_BUDGET = { maxIterations: 50, maxWallTimeMs: 0 } as const;
 
 export interface BuildAppResolveOptions {

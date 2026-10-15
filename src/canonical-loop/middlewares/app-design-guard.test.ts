@@ -9,6 +9,7 @@ import { getRuntimeConfig, setRuntimeConfig } from "../../config.js";
 import type { LAXConfig } from "../../types.js";
 import { selectDesignBrief, DESIGN_CRAFT, DESIGN_ANTI_PATTERNS } from "../../tools/design-brief.js";
 import type { CanonicalLoopContext, CanonicalMiddlewareResult } from "./types.js";
+import { OP_TYPE } from "../../ops/op-types.js";
 
 let workspace: string;
 let saved: LAXConfig;
@@ -83,8 +84,11 @@ describe("app-design-guard", () => {
   });
 
   it("stays silent on a build_app op — that path already injects the system", () => {
+    // The op build_app creates is typed OP_TYPE.appBuild ("app_build"); this test
+    // once passed "build_app", the tool's name, so the guard and its test agreed on
+    // a type no op has and every real build was nudged to redo its UI.
     mkdirSync(join(workspace, "apps", "pmajlabs"), { recursive: true });
-    const result = runTurn(ctxFor(appPath("pmajlabs", "index.html"), { opType: "build_app" }));
+    const result = runTurn(ctxFor(appPath("pmajlabs", "index.html"), { opType: OP_TYPE.appBuild }));
     expect(result.kind).toBe("continue");
   });
 

@@ -21,6 +21,7 @@ import { VOICE_FAST_TOOLS, buildVoiceTail } from "./voice-prompt.js";
 import type { ProviderId } from "../providers/provider-ids.js";
 import { userAuthoredRows } from "../harness-rows.js";
 import { withRecallCarried } from "../agent-request/recall-carry.js";
+import { OP_TYPE } from "../ops/op-types.js";
 const logger = createLogger("server.lifecycle");
 
 // A spoken reply is a few sentences; this caps a voice turn's output so a
@@ -327,7 +328,7 @@ export async function setupVoiceWs(deps: {
           cacheConversation: voiceSplit.fullyStable,
           signal,
           onEvent,
-          opType: "voice_turn",
+          opType: OP_TYPE.voiceTurn,
           lane: "interactive",
           promptTelemetry: voicePromptTelemetry,
           renderedPromptSections: voiceRenderedPromptSections,

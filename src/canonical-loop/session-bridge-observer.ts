@@ -37,7 +37,7 @@ import { isDispatchFailure } from "./types.js";
 import { pushPendingNotification } from "../ops/pending-notifications.js";
 import { scheduleIdleNudge } from "../ops/idle-nudge.js";
 
-import { toSpokenCompletion, redirectAppliedRow } from "./session-bridge-extractors.js";
+import { toSpokenCompletion, redirectAppliedRow, isSidebarSuppressedOpType } from "./session-bridge-extractors.js";
 import { readOp } from "../ops/op-store.js";
 import { VERIFICATION_OP_TYPE } from "./verification-spend.js";
 import { resolveTerminalOpStatus, type TerminalOpStatus } from "./checkpoint-stop.js";
@@ -47,6 +47,7 @@ import type { CanonicalEvent } from "./types.js";
 
 import { createLogger } from "../logger.js";
 import { createRequire } from "node:module";
+import { OP_TYPE } from "../ops/op-types.js";
 const require = createRequire(import.meta.url);
 const logger = createLogger("canonical-loop.session-bridge-observer");
 
@@ -69,28 +70,6 @@ function warnOnce(msg: string): void {
   warnedOnce = true;
   logger.warn(`[canonical-bridge] ${msg} (further warnings suppressed)`);
 }
-
-/**
- * Op types that never surface in the AGENTS sidebar, never queue a pending
- * notification and never schedule an idle nudge. They STILL take the terminal
- * release branch in recordCanonicalEventWithSink (see the leak note there).
- *
- *   chat_turn     the chat reply itself (WS stream channel), not a worker card
- *   agent_spawn   handler-events emits the named-agent card; this doubled it
- *   voice_turn    one per utterance; the reply is TTS audio, not a card
- *   skill_review  background-jobs/skill-review.ts — headless post-turn audit,
- *                 bound by trackOpForSession to its synthetic fork session
- *                 (skill-review-<ts>-<seq>). bg_op_* is a GLOBAL chat-WS
- *                 family, so every client saw "Worker: <untrusted-recalled-
- *                 data …> FAILED" cards plus a "hit a snag" idle nudge.
- *
- * NOT here on purpose: memory_consolidation — its bg_op_queued/started (with
- * opType) are the only feed for the ambient "dreaming" group
- * (public/js/chat-agent-feeds-ambient.js). Suppressing it empties that group.
- */
-const SIDEBAR_SUPPRESSED_OP_TYPES: ReadonlySet<string> = new Set([
-  "chat_turn", "agent_spawn", "voice_turn", "skill_review",
-]);
 
 export function recordCanonicalEvent(
   event: CanonicalEvent,
@@ -129,9 +108,9 @@ function recordCanonicalEventWithSink(
     if (!sessionId) return; // op wasn't submitted by a chat session — nothing to surface
 
     const op = readOp(event.opId);
-    if (op?.type && SIDEBAR_SUPPRESSED_OP_TYPES.has(op.type)) {
+    if (op?.type && isSidebarSuppressedOpType(op.type)) {
       // Suppressed from the AGENTS sidebar (these surface elsewhere, or are
-      // headless — see SIDEBAR_SUPPRESSED_OP_TYPES), but the session→op
+      // headless — see isSidebarSuppressedOpType), but the session→op
       // binding MUST still be released on terminal state. Skipping it leaks
       // every past chat_turn into listOpsForSession forever, which poisons the
       // system prompt with phantom "[PARALLEL CONTEXT]" workers. Exactly the
@@ -242,12 +221,12 @@ function recordCanonicalEventWithSink(
           // a link.
           let resultUrl: string | undefined;
           if (status === "completed") {
-            if (op?.type === "app_build") {
+            if (op?.type === OP_TYPE.appBuild) {
               // Prefer the op's known appUrl — deterministic, provider-agnostic.
               // Falls back to the APP_READY marker only for legacy ops that
               // predate the appUrl field.
               resultUrl = op.appUrl || extractAppReadyUrl(event.opId);
-            } else if (op?.type === "scheduled_mission") {
+            } else if (op?.type === OP_TYPE.scheduledMission) {
               const sess = sessionId || "";
               const cronMatch = sess.match(/^cron-(.+)-\d+$/);
               if (cronMatch && cronMatch[1]) {

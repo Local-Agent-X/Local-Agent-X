@@ -36,6 +36,7 @@ import { resolveAgentPath } from "../../workspace/paths.js";
 import { workspacePath } from "../../config.js";
 import { selectDesignBrief, DESIGN_CRAFT, DESIGN_ANTI_PATTERNS } from "../../tools/design-brief.js";
 import { createLogger } from "../../logger.js";
+import { OP_TYPE } from "../../ops/op-types.js";
 
 const logger = createLogger("canonical-loop.app-design-guard");
 
@@ -130,7 +131,7 @@ export const appDesignGuardMiddleware: CanonicalMiddleware = {
   // are observable, which is what separates a create from an update.
   afterModelCall(ctx) {
     if (process.env.LAX_APP_DESIGN_GUARD === "0") return { kind: "continue" };
-    if (ctx.op.type === "build_app") return { kind: "continue" };
+    if (ctx.op.type === OP_TYPE.appBuild) return { kind: "continue" };
     try {
       const appsRoot = workspacePath("apps");
       const state = getMiddlewareState<AppDesignState>(
@@ -152,7 +153,7 @@ export const appDesignGuardMiddleware: CanonicalMiddleware = {
 
   afterToolExecution(ctx) {
     if (process.env.LAX_APP_DESIGN_GUARD === "0") return { kind: "continue" };
-    if (ctx.op.type === "build_app") return { kind: "continue" };
+    if (ctx.op.type === OP_TYPE.appBuild) return { kind: "continue" };
     try {
       const appsRoot = workspacePath("apps");
       const state = getMiddlewareState<AppDesignState>(

@@ -10,6 +10,7 @@ import { DREAM_SYSTEM_PROMPT, DREAM_TOOL_NAMES } from "./prompts.js";
 import type { ProviderId } from "../../providers/provider-ids.js";
 import { registerDreamRunner, type DreamRunResult } from "../../memory/dream.js";
 import { renderPromptSection } from "../../context/system-prompt-builder.js";
+import { OP_TYPE } from "../../ops/op-types.js";
 
 const logger = createLogger("server.background-jobs.dream");
 
@@ -76,7 +77,7 @@ export function registerDreamRunnerForServer(deps: DreamCheckDeps): void {
           tools: dreamTools, security, toolPolicy,
           sessionId: dreamSession.id, maxIterations: 10, temperature: 0.3,
           callContext: "delegated",
-          opType: "memory_consolidation", lane: "background",
+          opType: OP_TYPE.memoryConsolidation, lane: "background",
           // The dream brief is harness-composed, not user-typed — the
           // instruction-ledger middleware must not mine constraints from it.
           harnessAuthoredTask: true,
@@ -98,7 +99,7 @@ export function registerDreamRunnerForServer(deps: DreamCheckDeps): void {
             tools: dreamTools, security, toolPolicy,
             sessionId: `${dreamSession.id}-b${i}`, maxIterations: 15, temperature: 0.3,
             callContext: "delegated",
-            opType: "memory_consolidation", lane: "background",
+            opType: OP_TYPE.memoryConsolidation, lane: "background",
             harnessAuthoredTask: true,
           });
           dreamSession.messages.push(...result.messages.filter(m => m.role !== "system"));

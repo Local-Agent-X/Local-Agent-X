@@ -33,6 +33,7 @@ export type {
 } from "./handler-types.js";
 export { createHandlerTools } from "./handler-tools.js";
 import { buildAgentStatus } from "./handler-status.js";
+import { OP_TYPE } from "../ops/op-types.js";
 
 // -- Helpers ----------------------------------------------------------------
 
@@ -247,7 +248,7 @@ export class Handler {
     for (const id of listOpsForSession(sessionId)) {
       const op = readOp(id);
       const state = op?.canonical?.state;
-      if (op?.type === "agent_spawn" && state && !isTerminalCanonicalState(state)) return op;
+      if (op?.type === OP_TYPE.agentSpawn && state && !isTerminalCanonicalState(state)) return op;
     }
     return null;
   }

@@ -11,6 +11,7 @@ import { appendSystemPromptSection } from "../../context/system-prompt-builder.j
 import { preflightCapabilityAwarePrompt } from "../prompt-preflight.js";
 import type { OpenAICompatTarget } from "../adapters/openai-compat.js";
 import { recordUserLinks } from "../../browser/site-provenance.js";
+import { OP_TYPE } from "../../ops/op-types.js";
 
 function readChatWallClockMs(): number {
   const raw = parseInt(process.env.LAX_CHAT_WALLCLOCK_MS ?? "7200000", 10);
@@ -67,11 +68,11 @@ export async function createChatOp(ctx: CanonicalChatContext): Promise<CreatedCh
   const op: Op = {
     id: newOpId("op_chat_turn"),
     sessionId: ctx.sessionId,
-    type: "chat_turn",
+    type: OP_TYPE.chatTurn,
     task: ctx.message,
     contextPack,
     lane: "interactive",
-    retryPolicy: getRetryPolicy("chat_turn"),
+    retryPolicy: getRetryPolicy(OP_TYPE.chatTurn),
     ownerId: "local-user",
     visibility: "private" as OpVisibility,
     status: "pending",

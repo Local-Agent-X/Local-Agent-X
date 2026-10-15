@@ -21,6 +21,7 @@ import { resolveContextWindow } from "../../context-manager/model-windows.js";
 import { opAnthropicTransport } from "../../context-manager/resolve-transport.js";
 import { isRuntimeFailoverBoundary } from "../../ops/target-identity.js";
 import { dropStrandedToolResults } from "./orphan-tool-results.js";
+import { OP_TYPE } from "../../ops/op-types.js";
 
 export async function buildTurnInput(
   op: Op,
@@ -82,7 +83,7 @@ export async function buildTurnInput(
     // guess cannot self-correct).
     const baselineTokens = (
       process.env.LAX_CONTEXT_BASELINE !== "0"
-      && op.type === "chat_turn"
+      && op.type === OP_TYPE.chatTurn
       && resolveContextWindow(model).provenance !== "floor"
     )
       ? (getSessionBaselineTokens(op.canonical?.sessionId, model) ?? getOpBaselineTokens(op.id))

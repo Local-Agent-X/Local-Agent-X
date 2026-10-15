@@ -43,6 +43,7 @@ import { createCuratorTools } from "./curator.js";
 import type { Protocol } from "./types.js";
 import { resolveActiveLearnedProtocolProvenance } from "./learned-lifecycle.js";
 import { registerLearnedProtocolEnvelopeForOp } from "../canonical-loop/public/learned-protocols.js";
+import { OP_TYPE } from "../ops/op-types.js";
 
 // ── Re-exports ────────────────────────────────────────────────
 
@@ -125,7 +126,7 @@ export function createAllProtocolTools(): ToolDefinition[] {
  * or ~/.lax/custom-protocols.json.
  */
 /** Ops whose protocol reads are LAX maintenance, not use (see protocol_get). */
-const MAINTENANCE_OP_TYPES = new Set(["skill_review", "memory_consolidation"]);
+const MAINTENANCE_OP_TYPES: ReadonlySet<string> = new Set([OP_TYPE.skillReview, OP_TYPE.memoryConsolidation]);
 
 export function getAllProtocols(): Protocol[] {
   const builtins = stampBuiltinSource([

@@ -14,13 +14,15 @@
  * was written slightly off-format. The verdict is also never LOWER than the
  * worst finding: "VERDICT: GREEN" above a red finding is RED.
  *
- * Light on purpose (no imports): verification-trigger.ts reads the op type for
- * its recursion guard on every terminal event.
+ * Light on purpose (one leaf import): verification-trigger.ts reads the op type
+ * for its recursion guard on every terminal event.
  */
+
+import { OP_TYPE } from "../ops/op-types.js";
 
 /** The review op's type — the persisted marker the recursion guards key on.
  *  Dispatch is not type-keyed (runtime.ts resolves adapters per op id). */
-export const REVIEW_PUBLISH_OP_TYPE = "review_publish";
+export const REVIEW_PUBLISH_OP_TYPE = OP_TYPE.reviewPublish;
 
 export type ReviewSeverity = "red" | "amber" | "yellow";
 export type ReviewVerdict = "RED" | "AMBER" | "GREEN";

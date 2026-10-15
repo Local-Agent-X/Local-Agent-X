@@ -21,6 +21,7 @@ import { registerSessionOwner, clearSessionOwner } from "../../browser/session-o
 import { remeasurePromptTelemetry } from "../../prompt-telemetry.js";
 import { toolSchemaFormatForDispatch } from "../../providers/shared/tool-shape.js";
 import { renderPromptSection } from "../../context/system-prompt-builder.js";
+import { OP_TYPE } from "../../ops/op-types.js";
 
 const logger = createLogger("server.background-jobs.cron");
 
@@ -139,7 +140,7 @@ export function registerCronRunner(deps: CronRunnerDeps): void {
         maxIterations: config.maxIterations,
         signal: externalCancelController.signal,
         wallClockMs: MISSION_HARD_TIMEOUT_MS,
-        opType: "scheduled_mission",
+        opType: OP_TYPE.scheduledMission,
         lane: "background",
         promptTelemetry,
         renderedPromptSections,

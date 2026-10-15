@@ -43,6 +43,7 @@ import { ANTHROPIC_ADAPTER_NAME } from "./adapters/anthropic/types.js";
 import { effectiveContextWindow, isAnthropicModel, type AnthropicTransport } from "../context-manager/effective-window.js";
 import { totalTokens } from "../context-manager/token-estimation.js";
 import { toChatParams } from "./turn-loop/compact-history.js";
+import { OP_TYPE } from "../ops/op-types.js";
 
 interface Observation {
   /** Isolated stable baseline: real prompt prefix − estimated prompt conversation. */
@@ -87,7 +88,7 @@ export function recordSessionBaselineObservation(
   // baseline downward → under-count → the death this exists to prevent. The
   // baseline is constant only WITHIN one op class's tool surface, and
   // "chat_turn" is the full interactive-chat surface the death occurs on.
-  if (opType !== "chat_turn") return;
+  if (opType !== OP_TYPE.chatTurn) return;
   const obs = observe(providerState, observedTools, promptMessages, transport);
   if (!obs) return;
   const existing = sessions.get(sessionId);

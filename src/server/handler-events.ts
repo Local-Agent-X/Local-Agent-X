@@ -21,6 +21,7 @@ import { clearSessionProfile } from "../autonomy/profile-store.js";
 import { registerChildSessionOwner, clearSessionOwner } from "../browser/session-owner-registry.js";
 import { AgentWorkspaceError, provisionAgentWorkspace, releaseAgentWorkspace, type AgentWorkspace } from "../agency/agent-workspace.js";
 import { requiredPromptPlan } from "../context/system-prompt-builder.js";
+import { OP_TYPE } from "../ops/op-types.js";
 const logger = createLogger("server.handler-events");
 
 // AgentSpawnEvent / AgentResultEvent live in handler-events-agent-result.ts
@@ -191,7 +192,7 @@ export function registerHandlerEvents(deps: {
         tools: spawnedTools, security, toolPolicy, sessionId: runSessionId, maxIterations: config.maxIterations, temperature: config.temperature, targetPin: targetPinForModelOverride(modelOverride),
         callContext: "delegated",
         wallClockMs: config.agentTimeoutMs,
-        opType: "agent_spawn",
+        opType: OP_TYPE.agentSpawn,
         lane: "agent",
         runId: agentId, harnessAuthoredTask: req.harnessAuthoredTask, delegation: req.delegation,
         signal,

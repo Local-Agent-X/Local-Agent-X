@@ -10,6 +10,7 @@
  * survived (canonical runners and op_submit_async still consult it).
  */
 import type { Op, OpRetryPolicy } from "./types.js";
+import { OP_TYPE, DELEGATED_OP_LABEL } from "./op-types.js";
 
 export interface RecoveryDecision {
   shouldRetry: boolean;
@@ -51,11 +52,11 @@ const DEFAULT_RETRY_POLICY: OpRetryPolicy = {
 const RETRY_POLICIES: Record<string, OpRetryPolicy> = {
   "send_email":           { maxRecoveryAttempts: 1, backoffMs: [10_000] },
   "research_query":       { maxRecoveryAttempts: 5, backoffMs: [5_000, 30_000, 60_000, 120_000, 300_000] },
-  "autopilot_round":      { maxRecoveryAttempts: 2, backoffMs: [30_000, 120_000] },
-  "build_app":            { maxRecoveryAttempts: 3, backoffMs: [30_000, 60_000, 180_000] },
-  "app_build":            { maxRecoveryAttempts: 3, backoffMs: [30_000, 60_000, 180_000] },
-  "memory_consolidation": { maxRecoveryAttempts: 5, backoffMs: [60_000, 300_000, 600_000, 1_800_000, 3_600_000] },
-  "self_edit":            { maxRecoveryAttempts: 2, backoffMs: [10_000, 60_000] },
+  [OP_TYPE.autopilotRound]: { maxRecoveryAttempts: 2, backoffMs: [30_000, 120_000] },
+  [DELEGATED_OP_LABEL.buildApp]: { maxRecoveryAttempts: 3, backoffMs: [30_000, 60_000, 180_000] },
+  [OP_TYPE.appBuild]:       { maxRecoveryAttempts: 3, backoffMs: [30_000, 60_000, 180_000] },
+  [OP_TYPE.memoryConsolidation]: { maxRecoveryAttempts: 5, backoffMs: [60_000, 300_000, 600_000, 1_800_000, 3_600_000] },
+  [OP_TYPE.selfEdit]:       { maxRecoveryAttempts: 2, backoffMs: [10_000, 60_000] },
   "smoke-test":           { maxRecoveryAttempts: 1, backoffMs: [5_000] },
 };
 

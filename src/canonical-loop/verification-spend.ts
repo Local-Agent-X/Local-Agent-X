@@ -51,6 +51,7 @@ import { listOpsForSession } from "../ops/session-bridge.js";
 import type { Op } from "../ops/types.js";
 
 import { createLogger } from "../logger.js";
+import { OP_TYPE } from "../ops/op-types.js";
 const logger = createLogger("canonical-loop.verification-spend");
 
 /** The verification op's type — the persisted recursion-guard marker. Dispatch
@@ -58,9 +59,9 @@ const logger = createLogger("canonical-loop.verification-spend");
  *  per lane), so a dedicated type is safe; it is also what the AGENTS panel
  *  keys per-type icons on, what the observer's failed-verification quieting
  *  discriminates on, and what routes a verdict to its spoken headline. It must
- *  stay OUT of session-bridge-observer's SIDEBAR_SUPPRESSED_OP_TYPES so the op
+ *  stay OUT of session-bridge-extractors.ts's SIDEBAR_SUPPRESSED_OP_TYPES so the op
  *  surfaces like any background worker. */
-export const VERIFICATION_OP_TYPE = "verify_deliverable";
+export const VERIFICATION_OP_TYPE = OP_TYPE.verifyDeliverable;
 
 /** File extensions that count as persistent deliverables worth an independent
  *  verification pass. Lowercase, dot-prefixed; matched case-insensitively. */

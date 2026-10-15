@@ -19,6 +19,7 @@ import { renderPromptSection, type RenderedPromptSection } from "../../context/s
 import { createHash } from "node:crypto";
 import { readOp, tryWithOpLock } from "../../ops/op-store.js";
 import { resolveCredential } from "../../auth/resolve.js";
+import { OP_TYPE } from "../../ops/op-types.js";
 
 async function submitDelegationOp(message: string, sessionId: string, ingressKey?: string): Promise<{ opId: string }> {
   const lane = "build" as const;
@@ -50,11 +51,11 @@ async function submitDelegationOp(message: string, sessionId: string, ingressKey
   const op: Op = {
     id: opId,
     sessionId,
-    type: "freeform",
+    type: OP_TYPE.freeform,
     task: message,
     contextPack,
     lane,
-    retryPolicy: getRetryPolicy("freeform"),
+    retryPolicy: getRetryPolicy(OP_TYPE.freeform),
     ownerId: "local-user",
     visibility: "private" as OpVisibility,
     status: "pending",
@@ -224,7 +225,7 @@ export async function runDelegationHandoff(args: DelegationHandoffArgs): Promise
       temperature: prepared.temperature,
       signal: wsChat.abort.signal,
       onEvent,
-      opType: "delegation_ack",
+      opType: OP_TYPE.delegationAck,
       lane: "interactive",
       promptTelemetry,
       renderedPromptSections,

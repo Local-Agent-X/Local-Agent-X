@@ -11,6 +11,7 @@ import type { ToolPolicy } from "../../tool-policy/index.js";
 import { createLogger } from "../../logger.js";
 import { WORKER_SYSTEM_PROMPT_TEMPLATE } from "./prompts.js";
 import { renderPromptSection } from "../../context/system-prompt-builder.js";
+import { OP_TYPE } from "../../ops/op-types.js";
 
 const logger = createLogger("server.background-jobs.workers");
 
@@ -55,7 +56,7 @@ export function registerWorkerRunnerForServer(deps: WorkerRunnerDeps): void {
         security, toolPolicy, sessionId,
         callContext: "delegated",
         maxIterations: 15,
-        opType: "app_builder",
+        opType: OP_TYPE.appBuilder,
         lane: "background",
       });
       session.messages = stripEphemeralMessages(result.messages).filter(m => m.role !== "system");

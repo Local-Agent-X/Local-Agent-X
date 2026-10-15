@@ -29,6 +29,7 @@ import { randomId } from "../util/ids.js";
 import { atomicWriteFileSync, type AtomicWriteOperations } from "../util/json-store.js";
 
 import { createLogger } from "../logger.js";
+import { OP_TYPE } from "./op-types.js";
 const logger = createLogger("workers.op-store");
 
 const OPS_BASE = join(getLaxDir(), "operations");
@@ -43,7 +44,7 @@ const OPS_BASE = join(getLaxDir(), "operations");
  * worker and the model read the BLOCKED text aloud as "already running."
  */
 export function isInteractiveHostOpType(type: string): boolean {
-  return type === "chat_turn" || type === "voice_turn";
+  return type === OP_TYPE.chatTurn || type === OP_TYPE.voiceTurn;
 }
 
 type StrictWriteFailurePoint = "before_write" | "before_rename";

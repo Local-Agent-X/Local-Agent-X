@@ -54,6 +54,7 @@ import {
 } from "./skill-review-queue.js";
 import { renderOpTranscript, TRANSCRIPT_CHAR_CAP } from "../../canonical-loop/public/op-transcript.js";
 import { broadcastToSession } from "../../ops/session-bridge.js";
+import { OP_TYPE } from "../../ops/op-types.js";
 
 const logger = createLogger("server.background-jobs.skill-review");
 
@@ -265,7 +266,7 @@ async function runSingleReview(request: SkillReviewRequest, d: SkillReviewDeps):
       wallClockMs: timeoutMs,
       temperature: 0.3,
       callContext: "delegated",
-      opType: "skill_review",
+      opType: OP_TYPE.skillReview,
       lane: "background",
       // The transcript is machine-composed, not user-typed — the
       // instruction-ledger middleware must not mine constraints out of it.

@@ -27,6 +27,7 @@ import type { Op } from "../../ops/types.js";
 import type { ServerEvent } from "../../types.js";
 import type { CanonicalMessage, ToolCall, ToolDescriptor } from "../contract-types.js";
 import type { ToolDispatchStatus } from "../types.js";
+import { OP_TYPE } from "../../ops/op-types.js";
 
 export interface NudgeMetadata {
   strategyPivot?: {
@@ -207,10 +208,10 @@ export function isWorkerOp(ctx: CanonicalLoopContext): boolean {
  * user instruction. `app_build`'s turn-0 message is the per-build context the
  * harness composes ("you must NOT edit core LAX", "leave the locked baseline
  * alone", "do NOT recreate the skeleton"). Matches build-app.ts's
- * APP_BUILD_OP_TYPE — kept as a literal to avoid a middlewares -> build-app
- * import cycle; the instruction-ledger skip test pins the value.
+ * OP_TYPE.appBuild (ops/op-types.ts, a leaf, so no middlewares -> build-app
+ * import cycle).
  */
-const SYNTHETIC_CONTEXT_OP_TYPES: ReadonlySet<string> = new Set(["app_build"]);
+const SYNTHETIC_CONTEXT_OP_TYPES: ReadonlySet<string> = new Set([OP_TYPE.appBuild]);
 
 /**
  * True when this op's task text was composed by the HARNESS, false when a human

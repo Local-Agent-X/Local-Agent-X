@@ -21,6 +21,7 @@ import type { SecretsStore } from "../../secrets.js";
 import type { ToolPolicy } from "../../tool-policy/index.js";
 import { createLogger } from "../../logger.js";
 import { renderPromptSection } from "../../context/system-prompt-builder.js";
+import { OP_TYPE } from "../../ops/op-types.js";
 
 const logger = createLogger("server.background-jobs.self-edit-surgeon");
 
@@ -74,7 +75,7 @@ export function registerSelfEditSurgeonForServer(deps: SelfEditSurgeonRunnerDeps
         tools, security, toolPolicy, sessionId,
         callContext: "delegated",
         maxIterations: 30,
-        opType: "self_edit",
+        opType: OP_TYPE.selfEdit,
         lane: "background",
         // The surgeon's message is buildSelfEditPrompt's envelope around the
         // self_edit tool's task argument — machine prose either way. Its own

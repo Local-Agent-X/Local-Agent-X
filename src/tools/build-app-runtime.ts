@@ -28,6 +28,7 @@ import { processStartTool, processStatusTool, processKillTool } from "./process-
 import { appServeBackendTool, appServeFrontendTool } from "./dev-server-tools.js";
 import type { AppTier } from "./app-tier.js";
 import { checkProductBuildOwnership } from "./build-app-collision.js";
+import { OP_TYPE } from "../ops/op-types.js";
 
 const BASE_TOOLS = [writeTool, readTool, editTool, bashTool, globTool, connectorCreateTool];
 const MUTATING_APP_BUILD_TOOLS = new Set([
@@ -198,7 +199,7 @@ export function restorePersistedAppBuildRuntimes(ops: Op[] = listOps()): string[
   for (const op of ops) {
     const descriptor = op.runtimeDescriptor;
     const state = op.canonical?.state;
-    if (op.type !== "app_build" || descriptor?.kind !== "app-build") continue;
+    if (op.type !== OP_TYPE.appBuild || descriptor?.kind !== "app-build") continue;
     if (state === "succeeded" || state === "failed" || state === "cancelled") continue;
     const registration = registerAppBuildRuntime(op, descriptor);
     if (!registration.registered) {

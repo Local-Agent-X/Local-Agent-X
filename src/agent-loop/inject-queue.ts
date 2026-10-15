@@ -16,6 +16,7 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { OP_TYPE } from "../ops/op-types.js";
 
 export interface InjectItem { id: string; text: string }
 
@@ -68,7 +69,7 @@ export function hasQueuedInjectText(sessionId: string, message: string): boolean
  * drift apart.
  */
 export function opConsumesInjects(opType: string): boolean {
-  return opType === "chat_turn" || opType === "agent_spawn";
+  return opType === OP_TYPE.chatTurn || opType === OP_TYPE.agentSpawn;
 }
 
 /** Test-only / shutdown cleanup. */

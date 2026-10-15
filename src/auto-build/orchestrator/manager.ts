@@ -31,6 +31,7 @@ import * as registry from "./registry.js";
 import { createLogger } from "../../logger.js";
 import { broadcastToSession } from "../../ops/session-bridge.js";
 import { updateAppBuildWorkflow } from "../workflow-state.js";
+import { OP_TYPE } from "../../ops/op-types.js";
 
 const logger = createLogger("auto-build.orchestrator");
 
@@ -176,7 +177,7 @@ export function startOrchestration(opts: StartOrchestrationOptions): StartOrches
     // Mark this card as the SUPERVISOR / tree root — the agents panel keys a
     // distinct hub glyph (◈) + a persistent accent border off this opType so
     // the orchestrator never reads as just another worker card.
-    opType: "orchestrator",
+    opType: OP_TYPE.orchestrator,
   });
 
   // Run the loop async. Errors caught and emitted as halts; never throw

@@ -13,6 +13,7 @@
 import { readOpMessages } from "./store.js";
 import { VERIFICATION_OP_TYPE } from "./verification-spend.js";
 import { extractText } from "./turn-loop/content-extract.js";
+import { OP_TYPE } from "../ops/op-types.js";
 
 /** Is this per-value row's `match?` cell a NO? Tolerant of the spellings
  *  models actually emit for that column. */
@@ -192,4 +193,30 @@ export function extractFinalAssistantText(opId: string, maxChars = 2000): string
     }
   } catch { /* malformed op-messages — nothing to surface */ }
   return "";
+}
+
+/**
+ * Op types that never surface in the AGENTS sidebar, never queue a pending
+ * notification and never schedule an idle nudge. They STILL take the terminal
+ * release branch in session-bridge-observer.ts recordCanonicalEventWithSink (see the leak note there).
+ *
+ *   chat_turn     the chat reply itself (WS stream channel), not a worker card
+ *   agent_spawn   handler-events emits the named-agent card; this doubled it
+ *   voice_turn    one per utterance; the reply is TTS audio, not a card
+ *   skill_review  background-jobs/skill-review.ts — headless post-turn audit,
+ *                 bound by trackOpForSession to its synthetic fork session
+ *                 (skill-review-<ts>-<seq>). bg_op_* is a GLOBAL chat-WS
+ *                 family, so every client saw "Worker: <untrusted-recalled-
+ *                 data …> FAILED" cards plus a "hit a snag" idle nudge.
+ *
+ * NOT here on purpose: memory_consolidation — its bg_op_queued/started (with
+ * opType) are the only feed for the ambient "dreaming" group
+ * (public/js/chat-agent-feeds-ambient.js). Suppressing it empties that group.
+ */
+const SIDEBAR_SUPPRESSED_OP_TYPES: ReadonlySet<string> = new Set([
+  OP_TYPE.chatTurn, OP_TYPE.agentSpawn, OP_TYPE.voiceTurn, OP_TYPE.skillReview,
+]);
+
+export function isSidebarSuppressedOpType(opType: string): boolean {
+  return SIDEBAR_SUPPRESSED_OP_TYPES.has(opType);
 }

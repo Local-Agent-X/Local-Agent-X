@@ -13,6 +13,7 @@
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { readSessionActions } from "../ops/action-ledger.js";
 import { isDispatchFailure } from "../canonical-loop/public/op-facts.js";
+import { OP_TYPE } from "../ops/op-types.js";
 
 function ok(content: string): ToolResult { return { content }; }
 
@@ -60,7 +61,7 @@ export function createReadMyLogsTool(getSessionId?: () => string): ToolDefinitio
           .map(a => `${a.tool}${a.status === "ok" ? "✓" : a.status === "cancelled" ? "⊘" : "✗"}`)
           .join(", ");
         const when = e.ts.replace("T", " ").slice(0, 16);
-        const surface = e.opType === "chat_turn" ? "" : ` (${e.opType})`;
+        const surface = e.opType === OP_TYPE.chatTurn ? "" : ` (${e.opType})`;
         return `- ${when}${surface}: ${acts}`;
       });
 

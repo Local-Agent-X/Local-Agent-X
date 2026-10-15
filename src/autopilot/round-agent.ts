@@ -19,6 +19,7 @@ import { buildAutopilotNudge, type NudgeContext } from "./nudge.js";
 import { renderPromptSection } from "../context/system-prompt-builder.js";
 
 import { createLogger } from "../logger.js";
+import { OP_TYPE } from "../ops/op-types.js";
 const logger = createLogger("autopilot.round-agent");
 
 export interface RoundAgentDeps {
@@ -119,7 +120,7 @@ export async function runAutopilotRound(
       maxIterations: deps.config.maxIterations,
       wallClockMs: opts.wallClockMs,
       signal: opts.signal,
-      opType: "autopilot_round",
+      opType: OP_TYPE.autopilotRound,
       lane: "background",
       // "Begin round N." is a harness kick, not user speech — the mission the
       // user actually wrote lives in the system prompt, which the instruction

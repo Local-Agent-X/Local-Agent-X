@@ -18,7 +18,7 @@ import {
 // unverified or failing edit, whatever the task.
 
 const edit = (filePath: string): VerifyTurnAction => ({ tool: "edit", filePath });
-const bash = (command: string, status: "ok" | "error"): VerifyTurnAction => ({ tool: "bash", command, status });
+const bash = (command: string, status: "ok" | "error" | "blocked" | "timeout"): VerifyTurnAction => ({ tool: "bash", command, status });
 const del = (filePath: string): VerifyTurnAction => ({ tool: "delete_file", filePath });
 
 describe("isSourceFile — which extensions demand a verify", () => {
@@ -146,6 +146,19 @@ describe("checkVerifyGate — Python stdlib unittest is a real verify", () => {
     expect(r.nudge).toMatch(/STOP/);
     expect(r.nudge).toMatch(/FAILED/);
     expect(opEditedSourceUnverified(s)).toBe(true);
+  });
+
+  it("a check that never ran (blocked) or never answered (timeout) is unverified, not red", () => {
+    // A blocked smoke command once produced "STOP: your last build/type-check/test
+    // run FAILED", and the model went looking for errors in code that was fine.
+    for (const status of ["blocked", "timeout"] as const) {
+      const s = createVerifyGateState();
+      noteVerifyEvidence([edit("poker.py"), bash("python3 -m unittest poker_test", status)], s);
+      const r = checkVerifyGate(s);
+      expect(r.nudge, status).not.toMatch(/FAILED/);
+      expect(r.nudge, status).toMatch(/haven't run/i);
+      expect(opEditedSourceUnverified(s), status).toBe(true);
+    }
   });
 
   it("running the module (`python file.py`) is NOT a verify — still nudges", () => {

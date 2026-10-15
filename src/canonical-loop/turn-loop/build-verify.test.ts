@@ -103,6 +103,22 @@ describe("runBuildVerifyGate", () => {
     expect(r.confirmation).toContain("npm run typecheck");
   });
 
+  it("a build the harness couldn't run (blocked) or that never answered (timeout) is not called red", async () => {
+    for (const status of ["blocked", "timeout"] as const) {
+      _resetBuildVerifyState();
+      vi.clearAllMocks();
+      const r = await runBuildVerifyGate(op, {
+        editedPaths: ["/proj/src/a.ts"],
+        probe,
+        exec: vi.fn(async () => ({ ok: false, status, output: "Shell commands are disabled." })),
+      });
+      expect(r.nudge, status).toBe("");
+      expect(r.shouldRetry, status).toBe(false);
+      expect(r.verifiedClean, status).toBeFalsy();
+      expect(recordOrchestratorVerify, status).not.toHaveBeenCalled();
+    }
+  });
+
   it("green build's confirmation stays size-free (sizes are a separate op-end note)", async () => {
     const r = await runBuildVerifyGate(op, { editedPaths: ["/proj/src/a.ts"], probe, exec: vi.fn(GREEN) });
     expect(r.verifiedClean).toBe(true);

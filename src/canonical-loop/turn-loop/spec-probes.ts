@@ -33,6 +33,8 @@ import { getSessionForOp } from "../../ops/session-bridge.js";
 import { resolveAgentPath } from "../../workspace/paths.js";
 import { generateOracleProbe, type OracleProbe, type ProbeLanguage } from "../../classifiers/oracle-probe-gen.js";
 import { executeHarnessCommand } from "../../tool-execution/harness-exec.js";
+import { checkVerdict } from "../../tool-execution/check-verdict.js";
+import type { ToolResultStatus } from "../../types.js";
 import { workspaceRoot } from "../../config.js";
 import { removeLeftovers, snapshotTree } from "./probe-leftovers.js";
 import { createLogger } from "../../logger.js";
@@ -104,9 +106,10 @@ export type ProbeVerdict = "pass" | "red" | "invalid";
  * Erring toward INVALID on ambiguity is intentional: a mis-guessed probe must
  * degrade to silence, never false-flag a correct implementation.
  */
-export function classifyProbeRun(status: string, output: string): ProbeVerdict {
-  if (status === "ok") return "pass";
-  if (status !== "error") return "invalid";
+export function classifyProbeRun(status: ToolResultStatus, output: string): ProbeVerdict {
+  const verdict = checkVerdict(status);
+  if (verdict === "passed") return "pass";
+  if (verdict === "none") return "invalid";
   return PROBE_INVALID_RE.test(output) ? "invalid" : "red";
 }
 

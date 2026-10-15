@@ -22,6 +22,8 @@ import type { FileDiagnostic } from "../../language-intel/index.js";
 import { resolveAgentPath } from "../../workspace/paths.js";
 import { workspaceRoot } from "../../config.js";
 import { executeHarnessCommand } from "../../tool-execution/harness-exec.js";
+import { checkVerdict, type CheckVerdict } from "../../tool-execution/check-verdict.js";
+import type { ToolResultStatus } from "../../types.js";
 import { createLogger } from "../../logger.js";
 import type { Op } from "../../ops/types.js";
 
@@ -136,12 +138,23 @@ const realProbe: FsProbe = {
   },
 };
 
-/** Run the detected command and reduce it to a pass/output verdict. Anything
- *  short of a clean exit (error, timeout, blocked) counts as "not verified" —
- *  we never round a non-zero or aborted build up to green. */
-async function defaultExec(command: string, cwd: string, opId: string): Promise<{ ok: boolean; output: string }> {
+/** A check's outcome: `status` (the harness's tool status) decides the verdict
+ *  through checkVerdict; without one (a test double), `ok` does. */
+interface CheckRun {
+  ok: boolean;
+  status?: ToolResultStatus;
+  output: string;
+}
+
+/** Run the detected command. We never round a non-zero or aborted build up to
+ *  green, and never call one that didn't run (blocked, timed out) red. */
+async function defaultExec(command: string, cwd: string, opId: string): Promise<CheckRun> {
   const r = await executeHarnessCommand({ command, cwd, timeoutMs: BUILD_TIMEOUT_MS, purpose: "build-verify", opId });
-  return { ok: r.ok, output: r.output };
+  return { ok: r.ok, status: r.status, output: r.output };
+}
+
+function verdictOf(run: CheckRun): CheckVerdict {
+  return run.status !== undefined ? checkVerdict(run.status) : run.ok ? "passed" : "failed";
 }
 
 /** Head-truncate compiler output: the first errors are the root causes (a
@@ -237,7 +250,7 @@ export interface BuildVerifyOptions {
   /** Override the filesystem probe (default: node:fs). */
   probe?: FsProbe;
   /** Override the command runner (default: bashTool in the sandbox cage). */
-  exec?: (command: string, cwd: string) => Promise<{ ok: boolean; output: string }>;
+  exec?: (command: string, cwd: string) => Promise<CheckRun>;
 }
 
 const NO_RETRY: BuildVerifyGateResult = { nudge: "", shouldRetry: false, capReached: false, verifiedClean: false, confirmation: "" };
@@ -310,8 +323,13 @@ export async function runBuildVerifyGate(op: Op, opts: BuildVerifyOptions = {}):
 
   // 1. Type-check (fast, side-effect-free). The broken-reference class fails here.
   const build = await exec(detected.command, detected.cwd);
-  logger.info(`op=${op.id} ran \`${detected.command}\` in ${detected.cwd} → ${build.ok ? "PASSED" : "FAILED"} (retry ${getBuildVerifyRetries(op.id)})`);
-  if (!build.ok) {
+  const buildVerdict = verdictOf(build);
+  logger.info(`op=${op.id} ran \`${detected.command}\` in ${detected.cwd} → ${buildVerdict} (retry ${getBuildVerifyRetries(op.id)})`);
+  if (buildVerdict === "none") {
+    logger.warn(`op=${op.id} build check gave no verdict (${build.status ?? "unknown"}): ${build.output.slice(0, 200)} — left unverified, not red`);
+    return NO_RETRY;
+  }
+  if (buildVerdict === "failed") {
     const reframe = reframePreamble(op.id, "build", build.output);
     return redResult(reframe + formatBuildErrorsForAgent(detected.command, detected.cwd, build.output, detected.kind));
   }
@@ -324,8 +342,13 @@ export async function runBuildVerifyGate(op: Op, opts: BuildVerifyOptions = {}):
   const testCmd = detectTestCommand(editedPaths, probe, wsRoot);
   if (testCmd) {
     const test = await exec(testCmd.command, testCmd.cwd);
-    logger.info(`op=${op.id} ran \`${testCmd.command}\` in ${testCmd.cwd} → ${test.ok ? "PASSED" : "FAILED"} (retry ${getBuildVerifyRetries(op.id)})`);
-    if (!test.ok) {
+    const testVerdict = verdictOf(test);
+    logger.info(`op=${op.id} ran \`${testCmd.command}\` in ${testCmd.cwd} → ${testVerdict} (retry ${getBuildVerifyRetries(op.id)})`);
+    if (testVerdict === "none") {
+      logger.warn(`op=${op.id} test check gave no verdict (${test.status ?? "unknown"}) — left unverified, not red`);
+      return NO_RETRY;
+    }
+    if (testVerdict === "failed") {
       const reframe = reframePreamble(op.id, "test", test.output);
       return redResult(reframe + formatTestFailuresForAgent(testCmd.command, testCmd.cwd, test.output));
     }

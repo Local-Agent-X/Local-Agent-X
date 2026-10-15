@@ -14,6 +14,7 @@
 // The cage is bashTool's own and applies regardless.
 import { bashTool } from "../tools/shell-tool.js";
 import { statusOf } from "../tools/result-helpers.js";
+import type { ToolResultStatus } from "../types.js";
 import { getSetting } from "../settings.js";
 import { getSharedAuditTrail } from "../threat/audit-trail.js";
 import { getLaxDir } from "../lax-data-dir.js";
@@ -34,7 +35,7 @@ export interface HarnessCommandResult {
   /** Clean exit. Anything else — error, timeout, blocked — is false. */
   ok: boolean;
   /** The tool-result status ("ok", "error", "timeout", …); "blocked" when the kill switch refused. */
-  status: string;
+  status: ToolResultStatus;
   output: string;
 }
 

@@ -17,6 +17,7 @@
 
 import { isTestFile, normPath, workspaceAppSlug } from "./build-command.js";
 import { evaluateClaimGrounding, type EvidenceKind } from "./claim-grounding.js";
+import { checkVerdict } from "../tool-execution/check-verdict.js";
 
 /** Normalized view of one tool call + its dispatch outcome for a turn. */
 export interface VerifyTurnAction {
@@ -167,14 +168,14 @@ export function noteVerifyEvidence(
       (VERIFY_CMD_RE.test(a.command) || HTTP_SMOKE_CMD_RE.test(a.command)) &&
       verifyTargetsEditedApp(a.command, state.editedPaths)
     ) {
-      // Exit 0 → ok; any failure flavor (error / blocked / declined / timeout
-      // — all of which arrived as "error" before the dispatch boundary carried
-      // the envelope flavor) → failed verify. A cancelled/unknown status
-      // carries no verdict, so it's left untouched.
-      if (a.status === "ok") {
+      // A check that never ran (blocked, declined, cancelled) or ran without an
+      // answer (timeout) is no verdict: the work stays unverified, but it is not
+      // red, and telling the model it is sends it to fix code that may be fine.
+      const verdict = checkVerdict(a.status);
+      if (verdict === "passed") {
         state.verifiedSinceEdit = true;
         state.verifyFailedSinceEdit = false;
-      } else if (a.status !== undefined && a.status !== "cancelled") {
+      } else if (verdict === "failed") {
         state.verifyFailedSinceEdit = true;
         state.verifiedSinceEdit = false;
       }

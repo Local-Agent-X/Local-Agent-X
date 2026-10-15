@@ -15,10 +15,11 @@
  *   - "deny"                → block without prompting
  *
  * Session-scoped "always allow" cache prevents re-prompting for the same
- * (tool, argsFingerprint) within one session. Fingerprint captures the
- * risk-relevant arg (full command for shell, parent dir for write, hostname
- * for network, action for browser) so a grant doesn't accidentally cover
- * unrelated calls. Still re-prompts across sessions.
+ * (tool, argsFingerprint) within one session. The fingerprint is derived from
+ * what each argument means (computeArgsFingerprint: directory for a declared
+ * path, canonical command for shell, host for an egress url, the exact value
+ * otherwise) so a grant doesn't cover unrelated calls. Grants live in memory
+ * only: they lapse with the session and with the process.
  *
  * The decision/fingerprint/destructive logic lives in ./approval-decision.ts
  * and the typed action-preview factories in ./approval-preview.ts; both are

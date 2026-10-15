@@ -48,11 +48,12 @@ function sid(label: string): string {
   return `test-${label}-${++_sid}-${process.hrtime.bigint().toString(36)}`;
 }
 
+const bashKey = (command: string) => computeArgsFingerprint("bash", { command });
+
 describe("computeArgsFingerprint — bash/shell", () => {
   it("fingerprints the full command, not just the binary", () => {
-    expect(computeArgsFingerprint("bash", { command: "git status" })).toBe("git status");
-    expect(computeArgsFingerprint("bash", { command: "git push origin main" })).toBe("git push origin main");
-    expect(computeArgsFingerprint("bash", { command: "rm -rf /" })).toBe("rm -rf /");
+    expect(bashKey("git status")).not.toBe(bashKey("git push origin main"));
+    expect(bashKey("git push origin main")).not.toBe(bashKey("git push origin main --tags"));
   });
 
   it("does NOT collapse different subcommands of the same binary", () => {
@@ -70,29 +71,29 @@ describe("computeArgsFingerprint — bash/shell", () => {
   });
 
   it("strips leading env-var assignments", () => {
-    expect(computeArgsFingerprint("bash", { command: "FOO=bar git status" })).toBe("git status");
-    expect(computeArgsFingerprint("bash", { command: "FOO=bar BAZ=qux git push" })).toBe("git push");
+    expect(bashKey("FOO=bar git status")).toBe(bashKey("git status"));
+    expect(bashKey("FOO=bar BAZ=qux git push")).toBe(bashKey("git push"));
   });
 
   it("normalizes surrounding and internal whitespace", () => {
-    expect(computeArgsFingerprint("bash", { command: "   ls   " })).toBe("ls");
-    expect(computeArgsFingerprint("bash", { command: "git   status" })).toBe("git status");
+    expect(bashKey("   ls   ")).toBe(bashKey("ls"));
+    expect(bashKey("git   status")).toBe(bashKey("git status"));
   });
 
   it("retains pipes / chain operators (full command is the key)", () => {
-    expect(computeArgsFingerprint("bash", { command: "cat file|grep x" })).toBe("cat file|grep x");
-    expect(computeArgsFingerprint("bash", { command: "ls && rm -rf /" })).toBe("ls && rm -rf /");
+    expect(bashKey("cat file|grep x")).not.toBe(bashKey("cat file"));
+    expect(bashKey("ls && rm -rf /")).not.toBe(bashKey("ls"));
   });
 
   it("treats shell the same as bash", () => {
-    expect(computeArgsFingerprint("shell", { command: "git status" })).toBe("git status");
+    expect(computeArgsFingerprint("shell", { command: "git status" })).toBe(bashKey("git status"));
   });
 });
 
 describe("computeArgsFingerprint — file path tools", () => {
   it("uses parent directory of resolved path", () => {
     const fp = computeArgsFingerprint("write", { path: "/Users/x/Documents/foo.txt" });
-    expect(fp).toBe(path.dirname(path.resolve("/Users/x/Documents/foo.txt")));
+    expect(fp).toContain(JSON.stringify(path.dirname(path.resolve("/Users/x/Documents/foo.txt"))));
   });
 
   it("different parent dirs produce different fingerprints", () => {
@@ -115,16 +116,18 @@ describe("computeArgsFingerprint — file path tools", () => {
     expect(e).toBe(d);
   });
 
-  it("missing path → <unresolvable>", () => {
-    expect(computeArgsFingerprint("write", {})).toBe("<unresolvable>");
-    expect(computeArgsFingerprint("write", { path: "" })).toBe("<unresolvable>");
+  it("a write's content is its payload, not its scope", () => {
+    expect(computeArgsFingerprint("write", { path: "/tmp/a/x.txt", content: "one" }))
+      .toBe(computeArgsFingerprint("write", { path: "/tmp/a/y.txt", content: "two" }));
   });
 });
 
 describe("computeArgsFingerprint — network tools", () => {
-  it("uses hostname", () => {
-    expect(computeArgsFingerprint("http_request", { url: "https://example.com/foo" })).toBe("example.com");
-    expect(computeArgsFingerprint("web_fetch", { url: "https://example.com/bar?q=1" })).toBe("example.com");
+  it("uses the host, not the path or query", () => {
+    expect(computeArgsFingerprint("http_request", { url: "https://example.com/foo" }))
+      .toBe(computeArgsFingerprint("http_request", { url: "https://example.com/bar?q=1", method: "POST", body: "x" }));
+    expect(computeArgsFingerprint("web_fetch", { url: "https://example.com/bar?q=1" }))
+      .toBe(computeArgsFingerprint("web_fetch", { url: "https://example.com/" }));
   });
 
   it("different hosts produce different fingerprints", () => {
@@ -133,35 +136,35 @@ describe("computeArgsFingerprint — network tools", () => {
     expect(a).not.toBe(b);
   });
 
-  it("malformed url → <malformed>", () => {
-    expect(computeArgsFingerprint("http_request", { url: "garbage url" })).toBe("<malformed>");
-    expect(computeArgsFingerprint("http_request", {})).toBe("<malformed>");
+  it("a malformed url keys on itself, never on another call's host", () => {
+    expect(computeArgsFingerprint("http_request", { url: "garbage url" }))
+      .not.toBe(computeArgsFingerprint("http_request", { url: "other garbage" }));
+    expect(computeArgsFingerprint("http_request", { url: "garbage url" }))
+      .not.toBe(computeArgsFingerprint("http_request", { url: "https://example.com/" }));
   });
 });
 
 describe("computeArgsFingerprint — browser", () => {
-  it("uses action", () => {
-    expect(computeArgsFingerprint("browser", { action: "click" })).toBe("click");
-    expect(computeArgsFingerprint("browser", { action: "navigate" })).toBe("navigate");
-  });
-
   it("different actions produce different fingerprints", () => {
     const a = computeArgsFingerprint("browser", { action: "click" });
     const b = computeArgsFingerprint("browser", { action: "navigate" });
     expect(a).not.toBe(b);
   });
+
+  it("a navigation is scoped by the site it opens", () => {
+    expect(computeArgsFingerprint("browser", { action: "navigate", url: "https://a.example/" }))
+      .not.toBe(computeArgsFingerprint("browser", { action: "navigate", url: "https://b.example/" }));
+  });
 });
 
 describe("computeArgsFingerprint — default", () => {
-  it("unlisted tool → *", () => {
-    expect(computeArgsFingerprint("memory_save", { content: "hello" })).toBe("*");
-    expect(computeArgsFingerprint("some_unknown_tool", { foo: 1, bar: 2 })).toBe("*");
-  });
-
-  it("different args still collapse to same * key (preserves old behavior)", () => {
-    const a = computeArgsFingerprint("memory_save", { content: "hello" });
-    const b = computeArgsFingerprint("memory_save", { content: "totally different" });
-    expect(a).toBe(b);
+  it("a tool with no declared scope is keyed on its exact arguments, never '*'", () => {
+    expect(computeArgsFingerprint("memory_save", { content: "hello" })).not.toBe("*");
+    expect(computeArgsFingerprint("some_unknown_tool", { foo: 1, bar: 2 })).not.toBe("*");
+    expect(computeArgsFingerprint("memory_save", { content: "hello" }))
+      .not.toBe(computeArgsFingerprint("memory_save", { content: "totally different" }));
+    expect(computeArgsFingerprint("some_unknown_tool", { foo: 1, bar: 2 }))
+      .toBe(computeArgsFingerprint("some_unknown_tool", { bar: 2, foo: 1 }));
   });
 });
 

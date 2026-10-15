@@ -24,7 +24,7 @@ describe("computeArgsFingerprint", () => {
       });
       const plain = computeArgsFingerprint("bash", { command: "git status" });
       expect(withEnv).toBe(plain);
-      expect(withEnv).toBe("git status");
+      expect(withEnv).not.toBe(computeArgsFingerprint("bash", { command: "git" }));
     });
 
     it("strips a pathological env-prefix without catastrophic backtracking (ReDoS regression)", () => {
@@ -33,18 +33,21 @@ describe("computeArgsFingerprint", () => {
       // token-split implementation is linear, so this returns immediately
       // rather than hanging the approval path.
       const command = "a=b  ".repeat(2000) + "git status";
-      expect(computeArgsFingerprint("bash", { command })).toBe("git status");
+      expect(computeArgsFingerprint("bash", { command }))
+        .toBe(computeArgsFingerprint("bash", { command: "git status" }));
     });
 
     it("is case-insensitive on the tool name but preserves command case", () => {
-      expect(computeArgsFingerprint("BASH", { command: "GIT status" })).toBe(
-        "GIT status",
-      );
+      expect(computeArgsFingerprint("BASH", { command: "FOO=1 GIT status" }))
+        .toBe(computeArgsFingerprint("bash", { command: "GIT status" }));
+      expect(computeArgsFingerprint("bash", { command: "GIT status" }))
+        .not.toBe(computeArgsFingerprint("bash", { command: "git status" }));
     });
 
-    it("returns empty string for a missing/non-string command", () => {
-      expect(computeArgsFingerprint("bash", {})).toBe("");
-      expect(computeArgsFingerprint("bash", { command: 42 })).toBe("");
+    it("a missing or non-string command never shares a grant with a real one", () => {
+      const real = computeArgsFingerprint("bash", { command: "ls" });
+      expect(computeArgsFingerprint("bash", {})).not.toBe(real);
+      expect(computeArgsFingerprint("bash", { command: 42 })).not.toBe(real);
     });
 
     // The fingerprint keys on the FULL command, so risk-bearing subcommands and
@@ -55,8 +58,6 @@ describe("computeArgsFingerprint", () => {
       const risky = computeArgsFingerprint("bash", {
         command: "git push --force",
       });
-      expect(benign).toBe("git log");
-      expect(risky).toBe("git push --force");
       expect(benign).not.toBe(risky);
     });
   });
@@ -74,8 +75,9 @@ describe("computeArgsFingerprint", () => {
       expect(a).toBe(b);
     });
 
-    it("returns <unresolvable> for a missing path", () => {
-      expect(computeArgsFingerprint("delete_file", {})).toBe("<unresolvable>");
+    it("a missing path never shares a grant with a real one", () => {
+      expect(computeArgsFingerprint("delete_file", {}))
+        .not.toBe(computeArgsFingerprint("delete_file", { path: "/tmp/aaa/one.txt" }));
     });
   });
 
@@ -88,7 +90,6 @@ describe("computeArgsFingerprint", () => {
         url: "https://good.example.com/x",
       });
       expect(a).not.toBe(b);
-      expect(a).toBe("evil.example.com");
     });
 
     it("ignores path/query — same host is the same fingerprint", () => {
@@ -101,26 +102,24 @@ describe("computeArgsFingerprint", () => {
       expect(a).toBe(b);
     });
 
-    it("returns <malformed> for an unparseable url", () => {
-      expect(computeArgsFingerprint("http_request", { url: "not a url" })).toBe(
-        "<malformed>",
-      );
-      expect(computeArgsFingerprint("web_fetch", {})).toBe("<malformed>");
+    it("an unparseable or missing url never shares a grant with a real host", () => {
+      const real = computeArgsFingerprint("http_request", { url: "https://example.com/" });
+      expect(computeArgsFingerprint("http_request", { url: "not a url" })).not.toBe(real);
+      expect(computeArgsFingerprint("http_request", {})).not.toBe(real);
     });
   });
 
   describe("browser action + fallthrough", () => {
     it("keys on the browser action", () => {
-      expect(computeArgsFingerprint("browser", { action: "click" })).toBe(
-        "click",
-      );
       expect(
         computeArgsFingerprint("browser", { action: "click" }),
       ).not.toBe(computeArgsFingerprint("browser", { action: "navigate" }));
     });
 
-    it("returns * for an unknown tool", () => {
-      expect(computeArgsFingerprint("some_unknown_tool", { x: 1 })).toBe("*");
+    it("keys an unknown tool on its exact arguments, never '*'", () => {
+      expect(computeArgsFingerprint("some_unknown_tool", { x: 1 })).not.toBe("*");
+      expect(computeArgsFingerprint("some_unknown_tool", { x: 1 }))
+        .not.toBe(computeArgsFingerprint("some_unknown_tool", { x: 2 }));
     });
   });
 });

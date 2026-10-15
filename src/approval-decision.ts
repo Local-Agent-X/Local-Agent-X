@@ -11,7 +11,7 @@
  * is a pure function or a constant.
  */
 
-import { dirname as pathDirname, resolve as pathResolve } from "node:path";
+import { dirname as pathDirname, isAbsolute, normalize, resolve as pathResolve } from "node:path";
 import {
   decide,
   getProfile,
@@ -20,6 +20,8 @@ import {
 import { loadProfileName, getSessionProfile } from "./autonomy/profile-store.js";
 import { classifyToolRisk } from "./autonomy/risk.js";
 import { irreversibleToolReason } from "./irreversible-tools.js";
+import { hasCapability, TOOL_PATH_ARGS } from "./tool-registry.js";
+import { declaredPaths } from "./security/layer/runtime-state.js";
 
 // Profile name cached 1s — same shape as the prior approvalMode cache.
 // loadProfileName() reads ~/.lax/autonomy-profile.json on miss.
@@ -95,10 +97,63 @@ export function applyIrreversibleFloor(
 }
 
 /**
- * Compute a stable, risk-relevant fingerprint of a tool call's args. Used to
- * key the session auto-approve cache so a grant for `bash git status` does
- * NOT cover `bash rm -rf /`. Must be pure — no Date.now, no randomness, no
- * env reads — so the same input always produces the same key.
+ * Tools whose "always allow" covers every later call. Each one only edits
+ * LAX's own bookkeeping — the task list and the sidebar's navigation entries —
+ * so no call can reach a file, a program, a network or a person the user did
+ * not already approve. Every other tool's grant is scoped by its arguments.
+ */
+export const WHOLE_TOOL_GRANTS: ReadonlySet<string> = new Set([
+  "task_create", "task_update", "sidebar_pin", "sidebar_unpin", "sidebar_clear",
+]);
+
+/**
+ * Egress tools whose `url` is the whole destination: a grant names the host,
+ * and the method, headers and body sent there are its payload. Keyed on the
+ * tool, never on a `url` argument being present — a model can add an unused
+ * `url` to any call, and that must not turn the rest of it into payload.
+ */
+export const HOST_SCOPED_GRANTS: ReadonlySet<string> = new Set(["http_request", "web_fetch", "ari_http"]);
+
+/** The command a grant names: leading env-var assignments dropped, whitespace
+ *  collapsed. A token split, not a regex: `/^(\s*\w+=\S+\s+)+/` backtracks
+ *  polynomially on adversarial input (ReDoS). */
+function canonicalCommand(raw: string): string {
+  const tokens = raw.trim().split(/\s+/);
+  let i = 0;
+  while (i < tokens.length && /^\w+=\S+$/.test(tokens[i])) i++;
+  return tokens.slice(i).join(" ");
+}
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
+}
+
+function stableJson(value: unknown): string {
+  return JSON.stringify(value, (_key, v: unknown) => {
+    if (!v || typeof v !== "object" || Array.isArray(v)) return v;
+    const sorted: Record<string, unknown> = {};
+    for (const k of Object.keys(v).sort()) sorted[k] = (v as Record<string, unknown>)[k];
+    return sorted;
+  });
+}
+
+/**
+ * The scope of a remembered approval — the session auto-approve cache key — so
+ * a grant for one call never covers a call the user did not see. It is derived
+ * from what the arguments mean, as the tool table declares it:
+ *   - a declared path argument (TOOL_PATH_ARGS) counts by its directory;
+ *   - a shell-class tool's `command` counts as the canonical command;
+ *   - an egress tool's `url` counts as its host;
+ *   - every other argument counts exactly.
+ * A file-mutating tool (workspace-write) is scoped by its paths alone, and a
+ * HOST_SCOPED_GRANTS tool by its host alone: what they write or send there is
+ * the payload, so one grant covers a directory or a host, never more.
+ * Internal `_` arguments are not the model's and never count. Only
+ * WHOLE_TOOL_GRANTS get "*". Pure: the same call always yields the same key.
  */
 export function computeArgsFingerprint(
   toolName: string,
@@ -106,57 +161,45 @@ export function computeArgsFingerprint(
 ): string {
   const tool = toolName.toLowerCase();
 
-  if (tool === "bash" || tool === "shell") {
-    // Fingerprint the FULL command (whitespace-normalized), not just the
-    // leading binary. Keying on the binary alone collapsed every subcommand of
-    // a multi-purpose tool into one grant — approving `git log` would then
-    // auto-approve `git push --force` / `git reset --hard` under the same key.
-    if (typeof args.command === "string") {
-      const raw = args.command;
-      // Strip leading env-var assignments (`FOO=bar BAZ=qux cmd ...`) and
-      // collapse whitespace. Done by token split rather than a single regex:
-      // the old `/^(\s*\w+=\S+\s+)+/` had nested quantifiers that backtrack
-      // polynomially on adversarial input (ReDoS). Splitting is linear.
-      const tokens = raw.trim().split(/\s+/);
-      let i = 0;
-      while (i < tokens.length && /^\w+=\S+$/.test(tokens[i])) i++;
-      return tokens.slice(i).join(" ");
-    }
-    return "";
-  }
-
-  if (tool === "write" || tool === "edit" || tool === "delete_file" || tool === "restore_file") {
-    const p = typeof args.path === "string" ? args.path : "";
-    if (!p) return "<unresolvable>";
-    try {
-      return pathDirname(pathResolve(p));
-    } catch {
-      return "<unresolvable>";
-    }
-  }
-
-  if (tool === "http_request" || tool === "web_fetch") {
-    const u = typeof args.url === "string" ? args.url : "";
-    if (!u) return "<malformed>";
-    try {
-      return new URL(u).hostname;
-    } catch {
-      return "<malformed>";
-    }
-  }
-
-  if (tool === "browser") {
-    return typeof args.action === "string" ? args.action : "";
-  }
-
   // A vault secret handed to a command: "always allow" covers this program
   // with these secrets, never every secret (secret-env-approval.ts).
   if (tool === "use_secret") {
     const secrets = Array.isArray(args.secrets) ? args.secrets.map(String).sort().join(",") : "";
     return `${String(args.program ?? "")}::${secrets}`;
   }
+  if (WHOLE_TOOL_GRANTS.has(tool)) return "*";
 
-  return "*";
+  const scope: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(args)) if (!k.startsWith("_")) scope[k] = v;
+
+  const specs = TOOL_PATH_ARGS[tool] ?? [];
+  const action = String(args.action ?? "");
+  const pathDirs = new Map<string, Set<string>>();
+  for (const spec of specs) {
+    // An `each` arg is a list of records that carry more than paths (a batch's
+    // task descriptions), and a malformed path value names no directory: both
+    // count exactly, as does a path the call's action does not open.
+    if (spec.each || args[spec.arg] === undefined) continue;
+    if (spec.forActions && !spec.forActions.includes(action)) continue;
+    const paths = declaredPaths(args, spec);
+    if (paths === null) continue;
+    const dirs = pathDirs.get(spec.arg) ?? new Set<string>();
+    // A relative path is resolved by the tool against the session's root, not
+    // this process's cwd, so it keys on its own normalized directory.
+    for (const p of paths) dirs.add(pathDirname(isAbsolute(p) ? pathResolve(p) : normalize(p)));
+    pathDirs.set(spec.arg, dirs);
+  }
+  for (const [arg, dirs] of pathDirs) scope[arg] = [...dirs].sort();
+
+  if (hasCapability(tool, "shell") && typeof args.command === "string") {
+    scope.command = canonicalCommand(args.command);
+  }
+  if (hasCapability(tool, "egress") && typeof args.url === "string") scope.url = hostOf(args.url);
+  if (hasCapability(tool, "workspace-write") || HOST_SCOPED_GRANTS.has(tool)) {
+    const kept = new Set(["action", "url", ...specs.map((s) => s.arg)]);
+    for (const k of Object.keys(scope)) if (!kept.has(k)) delete scope[k];
+  }
+  return stableJson(scope);
 }
 
 export function cacheKey(toolName: string, args: Record<string, unknown>): string {

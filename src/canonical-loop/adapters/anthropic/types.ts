@@ -167,7 +167,13 @@ export interface AnthropicAdapterOptions {
   effort?: AnthropicEffort;
   /** See AnthropicTransportRequest.systemStablePrefixLen. */
   systemStablePrefixLen?: number;
-  /** See AnthropicTransportRequest.cacheConversation. */
+  /** See AnthropicTransportRequest.cacheConversation. Defaults to ON: an adapter's
+   *  system prompt is fixed at construction and the instance is reused across the op's
+   *  turns, and the volatile tail is excluded per turn (ephemeralTailMessages), so the
+   *  prefix below the breakpoint is byte-stable within an op by construction. Every
+   *  caller that left it unset re-sent its whole growing conversation uncached every
+   *  turn: an app build billed 656k of its 783k input tokens at the full rate
+   *  (2026-10-14). Pass false only for a caller whose prompt changes per turn. */
   cacheConversation?: boolean;
 }
 

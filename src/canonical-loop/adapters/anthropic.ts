@@ -133,7 +133,7 @@ export class AnthropicAdapter implements Adapter {
       disableThinking: this.opts.disableThinking,
       effort: this.opts.effort,
       systemStablePrefixLen: this.opts.systemStablePrefixLen,
-      cacheConversation: this.opts.cacheConversation,
+      cacheConversation: this.opts.cacheConversation ?? true,
       // Per-turn, from the loop's own input — the digest row build-input.ts
       // appends is volatile, so the cache breakpoint must land beneath it.
       ephemeralTailMessages: input.ephemeralTailMessages,

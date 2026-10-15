@@ -33,9 +33,9 @@ export interface CanonicalAgentOptions extends AgentOptions {
    *  aligned). Enables the two-block system prompt-cache split on the
    *  Anthropic direct-HTTP path. */
   systemStablePrefixLen?: number;
-  /** Mark the last message with an Anthropic cache breakpoint so conversation
-   *  history caches across turns. Set only when the system prompt is
-   *  byte-stable turn-to-turn (see systemStablePrefixLen). */
+  /** Anthropic conversation-history caching. On unless false (see
+   *  AnthropicAdapterOptions.cacheConversation): pass false only for a caller
+   *  whose system prompt changes turn to turn. */
   cacheConversation?: boolean;
   /** Trusted dispatch origin. Omitted non-chat callers default to API. */
   callContext?: CallContext;

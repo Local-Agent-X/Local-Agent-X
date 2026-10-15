@@ -51,3 +51,19 @@ describe("AnthropicAdapter — ephemeral tail plumbing", () => {
     expect(seen[0].ephemeralTailMessages).toBeUndefined();
   });
 });
+
+describe("AnthropicAdapter — conversation caching defaults on", () => {
+  // Callers that never set the flag (app builds, delegated ops, agents, cron)
+  // re-sent their whole conversation uncached every turn.
+  it("caches the conversation when the caller says nothing", async () => {
+    const seen: AnthropicTransportRequest[] = [];
+    await new AnthropicAdapter({ transport: capturingTransport(seen) }).runTurn(turnInput(), () => {});
+    expect(seen[0].cacheConversation).toBe(true);
+  });
+
+  it("a caller whose prompt changes per turn can still turn it off", async () => {
+    const seen: AnthropicTransportRequest[] = [];
+    await new AnthropicAdapter({ transport: capturingTransport(seen), cacheConversation: false }).runTurn(turnInput(), () => {});
+    expect(seen[0].cacheConversation).toBe(false);
+  });
+});

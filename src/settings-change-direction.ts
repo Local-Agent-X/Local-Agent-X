@@ -45,15 +45,22 @@ export const PROTECTED_TIGHTENING: Readonly<Record<string, Tightening>> = {
   learningMode: { safe: "assisted" },
   browserSecrecy: { safe: "lockdown" },
   toolApproval: { stricterLast: ["auto", "confirm-risky", "confirm-all"] },
+  // The choices that keep memory text, microphone audio and replies on this
+  // machine. "ollama" is not one: an Ollama cloud model runs off the machine.
+  embeddingProvider: { safe: "local" },
+  voiceSttProvider: { safe: "local-whisper" },
+  voiceTier4Provider: { safe: "kokoro" },
 };
 
 /**
  * Protected settings where no change is narrower than another, so every change
  * is put to the user. browserMode trades one browser identity for another (a
  * fresh one per session, a persistent agent profile, one context shared by
- * every session); none is a subset of the others.
+ * every session); none is a subset of the others. An embedding model name can
+ * name an Ollama cloud model as easily as a local one, and voiceMode "browser"
+ * hands speech to whatever service the browser uses (Google's, in Chrome).
  */
-export const PROTECTED_WITHOUT_SAFE_DIRECTION: ReadonlySet<string> = new Set(["browserMode"]);
+export const PROTECTED_WITHOUT_SAFE_DIRECTION: ReadonlySet<string> = new Set(["browserMode", "embeddingModel", "voiceMode"]);
 
 /** True for a setting the agent may narrow but only the user may widen. */
 export function isUserOwnedSetting(field: string): boolean {

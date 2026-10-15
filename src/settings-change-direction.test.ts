@@ -55,6 +55,26 @@ describe("the spending caps", () => {
   });
 });
 
+describe("the settings that choose where memory text and voice go", () => {
+  it("are the user's, so the agent cannot hand that data to a new provider on its own", () => {
+    for (const field of ["embeddingProvider", "embeddingModel", "voiceMode", "voiceSttProvider", "voiceTier4Provider"]) {
+      expect(isUserOwnedSetting(field), field).toBe(true);
+    }
+  });
+
+  it("narrow only toward the choice that keeps the data on this machine", () => {
+    expect(strictlyTightens("embeddingProvider", "local")).toBe(true);
+    expect(strictlyTightens("embeddingProvider", "ollama")).toBe(false);
+    expect(strictlyTightens("embeddingProvider", "openai")).toBe(false);
+    expect(strictlyTightens("voiceSttProvider", "local-whisper")).toBe(true);
+    expect(strictlyTightens("voiceSttProvider", "groq")).toBe(false);
+    expect(strictlyTightens("voiceTier4Provider", "kokoro")).toBe(true);
+    expect(strictlyTightens("voiceTier4Provider", "edge-tts")).toBe(false);
+    expect(strictlyTightens("embeddingModel", "nomic-embed-text")).toBe(false);
+    expect(strictlyTightens("voiceMode", "standard")).toBe(false);
+  });
+});
+
 describe("a value the module cannot place counts as widening", () => {
   it("for an ordered field whose current value is unknown", () => {
     expect(strictlyTightens("toolApproval", "confirm-all", () => undefined)).toBe(false);

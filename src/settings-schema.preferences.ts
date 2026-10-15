@@ -15,6 +15,12 @@ import { SPEED_MIN, SPEED_MAX } from "./voice/tier4/env.js";
 /** A voice choice the UI clears by sending null or an empty string. */
 const clearable = z.string().nullable();
 
+// A setting that decides which outside service receives the user's memory
+// text, microphone audio or replies is the user's: the agent may move it only
+// toward keeping that data on this machine (settings-change-direction.ts).
+const MEMORY_EMBEDDINGS = "Settings → Memory → Memory Embeddings";
+const VOICE_SYSTEM = "Settings → Media → Voice System";
+
 export const PREFERENCE_SETTINGS: ReadonlyArray<FlippableSetting> = [
   {
     field: "palette",
@@ -39,14 +45,14 @@ export const PREFERENCE_SETTINGS: ReadonlyArray<FlippableSetting> = [
   },
   {
     field: "embeddingProvider",
-    owner: "agent",
+    owner: "protected", where: MEMORY_EMBEDDINGS,
     validate: z.enum(["local", "ollama", "openai", "gemini"]),
     runtime: false,
     description: "Embedding backend for memory search. local=built-in, no network; ollama=a local Ollama model; openai/gemini send memory text to that provider's API",
   },
   {
     field: "embeddingModel",
-    owner: "agent",
+    owner: "protected", where: MEMORY_EMBEDDINGS,
     validate: z.string(),
     runtime: false,
     description: "Model name within embeddingProvider. Empty = that provider's default",
@@ -60,21 +66,21 @@ export const PREFERENCE_SETTINGS: ReadonlyArray<FlippableSetting> = [
   },
   {
     field: "voiceMode",
-    owner: "agent",
+    owner: "protected", where: VOICE_SYSTEM,
     validate: z.enum(["browser", "standard"]),
     runtime: false,
     description: "Voice chat tier. browser=the browser's own speech recognition and voices; standard=the server voice pipeline",
   },
   {
     field: "voiceTier4Provider",
-    owner: "agent",
+    owner: "protected", where: VOICE_SYSTEM,
     validate: z.string(),
     runtime: false,
     description: "Text-to-speech provider for spoken replies (browser, edge-tts, kokoro). Empty = the engine's default. edge-tts sends reply text to Microsoft",
   },
   {
     field: "voiceSttProvider",
-    owner: "agent",
+    owner: "protected", where: VOICE_SYSTEM,
     validate: z.string(),
     runtime: false,
     description: "Speech-to-text provider (browser, local-whisper, groq, openai, mistral). Empty = the engine's default. groq/openai/mistral send microphone audio to that provider",

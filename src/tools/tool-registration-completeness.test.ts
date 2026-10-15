@@ -32,6 +32,7 @@ import { DEFAULT_POLICY } from "../tool-policy/default-rules.js";
 import { auditKernelCoverage } from "../ari-kernel/coverage.js";
 import { TOOL_PATH_ARGS } from "../tool-registry.js";
 import { TOOL_POLICIES } from "../tool-policy/tool-policies.data.js";
+import { matchGlob } from "../tool-policy/matchers.js";
 
 let tools: Map<string, ToolDefinition>;
 let names: string[];
@@ -155,6 +156,28 @@ describe("every tool whose defining file reaches the network is an off-box sink"
   it("every exemption names a live tool that is not already marked", () => {
     const stale = Object.keys(EGRESS_EXEMPT).filter((name) => !tools.has(name) || TOOL_POLICIES[name]?.offBoxFetch === true);
     expect(stale, `EGRESS_EXEMPT entries that no longer apply: ${stale.join(", ")}`).toEqual([]);
+  });
+});
+
+// A policy glob pre-approves every tool its name matches, including tools not
+// written yet. Twelve globs (payment_*, sms_*, shop_*, cron_*, …) matched no
+// tool at all: standing allows waiting for any tool that took the name. Each
+// glob must cover a tool that exists, or a family that registers at runtime
+// and so can't be in this catalog.
+const RUNTIME_FAMILIES: Record<string, string> = {
+  "mcp_*": "external MCP server tools (mcp_<server>_<tool>) register when the user adds a server",
+};
+
+describe("every policy glob covers a tool that exists", () => {
+  it("or a runtime-registered family, with a reason", () => {
+    const dead = Object.keys(TOOL_POLICIES)
+      .filter((key) => key.includes("*") && key !== "*" && !(key in RUNTIME_FAMILIES))
+      .filter((glob) => !names.some((name) => matchGlob(glob, name)));
+    expect(dead, "policy globs matching no runtime tool — remove them, or list the runtime family with its reason").toEqual([]);
+  });
+
+  it("every runtime family is still a glob in the table", () => {
+    expect(Object.keys(RUNTIME_FAMILIES).filter((k) => !(k in TOOL_POLICIES))).toEqual([]);
   });
 });
 

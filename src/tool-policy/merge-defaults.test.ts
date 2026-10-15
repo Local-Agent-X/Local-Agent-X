@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { DEFAULT_POLICY } from "./default-rules.js";
 import { mergeWithDefaults, snapshotHashOf, stampedDefaultPolicy } from "./merge-defaults.js";
@@ -126,6 +129,50 @@ describe("non-default rules and stamping infrastructure", () => {
     const custom: ToolPolicyRule = { id: "my-rule", tool: "my_tool", decision: "deny", reason: "mine", priority: 5 };
     const merged = mergedRule([custom], "my-rule");
     expect(merged).toEqual(custom);
+  });
+});
+
+// A default code retires (a pre-approval for tools nobody wrote, a deny the
+// owner lifted) used to stay on every existing install as "user-authored",
+// because the merge kept anything whose id code no longer ships.
+describe("retired defaults", () => {
+  const retiredAllow = (): ToolPolicyRule => {
+    const rule: ToolPolicyRule = { id: "allow-payment", tool: "payment_*", decision: "allow", reason: "Payment ops", priority: 40, constraints: { maxCallsPerSession: 30 } };
+    return { ...rule, snapshotHash: snapshotHashOf(rule) };
+  };
+
+  it("a stamped, untouched rule code no longer ships is dropped", () => {
+    expect(DEFAULT_POLICY.rules.some((r) => r.id === "allow-payment")).toBe(false);
+    expect(mergeWithDefaults(cfg([retiredAllow()])).rules.find((r) => r.id === "allow-payment")).toBeUndefined();
+  });
+
+  it("a retired deny goes too — the owner lifting a default reaches existing installs", () => {
+    const deny: ToolPolicyRule = { id: "deny-bash-rm-rf", tool: "bash", decision: "deny", reason: "rm -rf", priority: 100 };
+    const stamped = { ...deny, snapshotHash: snapshotHashOf(deny) };
+    expect(mergeWithDefaults(cfg([stamped])).rules.find((r) => r.id === "deny-bash-rm-rf")).toBeUndefined();
+  });
+
+  it("a retired rule the user edited is theirs now, and stays", () => {
+    const edited = { ...retiredAllow(), decision: "confirm" as const };
+    expect(mergedRule([edited], "allow-payment").decision).toBe("confirm");
+  });
+
+  it("an unstamped rule code no longer ships can't be proven untouched, and stays", () => {
+    const { snapshotHash: _unstamped, ...legacy } = retiredAllow();
+    expect(mergedRule([legacy], "allow-payment")).toEqual(legacy);
+  });
+
+  it("the drop is written back, so the on-disk snapshot heals", () => {
+    const dir = mkdtempSync(join(tmpdir(), "policy-retire-"));
+    try {
+      const path = join(dir, "tool-policy.json");
+      mergeWithDefaults(cfg([...stampedDefaultPolicy().rules, retiredAllow()]), path);
+      const onDisk = JSON.parse(readFileSync(path, "utf-8")) as ToolPolicyConfig;
+      expect(onDisk.rules.some((r) => r.id === "allow-payment")).toBe(false);
+      expect(onDisk.rules.length).toBe(DEFAULT_POLICY.rules.length);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("missing default rules are added stamped", () => {

@@ -24,6 +24,11 @@
  *     fields already equal the current default → stamp it (bootstraps
  *     tracking, no behavior change); anything else is ambiguous → preserved
  *     forever (fail safe: never overwrite a possibly-deliberate user setting).
+ *   - a stamped, untouched rule whose id code no longer ships → RETIRED, and
+ *     dropped. Code wrote it and the user never changed it, so removing it from
+ *     the defaults is the decision; keeping it as "user-authored" made every
+ *     retired default — a pre-approval, a deny the owner lifted — outlive its
+ *     removal on every existing install. An edited or unstamped one stays.
  */
 import { createHash } from "node:crypto";
 import { writeFileSync } from "node:fs";
@@ -96,6 +101,7 @@ export function mergeWithDefaults(user: ToolPolicyConfig, policyPath?: string): 
   let patternRefreshed = 0;
   let decisionRefreshed = 0;
   let stamped = 0;
+  let retired = 0;
 
   /** Existing behavior for user-owned rules: only the code-owned matching
    *  key (`tool`, `action`) refreshes; everything the user owns is kept. */
@@ -105,36 +111,43 @@ export function mergeWithDefaults(user: ToolPolicyConfig, policyPath?: string): 
     return { ...u, tool: def.tool, action: def.action };
   };
 
-  const reconciled = user.rules.map((u) => {
+  const reconciled = user.rules.flatMap((u): ToolPolicyRule[] => {
     const def = defaultsById.get(u.id);
-    if (!def) return u; // genuinely user-authored rule — untouched
+    if (!def) {
+      // A stamp that still matches proves code wrote it and nobody changed it.
+      if (u.snapshotHash && snapshotHashOf(u) === u.snapshotHash) {
+        retired++;
+        return [];
+      }
+      return [u]; // user-authored, or a legacy rule we can't prove untouched
+    }
 
     if (u.snapshotHash) {
       if (snapshotHashOf(u) === u.snapshotHash) {
         // Untouched since code last wrote it — code owns it wholesale.
         const fresh = stampedDefault(def);
         if (fresh.snapshotHash !== u.snapshotHash) decisionRefreshed++;
-        return fresh;
+        return [fresh];
       }
       // User diverged from what code wrote — preserve their fields. The stale
       // stamp stays: it keeps recording "not what code wrote", which is the fact.
-      return refreshPattern(u, def);
+      return [refreshPattern(u, def)];
     }
 
     // Legacy rule (written before stamping existed).
     if (LEGACY_DEFAULT_DECISIONS[u.id]?.includes(u.decision) && u.decision !== def.decision) {
       decisionRefreshed++;
-      return stampedDefault(def);
+      return [stampedDefault(def)];
     }
     if (snapshotHashOf(u) === snapshotHashOf(def)) {
       // Already in sync with the current default — adopt the code copy
       // (stamps it, syncs reason/pattern; no behavior change).
       stamped++;
-      return stampedDefault(def);
+      return [stampedDefault(def)];
     }
     // Ambiguous: differs from the current default and we cannot prove it is a
     // stale snapshot. Fail safe — treat as a user edit, preserve forever.
-    return refreshPattern(u, def);
+    return [refreshPattern(u, def)];
   });
 
   const missing = DEFAULT_POLICY.rules.filter((r) => !userIds.has(r.id)).map(stampedDefault);
@@ -147,13 +160,16 @@ export function mergeWithDefaults(user: ToolPolicyConfig, policyPath?: string): 
   if (decisionRefreshed > 0) {
     logger.info(`[policy] Refreshed ${decisionRefreshed} default rule(s) whose decision changed in code (user-untouched snapshots)`);
   }
+  if (retired > 0) {
+    logger.info(`[policy] Dropped ${retired} retired default rule(s) — code no longer ships them and they were never edited`);
+  }
 
   const merged: ToolPolicyConfig = {
     defaultDecision: user.defaultDecision,
     rules: [...reconciled, ...missing],
   };
-  // Persist so new/refreshed/stamped rules survive restarts and self-heal the snapshot.
-  if ((missing.length > 0 || patternRefreshed > 0 || decisionRefreshed > 0 || stamped > 0) && policyPath) {
+  // Persist so new/refreshed/stamped/retired rules survive restarts and self-heal the snapshot.
+  if ((missing.length > 0 || patternRefreshed > 0 || decisionRefreshed > 0 || stamped > 0 || retired > 0) && policyPath) {
     try {
       writeFileSync(policyPath, JSON.stringify(merged, null, 2), { encoding: "utf-8", mode: 0o600 });
       logger.info(`[policy] Saved merged policy (${merged.rules.length} rules) to ${policyPath}`);

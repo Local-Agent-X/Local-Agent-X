@@ -37,6 +37,17 @@ describe("kill-switch gate registry contract", () => {
     expect(CAPABILITY_CLASS_MEMBERS.shell).toEqual(expect.arrayContaining(["bash", "app_rebuild"]));
   });
 
+  // ari_http makes the same arbitrary request http_request does; left on, it
+  // was a way around the switch. Reading a page (web_fetch) is not an HTTP
+  // request in the switch's sense and stays on (owner's call, 2026-10-15).
+  it("HTTP Requests covers ari_http as well as http_request, and leaves web_fetch on", () => {
+    const off = { ...ALL_ON, enableHttp: false };
+    expect(killSwitchBlock("http_request", off)).not.toBeNull();
+    expect(killSwitchBlock("ari_http", off)).not.toBeNull();
+    expect(killSwitchBlock("web_fetch", off)).toBeNull();
+    expect(killSwitchBlock("ari_http", ALL_ON)).toBeNull();
+  });
+
   it("every gate's recovery names the `setting` tool and the exact field", () => {
     for (const gate of KILL_SWITCH_GATES) {
       const block = killSwitchBlock(

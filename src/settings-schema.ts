@@ -147,7 +147,7 @@ export const FLIPPABLE_SETTINGS: ReadonlyArray<FlippableSetting> = [
     runtime: true,
     broadcast: true,
     protected: true,
-    description: "Category kill-switch — when false, blocks ALL http_request tool calls at pre-dispatch",
+    description: "Category kill-switch — when false, blocks ALL http_request and ari_http tool calls at pre-dispatch (web_fetch page reads stay on)",
   },
   {
     field: "enableBrowser",

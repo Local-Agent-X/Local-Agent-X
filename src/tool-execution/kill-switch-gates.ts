@@ -47,10 +47,14 @@ export const KILL_SWITCH_GATES: ReadonlyArray<KillSwitchGate> = [
     extraRecovery: "Other tools (write/edit/http_request) still work.",
   },
   {
+    // ari_http is the kernel's own HTTP tool: the same arbitrary request to
+    // any host, so leaving it on while HTTP is off would bypass the toggle.
+    // web_fetch (reading a page) is deliberately NOT covered: switching off
+    // API calls and outbound requests is not switching off reading the web.
     field: "enableHttp",
     label: "HTTP Requests",
     plural: true,
-    matches: (t) => t === "http_request",
+    matches: (t) => t === "http_request" || t === "ari_http",
   },
   {
     field: "enableBrowser",

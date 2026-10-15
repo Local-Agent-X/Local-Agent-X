@@ -1,23 +1,16 @@
 import { createHash } from "node:crypto";
 
 import type { DataClassification } from "./classification.js";
+import { classifyAccess, isAccessType, isSourceKind, type DataAccess } from "./data-access.js";
 import { fingerprintOf, isLearned } from "./trust-ledger.js";
-import { isSensitivePath, sensitivePathsReadByCommand } from "../data-lineage/index.js";
 import { unvouchedSecretMatches, vouchedFor } from "../browser/site-provenance.js";
-import { outboundPayloadParts } from "../security/secrets/index.js";
+import { egressPayload } from "../tool-execution/egress-payload.js";
 import { STATEFUL_LIVE_STATE_TOOLS } from "../tool-execution/stateful-tools.js";
+import { hasCapability } from "../tool-registry.js";
 
 // ═══════════════════════════════════════════════════════════════════
 // TOOL CHAIN ANALYSIS — Track tool sequences, block exfiltration
 // ═══════════════════════════════════════════════════════════════════
-
-/** What data a tool call touched */
-export interface DataAccess {
-  type: "file_read" | "file_write" | "shell" | "web_fetch" | "http_request" | "browser" | "memory" | "secret";
-  target: string;       // file path, URL, command, etc.
-  sensitive: boolean;    // classified as sensitive by data classifier
-  timestamp: number;
-}
 
 export interface ToolChainState {
   history: Array<Omit<DataAccess, "target">>;
@@ -40,13 +33,8 @@ function hashToolCall(name: string, args: Record<string, unknown>): string {
   return createHash("sha256").update(`${name}:${JSON.stringify(args)}`).digest("hex").slice(0, 16);
 }
 
-// The bytes an external sink would put on the wire: URL + body + header values.
-// Scanned for secret-shaped spans so the exfil check is data-flow (what leaves)
-// rather than temporal (what was read). Shares the byte-assembly helper with the
-// egress guard (security/outbound-payload.ts); includeUrl=true so a secret in a
-// GET query param is seen.
-function outboundPayload(args: Record<string, unknown>): string {
-  return outboundPayloadParts(args, { includeUrl: true });
+function describeSink(sink: DataAccess): string {
+  return sink.target ? `${sink.type} to ${sink.target.slice(0, 50)}` : sink.type;
 }
 
 export class ToolChainAnalyzer {
@@ -90,7 +78,7 @@ export class ToolChainAnalyzer {
      *  this so /approve can record into the trust ledger. */
     blockedFingerprint?: string;
   } {
-    const access = this.classifyAccess(toolName, args, resultClassification);
+    const access = classifyAccess(toolName, args, resultClassification);
     if (access) {
       this.history.push(access);
       if (this.history.length > this.MAX_HISTORY) this.history.shift();
@@ -116,9 +104,12 @@ export class ToolChainAnalyzer {
     // the tainted bytes, or carries secret-shaped content), and whether they
     // leave the box by checkExfiltration below and the outbound scan.
 
-    // Exfiltration detection: is secret material actually in the outbound payload?
-    if (access && this.isExternalSink(access)) {
-      const exfil = this.checkExfiltration(access, args);
+    // Exfiltration detection: is secret material actually in the outbound
+    // payload? A sink call that carries nothing (a mouse move, a click) can
+    // neither exfiltrate nor stage.
+    const payload = access && hasCapability(toolName, "egress") ? egressPayload(toolName, args) : null;
+    if (access && payload && (payload.text || payload.attachmentPaths.length > 0)) {
+      const exfil = this.checkExfiltration(toolName, access, args, payload.text);
       if (exfil) {
         const fp = fingerprintOf(exfil.source.type, exfil.sink.target);
         // Layer C: trust ledger. If the user has approved this exact
@@ -198,7 +189,7 @@ export class ToolChainAnalyzer {
       throw new Error("invalid persisted tool-chain state");
     }
     this.history = state.history.map(item => {
-      if (!item || !["file_read", "file_write", "shell", "web_fetch", "http_request", "browser", "memory", "secret"].includes(item.type)
+      if (!item || typeof item.type !== "string" || !isAccessType(item.type)
         || typeof item.sensitive !== "boolean" || !Number.isFinite(item.timestamp) || item.timestamp < 0) {
         throw new Error("invalid persisted tool-chain access");
       }
@@ -214,57 +205,7 @@ export class ToolChainAnalyzer {
     this.lastBlockedAt = state.lastBlockedAt;
   }
 
-  /** Does a shell command READ sensitive data? A credential-file operand of a
-   *  command whose output can carry its bytes (the same argv walk the taint
-   *  policy uses), or a read verb over /etc or the registry. */
-  private isCommandSensitive(command: string): boolean {
-    const c = command.toLowerCase();
-    if (sensitivePathsReadByCommand(command).length > 0) return true;
-    return /\b(cat|type|more|less|head|tail|get-content)\b/.test(c) && (/\/etc\//.test(c) || /registry/.test(c));
-  }
-
-  private classifyAccess(
-    toolName: string,
-    args: Record<string, unknown>,
-    classification: DataClassification
-  ): DataAccess | null {
-    // Sensitive by CONTENT (regex classification) OR by SOURCE PATH
-    const contentSensitive = classification.labels.length > 0;
-    switch (toolName) {
-      case "read": {
-        const path = String(args.path || "");
-        const sensitive = contentSensitive || isSensitivePath(path);
-        return { type: "file_read", target: path, sensitive, timestamp: Date.now() };
-      }
-      case "write":
-      case "edit":
-        return { type: "file_write", target: String(args.path || ""), sensitive: contentSensitive, timestamp: Date.now() };
-      case "bash": {
-        const cmd = String(args.command || "");
-        const sensitive = contentSensitive || this.isCommandSensitive(cmd);
-        return { type: "shell", target: cmd, sensitive, timestamp: Date.now() };
-      }
-      case "web_fetch":
-        return { type: "web_fetch", target: String(args.url || ""), sensitive: contentSensitive, timestamp: Date.now() };
-      case "http_request":
-        return { type: "http_request", target: String(args.url || ""), sensitive: contentSensitive, timestamp: Date.now() };
-      case "browser":
-        return { type: "browser", target: String(args.url || args.action || ""), sensitive: contentSensitive, timestamp: Date.now() };
-      case "memory_search":
-      case "memory_get":
-        return { type: "memory", target: String(args.query || args.path || ""), sensitive: true, timestamp: Date.now() }; // Memory is always sensitive
-      case "request_secret":
-        return { type: "secret", target: String(args.name || ""), sensitive: true, timestamp: Date.now() };
-      default:
-        return null;
-    }
-  }
-
-  private isExternalSink(access: DataAccess): boolean {
-    return ["web_fetch", "http_request", "browser"].includes(access.type);
-  }
-
-  private checkExfiltration(sink: DataAccess, args: Record<string, unknown>): ExfilPattern | null {
+  private checkExfiltration(toolName: string, sink: DataAccess, args: Record<string, unknown>, payload: string): ExfilPattern | null {
     // Data-flow, not temporal. An external send is exfiltration only when the
     // OUTBOUND PAYLOAD actually carries secret material — a prior sensitive read
     // that never reaches the wire is normal credential/config use, not exfil
@@ -273,27 +214,25 @@ export class ToolChainAnalyzer {
     // placeholders are not secret-shaped, so injecting a stored key into its own
     // API passes cleanly; a hardcoded raw key does not. Exact-byte exfil of a
     // non-secret-shaped value is still covered by the data-lineage taint gate.
-    const payload = outboundPayload(args);
     if (!payload) return null;
     // The same rule the egress gate applied before the call ran
     // (site-provenance.ts), so this post-call scan cannot re-judge an ID the
     // destination's own site showed as exfiltration after the gate allowed it.
-    const kinds = [...new Set(unvouchedSecretMatches(payload, vouchedFor(sink.type, args, this.sessionId)).map((m) => m.pattern))];
+    const kinds = [...new Set(unvouchedSecretMatches(payload, vouchedFor(toolName, args, this.sessionId)).map((m) => m.pattern))];
     if (kinds.length === 0) return null;
 
     // Attribute to the most recent in-window sensitive read for the audit
     // description + trust-ledger fingerprint; fall back to the sink itself.
     const now = Date.now();
     const source = [...this.history].reverse().find(
-      s => s.sensitive && s !== sink && now - s.timestamp <= 900_000 &&
-        ["file_read", "shell", "memory", "secret"].includes(s.type),
+      s => s.sensitive && s !== sink && now - s.timestamp <= 900_000 && isSourceKind(s.type),
     ) ?? sink;
     return {
       source,
       sink,
       score: 0.9,
       description:
-        `Exfiltration pattern detected: outbound ${sink.type} to ${sink.target.slice(0, 50)} ` +
+        `Exfiltration pattern detected: outbound ${describeSink(sink)} ` +
         `carries secret-shaped content (${kinds.join(", ")}). ` +
         `This looks like an attempt to send sensitive data to an external service.`,
     };
@@ -309,14 +248,14 @@ export class ToolChainAnalyzer {
       if (!source.sensitive) continue;
       if (now - source.timestamp > lookback) continue;
       if (source === sink) continue;
-      if (["file_read", "shell", "memory", "secret"].includes(source.type)) {
+      if (isSourceKind(source.type)) {
         return {
           source,
           sink,
           score: 0.5,
           description:
             `Suspected staging: sensitive ${source.type} (${source.target.slice(0, 50)}) ` +
-            `preceded external ${sink.type} (${sink.target.slice(0, 50)}) — no secret was in the payload, ` +
+            `preceded external ${describeSink(sink)} — no secret was in the payload, ` +
             `so this is recorded as an observability signal, not blocked or scored.`,
         };
       }

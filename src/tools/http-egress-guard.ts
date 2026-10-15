@@ -93,7 +93,7 @@ export function checkOutboundRequest(args: GuardArgs, vouchedToken?: (token: str
   // scan the request leaves before the threat tool-chain's post-execution audit
   // sees it, and a POST URL can carry a query-string secret just like its body.
   // includeUrl=true keeps this byte set identical to the exfil analyzer's
-  // (security/outbound-payload.ts assembles both).
+  // (egressPayload's http_request case: url + body + header values).
   const preScanText = outboundPayloadParts(args, { includeUrl: true });
   if (!preScanText) return null;
 

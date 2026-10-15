@@ -152,6 +152,18 @@ function jobToolUses(rec) {
   return n;
 }
 
+// Pure: the task card's live stat labels ('' hides one). The card renders them
+// and the 1s sync (syncAgentRowCells) rewrites them from the same function, so
+// the tokens / tool uses / activity on a card can't freeze at the last rebuild.
+function jobTaskStats(rec) {
+  var uses = jobToolUses(rec);
+  return {
+    tokens: Number(rec.totalTokens) > 0 ? formatTokens(rec.totalTokens) + ' tokens' : '',
+    uses: uses > 0 ? uses + ' tool use' + (uses === 1 ? '' : 's') : '',
+    activity: isTerminalStatus(rec.status) ? '' : jobActivityLabel(rec),
+  };
+}
+
 // Pure: what the op is doing right now, from its latest trace line: the tool
 // names of the last turn, or the line itself for lifecycle markers.
 function jobActivityLabel(rec) {
@@ -278,8 +290,7 @@ function renderTaskCard(rec, now, expanded) {
   var terminal = isTerminalStatus(rec.status);
   var stalled = jobStallMs(rec, now) > 0;
   var kind = isAmbientType(rec.type) && !terminal ? ambientStatusLabel(rec) : jobKindLabel(rec.type);
-  var uses = jobToolUses(rec);
-  var activity = terminal ? '' : jobActivityLabel(rec);
+  var stats = jobTaskStats(rec);
   return '<div class="job-task ' + o.cls + (stalled ? ' stalled' : '') + (expanded ? ' open' : '') + '" id="agent-row-' + safeId + '" data-agent-row="' + safeId + '">' +
       '<div class="job-task-title"><span class="job-task-icon">' + iconForType(rec.type || rec.role) + '</span><span class="job-task-name">' + esc(rec.name || rec.id) + '</span>' +
         (terminal
@@ -293,9 +304,9 @@ function renderTaskCard(rec, now, expanded) {
         jobStallBadge(rec, now) +
       '</div>' +
       '<div class="job-task-stats">' +
-        (Number(rec.totalTokens) > 0 ? '<span class="job-task-tokens">' + formatTokens(rec.totalTokens) + ' tokens</span>' : '') +
-        (uses > 0 ? '<span class="job-task-uses">' + uses + ' tool use' + (uses === 1 ? '' : 's') + '</span>' : '') +
-        (activity ? '<span class="job-task-activity">' + esc(activity) + '</span>' : '') +
+        '<span class="job-task-tokens">' + esc(stats.tokens) + '</span>' +
+        '<span class="job-task-uses">' + esc(stats.uses) + '</span>' +
+        '<span class="job-task-activity">' + esc(stats.activity) + '</span>' +
         '<span class="job-task-transcript">View transcript</span>' +
       '</div>' +
     '</div>' +

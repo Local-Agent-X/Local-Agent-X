@@ -179,7 +179,7 @@ function updateAgentFeed(agentId, update) {
     var tokFillEl = card.querySelector('.worker-token-bar-fill');
     if (tokFillEl) tokFillEl.style.width = tokenBarFillPct(existing.totalTokens) + '%';
   }
-  if (update.totalTokens != null || update.model) syncAgentRowCells(agentId, existing, Date.now());
+  if (update.totalTokens != null || update.model || update.output) syncAgentRowCells(agentId, existing, Date.now());
   // Build_app and other URL-producing ops set resultUrl on completion; the
   // markup (incl. the ?token= auth append) comes from resultLinkHtml, the one
   // chokepoint shared with the render path.

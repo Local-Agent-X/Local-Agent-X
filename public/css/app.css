@@ -1684,6 +1684,7 @@ body.agent-feeds-resizing .agent-feeds{transition:none!important}
 .job-task-stop:hover{border-color:var(--danger);color:var(--danger)}
 .job-task-stats{display:flex;flex-wrap:wrap;gap:10px;font-family:var(--mono);font-size:.62rem;color:var(--muted)}
 .job-task-activity{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:14em}
+.job-task-stats span:empty{display:none}
 .job-task-transcript{color:var(--accent);margin-left:auto;white-space:nowrap}
 .job-prompt{background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 8px;margin-bottom:4px;font-size:.72rem;line-height:1.4;color:var(--text)}
 .job-prompt-text{white-space:pre-wrap;display:-webkit-box;-webkit-line-clamp:6;-webkit-box-orient:vertical;overflow:hidden}

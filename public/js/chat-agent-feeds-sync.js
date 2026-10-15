@@ -1,6 +1,7 @@
 // ── Agent Feeds — 1s sync tick ──
 // Re-applies the visible DOM of every live record from agentFeedsData:
-// the row cells the jobs layout owns (elapsed time, tokens, stall badge) and
+// the row cells the jobs layout owns (elapsed time, tokens, a task card's tool
+// uses and activity, stall badge) and
 // the embedded detail (latest line, activity trace, stream text).
 // updateAgentFeed already writes most of this per event; the tick is the
 // safety net for the paint hiccups field reports kept showing (a count or
@@ -23,6 +24,14 @@ function syncAgentRowCells(id, rec, now) {
   }
   var modelEl = row.querySelector('.job-row-model');
   if (modelEl && rec.model && modelEl.textContent !== rec.model) modelEl.textContent = rec.model;
+  if (row.querySelector('.job-task-stats')) {
+    var stats = jobTaskStats(rec);
+    var cells = { '.job-task-tokens': stats.tokens, '.job-task-uses': stats.uses, '.job-task-activity': stats.activity };
+    for (var sel in cells) {
+      var cell = row.querySelector(sel);
+      if (cell && cell.textContent !== cells[sel]) cell.textContent = cells[sel];
+    }
+  }
   // A stall appears or clears between events; a task card's Cancel button
   // comes and goes with it, so that is a rebuild, not a class flip.
   var stalled = jobStallMs(rec, now) > 0;

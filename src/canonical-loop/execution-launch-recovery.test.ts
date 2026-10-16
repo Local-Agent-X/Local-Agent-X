@@ -63,7 +63,7 @@ function commitCommittingTurn(opId: string, turnIdx = 0): void {
     turnIdx,
     providerState: { adapterName: "test", adapterVersion: "1", providerPayload: null },
     toolCallSummary: [
-      { tool: "secret_save", argsHash: "h", resultStatus: "ok", durationMs: 3 },
+      { tool: "email_send", argsHash: "h", resultStatus: "ok", durationMs: 3 },
     ],
     terminalReason: null,
     redirectConsumed: false,

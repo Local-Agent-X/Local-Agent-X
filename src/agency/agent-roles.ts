@@ -28,7 +28,7 @@ const BUILT_IN_ROLES: Record<string, AgentRole> = {
       "   - Cite inline, right after the sentence each source supports — never a trailing 'Sources' pile. Prefer primary sources over commentary; cite more than one when they corroborate a load-bearing claim.\n" +
       "   - Surface conflicting sources explicitly with both sides, mark unverified claims as such, and date-stamp findings since web content changes.\n" +
       "   - Close with a short conclusion and concrete next steps or open questions.",
-    suggestedTools: ["web_search", "web_fetch", "browser_navigate", "read", "write"],
+    suggestedTools: ["web_search", "web_fetch", "browser", "read", "write"],
   },
   writer: {
     name: "writer",
@@ -54,10 +54,9 @@ const BUILT_IN_ROLES: Record<string, AgentRole> = {
     systemPrompt: SOCIAL_MEDIA_PROMPT,
     suggestedTools: [
       "web_search",
-      "browser_navigate",
+      "browser",
       "write",
       "read",
-      "social_post",
     ],
   },
   analyst: {
@@ -70,7 +69,7 @@ const BUILT_IN_ROLES: Record<string, AgentRole> = {
     name: "monitor",
     description: "Watch for changes, check status, alert on issues",
     systemPrompt: MONITOR_PROMPT,
-    suggestedTools: ["bash", "web_search", "browser_navigate", "read"],
+    suggestedTools: ["bash", "web_search", "browser", "read"],
   },
   designer: {
     name: "designer",
@@ -89,8 +88,7 @@ const BUILT_IN_ROLES: Record<string, AgentRole> = {
     description: "Send emails, Slack messages, manage notifications",
     systemPrompt: COMMUNICATOR_PROMPT,
     suggestedTools: [
-      "send_email",
-      "slack_send",
+      "email_send",
       "write",
       "read",
       "web_search",

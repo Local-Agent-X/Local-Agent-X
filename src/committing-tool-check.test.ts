@@ -334,22 +334,18 @@ describe("the two layers share ONE precedence order", () => {
     expect(isCommittingCall("plugin_only_tool", { anything: 1 })).toBe(false);
   });
 
-  it("the legacy-override branch cannot outrank anything — the two sets are disjoint", () => {
-    // This case used to be named "a legacy override also outranks the arg-aware
-    // inspection" and asserted it with `secret_save`, which is not arg-aware —
-    // so it could not fail whichever order the branches ran in. The property is
-    // unreachable, and THAT is what is pinned instead: every arg-aware name
-    // answers false at the name-only layer, which it can only do if it is in
-    // NEITHER the plugin registry NOR LEGACY_COMMITTING_OVERRIDES. Put one of
-    // them in the override set and this goes red — which is precisely when the
-    // override-vs-args precedence becomes reachable and needs a real test. The
-    // plugin case above is the only reachable proof of the shared order today.
+  it("every arg-aware name answers false at the name-only layer", () => {
+    // Only a plugin registration outranks the arg inspection (the case above).
     for (const name of ARG_AWARE_NAMES) expect(isCommittingTool(name), name).toBe(false);
+  });
 
-    // What an override DOES pin: it is committing in both layers, even when the
-    // args would read as idempotent under an arg grammar.
-    expect(isCommittingTool("secret_save")).toBe(true);
-    expect(isCommittingCall("secret_save", { method: "GET" })).toBe(true);
+  it("the writes a hand-kept override list once covered are committing by their own rows", () => {
+    // The list named secret_save / cron_* after those tools were gone, and
+    // every live entry already had a committing risk tier on its row.
+    for (const name of ["issue_create", "issue_update", "issue_checkout", "issue_release", "agent_wakeup", "project_brief_update", "telegram_send", "whatsapp_send"]) {
+      expect(isCommittingTool(name), name).toBe(true);
+      expect(isCommittingCall(name, { method: "GET" }), name).toBe(true);
+    }
   });
 
   it("detectCommittingCalls uses the same order — a plugin browser still counts", () => {

@@ -93,7 +93,7 @@ export async function emitContextStatus(
 }
 
 const IDE_BLOCKED_TOOLS = new Set([
-  "agent_spawn", "delegate", "build_app", "agent_status",
+  "agent_spawn", "build_app", "agent_status",
   "agent_cancel", "agent_pause", "agent_resume", "agent_message",
 ]);
 

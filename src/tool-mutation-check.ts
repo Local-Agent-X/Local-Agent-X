@@ -52,17 +52,11 @@ const PROGRESS_RISKS: ReadonlySet<ToolRisk> = new Set<ToolRisk>([
 ]);
 
 // Mutations the risk taxonomy doesn't capture. `browser` is network-read by tier
-// but its actions are real side effects. The rest are plugin / MCP / integration
-// tools that register via tools/plugins.ts and never enter the policy table
-// (same root cause + fix as committing-tool-check.ts LEGACY_COMMITTING_
-// OVERRIDES). If one later gains a mutating risk tier, drop it from here.
+// but its actions are real side effects. The filesystem MCP server's writes are
+// runtime tools with no policy row. (Plugin tools count through their active
+// metadata below.)
 const MUTATION_OVERRIDES: ReadonlySet<string> = new Set<string>([
   "browser",
-  "calendar_create", "calendar_update", "calendar_delete",
-  "contacts_create", "contacts_update", "contacts_delete",
-  "cron_create", "cron_delete", "cron_update",
-  "secret_save", "secret_delete",
-  "sms_send",
   "mcp_filesystem_write_file", "mcp_filesystem_edit_file",
 ]);
 

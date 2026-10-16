@@ -10,6 +10,7 @@ import { collectRuntimeToolNames } from "./runtime-tool-names.js";
 import { BROWSER_TOOL_PARAMETERS } from "./browser-tools/description.js";
 import { FLIPPABLE_SETTINGS } from "../settings-schema.js";
 import { createCoreProtocolTools } from "../protocols/index.js";
+import { _seedBuiltinRoles } from "../agency/agent-roles.js";
 
 // The startup coverage check and tool-policy-default.test.ts prove that every
 // REGISTERED tool has a policy entry. Nothing proved the reverse, so a name
@@ -154,6 +155,14 @@ describe("every tool name a referrer uses is a registered tool", () => {
 
   it("the resolver's session-scoped list", () => {
     expect(missing(SESSION_SCOPED_TOOLS)).toEqual([]);
+  });
+
+  // A role's tools become its agent's allowedTools (src/agents/catalog.ts): a
+  // name that is not a tool is a tool the role silently lacks — researcher,
+  // monitor and social-media named browser_navigate and could not browse.
+  it("the built-in agent roles' tools", () => {
+    const names = _seedBuiltinRoles().flatMap((r) => r.suggestedTools.map((t) => `${t} (role ${r.name})`));
+    expect(names.filter((n) => !registered.has(n.split(" ")[0]))).toEqual([]);
   });
 
   it("the system prompt sources", () => {

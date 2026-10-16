@@ -58,22 +58,6 @@ const ARG_AWARE_TOOLS: ReadonlySet<string> = new Set<string>([
 /** pdf actions that only read. Anything else on the tool writes a file. */
 const PDF_READONLY_ACTIONS: ReadonlySet<string> = new Set<string>(["read", "extract_tables"]);
 
-/** Committing tools NOT covered by the registry derivation. `tool-registry.ts`
- *  derives risk from the policy taxonomy, but plugin/integration tools register
- *  via tools/plugins.ts and never enter that taxonomy, so their committing
- *  status has to be declared here. Covers secrets, cron, messaging, and the
- *  issue/agent-coordination writes. Without the issue/agent entries a CEO that
- *  actually created issues reads as having committed nothing — tripping the
- *  false-completion guard and denying the mid-turn-stale brake its progress
- *  signal. If one of these later gains a committing-risk tier in the taxonomy,
- *  drop it here. */
-const LEGACY_COMMITTING_OVERRIDES: ReadonlySet<string> = new Set<string>([
-  "secret_save", "secret_delete",
-  "cron_create", "cron_delete", "cron_update",
-  "whatsapp_send", "telegram_send",
-  "issue_create", "issue_update", "issue_checkout", "issue_release", "agent_wakeup",
-  "project_brief_update",
-]);
 
 const COMMITTING_HTTP_METHODS = new Set(["POST", "PUT", "DELETE", "PATCH"]);
 
@@ -147,8 +131,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  *  The single precedence order every arg-aware caller shares, so the two
  *  layers cannot disagree about the same tool.
  *
- *  It MUST match isCommittingTool's order: a plugin registration or a legacy
- *  override DECLARES the tool committing and outranks the arg inspection.
+ *  It MUST match isCommittingTool's order: a plugin registration DECLARES the
+ *  tool committing and outranks the arg inspection.
  *  Checking ARG_AWARE_TOOLS first (as this used to) meant a plugin registering
  *  a tool NAMED `browser` / `pdf` / `http_request` got judged by the built-in
  *  tool's arg grammar — args it does not share — so dispatch stamped
@@ -158,7 +142,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  *  call. */
 function committingCallReason(name: string, args: unknown): string | null {
   if (getActivePluginToolMetadata(name)) return `${name} is non-idempotent`;
-  if (LEGACY_COMMITTING_OVERRIDES.has(name)) return `${name} is non-idempotent`;
   if (ARG_AWARE_TOOLS.has(name)) return committingArgReason(name, args);
   return isCommittingTool(name) ? `${name} is non-idempotent` : null;
 }
@@ -205,14 +188,12 @@ export function turnPerformedCommittingCall(
  *  Decision order (committingCallReason mirrors it exactly — keep them in step):
  *    1. Active plugin tool metadata (plugin/integration tools are outside the
  *       registry taxonomy; registering one is the declaration).
- *    2. Legacy override Set (for tools not yet in tool-registry).
- *    3. Arg-aware tools (http_request, browser, pdf) return false here —
+ *    2. Arg-aware tools (http_request, browser, pdf) return false here —
  *       they need args for an accurate verdict; use isCommittingCall
  *       when args are in scope.
- *    4. Registry-derived: any tool whose `risk` is in COMMITTING_RISKS. */
+ *    3. Registry-derived: any tool whose `risk` is in COMMITTING_RISKS. */
 export function isCommittingTool(name: string): boolean {
   if (getActivePluginToolMetadata(name)) return true;
-  if (LEGACY_COMMITTING_OVERRIDES.has(name)) return true;
   if (ARG_AWARE_TOOLS.has(name)) return false;
   const entry = TOOLS[name];
   if (!entry) return false;

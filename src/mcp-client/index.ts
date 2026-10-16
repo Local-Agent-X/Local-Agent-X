@@ -131,7 +131,7 @@ export class MCPManager {
       if (expanded.missing.length > 0) {
         logger.info(
           `[mcp] Skipping "${name}" — missing secret(s): ${expanded.missing.join(", ")}. ` +
-          `Add via secret_save or the secrets UI to enable.`,
+          `Add it in the secrets UI to enable.`,
         );
         continue;
       }

@@ -15,7 +15,6 @@ import { resultFromRendered } from "../tools/result-helpers.js";
 const MCP_HIDDEN_TOOLS = new Set<string>([
   "op_wait",      // blocks the chat turn — supervisor should let auto-notify surface results
   "op_submit",    // sugar = op_submit_async + op_wait, same blocking problem
-  "delegate",     // generic delegate primitive — superseded by agent_spawn
   "agent_message",// reply-to-agent primitive used inside agency, not by user-facing supervisor
 ]);
 

@@ -59,16 +59,15 @@ function writeRunningOp(opId: string, attemptCount = 0): Op {
   return op;
 }
 
-/** Commit a turn whose tool call is unambiguously committing (secret_save is
- *  in the legacy committing override set, so this does not depend on the
- *  registry's risk taxonomy). */
+/** Commit a turn whose tool call is unambiguously committing: email_send's
+ *  row is external-comms, a committing tier with no arg-dependent reading. */
 function commitCommittingTurn(opId: string, turnIdx = 0): void {
   const row: OpTurnRow = {
     opId,
     turnIdx,
     providerState: { adapterName: "test", adapterVersion: "1", providerPayload: null },
     toolCallSummary: [
-      { tool: "secret_save", argsHash: "h", resultStatus: "ok", durationMs: 3 },
+      { tool: "email_send", argsHash: "h", resultStatus: "ok", durationMs: 3 },
     ],
     terminalReason: null,
     redirectConsumed: false,

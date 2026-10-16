@@ -7,8 +7,8 @@ run `npm run docs:map` to refresh; `npm run build` fails if this file is stale.
 This file owns the facts that *drift* (importer counts, dead-code, god files).
 [ARCHITECTURE.md](../ARCHITECTURE.md) owns the *meaning* (which file does what, and why).
 
-**Definitions** — *Importers*: distinct non-test files outside the dir that statically
-import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k non-test LOC
+**Definitions** — *Importers*: distinct non-test files outside the dir that import it,
+statically or by `import()` (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k non-test LOC
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 

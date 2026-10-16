@@ -12,8 +12,8 @@
  * the prose.
  *
  * WHAT IT REPORTS, per top-level src/ directory:
- *   - importers: distinct NON-TEST files outside the dir that statically import
- *     it (the real "how wired-in is this" signal; 0 ⇒ dead/superseded).
+ *   - importers: distinct NON-TEST files outside the dir that import it,
+ *     statically or by import() (the real "how wired-in is this" signal; 0 ⇒ dead/superseded).
  *   - files / size tier: file count + an S/M/L/XL bucket (NOT raw LOC, so a
  *     few-line edit doesn't flip the build gate — only crossing a tier does).
  *   - god files: count of non-test files over the 400-LOC source-hygiene limit.
@@ -231,8 +231,8 @@ out.push("");
 out.push("This file owns the facts that *drift* (importer counts, dead-code, god files).");
 out.push("[ARCHITECTURE.md](../ARCHITECTURE.md) owns the *meaning* (which file does what, and why).");
 out.push("");
-out.push("**Definitions** — *Importers*: distinct non-test files outside the dir that statically");
-out.push(`import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k non-test LOC`);
+out.push("**Definitions** — *Importers*: distinct non-test files outside the dir that import it,");
+out.push(`statically or by \`import()\` (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k non-test LOC`);
 out.push(`(tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files`);
 out.push(`over ${GOD_LOC} LOC (the source-hygiene ceiling).`);
 out.push("");

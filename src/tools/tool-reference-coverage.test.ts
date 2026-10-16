@@ -90,7 +90,6 @@ const TOOL_LISTS: Array<{ file: string; name: string; shape: "literals" | "keys"
   { file: "src/tools/tool-companions.ts", name: "TOOL_COMPANIONS", shape: "literals" },
   { file: "src/server/voice-prompt.ts", name: "VOICE_FAST_TOOLS", shape: "literals" },
   { file: "src/local-only-policy.ts", name: "REMOTE_ONLY_TOOLS", shape: "literals" },
-  { file: "src/data-lineage/external.ts", name: "EXTERNAL_INGESTING_TOOLS", shape: "literals" },
   { file: "src/tools/plan-tools.ts", name: "READ_ONLY_TOOLS", shape: "literals" },
   { file: "src/committing-tool-check.ts", name: "ARG_AWARE_TOOLS", shape: "literals" },
   { file: "src/approval-decision.ts", name: "DESTRUCTIVE_TOOL_ACTIONS", shape: "keys" },

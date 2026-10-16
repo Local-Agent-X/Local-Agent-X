@@ -323,9 +323,10 @@ describe("classifyShellTier — skeptic holes (dangerous → forced tier-1)", ()
 });
 
 describe("isShellTierTool", () => {
-  it("recognizes shell-spawner tools", () => {
+  it("recognizes the tools that run their command to exit (bash), not the background spawners", () => {
     expect(isShellTierTool("bash")).toBe(true);
-    expect(isShellTierTool("shell")).toBe(true);
+    expect(isShellTierTool("process_start")).toBe(false);
+    expect(isShellTierTool("app_serve_backend")).toBe(false);
     expect(isShellTierTool("read")).toBe(false);
     expect(isShellTierTool("http_request")).toBe(false);
   });

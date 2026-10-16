@@ -37,6 +37,7 @@ import {
 } from "../security/layer/shell-lex.js";
 import { SHELL_KEYWORD_PREFIXES } from "../security/layer/shell-rules.js";
 import { isDestructiveCommand } from "../approval-decision.js";
+import { waitsForShellCommand } from "../tool-registry.js";
 // Canonical always-blocked sensitive-path gate (the SAME checker the file tools
 // use — regex catalog for whole cred DIRS like .ssh/.aws/.kube UNIONed with the
 // shared credential-file catalog classifySensitivePath). Reused read-only so a
@@ -318,8 +319,9 @@ export function classifyShellTier(command: string, ctx: ShellTierContext): Shell
   return 0;
 }
 
-/** Shell-spawner tool names whose string `command` is tier-classifiable. */
-const SHELL_TIER_TOOLS = new Set<string>(["bash", "shell"]);
+/** A tool whose command is tier-classifiable: it runs the command to exit
+ *  before returning (its row's shellCommand.waitsForExit — bash), so a tier-0
+ *  command is done, not left running in the background. */
 export function isShellTierTool(toolName: string): boolean {
-  return SHELL_TIER_TOOLS.has(toolName.toLowerCase());
+  return waitsForShellCommand(toolName.toLowerCase());
 }

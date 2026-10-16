@@ -9,12 +9,10 @@
 import { homedir } from "node:os";
 import type { ToolResult } from "../types.js";
 import { addressesIn, recordPrivateRead } from "../data-lineage/private-content.js";
-import { declaredPaths, pathSpecsForCall } from "../tool-registry.js";
+import { declaredPaths, outputOf, pathSpecsForCall } from "../tool-registry.js";
 import { resolveAgentPath } from "../workspace/paths.js";
 import { workspaceRoot } from "../config.js";
 import { pathIsWithin, userContentDirs } from "../security/layer/file-access.js";
-
-const EMAIL_READS: ReadonlySet<string> = new Set(["email_read", "email_search", "email_read_message"]);
 
 /** The user's own document a read named, or null. Respects action-scoped path specs. */
 function personalDocumentRead(toolName: string, args: Record<string, unknown>, sessionId: string): string | null {
@@ -47,7 +45,7 @@ export function recordPrivateReadFromResult(
 ): void {
   if (!result || result.isError || typeof result.content !== "string" || !result.content) return;
   const content = result.content.slice(0, deliveredChars);
-  if (EMAIL_READS.has(toolName)) {
+  if (outputOf(toolName) === "mailbox") {
     // Only a single message names who already holds it; a search or inbox
     // listing mixes many senders, and trusting all of them would trust the
     // sender of an injected email too.

@@ -38,7 +38,7 @@ import {
 } from "./post-edit-diagnostics.js";
 import { classifyTestDeletion } from "../../classifiers/test-deletion-classify.js";
 import { resolveAgentPath } from "../../workspace/paths.js";
-import { callPaths } from "../../tool-registry.js";
+import { callPaths, shellCommandOf, waitsForShellCommand } from "../../tool-registry.js";
 import { capabilityForbiddenForOp } from "../instruction-ledger/index.js";
 
 /**
@@ -167,7 +167,9 @@ function buildActions(
       tool: tc.tool,
       writes,
       deletes,
-      command: typeof args.command === "string" ? args.command : undefined,
+      // A verdict comes only from a command that has exited (its row's
+      // shellCommand.waitsForExit): a background `npm test` just started.
+      command: waitsForShellCommand(tc.tool) ? shellCommandOf(tc.tool, args) : undefined,
       status: statusById.get(tc.toolCallId),
     };
   });

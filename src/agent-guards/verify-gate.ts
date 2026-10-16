@@ -27,7 +27,8 @@ export interface VerifyTurnAction {
   writes?: string[];
   /** Paths this call deleted. */
   deletes?: string[];
-  /** command string for bash, when present. */
+  /** The shell command this call ran to exit (its row's shellCommand with
+   *  waitsForExit — bash), when present: a verdict and an `rm` are settled. */
   command?: string;
   /** Dispatch status. Mirrors the canonical ToolDispatchStatus union (kept as
    *  a local literal so this pure guard doesn't reach up into canonical-loop). */
@@ -156,7 +157,6 @@ export function noteVerifyEvidence(
       state.verifyFailedSinceEdit = false;
     }
     if (
-      a.tool === "bash" &&
       a.command &&
       state.editedSource &&
       (VERIFY_CMD_RE.test(a.command) || HTTP_SMOKE_CMD_RE.test(a.command)) &&
@@ -174,12 +174,12 @@ export function noteVerifyEvidence(
         state.verifiedSinceEdit = false;
       }
     }
-    // Test-deletion tripwire: a deleted test path (or a bash `rm` of one).
+    // Test-deletion tripwire: a deleted test path (or a shell `rm` of one).
     // A deleted test is invisible to the build-verify gate — it only runs EDITED
     // tests — so "delete the failing test" would otherwise go green unseen.
     const deletedTest =
       (a.deletes ?? []).find((path) => isTestFile(path))
-        ?? (a.tool === "bash" && a.command
+        ?? (a.command
           ? a.command.match(/\brm\b[^|;&]*?([^\s|;&]+\.(?:test|spec)\.[cm]?[jt]sx?)\b/i)?.[1] ?? null
           : null);
     if (

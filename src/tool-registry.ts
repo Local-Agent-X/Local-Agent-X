@@ -17,7 +17,7 @@
 
 import { deriveTools, derivePathArgs, TOOL_POLICIES } from "./tool-policy/tool-policies.js";
 import type { PathArgSpec } from "./tool-policy/tool-policies.data.js";
-import type { DeclaredCapability } from "./tool-policy/tool-policies.types.js";
+import type { DeclaredCapability, OutputKind, ToolPolicyRow } from "./tool-policy/tool-policies.types.js";
 import { getActivePluginToolMetadata } from "./plugin-system/tool-metadata.js";
 export type { PathArgSpec } from "./tool-policy/tool-policies.data.js";
 
@@ -169,6 +169,33 @@ export function hasCapability(name: string, cls: CapabilityClass, args?: Record<
   if (getActivePluginToolMetadata(name)) return cls === "shell";
   if (cls === "workspace-write") return pathSpecsForCall(name, args).some(writesAt);
   return DECLARED_SETS[cls].has(name);
+}
+
+/** The shell command this call runs, read from the arg its row's shellCommand
+ *  names; undefined for a tool that runs none, or a call that passed none (a
+ *  restart reusing a tracked session's command). */
+export function shellCommandOf(name: string, args: Record<string, unknown>): string | undefined {
+  const arg = TOOL_POLICIES[name]?.shellCommand?.arg;
+  const value = arg ? args[arg] : undefined;
+  return typeof value === "string" ? value : undefined;
+}
+
+/** Does this tool's call return only once its shell command has exited, so
+ *  what the command did is settled when the result arrives (bash)? */
+export function waitsForShellCommand(name: string): boolean {
+  return TOOL_POLICIES[name]?.shellCommand?.waitsForExit === true;
+}
+
+/** This tool's own policy row, or undefined for a name with none (a glob key,
+ *  a runtime MCP server tool, a name from another system). */
+export function policyRowOf(name: string): ToolPolicyRow | undefined {
+  const row = TOOL_POLICIES[name];
+  return row?.kernel !== undefined ? row : undefined;
+}
+
+/** What this tool's result carries, when masking or taint must know. */
+export function outputOf(name: string): OutputKind | undefined {
+  return TOOL_POLICIES[name]?.output;
 }
 
 /**

@@ -25,6 +25,7 @@ import { commandPositions } from "./security/layer/shell-command-positions.js";
 import { execBasename } from "./security/layer/shell-lex.js";
 import { mapMsysDrivePath } from "./workspace/paths.js";
 import { workspaceRoot } from "./config.js";
+import { shellCommandOf } from "./tool-registry.js";
 import {
   assignedNames, matchPublishArgv, normalizeBin, pastAssignments, unwrapPackageRunner, type GitOption, type PublishKind,
 } from "./publish-operation-table.js";
@@ -55,10 +56,6 @@ export interface PublishOperation {
   explicitTarget?: string;
 }
 
-/** Tools that spawn a shell on `args.command`. Same set as
- *  isDestructiveCommand's spawners. */
-const SHELL_SPAWNERS: ReadonlySet<string> = new Set(["bash", "shell", "process_start", "process_restart"]);
-
 /**
  * Registered LAX tools whose whole purpose is to publish or deploy, by name.
  * None exists today: deploys run through the shell (the CLIs above) or a
@@ -87,11 +84,12 @@ export function publishOperations(toolName: string, args: Record<string, unknown
   const tool = toolName.toLowerCase();
   const byName = PUBLISH_TOOLS[tool];
   if (byName) return [{ kind: byName, label: tool, tool, cwd: baseCwd(args) }];
-  if (!SHELL_SPAWNERS.has(tool)) return [];
-  if (typeof args.command !== "string" || !args.command) return [];
+  // Every tool that runs a model-authored shell command (its row's commandArg).
+  const command = shellCommandOf(tool, args);
+  if (!command) return [];
   // process_start / process_restart run the command with extra variables.
   const toolEnv = args.env && typeof args.env === "object" && !Array.isArray(args.env) ? Object.keys(args.env) : [];
-  return shellPublishes(tool, args.command, baseCwd(args), toolEnv);
+  return shellPublishes(tool, command, baseCwd(args), toolEnv);
 }
 
 /** Where the tool starts the command: the stamped worktree/session root

@@ -31,7 +31,7 @@ import {
 import type { TaintSource, MaskOptions } from "../data-lineage/index.js";
 import { recordExternalIngestion, isExternalIngestingTool } from "../data-lineage/external.js";
 import { DEFAULT_MAX_RESULT_CHARS } from "../context-manager/tool-result-cap.js";
-import { hasCapability } from "../tool-registry.js";
+import { hasCapability, outputOf, shellCommandOf, waitsForShellCommand } from "../tool-registry.js";
 import { resolveAgentPath } from "../workspace/paths.js";
 import { realpathDeep, isSanctionedWorkRootEnvFile } from "../security/layer/index.js";
 import { recordPrivateReadFromResult } from "./private-read-record.js";
@@ -41,19 +41,19 @@ import { withMetadata } from "../tools/result-helpers.js";
 
 const logger = createLogger("tool-execution");
 
-// Sensitive-read tools whose taint is gated on the READ PATH (not on scanning
-// returned content): a file read / pattern list. Their output is masked for
-// registered values only (maskScope), preserving canonical read/glob/grep
-// behavior on files that merely contain credential-shaped strings.
-const PATH_GATED_READS: ReadonlySet<string> = new Set(["read", "glob", "grep", "structural_search"]);
+// What a result carries is its row's `output` (tool-policies.types.ts
+// OutputKind): a command's output whichever tool hands it back (bash at once,
+// the process tools and dev servers a background command's lines — a dev
+// server printing its env is the same channel as `cat .env`), a fetched body,
+// or file content read by path, whose taint follows the path and whose masking
+// is registered values only, preserving read/glob/grep on files that merely
+// contain credential-shaped strings.
 
-// A command's output, whichever tool hands it back: bash returns it at once,
-// the process tools return a background command's line (process_start,
-// process_restart, process_list) and its stdout/stderr (process_status). A
-// dev server printing its env is the same channel as `cat .env` in bash.
-const COMMAND_OUTPUT_TOOLS: ReadonlySet<string> = new Set([
-  "bash", "process_start", "process_restart", "process_status", "process_list",
-]);
+/** The command whose output IS this call's result: one the tool ran to exit
+ *  (bash). Its sensitivity is judged by what the command reads, not by a path. */
+function finishedCommandOf(toolName: string, args: Record<string, unknown>): string | undefined {
+  return waitsForShellCommand(toolName) ? shellCommandOf(toolName, args) : undefined;
+}
 
 /**
  * How much of a delivered output is masked.
@@ -71,8 +71,9 @@ const COMMAND_OUTPUT_TOOLS: ReadonlySet<string> = new Set([
  *    tool happens to carry them.
  */
 function maskScope(toolName: string, args: Record<string, unknown>, isSensitiveRead: boolean): MaskOptions {
-  if (toolName === "http_request" || toolName === "web_fetch") return { endpoint: isSecretEndpointUrl(args.url) };
-  if (COMMAND_OUTPUT_TOOLS.has(toolName) || (isSensitiveRead && !PATH_GATED_READS.has(toolName))) return {};
+  const output = outputOf(toolName);
+  if (output === "http-body") return { endpoint: isSecretEndpointUrl(args.url) };
+  if (output === "command" || (isSensitiveRead && output !== "file-content")) return {};
   return { knownOnly: true };
 }
 
@@ -146,7 +147,8 @@ export function callReadsSensitivePath(
   args: Record<string, unknown>,
   sessionId: string | undefined,
 ): boolean {
-  if (toolName === "bash") return sensitivePathsReadByCommand(String(args.command || "")).length > 0;
+  const command = finishedCommandOf(toolName, args);
+  if (command !== undefined) return sensitivePathsReadByCommand(command).length > 0;
   if (!hasCapability(toolName, "sensitive-read") || typeof args.path !== "string" || !args.path) return false;
   return isSensitivePath(resolveTaintPath(args.path, sessionId));
 }
@@ -173,7 +175,8 @@ export function setPreExecuteTaintFloor(
   const sid = sessionId || "default";
   const floor: PreExecuteFloor = { pairs: [], preTaintedPath: null };
   const isSensitiveReadCap = hasCapability(toolName, "sensitive-read");
-  if (isSensitiveReadCap && toolName !== "bash" && typeof args.path === "string" && args.path) {
+  const command = finishedCommandOf(toolName, args);
+  if (isSensitiveReadCap && command === undefined && typeof args.path === "string" && args.path) {
     const taintPath = resolveTaintPath(String(args.path), sessionId);
     // The sanctioned work-root env file skips the PATH-based pre-taint — the
     // post-execute check taints it CONTENT-conditionally instead, so a
@@ -184,8 +187,8 @@ export function setPreExecuteTaintFloor(
       floor.pairs.push({ source: "sensitive_file", target: taintPath });
       floor.preTaintedPath = taintPath;
     }
-  } else if (toolName === "bash") {
-    for (const p of sensitivePathsReadByCommand(String(args.command || ""))) {
+  } else if (command !== undefined) {
+    for (const p of sensitivePathsReadByCommand(command)) {
       recordSensitiveRead(sid, "sensitive_file", p);
       floor.pairs.push({ source: "sensitive_file", target: p });
     }
@@ -215,11 +218,12 @@ export function applyResultTaintPolicy(
   let redactReason: string | null = null;
   const pending: Array<{ source: TaintSource; target: string; content?: string }> = [];
   const isSensitiveRead = hasCapability(toolName, "sensitive-read");
+  const command = finishedCommandOf(toolName, args);
 
   // Path-carrying sensitive-read sinks (read, ari_file, glob, grep, …): a read
   // of a sensitive path redacts (and, if delivered, taints). Keyed on the
   // REALPATH of the arg, not the raw name (R4-19, see resolveTaintPath).
-  if (isSensitiveRead && toolName !== "bash" && args.path) {
+  if (isSensitiveRead && command === undefined && args.path) {
     const taintPath = resolveTaintPath(String(args.path), sessionId);
     // The sanctioned work-root env file is CONTENT-conditional: a structured
     // secret shape (real API key / JWT / PEM) in its bytes gets the full
@@ -241,15 +245,15 @@ export function applyResultTaintPolicy(
     }
   }
 
-  if (toolName === "bash") {
-    const matches = sensitivePathsReadByCommand(String(args.command || ""));
+  if (command !== undefined) {
+    const matches = sensitivePathsReadByCommand(command);
     if (matches.length > 0) {
       // The floor for these paths was set pre-execute; whether it stands is
       // decided by the stub branch below (stubbed → retracted, delivered →
       // kept). No content-bearing re-record — these reads carry no per-path
       // content to fingerprint. A command that names a secrets FILE gets the
       // whole-result stub; any other command's output is masked below.
-      redactReason = `bash command referenced sensitive path(s): ${matches.join(", ")}`;
+      redactReason = `${toolName} command referenced sensitive path(s): ${matches.join(", ")}`;
     }
   }
 
@@ -259,7 +263,7 @@ export function applyResultTaintPolicy(
   // What a network response showed the model, after masking, it may send back
   // to that site: an id an API returned is the next request's path, and the
   // outbound scan would otherwise refuse it as a random-looking token.
-  if ((toolName === "http_request" || toolName === "web_fetch") && typeof result?.content === "string") {
+  if (outputOf(toolName) === "http-body" && typeof result?.content === "string") {
     recordResponseTokens(sessionId ?? "", String(args.url ?? ""), result.content);
   }
 

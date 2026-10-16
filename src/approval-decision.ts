@@ -21,7 +21,7 @@ import {
 import { loadProfileName, getSessionProfile } from "./autonomy/profile-store.js";
 import { classifyToolRisk } from "./autonomy/risk.js";
 import { irreversibleToolReason } from "./irreversible-tools.js";
-import { declaredPaths, hasCapability, pathSpecsForCall, TOOL_PATH_ARGS } from "./tool-registry.js";
+import { declaredPaths, hasCapability, pathSpecsForCall, shellCommandOf, TOOL_PATH_ARGS } from "./tool-registry.js";
 import { declaredDestinations, destinationKey } from "./tool-execution/send-destinations.js";
 
 // Profile name cached 1s — same shape as the prior approvalMode cache.
@@ -200,9 +200,8 @@ export function computeArgsFingerprint(
   }
   for (const [arg, dirs] of pathDirs) scope[arg] = [...dirs].sort();
 
-  if (hasCapability(tool, "shell") && typeof args.command === "string") {
-    scope.command = canonicalCommand(args.command);
-  }
+  const command = shellCommandOf(tool, args);
+  if (command !== undefined) scope.command = canonicalCommand(command);
   const recipients = recipientsOf(tool, args);
   if (recipients || hasCapability(tool, "workspace-write", args)) {
     const kept = new Set(["action", ...specs.map((s) => s.arg)]);
@@ -316,21 +315,13 @@ export function isDestructiveCommand(
   toolName: string,
   args: Record<string, unknown>,
 ): string | null {
-  const tool = toolName.toLowerCase();
-  // process_start/process_restart spawn the IDENTICAL `/bin/bash -c <command>`
-  // bash does, so they must hit the same destructive floor — keying this on the
-  // spawn primitive (any bash-spawning tool), not just the `bash` tool name.
-  // Otherwise `process_start({command:"git push --force"})` ran silently while
-  // the identical bash forced an unskippable confirm. Both take args.command
-  // as a string, so they flow through the same text-pattern scan below.
-  const isShellSpawner =
-    tool === "bash" ||
-    tool === "shell" ||
-    tool === "process_start" ||
-    tool === "process_restart";
-  if (!isShellSpawner) return null;
-
-  const cmd = typeof args.command === "string" ? args.command : "";
+  // Every tool that runs a model-authored shell command (its row's commandArg:
+  // bash, the process_* spawners, the app dev servers) hits the same floor —
+  // they spawn the identical shell. Keyed on the tool name, process_start's
+  // `git push --force` ran silently while the identical bash forced a confirm,
+  // and app_serve_backend's command was never scanned at all.
+  const cmd = shellCommandOf(toolName, args);
+  if (cmd === undefined) return null;
   for (const { pattern, reason } of DESTRUCTIVE_COMMAND_PATTERNS) {
     if (pattern.test(cmd)) return reason;
   }

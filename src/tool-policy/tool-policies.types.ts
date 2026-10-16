@@ -70,6 +70,19 @@ export interface PathArgSpec {
  */
 export type DeclaredCapability = "egress" | "sensitive-read" | "shell";
 
+/**
+ * What a tool's result carries, where masking and taint must treat it apart
+ * from the rest (tool-execution/sensitive-read-taint.ts, private-read-record.ts):
+ *   command      — a command's stdout/stderr (a dev server printing its env is
+ *                  the same channel as `cat .env`)
+ *   http-body    — a fetched response body (endpoint-aware masking; its tokens
+ *                  vouch for a later send back to the same site)
+ *   file-content — a file read by path: taint follows the path, and only
+ *                  registered secret values are masked
+ *   mailbox      — mail the user received: private content they hold
+ */
+export type OutputKind = "command" | "http-body" | "file-content" | "mailbox";
+
 /** One concrete tool's row. Every fact a gate needs about the tool lives here,
  *  so a new tool answers each question once, and the type will not build
  *  without the answers. */
@@ -80,6 +93,20 @@ export interface ToolPolicyRow {
   risk: ToolRisk;
   /** The sink classes this tool belongs to; `[]` when none. */
   capabilities: readonly DeclaredCapability[];
+  /** A model-authored shell command the tool runs: the arg holding it, and
+   *  whether the call returns only once the command has exited (bash) rather
+   *  than leaving it running (process_start, the dev servers). Every command
+   *  gate reads it through shellCommandOf (tool-registry.ts): the destructive
+   *  floor, the publish gate, the delete gates, the verify gate; a check of
+   *  what the command DID (a delete really happened, tier-0 auto-allow) needs
+   *  waitsForExit. */
+  shellCommand?: { arg: string; waitsForExit?: true };
+  /** What the result carries, when masking or taint must know (OutputKind). */
+  output?: OutputKind;
+  /** A successful result puts text authored off this computer in front of the
+   *  model (a fetched page, a search result, mail, a folder name a server chose)
+   *  — untrusted content that blocks the turn from auto-promoting memory. */
+  externalContent?: true;
   /** Explicit policy rule(s). `tool` is stamped from the record key by
    *  deriveDefaultRules — omit it here. */
   rules?: Array<Omit<ToolPolicyRule, "tool">>;
@@ -105,6 +132,9 @@ export interface GlobPolicyEntry {
   kernel?: undefined;
   risk?: undefined;
   capabilities?: undefined;
+  shellCommand?: undefined;
+  output?: undefined;
+  externalContent?: undefined;
   pathArgs?: undefined;
   offBoxFetch?: undefined;
 }

@@ -47,6 +47,7 @@
 import { createHash } from "node:crypto";
 import { type TaintEntry, MAX_FINGERPRINT_CONTENT, computeFingerprints, payloadFingerprints } from "./fingerprint.js";
 import { adjudicatePayload, type PayloadVerdict } from "./payload-overlap.js";
+import { policyRowOf } from "../tool-registry.js";
 
 interface ExternalIngestState {
 	entries: TaintEntry[];
@@ -80,18 +81,18 @@ function contentlessEntry(sessionId: string, target: string): TaintEntry {
 
 /**
  * Tools whose SUCCESSFUL results place off-box (untrusted external) content
- * into the model context. No existing classification is exactly this axis:
- * The egress class (tool-registry.ts) includes non-ingesting exfil sinks
- * (email_send, clipboard_write, process_start, send_image, computer, ...) and
- * the policy `offBoxFetch` flag marks payload-ships-off-box tools
+ * into the model context: the policy row's `externalContent`. No other
+ * classification is exactly this axis: the egress class includes non-ingesting
+ * exfil sinks (email_send, clipboard_write, process_start, send_image,
+ * computer, ...) and `offBoxFetch` marks payload-ships-off-box tools
  * (view_image, generate_image, telegram_send) whose results are not external
- * content. Membership here is the INGESTION subset of the egress class:
+ * content. Why each declaring row declares it:
  *  - web_fetch / http_request / ari_http — fetched bodies
  *  - browser — ALL actions: even a bare navigate ingests the page via any
  *    subsequent read/snapshot/observe result, wrapped or not
  *  - web_search / image_search — off-box result snippets enter context
- *  - WebSearch / WebFetch — provider-native aliases observed out of process
- *  - extract_site_assets / youtube_analyze — off-box GET returning content
+ *  - extract_site_assets / compare_pages / youtube_analyze — off-box GETs
+ *    returning content
  *  - email_read / email_search — third-party-authored sender/subject/body
  *    content over IMAP (email-read-tools.ts), returned with NO wrap; inbound
  *    email is a primary injection channel
@@ -122,45 +123,25 @@ function contentlessEntry(sessionId: string, target: string): TaintEntry {
  *    session's memory AUTO-promotion, and a turn that just deleted mail on a
  *    third party's instruction is the last turn that should be writing durable
  *    facts.
- * Local file reads and sql over local DBs are deliberately NOT here (owned
+ * Local file reads and sql over local DBs deliberately do not declare it (owned
  * sources — covered by the sensitive-read taint axis instead).
  */
-const EXTERNAL_INGESTING_TOOLS: ReadonlySet<string> = new Set([
-	"web_fetch",
-	"http_request",
-	"ari_http",
-	"browser",
-	"web_search",
-	"image_search",
-	"extract_site_assets",
-	"compare_pages",
-	"youtube_analyze",
-	"email_read",
-	"email_search",
-	"email_read_message",
-	"email_folders",
-	"email_delete",
-	"email_mark",
-	"WebSearch",
-	"WebFetch",
-]);
 
-/** Built-in LOCAL management tools that happen to carry the mcp_ prefix
- *  (mcp-admin-tools.ts — currently just mcp_add_server, which writes
- *  ~/.lax/mcp.json and spawns the server). They ingest nothing off-box, so
- *  they must not false-mark the session via the prefix rule below. */
-const MCP_BUILTIN_LOCAL_TOOLS: ReadonlySet<string> = new Set([
-	"mcp_add_server",
-]);
+/** Names another system reports for its own web tools when it runs out of
+ *  process (the provider's server-side search and fetch). Not LAX tools, so no
+ *  policy row says what they return; their results are fetched web content. */
+const PROVIDER_NATIVE_EXTERNAL_TOOLS: ReadonlySet<string> = new Set(["WebSearch", "WebFetch"]);
 
 /** Does a successful result from this tool constitute external-content
- *  ingestion? MCP server tools (mcp_<server>_<tool>, registered at runtime)
- *  are all external per the campaign's trust model — their results come from
- *  an out-of-process server this system doesn't own. Built-in local mcp_*
- *  management tools are exclusion-listed before the prefix check. */
+ *  ingestion? A tool with a policy row says so itself (`externalContent`) —
+ *  mcp_add_server, a local management tool, declares nothing. A tool with no
+ *  row is an MCP server's (mcp_<server>_<tool>, registered at runtime), which
+ *  per the campaign's trust model is external — its results come from an
+ *  out-of-process server this system doesn't own — or a provider's own. */
 export function isExternalIngestingTool(toolName: string): boolean {
-	if (MCP_BUILTIN_LOCAL_TOOLS.has(toolName)) return false;
-	return EXTERNAL_INGESTING_TOOLS.has(toolName) || toolName.startsWith("mcp_");
+	const row = policyRowOf(toolName);
+	if (row) return row.externalContent === true;
+	return toolName.startsWith("mcp_") || PROVIDER_NATIVE_EXTERNAL_TOOLS.has(toolName);
 }
 
 /**

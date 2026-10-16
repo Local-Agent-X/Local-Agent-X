@@ -11,6 +11,7 @@
 // failed open for every egress tool it did not name.
 
 import { isInternalArgKey } from "./internal-args.js";
+import { callPaths } from "../tool-registry.js";
 
 /**
  * Arguments that address or steer a tool locally and carry nothing anywhere:
@@ -29,11 +30,6 @@ export const LOCAL_CONTROL_ARGS: Readonly<Record<string, ReadonlySet<string>>> =
 
 // Remote http(s)/data: references aren't local-file reads.
 const isLocalFileRef = (v: unknown): v is string => typeof v === "string" && v !== "" && !/^(https?:|data:)/i.test(v);
-
-// Arguments that name a LOCAL file whose bytes the sink ships off-box
-// (generate_video reference images, edit_image source and mask, send_video
-// path, ...). They go to the sensitive-attachment check as well as the text.
-const LOCAL_FILE_ARGS = ["reference_image", "reference_images", "image", "mask", "path"] as const;
 
 /** Every string and number in a value, object keys included: a header name or
  *  an env var name leaves with its value. Booleans carry nothing to scan. */
@@ -63,16 +59,10 @@ export function egressPayload(name: string, args: Record<string, unknown>): { te
     collect(value, parts);
   }
 
-  const attachmentPaths: string[] = [];
-  if (name === "email_send" && args.attachments) {
-    try {
-      const paths = JSON.parse(String(args.attachments));
-      if (Array.isArray(paths)) for (const p of paths) attachmentPaths.push(String(p));
-    } catch { /* malformed attachments JSON — the tool will reject it */ }
-  }
-  for (const arg of LOCAL_FILE_ARGS) {
-    const v = args[arg];
-    for (const ref of Array.isArray(v) ? v : [v]) if (isLocalFileRef(ref)) attachmentPaths.push(ref);
-  }
+  // The local files it ships are the paths its policy row says the call reads
+  // (email_send attachments, generate_video reference images, edit_image
+  // source and mask, send_video path, ...): they go to the sensitive-attachment
+  // check as well as the text.
+  const attachmentPaths = callPaths(name, args).reads.filter(isLocalFileRef);
   return { text: parts.join("\n"), attachmentPaths };
 }

@@ -15,7 +15,7 @@ export const TOOL_POLICIES_NETWORK: Record<string, ToolPolicyRow> = {
     // bursts at the mutex (src/browser/mutex.ts) and stops genuine stuck-loops
     // via no-progress detection (src/browser/progress-tracker.ts), which feeds
     // the circuit breaker. The per-session ceiling below stays as a backstop.
-    kernel: "http", risk: "network-read", capabilities: ["egress"],
+    kernel: "http", risk: "network-read", capabilities: ["egress"], externalContent: true,
     rules: [
       { id: "flag-browser-evaluate", action: "evaluate", decision: "allow", reason: "Browser JS evaluation — autonomous by default (guarded by CSP, sensitive-page gating at the browser-tool layer, and the read-into-context blocklist — not a per-call modal). Rule kept so the supervised-mode layer can re-arm a confirm.", priority: 100 },
       // No per-action rule for `emulate`: it falls to allow-browser below
@@ -37,39 +37,39 @@ export const TOOL_POLICIES_NETWORK: Record<string, ToolPolicyRow> = {
   browser_capture_to_secret: { kernel: "secret-vault", risk: "workspace-write", capabilities: [], rules: [{ id: "allow-browser-capture-to-secret", decision: "allow", reason: "Capture page value into encrypted vault (value never enters model context)", priority: 50 }] },
   browser_fill_from_secret:  { kernel: "secret-vault", risk: "secrets", capabilities: [], rules: [{ id: "allow-browser-fill-from-secret", decision: "allow", reason: "Fill vault value into page input (origin-bound, selector-whitelisted, approval-gated)", priority: 50 }] },
   http_request: {
-    kernel: "http", risk: "network-write", capabilities: ["egress"], offBoxFetch: true,
+    kernel: "http", risk: "network-write", capabilities: ["egress"], output: "http-body", externalContent: true, offBoxFetch: true,
     rateLimit: { maxCalls: 20, windowMs: 60_000, action: "block" },
     rules: [{ id: "allow-http-limited", decision: "allow", reason: "HTTP allowed (rate limited, SSRF-checked, content-wrapped)", priority: 40, constraints: { maxCallsPerSession: 60 } }],
   },
-  ari_http: { kernel: "internal", risk: "network-write", capabilities: ["egress"], offBoxFetch: true },
+  ari_http: { kernel: "internal", risk: "network-write", capabilities: ["egress"], output: "http-body", externalContent: true, offBoxFetch: true },
   web_fetch: {
-    kernel: "http", risk: "network-read", capabilities: ["egress"], offBoxFetch: true,
+    kernel: "http", risk: "network-read", capabilities: ["egress"], output: "http-body", externalContent: true, offBoxFetch: true,
     rateLimit: { maxCalls: 20, windowMs: 60_000, action: "block" },
     rules: [{ id: "allow-webfetch-limited", decision: "allow", reason: "Web fetch allowed (rate limited, SSRF-checked, content-wrapped)", priority: 40, constraints: { maxCallsPerSession: 60 } }],
   },
   compare_pages: {
-    kernel: "http", risk: "network-read", capabilities: ["egress"], offBoxFetch: true,
+    kernel: "http", risk: "network-read", capabilities: ["egress"], externalContent: true, offBoxFetch: true,
     rateLimit: { maxCalls: 20, windowMs: 60_000, action: "block" },
     rules: [{ id: "allow-compare-pages", decision: "allow", reason: "Structural two-page compare (read-only, rate limited, SSRF-checked, content-wrapped)", priority: 40, constraints: { maxCallsPerSession: 60 } }],
   },
   // Both ship the model's query off-box and read what comes back: the same
   // tier as web_fetch, not the local-read tier.
-  web_search:          { kernel: "http", risk: "network-read", capabilities: ["egress"], offBoxFetch: true, rules: [{ id: "allow-web-search", decision: "allow", reason: "Web search", priority: 50 }] },
-  image_search:        { kernel: "http", risk: "network-read", capabilities: ["egress"], offBoxFetch: true, rules: [{ id: "allow-image-search", decision: "allow", reason: "Web image search (read-only)", priority: 50 }] },
-  youtube_analyze:     { kernel: "http", risk: "network-read", capabilities: ["egress"], offBoxFetch: true },
+  web_search:          { kernel: "http", risk: "network-read", capabilities: ["egress"], externalContent: true, offBoxFetch: true, rules: [{ id: "allow-web-search", decision: "allow", reason: "Web search", priority: 50 }] },
+  image_search:        { kernel: "http", risk: "network-read", capabilities: ["egress"], externalContent: true, offBoxFetch: true, rules: [{ id: "allow-image-search", decision: "allow", reason: "Web image search (read-only)", priority: 50 }] },
+  youtube_analyze:     { kernel: "http", risk: "network-read", capabilities: ["egress"], externalContent: true, offBoxFetch: true },
   // Downloads land on disk under output_dir, which the tool confines to the
   // workspace itself (asset-tools.ts workspaceOutputDir); declared here too so
   // the file-access mode's write rules and the control-file gate see it.
-  extract_site_assets: { kernel: "http", risk: "workspace-write", capabilities: ["egress"], pathArgs: [{ arg: "output_dir", action: "write" }], rules: [{ id: "allow-extract-site-assets", decision: "allow", reason: "Web asset extraction (downloads into the workspace)", priority: 50 }] },
+  extract_site_assets: { kernel: "http", risk: "workspace-write", capabilities: ["egress"], externalContent: true, pathArgs: [{ arg: "output_dir", action: "write" }], rules: [{ id: "allow-extract-site-assets", decision: "allow", reason: "Web asset extraction (downloads into the workspace)", priority: 50 }] },
 
   // ── External services (Gmail / Calendar / Marketplace) ──
-  email_read:                  { kernel: "http", risk: "network-read", capabilities: ["sensitive-read"] },
-  email_search:                { kernel: "http", risk: "network-read", capabilities: ["sensitive-read"] },
+  email_read:                  { kernel: "http", risk: "network-read", capabilities: ["sensitive-read"], output: "mailbox", externalContent: true },
+  email_search:                { kernel: "http", risk: "network-read", capabilities: ["sensitive-read"], output: "mailbox", externalContent: true },
   // One message in full (IMAP FETCH) and the mailbox list (IMAP LIST). Both are
   // reads over the same transport as email_read/email_search and carry the same
   // risk class — neither writes, sends, or takes a path argument.
-  email_read_message:          { kernel: "http", risk: "network-read", capabilities: ["sensitive-read"] },
-  email_folders:               { kernel: "http", risk: "network-read", capabilities: [] },
+  email_read_message:          { kernel: "http", risk: "network-read", capabilities: ["sensitive-read"], output: "mailbox", externalContent: true },
+  email_folders:               { kernel: "http", risk: "network-read", capabilities: [], externalContent: true },
   // email_delete is the canonical destructive class (delete_file, memory_forget,
   // process_kill) and that is what wires the autonomy gating: profiles.ts maps
   // it to deny / ask / allow-with-rollback per profile. It can carry that class
@@ -78,8 +78,8 @@ export const TOOL_POLICIES_NETWORK: Record<string, ToolPolicyRow> = {
   // email_mark changes IMAP flags: a real, user-visible mutation, but a
   // recoverable one, so it sits with the other workspace writes rather than
   // being dressed up as either a read or a destructive act.
-  email_delete:                { kernel: "http", risk: "destructive", capabilities: [] },
-  email_mark:                  { kernel: "http", risk: "workspace-write", capabilities: [] },
+  email_delete:                { kernel: "http", risk: "destructive", capabilities: [], externalContent: true },
+  email_mark:                  { kernel: "http", risk: "workspace-write", capabilities: [], externalContent: true },
   email_draft:                 { kernel: "http", risk: "workspace-write", capabilities: [] },
   // email_setup's verify step connects to the model-named SMTP host with the
   // vault password: an off-box sink. email_send attaches local files by path.

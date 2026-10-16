@@ -97,8 +97,9 @@ describe("isDestructiveCommand — flags irreversible shell operations", () => {
     });
   }
 
-  it("applies to shell aliases but not non-shell tools", () => {
-    expect(isDestructiveCommand("shell", { command: "rm -rf /x" })).toBe("rm -rf");
+  it("applies to every tool that runs a shell command, not to the rest", () => {
+    expect(isDestructiveCommand("process_start", { command: "rm -rf /x" })).toBe("rm -rf");
+    expect(isDestructiveCommand("app_serve_backend", { command: "rm -rf /x" })).toBe("rm -rf");
     expect(isDestructiveCommand("write", { path: "/x", content: "rm -rf /" })).toBeNull();
     expect(isDestructiveCommand("bash", {})).toBeNull();
   });

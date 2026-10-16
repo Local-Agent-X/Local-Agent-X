@@ -8,7 +8,7 @@
 
 import type { DataClassification } from "./classification.js";
 import { isSensitivePath, sensitivePathsReadByCommand } from "../data-lineage/index.js";
-import { callPaths, hasCapability, TOOL_PATH_ARGS } from "../tool-registry.js";
+import { callPaths, hasCapability, shellCommandOf, TOOL_PATH_ARGS } from "../tool-registry.js";
 
 /** The kinds of source an exfil pattern is attributed to (and the trust
  *  ledger's fingerprint prefix): a read that names a path, a shell command,
@@ -68,7 +68,7 @@ export function classifyAccess(
   const shell = hasCapability(toolName, "shell");
   if ((hasCapability(toolName, "sensitive-read") || shell) && paths.writes.length === 0) {
     if (shell) {
-      const command = String(args.command ?? "");
+      const command = shellCommandOf(toolName, args) ?? "";
       return { type: "shell", target: command || toolName, sensitive: contentSensitive || isCommandSensitive(command), timestamp };
     }
     if (TOOL_PATH_ARGS[toolName]) {

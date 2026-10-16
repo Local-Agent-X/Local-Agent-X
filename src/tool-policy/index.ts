@@ -9,6 +9,7 @@ import { matchArgPattern, matchGlob, matchHost } from "./matchers.js";
 import { mergeWithDefaults, stampedDefaultPolicy } from "./merge-defaults.js";
 import type { PolicyDecision, ToolPolicyConfig, ToolPolicyRule } from "./types.js";
 import { USER_HINTS } from "../types.js";
+import { shellCommandOf } from "../tool-registry.js";
 
 const logger = createLogger("tool-policy");
 
@@ -184,9 +185,10 @@ export class ToolPolicy {
       }
     }
 
-    // Command constraints (for bash)
-    if (c.allowedCommands && toolName === "bash") {
-      const cmd = String(args.command || "").trim();
+    // Command constraints: the command any tool runs (its row's shellCommand)
+    const ruleCommand = shellCommandOf(toolName, args);
+    if (c.allowedCommands && ruleCommand !== undefined) {
+      const cmd = ruleCommand.trim();
       const firstWord = cmd.split(/\s/)[0];
       if (!c.allowedCommands.some((ac) => firstWord === ac || cmd.startsWith(ac))) {
         return { allowed: false, reason: `Command "${firstWord}" not in allowlist`, ruleId: rule.id, userHint: USER_HINTS.commandShell };

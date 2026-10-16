@@ -45,6 +45,7 @@ import { isTaskArtifact } from "../data-lineage/task-artifacts.js";
 import type { ToolDefinition } from "../types.js";
 import { coerceArgs, repairJson, repairMarkerKeys } from "./arg-repair.js";
 import { withoutInternalArgs } from "./internal-args.js";
+import { shellCommandOf } from "../tool-registry.js";
 
 export const GATED_DELETE_TOOL = "delete_file";
 const UNTRUSTED = /EXTERNAL_UNTRUSTED_CONTENT|INJECTION WARNING/i;
@@ -107,11 +108,6 @@ export interface UnnamedDeleteCall {
   notice?: true;
 }
 
-/** Shell tools whose command may delete a file one at a time. EXP-18 showed
- *  the ladder: `delete_file` refused → `rm -rf` carded by the floor → per-file
- *  `rm`, which nothing covered. The rule is about the act, not the tool. */
-export const GATED_SHELL_TOOLS: ReadonlySet<string> = new Set(["bash", "shell"]);
-
 type ArgSchema = Parameters<typeof repairMarkerKeys>[1];
 
 /** The arguments the call will run with, not the string the model sent: the
@@ -145,8 +141,12 @@ export function deleteTargetsOf(tc: { name: string; arguments: string }, tools?:
     const path = String(args.path ?? "");
     return path ? [path] : [];
   }
-  if (GATED_SHELL_TOOLS.has(tc.name) && typeof args.command === "string") return shellDeleteTargets(args.command);
-  return [];
+  // A command any tool runs may delete a file one at a time (its row's
+  // commandArg). EXP-18 showed the ladder: `delete_file` refused → `rm -rf`
+  // carded by the floor → per-file `rm`, which nothing covered. The rule is
+  // about the act, not the tool.
+  const command = shellCommandOf(tc.name, args);
+  return command !== undefined ? shellDeleteTargets(command) : [];
 }
 
 /** A delete_file target that is an existing folder: its file count, else null. */

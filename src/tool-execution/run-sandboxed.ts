@@ -15,7 +15,7 @@ import { RetryableToolResultError } from "../resilience-policy.js";
 import { ToolTimeoutError } from "./tool-timeout.js";
 import { timeout, blocked, ok, statusOf } from "../tools/result-helpers.js";
 import { resolveAgentPath } from "../workspace/paths.js";
-import { pathSpecsForCall } from "../tool-registry.js";
+import { pathSpecsForCall, shellCommandOf, waitsForShellCommand } from "../tool-registry.js";
 import { isAbsolute } from "node:path";
 import { existsSync } from "node:fs";
 import { checkFreshness, recordFileSeen, unchangedSinceSeen, seenViewFromReadResult } from "../tools/read-state.js";
@@ -27,7 +27,6 @@ import { createToolRunner } from "./tool-runner.js";
 import { recordTaskArtifact } from "../data-lineage/task-artifacts.js";
 import { CREATE_CLASS, createTargetPath } from "./create-target-path.js";
 import { checkShellDeleteHappened } from "./verify-shell-deletes.js";
-import { GATED_SHELL_TOOLS } from "./unnamed-delete-gate.js";
 
 
 // CREATE_CLASS + createTargetPath (the per-family tool→output-path mapping the
@@ -181,8 +180,10 @@ export const runSandboxedPhase: Phase = async (ctx) => {
     ctx.result = applyResultTaintPolicy(tc.name, args, sessionId, ctx.result, floor);
     // An exit code says the shell ran, not that the delete happened: a delete
     // whose targets are still there is reported as not done (verify-shell-deletes.ts).
-    if (ctx.result && GATED_SHELL_TOOLS.has(tc.name) && typeof args.command === "string") {
-      ctx.result = checkShellDeleteHappened(args.command, ctx.result, sessionId);
+    // Only once the command has exited: a background command is still running.
+    const ranCommand = shellCommandOf(tc.name, args);
+    if (ctx.result && ranCommand !== undefined && waitsForShellCommand(tc.name)) {
+      ctx.result = checkShellDeleteHappened(ranCommand, ctx.result, sessionId);
     }
   } catch (e) {
     const reconciliation = runner.reconcile(e);

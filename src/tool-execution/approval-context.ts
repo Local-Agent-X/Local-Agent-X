@@ -1,14 +1,16 @@
 import type { SecurityLayer } from "../security/index.js";
 import { resolveNewTabUrls } from "../security/layer/browser-egress-eval.js";
+import { shellCommandOf } from "../tool-registry.js";
 
 export function getRiskLevel(_toolName: string, _args: Record<string, unknown>, _security?: SecurityLayer): "low" | "medium" | "high" {
   return "low";
 }
 
 export function buildApprovalContext(toolName: string, args: Record<string, unknown>): string {
+  // Whichever tool runs it (its row's shellCommand), a command reads as one.
+  const command = shellCommandOf(toolName, args);
+  if (command !== undefined) return `Run command: "${command.slice(0, 150)}"`;
   switch (toolName) {
-    case "bash":
-      return `Run command: "${String(args.command || "").slice(0, 150)}"`;
     case "write":
       return `Create file: ${String(args.path || "").split(/[/\\]/).pop()} (${String(args.content || "").length} chars)`;
     case "edit":

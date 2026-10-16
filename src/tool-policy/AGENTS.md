@@ -6,8 +6,9 @@
 
 ## Invariants
 - A new tool gets ONE entry in the matching `tool-policies.<domain>.ts` fragment (`core`, `network`, `memory`, `orchestration`, `apps`, `globs`). `tool-policies.data.ts` is only the merge barrel — never edit it; fragments partition the keyspace, no key in two files.
-- Row fields (`tool-policies.types.ts` `ToolPolicyRow`): `kernel`, `risk`, `capabilities` (required), `pathArgs`, `offBoxFetch`, `rules`, `rateLimit`. No matching rule means deny-by-default at runtime — there is no risk-tier fallback. Glob entries (`GlobPolicyEntry`) carry only `rules`/`rateLimit`.
+- Row fields (`tool-policies.types.ts` `ToolPolicyRow`): `kernel`, `risk`, `capabilities` (required), `pathArgs`, `offBoxFetch`, `shellCommand`, `output`, `externalContent`, `rules`, `rateLimit`. No matching rule means deny-by-default at runtime — there is no risk-tier fallback. Glob entries (`GlobPolicyEntry`) carry only `rules`/`rateLimit`.
 - A row is the one place a tool's facts live: the capability classes are read off it (`src/tool-registry.ts` `hasCapability`) — `egress` / `sensitive-read` / `shell` from `capabilities`, `workspace-write` from the `pathArgs` that write, edit or delete — so no gate keeps a list of tool names. `offBoxFetch: true` requires `egress`; a path-taking tool without `pathArgs` bypasses file confinement.
+- What a call runs and returns is on the row too, read through one accessor each in `src/tool-registry.ts`: `shellCommand` names the arg holding a model-authored shell command (`shellCommandOf`; `waitsForExit` when the result arrives after it exits) — the destructive floor, the publish gate, the delete card, grant scopes and `allowedCommands` all read it; `output` says what a result carries (`command`, `http-body`, `file-content`, `mailbox`) for masking and taint (`outputOf`); `externalContent: true` marks a result as off-box content for the memory-promotion axis (`src/data-lineage/external.ts`).
 - Never add a broad `*` allow. User overrides in the data dir's `tool-policy.json` are merged on top by `merge-defaults.ts`, never replace the defaults.
 
 ## Coupled to
@@ -15,6 +16,7 @@
 |---|---|---|
 | a fragment entry | `TOOLS` / `TOOL_PATH_ARGS` in `src/tool-registry.ts`, `TOOL_CLASS_MAP` in `src/ari-kernel/tool-class-map.ts` | `src/tool-policy-default.test.ts`, `src/tools/tool-registration-completeness.test.ts` |
 | `capabilities` / `offBoxFetch` / a write `pathArgs` spec | every gate keyed on a capability class (`hasCapability`) | `src/tool-execution/capability-class-gates.test.ts` |
+| `shellCommand` / `output` / `externalContent` | the shell-command gates, result masking, the external-content axis | `src/tool-execution/command-output-facts.test.ts` |
 | `merge-defaults.ts` | the stamped default policy written on first run | `merge-defaults.test.ts` |
 | a pack in `packs/` | `src/tool-execution/pre-dispatch.ts` | `packs/spend-cap-pack.test.ts`, `packs/threat-engine-pack.test.ts` |
 

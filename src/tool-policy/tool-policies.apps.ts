@@ -94,9 +94,9 @@ export const TOOL_POLICIES_APPS: Record<string, ToolPolicyRow> = {
   // the kernel shell defense pipeline + audit — NOT "internal" like its
   // connector_create sibling, which only writes a manifest. Allowed via the
   // app_* glob (same as app_create/app_delete).
-  app_serve_backend:     { kernel: "shell", risk: "shell", capabilities: ["egress", "shell"] },
-  app_serve_frontend:    { kernel: "shell", risk: "shell", capabilities: ["egress", "shell"] },   // spawns a frontend dev server — same sink as app_serve_backend
-  app_rebuild:           { kernel: "shell", risk: "shell", capabilities: ["egress", "shell"] },   // spawns the framework's production build (npx vite build) via the canonical static-build runner — same sink class as app_serve_*; allowed via the app_* glob
+  app_serve_backend:     { kernel: "shell", risk: "shell", capabilities: ["egress", "shell"], shellCommand: { arg: "command" }, output: "command" },
+  app_serve_frontend:    { kernel: "shell", risk: "shell", capabilities: ["egress", "shell"], shellCommand: { arg: "command" }, output: "command" },   // spawns a frontend dev server — same sink as app_serve_backend
+  app_rebuild:           { kernel: "shell", risk: "shell", capabilities: ["egress", "shell"], output: "command" },   // spawns the framework's production build (npx vite build) via the canonical static-build runner — same sink class as app_serve_*; allowed via the app_* glob
   create_page:           { kernel: "internal", risk: "workspace-write", capabilities: [], rules: [{ id: "allow-create-page", decision: "allow", reason: "Create custom pages", priority: 50 }] },
   start_app_build:       { kernel: "internal", risk: "workspace-write", capabilities: [], rules: [{ id: "allow-start-app-build", decision: "allow", reason: "App-build kickoff handle", priority: 50 }] },
   // finalize creates project_dir and writes the spec into it; run reads the

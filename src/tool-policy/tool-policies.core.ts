@@ -9,7 +9,7 @@ import type { ToolPolicyRow } from "./tool-policies.types.js";
 export const TOOL_POLICIES_CORE: Record<string, ToolPolicyRow> = {
   // ── Shell / subprocess ──
   bash: {
-    kernel: "shell", risk: "shell", capabilities: ["sensitive-read", "shell"],
+    kernel: "shell", risk: "shell", capabilities: ["sensitive-read", "shell"], shellCommand: { arg: "command", waitsForExit: true }, output: "command",
     rateLimit: { maxCalls: 30, windowMs: 60_000, action: "block" },
     // No `rm -rf` deny here: the irreversible-op floor (tool-execution) cards
     // every recursive delete for the user's approval. A hard deny above that
@@ -23,14 +23,14 @@ export const TOOL_POLICIES_CORE: Record<string, ToolPolicyRow> = {
       { id: "allow-bash-limited", decision: "allow", reason: "Shell allowed (rate limited, command-checked)", priority: 40, constraints: { maxCallsPerSession: 30 } },
     ],
   },
-  process_start:    { kernel: "shell",    risk: "shell", capabilities: ["egress", "shell"] },
-  process_status:   { kernel: "shell",    risk: "safe", capabilities: [] },
+  process_start:    { kernel: "shell",    risk: "shell", capabilities: ["egress", "shell"], shellCommand: { arg: "command" }, output: "command" },
+  process_status:   { kernel: "shell",    risk: "safe", capabilities: [], output: "command" },
   process_kill:     { kernel: "shell",    risk: "destructive", capabilities: [] },
-  process_restart:  { kernel: "shell",    risk: "destructive", capabilities: ["egress", "shell"] },
-  process_list:     { kernel: "shell",    risk: "safe", capabilities: [] },
+  process_restart:  { kernel: "shell",    risk: "destructive", capabilities: ["egress", "shell"], shellCommand: { arg: "command" }, output: "command" },
+  process_list:     { kernel: "shell",    risk: "safe", capabilities: [], output: "command" },
 
   // ── Raw filesystem ──
-  read:        { kernel: "file", risk: "safe", capabilities: ["sensitive-read"], pathArgs: [{ arg: "path", action: "read", knowsContent: true }], rules: [{ id: "allow-read", decision: "allow", reason: "File read (path-checked by SecurityLayer)", priority: 50 }] },
+  read:        { kernel: "file", risk: "safe", capabilities: ["sensitive-read"], output: "file-content", pathArgs: [{ arg: "path", action: "read", knowsContent: true }], rules: [{ id: "allow-read", decision: "allow", reason: "File read (path-checked by SecurityLayer)", priority: 50 }] },
   write: {
     kernel: "file", risk: "workspace-write", capabilities: [],
     pathArgs: [{ arg: "path", action: "write", knowsContent: true }],
@@ -103,9 +103,9 @@ export const TOOL_POLICIES_CORE: Record<string, ToolPolicyRow> = {
     pathArgs: [{ arg: "path", action: "write" }, { arg: "destination", action: "write" }],
     rules: [{ id: "allow-restore-file", decision: "allow", reason: "Task-trash restore (path-checked by SecurityLayer; refuses overwrite)", priority: 50 }],
   },
-  glob:        { kernel: "file", risk: "safe", capabilities: ["sensitive-read"], pathArgs: [{ arg: "path", action: "read", searchRoot: true }], rules: [{ id: "allow-glob", decision: "allow", reason: "File pattern search (read-only)", priority: 50 }] },
-  grep:        { kernel: "file", risk: "safe", capabilities: ["sensitive-read"], pathArgs: [{ arg: "path", action: "read", searchRoot: true }], rules: [{ id: "allow-grep", decision: "allow", reason: "Content search (read-only)", priority: 50 }] },
-  structural_search: { kernel: "file", risk: "safe", capabilities: ["sensitive-read"], pathArgs: [{ arg: "path", action: "read", searchRoot: true }], rules: [{ id: "allow-structural-search", decision: "allow", reason: "Symbol-accurate code search (read-only)", priority: 50 }] },
+  glob:        { kernel: "file", risk: "safe", capabilities: ["sensitive-read"], output: "file-content", pathArgs: [{ arg: "path", action: "read", searchRoot: true }], rules: [{ id: "allow-glob", decision: "allow", reason: "File pattern search (read-only)", priority: 50 }] },
+  grep:        { kernel: "file", risk: "safe", capabilities: ["sensitive-read"], output: "file-content", pathArgs: [{ arg: "path", action: "read", searchRoot: true }], rules: [{ id: "allow-grep", decision: "allow", reason: "Content search (read-only)", priority: 50 }] },
+  structural_search: { kernel: "file", risk: "safe", capabilities: ["sensitive-read"], output: "file-content", pathArgs: [{ arg: "path", action: "read", searchRoot: true }], rules: [{ id: "allow-structural-search", decision: "allow", reason: "Symbol-accurate code search (read-only)", priority: 50 }] },
   view_image:  { kernel: "file", risk: "safe", capabilities: ["egress"], offBoxFetch: true, pathArgs: [{ arg: "path", action: "read" }], rules: [{ id: "allow-view-image", decision: "allow", reason: "Image viewing (path-checked); base64-ships the image off-box to the vision API", priority: 50 }] },
   transcribe_media:   { kernel: "file", risk: "safe", capabilities: ["egress"], offBoxFetch: true, pathArgs: [{ arg: "path", action: "read" }], rules: [{ id: "allow-transcribe-media", decision: "allow", reason: "Transcribes a local recording (path-checked read); ships audio off-box when a CLOUD stt provider is configured", priority: 50 }] },
   read_video_frames:  { kernel: "file", risk: "safe", capabilities: ["egress"], offBoxFetch: true, pathArgs: [{ arg: "path", action: "read" }], rules: [{ id: "allow-read-video-frames", decision: "allow", reason: "Samples frames from a local video (path-checked read); base64-ships them off-box to the vision API", priority: 50 }] },

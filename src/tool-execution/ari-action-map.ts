@@ -1,106 +1,35 @@
-// Kernel action derivation — the (tool → AriKernel action) mapping the policy
-// phase feeds into ariEvaluate. Split out of enforce-policy.ts (SC-10) so that
-// file stays under the source-hygiene LOC ceiling; the canonical owner of this
-// table. Re-exported from ./enforce-policy.js so existing importers are
-// unaffected.
+// Kernel action derivation — the (tool → AriKernel action) the policy phase
+// feeds into ariEvaluate. Each tool's action is its policy row's `ariAction`
+// (tool-policies.types.ts AriActionSpec), and the row type requires one on
+// every kernel-gated tool: a gated tool that fell through to "exec" was
+// rejected by the kernel schema (exec is valid only for shell), and ariRequired
+// turned every call into a block — image_search shipped exactly that way
+// (2026-06-10), as "ARI error (ariRequired mode)".
+//
+// An action read off the call's args (http_request's method, browser's action)
+// is what lets a preset that denies tainted http WRITES see them at all: the
+// arikernel workspace-assistant preset allows a clean post/put/patch/delete
+// (allow-http-write-clean, prio 100) and denies the same verbs under
+// web/rag/email taint (deny-tainted-http-write, prio 40, wins).
+import { TOOL_POLICIES } from "../tool-policy/tool-policies.js";
+import type { AriActionSpec } from "../tool-policy/tool-policies.types.js";
 
-// HOST_CAPABILITY_MANIFEST action names — see ari-kernel.ts. A non-shell
-// tool that falls through to "exec" → lookupHostGrantId returns undefined
-// → firewall.execute throws → ariRequired turns it into a block. Every
-// gated tool must map to a manifest-valid action. Exported for the
-// coverage test (ari-action-map.test.ts) that fails when a kernel-gated
-// tool ships without a mapping — image_search did exactly that
-// (2026-06-10): action fell through to "exec", the http schema rejected
-// it, and every call blocked as "ARI error (ariRequired mode)".
-export const ARI_ACTION_MAP: Record<string, string> = {
-  read: "read", write: "write", edit: "write", edit_lines: "write", multi_edit: "write", bulk_replace: "write",
-  web_search: "get", web_fetch: "get", http_request: "get", browser: "get",
-  // Two guarded GETs (desktop + phone UA) per URL, through canonicalFetch.
-  compare_pages: "get",
-  image_search: "get",
-  bash: "exec",
-  memory_search: "search",
-  // ARI database toolClass declares actions [query, exec, mutate] — "write"
-  // is not in that set, so action="write" tripped deny-by-default at the
-  // policy engine. memory_save is a row insert into the daily-log SQLite
-  // table, which maps cleanly to mutate.
-  memory_save: "mutate",
-  // secret-vault actions are overridden inside ariEvaluate by
-  // secretVaultActionMap; "capture" is just a valid no-op default.
-  browser_capture_to_secret: "capture",
-  browser_fill_from_secret: "fill",
-  clipboard_write_from_secret: "clipboard",
-  // file
-  glob: "read", grep: "read", structural_search: "read", view_image: "read", transcribe_media: "read", read_video_frames: "read", send_video: "read", send_image: "read", send_file: "read", delete_file: "write",
-  restore_file: "write", // materializes the trashed bytes back on disk — a file write to the kernel
-  // http — get for read paths, post for mutations
-  calendar_check_availability: "get", calendar_list_events: "get",
-  calendar_create_event: "post",
-  email_read: "get", email_search: "get", email_draft: "post",
-  email_read_message: "get", email_folders: "get",
-  // Both are WRITE verbs on purpose. The arikernel workspace-assistant preset
-  // allows a clean post/put/patch/delete (allow-http-write-clean, prio 100) and
-  // denies the same verbs under email/web taint (deny-tainted-http-write, prio
-  // 40, wins). So a turn that has already read third-party mail cannot then
-  // trash or re-flag it — which is exactly the shape of the injection ("delete
-  // all my email") these two verbs would otherwise carry out. Mapping either to
-  // "get" to dodge that would be lying to the kernel about what they do.
-  email_delete: "delete", email_mark: "post",
-  email_send: "post", email_setup: "post", telegram_send: "post", whatsapp_send: "post",
-  marketplace_search: "get", marketplace_list: "get", marketplace_install: "get",
-  extract_site_assets: "get",
-  youtube_analyze: "get",
-  // shell — subprocess spawns + OS process queries
-  process_start: "exec", process_status: "exec",
-  process_kill: "exec", process_list: "exec",
-  // app_rebuild spawns the framework's production build (kernel class "shell").
-  // "exec" is the ONLY schema-valid shell action (SHELL_ACTIONS in
-  // packages/arikernel/core/src/types/actions.ts; toolCallRequestSchema.parse
-  // rejects anything else, which ariRequired mode turns into a hard block) —
-  // an http-style verb here would brick every call, the image_search failure
-  // shape all over again.
-  app_rebuild: "exec",
-  // Same schema-valid-shell-action story as app_rebuild above: every android
-  // action ultimately spawns adb/emulator, so "exec" is correct for all of
-  // them even though the tool has its own read/tap/type action vocabulary.
-  android: "exec",
-  // database — SQL (read-class today; tools self-restrict writes)
-  sql_query: "query", sql_explain: "query", sql_schema: "query",
-  // retrieval — vector/keyword session search
-  search_past_sessions: "search",
-};
-
-// The static map above is per-tool-NAME, so http_request and browser always
-// read as "get" — a POST or a browser click/evaluate looks passive to the
-// kernel, and a preset that denies http WRITES can never see them. deriveAriAction
-// derives the kernel action from the CALL's args instead:
-//   http_request → by args.method (POST/PUT/PATCH/DELETE → that write verb;
-//                  GET/HEAD/OPTIONS/absent → "get")
-//   browser      → by args.action (click/fill/select/type/evaluate/act → "post"
-//                  = an http write; navigate/read/screenshot/absent → "get")
-// Verified against the real arikernel workspace-assistant preset
-// (packages/arikernel/core/src/presets/policy-spec.json): allow-http-write-clean
-// (prio 100) allows a CLEAN post/put/patch/delete, deny-tainted-http-write
-// (prio 40, wins) denies the SAME verbs under web/rag/email taint — so a clean
-// POST stays allowed and only a tainted POST is denied; all four verbs are valid
-// http actions in HOST_CAPABILITY_MANIFEST. Tools whose action isn't derivable
-// from args fall through to the static ARI_ACTION_MAP.
-const HTTP_WRITE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
-// Deliberately EXCLUDES emulate — it is "get" to the kernel. emulate re-opens
-// the CURRENT url in a new context (an http GET, no write). Classifying it as
-// a write would deny it under web/rag taint (deny-tainted-http-write) — i.e.
-// exactly after browsing, which is the only time a mobile re-render is ever
-// wanted.
-export const BROWSER_WRITE_ACTIONS: ReadonlySet<string> = new Set(["click", "fill", "select", "type", "evaluate", "act"]);
-
-export function deriveAriAction(toolName: string, args: Record<string, unknown>): string {
-  if (toolName === "http_request") {
-    const method = String(args?.method ?? "GET").toUpperCase();
-    return HTTP_WRITE_METHODS.has(method) ? method.toLowerCase() : "get";
-  }
-  if (toolName === "browser") {
-    const action = String(args?.action ?? "").toLowerCase();
-    return BROWSER_WRITE_ACTIONS.has(action) ? "post" : "get";
-  }
-  return ARI_ACTION_MAP[toolName] || "exec";
+function resolveSpec(spec: AriActionSpec, args: Record<string, unknown>): string {
+  if (typeof spec === "string") return spec;
+  const value = String(args?.[spec.arg] ?? "").toLowerCase();
+  const write = spec.writes.find((w) => w.toLowerCase() === value);
+  return write ? (spec.as ?? write.toLowerCase()) : "get";
 }
+
+/** The action the kernel judges this call as; "exec" for a tool with no row
+ *  (the kernel never sees an internal tool). */
+export function deriveAriAction(toolName: string, args: Record<string, unknown>): string {
+  const spec = TOOL_POLICIES[toolName]?.ariAction;
+  return spec === undefined ? "exec" : resolveSpec(spec, args);
+}
+
+/** Each kernel-gated tool's action when its args say nothing more: a fixed
+ *  verb, or "get" for one read off the args. */
+export const ARI_ACTION_MAP: Readonly<Record<string, string>> = Object.fromEntries(
+  Object.entries(TOOL_POLICIES).flatMap(([name, row]) => (row.ariAction === undefined ? [] : [[name, resolveSpec(row.ariAction, {})]])),
+);

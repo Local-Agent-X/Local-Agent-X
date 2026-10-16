@@ -138,14 +138,48 @@ type RiskFacts =
   | { risk: "destructive"; undo: UndoSpec }
   | { risk: Exclude<ToolRisk, "destructive">; undo?: undefined };
 
+/**
+ * The action the Ari kernel judges a call as (tool-execution/ari-action-map.ts
+ * ariActionOf). It must be valid for the row's kernel class in the kernel's
+ * HOST_CAPABILITY_MANIFEST — `exec` only for shell — or every call throws and
+ * blocks under ariRequired. Either one verb, or a verb read off an argument: a
+ * value in `writes` (any case) is a write, judged as `as` or as that value
+ * lowercased, and anything else as "get" — so a POST or a browser click reads
+ * as a write to a preset that denies tainted writes.
+ */
+export type AriActionSpec = string | { arg: string; writes: readonly string[]; as?: string };
+
+/** The kernel defense pipeline (feeds TOOLS / TOOL_CLASS_MAP). A tool the
+ *  kernel checks must say which action it is judged as; an internal tool
+ *  never reaches the kernel. */
+type KernelFacts =
+  | { kernel: "internal"; ariAction?: undefined }
+  | { kernel: Exclude<KernelClass, "internal">; ariAction: AriActionSpec };
+
+/**
+ * A result that depends on state that changes between identical calls, so a
+ * repeat must run again rather than be answered from an earlier result (the
+ * 60 s dedup cache, the session-wide repeat skip):
+ *   poll   — and an identical repeat is how the tool is used (waiting on an op,
+ *            a process, a page), so the threat engine's repeat and ping-pong
+ *            loop arms exempt it; its 40-call breaker still applies
+ *   fresh  — a changing answer (a task list, the tool catalog, a person's
+ *            reply), still loop-guarded like any other call
+ */
+export type LiveState = "poll" | "fresh";
+
 /** One concrete tool's row. Every fact a gate needs about the tool lives here,
  *  so a new tool answers each question once, and the type will not build
  *  without the answers. */
-export type ToolPolicyRow = ToolPolicyRowFacts & RiskFacts;
+export type ToolPolicyRow = ToolPolicyRowFacts & RiskFacts & KernelFacts;
 
 interface ToolPolicyRowFacts {
-  /** The kernel defense pipeline — feeds TOOLS / TOOL_CLASS_MAP. */
-  kernel: KernelClass;
+  /** How long a call may run before the harness abandons it (tool-timeout.ts);
+   *  0 is unbounded, for a tool that legitimately runs for minutes. A tool
+   *  without one gets the 120 s fallback. */
+  timeoutMs?: number;
+  /** See LiveState. */
+  liveState?: LiveState;
   /** For a collapsed one-tool-many-actions family whose risk is not
    *  destructive as a whole: the actions that are, each with what it destroys
    *  (approval-decision.ts destructiveOperationReason). */
@@ -200,6 +234,9 @@ export interface GlobPolicyEntry {
   destination?: undefined;
   undo?: undefined;
   destructiveActions?: undefined;
+  ariAction?: undefined;
+  timeoutMs?: undefined;
+  liveState?: undefined;
   pathArgs?: undefined;
   offBoxFetch?: undefined;
 }

@@ -19,7 +19,7 @@
 import { createHash } from "node:crypto";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { ToolResult } from "../types.js";
-import { STATEFUL_LIVE_STATE_TOOLS } from "./stateful-tools.js";
+import { LIVE_STATE_TOOLS } from "./stateful-tools.js";
 import { CAPABILITY_CLASS_MEMBERS } from "../tool-registry.js";
 
 const DEDUP_TTL_MS = 60_000;
@@ -31,16 +31,11 @@ const DEDUP_TTL_MS = 60_000;
 // once and the cached response is correct for "what does this file say
 // right now."
 const DEDUP_SKIP: ReadonlySet<string> = new Set([
-  "autopilot_status", "build_plan_status", "memory_stats",
-  "task_get", "task_list", "agent_list", "agent_team_list",
-  "ari_database",
-  // Stateful live-state tools (browser, process/op/agent polling, live
-  // captures) — shared with resolvePhase dedup and the threat loop guard so a
-  // stale snapshot isn't served <60s apart (and doesn't count toward the loop
-  // breaker). One source of truth: stateful-tools.ts. Covers the status reads
-  // this list carried before (process_status/op_status/agent_status/
-  // session_status) plus browser/op_wait/agent_output/process_list/captures.
-  ...STATEFUL_LIVE_STATE_TOOLS,
+  // Live-state tools (each row's liveState: browser, process/op/agent polling,
+  // live captures, status and task lists, the tool catalog, a secret request)
+  // — shared with resolvePhase dedup and the threat loop guard so a stale
+  // snapshot isn't served <60s apart. One source of truth: stateful-tools.ts.
+  ...LIVE_STATE_TOOLS,
   // File mutations are state-sensitive: repeating the same edit after the
   // first one should usually fail with "old_string not found" or trip the
   // current write guard. Replaying the previous "Edited/Wrote" result makes
@@ -50,9 +45,6 @@ const DEDUP_SKIP: ReadonlySet<string> = new Set([
   // the file sits back in the trash is pure false progress.
   // Every tool that writes files: the workspace-write class, from the rows.
   ...CAPABILITY_CLASS_MEMBERS["workspace-write"],
-  // tool_search results depend on the deferred-tool catalog which can
-  // shift as a turn progresses (registered via prior tool runs).
-  "tool_search",
 ]);
 
 export interface DedupRecord {

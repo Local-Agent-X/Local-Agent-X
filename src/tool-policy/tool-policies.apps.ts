@@ -16,15 +16,15 @@ export const TOOL_POLICIES_APPS: Record<string, ToolPolicyRow> = {
   // arrives as a real array or, from some models, a JSON-encoded string.
   edit_image: { kernel: "internal", risk: "workspace-write", capabilities: ["egress"], offBoxFetch: true, destination: [{ to: "service", name: "the image generation service" }], pathArgs: [{ arg: "image", action: "read" }, { arg: "mask", action: "read" }], rateLimit: { maxCalls: 20, windowMs: 60_000, action: "block" }, rules: [{ id: "allow-edit-image", decision: "allow", reason: "Image editing allowed (rate limited)", priority: 40, constraints: { maxCallsPerSession: 20 } }] },
   generate_video: { kernel: "internal", risk: "workspace-write", capabilities: ["egress"], offBoxFetch: true, destination: [{ to: "service", name: "the video generation service" }], pathArgs: [{ arg: "reference_images", action: "read", json: true }], rateLimit: { maxCalls: 5, windowMs: 60_000, action: "block" }, rules: [{ id: "allow-generate-video", decision: "allow", reason: "Video generation allowed (rate limited)", priority: 40, constraints: { maxCallsPerSession: 5 } }] },
-  camera_capture: { kernel: "internal", risk: "workspace-write", capabilities: ["egress"], offBoxFetch: true },
-  screen_capture: { kernel: "internal", risk: "workspace-write", capabilities: ["egress"], offBoxFetch: true },
+  camera_capture: { kernel: "internal", risk: "workspace-write", capabilities: ["egress"], liveState: "poll", offBoxFetch: true },
+  screen_capture: { kernel: "internal", risk: "workspace-write", capabilities: ["egress"], liveState: "poll", offBoxFetch: true },
   // Mouse/keyboard actuation. kernel:"internal" — it has no data-I/O sink the
   // kernel taint-checks; it's an ACTUATOR. The policy rule allows it so it isn't
   // default-denied; the REAL gates are the off-by-default enableComputerControl
   // kill-switch (pre-dispatch, runs before this rule), the OS Accessibility
   // grant (driver), and risk:"shell" (top autonomy tier → confirm-risky/
   // autonomous profiles still gate the call).
-  computer:       { kernel: "internal", risk: "shell", capabilities: ["egress"], destination: [{ to: "foreground-app" }], rules: [{ id: "allow-computer", decision: "allow", reason: "Mouse/keyboard control allowed at policy layer; gated by enableComputerControl + OS permission + risk tier", priority: 40 }] },
+  computer:       { kernel: "internal", risk: "shell", capabilities: ["egress"], liveState: "poll", destination: [{ to: "foreground-app" }], rules: [{ id: "allow-computer", decision: "allow", reason: "Mouse/keyboard control allowed at policy layer; gated by enableComputerControl + OS permission + risk tier", priority: 40 }] },
   ocr:            { kernel: "internal", risk: "safe", capabilities: [], pathArgs: [{ arg: "path", action: "read" }], rules: [{ id: "allow-ocr", decision: "allow", reason: "OCR text extraction (read-only)", priority: 50 }] },
   // Genuinely "shell": every action spawns a real adb/emulator subprocess
   // (unlike `computer`, which drives OS input APIs with no child process at
@@ -36,7 +36,7 @@ export const TOOL_POLICIES_APPS: Record<string, ToolPolicyRow> = {
   // gets denied outright, which would brick tap/screenshot/etc here).
   // Typed text lands in whatever app is on the device's screen, which the
   // check cannot name; open_url sends the URL to its site.
-  android:        { kernel: "shell", risk: "shell", capabilities: ["shell"], destination: [{ to: "site", arg: "url", forActions: ["open_url"] }, { to: "unknown", label: "the app on the Android device" }], pathArgs: [{ arg: "apk_path", action: "read" }], rules: [{ id: "allow-android", decision: "allow", reason: "Android emulator/device control allowed at policy layer (subprocess spawn via adb/emulator, same tier as bash)", priority: 40 }] },
+  android:        { kernel: "shell", ariAction: "exec", risk: "shell", capabilities: ["shell"], destination: [{ to: "site", arg: "url", forActions: ["open_url"] }, { to: "unknown", label: "the app on the Android device" }], pathArgs: [{ arg: "apk_path", action: "read" }], rules: [{ id: "allow-android", decision: "allow", reason: "Android emulator/device control allowed at policy layer (subprocess spawn via adb/emulator, same tier as bash)", priority: 40 }] },
 
   // ── Apps (app_* glob) ──
   app_create:      { kernel: "internal", risk: "workspace-write", capabilities: [] },
@@ -63,31 +63,36 @@ export const TOOL_POLICIES_APPS: Record<string, ToolPolicyRow> = {
   issue_release:  { kernel: "internal", risk: "workspace-write", capabilities: [] },
   issue_search:   { kernel: "internal", risk: "safe", capabilities: [] },
   task_create:    { kernel: "internal", risk: "workspace-write", capabilities: [] },
-  task_get:       { kernel: "internal", risk: "safe", capabilities: [] },
-  task_list:      { kernel: "internal", risk: "safe", capabilities: [] },
+  task_get:       { kernel: "internal", risk: "safe", capabilities: [], liveState: "fresh" },
+  task_list:      { kernel: "internal", risk: "safe", capabilities: [], liveState: "fresh" },
   task_update:    { kernel: "internal", risk: "workspace-write", capabilities: [] },
 
   // ── Worker-pool (op_* globs) ──
   // context_files are read into the worker's context pack before any of the
   // worker's own gated reads run (context-pack-builder.ts).
-  op_submit:         { kernel: "internal", risk: "workspace-write", capabilities: [], pathArgs: [{ arg: "context_files", action: "read" }] },
-  op_submit_async:   { kernel: "internal", risk: "workspace-write", capabilities: [], pathArgs: [{ arg: "context_files", action: "read" }] },
+  op_submit:         { kernel: "internal", risk: "workspace-write", capabilities: [], timeoutMs: 0, pathArgs: [{ arg: "context_files", action: "read" }] },
+  op_submit_async:   { kernel: "internal", risk: "workspace-write", capabilities: [], timeoutMs: 0, pathArgs: [{ arg: "context_files", action: "read" }] },
   op_submit_batch:   { kernel: "internal", risk: "workspace-write", capabilities: [], pathArgs: [{ arg: "tasks", each: "context_files", action: "read" }] },
-  op_wait:           { kernel: "internal", risk: "safe", capabilities: [] },
-  op_status:         { kernel: "internal", risk: "safe", capabilities: [] },
-  op_kill:           { kernel: "internal", risk: "destructive", capabilities: [], undo: { irreversible: "a running operation", uncarded: "stops a run; nothing the user owns is destroyed, and the stop is usually the user's own" } },
+  // op_wait enforces its own timeout_ms and has a graceful "op keeps running,
+  // call op_status" branch; a harness timeout would make that unreachable.
+  op_wait:           { kernel: "internal", risk: "safe", capabilities: [], timeoutMs: 0, liveState: "poll" },
+  op_status:         { kernel: "internal", risk: "safe", capabilities: [], liveState: "poll" },
+  op_kill:           { kernel: "internal", risk: "destructive", capabilities: [], liveState: "poll", undo: { irreversible: "a running operation", uncarded: "stops a run; nothing the user owns is destroyed, and the stop is usually the user's own" } },
   op_redirect:       { kernel: "internal", risk: "workspace-write", capabilities: [] },
 
   // ── Autopilot (autopilot_* glob) ──
   autopilot_start:  { kernel: "internal", risk: "workspace-write", capabilities: [] },
-  autopilot_status: { kernel: "internal", risk: "safe", capabilities: [] },
+  autopilot_status: { kernel: "internal", risk: "safe", capabilities: [], liveState: "fresh" },
   autopilot_stop:   { kernel: "internal", risk: "destructive", capabilities: [], undo: { pairedWith: "autopilot_start" } },
 
   // ── App-build pipeline ──
   // Returns the design system text and records that this session has it
   // (design-gate.ts); reads only the app folder's listing.
   app_design_brief:      { kernel: "internal", risk: "safe", capabilities: [], rules: [{ id: "allow-app-design-brief", decision: "allow", reason: "Read the house design system before writing app UI", priority: 50 }] },
-  build_app:             { kernel: "internal", risk: "workspace-write", capabilities: [], rules: [{ id: "allow-build-app", decision: "allow", reason: "Build workspace apps", priority: 50 }] },
+  // The app-build ops (build_app, start/finalize_app_build, run_build_plan),
+  // self_edit, op_submit*/op_wait and agent_spawn/agent_create run for minutes
+  // by design: timeoutMs 0, since killing a real long-runner is the bigger bug.
+  build_app:             { kernel: "internal", risk: "workspace-write", capabilities: [], timeoutMs: 0, rules: [{ id: "allow-build-app", decision: "allow", reason: "Build workspace apps", priority: 50 }] },
   // The manifest names the upstream the connector proxy will then reach, so
   // the call is gated as the off-box sink it opens.
   connector_create:      { kernel: "internal", risk: "workspace-write", capabilities: ["egress"], offBoxFetch: true, rules: [{ id: "allow-connector-create", decision: "allow", reason: "Define an external-API connector manifest (data file; egress stays gated by the per-manifest allow-list + connector proxy)", priority: 50 }] },
@@ -96,31 +101,35 @@ export const TOOL_POLICIES_APPS: Record<string, ToolPolicyRow> = {
   // the kernel shell defense pipeline + audit — NOT "internal" like its
   // connector_create sibling, which only writes a manifest. Allowed via the
   // app_* glob (same as app_create/app_delete).
-  app_serve_backend:     { kernel: "shell", risk: "shell", capabilities: ["egress", "shell"], shellCommand: { arg: "command" }, output: "command" },
-  app_serve_frontend:    { kernel: "shell", risk: "shell", capabilities: ["egress", "shell"], shellCommand: { arg: "command" }, output: "command" },   // spawns a frontend dev server — same sink as app_serve_backend
-  app_rebuild:           { kernel: "shell", risk: "shell", capabilities: ["egress", "shell"], output: "command" },   // spawns the framework's production build (npx vite build) via the canonical static-build runner — same sink class as app_serve_*; allowed via the app_* glob
+  app_serve_backend:     { kernel: "shell", ariAction: "exec", risk: "shell", capabilities: ["egress", "shell"], shellCommand: { arg: "command" }, output: "command" },
+  app_serve_frontend:    { kernel: "shell", ariAction: "exec", risk: "shell", capabilities: ["egress", "shell"], shellCommand: { arg: "command" }, output: "command" },   // spawns a frontend dev server — same sink as app_serve_backend
+  // Spawns the framework's production build (npx vite build) via the canonical
+  // static-build runner — same sink class as app_serve_*; allowed via the app_*
+  // glob. Its runner has its own 240 s deadline and returns a timed-out
+  // envelope, so the harness timeout sits above it or the envelope is never seen.
+  app_rebuild:           { kernel: "shell", ariAction: "exec", risk: "shell", capabilities: ["egress", "shell"], timeoutMs: 300_000, output: "command" },
   create_page:           { kernel: "internal", risk: "workspace-write", capabilities: [], rules: [{ id: "allow-create-page", decision: "allow", reason: "Create custom pages", priority: 50 }] },
-  start_app_build:       { kernel: "internal", risk: "workspace-write", capabilities: [], rules: [{ id: "allow-start-app-build", decision: "allow", reason: "App-build kickoff handle", priority: 50 }] },
+  start_app_build:       { kernel: "internal", risk: "workspace-write", capabilities: [], timeoutMs: 0, rules: [{ id: "allow-start-app-build", decision: "allow", reason: "App-build kickoff handle", priority: 50 }] },
   // finalize creates project_dir and writes the spec into it; run reads the
   // plan under it (the build's own writes run under the worker's gates).
-  finalize_app_build:    { kernel: "internal", risk: "workspace-write", capabilities: [], pathArgs: [{ arg: "project_dir", action: "write" }], rules: [{ id: "allow-finalize-app-build", decision: "allow", reason: "App-build finalize handle", priority: 50 }] },
+  finalize_app_build:    { kernel: "internal", risk: "workspace-write", capabilities: [], timeoutMs: 0, pathArgs: [{ arg: "project_dir", action: "write" }], rules: [{ id: "allow-finalize-app-build", decision: "allow", reason: "App-build finalize handle", priority: 50 }] },
   build_plan_resume:     { kernel: "internal", risk: "workspace-write", capabilities: [], pathArgs: [{ arg: "project_dir", action: "read" }], rules: [{ id: "allow-build-plan-resume", decision: "allow", reason: "Auto-build resume handle", priority: 50 }] },
-  build_plan_status:     { kernel: "internal", risk: "safe", capabilities: [], pathArgs: [{ arg: "project_dir", action: "read" }], rules: [{ id: "allow-build-plan-status", decision: "allow", reason: "Auto-build status read", priority: 50 }] },
-  run_build_plan:        { kernel: "internal", risk: "workspace-write", capabilities: [], pathArgs: [{ arg: "project_dir", action: "read" }], rules: [{ id: "allow-run-build-plan", decision: "allow", reason: "Auto-build loop kickoff", priority: 50 }] },
+  build_plan_status:     { kernel: "internal", risk: "safe", capabilities: [], liveState: "fresh", pathArgs: [{ arg: "project_dir", action: "read" }], rules: [{ id: "allow-build-plan-status", decision: "allow", reason: "Auto-build status read", priority: 50 }] },
+  run_build_plan:        { kernel: "internal", risk: "workspace-write", capabilities: [], timeoutMs: 0, pathArgs: [{ arg: "project_dir", action: "read" }], rules: [{ id: "allow-run-build-plan", decision: "allow", reason: "Auto-build loop kickoff", priority: 50 }] },
 
   // ── UI / state / config ──
   sidebar_pin:    { kernel: "internal", risk: "workspace-write", capabilities: [] },
   sidebar_unpin:  { kernel: "internal", risk: "workspace-write", capabilities: [] },
   sidebar_clear:  { kernel: "internal", risk: "workspace-write", capabilities: [] },
   voice_visual:   { kernel: "internal", risk: "safe", capabilities: [], rules: [{ id: "allow-voice-visual", decision: "allow", reason: "Particle visualizer (UI-only side effect, rate-limited)", priority: 50 }] },
-  session_status: { kernel: "internal", risk: "safe", capabilities: [], rules: [{ id: "allow-session-status", decision: "allow", reason: "Current session info", priority: 50 }] },
+  session_status: { kernel: "internal", risk: "safe", capabilities: [], liveState: "poll", rules: [{ id: "allow-session-status", decision: "allow", reason: "Current session info", priority: 50 }] },
   // Re-surfaces the session's block notice / declassify control. UI-only:
   // it reads taint + kernel run state and never clears either (the click is
   // the user's, through /api/security/declassify).
   show_unblock_control: { kernel: "internal", risk: "safe", capabilities: [], rules: [{ id: "allow-show-unblock-control", decision: "allow", reason: "Show the user the unblock control for this session (read-only)", priority: 50 }] },
   read_my_logs:   { kernel: "internal", risk: "safe", capabilities: [], rules: [{ id: "allow-read-my-logs", decision: "allow", reason: "Agent's own action history (read-only)", priority: 50 }] },
   setting:        { kernel: "internal", risk: "workspace-write", capabilities: [], rules: [{ id: "allow-setting", decision: "allow", reason: "Agent settings flip (toggles, theme, provider — runtime state user can also change via UI)", priority: 50 }] },
-  clipboard_read:  { kernel: "internal", risk: "safe", capabilities: [] },
+  clipboard_read:  { kernel: "internal", risk: "safe", capabilities: [], liveState: "poll" },
   clipboard_write: { kernel: "internal", risk: "workspace-write", capabilities: ["egress"], destination: [{ to: "user" }] },
 
   // ── Platform self-management (restart + updates over messaging) ──
@@ -134,10 +143,10 @@ export const TOOL_POLICIES_APPS: Record<string, ToolPolicyRow> = {
   // ── Diagnostics / planning ──
   doctor:          { kernel: "internal", risk: "safe", capabilities: [], rules: [{ id: "allow-doctor", decision: "allow", reason: "System self-diagnostics (read-only)", priority: 50 }] },
   usage_report:    { kernel: "internal", risk: "safe", capabilities: [], rules: [{ id: "allow-usage-report", decision: "allow", reason: "Token usage / cost report (read-only)", priority: 50 }] },
-  tool_search:     { kernel: "internal", risk: "safe", capabilities: [], rules: [{ id: "allow-tool-search", decision: "allow", reason: "Discover available tools", priority: 50 }] },
+  tool_search:     { kernel: "internal", risk: "safe", capabilities: [], liveState: "fresh", rules: [{ id: "allow-tool-search", decision: "allow", reason: "Discover available tools", priority: 50 }] },
   list_monitors:   { kernel: "internal", risk: "safe", capabilities: [], rules: [{ id: "allow-list-monitors", decision: "allow", reason: "Enumerate available display monitors", priority: 50 }] },
   enter_plan_mode: { kernel: "internal", risk: "safe", capabilities: [], rules: [{ id: "allow-enter-plan", decision: "allow", reason: "Enter read-only plan mode", priority: 50 }] },
-  exit_plan_mode:  { kernel: "internal", risk: "safe", capabilities: [], rules: [{ id: "allow-exit-plan", decision: "allow", reason: "Exit plan mode", priority: 50 }] },
+  exit_plan_mode:  { kernel: "internal", risk: "safe", capabilities: [], timeoutMs: 0, rules: [{ id: "allow-exit-plan", decision: "allow", reason: "Exit plan mode", priority: 50 }] },
   // Pure interaction: no I/O sink at all — the question lands in the user's own
   // transcript, so there is nothing for the kernel to taint-check (internal) and
   // nothing to lose if it fires unapproved (safe). Same shape as its

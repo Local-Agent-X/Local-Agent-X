@@ -15,7 +15,7 @@ import { getRiskLevel, buildApprovalContext } from "./approval-context.js";
 import { ARI_ACTION_MAP } from "./enforce-policy.js";
 import { sessionWorkRootOf } from "../workspace/paths.js";
 import { CAPABILITY_CLASS_MEMBERS, TOOL_PATH_ARGS } from "../tool-registry.js";
-import { STATEFUL_LIVE_STATE_TOOLS } from "./stateful-tools.js";
+import { LIVE_STATE_TOOLS } from "./stateful-tools.js";
 import { readOpMessages } from "../canonical-loop/index.js";
 import { READ_DEDUP_STUB_LEAD } from "./read-dedup-evidence.js";
 import { isInternalArgKey } from "./internal-args.js";
@@ -124,7 +124,6 @@ export function latestUserMessageId(operationId: string): string | undefined {
 }
 
 const SESSION_REPEAT_SKIP_TOOLS: ReadonlySet<string> = new Set([
-  "request_secret", "request_secrets",
   // State-sensitive mutations must re-dispatch: every tool that writes files
   // (the workspace-write class, read off each policy row's path specs). A
   // repeated edit/write is often the signal that the previous change already
@@ -133,11 +132,12 @@ const SESSION_REPEAT_SKIP_TOOLS: ReadonlySet<string> = new Set([
   // delete cycle repeats identical args. Returning a prior success is false
   // progress.
   ...CAPABILITY_CLASS_MEMBERS["workspace-write"],
-  // STATEFUL live-state tools (browser, process/op/agent polling, live
-  // captures) share one source of truth with the 60s dedup cache and the
-  // threat-engine loop guard — see stateful-tools.ts for the rationale and the
-  // 2026-07-23 stale-snapshot failure that motivated the exemption.
-  ...STATEFUL_LIVE_STATE_TOOLS,
+  // Live-state tools (each row's liveState: browser, process/op/agent polling,
+  // live captures, status and task lists, a secret request the user answers)
+  // share one source of truth with the 60s dedup cache and the threat-engine
+  // loop guard — see stateful-tools.ts for the rationale and the 2026-07-23
+  // stale-snapshot failure that motivated the exemption.
+  ...LIVE_STATE_TOOLS,
 ]);
 
 type WireCall = { id: string; function: { name: string; arguments: string } };

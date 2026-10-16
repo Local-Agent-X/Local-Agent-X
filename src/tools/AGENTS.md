@@ -7,14 +7,14 @@
 ## Invariants
 - A tool is reachable only if registered, and `allTools` is a minority: coverage tests must use `collectRuntimeToolNames()`, never `allTools` alone.
 - `AUDIENCES_BY_TOOL` (`audience-map.ts`) is exhaustive: a tool absent from it is deferred — reachable only through `tool_search`. After editing it run `npm run docs:generated` (`docs/agent-capabilities.md` is generated from it and the build byte-compares).
-- Registering a tool also means: a `src/tool-policy/` fragment entry, an `ARI_ACTION_MAP` row, `SESSION_SCOPED_TOOLS` if it reads `_sessionId` outside its policy `pathArgs` (path-gated tools are stamped automatically); its row's `capabilities` (and `pathArgs`, if it opens paths) say which capability classes it belongs to — there are no class lists to edit.
+- Registering a tool also means: a `src/tool-policy/` fragment entry (with `ariAction` if the kernel checks it), `SESSION_SCOPED_TOOLS` if it reads `_sessionId` outside its policy `pathArgs` (path-gated tools are stamped automatically); its row's `capabilities` (and `pathArgs`, if it opens paths) say which capability classes it belongs to — there are no class lists to edit.
 - A path argument resolves through `resolveAgentPath(p, sessionIdOf(args))` — the session the file-access gate resolved it with — never a hand-rolled `resolve()` or a sessionless call (`src/tool-execution/agent-path-session.test.ts`).
 - External content a tool returns is wrapped with `wrapExternalContent` (`src/sanitize.ts`) before it reaches the model.
 
 ## Coupled to
 | If you change | Also check | Guard |
 |---|---|---|
-| `allTools` / `plugins.ts` | `src/tool-policy/` fragment, `src/tool-execution/ari-action-map.ts`, `src/tool-registry.ts` | `tool-registration-completeness.test.ts`, `src/tool-policy-default.test.ts` |
+| `allTools` / `plugins.ts` | `src/tool-policy/` fragment, `src/tool-registry.ts` | `tool-registration-completeness.test.ts`, `src/tool-policy-default.test.ts` |
 | `audience-map.ts` | `docs/agent-capabilities.md` (`npm run docs:generated`) | `tool-reference-coverage.test.ts` |
 | a tool's `name` | every doc, prompt and table that names it | `tool-reference-coverage.test.ts` |
 | `tier-tool-set.ts` (`ESSENTIAL_TOOLS_ORDER`) | small-tier schemas | `src/model-tiers.test.ts` |

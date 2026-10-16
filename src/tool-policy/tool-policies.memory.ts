@@ -8,16 +8,22 @@ import type { ToolPolicyRow } from "./tool-policies.types.js";
 export const TOOL_POLICIES_MEMORY: Record<string, ToolPolicyRow> = {
   // ── Retrieval / search ──
   ari_retrieval:        { kernel: "internal",  risk: "safe", capabilities: ["sensitive-read"] },
-  search_past_sessions: { kernel: "retrieval", risk: "safe", capabilities: [], rules: [{ id: "allow-search-past-sessions", decision: "allow", reason: "Search prior chat sessions", priority: 50 }] },
-  memory_search:        { kernel: "retrieval", risk: "safe", capabilities: ["sensitive-read"] },
+  // Lookups are local (FTS + the local embedder) and normally sub-second; a
+  // measured 71 s stall was a hang that blocked the turn. 30 s, not 15 s: the
+  // first search after a cold boot pays the ~16.5 s embedder load. Read-only,
+  // so killing a real stall strands nothing.
+  search_past_sessions: { kernel: "retrieval", ariAction: "search", risk: "safe", capabilities: [], timeoutMs: 30_000, rules: [{ id: "allow-search-past-sessions", decision: "allow", reason: "Search prior chat sessions", priority: 50 }] },
+  memory_search:        { kernel: "retrieval", ariAction: "search", risk: "safe", capabilities: ["sensitive-read"], timeoutMs: 30_000 },
   // Raw conversation-history paging from the canonical op store (recall-tool.ts).
   // kernel "internal" (local read of ~/.lax op state, no ARI_ACTION_MAP needed).
   recall:               { kernel: "internal", risk: "safe", capabilities: [], rules: [{ id: "allow-recall", decision: "allow", reason: "Page raw messages of the agent's own op history (read-only)", priority: 50 }] },
 
   // ── Secrets vault ──
-  clipboard_write_from_secret: { kernel: "secret-vault", risk: "secrets", capabilities: [] },
-  request_secret:              { kernel: "internal", risk: "secrets", capabilities: [], rules: [{ id: "allow-request-secret", decision: "allow", reason: "Secret request (user confirms via UI)", priority: 50 }] },
-  request_secrets:             { kernel: "internal", risk: "secrets", capabilities: [], rules: [{ id: "allow-request-secrets", decision: "allow", reason: "Multi-secret request (user confirms via UI)", priority: 50 }] },
+  clipboard_write_from_secret: { kernel: "secret-vault", ariAction: "clipboard", risk: "secrets", capabilities: [] },
+  // Waits on a modal the user answers, bounded by that surface's own timeout:
+  // a harness timeout killed the wait first and the retry raised a second card.
+  request_secret:              { kernel: "internal", risk: "secrets", capabilities: [], timeoutMs: 0, liveState: "fresh", rules: [{ id: "allow-request-secret", decision: "allow", reason: "Secret request (user confirms via UI)", priority: 50 }] },
+  request_secrets:             { kernel: "internal", risk: "secrets", capabilities: [], timeoutMs: 0, liveState: "fresh", rules: [{ id: "allow-request-secrets", decision: "allow", reason: "Multi-secret request (user confirms via UI)", priority: 50 }] },
   // Read-only: names / metadata only, never a secret VALUE. Risk "safe" (not
   // "secrets") so inspecting what's stored never trips an approval prompt — the
   // value-touching tools (request_secret, clipboard/browser *_secret) stay "secrets".
@@ -25,7 +31,9 @@ export const TOOL_POLICIES_MEMORY: Record<string, ToolPolicyRow> = {
   get_secret_meta:             { kernel: "internal", risk: "safe", capabilities: [], rules: [{ id: "allow-get-secret-meta", decision: "allow", reason: "Secret metadata (no values exposed)", priority: 50 }] },
 
   // ── Memory ── (memory_* glob covers all; remember/update_fact/forget are no-prefix)
-  memory_save:           { kernel: "database", risk: "workspace-write", capabilities: [] },
+  // A row insert into the daily-log SQLite table: the database class's actions
+  // are query/exec/mutate, and "write" tripped deny-by-default in the kernel.
+  memory_save:           { kernel: "database", ariAction: "mutate", risk: "workspace-write", capabilities: [] },
   memory_consolidate:    { kernel: "internal", risk: "workspace-write", capabilities: [] },
   memory_discover:       { kernel: "internal", risk: "safe", capabilities: [] },
   memory_dream:          { kernel: "internal", risk: "workspace-write", capabilities: [] },
@@ -37,10 +45,10 @@ export const TOOL_POLICIES_MEMORY: Record<string, ToolPolicyRow> = {
   // (memory-recall.ts reinforceFacts): bookkeeping the user never loses, so
   // the tier stays "safe" — the mutating tiers would make a recall count as
   // work for the loop guards (SPIRALABLE_TOOLS) and the failover checks.
-  memory_recall:         { kernel: "internal", risk: "safe", capabilities: [] },
+  memory_recall:         { kernel: "internal", risk: "safe", capabilities: [], timeoutMs: 30_000 },
   memory_reflect:        { kernel: "internal", risk: "workspace-write", capabilities: [] },
   memory_reindex:        { kernel: "internal", risk: "workspace-write", capabilities: [] },
-  memory_stats:          { kernel: "internal", risk: "safe", capabilities: [] },
+  memory_stats:          { kernel: "internal", risk: "safe", capabilities: [], liveState: "fresh" },
   memory_set_user_field: { kernel: "internal", risk: "workspace-write", capabilities: [] },
   memory_update_profile: { kernel: "internal", risk: "workspace-write", capabilities: [] },
   remember:    { kernel: "internal", risk: "workspace-write", capabilities: [], rules: [{ id: "allow-remember", decision: "allow", reason: "Save durable fact to Facts DB (internal)", priority: 50 }] },
@@ -48,5 +56,5 @@ export const TOOL_POLICIES_MEMORY: Record<string, ToolPolicyRow> = {
   forget:      { kernel: "internal", risk: "destructive", capabilities: [], undo: { recoverable: "a soft delete of one fact; its history is kept" }, rules: [{ id: "allow-forget", decision: "allow", reason: "Soft-delete a fact in the Facts DB (internal)", priority: 50 }] },
 
   // ── Self-edit — sandboxed, but the merge mutates running source ──
-  self_edit: { kernel: "internal", risk: "destructive", capabilities: [], undo: { irreversible: "the engine's own source", uncarded: "the engine's own source under git (git is the undo); a card per self-repair is the friction it exists to remove" }, rules: [{ id: "allow-self-edit", decision: "allow", reason: "Agent self-repair via Claude Code subprocess", priority: 50 }] },
+  self_edit: { kernel: "internal", risk: "destructive", capabilities: [], timeoutMs: 0, undo: { irreversible: "the engine's own source", uncarded: "the engine's own source under git (git is the undo); a card per self-repair is the friction it exists to remove" }, rules: [{ id: "allow-self-edit", decision: "allow", reason: "Agent self-repair via Claude Code subprocess", priority: 50 }] },
 };

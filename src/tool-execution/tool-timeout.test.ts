@@ -70,7 +70,7 @@ describe("getToolTimeout exemptions", () => {
     // self_edit drives a CLI subprocess for minutes — must be exempt.
     expect(getToolTimeout("self_edit")).toBe(0);
     // Spot-check the other documented long-runners all map to unbounded.
-    for (const name of ["build_app", "agent_spawn", "delegate", "op_submit"]) {
+    for (const name of ["build_app", "agent_spawn", "agent_create", "op_submit"]) {
       expect(getToolTimeout(name)).toBe(0);
     }
   });

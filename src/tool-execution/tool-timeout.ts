@@ -1,75 +1,16 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
+import { TOOL_POLICIES } from "../tool-policy/tool-policies.js";
 
-// A timeout of 0 (or negative) means "unbounded — never time out". Used to
-// EXEMPT tools that legitimately run for minutes: they spawn sub-agents,
-// drive a CLI subprocess (claude/codex), or block on a worker pool. The
-// timeout here is a hang-catcher for tools that should finish quickly, not a
-// work-limiter — killing a real long-runner would be the bigger bug.
-export const DEFAULT_TIMEOUTS: Record<string, number> = {
-  // ABOVE bash's own 120s default on purpose. bash kills its child at its
-  // deadline and returns a clean timeout that names process_start; this
-  // backstop only abandons the promise. At an equal 120s the backstop won the
-  // race, the command kept running, and the model was told the harness had
-  // failed (muse, wordy, 2026-09-17).
-  bash: 130_000,
-  browser: 30_000,
-  web_search: 15_000,
-  http_request: 60_000,
-  web_fetch: 60_000,
-  read: 10_000,
-  write: 10_000,
-  edit: 10_000,
-  view_image: 10_000,
-  // Memory lookups are local (better-sqlite3 FTS + local embedder) and
-  // normally sub-second; a measured 71s memory_search stall was a hang that
-  // blocked the whole turn, not legitimate work. 30s (not 15s): the first
-  // search after a cold boot legitimately pays the ~16.5s embedder cold-load
-  // because the boot pre-warm is fire-and-forget, so 15s would predictably
-  // kill it. These tools are read-only — killing a real stall is always safe
-  // (no partial write to strand).
-  memory_search: 30_000,
-  memory_recall: 30_000,
-  search_past_sessions: 30_000,
+// Each tool's timeout is its policy row's `timeoutMs`. It is a hang-catcher for
+// tools that should finish quickly, not a work-limiter: 0 (or negative) means
+// "unbounded", for tools that legitimately run for minutes (sub-agents, a CLI
+// subprocess, the worker pool, a card the user has to answer).
 
-  // ── Exempt long-runners (0 = unbounded) ──
-  // self_edit drives a claude/codex subprocess; build_app / start_app_build /
-  // run_build_plan kick off canonical app-build ops; op_submit / op_wait block
-  // on the worker pool up to 30min (op_wait enforces its own timeout_ms and
-  // has a graceful "op keeps running, call op_status" branch — the fallback
-  // here would kill it at 2min and make that branch unreachable); agent_* /
-  // delegate / swarm_create spawn sub-agents. None of these are hung when
-  // they run long.
-  self_edit: 0,
-  build_app: 0,
-  start_app_build: 0,
-  finalize_app_build: 0,
-  // app_rebuild runs a static build with its own 240s deadline and returns a
-  // timed-out envelope on it; the harness backstop must sit ABOVE that or it
-  // abandons the promise first and the envelope is never seen (found 2026-07-29).
-  app_rebuild: 300_000,
-  run_build_plan: 0,
-  op_submit: 0,
-  op_submit_async: 0,
-  op_wait: 0,
-  agent_spawn: 0,
-  agent_create: 0,
-  delegate: 0,
-  swarm_create: 0,
-  // Human-input waiters: these block on a UI card/modal the USER has to
-  // click, and their wait is already bounded by that surface's own timeout
-  // (ApprovalManager: 5min; secret modal: its own). The generic fallback
-  // killed the wait first — the plan-approval card "failed" at 2min, the
-  // model retried, and the user saw duplicate cards.
-  exit_plan_mode: 0,
-  request_secret: 0,
-  request_secrets: 0,
-};
-
-// Generous fallback for UNLISTED tools: the timeout exists to catch a hang,
-// not to cap legitimate work, so an un-tuned tool gets two minutes before we
-// abandon it rather than the old 30s (which prematurely killed slow tools).
+// Generous fallback for a tool whose row sets none: the timeout exists to catch
+// a hang, not to cap legitimate work, so an un-tuned tool gets two minutes
+// before we abandon it rather than the old 30s (which killed slow tools).
 export const DEFAULT_FALLBACK = 120_000;
 
 /** Thrown by withTimeout when the deadline fires. run-sandboxed maps this to a
@@ -110,8 +51,7 @@ function saveCustomTimeouts(timeouts: Record<string, number>): void {
 export function getToolTimeout(toolName: string): number {
   const custom = loadCustomTimeouts();
   if (custom[toolName] !== undefined) return custom[toolName];
-  if (DEFAULT_TIMEOUTS[toolName] !== undefined) return DEFAULT_TIMEOUTS[toolName];
-  return DEFAULT_FALLBACK;
+  return TOOL_POLICIES[toolName]?.timeoutMs ?? DEFAULT_FALLBACK;
 }
 
 export function setToolTimeout(toolName: string, ms: number): void {

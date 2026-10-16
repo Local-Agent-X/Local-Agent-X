@@ -344,6 +344,11 @@ body.platform-darwin #sidebar-agents-controls{top:3px;right:14px}
    edges (not plain `stable`) because reserving on one side alone would leave
    the centered column permanently off-centre. */
 #messages{flex:1;min-height:0;overflow-y:auto;scrollbar-gutter:stable both-edges;padding:24px 20px;display:flex;flex-direction:column;gap:20px;scrollbar-width:thin;scrollbar-color:var(--scroll-thumb) transparent;align-items:center}
+/* The transcript scrolls; an entry in it never shrinks. A flex item shrinks to
+   fit the column, held at its content height only by min-height:auto, so any
+   rule giving an entry min-height:0 (the reply's dropped reserve, below) let it
+   collapse to nothing and spill its content over whatever followed it. */
+#messages > *{flex-shrink:0}
 /* A flex/grid item defaults to min-width:auto = min-content, so one long
    unbroken token (a path, a URL, a hash) in any message would push the column
    wider than the chat pane instead of wrapping. min-width:0 lets it wrap. */
@@ -1253,7 +1258,7 @@ body.platform-win .settings-overlay{top:32px}
 
 /* ── Secret card (rendered inline in the chat flow) ── */
 #secret-modal-overlay{display:none}
-#secret-modal-overlay.visible{display:block;margin:8px 0 4px}
+#secret-modal-overlay.visible{display:block;margin:8px 0 4px;width:100%;max-width:800px}
 .secret-input-wrap{position:relative}
 .secret-input-wrap .secret-input-field{padding-right:38px}
 .secret-reveal{position:absolute;right:6px;top:50%;transform:translateY(-50%);display:flex;padding:5px;background:none;border:0;border-radius:6px;color:var(--muted);cursor:pointer}

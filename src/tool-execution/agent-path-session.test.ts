@@ -86,12 +86,36 @@ function resolverCalls(file: string, sf: ts.SourceFile, resolvers: Resolvers, vi
   walk(sf);
 }
 
+/**
+ * The source tree, parsed on demand. A file can call a resolver only if its
+ * text names one, so only those files are parsed: the scan stays fast however
+ * large src/ grows (parsing every file outran the test timeout on a loaded CI
+ * runner).
+ */
+class Sources {
+  private readonly parsed = new Map<string, ts.SourceFile>();
+  constructor(readonly texts: ReadonlyMap<string, string>) {}
+  get(file: string): ts.SourceFile {
+    let sf = this.parsed.get(file);
+    if (!sf) { sf = parse(file, this.texts.get(file)!); this.parsed.set(file, sf); }
+    return sf;
+  }
+  /** The files whose text names any of these functions. */
+  naming(names: ReadonlySet<string>): string[] {
+    return [...this.texts].filter(([, text]) => [...names].some((n) => text.includes(n))).map(([f]) => f);
+  }
+}
+
+const resolverName = (key: string): string => key.split("#")[1];
+
 /** Every resolver, base and forwarding wrapper, found to a fixpoint over `sources`. */
-function discoverResolvers(sources: Map<string, ts.SourceFile>): Resolvers {
+function discoverResolvers(sources: Sources): Resolvers {
   const resolvers: Resolvers = new Map(BASE);
   for (let grew = true; grew;) {
     grew = false;
-    for (const [file, sf] of sources) {
+    const names = new Set([...resolvers.keys()].map(resolverName));
+    for (const file of sources.naming(names)) {
+      const sf = sources.get(file);
       resolverCalls(file, sf, resolvers, (call, _key, slot) => {
         const arg = call.arguments[slot];
         if (!arg || !ts.isIdentifier(arg)) return;
@@ -111,16 +135,18 @@ function isUndefinedLiteral(e: ts.Expression): boolean {
 }
 
 /** Calls in `scanned` that resolve a path without the call's session. */
-function sessionlessResolves(sources: Map<string, ts.SourceFile>, scanned: Iterable<string>): Violation[] {
+function sessionlessResolves(sources: Sources, scanned: Iterable<string>): Violation[] {
   const resolvers = discoverResolvers(sources);
   const definers = new Set([...resolvers.keys()].map((k) => k.split("#")[0]));
+  const naming = new Set(sources.naming(new Set([...resolvers.keys()].map(resolverName))));
   const out: Violation[] = [];
   for (const file of scanned) {
-    const sf = sources.get(file)!;
-    for (const m of sf.text.matchAll(/\bimport\(\s*["'](\.[^"']*)["']\s*\)/g)) {
+    for (const m of sources.texts.get(file)!.matchAll(/\bimport\(\s*["'](\.[^"']*)["']\s*\)/g)) {
       const target = posix.join(posix.dirname(file), m[1]).replace(/\.js$/, ".ts");
       if (definers.has(target)) out.push({ key: `${file}: import("${m[1]}")`, at: `${file}: import("${m[1]}") loads a path resolver where this scan cannot follow its calls; import it statically` });
     }
+    if (!naming.has(file)) continue;
+    const sf = sources.get(file);
     resolverCalls(file, sf, resolvers, (call, key, slot) => {
       const arg = call.arguments[slot];
       if (arg && !isUndefinedLiteral(arg)) return;
@@ -140,7 +166,7 @@ describe("every agent-path resolve in a tool or the dispatch pipeline carries th
   it("source scan", async () => {
     const all = await fg("src/**/*.ts", { ignore: NOT_SOURCE });
     const scanned = new Set(await fg(SCANNED, { ignore: NOT_SOURCE }));
-    const sources = new Map(all.map((f) => [f, parse(f, readFileSync(f, "utf8"))]));
+    const sources = new Sources(new Map(all.map((f) => [f, readFileSync(f, "utf8")])));
     const resolvers = discoverResolvers(sources);
     // The scan has to see the resolvers it is guarding, or it proves nothing.
     expect([...resolvers.keys()]).toEqual(expect.arrayContaining([
@@ -157,13 +183,13 @@ describe("every agent-path resolve in a tool or the dispatch pipeline carries th
   });
 
   it("the scan follows aliases and wrappers and flags an omitted or undefined session", () => {
-    const sources = new Map([
-      ["src/tools/wrap.ts", parse("src/tools/wrap.ts", [
+    const sources = new Sources(new Map([
+      ["src/tools/wrap.ts", [
         'import { resolveAgentPath as rap } from "../workspace/paths.js";',
         "export function wrapped(p: string, sid?: string) { return rap(p, sid); }",
         "export const viaArrow = (p: string, s: string | undefined) => wrapped(p, s);",
-      ].join("\n"))],
-      ["src/tools/use.ts", parse("src/tools/use.ts", [
+      ].join("\n")],
+      ["src/tools/use.ts", [
         'import { wrapped, viaArrow } from "./wrap.js";',
         'import { resolveAgentPath } from "../workspace/paths.js";',
         "export function a(args: Record<string, unknown>) {",
@@ -172,8 +198,8 @@ describe("every agent-path resolve in a tool or the dispatch pipeline carries th
         "  viaArrow(String(args.path), undefined);",
         "  resolveAgentPath(String(args.path), sessionIdOf(args));",
         "}",
-      ].join("\n"))],
-    ]);
+      ].join("\n")],
+    ]));
     const found = sessionlessResolves(sources, ["src/tools/use.ts"]).map((v) => v.key);
     expect(found).toEqual([
       "src/tools/use.ts: resolveAgentPath(String(args.path))",

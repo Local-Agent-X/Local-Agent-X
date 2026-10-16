@@ -152,6 +152,9 @@ const devPort = Number(process.env.LAX_DEV_PORT) || undefined
 // itself (in-app browser, a pasted vite URL) where window.__LAX_CONNECTOR_TOKEN__
 // is never injected. Without the env (vite run by hand) there's no proxy and
 // the app only works behind /apps/${appName}/, as before.
+// /vendor/fonts/* goes to LAX too: the design system's typefaces ship with LAX
+// (design-fonts.ts) and the page links them at that root path, which this dev
+// server, serving under its base, would otherwise 404.
 const laxPort = Number(process.env.LAX_SERVER_PORT) || undefined
 const connectorToken = process.env.LAX_CONNECTOR_TOKEN || ''
 
@@ -168,6 +171,16 @@ export default defineConfig({
           target: 'http://127.0.0.1:' + laxPort,
           changeOrigin: true,
           ...(connectorToken ? { headers: { authorization: 'Bearer ' + connectorToken } } : {}),
+        },
+        '/vendor/fonts': {
+          target: 'http://127.0.0.1:' + laxPort,
+          changeOrigin: true,
+        },
+        // In dev, Vite rewrites the page's /vendor/fonts link under \`base\`.
+        '/apps/${appName}/vendor/fonts': {
+          target: 'http://127.0.0.1:' + laxPort,
+          changeOrigin: true,
+          rewrite: (path) => path.slice('/apps/${appName}'.length),
         },
       },
     } : {}),

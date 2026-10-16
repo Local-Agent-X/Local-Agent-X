@@ -1,3 +1,4 @@
+import { basename } from "node:path";
 import { workspaceRoot } from "../config.js";
 import {
   makeChatToolDispatcher,
@@ -29,6 +30,7 @@ import { appServeBackendTool, appServeFrontendTool } from "./dev-server-tools.js
 import type { AppTier } from "./app-tier.js";
 import { checkProductBuildOwnership } from "./build-app-collision.js";
 import { OP_TYPE } from "../ops/op-types.js";
+import { markDesignDelivered } from "./app-tools/design-gate.js";
 
 const BASE_TOOLS = [writeTool, readTool, editTool, bashTool, globTool, connectorCreateTool];
 const MUTATING_APP_BUILD_TOOLS = new Set([
@@ -155,6 +157,12 @@ export function registerAppBuildRuntime(
   if (descriptor.strategy === "in-canonical-sub-agent") {
     const security = new SecurityLayer(workspaceRoot(), loadFileAccessModeAtLeast("common"));
     security.addAllowedPath(descriptor.appDir, op.id);
+    // The builder's prompt carries the design system (render-builder-prompt.ts),
+    // so its writes into the app pass the design gate (app-tools/design-gate.ts).
+    // Recorded under the session its tools run as, op.id below: not the chat
+    // that started the build, which never saw the system. Here rather than in
+    // build_app so a build resumed after a restart is covered too.
+    markDesignDelivered(op.id, basename(descriptor.appDir));
     const dispatcher = makeChatToolDispatcher({
       tools,
       security,

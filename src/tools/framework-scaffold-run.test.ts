@@ -36,6 +36,7 @@ vi.mock("./shell-proxy-env.js", () => ({ shellProxyEnv: async () => seam.proxy, 
 
 import { refreshOwnedViteConfig, runFrameworkScaffold } from "./framework-scaffold-run.js";
 import { viteConfigText, viteScaffoldPlan, SCAFFOLD_MANIFEST_REL } from "./framework-scaffold.js";
+import { FONT_URL_PREFIX } from "./design-fonts.js";
 import { SANDBOX_PROOF_PENDING_RETRY } from "../sandbox/index.js";
 
 let dir: string;
@@ -98,6 +99,19 @@ describe("viteConfigText — the canonical template's load-bearing pieces", () =
     expect(text).toContain("LAX_SERVER_PORT");
     expect(text).toContain("LAX_CONNECTOR_TOKEN");
     expect(text).toMatch(/authorization.*Bearer/);
+  });
+
+  // Live 2026-10-16: a Vite app's page linked the bundled faces and the dev
+  // server 404'd /vendor/fonts, then served its index.html for the
+  // base-prefixed form Vite rewrites the link to. Both forms must reach LAX.
+  it("forwards the bundled-font route to LAX, at the root and under the app's base", () => {
+    const prefix = FONT_URL_PREFIX.replace(/\/$/, "");
+    expect(text).toContain(`'${prefix}': {`);
+    expect(text).toContain(`'/apps/myapp${prefix}': {`);
+    const rewrite = text.match(/rewrite: (\(path\) => path\.slice\('\/apps\/myapp'\.length\))/)?.[1];
+    expect(rewrite, "the base-prefixed entry must strip the app's base").toBeTruthy();
+    const fn = new Function(`return ${rewrite}`)() as (p: string) => string;
+    expect(fn(`/apps/myapp${prefix}/archivo.css`)).toBe(`${prefix}/archivo.css`);
   });
 
   it("is exactly what the scaffold plan writes (one template, no fork)", () => {

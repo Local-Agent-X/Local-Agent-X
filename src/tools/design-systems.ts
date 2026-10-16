@@ -19,9 +19,10 @@
  *
  * Fonts lead with a named webface but always fall back to a system stack. Every
  * named face is bundled (design-fonts.ts, public/vendor/fonts/) and the brief
- * tells the builder the exact <link> that loads it; where it can't load (an app
- * on its own dev server), the fallback stands in and the scale/weights/color
- * still carry the look. A new face here needs its files there first:
+ * tells the builder the exact <link> that loads it (a Vite app's dev server
+ * forwards that path to LAX: framework-scaffold.ts). Where it still can't load
+ * (an exported page), the fallback stands in and the scale/weights/color still
+ * carry the look. A new face here needs its files there first:
  * design-fonts.test.ts fails otherwise.
  *
  * Every value here is original — a coherent system authored for the archetype,

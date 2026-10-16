@@ -1,5 +1,5 @@
-import { afterAll, afterEach, describe, expect, it } from "vitest";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
@@ -19,6 +19,8 @@ import {
   registerAppBuildRuntime,
   restorePersistedAppBuildRuntimes,
 } from "./build-app-runtime.js";
+import { resetDesignDeliveries } from "./app-tools/design-gate.js";
+import { setAriRequired } from "../ari-kernel/state.js";
 
 // A temp app dir, NOT resolve("workspace", …): the repo-root `workspace` is a
 // SYMLINK into Documents on any dev box where the dev server has run
@@ -289,6 +291,36 @@ describe("restorePersistedAppBuildRuntimes", () => {
       expect(getToolsForOp(id)).toEqual([]);
     } finally {
       rmSync(appDir, { recursive: true, force: true });
+    }
+  });
+});
+
+// Live 2026-10-16: the builder's first index.html was refused by the design
+// gate ("the house design system had not been loaded") although its prompt
+// carries the system. build_app recorded the delivery under the CHAT's session,
+// but the builder's tools run as op.id. This sends a real write through the
+// dispatcher the runtime registers, so the key and the stamp must agree.
+describe("the builder's writes pass the design gate", () => {
+  beforeAll(() => setAriRequired(false));
+  afterAll(() => setAriRequired(true));
+
+  it("lands the builder's first UI write instead of refusing it", async () => {
+    const root = mkdtempSync(join(tmpdir(), "lax-build-design-gate-"));
+    const appDir = join(root, "workspace", "apps", "gate-app");
+    mkdirSync(appDir, { recursive: true });
+    const id = "design-gate-builder";
+    workRootIds.add(id);
+    resetDesignDeliveries();
+    const runtimeDescriptor = { ...descriptor, appName: "gate-app", appDir };
+    try {
+      expect(registerAppBuildRuntime(op(id, "paused", runtimeDescriptor), runtimeDescriptor)).toEqual({ registered: true });
+      const page = `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><title>t</title></head><body>${"x".repeat(300)}</body></html>`;
+      const res = await getToolDispatcher(id).dispatch({ toolCallId: "w1", tool: "write", args: { path: join(appDir, "index.html"), content: page } });
+      const text = typeof res.result === "string" ? res.result : JSON.stringify(res.result);
+      expect(text).not.toContain("house design system");
+      expect(existsSync(join(appDir, "index.html"))).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
     }
   });
 });

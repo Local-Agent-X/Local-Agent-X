@@ -54,7 +54,6 @@ import { resolveAppTier, tierLabel, formatClarify, type AppTier } from "./app-ti
 import { checkBuildCollision } from "./build-app-collision.js";
 import { selectDesignBrief } from "./design-brief.js";
 import { recordDesignSpec } from "../canonical-loop/index.js";
-import { markDesignDelivered } from "./app-tools/design-gate.js";
 import { registerAppBuildRuntime } from "./build-app-runtime.js";
 import { cliBuildDeveloperModeRefusal } from "./build-app-cli-gate.js";
 import { OP_TYPE } from "../ops/op-types.js";
@@ -319,9 +318,6 @@ export const buildAppTool: ToolDefinition = {
     // Stash the mandated design spec so the vision judges score token adherence
     // (feeds the design-verify refine nudge). Create-only, like the prompt brief.
     if (!isUpdate) recordDesignSpec(op.id, selectDesignBrief(prompt).brief);
-    // The builder's prompt carries the design system, so its own writes into
-    // the app pass the design gate (app-tools/design-gate.ts).
-    markDesignDelivered(sessionId, appName);
 
     // Pre-seed the turn-0 user message with the per-build context so the
     // in-canonical agent sees the exact prompt the legacy CLI received. The

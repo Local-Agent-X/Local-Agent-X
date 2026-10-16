@@ -15,8 +15,9 @@
 // auditPolicyCoverage at boot (and the orphan test), not papered over by a
 // silent risk-tier fallback.
 
-import { deriveTools, derivePathArgs } from "./tool-policy/tool-policies.js";
+import { deriveTools, derivePathArgs, TOOL_POLICIES } from "./tool-policy/tool-policies.js";
 import type { PathArgSpec } from "./tool-policy/tool-policies.data.js";
+import type { DeclaredCapability } from "./tool-policy/tool-policies.types.js";
 import { getActivePluginToolMetadata } from "./plugin-system/tool-metadata.js";
 export type { PathArgSpec } from "./tool-policy/tool-policies.data.js";
 
@@ -63,145 +64,112 @@ export const TOOL_PATH_ARGS: Record<string, PathArgSpec[]> = derivePathArgs();
 
 // ── Capability classes (THE single source of truth for I/O-sink gating) ──
 //
-// Security gates must NOT key on literal canonical tool NAMES: the ari_* bridge
-// tools and other synonyms (email_send, browser, clipboard_write, process_start,
-// ari_file, email_read, memory_search) are the SAME I/O sinks under names no
-// gate recognizes — so name-keyed gates let them bypass egress / sensitive-read
-// / worktree enforcement. Classify each sink by CAPABILITY CLASS and key the
-// gates on class membership so synonyms are enforced identically to canonicals.
-//
-// A tool may belong to multiple classes (e.g. bash is sensitive-read AND shell).
-// Canonical-tool membership below EXACTLY matches the gates' former hardcoded
-// lists — the synonyms are what's newly added.
-export type CapabilityClass = "egress" | "sensitive-read" | "workspace-write" | "shell";
+// Security gates must NOT key on literal tool NAMES: the ari_* bridge tools and
+// other synonyms (email_send, browser, clipboard_write, process_start, ari_file,
+// email_read, memory_search) are the SAME I/O sinks under names no gate
+// recognizes — so name-keyed gates let them bypass egress / sensitive-read /
+// worktree enforcement. Every gate keys on class membership instead, and the
+// membership is the tool's own policy row: egress, sensitive-read and shell are
+// declared there (`capabilities`), and workspace-write is read off the paths
+// the row says a call writes, edits or deletes (`pathArgs`). A tool joins a
+// class by saying what it does, in the one place a new tool is added.
+export type CapabilityClass = DeclaredCapability | "workspace-write";
 
-// Egress = can send data off-box or to another app/process (data-exfil sinks).
-const EGRESS_TOOLS: ReadonlySet<string> = new Set([
-  "http_request", "web_fetch", // canonical (was the data-lineage gate's hardcoded list)
-  "ari_http",                  // kernel HTTP bridge — same off-box sink
-  "email_send",                // sends a message a third party receives
-  "telegram_send",             // proactively DMs the owner over the Telegram bridge
-  "whatsapp_send",             // proactively DMs the owner over the WhatsApp bridge
-  "clipboard_write",           // crosses into another app's read surface
-  "process_start",             // spawns a subprocess that can carry data off-box
-  "process_restart",           // respawns through the same shell path as process_start
-  "app_serve_backend",         // spawns a full-stack app's dev-server subprocess (same sink as process_start)
-  "app_serve_frontend",        // spawns a frontend (Vite/Next) dev-server subprocess (same sink as process_start)
-  "app_rebuild",               // spawns the framework's production-build subprocess (same sink as app_serve_frontend)
-  "browser",                   // browser navigation/fetch actions (browser_* below)
-  "extract_site_assets",       // model-controlled url → off-box GET (was DNS-pin only)
-  "youtube_analyze",           // model-derived url → off-box GET + yt-dlp spawn
-  "compare_pages",             // two model-controlled urls → four off-box GETs
-  "email_setup",               // connects to the model-named SMTP host with the vault password
-  "connector_create",          // names the upstream the connector proxy will then reach
-  // Off-box sinks whose payload rides a non-url arg (query/queries/prompt) or
-  // ships local file bytes off-box — were missing the taint floor + secret scan
-  // + canary tripwire (R3 C3-4/C3-11/C3-22). Membership is build-time-enforced
-  // against policy `offBoxFetch: true` (capability-class-gates.test.ts).
-  "web_search",                // query/queries[] → off-box GET to DDG/Brave
-  "image_search",              // query → off-box GET to image providers (same class as web_search)
-  "generate_image",            // model `prompt` → POST api.x.ai / api.openai.com
-  "edit_image",                // model `prompt` + base64 source image/mask → POST api.x.ai / api.openai.com
-  "generate_video",            // model `prompt` + base64 reference_image → api.x.ai
-  "send_video",                // ships a local file path off-box over a messaging bridge
-  "send_image",                // ships a local image file off-box over a messaging bridge
-  "send_file",                 // stages a local document for device pickup (phone over broker)
-  "view_image",                // base64-ships local image bytes off-box to the vision API
-  "read_video_frames",         // base64-ships sampled video frames off-box to the vision API
-  "transcribe_media",          // ships a local recording's audio off-box when LAX_VOICE_STT_PROVIDER names a cloud provider
-  "screen_capture",            // captured screen image bytes get forwarded off-box by the bridge
-  "camera_capture",            // captured camera image bytes get forwarded off-box by the bridge
-  // `computer` types model-authored text into ANOTHER app (action:"type") — a
-  // cross-app data write, the same exfil shape as clipboard_write. Local-only,
-  // so NOT offBoxFetch. Only the typed text is a payload (egressPayload below);
-  // move/click/screen_size carry no data and pass the gates untouched.
-  "computer",
-]);
+function declaredMembers(cls: DeclaredCapability): ReadonlySet<string> {
+  return new Set(Object.entries(TOOL_POLICIES).filter(([, row]) => row.capabilities?.includes(cls)).map(([name]) => name));
+}
 
-// Sensitive-read = can surface file/secret/PII content into the model context.
-const SENSITIVE_READ_TOOLS: ReadonlySet<string> = new Set([
-  "read", "bash", "sql_query",                       // canonical (was run-sandboxed's list)
-  "ari_file",                                         // kernel file read bridge
-  "email_read", "memory_search", "grep", "glob",      // surface mailbox / memory / file content
-  // email_read_message surfaces one message's WHOLE body — strictly a larger
-  // mailbox-content surface than email_read's snippet, so the owned-source
-  // secret scan + redaction must cover it too. Otherwise an account credential
-  // sitting in a message body (a password-reset mail, a key a vendor emailed)
-  // reaches the model unredacted while the same string quoted in email_read's
-  // snippet is caught. email_folders is deliberately NOT here: folder paths and
-  // RFC 6154 role attributes are metadata, not record content, so membership
-  // would buy nothing and arm a whole-result redaction stub on any entropy
-  // false-positive in a folder name.
-  "email_read_message",
-  "structural_search",                                 // grep's symbol-accurate sibling — same file-content surface
-  "ari_retrieval", "ari_database", "ari_sqlite",      // kernel retrieval / db read bridges
-]);
-
-// Workspace-write = mutates files; subject to worktree containment.
-const WORKSPACE_WRITE_TOOLS: ReadonlySet<string> = new Set([
-  "write", "edit",  // canonical
-  "ari_file",        // kernel file write bridge (action: 'write')
-  // Registered edit/delete synonyms with identical blast radius (the same
-  // family resolve-tool's protected-files gate keys on via ARI_ACTION_MAP:
-  // "write"). Left out, a workspace-write ban blocked `edit` but not
-  // `edit_lines` — the class fails open under a different spelling.
-  "edit_lines", "multi_edit", "bulk_replace", "delete_file",
-  // restore_file re-materializes a task-trashed file on disk — a workspace
-  // write under another spelling; a write ban must cover it too.
-  "restore_file",
-]);
-
-// Shell = subprocess spawn / arbitrary command execution.
-const SHELL_TOOLS: ReadonlySet<string> = new Set([
-  "bash",          // canonical
-  "shell", "process_start", "process_restart",
-  "app_serve_backend",  // wraps a process spawn — gate it as shell like process_start
-  "app_serve_frontend", // also wraps a process spawn (Vite/Next dev server)
-  "app_rebuild",        // wraps a process spawn (framework production build)
-]);
-
-const CAPABILITY_SETS: Record<CapabilityClass, ReadonlySet<string>> = {
-  "egress": EGRESS_TOOLS,
-  "sensitive-read": SENSITIVE_READ_TOOLS,
-  "workspace-write": WORKSPACE_WRITE_TOOLS,
-  "shell": SHELL_TOOLS,
+const DECLARED_SETS: Record<DeclaredCapability, ReadonlySet<string>> = {
+  "egress": declaredMembers("egress"),
+  "sensitive-read": declaredMembers("sensitive-read"),
+  "shell": declaredMembers("shell"),
 };
 
-// Read-only view of the capability-class membership, exposed for the build-time
-// name-drift assertion (capability-class-gates.test.ts). Every member here must
-// resolve to a real registered tool (or an explicitly-whitelisted bare synonym)
-// — name drift like `ari_sqlite_database` or a forgotten egress registration
-// becomes a TEST FAILURE instead of a silent fail-closed/fail-open hole.
+/** A path spec that writes, edits or deletes at its path. */
+const writesAt = (spec: PathArgSpec): boolean => spec.action !== "read";
+
+/**
+ * The path specs of `name` that a call opens: for a collapsed family whose specs
+ * are action-scoped (`forActions`), only those naming the call's action. Without
+ * `args`, every spec — what the tool opens on SOME call. (SecurityLayer also
+ * refuses a call whose action no scoped spec names; that is its check, not this.)
+ */
+export function pathSpecsForCall(name: string, args?: Record<string, unknown>): readonly PathArgSpec[] {
+  const specs = TOOL_PATH_ARGS[name] ?? [];
+  if (!args) return specs;
+  const action = String(args.action ?? "");
+  return specs.filter((spec) => !spec.forActions || spec.forActions.includes(action));
+}
+
+/** The paths a declared path arg carries: one string, a real array of
+ *  strings, or (json) a JSON-array string. Returns null when an array holds a
+ *  non-string element — the caller fails closed, since a value the gate cannot
+ *  read as a path must not reach the tool as one. A json arg whose string is
+ *  not a JSON array is gated as the one path it spells: generate_video treats
+ *  a bare string as a single reference, so skipping it would skip the read. */
+export function pathArgPaths(raw: unknown, json?: boolean): string[] | null {
+  if (Array.isArray(raw)) return raw.every((x): x is string => typeof x === "string") ? raw : null;
+  if (typeof raw !== "string" || raw.length === 0) return [];
+  if (!json) return [raw];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return [raw];
+  }
+  return Array.isArray(parsed) ? pathArgPaths(parsed) : [raw];
+}
+
+/** Every path one PathArgSpec names in a call's args, or null when a value
+ *  cannot be read as paths (fail closed). `each` specs read the path off every
+ *  element of an array-of-objects arg (op_submit_batch.tasks[].context_files);
+ *  an element that is not an object fails closed too. */
+export function declaredPaths(args: Record<string, unknown>, spec: PathArgSpec): string[] | null {
+  const raw = args[spec.arg];
+  if (!spec.each) return pathArgPaths(raw, spec.json);
+  if (raw === undefined || raw === null) return [];
+  if (!Array.isArray(raw)) return null;
+  const out: string[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+    const paths = pathArgPaths((item as Record<string, unknown>)[spec.each], spec.json);
+    if (paths === null) return null;
+    out.push(...paths);
+  }
+  return out;
+}
+
+/** The paths this call names, by what it does at each: reads, writes (create
+ *  or edit), deletes. For the readers that report or track paths; a gate that
+ *  must fail closed on an unreadable value reads declaredPaths itself. */
+export function callPaths(name: string, args: Record<string, unknown>): { reads: string[]; writes: string[]; deletes: string[] } {
+  const out = { reads: [] as string[], writes: [] as string[], deletes: [] as string[] };
+  for (const spec of pathSpecsForCall(name, args)) {
+    const into = spec.action === "read" ? out.reads : spec.action === "delete_file" ? out.deletes : out.writes;
+    into.push(...(declaredPaths(args, spec) ?? []));
+  }
+  return out;
+}
+
+// Every member by class, name-level (a tool that writes on SOME call is a
+// workspace-write member), for the consumers that list the class or describe it.
 export const CAPABILITY_CLASS_MEMBERS: Record<CapabilityClass, readonly string[]> = {
-  "egress": [...EGRESS_TOOLS],
-  "sensitive-read": [...SENSITIVE_READ_TOOLS],
-  "workspace-write": [...WORKSPACE_WRITE_TOOLS],
-  "shell": [...SHELL_TOOLS],
+  "egress": [...DECLARED_SETS.egress],
+  "sensitive-read": [...DECLARED_SETS["sensitive-read"]],
+  "shell": [...DECLARED_SETS.shell],
+  "workspace-write": Object.keys(TOOL_PATH_ARGS).filter((name) => TOOL_PATH_ARGS[name].some(writesAt)),
 };
 
 /**
- * Does `name` belong to capability class `cls`?
- *
- * The `browser_*` family (browser navigation/fetch sub-actions) is folded into
- * the egress class by prefix so synonyms like `browser_navigate` are gated like
- * `browser`. All other membership is exact-name.
+ * Does `name` belong to capability class `cls`? With the call's `args`, the
+ * answer is for THIS call: a spreadsheet `read` writes nothing, its `write`
+ * does. Without them, for any call the tool can make.
  */
-export function hasCapability(name: string, cls: CapabilityClass): boolean {
+export function hasCapability(name: string, cls: CapabilityClass, args?: Record<string, unknown>): boolean {
   if (getActivePluginToolMetadata(name)) return cls === "shell";
-  if (CAPABILITY_SETS[cls].has(name)) return true;
-  if (cls === "egress" && name.startsWith("browser_")) {
-    // Vault-only browser sub-tools write INTO the page from the encrypted vault;
-    // the value never enters model context, so they aren't data-exfil egress.
-    if (name === "browser_capture_to_secret" || name === "browser_fill_from_secret") return false;
-    return true;
-  }
-  return false;
+  if (cls === "workspace-write") return pathSpecsForCall(name, args).some(writesAt);
+  return DECLARED_SETS[cls].has(name);
 }
-
-/** Tool names that take a `path` arg and must be subject to worktree containment. */
-export const WORKTREE_PATH_TOOLS: ReadonlySet<string> = new Set([
-  ...WORKSPACE_WRITE_TOOLS, "read", "glob", "grep", "structural_search",
-]);
 
 /**
  * Build-time invariant: no single tool may be BOTH an egress sink AND a
@@ -218,7 +186,7 @@ export const WORKTREE_PATH_TOOLS: ReadonlySet<string> = new Set([
  * directly in capability-class-gates.test.ts.
  */
 export function validateCapabilitySets(): void {
-  const overlap = [...EGRESS_TOOLS].filter((name) => SENSITIVE_READ_TOOLS.has(name));
+  const overlap = [...DECLARED_SETS.egress].filter((name) => DECLARED_SETS["sensitive-read"].has(name));
   if (overlap.length > 0) {
     throw new Error(
       `capability-set invariant violated: tool(s) are BOTH egress and sensitive-read ` +

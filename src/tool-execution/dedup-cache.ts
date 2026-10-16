@@ -20,6 +20,7 @@ import { createHash } from "node:crypto";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { ToolResult } from "../types.js";
 import { STATEFUL_LIVE_STATE_TOOLS } from "./stateful-tools.js";
+import { CAPABILITY_CLASS_MEMBERS } from "../tool-registry.js";
 
 const DEDUP_TTL_MS = 60_000;
 
@@ -47,7 +48,8 @@ const DEDUP_SKIP: ReadonlySet<string> = new Set([
   // is the same class from the other side: a delete→restore→delete→restore
   // cycle repeats identical args, and replaying cycle 1's "Restored" while
   // the file sits back in the trash is pure false progress.
-  "write", "edit", "edit_lines", "multi_edit", "bulk_replace", "delete_file", "restore_file",
+  // Every tool that writes files: the workspace-write class, from the rows.
+  ...CAPABILITY_CLASS_MEMBERS["workspace-write"],
   // tool_search results depend on the deferred-tool catalog which can
   // shift as a turn progresses (registered via prior tool runs).
   "tool_search",

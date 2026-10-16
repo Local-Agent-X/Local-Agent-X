@@ -9,22 +9,17 @@
 import { homedir } from "node:os";
 import type { ToolResult } from "../types.js";
 import { addressesIn, recordPrivateRead } from "../data-lineage/private-content.js";
-import { TOOL_PATH_ARGS } from "../tool-registry.js";
+import { declaredPaths, pathSpecsForCall } from "../tool-registry.js";
 import { resolveAgentPath } from "../workspace/paths.js";
 import { workspaceRoot } from "../config.js";
 import { pathIsWithin, userContentDirs } from "../security/layer/file-access.js";
-import { declaredPaths } from "../security/layer/runtime-state.js";
 
 const EMAIL_READS: ReadonlySet<string> = new Set(["email_read", "email_search", "email_read_message"]);
 
 /** The user's own document a read named, or null. Respects action-scoped path specs. */
 function personalDocumentRead(toolName: string, args: Record<string, unknown>, sessionId: string): string | null {
-  const specs = TOOL_PATH_ARGS[toolName];
-  if (!specs) return null;
-  const action = String(args.action ?? "");
-  for (const spec of specs) {
+  for (const spec of pathSpecsForCall(toolName, args)) {
     if (spec.action !== "read" || spec.json) continue;
-    if (spec.forActions && !spec.forActions.includes(action)) continue;
     for (const raw of declaredPaths(args, spec) ?? []) {
       const doc = personalDocumentPath(raw, sessionId);
       if (doc) return doc;

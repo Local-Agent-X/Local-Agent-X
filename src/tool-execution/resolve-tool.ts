@@ -14,7 +14,7 @@ import { blocked } from "../tools/result-helpers.js";
 import { getRiskLevel, buildApprovalContext } from "./approval-context.js";
 import { ARI_ACTION_MAP } from "./enforce-policy.js";
 import { sessionWorkRootOf } from "../workspace/paths.js";
-import { TOOL_PATH_ARGS } from "../tool-registry.js";
+import { CAPABILITY_CLASS_MEMBERS, TOOL_PATH_ARGS } from "../tool-registry.js";
 import { STATEFUL_LIVE_STATE_TOOLS } from "./stateful-tools.js";
 import { readOpMessages } from "../canonical-loop/index.js";
 import { READ_DEDUP_STUB_LEAD } from "./read-dedup-evidence.js";
@@ -123,17 +123,16 @@ export function latestUserMessageId(operationId: string): string | undefined {
   return undefined;
 }
 
-const SESSION_REPEAT_SKIP_TOOLS = new Set([
+const SESSION_REPEAT_SKIP_TOOLS: ReadonlySet<string> = new Set([
   "request_secret", "request_secrets",
-  // State-sensitive mutations must re-dispatch. A repeated edit/write is often
-  // the signal that the previous change already landed (old_string gone) or
-  // that a new guard now rejects the path. Returning a prior success is false
-  // progress.
-  "write", "edit", "edit_lines", "multi_edit", "bulk_replace", "delete_file",
+  // State-sensitive mutations must re-dispatch: every tool that writes files
+  // (the workspace-write class, read off each policy row's path specs). A
+  // repeated edit/write is often the signal that the previous change already
+  // landed (old_string gone) or that a new guard now rejects the path, and
   // restore_file consumes its manifest entry on success — a delete→restore→
-  // delete cycle repeats identical args, and a cached "Restored" for a file
-  // that is back in the trash is false progress.
-  "restore_file",
+  // delete cycle repeats identical args. Returning a prior success is false
+  // progress.
+  ...CAPABILITY_CLASS_MEMBERS["workspace-write"],
   // STATEFUL live-state tools (browser, process/op/agent polling, live
   // captures) share one source of truth with the 60s dedup cache and the
   // threat-engine loop guard — see stateful-tools.ts for the rationale and the

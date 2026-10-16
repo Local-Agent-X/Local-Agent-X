@@ -29,7 +29,7 @@
 import type { CanonicalLoopContext, CanonicalMiddleware } from "./types.js";
 import { getMiddlewareState } from "./state.js";
 import { isDispatchFailure } from "../types.js";
-import { EDIT_TOOLS } from "../../agent-guards/verify-gate.js";
+import { callPaths } from "../../tool-registry.js";
 import { getLanguageIntel, type FileDiagnostic } from "../../language-intel/index.js";
 import { resolveAgentPath } from "../../workspace/paths.js";
 import { createLogger } from "../../logger.js";
@@ -155,28 +155,23 @@ function diagKey(d: FileDiagnostic): string {
   return `${d.code}::${d.message.replace(/\s+/g, " ").trim()}`;
 }
 
-/** Resolved paths of files touched by SUCCESSFUL edit-family calls this turn,
- *  filtered to languages language-intel supports. Same normalization as
- *  verify-gate's buildActions: tool name in EDIT_TOOLS, file from args
- *  file_path|path, dispatch status from the toolCallId-matched result (a
- *  failed or cancelled edit changed nothing worth diagnosing). */
+/** Resolved paths of files written by SUCCESSFUL calls this turn — every path
+ *  a call's declared specs create or edit (tool-registry.ts callPaths), as
+ *  verify-gate's buildActions reads them — filtered to languages language-intel
+ *  supports. Dispatch status from the toolCallId-matched result (a failed or
+ *  cancelled edit changed nothing worth diagnosing). */
 function editedSupportedFiles(ctx: CanonicalLoopContext): string[] {
   const statusById = new Map(ctx.toolResults.map((tr) => [tr.toolCallId, tr.status]));
   const intel = getLanguageIntel();
   const out: string[] = [];
   for (const tc of ctx.toolCalls) {
-    if (!EDIT_TOOLS.has(tc.tool)) continue;
     const status = statusById.get(tc.toolCallId);
     if (isDispatchFailure(status) || status === "cancelled") continue;
-    const args = (tc.args ?? {}) as Record<string, unknown>;
-    const raw =
-      typeof args.file_path === "string" ? args.file_path
-      : typeof args.path === "string" ? args.path
-      : undefined;
-    if (!raw) continue;
-    const resolved = resolveAgentPath(raw);
-    if (!intel.supports(resolved)) continue;
-    if (!out.includes(resolved)) out.push(resolved);
+    for (const raw of callPaths(tc.tool, (tc.args ?? {}) as Record<string, unknown>).writes) {
+      const resolved = resolveAgentPath(raw);
+      if (!intel.supports(resolved)) continue;
+      if (!out.includes(resolved)) out.push(resolved);
+    }
   }
   return out;
 }

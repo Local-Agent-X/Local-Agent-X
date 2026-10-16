@@ -19,7 +19,7 @@ over 400 LOC (the source-hygiene ceiling).
 | Directory | Importers | Files | Size | God files |
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 157 | 29 | XL |  |
-| `src/security/` | 123 | 46 | XL |  |
+| `src/security/` | 121 | 46 | XL |  |
 | `src/tools/` | 104 | 210 | XL |  |
 | `src/canonical-loop/` | 79 | 258 | XL |  |
 | `src/workspace/` | 72 | 3 | M |  |
@@ -55,7 +55,6 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/self-edit/` | 13 | 19 | L |  |
 | `src/whatsapp-bridge/` | 12 | 8 | L |  |
 | `src/broker-transport/` | 11 | 38 | XL |  |
-| `src/agent-guards/` | 10 | 11 | L |  |
 | `src/agent-loop/` | 10 | 1 | S |  |
 | `src/ari-kernel/` | 10 | 12 | L |  |
 | `src/autopilot/` | 10 | 14 | L |  |
@@ -64,6 +63,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/routes/` | 10 | 92 | XL |  |
 | `src/sync/` | 10 | 21 | L |  |
 | `src/screen-stream/` | 9 | 11 | L |  |
+| `src/agent-guards/` | 8 | 11 | L |  |
 | `src/bridge-voice/` | 8 | 5 | M |  |
 | `src/inbox/` | 8 | 5 | M |  |
 | `src/telegram-bridge/` | 8 | 6 | M |  |

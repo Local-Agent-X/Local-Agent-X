@@ -19,6 +19,11 @@ import { pruneMergedAgentBranches } from "./worktree-junctions.js";
 import { getMergeDeltaDiff, getMergeDeltaFiles, securitySensitiveChangedFiles, commitInWorktree } from "./worktree-state.js";
 import { scanWorktreeForStagedSecrets } from "../self-edit/exfil-scan.js";
 import { rewritePathForWorktree } from "../tool-execution/worktree-paths.js";
+import { pathSpecsForCall } from "../tool-registry.js";
+
+/** Rewrite as dispatch does: by the tool's own declared path spec. */
+const rw = (tool: string, raw: string | undefined, wt = WT) =>
+  rewritePathForWorktree(raw, wt, pathSpecsForCall(tool).find((s) => s.arg === "path")?.searchRoot);
 
 const WT = join(tmpdir(), "lax-worktrees", "test-agent");
 
@@ -39,51 +44,51 @@ function initRepo(): { repo: string; g: (args: string[], cwd?: string) => string
 
 describe("Worktree path rewriting", () => {
   it("rewrites relative read path into worktree", () => {
-    expect(rewritePathForWorktree("read", "src/index.ts", WT)).toBe(join(WT, "src/index.ts"));
+    expect(rw("read", "src/index.ts", WT)).toBe(join(WT, "src/index.ts"));
   });
 
   it("rewrites relative write path into worktree", () => {
-    expect(rewritePathForWorktree("write", "output.txt", WT)).toBe(join(WT, "output.txt"));
+    expect(rw("write", "output.txt", WT)).toBe(join(WT, "output.txt"));
   });
 
   it("rewrites relative edit path into worktree", () => {
-    expect(rewritePathForWorktree("edit", "src/config.ts", WT)).toBe(join(WT, "src/config.ts"));
+    expect(rw("edit", "src/config.ts", WT)).toBe(join(WT, "src/config.ts"));
   });
 
   it("defaults glob with no path to worktree root", () => {
-    expect(rewritePathForWorktree("glob", undefined, WT)).toBe(WT);
+    expect(rw("glob", undefined, WT)).toBe(WT);
   });
 
   it("defaults grep with no path to worktree root", () => {
-    expect(rewritePathForWorktree("grep", undefined, WT)).toBe(WT);
+    expect(rw("grep", undefined, WT)).toBe(WT);
   });
 
   it("clamps absolute glob path that escapes worktree", () => {
-    expect(rewritePathForWorktree("glob", "/etc/passwd", WT)).toBe(WT);
+    expect(rw("glob", "/etc/passwd", WT)).toBe(WT);
   });
 
   it("clamps absolute grep path that escapes worktree", () => {
-    expect(rewritePathForWorktree("grep", "C:\\Users\\secrets", WT)).toBe(WT);
+    expect(rw("grep", "C:\\Users\\secrets", WT)).toBe(WT);
   });
 
   it("allows absolute glob path within worktree", () => {
     const insidePath = join(WT, "src");
-    expect(rewritePathForWorktree("glob", insidePath, WT)).toBe(insidePath);
+    expect(rw("glob", insidePath, WT)).toBe(insidePath);
   });
 
   it("rewrites relative glob path into worktree", () => {
-    expect(rewritePathForWorktree("glob", "src/**/*.ts", WT)).toBe(join(WT, "src/**/*.ts"));
+    expect(rw("glob", "src/**/*.ts", WT)).toBe(join(WT, "src/**/*.ts"));
   });
 
   it("rewrites .. traversal in relative path into worktree (still under root after join)", () => {
-    const result = rewritePathForWorktree("read", "../../../etc/passwd", WT);
+    const result = rw("read", "../../../etc/passwd", WT);
     // join resolves it — the security layer then catches if it escapes
     expect(result).toBe(join(WT, "../../../etc/passwd"));
   });
 
   it("does not rewrite bash paths (uses _cwd instead)", () => {
-    // Bash doesn't use args.path — it uses _cwd
-    expect(rewritePathForWorktree("bash", undefined, WT)).toBeUndefined();
+    // bash declares no path argument: it gets the worktree as _cwd instead.
+    expect(pathSpecsForCall("bash")).toEqual([]);
   });
 });
 

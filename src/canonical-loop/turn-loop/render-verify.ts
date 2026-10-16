@@ -11,6 +11,7 @@
 // clearRenderVerifyStateForOp, hooked into state-machine.ts.
 
 import type { ToolCall } from "../contract-types.js";
+import { callPaths } from "../../tool-registry.js";
 
 export interface PreviewRuntimeError {
   kind: string;       // "error" | "rejection" | "console" | "csp" | "resource" | "blank"
@@ -94,23 +95,22 @@ export function _resetRenderVerifyState(): void {
   renderProbe = null;
 }
 
-// A turn touched an app if at least one tool call wrote/edited a path
-// under workspace/apps/<id>/. Read tools are not enough — we only care
-// when the model could have changed what the preview renders.
-const MUTATING_FILE_TOOLS = new Set(["write", "edit", "build_app"]);
+// A turn touched an app if at least one tool call changed a path under
+// workspace/apps/<id>/ — any tool, under any path arg its policy row declares
+// it writes, edits or deletes (callPaths). Read tools are not enough — we only
+// care when the model could have changed what the preview renders.
 const APP_PATH_RE = /(^|[\\/])workspace[\\/]apps[\\/]([^\\/]+)[\\/]/;
+
+function changedPaths(call: ToolCall): string[] {
+  const { writes, deletes } = callPaths(call.tool, (call.args ?? {}) as Record<string, unknown>);
+  return [...writes, ...deletes];
+}
 
 export function turnTouchedAppFiles(toolCalls: ToolCall[]): boolean {
   for (const call of toolCalls) {
-    if (!MUTATING_FILE_TOOLS.has(call.tool)) continue;
-    const args = call.args as { path?: unknown; file_path?: unknown } | null | undefined;
-    const raw = args?.path ?? args?.file_path;
-    if (typeof raw !== "string") {
-      // build_app doesn't pass a path; the tool name alone is the signal.
-      if (call.tool === "build_app") return true;
-      continue;
-    }
-    if (APP_PATH_RE.test(raw.replace(/\\/g, "/"))) return true;
+    // build_app doesn't pass a path; the tool name alone is the signal.
+    if (call.tool === "build_app") return true;
+    if (changedPaths(call).some((raw) => APP_PATH_RE.test(raw.replace(/\\/g, "/")))) return true;
   }
   return false;
 }
@@ -120,12 +120,10 @@ export function turnTouchedAppFiles(toolCalls: ToolCall[]): boolean {
 export function appIdsTouchedByTurn(toolCalls: ToolCall[]): string[] {
   const ids = new Set<string>();
   for (const call of toolCalls) {
-    if (!MUTATING_FILE_TOOLS.has(call.tool)) continue;
-    const args = call.args as { path?: unknown; file_path?: unknown } | null | undefined;
-    const raw = args?.path ?? args?.file_path;
-    if (typeof raw !== "string") continue;
-    const m = APP_PATH_RE.exec(raw.replace(/\\/g, "/"));
-    if (m) ids.add(m[2]);
+    for (const raw of changedPaths(call)) {
+      const m = APP_PATH_RE.exec(raw.replace(/\\/g, "/"));
+      if (m) ids.add(m[2]);
+    }
   }
   return [...ids];
 }

@@ -9,7 +9,7 @@ import { USER_HINTS, type ToolResult } from "../types.js";
 import { ariEvaluate, ariObserve, isAriActive, shouldGateInKernel, shouldObserveInKernel } from "../ari-kernel/index.js";
 import { checkSessionPolicy } from "../session/policy.js";
 import { getKernelTaintSources } from "../data-lineage/index.js";
-import { WORKTREE_PATH_TOOLS, hasCapability } from "../tool-registry.js";
+import { hasCapability, pathSpecsForCall } from "../tool-registry.js";
 import { taintedShellBlockReason, knownSecretShellBlock, blockedSelfVerifyGuidance, SHELL_TAINT_DENY_SOURCES } from "./shell-block-guidance.js";
 import { getHookEngine } from "../hooks/hook-engine.js";
 import { checkCircuit, circuitArgsSig } from "../circuit-breaker.js";
@@ -173,7 +173,7 @@ async function ariKernelGate(ctx: ToolCallContext): Promise<PhaseOutcome> {
 }
 
 function sessionPolicyGate(ctx: ToolCallContext): PhaseOutcome {
-  const block = checkSessionPolicy(ctx.sessionId || "default", ctx.tc.name);
+  const block = checkSessionPolicy(ctx.sessionId || "default", ctx.tc.name, ctx.args);
   if (block) {
     const recovery = "Do this with a tool the session allows, or tell the user it needs this tool enabled for the session.";
     return terminate(ctx, { rendered: "model", result: blocked(block, { layer: "session-policy", userHint: USER_HINTS.policy, recovery }), allowed: false });
@@ -191,12 +191,13 @@ async function rewriteWorktreePaths(ctx: ToolCallContext): Promise<void> {
     const { getWorktreePath } = await import("../agency/worktree.js");
     const wtPath = getWorktreePath(agentId);
     if (!wtPath) return;
-    if (WORKTREE_PATH_TOOLS.has(tc.name)) {
-      args.path = rewritePathForWorktree(
-        tc.name,
-        args.path === undefined ? undefined : String(args.path),
-        wtPath,
-      );
+    // Every path the call opens, by its declared arg (a list-valued arg is
+    // gated per element and left as written).
+    for (const spec of pathSpecsForCall(tc.name, args)) {
+      if (spec.json || spec.each) continue;
+      const raw = args[spec.arg];
+      if (raw === undefined && !spec.searchRoot) continue;
+      args[spec.arg] = rewritePathForWorktree(raw === undefined ? undefined : String(raw), wtPath, spec.searchRoot);
     }
     if (tc.name === "bash") args._cwd = wtPath;
   } catch { /* worktree module not available */ }

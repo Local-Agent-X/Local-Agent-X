@@ -22,22 +22,19 @@ import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { relative } from "node:path";
 import type { ToolCallContext } from "./context.js";
-import { TOOL_PATH_ARGS } from "../tool-registry.js";
+import { declaredPaths, pathSpecsForCall } from "../tool-registry.js";
 import { resolveAgentPath } from "../workspace/paths.js";
 import { laxApprovalGatedFile } from "../security/layer/lax-control-files.js";
 import { persistenceLocationJudge, type PersistenceLocationOf } from "../security/layer/persistence-locations.js";
 import { pathIsWithin } from "../security/layer/file-access.js";
-import { declaredPaths } from "../security/layer/runtime-state.js";
 import { findTrashEntry } from "../trash-journal.js";
 import { restoreRef } from "../tools/restore-file-tool.js";
 
 function writeTargets(ctx: ToolCallContext): Array<{ path: string; deletes: boolean }> {
   const { name } = ctx.tc;
-  const action = String(ctx.args.action ?? "");
   const out: Array<{ path: string; deletes: boolean }> = [];
-  for (const spec of TOOL_PATH_ARGS[name] ?? []) {
+  for (const spec of pathSpecsForCall(name, ctx.args)) {
     if (spec.action === "read") continue;
-    if (spec.forActions && !spec.forActions.includes(action)) continue;
     // A non-string element is refused by the file-access gate before this runs.
     for (const raw of declaredPaths(ctx.args, spec) ?? []) {
       out.push({ path: resolveAgentPath(raw, ctx.sessionId), deletes: spec.action === "delete_file" });

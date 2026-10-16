@@ -81,7 +81,7 @@ function contentlessEntry(sessionId: string, target: string): TaintEntry {
 /**
  * Tools whose SUCCESSFUL results place off-box (untrusted external) content
  * into the model context. No existing classification is exactly this axis:
- * EGRESS_TOOLS (tool-registry.ts) includes non-ingesting exfil sinks
+ * The egress class (tool-registry.ts) includes non-ingesting exfil sinks
  * (email_send, clipboard_write, process_start, send_image, computer, ...) and
  * the policy `offBoxFetch` flag marks payload-ships-off-box tools
  * (view_image, generate_image, telegram_send) whose results are not external

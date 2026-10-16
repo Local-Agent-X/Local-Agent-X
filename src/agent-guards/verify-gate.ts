@@ -22,8 +22,11 @@ import { checkVerdict } from "../tool-execution/check-verdict.js";
 /** Normalized view of one tool call + its dispatch outcome for a turn. */
 export interface VerifyTurnAction {
   tool: string;
-  /** file_path for edit/write tools, when present. */
-  filePath?: string;
+  /** Paths this call created or edited, by its declared path specs
+   *  (tool-registry.ts callPaths) — whichever tool, under whichever arg. */
+  writes?: string[];
+  /** Paths this call deleted. */
+  deletes?: string[];
   /** command string for bash, when present. */
   command?: string;
   /** Dispatch status. Mirrors the canonical ToolDispatchStatus union (kept as
@@ -84,17 +87,6 @@ const MAX_EDITED_PATHS = 200;
  *  breakers (dead-end / repeat-failure) and the partial outcome label take over. */
 const MAX_FAIL_NUDGES = 2;
 
-/** Tools that change file contents on disk. self_edit is excluded — it runs
- *  its own build subprocess on LAX's own source, so nudging it is noise.
- *  Exported so the open-steps plan-seed keys "the op wrote a file" off the SAME
- *  definition instead of a second drifting copy. */
-export const EDIT_TOOLS: ReadonlySet<string> = new Set([
-  "write", "edit", "edit_lines", "multi_edit", "bulk_replace",
-  // restore_file puts a source file back on disk — the tree changed just as
-  // surely as an edit, so a restored .ts deserves the same build nudge.
-  "restore_file",
-]);
-
 /** Extensions that have a meaningful compile / type-check / test step. Pure
  *  data files (.json/.md/.css/.html/.yaml) are intentionally excluded — editing
  *  only those shouldn't demand a build. Deliberately BROADER than language-intel's
@@ -148,13 +140,15 @@ export function noteVerifyEvidence(
   state: VerifyGateState,
 ): void {
   for (const a of actions) {
-    if (EDIT_TOOLS.has(a.tool) && a.filePath && isSourceFile(a.filePath)) {
+    // A source file created or edited on disk — under any tool's declared path
+    // arg — owes a verify. (A deletion is the test-deletion tripwire's below,
+    // and self_edit declares no path: it runs its own build on LAX's own source,
+    // so nudging it is noise.)
+    for (const path of a.writes ?? []) {
+      if (!isSourceFile(path)) continue;
       state.editedSource = true;
-      if (
-        !state.editedPaths.includes(a.filePath) &&
-        state.editedPaths.length < MAX_EDITED_PATHS
-      ) {
-        state.editedPaths.push(a.filePath);
+      if (!state.editedPaths.includes(path) && state.editedPaths.length < MAX_EDITED_PATHS) {
+        state.editedPaths.push(path);
       }
       // A fresh edit invalidates both a prior pass AND a prior failure — the
       // edit is presumed a fix attempt that must be re-verified from scratch.
@@ -180,15 +174,14 @@ export function noteVerifyEvidence(
         state.verifiedSinceEdit = false;
       }
     }
-    // Test-deletion tripwire: delete_file on a test path (or a bash `rm` of one).
+    // Test-deletion tripwire: a deleted test path (or a bash `rm` of one).
     // A deleted test is invisible to the build-verify gate — it only runs EDITED
     // tests — so "delete the failing test" would otherwise go green unseen.
     const deletedTest =
-      a.tool === "delete_file" && a.filePath && isTestFile(a.filePath)
-        ? a.filePath
-        : a.tool === "bash" && a.command
+      (a.deletes ?? []).find((path) => isTestFile(path))
+        ?? (a.tool === "bash" && a.command
           ? a.command.match(/\brm\b[^|;&]*?([^\s|;&]+\.(?:test|spec)\.[cm]?[jt]sx?)\b/i)?.[1] ?? null
-          : null;
+          : null);
     if (
       deletedTest &&
       !state.deletedTestPaths.includes(deletedTest) &&

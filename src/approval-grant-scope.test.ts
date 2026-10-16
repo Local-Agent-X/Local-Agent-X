@@ -71,7 +71,7 @@ describe("grant scope over the runtime catalog", () => {
       const { base, value, pathArgs } = callArgs(name, def);
       const named = declaredDestinations(name, base);
       const byRecipient = named !== null && named.every((d) => destinationKey(d) !== null);
-      const payloadOnly = hasCapability(name, "workspace-write") || byRecipient;
+      const payloadOnly = hasCapability(name, "workspace-write", base) || byRecipient;
       const recipientArg = (arg: string, changed: unknown) =>
         JSON.stringify(named) !== JSON.stringify(declaredDestinations(name, { ...base, [arg]: changed }));
       const before = computeArgsFingerprint(name, base);

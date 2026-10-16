@@ -5,9 +5,9 @@
 // TOOLS) and the global sliding-window rate cap. No kernel/risk — policy
 // patterns only.
 
-import type { ToolPolicyEntry } from "./tool-policies.types.js";
+import type { GlobPolicyEntry } from "./tool-policies.types.js";
 
-export const TOOL_POLICIES_GLOBS: Record<string, ToolPolicyEntry> = {
+export const TOOL_POLICIES_GLOBS: Record<string, GlobPolicyEntry> = {
   // ── Glob-family rules (cover concrete tools above + tools registered
   //    outside TOOLS). No kernel/risk — these are policy patterns only.
   //    Every glob must match a tool that exists, or a family registered at

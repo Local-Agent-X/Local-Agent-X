@@ -13,6 +13,7 @@ import type { ChannelKind } from "../types.js";
 import { filterToolsForMessage } from "../tool-filter.js";
 import { isSlashCommandExpansion } from "../../slash-commands.js";
 import { createLogger } from "../../logger.js";
+import { CAPABILITY_CLASS_MEMBERS } from "../../tool-registry.js";
 import {
   applyProductBuildToolRoute,
   productBuildMethodologyTurn,
@@ -64,10 +65,13 @@ export interface ToolSelectionResult {
 // dual-build bug shipped a Rust raytrace TWICE — the worker compiled it at
 // apps/<id>/ while the main agent ALSO ran cargo at workspace/<id>/. Read-only
 // tools (read/glob/grep) stay — they can't build.
-const INLINE_BUILD_TOOLS = new Set([
-  "write", "edit", "edit_lines", "multi_edit", "bulk_replace", "bash",
-  "process_start", "process_status", "process_kill",
-  "send_image", "connector_create", "app_serve_backend", "self_edit",
+// Every tool that writes files or runs commands is a way to build (the
+// capability classes, so a synonym or a new tool joins by its policy row), plus
+// the few that build or steer a build by other means.
+const INLINE_BUILD_TOOLS: ReadonlySet<string> = new Set([
+  ...CAPABILITY_CLASS_MEMBERS["workspace-write"],
+  ...CAPABILITY_CLASS_MEMBERS.shell,
+  "process_status", "process_kill", "send_image", "connector_create", "self_edit",
 ]);
 
 /** Remove the inline-build tools so a forced build_app turn can't ALSO build

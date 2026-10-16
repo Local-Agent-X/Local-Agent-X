@@ -41,17 +41,12 @@ export const CONTEXT_RESTRICTED_TOOLS: Record<string, CallContext[]> = {
   edit_image: ["cron"],                    // Resource-intensive off-box edit, block in cron
 };
 
-// Tools that require worktree isolation in a WORKER_CONTEXTS run.
-// If the run has a worktree or work root (session in allowedPaths), these are safe.
-// If not (e.g. Codex agents), block them to prevent uncontrolled writes.
-//
-// Keyed on workspace-write + shell CAPABILITY membership, not literal names, so
-// the synonyms (ari_file write, process_start) require
-// worktree isolation identically to their canonical equivalents (write/edit/bash).
-// Canonical {write, edit, bash} are preserved; the synonyms are newly added.
-export const WORKTREE_REQUIRED_TOOLS = new Set([
-  "write", "edit", "ari_file",
+// Tools that can need worktree isolation in a WORKER_CONTEXTS run: every tool
+// that writes files on some call, and every shell tool — the capability classes,
+// so a synonym (ari_file, edit_lines, process_start) or a new tool joins by its
+// own policy row. The security layer judges each CALL (a spreadsheet read needs
+// nothing); this name-level set is for the surfaces that list tools.
+export const WORKTREE_REQUIRED_TOOLS: ReadonlySet<string> = new Set([
+  ...CAPABILITY_CLASS_MEMBERS["workspace-write"],
   ...CAPABILITY_CLASS_MEMBERS.shell,
-  "edit_lines", "multi_edit", "bulk_replace", "delete_file", // registered edit/delete synonyms — same blast radius as write/edit
-  "restore_file", // re-materializes task-trashed bytes on disk — a write under another spelling
 ]);

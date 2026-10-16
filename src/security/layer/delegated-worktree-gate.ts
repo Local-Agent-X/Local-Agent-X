@@ -7,7 +7,7 @@
 import type { SecurityDecision } from "../../types.js";
 import { USER_HINTS } from "../../types.js";
 import type { ToolCallContext } from "./types.js";
-import { hasCapability } from "../../tool-registry.js";
+import { declaredPaths, hasCapability, pathSpecsForCall } from "../../tool-registry.js";
 import { SANDBOX_PROOF_PENDING_RETRY } from "../../sandbox/index.js";
 
 export interface DelegatedGateDeps {
@@ -92,28 +92,17 @@ export function evaluateDelegatedWorktreeGate(
   }
 
   if (!hasWorktree) {
-    // Non-shell workspace-write tools (write/edit/ari_file/delete_file):
-    // isolation is required only for repo SOURCE paths — user-content writes are
-    // exempt (they don't touch the agent's running code).
-    //
-    // ari_file is a single bridge tool whose action (read|write) lives in
-    // args.action — a read never mutates source, and a write to user-content
-    // territory is exempt just like write/edit. So gate only ari_file WRITES to
-    // source paths, mirroring the write/edit reasoning above.
-    const ariFileAction = toolName === "ari_file" ? String(args.action || "read") : null;
-    const ariFileExempt = ariFileAction === "read" ||
-      (ariFileAction === "write" && deps.isUserContentPath(String(args.path || "")));
-    // delete_file shares edit's `path` arg + blast radius → a user-content delete
-    // skips the worktree too (else all delegated deletes were refused).
-    // restore_file is delete_file's inverse (main-chat-only audience today, so
-    // reachable here only by a literal call) — kept in lockstep for parity: a
-    // delegated agent restoring a user-content file it deleted needs no
-    // worktree either, and asymmetry would strand a worker's own undo.
-    const isContentWrite =
-      ((toolName === "write" || toolName === "edit" || toolName === "delete_file" || toolName === "restore_file") &&
-        deps.isUserContentPath(String(args.path || ""))) ||
-      ariFileExempt;
-    if (!isContentWrite) {
+    // A call that writes (the caller passes only those, by the call's own path
+    // specs): isolation is required only for repo SOURCE paths — a call whose
+    // every write target is user content is exempt (it doesn't touch the
+    // agent's running code). Every write arg the call opens is judged, so a
+    // synonym (edit_lines, multi_edit), a second target (restore_file's
+    // destination) or a document tool's file_path is held to the same rule. A
+    // malformed path value fails closed.
+    const targets = pathSpecsForCall(toolName, args)
+      .filter((spec) => spec.action !== "read")
+      .flatMap((spec) => declaredPaths(args, spec) ?? [""]);
+    if (!targets.every((target) => deps.isUserContentPath(target))) {
       return {
         allowed: false,
         reason: `Blocked: a ${run}'s "${toolName}" requires worktree isolation for source-code paths (writes to workspace/, ~/Documents, or anywhere outside the repo don't need it)`,

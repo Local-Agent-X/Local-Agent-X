@@ -55,7 +55,7 @@ function ctxFor(op: string, over: Partial<CanonicalLoopContext>): CanonicalLoopC
 function editTurn(op: string, file: string, status: "ok" | "error" = "ok") {
   return postEditDiagnosticsMiddleware.afterToolExecution!(
     ctxFor(op, {
-      toolCalls: [{ toolCallId: "e1", tool: "edit", args: { file_path: file } }],
+      toolCalls: [{ toolCallId: "e1", tool: "edit", args: { path: file } }],
       toolResults: [{ toolCallId: "e1", toolName: "edit", content: "ok", status }],
     } as Partial<CanonicalLoopContext>),
   );

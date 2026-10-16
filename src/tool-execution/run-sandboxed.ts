@@ -15,6 +15,7 @@ import { RetryableToolResultError } from "../resilience-policy.js";
 import { ToolTimeoutError } from "./tool-timeout.js";
 import { timeout, blocked, ok, statusOf } from "../tools/result-helpers.js";
 import { resolveAgentPath } from "../workspace/paths.js";
+import { pathSpecsForCall } from "../tool-registry.js";
 import { isAbsolute } from "node:path";
 import { existsSync } from "node:fs";
 import { checkFreshness, recordFileSeen, unchangedSinceSeen, seenViewFromReadResult } from "../tools/read-state.js";
@@ -28,12 +29,6 @@ import { CREATE_CLASS, createTargetPath } from "./create-target-path.js";
 import { checkShellDeleteHappened } from "./verify-shell-deletes.js";
 import { GATED_SHELL_TOOLS } from "./unnamed-delete-gate.js";
 
-// Edit-family tools that must not touch a file the session hasn't seen the
-// current bytes of (stale-read guard). Read-before-edit, enforced at the layer
-// that actually knows the session — not inside the tool, which doesn't.
-const FRESHNESS_GUARDED: ReadonlySet<string> = new Set(["edit", "edit_lines", "multi_edit"]);
-// Tools that leave the session knowing a file's current on-disk bytes.
-const RECORDS_SEEN: ReadonlySet<string> = new Set(["read", "write", "edit", "edit_lines", "multi_edit"]);
 
 // CREATE_CLASS + createTargetPath (the per-family tool→output-path mapping the
 // pre-stat below keys on) live in create-target-path.ts — shared with the
@@ -71,6 +66,10 @@ function failureRow(e: unknown, reconciliation: ToolResult | null, progressLog: 
 
 export const runSandboxedPhase: Phase = async (ctx) => {
   const { tc, tool, args, sessionId, signal, onEvent } = ctx;
+  // The path spec, if any, whose file the session knows after this call
+  // (tool-policies.types.ts knowsContent); an in-place edit of it is guarded.
+  const contentKnown = pathSpecsForCall(tc.name, args).find((spec) => spec.knowsContent);
+  const freshnessGuarded = contentKnown?.action === "edit" ? contentKnown : undefined;
   if (!tool) return CONTINUE;
 
   // A cage still proving its fence answers in seconds; that one is a retry,
@@ -98,11 +97,12 @@ export const runSandboxedPhase: Phase = async (ctx) => {
   // the current bytes of. Runs before execute (and before circuit-breaker
   // accounting) so a "re-read first" never trips the breaker — it's guidance,
   // not a tool failure.
-  if (typeof args.path === "string" && args.path && FRESHNESS_GUARDED.has(tc.name)) {
+  const guardedPath = args[freshnessGuarded?.arg ?? ""];
+  if (freshnessGuarded && typeof guardedPath === "string" && guardedPath) {
     // Path resolution / freshness is best-effort: a malformed path is the
     // tool's job to report, not ours to crash on, so swallow and fall through.
     let resolved: string | null = null;
-    try { resolved = resolveAgentPath(args.path, sessionId); } catch { /* let the tool handle it */ }
+    try { resolved = resolveAgentPath(guardedPath, sessionId); } catch { /* let the tool handle it */ }
     const fresh = resolved ? checkFreshness(sessionId, resolved) : "ok";
     if (resolved && fresh !== "ok") {
       ctx.result = blocked(
@@ -202,12 +202,13 @@ export const runSandboxedPhase: Phase = async (ctx) => {
   runner.complete(result);
   const durationMs = Date.now() - startedAt;
   const succeeded = !result.isError;
-  if (succeeded && typeof args.path === "string" && args.path && RECORDS_SEEN.has(tc.name)) {
+  const seenPath = args[contentKnown?.arg ?? ""];
+  if (succeeded && contentKnown && typeof seenPath === "string" && seenPath) {
     // Reads record HOW the file was seen (partial/range views never dedup);
     // writes/edits pass no view — the session knows the whole resulting file,
     // and re-recording refreshes the diff snapshot to the post-edit bytes.
-    const view = tc.name === "read" ? seenViewFromReadResult(args, result.metadata) : undefined;
-    try { recordFileSeen(sessionId, resolveAgentPath(args.path, sessionId), view); } catch { /* freshness is best-effort */ }
+    const view = contentKnown.action === "read" ? seenViewFromReadResult(args, result.metadata) : undefined;
+    try { recordFileSeen(sessionId, resolveAgentPath(seenPath, sessionId), view); } catch { /* freshness is best-effort */ }
   }
   if (sessionId && createdArtifactTarget && statusOf(result) === "ok") {
     // The file did not exist pre-execute and the create-class call succeeded:

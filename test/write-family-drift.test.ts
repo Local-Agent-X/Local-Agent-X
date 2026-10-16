@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { TOOL_POLICIES } from "../src/tool-policy/tool-policies.js";
-import { CAPABILITY_CLASS_MEMBERS } from "../src/tool-registry.js";
+import { CAPABILITY_CLASS_MEMBERS, callPaths } from "../src/tool-registry.js";
 import { WORKTREE_REQUIRED_TOOLS } from "../src/security/layer/index.js";
-import { EDIT_TOOLS } from "../src/agent-guards/verify-gate.js";
+import { createVerifyGateState, noteVerifyEvidence } from "../src/agent-guards/verify-gate.js";
 import { allTools } from "../src/tools/registry-build.js";
 import { BUILD_MUTATION_TOOLS } from "../src/ops/tools/delegated-toolset.js";
 
@@ -36,8 +36,14 @@ describe("write-family capability-set drift", () => {
     expect(missing, `delegated agents can write without a worktree via: ${missing.join(", ")}`).toEqual([]);
   });
 
-  it("every workspace-write file tool triggers the verify (build-nudge) gate", () => {
-    const missing = writeFamily.filter((t) => !EDIT_TOOLS.has(t));
+  it("every workspace-write file tool's edit of a source file reaches the verify (build-nudge) gate", () => {
+    // The gate reads what a call wrote off its declared path specs (callPaths),
+    // so a tool joins by its policy row — no list to forget it in.
+    const missing = writeFamily.filter((t) => {
+      const state = createVerifyGateState();
+      noteVerifyEvidence([{ tool: t, writes: callPaths(t, { path: "src/a.ts" }).writes }], state);
+      return !state.editedSource;
+    });
     expect(missing, `source edits via these tools never nudge a build: ${missing.join(", ")}`).toEqual([]);
   });
 

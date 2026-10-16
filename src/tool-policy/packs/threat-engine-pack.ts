@@ -31,8 +31,6 @@ const PACK_PRIORITY = 30;
 // registry so a new egress tool is restricted the day it is registered. The
 // hand-written {http_request, web_fetch, browser} set this replaces let a
 // restricted session keep sending through email_send / telegram_send.
-const restrictedExternalTool = (name: string): boolean => hasCapability(name, "egress");
-
 const RULE_REASON =
   "Session security restriction active (deterministic evidence recorded). External calls to implicated sinks denied; all external calls denied when the evidence has no attributable sink.";
 
@@ -40,6 +38,15 @@ function isOwnAppBrowserCall(args: Record<string, unknown>): boolean {
   const urlArg = String(args.url || "");
   const appPort = process.env.LAX_PORT ?? "7007";
   return new RegExp(`^https?://(127\\.0\\.0\\.1|localhost):${appPort}`, "i").test(urlArg);
+}
+
+/** Does a restricted session refuse this call? Every egress-class call, except
+ *  the browser opening this app's own pages. The one rule for both the
+ *  pre-dispatch pack below and the flip-turn post-execution deny
+ *  (tool-execution/audit-tool-call.ts). */
+export function restrictedCall(name: string, args: Record<string, unknown>): boolean {
+  if (!hasCapability(name, "egress")) return false;
+  return !(name === "browser" && isOwnAppBrowserCall(args));
 }
 
 function describeRules(): RulePackRule[] {
@@ -77,8 +84,7 @@ export function makeThreatEnginePack(threatEngine: ThreatEngine | undefined): Ru
     evaluate(call: PolicyCall, _ctx: PolicyEvalCtx): PackDecision {
       if (!threatEngine) return { allowed: true };
       if (!threatEngine.isRestricted()) return { allowed: true };
-      if (!restrictedExternalTool(call.name)) return { allowed: true };
-      if (call.name === "browser" && isOwnAppBrowserCall(call.args)) return { allowed: true };
+      if (!restrictedCall(call.name, call.args)) return { allowed: true };
 
       const evidence = threatEngine.getRestrictionEvidence();
 

@@ -21,8 +21,7 @@ import {
 import { loadProfileName, getSessionProfile } from "./autonomy/profile-store.js";
 import { classifyToolRisk } from "./autonomy/risk.js";
 import { irreversibleToolReason } from "./irreversible-tools.js";
-import { hasCapability, TOOL_PATH_ARGS } from "./tool-registry.js";
-import { declaredPaths } from "./security/layer/runtime-state.js";
+import { declaredPaths, hasCapability, pathSpecsForCall, TOOL_PATH_ARGS } from "./tool-registry.js";
 import { declaredDestinations, destinationKey } from "./tool-execution/send-destinations.js";
 
 // Profile name cached 1s — same shape as the prior approvalMode cache.
@@ -185,14 +184,12 @@ export function computeArgsFingerprint(
   for (const [k, v] of Object.entries(args)) if (!k.startsWith("_")) scope[k] = v;
 
   const specs = TOOL_PATH_ARGS[tool] ?? [];
-  const action = String(args.action ?? "");
   const pathDirs = new Map<string, Set<string>>();
-  for (const spec of specs) {
+  for (const spec of pathSpecsForCall(tool, args)) {
     // An `each` arg is a list of records that carry more than paths (a batch's
     // task descriptions), and a malformed path value names no directory: both
     // count exactly, as does a path the call's action does not open.
     if (spec.each || args[spec.arg] === undefined) continue;
-    if (spec.forActions && !spec.forActions.includes(action)) continue;
     const paths = declaredPaths(args, spec);
     if (paths === null) continue;
     const dirs = pathDirs.get(spec.arg) ?? new Set<string>();
@@ -207,7 +204,7 @@ export function computeArgsFingerprint(
     scope.command = canonicalCommand(args.command);
   }
   const recipients = recipientsOf(tool, args);
-  if (recipients || hasCapability(tool, "workspace-write")) {
+  if (recipients || hasCapability(tool, "workspace-write", args)) {
     const kept = new Set(["action", ...specs.map((s) => s.arg)]);
     for (const k of Object.keys(scope)) if (!kept.has(k)) delete scope[k];
   }

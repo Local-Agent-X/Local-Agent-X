@@ -71,12 +71,11 @@ policy entry or kernel class, or a name in a prompt or table that isn't a
 tool, fails the build. The other steps are covered by the tests named.
 
 1. Define it under `src/tools/` and register it: `allTools` in `src/tools/registry-build.ts` for core file/retrieval tools, otherwise the owning plugin in `src/tools/plugins.ts` (memory, browser, secrets, agents, protocols, cron, apps, ...).
-2. Policy entry in the matching `src/tool-policy/tool-policies.<domain>.ts` (`core`, `network`, `memory`, `orchestration`, `apps`, `globs`). `tool-policies.data.ts` only merges them. The entry's `kernel` class decides whether Ari checks the tool at all; `pathArgs` names the args file-confinement must check; `offBoxFetch: true` must be mirrored in `EGRESS_TOOLS` (`capability-class-gates.test.ts`).
+2. Policy entry in the matching `src/tool-policy/tool-policies.<domain>.ts` (`core`, `network`, `memory`, `orchestration`, `apps`, `globs`). `tool-policies.data.ts` only merges them. The entry's `kernel` class decides whether Ari checks the tool at all; `capabilities` (required) says which sink classes it belongs to (`egress`, `sensitive-read`, `shell`, or `[]`), and every gate keys on that, never on the name; `pathArgs` names the args file-confinement must check, and which paths a call writes, which is what puts it in the workspace-write class; `offBoxFetch: true` requires `egress` (`capability-class-gates.test.ts`).
 3. `AUDIENCES_BY_TOOL` in `src/tools/audience-map.ts`, or the tool is deferred (reachable only by `tool_search`). Then `npm run docs:generated`.
 4. `ARI_ACTION_MAP` in `src/tool-execution/ari-action-map.ts` for `file` / `http` / `retrieval` kernel classes (`ari-action-map.test.ts`).
-5. Capability sets in `src/tool-registry.ts` as applicable: `EGRESS_TOOLS`, `SENSITIVE_READ_TOOLS`, `WORKSPACE_WRITE_TOOLS`, `SHELL_TOOLS`.
-6. If destructive: `src/tools/undo-pairs.ts` and `src/irreversible-tools.ts`. If publish-shaped: `src/publish-operation.ts`.
-7. If it reads `_sessionId` and has no policy `pathArgs` (those are stamped automatically): `SESSION_SCOPED_TOOLS` in `src/tool-execution/resolve-tool.ts`. Optional: `DEFAULT_TIMEOUTS` in `tool-timeout.ts` (fallback 120 s), `compactDescription` for small models.
+5. If destructive: `src/tools/undo-pairs.ts` and `src/irreversible-tools.ts`. If publish-shaped: `src/publish-operation.ts`.
+6. If it reads `_sessionId` and has no policy `pathArgs` (those are stamped automatically): `SESSION_SCOPED_TOOLS` in `src/tool-execution/resolve-tool.ts`. Optional: `DEFAULT_TIMEOUTS` in `tool-timeout.ts` (fallback 120 s), `compactDescription` for small models.
 
 ## When in doubt
 

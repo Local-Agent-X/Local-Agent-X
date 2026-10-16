@@ -49,7 +49,7 @@ export interface PreDispatchApprovalManager {
  *  optional; an absent field means "the real singleton, read at gate time". */
 export interface PreDispatchDeps {
   /** Session-scoped runtime toggle (src/session/policy.ts state). */
-  checkSessionPolicy?: (sessionId: string, toolName: string) => string | null;
+  checkSessionPolicy?: (sessionId: string, toolName: string, args?: Record<string, unknown>) => string | null;
   /** Kill-switches + local-only flag. Read PER CALL — config is hot-reloaded. */
   getRuntimeConfig?: () => PreDispatchRuntimeFlags;
   /** Strict local-only veto. The default preserves today's lazy dynamic import. */
@@ -66,7 +66,7 @@ export interface PreDispatchDeps {
   /** Session-scoped enforced-plan-mode state. */
   planModeForbidsCapability?: (sessionId: string, cls: CapabilityClass) => boolean;
   /** Tool-registry capability classification. */
-  hasCapability?: (toolName: string, cls: CapabilityClass) => boolean;
+  hasCapability?: (toolName: string, cls: CapabilityClass, args?: Record<string, unknown>) => boolean;
   /** Whether a call targets a secret/credential path — the scope of a
    *  user's "don't read my secrets" ban. */
   callReadsSensitivePath?: (toolName: string, args: Record<string, unknown>, sessionId: string) => boolean;

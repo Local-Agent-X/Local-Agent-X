@@ -358,7 +358,7 @@ describe("dispatchSingleToolCall reports the real envelope status (TD-7)", () =>
 });
 
 describe("canonical unattended shell capability gate", () => {
-  const SHELL_BACKENDS = ["bash", "shell", "process_start", "process_restart", "app_serve_backend", "app_serve_frontend"];
+  const SHELL_BACKENDS = ["bash", "process_start", "process_restart", "app_serve_backend", "app_serve_frontend"];
   let dataDir: string;
   let previousDataDir: string | undefined;
   let previousMode: string | undefined;
@@ -448,10 +448,10 @@ describe("canonical unattended shell capability gate", () => {
   }
 
   it("defaults omitted origin metadata to API even for a chat-style session id", async () => {
-    const execute = vi.fn(async (): Promise<ToolResult> => ({ content: "executed:shell" }));
-    const tool = { name: "shell", description: "", parameters: { type: "object", properties: {} }, execute } as unknown as ToolDefinition;
+    const execute = vi.fn(async (): Promise<ToolResult> => ({ content: "executed:bash" }));
+    const tool = { name: "bash", description: "", parameters: { type: "object", properties: {} }, execute } as unknown as ToolDefinition;
     const messages = await executeToolCalls(
-      [{ id: "default-api", name: "shell", arguments: JSON.stringify({ command: "echo ok" }) }],
+      [{ id: "default-api", name: "bash", arguments: JSON.stringify({ command: "echo ok" }) }],
       new Map([[tool.name, tool]]), undefined as never, undefined, undefined, undefined, undefined, "chat-style-forged",
     );
     expect(execute).not.toHaveBeenCalled();

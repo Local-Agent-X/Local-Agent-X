@@ -175,12 +175,12 @@ describe("auditPhase provenance recording", () => {
 });
 
 describe("auditPhase provenance — suppressed executions record nothing", () => {
-  it("dedup-cache reuse adds no record for a write that did not execute now", async () => {
-    // F2 regression: the office create-class families (spreadsheet et al.,
-    // unlike `write`) are NOT in DEDUP_SKIP, so a duplicated create within
-    // the TTL reuses the cached ok result and the dedup-position auditPhase
-    // re-runs in full. The reused result still reads "ok" — only the dedup
-    // phase knows nothing executed.
+  it("a file write is never served from the dedup cache, so no reused write can claim a record", async () => {
+    // The office create-class families (spreadsheet et al.) used to be outside
+    // DEDUP_SKIP, so a duplicated create within the TTL reused the cached ok
+    // result: "written" for a write that never ran. Every tool that writes
+    // files is in DEDUP_SKIP now (the workspace-write class, from each policy
+    // row's path specs), so the duplicate re-dispatches and nothing is reused.
     const target = join(dir, "report.xlsx");
     const args = { action: "write", file_path: target, sources: [{ url: "https://example.com/report" }] };
     const session = "prov-dedup-sess";
@@ -191,11 +191,8 @@ describe("auditPhase provenance — suppressed executions record nothing", () =>
       result: { content: "written", status: "ok" },
       resultContent: "written",
     });
-    const outcome = await dedupCheckPhase(ctx);
-    expect(outcome.kind).toBe("halt"); // a genuine reuse, not a miss
-    await auditPhase(ctx);
-    expect(readProvenance(target)).toEqual([]);
-    expect(sidecarDirExists()).toBe(false);
+    expect((await dedupCheckPhase(ctx)).kind).toBe("continue");
+    expect(ctx.resultReused).toBeUndefined();
   });
 
   it("journal replay re-dispatch keeps exactly one record for the toolCallId", async () => {

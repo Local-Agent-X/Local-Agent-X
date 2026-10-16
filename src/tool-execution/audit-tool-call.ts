@@ -16,7 +16,7 @@ import { budgetReadResult } from "./read-budget.js";
 import type { Phase, ToolCallContext } from "./context.js";
 import { CONTINUE } from "./context.js";
 import { carryBlockRecord } from "./block-record.js";
-import { buildDenyReason } from "../tool-policy/packs/threat-engine-pack.js";
+import { buildDenyReason, restrictedCall } from "../tool-policy/packs/threat-engine-pack.js";
 import { resolveContextWindow } from "../context-manager/model-windows.js";
 import { toolManifestTokens } from "../context-manager/request-fit.js";
 import { DEFAULT_MAX_RESULT_CHARS, toolResultCapChars } from "../context-manager/tool-result-cap.js";
@@ -124,27 +124,19 @@ function evaluateThreat(ctx: ToolCallContext): void {
       },
     };
   }
-  if (threatEngine.isRestricted() && ["http_request", "web_fetch", "browser"].includes(tc.name)) {
-    let isOwnApp = false;
-    if (tc.name === "browser") {
-      const urlArg = String(args.url || "");
-      const appPort = process.env.LAX_PORT ?? "7007";
-      if (new RegExp(`^https?://(127\\.0\\.0\\.1|localhost):${appPort}`, "i").test(urlArg)) {
-        isOwnApp = true;
-      }
-    }
-    if (!isOwnApp) {
-      const evidence = threatEngine.getRestrictionEvidence();
-      ctx.result = {
-        content: `BLOCKED: ${buildDenyReason(evidence)}`,
-        isError: true,
-        status: "blocked",
-        metadata: {
-          layer: "threat", userHint: USER_HINTS.threatRestricted,
-          recovery: "Outside calls are paused in this session by the threat monitor. Continue with work that does not need them, and tell the user what is waiting.",
-        },
-      };
-    }
+  // The turn the session turned restricted: withhold this call's result by the
+  // same rule the pre-dispatch pack refuses the next call with.
+  if (threatEngine.isRestricted() && restrictedCall(tc.name, args)) {
+    const evidence = threatEngine.getRestrictionEvidence();
+    ctx.result = {
+      content: `BLOCKED: ${buildDenyReason(evidence)}`,
+      isError: true,
+      status: "blocked",
+      metadata: {
+        layer: "threat", userHint: USER_HINTS.threatRestricted,
+        recovery: "Outside calls are paused in this session by the threat monitor. Continue with work that does not need them, and tell the user what is waiting.",
+      },
+    };
   }
 }
 

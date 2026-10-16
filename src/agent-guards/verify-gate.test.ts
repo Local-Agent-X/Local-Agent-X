@@ -17,9 +17,9 @@ import {
 // agnostic to any one project or rename; it fires on the EVIDENCE of an
 // unverified or failing edit, whatever the task.
 
-const edit = (filePath: string): VerifyTurnAction => ({ tool: "edit", filePath });
+const edit = (filePath: string): VerifyTurnAction => ({ tool: "edit", writes: [filePath] });
 const bash = (command: string, status: "ok" | "error" | "blocked" | "timeout"): VerifyTurnAction => ({ tool: "bash", command, status });
-const del = (filePath: string): VerifyTurnAction => ({ tool: "delete_file", filePath });
+const del = (filePath: string): VerifyTurnAction => ({ tool: "delete_file", deletes: [filePath] });
 
 describe("isSourceFile — which extensions demand a verify", () => {
   it("flags compiled/checked languages, not pure data files", () => {
@@ -53,7 +53,7 @@ describe("checkVerifyGate — edited but never verified", () => {
 
   it("does not fire on a pure-conversation turn (no source edit)", () => {
     const s = createVerifyGateState();
-    noteVerifyEvidence([{ tool: "read", filePath: "src/x.ts" }, bash("ls", "ok")], s);
+    noteVerifyEvidence([{ tool: "read" }, bash("ls", "ok")], s);
     expect(checkVerifyGate(s).nudge).toBeNull();
     expect(opEditedSourceUnverified(s)).toBe(false);
   });
@@ -361,7 +361,7 @@ describe("decideDeletedTest — nudge/label from the judge verdict", () => {
 describe("editedPaths — what the orchestrator build-verify gate locates the project from", () => {
   it("records distinct edited source paths in order, ignoring data files and reads", () => {
     const s = createVerifyGateState();
-    noteVerifyEvidence([edit("src/a.ts"), { tool: "read", filePath: "src/z.ts" }, edit("README.md")], s);
+    noteVerifyEvidence([edit("src/a.ts"), { tool: "read" }, edit("README.md")], s);
     noteVerifyEvidence([edit("src/b.ts"), edit("src/a.ts")], s); // a.ts repeat is deduped
     expect(s.editedPaths).toEqual(["src/a.ts", "src/b.ts"]);
   });

@@ -38,6 +38,7 @@ import {
 } from "./post-edit-diagnostics.js";
 import { classifyTestDeletion } from "../../classifiers/test-deletion-classify.js";
 import { resolveAgentPath } from "../../workspace/paths.js";
+import { callPaths } from "../../tool-registry.js";
 import { capabilityForbiddenForOp } from "../instruction-ledger/index.js";
 
 /**
@@ -161,13 +162,11 @@ function buildActions(
   const statusById = new Map(toolResults.map(tr => [tr.toolCallId, tr.status]));
   return toolCalls.map(tc => {
     const args = (tc.args ?? {}) as Record<string, unknown>;
-    const filePath =
-      typeof args.file_path === "string" ? args.file_path
-      : typeof args.path === "string" ? args.path
-      : undefined;
+    const { writes, deletes } = callPaths(tc.tool, args);
     return {
       tool: tc.tool,
-      filePath,
+      writes,
+      deletes,
       command: typeof args.command === "string" ? args.command : undefined,
       status: statusById.get(tc.toolCallId),
     };

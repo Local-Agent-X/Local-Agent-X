@@ -24,6 +24,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { hasCapability } from "../tool-registry.js";
+import { TOOL_POLICIES } from "../tool-policy/tool-policies.js";
 
 describe("in-app browser stays egress-tainted (G1 regression)", () => {
 	it("the `browser` tool is an egress sink regardless of backend", () => {
@@ -33,12 +34,15 @@ describe("in-app browser stays egress-tainted (G1 regression)", () => {
 		expect(hasCapability("browser", "egress")).toBe(true);
 	});
 
-	it("the `browser_navigate` synonym is egress-tainted (prefix rule)", () => {
-		// An in-app navigate ships a URL to a remote host exactly like CDP; the
-		// browser_* prefix rule folds the sub-action into the egress class so the
-		// "authed read → navigate to attacker host with data in URL" exfil is
-		// still gated after the backend swap.
-		expect(hasCapability("browser_navigate", "egress")).toBe(true);
+	it("navigation is an action of the egress-class `browser` tool, not a name a prefix rule must catch", () => {
+		// An in-app navigate ships a URL to a remote host exactly like CDP. It is
+		// `browser` with action "navigate", so the "authed read → navigate to
+		// attacker host with data in URL" exfil is gated by `browser`'s own row.
+		// The only registered browser_* tools are the vault fills, whose value
+		// never enters the model's context: their rows declare no egress.
+		const browserTools = Object.keys(TOOL_POLICIES).filter((name) => name.startsWith("browser_")).sort();
+		expect(browserTools).toEqual(["browser_capture_to_secret", "browser_fill_from_secret"]);
+		for (const name of browserTools) expect(hasCapability(name, "egress"), name).toBe(false);
 	});
 
 	it("vault-only browser sub-tools remain NON-egress (value never enters model context)", () => {

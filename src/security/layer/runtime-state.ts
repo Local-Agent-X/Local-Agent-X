@@ -10,44 +10,6 @@ export interface SecurityRuntimeIdentity {
   allowedPaths: Array<{ sessionId: string; path: string }>;
 }
 
-/** The paths a declared path arg carries: one string, a real array of
- *  strings, or (json) a JSON-array string. Returns null when an array holds a
- *  non-string element — the caller fails closed, since a value the gate cannot
- *  read as a path must not reach the tool as one. A json arg whose string is
- *  not a JSON array is gated as the one path it spells: generate_video treats
- *  a bare string as a single reference, so skipping it would skip the read. */
-export function pathArgPaths(raw: unknown, json?: boolean): string[] | null {
-  if (Array.isArray(raw)) return raw.every((x): x is string => typeof x === "string") ? raw : null;
-  if (typeof raw !== "string" || raw.length === 0) return [];
-  if (!json) return [raw];
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return [raw];
-  }
-  return Array.isArray(parsed) ? pathArgPaths(parsed) : [raw];
-}
-
-/** Every path one PathArgSpec names in a call's args, or null when a value
- *  cannot be read as paths (fail closed). `each` specs read the path off every
- *  element of an array-of-objects arg (op_submit_batch.tasks[].context_files);
- *  an element that is not an object fails closed too. */
-export function declaredPaths(args: Record<string, unknown>, spec: PathArgSpec): string[] | null {
-  const raw = args[spec.arg];
-  if (!spec.each) return pathArgPaths(raw, spec.json);
-  if (raw === undefined || raw === null) return [];
-  if (!Array.isArray(raw)) return null;
-  const out: string[] = [];
-  for (const item of raw) {
-    if (!item || typeof item !== "object" || Array.isArray(item)) return null;
-    const paths = pathArgPaths((item as Record<string, unknown>)[spec.each], spec.json);
-    if (paths === null) return null;
-    out.push(...paths);
-  }
-  return out;
-}
-
 export function snapshotSecurityRuntime(
   workspace: string,
   fileAccessMode: FileAccessMode,

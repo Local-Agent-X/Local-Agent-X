@@ -41,7 +41,7 @@ describe("derivability: a proposal must name what the agent could not have deriv
     expect(derivabilityProblem({ kind: "external_string", detail: "git push origin master" }, pushBody, LOCAL_RUN)).toContain("never called a tool that reaches one");
     expect(derivabilityProblem({ kind: "precondition", detail: "git push origin master" }, pushBody, LOCAL_RUN)).toContain("never called a tool that reaches one");
     expect(derivabilityProblem({ kind: "external_string", detail: "git push origin master" }, pushBody, ["bash", "http_request", "read", "bash"])).toBeNull();
-    expect(derivabilityProblem({ kind: "external_string", detail: "git push origin master" }, pushBody, ["bash", "browser_navigate", "read", "bash"])).toBeNull();
+    expect(derivabilityProblem({ kind: "external_string", detail: "git push origin master" }, pushBody, ["bash", "browser", "read", "bash"])).toBeNull();
   });
 
   it("still lets a local-only run record a pitfall or a user correction", () => {

@@ -50,7 +50,7 @@ function ctxFor(
 function editTurn(op: string, file: string) {
   return verifyGateMiddleware.afterToolExecution!(
     ctxFor(op, {
-      toolCalls: [{ toolCallId: "e1", tool: "edit", args: { file_path: file } }],
+      toolCalls: [{ toolCallId: "e1", tool: "edit", args: { path: file } }],
       toolResults: [{ toolCallId: "e1", toolName: "edit", content: "ok", status: "ok" }],
     } as Partial<CanonicalLoopContext>),
   );

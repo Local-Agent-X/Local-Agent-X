@@ -5,7 +5,6 @@ import { USER_HINTS } from "../../types.js";
 import {
   CONTEXT_RESTRICTED_TOOLS,
   WORKER_CONTEXTS,
-  WORKTREE_REQUIRED_TOOLS,
   type FileAccessMode,
   type InlineEvalPolicy,
   type ToolCallContext,
@@ -16,12 +15,12 @@ import { getSandboxStatus } from "../../sandbox/index.js";
 import { evaluateWebFetch, validateUrlWithDns } from "./network-policy.js";
 import { evaluateBrowser as evaluateBrowserAction } from "./browser-egress-eval.js";
 import { kernelClassForTool } from "../../ari-kernel/tool-class-map.js";
-import { TOOL_PATH_ARGS, type KernelClass, type PathArgSpec } from "../../tool-registry.js";
+import { TOOL_PATH_ARGS, declaredPaths, hasCapability, pathSpecsForCall, type KernelClass, type PathArgSpec } from "../../tool-registry.js";
 import { sessionWorkRootOf } from "../../workspace/paths.js";
 import { evaluateByKernelClass as evaluateKernelClassPolicy } from "./kernel-class-policy.js";
 import { loadLocalServicePorts, liveLocalServicePorts, loadFileAccessMode, loadInlineEvalPolicy, manualRuntimeHostPorts } from "./security-config.js";
 import { EgressPolicyState, updateSecurityJson } from "./egress-policy-state.js";
-import { declaredPaths, fingerprintSecurityPolicy, restoreSecurityAllowedPaths, snapshotSecurityRuntime, type SecurityRuntimeIdentity } from "./runtime-state.js";
+import { fingerprintSecurityPolicy, restoreSecurityAllowedPaths, snapshotSecurityRuntime, type SecurityRuntimeIdentity } from "./runtime-state.js";
 import { evaluateDelegatedWorktreeGate } from "./delegated-worktree-gate.js";
 
 import { createLogger } from "../../logger.js";
@@ -202,8 +201,8 @@ export class SecurityLayer {
     // A worker run (delegated agent or scheduled job) modifying repo SOURCE (or
     // running an uncontained shell) must be worktree-isolated; user-content
     // writes and doubly-contained shells pass through. Full rationale lives in
-    // the extracted gate.
-    if (WORKER_CONTEXTS.has(callCtx) && WORKTREE_REQUIRED_TOOLS.has(toolName)) {
+    // the extracted gate. Judged per call: a spreadsheet read writes nothing.
+    if (WORKER_CONTEXTS.has(callCtx) && (hasCapability(toolName, "shell") || hasCapability(toolName, "workspace-write", args))) {
       const blocked = evaluateDelegatedWorktreeGate(ctx, {
         hasSessionWorktree: (s) => this.hasSessionWorktree(s),
         delegatedShellOsContained: (s) => this.delegatedShellOsContained(s),
@@ -308,7 +307,7 @@ export class SecurityLayer {
           userHint: USER_HINTS.policy,
         };
       }
-      applicable = specs.filter((s) => !s.forActions || s.forActions.includes(action));
+      applicable = pathSpecsForCall(ctx.toolName, args);
     }
     for (const spec of applicable) {
       const paths = declaredPaths(args, spec);

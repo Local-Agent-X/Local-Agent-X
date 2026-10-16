@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { isSourceKind } from "./data-access.js";
 import { ToolChainAnalyzer } from "./tool-chain.js";
-import { CAPABILITY_CLASS_MEMBERS, hasCapability } from "../tool-registry.js";
+import { CAPABILITY_CLASS_MEMBERS, hasCapability, pathSpecsForCall } from "../tool-registry.js";
 import type { DataClassification } from "./classification.js";
 
 const clean: DataClassification = { labels: [], confidence: 0 };
@@ -29,19 +29,22 @@ describe("ToolChainAnalyzer — every capability-class member has a role", () =>
     expect(type !== undefined && isSourceKind(type), `${tool} → ${type}`).toBe(true);
   });
 
-  it.each(CAPABILITY_CLASS_MEMBERS["workspace-write"].filter((t) => !hasCapability(t, "sensitive-read")))(
+  // A write as the tool makes one: its first write spec's arg, under that
+  // spec's action for a collapsed family. Egress and sensitive-read members
+  // take those roles first (the cases above).
+  const writeCall = (tool: string): Record<string, unknown> => {
+    const spec = pathSpecsForCall(tool).find((s) => s.action !== "read")!;
+    return { ...(spec.forActions ? { action: spec.forActions[0] } : {}), [spec.arg]: "notes.md" };
+  };
+  it.each(CAPABILITY_CLASS_MEMBERS["workspace-write"].filter((t) => !hasCapability(t, "sensitive-read") && !hasCapability(t, "egress")))(
     "workspace-write %s is a write",
     (tool) => {
-      expect(recorded(tool, { path: "notes.md" })?.type).toBe("file_write");
+      expect(recorded(tool, writeCall(tool))?.type).toBe("file_write");
     },
   );
 
   it.each(CAPABILITY_CLASS_MEMBERS.shell.filter((t) => !hasCapability(t, "egress")))("shell %s is a shell source", (tool) => {
     expect(recorded(tool, { command: "ls" })?.type).toBe("shell");
-  });
-
-  it("the browser_* family is a sink by prefix", () => {
-    expect(recorded("browser_navigate", { url: "https://example.com/" })?.type).toBe("browser_navigate");
   });
 
   it("ari_file is a read or a write by the action its path spec opens", () => {

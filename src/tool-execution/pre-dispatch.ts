@@ -123,7 +123,7 @@ export async function assertToolCallAllowed(
 
   // Per-session gate (not a rule pack — session-scoped runtime toggle).
   if (!ctx.skipSessionPolicy) {
-    const sessionBlock = d.checkSessionPolicy(ctx.sessionId, call.name);
+    const sessionBlock = d.checkSessionPolicy(ctx.sessionId, call.name, call.args as Record<string, unknown>);
     if (sessionBlock) throw new ToolBlocked({ stage: "session-policy", reason: sessionBlock });
   }
 
@@ -214,7 +214,7 @@ export async function assertToolCallAllowed(
   {
     for (const { cls, verb, recovery } of OP_PROHIBITION_GUIDANCE) {
       if (!capForbidden(cls)) continue;
-      if (!d.hasCapability(call.name, cls)) continue;
+      if (!d.hasCapability(call.name, cls, call.args as Record<string, unknown>)) continue;
       // A user's sensitive-read ban names secrets, credentials, keys — never
       // every read. Class-wide, "keep credential files off-limits" hard-denied
       // read/grep/bash on a delegated release's own repo. Plan mode's rule

@@ -15,7 +15,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { dataLineageGate, egressGuardGate, canaryEgressGate } from "./enforce-policy.js";
-import { hasCapability, WORKTREE_PATH_TOOLS, CAPABILITY_CLASS_MEMBERS, TOOLS, validateCapabilitySets } from "../tool-registry.js";
+import { hasCapability, pathSpecsForCall, CAPABILITY_CLASS_MEMBERS, TOOLS, validateCapabilitySets } from "../tool-registry.js";
 import { TOOL_POLICIES } from "../tool-policy/tool-policies.js";
 import { getAllTools } from "../tools/registry-build.js";
 import { WORKTREE_REQUIRED_TOOLS } from "../security/layer/index.js";
@@ -27,7 +27,7 @@ import { makeCtx } from "./capability-class-gates.test-helper.js";
 
 describe("capability-class membership (single source of truth)", () => {
   it("egress class covers canonical http AND every synonym", () => {
-    for (const t of ["http_request", "web_fetch", "ari_http", "email_send", "clipboard_write", "process_start", "process_restart", "browser", "browser_navigate"]) {
+    for (const t of ["http_request", "web_fetch", "ari_http", "email_send", "clipboard_write", "process_start", "process_restart", "browser"]) {
       expect(hasCapability(t, "egress")).toBe(true);
     }
     // vault-only browser sub-tools are NOT egress (value never enters context).
@@ -43,8 +43,8 @@ describe("capability-class membership (single source of truth)", () => {
   });
 
   it("sensitive-read class covers canonical AND synonyms", () => {
-    for (const t of ["read", "bash", "sql_query", "ari_file", "email_read", "memory_search", "grep", "glob", "ari_retrieval", "ari_database", "ari_sqlite"]) {
-      expect(hasCapability(t, "sensitive-read")).toBe(true);
+    for (const t of ["read", "bash", "sql_query", "ari_file", "email_read", "email_search", "memory_search", "grep", "glob", "ari_retrieval", "ari_database", "ari_sqlite"]) {
+      expect(hasCapability(t, "sensitive-read"), t).toBe(true);
     }
     expect(hasCapability("http_request", "sensitive-read")).toBe(false);
   });
@@ -66,70 +66,62 @@ describe("capability-class membership (single source of truth)", () => {
     // (the same family resolve-tool's protected-files gate keys on). Left out
     // of the class, a workspace-write ban (op ledger or enforced plan mode)
     // blocked `edit` but not `edit_lines` — fail-open under another spelling.
-    for (const t of ["write", "edit", "ari_file", "edit_lines", "multi_edit", "delete_file"]) {
-      expect(hasCapability(t, "workspace-write")).toBe(true);
+    for (const t of ["write", "edit", "ari_file", "edit_lines", "multi_edit", "bulk_replace", "delete_file", "restore_file"]) {
+      expect(hasCapability(t, "workspace-write"), t).toBe(true);
     }
     expect(hasCapability("read", "workspace-write")).toBe(false);
   });
 
-  it("worktree path tools + WORKTREE_REQUIRED include ari_file", () => {
-    expect(WORKTREE_PATH_TOOLS.has("ari_file")).toBe(true);
-    for (const t of ["read", "write", "edit", "glob", "grep"]) expect(WORKTREE_PATH_TOOLS.has(t)).toBe(true);
-    // WORKTREE_REQUIRED_TOOLS: canonical preserved + synonyms added.
-    for (const t of ["write", "edit", "bash", "ari_file", "process_start", "process_restart", "app_serve_backend", "app_serve_frontend"]) {
-      expect(WORKTREE_REQUIRED_TOOLS.has(t)).toBe(true);
+  it("workspace-write is read off each row's path specs: every tool that writes at a declared path is in it, nothing else", () => {
+    const writers = Object.entries(TOOL_POLICIES)
+      .filter(([, row]) => (row.pathArgs ?? []).some((spec) => spec.action !== "read"))
+      .map(([name]) => name).sort();
+    expect([...CAPABILITY_CLASS_MEMBERS["workspace-write"]].sort()).toEqual(writers);
+    // The document and generator tools write files too; a "don't edit files"
+    // ban or the read-only preset used to let them through.
+    for (const t of ["spreadsheet", "document", "presentation", "pdf", "create_chart", "finalize_app_build", "extract_site_assets"]) {
+      expect(writers, t).toContain(t);
     }
   });
 
-  it("shell class covers every canonical shell-exec backend", () => {
-    for (const t of ["bash", "shell", "process_start", "process_restart", "app_serve_backend", "app_serve_frontend"]) {
+  it("with the call's args the class answers for THAT call: a collapsed family's read writes nothing", () => {
+    expect(hasCapability("spreadsheet", "workspace-write", { action: "write", file_path: "a.xlsx" })).toBe(true);
+    expect(hasCapability("spreadsheet", "workspace-write", { action: "read", file_path: "a.xlsx" })).toBe(false);
+    expect(hasCapability("ari_file", "workspace-write", { action: "write", path: "a" })).toBe(true);
+    expect(hasCapability("ari_file", "workspace-write", { action: "read", path: "a" })).toBe(false);
+    expect(hasCapability("document", "workspace-write", { action: "template", template_path: "t.docx", output_path: "o.docx" })).toBe(true);
+    expect(hasCapability("write", "workspace-write", { path: "a" })).toBe(true);
+    expect(pathSpecsForCall("spreadsheet", { action: "read" }).map((spec) => spec.action)).toEqual(["read"]);
+  });
+
+  it("WORKTREE_REQUIRED is the write and shell classes", () => {
+    expect([...WORKTREE_REQUIRED_TOOLS].sort()).toEqual([...new Set([...CAPABILITY_CLASS_MEMBERS["workspace-write"], ...CAPABILITY_CLASS_MEMBERS.shell])].sort());
+    for (const t of ["write", "edit", "bash", "ari_file", "process_start", "process_restart", "app_serve_backend", "app_serve_frontend", "android"]) {
+      expect(WORKTREE_REQUIRED_TOOLS.has(t), t).toBe(true);
+    }
+  });
+
+  it("shell class covers every shell-exec backend", () => {
+    for (const t of ["bash", "process_start", "process_restart", "app_serve_backend", "app_serve_frontend", "app_rebuild", "android"]) {
       expect(hasCapability(t, "shell"), t).toBe(true);
     }
   });
 });
 
-describe("name-drift guard — every capability-set member resolves to a real tool", () => {
+describe("name-drift guard — class membership is each tool's own policy row", () => {
   // The ROOT cause behind H1/L1 (egress sinks left OUT of EGRESS_TOOLS → gates
   // fail OPEN) and L2 (ari_sqlite_database vs ari_sqlite → policy projection
-  // fails CLOSED) is silent NAME DRIFT: a capability set names a tool the
-  // registry doesn't know, or the registry renames a tool and a set is left
-  // stale. This test makes either direction a build failure.
-  //
-  // Canonical name authority = the unified policy table (TOOL_POLICIES). Every
-  // concrete tool the kernel/security pipeline knows about is a key there
-  // (deriveTools → TOOLS); the ari_* kernel-bridge synonyms live there too.
-  // (getAllTools() is only the statically-bundled core — agent_*/memory_*/
-  // mission_schedule_*/app_*/browser etc. are registered through runtime/bridge paths —
-  // so it is NOT the right ground truth; the policy table is.)
+  // fails CLOSED) was silent NAME DRIFT between hand-kept class lists and the
+  // tools that exist. Membership is now read off the rows themselves, so a
+  // class can only name a tool that has a row.
   const POLICY_KEYS = new Set(Object.keys(TOOL_POLICIES));
 
-  // Bare model-synonyms that are intentionally NOT policy-table keys: the loop's
-  // tool-call text-extractor maps these aliases onto a real sink at dispatch,
-  // and the capability sets list them so the alias is gated like its canonical.
-  // Whitelist them EXPLICITLY — kept minimal and justified — so a genuinely
-  // drifted name (e.g. a typo'd egress tool) still fails.
-  const SYNONYM_ALIASES = new Set<string>([
-    "shell", // model alias for `bash` (canonical-loop/adapters/tool-call-text-extractor.ts)
-  ]);
-
-  function isResolvable(name: string): boolean {
-    if (POLICY_KEYS.has(name)) return true;
-    if (SYNONYM_ALIASES.has(name)) return true;
-    // browser_* sub-actions are gated by prefix (hasCapability) and dispatched
-    // through the `browser` tool (a policy key); the two vault sub-tools have
-    // their own policy entries.
-    if (name.startsWith("browser_")) return true;
-    return false;
-  }
-
-  it("every capability-class member resolves to a policy-table tool or whitelisted synonym", () => {
-    const orphans: string[] = [];
+  it("every capability-class member is a policy-table tool, and every tool row says which classes it is in", () => {
     for (const [cls, members] of Object.entries(CAPABILITY_CLASS_MEMBERS)) {
-      for (const name of members) {
-        if (!isResolvable(name)) orphans.push(`${cls}:${name}`);
-      }
+      expect(members.filter((name) => !POLICY_KEYS.has(name)), cls).toEqual([]);
     }
-    expect(orphans, `capability-set members with no resolvable tool: ${orphans.join(", ")}`).toEqual([]);
+    const undeclared = Object.entries(TOOL_POLICIES).filter(([, row]) => row.kernel && !Array.isArray(row.capabilities)).map(([name]) => name);
+    expect(undeclared, "tool rows without `capabilities`").toEqual([]);
   });
 
   it("ari_sqlite is the canonical SQLite-bridge spelling (regression: NOT ari_sqlite_database)", () => {
@@ -150,13 +142,12 @@ describe("name-drift guard — every capability-set member resolves to a real to
     expect(registered.has("youtube_analyze")).toBe(true);
   });
 
-  it("every off-box-fetch tool (policy.offBoxFetch) is enrolled in EGRESS_TOOLS (regression: C3-4/C3-11/C3-22)", () => {
-    // The egress capability class is hand-maintained; an off-box network sink
-    // left OUT of it skips the taint floor, secret scan, AND the canary
-    // tripwire (the three gates early-return CONTINUE for non-members). This
-    // invariant ties the class to the per-tool `offBoxFetch` mark so marking a
-    // tool off-box but forgetting to enroll it FAILS the build instead of
-    // silently re-opening the exfil channel.
+  it("every off-box-fetch tool (policy.offBoxFetch) declares egress (regression: C3-4/C3-11/C3-22)", () => {
+    // An off-box network sink left OUT of the egress class skips the taint
+    // floor, secret scan, AND the canary tripwire (the three gates early-return
+    // CONTINUE for non-members). This invariant ties the class to the per-tool
+    // `offBoxFetch` mark so marking a tool off-box without declaring egress
+    // FAILS the build instead of silently re-opening the exfil channel.
     const egress = new Set(CAPABILITY_CLASS_MEMBERS.egress);
     const offBox = Object.entries(TOOL_POLICIES)
       .filter(([, entry]) => entry.offBoxFetch === true)
@@ -167,7 +158,7 @@ describe("name-drift guard — every capability-set member resolves to a real to
       expect(offBox, `${t} must carry offBoxFetch:true in the policy table`).toContain(t);
     }
     const unenrolled = offBox.filter(name => !egress.has(name));
-    expect(unenrolled, `offBoxFetch tools missing from EGRESS_TOOLS: ${unenrolled.join(", ")}`).toEqual([]);
+    expect(unenrolled, `offBoxFetch tools that do not declare egress: ${unenrolled.join(", ")}`).toEqual([]);
   });
 
   it("every tool whose OUTPUT the bridge forwards off-box (_image/_media) is egress-class (regression: R4-12b)", () => {
@@ -202,7 +193,7 @@ describe("dataLineageGate keys on egress class (not just http_request)", () => {
   });
 
   it("blocks ALL egress-class sinks when the session is tainted", () => {
-    for (const name of ["http_request", "ari_http", "email_send", "clipboard_write", "process_start", "browser_navigate"]) {
+    for (const name of ["http_request", "ari_http", "email_send", "clipboard_write", "process_start", "browser"]) {
       const ctx = makeCtx(name, {}, sessionId);
       const outcome = dataLineageGate(ctx);
       expect(outcome.kind).toBe("halt");

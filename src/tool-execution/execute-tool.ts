@@ -21,7 +21,7 @@ import { runSandboxedPhase } from "./run-sandboxed.js";
 import { attachPublishReviewNote } from "./publish-review-gate.js";
 import { auditPhase } from "./audit-tool-call.js";
 import { resultFromRendered } from "../tools/result-helpers.js";
-import { hasCapability, WORKTREE_PATH_TOOLS } from "../tool-registry.js";
+import { hasCapability, pathSpecsForCall } from "../tool-registry.js";
 import { createLogger } from "../logger.js";
 import {
   heapRefusalResult, isHeapGuardExempt, maxParallelToolBatch, newHeapGuardTurn, sampleHeapPressure, shouldRefuseToolCall,
@@ -196,15 +196,15 @@ function isParallelSafe(t: ToolDefinition | undefined): boolean {
 // Splitting the two classes into separate sequential batches preserves call
 // order, so the read completes (and taints) before the egress tool runs.
 //
-// "Path-reading" includes the worktree path tools (read/glob/grep/...) even
-// though some carry no sensitive-read capability label, because a read of a
-// sensitive PATH taints from args in the sandbox phase regardless of the
+// "Path-reading" is any tool that reads at a declared path argument (its policy
+// pathArgs), whether or not it carries the sensitive-read class, because a read
+// of a sensitive PATH taints from args in the sandbox phase regardless of the
 // tool's class — so it, too, must not co-batch with an egress tool.
 function isEgressClass(name: string): boolean {
   return hasCapability(name, "egress");
 }
 function isReadClass(name: string): boolean {
-  return hasCapability(name, "sensitive-read") || WORKTREE_PATH_TOOLS.has(name);
+  return hasCapability(name, "sensitive-read") || pathSpecsForCall(name).some((spec) => spec.action === "read");
 }
 
 // Can `candidate` join a parallel batch that already contains `members`

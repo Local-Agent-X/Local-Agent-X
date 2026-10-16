@@ -11,7 +11,7 @@
 // and the file to edit.
 //
 // Tables with their own forward checks, not repeated here: Ari action map
-// (ari-action-map.test.ts), EGRESS_TOOLS ⇔ offBoxFetch
+// (ari-action-map.test.ts), offBoxFetch ⇒ egress
 // (capability-class-gates.test.ts), the write family (write-family-drift),
 // session-scoped `_sessionId` readers (session-scoped-tools.test.ts).
 //
@@ -150,7 +150,7 @@ describe("every tool whose defining file reaches the network is an off-box sink"
     expect(
       missing,
       `tools defined in a file that fetches or opens sockets without offBoxFetch: ${missing.join(", ")} — set offBoxFetch: true on the ` +
-        `policy entry and enroll the tool in EGRESS_TOOLS (src/tool-registry.ts), or add it to EGRESS_EXEMPT here with the reason`,
+        `policy row and declare "egress" in its capabilities, or add it to EGRESS_EXEMPT here with the reason`,
     ).toEqual([]);
   });
 

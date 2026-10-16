@@ -49,7 +49,7 @@ import { setAriRequired } from "../../ari-kernel/state.js";
 import {
   CAPABILITY_CLASS_MEMBERS,
   hasCapability,
-  WORKTREE_PATH_TOOLS,
+  pathSpecsForCall,
 } from "../../tool-registry.js";
 import { allTools } from "../../tools/registry-build.js";
 import { webFetchTool } from "../../tools/web-fetch.js";
@@ -239,12 +239,12 @@ describe("cross-seam behavior — dispatchTools batch lane through the real R4-0
     // isParallelSafe they are batchable — so ONLY isBatchCompatible's
     // read×egress split keeps them sequential. Fixture class membership is
     // taken from the REAL registry sets via the names:
-    //   "glob"                   → read-class (WORKTREE_PATH_TOOLS + sensitive-read)
-    //   "browser_probe_contract" → egress-class (browser_* prefix rule)
+    //   "glob"      → read-class (reads at its declared path + sensitive-read)
+    //   "web_fetch" → egress-class (its policy row declares egress)
     // Sanity-anchor that resolution so a registry rename fails HERE loudly
     // instead of silently turning this test vacuous:
-    expect(WORKTREE_PATH_TOOLS.has("glob")).toBe(true);
-    expect(hasCapability("browser_probe_contract", "egress")).toBe(true);
+    expect(pathSpecsForCall("glob").some((spec) => spec.action === "read")).toBe(true);
+    expect(hasCapability("web_fetch", "egress")).toBe(true);
 
     // Deferred-promise gate, INVERTED from the overlap test: the ingest tool
     // parks on a gate that only the egress tool's START can release (plus a
@@ -275,7 +275,7 @@ describe("cross-seam behavior — dispatchTools batch lane through the real R4-0
       ingestDone = true;
       return { content: "INGEST_DONE", isError: false };
     }, { readOnly: true });
-    const egress = fakeTool("browser_probe_contract", async () => {
+    const egress = fakeTool("web_fetch", async () => {
       egressStartedBeforeIngestDone = !ingestDone;
       releaseGate();
       return { content: "EGRESS_DONE", isError: false };
@@ -284,7 +284,7 @@ describe("cross-seam behavior — dispatchTools batch lane through the real R4-0
     registerChatDispatcher(opId, [ingest, egress]);
     const out = await dispatchTools(opId, 0, [
       call("c-ingest", "glob"),
-      call("c-egress", "browser_probe_contract"),
+      call("c-egress", "web_fetch"),
     ]);
 
     expect(coBatched).toBe(false); // never in one Promise.all
@@ -303,8 +303,8 @@ describe("cross-seam behavior — dispatchTools batch lane through the real R4-0
     // so isBatchCompatible must let them share one Promise.all. If the
     // batcher serialized them, tool A would sit on its gate until the 1500ms
     // escape fires, flagging serialized=true → red.
-    expect(WORKTREE_PATH_TOOLS.has("grep")).toBe(true);
-    expect(WORKTREE_PATH_TOOLS.has("structural_search")).toBe(true);
+    expect(pathSpecsForCall("grep").some((spec) => spec.action === "read")).toBe(true);
+    expect(pathSpecsForCall("structural_search").some((spec) => spec.action === "read")).toBe(true);
 
     const opId = trackOp(freshOpId());
     let releaseGate!: () => void;

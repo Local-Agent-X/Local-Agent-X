@@ -8,8 +8,7 @@
 
 import type { DataClassification } from "./classification.js";
 import { isSensitivePath, sensitivePathsReadByCommand } from "../data-lineage/index.js";
-import { hasCapability, TOOL_PATH_ARGS } from "../tool-registry.js";
-import { declaredPaths } from "../security/layer/runtime-state.js";
+import { callPaths, hasCapability, TOOL_PATH_ARGS } from "../tool-registry.js";
 
 /** The kinds of source an exfil pattern is attributed to (and the trust
  *  ledger's fingerprint prefix): a read that names a path, a shell command,
@@ -36,16 +35,10 @@ export function isAccessType(type: string): boolean {
 }
 
 /** The paths this call names under its declared path args, split by whether
- *  the spec opens them for reading. Action-scoped specs (ari_file) count only
- *  for the call's own action. */
+ *  the call opens them for reading or changes them (a delete is a write here). */
 function declaredCallPaths(toolName: string, args: Record<string, unknown>): { reads: string[]; writes: string[] } {
-  const action = String(args.action ?? "");
-  const out = { reads: [] as string[], writes: [] as string[] };
-  for (const spec of TOOL_PATH_ARGS[toolName] ?? []) {
-    if (spec.forActions && !spec.forActions.includes(action)) continue;
-    (spec.action === "read" ? out.reads : out.writes).push(...(declaredPaths(args, spec) ?? []));
-  }
-  return out;
+  const { reads, writes, deletes } = callPaths(toolName, args);
+  return { reads, writes: [...writes, ...deletes] };
 }
 
 /** Does a shell command READ sensitive data? A credential-file operand of a
@@ -84,7 +77,7 @@ export function classifyAccess(
     }
     return { type: "record_read", target: toolName, sensitive: true, timestamp };
   }
-  if (hasCapability(toolName, "workspace-write")) {
+  if (hasCapability(toolName, "workspace-write", args)) {
     return { type: "file_write", target: paths.writes[0] ?? toolName, sensitive: contentSensitive, timestamp };
   }
   return null;

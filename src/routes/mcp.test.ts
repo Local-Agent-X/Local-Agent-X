@@ -55,12 +55,12 @@ describe("MCP call-context provenance", () => {
   it("forces API privileges even when the body supplies a chat-style session id", async () => {
     const execute = vi.fn(async (): Promise<ToolResult> => ({ content: "SHELL_EXECUTED" }));
     const shell = {
-      name: "shell",
+      name: "bash",
       description: "test shell alias",
       parameters: { type: "object", properties: { command: { type: "string" } } },
       execute,
     } as unknown as ToolDefinition;
-    const req = makeReq({ name: "shell", arguments: { command: "echo ok" }, sessionId: "chat-user-session" });
+    const req = makeReq({ name: "bash", arguments: { command: "echo ok" }, sessionId: "chat-user-session" });
     const res = makeRes();
     const ctx = {
       allAgentTools: [shell],

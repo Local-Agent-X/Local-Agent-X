@@ -23,7 +23,7 @@ import { getSessionForOp } from "../../ops/session-bridge.js";
 import { getOpenTasksForSession } from "../../tools/task-tools.js";
 import { readOpTurns } from "../store.js";
 import { getMiddlewareState } from "./state.js";
-import { EDIT_TOOLS } from "../../agent-guards/verify-gate.js";
+import { hasCapability } from "../../tool-registry.js";
 import { capabilityForbiddenForOp, opForbidsCapability, planModeForbidsCapability } from "../instruction-ledger/index.js";
 import { isLedgerTool, opCommittedSubstantiveWork } from "../../committing-tool-check.js";
 
@@ -140,11 +140,11 @@ interface SeedFlag { fired: boolean }
 function interactiveBuildPlanSeed(ctx: CanonicalLoopContext): CanonicalMiddlewareResult {
   if (ctx.op.lane !== "interactive") return { kind: "continue" };
   if (!ctx.toolNames.has("task_create")) return { kind: "continue" };
-  // The RAW name-only tally, used ONLY as an EDIT_TOOLS name lookup — the one
+  // The RAW name-only tally, used ONLY as a "can this tool write files" lookup — the one
   // question all three committing tallies answer identically (see types.ts).
   // Never read it as "the op committed something": it is blind to browser /
   // pdf / http_request, which is why mid-turn-stale stopped reading it.
-  const wroteFiles = [...ctx.committingToolsThisOp].some((t) => EDIT_TOOLS.has(t));
+  const wroteFiles = [...ctx.committingToolsThisOp].some((t) => hasCapability(t, "workspace-write"));
   if (!wroteFiles) return { kind: "continue" };
 
   const flag = getMiddlewareState<SeedFlag>(ctx.op.id, "interactive-build-seed", () => ({ fired: false }));

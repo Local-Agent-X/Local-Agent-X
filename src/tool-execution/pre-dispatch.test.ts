@@ -344,7 +344,7 @@ describe("enforced plan mode at pre-dispatch", () => {
     setEnforcedPlanMode("plan-sess", true);
     for (const name of ["write", "edit", "edit_lines", "multi_edit", "delete_file", "ari_file"]) {
       try {
-        await assertToolCallAllowed({ id: `pm-${name}`, name, args: { path: "a.txt", content: "x" } }, planCtx("plan-sess", "op-1"));
+        await assertToolCallAllowed({ id: `pm-${name}`, name, args: { action: "write", path: "a.txt", content: "x" } }, planCtx("plan-sess", "op-1"));
         throw new Error(`expected ToolBlocked for ${name}`);
       } catch (e) {
         expect(e).toBeInstanceOf(ToolBlocked);

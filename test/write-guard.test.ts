@@ -9,6 +9,17 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { checkAppWrite, writeGuardRejectionMessage } from "../src/tools/app-tools/write-guard.js";
+import { markDesignDelivered, resetDesignDeliveries } from "../src/tools/app-tools/design-gate.js";
+
+// These pin the content checks and the baseline lock. The design gate runs
+// before both and keeps per-session state, so without this the first UI write
+// to each app got the design refusal instead of the check under test, and the
+// tests after it passed only because that refusal recorded the delivery. The
+// gate has its own suite (src/tools/app-tools/design-gate.test.ts).
+beforeEach(() => {
+  resetDesignDeliveries();
+  for (const app of ["demo", "shopper", "rooty", "backend", "broken"]) markDesignDelivered(undefined, app);
+});
 
 const BLOCKED_CDNS = [
   "cdn.tailwindcss.com",

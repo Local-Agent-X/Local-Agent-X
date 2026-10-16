@@ -21,7 +21,7 @@ import { checkFreshness, recordFileSeen, unchangedSinceSeen, seenViewFromReadRes
 import { READ_DEDUP_STUB_LEAD, readContentInView } from "./read-dedup-evidence.js";
 import { getModelView } from "./model-view.js";
 import { unattendedShellBlock } from "./unattended-shell-gate.js";
-import { reportUnattendedRefusal } from "./unattended-refusal.js";
+import { parkOrRefuse, takeUserGrant } from "./deferred-call.js";
 import { createToolRunner } from "./tool-runner.js";
 import { recordTaskArtifact } from "../data-lineage/task-artifacts.js";
 import { CREATE_CLASS, createTargetPath } from "./create-target-path.js";
@@ -73,12 +73,12 @@ export const runSandboxedPhase: Phase = async (ctx) => {
   const { tc, tool, args, sessionId, signal, onEvent } = ctx;
   if (!tool) return CONTINUE;
 
+  // A cage still proving its fence answers in seconds; that one is a retry,
+  // not something to put in front of the user. Any other unattended shell
+  // refusal is parked for the user's yes, and that yes runs it.
   const shellBlock = unattendedShellBlock(tc.name, ctx.callContext, sessionId);
-  if (shellBlock) {
-    // A cage still proving its fence answers in seconds; that one is a retry,
-    // not something to put in front of the user.
-    if (!shellBlock.metadata?.proofPending) reportUnattendedRefusal(ctx, shellBlock.content);
-    ctx.result = shellBlock;
+  if (shellBlock && (shellBlock.metadata?.proofPending || !takeUserGrant(ctx))) {
+    ctx.result = shellBlock.metadata?.proofPending ? shellBlock : parkOrRefuse(ctx, shellBlock.content, shellBlock);
     return CONTINUE;
   }
 

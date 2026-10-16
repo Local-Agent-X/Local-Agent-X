@@ -52,8 +52,8 @@ async function call(method: string, path: string, body?: unknown, role: Role = "
 function seed() {
   const store = inboxStore();
   const urgent = store.post({
-    kind: "refused-action", title: "Scheduled job: bash needs your OK", body: "BLOCKED", needsYou: true, key: "refused:op1:abc",
-    refusedCall: { toolName: "bash", args: { command: "npm publish" }, callContext: "cron", reason: "BLOCKED", jobLabel: "Scheduled job" },
+    kind: "approval", title: "Scheduled job wants to run bash", body: "BLOCKED", needsYou: true, key: "approval:op1:abc",
+    deferredCall: { toolName: "bash", args: { command: "npm publish" }, callContext: "cron", reason: "BLOCKED", jobLabel: "Scheduled job" },
   }).item;
   const plain = store.post({ kind: "job", title: "Background task finished", body: "ok", needsYou: false }).item;
   return { urgent, plain };
@@ -68,12 +68,12 @@ describe("GET /api/inbox", () => {
     expect((r.body!.items as Array<{ id: string }>).map((i) => i.id)).toEqual([urgent.id, plain.id]);
   });
 
-  it("never ships the server-side refused-call record or the producer key", async () => {
+  it("never ships the server-side deferred-call record or the producer key", async () => {
     seed();
     const r = await call("GET", "/api/inbox");
     const text = JSON.stringify(r.body);
     expect(text).not.toContain("npm publish");
-    expect(text).not.toContain("refused:op1");
+    expect(text).not.toContain("approval:op1");
   });
 });
 

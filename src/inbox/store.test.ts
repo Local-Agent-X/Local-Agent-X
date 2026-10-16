@@ -188,17 +188,57 @@ describe("retention", () => {
   });
 });
 
+const approval = (over: Partial<InboxInput> = {}): InboxInput => ({
+  kind: "approval", title: "t", body: "b", needsYou: true, key: "approval:x",
+  deferredCall: { toolName: "bash", args: { command: "ls" }, callContext: "cron", reason: "r", jobLabel: "Scheduled job" },
+  ...over,
+});
+
 describe("the client view", () => {
-  it("never carries the producer key, the dismiss stamp or the refused-call record", () => {
+  it("never carries the producer key, the dismiss stamp or the deferred-call record", () => {
     const store = createInboxStore(file, clock);
-    const { item } = store.post({
-      kind: "refused-action", title: "t", body: "b", needsYou: true, key: "refused:x",
-      refusedCall: { toolName: "bash", args: { command: "ls" }, callContext: "cron", reason: "r", jobLabel: "Scheduled job" },
-    });
+    const { item } = store.post(approval());
     const view = toInboxView({ ...item, dismissedAt: 1 });
     expect(view).not.toHaveProperty("key");
     expect(view).not.toHaveProperty("dismissedAt");
-    expect(view).not.toHaveProperty("refusedCall");
-    expect(store.get(item.id)?.refusedCall).toMatchObject({ toolName: "bash", args: { command: "ls" } });
+    expect(view).not.toHaveProperty("deferredCall");
+    expect(store.get(item.id)?.deferredCall).toMatchObject({ toolName: "bash", args: { command: "ls" } });
+  });
+});
+
+describe("answering an approval", () => {
+  it("the first claim resolves it with the answer; every later claim is refused, so its call runs at most once", () => {
+    const store = createInboxStore(file, clock);
+    const { item } = store.post(approval());
+    const first = store.claimApproval(item.id, "approved");
+    expect(first).toMatchObject({ kind: "claimed", item: { id: item.id, deferredCall: { toolName: "bash" } } });
+    expect(store.get(item.id)).toMatchObject({ resolvedAt: now, readAt: now, resolution: "approved" });
+    expect(store.claimApproval(item.id, "approved")).toEqual({ kind: "answered" });
+    expect(store.claimApproval(item.id, "declined")).toEqual({ kind: "answered" });
+    expect(store.get(item.id)?.resolution).toBe("approved");
+    expect(toInboxView(store.get(item.id)!)).toMatchObject({ resolution: "approved" });
+  });
+
+  it("refuses an unknown id, an item that is not an approval, and a dismissed approval", () => {
+    const store = createInboxStore(file, clock);
+    const job = store.post(urgent()).item;
+    const waved = store.post(approval({ key: "approval:y" })).item;
+    store.dismiss(waved.id);
+    expect(store.claimApproval("inb_nope", "approved")).toEqual({ kind: "missing" });
+    expect(store.claimApproval(job.id, "approved")).toEqual({ kind: "not-approval" });
+    expect(store.claimApproval(waved.id, "approved")).toEqual({ kind: "answered" });
+  });
+
+  it("dedupes while it waits; once answered, the same call parked again asks again", () => {
+    const store = createInboxStore(file, clock);
+    const { item } = store.post(approval());
+    expect(store.post(approval())).toMatchObject({ created: false, changed: false });
+    store.claimApproval(item.id, "approved");
+    now += 60_000;
+    const again = store.post(approval());
+    expect(again).toMatchObject({ created: false, changed: true, item: { id: item.id } });
+    expect(store.get(item.id)?.resolvedAt).toBeUndefined();
+    expect(store.get(item.id)?.resolution).toBeUndefined();
+    expect(store.counts().needsYou).toBe(1);
   });
 });

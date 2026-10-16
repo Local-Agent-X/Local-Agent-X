@@ -37,6 +37,7 @@ import { suspendedWorkerStatus, turnProgressLine } from "./live-workers.js";
 import { pushPendingNotification } from "../ops/pending-notifications.js";
 import { scheduleIdleNudge } from "../ops/idle-nudge.js";
 import { inboxJobResult, runLabel } from "../inbox/producers.js";
+import { cronJobIdOf } from "../cron/cron-session.js";
 
 import { toSpokenCompletion, redirectAppliedRow, isSidebarSuppressedOpType } from "./session-bridge-extractors.js";
 import { readOp } from "../ops/op-store.js";
@@ -222,11 +223,8 @@ function recordCanonicalEventWithSink(
               // predate the appUrl field.
               resultUrl = op.appUrl || extractAppReadyUrl(event.opId);
             } else if (op?.type === OP_TYPE.scheduledMission) {
-              const sess = sessionId || "";
-              const cronMatch = sess.match(/^cron-(.+)-\d+$/);
-              if (cronMatch && cronMatch[1]) {
-                resultUrl = `/api/cron/${cronMatch[1]}/reports/latest`;
-              }
+              const cronJobId = cronJobIdOf(sessionId);
+              if (cronJobId) resultUrl = `/api/cron/${cronJobId}/reports/latest`;
             }
             // Fallback: generic artifact extraction for any op type that
             // didn't get a specific URL above. Catches the long tail —

@@ -7,8 +7,10 @@ import type { ToolCallContext } from "./context.js";
 
 const requests: Array<{ toolName: string; args: unknown; context: string; alwaysAsk?: boolean }> = [];
 const state: { rule: string; answer: { approved: boolean; reason?: string } } = { rule: "ask", answer: { approved: true } };
+const { CallGrants } = await import("../approval-call-grants.js");
+const callGrants = new CallGrants();
 vi.mock("../approval-manager.js", () => ({
-  getApprovalManager: () => ({ requestApprovalDetailed: async (o: (typeof requests)[number]) => { requests.push(o); return state.answer; } }),
+  getApprovalManager: () => ({ callGrants, requestApprovalDetailed: async (o: (typeof requests)[number]) => { requests.push(o); return state.answer; } }),
   getRiskDecision: (risk: string) => (risk === "secrets" ? state.rule : "allow"),
   decisionDenies: (d: string) => d === "deny",
   decisionRequiresPrompt: (d: string) => d === "ask",
@@ -58,6 +60,18 @@ describe.each(["bash", "process_start", "process_restart"])("secretEnvGate on %s
     state.rule = "ask";
     expect((await secretEnvGate(ctx({ callContext: "cron" } as Partial<ToolCallContext>))).kind).toBe("blocked");
     expect(requests).toHaveLength(0);
+  });
+
+  it("the user's yes to this exact call, given from the inbox, answers the card in any run; deny still wins", async () => {
+    const call = ctx({ callContext: "cron" } as Partial<ToolCallContext>);
+    callGrants.grant("s", tool, call.args);
+    state.rule = "deny";
+    expect((await secretEnvGate(call)).kind).toBe("blocked");
+    state.rule = "ask";
+    expect(await secretEnvGate(call)).toEqual({ kind: "continue" });
+    expect(call.approvedByUser).toBe(true);
+    expect(requests).toHaveLength(0);
+    expect(callGrants.size()).toBe(0);
   });
 
   it("a call without secret_env is not its business", async () => {

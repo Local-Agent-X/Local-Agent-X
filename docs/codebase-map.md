@@ -12,15 +12,15 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 67 top-level dirs · 67 live · 0 with no live importer · 1770 non-test source files · 0 god files (>400 LOC).
+**Totals:** 67 top-level dirs · 67 live · 0 with no live importer · 1773 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | God files |
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 158 | 29 | XL |  |
-| `src/security/` | 118 | 45 | XL |  |
-| `src/tools/` | 103 | 208 | XL |  |
+| `src/security/` | 120 | 45 | XL |  |
+| `src/tools/` | 104 | 208 | XL |  |
 | `src/canonical-loop/` | 79 | 259 | XL |  |
 | `src/workspace/` | 72 | 3 | M |  |
 | `src/providers/` | 67 | 26 | XL |  |
@@ -30,19 +30,19 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/util/` | 39 | 3 | S |  |
 | `src/local-runtimes/` | 38 | 25 | XL |  |
 | `src/auth/` | 37 | 11 | L |  |
+| `src/threat/` | 37 | 13 | L |  |
 | `src/session/` | 36 | 7 | L |  |
-| `src/threat/` | 35 | 13 | L |  |
-| `src/tool-policy/` | 31 | 20 | L |  |
+| `src/tool-policy/` | 32 | 20 | L |  |
 | `src/agency/` | 27 | 20 | XL |  |
 | `src/agent-store/` | 26 | 7 | L |  |
 | `src/chat-ws/` | 25 | 21 | L |  |
+| `src/tool-execution/` | 25 | 71 | XL |  |
 | `src/classifiers/` | 24 | 16 | L |  |
 | `src/context/` | 24 | 8 | L |  |
 | `src/context-manager/` | 24 | 13 | L |  |
 | `src/agent-request/` | 23 | 15 | L |  |
 | `src/app-runtime/` | 23 | 12 | L |  |
 | `src/sandbox/` | 23 | 14 | L |  |
-| `src/tool-execution/` | 23 | 70 | XL |  |
 | `src/orchestrator/` | 20 | 24 | L |  |
 | `src/protocols/` | 19 | 52 | XL |  |
 | `src/agents/` | 17 | 13 | L |  |
@@ -51,11 +51,11 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/cognition/` | 14 | 34 | XL |  |
 | `src/server/` *(entrypoint)* | 14 | 57 | XL |  |
 | `src/voice/` | 14 | 74 | XL |  |
+| `src/cron/` | 13 | 10 | L |  |
 | `src/self-edit/` | 13 | 19 | L |  |
 | `src/whatsapp-bridge/` | 12 | 8 | L |  |
 | `src/agent-guards/` | 11 | 11 | L |  |
 | `src/broker-transport/` | 11 | 38 | XL |  |
-| `src/cron/` | 11 | 9 | L |  |
 | `src/agent-loop/` | 10 | 1 | S |  |
 | `src/ari-kernel/` | 10 | 12 | L |  |
 | `src/autopilot/` | 10 | 14 | L |  |
@@ -65,9 +65,9 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/sync/` | 10 | 21 | L |  |
 | `src/screen-stream/` | 9 | 11 | L |  |
 | `src/bridge-voice/` | 8 | 5 | M |  |
+| `src/inbox/` | 8 | 5 | M |  |
 | `src/telegram-bridge/` | 8 | 6 | M |  |
 | `src/auto-build/` | 7 | 52 | XL |  |
-| `src/inbox/` | 7 | 4 | M |  |
 | `src/plugin-system/` | 7 | 10 | L |  |
 | `src/android/` | 6 | 7 | M |  |
 | `src/app-renderer/` | 6 | 7 | M |  |
@@ -98,6 +98,7 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 |---|:--:|
 | `src/anthropic-models.ts` | M |
 | `src/api-docs.ts` | M |
+| `src/approval-call-grants.ts` | S |
 | `src/approval-decision.ts` | M |
 | `src/approval-durable-record.ts` | S |
 | `src/approval-manager.ts` | M |

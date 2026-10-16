@@ -2,10 +2,16 @@
 //
 // The list is the server's (GET /api/inbox), shared by every tab and device:
 // an agent asking for the user, a background or scheduled job's outcome, a
-// call an unattended run refused, an available update. Items that need the
-// user are pinned on top. The server pushes `inbox_item` when one arrives and
-// `inbox_changed` after any tab answers one (chat-ws-handler.js routes both
-// here); chat-ws.js reloads the list on every (re)connect.
+// call an unattended run parked for the user's yes (an "approval": Approve
+// runs that exact call once, Decline skips it, POST /api/inbox/act), an
+// available update. Items that need the user are pinned on top. The server
+// pushes `inbox_item` when one arrives (an approved call's outcome arrives
+// that way) and `inbox_changed` after any tab answers one (chat-ws-handler.js
+// routes both here); chat-ws.js reloads the list on every (re)connect.
+//
+// An approval's body is its confirmation: it names the job, the tool, what the
+// call does and why it needed the user, so Approve asks nothing further, the
+// same as the approval card in a chat.
 //
 // addNotification() is the one tab-local producer: a UI action in this tab
 // that failed (an agent redirect not delivered). It renders through the same
@@ -20,9 +26,10 @@ var _inboxLocal = [];
 var _inboxUnread = 0;
 var MAX_LOCAL_ITEMS = 20;
 var INBOX_KIND_LABEL = {
-  'agent-message': 'Agent', job: 'Job', 'refused-action': 'Needs your OK',
-  update: 'Update', 'app-error': 'Error', approval: 'Approval',
+  'agent-message': 'Agent', job: 'Job', update: 'Update', 'app-error': 'Error', approval: 'Needs your OK',
 };
+var INBOX_RESOLUTION_LABEL = { approved: 'Approved', declined: 'Declined', failed: 'Approved, could not run' };
+var _inboxAnswering = {};
 
 function addNotification(text, type) {
   _inboxLocal.unshift({
@@ -75,22 +82,29 @@ function inboxClip(text, max) {
   return s.length > max ? s.slice(0, max - 1) + '…' : s;
 }
 
+// An open approval is answered only by Approve or Decline, so it offers no
+// Done or Dismiss: either would close it without an answer.
 function renderInboxItem(n) {
   var pinned = inboxIsPinned(n);
   var unread = !n.readAt;
+  var awaiting = n.kind === 'approval' && pinned;
+  var answering = !!_inboxAnswering[n.id];
   var cls = 'notif-item' + (pinned ? ' needs-you' : '') + (unread ? ' unread' : '') + (n.resolvedAt ? ' resolved' : '');
   var actions = (Array.isArray(n.actions) ? n.actions : []).map(function (a) {
-    return '<button type="button" class="notif-btn" disabled title="Not available yet">' + esc(a.label) + '</button>';
+    if (!awaiting) return n.kind === 'approval' ? '' : '<button type="button" class="notif-btn" disabled title="Not available yet">' + esc(a.label) + '</button>';
+    return '<button type="button" class="notif-btn" data-inbox-answer="' + esc(a.id) + '"' + (answering ? ' disabled' : '') + '>' + esc(a.label) + '</button>';
   }).join('');
+  var state = answering ? 'Running…' : (n.resolution ? INBOX_RESOLUTION_LABEL[n.resolution] || n.resolution : '');
   return '<div class="' + cls + '" data-inbox-id="' + esc(n.id) + '">'
     + '<div class="notif-meta"><span class="notif-kind">' + esc(INBOX_KIND_LABEL[n.kind] || n.kind) + '</span>'
     + '<span class="notif-time">' + esc(timeAgo(n.updatedAt || n.createdAt)) + '</span></div>'
     + '<div class="notif-title">' + esc(n.title) + '</div>'
-    + (n.body ? '<div class="notif-body">' + esc(inboxClip(n.body, 400)) + '</div>' : '')
+    + (n.body ? '<div class="notif-body">' + esc(n.kind === 'approval' ? n.body : inboxClip(n.body, 400)) + '</div>' : '')
     + '<div class="notif-actions">' + actions
-    + (pinned ? '<button type="button" class="notif-btn" data-inbox-act="resolve">Done</button>' : '')
+    + (state ? '<span class="notif-resolution">' + esc(state) + '</span>' : '')
+    + (pinned && !awaiting ? '<button type="button" class="notif-btn" data-inbox-act="resolve">Done</button>' : '')
     + (unread ? '<button type="button" class="notif-btn" data-inbox-act="read">Mark read</button>' : '')
-    + '<button type="button" class="notif-btn" data-inbox-act="dismiss">Dismiss</button>'
+    + (awaiting ? '' : '<button type="button" class="notif-btn" data-inbox-act="dismiss">Dismiss</button>')
     + '</div></div>';
 }
 
@@ -136,6 +150,24 @@ async function inboxAct(id, act) {
   loadInbox();
 }
 
+// The server claims the item before anything runs, so a second click (here or
+// in another tab) gets 409 and runs nothing; disabling the buttons only spares
+// the round trip. The outcome arrives as its own item (an inbox_item frame).
+async function answerInboxApproval(id, action) {
+  if (_inboxAnswering[id]) return;
+  _inboxAnswering[id] = true;
+  renderNotifications();
+  try {
+    var r = await apiFetch('/api/inbox/act', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: id, action: action }),
+    });
+    if (!r.ok) console.warn('[inbox] ' + action + ' refused: ' + r.status);
+  } catch (e) { console.warn('[inbox] ' + action + ' failed', e && e.message); }
+  delete _inboxAnswering[id];
+  loadInbox();
+}
+
 function markAllInboxRead() {
   _inboxLocal.forEach(function (n) { if (!n.readAt) n.readAt = Date.now(); });
   inboxAct('', 'read-all');
@@ -168,6 +200,8 @@ function bindInboxList(el) {
     var row = ev.target.closest && ev.target.closest('[data-inbox-id]');
     if (!row) return;
     var id = row.getAttribute('data-inbox-id');
+    var answer = ev.target.closest('[data-inbox-answer]');
+    if (answer) { ev.stopPropagation(); answerInboxApproval(id, answer.getAttribute('data-inbox-answer')); return; }
     var btn = ev.target.closest('[data-inbox-act]');
     if (btn) { ev.stopPropagation(); inboxAct(id, btn.getAttribute('data-inbox-act')); return; }
     if (ev.target.closest('button')) return;

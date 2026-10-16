@@ -8,9 +8,9 @@ import { createLogger } from "../logger.js";
 import { createInboxStore, type InboxStore } from "./store.js";
 import type { InboxCounts, InboxFrame, InboxInput, InboxItem, StoredInboxItem } from "./types.js";
 
-export type { InboxCounts, InboxFrame, InboxInput, InboxItem, InboxKind, InboxLink, InboxAction, RefusedCallRecord, StoredInboxItem } from "./types.js";
+export type { InboxCounts, InboxFrame, InboxInput, InboxItem, InboxKind, InboxLink, InboxAction, InboxResolution, DeferredCallRecord, StoredInboxItem } from "./types.js";
 export { INBOX_KINDS } from "./types.js";
-export type { InboxStore } from "./store.js";
+export type { InboxStore, ApprovalClaim } from "./store.js";
 
 const logger = createLogger("inbox");
 
@@ -25,9 +25,9 @@ export function inboxStore(): InboxStore {
 }
 
 /** What a client may see: the producer key, the dismiss stamp and the
- *  refused-call record stay on the server. */
+ *  deferred-call record stay on the server. */
 export function toInboxView(item: StoredInboxItem): InboxItem {
-  const { key: _key, dismissedAt: _dismissed, refusedCall: _call, ...view } = item;
+  const { key: _key, dismissedAt: _dismissed, deferredCall: _call, ...view } = item;
   return view;
 }
 

@@ -242,9 +242,10 @@ describe("the approval phase carries the reason out", () => {
     expect(events.filter((e) => e.type === "approval_requested")).toHaveLength(1);
   });
 
-  // No profile lifts this refusal, so the way to get the change made is a
-  // chat, never a looser profile.
-  it("an unattended run is refused, naming the file, even under the Autonomous profile", async () => {
+  // No profile lifts this refusal: the change waits for the user's yes in
+  // their inbox, and where nothing can be parked (a harness run) the way to
+  // get it made is a chat, never a looser profile.
+  it("an unattended run never writes it on its own, even under the Autonomous profile: parked, naming the file", async () => {
     for (const callContext of ["cron", "delegated"] as const) {
       const c = ctx("write", { path: join(LAX, "plugins", "registry.json"), content: "{}" }, callContext, autonomousSession());
       controlFileGate(c);
@@ -253,19 +254,26 @@ describe("the approval phase carries the reason out", () => {
       expect(c.result?.status).toBe("blocked");
       expect(String(c.result?.content)).toContain("BLOCKED (unattended)");
       expect(String(c.result?.content)).toContain("~/.lax/plugins/registry.json");
-      expect(String(c.result?.content)).toContain("run it from a chat");
+      expect(String(c.result?.content)).toContain("waiting in the user's inbox");
       expect(String(c.result?.content)).not.toContain("Autonomous profile");
+
+      const harness = ctx("write", { path: join(LAX, "plugins", "registry.json"), content: "{}" }, callContext, `eval_${autonomousSession()}`);
+      controlFileGate(harness);
+      expect((await requireApprovalPhase(harness)).kind, callContext).toBe("halt");
+      expect(String(harness.result?.content)).toContain("run it from a chat");
+      expect(String(harness.result?.content)).not.toContain("Autonomous profile");
     }
   });
 
-  it("a refusal only the profile makes still points at the profiles", async () => {
-    const s = `ctl-gate-normal-${process.hrtime.bigint().toString(36)}`;
-    setSessionProfile(s, "Normal");
-    cleanup.push(() => clearSessionProfile(s));
-    const c = ctx("http_request", { url: "https://example.com", method: "POST" }, "cron", s);
-    controlFileGate(c);
-    expect((await requireApprovalPhase(c)).kind).toBe("halt");
-    expect(String(c.result?.content)).toContain("Run this under the Autonomous profile");
-    expect(String(c.result?.content)).not.toContain("run it from a chat");
+  it("a refusal only the profile makes is parked, or points at the profiles", async () => {
+    for (const s of [`ctl-gate-normal-${process.hrtime.bigint().toString(36)}`, `eval_ctl-gate-normal-${process.hrtime.bigint().toString(36)}`]) {
+      setSessionProfile(s, "Normal");
+      cleanup.push(() => clearSessionProfile(s));
+      const c = ctx("http_request", { url: "https://example.com", method: "POST" }, "cron", s);
+      controlFileGate(c);
+      expect((await requireApprovalPhase(c)).kind).toBe("halt");
+      expect(String(c.result?.content)).toContain(s.startsWith("eval_") ? "Run this under the Autonomous profile" : "waiting in the user's inbox");
+      expect(String(c.result?.content)).not.toContain("run it from a chat");
+    }
   });
 });

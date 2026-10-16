@@ -8,6 +8,7 @@
 import { USER_HINTS, type ToolResult } from "../types.js";
 import {
   type ApprovalDenyReason,
+  type ApprovalOutcome,
   getApprovalManager,
   getToolDecision,
   getRiskDecision,
@@ -35,7 +36,7 @@ import { classifyShellTier, isShellTierTool } from "./shell-approval-tier.js";
 import { getSandboxStatus } from "../sandbox/index.js";
 import { currentHumanText, takeUnnamedDeleteDecision, UNNAMED_DELETE_DECLINED_TEXT, UNNAMED_DELETE_USE_TRASH_TEXT } from "./unnamed-delete-gate.js";
 import { secretEnvGate } from "./secret-env-approval.js";
-import { reportUnattendedRefusal } from "./unattended-refusal.js";
+import { parkOrRefuse, takeUserGrant } from "./deferred-call.js";
 import { publishOperations } from "../publish-operation.js";
 import { publishReviewGate } from "./publish-review-gate.js";
 import { reviewCardContext, reviewNoteForModel, reviewPreview } from "./publish-review-text.js";
@@ -242,21 +243,28 @@ export const requireApprovalPhase: Phase = async (ctx) => {
   const policyRequiresPrompt = !!ctx.policyApprovalReason || !!promotion;
   if (!policyRequiresPrompt && !decisionRequiresPrompt(decision)) return CONTINUE;
 
+  // The user's yes to this exact call, given from the inbox (deferred-call.ts),
+  // answers this card in any run, alwaysAsk ones included.
+  const granted = takeUserGrant(ctx);
+
   // Unattended run: no human to prompt. The profile says "ask" and nothing
-  // authorized it, so block rather than silently run (this is the
-  // load-bearing guarantee for cron/delegated runs). A policy reason or a
-  // memory promotion asks a person under every profile, so pointing at a
-  // looser profile would send the user to a switch that changes nothing.
-  if (ctx.callContext !== "local") {
-    const result: ToolResult = {
-      content:
-        `BLOCKED (unattended): ${ctx.tc.name} needs human approval` +
-        `${promotion ? " because risky content cannot become durable memory without explicit user approval" : ctx.policyApprovalReason ? ` because ${ctx.policyApprovalReason}` : " under the active autonomy profile"}, ` +
-        `but no one is watching this ${ctx.callContext} run. ` +
+  // authorized it, so it does not silently run (this is the load-bearing
+  // guarantee for cron/delegated runs): the call is parked in the user's
+  // inbox and the run goes on without it. A policy reason or a memory
+  // promotion asks a person under every profile, so the fallback refusal
+  // never points at a looser profile, a switch that changes nothing.
+  if (!granted && ctx.callContext !== "local") {
+    const reason =
+      `BLOCKED (unattended): ${ctx.tc.name} needs human approval` +
+      `${promotion ? " because risky content cannot become durable memory without explicit user approval" : ctx.policyApprovalReason ? ` because ${ctx.policyApprovalReason}` : " under the active autonomy profile"}, ` +
+      `but no one is watching this ${ctx.callContext} run.`;
+    const reviewNote = ctx.publishReview ? reviewNoteForModel(ctx.publishReview) : "";
+    const refusal: ToolResult = {
+      content: `${reason} ` +
         (policyRequiresPrompt
           ? "It is refused under every profile: run it from a chat, where you can approve it."
           : "Run this under the Autonomous profile (or pin a per-job profile) to allow it.") +
-        (ctx.publishReview ? `\n\n${reviewNoteForModel(ctx.publishReview)}` : ""),
+        (reviewNote ? `\n\n${reviewNote}` : ""),
       isError: true,
       status: "blocked",
       metadata: {
@@ -264,8 +272,7 @@ export const requireApprovalPhase: Phase = async (ctx) => {
         recovery: "Nobody can approve this here. Report what you needed to do and why, so the user can do it or run it from a chat, and continue with the rest of the work.",
       },
     };
-    reportUnattendedRefusal(ctx, result.content);
-    return terminate(ctx, { rendered: "model", result, allowed: false });
+    return terminate(ctx, { rendered: "model", result: parkOrRefuse(ctx, reason, refusal, reviewNote), allowed: false });
   }
   // Interactive context but NO event sink: there is no channel to render an
   // approval card through, so an answer can never arrive. Everything past the
@@ -278,7 +285,7 @@ export const requireApprovalPhase: Phase = async (ctx) => {
   // invariant against the next "local" caller that forgets one. (Calls with
   // nothing to approve never reach here — the fast-path above already
   // continued — so the legitimate sink-less local dispatch is unaffected.)
-  if (!ctx.onEvent) {
+  if (!granted && !ctx.onEvent) {
     const need = promotion
       ? "risky content cannot become durable memory without explicit user approval"
       : ctx.policyApprovalReason
@@ -301,7 +308,7 @@ export const requireApprovalPhase: Phase = async (ctx) => {
   }
 
   const review = ctx.publishReview;
-  const outcome = await getApprovalManager().requestApprovalDetailed({
+  const outcome: ApprovalOutcome = granted ? { approved: true, grantId: granted } : !ctx.onEvent ? { approved: false } : await getApprovalManager().requestApprovalDetailed({
     toolName: ctx.tc.name,
     toolCallId: ctx.tc.id,
     sessionId: ctx.sessionId || "default",

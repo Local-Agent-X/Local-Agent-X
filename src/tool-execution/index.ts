@@ -4,6 +4,7 @@
 
 export { executeToolCalls, dispatchSingleToolCall } from "./execute-tool.js";
 export { executeHarnessCommand } from "./harness-exec.js";
+export { dispatchApprovedCall, resolveApprovedTool } from "./approved-call.js";
 export type { UnifiedDispatchCtx } from "./execute-tool.js";
 export { markDryRunSession, unmarkDryRunSession } from "./resolve-tool.js";
 export { getRiskLevel, buildApprovalContext } from "./approval-context.js";

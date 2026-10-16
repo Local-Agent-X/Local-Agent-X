@@ -48,5 +48,8 @@ export interface ToolBlockRecord {
   quarantine?: KernelQuarantine;
   /** Where the block state lives and what ends it. */
   scope?: "operation" | "session-memory";
+  /** The inbox item the call is parked in, waiting for the user's yes
+   *  (tool-execution/deferred-call.ts). Loop guards read this, not the text. */
+  deferredTo?: string;
   notice: "declassify-card" | "allow-host-card" | "kernel-notice" | "none";
 }

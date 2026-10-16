@@ -30,6 +30,7 @@ export function blockRecordOf(result: ToolResult): ToolBlockRecord | undefined {
     ...(host ? { host } : {}),
     ...(quarantine ? { quarantine } : {}),
     ...(scope ? { scope } : {}),
+    ...(typeof md.deferredTo === "string" && md.deferredTo ? { deferredTo: md.deferredTo } : {}),
     notice: clearable === "declassify" ? "declassify-card" : clearable === "allow-host" ? "allow-host-card" : kernel ? "kernel-notice" : "none",
   };
 }

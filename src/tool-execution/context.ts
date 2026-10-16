@@ -40,6 +40,11 @@ export interface ToolCallContext {
   /** Set by the approval phase when the user said yes to this call, on its
    * card or by a remembered "always allow" for its scope. */
   approvedByUser?: true;
+  /** Set when this dispatch consumed the user's one-shot yes to this exact
+   * call (deferred-call.ts takeUserGrant). Every later gate in the same
+   * dispatch that would park, refuse or prompt for want of a person reads it
+   * instead of asking again; nothing else sets it. */
+  userGrantId?: string;
   /** Set by the PreToolUse hook phase when a user hook rewrote the args.
    * enforcePolicyPhase consumes it: applies the rewrite to `args`, then
    * re-runs the security + validation gates on the rewritten call. */

@@ -2,7 +2,7 @@
 
 **Owns:** The dispatch pipeline every model-issued tool call passes through — resolve → policy (Ari + rule packs) → approval → sandbox → audit.
 **Does not own:** Tool definitions and the registry → `src/tools/`; policy rows → `src/tool-policy/`; the kernel itself → `src/ari-kernel/`.
-**Entry:** `index.ts` — `executeToolCalls` / `dispatchSingleToolCall` for model calls; `executeHarnessCommand` (`harness-exec.ts`) for harness-initiated shell (build-verify, spec-probes): kill switch + audit only, no policy/approval/RBAC.
+**Entry:** `index.ts` — `executeToolCalls` / `dispatchSingleToolCall` for model calls; `executeHarnessCommand` (`harness-exec.ts`) for harness-initiated shell (build-verify, spec-probes): kill switch + audit only, no policy/approval/RBAC; `dispatchApprovedCall` (`approved-call.ts`) to run a call the user approved from the inbox, through `executeToolCalls`.
 
 ## Invariants
 - Never call a tool's `execute` from outside this module: the gates in `pre-dispatch.ts` and `enforce-policy.ts` are what make policy, Ari, approval and RBAC apply.
@@ -11,6 +11,8 @@
 - Model-supplied `_`-prefixed args are dropped (`internal-args.ts`); only `SESSION_SCOPED_TOOLS` get the trusted `_sessionId` (every tool with policy `pathArgs` is in it automatically), only `OPERATION_SCOPED_TOOLS` get `_operationId`.
 - A tool path argument is resolved with the call's session everywhere it is resolved: the file-access gate (`ctx.sessionId`), the tool (`sessionIdOf(args)`), and every check here about the same file (freshness, read-dedup, task-artifact pre-stat, the delete gates). Otherwise a work-rooted session gates `<workRoot>/x` and opens `<workspace>/x`. Guards: `agent-path-session.test.ts` (source scan), `test/work-root-gate-sink-parity.test.ts`.
 - Every tool result the model reads is screened once, in the audit phase (`injection-exposure.ts`), never in a tool or a provider: the content is never edited, a note leads the rendered text, and harness text (the wrapper's frame, `read`'s warning) is never scanned.
+- An unattended run never pauses for a person. A gate that would need one parks the call in the user's inbox (`deferred-call.ts` `parkOrRefuse`) and the run goes on: the result stays status `blocked`, `metadata.layer` `"approval"`, marked by `metadata.deferredTo` (the item id, carried on the block record), with the gate's own reason. Never a new status, and never a loop guard reading the wording.
+- The user's Approve is a one-shot grant on the ApprovalManager for that exact call in its session (`src/approval-call-grants.ts`), never a flag that skips gates. Each gate that would park, refuse or prompt for want of a person calls `takeUserGrant` first (the approval phase, the `secret_env` card, the unattended shell gate; `requestApprovalDetailed` takes it too); it sets `ctx.approvedByUser`. Every other gate re-runs. `dispatchApprovedCall` revokes the grant when the dispatch returns.
 
 ## Coupled to
 | If you change | Also check | Guard |
@@ -26,6 +28,9 @@
 | `askAfterInjectionExposure` on each profile (`src/autonomy/profiles.ts`) | the exposure gate (`injection-exposure.ts`) asks only for risks a profile lists and would otherwise run; an empty list is "note only" | `injection-exposure.test.ts`, `src/autonomy/profiles.test.ts` |
 | `metadata.injection` a tool reports (`read`, `read-imports.ts`) | the result screen trusts it instead of re-scanning text that carries the tool's own warning | `injection-exposure.test.ts` |
 | gate order (`pre-dispatch.ts`, `enforce-policy.ts`) | both dispatch callers (chat path, arikernel executors) | `gate-order.test.ts`, `pre-dispatch-matrix.test.ts` |
+| a gate that refuses an unattended call for want of a person | it must park through `parkOrRefuse` and take the one-shot grant (`takeUserGrant`) before parking, refusing or prompting, or an approved call is parked again | `deferred-call.test.ts`, `approved-call.test.ts` |
+| the one-shot grant key (`src/approval-call-grants.ts`, `exactKey`) | the args the parked record keeps (`deferred-call.ts`, minus `_` keys) must key the same as the re-dispatched call's | `src/approval-call-grants.test.ts`, `approved-call.test.ts` |
+| the parked result's shape (`metadata.deferredTo`, `block-record.ts`) | `src/canonical-loop/middlewares/repeat-failure.ts` groups parked shell calls off `block.deferredTo` | `src/canonical-loop/middlewares/repeat-failure.test.ts` |
 
 ## Tests
 `npx vitest run src/tool-execution` (PowerShell on Windows)

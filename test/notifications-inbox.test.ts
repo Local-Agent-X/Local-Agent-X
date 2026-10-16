@@ -3,8 +3,9 @@
 // The bell is the view of the server inbox (src/inbox/): it renders the
 // server's list with needs-you items pinned on top, escapes every server
 // string, merges live inbox_item frames (toasting the ones that need the
-// user), refetches on inbox_changed, and renders the tab-local app-error
-// items through the same list. Drives the REAL source files.
+// user), refetches on inbox_changed, answers approvals through
+// /api/inbox/act, and renders the tab-local app-error items through the same
+// list. Drives the REAL source files.
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -66,9 +67,9 @@ describe("the bell renders the server inbox", () => {
     bell.handleInboxFrame({ type: "inbox_item", created: true, unread: 3, needsYou: 1, item: { id: "inb_new", kind: "job", title: "Report finished", body: "", createdAt: NOW, needsYou: false } });
     const toast = (g.window as { desktop: { showNotification: ReturnType<typeof vi.fn> } }).desktop.showNotification;
     expect(toast).not.toHaveBeenCalled();
-    bell.handleInboxFrame({ type: "inbox_item", created: true, unread: 4, needsYou: 2, item: { id: "inb_refused", kind: "refused-action", title: "Scheduled job: bash needs your OK", body: "BLOCKED", createdAt: NOW, needsYou: true } });
-    expect(toast).toHaveBeenCalledWith("Scheduled job: bash needs your OK", "BLOCKED");
-    expect(rows()).toEqual(["inb_refused", "inb_urgent", "inb_new", "inb_info"]);
+    bell.handleInboxFrame({ type: "inbox_item", created: true, unread: 4, needsYou: 2, item: { id: "inb_parked", kind: "approval", title: "Scheduled job wants to run bash", body: "BLOCKED", createdAt: NOW, needsYou: true } });
+    expect(toast).toHaveBeenCalledWith("Scheduled job wants to run bash", "BLOCKED");
+    expect(rows()).toEqual(["inb_parked", "inb_urgent", "inb_new", "inb_info"]);
     expect(document.getElementById("notif-badge")!.textContent).toBe("4");
   });
 
@@ -88,6 +89,47 @@ describe("the bell renders the server inbox", () => {
       { path: "/api/inbox/resolve", body: { id: "inb_urgent" } },
       { path: "/api/inbox/dismiss", body: { id: "inb_urgent" } },
     ]));
+  });
+
+  it("an open approval shows its whole body and only Approve / Decline; Approve posts the answer once and shows the outcome item when it arrives", async () => {
+    const longBody = "Tool: bash\nCommand: npm publish\n\nWhy it needs you: " + "x".repeat(600);
+    const approval = { id: "inb_ok", kind: "approval", title: "Scheduled job wants to run bash", body: longBody, createdAt: NOW, needsYou: true, actions: [{ id: "approve", label: "Approve" }, { id: "decline", label: "Decline" }] };
+    let release: () => void = () => {};
+    g.apiFetch = vi.fn(async (path: string, opts?: { method?: string; body?: string }) => {
+      if (opts?.method === "POST") {
+        posted.push({ path, body: JSON.parse(opts.body || "{}") });
+        await new Promise<void>((r) => { release = r; });
+        return { ok: true, json: async () => ({ ok: true, resolution: "approved" }) };
+      }
+      return { ok: true, json: async () => ({ items: [approval], unread: 1, needsYou: 1 }) };
+    });
+    const bell = load();
+    await bell.loadInbox();
+    const row = () => document.querySelector('[data-inbox-id="inb_ok"]')!;
+    expect(row().querySelector(".notif-kind")!.textContent).toBe("Needs your OK");
+    expect(row().querySelector(".notif-body")!.textContent).toBe(longBody);
+    const labels = [...row().querySelectorAll("button")].map((b) => b.textContent);
+    expect(labels).toEqual(["Approve", "Decline", "Mark read"]);
+    const approve = row().querySelector('[data-inbox-answer="approve"]') as HTMLButtonElement;
+    expect(approve.disabled).toBe(false);
+    approve.click();
+    (row().querySelector('[data-inbox-answer="approve"]') as HTMLButtonElement).click();
+    await vi.waitFor(() => expect(row().querySelector(".notif-resolution")?.textContent).toBe("Running…"));
+    expect((row().querySelector('[data-inbox-answer="approve"]') as HTMLButtonElement).disabled).toBe(true);
+    expect(posted).toEqual([{ path: "/api/inbox/act", body: { id: "inb_ok", action: "approve" } }]);
+    release();
+    bell.handleInboxFrame({ type: "inbox_item", created: true, unread: 1, needsYou: 0, item: { id: "inb_result", kind: "job", title: "Your approved bash call ran", body: "ran", createdAt: NOW + 1, needsYou: false } });
+    expect(rows()).toContain("inb_result");
+  });
+
+  it("an answered approval shows how it was answered and can be dismissed", async () => {
+    const answered = { id: "inb_done", kind: "approval", title: "t", body: "b", createdAt: NOW, needsYou: true, resolvedAt: NOW, readAt: NOW, resolution: "declined", actions: [{ id: "approve", label: "Approve" }, { id: "decline", label: "Decline" }] };
+    g.apiFetch = vi.fn(async () => ({ ok: true, json: async () => ({ items: [answered], unread: 0, needsYou: 0 }) }));
+    const bell = load();
+    await bell.loadInbox();
+    const row = document.querySelector('[data-inbox-id="inb_done"]')!;
+    expect(row.querySelector(".notif-resolution")!.textContent).toBe("Declined");
+    expect([...row.querySelectorAll("button")].map((b) => b.textContent)).toEqual(["Dismiss"]);
   });
 
   it("a tab-local app error renders in the same list, escaped, and is dismissed without the server", async () => {

@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { repeatFailureMiddleware, REPEAT_FAILURE_REASON } from "./repeat-failure.js";
 import type { CanonicalLoopContext } from "./types.js";
 import { makeCanonicalLoopContext } from "./ctx.test-helper.js";
+import { buildToolResultsView } from "../turn-loop/content-extract.js";
 
 let _op = 0;
 function opId(): string { return `op-rf-test-${++_op}`; }
@@ -104,6 +105,31 @@ describe("repeat-failure breaker", () => {
         content: `[blocked, layer=\"sandbox\"] BLOCKED (unattended): ${toolName} cannot execute`,
         status: "blocked",
       }]);
+    }
+    expect(result?.kind).toBe("suspend");
+  });
+
+  // A shell call an unattended run parks for the user's yes reads as the same
+  // capability failure whatever the command and whatever the gate said: the
+  // signal is the block record's deferredTo, carried from the dispatcher's
+  // tool_result row into the view, never the refusal's wording (which the
+  // guard used to parse, so rewording a gate's text blinded it).
+  it("groups repeated parked shell calls by the block record, not the text", async () => {
+    const op = opId();
+    const rows = ["npm test", "npm run lint", "git status", "npm test -- -u", "make"].map((command, i) => ({
+      role: "tool_result",
+      content: {
+        toolCallId: `tc${i}`,
+        result: `[blocked, layer="approval", deferredTo="inb_${i}"] ${command} is waiting for the user's yes.`,
+        status: "blocked",
+        block: { layer: "approval", reason: `${command} is waiting`, notice: "none", deferredTo: `inb_${i}` },
+      },
+    }));
+    let result: Awaited<ReturnType<typeof run>> | undefined;
+    for (const [i, row] of rows.entries()) {
+      const [view] = buildToolResultsView([row] as never, [{ tool: i % 2 ? "process_start" : "bash", argsHash: "h", resultStatus: "blocked", durationMs: 1 }]);
+      expect(view.block?.deferredTo).toBe(`inb_${i}`);
+      result = await repeatFailureMiddleware.afterToolExecution!(makeCanonicalLoopContext({ op: { id: op, lane: "build" }, toolResults: [view] }));
     }
     expect(result?.kind).toBe("suspend");
   });

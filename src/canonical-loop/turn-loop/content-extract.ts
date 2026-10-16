@@ -7,6 +7,7 @@
 import type { CommitTurnMessage } from "../checkpoint.js";
 import type { ToolCallSummary } from "../types.js";
 import type { CanonicalToolResultView } from "../middlewares/types.js";
+import type { ToolBlockRecord } from "../../types.js";
 
 /** The payload of a tool_result row, in either stored shape: `{ toolCallId,
  *  result, status }` from the turn loop, or `{ text, toolCallId }` re-seeded
@@ -51,10 +52,14 @@ export function buildToolResultsView(
   summary: ToolCallSummary[],
   extract: (content: unknown) => string = extractToolResultText,
 ): CanonicalToolResultView[] {
-  return messages.map((message, index) => ({
-    toolName: summary[index]?.tool ?? "unknown",
-    toolCallId: (message.content as { toolCallId?: string })?.toolCallId ?? "",
-    content: extract(message.content),
-    status: summary[index]?.resultStatus,
-  }));
+  return messages.map((message, index) => {
+    const block = (message.content as { block?: ToolBlockRecord } | null)?.block;
+    return {
+      toolName: summary[index]?.tool ?? "unknown",
+      toolCallId: (message.content as { toolCallId?: string })?.toolCallId ?? "",
+      content: extract(message.content),
+      status: summary[index]?.resultStatus,
+      ...(block && typeof block === "object" ? { block } : {}),
+    };
+  });
 }

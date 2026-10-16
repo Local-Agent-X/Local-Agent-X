@@ -17,7 +17,7 @@ import { decisionDenies, decisionRequiresPrompt, getApprovalManager, getRiskDeci
 import { SECRET_ENV_TOOLS, secretEnvOf, secretEnvProgram } from "../tools/shell-secret-env.js";
 import { spawnCommandOf } from "../tools/process-session.js";
 import type { ToolCallContext } from "./context.js";
-import { reportUnattendedRefusal } from "./unattended-refusal.js";
+import { parkOrRefuse, takeUserGrant } from "./deferred-call.js";
 
 export const SECRET_USE_TOOL = "use_secret";
 
@@ -34,20 +34,20 @@ export async function secretEnvGate(ctx: ToolCallContext): Promise<SecretEnvGate
 
   const rule = getRiskDecision("secrets", ctx.sessionId);
   const names = [...new Set(Object.values(secretEnv))].sort();
-  const blockedResult = (content: string, recovery: string): SecretEnvGate => ({
-    kind: "blocked",
-    result: { content, isError: true, status: "blocked", metadata: { layer: "approval", userHint: USER_HINTS.policy, recovery } },
-  });
+  const blockedResult = (content: string, recovery: string): ToolResult =>
+    ({ content, isError: true, status: "blocked", metadata: { layer: "approval", userHint: USER_HINTS.policy, recovery } });
   if (decisionDenies(rule)) {
-    return blockedResult(`BLOCKED by profile: this profile does not let a vault secret (${names.join(", ")}) be handed to a command. Use http_request with {{SECRET_NAME}} in a header, or ask the user to run the command.`,
-      "Send the secret with http_request and a {{SECRET_NAME}} placeholder, or give the user the command to run themselves. Continue with the rest of the request.");
+    return { kind: "blocked", result: blockedResult(`BLOCKED by profile: this profile does not let a vault secret (${names.join(", ")}) be handed to a command. Use http_request with {{SECRET_NAME}} in a header, or ask the user to run the command.`,
+      "Send the secret with http_request and a {{SECRET_NAME}} placeholder, or give the user the command to run themselves. Continue with the rest of the request.") };
   }
   if (!decisionRequiresPrompt(rule)) return { kind: "continue" };
+  // The user's yes to this exact call, given from the inbox, covers its secrets too.
+  if (takeUserGrant(ctx)) return { kind: "continue" };
   if (ctx.callContext !== "local" || !ctx.onEvent) {
-    const refusal = `BLOCKED: handing ${names.join(", ")} to a command needs the user's yes under this profile, and no one can be asked on this run.`;
-    reportUnattendedRefusal(ctx, refusal);
-    return blockedResult(refusal,
+    const reason = `BLOCKED: handing ${names.join(", ")} to a command needs the user's yes under this profile, and no one can be asked on this run.`;
+    const refusal = blockedResult(reason,
       "Send the secret with http_request and a {{SECRET_NAME}} placeholder if that fits; otherwise report the command as waiting for the user. Continue with the rest of the request.");
+    return { kind: "blocked", result: parkOrRefuse(ctx, reason, refusal) };
   }
 
   const command = spawnCommandOf(ctx.args);

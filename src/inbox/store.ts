@@ -14,7 +14,7 @@
 
 import { randomBytes } from "node:crypto";
 import { createJsonStore } from "../util/json-store.js";
-import { INBOX_KINDS, type InboxCounts, type InboxInput, type StoredInboxItem } from "./types.js";
+import { INBOX_KINDS, type DeferredCallRecord, type InboxCounts, type InboxInput, type InboxResolution, type StoredInboxItem } from "./types.js";
 
 export const INFO_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 export const MAX_INBOX_ITEMS = 200;
@@ -43,7 +43,15 @@ export interface InboxStore {
   resolve(id: string): boolean;
   /** Resolve every open item `match` selects; returns how many changed. */
   resolveWhere(match: (item: StoredInboxItem) => boolean): number;
+  /** Answer an open approval: resolves it with `resolution` in the same
+   *  read-modify-write that checks it is still open, so of two answers to one
+   *  item exactly one gets "claimed" and its call runs at most once. */
+  claimApproval(id: string, resolution: InboxResolution): ApprovalClaim;
 }
+
+export type ApprovalClaim =
+  | { kind: "claimed"; item: StoredInboxItem & { deferredCall: DeferredCallRecord } }
+  | { kind: "missing" | "not-approval" | "answered" };
 
 export function isPinned(item: StoredInboxItem): boolean {
   return item.needsYou && item.resolvedAt === undefined && item.dismissedAt === undefined;
@@ -84,7 +92,7 @@ function sameContent(item: StoredInboxItem, next: ReturnType<typeof fromInput>):
     && item.needsYou === next.needsYou
     && JSON.stringify(item.link ?? null) === JSON.stringify(next.link ?? null)
     && JSON.stringify(item.actions ?? null) === JSON.stringify(next.actions ?? null)
-    && JSON.stringify(item.refusedCall ?? null) === JSON.stringify(next.refusedCall ?? null);
+    && JSON.stringify(item.deferredCall ?? null) === JSON.stringify(next.deferredCall ?? null);
 }
 
 function fromInput(input: InboxInput): Omit<StoredInboxItem, "id" | "createdAt"> {
@@ -96,7 +104,7 @@ function fromInput(input: InboxInput): Omit<StoredInboxItem, "id" | "createdAt">
     ...(input.link && Object.keys(input.link).length > 0 ? { link: input.link } : {}),
     ...(input.actions && input.actions.length > 0 ? { actions: input.actions } : {}),
     ...(input.key ? { key: input.key } : {}),
-    ...(input.refusedCall ? { refusedCall: input.refusedCall } : {}),
+    ...(input.deferredCall ? { deferredCall: input.deferredCall } : {}),
   };
 }
 
@@ -137,10 +145,13 @@ export function createInboxStore(filePath: string, clock: () => number = Date.no
       const existing = input.key ? items.find((item) => item.key === input.key) : undefined;
       const next = fromInput(input);
       if (existing) {
-        if (sameContent(existing, next)) {
+        // An approval dedupes only while it waits: once answered (or waved
+        // off) the yes or no was for that occurrence, and the same call parked
+        // again asks again.
+        if (sameContent(existing, next) && (existing.kind !== "approval" || isPinned(existing))) {
           return { item: existing, created: false, changed: false };
         }
-        for (const field of ["link", "actions", "refusedCall", "readAt", "resolvedAt", "dismissedAt"] as const) delete existing[field];
+        for (const field of ["link", "actions", "deferredCall", "readAt", "resolvedAt", "resolution", "dismissedAt"] as const) delete existing[field];
         Object.assign(existing, next, { updatedAt: now });
         return { item: existing, created: false, changed: true };
       }
@@ -175,6 +186,16 @@ export function createInboxStore(filePath: string, clock: () => number = Date.no
         count++;
       }
       return count;
+    }),
+    claimApproval: (id, resolution) => mutate((items, now): ApprovalClaim => {
+      const item = items.find((candidate) => candidate.id === id);
+      if (!item) return { kind: "missing" };
+      if (item.kind !== "approval" || !item.deferredCall) return { kind: "not-approval" };
+      if (!isPinned(item)) return { kind: "answered" };
+      item.resolvedAt = now;
+      item.resolution = resolution;
+      if (item.readAt === undefined) item.readAt = now;
+      return { kind: "claimed", item: item as StoredInboxItem & { deferredCall: DeferredCallRecord } };
     }),
   };
 }

@@ -29,6 +29,7 @@
 import type { ActionPreview, ServerEvent } from "./types.js";
 import { cacheKey, exactKey, DECLINE_SUPPRESS_MS } from "./approval-decision.js";
 import { ensureDurableBridge, reconcileRecoveredAsk, recordDurableRequest, recordDurableResolve } from "./approval-durable-record.js";
+import { CallGrants } from "./approval-call-grants.js";
 import { createLogger } from "./logger.js";
 
 export {
@@ -53,7 +54,6 @@ export {
  *  substrate (control-api-approvals.ts expiry hygiene) shares the SAME budget
  *  instead of forking a second constant that drifts. */
 export const APPROVAL_TIMEOUT_MS = 5 * 60_000;
-
 
 const logger = createLogger("approval-manager");
 
@@ -120,6 +120,7 @@ class ApprovalManager {
   // never writes. denyPendingForSession ("superseded") and clearSession
   // teardown deliberately never seed it.
   private suppressed = new Map<string, { ts: number; reason: ApprovalDenyReason }>();
+  readonly callGrants = new CallGrants(); // the user's yes to one exact call, given from the inbox
   private nextId = 1;
 
   /**
@@ -175,6 +176,8 @@ class ApprovalManager {
     opId?: string;
     emit: (event: ServerEvent) => void;
   }): Promise<ApprovalOutcome> {
+    const granted = this.callGrants.take(opts.sessionId, opts.toolName, opts.args);
+    if (granted) return { approved: true, grantId: granted };
     // Session-scoped auto-approval short-circuit. Key is composite
     // (toolName, argsFingerprint) so a prior grant for one binary/host/dir
     // does not cover unrelated calls under the same tool. Destructive ops
@@ -283,11 +286,10 @@ class ApprovalManager {
     // Suppression is written synchronously at each resolve site; this hook
     // only releases the coalescing slot.
     void promise.then(() => this.inflight.delete(ekey));
-    // Bank the wait against the CALL, so the runner's tool timeout can exclude
-    // it. Accumulated (not overwritten): one call can ask more than once.
     // Bank the wait against the CALL currently executing (approval-wait.ts),
     // so the runner's tool timeout excludes it — from the moment the card goes
     // up, not from when it is answered: the deadline lands mid-decision.
+    // Accumulated (not overwritten): one call can ask more than once.
     const endWait = beginApprovalWait();
     return promise.then((outcome) => { endWait(); return outcome; }, (error) => { endWait(); throw error; });
   }

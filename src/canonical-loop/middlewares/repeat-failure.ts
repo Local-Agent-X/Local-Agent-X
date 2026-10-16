@@ -14,7 +14,7 @@
  * Keys on the dispatcher's real resultStatus, not error-shaped text.
  */
 import { hasCapability } from "../../tool-registry.js";
-import { isWorkerOp, type CanonicalMiddleware } from "./types.js";
+import { isWorkerOp, type CanonicalMiddleware, type CanonicalToolResultView } from "./types.js";
 import { getMiddlewareState } from "./state.js";
 import { isDispatchFailure } from "../types.js";
 
@@ -48,13 +48,17 @@ function toolFamily(toolName: string): string {
 
 /** Tool name + normalized head of the error text. Args are deliberately NOT
  *  part of the signature — varying the payload against the same broken
- *  precondition is still the same failure. */
-function failureSig(toolName: string, content: string): string {
-  const family = toolFamily(toolName);
-  if (family === "shell" && /BLOCKED \(unattended\)|layer=["']?sandbox/i.test(content)) {
+ *  precondition is still the same failure. A shell call an unattended run
+ *  could not run — parked in the user's inbox (`block.deferredTo`) or refused
+ *  by the sandbox gate — is one failure whatever the command or the gate's
+ *  wording: read off the block record (or the envelope header's layer when a
+ *  view carries no record), never the refusal sentence. */
+function failureSig(tr: CanonicalToolResultView): string {
+  const family = toolFamily(tr.toolName);
+  if (family === "shell" && (tr.block?.deferredTo !== undefined || tr.block?.layer === "sandbox" || /\[blocked, (?:[^\]]*, )?layer=["']?sandbox/.test(tr.content))) {
     return "shell::unattended-sandbox";
   }
-  return `${family}::${content.replace(/\s+/g, " ").trim().slice(0, 200)}`;
+  return `${family}::${tr.content.replace(/\s+/g, " ").trim().slice(0, 200)}`;
 }
 
 export const repeatFailureMiddleware: CanonicalMiddleware = {
@@ -73,7 +77,7 @@ export const repeatFailureMiddleware: CanonicalMiddleware = {
         }
         continue;
       }
-      const sig = failureSig(tr.toolName, tr.content);
+      const sig = failureSig(tr);
       if (sig === state.sig) state.count++;
       else { state.sig = sig; state.family = toolFamily(tr.toolName); state.count = 1; }
 

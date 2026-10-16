@@ -11,6 +11,7 @@ import type { MemoryIndex, MemoryManager } from "../../memory/index.js";
 import type { SecretsStore } from "../../secrets.js";
 import type { ToolPolicy } from "../../tool-policy/index.js";
 import type { CronService } from "../../cron/cron-service.js";
+import { cronSessionId } from "../../cron/cron-session.js";
 import type { IntegrationRegistry } from "../../integrations/index.js";
 import { validateMissionOutputConfirmed } from "../../cron/output-validation.js";
 import { createLogger } from "../../logger.js";
@@ -77,7 +78,7 @@ export function registerCronRunner(deps: CronRunnerDeps): void {
     // are hidden from the sidebar and from /api/sessions/search, so the run row
     // in the cron detail view is the only remaining path back to the full
     // transcript (tool calls and all).
-    const sessionId = `cron-${jobId}-${Date.now()}`;
+    const sessionId = cronSessionId(jobId);
     const cleanedPrompt = stripSaveInstructions(stripCronPreamble(prompt));
     const jobMeta = cronService.get(jobId);
     const { prepareAgentRequest } = await import("../../agent-request/index.js");

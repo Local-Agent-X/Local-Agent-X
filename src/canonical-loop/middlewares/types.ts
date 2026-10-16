@@ -24,7 +24,7 @@
  * registry in `state.ts` keyed by opId. Cleared on op-terminal.
  */
 import type { Op } from "../../ops/types.js";
-import type { ServerEvent } from "../../types.js";
+import type { ServerEvent, ToolBlockRecord } from "../../types.js";
 import type { CanonicalMessage, ToolCall, ToolDescriptor } from "../contract-types.js";
 import type { ToolDispatchStatus } from "../types.js";
 import { OP_TYPE } from "../../ops/op-types.js";
@@ -52,6 +52,9 @@ export interface CanonicalToolResultView {
    *  flavor (blocked/declined/timeout are distinct from error); middlewares
    *  that only care ok-vs-failure use isDispatchFailure from ../types.js. */
   status?: ToolDispatchStatus;
+  /** The block record when the call was blocked (tool-execution/block-record.ts):
+   *  structured layer and `deferredTo`, for guards that must not parse wording. */
+  block?: ToolBlockRecord;
 }
 
 /**

@@ -50,8 +50,8 @@ const sessions: string[] = [];
 afterEach(() => {
   for (const s of sessions.splice(0)) clearSessionProfile(s);
 });
-function pinned(profile: Parameters<typeof setSessionProfile>[1]): string {
-  const s = sid();
+function pinned(profile: Parameters<typeof setSessionProfile>[1], prefix = ""): string {
+  const s = `${prefix}${sid()}`;
   setSessionProfile(s, profile);
   sessions.push(s);
   return s;
@@ -133,25 +133,37 @@ describe("requireApprovalPhase — unattended runs", () => {
     expect(ctx.result?.status).toBe("blocked");
   });
 
-  // Only a refusal the profile makes can be lifted by a looser profile; a
-  // policy reason asks a person under every one, so the Autonomous profile
-  // is the wrong way out and a chat is the right one.
-  it("a policy reason refused unattended points at a chat, never at a looser profile", async () => {
+  // A user's run parks the call in their inbox (deferred-call.ts) and says so.
+  // Where nothing can be parked (a harness run), the refusal names the way
+  // out: only a refusal the profile makes can be lifted by a looser profile; a
+  // policy reason asks a person under every one, so the Autonomous profile is
+  // the wrong way out and a chat is the right one.
+  it("a policy reason refused unattended is parked for the user, or points at a chat; never at a looser profile", async () => {
     for (const callContext of ["cron", "delegated"] as const) {
       const ctx = makeCtx({ name: "http_request", sessionId: pinned("Autonomous"), callContext, policyApprovalReason: "this host needs review" });
       expect((await requireApprovalPhase(ctx)).kind, callContext).toBe("halt");
       expect(String(ctx.result?.content), callContext).toContain("because this host needs review");
-      expect(String(ctx.result?.content), callContext).toContain("It is refused under every profile: run it from a chat, where you can approve it.");
+      expect(String(ctx.result?.content), callContext).toContain("waiting in the user's inbox");
+      expect(ctx.result?.metadata?.deferredTo, callContext).toMatch(/^inb_/);
       expect(String(ctx.result?.content), callContext).not.toContain("Autonomous profile");
+
+      const harness = makeCtx({ name: "http_request", sessionId: pinned("Autonomous", "eval_"), callContext, policyApprovalReason: "this host needs review" });
+      expect((await requireApprovalPhase(harness)).kind, callContext).toBe("halt");
+      expect(String(harness.result?.content), callContext).toContain("It is refused under every profile: run it from a chat, where you can approve it.");
+      expect(String(harness.result?.content), callContext).not.toContain("Autonomous profile");
     }
   });
 
-  it("a refusal the profile makes still points at the profiles", async () => {
+  it("a refusal the profile makes is parked for the user, or points at the profiles", async () => {
     const ctx = makeCtx({ name: "http_request", sessionId: pinned("Normal"), callContext: "cron" });
     expect((await requireApprovalPhase(ctx)).kind).toBe("halt");
     expect(String(ctx.result?.content)).toContain("under the active autonomy profile");
-    expect(String(ctx.result?.content)).toContain("Run this under the Autonomous profile (or pin a per-job profile) to allow it.");
-    expect(String(ctx.result?.content)).not.toContain("refused under every profile");
+    expect(String(ctx.result?.content)).toContain("waiting in the user's inbox");
+
+    const harness = makeCtx({ name: "http_request", sessionId: pinned("Normal", "eval_"), callContext: "cron" });
+    expect((await requireApprovalPhase(harness)).kind).toBe("halt");
+    expect(String(harness.result?.content)).toContain("Run this under the Autonomous profile (or pin a per-job profile) to allow it.");
+    expect(String(harness.result?.content)).not.toContain("refused under every profile");
   });
 
   it("lets an allow-tier tool proceed in a cron run", async () => {
@@ -696,7 +708,7 @@ describe("requireApprovalPhase — external-ingestion taint demotes fact saves t
     expect(outcome.kind).toBe("continue");
   });
 
-  it("tainted session + PROFILE-file target UNATTENDED → hard-blocked (unchanged)", async () => {
+  it("tainted session + PROFILE-file target UNATTENDED → not run: parked for the user's yes", async () => {
     const { recordExternalIngestion } = await import("../data-lineage/external.js");
     const s = pinned("Power");
     recordExternalIngestion(s);
@@ -711,8 +723,8 @@ describe("requireApprovalPhase — external-ingestion taint demotes fact saves t
     expect(outcome.kind).toBe("halt");
     expect(ctx.result?.status).toBe("blocked");
     expect(String(ctx.result?.content)).toContain("risky content cannot become durable memory");
+    expect(String(ctx.result?.content)).toContain("waiting in the user's inbox");
     // A promotion asks a person under every profile, so no looser one helps.
-    expect(String(ctx.result?.content)).toContain("It is refused under every profile: run it from a chat, where you can approve it.");
     expect(String(ctx.result?.content)).not.toContain("Autonomous profile");
   });
 

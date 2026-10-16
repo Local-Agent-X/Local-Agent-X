@@ -38,9 +38,9 @@ interface Exposure {
 const exposures = new Map<string, Exposure>();
 const sessionKey = (ctx: Pick<ToolCallContext, "sessionId">): string => ctx.sessionId || "default";
 
-/** The verdict a tool reported about its own output (read screens every file
- *  it shows and warns in its own words): null when clean, undefined when the
- *  tool reported none. */
+/** The finding a tool reported about its own output (read warns in its own
+ *  words, so its text is not re-read once it has); undefined when it reported
+ *  none, as a clean read does, whose text is then screened here. */
 function reportedFinding(result: ToolResult): InjectionFinding | null | undefined {
   const f = (result.metadata as { injection?: unknown } | undefined)?.injection;
   if (!f || typeof f !== "object") return undefined;

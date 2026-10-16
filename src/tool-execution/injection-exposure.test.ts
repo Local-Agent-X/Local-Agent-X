@@ -150,11 +150,11 @@ describe("harness text never makes a finding", () => {
     expect(await nextCallAsks("bash", { command: "ls" })).toBeUndefined();
   });
 
-  it("a clean read reports a clean verdict and gets no note", async () => {
+  it("a clean read carries no verdict on the wire and gets no note", async () => {
     const file = join(dir, "ok.ts");
     writeFileSync(file, "export const x = 1;\n");
     const result = await readTool.execute({ path: file, _sessionId: sid });
-    expect(result.metadata?.injection).toEqual({ score: 0, labels: [] });
+    expect(JSON.parse(JSON.stringify(result.metadata))).not.toHaveProperty("injection");
     const { rendered } = await deliver("read", { path: file }, result);
     expect(rendered).not.toContain(NOTE_HEAD);
   });

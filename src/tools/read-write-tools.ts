@@ -176,10 +176,11 @@ export const readTool: ToolDefinition = {
         // the read-dedup layer must never stub it away on a re-read. An
         // injection warning inside an appended import counts the same way.
         screened: injections.length > 0 || importInjections.length > 0 || undefined,
-        // The screen's verdict as data, clean included: the dispatcher's
-        // result screen takes it instead of re-reading this result, whose own
-        // warning trips the detector.
-        injection: injectionFinding([...injections, ...importInjections]) ?? { score: 0, labels: [] },
+        // A finding as data: the dispatcher's result screen takes it instead
+        // of re-reading this result, whose own warning trips the detector. A
+        // clean read carries none (it travels on every tool_end), and its
+        // text, with no warning in it, is safe for that screen to read.
+        injection: injectionFinding([...injections, ...importInjections]) ?? undefined,
         ...importsMeta,
       });
     } catch (e) {

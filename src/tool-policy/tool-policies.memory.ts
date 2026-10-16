@@ -29,8 +29,8 @@ export const TOOL_POLICIES_MEMORY: Record<string, ToolPolicyRow> = {
   memory_consolidate:    { kernel: "internal", risk: "workspace-write", capabilities: [] },
   memory_discover:       { kernel: "internal", risk: "safe", capabilities: [] },
   memory_dream:          { kernel: "internal", risk: "workspace-write", capabilities: [] },
-  memory_forget:         { kernel: "internal", risk: "destructive", capabilities: [] },
-  memory_forget_imports: { kernel: "internal", risk: "destructive", capabilities: [] },
+  memory_forget:         { kernel: "internal", risk: "destructive", capabilities: [], undo: { irreversible: "forgetting is the point", previewsUntil: "confirm" } },
+  memory_forget_imports: { kernel: "internal", risk: "destructive", capabilities: [], undo: { irreversible: "forgetting is the point", previewsUntil: "confirm" } },
   memory_get:            { kernel: "internal", risk: "safe", capabilities: [] },
   memory_ingest:         { kernel: "internal", risk: "workspace-write", capabilities: [], pathArgs: [{ arg: "directory", action: "read" }, { arg: "file", action: "read" }] },
   // A recall bumps the hot-score timestamp of the facts it returns
@@ -45,8 +45,8 @@ export const TOOL_POLICIES_MEMORY: Record<string, ToolPolicyRow> = {
   memory_update_profile: { kernel: "internal", risk: "workspace-write", capabilities: [] },
   remember:    { kernel: "internal", risk: "workspace-write", capabilities: [], rules: [{ id: "allow-remember", decision: "allow", reason: "Save durable fact to Facts DB (internal)", priority: 50 }] },
   update_fact: { kernel: "internal", risk: "workspace-write", capabilities: [], rules: [{ id: "allow-update-fact", decision: "allow", reason: "Correct a fact in the Facts DB (internal)", priority: 50 }] },
-  forget:      { kernel: "internal", risk: "destructive", capabilities: [], rules: [{ id: "allow-forget", decision: "allow", reason: "Soft-delete a fact in the Facts DB (internal)", priority: 50 }] },
+  forget:      { kernel: "internal", risk: "destructive", capabilities: [], undo: { recoverable: "a soft delete of one fact; its history is kept" }, rules: [{ id: "allow-forget", decision: "allow", reason: "Soft-delete a fact in the Facts DB (internal)", priority: 50 }] },
 
   // ── Self-edit — sandboxed, but the merge mutates running source ──
-  self_edit: { kernel: "internal", risk: "destructive", capabilities: [], rules: [{ id: "allow-self-edit", decision: "allow", reason: "Agent self-repair via Claude Code subprocess", priority: 50 }] },
+  self_edit: { kernel: "internal", risk: "destructive", capabilities: [], undo: { irreversible: "the engine's own source", uncarded: "the engine's own source under git (git is the undo); a card per self-repair is the friction it exists to remove" }, rules: [{ id: "allow-self-edit", decision: "allow", reason: "Agent self-repair via Claude Code subprocess", priority: 50 }] },
 };

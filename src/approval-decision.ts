@@ -21,7 +21,7 @@ import {
 import { loadProfileName, getSessionProfile } from "./autonomy/profile-store.js";
 import { classifyToolRisk } from "./autonomy/risk.js";
 import { irreversibleToolReason } from "./irreversible-tools.js";
-import { declaredPaths, hasCapability, pathSpecsForCall, shellCommandOf, TOOL_PATH_ARGS } from "./tool-registry.js";
+import { declaredPaths, hasCapability, pathSpecsForCall, policyRowOf, shellCommandOf, TOOL_PATH_ARGS } from "./tool-registry.js";
 import { declaredDestinations, destinationKey } from "./tool-execution/send-destinations.js";
 
 // Profile name cached 1s — same shape as the prior approvalMode cache.
@@ -344,26 +344,13 @@ export function isDestructiveCommand(
  *   2. The "destructive" ToolRisk class — non-shell tools whose whole purpose
  *      is an irreversible side effect (delete_file, process_kill,
  *      memory_forget, marketplace_install).
- *   3. DESTRUCTIVE_TOOL_ACTIONS — collapsed one-tool-many-actions families
+ *   3. A row's destructiveActions — collapsed one-tool-many-actions families
  *      whose risk varies per args.action. The tool's static ToolRisk is its
  *      worst NON-destructive tier; the destructive actions are reclassified
- *      here so collapsing a family never weakens its approval gate.
+ *      there so collapsing a family never weakens its approval gate.
  *
  * Scoped to "destructive" ONLY. money/secrets already have their own tiers.
  */
-const DESTRUCTIVE_TOOL_ACTIONS: Record<string, Record<string, string>> = {
-  protocol: {
-    delete: "deletes a saved protocol",
-    prune: "bulk-archives unused protocols",
-    archive_bulk: "bulk-archives protocols",
-    rollback_undo: "rewinds a protocol execution to an earlier step snapshot",
-    var_delete: "deletes a stored protocol variable",
-    install: "downloads skills from a repo and writes them into the workspace",
-    update: "overwrites an installed skill with its upstream version",
-    curate: "archives stale protocols and hard-deletes archived ones past their cutoff",
-  },
-};
-
 export function destructiveOperationReason(
   toolName: string,
   args: Record<string, unknown>,
@@ -373,7 +360,7 @@ export function destructiveOperationReason(
   if (classifyToolRisk(toolName) === "destructive") {
     return `destructive tool (${toolName}) — irreversible, confirm before running`;
   }
-  const actionReason = DESTRUCTIVE_TOOL_ACTIONS[toolName]?.[String(args.action ?? "")];
+  const actionReason = policyRowOf(toolName)?.destructiveActions?.[String(args.action ?? "")];
   if (actionReason) {
     return `destructive action (${toolName}.${args.action}) — ${actionReason}, confirm before running`;
   }

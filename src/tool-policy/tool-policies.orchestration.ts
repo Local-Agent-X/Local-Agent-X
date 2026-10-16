@@ -20,7 +20,7 @@ export const TOOL_POLICIES_ORCHESTRATION: Record<string, ToolPolicyRow> = {
   agent_redirect:  { kernel: "internal", risk: "workspace-write", capabilities: [] },
   agent_pause:     { kernel: "internal", risk: "workspace-write", capabilities: [] },
   agent_resume:    { kernel: "internal", risk: "workspace-write", capabilities: [] },
-  agent_cancel:    { kernel: "internal", risk: "destructive", capabilities: [] },
+  agent_cancel:    { kernel: "internal", risk: "destructive", capabilities: [], undo: { irreversible: "a spawned agent's run", uncarded: "stops a spawned agent's run; nothing the user owns is destroyed" } },
   agent_status:    { kernel: "internal", risk: "safe", capabilities: [] },
   agent_output:    { kernel: "internal", risk: "safe", capabilities: [] },
   agent_message:   { kernel: "internal", risk: "workspace-write", capabilities: [] },
@@ -34,7 +34,7 @@ export const TOOL_POLICIES_ORCHESTRATION: Record<string, ToolPolicyRow> = {
   // mission_schedule_* (cron/tools.ts) has a family glob (allow-mission-schedule);
   // the entries below carry each tool's class and risk.
   mission_schedule_create:  { kernel: "internal", risk: "workspace-write", capabilities: [] },
-  mission_schedule_delete:  { kernel: "internal", risk: "destructive", capabilities: [] },
+  mission_schedule_delete:  { kernel: "internal", risk: "destructive", capabilities: [], undo: { pairedWith: "mission_schedule_create" } },
   mission_schedule_list:    { kernel: "internal", risk: "safe", capabilities: [] },
   mission_schedule_update:  { kernel: "internal", risk: "workspace-write", capabilities: [] },
   mission_schedule_toggle:  { kernel: "internal", risk: "workspace-write", capabilities: [] },
@@ -54,5 +54,20 @@ export const TOOL_POLICIES_ORCHESTRATION: Record<string, ToolPolicyRow> = {
   // actions (delete, prune, archive_bulk, rollback_undo, var_delete, install,
   // update, curate) are reclassified per-call by the action-aware table in
   // approval-decision.ts.
-  protocol: { kernel: "internal", risk: "workspace-write", capabilities: [], rules: [{ id: "allow-protocols", decision: "allow", reason: "Protocol browsing, workflows, and execution", priority: 50 }] },
+  // The family's risk is its worst non-destructive tier; these actions are
+  // destructive, so collapsing the family never weakens their approval gate.
+  protocol: {
+    kernel: "internal", risk: "workspace-write", capabilities: [],
+    destructiveActions: {
+      delete: "deletes a saved protocol",
+      prune: "bulk-archives unused protocols",
+      archive_bulk: "bulk-archives protocols",
+      rollback_undo: "rewinds a protocol execution to an earlier step snapshot",
+      var_delete: "deletes a stored protocol variable",
+      install: "downloads skills from a repo and writes them into the workspace",
+      update: "overwrites an installed skill with its upstream version",
+      curate: "archives stale protocols and hard-deletes archived ones past their cutoff",
+    },
+    rules: [{ id: "allow-protocols", decision: "allow", reason: "Protocol browsing, workflows, and execution", priority: 50 }],
+  },
 };

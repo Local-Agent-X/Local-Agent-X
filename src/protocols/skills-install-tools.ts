@@ -2,7 +2,7 @@
  * The model-facing half of skills-install.ts: three `protocol_*` tools that
  * protocol-tool.ts collapses into `protocol(action:"install" | "refresh" |
  * "update")`. `install` and `update` write into the workspace and are listed
- * in DESTRUCTIVE_TOOL_ACTIONS (approval-decision.ts) so the collapsed family
+ * in the protocol policy row's destructiveActions so the collapsed family
  * keeps its approval gate; `refresh` only reports a diff.
  */
 

@@ -18,7 +18,7 @@
 | `audience-map.ts` | `docs/agent-capabilities.md` (`npm run docs:generated`) | `tool-reference-coverage.test.ts` |
 | a tool's `name` | every doc, prompt and table that names it | `tool-reference-coverage.test.ts` |
 | `tier-tool-set.ts` (`ESSENTIAL_TOOLS_ORDER`) | small-tier schemas | `src/model-tiers.test.ts` |
-| `undo-pairs.ts` | `src/irreversible-tools.ts` | none |
+| a row's `undo` (read by `undo-pairs.ts`) | `src/irreversible-tools.ts`, tool selection's `withUndoCounterparts` | `undo-pairs.test.ts`, `src/irreversible-tool-floor.test.ts` |
 
 ## Tests
 `npx vitest run src/tools` (PowerShell on Windows)

@@ -80,7 +80,7 @@ export const TOOL_POLICIES_NETWORK: Record<string, ToolPolicyRow> = {
   // email_mark changes IMAP flags: a real, user-visible mutation, but a
   // recoverable one, so it sits with the other workspace writes rather than
   // being dressed up as either a read or a destructive act.
-  email_delete:                { kernel: "http", risk: "destructive", capabilities: [], externalContent: true },
+  email_delete:                { kernel: "http", risk: "destructive", capabilities: [], externalContent: true, undo: { recoverable: "moves the message to the mailbox's Trash — never an expunge (email-imap decision E1)" } },
   email_mark:                  { kernel: "http", risk: "workspace-write", capabilities: [], externalContent: true },
   email_draft:                 { kernel: "http", risk: "workspace-write", capabilities: [] },
   // email_setup's verify step connects to the model-named SMTP host with the
@@ -97,7 +97,7 @@ export const TOOL_POLICIES_NETWORK: Record<string, ToolPolicyRow> = {
   calendar_create_event:       { kernel: "http", risk: "workspace-write", capabilities: [] },
   marketplace_search:          { kernel: "http", risk: "network-read", capabilities: [] },
   marketplace_list:            { kernel: "http", risk: "network-read", capabilities: [] },
-  marketplace_install:         { kernel: "http", risk: "destructive", capabilities: [] },
+  marketplace_install:         { kernel: "http", risk: "destructive", capabilities: [], undo: { irreversible: "overwrites a custom protocol record" } },
 
   // ── Database ──
   sql_query:           { kernel: "database", risk: "workspace-write", capabilities: ["sensitive-read"] },

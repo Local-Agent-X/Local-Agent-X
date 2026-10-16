@@ -8,42 +8,32 @@
  * `restore_file`. Membership may shrink (EXP-18); this table says what may
  * never be separated.
  *
- * Every destructive-risk tool (autonomy/risk.ts) is in exactly one of the two
- * lists. `undo-pairs.test.ts` fails the build when a destructive tool is in
- * neither, so a new destructive tool has to be classified the day it lands.
+ * Every destructive-risk tool says how its effect is undone on its own policy
+ * row (`undo`), and the row's type will not build without it, so a new
+ * destructive tool is classified the day it lands. These tables are read off
+ * the rows.
  */
 import type { ToolDefinition } from "../types.js";
+import { TOOL_POLICIES } from "../tool-policy/tool-policies.js";
+import type { UndoSpec } from "../tool-policy/tool-policies.types.js";
+
+const undoRows = Object.entries(TOOL_POLICIES).flatMap(([name, row]) => (row.undo ? [[name, row.undo] as [string, UndoSpec]] : []));
 
 /** destructive tool → the tool that reverses it. Both ship or neither does. */
-export const UNDO_PAIRS: Readonly<Record<string, string>> = {
-  delete_file: "restore_file",
-  process_kill: "process_start",
-  process_restart: "process_start",
-  autopilot_stop: "autopilot_start",
-  mission_schedule_delete: "mission_schedule_create",
-};
+export const UNDO_PAIRS: Readonly<Record<string, string>> = Object.fromEntries(
+  undoRows.flatMap(([name, u]) => ("pairedWith" in u ? [[name, u.pairedWith]] : [])),
+);
 
 /** Destructive on purpose, with no counterpart that could undo it: the
- *  approval gate is the only protection, and it is listed here so the coverage
- *  test knows the omission is a decision, not an oversight. */
-export const IRREVERSIBLE: ReadonlySet<string> = new Set([
-  "app_delete",            // an app's files; the workspace mirror is the recovery path
-  "op_kill",               // a running operation
-  "agent_cancel",          // a spawned agent's run
-  "memory_forget",         // forgetting is the point
-  "memory_forget_imports",
-  "self_edit",             // the engine's own source; git is the undo
-  "marketplace_install",   // overwrites a custom protocol record
-  "apply_update",          // the installed app; the update pipeline owns rollback
-]);
+ *  approval gate is the only protection. */
+export const IRREVERSIBLE: ReadonlySet<string> = new Set(undoRows.filter(([, u]) => "irreversible" in u).map(([name]) => name));
 
-/** Destructive, but recoverable without a paired tool. Listed apart so the
- *  irreversible floor (approval-decision.ts) does not card them as if they
- *  destroyed something; the coverage test holds all three lists disjoint. */
-export const RECOVERABLE_WITHOUT_PAIR: Readonly<Record<string, string>> = {
-  forget: "a soft delete of one fact; its history is kept",
-  email_delete: "moves the message to the mailbox's Trash — never an expunge (email-imap decision E1)",
-};
+/** Destructive, but recoverable without a paired tool, so the irreversible
+ *  floor (approval-decision.ts) does not card them as if they destroyed
+ *  something. */
+export const RECOVERABLE_WITHOUT_PAIR: Readonly<Record<string, string>> = Object.fromEntries(
+  undoRows.flatMap(([name, u]) => ("recoverable" in u ? [[name, u.recoverable]] : [])),
+);
 
 /**
  * Adds each destructive tool's counterpart from the catalog when the set has

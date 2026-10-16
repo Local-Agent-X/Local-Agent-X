@@ -103,7 +103,7 @@ export async function authorProtocol(input: AuthorProtocolInput): Promise<Author
   // If superseding, ARCHIVE the old protocol — never hard-delete it.
   //
   // `supersedes` is reachable from the ordinary agent path
-  // (protocol(action:"create")), which is not in DESTRUCTIVE_TOOL_ACTIONS and
+  // (protocol(action:"create")), which is not in the protocol row's destructiveActions and
   // is blanket-allowed by the orchestration policy. A hard delete there meant
   // the model could irrecoverably erase a user-authored protocol with no
   // approval prompt and no undo. Archiving makes the operation recoverable,

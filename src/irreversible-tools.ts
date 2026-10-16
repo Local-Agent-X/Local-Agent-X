@@ -1,27 +1,14 @@
 /**
  * Which irreversible TOOLS the irreversible floor (approval-decision.ts) cards.
  *
- * The table of what can be undone lives in tools/undo-pairs.ts; this file only
- * decides which of its IRREVERSIBLE tools ask before running. Under Power (the
+ * What can be undone is each destructive tool's policy row (`undo`); an
+ * irreversible tool asks before running unless its row says why not
+ * (`uncarded`), so a tool added later is carded by default. Under Power (the
  * default profile) destructive means "allow", so until 2026-09-26 app_delete, a
  * confirmed memory_forget and marketplace_install ran with no card.
  */
-import { IRREVERSIBLE } from "./tools/undo-pairs.js";
+import { policyRowOf } from "./tool-registry.js";
 
-/**
- * Irreversible tools the floor does NOT card, each with why. Every other
- * irreversible tool gets one confirm in an interactive run, so a tool added to
- * that table later is carded by default.
- */
-export const IRREVERSIBLE_TOOLS_UNCARDED: Readonly<Record<string, string>> = {
-  op_kill: "stops a run; nothing the user owns is destroyed, and the stop is usually the user's own",
-  agent_cancel: "stops a spawned agent's run, the same way",
-  self_edit: "the engine's own source under git (git is the undo); a card per self-repair is the friction it exists to remove",
-  apply_update: "the update pipeline owns rollback",
-};
-
-/** Two-step forgets: the first call previews, only `confirm: true` deletes. */
-const PREVIEWING_FORGETS = new Set(["memory_forget", "memory_forget_imports"]);
 const USER_ASKED_TO_FORGET = /\b(forget|delete|erase|remove|wipe|scrub|purge)\b/i;
 
 /** The human's own latest message asks for something to be forgotten. A
@@ -38,9 +25,11 @@ export function irreversibleToolReason(
   args: Record<string, unknown>,
   userText = "",
 ): string | null {
-  if (!IRREVERSIBLE.has(toolName) || toolName in IRREVERSIBLE_TOOLS_UNCARDED) return null;
-  if (PREVIEWING_FORGETS.has(toolName)) {
-    if (args.confirm !== true) return null;
+  const undo = policyRowOf(toolName)?.undo;
+  if (!undo || !("irreversible" in undo) || undo.uncarded) return null;
+  // A two-step forget: the first call previews, only `confirm: true` deletes.
+  if (undo.previewsUntil) {
+    if (args[undo.previewsUntil] !== true) return null;
     if (userAskedToForget(userText)) return null;
   }
   return `irreversible tool (${toolName})`;

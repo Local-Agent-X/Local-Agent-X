@@ -20,7 +20,7 @@ over 400 LOC (the source-hygiene ceiling).
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 157 | 29 | XL |  |
 | `src/security/` | 121 | 46 | XL |  |
-| `src/tools/` | 104 | 210 | XL |  |
+| `src/tools/` | 103 | 210 | XL |  |
 | `src/canonical-loop/` | 79 | 258 | XL |  |
 | `src/workspace/` | 72 | 3 | M |  |
 | `src/providers/` | 67 | 26 | XL |  |
@@ -32,7 +32,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/auth/` | 37 | 11 | L |  |
 | `src/threat/` | 37 | 13 | L |  |
 | `src/session/` | 36 | 7 | L |  |
-| `src/tool-policy/` | 33 | 20 | L |  |
+| `src/tool-policy/` | 34 | 20 | L |  |
 | `src/agency/` | 27 | 20 | XL |  |
 | `src/agent-store/` | 26 | 7 | L |  |
 | `src/chat-ws/` | 25 | 21 | L |  |

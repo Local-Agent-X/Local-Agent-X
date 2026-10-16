@@ -115,14 +115,41 @@ export type DestinationSpec = (
   | { to: "unknown"; label: string }
 ) & { forActions?: readonly string[] };
 
+/**
+ * How a destructive tool's effect is undone (tools/undo-pairs.ts reads it):
+ *   pairedWith    — the tool that reverses it; a tool set that carries one
+ *                   carries both, so one wrong call is never unrecoverable
+ *   recoverable   — undone without a pair (why); the irreversible floor does
+ *                   not card it
+ *   irreversible  — nothing undoes it (why): the approval gate is the only
+ *                   protection, and the irreversible floor (irreversible-tools.ts)
+ *                   cards it in an interactive run unless `uncarded` says why
+ *                   not. `previewsUntil` names the arg that must be `true` for
+ *                   the call to destroy anything (a forget previews first).
+ */
+export type UndoSpec =
+  | { pairedWith: string }
+  | { recoverable: string }
+  | { irreversible: string; uncarded?: string; previewsUntil?: string };
+
+/** What the user loses if a tool fires unapproved (feeds TOOL_RISK). A
+ *  destructive tool must say how its effect is undone, and only it may. */
+type RiskFacts =
+  | { risk: "destructive"; undo: UndoSpec }
+  | { risk: Exclude<ToolRisk, "destructive">; undo?: undefined };
+
 /** One concrete tool's row. Every fact a gate needs about the tool lives here,
  *  so a new tool answers each question once, and the type will not build
  *  without the answers. */
-export interface ToolPolicyRow {
+export type ToolPolicyRow = ToolPolicyRowFacts & RiskFacts;
+
+interface ToolPolicyRowFacts {
   /** The kernel defense pipeline — feeds TOOLS / TOOL_CLASS_MAP. */
   kernel: KernelClass;
-  /** What the user loses if it fires unapproved — feeds TOOL_RISK. */
-  risk: ToolRisk;
+  /** For a collapsed one-tool-many-actions family whose risk is not
+   *  destructive as a whole: the actions that are, each with what it destroys
+   *  (approval-decision.ts destructiveOperationReason). */
+  destructiveActions?: Readonly<Record<string, string>>;
   /** The sink classes this tool belongs to; `[]` when none. */
   capabilities: readonly DeclaredCapability[];
   /** A model-authored shell command the tool runs: the arg holding it, and
@@ -171,6 +198,8 @@ export interface GlobPolicyEntry {
   output?: undefined;
   externalContent?: undefined;
   destination?: undefined;
+  undo?: undefined;
+  destructiveActions?: undefined;
   pathArgs?: undefined;
   offBoxFetch?: undefined;
 }

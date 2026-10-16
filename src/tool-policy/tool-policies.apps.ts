@@ -45,7 +45,7 @@ export const TOOL_POLICIES_APPS: Record<string, ToolPolicyRow> = {
   app_action:      { kernel: "internal", risk: "workspace-write", capabilities: [] },
   app_query:       { kernel: "internal", risk: "safe", capabilities: [] },
   app_list:        { kernel: "internal", risk: "safe", capabilities: [] },
-  app_delete:      { kernel: "internal", risk: "destructive", capabilities: [] },
+  app_delete:      { kernel: "internal", risk: "destructive", capabilities: [], undo: { irreversible: "an app's files; the workspace mirror is the recovery path" } },
   // Every action mutates the app registry — grant/revoke rewrite an app's ACL,
   // suspend/activate/archive flip its lifecycle state. There is no read-only
   // action (app_read/app_query are the readers), so the tier is the sibling
@@ -75,13 +75,13 @@ export const TOOL_POLICIES_APPS: Record<string, ToolPolicyRow> = {
   op_submit_batch:   { kernel: "internal", risk: "workspace-write", capabilities: [], pathArgs: [{ arg: "tasks", each: "context_files", action: "read" }] },
   op_wait:           { kernel: "internal", risk: "safe", capabilities: [] },
   op_status:         { kernel: "internal", risk: "safe", capabilities: [] },
-  op_kill:           { kernel: "internal", risk: "destructive", capabilities: [] },
+  op_kill:           { kernel: "internal", risk: "destructive", capabilities: [], undo: { irreversible: "a running operation", uncarded: "stops a run; nothing the user owns is destroyed, and the stop is usually the user's own" } },
   op_redirect:       { kernel: "internal", risk: "workspace-write", capabilities: [] },
 
   // ── Autopilot (autopilot_* glob) ──
   autopilot_start:  { kernel: "internal", risk: "workspace-write", capabilities: [] },
   autopilot_status: { kernel: "internal", risk: "safe", capabilities: [] },
-  autopilot_stop:   { kernel: "internal", risk: "destructive", capabilities: [] },
+  autopilot_stop:   { kernel: "internal", risk: "destructive", capabilities: [], undo: { pairedWith: "autopilot_start" } },
 
   // ── App-build pipeline ──
   // Returns the design system text and records that this session has it
@@ -129,7 +129,7 @@ export const TOOL_POLICIES_APPS: Record<string, ToolPolicyRow> = {
   // conversational confirm, and (apply_update) the sandbox build/boot/smoke gate.
   restart:           { kernel: "internal", risk: "workspace-write", capabilities: [], rules: [{ id: "allow-restart", decision: "allow", reason: "Restart the server to pick up new code (desktop-gated, cooldown, pings on recovery)", priority: 50 }] },
   check_for_updates: { kernel: "internal", risk: "network-read", capabilities: [], rules: [{ id: "allow-check-for-updates", decision: "allow", reason: "Check the main branch for a newer version (read-only)", priority: 50 }] },
-  apply_update:      { kernel: "internal", risk: "destructive", capabilities: [], rules: [{ id: "allow-apply-update", decision: "allow", reason: "Download + sandbox-validate + apply a platform update, then relaunch (same gates as self_edit)", priority: 50 }] },
+  apply_update:      { kernel: "internal", risk: "destructive", capabilities: [], undo: { irreversible: "the installed app", uncarded: "the update pipeline owns rollback" }, rules: [{ id: "allow-apply-update", decision: "allow", reason: "Download + sandbox-validate + apply a platform update, then relaunch (same gates as self_edit)", priority: 50 }] },
 
   // ── Diagnostics / planning ──
   doctor:          { kernel: "internal", risk: "safe", capabilities: [], rules: [{ id: "allow-doctor", decision: "allow", reason: "System self-diagnostics (read-only)", priority: 50 }] },

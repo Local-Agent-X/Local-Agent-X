@@ -25,8 +25,8 @@ export const TOOL_POLICIES_CORE: Record<string, ToolPolicyRow> = {
   },
   process_start:    { kernel: "shell",    risk: "shell", capabilities: ["egress", "shell"], shellCommand: { arg: "command" }, output: "command" },
   process_status:   { kernel: "shell",    risk: "safe", capabilities: [], output: "command" },
-  process_kill:     { kernel: "shell",    risk: "destructive", capabilities: [] },
-  process_restart:  { kernel: "shell",    risk: "destructive", capabilities: ["egress", "shell"], shellCommand: { arg: "command" }, output: "command" },
+  process_kill:     { kernel: "shell",    risk: "destructive", capabilities: [], undo: { pairedWith: "process_start" } },
+  process_restart:  { kernel: "shell",    risk: "destructive", capabilities: ["egress", "shell"], shellCommand: { arg: "command" }, output: "command", undo: { pairedWith: "process_start" } },
   process_list:     { kernel: "shell",    risk: "safe", capabilities: [], output: "command" },
 
   // ── Raw filesystem ──
@@ -89,7 +89,7 @@ export const TOOL_POLICIES_CORE: Record<string, ToolPolicyRow> = {
   },
   // delete_file is the path-bounded alternative to `bash rm` — single file
   // per call, directories refused, workspace-bounded by SecurityLayer.
-  delete_file: { kernel: "file", risk: "destructive", capabilities: [], pathArgs: [{ arg: "path", action: "delete_file" }], rules: [{ id: "allow-delete-file", decision: "allow", reason: "Single-file delete (path-checked by SecurityLayer, directories refused)", priority: 50 }] },
+  delete_file: { kernel: "file", risk: "destructive", capabilities: [], undo: { pairedWith: "restore_file" }, pathArgs: [{ arg: "path", action: "delete_file" }], rules: [{ id: "allow-delete-file", decision: "allow", reason: "Single-file delete (path-checked by SecurityLayer, directories refused)", priority: 50 }] },
   // restore_file is delete_file's inverse leg on the task-trash tier: it puts
   // an agent-created file back where it was deleted from (safe-delete.ts,
   // restoreFromTaskTrash). It materializes bytes on disk, so it is gated as a

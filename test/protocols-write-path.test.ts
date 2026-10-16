@@ -533,7 +533,7 @@ describe("dedup gate is shared by both create paths (F3)", () => {
 
 describe("supersedes archives the target, never hard-deletes it (F27/F37)", () => {
   // `supersedes` is reachable from protocol(action:"create"), which is not in
-  // DESTRUCTIVE_TOOL_ACTIONS and is blanket-allowed by the orchestration policy.
+  // the protocol row's destructiveActions and is blanket-allowed by the orchestration policy.
   // While it hard-deleted, the ordinary agent could erase a user-authored
   // protocol with no approval prompt and no undo — the one thing the recoverable
   // archive is supposed to guarantee.

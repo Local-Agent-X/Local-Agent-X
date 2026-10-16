@@ -92,7 +92,6 @@ const TOOL_LISTS: Array<{ file: string; name: string; shape: "literals" | "keys"
   { file: "src/local-only-policy.ts", name: "REMOTE_ONLY_TOOLS", shape: "literals" },
   { file: "src/tools/plan-tools.ts", name: "READ_ONLY_TOOLS", shape: "literals" },
   { file: "src/committing-tool-check.ts", name: "ARG_AWARE_TOOLS", shape: "literals" },
-  { file: "src/approval-decision.ts", name: "DESTRUCTIVE_TOOL_ACTIONS", shape: "keys" },
   { file: "src/tool-execution/stateful-tools.ts", name: "STATEFUL_LIVE_STATE_TOOLS", shape: "literals" },
   { file: "src/tool-execution/dedup-cache.ts", name: "DEDUP_SKIP", shape: "literals" },
   { file: "src/tool-execution/heap-guard.ts", name: "HEAP_GUARD_EXEMPT_TOOLS", shape: "literals" },

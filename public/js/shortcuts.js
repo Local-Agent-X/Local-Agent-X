@@ -187,8 +187,6 @@ document.addEventListener('keydown', (e) => {
     if (setOv && setOv.classList.contains('visible')) { closeSettings(); return; }
     const so = document.getElementById('shortcuts-overlay');
     if (so && so.style.display === 'flex') { so.style.display = 'none'; return; }
-    const np = document.getElementById('notif-panel');
-    if (np && np.classList.contains('open')) { np.classList.remove('open'); return; }
     if (commandPaletteOpen) { closeCommandPalette(); return; }
     // Close lightbox
     const lb = document.getElementById('img-preview-overlay');

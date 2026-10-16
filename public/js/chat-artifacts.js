@@ -9,32 +9,23 @@ var artifactsFetchedAt = 0;
 var artifactsFilter = 'all';
 var ARTIFACTS_TTL_MS = 15000;
 
+// Each tab is a #side-tab-<name> button and a #<name>-tab-body pane.
+var SIDE_PANEL_TABS = ['agents', 'inbox', 'artifacts', 'browser', 'android', 'terminal'];
+
 function switchSidePanelTab(tab) {
   sidePanelTab = tab;
-  var agentsBody = document.getElementById('agents-tab-body');
-  var artifactsBody = document.getElementById('artifacts-tab-body');
-  var browserBody = document.getElementById('browser-tab-body');
-  var androidBody = document.getElementById('android-tab-body');
-  var terminalBody = document.getElementById('terminal-tab-body');
-  var agentsTab = document.getElementById('side-tab-agents');
-  var artifactsTab = document.getElementById('side-tab-artifacts');
-  var browserTab = document.getElementById('side-tab-browser');
-  var androidTab = document.getElementById('side-tab-android');
-  var terminalTab = document.getElementById('side-tab-terminal');
+  SIDE_PANEL_TABS.forEach(function(name) {
+    var body = document.getElementById(name + '-tab-body');
+    var button = document.getElementById('side-tab-' + name);
+    if (body) body.style.display = tab === name ? '' : 'none';
+    if (button) button.classList.toggle('active', tab === name);
+  });
   var autoBtn = document.getElementById('agent-feeds-autoopen-toggle');
-  if (agentsBody) agentsBody.style.display = tab === 'agents' ? '' : 'none';
-  if (artifactsBody) artifactsBody.style.display = tab === 'artifacts' ? '' : 'none';
-  if (browserBody) browserBody.style.display = tab === 'browser' ? '' : 'none';
-  if (androidBody) androidBody.style.display = tab === 'android' ? '' : 'none';
-  if (terminalBody) terminalBody.style.display = tab === 'terminal' ? '' : 'none';
-  if (agentsTab) agentsTab.classList.toggle('active', tab === 'agents');
-  if (artifactsTab) artifactsTab.classList.toggle('active', tab === 'artifacts');
-  if (browserTab) browserTab.classList.toggle('active', tab === 'browser');
-  if (androidTab) androidTab.classList.toggle('active', tab === 'android');
-  if (terminalTab) terminalTab.classList.toggle('active', tab === 'terminal');
   // AUTO (auto-open on agent spawn) only makes sense on the agents tab.
   if (autoBtn) autoBtn.style.display = tab === 'agents' ? '' : 'none';
   if (tab === 'artifacts') loadArtifacts(false);
+  // An item posted from an out-of-process worker has no live frame here.
+  if (tab === 'inbox' && typeof loadInbox === 'function') loadInbox();
   if (typeof applyAgentFeedsTabWidth === 'function') applyAgentFeedsTabWidth(tab);
   if (tab !== 'browser' && window.laxBrowserWorkspace) {
     window.laxBrowserWorkspace.onTabHidden();

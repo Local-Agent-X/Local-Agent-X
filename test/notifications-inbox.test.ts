@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 //
-// The bell is the view of the server inbox (src/inbox/): it renders the
+// The side panel's INBOX tab (opened by the bell) is the view of the server
+// inbox (src/inbox/): it renders the
 // server's list with needs-you items pinned on top, escapes every server
 // string, merges live inbox_item frames (toasting the ones that need the
 // user), refetches on inbox_changed, answers approvals through
@@ -29,9 +30,28 @@ const serverItems = [
 ];
 
 function load(): Bell {
-  document.body.innerHTML = '<span id="notif-badge" style="display:none"></span><div id="notif-panel"></div><div id="notif-list"></div>';
+  document.body.innerHTML = '<span id="notif-badge" style="display:none"></span><span id="inbox-count" style="display:none"></span><div id="notif-list"></div>';
   new Function(src("shared-escape.js") + "\nglobalThis.esc = esc;")();
   return new Function(src("notifications.js") + "\nreturn { loadInbox, handleInboxFrame, addNotification, renderNotifications };")() as Bell;
+}
+
+interface Panel {
+  toggleInboxTab: () => void;
+  switchSidePanelTab: (tab: string) => void;
+  isOpen: () => boolean;
+}
+
+// The real tab switcher (chat-artifacts.js) and the bell in one scope, with the
+// panel's open/close (chat-agent-feeds.js) reduced to its flag.
+function loadPanel(): Panel {
+  document.body.innerHTML = '<span id="notif-badge"></span>'
+    + '<button id="side-tab-agents" class="active"></button><button id="side-tab-inbox"></button><button id="side-tab-artifacts"></button>'
+    + '<span id="inbox-count"></span><div id="agents-tab-body"></div><div id="artifacts-tab-body" style="display:none"></div>'
+    + '<div id="inbox-tab-body" style="display:none"><div id="notif-list"></div></div>';
+  new Function(src("shared-escape.js") + "\nglobalThis.esc = esc;")();
+  return new Function("var agentFeedsOpen = false;\nfunction toggleAgentFeeds() { agentFeedsOpen = !agentFeedsOpen; }\n"
+    + src("chat-artifacts.js") + "\n" + src("notifications.js")
+    + "\nreturn { toggleInboxTab, switchSidePanelTab, isOpen: function () { return agentFeedsOpen; } };")() as Panel;
 }
 
 let posted: Array<{ path: string; body: unknown }>;
@@ -145,9 +165,50 @@ describe("the bell renders the server inbox", () => {
     expect(posted).toEqual([]);
   });
 
+  it("the unread count shows on the INBOX tab as well as the bell", async () => {
+    const bell = load();
+    await bell.loadInbox();
+    const tabCount = document.getElementById("inbox-count")!;
+    expect(tabCount.textContent).toBe("2");
+    expect(tabCount.style.display).toBe("");
+  });
+
   it("no longer keeps a localStorage copy", () => {
     localStorage.setItem("lax_notifications", JSON.stringify([{ text: "stale", read: false }]));
     load();
     expect(localStorage.getItem("lax_notifications")).toBeNull();
+  });
+});
+
+describe("the inbox is a tab of the side panel", () => {
+  const shown = (id: string) => document.getElementById(id)!.style.display !== "none";
+
+  it("the bell opens the closed panel on the INBOX tab and loads the list", async () => {
+    const panel = loadPanel();
+    panel.toggleInboxTab();
+    expect(panel.isOpen()).toBe(true);
+    expect(shown("inbox-tab-body")).toBe(true);
+    expect(shown("agents-tab-body")).toBe(false);
+    expect(document.getElementById("side-tab-inbox")!.classList.contains("active")).toBe(true);
+    await vi.waitFor(() => expect(rows()).toEqual(["inb_urgent", "inb_info"]));
+  });
+
+  it("on another tab the bell switches to INBOX without closing; on INBOX it closes the panel", () => {
+    const panel = loadPanel();
+    panel.toggleInboxTab();
+    panel.switchSidePanelTab("agents");
+    panel.toggleInboxTab();
+    expect(panel.isOpen()).toBe(true);
+    expect(shown("inbox-tab-body")).toBe(true);
+    panel.toggleInboxTab();
+    expect(panel.isOpen()).toBe(false);
+  });
+
+  it("app.html has no floating notification panel: the list lives in the INBOX tab body", () => {
+    const html = readFileSync(join(here, "../public/app.html"), "utf8");
+    const page = new DOMParser().parseFromString(html.slice(html.indexOf("<body"), html.lastIndexOf("</body>")), "text/html");
+    expect(page.getElementById("notif-panel")).toBeNull();
+    expect(page.getElementById("notif-list")!.closest("#inbox-tab-body")).not.toBeNull();
+    expect(page.getElementById("side-tab-inbox")!.closest(".agent-feeds-header")).not.toBeNull();
   });
 });

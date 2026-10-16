@@ -125,6 +125,11 @@ body.sidebar-controls-ready #sidebar-agents-controls{visibility:visible}
 body:not(.platform-darwin):not(.platform-win):not(.sidebar-right) #sidebar:not(.collapsed) #sidebar-brand{padding-left:74px}
 body:not(.platform-darwin):not(.platform-win) #sidebar.collapsed + #main .page-header,
 body.sidebar-right:not(.platform-darwin):not(.platform-win) #main .page-header{padding-left:74px}
+/* The side panel's tab row is the column under a cluster: flipped, the panel
+   sits top-left under #sidebar-controls; otherwise top-right under
+   #sidebar-agents-controls. */
+body.sidebar-right:not(.platform-darwin):not(.platform-win) .agent-feeds-header{padding-left:74px}
+body:not(.sidebar-right):not(.platform-darwin):not(.platform-win) .agent-feeds-header{padding-right:44px}
 /* Drag-to-resize handle pinned to the sidebar's inner edge (right normally,
    left when the sidebar is flipped to the right side). Thin hit area with
    an accent line on hover/drag. Hidden while collapsed or on mobile. */
@@ -285,9 +290,6 @@ body.platform-darwin #sidebar-agents-controls{top:3px;right:14px}
 /* Error retry */
 .error-retry{padding:16px;border:1px solid var(--danger);border-radius:10px;background:rgba(255,51,51,.05);text-align:center}
 /* Notification center */
-.notif-panel{position:fixed;top:0;right:0;width:320px;height:100vh;background:var(--surface);border-left:1px solid var(--border);z-index:1000;display:flex;flex-direction:column;transform:translateX(100%)}
-.notif-panel.open{transform:translateX(0)}
-.notif-header{padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
 .notif-list{flex:1;overflow-y:auto;padding:8px}
 .notif-item{padding:10px 12px;border-bottom:1px solid var(--border);font-size:.75rem}
 .notif-item .notif-time{font-size:.6rem;color:var(--muted)}
@@ -1527,7 +1529,7 @@ body.sidebar-right #browser-view-anchor{margin-left:0;margin-right:var(--feeds-r
 .agent-feeds.collapsed .agent-feeds-resize-handle{display:none}
 body.agent-feeds-resizing{cursor:ew-resize;user-select:none}
 body.agent-feeds-resizing .agent-feeds{transition:none!important}
-.agent-feeds-header{padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;flex-shrink:0}
+.agent-feeds-header{padding:14px 16px;border-bottom:1px solid var(--border);display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;flex-shrink:0}
 .agent-feeds-title{font-family:var(--mono);font-size:.72rem;color:var(--accent);letter-spacing:2px;text-transform:uppercase}
 .agent-count{font-family:var(--mono);font-size:.65rem;background:var(--accent);color:var(--bg);border-radius:10px;padding:1px 7px;min-width:18px;text-align:center}
 .agent-feeds-autoopen{background:none;border:1px solid var(--border);cursor:pointer;font-family:var(--mono);font-size:.6rem;padding:3px 8px;border-radius:6px;margin-left:auto;transition:all .15s;line-height:1;letter-spacing:1px}

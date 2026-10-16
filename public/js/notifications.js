@@ -1,4 +1,7 @@
-// ── Notification Center: the view of the user inbox (src/inbox/) ──
+// ── Inbox: the side panel's INBOX tab, the view of the user inbox (src/inbox/) ──
+//
+// The bell in the utility bar opens the tab (toggleInboxTab); the panel and
+// its tab switching are chat-agent-feeds.js and chat-artifacts.js.
 //
 // The list is the server's (GET /api/inbox), shared by every tab and device:
 // an agent asking for the user, a background or scheduled job's outcome, a
@@ -19,7 +22,8 @@
 // this tab only, and the server being unreachable is one of its causes.
 //
 // External deps (classic-script globals): apiFetch (shared-api.js), esc
-// (shared-escape.js), Spring, navigate, selectChat, chats, openSettings.
+// (shared-escape.js), navigate, selectChat, chats, openSettings,
+// agentFeedsOpen, toggleAgentFeeds, sidePanelTab, switchSidePanelTab.
 
 var _inboxItems = [];
 var _inboxLocal = [];
@@ -118,13 +122,15 @@ function renderNotifications() {
     : items.map(renderInboxItem).join('');
 }
 
+// The unread count shows on the bell and on the INBOX tab.
 function updateNotifBadge() {
-  var badge = document.getElementById('notif-badge');
   var count = _inboxUnread + _inboxLocal.filter(function (n) { return !n.readAt; }).length;
-  if (badge) {
+  ['notif-badge', 'inbox-count'].forEach(function (id) {
+    var badge = document.getElementById(id);
+    if (!badge) return;
     badge.textContent = count > 0 ? String(count) : '';
     badge.style.display = count > 0 ? '' : 'none';
-  }
+  });
 }
 
 function findInboxItem(id) {
@@ -208,26 +214,16 @@ function bindInboxList(el) {
     var n = findInboxItem(id);
     if (!n) return;
     if (!n.readAt) inboxAct(id, 'read');
-    if (n.link || n.kind === 'update') { toggleNotifPanel(); openInboxLink(n); }
+    if (n.link || n.kind === 'update') openInboxLink(n);
   });
 }
 
-function toggleNotifPanel() {
-  var panel = document.getElementById('notif-panel');
-  if (!panel) return;
-  var opening = !panel.classList.contains('open');
-  if (opening) {
-    panel.classList.add('open');
-    // Disable CSS transition, let spring handle it
-    panel.style.transition = 'none';
-    Spring.animate(panel, 'x', 0, { from: 320, preset: 'stiff', unit: 'px', onDone: function () { panel.style.transition = ''; panel.style.transform = ''; } });
-    renderNotifications();
-    // An item posted from an out-of-process worker has no live frame here.
-    loadInbox();
-  } else {
-    panel.style.transition = 'none';
-    Spring.animate(panel, 'x', 320, { from: 0, preset: 'stiff', unit: 'px', onDone: function () { panel.classList.remove('open'); panel.style.transform = ''; panel.style.transition = ''; } });
-  }
+// The bell: opens the side panel on its INBOX tab, or closes the panel when
+// that tab is already showing.
+function toggleInboxTab() {
+  if (agentFeedsOpen && sidePanelTab === 'inbox') { toggleAgentFeeds(); return; }
+  if (!agentFeedsOpen) toggleAgentFeeds();
+  switchSidePanelTab('inbox');
 }
 
 function timeAgo(ts) {

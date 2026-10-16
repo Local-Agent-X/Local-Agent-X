@@ -48,6 +48,7 @@ Color tokens (EXACT). Put \`color-scheme: light dark\` on :root and define each 
   --danger: light-dark(oklch(0.52 0.19 27), oklch(0.7 0.17 27));
 Token roles — use the one that names the job: --surface-hover is a card under the pointer · --border is a component edge, --border-subtle a row divider · --accent is a FILL (buttons, active nav), never body-text color · --accent-contrast is the text ON --accent and is NOT always white · --success/--warn/--danger are semantic only. Derive any shade you still need with color-mix() against these, never a fresh invented hex.
 Typography: 'Manrope', system-ui, -apple-system, 'Segoe UI', sans-serif. Scale: h1 30px/800/-0.02em · h2 20px/700/-0.01em · body 16px/400/1.6 · label 13px/600. The weight gap between headings and body is doing the hierarchy work — do not flatten it.
+Fonts: these faces ship with Local Agent X. Load them with exactly this in <head>, and nothing from a font CDN: <link rel="stylesheet" href="/vendor/fonts/manrope.css">
 Radius: 8px controls / 12px cards. Shadow: 0 1px 2px rgba(0,0,0,.06), 0 6px 16px rgba(0,0,0,.05). Spacing: 4px base (4/8/12/16/24/32/48).
 Attitude: Clean, contemporary, content-first — polish through restraint, one clear center of gravity per view.
 Layout & hierarchy: Header → primary content → supporting sections → footer. Card/list groupings with generous gutters; one clear primary action per view.
@@ -228,6 +229,7 @@ Color tokens (EXACT). Put \`color-scheme: light dark\` on :root and define each 
   --danger: light-dark(oklch(0.52 0.19 27), oklch(0.7 0.17 27));
 Token roles — use the one that names the job: --surface-hover is a card under the pointer · --border is a component edge, --border-subtle a row divider · --accent is a FILL (buttons, active nav), never body-text color · --accent-contrast is the text ON --accent and is NOT always white · --success/--warn/--danger are semantic only. Derive any shade you still need with color-mix() against these, never a fresh invented hex.
 Typography: Display 'Sora', system-ui, sans-serif; body 'Manrope', system-ui, sans-serif. Scale: h1 clamp(40px,6vw,72px)/800/-0.03em · sub 18px/400/1.6 · body 17px/400/1.6 · CTA 16px/600. Big benefit-led headlines, skimmable body.
+Fonts: these faces ship with Local Agent X. Load them with exactly this in <head>, and nothing from a font CDN: <link rel="stylesheet" href="/vendor/fonts/sora.css"> <link rel="stylesheet" href="/vendor/fonts/manrope.css">
 Radius: 10px cards / 999px pill CTAs. Shadow: CTA 0 8px 24px color-mix(in oklch, var(--accent) 30%, transparent). Spacing: 4px base; generous 80–96px section padding.
 A dark band is welcome for one section: use --text as its background and --bg as its text. Flat and deliberate — never a gradient, and never more than one such band.
 Attitude: Persuasive and momentum-building — one clear narrative that guides the eye straight to a single conversion goal.
@@ -335,6 +337,7 @@ Color tokens (EXACT). Put \`color-scheme: light dark\` on :root and define each 
   --danger: light-dark(oklch(0.52 0.19 27), oklch(0.7 0.17 27));
 Token roles — use the one that names the job: --surface-hover is a card under the pointer · --border is a component edge, --border-subtle a row divider · --accent is a FILL (buttons, active nav), never body-text color · --accent-contrast is the text ON --accent and is NOT always white · --success/--warn/--danger are semantic only. Derive any shade you still need with color-mix() against these, never a fresh invented hex.
 Typography: Display 'Sora', system-ui, sans-serif; body 'Manrope', system-ui, sans-serif. Scale: h1 clamp(40px,6vw,72px)/800/-0.03em · sub 18px/400/1.6 · body 17px/400/1.6 · CTA 16px/600. Big benefit-led headlines, skimmable body.
+Fonts: these faces ship with Local Agent X. Load them with exactly this in <head>, and nothing from a font CDN: <link rel="stylesheet" href="/vendor/fonts/sora.css"> <link rel="stylesheet" href="/vendor/fonts/manrope.css">
 Radius: 10px cards / 999px pill CTAs. Shadow: CTA 0 8px 24px color-mix(in oklch, var(--accent) 30%, transparent). Spacing: 4px base; generous 80–96px section padding.
 A dark band is welcome for one section: use --text as its background and --bg as its text. Flat and deliberate — never a gradient, and never more than one such band.
 Attitude: Persuasive and momentum-building — one clear narrative that guides the eye straight to a single conversion goal.

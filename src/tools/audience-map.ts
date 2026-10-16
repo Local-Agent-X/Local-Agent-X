@@ -190,6 +190,9 @@ export const AUDIENCES_BY_TOOL: Record<string, Audience[]> = {
   // /\bapp\b|dashboard|tracker/ rule surfaces app_* on the messages that
   // need them (same path as email_*/calendar_*).
   build_app: ["main-chat"],
+  // Eager beside build_app: the direct-write route needs it before the first
+  // app UI write, and a deferred tool would cost a tool_search first.
+  app_design_brief: ["main-chat"],
   // Connector definition — eager wherever build_app is, so the main agent can
   // wire an app's data source. The in-canonical builder gets it directly via
   // BUILDER_AGENT_TOOLS (build-app.ts), not through this map.

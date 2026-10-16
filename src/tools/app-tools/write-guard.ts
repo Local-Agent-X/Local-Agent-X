@@ -1,9 +1,11 @@
 /**
- * Write-time enforcement for files written under workspace/apps/<id>/. Two
+ * Write-time enforcement for files written under workspace/apps/<id>/. Three
  * concerns, kept independent:
  *   1. Content policy (CDN references, viewport meta) — pure text checks that
  *      apply to EVERY writer of an app file.
- *   2. Baseline lock — when a build's baseline was generated and OWNED by the
+ *   2. Design gate (design-gate.ts) — the first UI write to an app in a session
+ *      that has not been given the house design system is refused with it.
+ *   3. Baseline lock — when a build's baseline was generated and OWNED by the
  *      harness (frontend-spa scaffold), the model may only add code under src/;
  *      writes/edits to the owned config files (package.json / vite.config /
  *      tsconfig) are rejected so the model can't clobber the working skeleton.
@@ -20,6 +22,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { SCAFFOLD_MANIFEST_REL } from "../framework-scaffold.js";
 import { readRunTargetManifest } from "../app-run-target.js";
+import { designGateRejection } from "./design-gate.js";
 
 export interface WriteGuardResult {
   allow: boolean;
@@ -123,11 +126,20 @@ function builtArtifactWarning(filePath: string): string | null {
   );
 }
 
-export function checkAppWrite(filePath: string, content: string): WriteGuardResult {
+/** `sessionId` keys the design gate: the session whose agent is writing. */
+export function checkAppWrite(filePath: string, content: string, sessionId?: string): WriteGuardResult {
   if (!isUnderAppsDir(filePath)) return { allow: true };
 
   const baseline = ownedBaselineRejection(filePath);
   if (baseline) return { allow: false, reason: "harness-owned baseline file", message: baseline };
+
+  // Before the content checks: a design rejection means rewriting the file, so
+  // it must not wait behind a CDN fix and cost a second full draft.
+  const parts = appRootAndRel(filePath);
+  const design = parts
+    ? designGateRejection(parts.root, parts.root.replace(/^.*\//, ""), filePath, content, sessionId)
+    : null;
+  if (design) return { allow: false, reason: "design system not yet loaded for this app", message: design };
 
   for (const host of BLOCKED_CDNS) {
     if (content.includes(host)) {

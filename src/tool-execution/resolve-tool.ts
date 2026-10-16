@@ -71,6 +71,9 @@ export const SESSION_SCOPED_TOOLS = new Set([
   "project_brief_update", "project_create",
   "self_edit",
   "build_app", "start_app_build", "finalize_app_build",
+  // The design gate records delivery per session (app-tools/design-gate.ts),
+  // and a write checks the same session's record.
+  "app_design_brief",
   "agent_escalate",
   // agent_wakeup / issue_update wake other agents through the canonical
   // invoke door; the trusted _sessionId is how they derive the calling RUN

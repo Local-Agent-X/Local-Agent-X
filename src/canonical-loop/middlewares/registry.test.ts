@@ -69,7 +69,6 @@ const EXPECTED_ORDER = [
   "budget-ladder",
   "post-edit-diagnostics",
   "external-change-diff",
-  "app-design-guard",
   "dead-end",
   "repeat-failure",
   "thrash-guard",

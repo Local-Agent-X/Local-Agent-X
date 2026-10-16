@@ -13,11 +13,10 @@
  *                         nothing committed), verify-gate, open-steps
  *                         (forces continuation when the model left declared
  *                         task-list steps unfinished; runs on interactive too,
- *                         its open-tasks signal is safe for chat),
- *                         app-design-guard
+ *                         its open-tasks signal is safe for chat)
  *   afterToolExecution:   mid-turn-stale, loop-detection, repeat-output,
  *                         verify-gate, post-edit-diagnostics,
- *                         external-change-diff, app-design-guard, dead-end,
+ *                         external-change-diff, dead-end,
  *                         repeat-failure (ALL lanes — same-tool same-error
  *                         spiral breaker; nudge at 3, abort at 5), thrash-guard
  *
@@ -49,7 +48,6 @@ import { budgetLadderMiddleware } from "./budget-ladder.js";
 import { midTurnStaleMiddleware } from "./mid-turn-stale.js";
 import { verifyGateMiddleware } from "./verify-gate.js";
 import { postEditDiagnosticsMiddleware } from "./post-edit-diagnostics.js";
-import { appDesignGuardMiddleware } from "./app-design-guard.js";
 import { externalChangeDiffMiddleware } from "./external-change-diff.js";
 import { instructionLedgerMiddleware } from "./instruction-ledger.js";
 import { thrashGuardMiddleware } from "./thrash-guard.js";
@@ -115,12 +113,6 @@ const DEFAULT_STACK: StackEntry[] = [
   // post-edit-diagnostics (a turn's own introduced-error feedback wins first)
   // and before dead-end. Fail-open; disable with LAX_EXTERNAL_CHANGE_DIFF=0.
   { order: 247, mw: externalChangeDiffMiddleware },
-  // All lanes — an agent that writes app UI files straight into
-  // workspace/apps/ skips build_app and therefore the design system it
-  // injects; this hands the same rules over once per op. Sits after
-  // post-edit-diagnostics so an introduced compile error wins first.
-  // Fail-open; disable with LAX_APP_DESIGN_GUARD=0.
-  { order: 248, mw: appDesignGuardMiddleware },
   { order: 250, mw: deadEndMiddleware },
   // All lanes (incl. interactive) — same-tool same-error spiral breaker.
   { order: 260, mw: repeatFailureMiddleware },

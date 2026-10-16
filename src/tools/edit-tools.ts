@@ -99,10 +99,10 @@ function applyStringEdit(content: string, rawOld: string, rawNew: string, replac
 // allowSyntaxErrors is the USER-authorized escape hatch (a reliability rail,
 // not a security one): the gate stops landing the write but still surfaces the
 // parse error as a note, so authorized breakage is never silent breakage.
-function commitEdit(filePath: string, updated: string, verb: string, allowSyntaxErrors = false): ToolResult {
+function commitEdit(filePath: string, updated: string, verb: string, allowSyntaxErrors: boolean, sessionId: string | undefined): ToolResult {
   const connectorRejection = connectorManifestWriteRejection(filePath);
   if (connectorRejection) return err(connectorRejection);
-  const guard = checkAppWrite(filePath, updated);
+  const guard = checkAppWrite(filePath, updated, sessionId);
   if (!guard.allow) return err(guard.message ?? writeGuardRejectionMessage(guard.reason ?? "policy violation"));
   const before = existsSync(filePath) ? readFileSync(filePath, "utf-8") : null;
   const verdict = checkEditSyntax(filePath, before, updated);
@@ -147,7 +147,7 @@ export const editTool: ToolDefinition = {
       const res = applyStringEdit(content, String(args.old_string), String(args.new_string), Boolean(args.replace_all));
       if (!res.ok) return err(`${res.message} (${filePath})`, res.recovery ? { recovery: res.recovery } : undefined);
       if (res.tolerant) logger.info(`[edit] whitespace-tolerant match used for ${filePath} (exact old_string missed; relative indentation preserved)`);
-      return commitEdit(filePath, res.updated, "Edited", Boolean(args.allow_syntax_errors));
+      return commitEdit(filePath, res.updated, "Edited", Boolean(args.allow_syntax_errors), sessionIdOf(args));
     } catch (e) {
       return err(`Failed to edit ${filePath}: ${(e as Error).message}`);
     }
@@ -202,7 +202,7 @@ export const editLinesTool: ToolDefinition = {
         verb = `Inserted ${newLines.length} line(s) into`;
       }
       const joined = out.join("\n");
-      return commitEdit(filePath, crlf ? joined.replace(/\n/g, "\r\n") : joined, verb, Boolean(args.allow_syntax_errors));
+      return commitEdit(filePath, crlf ? joined.replace(/\n/g, "\r\n") : joined, verb, Boolean(args.allow_syntax_errors), sessionIdOf(args));
     } catch (e) {
       return err(`Failed to edit ${filePath}: ${(e as Error).message}`);
     }
@@ -258,7 +258,7 @@ export const multiEditTool: ToolDefinition = {
         content = res.updated;
       }
       if (tolerantUsed) logger.info(`[multi_edit] whitespace-tolerant match used for ${tolerantUsed}/${edits.length} edits in ${filePath}`);
-      return commitEdit(filePath, content, `Applied ${edits.length} edit(s) to`, Boolean(args.allow_syntax_errors));
+      return commitEdit(filePath, content, `Applied ${edits.length} edit(s) to`, Boolean(args.allow_syntax_errors), sessionIdOf(args));
     } catch (e) {
       return err(`Failed to edit ${filePath}: ${(e as Error).message}`);
     }
@@ -344,7 +344,7 @@ export const bulkReplaceTool: ToolDefinition = {
       const count = content.split(effOld).length - 1;
       if (count === 0) continue;
       if (!dryRun) {
-        const res = commitEdit(file, content.split(effOld).join(effNew), "Bulk-replaced in", Boolean(args.allow_syntax_errors));
+        const res = commitEdit(file, content.split(effOld).join(effNew), "Bulk-replaced in", Boolean(args.allow_syntax_errors), sessionIdOf(args));
         if (res.isError) { failed.push(`${relative(root, file)}: ${res.content}`); continue; }
       }
       changed.push({ file: relative(root, file) || file, count });

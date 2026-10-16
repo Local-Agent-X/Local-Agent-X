@@ -82,6 +82,9 @@ export const TOOL_POLICIES_APPS: Record<string, ToolPolicyEntry> = {
   autopilot_stop:   { kernel: "internal", risk: "destructive" },
 
   // ── App-build pipeline ──
+  // Returns the design system text and records that this session has it
+  // (design-gate.ts); reads only the app folder's listing.
+  app_design_brief:      { kernel: "internal", risk: "safe", rules: [{ id: "allow-app-design-brief", decision: "allow", reason: "Read the house design system before writing app UI", priority: 50 }] },
   build_app:             { kernel: "internal", risk: "workspace-write", rules: [{ id: "allow-build-app", decision: "allow", reason: "Build workspace apps", priority: 50 }] },
   // The manifest names the upstream the connector proxy will then reach, so
   // the call is gated as the off-box sink it opens.

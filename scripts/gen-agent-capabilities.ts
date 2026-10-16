@@ -124,6 +124,7 @@ const BLURB: Record<string, { say?: string; does: string }> = {
   browser: { say: "open google.com and search for X", does: "Drive a real browser." },
 
   build_app:  { say: "build me a todo app", does: "Build a working app from a description." },
+  app_design_brief: { say: "add a habit tracker to my sidebar", does: "Load the house design system before writing an app's UI by hand." },
   app_create: { does: "Create a new app scaffold." },
   app_list:   { does: "List your apps." },
 

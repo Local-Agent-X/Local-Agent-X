@@ -97,12 +97,12 @@ in the conductor.
 non-`continue` verdict. Per phase, the middlewares that implement the hook:
 
 - **beforeTurn:** mid-turn-stale, instruction-ledger, loop-detection, open-steps, budget-ladder
-- **afterModelCall:** office-theme-guard, loop-detection, repeat-output, premature-completion (worker ops only), verify-gate, open-steps, app-design-guard
-- **afterToolExecution:** mid-turn-stale, loop-detection, repeat-output, verify-gate, post-edit-diagnostics, external-change-diff, app-design-guard, dead-end, repeat-failure, thrash-guard
+- **afterModelCall:** office-theme-guard, loop-detection, repeat-output, premature-completion (worker ops only), verify-gate, open-steps
+- **afterToolExecution:** mid-turn-stale, loop-detection, repeat-output, verify-gate, post-edit-diagnostics, external-change-diff, dead-end, repeat-failure, thrash-guard
 
 Full registration order: mid-turn-stale, office-theme-guard, instruction-ledger,
 loop-detection, repeat-output, premature-completion, verify-gate, open-steps,
-budget-ladder, post-edit-diagnostics, external-change-diff, app-design-guard,
+budget-ladder, post-edit-diagnostics, external-change-diff,
 dead-end, repeat-failure, thrash-guard. `open-steps` is skipped when the op
 forbids workspace writes (ledger or enforced plan mode).
 

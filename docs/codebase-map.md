@@ -18,10 +18,10 @@ over 400 LOC (the source-hygiene ceiling).
 
 | Directory | Importers | Files | Size | God files |
 |---|--:|--:|:--:|--:|
-| `src/ops/` | 158 | 29 | XL |  |
+| `src/ops/` | 157 | 29 | XL |  |
 | `src/security/` | 120 | 45 | XL |  |
-| `src/tools/` | 104 | 208 | XL |  |
-| `src/canonical-loop/` | 79 | 259 | XL |  |
+| `src/tools/` | 103 | 209 | XL |  |
+| `src/canonical-loop/` | 79 | 258 | XL |  |
 | `src/workspace/` | 72 | 3 | M |  |
 | `src/providers/` | 67 | 26 | XL |  |
 | `src/memory/` | 51 | 139 | XL |  |
@@ -54,8 +54,8 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/cron/` | 13 | 10 | L |  |
 | `src/self-edit/` | 13 | 19 | L |  |
 | `src/whatsapp-bridge/` | 12 | 8 | L |  |
-| `src/agent-guards/` | 11 | 11 | L |  |
 | `src/broker-transport/` | 11 | 38 | XL |  |
+| `src/agent-guards/` | 10 | 11 | L |  |
 | `src/agent-loop/` | 10 | 1 | S |  |
 | `src/ari-kernel/` | 10 | 12 | L |  |
 | `src/autopilot/` | 10 | 14 | L |  |

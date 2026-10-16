@@ -12,8 +12,16 @@
  * pinned here is that each rejection carries ITS OWN remedy, and that a
  * remedy names a route the model can actually take.
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { checkAppWrite, writeGuardRejectionMessage } from "./write-guard.js";
+import { markDesignDelivered, resetDesignDeliveries } from "./design-gate.js";
+
+// These pin the content checks; the design gate has its own suite
+// (design-gate.test.ts), so the session here has already been given it.
+beforeEach(() => {
+  resetDesignDeliveries();
+  markDesignDelivered(undefined, "demo");
+});
 
 /** Only paths under a workspace apps dir are guarded at all. */
 const APP = "/home/u/workspace/apps/demo/index.html";

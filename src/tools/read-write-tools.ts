@@ -225,7 +225,7 @@ export const writeTool: ToolDefinition = {
     }
     const containerRejection = binaryContainerRejection(filePath, content);
     if (containerRejection) return err(containerRejection);
-    const guard = checkAppWrite(filePath, content);
+    const guard = checkAppWrite(filePath, content, sessionIdOf(args));
     if (!guard.allow) return err(guard.message ?? writeGuardRejectionMessage(guard.reason ?? "policy violation"));
     try {
       mkdirSync(dirname(filePath), { recursive: true });

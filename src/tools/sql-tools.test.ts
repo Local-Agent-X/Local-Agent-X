@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import Database from "better-sqlite3";
 
 import { resolvePath, sqlTools } from "./sql-tools.js";
-import { workspaceRoot } from "../config.js";
+import { getRuntimeConfig, setRuntimeConfig, workspaceRoot } from "../config.js";
 import { resolveAgentPath } from "../workspace/paths.js";
 
 // The data-bearing SQL tool outputs must be wrapped as untrusted external
@@ -106,6 +106,19 @@ describe("sql tools taint their data output", () => {
 // server's cwd — on the desktop, the install dir, not the workspace. The path
 // now goes through the canonical resolver the file tools and the gate use.
 describe("sql tools resolve a relative database path against the workspace", () => {
+  // A workspace of this test's own: the repo's workspace/ is user data, and
+  // another test asserts nothing touched it.
+  const previousConfig = getRuntimeConfig();
+  let ownWorkspace = "";
+  beforeAll(() => {
+    ownWorkspace = mkdtempSync(join(tmpdir(), "lax-sql-workspace-"));
+    setRuntimeConfig({ ...previousConfig, workspace: join(ownWorkspace, "workspace") });
+  });
+  afterAll(() => {
+    setRuntimeConfig(previousConfig);
+    rmSync(ownWorkspace, { recursive: true, force: true });
+  });
+
   it("resolvePath is the canonical agent-path resolver", () => {
     expect(resolvePath("workspace/data.db", undefined)).toBe(resolveAgentPath("data.db"));
     expect(resolvePath("data.db", undefined)).toBe(resolveAgentPath("data.db"));

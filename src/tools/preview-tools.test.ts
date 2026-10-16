@@ -2,7 +2,7 @@ import { describe, it, expect, afterAll } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { workspaceRoot } from "../config.js";
+import { getRuntimeConfig, setRuntimeConfig, workspaceRoot } from "../config.js";
 import { pdfTools } from "./pdf-tools.js";
 import { documentTools } from "./document-tools.js";
 import { previewTools } from "./preview-tools.js";
@@ -13,10 +13,18 @@ import type { ToolDefinition } from "../types.js";
 const maskId = (text: string): string => text.replace(/ id="[0-9a-f]+"/g, ' id="X"');
 
 // The thumbnail is written beside the file under the file-access mode, so the
-// fixtures live in the workspace, where every mode allows a write.
+// fixtures live in the workspace, where every mode allows a write. A workspace
+// of this test's own: the repo's workspace/ is user data, and another test
+// asserts nothing touched it.
+const previousConfig = getRuntimeConfig();
+const ownWorkspace = mkdtempSync(join(tmpdir(), "preview-workspace-"));
+setRuntimeConfig({ ...previousConfig, workspace: join(ownWorkspace, "app", "workspace") });
 mkdirSync(workspaceRoot(), { recursive: true });
 const dir = mkdtempSync(join(workspaceRoot(), "preview-"));
-afterAll(() => rmSync(dir, { recursive: true, force: true }));
+afterAll(() => {
+  setRuntimeConfig(previousConfig);
+  rmSync(ownWorkspace, { recursive: true, force: true });
+});
 const find = (a: ToolDefinition[], n: string) => a.find((t) => t.name === n)!;
 const preview = previewTools[0];
 const isPng = (b: Buffer) => b[0] === 0x89 && b.slice(1, 4).toString() === "PNG";

@@ -4,6 +4,7 @@ export { handleMemoryRoutes } from "./memory.js";
 export { handleMemoryLearningRoutes } from "./memory-learning.js";
 export { handleAgentRoutes } from "./agents.js";
 export { handleApprovalRoutes } from "./approvals.js";
+export { handleInboxRoutes } from "./inbox.js";
 export { handleIssueRoutes } from "./issues.js";
 export { handleRunsRoutes } from "./runs.js";
 export { handleAppRoutes } from "./apps.js";

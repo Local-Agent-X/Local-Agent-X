@@ -179,9 +179,12 @@
   <div id="notif-panel" class="notif-panel">
     <div class="notif-header">
       <span style="font-family:var(--mono);font-size:.8rem;color:var(--accent)">NOTIFICATIONS</span>
-      <button onclick="toggleNotifPanel()" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:1.2rem">&times;</button>
+      <span style="display:flex;align-items:center;gap:8px">
+        <button type="button" class="notif-btn" onclick="markAllInboxRead()">Mark all read</button>
+        <button onclick="toggleNotifPanel()" aria-label="Close notifications" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:1.2rem">&times;</button>
+      </span>
     </div>
-    <div class="notif-list" id="notif-list"><div style="padding:20px;text-align:center;color:var(--muted);font-size:.75rem">No notifications yet</div></div>
+    <div class="notif-list" id="notif-list"><div class="notif-empty">No notifications yet</div></div>
   </div>
 
   <!-- ══ KEYBOARD SHORTCUTS OVERLAY ══ -->

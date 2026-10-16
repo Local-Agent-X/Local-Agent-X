@@ -185,6 +185,8 @@ function connectChatWs() {
     // approval_requested for (page reload, server restart, second device) —
     // GET /api/approvals/pending is the durable source of truth.
     rediscoverPendingApprovals().catch(() => {});
+    // Same for the inbox: items posted while this socket was down.
+    if (typeof loadInbox === 'function') loadInbox();
   };
 
   // The durable-resolve reply (approval_resolved + delivery) is a bare

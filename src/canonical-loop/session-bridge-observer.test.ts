@@ -10,6 +10,8 @@ import { cancelIdleNudge, scheduleIdleNudge } from "../ops/idle-nudge.js";
 import { collectCanonicalBrowserEvents, recordCanonicalEvent } from "./session-bridge-observer.js";
 import { getBus, streamChannel } from "./bus.js";
 import type { CanonicalEvent } from "./types.js";
+import { inboxStore } from "../inbox/index.js";
+import { VERIFICATION_OP_TYPE } from "./verification-spend.js";
 
 // Spy-wrap the two side-channel sinks the observer feeds on terminal state so
 // the headless-job cases below can prove "no notification, no nudge". The real
@@ -602,5 +604,46 @@ describe("session-bridge-observer — a checkpoint-stopped op is partial, not co
     // names the same task; the completed-dedup guard must not block it.
     expect(findRecentCompletionMatching(sessionId, "research the widget market in depth")).toBeNull();
     cancelIdleNudge(sessionId);
+  });
+});
+
+describe("session-bridge-observer — the user's inbox", () => {
+  const itemFor = (opId: string) => inboxStore().list().filter((i) => i.kind === "job" && i.link?.opId === opId);
+  const finish = (opId: string, type: string, sessionId: string, to: string, task = "summarize the quarterly numbers") => {
+    makeOp(opId, type);
+    trackOpForSession(opId, sessionId, task);
+    setSessionBroadcaster(vi.fn());
+    recordCanonicalEvent(stateChanged(opId, to));
+    cancelIdleNudge(sessionId);
+  };
+
+  it("a failed background op posts one needs-you job item linked to its chat and op", () => {
+    finish("op_inbox_failed_1", "research", "sess-inbox-1", "failed");
+    const items = itemFor("op_inbox_failed_1");
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      title: 'Background task "summarize the quarterly numbers" failed',
+      needsYou: true,
+      link: { sessionId: "sess-inbox-1", opId: "op_inbox_failed_1" },
+    });
+  });
+
+  it("a completed op is information, and a replayed terminal event updates rather than duplicates", () => {
+    finish("op_inbox_done_1", "research", "sess-inbox-2", "succeeded");
+    trackOpForSession("op_inbox_done_1", "sess-inbox-2", "summarize the quarterly numbers");
+    recordCanonicalEvent(stateChanged("op_inbox_done_1", "succeeded"));
+    cancelIdleNudge("sess-inbox-2");
+    const items = itemFor("op_inbox_done_1");
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ title: 'Background task "summarize the quarterly numbers" finished', needsYou: false });
+  });
+
+  it("a scheduled mission (the cron executor posts it), a verification pass and a headless harness op post nothing", () => {
+    finish("op_inbox_mission_1", "scheduled_mission", "cron-job-1-1700000000000", "failed");
+    finish("op_inbox_verify_1", VERIFICATION_OP_TYPE, "sess-inbox-3", "succeeded");
+    finish("op_inbox_headless_1", "research", "skill-review-1-1", "failed");
+    expect(itemFor("op_inbox_mission_1")).toEqual([]);
+    expect(itemFor("op_inbox_verify_1")).toEqual([]);
+    expect(itemFor("op_inbox_headless_1")).toEqual([]);
   });
 });

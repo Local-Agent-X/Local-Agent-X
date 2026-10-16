@@ -20,6 +20,7 @@ import {
   type ExecuteResult,
 } from "./cron-service-types.js";
 import type { CronService } from "./cron-service.js";
+import { inboxJobResult } from "../inbox/producers.js";
 
 const logger = createLogger("cron-service");
 
@@ -99,6 +100,7 @@ export async function runJob(
       model: result.model,
     });
 
+    postCronOutcome(job, status === "success" ? summarize(result.output) : (job.lastErrorMessage || status), status === "success", result.sessionId);
     maybeAutoPause(svc, job);
   } catch (e) {
     const finishedAt = new Date().toISOString();
@@ -126,11 +128,29 @@ export async function runJob(
       errorMessage,
     });
 
+    postCronOutcome(job, errorMessage, false);
     scheduleTransientRetry(svc, job, opts);
     maybeAutoPause(svc, job);
   } finally {
     svc.running.delete(job.id);
   }
+}
+
+/**
+ * The user's inbox line for a finished scheduled run. One item per job and
+ * outcome: each run updates its job's "finished" notice, and a failing job
+ * keeps one needs-you item (refreshed by each further failure) until the user
+ * deals with it. Posted here, not from the op observer, because only this
+ * executor knows the run's verdict after the report quality gate.
+ */
+function postCronOutcome(job: CronJob, summary: string, succeeded: boolean, sessionId?: string): void {
+  inboxJobResult({
+    label: `Scheduled job "${job.name}"`,
+    outcome: succeeded ? "completed" : "failed",
+    summary,
+    key: `${succeeded ? "cron-done" : "cron-failed"}:${job.id}`,
+    ...(sessionId ? { link: { sessionId } } : {}),
+  });
 }
 
 function recordSkip(svc: CronService, job: CronJob, scheduledAt: string, manual: boolean, reason: string): void {

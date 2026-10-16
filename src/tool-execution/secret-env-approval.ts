@@ -17,6 +17,7 @@ import { decisionDenies, decisionRequiresPrompt, getApprovalManager, getRiskDeci
 import { SECRET_ENV_TOOLS, secretEnvOf, secretEnvProgram } from "../tools/shell-secret-env.js";
 import { spawnCommandOf } from "../tools/process-session.js";
 import type { ToolCallContext } from "./context.js";
+import { reportUnattendedRefusal } from "./unattended-refusal.js";
 
 export const SECRET_USE_TOOL = "use_secret";
 
@@ -43,7 +44,9 @@ export async function secretEnvGate(ctx: ToolCallContext): Promise<SecretEnvGate
   }
   if (!decisionRequiresPrompt(rule)) return { kind: "continue" };
   if (ctx.callContext !== "local" || !ctx.onEvent) {
-    return blockedResult(`BLOCKED: handing ${names.join(", ")} to a command needs the user's yes under this profile, and no one can be asked on this run.`,
+    const refusal = `BLOCKED: handing ${names.join(", ")} to a command needs the user's yes under this profile, and no one can be asked on this run.`;
+    reportUnattendedRefusal(ctx, refusal);
+    return blockedResult(refusal,
       "Send the secret with http_request and a {{SECRET_NAME}} placeholder if that fits; otherwise report the command as waiting for the user. Continue with the rest of the request.");
   }
 

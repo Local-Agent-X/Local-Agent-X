@@ -20,6 +20,7 @@ import {
 } from "../agent-store/index.js";
 import { ProjectRosterStore } from "../project-rosters.js";
 import { EventBus } from "../event-bus.js";
+import { inboxAgentEscalation } from "../inbox/producers.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("escalation-core");
@@ -116,6 +117,12 @@ export async function performEscalation(
   }
 
   if (resolved === "user") {
+    // The inbox is what the user actually sees. The event below is forwarded
+    // as an `agent-escalation` WS frame (server/handler-events.ts) that no
+    // client renders, so on its own it reached nobody. A chat-origin
+    // escalation (no caller agent) is the chat itself talking to the user,
+    // who is already reading it.
+    if (callerAgentId) inboxAgentEscalation({ fromAgentId: callerAgentId, fromName: callerName, context, urgency, issueId });
     await EventBus.emit("handler:agent-escalation", {
       from: callerAgentId || "user",
       fromName: callerName,

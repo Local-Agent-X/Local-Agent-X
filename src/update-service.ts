@@ -15,6 +15,7 @@ import { pathToFileURL } from "node:url";
 import { safeErrorMessage } from "./server-utils.js";
 import { isLocalOnlyMode, LOCAL_ONLY_BLOCK_MESSAGE } from "./local-only-policy.js";
 import { gitSafeCmd } from "./git-safety.js";
+import { inboxUpdateAvailable, inboxUpdateCurrent } from "./inbox/producers.js";
 
 export interface UpdateCheckResult {
   localVersion: string;
@@ -133,6 +134,20 @@ async function withNativeRuntimeCheck(result: UpdateCheckResult): Promise<Update
 }
 
 export async function checkForUpdate(force = false): Promise<UpdateCheckResult> {
+  const result = await checkForUpdateOnce(force);
+  noteUpdateInInbox(result);
+  return result;
+}
+
+/** One inbox item per available version; once the install is current an
+ *  open notice is resolved. A failed check says nothing either way. */
+function noteUpdateInInbox(result: UpdateCheckResult): void {
+  if (result.error) return;
+  if (result.updateAvailable) inboxUpdateAvailable({ version: result.remoteVersion, commit: result.remoteCommit, notes: result.releaseNotes });
+  else inboxUpdateCurrent();
+}
+
+async function checkForUpdateOnce(force: boolean): Promise<UpdateCheckResult> {
   if (isLocalOnlyMode()) {
     return { localVersion: "0.0.0", localCommit: "", remoteVersion: "0.0.0", remoteCommit: "", updateAvailable: false, releaseNotes: "", error: LOCAL_ONLY_BLOCK_MESSAGE };
   }

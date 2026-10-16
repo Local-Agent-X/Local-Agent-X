@@ -290,7 +290,22 @@ body.platform-darwin #sidebar-agents-controls{top:3px;right:14px}
 .notif-header{padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
 .notif-list{flex:1;overflow-y:auto;padding:8px}
 .notif-item{padding:10px 12px;border-bottom:1px solid var(--border);font-size:.75rem}
-.notif-item .notif-time{font-size:.6rem;color:var(--muted);margin-top:4px}
+.notif-item .notif-time{font-size:.6rem;color:var(--muted)}
+.notif-item.unread{background:var(--surface-2)}
+.notif-item.needs-you{border-left:3px solid var(--warn);background:color-mix(in srgb, var(--warn) 8%, var(--surface))}
+.notif-item.resolved{opacity:.6}
+.notif-item[data-inbox-id]{cursor:pointer}
+.notif-meta{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px}
+.notif-kind{font-family:var(--mono);font-size:.6rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
+.notif-item.needs-you .notif-kind{color:var(--warn)}
+.notif-title{color:var(--text);font-weight:600}
+.notif-item:not(.unread) .notif-title{font-weight:400}
+.notif-body{color:var(--muted);margin-top:4px;white-space:pre-wrap;overflow-wrap:anywhere}
+.notif-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.notif-btn{background:none;border:1px solid var(--border);border-radius:4px;color:var(--text);cursor:pointer;font-size:.65rem;padding:2px 8px}
+.notif-btn:hover:not(:disabled){border-color:var(--accent)}
+.notif-btn:disabled{color:var(--muted);cursor:default}
+.notif-empty{padding:20px;text-align:center;color:var(--muted);font-size:.75rem}
 .notif-badge{position:absolute;top:-4px;right:-4px;background:var(--danger);color:#fff;font-size:.55rem;min-width:14px;height:14px;border-radius:7px;display:flex;align-items:center;justify-content:center;font-weight:700}
 /* ── Protocols page detail (list/grid uses shared .drill-* classes) ── */
 #protocol-tree{flex:1;min-height:0}

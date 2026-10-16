@@ -1,75 +1,211 @@
-// ── Notification Center ──
+// ── Notification Center: the view of the user inbox (src/inbox/) ──
+//
+// The list is the server's (GET /api/inbox), shared by every tab and device:
+// an agent asking for the user, a background or scheduled job's outcome, a
+// call an unattended run refused, an available update. Items that need the
+// user are pinned on top. The server pushes `inbox_item` when one arrives and
+// `inbox_changed` after any tab answers one (chat-ws-handler.js routes both
+// here); chat-ws.js reloads the list on every (re)connect.
+//
+// addNotification() is the one tab-local producer: a UI action in this tab
+// that failed (an agent redirect not delivered). It renders through the same
+// list as an "app-error" item but is never sent to the server: it concerns
+// this tab only, and the server being unreachable is one of its causes.
+//
+// External deps (classic-script globals): apiFetch (shared-api.js), esc
+// (shared-escape.js), Spring, navigate, selectChat, chats, openSettings.
 
-let _notifications = [];
-try { _notifications = JSON.parse(localStorage.getItem('lax_notifications') || '[]'); } catch {}
+var _inboxItems = [];
+var _inboxLocal = [];
+var _inboxUnread = 0;
+var MAX_LOCAL_ITEMS = 20;
+var INBOX_KIND_LABEL = {
+  'agent-message': 'Agent', job: 'Job', 'refused-action': 'Needs your OK',
+  update: 'Update', 'app-error': 'Error', approval: 'Approval',
+};
 
 function addNotification(text, type) {
-  type = type || 'info';
-  _notifications.unshift({ text, type, time: Date.now(), read: false });
-  if (_notifications.length > 50) _notifications.pop();
-  localStorage.setItem('lax_notifications', JSON.stringify(_notifications));
+  _inboxLocal.unshift({
+    id: 'local-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+    kind: 'app-error', title: String(text || ''), body: '', createdAt: Date.now(),
+    needsYou: false, _local: true, _type: type || 'info',
+  });
+  if (_inboxLocal.length > MAX_LOCAL_ITEMS) _inboxLocal.pop();
   renderNotifications();
   updateNotifBadge();
 }
 
-function renderNotifications() {
-  const el = document.getElementById('notif-list');
-  if (!el) return;
-  if (_notifications.length === 0) {
-    el.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted);font-size:.75rem">No notifications yet</div>';
-    return;
+async function loadInbox() {
+  try {
+    var r = await apiFetch('/api/inbox');
+    if (!r.ok) return;
+    var data = await r.json();
+    _inboxItems = Array.isArray(data.items) ? data.items : [];
+    _inboxUnread = typeof data.unread === 'number' ? data.unread : 0;
+    renderNotifications();
+    updateNotifBadge();
+  } catch (e) { console.warn('[inbox] load failed', e && e.message); }
+}
+
+function handleInboxFrame(msg) {
+  if (msg.type === 'inbox_changed') { loadInbox(); return; }
+  if (msg.type !== 'inbox_item' || !msg.item || !msg.item.id) return;
+  var item = msg.item;
+  _inboxItems = _inboxItems.filter(function (n) { return n.id !== item.id; });
+  _inboxItems.unshift(item);
+  if (typeof msg.unread === 'number') _inboxUnread = msg.unread;
+  renderNotifications();
+  updateNotifBadge();
+  if (item.needsYou && !item.resolvedAt && window.desktop && typeof window.desktop.showNotification === 'function') {
+    window.desktop.showNotification(item.title, String(item.body || '').slice(0, 100));
   }
-  el.innerHTML = _notifications.map((n, i) => {
-    const ago = timeAgo(n.time);
-    const color = n.type === 'error' ? 'var(--danger)' : n.type === 'success' ? 'var(--accent)' : 'var(--text)';
-    return `<div class="notif-item" style="opacity:${n.read ? '.5' : '1'}" onclick="_notifications[${i}].read=true;localStorage.setItem('lax_notifications',JSON.stringify(_notifications));renderNotifications();updateNotifBadge()">
-      <div style="color:${color}">${esc(n.text)}</div>
-      <div class="notif-time">${ago}</div>
-    </div>`;
+}
+
+function inboxIsPinned(n) { return !!n.needsYou && !n.resolvedAt; }
+
+function inboxSorted() {
+  var at = function (n) { return n.updatedAt || n.createdAt || 0; };
+  return _inboxItems.concat(_inboxLocal).sort(function (a, b) {
+    return (inboxIsPinned(b) - inboxIsPinned(a)) || (at(b) - at(a));
+  });
+}
+
+function inboxClip(text, max) {
+  var s = String(text || '');
+  return s.length > max ? s.slice(0, max - 1) + '…' : s;
+}
+
+function renderInboxItem(n) {
+  var pinned = inboxIsPinned(n);
+  var unread = !n.readAt;
+  var cls = 'notif-item' + (pinned ? ' needs-you' : '') + (unread ? ' unread' : '') + (n.resolvedAt ? ' resolved' : '');
+  var actions = (Array.isArray(n.actions) ? n.actions : []).map(function (a) {
+    return '<button type="button" class="notif-btn" disabled title="Not available yet">' + esc(a.label) + '</button>';
   }).join('');
+  return '<div class="' + cls + '" data-inbox-id="' + esc(n.id) + '">'
+    + '<div class="notif-meta"><span class="notif-kind">' + esc(INBOX_KIND_LABEL[n.kind] || n.kind) + '</span>'
+    + '<span class="notif-time">' + esc(timeAgo(n.updatedAt || n.createdAt)) + '</span></div>'
+    + '<div class="notif-title">' + esc(n.title) + '</div>'
+    + (n.body ? '<div class="notif-body">' + esc(inboxClip(n.body, 400)) + '</div>' : '')
+    + '<div class="notif-actions">' + actions
+    + (pinned ? '<button type="button" class="notif-btn" data-inbox-act="resolve">Done</button>' : '')
+    + (unread ? '<button type="button" class="notif-btn" data-inbox-act="read">Mark read</button>' : '')
+    + '<button type="button" class="notif-btn" data-inbox-act="dismiss">Dismiss</button>'
+    + '</div></div>';
+}
+
+function renderNotifications() {
+  var el = document.getElementById('notif-list');
+  if (!el) return;
+  bindInboxList(el);
+  var items = inboxSorted();
+  el.innerHTML = items.length === 0
+    ? '<div class="notif-empty">No notifications yet</div>'
+    : items.map(renderInboxItem).join('');
 }
 
 function updateNotifBadge() {
-  const badge = document.getElementById('notif-badge');
-  const count = _notifications.filter(n => !n.read).length;
+  var badge = document.getElementById('notif-badge');
+  var count = _inboxUnread + _inboxLocal.filter(function (n) { return !n.readAt; }).length;
   if (badge) {
-    badge.textContent = count > 0 ? count : '';
+    badge.textContent = count > 0 ? String(count) : '';
     badge.style.display = count > 0 ? '' : 'none';
   }
 }
 
+function findInboxItem(id) {
+  return _inboxItems.concat(_inboxLocal).find(function (n) { return n.id === id; }) || null;
+}
+
+async function inboxAct(id, act) {
+  var local = _inboxLocal.find(function (n) { return n.id === id; });
+  if (local) {
+    if (act === 'dismiss') _inboxLocal = _inboxLocal.filter(function (n) { return n.id !== id; });
+    else local.readAt = Date.now();
+    renderNotifications();
+    updateNotifBadge();
+    return;
+  }
+  try {
+    var r = await apiFetch('/api/inbox/' + act, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(id ? { id: id } : {}),
+    });
+    if (!r.ok) console.warn('[inbox] ' + act + ' refused: ' + r.status);
+  } catch (e) { console.warn('[inbox] ' + act + ' failed', e && e.message); }
+  loadInbox();
+}
+
+function markAllInboxRead() {
+  _inboxLocal.forEach(function (n) { if (!n.readAt) n.readAt = Date.now(); });
+  inboxAct('', 'read-all');
+}
+
+// Where an item leads. Agent and issue views live on the Agents page (its
+// module sets the window.* openers); a scheduled run's session is hidden from
+// the chat list, so it opens Missions instead.
+function openInboxLink(n) {
+  var link = n.link || {};
+  var call = function (name, arg) { if (typeof window[name] === 'function') window[name](arg); };
+  if (n.kind === 'update') { if (typeof openSettings === 'function') openSettings('general'); return; }
+  if (link.issueId || link.agentId) {
+    navigate('agents');
+    if (link.issueId) call('showIssueDetail', link.issueId);
+    else call(n.kind === 'agent-message' ? 'showHiredAgent' : 'showAgentDetail', link.agentId);
+    return;
+  }
+  if (link.sessionId) {
+    if (link.sessionId.indexOf('cron-') === 0) { navigate('missions'); return; }
+    var known = typeof chats !== 'undefined' && Array.isArray(chats) && chats.some(function (c) { return c.id === link.sessionId; });
+    if (known && typeof selectChat === 'function') selectChat(link.sessionId);
+  }
+}
+
+function bindInboxList(el) {
+  if (el._inboxBound) return;
+  el._inboxBound = true;
+  el.addEventListener('click', function (ev) {
+    var row = ev.target.closest && ev.target.closest('[data-inbox-id]');
+    if (!row) return;
+    var id = row.getAttribute('data-inbox-id');
+    var btn = ev.target.closest('[data-inbox-act]');
+    if (btn) { ev.stopPropagation(); inboxAct(id, btn.getAttribute('data-inbox-act')); return; }
+    if (ev.target.closest('button')) return;
+    var n = findInboxItem(id);
+    if (!n) return;
+    if (!n.readAt) inboxAct(id, 'read');
+    if (n.link || n.kind === 'update') { toggleNotifPanel(); openInboxLink(n); }
+  });
+}
+
 function toggleNotifPanel() {
-  const panel = document.getElementById('notif-panel');
+  var panel = document.getElementById('notif-panel');
   if (!panel) return;
-  const opening = !panel.classList.contains('open');
+  var opening = !panel.classList.contains('open');
   if (opening) {
     panel.classList.add('open');
     // Disable CSS transition, let spring handle it
     panel.style.transition = 'none';
-    Spring.animate(panel, 'x', 0, { from: 320, preset: 'stiff', unit: 'px', onDone: () => { panel.style.transition = ''; panel.style.transform = ''; } });
+    Spring.animate(panel, 'x', 0, { from: 320, preset: 'stiff', unit: 'px', onDone: function () { panel.style.transition = ''; panel.style.transform = ''; } });
     renderNotifications();
+    // An item posted from an out-of-process worker has no live frame here.
+    loadInbox();
   } else {
     panel.style.transition = 'none';
-    Spring.animate(panel, 'x', 320, { from: 0, preset: 'stiff', unit: 'px', onDone: () => { panel.classList.remove('open'); panel.style.transform = ''; panel.style.transition = ''; } });
+    Spring.animate(panel, 'x', 320, { from: 0, preset: 'stiff', unit: 'px', onDone: function () { panel.classList.remove('open'); panel.style.transform = ''; panel.style.transition = ''; } });
   }
 }
 
-function clearNotifications() {
-  _notifications = [];
-  localStorage.setItem('lax_notifications', '[]');
-  renderNotifications();
-  updateNotifBadge();
-}
-
 function timeAgo(ts) {
-  const diff = Date.now() - ts;
+  var diff = Date.now() - ts;
   if (diff < 60000) return 'just now';
   if (diff < 3600000) return Math.floor(diff / 60000) + 'm ago';
   if (diff < 86400000) return Math.floor(diff / 3600000) + 'h ago';
   return Math.floor(diff / 86400000) + 'd ago';
 }
 
-// Init
+// The list used to live in this window's localStorage; the server owns it now.
+try { localStorage.removeItem('lax_notifications'); } catch (e) { /* storage unavailable: nothing to clear */ }
 updateNotifBadge();
 
 // Getting Started checklist removed 2026-05-17. Took sidebar real estate

@@ -35,6 +35,7 @@ import { classifyShellTier, isShellTierTool } from "./shell-approval-tier.js";
 import { getSandboxStatus } from "../sandbox/index.js";
 import { currentHumanText, takeUnnamedDeleteDecision, UNNAMED_DELETE_DECLINED_TEXT, UNNAMED_DELETE_USE_TRASH_TEXT } from "./unnamed-delete-gate.js";
 import { secretEnvGate } from "./secret-env-approval.js";
+import { reportUnattendedRefusal } from "./unattended-refusal.js";
 import { publishOperations } from "../publish-operation.js";
 import { publishReviewGate } from "./publish-review-gate.js";
 import { reviewCardContext, reviewNoteForModel, reviewPreview } from "./publish-review-text.js";
@@ -263,6 +264,7 @@ export const requireApprovalPhase: Phase = async (ctx) => {
         recovery: "Nobody can approve this here. Report what you needed to do and why, so the user can do it or run it from a chat, and continue with the rest of the work.",
       },
     };
+    reportUnattendedRefusal(ctx, result.content);
     return terminate(ctx, { rendered: "model", result, allowed: false });
   }
   // Interactive context but NO event sink: there is no channel to render an

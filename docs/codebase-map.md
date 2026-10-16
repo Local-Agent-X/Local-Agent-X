@@ -12,13 +12,13 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 66 top-level dirs · 66 live · 0 with no live importer · 1764 non-test source files · 0 god files (>400 LOC).
+**Totals:** 67 top-level dirs · 67 live · 0 with no live importer · 1770 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | God files |
 |---|--:|--:|:--:|--:|
-| `src/ops/` | 156 | 29 | XL |  |
+| `src/ops/` | 158 | 29 | XL |  |
 | `src/security/` | 118 | 45 | XL |  |
 | `src/tools/` | 103 | 208 | XL |  |
 | `src/canonical-loop/` | 79 | 259 | XL |  |
@@ -27,22 +27,22 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/memory/` | 51 | 139 | XL |  |
 | `src/browser/` | 46 | 86 | XL |  |
 | `src/data-lineage/` | 42 | 11 | L |  |
+| `src/util/` | 39 | 3 | S |  |
 | `src/local-runtimes/` | 38 | 25 | XL |  |
-| `src/util/` | 38 | 3 | S |  |
 | `src/auth/` | 37 | 11 | L |  |
 | `src/session/` | 36 | 7 | L |  |
 | `src/threat/` | 35 | 13 | L |  |
 | `src/tool-policy/` | 31 | 20 | L |  |
 | `src/agency/` | 27 | 20 | XL |  |
 | `src/agent-store/` | 26 | 7 | L |  |
+| `src/chat-ws/` | 25 | 21 | L |  |
 | `src/classifiers/` | 24 | 16 | L |  |
 | `src/context/` | 24 | 8 | L |  |
 | `src/context-manager/` | 24 | 13 | L |  |
 | `src/agent-request/` | 23 | 15 | L |  |
 | `src/app-runtime/` | 23 | 12 | L |  |
-| `src/chat-ws/` | 23 | 21 | L |  |
 | `src/sandbox/` | 23 | 14 | L |  |
-| `src/tool-execution/` | 23 | 69 | XL |  |
+| `src/tool-execution/` | 23 | 70 | XL |  |
 | `src/orchestrator/` | 20 | 24 | L |  |
 | `src/protocols/` | 19 | 52 | XL |  |
 | `src/agents/` | 17 | 13 | L |  |
@@ -61,12 +61,13 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/autopilot/` | 10 | 14 | L |  |
 | `src/integrations/` | 10 | 15 | M |  |
 | `src/persistence/` | 10 | 2 | S |  |
-| `src/routes/` | 10 | 91 | XL |  |
+| `src/routes/` | 10 | 92 | XL |  |
 | `src/sync/` | 10 | 21 | L |  |
 | `src/screen-stream/` | 9 | 11 | L |  |
 | `src/bridge-voice/` | 8 | 5 | M |  |
 | `src/telegram-bridge/` | 8 | 6 | M |  |
 | `src/auto-build/` | 7 | 52 | XL |  |
+| `src/inbox/` | 7 | 4 | M |  |
 | `src/plugin-system/` | 7 | 10 | L |  |
 | `src/android/` | 6 | 7 | M |  |
 | `src/app-renderer/` | 6 | 7 | M |  |

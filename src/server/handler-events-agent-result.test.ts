@@ -8,6 +8,7 @@ import type { SecurityLayer } from "../security/index.js";
 import type { ToolPolicy } from "../tool-policy/index.js";
 import { registerAgentLifecycleEvents, isOrchestratorChild, agentCompleteChatRow, type PendingAgentMeta } from "./handler-events-agent-result.js";
 import { registerHandlerEvents } from "./handler-events.js";
+import { inboxStore } from "../inbox/index.js";
 
 // Regression (2026-08-30 overnight auto-build): every chunk / retry /
 // preflight worker report landed in the user's chat as an assistant
@@ -251,5 +252,31 @@ describe("registerHandlerEvents wiring", () => {
     await EventBus.emit("handler:agent-spawn", spawnEvent("run-10", null));
     await EventBus.emit("handler:agent-result", { agentId: "run-10", result: "ok", success: true });
     expect(h.session.messages[1]).toEqual({ role: "assistant", content: "**Agent Researcher completed:**\n\nok" });
+  });
+});
+
+describe("handler:agent-result — the user's inbox", () => {
+  const itemFor = (runId: string) => inboxStore().list().filter((i) => i.kind === "job" && i.link?.agentId === runId);
+
+  it("a failed agent run posts a needs-you job item keyed to the run", async () => {
+    const h = harness();
+    registerAgentLifecycleEvents({ eventBus: EventBus.getInstance(), ...h });
+    await EventBus.emit("handler:agent-spawn", spawnEvent("run-inbox-1", null));
+    await EventBus.emit("handler:agent-result", { agentId: "run-inbox-1", result: "could not reach the API", success: false });
+    expect(itemFor("run-inbox-1")).toEqual([expect.objectContaining({
+      needsYou: true, body: "could not reach the API", link: { agentId: "run-inbox-1", sessionId: CHAT },
+    })]);
+    expect(itemFor("run-inbox-1")[0].title).toMatch(/^Agent .+ failed$/);
+  });
+
+  it("an agent woken by another agent (no chat) reports to the inbox; an orchestrator child inside a chat does not", async () => {
+    const h = harness();
+    registerAgentLifecycleEvents({ eventBus: EventBus.getInstance(), ...h });
+    await EventBus.emit("handler:agent-spawn", spawnEvent("run-inbox-wake", "caller-run-1", ""));
+    await EventBus.emit("handler:agent-result", { agentId: "run-inbox-wake", result: "triaged", success: true });
+    await EventBus.emit("handler:agent-spawn", spawnEvent("run-inbox-chunk", ORCH_OP));
+    await EventBus.emit("handler:agent-result", { agentId: "run-inbox-chunk", result: "STATUS: done", success: true });
+    expect(itemFor("run-inbox-wake")).toEqual([expect.objectContaining({ needsYou: false, body: "triaged" })]);
+    expect(itemFor("run-inbox-chunk")).toEqual([]);
   });
 });

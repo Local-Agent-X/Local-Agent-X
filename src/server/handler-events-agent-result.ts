@@ -3,6 +3,7 @@ import { looksLikeClarificationRequest } from "../agents/result-guard.js";
 import type { AgentRun, AgentRunStore } from "../agent-store/index.js";
 import type { SessionStore } from "../memory/index.js";
 import type { EventBus } from "../event-bus.js";
+import { inboxJobResult } from "../inbox/producers.js";
 import { createLogger } from "../logger.js";
 const logger = createLogger("server.handler-events");
 
@@ -135,6 +136,18 @@ export function registerAgentLifecycleEvents(deps: {
       const status: AgentRun["status"] = explicitFailure || guardError ? "failed" : "succeeded";
       const errorField = explicitFailure ? evt.result : guardError;
       agentRunStore.save({ id: evt.agentId, parentAgentId: m.parentAgentId, sessionId: m.sessionId, name: m.name, role: m.role, task: m.task, systemPrompt: m.systemPrompt, status, output: [], result: evt.result || "", toolsUsed: m.toolsUsed, tokensUsed: evt.tokens || 0, startedAt: m.startedAt, completedAt: Date.now(), error: errorField, templateId: m.templateId || undefined } as AgentRun);
+      // The user's inbox, keyed to the run. An orchestrator child inside a
+      // chat reports to its orchestrator, whose own op is what the user sees;
+      // an agent woken by another agent (no chat) reports to nobody else.
+      if (!(isOrchestratorChild(m) && m.sessionId)) {
+        inboxJobResult({
+          label: `Agent ${displayName}`,
+          outcome: status === "failed" ? "failed" : "completed",
+          summary: errorField || evt.result || "",
+          key: `agent-run:${evt.agentId}`,
+          link: { agentId: evt.agentId, ...(m.sessionId ? { sessionId: m.sessionId } : {}) },
+        });
+      }
       // Chat-initiated spawns only — an orchestrator child's report is
       // consumed by the orchestrator, never by the user's chat. The persisted
       // row uses `displayName` — the SAME name the agent-complete broadcast

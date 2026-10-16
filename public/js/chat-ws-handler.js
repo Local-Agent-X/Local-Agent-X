@@ -161,6 +161,9 @@ function dispatchChatWsNonEvent(msg) {
   if (msg.type === 'user_notice' && msg.text) showUserNoticeBanner(msg.noticeId, msg.text);
 
   if (msg.type === 'settings_changed' && msg.settings) handleSettingsChanged(msg);
+  // The user inbox (notifications.js): a new or changed item, or another tab
+  // answered one.
+  if ((msg.type === 'inbox_item' || msg.type === 'inbox_changed') && typeof handleInboxFrame === 'function') handleInboxFrame(msg);
   if (msg.type === 'learning_changed' && typeof window.refreshLearnedWorkflows === 'function') {
     window.refreshLearnedWorkflows();
   }

@@ -36,6 +36,7 @@ import { isHeadlessSession } from "../chat-ws/broadcast.js";
 import { suspendedWorkerStatus, turnProgressLine } from "./live-workers.js";
 import { pushPendingNotification } from "../ops/pending-notifications.js";
 import { scheduleIdleNudge } from "../ops/idle-nudge.js";
+import { inboxJobResult, runLabel } from "../inbox/producers.js";
 
 import { toSpokenCompletion, redirectAppliedRow, isSidebarSuppressedOpType } from "./session-bridge-extractors.js";
 import { readOp } from "../ops/op-store.js";
@@ -282,6 +283,12 @@ function recordCanonicalEventWithSink(
               status === "partial" ? toSpokenPartial(task) : toSpokenCompletion(task, summary, status, op?.type),
             );
             scheduleIdleNudge(sessionId, task);
+          }
+          // The user's inbox. A scheduled mission is posted by the cron
+          // executor, which alone knows its quality-gate verdict; verification
+          // passes and headless harness runs are not the user's jobs.
+          if (core && !isHeadlessSession(sessionId) && op?.type !== OP_TYPE.scheduledMission && op?.type !== VERIFICATION_OP_TYPE) {
+            inboxJobResult({ label: runLabel("Background task", task), outcome: status, summary: persistedSummary, key: `op:${event.opId}`, link: { sessionId, opId: event.opId } });
           }
           if (core) {
             releaseOpFromSession(event.opId);

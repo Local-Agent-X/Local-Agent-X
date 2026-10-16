@@ -23,6 +23,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { SCAFFOLD_MANIFEST_REL } from "../framework-scaffold.js";
 import { readRunTargetManifest } from "../app-run-target.js";
 import { designGateRejection } from "./design-gate.js";
+import { FONT_URL_PREFIX } from "../design-fonts.js";
 
 export interface WriteGuardResult {
   allow: boolean;
@@ -153,8 +154,9 @@ export function checkAppWrite(filePath: string, content: string, sessionId?: str
         message:
           `Write rejected: ${reason}. The preview iframe cannot reach external CDNs, so this would render unstyled. ` +
           (isFontHost(host)
-            ? `Either use a system font stack (font-family: system-ui, -apple-system, "Segoe UI", sans-serif), ` +
-              `or fetch the font CSS and the .woff2 files with the \`http_request\` tool and write them into the app.`
+            ? `The design system's faces ship with Local Agent X: load one with ` +
+              `<link rel="stylesheet" href="${FONT_URL_PREFIX}<face>.css"> (the design brief names the exact tags). ` +
+              `For any other face, use a system font stack (font-family: system-ui, -apple-system, "Segoe UI", sans-serif).`
             : `Fetch the library with the \`http_request\` tool and write it into the app as a local file, ` +
               `then reference that local path.`),
       };

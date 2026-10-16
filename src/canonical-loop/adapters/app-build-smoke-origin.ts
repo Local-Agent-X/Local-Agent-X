@@ -30,10 +30,11 @@
  */
 import { createServer, type Server } from "node:http";
 import { readFileSync } from "node:fs";
-import { basename } from "node:path";
+import { basename, join } from "node:path";
 import type { AddressInfo } from "node:net";
 import { staticBuildDistDir } from "../../tools/app-run-target.js";
-import { APP_CONTENT_TYPES, WORKSPACE_APP_HTML_HEADERS, resolveAppStaticFile } from "../../server/app-serving-policy.js";
+import { APP_CONTENT_TYPES, WORKSPACE_APP_HTML_HEADERS, resolveAppStaticFile, resolveBundledFontFile } from "../../server/app-serving-policy.js";
+import { platformRoot } from "../../platform-root.js";
 
 export interface SmokeOrigin {
   /** URL to navigate to — `/apps/<id>/`, the same mount point production uses. */
@@ -72,9 +73,10 @@ export async function startStaticSmokeOrigin(appDir: string): Promise<SmokeOrigi
     // Production only serves under /apps/<id>/; anything else never reaches the
     // app's files. Reproducing that is the whole point of the mount prefix — a
     // build using root-absolute asset paths must break HERE, not at the user.
-    if (pathname !== mount && !pathname.startsWith(mount + "/")) { res.writeHead(404); res.end(); return; }
-    const servePathname = pathname.slice(mount.length) || "/";
-    const resolved = resolveAppStaticFile(serveRoot, servePathname, distDir !== null);
+    // The bundled faces are served beside the app in production, so here too.
+    const font = resolveBundledFontFile(join(platformRoot(), "public"), pathname);
+    if (!font && pathname !== mount && !pathname.startsWith(mount + "/")) { res.writeHead(404); res.end(); return; }
+    const resolved = font ?? resolveAppStaticFile(serveRoot, pathname.slice(mount.length) || "/", distDir !== null);
     if (resolved.kind === "forbidden") { res.writeHead(403); res.end(); return; }
     if (resolved.kind === "not-found") { res.writeHead(404); res.end(); return; }
     const ext = resolved.path.split(".").pop() || "";

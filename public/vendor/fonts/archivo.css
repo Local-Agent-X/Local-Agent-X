@@ -1,0 +1,8 @@
+/* Archivo, SIL Open Font License 1.1 (archivo/OFL.txt). Latin subset from Fontsource 5.3.0. */
+@font-face {
+  font-family: 'Archivo';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url(./archivo/archivo-latin-wght-normal.woff2) format('woff2');
+}

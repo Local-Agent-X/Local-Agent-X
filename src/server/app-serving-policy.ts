@@ -21,12 +21,14 @@
  * a refusal or a missing asset is observed rather than guessed — and because
  * both sides read this module, the gate cannot drift from what the server does.
  *
- * Imports only node:fs/path + confineToDir, all of which the server route and
- * the build gate already depend on: neither subsystem is dragged into the other.
+ * Imports only node:fs/path, confineToDir and the design-fonts leaf, all of
+ * which the server route and the build gate already depend on: neither
+ * subsystem is dragged into the other.
  */
 import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { confineToDir } from "../security/layer/index.js";
+import { FONT_URL_PREFIX } from "../tools/design-fonts.js";
 
 /** The CSP part every app document on the agent origin carries, whichever
  *  route renders it (static, dev-server proxy, registry renderer).
@@ -112,5 +114,24 @@ export function resolveAppStaticFile(
   // hanging until the client's own timeout. "Not found" is the honest answer,
   // and it is the answer a caller without a crash guard needs.
   try { if (statSync(file).isDirectory()) return { kind: "not-found" }; } catch { return { kind: "not-found" }; }
+  return { kind: "file", path: file };
+}
+
+/** File types under the bundled-font route; anything else there is refused. */
+const FONT_FILE_RE = /\.(css|woff2|txt)$/i;
+
+/**
+ * Resolve a request for a bundled design-system face (design-fonts.ts) to its
+ * file under `<publicDir>/vendor/fonts/`, or null when the path is not under
+ * the font route at all. Shared by the agent origin and the build gate's
+ * origin, so a page that loads its face in the app loads it in the gate too.
+ */
+export function resolveBundledFontFile(publicDir: string, pathname: string): AppFileResolution | null {
+  if (!pathname.startsWith(FONT_URL_PREFIX)) return null;
+  const rel = pathname.slice(FONT_URL_PREFIX.length);
+  if (!FONT_FILE_RE.test(rel)) return { kind: "not-found" };
+  const file = confineToDir(join(publicDir, "vendor", "fonts"), rel);
+  if (!file) return { kind: "forbidden" };
+  try { if (!existsSync(file) || statSync(file).isDirectory()) return { kind: "not-found" }; } catch { return { kind: "not-found" }; }
   return { kind: "file", path: file };
 }

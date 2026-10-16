@@ -32,6 +32,7 @@
  *     read it under a name of its own.
  */
 
+import { readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { jsonResponse } from "../server-utils.js";
@@ -40,6 +41,7 @@ import { uiOrigins } from "./ide-frame-bridge.js";
 import { deriveFilesLinkCapability, signAgentFilePath, verifyFilesLinkCapability } from "./agent-file-links.js";
 import { serveAgentFile } from "./static-assets.js";
 import { serveWorkspaceApp } from "./workspace-app-serving.js";
+import { APP_CONTENT_TYPES, resolveBundledFontFile } from "./app-serving-policy.js";
 import { handleAppRoutes } from "../routes/apps.js";
 import { handleConnectorProxyRoutes } from "../routes/connector-proxy.js";
 import { createLogger } from "../logger.js";
@@ -93,6 +95,15 @@ async function routeAgentRequest(method: string, url: URL, req: IncomingMessage,
       return true;
     }
     return handleConnectorProxyRoutes(method, url, req, res, deps.getCtx(), "user");
+  }
+  // The design system's bundled faces (design-fonts.ts), shared by every app.
+  const font = method === "GET" ? resolveBundledFontFile(deps.publicDir, url.pathname) : null;
+  if (font) {
+    if (font.kind !== "file") { jsonResponse(res, font.kind === "forbidden" ? 403 : 404, { error: "Not found" }, req); return true; }
+    const ext = font.path.split(".").pop() || "";
+    res.writeHead(200, { "Content-Type": APP_CONTENT_TYPES[ext] || "application/octet-stream", "Cache-Control": "public, max-age=86400", "X-Content-Type-Options": "nosniff" });
+    res.end(readFileSync(font.path));
+    return true;
   }
   // A registry-defined app renders here; a workspace app falls through to the
   // static / dev-server route.

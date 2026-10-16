@@ -17,10 +17,12 @@
  * License, so a build may legitimately self-host them; the anti-patterns carry
  * the rule that the license file ships alongside the font files.
  *
- * Fonts lead with a named webface but always fall back to a system stack, so the
- * design holds even where an external font can't load (the static preview blocks
- * external CDNs). The builder self-hosts the named face on the framework path or
- * renders the system fallback — either way the scale/weights/color carry the look.
+ * Fonts lead with a named webface but always fall back to a system stack. Every
+ * named face is bundled (design-fonts.ts, public/vendor/fonts/) and the brief
+ * tells the builder the exact <link> that loads it; where it can't load (an app
+ * on its own dev server), the fallback stands in and the scale/weights/color
+ * still carry the look. A new face here needs its files there first:
+ * design-fonts.test.ts fails otherwise.
  *
  * Every value here is original — a coherent system authored for the archetype,
  * not lifted from any product's identity.

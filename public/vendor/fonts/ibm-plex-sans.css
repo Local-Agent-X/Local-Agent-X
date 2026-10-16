@@ -1,0 +1,8 @@
+/* IBM Plex Sans, SIL Open Font License 1.1 (ibm-plex-sans/OFL.txt). Latin subset from Fontsource 5.3.0. */
+@font-face {
+  font-family: 'IBM Plex Sans';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 700;
+  src: url(./ibm-plex-sans/ibm-plex-sans-latin-wght-normal.woff2) format('woff2');
+}

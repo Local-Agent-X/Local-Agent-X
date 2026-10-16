@@ -76,6 +76,36 @@ const signed = (rel: string) => `/files/${rel}?sig=${signAgentFilePath(OP_TOKEN,
 // redirect named the agent origin's port, which the egress gate refused as a
 // private address, so the browser showed ERR_BLOCKED_BY_CLIENT and
 // http_request was blocked. The redirect and the gate must agree.
+// The design system's faces ship in public/vendor/fonts (design-fonts.ts). An
+// app page loads them from its own origin; this is the route it reaches.
+describe("the agent origin serves the bundled design-system faces", () => {
+  it("serves a face's stylesheet and its font file with font types", async () => {
+    const css = await agent("/vendor/fonts/manrope.css");
+    expect(css.status).toBe(200);
+    expect(css.headers.get("content-type")).toBe("text/css");
+    const body = await css.text();
+    const file = body.match(/url\(\.\/([^)]+)\)/)?.[1];
+    expect(file).toBeTruthy();
+    const font = await agent(`/vendor/fonts/${file}`);
+    expect(font.status).toBe(200);
+    expect(font.headers.get("content-type")).toBe("font/woff2");
+    expect(Buffer.from(await font.arrayBuffer()).subarray(0, 4).toString("latin1")).toBe("wOF2");
+  });
+
+  it("serves nothing else from public/ through that route", async () => {
+    expect((await agent("/vendor/fonts/%2e%2e/%2e%2e/index.html")).status).not.toBe(200);
+    expect((await agent("/vendor/fonts/../katex/katex.min.js")).status).not.toBe(200);
+    expect((await agent("/vendor/katex/katex.min.css")).status).toBe(404);
+  });
+
+  it("an app page's policy lets it load a same-origin font", async () => {
+    const csp = (await agent("/apps/demo/")).headers.get("content-security-policy") || "";
+    const fontSrc = csp.split(";").map((d) => d.trim()).find((d) => d.startsWith("font-src"));
+    const governing = fontSrc ?? csp.split(";").map((d) => d.trim()).find((d) => d.startsWith("default-src")) ?? "";
+    expect(governing).toContain("'self'");
+  });
+});
+
 describe("the agent can look at what it built", () => {
   it("the gate admits where the UI's app redirect sends it", async () => {
     const res = await ui("/apps/demo/");

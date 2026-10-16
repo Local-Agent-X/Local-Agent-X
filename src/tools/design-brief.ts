@@ -22,6 +22,7 @@
  */
 import { ARCHETYPES, NEUTRAL_ARCHETYPE } from "./design-systems.js";
 import { PALETTES, TOKEN_CSS_NAMES, type PaletteId, type PaletteTokens } from "./design-palettes.js";
+import { fontLinkTags } from "./design-fonts.js";
 
 /**
  * Universal constraints — spliced into every build regardless of archetype.
@@ -167,6 +168,9 @@ function renderBrief(a: DesignArchetype): string {
     DESIGN_PRECEDENCE,
     renderPalette(a.palette),
     `Typography: ${a.typography}`,
+    ...(fontLinkTags(a.typography)
+      ? [`Fonts: these faces ship with Local Agent X. Load them with exactly this in <head>, and nothing from a font CDN: ${fontLinkTags(a.typography)}`]
+      : []),
     a.geometry,
     ...(a.extra ? [a.extra] : []),
     `Attitude: ${a.style}`,

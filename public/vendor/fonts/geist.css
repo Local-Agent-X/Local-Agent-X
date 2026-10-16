@@ -1,0 +1,8 @@
+/* Geist, SIL Open Font License 1.1 (geist/OFL.txt). Latin subset from Fontsource 5.3.0. */
+@font-face {
+  font-family: 'Geist';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url(./geist/geist-latin-wght-normal.woff2) format('woff2');
+}

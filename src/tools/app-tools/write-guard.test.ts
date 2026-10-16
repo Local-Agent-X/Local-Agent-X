@@ -32,12 +32,13 @@ const surfaced = (r: ReturnType<typeof checkAppWrite>): string =>
   r.message ?? writeGuardRejectionMessage(r.reason ?? "policy violation");
 
 describe("a blocked CDN write names a route the model can take", () => {
-  it("sends a font CDN to a system stack or http_request, not to 'self-host' alone", () => {
+  it("sends a font CDN to the bundled faces or a system stack, not to 'self-host' alone", () => {
     const r = checkAppWrite(APP, `<html><head>${VIEWPORT}<link href="https://fonts.googleapis.com/css2?family=Inter"></head></html>`);
     expect(r.allow).toBe(false);
     const msg = surfaced(r);
     expect(msg).toContain("fonts.googleapis.com");
-    expect(msg).toContain("http_request");
+    expect(msg, "a font is binary: http_request cannot save it, so it is no route").not.toContain("http_request");
+    expect(msg).toContain("/vendor/fonts/");
     expect(msg).toMatch(/system-ui/);
   });
 

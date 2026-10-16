@@ -1,0 +1,8 @@
+/* Space Grotesk, SIL Open Font License 1.1 (space-grotesk/OFL.txt). Latin subset from Fontsource 5.3.0. */
+@font-face {
+  font-family: 'Space Grotesk';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 300 700;
+  src: url(./space-grotesk/space-grotesk-latin-wght-normal.woff2) format('woff2');
+}

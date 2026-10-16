@@ -1,0 +1,8 @@
+/* Sora, SIL Open Font License 1.1 (sora/OFL.txt). Latin subset from Fontsource 5.3.0. */
+@font-face {
+  font-family: 'Sora';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 800;
+  src: url(./sora/sora-latin-wght-normal.woff2) format('woff2');
+}

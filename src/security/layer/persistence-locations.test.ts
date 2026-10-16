@@ -84,7 +84,7 @@ describe("a file-tool write to a startup file", () => {
     }
   });
 
-  it("is refused in an unattended run, even under the Autonomous profile", async () => {
+  it("never runs in an unattended run, even under the Autonomous profile: it waits for the user's yes", async () => {
     const session = `persist-${process.hrtime.bigint().toString(36)}`;
     setSessionProfile(session, "Autonomous");
     cleanup.push(() => clearSessionProfile(session));
@@ -93,7 +93,7 @@ describe("a file-tool write to a startup file", () => {
     expect((await requireApprovalPhase(c)).kind).toBe("halt");
     expect(c.allowed).toBe(false);
     expect(String(c.result?.content)).toContain("~/.zshrc");
-    expect(String(c.result?.content)).toContain("run it from a chat");
+    expect(c.result?.metadata?.deferredTo, "parked in the user's inbox").toEqual(expect.any(String));
     expect(String(c.result?.content)).not.toContain("Autonomous profile");
   });
 

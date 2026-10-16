@@ -66,6 +66,9 @@ export const LAX_DATA_CATALOG: readonly LaxDataEntry[] = [
   ...at("blocked", "decides whether the app's server starts inside its sandbox", "server-sandbox-boot.json"),
   ...at("blocked", "decides which access tokens the app accepts and what each may do", "tokens.json"),
   ...at("blocked", "lists the data flows you approved, which then run without asking", "threat-trust-ledger.json"),
+  // Approve on an inbox item runs the call stored with it, as the role stored
+  // with it: a forged item would run whatever it hides behind a harmless title.
+  ...at("blocked", "holds the calls waiting for your yes, which run when you approve them", "inbox.json"),
   // A mission's own autonomy profile lets its unattended runs act without
   // asking, and the mission tools refuse to grant one (cron/job-authority.ts).
   ...at("blocked", "holds your missions and the autonomy profile each one runs under when no one is watching", "cron/jobs.json"),

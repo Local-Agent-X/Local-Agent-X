@@ -17,8 +17,13 @@ oversized files). When a number in prose disagrees with the map, the map wins.
 | Regenerate the codebase map after adding or moving a module | `npm run docs:map` |
 | Who imports a file or module, file by file | `npm run deps -- <path>` |
 | Who uses a function, class, type or member (the compiler's answer, via `src/language-intel/`) | `npm run refs -- <Name>` (or `<file>#<Name>`, `<file>:<line>`) |
+| How far a change reaches, hop by hop, and the tests to run | `npm run refs -- <Name> --depth N` (declarations), `npm run deps -- <path> --depth N` (files) |
 | Exported names declared in more than one file | `npm run refs -- --duplicates` |
 | Regenerate `docs/agent-capabilities.md` after an audience change | `npm run docs:generated` |
+
+Optional for Claude Code: `scripts/refs-hint-hook.mjs` is a PostToolUse hook
+(matcher `Grep|Bash`) that, when you grep for a code symbol, suggests the
+`refs` command for it. It never blocks; its header has the settings snippet.
 
 ## Directory boundaries
 

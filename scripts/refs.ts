@@ -10,6 +10,9 @@
  *   npm run refs -- <file>:<line>[:col]  the symbol at a position (members, locals)
  *   npm run refs -- --duplicates         exported names declared in more than one non-test file
  *   --tests                              list each use in test files (default: counted only)
+ *   --depth N                            how far a change reaches: the declarations that use it,
+ *                                        those that use them, ... N hops out, and the tests to run
+ *                                        (scripts/lib/symbol-reach.ts)
  *
  * The module-level questions ("which modules import this one", dead modules)
  * are docs/codebase-map.md and `npm run deps`.
@@ -17,11 +20,14 @@
 import { readFileSync } from "node:fs";
 import { relative, resolve, sep } from "node:path";
 import { getLanguageIntel, type ReferenceHit, type SymbolLocation } from "../src/language-intel/index.js";
+import { IMPORT_LINE, symbolReach } from "./lib/symbol-reach.js";
 
 const REPO = process.cwd();
 const SRC = resolve(REPO, "src");
 const args = process.argv.slice(2);
-const query = args.find((a) => !a.startsWith("--"));
+const depthAt = args.indexOf("--depth");
+const depth = depthAt >= 0 ? Number(args[depthAt + 1]) : 0;
+const query = args.find((a, i) => !a.startsWith("--") && (depthAt < 0 || i !== depthAt + 1));
 const listTests = args.includes("--tests");
 const rel = (f: string): string => relative(REPO, f).split(sep).join("/");
 const isTest = (f: string): boolean => /\.test\.[^.]+$|\.test-helper\.[^.]+$/.test(f) || /(^|\/)(__tests__|test)\//.test(rel(f));
@@ -56,10 +62,7 @@ async function targetsOf(q: string): Promise<SymbolLocation[]> {
 
 function print(target: SymbolLocation, hits: ReferenceHit[]): void {
   const def = hits.find((h) => h.isDefinition && h.file === target.file && h.line === target.line);
-  // An import/re-export line, including one name alone on a line inside a
-  // multi-line `import { … }` / `export { … } from` block.
-  const importLine = /^\s*(import\b|export\s*(\*|\{|type\s*\{)|\}\s*from\s|(type\s+)?[A-Za-z_$][\w$]*(\s+as\s+[A-Za-z_$][\w$]*)?,?\s*$)/;
-  const uses = hits.filter((h) => !h.isDefinition && !importLine.test(h.lineText));
+  const uses = hits.filter((h) => !h.isDefinition && !IMPORT_LINE.test(h.lineText));
   const importLines = hits.filter((h) => !h.isDefinition).length - uses.length;
   const group = (list: ReferenceHit[]) => {
     const m = new Map<string, ReferenceHit[]>();
@@ -84,13 +87,34 @@ function print(target: SymbolLocation, hits: ReferenceHit[]): void {
   }
 }
 
+async function printReach(target: SymbolLocation): Promise<void> {
+  // Only a runnable test ends the walk; a test helper is followed to the tests that use it.
+  const reach = await symbolReach((loc) => intel.findReferences(loc), target, depth, (f) => /\.test\.[^.]+$/.test(f));
+  const line = readFileSync(target.file, "utf8").split(/\r?\n/)[target.line - 1] ?? "";
+  console.log(`\n## Reach of ${rel(target.file)}:${target.line}  ${line.trim().slice(0, 100)}  (depth ${depth})`);
+  reach.hops.forEach((decls, i) => {
+    const byFile = new Map<string, string[]>();
+    for (const d of decls) byFile.set(d.file, [...(byFile.get(d.file) ?? []), `${d.name}:${d.line}`]);
+    console.log(`\nhop ${i + 1}: ${decls.length} declarations in ${byFile.size} files`);
+    for (const [f, names] of [...byFile].sort((a, b) => a[0].localeCompare(b[0]))) console.log(`  ${rel(f)}  ${names.join(", ")}`);
+  });
+  if (reach.moduleScope.length) {
+    console.log("\nused at module scope (the file is reached; nothing further to follow):");
+    for (const m of reach.moduleScope) console.log(`  ${rel(m.file)}:${m.line}`);
+  }
+  if (reach.capped) console.log("\n(stopped early: over 300 declarations reached; narrow the target or lower --depth)");
+  console.log(`\ntests to run (${reach.tests.length}): the test files that use a reached declaration`);
+  for (const t of reach.tests) console.log(`  ${rel(t)}`);
+  console.log("\nEvery test importing a reached file, symbol used or not: npm run deps -- <file> --depth N");
+}
+
 async function main(): Promise<number> {
   if (args.includes("--duplicates")) {
     await duplicates();
     return 0;
   }
-  if (!query) {
-    console.error("usage: npm run refs -- <Name> | <file>#<Name> | <file>:<line>[:col] | --duplicates  [--tests]");
+  if (!query || !Number.isInteger(depth) || depth < 0) {
+    console.error("usage: npm run refs -- <Name> | <file>#<Name> | <file>:<line>[:col] | --duplicates  [--tests] [--depth N]");
     return 2;
   }
   const started = Date.now();
@@ -99,7 +123,10 @@ async function main(): Promise<number> {
     console.error(`No module-level declaration named ${query} under src/. For a member or a local, pass <file>:<line> of its declaration.`);
     return 1;
   }
-  for (const t of targets) print(t, await intel.findReferences(t));
+  for (const t of targets) {
+    if (depth > 0) await printReach(t);
+    else print(t, await intel.findReferences(t));
+  }
   console.error(`\n(${((Date.now() - started) / 1000).toFixed(1)}s)`);
   return 0;
 }

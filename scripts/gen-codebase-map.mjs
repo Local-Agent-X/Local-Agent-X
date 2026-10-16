@@ -13,7 +13,8 @@
  *
  * WHAT IT REPORTS, per top-level src/ directory:
  *   - importers: distinct NON-TEST files outside the dir that import it,
- *     statically or by import() (the real "how wired-in is this" signal; 0 ⇒ dead/superseded).
+ *     statically or by import() (the real "how wired-in is this" signal; 0 ⇒ dead/superseded),
+ *     from the compiler's import graph (scripts/lib/import-graph.mjs).
  *   - files / size tier: file count + an S/M/L/XL bucket (NOT raw LOC, so a
  *     few-line edit doesn't flip the build gate — only crossing a tier does).
  *   - god files: count of non-test files over the 400-LOC source-hygiene limit.
@@ -25,11 +26,12 @@
  *
  *   Regenerate:  npm run docs:map        (node scripts/gen-codebase-map.mjs)
  *   Verify:      npm run check:codebase-map   (--check; runs inside npm build)
- *   Who imports: npm run deps -- <file or dir>   (--deps; prints, writes nothing)
+ *   Who imports: npm run deps -- <file or dir> [--depth N]   (scripts/deps.mjs)
  */
 import { readFileSync, writeFileSync, readdirSync, statSync } from "node:fs";
 import { join, dirname, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { buildImportGraph } from "./lib/import-graph.mjs";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const SRC_ROOT = join(REPO_ROOT, "src");
@@ -73,32 +75,10 @@ function sizeTier(loc) {
   return "XL";
 }
 
-// All import/export/require specifiers in a file (static + dynamic).
-const SPEC_RES = [
-  /\bfrom\s+["']([^"']+)["']/g,        // import ... from "x" / export ... from "x"
-  /\bimport\s+["']([^"']+)["']/g,      // side-effect import "x"
-  /\bimport\s*\(\s*["']([^"']+)["']/g, // dynamic import("x")
-  /\brequire\s*\(\s*["']([^"']+)["']/g,
-];
-function importSpecs(text) {
-  const specs = new Set();
-  for (const re of SPEC_RES) {
-    re.lastIndex = 0;
-    let m;
-    while ((m = re.exec(text)) !== null) specs.add(m[1]);
-  }
-  return specs;
-}
-
-// Resolve a relative specifier to the top-level src/ dir it lands in, or null.
-function specToTopDir(fromFile, spec) {
-  if (!spec.startsWith(".")) return null; // bare pkg (npm, @arikernel/*) — not a src dir
-  const abs = resolve(dirname(fromFile), spec);
-  const rel = relative(SRC_ROOT, abs);
-  if (rel.startsWith("..") || rel === "") return null; // outside src/
-  const top = rel.split(sep)[0];
-  // A top-level loose file (e.g. "tool-executor.js") isn't a directory.
-  return top.includes(".") ? null : top;
+// The top-level src/ dir a file sits in, or null for a loose src/*.ts file.
+function topDirOf(abs) {
+  const parts = relative(SRC_ROOT, abs).split(sep);
+  return parts.length > 1 ? parts[0] : null;
 }
 
 // ── Gather the tree ────────────────────────────────────────────────────────
@@ -107,60 +87,7 @@ const topDirs = readdirSync(SRC_ROOT)
   .sort();
 
 const allFiles = walk(SRC_ROOT).filter((p) => isSource(p.split(sep).pop()));
-
-// ── --deps <path>: who imports a file or directory, file by file ───────────
-// The map's per-directory counts answer "how wired-in is this module"; this
-// answers "who exactly would a change here reach". Same specifier scan as the
-// map, resolved to files (ESM `.js` specifiers land on their `.ts` source).
-const depsIdx = process.argv.indexOf("--deps");
-if (depsIdx >= 0) {
-  const target = resolve(REPO_ROOT, process.argv[depsIdx + 1] ?? "");
-  const inside = (p) => p === target || p.startsWith(target + sep);
-  const resolveFile = (fromFile, spec) => {
-    if (!spec.startsWith(".")) return null;
-    const base = resolve(dirname(fromFile), spec);
-    const stem = base.replace(/\.(m|c)?jsx?$/, "");
-    for (const c of [base, `${stem}.ts`, `${stem}.tsx`, join(base, "index.ts"), join(base, "index.tsx")]) {
-      try { if (statSync(c).isFile()) return c; } catch { /* not this candidate */ }
-    }
-    return null;
-  };
-  const posixRel = (p) => relative(REPO_ROOT, p).split(sep).join("/");
-  const unit = (p) => { const parts = relative(SRC_ROOT, p).split(sep); return parts.length > 1 ? parts[0] : "(src root)"; };
-  const importers = new Map();
-  const usesFrom = new Map();
-  let testImporters = 0;
-  for (const abs of allFiles) {
-    const test = isTest(abs.split(sep).pop());
-    for (const spec of importSpecs(readFileSync(abs, "utf-8"))) {
-      const hit = resolveFile(abs, spec);
-      if (!hit) continue;
-      if (inside(hit) && !inside(abs)) {
-        if (test) { testImporters += 1; continue; }
-        const u = unit(abs);
-        if (!importers.has(u)) importers.set(u, new Set());
-        importers.get(u).add(posixRel(abs));
-      } else if (inside(abs) && !inside(hit) && !test) {
-        const u = unit(hit);
-        if (!usesFrom.has(u)) usesFrom.set(u, new Set());
-        usesFrom.get(u).add(posixRel(hit));
-      }
-    }
-  }
-  const print = (title, m) => {
-    const total = [...m.values()].reduce((n, s) => n + s.size, 0);
-    console.log(`\n## ${title} (${total} files across ${m.size} modules)`);
-    for (const [u, s] of [...m].sort((a, b) => b[1].size - a[1].size || a[0].localeCompare(b[0]))) {
-      console.log(`\n${u}/ (${s.size})`);
-      for (const p of [...s].sort()) console.log(`  ${p}`);
-    }
-  };
-  console.log(`# Dependencies of ${posixRel(target)} (non-test files; static and dynamic imports; ${testImporters} test-file imports not listed)`);
-  print("Imported by", importers);
-  print("Imports from", usesFrom);
-  console.log("\nFor one function, class or type rather than a whole file: npm run refs -- <Name>");
-  process.exit(0);
-}
+const graph = buildImportGraph(REPO_ROOT, [SRC_ROOT]);
 
 // Per-dir aggregates.
 const dirData = new Map(
@@ -182,13 +109,9 @@ for (const abs of allFiles) {
   // count toward "wired into the running system").
   if (!isTest(name)) {
     const fromDir = parts.length > 1 ? parts[0] : null; // self-dir, to exclude self-imports
-    const seen = new Set();
-    for (const spec of importSpecs(text)) {
-      const top = specToTopDir(abs, spec);
-      if (top && top !== fromDir && dirData.has(top) && !seen.has(top)) {
-        seen.add(top);
-        dirData.get(top).importers.add(rel);
-      }
+    for (const target of graph.importsOf.get(resolve(abs)) ?? []) {
+      const top = topDirOf(target);
+      if (top && top !== fromDir && dirData.has(top)) dirData.get(top).importers.add(rel);
     }
   }
 

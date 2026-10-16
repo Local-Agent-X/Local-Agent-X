@@ -13,6 +13,8 @@ build` fails if that file goes stale. This doc owns the *meaning*; the generated
 map owns the *counts*. **When a number here disagrees with the map, the map
 wins** — it resolves **dynamic `import()`**, which a plain `grep "from"` misses
 (that gap is exactly why several live dirs were mislabeled "dead" below before).
+The map and `npm run deps` read one import graph, scanned and resolved by the
+TypeScript compiler ([`scripts/lib/import-graph.mjs`](scripts/lib/import-graph.mjs)).
 
 Companion docs: [AGENTS.md](AGENTS.md) (the invariants/rules),
 [docs/ari-kernel.md](docs/ari-kernel.md) (current security-kernel behavior),

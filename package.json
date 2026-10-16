@@ -30,7 +30,7 @@
     "check:release-attribution": "node scripts/check-release-attribution.mjs",
     "check:release-environment": "node scripts/check-release-environment.mjs",
     "docs:map": "node scripts/gen-codebase-map.mjs",
-    "deps": "node scripts/gen-codebase-map.mjs --deps",
+    "deps": "node scripts/deps.mjs",
     "refs": "tsx scripts/refs.ts",
     "docs:generated": "node scripts/regen-generated-docs.mjs",
     "check:generated-docs": "node scripts/regen-generated-docs.mjs --check",

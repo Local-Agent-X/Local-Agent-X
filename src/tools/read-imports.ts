@@ -175,8 +175,9 @@ export interface ImportAppendix {
     imports_skipped: number;
     imports_truncated?: true;
   };
-  /** True when any import's content tripped the injection screen. */
-  screened: boolean;
+  /** What the injection screen found in the imports (each flagged import
+   *  carries its own warning); empty when they were clean. */
+  injections: ReturnType<typeof detectInjection>;
 }
 
 /**
@@ -227,7 +228,7 @@ export function buildImportAppendix(
   const sections: string[] = [];
   let lineBudget = IMPORT_TOTAL_LINE_CAP;
   let included = 0;
-  let screened = false;
+  const found: ReturnType<typeof detectInjection> = [];
 
   for (const target of resolved) {
     // The confinement invariant: only read an import that sits (symlink-safe)
@@ -278,7 +279,7 @@ export function buildImportAppendix(
     const injections = exempt ? [] : detectInjection(numbered);
     let warning = "";
     if (injections.length > 0) {
-      screened = true;
+      found.push(...injections);
       const maxScore = Math.max(...injections.map((i) => i.score));
       const labels = injections.map((i) => i.label).join(", ");
       warning = `⚠ INJECTION WARNING (score=${maxScore.toFixed(2)}): This file contains suspicious patterns [${labels}]. ` +
@@ -303,7 +304,7 @@ export function buildImportAppendix(
   return {
     text: parts.length > 0 ? `\n\n=== imports (depth 1) ===\n\n${parts.join("\n\n")}` : "",
     metadata,
-    screened,
+    injections: found,
   };
 }
 

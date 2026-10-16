@@ -10,6 +10,7 @@
 - A kernel-gated tool with no `ARI_ACTION_MAP` row falls through to action `exec`, which the kernel schema rejects — a hard block under `ariRequired`.
 - Model-supplied `_`-prefixed args are dropped (`internal-args.ts`); only `SESSION_SCOPED_TOOLS` get the trusted `_sessionId` (every tool with policy `pathArgs` is in it automatically), only `OPERATION_SCOPED_TOOLS` get `_operationId`.
 - A tool path argument is resolved with the call's session everywhere it is resolved: the file-access gate (`ctx.sessionId`), the tool (`sessionIdOf(args)`), and every check here about the same file (freshness, read-dedup, task-artifact pre-stat, the delete gates). Otherwise a work-rooted session gates `<workRoot>/x` and opens `<workspace>/x`. Guards: `agent-path-session.test.ts` (source scan), `test/work-root-gate-sink-parity.test.ts`.
+- Every tool result the model reads is screened once, in the audit phase (`injection-exposure.ts`), never in a tool or a provider: the content is never edited, a note leads the rendered text, and harness text (the wrapper's frame, `read`'s warning) is never scanned.
 
 ## Coupled to
 | If you change | Also check | Guard |
@@ -22,6 +23,8 @@
 | `DECLARED_DESTINATIONS` (`send-destinations.ts`) | the private-content gate's destinations and the "always allow" scope of every send (`src/approval-decision.ts`) | `private-content-destinations.test.ts`, `src/approval-grant-scope.test.ts` |
 | `LOCAL_CONTROL_ARGS` (`egress-payload.ts`) | every outbound scan skips those args; the taint floor and `taint-scope.ts` read "nothing to carry" from them | `egress-payload.test.ts` |
 | `SECRET_ENV_TOOLS` (`src/tools/shell-secret-env.ts`) | the `use_secret` card (`secret-env-approval.ts`) and the outbound-secret recovery (`stored-secret-route.ts`) cover exactly those tools | `src/tools/tool-registration-completeness.test.ts`, `secret-env-approval.test.ts` |
+| `askAfterInjectionExposure` on each profile (`src/autonomy/profiles.ts`) | the exposure gate (`injection-exposure.ts`) asks only for risks a profile lists and would otherwise run; an empty list is "note only" | `injection-exposure.test.ts`, `src/autonomy/profiles.test.ts` |
+| `metadata.injection` a tool reports (`read`, `read-imports.ts`) | the result screen trusts it instead of re-scanning text that carries the tool's own warning | `injection-exposure.test.ts` |
 | gate order (`pre-dispatch.ts`, `enforce-policy.ts`) | both dispatch callers (chat path, arikernel executors) | `gate-order.test.ts`, `pre-dispatch-matrix.test.ts` |
 
 ## Tests

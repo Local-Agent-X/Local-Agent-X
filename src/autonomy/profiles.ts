@@ -15,6 +15,11 @@ export type Decision = "allow" | "allow-with-rollback" | "ask" | "deny";
 export type Profile = {
   name: string;
   rules: Record<ToolRisk, Decision>;
+  /** The risks that ask anyway while the session is exposed: a tool result it
+   *  read held text that looked like an injected instruction, and no new
+   *  human message has come since (tool-execution/injection-exposure.ts). A
+   *  risk the profile already asks for or denies is unaffected. */
+  askAfterInjectionExposure: readonly ToolRisk[];
 };
 
 // Names exported as a closed set so the store can validate persisted values.
@@ -44,6 +49,16 @@ export const DEFAULT_PROFILE: ProfileName = "Power";
 //                 secrets"; the review, not a prompt, is what makes that safe,
 //                 and the model still reads every finding in the tool result.
 //   Autonomous    allow — unattended by definition; RED still blocks.
+//
+// "askAfterInjectionExposure" — what stops running without a card once a tool
+// result carried a planted-looking instruction. Safe, Normal and Developer ask
+// before anything outward or irreversible until the user speaks again.
+// workspace-write stays out: editing files is how the agent works, and running
+// what it wrote needs shell, which is in. Power and Autonomous never get the
+// card; they get the note on the result.
+const ASK_OUTWARD_AFTER_EXPOSURE: readonly ToolRisk[] = [
+  "shell", "destructive", "network-write", "external-comms", "publish", "money", "secrets",
+];
 
 const Safe: Profile = {
   name: "Safe",
@@ -59,6 +74,7 @@ const Safe: Profile = {
     "secrets": "deny",
     "publish": "ask",
   },
+  askAfterInjectionExposure: ASK_OUTWARD_AFTER_EXPOSURE,
 };
 
 const Normal: Profile = {
@@ -75,6 +91,7 @@ const Normal: Profile = {
     "secrets": "ask",
     "publish": "ask",
   },
+  askAfterInjectionExposure: ASK_OUTWARD_AFTER_EXPOSURE,
 };
 
 const Developer: Profile = {
@@ -91,6 +108,7 @@ const Developer: Profile = {
     "secrets": "ask",
     "publish": "ask",
   },
+  askAfterInjectionExposure: ASK_OUTWARD_AFTER_EXPOSURE,
 };
 
 const Power: Profile = {
@@ -107,6 +125,7 @@ const Power: Profile = {
     "secrets": "ask",
     "publish": "allow",
   },
+  askAfterInjectionExposure: [],
 };
 
 // Reversible classes get rollback wrapping; irreversible side effects
@@ -126,6 +145,7 @@ const Autonomous: Profile = {
     "secrets": "allow",
     "publish": "allow",
   },
+  askAfterInjectionExposure: [],
 };
 
 export const PROFILES: Record<ProfileName, Profile> = {

@@ -77,17 +77,26 @@ describe("wrapExternalContent strips every system-injection tag name in every cl
   }
 });
 
-describe("detectInjection flags every stripped tag name in every form the stripper removes", () => {
+describe("detectInjection flags every stripped tag name written as a frame", () => {
   const flagged = (text: string) => detectInjection(text).some((d) => d.label === "system-xml");
+  // Every lone form the stripper removes except mixed case, which detection
+  // does not claim: a PascalCase name is a JSX component (below).
+  const frameForms = (name: string) => loneForms(name).filter(([form]) => form !== "mixed-case open");
   for (const name of SYSTEM_INJECTION_TAG_NAMES) {
     it(`flags ${name}`, () => {
-      const missed = loneForms(name).filter(([, tag]) => !flagged(`before ${tag} after`)).map(([form]) => form);
+      const missed = frameForms(name).filter(([, tag]) => !flagged(`before ${tag} after`)).map(([form]) => form);
       expect(missed).toEqual([]);
     });
     it(`does not flag a tag that only shares ${name}'s prefix or suffix`, () => {
       expect(flagged(`<${name}x> <x${name}>`)).toBe(false);
     });
   }
+
+  it("does not flag JSX components or self-closing tags that share a name", () => {
+    for (const code of ["return <User />;", "<Admin role={r}>", "<User>{name}</User>", "<Operator id=\"1\"/>", "<user/>", "<system />"]) {
+      expect(flagged(code), code).toBe(false);
+    }
+  });
 });
 
 describe("wrapExternalContent folds lookalike brackets before matching, not after", () => {

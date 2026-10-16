@@ -1,6 +1,5 @@
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import { isHarnessRow } from "../harness-rows.js";
-import { stripSystemInjectionTags } from "../sanitize.js";
 import { MODEL_REFUSAL_CODE } from "../canonical-loop/public/model-stop.js";
 import {
   INTERRUPTED_TURN_BOUNDARY,
@@ -9,14 +8,6 @@ import {
   TURN_ERROR_BODY_BOUND,
   TURN_ERROR_ECHO,
 } from "../harness-text.js";
-
-/** Sanitize tool result content to remove pseudo-system injection tags. */
-export function sanitizeToolResults(results: ChatCompletionMessageParam[]): ChatCompletionMessageParam[] {
-  return results.map(r => {
-    if (r.role !== "tool" || typeof r.content !== "string") return r;
-    return { ...r, content: stripSystemInjectionTags(r.content) };
-  });
-}
 
 // ── Control-marker invariant ────────────────────────────────────────────────
 //

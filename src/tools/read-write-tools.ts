@@ -6,7 +6,7 @@ import { moveToTrash, moveToTaskTrash } from "../safe-delete.js";
 import { isTaskArtifact, unrecordTaskArtifact } from "../data-lineage/task-artifacts.js";
 import { readValidatedFile, writeValidatedFile, FileAccessDeniedError } from "../security/layer/index.js";
 import type { ToolDefinition } from "../types.js";
-import { detectInjection } from "../sanitize.js";
+import { detectInjection, injectionFinding } from "../sanitize.js";
 import { ok, err, blocked } from "./result-helpers.js";
 import { fileNotFoundError } from "./edit-recovery.js";
 import { binaryContainerRejection, checkEditSyntax, syntaxRejectionMessage } from "./syntax-validate.js";
@@ -151,7 +151,7 @@ export const readTool: ToolDefinition = {
       // re-screens each one in-tool (bulk_replace precedent). Default path
       // (include_imports absent/false) is byte-identical to before.
       let importsText = "";
-      let importsScreened = false;
+      let importInjections: ReturnType<typeof detectInjection> = [];
       const importsMeta: Record<string, number | boolean> = {};
       if (Boolean(args.include_imports)) {
         if (!isJsFamilyFile(filePath)) {
@@ -162,7 +162,7 @@ export const readTool: ToolDefinition = {
             injectionExempt: isScreenExemptAgentCode,
           });
           importsText = appendix.text;
-          importsScreened = appendix.screened;
+          importInjections = appendix.injections;
           Object.assign(importsMeta, appendix.metadata);
         }
       }
@@ -175,7 +175,11 @@ export const readTool: ToolDefinition = {
         // A screened view (warning prepended) is a PARTIAL sight of the file:
         // the read-dedup layer must never stub it away on a re-read. An
         // injection warning inside an appended import counts the same way.
-        screened: injections.length > 0 || importsScreened || undefined,
+        screened: injections.length > 0 || importInjections.length > 0 || undefined,
+        // The screen's verdict as data, clean included: the dispatcher's
+        // result screen takes it instead of re-reading this result, whose own
+        // warning trips the detector.
+        injection: injectionFinding([...injections, ...importInjections]) ?? { score: 0, labels: [] },
         ...importsMeta,
       });
     } catch (e) {

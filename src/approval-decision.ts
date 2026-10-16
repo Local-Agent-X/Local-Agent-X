@@ -16,6 +16,7 @@ import {
   decide,
   getProfile,
   type Decision,
+  type Profile,
 } from "./autonomy/profiles.js";
 import { loadProfileName, getSessionProfile } from "./autonomy/profile-store.js";
 import { classifyToolRisk } from "./autonomy/risk.js";
@@ -41,18 +42,23 @@ function currentProfileName(sessionId?: string): ReturnType<typeof loadProfileNa
   return _cachedProfile;
 }
 
+/** The profile governing this session: its per-session override (cron jobs)
+ *  when one is pinned, else the persisted global one. */
+export function getActiveProfile(sessionId?: string): Profile {
+  return getProfile(currentProfileName(sessionId));
+}
+
 /** What does the active profile say about this tool? Pass `sessionId` so a
  *  per-session profile override (cron jobs) is honored. */
 export function getToolDecision(toolName: string, sessionId?: string): Decision {
-  const profile = getProfile(currentProfileName(sessionId));
-  return decide(profile, classifyToolRisk(toolName));
+  return decide(getActiveProfile(sessionId), classifyToolRisk(toolName));
 }
 
 /** What does the active profile say about a specific risk tier? Used to
  *  re-decide a call that got RECLASSIFIED (a shell command carrying rm -rf
  *  is decided by the destructive rule, not the shell rule). */
 export function getRiskDecision(risk: Parameters<typeof decide>[1], sessionId?: string): Decision {
-  return decide(getProfile(currentProfileName(sessionId)), risk);
+  return decide(getActiveProfile(sessionId), risk);
 }
 
 /** Does this decision require an interactive user prompt before running? */

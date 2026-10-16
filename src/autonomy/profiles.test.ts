@@ -182,6 +182,21 @@ describe("autonomy profiles", () => {
     }
   });
 
+  it("every profile declares what asks after an injection exposure; Power and Autonomous only get the note", () => {
+    const outward: ToolRisk[] = ["shell", "destructive", "network-write", "external-comms", "publish", "money", "secrets"];
+    for (const name of PROFILE_NAMES) {
+      const list = PROFILES[name].askAfterInjectionExposure;
+      expect(Array.isArray(list), name).toBe(true);
+      expect(list.every((r) => ALL_RISKS.includes(r)), name).toBe(true);
+      expect(list, name).not.toContain("workspace-write");
+    }
+    for (const name of ["Safe", "Normal", "Developer"] as const) {
+      expect([...PROFILES[name].askAfterInjectionExposure].sort(), name).toEqual([...outward].sort());
+    }
+    expect(PROFILES.Power.askAfterInjectionExposure).toEqual([]);
+    expect(PROFILES.Autonomous.askAfterInjectionExposure).toEqual([]);
+  });
+
   describe("isProfileName", () => {
     it("accepts known names", () => {
       for (const n of PROFILE_NAMES) expect(isProfileName(n)).toBe(true);

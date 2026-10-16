@@ -49,16 +49,26 @@ import { withoutInternalArgs } from "./internal-args.js";
 export const GATED_DELETE_TOOL = "delete_file";
 const UNTRUSTED = /EXTERNAL_UNTRUSTED_CONTENT|INJECTION WARNING/i;
 
+/** A row a person wrote: a user message that is neither a harness row nor
+ *  carries a harness marker. */
+function isHumanRow(m: ChatCompletionMessageParam): m is ChatCompletionMessageParam & { content: string } {
+  return m.role === "user" && typeof m.content === "string" && !isHarnessRow(m) && !containsHarnessMarker(m.content);
+}
+
 /** The human's most recent message, or "" when there is none we can trust. */
 export function currentHumanText(priorMessages: readonly ChatCompletionMessageParam[] | undefined): string {
   if (!priorMessages) return "";
   for (let i = priorMessages.length - 1; i >= 0; i--) {
     const m = priorMessages[i];
-    if (m.role !== "user" || typeof m.content !== "string") continue;
-    if (isHarnessRow(m) || containsHarnessMarker(m.content)) continue;
+    if (!isHumanRow(m)) continue;
     return UNTRUSTED.test(m.content) ? "" : m.content;
   }
   return "";
+}
+
+/** How many messages a person wrote in this history, by the same row test. */
+export function humanMessageCount(priorMessages: readonly ChatCompletionMessageParam[] | undefined): number {
+  return (priorMessages ?? []).filter(isHumanRow).length;
 }
 
 const normalize = (p: string): string => p.replace(/\\/g, "/").replace(/^\.\//, "").toLowerCase();

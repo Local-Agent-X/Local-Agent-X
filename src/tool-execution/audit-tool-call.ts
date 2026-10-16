@@ -25,6 +25,7 @@ import { readOp } from "../ops/op-store.js";
 import { resolveOpModel } from "../canonical-loop/public/op-facts.js";
 import { STAGE_RECOVERY } from "./stage-recovery.js";
 import { isTrustedSend } from "../tools/http-egress-guard.js";
+import { screenToolResult } from "./injection-exposure.js";
 
 type ToolResultWithImage = ToolResult & {
   _image?: { path: string; question: string; mime: string; b64: string };
@@ -224,8 +225,10 @@ function harvestChip(ctx: ToolCallContext): void {
 }
 
 /** Exported for the envelope contract test: the single/multi image split is
- *  the seam that decides what the model actually SEES from a tool call. */
-export function shapeMsg(ctx: ToolCallContext): void {
+ *  the seam that decides what the model actually SEES from a tool call.
+ *  `note` (the result screen's, injection-exposure.ts) leads the rendered
+ *  text only; the result itself keeps the tool's exact output. */
+export function shapeMsg(ctx: ToolCallContext, note?: string): void {
   const { tc } = ctx;
   const result = ctx.result!;
   const imageData = (result as ToolResultWithImage)._image;
@@ -235,7 +238,7 @@ export function shapeMsg(ctx: ToolCallContext): void {
   const imageSet = imageData ? undefined : (result as ToolResultWithImage)._images;
   const content = imageData
     ? `Image loaded: ${imageData.path}\nQuestion: ${imageData.question}`
-    : renderToolResultForModel(result);
+    : renderToolResultForModel(note ? { ...result, content: `${note}\n${result.content}` } : result);
   const toolMessage = { role: "tool", tool_call_id: tc.id, content } as ChatCompletionMessageParam;
   // _media (a file PATH the bridge delivers off-box) rides the tool message in
   // ONE place, independent of _image — generate_image emits both, and branching
@@ -326,6 +329,6 @@ export const auditPhase: Phase = async (ctx) => {
   recordProvenance(ctx);
   ctx.onEvent?.({ type: "tool_end", toolName: ctx.tc.name, toolCallId: ctx.tc.id, result: ctx.result!.content, allowed: ctx.allowed, status: statusOf(ctx.result!), metadata: ctx.result!.metadata });
   harvestChip(ctx);
-  shapeMsg(ctx);
+  shapeMsg(ctx, screenToolResult(ctx));
   return CONTINUE;
 };

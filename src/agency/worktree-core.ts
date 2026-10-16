@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 
 import { createLogger } from "../logger.js";
 import { composeGitArgs } from "../git-safety.js";
+import { killProcessTree } from "../process-tree-kill.js";
 
 export const logger = createLogger("agency.worktree");
 
@@ -152,17 +153,20 @@ export function gitAsync(args: string[] | string, cwd: string): Promise<string> 
       clearTimeout(timer);
       rejectGit(new Error(`git ${argv.join(" ")} failed: ${detail}`));
     };
-    const timer = setTimeout(() => { timedOut = true; child.kill("SIGKILL"); }, GIT_TIMEOUT_MS);
+    // The whole tree, not the child: on Windows `git` is Git for Windows'
+    // launcher, which runs the real git (mingw64/bin/git.exe) as ITS child. A
+    // plain kill ended only the launcher; the real git ran on, streaming and
+    // holding the repo folder open after the promise had already failed.
+    const timer = setTimeout(() => { timedOut = true; killProcessTree(child, "SIGKILL"); }, GIT_TIMEOUT_MS);
     // setEncoding decodes ACROSS chunk boundaries — a multi-byte character split
     // by a 64 KiB pipe read is held until its remaining bytes arrive. Appending
     // Buffers instead (`stdout += chunk`) decodes each half on its own and turns
     // the character into U+FFFD, corrupting output the callers go on to parse.
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
-    // Same shape as the timeout above: flag, kill, and let the exit handler do
-    // the failing — so the promise settles only once the child is reaped and
-    // has let go of the repo's handles, never while it is still dying.
-    const overflow = () => { overflowed = true; child.kill("SIGKILL"); };
+    // Same shape as the timeout above: flag, kill, and let the close handler do
+    // the failing.
+    const overflow = () => { overflowed = true; killProcessTree(child, "SIGKILL"); };
     child.stdout.on("data", (chunk: string) => {
       if (overflowed) return;
       stdout += chunk;
@@ -174,7 +178,11 @@ export function gitAsync(args: string[] | string, cwd: string): Promise<string> 
       if (stderr.length > GIT_OUTPUT_CAP) overflow();
     });
     child.once("error", (e: Error) => fail(e.message));
-    child.once("exit", (code) => {
+    // "close", not "exit": it fires once the process has exited AND its output
+    // pipes have closed, and the real git holds those pipes too. On "exit" the
+    // promise settled while that git was still alive in the repo, and a success
+    // could resolve before the last of its output was read.
+    child.once("close", (code) => {
       if (overflowed) return fail(`output exceeded the ${GIT_OUTPUT_CAP / (1024 * 1024)} MiB cap`);
       if (timedOut) return fail(`timed out after ${GIT_TIMEOUT_MS}ms`);
       if (code !== 0) return fail(stderr || `exited with code ${code}`);

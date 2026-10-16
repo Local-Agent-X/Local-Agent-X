@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { git, gitAsync, GIT_OUTPUT_CAP, WORKTREE_BASE } from "./worktree-core.js";
@@ -54,8 +54,9 @@ function norm(p: string): string {
 }
 
 afterEach(() => {
-  // Retry: the overflow test SIGKILLs a git child mid-stream, and Windows can
-  // hold its handle on the repo dir for a beat after the process is gone.
+  // Retry for what is outside the test's control (a scanner briefly opening a
+  // fresh file on Windows). A git still running in the repo is not one of
+  // those: gitAsync settles only once git is gone (the overflow test).
   for (const root of roots.splice(0)) {
     rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
@@ -123,6 +124,10 @@ describe("gitAsync", () => {
     run(repo, ["add", "huge.bin"]);
     run(repo, ["commit", "-q", "-m", "huge"]);
     await expect(gitAsync(["show", "HEAD:huge.bin"], repo)).rejects.toThrow(/exceeded .* cap/);
+    // The rejection comes only once git is gone. On Windows the real git runs
+    // under a launcher; killing the launcher alone left it streaming inside the
+    // repo, so the folder could not be removed (EPERM) — no retries here.
+    expect(() => rmSync(dirname(repo), { recursive: true, force: true })).not.toThrow();
   }, 120_000);
 
   it("rejects with the same `git <cmd> failed: <stderr>` shape as git()", async () => {

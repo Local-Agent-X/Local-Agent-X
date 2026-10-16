@@ -23,6 +23,7 @@
 import { detectHighEntropyTokens } from "../security/secrets/entropy-detector.js";
 import { scanForSecrets, type SecretMatch } from "../security/secrets/index.js";
 import { registrableDomain } from "./registrable-domain.js";
+import { destinationSpecsOf } from "../tool-registry.js";
 
 /** Per-session cap on remembered tokens; past it nothing new is exempted. */
 const MAX_TOKENS_PER_SESSION = 5_000;
@@ -103,14 +104,18 @@ export function shownBySite(sessionId: string, destinationUrl: string, token: st
   return !!site && !!sessions.get(sessionId)?.bySite.get(site)?.has(token);
 }
 
-/** The site a call sends to, when one URL names it: a navigation or the page
- *  a browser action types into, or an http_request / web_fetch URL. A browser
- *  script can send anywhere and a destination-less sink (process_start, the
- *  clipboard) names no site, so neither is vouched for. */
+/** The site a call sends to, when one URL names it (its row's destination): a
+ *  navigation or the page a browser action types into, or a site destination's
+ *  URL (http_request, web_fetch, ...). A browser script can send anywhere and a
+ *  sink with no site (process_start, the clipboard) names none, so neither is
+ *  vouched for. */
 function destinationOf(toolName: string, args: Record<string, unknown>, sessionId: string): string {
-  const url = typeof args.url === "string" ? args.url : "";
-  if (toolName === "browser") return args.script ? "" : url || lastBrowserPageUrl(sessionId);
-  return toolName === "http_request" || toolName === "ari_http" || toolName === "web_fetch" ? url : "";
+  const specs = destinationSpecsOf(toolName, args) ?? [];
+  if (specs.length !== 1) return "";
+  const [spec] = specs;
+  const urlOf = (arg: string) => (typeof args[arg] === "string" ? args[arg] as string : "");
+  if (spec.to === "browser-page") return args.script ? "" : urlOf("url") || lastBrowserPageUrl(sessionId);
+  return spec.to === "site" ? urlOf(spec.arg) : "";
 }
 
 /** The tokens this call may carry to its destination despite looking random,

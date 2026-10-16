@@ -83,6 +83,38 @@ export type DeclaredCapability = "egress" | "sensitive-read" | "shell";
  */
 export type OutputKind = "command" | "http-body" | "file-content" | "mailbox";
 
+/**
+ * Where a send delivers (tool-execution/send-destinations.ts resolves it): the
+ * private-content gate names it on its card, an "always allow" is keyed on it,
+ * the outbound secret scan picks its allowlist from it, and site provenance
+ * vouches for tokens the destination site showed.
+ *   site           — the site the URL in `arg` reaches. `allowlisted`: the host
+ *                    allowlist exempts it, and the call is scanned as a request
+ *                    (url, method, body, headers)
+ *   recipients     — every email address in `args`; the user's own address and
+ *                    allowlisted domains are trusted
+ *   chat           — a messaging chat the user authorized in Settings, by `arg`
+ *   user           — only the user (their device, clipboard, own channel);
+ *                    `message`: delivered as a message or file over a channel
+ *   service        — a fixed third-party service
+ *   browser-page   — the page the session's browser is on, or the sites a
+ *                    navigation names (live state)
+ *   foreground-app — the desktop app with the foreground (live state)
+ *   unknown        — somewhere the check cannot name, described by `label`
+ * A spec with `forActions` applies to those actions only, in place of the
+ * unscoped ones.
+ */
+export type DestinationSpec = (
+  | { to: "site"; arg: string; allowlisted?: true }
+  | { to: "recipients"; args: readonly string[] }
+  | { to: "chat"; app: "Telegram" | "WhatsApp"; arg: string }
+  | { to: "user"; message?: true }
+  | { to: "service"; name: string }
+  | { to: "browser-page" }
+  | { to: "foreground-app" }
+  | { to: "unknown"; label: string }
+) & { forActions?: readonly string[] };
+
 /** One concrete tool's row. Every fact a gate needs about the tool lives here,
  *  so a new tool answers each question once, and the type will not build
  *  without the answers. */
@@ -107,6 +139,9 @@ export interface ToolPolicyRow {
    *  model (a fetched page, a search result, mail, a folder name a server chose)
    *  — untrusted content that blocks the turn from auto-promoting memory. */
   externalContent?: true;
+  /** Where a send delivers (DestinationSpec). A tool that sends with none is
+   *  sending to an unknown destination: asked about, never waved through. */
+  destination?: readonly DestinationSpec[];
   /** Explicit policy rule(s). `tool` is stamped from the record key by
    *  deriveDefaultRules — omit it here. */
   rules?: Array<Omit<ToolPolicyRule, "tool">>;
@@ -135,6 +170,7 @@ export interface GlobPolicyEntry {
   shellCommand?: undefined;
   output?: undefined;
   externalContent?: undefined;
+  destination?: undefined;
   pathArgs?: undefined;
   offBoxFetch?: undefined;
 }

@@ -17,7 +17,7 @@
 
 import { deriveTools, derivePathArgs, TOOL_POLICIES } from "./tool-policy/tool-policies.js";
 import type { PathArgSpec } from "./tool-policy/tool-policies.data.js";
-import type { DeclaredCapability, OutputKind, ToolPolicyRow } from "./tool-policy/tool-policies.types.js";
+import type { DeclaredCapability, DestinationSpec, OutputKind, ToolPolicyRow } from "./tool-policy/tool-policies.types.js";
 import { getActivePluginToolMetadata } from "./plugin-system/tool-metadata.js";
 export type { PathArgSpec } from "./tool-policy/tool-policies.data.js";
 
@@ -196,6 +196,17 @@ export function policyRowOf(name: string): ToolPolicyRow | undefined {
 /** What this tool's result carries, when masking or taint must know. */
 export function outputOf(name: string): OutputKind | undefined {
   return TOOL_POLICIES[name]?.output;
+}
+
+/** Where this call delivers, as its row declares it: the specs scoped to the
+ *  call's action when any are, else the unscoped ones. undefined for a tool
+ *  whose row declares no destination. */
+export function destinationSpecsOf(name: string, args: Record<string, unknown>): readonly DestinationSpec[] | undefined {
+  const specs = TOOL_POLICIES[name]?.destination;
+  if (!specs) return undefined;
+  const action = String(args.action ?? "");
+  const scoped = specs.filter((s) => s.forActions?.includes(action));
+  return scoped.length > 0 ? scoped : specs.filter((s) => !s.forActions);
 }
 
 /**

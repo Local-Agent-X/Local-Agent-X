@@ -4,8 +4,8 @@
 // and a `computer` keystroke is judged by what it types or pastes and the app
 // it lands in.
 import { describe, expect, it, vi } from "vitest";
-import { CAPABILITY_CLASS_MEMBERS, TOOLS } from "../tool-registry.js";
-import { DESTINATION_RULES, sendsOffBox } from "./private-content-destinations.js";
+import { CAPABILITY_CLASS_MEMBERS, TOOLS, policyRowOf } from "../tool-registry.js";
+import { sendsOffBox } from "./private-content-destinations.js";
 import { isPasteChord } from "./private-content-computer.js";
 import { ctx, readEmail, STATEMENT, useIsolatedSession, verdict } from "./private-content.test-helper.js";
 
@@ -21,15 +21,17 @@ describe("which calls are sends", () => {
     for (const name of ["email_read", "read", "write", "memory_save", "calendar_create_event"]) expect(sendsOffBox(name), name).toBe(false);
   });
 
-  it("every destination rule belongs to a tool the gate judges (a rule for anything else is dead)", () => {
-    for (const name of Object.keys(DESTINATION_RULES)) expect(sendsOffBox(name), name).toBe(true);
+  it("a row that says where it delivers is a send, whatever its capability class (android is shell)", () => {
+    const declaring = Object.keys(TOOLS).filter((name) => policyRowOf(name)?.destination);
+    expect(declaring).toContain("android");
+    for (const name of declaring) expect(sendsOffBox(name), name).toBe(true);
   });
 });
 
 describe("a send whose destination the gate cannot name is asked about, never waved through", () => {
   it("a judged tool with no destination rule", async () => {
     readEmail();
-    expect(DESTINATION_RULES.process_start).toBeUndefined();
+    expect(policyRowOf("process_start")?.destination).toBeUndefined();
     expect(await verdict(ctx("process_start", { command: `notify-send "${STATEMENT}"` }))).toMatch(/to an unknown destination/);
   });
 

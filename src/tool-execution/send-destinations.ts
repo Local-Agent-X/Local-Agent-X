@@ -1,13 +1,15 @@
-// Where a send delivers, for every tool whose arguments alone name it: the
-// recipients of an email, the site a request goes to, a chat the user
-// authorized, a fixed service. Two things read it: the private-content gate
-// (private-content-destinations.ts), which adds the sends that need live state
-// to name (the page the browser is on, the app under the cursor), and the
-// approval cache, which keys an "always allow" on who receives the send
-// (approval-decision.ts). Pure and synchronous: nothing here touches the
-// device.
+// Where a send delivers, resolved from its policy row's `destination` for
+// every spec its arguments alone name: the recipients of an email, the site a
+// request goes to, a chat the user authorized, a fixed service. Two things
+// read it: the private-content gate (private-content-destinations.ts), which
+// resolves the live-state specs too (the page the browser is on, the app
+// under the cursor), and the approval cache, which keys an "always allow" on
+// who receives the send (approval-decision.ts). Pure and synchronous: nothing
+// here touches the device.
 
 import { addressesIn } from "../data-lineage/private-content.js";
+import { destinationSpecsOf } from "../tool-registry.js";
+import type { DestinationSpec } from "../tool-policy/tool-policies.types.js";
 
 export type Destination =
   | { kind: "email"; address: string }
@@ -48,45 +50,32 @@ function recipients(fields: unknown[]): Destination[] {
   return out;
 }
 
-type ArgsRule = (args: Record<string, unknown>) => Destination[];
+/** A destination spec whose arguments alone name where it delivers. */
+export type ArgsNamedSpec = Exclude<DestinationSpec, { to: "browser-page" } | { to: "foreground-app" }>;
 
-const toUrl: ArgsRule = (args) => [siteOf(args.url) ?? unknownDestination("an address the check could not read")];
-const toOnlyTheUser: ArgsRule = () => [];
-const toService = (name: string): ArgsRule => () => [{ kind: "service", name }];
-const toChat = (app: "Telegram" | "WhatsApp", arg: string): ArgsRule =>
-  (args) => [{ kind: "chat", app, id: args[arg] == null ? "" : String(args[arg]).trim() }];
+/** Names live state rather than arguments: the open page, the foreground app. */
+export const isLiveSpec = (spec: DestinationSpec): spec is Exclude<DestinationSpec, ArgsNamedSpec> =>
+  spec.to === "browser-page" || spec.to === "foreground-app";
 
-/** The sends whose destination is fully named by their arguments. */
-export const DECLARED_DESTINATIONS: Readonly<Record<string, ArgsRule>> = {
-  email_send: (args) => recipients([args.to, args.cc, args.bcc]),
-  http_request: toUrl,
-  ari_http: toUrl,
-  web_fetch: toUrl,
-  extract_site_assets: toUrl,
-  youtube_analyze: toUrl,
-  telegram_send: toChat("Telegram", "chat_id"),
-  whatsapp_send: toChat("WhatsApp", "phone"),
-  // The owner's own devices and clipboard.
-  send_image: toOnlyTheUser,
-  send_video: toOnlyTheUser,
-  send_file: toOnlyTheUser,
-  clipboard_write: toOnlyTheUser,
-  web_search: toService("the web search engine"),
-  image_search: toService("the web search engine"),
-  generate_image: toService("the image generation service"),
-  edit_image: toService("the image generation service"),
-  generate_video: toService("the video generation service"),
-  // Typed text lands in whatever app is on the device's screen, which the
-  // check cannot name; open_url sends the URL to its site.
-  android: (args) => String(args.action ?? "") === "open_url"
-    ? [siteOf(args.url) ?? unknownDestination("an address the check could not read")]
-    : [unknownDestination("the app on the Android device")],
-};
+/** Where one args-named spec delivers this call; [] when it reaches only the user. */
+export function resolveSpec(spec: ArgsNamedSpec, args: Record<string, unknown>): Destination[] {
+  switch (spec.to) {
+    case "site": return [siteOf(args[spec.arg]) ?? unknownDestination("an address the check could not read")];
+    case "recipients": return recipients(spec.args.map((a) => args[a]));
+    case "chat": return [{ kind: "chat", app: spec.app, id: args[spec.arg] == null ? "" : String(args[spec.arg]).trim() }];
+    case "user": return [];
+    case "service": return [{ kind: "service", name: spec.name }];
+    case "unknown": return [unknownDestination(spec.label)];
+  }
+}
 
-/** Where this call delivers, when its arguments say; [] when it reaches only
- *  the user, null when naming it takes live state or the tool has no rule. */
+/** Where this call delivers, when its arguments say (its row's destination);
+ *  [] when it reaches only the user, null when naming it takes live state or
+ *  the row declares none. */
 export function declaredDestinations(toolName: string, args: Record<string, unknown>): Destination[] | null {
-  return DECLARED_DESTINATIONS[toolName]?.(args) ?? null;
+  const specs = destinationSpecsOf(toolName, args);
+  if (!specs || specs.some(isLiveSpec)) return null;
+  return (specs as readonly ArgsNamedSpec[]).flatMap((s) => resolveSpec(s, args));
 }
 
 export function describeDestination(d: Destination): string {

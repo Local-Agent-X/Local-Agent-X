@@ -2,18 +2,19 @@
 // gate (private-content-gate.ts).
 //
 // Which tools are judged is derived from the tool policy: every egress-capable
-// tool, and every tool whose risk class is sending to a third party, is a
-// send. The exceptions the policy classes as shell are named below (MCP
-// tools, android). A send with no rule below delivers to
-// "an unknown destination", which nobody has chosen, so a new sender asks
-// until it gets a rule; a rule can only make the gate quieter, by naming a
-// destination the user can recognise or by saying the tool reaches only them.
+// tool, every tool whose risk class is sending to a third party, and every
+// tool whose row declares a destination (android, which the policy classes as
+// shell) is a send; so is every MCP tool. A send whose row declares no
+// destination delivers to "an unknown destination", which nobody has chosen,
+// so a new sender asks until its row says where it goes; a destination can
+// only make the gate quieter, by naming one the user can recognise or by
+// saying the tool reaches only them.
 
 import type { ToolCallContext } from "./context.js";
-import { hasCapability, type ToolRisk } from "../tool-registry.js";
+import { destinationSpecsOf, hasCapability, policyRowOf, type ToolRisk } from "../tool-registry.js";
 import { classifyToolRisk } from "../autonomy/risk.js";
 import { egressPayload } from "./egress-payload.js";
-import { DECLARED_DESTINATIONS, siteOf, unknownDestination, type Destination } from "./send-destinations.js";
+import { isLiveSpec, resolveSpec, siteOf, unknownDestination, type Destination } from "./send-destinations.js";
 import { computerPayload, queryForegroundApp, readClipboardText, type ForegroundApp } from "./private-content-computer.js";
 
 export interface PrivateGateDeps {
@@ -27,18 +28,15 @@ export interface PrivateGateDeps {
 
 const THIRD_PARTY_RISKS: ReadonlySet<ToolRisk> = new Set(["external-comms", "network-write"]);
 
-/** Senders the policy classes as shell, not egress: an MCP tool hands its
- *  arguments to a program the user installed, which may send them anywhere,
- *  and the android tool types into apps and opens URLs on a device. Their
- *  risk class also drives approval cards under each profile, so it stays. */
-const SHELL_CLASSED_SENDERS: ReadonlySet<string> = new Set(["android"]);
-
-/** Is this tool a send the gate judges? */
+/** Is this tool a send the gate judges? An MCP tool hands its arguments to a
+ *  program the user installed, which may send them anywhere; a tool the
+ *  policy classes as shell but whose row says where it delivers (android) is
+ *  a send by that declaration. */
 export function sendsOffBox(toolName: string): boolean {
   return hasCapability(toolName, "egress")
     || THIRD_PARTY_RISKS.has(classifyToolRisk(toolName))
     || toolName.startsWith("mcp_")
-    || SHELL_CLASSED_SENDERS.has(toolName);
+    || policyRowOf(toolName)?.destination !== undefined;
 }
 
 /** Every string in a value, however deeply nested. */
@@ -66,8 +64,6 @@ async function defaultBrowserCurrentUrl(sessionId: string): Promise<string> {
   }
 }
 
-type Rule = (ctx: ToolCallContext, deps: PrivateGateDeps) => Destination[] | Promise<Destination[]>;
-
 const UNKNOWN = unknownDestination("an unknown destination");
 
 const LEAVES_THE_PAGE: ReadonlySet<string> = new Set(["navigate", "new_tab"]);
@@ -89,18 +85,16 @@ async function foregroundDestination(_ctx: ToolCallContext, deps: PrivateGateDep
   return [app ? { kind: "app", name: app.name, title: app.title } : UNKNOWN];
 }
 
-/** Exported for the contract test: every rule must belong to a judged tool.
- *  The sends whose arguments name their destination are declared in
- *  send-destinations.ts; the two here need the session's live state. */
-export const DESTINATION_RULES: Readonly<Record<string, Rule>> = {
-  ...Object.fromEntries(Object.entries(DECLARED_DESTINATIONS).map(([name, rule]): [string, Rule] => [name, (ctx) => rule(ctx.args)])),
-  browser: browserDestinations,
-  computer: foregroundDestination,
-};
-
-/** Where this call would deliver its payload; [] when it reaches only the user. */
+/** Where this call would deliver its payload, as its row declares it;
+ *  [] when it reaches only the user. */
 export async function destinationsOf(ctx: ToolCallContext, deps: PrivateGateDeps): Promise<Destination[]> {
   if (ctx.tc.name.startsWith("mcp_")) return [{ kind: "service", name: `the MCP tool ${ctx.tc.name}` }];
-  const rule = DESTINATION_RULES[ctx.tc.name];
-  return rule ? rule(ctx, deps) : [UNKNOWN];
+  const specs = destinationSpecsOf(ctx.tc.name, ctx.args);
+  if (!specs) return [UNKNOWN];
+  const out: Destination[] = [];
+  for (const spec of specs) {
+    if (!isLiveSpec(spec)) out.push(...resolveSpec(spec, ctx.args));
+    else out.push(...await (spec.to === "browser-page" ? browserDestinations(ctx, deps) : foregroundDestination(ctx, deps)));
+  }
+  return out;
 }

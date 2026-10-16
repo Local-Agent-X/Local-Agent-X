@@ -18,7 +18,7 @@
  * circuit first; the isHighStakesEgress predicate is the real cost guard before
  * any voter fires.
  */
-import { hasCapability } from "../../tool-registry.js";
+import { destinationSpecsOf, hasCapability } from "../../tool-registry.js";
 import { destructiveOperationReason } from "../../approval-decision.js";
 import { verifyByRefutation } from "../../classifiers/verify-by-refutation.js";
 import { USER_HINTS } from "../../types.js";
@@ -29,20 +29,23 @@ const PACK_ID = "egress-refutation";
 // cheaper, deterministic gates evaluate first and short-circuit on a deny.
 const PACK_PRIORITY = 95;
 
-// Tools that contact a third party / ship a file to a person. These are
-// high-stakes regardless of whether destructiveOperationReason flags them, so
-// they're folded into isHighStakesEgress alongside the irreversibility signal.
-const THIRD_PARTY_SEND = new Set(["email_send", "telegram_send", "whatsapp_send", "send_video", "send_image", "send_file"]);
+// A call that delivers a message or a file to a person (its row's destination:
+// email recipients, a messaging chat, the user's own channel) is high-stakes
+// whether or not destructiveOperationReason flags it, so it's folded into
+// isHighStakesEgress alongside the irreversibility signal.
+function messagesAPerson(name: string, args: Record<string, unknown>): boolean {
+  return (destinationSpecsOf(name, args) ?? []).some((s) => s.to === "recipients" || s.to === "chat" || (s.to === "user" && s.message === true));
+}
 
 const MAX_ARGS_CHARS = 2000;
 
-/** An egress call that is also irreversible OR a third-party send. The egress
- *  class alone is too broad (it includes reversible web_search/web_fetch), so
- *  it's gated by the irreversibility signal or the third-party-send set. */
+/** An egress call that is also irreversible OR a message to a person. The
+ *  egress class alone is too broad (it includes reversible web_search/web_fetch),
+ *  so it's gated by the irreversibility signal or the message destination. */
 function isHighStakesEgress(name: string, args: Record<string, unknown>): boolean {
   return (
     hasCapability(name, "egress") &&
-    (destructiveOperationReason(name, args) !== null || THIRD_PARTY_SEND.has(name))
+    (destructiveOperationReason(name, args) !== null || messagesAPerson(name, args))
   );
 }
 

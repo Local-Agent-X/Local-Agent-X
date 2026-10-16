@@ -10,9 +10,9 @@ import type { ToolCallContext } from "./tool-execution/context.js";
 import { collectRuntimeTools } from "./tools/runtime-tool-names.js";
 import { computeArgsFingerprint, getApprovalManager } from "./approval-manager.js";
 import { WHOLE_TOOL_GRANTS } from "./approval-decision.js";
-import { TOOL_PATH_ARGS, hasCapability, type PathArgSpec } from "./tool-registry.js";
+import { TOOL_PATH_ARGS, TOOLS, hasCapability, policyRowOf, type PathArgSpec } from "./tool-registry.js";
 import { destinationsOf } from "./tool-execution/private-content-destinations.js";
-import { DECLARED_DESTINATIONS, declaredDestinations, destinationKey } from "./tool-execution/send-destinations.js";
+import { declaredDestinations, destinationKey, isLiveSpec } from "./tool-execution/send-destinations.js";
 
 type Schema = { type?: string | string[]; enum?: unknown[] };
 
@@ -87,8 +87,10 @@ describe("grant scope over the runtime catalog", () => {
     expect(leaks).toEqual([]);
   });
 
-  it("a declared recipient rule belongs to a runtime tool and names what the private-content gate names", async () => {
-    for (const name of Object.keys(DECLARED_DESTINATIONS)) {
+  it("a destination its arguments name belongs to a runtime tool and is what the private-content gate names", async () => {
+    const argsNamed = Object.keys(TOOLS).filter((name) => policyRowOf(name)?.destination?.every((s) => !isLiveSpec(s)));
+    expect(argsNamed).toEqual(expect.arrayContaining(["email_send", "http_request", "telegram_send", "send_file", "android"]));
+    for (const name of argsNamed) {
       expect(tools.has(name), name).toBe(true);
       const args = { url: "https://api.example.com/v1", to: "a@example.com", chat_id: "42", phone: "+15550100", action: "open_url" };
       const ctx = { tc: { id: "c", name, arguments: "{}" }, args, sessionId: "s" };

@@ -19,8 +19,8 @@
 import { USER_HINTS, type BlockAction, type ToolResult } from "../types.js";
 import { checkEgressTaintWithPayload } from "../data-lineage/index.js";
 import { checkCanariesInPayload, recordCanaryExfilAudit } from "../threat/canaries.js";
-import { hasCapability } from "../tool-registry.js";
-import { checkOutboundRequest, checkOutboundPayload, checkOutboundEmail, checkAttachmentPaths, isTrustedDestination } from "../tools/http-egress-guard.js";
+import { destinationSpecsOf, hasCapability } from "../tool-registry.js";
+import { checkOutboundRequest, checkOutboundPayload, checkOutboundEmail, checkAttachmentPaths, isTrustedDestination, recipientFields } from "../tools/http-egress-guard.js";
 import { vouchedFor } from "../browser/site-provenance.js";
 import { egressPayload } from "./egress-payload.js";
 import { outboundSecretRecovery } from "./stored-secret-route.js";
@@ -91,14 +91,18 @@ export function probeEgressGuard(ctx: ToolCallContext): EgressBlocker | null {
     }
   }
 
-  // Outbound-secret scan. http-shaped sinks go through the host-allowlist-aware
-  // checkOutboundRequest; email through the recipient-allowlist-aware
-  // checkOutboundEmail (own address + allowlist trusted, unknown recipient →
-  // confirmable); the rest through the destination-less payload scan.
+  // Outbound-secret scan, chosen by where the row says the call delivers: an
+  // allowlisted site through the host-allowlist-aware checkOutboundRequest;
+  // recipients through the recipient-allowlist-aware checkOutboundEmail (own
+  // address + allowlist trusted, unknown recipient → confirmable); the rest
+  // through the destination-less payload scan.
   let block: { message: string; meta: Record<string, unknown>; confirmable?: boolean } | null = null;
   const vouched = vouchedFor(tc.name, args as Record<string, unknown>, ctx.sessionId ?? "");
-  if (tc.name === "http_request" || tc.name === "ari_http") {
-    const url = String(args.url ?? "");
+  const specs = destinationSpecsOf(tc.name, args as Record<string, unknown>) ?? [];
+  const site = specs.find((s) => s.to === "site" && s.allowlisted);
+  const mail = specs.find((s) => s.to === "recipients");
+  if (site?.to === "site") {
+    const url = String(args[site.arg] ?? "");
     // The request scan reads url, body and headers; every other argument is
     // scanned with them, under the same destination allowlist.
     block = checkOutboundRequest({
@@ -107,15 +111,8 @@ export function probeEgressGuard(ctx: ToolCallContext): EgressBlocker | null {
       body: args.body,
       headers: args.headers,
     }, vouched) ?? (isTrustedDestination(url) ? null : checkOutboundPayload(tc.name, text, vouched));
-  } else if (tc.name === "email_send") {
-    block = checkOutboundEmail(
-      {
-        to: args.to ? String(args.to) : "",
-        cc: args.cc ? String(args.cc) : "",
-        bcc: args.bcc ? String(args.bcc) : "",
-      },
-      text,
-    );
+  } else if (mail?.to === "recipients") {
+    block = checkOutboundEmail(recipientFields(mail.args, args as Record<string, unknown>), text);
   } else {
     block = checkOutboundPayload(tc.name, text, vouched);
   }

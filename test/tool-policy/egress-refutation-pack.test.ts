@@ -2,9 +2,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // Egress-refutation pack — autonomous safety net for high-stakes irreversible
 // egress. Mock ONLY verifyByRefutation so the verdict is deterministic; the
-// egress classification (hasCapability) and the third-party-send set run for
-// real against the real tool names (email_send is egress + third-party-send,
-// web_search is egress but not high-stakes).
+// egress classification (hasCapability) and each row's destination run for
+// real against the real tool names (email_send is egress + a message to its
+// recipients, web_search is egress but not high-stakes).
 
 const verifyByRefutation = vi.fn();
 
@@ -44,6 +44,21 @@ describe("egress-refutation pack", () => {
   it("passes through a non-high-stakes egress tool (web_search) without running the refutation", async () => {
     const decision = await makeEgressRefutationPack().evaluate(SEARCH_CALL, CRON);
     expect(decision.allowed).toBe(true);
+    expect(verifyByRefutation).not.toHaveBeenCalled();
+  });
+
+  it("a message to a person is high-stakes by its row's destination; the clipboard is not", async () => {
+    mockVerdict("holds");
+    for (const [name, args] of [
+      ["telegram_send", { text: "hi" }], ["whatsapp_send", { phone: "+15550100", text: "hi" }],
+      ["send_image", { path: "a.png" }], ["send_video", { path: "a.mp4" }], ["send_file", { path: "a.pdf" }],
+    ] as const) {
+      verifyByRefutation.mockClear();
+      await makeEgressRefutationPack().evaluate({ id: "t", name, args }, CRON);
+      expect(verifyByRefutation, name).toHaveBeenCalledTimes(1);
+    }
+    verifyByRefutation.mockClear();
+    await makeEgressRefutationPack().evaluate({ id: "t", name: "clipboard_write", args: { text: "hi" } }, CRON);
     expect(verifyByRefutation).not.toHaveBeenCalled();
   });
 

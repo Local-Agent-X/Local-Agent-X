@@ -9,13 +9,13 @@ import type { ToolPolicyRow } from "./tool-policies.types.js";
 
 export const TOOL_POLICIES_APPS: Record<string, ToolPolicyRow> = {
   // ── Media generation / capture ──
-  generate_image: { kernel: "internal", risk: "workspace-write", capabilities: ["egress"], offBoxFetch: true, rateLimit: { maxCalls: 20, windowMs: 60_000, action: "block" }, rules: [{ id: "allow-generate-image", decision: "allow", reason: "Image generation allowed (rate limited)", priority: 40, constraints: { maxCallsPerSession: 20 } }] },
+  generate_image: { kernel: "internal", risk: "workspace-write", capabilities: ["egress"], offBoxFetch: true, destination: [{ to: "service", name: "the image generation service" }], rateLimit: { maxCalls: 20, windowMs: 60_000, action: "block" }, rules: [{ id: "allow-generate-image", decision: "allow", reason: "Image generation allowed (rate limited)", priority: 40, constraints: { maxCallsPerSession: 20 } }] },
   // The source image, mask and reference images are read off disk when they
   // name local files (image-tools/shared.ts resolveLocalImagePath); a URL or
   // data: value resolves inside the workspace and passes. reference_images
   // arrives as a real array or, from some models, a JSON-encoded string.
-  edit_image: { kernel: "internal", risk: "workspace-write", capabilities: ["egress"], offBoxFetch: true, pathArgs: [{ arg: "image", action: "read" }, { arg: "mask", action: "read" }], rateLimit: { maxCalls: 20, windowMs: 60_000, action: "block" }, rules: [{ id: "allow-edit-image", decision: "allow", reason: "Image editing allowed (rate limited)", priority: 40, constraints: { maxCallsPerSession: 20 } }] },
-  generate_video: { kernel: "internal", risk: "workspace-write", capabilities: ["egress"], offBoxFetch: true, pathArgs: [{ arg: "reference_images", action: "read", json: true }], rateLimit: { maxCalls: 5, windowMs: 60_000, action: "block" }, rules: [{ id: "allow-generate-video", decision: "allow", reason: "Video generation allowed (rate limited)", priority: 40, constraints: { maxCallsPerSession: 5 } }] },
+  edit_image: { kernel: "internal", risk: "workspace-write", capabilities: ["egress"], offBoxFetch: true, destination: [{ to: "service", name: "the image generation service" }], pathArgs: [{ arg: "image", action: "read" }, { arg: "mask", action: "read" }], rateLimit: { maxCalls: 20, windowMs: 60_000, action: "block" }, rules: [{ id: "allow-edit-image", decision: "allow", reason: "Image editing allowed (rate limited)", priority: 40, constraints: { maxCallsPerSession: 20 } }] },
+  generate_video: { kernel: "internal", risk: "workspace-write", capabilities: ["egress"], offBoxFetch: true, destination: [{ to: "service", name: "the video generation service" }], pathArgs: [{ arg: "reference_images", action: "read", json: true }], rateLimit: { maxCalls: 5, windowMs: 60_000, action: "block" }, rules: [{ id: "allow-generate-video", decision: "allow", reason: "Video generation allowed (rate limited)", priority: 40, constraints: { maxCallsPerSession: 5 } }] },
   camera_capture: { kernel: "internal", risk: "workspace-write", capabilities: ["egress"], offBoxFetch: true },
   screen_capture: { kernel: "internal", risk: "workspace-write", capabilities: ["egress"], offBoxFetch: true },
   // Mouse/keyboard actuation. kernel:"internal" — it has no data-I/O sink the
@@ -24,7 +24,7 @@ export const TOOL_POLICIES_APPS: Record<string, ToolPolicyRow> = {
   // kill-switch (pre-dispatch, runs before this rule), the OS Accessibility
   // grant (driver), and risk:"shell" (top autonomy tier → confirm-risky/
   // autonomous profiles still gate the call).
-  computer:       { kernel: "internal", risk: "shell", capabilities: ["egress"], rules: [{ id: "allow-computer", decision: "allow", reason: "Mouse/keyboard control allowed at policy layer; gated by enableComputerControl + OS permission + risk tier", priority: 40 }] },
+  computer:       { kernel: "internal", risk: "shell", capabilities: ["egress"], destination: [{ to: "foreground-app" }], rules: [{ id: "allow-computer", decision: "allow", reason: "Mouse/keyboard control allowed at policy layer; gated by enableComputerControl + OS permission + risk tier", priority: 40 }] },
   ocr:            { kernel: "internal", risk: "safe", capabilities: [], pathArgs: [{ arg: "path", action: "read" }], rules: [{ id: "allow-ocr", decision: "allow", reason: "OCR text extraction (read-only)", priority: 50 }] },
   // Genuinely "shell": every action spawns a real adb/emulator subprocess
   // (unlike `computer`, which drives OS input APIs with no child process at
@@ -34,7 +34,9 @@ export const TOOL_POLICIES_APPS: Record<string, ToolPolicyRow> = {
   // this is the one path-gating shape that doesn't need every other action
   // listed too (a forActions spec fails closed: an action in none of them
   // gets denied outright, which would brick tap/screenshot/etc here).
-  android:        { kernel: "shell", risk: "shell", capabilities: ["shell"], pathArgs: [{ arg: "apk_path", action: "read" }], rules: [{ id: "allow-android", decision: "allow", reason: "Android emulator/device control allowed at policy layer (subprocess spawn via adb/emulator, same tier as bash)", priority: 40 }] },
+  // Typed text lands in whatever app is on the device's screen, which the
+  // check cannot name; open_url sends the URL to its site.
+  android:        { kernel: "shell", risk: "shell", capabilities: ["shell"], destination: [{ to: "site", arg: "url", forActions: ["open_url"] }, { to: "unknown", label: "the app on the Android device" }], pathArgs: [{ arg: "apk_path", action: "read" }], rules: [{ id: "allow-android", decision: "allow", reason: "Android emulator/device control allowed at policy layer (subprocess spawn via adb/emulator, same tier as bash)", priority: 40 }] },
 
   // ── Apps (app_* glob) ──
   app_create:      { kernel: "internal", risk: "workspace-write", capabilities: [] },
@@ -119,7 +121,7 @@ export const TOOL_POLICIES_APPS: Record<string, ToolPolicyRow> = {
   read_my_logs:   { kernel: "internal", risk: "safe", capabilities: [], rules: [{ id: "allow-read-my-logs", decision: "allow", reason: "Agent's own action history (read-only)", priority: 50 }] },
   setting:        { kernel: "internal", risk: "workspace-write", capabilities: [], rules: [{ id: "allow-setting", decision: "allow", reason: "Agent settings flip (toggles, theme, provider — runtime state user can also change via UI)", priority: 50 }] },
   clipboard_read:  { kernel: "internal", risk: "safe", capabilities: [] },
-  clipboard_write: { kernel: "internal", risk: "workspace-write", capabilities: ["egress"] },
+  clipboard_write: { kernel: "internal", risk: "workspace-write", capabilities: ["egress"], destination: [{ to: "user" }] },
 
   // ── Platform self-management (restart + updates over messaging) ──
   // internal: a fixed system action, no agent-controlled I/O sink for the kernel

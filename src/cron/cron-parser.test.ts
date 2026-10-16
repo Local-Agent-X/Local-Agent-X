@@ -104,10 +104,13 @@ describe("msUntilNextCron — schedule matching", () => {
   });
 
   it("with tz: next 9am lands on 9:00 wall-clock IN that zone", () => {
+    // One clock read: the search steps whole minutes from `now`, seconds kept,
+    // so a second Date.now() taken at hh:mm:59.9 lands a minute late.
+    const now = new Date();
     for (const tz of ["Asia/Tokyo", "America/Los_Angeles", "Europe/London"]) {
-      const ms = msUntilNextCron("0 9 * * *", tz);
+      const ms = msUntilNextCron("0 9 * * *", tz, now);
       expect(ms).not.toBeNull();
-      const next = new Date(Date.now() + (ms as number));
+      const next = new Date(now.getTime() + (ms as number));
       const f = getCronFields(next, tz);
       expect(f.hour).toBe(9);
       expect(f.minute).toBe(0);

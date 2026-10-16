@@ -167,12 +167,11 @@ function cronMatchesAt(
 }
 
 /** Calculate ms until the next cron match, evaluated in `tz`. Null for non-cron. */
-export function msUntilNextCron(schedule: string, tz?: string): number | null {
+export function msUntilNextCron(schedule: string, tz?: string, now: Date = new Date()): number | null {
   const parts = schedule.trim().split(/\s+/);
   if (parts.length !== 5) return null;
   const [min, hour, dom, mon, dow] = parts;
 
-  const now = new Date();
   for (let offset = 1; offset <= 2880; offset++) {
     const candidate = new Date(now.getTime() + offset * 60_000);
     if (cronMatchesAt(candidate, { min, hour, dom, mon, dow }, tz)) {

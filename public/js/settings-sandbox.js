@@ -59,9 +59,9 @@ function renderSandboxStatus(d) {
     if (pending) detail.textContent = 'Shell commands wait until the check finishes (a few seconds after start); none runs outside the cage meanwhile.';
     else if (grantFailure) detail.textContent = grantFailure;
     else if (granting) detail.textContent = 'The cage is giving its sandbox user access to the workspace and the shell\'s own files (once after each start). Shell commands wait for it or are asked to retry; none runs outside the cage.';
-    else if (confined) detail.textContent = 'Cron shell is blocked. Delegated and API shell are allowed because the effective mode is confined.';
-    else if (d.unconfinedHostAcknowledged) detail.textContent = (d.fallbackReason || 'Shell commands run directly on the host.') + ' Cron shell is blocked; delegated and API host shell are acknowledged.';
-    else detail.textContent = (d.fallbackReason || 'Shell commands run directly on the host.') + ' Cron shell is blocked; delegated and API shell are blocked until acknowledgement.';
+    else if (confined) detail.textContent = 'Scheduled jobs, delegated agents and API runs may use the shell because the effective mode is confined.';
+    else if (d.unconfinedHostAcknowledged) detail.textContent = (d.fallbackReason || 'Shell commands run directly on the host.') + ' Host shell for scheduled jobs, delegated agents and API runs is acknowledged.';
+    else detail.textContent = (d.fallbackReason || 'Shell commands run directly on the host.') + ' Scheduled jobs and delegated agents use the shell only in their own work folder; API shell is blocked until acknowledgement.';
   }
   const unconfinedHost = !confined && !pending;
   if (actions) actions.style.display = unconfinedHost ? '' : 'none';

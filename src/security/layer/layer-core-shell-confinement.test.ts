@@ -13,13 +13,13 @@ mkdirSync(WORKSPACE, { recursive: true });
 afterAll(() => rmSync(WORKSPACE_ROOT, { recursive: true, force: true }));
 
 
-describe("cron shell context restriction", () => {
-  it("categorically denies every shell capability member", () => {
+describe("a scheduled job's shell without its work folder", () => {
+  it("denies every shell capability member for want of isolation", () => {
     const sec = new SecurityLayer(WORKSPACE, "workspace");
     for (const toolName of CAPABILITY_CLASS_MEMBERS.shell) {
       const decision = sec.evaluate({ toolName, args: { command: "echo ok" }, sessionId: "cron-test", callContext: "cron" });
       expect(decision.allowed, toolName).toBe(false);
-      expect(decision.reason).toContain("cron context");
+      expect(decision.reason).toContain("requires worktree isolation");
     }
   });
 });

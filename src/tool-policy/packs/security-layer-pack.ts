@@ -3,7 +3,7 @@
  * context checks). Rule semantics are unchanged.
  */
 import type { SecurityLayer } from "../../security/index.js";
-import { CONTEXT_RESTRICTED_TOOLS, WORKTREE_REQUIRED_TOOLS } from "../../security/layer/index.js";
+import { CONTEXT_RESTRICTED_TOOLS, WORKER_CONTEXTS, WORKTREE_REQUIRED_TOOLS } from "../../security/layer/index.js";
 import { USER_HINTS } from "../../types.js";
 import type { PolicyCall, PolicyEvalCtx, PackDecision, RulePack, RulePackRule } from "../evaluator.js";
 
@@ -48,9 +48,9 @@ function describeRules(): RulePackRule[] {
     rules.push({
       id: `security.worktree-required.${tool}`,
       kind: "context",
-      match: { tool, callContext: "delegated" },
+      match: { tool, contexts: [...WORKER_CONTEXTS] },
       decision: "deny",
-      reason: `Delegated "${tool}" requires worktree isolation`,
+      reason: `"${tool}" in a delegated or scheduled run requires worktree isolation`,
     });
   }
   rules.push(

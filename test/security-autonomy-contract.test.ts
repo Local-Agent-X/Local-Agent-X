@@ -252,7 +252,8 @@ describe("SEAM 5 — TIER×APPROVAL: tier-0 auto-allows, installs prompt, destru
 // ───────────────────────────────────────────────────────────────────────────
 // SEAM 6 — DELEGATED × VERIFY (chunk K: delegated self-verify when doubly contained)
 // A delegated agent with worktree isolation AND a confined sandbox may run its own
-// build/test; without a worktree it cannot; cron shell stays blocked regardless.
+// build/test; without a worktree it cannot. A scheduled job is held to the same
+// AND (WORKER_CONTEXTS): its missions folder is its work root.
 // (Real SecurityLayer; getSandboxStatus mocked to pin the confinement dimension.)
 // ───────────────────────────────────────────────────────────────────────────
 describe("SEAM 6 — DELEGATED×VERIFY: delegated self-verify requires worktree AND confinement", async () => {
@@ -265,14 +266,14 @@ describe("SEAM 6 — DELEGATED×VERIFY: delegated self-verify requires worktree 
   function setConfined() {
     sandbox.status = {
       selectedMode: "guarded", effectiveMode: "guarded", confined: true,
-      unconfinedHostAcknowledged: false, cronShellAllowed: false,
+      unconfinedHostAcknowledged: false,
       delegatedShellAllowed: true, apiShellAllowed: true,
     };
   }
   function setHostFallback() {
     sandbox.status = {
       selectedMode: "guarded", effectiveMode: "host", confined: false,
-      cronShellAllowed: false, delegatedShellAllowed: false, apiShellAllowed: false,
+      delegatedShellAllowed: false, apiShellAllowed: false,
     };
   }
   const delegatedBash = (sec: InstanceType<typeof SecurityLayer>, command: string, sid: string, callContext = "delegated") =>
@@ -308,16 +309,18 @@ describe("SEAM 6 — DELEGATED×VERIFY: delegated self-verify requires worktree 
     } finally { sec.removeAllowedPath(root, "d-hostfb"); }
   });
 
-  it("cron shell stays BLOCKED even with worktree + confinement", () => {
-    setConfined();
+  it("cron shell follows the same AND: allowed with worktree + confinement, blocked under host-fallback or without one", () => {
     const sec = new SecurityLayer(WORKSPACE, "common");
     const root = join(WORKSPACE, "apps", "bench3");
     sec.addAllowedPath(root, "d-cron");
     try {
-      const d = delegatedBash(sec, "npm test", "d-cron", "cron");
-      expect(d.allowed).toBe(false);
-      expect(d.reason).toMatch(/not allowed in cron/i);
+      setConfined();
+      expect(delegatedBash(sec, "npm test", "d-cron", "cron").allowed).toBe(true);
+      setHostFallback();
+      expect(delegatedBash(sec, "npm test", "d-cron", "cron").reason).toMatch(/confined sandbox|unconfined host/i);
     } finally { sec.removeAllowedPath(root, "d-cron"); }
+    setConfined();
+    expect(delegatedBash(sec, "npm test", "d-cron-none", "cron").reason).toContain("worktree isolation");
   });
 });
 

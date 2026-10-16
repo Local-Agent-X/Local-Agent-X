@@ -118,11 +118,17 @@ describe("the secret_env gate's unattended branch", () => {
 });
 
 describe("the unattended shell gate", () => {
-  it("a cron run's shell call is parked, its own reason kept", async () => {
+  // An unconfined host nobody acknowledged (a fresh data dir has no
+  // acknowledgement), and a run with no work root to scope it.
+  const prevSandbox = process.env.LAX_SANDBOX;
+  beforeEach(() => { process.env.LAX_SANDBOX = "host"; });
+  afterEach(() => { if (prevSandbox === undefined) delete process.env.LAX_SANDBOX; else process.env.LAX_SANDBOX = prevSandbox; });
+
+  it("a cron run's unscoped shell call on an unacknowledged host is parked, its own reason kept", async () => {
     const tool = { name: "bash", execute: async () => ({ content: "ran" }) } as unknown as ToolDefinition;
     const c = ctx("bash", { command: "npm test" }, "cron", undefined, { tool });
     await runSandboxedPhase(c);
-    expect(String(c.result?.content)).toContain("categorically disabled for cron runs");
+    expect(String(c.result?.content)).toContain("must explicitly acknowledge unconfined unattended shell execution");
     expect(c.result?.status).toBe("blocked");
     expect(parked().map((i) => i.deferredCall?.toolName)).toEqual(["bash"]);
     expect(c.result?.metadata).toMatchObject({ layer: "approval", deferredTo: parked()[0].id, callContext: "cron" });

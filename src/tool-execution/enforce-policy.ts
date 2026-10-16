@@ -26,6 +26,7 @@ import { outboundIsTaintFree, withoutUntrustedContent } from "./taint-scope.js";
 import { kernelDenyBlocker, kernelDenyResult } from "./kernel-block.js";
 import { rewritePathForWorktree } from "./worktree-paths.js";
 import { blocked } from "../tools/result-helpers.js";
+import { WORKER_CONTEXTS } from "../security/layer/index.js";
 
 export { egressGuardGate, dataLineageGate, canaryEgressGate } from "./egress-gates.js";
 // Tool lookup + arg validation live in arg-validation.ts (LOC ceiling);
@@ -238,13 +239,13 @@ async function runPreDispatch(ctx: ToolCallContext): Promise<PhaseOutcome> {
     // A blocked verify-shaped shell command (running the project's build/type-check
     // on source) gets accurate guidance instead of the generic "find a safer way"
     // recovery, which otherwise sends the model hunting a nonexistent executor. The
-    // orchestrator build-verify gate covers it — see build-verify.ts. But when the
-    // delegated agent's shell IS available to it (worktree isolation + effective
-    // OS containment), the block was NOT "delegated agents can't run shell" — so
-    // the redirect would misinform; suppress it and let the real block reason
-    // stand (chunk K). delegatedShellContained is the SAME AND the security layer's
+    // orchestrator build-verify gate covers it — see build-verify.ts. But when a
+    // worker run's shell IS available to it (worktree isolation + effective OS
+    // containment), the block was NOT "this run can't run shell" — so the
+    // redirect would misinform; suppress it and let the real block reason stand
+    // (chunk K). delegatedShellContained is the SAME AND the security layer's
     // delegated-shell gate enforces.
-    const shellAvailable = ctx.callContext === "delegated" &&
+    const shellAvailable = WORKER_CONTEXTS.has(ctx.callContext) &&
       !!ctx.security?.delegatedShellContained(ctx.sessionId);
     const selfVerify = blockedSelfVerifyGuidance(ctx.tc.name, ctx.args, shellAvailable);
     ctx.allowed = false;

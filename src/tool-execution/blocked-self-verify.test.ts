@@ -60,7 +60,7 @@ describe("blockedSelfVerifyGuidance", () => {
     }
   });
 
-  it("STILL fires the redirect when shell is unavailable (no worktree / unconfined / cron)", () => {
+  it("STILL fires the redirect when shell is unavailable (no worktree / unconfined)", () => {
     // shellAvailable=false is the default and the still-blocked case.
     expect(blockedSelfVerifyGuidance("bash", { command: "npm test" }, false)).not.toBeNull();
     expect(blockedSelfVerifyGuidance("bash", { command: "vitest run" }, false)).not.toBeNull();

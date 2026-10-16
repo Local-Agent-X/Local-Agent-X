@@ -23,8 +23,15 @@ import { remeasurePromptTelemetry } from "../../prompt-telemetry.js";
 import { toolSchemaFormatForDispatch } from "../../providers/shared/tool-shape.js";
 import { renderPromptSection } from "../../context/system-prompt-builder.js";
 import { OP_TYPE } from "../../ops/op-types.js";
+import { provisionAgentWorkspace, releaseAgentWorkspace } from "../../agency/agent-workspace.js";
 
 const logger = createLogger("server.background-jobs.cron");
+
+/** A job's own folder: its runs work there, and its latest report lands there. */
+function missionFolder(workspace: string, name: string | undefined, jobId: string): string {
+  const slug = (name || jobId).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/-+$/, "");
+  return join(resolve(workspace), "missions", slug || jobId);
+}
 
 // 20-min default — thorough multi-source research (web_search + 3-5
 // web_fetch hits) routinely runs 10-15min just on TLS + page-load time,
@@ -97,42 +104,46 @@ export function registerCronRunner(deps: CronRunnerDeps): void {
       : (prepared.provider === "anthropic" || prepared.provider === "anthropic-api" ? "claude-sonnet-4-6" : prepared.model);
     const providerName = String(prepared.provider);
     const wrappedPrompt = `<scheduled_task>\n${cleanedPrompt}\n</scheduled_task>`;
-    // no recursive scheduling, no file writes — agent's returned text IS the report
-    const cronTools = prepared.tools.filter(t => !t.name.startsWith("mission_schedule_") && t.name !== "write" && t.name !== "edit");
-    const renderedPromptSections = [renderPromptSection({
-      id: "scheduled-mission",
-      label: "Scheduled Mission",
-      type: "static",
-      policy: "required",
-      text: CRON_SYSTEM_PROMPT,
-    })];
-    const promptTelemetry = remeasurePromptTelemetry({
-      baseline: prepared.promptTelemetry,
-      prompt: CRON_SYSTEM_PROMPT,
-      tools: cronTools,
-      model: cronModel,
-      toolSchemaFormat: toolSchemaFormatForDispatch(
-        prepared.provider,
-        prepared.promptTelemetry.toolSchemaFormat,
-        false,
-      ),
-      historyMessageCount: 0,
-      sections: renderedPromptSections.map((section) => section.measurement),
+    // No recursive scheduling. Writes and shell answer to the same rules as a
+    // delegated agent's (security/layer WORKER_CONTEXTS), in the job's folder.
+    const cronTools = prepared.tools.filter(t => !t.name.startsWith("mission_schedule_"));
+    const missionDir = missionFolder(config.workspace, jobMeta?.name, jobId);
+    mkdirSync(missionDir, { recursive: true });
+    const workspace = provisionAgentWorkspace({
+      agentId: `cron-${jobId}`, runSessionId: sessionId, security: cronSecurity, requiresWorktree: false, workRoot: missionDir,
     });
-    const externalCancelController = new AbortController();
-    cronService.registerRunAbort(jobId, externalCancelController);
-    // Pin this run's tool-approval decisions to the job's profile (if set).
-    // Without it, ask-tier tools the job needs (network-write, comms, money)
-    // block unattended under the global profile. Cleared in finally so the
-    // override never outlives the run.
-    if (jobMeta?.profile) setSessionProfile(sessionId, jobMeta.profile);
     let result;
     try {
+      const renderedPromptSections = [
+        renderPromptSection({ id: "scheduled-mission", label: "Scheduled Mission", type: "static", policy: "required", text: CRON_SYSTEM_PROMPT }),
+        renderPromptSection({ id: "work-folder", label: "Work Folder", type: "dynamic", policy: "required", text: workspace.promptBlock }),
+      ];
+      const systemPrompt = renderedPromptSections.map((section) => section.text).join("");
+      const promptTelemetry = remeasurePromptTelemetry({
+        baseline: prepared.promptTelemetry,
+        prompt: systemPrompt,
+        tools: cronTools,
+        model: cronModel,
+        toolSchemaFormat: toolSchemaFormatForDispatch(
+          prepared.provider,
+          prepared.promptTelemetry.toolSchemaFormat,
+          false,
+        ),
+        historyMessageCount: 0,
+        sections: renderedPromptSections.map((section) => section.measurement),
+      });
+      const externalCancelController = new AbortController();
+      cronService.registerRunAbort(jobId, externalCancelController);
+      // Pin this run's tool-approval decisions to the job's profile (if set).
+      // Without it, ask-tier tools the job needs (network-write, comms, money)
+      // block unattended under the global profile. Cleared in finally so the
+      // override never outlives the run.
+      if (jobMeta?.profile) setSessionProfile(sessionId, jobMeta.profile);
       result = await runAgentViaCanonical(wrappedPrompt, [], {
         apiKey: prepared.apiKey,
         model: cronModel,
         provider: prepared.provider as AgentOptions["provider"],
-        systemPrompt: CRON_SYSTEM_PROMPT,
+        systemPrompt,
         tools: cronTools,
         security: cronSecurity,
         toolPolicy,
@@ -150,6 +161,7 @@ export function registerCronRunner(deps: CronRunnerDeps): void {
       cronService.unregisterRunAbort(jobId);
       clearSessionProfile(sessionId);
       clearSessionOwner(sessionId);
+      releaseAgentWorkspace(workspace, cronSecurity, sessionId);
     }
     const session = getOrCreateSession(sessionId);
     session.messages = stripEphemeralMessages(result.messages).filter(m => m.role !== "system"); session.updatedAt = Date.now(); saveSession(session);
@@ -237,12 +249,9 @@ export function registerCronRunner(deps: CronRunnerDeps): void {
         provider: providerName, model: cronModel, sessionId,
       };
     }
-    const slug = (job?.name || jobId).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/-+$/, "");
-    const missionDir = join(resolve(config.workspace), "missions", slug);
     // workspace/missions mirror write is best-effort — canonical report at
     // reportPath above is the source of truth.
     try {
-      mkdirSync(missionDir, { recursive: true });
       writeFileSync(join(missionDir, "latest.md"), reportContent, "utf-8");
     } catch (e) {
       logger.warn(`[cron] Job ${jobId} workspace mirror write to ${missionDir} failed (canonical at ${reportPath} OK): ${(e as Error).message}`);

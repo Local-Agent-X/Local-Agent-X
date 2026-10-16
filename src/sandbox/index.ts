@@ -79,7 +79,9 @@ export interface SandboxStatus {
    *  running: nothing is confined yet, and no shell spawns until it lands. */
   proofPending: boolean;
   unconfinedHostAcknowledged: boolean;
-  cronShellAllowed: boolean;
+  /** Shell for a worker run — a delegated agent or a scheduled job
+   *  (WORKER_CONTEXTS) — on any folder; a run scoped to its own work root
+   *  needs no more (tool-execution/unattended-shell-gate.ts). */
   delegatedShellAllowed: boolean;
   apiShellAllowed: boolean;
 }
@@ -163,7 +165,6 @@ export function getSandboxStatus(): SandboxStatus {
     ...(fallbackReason ? { fallbackReason } : {}),
     proofPending,
     unconfinedHostAcknowledged,
-    cronShellAllowed: false,
     delegatedShellAllowed: unattendedHostAllowed,
     apiShellAllowed: unattendedHostAllowed,
   };

@@ -25,16 +25,24 @@ export interface ToolCallContext {
   mcpServer?: string;
 }
 
+/**
+ * Runs with no one watching that work in a folder provisioned for them: a
+ * delegated agent (agency/agent-workspace.ts) and a scheduled job (its
+ * missions folder, server/background-jobs/cron-runner.ts). Both answer to the
+ * same rules: WORKTREE_REQUIRED_TOOLS through delegated-worktree-gate.ts, and
+ * shell through the unattended shell gate.
+ */
+export const WORKER_CONTEXTS: ReadonlySet<CallContext> = new Set<CallContext>(["delegated", "cron"]);
+
 // Tools blocked in non-local contexts (API calls, delegated agents, cron jobs)
 export const CONTEXT_RESTRICTED_TOOLS: Record<string, CallContext[]> = {
-  ...Object.fromEntries(CAPABILITY_CLASS_MEMBERS.shell.map((name) => [name, ["cron"] as CallContext[]])),
   browser: ["cron"],                      // No browser in automated jobs
   generate_image: ["cron"],               // Resource-intensive, block in cron
   edit_image: ["cron"],                    // Resource-intensive off-box edit, block in cron
 };
 
-// Tools that require worktree isolation for delegated agents.
-// If a delegated agent has a worktree (session in allowedPaths), these are safe.
+// Tools that require worktree isolation in a WORKER_CONTEXTS run.
+// If the run has a worktree or work root (session in allowedPaths), these are safe.
 // If not (e.g. Codex agents), block them to prevent uncontrolled writes.
 //
 // Keyed on workspace-write + shell CAPABILITY membership, not literal names, so

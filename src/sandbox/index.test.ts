@@ -279,7 +279,6 @@ describe("effective sandbox status", () => {
         effectiveMode: "host",
         confined: false,
         unconfinedHostAcknowledged: false,
-        cronShellAllowed: false,
         delegatedShellAllowed: false,
         apiShellAllowed: false,
       });
@@ -288,7 +287,6 @@ describe("effective sandbox status", () => {
       expect(getSandboxStatus()).toMatchObject({
         effectiveMode: "host",
         unconfinedHostAcknowledged: true,
-        cronShellAllowed: false,
         delegatedShellAllowed: true,
         apiShellAllowed: true,
       });
@@ -310,7 +308,6 @@ describe("effective sandbox status", () => {
       expect(status.selectedMode).toBe("guarded");
       expect(status.effectiveMode).toBe(isGuardedUsable() ? "guarded" : "host");
       expect(status.confined).toBe(isGuardedUsable());
-      expect(status.cronShellAllowed).toBe(false);
       expect(status.delegatedShellAllowed).toBe(isGuardedUsable());
       expect(status.apiShellAllowed).toBe(isGuardedUsable());
       if (!isGuardedUsable()) expect(status.fallbackReason).toMatch(/unconfined/i);

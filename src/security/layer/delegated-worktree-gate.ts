@@ -21,8 +21,9 @@ export interface DelegatedGateDeps {
 }
 
 /**
- * Delegated agents using write/edit/bash must have worktree isolation IF they're
- * modifying repo SOURCE code. Writes to user-content territory (workspace/,
+ * Worker runs (WORKER_CONTEXTS: delegated agents and scheduled jobs) using
+ * write/edit/bash must have worktree isolation IF they're modifying repo SOURCE
+ * code. Writes to user-content territory (workspace/,
  * ~/Documents, ~/Desktop, anywhere outside the repo) don't need isolation — the
  * sandbox protects the agent's own running code from mid-task mutation, NOT the
  * workers producing user-facing artifacts. The old blanket rule killed every
@@ -34,8 +35,8 @@ export interface DelegatedGateDeps {
  * children / redirects / expansions escape the worktree that write/edit's
  * explicit `path` arg keeps them inside.
  *
- * The caller invokes this only when callContext === "delegated" and the tool is
- * in WORKTREE_REQUIRED_TOOLS. Returns a blocking decision, or null to continue.
+ * The caller invokes this only for a WORKER_CONTEXTS call whose tool is in
+ * WORKTREE_REQUIRED_TOOLS. Returns a blocking decision, or null to continue.
  */
 export function evaluateDelegatedWorktreeGate(
   ctx: ToolCallContext,
@@ -44,6 +45,7 @@ export function evaluateDelegatedWorktreeGate(
   const { toolName, args } = ctx;
   const sessionKey = ctx.sessionId;
   const hasWorktree = deps.hasSessionWorktree(sessionKey);
+  const run = ctx.callContext === "cron" ? "scheduled job" : "delegated agent";
 
   if (hasCapability(toolName, "shell")) {
     // ── Delegated-shell containment gate (chunk K) ──
@@ -57,15 +59,15 @@ export function evaluateDelegatedWorktreeGate(
     //                                  delegatedShellOsContained), so the shell's
     //                                  children/redirects/expansions are caged,
     //                                  not just its top-level argv.
-    // Missing EITHER → block (err safe). cron never reaches here: shell is in
-    // CONTEXT_RESTRICTED_TOOLS for cron and was denied above. The command
+    // Missing EITHER → block (err safe). A scheduled job is held to the same
+    // AND: its missions folder is its work root. The command
     // denylist / rm / egress / network-client rules run downstream regardless
     // (evaluateShellCommandAndPaths), so a dangerous command (rm -rf, curl, …)
     // stays blocked even when the agent is fully contained.
     if (!hasWorktree) {
       return {
         allowed: false,
-        reason: `Blocked: delegated shell tool "${toolName}" requires worktree isolation to run (no worktree is provisioned for this session)`,
+        reason: `Blocked: a ${run}'s shell tool "${toolName}" requires worktree isolation to run (no worktree is provisioned for this session)`,
         userHint: USER_HINTS.worktreeIsolation,
       };
     }
@@ -75,13 +77,13 @@ export function evaluateDelegatedWorktreeGate(
       if (deps.sandboxProofPending()) {
         return {
           allowed: false,
-          reason: `Blocked for now: delegated shell tool "${toolName}" waits for the sandbox. ${SANDBOX_PROOF_PENDING_RETRY}`,
+          reason: `Blocked for now: a ${run}'s shell tool "${toolName}" waits for the sandbox. ${SANDBOX_PROOF_PENDING_RETRY}`,
           userHint: SANDBOX_PROOF_PENDING_RETRY,
         };
       }
       return {
         allowed: false,
-        reason: `Blocked: delegated shell tool "${toolName}" requires an effectively-confined sandbox — the selected sandbox fell back to the unconfined host and this run has no operator acknowledgement or scoped work root, so a self-verify shell cannot be contained`,
+        reason: `Blocked: a ${run}'s shell tool "${toolName}" requires an effectively-confined sandbox — the selected sandbox fell back to the unconfined host and this run has no operator acknowledgement or scoped work root, so a self-verify shell cannot be contained`,
         userHint: USER_HINTS.policy,
       };
     }
@@ -114,7 +116,7 @@ export function evaluateDelegatedWorktreeGate(
     if (!isContentWrite) {
       return {
         allowed: false,
-        reason: `Blocked: delegated agent "${toolName}" requires worktree isolation for source-code paths (writes to workspace/, ~/Documents, or anywhere outside the repo don't need it)`,
+        reason: `Blocked: a ${run}'s "${toolName}" requires worktree isolation for source-code paths (writes to workspace/, ~/Documents, or anywhere outside the repo don't need it)`,
         userHint: USER_HINTS.worktreeIsolation,
       };
     }

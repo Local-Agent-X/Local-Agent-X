@@ -18,7 +18,7 @@ vi.mock("../sandbox/index.js", async (importOriginal) => {
 beforeEach(() => {
   sandbox.status = {
     selectedMode: "guarded", effectiveMode: "guarded", confined: true,
-    unconfinedHostAcknowledged: false, cronShellAllowed: false,
+    unconfinedHostAcknowledged: false,
     delegatedShellAllowed: true, apiShellAllowed: true,
   };
 });

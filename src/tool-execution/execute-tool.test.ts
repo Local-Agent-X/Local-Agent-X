@@ -422,6 +422,7 @@ describe("canonical unattended shell capability gate", () => {
     { label: "delegated agent", sessionId: "agent-shell-gate", callContext: "delegated" as const },
     { label: "worker session", sessionId: "worker-app-forged", callContext: "delegated" as const },
     { label: "API with chat-style session", sessionId: "chat-forged-mcp", callContext: "api" as const },
+    { label: "scheduled job", sessionId: "cron-shell-gate", callContext: "cron" as const },
   ];
 
   for (const origin of ORIGINS) {
@@ -438,11 +439,13 @@ describe("canonical unattended shell capability gate", () => {
     });
   }
 
-  it.each(SHELL_BACKENDS)("allows %s for an unacknowledged delegated run confined to a registered work root", async (name) => {
-    const result = await dispatch(name, "worker-app-scoped", "delegated", false, true);
-    expect(result.execute).toHaveBeenCalledOnce();
-    expect(result.content).toContain(`executed:${name}`);
-  });
+  for (const callContext of ["delegated", "cron"] as const) {
+    it.each(SHELL_BACKENDS)(`allows %s for an unacknowledged ${callContext} run confined to a registered work root`, async (name) => {
+      const result = await dispatch(name, `${callContext}-app-scoped`, callContext, false, true);
+      expect(result.execute).toHaveBeenCalledOnce();
+      expect(result.content).toContain(`executed:${name}`);
+    });
+  }
 
   it("defaults omitted origin metadata to API even for a chat-style session id", async () => {
     const execute = vi.fn(async (): Promise<ToolResult> => ({ content: "executed:shell" }));
@@ -453,12 +456,6 @@ describe("canonical unattended shell capability gate", () => {
     );
     expect(execute).not.toHaveBeenCalled();
     expect(String(messages[0]?.content)).toMatch(/effective mode is "host"/i);
-  });
-
-  it.each(SHELL_BACKENDS)("categorically blocks %s in cron even when host execution is acknowledged", async (name) => {
-    const result = await dispatch(name, "chat-looking-cron", "cron", true);
-    expect(result.execute).not.toHaveBeenCalled();
-    expect(result.content).toMatch(/categorically disabled for cron/i);
   });
 });
 

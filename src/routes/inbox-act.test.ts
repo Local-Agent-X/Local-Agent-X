@@ -123,7 +123,7 @@ describe("Approve", () => {
     expect(shellRuns).toEqual(["echo hi"]);
   });
 
-  it("the user's yes answers only the asking gates: a scheduled run's shell call, which the security layer forbids in cron, stays blocked and says so", async () => {
+  it("the user's yes answers only the asking gates: a scheduled run's shell call outside its work folder, which the security layer refuses, stays blocked and says so", async () => {
     const item = inboxApprovalRequest({
       toolName: "bash", args: { command: "echo hi" }, callContext: "cron", reason: "BLOCKED (unattended): bash cannot execute in this cron context.",
       jobLabel: "Scheduled job", cronJobId: "nightly", sessionId: "cron-nightly-1700000000000",
@@ -133,7 +133,7 @@ describe("Approve", () => {
     expect(shellRuns).toEqual([]);
     const result = inboxStore().get(String(r.body.resultId));
     expect(result).toMatchObject({ kind: "job", title: "Your approved bash call was blocked", needsYou: true });
-    expect(result?.body).toContain("not allowed in cron context");
+    expect(result?.body).toContain("requires worktree isolation");
   });
 
   it("a call whose tool no longer exists is resolved as failed, says so, and runs nothing", async () => {

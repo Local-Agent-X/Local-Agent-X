@@ -1,4 +1,5 @@
 import { getSandboxStatus, SANDBOX_PROOF_PENDING_RETRY } from "../sandbox/index.js";
+import { WORKER_CONTEXTS } from "../security/layer/index.js";
 import { hasCapability } from "../tool-registry.js";
 import { blocked } from "../tools/result-helpers.js";
 import type { ToolResult } from "../types.js";
@@ -13,17 +14,15 @@ export function unattendedShellBlock(
   if (!hasCapability(toolName, "shell") || callContext === "local") return null;
 
   const sandbox = getSandboxStatus();
-  const scopedDelegatedRun = callContext === "delegated" && !!sessionId && !!sessionWorkRootOf(sessionId);
-  const contextAllowed = callContext === "cron"
-    ? sandbox.cronShellAllowed
-    : callContext === "delegated"
-      ? sandbox.delegatedShellAllowed || scopedDelegatedRun
-      : sandbox.apiShellAllowed;
+  // A worker run (delegated agent or scheduled job) scoped to its own work root.
+  const worker = WORKER_CONTEXTS.has(callContext);
+  const scopedRun = worker && !!sessionId && !!sessionWorkRootOf(sessionId);
+  const contextAllowed = worker ? sandbox.delegatedShellAllowed || scopedRun : sandbox.apiShellAllowed;
   if (contextAllowed) return null;
 
   // Not a host to acknowledge yet: the Windows cage is still proving its fence,
   // and its answer lands within seconds.
-  if (callContext !== "cron" && sandbox.proofPending) {
+  if (sandbox.proofPending) {
     return blocked(
       `BLOCKED (unattended): ${toolName} cannot execute yet in this ${callContext} context. ${SANDBOX_PROOF_PENDING_RETRY}`,
       {
@@ -37,10 +36,8 @@ export function unattendedShellBlock(
     );
   }
 
-  const reason = callContext === "cron"
-    ? "Shell execution is categorically disabled for cron runs, regardless of sandbox mode or host acknowledgement."
-    : `The selected sandbox mode is "${sandbox.selectedMode}" but the effective mode is "host". ` +
-      `A user must explicitly acknowledge unconfined unattended shell execution in Settings > Security before this ${callContext} run can use shell-exec tools.`;
+  const reason = `The selected sandbox mode is "${sandbox.selectedMode}" but the effective mode is "host". ` +
+    `A user must explicitly acknowledge unconfined unattended shell execution in Settings > Security before this ${callContext} run can use shell-exec tools.`;
   return blocked(
     `BLOCKED (unattended): ${toolName} cannot execute in this ${callContext} context. ${reason}`,
     {
@@ -48,9 +45,7 @@ export function unattendedShellBlock(
       callContext,
       selectedMode: sandbox.selectedMode,
       effectiveMode: sandbox.effectiveMode,
-      recovery: callContext === "cron"
-        ? "Run the shell step interactively or through a delegated/API run whose effective sandbox is confined or explicitly acknowledged."
-        : "Ask the user to review and acknowledge the effective sandbox status in Settings > Security.",
+      recovery: "Ask the user to review and acknowledge the effective sandbox status in Settings > Security.",
     },
   );
 }

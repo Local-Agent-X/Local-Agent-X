@@ -94,7 +94,6 @@ describe("sandbox status acknowledgement API", () => {
     expect(response.status).toBe(200);
     expect(response.body).toMatchObject({
       effectiveMode: "host",
-      cronShellAllowed: false,
       delegatedShellAllowed: false,
       apiShellAllowed: false,
     });
@@ -105,7 +104,6 @@ describe("sandbox status acknowledgement API", () => {
     expect(acknowledged.status).toBe(200);
     expect(acknowledged.body).toMatchObject({
       unconfinedHostAcknowledged: true,
-      cronShellAllowed: false,
       delegatedShellAllowed: true,
       apiShellAllowed: true,
     });
@@ -115,7 +113,6 @@ describe("sandbox status acknowledgement API", () => {
     expect(revoked.status).toBe(200);
     expect(revoked.body).toMatchObject({
       unconfinedHostAcknowledged: false,
-      cronShellAllowed: false,
       delegatedShellAllowed: false,
       apiShellAllowed: false,
     });

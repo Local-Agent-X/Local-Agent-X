@@ -25,7 +25,7 @@ vi.mock("../../sandbox/index.js", async (importOriginal) => {
 function setConfined() {
   sandbox.status = {
     selectedMode: "guarded", effectiveMode: "guarded", confined: true,
-    unconfinedHostAcknowledged: false, cronShellAllowed: false,
+    unconfinedHostAcknowledged: false,
     delegatedShellAllowed: true, apiShellAllowed: true,
   };
 }
@@ -34,7 +34,7 @@ function setHostFallback() {
   sandbox.status = {
     selectedMode: "guarded", effectiveMode: "host", confined: false,
     fallbackReason: "guarded cage unavailable", unconfinedHostAcknowledged: false,
-    cronShellAllowed: false, delegatedShellAllowed: false, apiShellAllowed: false,
+    delegatedShellAllowed: false, apiShellAllowed: false,
   };
 }
 /** Guarded on Windows with the cage's fence proof still running. */
@@ -257,17 +257,6 @@ describe("delegated-shell containment gate (worktree AND confinement)", () => {
     expect(unattended?.content).toMatch(/still being verified; try again in a few seconds/);
     expect(unattended?.content).not.toMatch(/acknowledg/i);
     expect(unattended?.metadata).toMatchObject({ proofPending: true, recovery: expect.stringMatching(/Retry this call in a few seconds/) });
-    // Cron stays categorically refused, pending or not.
-    expect(unattendedShellBlock("bash", "cron", "agent-k-c2")?.content).toMatch(/categorically disabled for cron/);
-  });
-
-  it("(d) BLOCKS shell in cron context regardless of worktree + confinement", () => {
-    setConfined();
-    withWorktree("agent-k-d", (sec) => {
-      const d = sec.evaluate({ toolName: "bash", args: { command: "npm test" }, sessionId: "agent-k-d", callContext: "cron" });
-      expect(d.allowed).toBe(false);
-      expect(d.reason).toMatch(/not allowed in cron/i);
-    });
   });
 
   it("(f) STILL blocks a dangerous delegated command even when contained (worktree + confined)", () => {
@@ -296,5 +285,73 @@ describe("delegated-shell containment gate (worktree AND confinement)", () => {
     const sec = makeLayer();
     expect(sec.delegatedShellContained("agent-k-none")).toBe(false);
     expect(blockedSelfVerifyGuidance("bash", { command: "npm test" }, sec.delegatedShellContained("agent-k-none"))).not.toBeNull();
+  });
+});
+
+// A scheduled job is a worker run (WORKER_CONTEXTS), like a delegated agent:
+// its missions folder is its work root (cron-runner.ts). It once had rules of
+// its own — shell refused outright, write/edit dropped by name while
+// edit_lines, multi_edit, bulk_replace and ari_file went through unchecked.
+// Now every gate decides it exactly as it decides a delegated agent.
+describe("a scheduled job is decided exactly as a delegated agent", () => {
+  const SESSION = "cron-parity-1700000000000";
+  const ROOT = join(WORKSPACE_ROOT, "parity-root");
+  const SOURCE = join(WORKSPACE_ROOT, "src", "index.ts");
+  const CONTENT = join(WORKSPACE, "missions", "daily", "notes.md");
+  const CALLS: Array<[string, Record<string, unknown>]> = [
+    ["bash", { command: "npm test" }],
+    ["write", { path: SOURCE, content: "x" }],
+    ["edit_lines", { path: SOURCE, start_line: 1, end_line: 1, new_content: "x" }],
+    ["multi_edit", { path: SOURCE, edits: [] }],
+    ["bulk_replace", { path: SOURCE, old_string: "a", new_string: "b" }],
+    ["ari_file", { action: "write", path: SOURCE, content: "x" }],
+    ["write", { path: CONTENT, content: "x" }],
+  ];
+  const ISOLATION = {
+    none: () => () => {},
+    worktree: (sec: SecurityLayer) => { sec.addAllowedPath(ROOT, SESSION); return () => sec.removeAllowedPath(ROOT, SESSION); },
+    "work root": (sec: SecurityLayer) => {
+      sec.addAllowedPath(ROOT, SESSION); setSessionWorkRoot(SESSION, ROOT);
+      return () => { clearSessionWorkRoot(SESSION); sec.removeAllowedPath(ROOT, SESSION); };
+    },
+  };
+  const SANDBOX = { confined: setConfined, "host fallback": setHostFallback, "proof pending": setProofPending };
+
+  it("every gate, in every sandbox state and isolation, gives a scheduled job the delegated answer", () => {
+    mkdirSync(ROOT, { recursive: true });
+    for (const [sandboxState, setSandbox] of Object.entries(SANDBOX)) {
+      for (const [isolation, isolate] of Object.entries(ISOLATION)) {
+        setSandbox();
+        const sec = makeLayer();
+        const undo = isolate(sec);
+        try {
+          for (const [toolName, args] of CALLS) {
+            const as = (callContext: "cron" | "delegated") => sec.evaluate({ toolName, args, sessionId: SESSION, callContext }).allowed;
+            expect(as("cron"), `${toolName} ${String(args.path ?? "")} — ${sandboxState}, ${isolation}`).toBe(as("delegated"));
+          }
+          expect(unattendedShellBlock("bash", "cron", SESSION) === null, `unattended gate — ${sandboxState}, ${isolation}`)
+            .toBe(unattendedShellBlock("bash", "delegated", SESSION) === null);
+        } finally { undo(); }
+      }
+    }
+  });
+
+  it("with its work root, a scheduled job runs shell and writes there; without one, shell and source writes are refused", () => {
+    setConfined();
+    const scoped = makeLayer();
+    const undo = ISOLATION["work root"](scoped);
+    try {
+      expect(scoped.evaluate({ toolName: "bash", args: { command: "npm test" }, sessionId: SESSION, callContext: "cron" }).allowed).toBe(true);
+      expect(unattendedShellBlock("bash", "cron", SESSION)).toBeNull();
+    } finally { undo(); }
+
+    const bare = makeLayer();
+    const shell = bare.evaluate({ toolName: "bash", args: { command: "npm test" }, sessionId: SESSION, callContext: "cron" });
+    expect(shell.allowed).toBe(false);
+    expect(shell.reason).toMatch(/scheduled job's shell tool "bash" requires worktree isolation/);
+    for (const toolName of ["edit_lines", "multi_edit", "bulk_replace"]) {
+      expect(bare.evaluate({ toolName, args: { path: SOURCE }, sessionId: SESSION, callContext: "cron" }).allowed, toolName).toBe(false);
+    }
+    expect(bare.evaluate({ toolName: "write", args: { path: CONTENT, content: "x" }, sessionId: SESSION, callContext: "cron" }).allowed).toBe(true);
   });
 });

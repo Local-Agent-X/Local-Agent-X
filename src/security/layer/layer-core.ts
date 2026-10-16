@@ -4,6 +4,7 @@ import { getRuntimeConfig } from "../../config.js";
 import { USER_HINTS } from "../../types.js";
 import {
   CONTEXT_RESTRICTED_TOOLS,
+  WORKER_CONTEXTS,
   WORKTREE_REQUIRED_TOOLS,
   type FileAccessMode,
   type InlineEvalPolicy,
@@ -96,12 +97,12 @@ export class SecurityLayer {
     return getSandboxStatus().delegatedShellAllowed || !!sessionWorkRootOf(sessionId);
   }
 
-  /** Is a DELEGATED agent's shell effectively contained enough to run its own
-   *  build/test (self-verify)? Worktree isolation AND OS containment — the exact
-   *  AND enforced by the delegated-shell gate in evaluate(). Exposed so the
-   *  SELF_VERIFY redirect only fires when shell is genuinely unavailable to the
-   *  delegated agent (no worktree / unconfined-unacknowledged / cron) and stays
-   *  silent when the agent CAN run its verify. */
+  /** Is a worker run's shell (delegated agent or scheduled job) effectively
+   *  contained enough to run its own build/test (self-verify)? Worktree
+   *  isolation AND OS containment — the exact AND enforced by the delegated-shell
+   *  gate in evaluate(). Exposed so the SELF_VERIFY redirect only fires when
+   *  shell is genuinely unavailable to the run (no worktree /
+   *  unconfined-unacknowledged) and stays silent when it CAN run its verify. */
   delegatedShellContained(sessionId: string | undefined): boolean {
     return this.hasSessionWorktree(sessionId) && this.delegatedShellOsContained(sessionId);
   }
@@ -198,10 +199,11 @@ export class SecurityLayer {
       };
     }
 
-    // Delegated agents modifying repo SOURCE (or running an uncontained shell)
-    // must be worktree-isolated; user-content writes and doubly-contained
-    // self-verify shells pass through. Full rationale lives in the extracted gate.
-    if (callCtx === "delegated" && WORKTREE_REQUIRED_TOOLS.has(toolName)) {
+    // A worker run (delegated agent or scheduled job) modifying repo SOURCE (or
+    // running an uncontained shell) must be worktree-isolated; user-content
+    // writes and doubly-contained shells pass through. Full rationale lives in
+    // the extracted gate.
+    if (WORKER_CONTEXTS.has(callCtx) && WORKTREE_REQUIRED_TOOLS.has(toolName)) {
       const blocked = evaluateDelegatedWorktreeGate(ctx, {
         hasSessionWorktree: (s) => this.hasSessionWorktree(s),
         delegatedShellOsContained: (s) => this.delegatedShellOsContained(s),

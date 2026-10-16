@@ -2,7 +2,7 @@
 // shell, network, config, audit). Exports only what external callers actually
 // import — surveyed 2026-07-11. Files inside src/security/ may deep-import.
 export type { CallContext, FileAccessMode, InlineEvalPolicy } from "./types.js";
-export { CONTEXT_RESTRICTED_TOOLS, WORKTREE_REQUIRED_TOOLS } from "./types.js";
+export { CONTEXT_RESTRICTED_TOOLS, WORKER_CONTEXTS, WORKTREE_REQUIRED_TOOLS } from "./types.js";
 export { SecurityLayer } from "./layer-core.js";
 export {
 	evaluateFileAccess,

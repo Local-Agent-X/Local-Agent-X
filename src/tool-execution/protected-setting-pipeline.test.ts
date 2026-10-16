@@ -29,7 +29,7 @@ async function dispatch(args: Record<string, unknown>, opts: { sessionId: string
   const c = createContext({
     tc: { id: `tc-setting-${Math.random().toString(36).slice(2)}`, name: settingTool.name, arguments: JSON.stringify(args) },
     toolMap: new Map([[settingTool.name, settingTool]]),
-    security: { evaluate: () => ({ allowed: true, reason: "" }) } as unknown as SecurityLayer,
+    security: { evaluate: () => ({ allowed: true, reason: "" }), delegatedShellContained: () => false } as unknown as SecurityLayer,
     sessionId: opts.sessionId,
     callContext: opts.callContext ?? "local",
     onEvent: opts.onEvent,

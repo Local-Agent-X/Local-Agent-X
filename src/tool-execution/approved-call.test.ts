@@ -45,7 +45,8 @@ beforeEach(() => {
   process.env.LAX_DATA_DIR = dir;
   shellRuns = [];
   // Safe asks before any shell call, so the run parks it at the approval
-  // phase, and a cron run's shell gate would refuse it again after that.
+  // phase, and on an unconfined host the unattended shell gate would refuse
+  // it again after that.
   setSessionProfile(SESSION, "Safe");
 });
 afterEach(() => {

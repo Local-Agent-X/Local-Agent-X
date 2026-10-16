@@ -21,6 +21,7 @@ import { answerEgressAsk, peekEgressDeny, type EgressAskMessage } from "./bridge
 import { recordSensitiveRead, clearSessionTaint } from "../data-lineage/index.js";
 import { generateCanaries, registerSessionCanaries, clearSessionCanaries } from "../threat/canaries.js";
 import { invalidateLocalRuntimes, restoreProjectedLocalRuntime } from "../local-runtimes/cache.js";
+import { setAgentOriginPort } from "../security/layer/agent-origin-port.js";
 
 const TAINT_SESSION = "wrk-taint-sess";
 const TAINT_VIEW = `view-${TAINT_SESSION}-shared`;
@@ -307,6 +308,30 @@ describe("egress worker — discovered local-runtime port parity (mirror)", () =
 		// Invalidation empties the mirror → the deny returns on both paths.
 		expect(await askPipeUntil({ url: runtimeUrl }, false)).toBe(false);
 		expect(askFallback({ url: runtimeUrl })).toBe(false);
+	});
+});
+
+// The UI origin 302s every /apps path to the agent origin's ephemeral port.
+// Live 2026-10-16 the gate knew only the UI port, so the agent's own app
+// rendered ERR_BLOCKED_BY_CLIENT and it could never look at what it built.
+describe("egress worker — the agent origin is this server's own (mirror)", () => {
+	const PORT = "18779";
+	const appUrl = `http://127.0.0.1:${PORT}/apps/demo/index.html`;
+
+	it("allows the agent origin on both paths once it binds, and only that port", async () => {
+		expect(askFallback({ url: appUrl })).toBe(false);
+		setAgentOriginPort(PORT);
+		try {
+			expect(askFallback({ url: appUrl })).toBe(true);
+			expect(await askPipeUntil({ url: appUrl }, true)).toBe(true);
+			const otherPort = "http://127.0.0.1:18780/apps/demo/index.html";
+			expect(askFallback({ url: otherPort })).toBe(false);
+			expect((await askPipe(pipe(), { url: otherPort })).allowed).toBe(false);
+		} finally {
+			setAgentOriginPort(null);
+		}
+		expect(await askPipeUntil({ url: appUrl }, false)).toBe(false);
+		expect(askFallback({ url: appUrl })).toBe(false);
 	});
 });
 

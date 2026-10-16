@@ -19,6 +19,7 @@ import {
 import { resolveAndPinHost } from "./network-dns.js";
 export { resolveAndPinHost } from "./network-dns.js";
 import { manualRuntimeHostPorts, liveLocalServicePorts } from "./security-config.js";
+import { agentOriginPort } from "./agent-origin-port.js";
 import { endpointHostPort } from "../../local-runtimes/admission.js";
 import { isLocalOnlyMode, isLoopbackUrl, LOCAL_ONLY_BLOCK_MESSAGE } from "../../local-only-policy.js";
 
@@ -102,11 +103,16 @@ export function evaluateWebFetch(
   }
 
   // Allow requests to the agent's own server BEFORE any other checks.
-  // The agent needs to call its own API for settings, theme, orgs, etc.
+  // The agent needs to call its own API for settings, theme, orgs, etc. Both
+  // of its listeners count: the UI origin redirects every app path to the
+  // agent origin, which is how the agent looks at what it built.
   if (isLoopbackHost(host)) {
     const port = String(selfPort || "7007");
     if (parsed.port === port || (!parsed.port && port === "80")) {
       return { allowed: true, reason: "Self-call to own server" };
+    }
+    if (parsed.port && parsed.port === agentOriginPort()) {
+      return { allowed: true, reason: "Self-call to own server (agent origin)" };
     }
   }
 

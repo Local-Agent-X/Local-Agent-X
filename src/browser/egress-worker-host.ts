@@ -28,6 +28,7 @@ import { getRuntimeConfig } from "../config.js";
 import { subscribeTaintChanges } from "../data-lineage/index.js";
 import { subscribeLocalRuntimeChanges } from "../local-runtimes/cache.js";
 import { loopbackPortFromUrl } from "../security/layer/security-config.js";
+import { subscribeAgentOriginPort } from "../security/layer/agent-origin-port.js";
 import { recordCanaryExfilAudit, subscribeCanaryChanges } from "../threat/canaries.js";
 import { subscribeAdoptedViewChanges } from "./bridge-perception.js";
 import { clearEgressDeny, recordEgressDeny } from "./bridge-egress.js";
@@ -152,6 +153,9 @@ function spawnWorker(st: HostState): void {
 			}
 			post({ kind: "runtime-ports", ports: [...ports] });
 		}),
+		// The agent origin's port: the gate counts it as this server's own, and
+		// a worker spawned before it binds still hears it.
+		subscribeAgentOriginPort((port) => post({ kind: "agent-origin-port", port })),
 	];
 
 	worker.on("message", (msg: EgressWorkerPost) => {

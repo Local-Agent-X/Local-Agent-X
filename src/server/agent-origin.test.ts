@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { agentOrigin, routeUiAgentPaths, startAgentOrigin } from "./agent-origin.js";
+import { evaluateEgressForUrl } from "../security/layer/network-policy.js";
 import { deriveFilesLinkCapability, signAgentFilePath, verifyAgentFileSignature } from "./agent-file-links.js";
 import { deriveAppDataCapability, deriveConnectorCapability } from "./app-connector-auth.js";
 import type { ServerContext } from "../server-context.js";
@@ -70,6 +71,25 @@ afterAll(async () => {
 const ui = (path: string, init: RequestInit = {}) => fetch(`${uiBase}${path}`, { redirect: "manual", ...init });
 const agent = (path: string, init: RequestInit = {}) => fetch(`${agentOrigin()}${path}`, { redirect: "manual", ...init });
 const signed = (rel: string) => `/files/${rel}?sig=${signAgentFilePath(OP_TOKEN, rel)}`;
+
+// Live 2026-10-16: the agent built an app and could not open it. The UI's
+// redirect named the agent origin's port, which the egress gate refused as a
+// private address, so the browser showed ERR_BLOCKED_BY_CLIENT and
+// http_request was blocked. The redirect and the gate must agree.
+describe("the agent can look at what it built", () => {
+  it("the gate admits where the UI's app redirect sends it", async () => {
+    const res = await ui("/apps/demo/");
+    expect(res.status).toBe(302);
+    const location = res.headers.get("location") || "";
+    expect(new URL(location).port).toBe(new URL(agentOrigin()).port);
+    expect(evaluateEgressForUrl(location, String(UI_PORT)).allowed).toBe(true);
+  });
+
+  it("the admission is that exact port, not loopback at large", () => {
+    const other = Number(new URL(agentOrigin()).port) + 1;
+    expect(evaluateEgressForUrl(`http://127.0.0.1:${other}/apps/demo/`, String(UI_PORT)).allowed).toBe(false);
+  });
+});
 
 describe("the two origins are distinct", () => {
   it("the agent origin is a loopback listener on its own port, never the UI's", () => {

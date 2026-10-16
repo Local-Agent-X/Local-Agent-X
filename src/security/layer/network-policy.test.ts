@@ -13,6 +13,7 @@ import {
   isPrivateIPv4,
   isPrivateIPv6,
 } from "./ip-classification.js";
+import { setAgentOriginPort } from "./agent-origin-port.js";
 
 const EMPTY_ALLOWLIST = new Set<string>();
 
@@ -378,6 +379,22 @@ describe("evaluateWebFetch — loopback alias names track the literal (C4)", () 
     const d = evaluateWebFetch(EMPTY_ALLOWLIST, false, "7007", `http://${h}:7007/apps/truckfinder/`, "permissive");
     expect(d.allowed).toBe(true);
     expect(d.reason).toBe("Self-call to own server");
+  });
+
+  // The agent origin (the second listener, serving /apps) is this server too.
+  it.each(["127.0.0.1", ...LOOPBACK_HOSTNAMES])("allows %s:<agent origin port> once it binds, and no neighbour", (h) => {
+    expect(evaluateWebFetch(EMPTY_ALLOWLIST, false, "7007", `http://${h}:53991/apps/bot/`, "permissive").allowed).toBe(false);
+    setAgentOriginPort(53991);
+    try {
+      const d = evaluateWebFetch(EMPTY_ALLOWLIST, false, "7007", `http://${h}:53991/apps/bot/`, "permissive");
+      expect(d.allowed).toBe(true);
+      expect(d.reason).toBe("Self-call to own server (agent origin)");
+      expect(evaluateWebFetch(EMPTY_ALLOWLIST, false, "7007", `http://${h}:53992/apps/bot/`, "permissive").allowed).toBe(false);
+      // A public host on the same port is not this server.
+      expect(evaluateWebFetch(EMPTY_ALLOWLIST, false, "7007", "http://10.0.0.5:53991/apps/bot/", "permissive").allowed).toBe(false);
+    } finally {
+      setAgentOriginPort(null);
+    }
   });
 
   it("allows a NON-default selfPort by name (LAX_PORT override)", () => {

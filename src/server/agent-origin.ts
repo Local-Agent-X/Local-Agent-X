@@ -43,6 +43,7 @@ import { serveWorkspaceApp } from "./workspace-app-serving.js";
 import { handleAppRoutes } from "../routes/apps.js";
 import { handleConnectorProxyRoutes } from "../routes/connector-proxy.js";
 import { createLogger } from "../logger.js";
+import { setAgentOriginPort } from "../security/layer/agent-origin-port.js";
 import type { ServerContext } from "../server-context.js";
 import type { LAXConfig } from "../types.js";
 import type { Role } from "../rbac.js";
@@ -137,6 +138,7 @@ export async function startAgentOrigin(deps: AgentOriginDeps): Promise<Server> {
     server.listen(0, "127.0.0.1", () => {
       server.off("error", reject);
       listeningPort = (server.address() as AddressInfo).port;
+      setAgentOriginPort(listeningPort);
       resolve();
     });
   });

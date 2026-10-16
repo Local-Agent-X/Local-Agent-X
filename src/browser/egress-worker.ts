@@ -62,7 +62,8 @@ export type EgressWorkerControl =
 	| { kind: "taint"; sessionId: string; entries: TaintEntry[] }
 	| { kind: "canaries"; sessionId: string; canaries: string[] }
 	| { kind: "adopted"; viewId: string; sessionId: string | null }
-	| { kind: "runtime-ports"; ports: string[] };
+	| { kind: "runtime-ports"; ports: string[] }
+	| { kind: "agent-origin-port"; port: string | null };
 
 /** Worker → host posts (single-writer side effects stay on the main thread). */
 export type EgressWorkerPost =
@@ -129,6 +130,7 @@ async function runEgressWorker(port: MessagePort, data: EgressWorkerData): Promi
 	const { checkCanariesInPayloadList } = await import("../threat/canaries.js");
 	const { sessionIdFromViewId } = await import("./bridge-perception.js");
 	const { decideEgressAsk, denyKey } = await import("./bridge-egress.js");
+	const { setAgentOriginPort } = await import("../security/layer/agent-origin-port.js");
 
 	// ── Mirrored registries (fed by host deltas; eventually-consistent) ──
 	const taintMirror = new Map<string, TaintEntry[]>();
@@ -152,6 +154,10 @@ async function runEgressWorker(port: MessagePort, data: EgressWorkerData): Promi
 			else adoptedMirror.delete(msg.viewId);
 		} else if (msg.kind === "runtime-ports") {
 			runtimePortsMirror = new Set(msg.ports);
+		} else if (msg.kind === "agent-origin-port") {
+			// This thread's agent-origin-port module is its own instance; the
+			// gate's self-call check reads it there.
+			setAgentOriginPort(msg.port);
 		}
 	});
 

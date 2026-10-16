@@ -107,7 +107,10 @@ describe("local model qualification proxy", () => {
       const scorecard = await runQualification(driver, { stageTimeoutMs: 90_000 });
       expect(scorecard.stages[0]).toMatchObject({ name: "isolated_boot", failure: "failed" });
       expect(driver.forbiddenRequests()).toBe(1);
-      expect(service.received.at(-1)).toBe("GET /api/version");
+      // The driver keeps polling upstream while the probe runs, so assert the
+      // probe by count, not by its position in the request log.
+      expect(service.counts.redirect).toBe(1);
+      expect(service.received).toContain("GET /api/version");
       expect(service.received).not.toContain("GET /redirected");
     } finally {
       await service.close();

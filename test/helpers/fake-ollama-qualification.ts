@@ -102,7 +102,7 @@ const NAVIGATION_CSS_DEFINITION = /[^\s"'`]*bellavida-medical-massage-clone[\\/]
 export class FakeOllamaQualificationService {
   readonly model = "qualification-fake:1b";
   readonly digest = "sha256:qualification-fake";
-  readonly counts = { version: 0, tags: 0, ps: 0, show: 0, generate: 0, completion: 0, chat: 0, forbidden: 0 };
+  readonly counts = { version: 0, tags: 0, ps: 0, show: 0, generate: 0, completion: 0, chat: 0, forbidden: 0, redirect: 0 };
   /** num_ctx of every native chat request, in order (undefined = none sent). */
   readonly chatNumCtx: Array<number | undefined> = [];
   readonly received: string[] = [];
@@ -132,6 +132,7 @@ export class FakeOllamaQualificationService {
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     this.received.push(`${req.method ?? ""} ${req.url ?? ""}`);
     if (req.headers["x-qualification-test-redirect"] === "1") {
+      this.counts.redirect += 1;
       res.writeHead(307, { Location: "http://127.0.0.1:1/redirected" }).end();
       return;
     }

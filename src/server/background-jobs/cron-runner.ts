@@ -114,9 +114,13 @@ export function registerCronRunner(deps: CronRunnerDeps): void {
     });
     let result;
     try {
+      // The connected integrations the job's tools can reach: the block the
+      // prepared (main-chat) prompt carries, which the mission prompt replaces.
+      const integrationsContext = integrations.getAgentContext({ reachableWith: new Set(cronTools.map((t) => t.name)) });
       const renderedPromptSections = [
         renderPromptSection({ id: "scheduled-mission", label: "Scheduled Mission", type: "static", policy: "required", text: CRON_SYSTEM_PROMPT }),
         renderPromptSection({ id: "work-folder", label: "Work Folder", type: "dynamic", policy: "required", text: workspace.promptBlock }),
+        ...(integrationsContext ? [renderPromptSection({ id: "integrations", label: "Connected Integrations", type: "dynamic", policy: "degradable", text: integrationsContext })] : []),
       ];
       const systemPrompt = renderedPromptSections.map((section) => section.text).join("");
       const promptTelemetry = remeasurePromptTelemetry({

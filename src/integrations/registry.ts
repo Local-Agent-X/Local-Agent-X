@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { CredentialRequirement, SecretAvailabilityPort } from "../credentials/requirements.js";
 import { missingSecretCredentials } from "../credentials/requirements.js";
 import type { IntegrationConfig, IntegrationDeclaration, IntegrationEndpoint } from "./types.js";
-import { canAuthTypeReach, normalizeTransport, transportTools } from "./types.js";
+import { canAuthTypeReach, normalizeTransport, transportTools, type IntegrationTransport } from "./types.js";
 import { BUILTIN_INTEGRATIONS } from "./builtins/index.js";
 import { evaluateEgressForUrl } from "../security/layer/index.js";
 import { isLocalOnlyMode } from "../local-only-policy.js";
@@ -307,10 +307,17 @@ export class IntegrationRegistry {
         missingSecretCredentials(integration.credentials, this.secrets).length === 0);
   }
 
-  getAgentContext(): string {
+  /** The connected integrations, as a prompt block. With `reachableWith` — the
+   *  names of the tools the reader holds — only the integrations those tools
+   *  can carry are listed: an HTTP integration needs http_request, an email
+   *  one its email tools. A run told about an API it cannot call would only
+   *  try, fail, and report the failure. */
+  getAgentContext(opts: { reachableWith?: ReadonlySet<string> } = {}): string {
     if (isLocalOnlyMode()) return "";
+    const carriedBy = (transport: IntegrationTransport): string[] => (transport === "http" ? ["http_request"] : transportTools(transport));
     const installed = this.advertisable()
-      .map(entry => ({ ...entry, transport: normalizeTransport(entry.integration.transport) }));
+      .map(entry => ({ ...entry, transport: normalizeTransport(entry.integration.transport) }))
+      .filter(({ transport }) => !opts.reachableWith || carriedBy(transport).some((tool) => opts.reachableWith!.has(tool)));
     if (installed.length === 0) return "";
 
     let ctx = "\n## Connected API Integrations\n";

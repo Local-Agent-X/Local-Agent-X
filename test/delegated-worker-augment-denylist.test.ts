@@ -25,7 +25,7 @@ import { join } from "node:path";
 import type { Audience, ToolDefinition } from "../src/types.js";
 import type { Op } from "../src/ops/types.js";
 import { unifiedRegistry } from "../src/tools/registry.js";
-import { augmentFromToolSearch } from "../src/canonical-loop/tool-augmentation.js";
+import { augmentByName, augmentFromToolSearch, canCallByName } from "../src/canonical-loop/tool-augmentation.js";
 import { getToolsForOp, unregisterToolsForOp } from "../src/canonical-loop/runtime.js";
 import { writeOp } from "../src/ops/op-store.js";
 
@@ -162,6 +162,28 @@ describe("augmentFromToolSearch delegated denylist", () => {
     augmentFromToolSearch(toolSearchResult(["write", "bash", ALLOWED]), opId, toolMap, undefined, "delegated");
 
     expect([...toolMap.keys()]).toEqual([ALLOWED]);
+  });
+
+  // A spawned agent's allow-list is its whole surface, resolved in full when
+  // it started: nothing is added later, whether found by tool_search or
+  // called by name. (Before, any registered tool a spawned agent named was
+  // loaded, so its list limited what it knew of, not what it could do.)
+  it("a spawned agent (the agent lane) is bounded: nothing is admitted, by search or by name", () => {
+    registerAll([ALLOWED, "write"]);
+    const opId = "op_agent_bounded_0001";
+    ops.push(opId);
+    persistOp(opId, "agent");
+    const toolMap = new Map<string, ToolDefinition>();
+    let augmented = false;
+
+    augmentFromToolSearch(toolSearchResult([ALLOWED, "write"]), opId, toolMap, () => { augmented = true; }, "delegated");
+    expect(toolMap.size).toBe(0);
+    expect(augmented).toBe(false);
+    expect(augmentByName(ALLOWED, opId, toolMap, undefined, "delegated")).toBe(false);
+    expect(canCallByName(ALLOWED, opId, toolMap, "delegated")).toBe(false);
+    // What it was started with, it keeps.
+    toolMap.set(ALLOWED, unifiedRegistry.get(ALLOWED)!);
+    expect(canCallByName(ALLOWED, opId, toolMap, "delegated")).toBe(true);
   });
 
   it("leaves discovery unfiltered for non-delegated context ('api')", () => {

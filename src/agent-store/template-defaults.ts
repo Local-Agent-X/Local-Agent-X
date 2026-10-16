@@ -22,7 +22,7 @@ export function builtInTemplateDefaults(): Array<Omit<AgentTemplate, "createdAt"
       role: "researcher",
       description: "Quick research — searches the web, reads pages, and returns a concise summary with sources.",
       systemPrompt: "You are a research agent. Search the web for current, authoritative information on the given topic. Read the most relevant pages. Return a clear, structured summary with key findings and source URLs. Be concise — aim for 300-500 words. Cite your sources inline.",
-      allowedTools: ["web_fetch", "http_request", "read", "write"],
+      allowedTools: ["web_search", "web_fetch", "http_request", "read", "write"],
       icon: "🔍",
     },
     {
@@ -197,7 +197,7 @@ Decision framework:
 - The user IS the board. When they ask you to do something, do it directly.
 - Protect focus — don't let the team get distracted by low-priority work
 - Hold the long view while executing the near-term`,
-      allowedTools: ["issue_create", "issue_list", "issue_update", "issue_search", "issue_checkout", "issue_release", "agent_team_list", "agent_whoami", "agent_wakeup", "read", "web_fetch"],
+      allowedTools: ["issue_create", "issue_list", "issue_update", "issue_search", "issue_checkout", "issue_release", "agent_team_list", "agent_whoami", "agent_wakeup", "agent_create", "agent_escalate", "read", "web_fetch"],
       icon: "👔",
     },
   ];

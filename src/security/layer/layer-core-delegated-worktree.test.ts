@@ -10,9 +10,7 @@ import { clearSessionWorkRoot, setSessionWorkRoot } from "../../workspace/paths.
 
 // The delegated-shell gate reads getSandboxStatus().confined / .delegatedShellAllowed;
 // mock ONLY that export (spread the rest of the real module) so we can pin
-// confined vs host-fallback deterministically on any host/CI. sessionWorkRootOf
-// stays REAL — the tests below register no work root, so the scoped-run escape is
-// inert (isolating the confinement dimension).
+// confined vs host-fallback deterministically on any host/CI.
 const sandbox = vi.hoisted(() => ({
   status: {} as Record<string, unknown>,
 }));
@@ -187,18 +185,21 @@ describe("build worker confined to its work root under the op id", () => {
     });
   });
 
-  it("bash passes on an unconfined host only because the work root scopes the run", () => {
+  // A work root anchors the run's paths and cwd; on an unconfined host it
+  // fences none of a command's children, so it never stands in for the cage.
+  it("bash on an unconfined host is refused even with a work root, until the user acknowledges the host", () => {
     setHostFallback();
-    withWorkRoot((sec) => {
-      expect(delegated(sec, "bash", { command: "npm test" }).allowed).toBe(true);
-      expect(unattendedShellBlock("bash", "delegated", OP)).toBeNull();
-    });
     withWorkRoot((sec) => {
       const d = delegated(sec, "bash", { command: "npm test" });
       expect(d.allowed).toBe(false);
-      expect(d.reason).toMatch(/scoped work root/);
-      expect(unattendedShellBlock("bash", "delegated", OP)).not.toBeNull();
-    }, false);
+      expect(d.reason).toMatch(/not acknowledged unconfined unattended shell/);
+      expect(unattendedShellBlock("bash", "delegated")).not.toBeNull();
+    });
+    sandbox.status = { ...sandbox.status, unconfinedHostAcknowledged: true, delegatedShellAllowed: true, apiShellAllowed: true };
+    withWorkRoot((sec) => {
+      expect(delegated(sec, "bash", { command: "npm test" }).allowed).toBe(true);
+      expect(unattendedShellBlock("bash", "delegated")).toBeNull();
+    });
   });
 });
 
@@ -253,7 +254,7 @@ describe("delegated-shell containment gate (worktree AND confinement)", () => {
       expect(d.reason).not.toMatch(/acknowledg/i);
       expect(d.userHint).toBe("The Windows shell cage is still being verified; try again in a few seconds.");
     });
-    const unattended = unattendedShellBlock("bash", "delegated", "agent-k-c2");
+    const unattended = unattendedShellBlock("bash", "delegated");
     expect(unattended?.content).toMatch(/still being verified; try again in a few seconds/);
     expect(unattended?.content).not.toMatch(/acknowledg/i);
     expect(unattended?.metadata).toMatchObject({ proofPending: true, recovery: expect.stringMatching(/Retry this call in a few seconds/) });
@@ -329,8 +330,8 @@ describe("a scheduled job is decided exactly as a delegated agent", () => {
             const as = (callContext: "cron" | "delegated") => sec.evaluate({ toolName, args, sessionId: SESSION, callContext }).allowed;
             expect(as("cron"), `${toolName} ${String(args.path ?? "")} — ${sandboxState}, ${isolation}`).toBe(as("delegated"));
           }
-          expect(unattendedShellBlock("bash", "cron", SESSION) === null, `unattended gate — ${sandboxState}, ${isolation}`)
-            .toBe(unattendedShellBlock("bash", "delegated", SESSION) === null);
+          expect(unattendedShellBlock("bash", "cron") === null, `unattended gate — ${sandboxState}, ${isolation}`)
+            .toBe(unattendedShellBlock("bash", "delegated") === null);
         } finally { undo(); }
       }
     }
@@ -342,7 +343,7 @@ describe("a scheduled job is decided exactly as a delegated agent", () => {
     const undo = ISOLATION["work root"](scoped);
     try {
       expect(scoped.evaluate({ toolName: "bash", args: { command: "npm test" }, sessionId: SESSION, callContext: "cron" }).allowed).toBe(true);
-      expect(unattendedShellBlock("bash", "cron", SESSION)).toBeNull();
+      expect(unattendedShellBlock("bash", "cron")).toBeNull();
     } finally { undo(); }
 
     const bare = makeLayer();

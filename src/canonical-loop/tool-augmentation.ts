@@ -17,9 +17,10 @@
  *    call then dispatches through every per-call gate (approval, kernel,
  *    policy, the un-named-delete card) unchanged.
  *
- * Both callers share one admission path: the delegated-worker denylist
- * applies at augmentation time, not just at spawn time — a search, or a
- * name, is not a reason to widen a worker that was deliberately restricted.
+ * Both callers share one admission path: a spawned agent's allow-list is a
+ * boundary and a delegated worker's denylist applies at augmentation time,
+ * not just at spawn time — a search, or a name, is not a reason to widen a
+ * run that was deliberately restricted.
  * Neither applies the availability gate: tool_search never did (documented
  * fail-open in tools/tool-search.ts — an unconfigured tool returns its own
  * error), and by-name loading keeps parity rather than becoming a second,
@@ -44,18 +45,25 @@ import { createLogger } from "../logger.js";
 
 const logger = createLogger("canonical-loop.tool-augmentation");
 
-/** The belt the op was spawned with, read from its record: lane plus the
- *  build lane's work root. Both are durable on the op, so the denylist
- *  answers the same at augmentation as it did at spawn. */
-function beltForOp(opId: string): DelegatedBelt | undefined {
+/** What a delegated caller may load, read from its op record (durable, so the
+ *  answer is the same at augmentation as at spawn): a spawned agent (the
+ *  agent lane) is BOUNDED — its template's allow-list is its whole surface,
+ *  resolved in full when it started, so nothing is ever added; a delegated
+ *  worker (the other lanes) widens freely except for its belt's denylist. */
+type CallerReach = { bounded: true } | { bounded: false; belt: DelegatedBelt | undefined };
+
+function reachOf(opId: string, callContext: CallContext | undefined): CallerReach {
+  if (callContext !== "delegated") return { bounded: false, belt: undefined };
   const op = readOp(opId);
-  if (!op || op.lane === "agent") return undefined;
-  return { lane: op.lane, workRoot: op.contextPack?.routing?.workRoot };
+  if (op?.lane === "agent") return { bounded: true };
+  return { bounded: false, belt: op ? { lane: op.lane, workRoot: op.contextPack?.routing?.workRoot } : undefined };
 }
 
-/** A registered tool this caller's belt forbids (a delegated worker's denylist). */
-function deniedForCaller(name: string, callContext: CallContext | undefined, belt: DelegatedBelt | undefined): boolean {
-  return callContext === "delegated" && isDeniedForDelegatedWorker(name, belt);
+/** A registered tool this caller may not load: outside a bounded run's
+ *  allow-list, or on a delegated worker's denylist. */
+function deniedForCaller(name: string, callContext: CallContext | undefined, reach: CallerReach): boolean {
+  if (reach.bounded) return true;
+  return callContext === "delegated" && isDeniedForDelegatedWorker(name, reach.belt);
 }
 
 /** Whether a call to `name` would run for this op: the tool is already offered, or it
@@ -69,7 +77,7 @@ export function canCallByName(
 ): boolean {
   if (toolMap.has(name)) return true;
   if (!opId || !unifiedRegistry.get(name)) return false;
-  return !deniedForCaller(name, callContext, callContext === "delegated" ? beltForOp(opId) : undefined);
+  return !deniedForCaller(name, callContext, reachOf(opId, callContext));
 }
 
 /** The one admission path. Returns the tools newly added to `toolMap`. */
@@ -82,13 +90,14 @@ function admit(
   via: string,
 ): ToolDefinition[] {
   const discovered: ToolDefinition[] = [];
-  const belt = callContext === "delegated" ? beltForOp(opId) : undefined;
+  const reach = reachOf(opId, callContext);
   for (const name of names) {
     if (!name || toolMap.has(name) || discovered.some((t) => t.name === name)) continue;
-    // Denylist holds at AUGMENTATION time, not just spawn time: a delegated
-    // worker must not search — or name — its way back to a denied tool.
-    if (deniedForCaller(name, callContext, belt)) {
-      logger.warn(`[augment] blocked denied tool '${name}' for delegated worker op=${opId.slice(0, 12)} (${via})`);
+    // The boundary holds at AUGMENTATION time, not just spawn time: a bounded
+    // agent or a delegated worker must not search — or name — its way to a
+    // tool it was not given.
+    if (deniedForCaller(name, callContext, reach)) {
+      logger.warn(`[augment] blocked tool '${name}' for ${reach.bounded ? "bounded agent" : "delegated worker"} op=${opId.slice(0, 12)} (${via})`);
       continue;
     }
     const tool = unifiedRegistry.get(name);

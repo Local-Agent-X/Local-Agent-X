@@ -14,8 +14,9 @@
  * Lanes: interactive and background workers are read-only. A build worker is
  * submitted with a work root (ops/tools/work-root.ts) and gets the write
  * family plus bash on top; confinement is the security layer's existing
- * delegated gate, which the work root satisfies (security/layer/
- * delegated-worktree-gate.ts) — this module grants no authority of its own.
+ * delegated gate (security/layer/delegated-worktree-gate.ts): the work root
+ * is its isolation, the sandbox its containment — this module grants no
+ * authority of its own.
  */
 
 import type { ToolDefinition } from "../../types.js";

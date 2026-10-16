@@ -20,7 +20,9 @@
 import type { ToolDefinition, ToolResult } from "../types.js";
 import type { InvokeScope } from "./types.js";
 import { AgentCatalog } from "./catalog.js";
-import { invokeAgent, awaitAgentRunning, AgentNotFoundError } from "./invoke.js";
+import { invokeAgent, awaitAgentRunning, AgentNotFoundError, callerRunIdFromSession } from "./invoke.js";
+import { allowedToolMatcher, resolveToolsForRequest } from "../tools/tool-search.js";
+import { unifiedRegistry } from "../tools/registry.js";
 import { taskNeedsArtifactEdit, canEditArtifacts, spawnMismatchMessage } from "./spawn-guard.js";
 import { Handler } from "../agency/handler.js";
 import { delegationFrom } from "../ops/delegation.js";
@@ -28,6 +30,19 @@ import { AgentTemplateStore } from "../agent-store/index.js";
 
 function ok(content: string): ToolResult { return { content }; }
 function err(content: string): ToolResult { return { content, isError: true }; }
+
+/** What an agent creating an agent may grant it: any tool a spawned agent may
+ *  hold, plus the caller's own. Undefined when the caller is the main chat
+ *  (the human's own surface), which may grant anything. */
+function grantableByCaller(sessionId: unknown): ((tool: string) => boolean) | undefined {
+  const runId = callerRunIdFromSession(sessionId);
+  if (!runId) return undefined;
+  const spawnable = new Set(resolveToolsForRequest({ audience: "spawned-agent" }, unifiedRegistry.getAll()).map((t) => t.name));
+  const status = Handler.getInstance().getAgentStatus(runId);
+  const template = !Array.isArray(status) && status.templateId ? AgentTemplateStore.getInstance().get(status.templateId) : null;
+  const own = allowedToolMatcher(template?.allowedTools ?? []);
+  return (tool) => spawnable.has(tool) || own(tool) || (tool.endsWith("*") && template?.allowedTools.includes(tool) === true);
+}
 
 function parseScope(args: Record<string, unknown>): InvokeScope | undefined {
   const projectId = args.project_id ?? args.projectId;
@@ -187,7 +202,7 @@ export function createAgentTools(): ToolDefinition[] {
           name: { type: "string", description: "Display name (e.g. 'Compliance Reviewer')" },
           role: { type: "string", description: "Lowercase role slug (e.g. 'compliance-reviewer')" },
           system_prompt: { type: "string", description: "The agent's load-bearing instructions" },
-          allowed_tools: { type: "array", items: { type: "string" }, description: "Tool names this agent may call" },
+          allowed_tools: { type: "array", items: { type: "string" }, description: "Tool names this agent may call; `mcp_<server>_*` names every tool of one MCP server" },
           description: { type: "string", description: "One-line description for pickers and lists" },
           icon: { type: "string", description: "Optional emoji or short icon" },
         },
@@ -195,8 +210,20 @@ export function createAgentTools(): ToolDefinition[] {
       },
       async execute(args) {
         try {
-          const tools = Array.isArray(args.allowed_tools) ? args.allowed_tools.map(String) : [];
-          if (tools.length === 0) return err(`allowed_tools must be a non-empty list of tool names.`);
+          const requested = Array.isArray(args.allowed_tools) ? args.allowed_tools.map(String) : [];
+          if (requested.length === 0) return err(`allowed_tools must be a non-empty list of tool names.`);
+          // A name no tool answers to is a tool the agent silently lacks (the
+          // roles once listed slack_send and browser_navigate); refuse it here,
+          // where the author can fix it. A `*` entry names an MCP server's
+          // tools, which exist only once the server is connected.
+          const unknown = requested.filter((t) => !t.endsWith("*") && !unifiedRegistry.get(t));
+          if (unknown.length > 0) return err(`Not tools: ${unknown.join(", ")}. Name registered tools (agent_list shows what each agent holds), or an MCP server's tools as mcp_<server>_*.`);
+          // An agent may give an agent it creates any tool a spawned agent may
+          // hold, plus any it holds itself — never a main-chat-only tool.
+          const grantable = grantableByCaller(args._sessionId);
+          const refused = grantable ? requested.filter((t) => !grantable(t)) : [];
+          const tools = requested.filter((t) => !refused.includes(t));
+          if (tools.length === 0) return err(`None of those tools can be granted by an agent: ${refused.join(", ")}.`);
           const name = String(args.name).trim();
           const store = AgentTemplateStore.getInstance();
           const existing = store.findByName(name);
@@ -217,7 +244,8 @@ export function createAgentTools(): ToolDefinition[] {
           });
           return ok(
             `Created agent: ${template.name} (id: ${template.id}, role: ${template.role}).\n` +
-            `Available via agent_spawn. Tools: ${template.allowedTools.join(", ")}.`,
+            `Available via agent_spawn. Tools: ${template.allowedTools.join(", ")}.` +
+            (refused.length > 0 ? `\nNot granted (an agent cannot give these): ${refused.join(", ")}.` : ""),
           );
         } catch (e) {
           return err(`Failed to create agent: ${String(e)}`);

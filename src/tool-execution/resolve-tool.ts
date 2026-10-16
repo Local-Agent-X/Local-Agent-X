@@ -40,7 +40,8 @@ export const SESSION_SCOPED_TOOLS = new Set([
   // connector_create and email_setup run the secret destination ladder, whose
   // same-session rung is keyed on the trusted session.
   "connector_create", "email_setup",
-  "agent_spawn", "browser_capture_to_secret", "browser_fill_from_secret",
+  // agent_create caps what an agent may grant by the calling run's own tools.
+  "agent_spawn", "agent_create", "browser_capture_to_secret", "browser_fill_from_secret",
   "session_status", "request_secret", "request_secrets",
   // show_unblock_control reads THIS session's taint registry; the trusted
   // stamp is what keeps it from being pointed at another session's state.

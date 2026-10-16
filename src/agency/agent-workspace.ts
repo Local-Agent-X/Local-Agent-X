@@ -11,10 +11,11 @@
  *   - a git repo → a fresh worktree of THAT repo, merged back when the run ends
  *   - a new name → a folder created under the workspace
  *   - another existing folder → that folder as the run's scoped work root
+ *   - no folder at all → a scratch folder of the run's own under the workspace
  * A folder that cannot be a work root, or a required worktree that cannot be
  * made, fails the spawn with the reason instead of starting a crippled agent.
  */
-import { existsSync, mkdirSync, realpathSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, realpathSync, rmdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, parse, relative, resolve } from "node:path";
 import { workspaceRoot } from "../config.js";
@@ -38,6 +39,8 @@ export interface AgentWorkspace {
   worktree: { path: string; branch: string } | null;
   /** The folder relative paths and the shell anchor to, when one is set. */
   workRoot: string | null;
+  /** The work root is a scratch folder made for this run (removed if left empty). */
+  scratch?: true;
   /** Prompt block telling the agent where it works. */
   promptBlock: string;
 }
@@ -114,6 +117,8 @@ export function provisionAgentWorkspace(opts: {
   requiresWorktree: boolean;
   workDir?: string;
   workRoot?: string;
+  /** The workspace a scratch folder is made under (default: the configured one). */
+  workspace?: string;
 }): AgentWorkspace {
   const { agentId, runSessionId, security } = opts;
   if (opts.workDir) {
@@ -158,18 +163,29 @@ export function provisionAgentWorkspace(opts: {
       promptBlock: `\n\n--- WORKTREE ---\nYou are in an isolated git worktree at: ${worktree.path}\nCode changes: cd here first. Output files (reports, exports) go to ${workspaceRoot()}/ (worktree gets cleaned up).\n--- END WORKTREE ---\n`,
     };
   }
+  // No folder named: a scratch folder of the run's own under the workspace,
+  // the same anchor a scheduled job gets (its missions folder). Without one
+  // the prompt promised bash and the delegated-shell gate refused every call.
+  const scratch = join(opts.workspace ?? workspaceRoot(), "agents", agentId);
+  mkdirSync(scratch, { recursive: true });
+  anchor(security, runSessionId, scratch);
   return {
     worktree: null,
-    workRoot: null,
-    promptBlock: `\n\n--- WORKSPACE ---\nWrite files (screenshots, exports, notes) to ${workspaceRoot()}/. You have bash/write/edit for non-code tasks. Do NOT edit the repo's source code.\n--- END WORKSPACE ---\n`,
+    workRoot: scratch,
+    scratch: true,
+    promptBlock: `\n\n--- WORK FOLDER ---\nYour own folder for this run: ${scratch.replace(/\\/g, "/")}\nRelative paths and bash start here; put files you make (notes, exports, scripts) here. Do NOT edit Local Agent X's source code.\n--- END WORK FOLDER ---\n`,
   };
 }
 
-/** Undo provisionAgentWorkspace's registrations. Idempotent. */
+/** Undo provisionAgentWorkspace's registrations. Idempotent. A scratch folder
+ *  the run left empty is removed; one it wrote into stays for the user. */
 export function releaseAgentWorkspace(ws: AgentWorkspace, security: SecurityLayer, runSessionId: string): void {
   if (ws.worktree) security.removeAllowedPath(ws.worktree.path, runSessionId);
   if (ws.workRoot) {
     security.removeAllowedPath(ws.workRoot, runSessionId);
     clearSessionWorkRoot(runSessionId);
+    if (ws.scratch) {
+      try { if (readdirSync(ws.workRoot).length === 0) rmdirSync(ws.workRoot); } catch { /* already gone, or in use: leave it */ }
+    }
   }
 }

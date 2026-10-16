@@ -439,11 +439,13 @@ describe("canonical unattended shell capability gate", () => {
     });
   }
 
+  // A work root anchors the run's paths and cwd; on an unconfined host it
+  // fences none of a command's children, so it never stands in for the cage.
   for (const callContext of ["delegated", "cron"] as const) {
-    it.each(SHELL_BACKENDS)(`allows %s for an unacknowledged ${callContext} run confined to a registered work root`, async (name) => {
+    it.each(SHELL_BACKENDS)(`still blocks %s for an unacknowledged ${callContext} run that has a work root`, async (name) => {
       const result = await dispatch(name, `${callContext}-app-scoped`, callContext, false, true);
-      expect(result.execute).toHaveBeenCalledOnce();
-      expect(result.content).toContain(`executed:${name}`);
+      expect(result.execute).not.toHaveBeenCalled();
+      expect(result.content).toMatch(/effective mode is "host"/i);
     });
   }
 

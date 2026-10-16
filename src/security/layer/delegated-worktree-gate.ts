@@ -12,9 +12,9 @@ import { SANDBOX_PROOF_PENDING_RETRY } from "../../sandbox/index.js";
 
 export interface DelegatedGateDeps {
   hasSessionWorktree(sessionId: string | undefined): boolean;
-  /** OS-containment half of the gate (confined sandbox / acknowledged host /
-   *  scoped work root) — see SecurityLayer.delegatedShellOsContained. */
-  delegatedShellOsContained(sessionId: string | undefined): boolean;
+  /** OS-containment half of the gate (confined sandbox / acknowledged host)
+   *  — see SecurityLayer.delegatedShellOsContained. */
+  delegatedShellOsContained(): boolean;
   /** The Windows cage is still proving its fence (sandbox status proofPending). */
   sandboxProofPending(): boolean;
   isUserContentPath(targetPath: string): boolean;
@@ -55,10 +55,11 @@ export function evaluateDelegatedWorktreeGate(
     //   (1) worktree isolation      — its writes can't reach the main agent's
     //                                  live running source, AND
     //   (2) effective OS containment — a confined sandbox (or an acknowledged
-    //                                  host / scoped work root; see
-    //                                  delegatedShellOsContained), so the shell's
-    //                                  children/redirects/expansions are caged,
-    //                                  not just its top-level argv.
+    //                                  host; see delegatedShellOsContained), so
+    //                                  the shell's children/redirects/expansions
+    //                                  are caged, not just its top-level argv.
+    //                                  A work root anchors the run; it cages
+    //                                  nothing.
     // Missing EITHER → block (err safe). A scheduled job is held to the same
     // AND: its missions folder is its work root. The command
     // denylist / rm / egress / network-client rules run downstream regardless
@@ -71,7 +72,7 @@ export function evaluateDelegatedWorktreeGate(
         userHint: USER_HINTS.worktreeIsolation,
       };
     }
-    if (!deps.delegatedShellOsContained(sessionKey)) {
+    if (!deps.delegatedShellOsContained()) {
       // Not an unconfined host yet: the Windows cage is still proving its
       // fence, and its answer lands within seconds.
       if (deps.sandboxProofPending()) {
@@ -83,7 +84,7 @@ export function evaluateDelegatedWorktreeGate(
       }
       return {
         allowed: false,
-        reason: `Blocked: a ${run}'s shell tool "${toolName}" requires an effectively-confined sandbox — the selected sandbox fell back to the unconfined host and this run has no operator acknowledgement or scoped work root, so a self-verify shell cannot be contained`,
+        reason: `Blocked: a ${run}'s shell tool "${toolName}" requires an effectively-confined sandbox — the selected sandbox fell back to the unconfined host and the user has not acknowledged unconfined unattended shell in Settings > Security, so the command cannot be contained`,
         userHint: USER_HINTS.policy,
       };
     }

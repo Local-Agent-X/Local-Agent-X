@@ -30,7 +30,7 @@
 import type { AgentDefinition, AgentModelPin, InvokeOpts, RunRef } from "./types.js";
 import { AgentCatalog } from "./catalog.js";
 import { Handler } from "../agency/handler.js";
-import { ProjectStore } from "../agent-store/index.js";
+import { AgentTemplateStore, ProjectStore } from "../agent-store/index.js";
 import { ProjectRosterStore } from "../project-rosters.js";
 import { EventBus } from "../event-bus.js";
 import { dispatchAgentRun, type AgentRunDriverRequest } from "./runtime.js";
@@ -85,7 +85,11 @@ export function invokeDefinition(
     ? `${def.systemPrompt}\n\n## Persona\n\n${def.persona}`
     : def.systemPrompt;
   const name = opts.nameOverride ?? def.name;
-  const templateId = def.id.startsWith("tpl-") ? def.id : undefined;
+  // Any definition the template store holds — a user's "tpl-…" or a seeded
+  // built-in (builtin-ceo, builtin-manager) — so the run gets its identity
+  // block and agent_whoami finds it; a "tpl-" prefix test left the built-in
+  // managers knowing only a run id and seeing no team.
+  const templateId = AgentTemplateStore.getInstance().get(def.id) ? def.id : undefined;
   const modelOverride = resolveAgentModel(def, opts);
 
   const { agentId, abortController } = Handler.getInstance().attachExternalRun({

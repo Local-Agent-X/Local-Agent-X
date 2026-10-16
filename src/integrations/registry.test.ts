@@ -548,6 +548,20 @@ describe("agent context credential gate", () => {
   });
 });
 
+describe("agent context for a reader that holds only some tools", () => {
+  // A spawned agent or a scheduled job gets the block for the integrations
+  // ITS tools can carry: an HTTP integration needs http_request, an email one
+  // its email tools. Told about an API it cannot call, it would only try and
+  // fail.
+  it("lists an HTTP integration only to a reader holding http_request", () => {
+    const registry = load(vault("GITHUB_TOKEN"));
+    registry.markInstalled("github", true);
+    expect(registry.getAgentContext({ reachableWith: new Set(["read", "write"]) })).toBe("");
+    expect(registry.getAgentContext({ reachableWith: new Set(["read", "http_request"]) })).toBe(PRE_GATE_GITHUB_CONTEXT);
+    expect(registry.getAgentContext()).toBe(PRE_GATE_GITHUB_CONTEXT);
+  });
+});
+
 describe("agent context endpoint feasibility", () => {
   it("advertises only the google endpoints an api_key can actually reach", () => {
     const registry = load(vault("GOOGLE_API_KEY"));

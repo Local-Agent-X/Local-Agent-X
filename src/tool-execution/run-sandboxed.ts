@@ -74,7 +74,7 @@ export const runSandboxedPhase: Phase = async (ctx) => {
   // A cage still proving its fence answers in seconds; that one is a retry,
   // not something to put in front of the user. Any other unattended shell
   // refusal is parked for the user's yes, and that yes runs it.
-  const shellBlock = unattendedShellBlock(tc.name, ctx.callContext, sessionId);
+  const shellBlock = unattendedShellBlock(tc.name, ctx.callContext);
   if (shellBlock && (shellBlock.metadata?.proofPending || !takeUserGrant(ctx))) {
     ctx.result = shellBlock.metadata?.proofPending ? shellBlock : parkOrRefuse(ctx, shellBlock.content, shellBlock);
     return CONTINUE;

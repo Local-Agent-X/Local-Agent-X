@@ -99,7 +99,7 @@ describe("scheduled mission prompt telemetry", () => {
       secretsStore: {} as never,
       toolPolicy: {} as never,
       cronService: cronService as never,
-      integrations: {} as never,
+      integrations: { getAgentContext: () => "" } as never,
       allAgentTools,
       bridgeTools: [],
       cronReportsDir: join(workspace, "reports"),

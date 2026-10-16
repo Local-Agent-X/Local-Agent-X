@@ -107,6 +107,25 @@ describe("provisionAgentWorkspace — a spawned agent can run commands where it 
     releaseAgentWorkspace(ws, sec, "agent-run-folder");
   });
 
+  it("no folder named: a scratch folder of the run's own, where bash runs; removed when left empty, kept when written to", () => {
+    const sec = new SecurityLayer(roots.workspace, "common");
+    const session = "agent-run-scratch";
+    const ws = provisionAgentWorkspace({ agentId: "ws-test-scratch", runSessionId: session, security: sec, requiresWorktree: false, workspace: roots.workspace });
+    expect(ws.workRoot).toBe(join(roots.workspace, "agents", "ws-test-scratch"));
+    expect(existsSync(ws.workRoot!)).toBe(true);
+    expect(sessionWorkRootOf(session)).toBe(realpathSync(ws.workRoot!));
+    expect(ws.promptBlock).toContain("Your own folder for this run");
+    expect(bash(sec, session).allowed).toBe(true);
+    releaseAgentWorkspace(ws, sec, session);
+    expect(existsSync(ws.workRoot!)).toBe(false);
+    expect(bash(sec, session).allowed).toBe(false);
+
+    const kept = provisionAgentWorkspace({ agentId: "ws-test-scratch-kept", runSessionId: "agent-run-scratch-kept", security: sec, requiresWorktree: false, workspace: roots.workspace });
+    writeFileSync(join(kept.workRoot!, "notes.md"), "found it");
+    releaseAgentWorkspace(kept, sec, "agent-run-scratch-kept");
+    expect(existsSync(join(kept.workRoot!, "notes.md"))).toBe(true);
+  });
+
   it("refuses a folder it can't isolate before the run starts", () => {
     const sec = new SecurityLayer(roots.workspace, "common");
     expect(() => provisionAgentWorkspace({ agentId: "ws-test-bad", runSessionId: "agent-run-bad", security: sec, requiresWorktree: false, workDir: "/" }))

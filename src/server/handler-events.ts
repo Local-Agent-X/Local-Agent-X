@@ -16,6 +16,7 @@ import type { SecretsStore } from "../secrets.js";
 import type { SecurityLayer } from "../security/index.js";
 import type { ToolPolicy } from "../tool-policy/index.js";
 import type { AgentRunStore, AgentTemplateStore } from "../agent-store/index.js";
+import type { IntegrationRegistry } from "../integrations/index.js";
 import { createLogger } from "../logger.js";
 import { clearSessionProfile } from "../autonomy/profile-store.js";
 import { registerChildSessionOwner, clearSessionOwner } from "../browser/session-owner-registry.js";
@@ -69,13 +70,14 @@ export function registerHandlerEvents(deps: {
   security: SecurityLayer;
   toolPolicy: ToolPolicy;
   allAgentTools: ToolDefinition[];
+  integrations: IntegrationRegistry;
   agentRunStore: AgentRunStore;
   agentTemplateStore: AgentTemplateStore;
   broadcastAll: (event: Record<string, unknown>) => void;
 }): void {
   const {
     config, dataDir, sessions, sessionStore, memoryIndex, secretsStore, security, toolPolicy,
-    allAgentTools, agentRunStore, agentTemplateStore, broadcastAll,
+    allAgentTools, integrations, agentRunStore, agentTemplateStore, broadcastAll,
   } = deps;
 
   const eventBus = EventBus.getInstance();
@@ -102,21 +104,6 @@ export function registerHandlerEvents(deps: {
 
     let parentContext = "";
     if (parentSessionId) { const ps = sessions.get(parentSessionId); if (ps?.messages.length) { parentContext = `\n\n--- PARENT CONTEXT ---\n${ps.messages.slice(-10).filter(m => typeof m.content === "string").map(m => `${m.role === "user" ? "User" : "Agent"}: ${(m.content as string).slice(0, 200)}`).join("\n")}\n--- END ---\n`; } }
-    // Briefing assembly (USER.md + recent facts + task-relevant memory +
-    // project brief + secrets) lives in agents/briefing.ts. agentProject is
-    // resolved above and now actually fed in, and the task keys a semantic
-    // memory search — both gaps the old inline block had.
-    let briefing = "";
-    try {
-      const { buildBriefing } = await import("../agents/briefing.js");
-      briefing = await buildBriefing({
-        dataDir, memoryIndex, secretsStore, task,
-        project: agentProject ? { id: agentProject.id, name: agentProject.name } : null,
-      });
-    } catch (e) {
-      logger.warn(`[handler] briefing assembly failed for ${agentId}: ${(e as Error).message}`);
-    }
-
     const identityBlock = template
       ? `\n\n--- YOUR IDENTITY ---\nAgent ID: ${template.id}\nName: ${template.name}\nRole: ${template.role}\n${roster?.reportsTo ? `Reports to: ${roster.reportsTo}` : "Reports to: Board (user)"}\n${agentProject ? `Project: ${agentProject.name}` : ""}\nUse agent_whoami with agentId="${template.id}" to see your full status and assigned issues.\n--- END IDENTITY ---\n`
       : `\n\nYour agent ID: ${agentId}\n`;
@@ -163,6 +150,22 @@ export function registerHandlerEvents(deps: {
         },
         allAgentTools,
       );
+
+      // Briefing assembly (USER.md + recent facts + task-relevant memory +
+      // project brief + secrets + the integrations its tools reach) lives in
+      // agents/briefing.ts. agentProject is resolved above and fed in, and the
+      // task keys a semantic memory search — both gaps the old inline block had.
+      let briefing = "";
+      try {
+        const { buildBriefing } = await import("../agents/briefing.js");
+        briefing = await buildBriefing({
+          dataDir, memoryIndex, secretsStore, task,
+          project: agentProject ? { id: agentProject.id, name: agentProject.name } : null,
+          integrations, toolNames: spawnedTools.map((t) => t.name),
+        });
+      } catch (e) {
+        logger.warn(`[handler] briefing assembly failed for ${agentId}: ${(e as Error).message}`);
+      }
 
       const worktreeInfo = workspace.worktree;
       logger.info(`[handler] Agent ${agentId} using ${provider}/${model} with ${spawnedTools.length} tools${worktreeInfo ? ` (worktree: ${worktreeInfo.path})` : workspace.workRoot ? ` (work root: ${workspace.workRoot})` : " (no worktree)"}`);

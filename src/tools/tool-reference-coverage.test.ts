@@ -11,6 +11,8 @@ import { BROWSER_TOOL_PARAMETERS } from "./browser-tools/description.js";
 import { FLIPPABLE_SETTINGS } from "../settings-schema.js";
 import { createCoreProtocolTools } from "../protocols/index.js";
 import { _seedBuiltinRoles } from "../agency/agent-roles.js";
+import { builtInTemplateDefaults } from "../agent-store/template-defaults.js";
+import { DREAM_TOOL_NAMES } from "../server/background-jobs/prompts.js";
 
 // The startup coverage check and tool-policy-default.test.ts prove that every
 // REGISTERED tool has a policy entry. Nothing proved the reverse, so a name
@@ -102,6 +104,7 @@ const TOOL_LISTS: Array<{ file: string; name: string; shape: "literals" | "keys"
   { file: "src/routes/chat/run-chat-turn/prepare-and-route.ts", name: "IDE_BLOCKED_TOOLS", shape: "literals" },
   { file: "src/routes/artifacts.ts", name: "PATH_TOOLS", shape: "literals" },
   { file: "src/canonical-loop/step-effort.ts", name: "MECHANICAL_TOOLS", shape: "literals" },
+  { file: "src/server/background-jobs/self-edit-surgeon-runner.ts", name: "SURGEON_TOOLS", shape: "literals" },
   { file: "src/agent-guards/loop-discovery.ts", name: "SPIRALABLE_TOOLS", shape: "literals" },
   // The user-facing capability blurbs; a blurb for a removed tool is dead weight.
   { file: "scripts/gen-agent-capabilities.ts", name: "BLURB", shape: "keys" },
@@ -160,8 +163,14 @@ describe("every tool name a referrer uses is a registered tool", () => {
   // A role's tools become its agent's allowedTools (src/agents/catalog.ts): a
   // name that is not a tool is a tool the role silently lacks — researcher,
   // monitor and social-media named browser_navigate and could not browse.
-  it("the built-in agent roles' tools", () => {
-    const names = _seedBuiltinRoles().flatMap((r) => r.suggestedTools.map((t) => `${t} (role ${r.name})`));
+  it("the built-in agent roles' and templates' tools, and the background jobs' belts", () => {
+    const lists: Array<[string, readonly string[]]> = [
+      ..._seedBuiltinRoles().map((r): [string, readonly string[]] => [`role ${r.name}`, r.suggestedTools]),
+      ...builtInTemplateDefaults().map((t): [string, readonly string[]] => [`template ${t.id}`, t.allowedTools]),
+      ["DREAM_TOOL_NAMES", DREAM_TOOL_NAMES],
+    ];
+    // A `*` entry names an MCP server's tools, registered only once it connects.
+    const names = lists.flatMap(([where, tools]) => tools.filter((t) => !t.endsWith("*")).map((t) => `${t} (${where})`));
     expect(names.filter((n) => !registered.has(n.split(" ")[0]))).toEqual([]);
   });
 

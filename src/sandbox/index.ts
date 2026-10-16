@@ -80,8 +80,8 @@ export interface SandboxStatus {
   proofPending: boolean;
   unconfinedHostAcknowledged: boolean;
   /** Shell for a worker run — a delegated agent or a scheduled job
-   *  (WORKER_CONTEXTS) — on any folder; a run scoped to its own work root
-   *  needs no more (tool-execution/unattended-shell-gate.ts). */
+   *  (WORKER_CONTEXTS): the sandbox is confined, or the user acknowledged the
+   *  unconfined host (tool-execution/unattended-shell-gate.ts). */
   delegatedShellAllowed: boolean;
   apiShellAllowed: boolean;
 }

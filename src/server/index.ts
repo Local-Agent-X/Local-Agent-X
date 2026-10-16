@@ -324,7 +324,7 @@ export async function startServer(config: LAXConfig) {
 
   registerHandlerEvents({
     config, dataDir, sessions, sessionStore, memoryIndex, secretsStore, security, toolPolicy,
-    allAgentTools, agentRunStore, agentTemplateStore, broadcastAll,
+    allAgentTools, integrations, agentRunStore, agentTemplateStore, broadcastAll,
   });
 
   phaseSync("startConfigWatcher", () => startConfigWatcher(dataDir));

@@ -84,16 +84,15 @@ export class SecurityLayer {
   }
 
   /** The OS-containment half of the delegated-shell gate: an effectively-confined
-   *  sandbox, an operator-acknowledged unconfined host, OR a registered project
-   *  work root that scopes the run. This is deliberately the SAME allow-condition
-   *  the downstream unattended-shell gate uses (unattended-shell-gate.ts:
-   *  `delegatedShellAllowed || scopedDelegatedRun`) — composed from the SAME
-   *  canonical primitives (getSandboxStatus + sessionWorkRootOf), not a fork — so
-   *  moving the check earlier here can never block a delegated shell the later
-   *  gate would have allowed (no regression on an intentionally-unsandboxed host
-   *  that acknowledged it, or on work-root-scoped app-build chunk workers). */
-  private delegatedShellOsContained(sessionId: string | undefined): boolean {
-    return getSandboxStatus().delegatedShellAllowed || !!sessionWorkRootOf(sessionId);
+   *  sandbox, or an operator-acknowledged unconfined host. A registered work
+   *  root is NOT containment: it anchors paths and the shell's cwd, but on an
+   *  unconfined host nothing fences a command's children, redirects or
+   *  expansions inside it, so it must not stand in for the cage. This is the
+   *  SAME allow-condition the downstream unattended-shell gate uses
+   *  (unattended-shell-gate.ts), read from the same primitive, so moving the
+   *  check earlier here can never block a shell the later gate would allow. */
+  private delegatedShellOsContained(): boolean {
+    return getSandboxStatus().delegatedShellAllowed;
   }
 
   /** Is a worker run's shell (delegated agent or scheduled job) effectively
@@ -103,7 +102,7 @@ export class SecurityLayer {
    *  shell is genuinely unavailable to the run (no worktree /
    *  unconfined-unacknowledged) and stays silent when it CAN run its verify. */
   delegatedShellContained(sessionId: string | undefined): boolean {
-    return this.hasSessionWorktree(sessionId) && this.delegatedShellOsContained(sessionId);
+    return this.hasSessionWorktree(sessionId) && this.delegatedShellOsContained();
   }
 
   /**
@@ -205,7 +204,7 @@ export class SecurityLayer {
     if (WORKER_CONTEXTS.has(callCtx) && (hasCapability(toolName, "shell") || hasCapability(toolName, "workspace-write", args))) {
       const blocked = evaluateDelegatedWorktreeGate(ctx, {
         hasSessionWorktree: (s) => this.hasSessionWorktree(s),
-        delegatedShellOsContained: (s) => this.delegatedShellOsContained(s),
+        delegatedShellOsContained: () => this.delegatedShellOsContained(),
         sandboxProofPending: () => getSandboxStatus().proofPending,
         isUserContentPath: (p) => this.isUserContentPath(p),
       });

@@ -6,6 +6,7 @@ import type { SessionStore, MemoryIndex } from "../memory/index.js";
 import type { SecretsStore } from "../secrets.js";
 import type { SecurityLayer } from "../security/index.js";
 import type { ToolPolicy } from "../tool-policy/index.js";
+import type { IntegrationRegistry } from "../integrations/index.js";
 import { registerAgentLifecycleEvents, isOrchestratorChild, agentCompleteChatRow, type PendingAgentMeta } from "./handler-events-agent-result.js";
 import { registerHandlerEvents } from "./handler-events.js";
 import { inboxStore } from "../inbox/index.js";
@@ -237,6 +238,7 @@ describe("registerHandlerEvents wiring", () => {
       security: {} as SecurityLayer,
       toolPolicy: {} as ToolPolicy,
       allAgentTools: [],
+      integrations: {} as IntegrationRegistry,
       agentRunStore: h.agentRunStore as unknown as AgentRunStore,
       agentTemplateStore: {} as AgentTemplateStore,
       broadcastAll: h.broadcastAll,

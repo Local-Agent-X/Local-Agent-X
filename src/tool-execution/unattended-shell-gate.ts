@@ -4,20 +4,18 @@ import { hasCapability } from "../tool-registry.js";
 import { blocked } from "../tools/result-helpers.js";
 import type { ToolResult } from "../types.js";
 import type { CallContext } from "./context.js";
-import { sessionWorkRootOf } from "../workspace/paths.js";
 
 export function unattendedShellBlock(
   toolName: string,
   callContext: CallContext,
-  sessionId?: string,
 ): ToolResult | null {
   if (!hasCapability(toolName, "shell") || callContext === "local") return null;
 
   const sandbox = getSandboxStatus();
-  // A worker run (delegated agent or scheduled job) scoped to its own work root.
-  const worker = WORKER_CONTEXTS.has(callContext);
-  const scopedRun = worker && !!sessionId && !!sessionWorkRootOf(sessionId);
-  const contextAllowed = worker ? sandbox.delegatedShellAllowed || scopedRun : sandbox.apiShellAllowed;
+  // A worker run (delegated agent or scheduled job) runs shell only inside a
+  // confined sandbox or on a host the user acknowledged; its work root anchors
+  // the command, it does not contain it.
+  const contextAllowed = WORKER_CONTEXTS.has(callContext) ? sandbox.delegatedShellAllowed : sandbox.apiShellAllowed;
   if (contextAllowed) return null;
 
   // Not a host to acknowledge yet: the Windows cage is still proving its fence,

@@ -24,6 +24,9 @@ import { createAgentTools } from "../src/agents/tools.js";
 import { _seedBuiltinRoles } from "../src/agency/agent-roles.js";
 import { AgentTemplateStore, ProjectStore } from "../src/agent-store/index.js";
 import { ProjectRosterStore } from "../src/project-rosters.js";
+import { Handler } from "../src/agency/handler.js";
+import { unifiedRegistry } from "../src/tools/registry.js";
+import type { Audience, ToolDefinition } from "../src/types.js";
 
 describe("AgentCatalog — superset merge of legacy sources", () => {
   beforeEach(() => {
@@ -287,6 +290,45 @@ describe("createAgentTools — three primitives for delegating agents", () => {
     );
     expect(res.isError).toBe(true);
     expect(res.content).toContain("allowed_tools");
+  });
+
+  // agent_create checks names against the live registry, which boot fills;
+  // these tests register the tools they name, as boot would.
+  const stub = (name: string, audiences?: Audience[]): ToolDefinition => ({
+    name, description: name, parameters: { type: "object", properties: {} }, execute: async () => ({ content: "" }),
+    ...(audiences ? { audiences } : {}),
+  });
+  const STUBS = [stub("read", ["spawned-agent"]), stub("write", ["spawned-agent"]), stub("agent_create"), stub("mcp_slack_send")];
+  beforeEach(() => { for (const t of STUBS) unifiedRegistry.register(t); });
+  afterEach(() => { for (const t of STUBS) unifiedRegistry.unregister(t.name); });
+
+  it("agent_create refuses a name no tool answers to, so an agent never silently lacks a tool", async () => {
+    const create = createAgentTools().find((t) => t.name === "agent_create")!;
+    const res = await create.execute({ name: "x", role: "x", system_prompt: "x", allowed_tools: ["read", "slack_send"] }, new AbortController().signal);
+    expect(res.isError).toBe(true);
+    expect(res.content).toContain("slack_send");
+    expect(AgentTemplateStore.getInstance().findByName("x")).toBeNull();
+  });
+
+  it("an agent may grant what a spawned agent may hold plus its own tools, never a main-chat-only tool", async () => {
+    const store = AgentTemplateStore.getInstance();
+    const parent = store.create({ name: "Test Hiring Lead", role: "test-hiring-lead", systemPrompt: "x", allowedTools: ["read", "mcp_slack_*"], description: "fixture" });
+    const { agentId } = Handler.getInstance().attachExternalRun({ name: parent.name, role: parent.role, task: "hire", templateId: parent.id });
+    const create = createAgentTools().find((t) => t.name === "agent_create")!;
+    try {
+      const res = await create.execute({
+        name: "Test Hired Slack Poster", role: "test-hired-poster", system_prompt: "x",
+        allowed_tools: ["read", "write", "agent_create", "mcp_slack_*"], _sessionId: `agent-${agentId}`,
+      }, new AbortController().signal);
+      expect(res.isError).toBeFalsy();
+      expect(res.content).toContain("Not granted (an agent cannot give these): agent_create");
+      const hired = store.list().find((t) => t.role === "test-hired-poster")!;
+      expect(hired.allowedTools).toEqual(["read", "write", "mcp_slack_*"]);
+    } finally {
+      for (const t of store.list()) if (t.role.startsWith("test-hir")) store.delete(t.id);
+      Handler.getInstance().finalizeExternalRun(agentId, { result: "", success: true });
+      AgentCatalog._resetForTest();
+    }
   });
 
   it("agent_create adds a new agent to the catalog and makes it visible to agent_list", async () => {

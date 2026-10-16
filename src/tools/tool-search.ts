@@ -46,7 +46,8 @@ export interface ResolveRequest {
   /** User message text. Only used when audience === "main-chat". */
   message?: string;
   /** Optional per-template tool restriction. Intersected as final pass for
-   *  spawned-agent audience. Always-on helpers (issue_*, agent_whoami,
+   *  spawned-agent audience; an entry ending in `*` matches by prefix
+   *  (allowedToolMatcher). Always-on helpers (issue_*, agent_whoami,
    *  agent_team_list, agent_wakeup, task_* planning tools) are preserved
    *  regardless of the allow-list — see ALWAYS_ON_TOOLS. */
   templateAllowedTools?: string[];
@@ -139,11 +140,20 @@ export function resolveToolsForRequest(
   // carry no spawned-agent audience tag, so filtering the audience-gated
   // subset would drop them and the agent would get neither.
   if (req.audience === "spawned-agent" && req.templateAllowedTools && req.templateAllowedTools.length > 0) {
-    const allowed = new Set(req.templateAllowedTools);
-    result = all.filter(t => allowed.has(t.name) || ALWAYS_ON_TOOLS.has(t.name));
+    const allowed = allowedToolMatcher(req.templateAllowedTools);
+    result = all.filter(t => allowed(t.name) || ALWAYS_ON_TOOLS.has(t.name));
   }
 
   return result;
+}
+
+/** Does a tool name match an allow-list? An entry ending in `*` matches by
+ *  prefix, so one entry (`mcp_slack_*`) admits every tool of one MCP server
+ *  without naming tools that only exist once the server is connected. */
+export function allowedToolMatcher(allowed: readonly string[]): (name: string) => boolean {
+  const exact = new Set(allowed.filter((entry) => !entry.endsWith("*")));
+  const prefixes = allowed.filter((entry) => entry.endsWith("*")).map((entry) => entry.slice(0, -1));
+  return (name) => exact.has(name) || prefixes.some((prefix) => name.startsWith(prefix));
 }
 
 function resolveMainChat(req: ResolveRequest, all: ToolDefinition[]): ToolDefinition[] {

@@ -18,6 +18,7 @@
  *    what turns a generic agent into one that knows the project's specifics)
  *  - project brief (PROJECT.md for the agent's resolved project — NEW)
  *  - secret names (so the agent knows what credentials it can reference)
+ *  - connected integrations its tools can reach (the block the main chat gets)
  *
  * Every source is best-effort: a failure in any one degrades that section to
  * a default and never blocks the spawn.
@@ -46,6 +47,10 @@ export interface BriefingDeps {
   task: string;
   /** The agent's resolved project (from the roster), or null for ungrouped. */
   project?: { id: string; name: string } | null;
+  /** The connected integrations, listed only for the tools the agent holds. */
+  integrations?: { getAgentContext(opts: { reachableWith: ReadonlySet<string> }): string };
+  /** The names of the tools the agent was given. */
+  toolNames?: readonly string[];
 }
 
 function cap(text: string, max: number): string {
@@ -113,5 +118,17 @@ export async function buildBriefing(deps: BriefingDeps): Promise<string> {
 
   const secrets = secretsStore.list().map(s => s.name).join(", ") || "(none)";
 
-  return `\n\n--- BRIEFING ---\nUser: ${userBlock}\nFacts: ${factsBlock}${relevantBlock}\nSecrets: ${secrets}\n--- END ---\n${projectBlock}`;
+  // Connected integrations the agent's own tools can reach (Slack over
+  // http_request, mail over the email tools). A history-less agent has no
+  // other way to learn they exist.
+  let integrationsBlock = "";
+  if (deps.integrations && deps.toolNames) {
+    try {
+      integrationsBlock = deps.integrations.getAgentContext({ reachableWith: new Set(deps.toolNames) });
+    } catch (e) {
+      logger.warn(`integrations context failed: ${(e as Error).message}`);
+    }
+  }
+
+  return `\n\n--- BRIEFING ---\nUser: ${userBlock}\nFacts: ${factsBlock}${relevantBlock}\nSecrets: ${secrets}\n--- END ---\n${projectBlock}${integrationsBlock}`;
 }

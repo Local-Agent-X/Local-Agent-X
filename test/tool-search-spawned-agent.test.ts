@@ -51,6 +51,18 @@ describe("resolveToolsForRequest — spawned-agent provisioning", () => {
     expect(got.has("web_fetch")).toBe(true);     // template + audience-tagged
   });
 
+  // An MCP server's tools exist only once it connects, under names a template
+  // cannot know in advance; `mcp_<server>_*` admits all of them, and nothing of
+  // another server's.
+  it("an allow-list entry ending in `*` admits every tool with that prefix", () => {
+    const withMcp = [...ALL, tool("mcp_slack_send", ["spawned-agent"]), tool("mcp_slack_list_channels"), tool("mcp_github_issues")];
+    const got = names(resolveToolsForRequest({ audience: "spawned-agent", templateAllowedTools: ["read", "mcp_slack_*"] }, withMcp));
+    expect(got.has("mcp_slack_send")).toBe(true);
+    expect(got.has("mcp_slack_list_channels")).toBe(true);
+    expect(got.has("mcp_github_issues")).toBe(false);
+    expect(got.has("web_fetch")).toBe(false);
+  });
+
   it("still caps the surface: audience-tagged tools outside the template don't leak in", () => {
     const got = names(
       resolveToolsForRequest(

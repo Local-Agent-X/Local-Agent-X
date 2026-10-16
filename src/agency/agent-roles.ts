@@ -55,6 +55,7 @@ const BUILT_IN_ROLES: Record<string, AgentRole> = {
     suggestedTools: [
       "web_search",
       "browser",
+      "http_request",
       "write",
       "read",
     ],
@@ -69,7 +70,7 @@ const BUILT_IN_ROLES: Record<string, AgentRole> = {
     name: "monitor",
     description: "Watch for changes, check status, alert on issues",
     systemPrompt: MONITOR_PROMPT,
-    suggestedTools: ["bash", "web_search", "browser", "read"],
+    suggestedTools: ["bash", "web_search", "browser", "read", "telegram_send"],
   },
   designer: {
     name: "designer",
@@ -89,6 +90,8 @@ const BUILT_IN_ROLES: Record<string, AgentRole> = {
     systemPrompt: COMMUNICATOR_PROMPT,
     suggestedTools: [
       "email_send",
+      "http_request",
+      "telegram_send",
       "write",
       "read",
       "web_search",

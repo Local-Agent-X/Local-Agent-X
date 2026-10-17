@@ -14,12 +14,14 @@ import type { AppBuildRuntimeDescriptor, Op } from "../ops/types.js";
 import { clearSessionWorkRoot, sessionWorkRootOf } from "../workspace/paths.js";
 import { ORCHESTRATOR_STATE_FILENAME } from "../auto-build/orchestrator/state.js";
 import {
+  builderToolsForTier,
   guardAppBuildDispatcher,
   ProductBuildOwnershipChangedError,
   registerAppBuildRuntime,
   restorePersistedAppBuildRuntimes,
 } from "./build-app-runtime.js";
 import { resetDesignDeliveries } from "./app-tools/design-gate.js";
+import { UNNAMED_DELETE_USE_TRASH_TEXT } from "../tool-execution/unnamed-delete-gate.js";
 import { setAriRequired } from "../ari-kernel/state.js";
 
 // A temp app dir, NOT resolve("workspace", …): the repo-root `workspace` is a
@@ -292,6 +294,19 @@ describe("restorePersistedAppBuildRuntimes", () => {
     } finally {
       rmSync(appDir, { recursive: true, force: true });
     }
+  });
+});
+
+// Live 2026-10-16: a builder's `rm` of the scaffold's starter files was refused
+// with "Delete them with delete_file instead", a tool the builder did not have,
+// so it reported "deleting files is blocked" and left them behind. A refusal
+// must name a route the refused agent can take.
+describe("the builder has the tool the shell-delete refusal names", () => {
+  it.each(["quick-html", "full-stack", "frontend-spa", "compiled-native"] as const)("%s", (tier) => {
+    const named = [...UNNAMED_DELETE_USE_TRASH_TEXT.matchAll(/\b(delete_file)\b/g)].map((m) => m[1]);
+    expect(named.length).toBeGreaterThan(0);
+    const tools = builderToolsForTier(tier).map((t) => t.name);
+    for (const name of named) expect(tools).toContain(name);
   });
 });
 

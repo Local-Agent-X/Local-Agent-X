@@ -1,6 +1,7 @@
 /**
  * The durable "nobody ever opened this app" note that a PASSING app_build turn
- * emits when the smoke gate could not launch a browser.
+ * emits when the smoke gate could not launch a browser, and (composeVerifiedNote
+ * below) the receipt it emits when the gate did open the app and it passed.
  *
  * Why it is not just a stream chunk: a `[verify] smoke gate skipped` chunk dies
  * with the live bubble, so the user would never learn — after the fact — that
@@ -84,6 +85,59 @@ export function emitUnverifiedNote(
       messageId: `am-${input.opId}-${input.turnIdx}-unverified`,
       role: "assistant",
       content: { text: composeUnverifiedNote(note) },
+    },
+  });
+}
+
+/** Leader of the passing counterpart. */
+export const SMOKE_VERIFIED_MARKER = "VERIFIED —";
+
+export interface VerifiedNoteInput {
+  builderText: string;
+  url?: string;
+  /** The smoke also clicked the page's primary action and the page survived. */
+  interacted: boolean;
+  /** What the vision check said: matched the brief, or could not run. */
+  judge: "passed" | "unavailable" | "not-run";
+}
+
+/**
+ * The receipt for a build the harness DID open. A passing smoke used to leave
+ * only a `[verify] smoke passed` stream chunk, which dies with the live bubble,
+ * so the inbox, op_wait, op_status and the phone card all showed the builder's
+ * own report instead, and the builder does not open a browser: live 2026-10-16
+ * the user read "I still haven't opened the app in a browser" for a water
+ * tracker the smoke gate had loaded, clicked and screenshotted. Same channel,
+ * URL placement and quoting as the unverified note, for the same reasons.
+ */
+export function composeVerifiedNote(note: VerifiedNoteInput): string {
+  const builderText = note.builderText.trim();
+  const appUrl = builderText.match(/APP_READY:\s*(\S+)/)?.[1] ?? note.url;
+  const quoted = builderText.length > BUILDER_TEXT_CHARS
+    ? builderText.slice(0, BUILDER_TEXT_CHARS).trimEnd() + "…"
+    : builderText;
+  const look = note.judge === "passed"
+    ? " A vision check compared the screenshot with the request and it matched."
+    : note.judge === "unavailable" ? " The vision check on its looks could not run (no vision-capable model)." : "";
+  return [
+    `${SMOKE_VERIFIED_MARKER} After the build, Local Agent X opened this app in a headless browser: the page loaded ` +
+      `with no uncaught errors${note.interacted ? " and its main action worked" : ""}.${look}`,
+    ...(appUrl ? [`APP_READY: ${appUrl}`] : []),
+    ...(quoted ? ["", "The build's own final report (written before that check ran):", "", quoted] : []),
+  ].join("\n");
+}
+
+export function emitVerifiedNote(
+  input: TurnInput,
+  report: (r: AdapterReport) => void,
+  note: VerifiedNoteInput,
+): void {
+  report({
+    kind: "message_finalized",
+    message: {
+      messageId: `am-${input.opId}-${input.turnIdx}-verified`,
+      role: "assistant",
+      content: { text: composeVerifiedNote(note) },
     },
   });
 }

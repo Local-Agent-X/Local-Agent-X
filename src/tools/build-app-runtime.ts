@@ -21,7 +21,7 @@ import { loadFileAccessModeAtLeast } from "../security/layer/index.js";
 import type { AppBuildRuntimeDescriptor, Op } from "../ops/types.js";
 import { listOps } from "../ops/op-store.js";
 import { clearSessionWorkRoot, setSessionWorkRoot } from "../workspace/paths.js";
-import { readTool, writeTool, editTool } from "./file-tools.js";
+import { readTool, writeTool, editTool, deleteFileTool } from "./file-tools.js";
 import { bashTool } from "./shell-tools.js";
 import { globTool } from "./glob-tool.js";
 import { connectorCreateTool } from "./connector-tools.js";
@@ -32,10 +32,14 @@ import { checkProductBuildOwnership } from "./build-app-collision.js";
 import { OP_TYPE } from "../ops/op-types.js";
 import { markDesignDelivered } from "./app-tools/design-gate.js";
 
-const BASE_TOOLS = [writeTool, readTool, editTool, bashTool, globTool, connectorCreateTool];
+// delete_file: a shell rm of files the user didn't name is refused with "use
+// delete_file instead" (unnamed-delete-gate.ts); without it a builder could not
+// clear the scaffold's starter files at all (live 2026-10-16). Trash + Undo.
+const BASE_TOOLS = [writeTool, readTool, editTool, deleteFileTool, bashTool, globTool, connectorCreateTool];
 const MUTATING_APP_BUILD_TOOLS = new Set([
   writeTool.name,
   editTool.name,
+  deleteFileTool.name,
   bashTool.name,
   connectorCreateTool.name,
   processStartTool.name,

@@ -62,7 +62,7 @@ import type { AppTier } from "../../tools/app-tier.js";
 import { detectFramework } from "../../tools/framework-detect.js";
 import { getDesignSpec } from "../turn-loop/design-verify.js";
 import { finalizeFrameworkBuild, type FinalizeFrameworkDeps } from "./app-build-finalize.js";
-import { emitUnverifiedNote } from "./app-build-unverified-note.js";
+import { emitUnverifiedNote, emitVerifiedNote } from "./app-build-unverified-note.js";
 import { extractText } from "../turn-loop/content-extract.js";
 import {
   runAppSmokeGate,
@@ -316,10 +316,12 @@ export class AppBuildVerifyAdapter implements Adapter {
     // like what was ASKED? Deterministic checks can't see wrong-but-quiet
     // rendering (the black-screen maze that throws nothing).
     const judgeShots = shots.filter((p): p is string => typeof p === "string");
+    let judged: "passed" | "unavailable" | "not-run" = "not-run";
     if (this.brief && judgeShots.length > 0) {
       const judgeBrief = smoke.judgeNotes ? `${this.brief}\n\n(${smoke.judgeNotes})` : this.brief;
       const verdict = await this.judge(judgeShots, judgeBrief, getDesignSpec(input.opId));
       if (verdict === null) {
+        judged = "unavailable";
         report({ kind: "stream_chunk", body: { delta: `[verify] vision judge unavailable (no vision-capable credential) — skipped\n` } });
       } else if (!verdict.ok) {
         // A taste verdict, NOT a broken build. Everything deterministic already
@@ -346,9 +348,12 @@ export class AppBuildVerifyAdapter implements Adapter {
         report({ kind: "stream_chunk", body: { delta: `[verify] vision judge was not satisfied — delivered anyway, design noted\n` } });
         return result;
       } else {
+        judged = "passed";
         report({ kind: "stream_chunk", body: { delta: `[verify] vision judge passed — render matches the brief\n` } });
       }
     }
+    // The durable receipt: the chunks above die with the live bubble.
+    emitVerifiedNote(input, report, { builderText, url, interacted: Boolean(smoke.interactionScreenshotPath), judge: judged });
     return result;
   }
 

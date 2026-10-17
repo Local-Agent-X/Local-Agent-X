@@ -19,7 +19,6 @@ import {
   ProjectStore,
 } from "../agent-store/index.js";
 import { ProjectRosterStore } from "../project-rosters.js";
-import { EventBus } from "../event-bus.js";
 import { inboxAgentEscalation } from "../inbox/producers.js";
 import { createLogger } from "../logger.js";
 
@@ -117,20 +116,9 @@ export async function performEscalation(
   }
 
   if (resolved === "user") {
-    // The inbox is what the user actually sees. The event below is forwarded
-    // as an `agent-escalation` WS frame (server/handler-events.ts) that no
-    // client renders, so on its own it reached nobody. A chat-origin
-    // escalation (no caller agent) is the chat itself talking to the user,
-    // who is already reading it.
+    // The inbox is what the user sees. A chat-origin escalation (no caller
+    // agent) is the chat itself talking to the user, who is already reading it.
     if (callerAgentId) inboxAgentEscalation({ fromAgentId: callerAgentId, fromName: callerName, context, urgency, issueId });
-    await EventBus.emit("handler:agent-escalation", {
-      from: callerAgentId || "user",
-      fromName: callerName,
-      to: "user",
-      context,
-      urgency,
-      issueId,
-    });
     return {
       ok: true,
       message: `Escalated to user (${urgency}): ${summary}`,
@@ -139,9 +127,9 @@ export async function performEscalation(
     };
   }
 
-  // Agent target. urgency:'high' wakes via canonical invoke; 'normal'
-  // emits a low-priority event so the target picks it up on next
-  // heartbeat.
+  // Agent target. urgency:'high' wakes via canonical invoke; 'normal' leaves
+  // the comment above on the anchor issue, which the target reads on its
+  // next wake.
   if (urgency === "high") {
     try {
       await wakeTarget(resolved.templateId, callerName, context, resolved.projectId, issueId, callerRunId);
@@ -160,15 +148,6 @@ export async function performEscalation(
     };
   }
 
-  await EventBus.emit("handler:agent-escalation", {
-    from: callerAgentId || "user",
-    fromName: callerName,
-    to: resolved.templateId,
-    toName: resolved.templateName,
-    context,
-    urgency,
-    issueId,
-  });
   return {
     ok: true,
     message: `Escalated to ${resolved.templateName} (normal — record only): ${summary}`,

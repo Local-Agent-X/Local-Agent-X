@@ -6,8 +6,9 @@
 // The message router itself is registered separately by the caller.
 
 import type { WebSocket } from "ws";
-import { clients } from "./state.js";
+import { browserClients, clients } from "./state.js";
 import { listActiveChatIds } from "./broadcast.js";
+import { sendFrame } from "./frames.js";
 import { reconcileAllPendingProcessRelays } from "../canonical-loop/public/process-relay.js";
 
 const WS_MAX_AGE_MS = 24 * 60 * 60 * 1000;
@@ -17,9 +18,12 @@ export interface ConnectionContext {
   subscriptions: Set<string>;
 }
 
-export function setupConnection(ws: WebSocket): ConnectionContext {
+/** `browser`: the upgrade came from a page (an Origin header) rather than a
+ *  loopback bridge; see browserClients. */
+export function setupConnection(ws: WebSocket, opts: { browser: boolean } = { browser: true }): ConnectionContext {
   const subscriptions = new Set<string>();
   clients.set(ws, subscriptions);
+  if (opts.browser) browserClients.add(ws);
   setImmediate(() => reconcileAllPendingProcessRelays());
 
   // Auto-close after 24h to force re-authentication.
@@ -59,10 +63,7 @@ export function setupConnection(ws: WebSocket): ConnectionContext {
   // map, leaking headless (eval_/skill-review-/dream-) and cron- ids to
   // every fresh connection, and the browser mints a sidebar row for every
   // id it receives here (setActiveSidebarSet → ensure()).
-  ws.send(JSON.stringify({
-    type: "active_chats",
-    sessionIds: listActiveChatIds(),
-  }));
+  sendFrame(ws, { type: "active_chats", sessionIds: listActiveChatIds() });
 
   // Replay bg_op_started for currently-running autopilot ops so a
   // fresh page load (or post-restart reconnect) sees the AGENTS card
@@ -74,7 +75,7 @@ export function setupConnection(ws: WebSocket): ConnectionContext {
     try {
       const { listActiveAutopilotOps } = await import("../autopilot/loop.js");
       for (const op of listActiveAutopilotOps()) {
-        ws.send(JSON.stringify({
+        sendFrame(ws, {
           type: "event",
           sessionId: "autopilot",  // chat.js requires truthy sessionId
           event: {
@@ -83,7 +84,7 @@ export function setupConnection(ws: WebSocket): ConnectionContext {
             task: op.autopilot?.topic || "Autopilot",
             provider: "autopilot",
           },
-        }));
+        });
       }
     } catch { /* autopilot module not loadable — skip silently */ }
   })();

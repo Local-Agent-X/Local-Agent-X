@@ -65,7 +65,26 @@ function handleSettingsChanged(msg) {
   if (msg.settings.sandbox && typeof loadSandboxMode === 'function') {
     loadSandboxMode();
   }
+  // The rest of the Tool Policy card (supervised browser, secrecy ladder,
+  // strict local-only, UI event bus, deliverable verification, the regression
+  // audit target): re-read the card, which draws every one of them.
+  if (TOOL_POLICY_CARD_FIELDS.some(k => k in msg.settings) && typeof loadToolPolicyToggles === 'function') {
+    loadToolPolicyToggles();
+  }
+  // The thinking-effort chip on the status bar mirrors settings.reasoningEffort.
+  if ('reasoningEffort' in msg.settings) {
+    try { const s = JSON.parse(localStorage.getItem('lax_settings') || '{}'); s.reasoningEffort = msg.settings.reasoningEffort; localStorage.setItem('lax_settings', JSON.stringify(s)); } catch {}
+    if (typeof updateStatusBar === 'function') updateStatusBar(true);
+  }
+  // Catalog sections another tab or the agent changed: re-read the list.
+  if (msg.settings.plugins && typeof loadPluginBundles === 'function') loadPluginBundles();
+  if (msg.settings.secrets && typeof loadSecrets === 'function') loadSecrets();
+  if (msg.settings.mcpServers && typeof loadMcpServers === 'function') loadMcpServers();
 }
+
+// Settings the Tool Policy card draws besides the three kill-switches above;
+// src/chat-ws/frames.test.ts holds this list against the keys the server sends.
+const TOOL_POLICY_CARD_FIELDS = ['supervisedBrowser', 'browserSecrecy', 'localOnlyMode', 'enableUiEventBus', 'verifyDeliverables', 'regressionAuditProvider', 'regressionAuditModel', 'preferGrokForMedia'];
 
 function handleSidebarPinsChanged(msg) {
   try {

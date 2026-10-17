@@ -144,6 +144,30 @@ function showUserNoticeBanner(noticeId, text) {
   } catch (e) { console.warn('[user_notice] banner failed', e); }
 }
 
+// Transient toast for a server reply that refused a control this tab sent. One
+// element, replaced on each message, gone after a few seconds — not the
+// remembered-dismissal notice banner, which is for one-shot information.
+function showControlErrorToast(text) {
+  try {
+    var id = 'control-error-toast';
+    var el = document.getElementById(id);
+    if (!el) {
+      el = document.createElement('div');
+      el.id = id;
+      el.setAttribute('role', 'alert');
+      el.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:9998;'
+        + 'background:var(--surface-2,#131325);border:1px solid var(--danger,#b14444);color:var(--text,#c8d0e0);'
+        + 'padding:10px 16px;border-radius:6px;font-family:var(--font);font-size:.82rem;max-width:min(560px,90vw);'
+        + 'transition:opacity .3s';
+      document.body.appendChild(el);
+    }
+    el.textContent = String(text).slice(0, 300); // textContent, not innerHTML — never parse server text as markup
+    el.style.opacity = '1';
+    clearTimeout(window._controlErrorToastT);
+    window._controlErrorToastT = setTimeout(function () { el.style.opacity = '0'; }, 4500);
+  } catch (e) { console.warn('[ws error]', text, e); }
+}
+
 function dispatchChatWsNonEvent(msg) {
   // Runtime canary verdicts (e.g. the memory-write self-test): show a
   // dismissible failure banner; auto-clear it when the subsystem recovers.
@@ -161,6 +185,10 @@ function dispatchChatWsNonEvent(msg) {
   if (msg.type === 'user_notice' && msg.text) showUserNoticeBanner(msg.noticeId, msg.text);
 
   if (msg.type === 'settings_changed' && msg.settings) handleSettingsChanged(msg);
+  // The server could not act on a control this tab sent (an agent control for
+  // a run that already ended, a redirect that failed, an unknown approval).
+  // It used to be dropped on the floor: the click looked like it worked.
+  if (msg.type === 'error' && msg.message) showControlErrorToast(msg.message);
   // The user inbox (notifications.js): a new or changed item, or another tab
   // answered one.
   if ((msg.type === 'inbox_item' || msg.type === 'inbox_changed') && typeof handleInboxFrame === 'function') handleInboxFrame(msg);

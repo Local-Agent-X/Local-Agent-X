@@ -47,17 +47,6 @@ function ideAttachWsListener() {
           ideSetStatus('working', thinkingPhrase() + '…');
           break;
         }
-        case 'agent_spawn':
-          if (ev.agent) {
-            _ideTrackedAgents[ev.agent.id] = ev.agent;
-            ideAddAgentCard(ev.agent);
-            ideStartAgentPolling();
-            ideSetStatus('working', 'Agent: ' + (ev.agent.name || ev.agent.role || 'working') + '...');
-          }
-          break;
-        case 'agent_status':
-          if (ev.agentId) ideUpdateAgentCard(ev.agentId, ev);
-          break;
         case 'done':
           _ideStreaming = false;
           _ideContent = '';

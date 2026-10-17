@@ -3,6 +3,7 @@ import { looksLikeClarificationRequest } from "../agents/result-guard.js";
 import type { AgentRun, AgentRunStore } from "../agent-store/index.js";
 import type { SessionStore } from "../memory/index.js";
 import type { EventBus } from "../event-bus.js";
+import type { GlobalFrame } from "../chat-ws/frames.js";
 import { inboxJobResult } from "../inbox/producers.js";
 import { resultUrlOfOp } from "../canonical-loop/public/op-facts.js";
 import { readOp } from "../ops/op-store.js";
@@ -20,7 +21,7 @@ export interface AgentSpawnEvent { agentId: string; name: string; role: string; 
 // status)" — never as a failure. agentCompleteChatRow + the AgentRun status
 // mapping below and the client (public/js/chat-ws-handler-misc.js) all pivot
 // on `success === false` only.
-export interface AgentResultEvent { agentId: string; result: string; success?: boolean; tokens?: number; name?: string; opId?: string }
+export interface AgentResultEvent { agentId: string; result: string; success?: boolean; error?: string; tokens?: number; name?: string; opId?: string }
 
 /**
  * The ONE chat-row format for a finished agent — the exact bytes persisted
@@ -97,7 +98,7 @@ export function registerAgentLifecycleEvents(deps: {
   pendingMeta: Map<string, PendingAgentMeta>;
   sessionStore: Pick<SessionStore, "load" | "save">;
   agentRunStore: Pick<AgentRunStore, "save">;
-  broadcastAll: (event: Record<string, unknown>) => void;
+  broadcastAll: (frame: GlobalFrame) => void;
 }): void {
   const { eventBus, pendingMeta, sessionStore, agentRunStore, broadcastAll } = deps;
 
@@ -107,8 +108,10 @@ export function registerAgentLifecycleEvents(deps: {
     const parentAgentId = evt.parentAgentId || null;
     const parentSessionId = evt.parentSessionId || "";
     // parentSessionId + parentAgentId are stated explicitly (not left to the
-    // spread) so the client can rely on both keys being present.
-    broadcastAll({ type: "agent-spawn", ...evt, name: displayName, displayName, rawName: evt.name, parentSessionId, parentAgentId });
+    // spread) so the client can rely on both keys being present. The system
+    // prompt stays server-side: no card renders it, and it went to every tab.
+    const { systemPrompt: _prompt, ...spawn } = evt;
+    broadcastAll({ type: "agent-spawn", ...spawn, name: displayName, displayName, rawName: evt.name, parentSessionId, parentAgentId });
     pendingMeta.set(evt.agentId, { name: displayName, role: evt.role, task: evt.task, systemPrompt: evt.systemPrompt || "", parentAgentId, sessionId: parentSessionId, startedAt: Date.now(), toolsUsed: [], templateId: evt.templateId || null });
   });
 

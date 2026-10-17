@@ -68,7 +68,7 @@ export function setupChatWebSocket(server: Server, authToken: string, maxPayload
       ws.close(WS_UNAUTHORIZED, auth.reason || "Unauthorized");
       return;
     }
-    const { subscriptions } = setupConnection(ws);
+    const { subscriptions } = setupConnection(ws, { browser: !!req.headers.origin });
     // The operator/loopback connection gets no live-screen session — the screen
     // path runs over the broker transport, not this socket.
     attachMessageRouter({ ws, subscriptions, screen: null });

@@ -5,6 +5,7 @@
  */
 
 import type { ToolDefinition } from "../../types.js";
+import type { SidebarPin } from "../../chat-ws/frames.js";
 import { existsSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { ok, err } from "./shared.js";
@@ -94,7 +95,7 @@ export const sidebarPin: ToolDefinition = {
     // (the mobile's icon source, which reads loadSettings()) sees the new pin
     // without a restart — no trailing reloadSettings() needed.
     const settings = reloadSettings();
-    const pins = (settings.sidebarPins || []) as Array<{ name: string; icon: string; url: string }>;
+    const pins = (settings.sidebarPins || []) as SidebarPin[];
 
     if (pins.length >= 10 && !pins.some(p => p.name === name)) {
       return err("Maximum 10 pinned apps. Unpin one first.");
@@ -131,7 +132,7 @@ export const sidebarUnpin: ToolDefinition = {
     if (!name) return err("name is required");
 
     const settings = reloadSettings();
-    const currentPins = (settings.sidebarPins || []) as Array<{ name: string }>;
+    const currentPins = (settings.sidebarPins || []) as SidebarPin[];
 
     if (name.toLowerCase() === "all") {
       if (currentPins.length === 0) return ok("Sidebar is already empty.");

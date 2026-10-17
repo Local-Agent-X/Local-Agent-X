@@ -68,7 +68,7 @@ describe("event-bus → store → signal (integration)", () => {
 
   it("bus payloads that violate the schema are rejected by the store, not buffered", async () => {
     _rewireUiEventBusForTest();
-    await EventBus.emit("ui:browser", "just a string");
+    await EventBus.emit("ui:browser", "just a string" as unknown as Record<string, unknown>);
     await EventBus.emit("ui:browser", { action: "navigate", ts: t(100), sessionId: "int-2" }); // no surface
     expect(uiSignal.triage!({ input: inputFor("int-2"), msgCount: 1 })).toBeNull();
   });

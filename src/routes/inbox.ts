@@ -40,7 +40,7 @@ const REFUSED_TEXT = {
 
 function broadcastChanged(ctx: ServerContext, action: Mutation, id?: string): InboxFrame {
   const frame: InboxFrame = { type: "inbox_changed", action, ...(id ? { id } : {}), ...inboxStore().counts() };
-  ctx.broadcastAll(frame as unknown as Record<string, unknown>);
+  ctx.broadcastAll(frame);
   return frame;
 }
 

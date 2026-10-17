@@ -84,6 +84,7 @@ describe("awaitAgentRunning", () => {
     await new Promise((r) => setTimeout(r, 5));
     await EventBus.emit("handler:agent-result", {
       agentId: runId,
+      result: "agent run failed during init",
       success: false,
       error: "agent run failed during init",
     });
@@ -141,6 +142,7 @@ describe("awaitAgentRunning", () => {
     // Fire failure for the WRONG agentId — must not resolve our promise.
     await EventBus.emit("handler:agent-result", {
       agentId: otherRunId,
+      result: "different agent crashed",
       success: false,
       error: "different agent crashed",
     });
@@ -158,6 +160,7 @@ describe("awaitAgentRunning", () => {
     await new Promise((r) => setTimeout(r, 5));
     await EventBus.emit("handler:agent-result", {
       agentId: runId,
+      result: "done",
       success: true,
     });
 

@@ -1,33 +1,53 @@
 // ── Event Bus ── Pub/sub system for decoupling components
+//
+// Every topic the bus carries is declared in EventTopics with its payload, so
+// an emit and its listeners agree on the shape at compile time, and a topic
+// exists only while something fires it AND something hears it:
+// event-bus-topics.test.ts scans src for both. An emit nobody hears is a
+// feature that silently does nothing (the agency's pause/resume/cancel and
+// `handler:agent-user-input` were); a listener nobody fires is dead code.
 
 import { createLogger } from "./logger.js";
+import type { AgentResultEvent, AgentSpawnEvent } from "./server/handler-events-agent-result.js";
 
 const log = createLogger("event-bus");
 
-type EventName =
-  | "tool:start"
-  | "tool:end"
-  | "chat:message"
-  | "chat:response"
-  | "session:create"
-  | "session:delete"
-  | "error"
-  | "voice:start"
-  | "voice:end"
-  | "mission:start"
-  | "mission:step"
-  | "mission:complete"
-  | `${string}:${string}`;
+export interface EventTopics {
+  /** A delegated agent run started (agents/invoke.ts). */
+  "handler:agent-spawn": AgentSpawnEvent;
+  /** A delegated agent run finished (agents/invoke.ts). */
+  "handler:agent-result": AgentResultEvent;
+  /** A line of a delegated run's progress (server/handler-events.ts). */
+  "handler:agent-output": { agentId: string; output: string };
+  /** The user redirected a delegated run (agency/handler.ts). */
+  "handler:agent-redirect": { agentId: string; newInstruction: string };
+  /** A UI event from the agent's browser (browser/bridge-perception.ts). */
+  "ui:browser": Record<string, unknown>;
+}
 
-type EventHandler = (data: unknown) => void | Promise<void>;
+export type EventName = keyof EventTopics;
+/** `"ui:*"` — every topic with that prefix; the payload is whichever fired. */
+export type EventPattern = `${string}:*`;
+
+/** Every topic, for event-bus-topics.test.ts; the compiler checks it matches
+ *  EventTopics in both directions. */
+export const EVENT_TOPICS = [
+  "handler:agent-spawn", "handler:agent-result", "handler:agent-output", "handler:agent-redirect", "ui:browser",
+] as const satisfies readonly EventName[];
+type MissingTopic = Exclude<EventName, (typeof EVENT_TOPICS)[number]>;
+const _everyTopicListed: MissingTopic extends never ? true : never = true;
+void _everyTopicListed;
+
+type EventHandler<T = unknown> = (data: T) => void | Promise<void>;
 
 const MAX_LISTENERS_PER_EVENT = 100;
 
 class EventBusImpl {
   private handlers = new Map<string, Set<EventHandler>>();
-  private onceHandlers = new WeakSet<EventHandler>();
 
-  on(event: EventName, handler: EventHandler): void {
+  on<K extends EventName>(event: K, handler: EventHandler<EventTopics[K]>): void;
+  on(event: EventPattern, handler: EventHandler): void;
+  on(event: string, handler: EventHandler<never>): void {
     const existing = this.handlers.get(event);
     if (existing && existing.size >= MAX_LISTENERS_PER_EVENT) {
       throw new Error(
@@ -36,29 +56,30 @@ class EventBusImpl {
       );
     }
     if (!existing) {
-      this.handlers.set(event, new Set([handler]));
+      this.handlers.set(event, new Set([handler as EventHandler]));
     } else {
-      existing.add(handler);
+      existing.add(handler as EventHandler);
     }
   }
 
-  off(event: EventName, handler: EventHandler): void {
+  off<K extends EventName>(event: K, handler: EventHandler<EventTopics[K]>): void;
+  off(event: EventPattern, handler: EventHandler): void;
+  off(event: string, handler: EventHandler<never>): void {
     const set = this.handlers.get(event);
     if (!set) return;
-    set.delete(handler);
+    set.delete(handler as EventHandler);
     if (set.size === 0) this.handlers.delete(event);
   }
 
-  once(event: EventName, handler: EventHandler): void {
-    const wrapped: EventHandler = (data) => {
+  once<K extends EventName>(event: K, handler: EventHandler<EventTopics[K]>): void {
+    const wrapped: EventHandler<EventTopics[K]> = (data) => {
       this.off(event, wrapped);
       return handler(data);
     };
-    this.onceHandlers.add(wrapped);
     this.on(event, wrapped);
   }
 
-  async emit(event: EventName, data?: unknown): Promise<void> {
+  async emit<K extends EventName>(event: K, data: EventTopics[K]): Promise<void> {
     const tasks: Promise<void>[] = [];
 
     // Listener isolation: a throwing/rejecting handler must never abort
@@ -98,11 +119,11 @@ class EventBusImpl {
     }
   }
 
-  listenerCount(event: EventName): number {
+  listenerCount(event: EventName | EventPattern): number {
     return this.handlers.get(event)?.size ?? 0;
   }
 
-  removeAllListeners(event?: EventName): void {
+  removeAllListeners(event?: EventName | EventPattern): void {
     if (event) {
       this.handlers.delete(event);
     } else {
@@ -122,27 +143,31 @@ export class EventBus {
     return instance;
   }
 
-  static on(event: EventName, handler: EventHandler): void {
-    EventBus.getInstance().on(event, handler);
+  static on<K extends EventName>(event: K, handler: EventHandler<EventTopics[K]>): void;
+  static on(event: EventPattern, handler: EventHandler): void;
+  static on(event: EventName | EventPattern, handler: EventHandler<never>): void {
+    EventBus.getInstance().on(event as EventPattern, handler as EventHandler);
   }
 
-  static off(event: EventName, handler: EventHandler): void {
-    EventBus.getInstance().off(event, handler);
+  static off<K extends EventName>(event: K, handler: EventHandler<EventTopics[K]>): void;
+  static off(event: EventPattern, handler: EventHandler): void;
+  static off(event: EventName | EventPattern, handler: EventHandler<never>): void {
+    EventBus.getInstance().off(event as EventPattern, handler as EventHandler);
   }
 
-  static once(event: EventName, handler: EventHandler): void {
+  static once<K extends EventName>(event: K, handler: EventHandler<EventTopics[K]>): void {
     EventBus.getInstance().once(event, handler);
   }
 
-  static async emit(event: EventName, data?: unknown): Promise<void> {
+  static async emit<K extends EventName>(event: K, data: EventTopics[K]): Promise<void> {
     await EventBus.getInstance().emit(event, data);
   }
 
-  static listenerCount(event: EventName): number {
+  static listenerCount(event: EventName | EventPattern): number {
     return EventBus.getInstance().listenerCount(event);
   }
 
-  static removeAllListeners(event?: EventName): void {
+  static removeAllListeners(event?: EventName | EventPattern): void {
     EventBus.getInstance().removeAllListeners(event);
   }
 
@@ -151,4 +176,4 @@ export class EventBus {
   }
 }
 
-export type { EventName, EventHandler };
+export type { EventHandler };

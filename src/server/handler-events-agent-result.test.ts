@@ -11,6 +11,7 @@ import { registerAgentLifecycleEvents, isOrchestratorChild, agentCompleteChatRow
 import { registerHandlerEvents } from "./handler-events.js";
 import { inboxStore } from "../inbox/index.js";
 import { writeOp } from "../ops/op-store.js";
+import type { GlobalFrame } from "../chat-ws/frames.js";
 
 // Regression (2026-08-30 overnight auto-build): every chunk / retry /
 // preflight worker report landed in the user's chat as an assistant
@@ -31,7 +32,7 @@ function harness() {
   const pendingMeta = new Map<string, PendingAgentMeta>();
   const sessionStore = { load: (id: string) => (id === CHAT ? session : null), save: (s: Session) => { saved.push(s); } };
   const agentRunStore = { save: (r: AgentRun) => { runs.push(r); } };
-  const broadcastAll = (e: Record<string, unknown>) => { broadcasts.push(e); };
+  const broadcastAll = (e: GlobalFrame) => { broadcasts.push(e as unknown as Record<string, unknown>); };
   return { session, saved, runs, broadcasts, pendingMeta, sessionStore, agentRunStore, broadcastAll };
 }
 

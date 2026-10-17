@@ -38,7 +38,7 @@ export function listInbox(): { items: InboxItem[] } & InboxCounts {
 
 async function broadcast(frame: InboxFrame): Promise<void> {
   const { broadcastAll } = await import("../chat-ws/broadcast.js");
-  broadcastAll(frame as unknown as Record<string, unknown>);
+  broadcastAll(frame);
 }
 
 /**

@@ -27,6 +27,7 @@
 import type { WebSocket } from "ws";
 import { createLogger } from "../logger.js";
 import { APPROVAL_TIMEOUT_MS } from "../approval-manager.js";
+import { sendFrame, type GlobalFrame } from "./frames.js";
 
 const logger = createLogger("chat-ws");
 
@@ -69,8 +70,8 @@ export async function resolveDurableApproval(
   rememberForSession: boolean,
   opIdFromClient: unknown,
 ): Promise<void> {
-  const send = (payload: Record<string, unknown>) => {
-    try { ws.send(JSON.stringify(payload)); } catch { /* socket gone */ }
+  const send = (frame: GlobalFrame) => {
+    try { sendFrame(ws, frame); } catch { /* socket gone */ }
   };
   const unknown = () => send({ type: "error", message: `Unknown or expired approval: ${approvalId}` });
   const opId = typeof opIdFromClient === "string" && opIdFromClient ? opIdFromClient : null;

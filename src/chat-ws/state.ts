@@ -157,6 +157,12 @@ export const activeChats = new Map<string, ActiveChat>();
 // Connected clients — each client subscribes to sessionIds.
 export const clients = new Map<WebSocket, Set<string>>();
 
+// The clients that are browser tabs (the upgrade carried an Origin). The
+// broker's chat bridge dials this socket too, as the operator, and relays
+// chat frames to the phone; a frame only a tab renders (a user notice) is
+// delivered when a tab received it, so broadcastAll counts these.
+export const browserClients = new WeakSet<WebSocket>();
+
 // Message-count provider for the session_snapshot event. Wired from
 // src/server/index.ts where SessionStore is in scope; the chat-ws layer
 // doesn't import SessionStore directly to avoid a circular dependency.

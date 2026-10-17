@@ -6,7 +6,6 @@
 
 import type { ToolDefinition } from "../../types.js";
 import { AppRegistry } from "../../app-runtime/index.js";
-import { EventBus } from "../../event-bus.js";
 import { ok, err, APP_TOOL_ACTOR } from "./shared.js";
 
 const registry = AppRegistry.getInstance();
@@ -99,7 +98,6 @@ export const appAction: ToolDefinition = {
       registry.updateComponentValues(id, { [target]: value }, actor);
     }
 
-    EventBus.emit("app:action", { appId: id, action, target });
     return ok(`Action queued: ${action}${target ? ` on ${target}` : ""}${value !== undefined ? ` = ${JSON.stringify(value)}` : ""}`);
   },
 };

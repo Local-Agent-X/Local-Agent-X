@@ -12,7 +12,7 @@ import {
 } from "../agent-store/index.js";
 import { ProjectRosterStore } from "../project-rosters.js";
 import { Handler } from "../agency/handler.js";
-import { EventBus } from "../event-bus.js";
+import { inboxStore } from "../inbox/index.js";
 import {
   registerAgentRunDriver,
   _resetAgentRunDriverForTest,
@@ -32,12 +32,16 @@ let outsiderTpl: AgentTemplate;
 let createdIssues: Issue[] = [];
 
 const driverCalls: AgentRunDriverRequest[] = [];
-const escalationEvents: Array<Record<string, unknown>> = [];
-let escalationListener: ((d: unknown) => void) | null = null;
+
+// What an escalation to the user leaves behind: the inbox item the bell shows
+// (the store is shared across this file's tests, so only items created since
+// the test began count).
+let inboxSince = 0;
+const userEscalations = () => inboxStore().list().filter((i) => i.kind === "agent-message" && i.createdAt >= inboxSince);
 
 beforeEach(() => {
   driverCalls.length = 0;
-  escalationEvents.length = 0;
+  inboxSince = Date.now();
   ProjectRosterStore._resetForTest();
 
   const templates = AgentTemplateStore.getInstance();
@@ -81,9 +85,6 @@ beforeEach(() => {
   rosters.upsert(project.id, workerTpl.id, { reportsTo: managerTpl.id });
   rosters.upsert(altProject.id, outsiderTpl.id);
 
-  escalationListener = (d: unknown) => { escalationEvents.push(d as Record<string, unknown>); };
-  EventBus.on("handler:agent-escalation", escalationListener);
-
   registerAgentRunDriver(async (req) => {
     driverCalls.push(req);
     return { result: "stub-ok", success: true, tokens: 0 };
@@ -91,10 +92,6 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  if (escalationListener) {
-    EventBus.off("handler:agent-escalation", escalationListener);
-    escalationListener = null;
-  }
   _resetAgentRunDriverForTest();
 
   // Tear down disk fixtures.
@@ -184,9 +181,10 @@ describe("agent_escalate to:'manager'", () => {
     expect(result.isError).toBeFalsy();
     expect(result.content).toContain("user");
     expect(driverCalls).toHaveLength(0);
-    expect(escalationEvents).toHaveLength(1);
-    expect(escalationEvents[0].to).toBe("user");
-    expect(escalationEvents[0].urgency).toBe("high");
+    const items = userEscalations();
+    expect(items).toHaveLength(1);
+    expect(items[0].title).toMatch(/needs you now$/); // urgency high
+    expect(items[0].body).toBe("I need a budget approval");
   });
 
   it("rejects when caller is the human chat user (no roster)", async () => {
@@ -204,7 +202,7 @@ describe("agent_escalate to:'manager'", () => {
 // ── Resolution: to: "user" ───────────────────────────────────────────
 
 describe("agent_escalate to:'user'", () => {
-  it("emits handler:agent-escalation with wake hint when urgency is high", async () => {
+  it("puts a needs-you-now item in the user's inbox when urgency is high", async () => {
     const sessionId = attachCaller(workerTpl.id);
     const result = await agentEscalate.execute({
       to: "user",
@@ -213,10 +211,11 @@ describe("agent_escalate to:'user'", () => {
       _sessionId: sessionId,
     });
     expect(result.isError).toBeFalsy();
-    expect(escalationEvents).toHaveLength(1);
-    expect(escalationEvents[0].to).toBe("user");
-    expect(escalationEvents[0].urgency).toBe("high");
-    expect(escalationEvents[0].from).toBe(workerTpl.id);
+    const items = userEscalations();
+    expect(items).toHaveLength(1);
+    expect(items[0].title).toMatch(/needs you now$/);
+    expect(items[0].body).toBe("need API key for stripe to continue");
+    expect(items[0].link?.agentId).toBe(workerTpl.id);
   });
 });
 
@@ -252,9 +251,7 @@ describe("agent_escalate to:<agentId>", () => {
     });
     expect(result.isError).toBeFalsy();
     expect(driverCalls).toHaveLength(0);
-    expect(escalationEvents).toHaveLength(1);
-    expect(escalationEvents[0].urgency).toBe("normal");
-    expect(escalationEvents[0].to).toBe(managerTpl.id);
+    expect(userEscalations()).toHaveLength(0); // an agent-to-agent record, not the user's business
     const comments = IssueStore.getInstance().get(issue.id)!.comments;
     expect(comments[comments.length - 1].content).toMatch(/Escalated to .* \(normal\)/);
   });
@@ -273,7 +270,7 @@ describe("agent_escalate to:<agentId>", () => {
     expect(result.content).toMatch(/issueId/);
     expect(result.content).toMatch(/urgency 'high'/);
     expect(driverCalls).toHaveLength(0);
-    expect(escalationEvents).toHaveLength(0);
+    expect(userEscalations()).toHaveLength(0);
   });
 
   it("urgency:'high' invokes the target agent through the canonical path", async () => {

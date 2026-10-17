@@ -7,10 +7,11 @@
 // that broadcastActiveChats performs.
 
 import type { ServerEvent } from "../types.js";
+import type { GlobalFrame } from "./frames.js";
 import { hasChatHandlerPending } from "../ops/session-bridge.js";
 import { isHiddenFromChatLists } from "../memory/synthetic-sessions.js";
 import { notifySessionEventObservers } from "./session-event-observers.js";
-import { activeChats, clients } from "./state.js";
+import { activeChats, browserClients, clients } from "./state.js";
 
 // How long a terminated ActiveChat lingers before its buffer is swept.
 // Matches manager.onEvent's natural-`done` sweep (5 min) so a stopped chat
@@ -181,23 +182,23 @@ export function broadcastActiveChats(): void {
   }
 }
 
-/** Broadcast a message to ALL connected WebSocket clients (for agent
- *  events that don't target a specific session). Used by app-tools,
- *  autopilot, routes/apps, routes/settings/* via dynamic import.
- *  Returns the number of OPEN clients that received the payload so
- *  callers can surface "(no UI clients to notify)" hints — the
- *  setting tool uses this to tell users to refresh manually when
- *  they flip a UI-affecting toggle with no tabs open. */
-export function broadcastAll(data: Record<string, unknown>): number {
-  const payload = JSON.stringify(data);
-  let sent = 0;
+/** Broadcast a frame to ALL connected WebSocket clients (for agent events
+ *  that don't target a specific session). Used by app-tools, autopilot,
+ *  routes/apps, routes/settings/* via dynamic import. Returns the number of
+ *  OPEN browser tabs that received it — the bridge to the phone gets the
+ *  frame too but renders only chat — so callers can surface "(no UI clients
+ *  to notify)" hints and a one-shot notice is marked delivered only once a
+ *  tab that shows it had it. */
+export function broadcastAll(frame: GlobalFrame): number {
+  const payload = JSON.stringify(frame);
+  let tabs = 0;
   for (const [ws] of clients) {
     if (ws.readyState === 1 /* OPEN */) {
       ws.send(payload);
-      sent++;
+      if (browserClients.has(ws)) tabs++;
     }
   }
-  return sent;
+  return tabs;
 }
 
 export interface TerminateOptions {

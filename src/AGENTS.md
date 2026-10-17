@@ -32,7 +32,7 @@ directly are not subject to any of this.
 
 - A sealed module is entered only through its public entries (`src/module-seals.test.ts`, `src/canonical-loop/interface-seal.test.ts`). Export the symbol from the entry; don't widen the row. Any module with a short `AGENTS.md` inside it has its own invariants there.
 - Source files import source files with the `.js` suffix; never `dist/`; no `require()` (`check:no-require`; `createRequire` is the sanctioned exception).
-- Mutations to shared state broadcast `settings_changed` (see root).
+- Mutations to shared state broadcast `settings_changed` (see root). A top-level socket frame is a `GlobalFrame` (`chat-ws/frames.ts`) and a bus topic is a key of `EventTopics` (`event-bus.ts`); a new frame type or topic needs its consumer in the same change (`chat-ws/frames.test.ts`, `event-bus-topics.test.ts`).
 - External content goes through `sanitize.ts` wrappers before the model sees it.
 - A silent `catch {}` needs a comment saying why. The codebase has many without one; don't add more.
 

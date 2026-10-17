@@ -10,6 +10,7 @@ import { looksLikeUnsubstantiatedCompletion, looksLikeEmptyOrErrorOnly } from ".
 import { registerAgentRunDriver, type AgentRunDriver } from "../agents/runtime.js";
 import { Handler } from "../agency/handler.js";
 import { registerAgentLifecycleEvents, type PendingAgentMeta } from "./handler-events-agent-result.js";
+import type { GlobalFrame } from "../chat-ws/frames.js";
 import type { LAXConfig, Session, ToolDefinition } from "../types.js";
 import type { SessionStore, MemoryIndex } from "../memory/index.js";
 import type { SecretsStore } from "../secrets.js";
@@ -27,18 +28,6 @@ const logger = createLogger("server.handler-events");
 
 // AgentSpawnEvent / AgentResultEvent live in handler-events-agent-result.ts
 // with the listeners that consume them.
-interface AgentOutputEvent { agentId: string; output: string }
-interface AgentBlockedEvent { agentId: string; reason: string; role: string }
-interface AgentRedirectEvent { agentId: string; [key: string]: unknown }
-interface AgentEscalationEvent {
-  from: string;
-  fromName: string;
-  to: string;
-  toName?: string;
-  context: string;
-  urgency: "normal" | "high";
-  issueId?: string;
-}
 
 // Worker execution rules appended to every spawned agent's system prompt.
 // Exported (pure) so tests can assert the composed invariants. The final-
@@ -73,7 +62,7 @@ export function registerHandlerEvents(deps: {
   integrations: IntegrationRegistry;
   agentRunStore: AgentRunStore;
   agentTemplateStore: AgentTemplateStore;
-  broadcastAll: (event: Record<string, unknown>) => void;
+  broadcastAll: (frame: GlobalFrame) => void;
 }): void {
   const {
     config, dataDir, sessions, sessionStore, memoryIndex, secretsStore, security, toolPolicy,
@@ -209,9 +198,9 @@ export function registerHandlerEvents(deps: {
             const m = pendingMeta.get(agentId);
             if (m && !m.toolsUsed.includes(event.toolName)) m.toolsUsed.push(event.toolName);
             // Real-progress signal: bump the FieldAgent's tool-call counter so
-            // buildStatus reports live progress. output[] stays empty during a
-            // canonical run, so this is the only thing that actually moves.
-            try { Handler.getInstance().noteAgentActivity(agentId); } catch {}
+            // buildStatus reports live progress, and record the tool on its
+            // output log, which the cron status route reads as recentTools.
+            try { Handler.getInstance().noteAgentActivity(agentId, event.toolName); } catch {}
             if (event.requiresApproval) event.requiresApproval = false;
           }
           if (event.type === "tool_progress") {
@@ -305,25 +294,7 @@ export function registerHandlerEvents(deps: {
   // Spawn + result listeners (AgentRun persistence, parent-chat injection
   // for chat-initiated spawns only, agent-spawn/agent-complete broadcasts).
   registerAgentLifecycleEvents({ eventBus, pendingMeta, sessionStore, agentRunStore, broadcastAll });
-  eventBus.on("handler:agent-output", (d: unknown) => { broadcastAll({ type: "agent-output", ...(d as AgentOutputEvent) }); });
-  eventBus.on("handler:agent-blocked", (d: unknown) => { const evt = d as AgentBlockedEvent; broadcastAll({ type: "agent-blocked", agentId: evt.agentId, reason: evt.reason, role: evt.role }); });
-  eventBus.on("handler:agent-redirect", (d: unknown) => { const evt = d as AgentRedirectEvent; broadcastAll({ type: "agent-update", ...evt, status: "redirected" }); });
-  // agent_escalate emits this when its `to` resolves to "user" (or
-  // record-only to another agent). Forward to the chat-attached UI; the
-  // renderer treats wakeUser=true as a higher-priority alert. UI styling
-  // is a follow-up chunk — the channel + payload ship now.
-  eventBus.on("handler:agent-escalation", (d: unknown) => {
-    const evt = d as AgentEscalationEvent;
-    broadcastAll({
-      type: "agent-escalation",
-      from: evt.from,
-      fromName: evt.fromName,
-      to: evt.to,
-      toName: evt.toName,
-      context: evt.context,
-      urgency: evt.urgency,
-      issueId: evt.issueId,
-      wakeUser: evt.to === "user" && evt.urgency === "high",
-    });
-  });
+  eventBus.on("handler:agent-output", (d) => { broadcastAll({ type: "agent-output", ...d }); });
+  // The spread must not carry a `type` of its own over the frame's.
+  eventBus.on("handler:agent-redirect", (d) => { broadcastAll({ ...d, type: "agent-update", status: "redirected" }); });
 }

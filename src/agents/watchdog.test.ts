@@ -10,7 +10,7 @@ import {
   type Project,
 } from "../agent-store/index.js";
 import { ProjectRosterStore } from "../project-rosters.js";
-import { EventBus } from "../event-bus.js";
+import { inboxStore } from "../inbox/index.js";
 import {
   registerAgentRunDriver,
   _resetAgentRunDriverForTest,
@@ -27,14 +27,18 @@ let managerTpl: AgentTemplate;
 let workerTpl: AgentTemplate;
 
 const driverCalls: AgentRunDriverRequest[] = [];
-const escalationEvents: Array<Record<string, unknown>> = [];
-let listener: ((d: unknown) => void) | null = null;
 const createdIssueIds: string[] = [];
 const savedRunIds: string[] = [];
 
+// What an escalation to the user leaves behind: the inbox item the bell shows
+// (the store is shared across this file's tests, so only items created since
+// the test began count).
+let inboxSince = 0;
+const userEscalations = () => inboxStore().list().filter((i) => i.kind === "agent-message" && i.createdAt >= inboxSince);
+
 beforeEach(() => {
   driverCalls.length = 0;
-  escalationEvents.length = 0;
+  inboxSince = Date.now();
   ProjectRosterStore._resetForTest();
   WatchdogService._resetForTest();
 
@@ -66,9 +70,6 @@ beforeEach(() => {
   rosters.upsert(project.id, managerTpl.id, { reportsTo: ceoTpl.id });
   rosters.upsert(project.id, workerTpl.id, { reportsTo: managerTpl.id });
 
-  listener = (d: unknown) => { escalationEvents.push(d as Record<string, unknown>); };
-  EventBus.on("handler:agent-escalation", listener);
-
   registerAgentRunDriver(async (req) => {
     driverCalls.push(req);
     return { result: "stub-ok", success: true, tokens: 0 };
@@ -76,8 +77,6 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  if (listener) EventBus.off("handler:agent-escalation", listener);
-  listener = null;
   _resetAgentRunDriverForTest();
   WatchdogService._resetForTest();
 
@@ -165,7 +164,7 @@ describe("WatchdogService", () => {
     const wd = WatchdogService.getInstance();
     await wd.tickNow();
     expect(driverCalls).toHaveLength(0);
-    expect(escalationEvents).toHaveLength(0);
+    expect(userEscalations()).toHaveLength(0);
   });
 
   it("does not escalate when the agent is within threshold", async () => {
@@ -173,7 +172,7 @@ describe("WatchdogService", () => {
     const wd = WatchdogService.getInstance();
     await wd.tickNow();
     expect(driverCalls).toHaveLength(0);
-    expect(escalationEvents).toHaveLength(0);
+    expect(userEscalations()).toHaveLength(0);
   });
 
   it("wakes the manager when an agent is exactly at the default 24h threshold", async () => {
@@ -197,10 +196,10 @@ describe("WatchdogService", () => {
     const wd = WatchdogService.getInstance();
     await wd.tickNow();
 
-    const userEvents = escalationEvents.filter((e) => e.to === "user");
-    expect(userEvents).toHaveLength(1);
-    expect(userEvents[0].urgency).toBe("high");
-    expect(String(userEvents[0].context)).toMatch(/2x threshold/);
+    const items = userEscalations();
+    expect(items).toHaveLength(1);
+    expect(items[0].title).toMatch(/needs you now$/); // urgency high
+    expect(items[0].body).toMatch(/2x threshold/);
     // user-tier path does NOT wake the manager — that was the 24h tick's job
     expect(driverCalls).toHaveLength(0);
   });
@@ -217,7 +216,7 @@ describe("WatchdogService", () => {
     await wd.tickNow();
 
     expect(driverCalls).toHaveLength(0);
-    expect(escalationEvents).toHaveLength(0);
+    expect(userEscalations()).toHaveLength(0);
   });
 
   it("respects a custom stallThresholdHours on the roster", async () => {
@@ -247,7 +246,7 @@ describe("WatchdogService", () => {
     await wd.tickNow();
 
     expect(driverCalls).toHaveLength(0);
-    expect(escalationEvents).toHaveLength(0);
+    expect(userEscalations()).toHaveLength(0);
   });
 
   it("uses the max — a recent comment by the agent keeps it fresh even if the issue.updatedAt is old", async () => {

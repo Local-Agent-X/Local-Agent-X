@@ -2,7 +2,6 @@
 
 import { watch, readFileSync, existsSync, type FSWatcher } from "node:fs";
 import { dirname, basename } from "node:path";
-import { EventBus } from "./event-bus.js";
 import { createLogger } from "./logger.js";
 
 const logger = createLogger("config-watcher");
@@ -74,7 +73,7 @@ export class ConfigWatcher {
     });
 
     this.watcher.on("error", (err) => {
-      EventBus.emit("error", { source: "config-watcher", error: err.message });
+      logger.warn(`watcher error: ${err.message}`);
     });
   }
 
@@ -112,13 +111,12 @@ export class ConfigWatcher {
     if (!this.configPath || !existsSync(this.configPath)) return;
 
     let raw: string;
+    // A reload that fails is logged, not emitted: nothing listened on the bus
+    // for it, so a broken edit to config.json went unreported.
     try {
       raw = readFileSync(this.configPath, "utf-8");
     } catch {
-      EventBus.emit("error", {
-        source: "config-watcher",
-        error: `Failed to read config file: ${this.configPath}`,
-      });
+      logger.warn(`failed to read config file: ${this.configPath}`);
       return;
     }
 
@@ -126,18 +124,12 @@ export class ConfigWatcher {
     try {
       parsed = parseConfig(raw);
     } catch {
-      EventBus.emit("error", {
-        source: "config-watcher",
-        error: `Invalid JSON in config file: ${this.configPath}`,
-      });
+      logger.warn(`invalid JSON in config file: ${this.configPath}`);
       return;
     }
 
     if (!validateConfig(parsed)) {
-      EventBus.emit("error", {
-        source: "config-watcher",
-        error: "Config validation failed: expected a JSON object",
-      });
+      logger.warn("config validation failed: expected a JSON object");
       return;
     }
 
@@ -152,8 +144,5 @@ export class ConfigWatcher {
         // Callback errors should not break the watcher
       }
     }
-
-    // Emit on event bus
-    EventBus.emit("config:changed", { newConfig: parsed, oldConfig });
   }
 }

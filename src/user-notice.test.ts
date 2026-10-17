@@ -41,7 +41,7 @@ async function boot(openClients: number): Promise<Record<string, unknown>[]> {
   await runMigrations(dataDir);
   const { startUserNoticeDrain } = await import("./user-notice.js");
   const seen: Record<string, unknown>[] = [];
-  startUserNoticeDrain((data) => { seen.push(data); return openClients; }, { intervalMs: 5, maxWaitMs: 20 });
+  startUserNoticeDrain((frame) => { seen.push(frame as unknown as Record<string, unknown>); return openClients; }, { intervalMs: 5, maxWaitMs: 20 });
   return seen;
 }
 
@@ -127,10 +127,11 @@ describe("user_notice delivery path", () => {
     // all — same class as `system_health`. This asserts against the REAL
     // broadcastAll and the REAL clients map, not a mock socket layer.
     const { broadcastAll } = await import("./chat-ws/broadcast.js");
-    const { clients } = await import("./chat-ws/state.js");
+    const { clients, browserClients } = await import("./chat-ws/state.js");
     const sent: string[] = [];
     const ws = { readyState: 1, send: (p: string) => sent.push(p) };
     clients.set(ws as never, new Set<string>());
+    browserClients.add(ws as never); // a tab, not the phone bridge: delivery counts it
     try {
       const { drainUserNotices, recordUserNotice, SPEND_BUDGET_NOTICE_ID, SPEND_BUDGET_NOTICE_TEXT } =
         await import("./user-notice.js");

@@ -3,6 +3,7 @@ import { join, resolve } from "node:path";
 import { timingSafeEqual } from "node:crypto";
 import type { IncomingMessage } from "node:http";
 import type { RouteHandler } from "../../server-context.js";
+import type { SidebarPin } from "../../chat-ws/frames.js";
 import { jsonResponse, safeParseBody, atomicWriteFileSync } from "../../server-utils.js";
 import { FLIPPABLE_SETTINGS, RUNTIME_SETTINGS, BROADCAST_KEYS, operatorOnlyRefusal, publicSchema, settingSpec } from "../../settings-schema.js";
 import { isUserOwnedSetting, strictlyTightens } from "../../settings-change-direction.js";
@@ -299,7 +300,7 @@ export const handlePreferencesRoutes: RouteHandler = async (method, url, req, re
     const pinName = decodeURIComponent(url.pathname.split("/").pop() || "");
     if (!pinName) { json(400, { error: "pin name required" }); return true; }
     const settings = { ...loadSettings() };
-    const pins = ((settings.sidebarPins || []) as Array<{ name: string }>).filter(p => p.name !== pinName);
+    const pins = ((settings.sidebarPins || []) as SidebarPin[]).filter(p => p.name !== pinName);
     settings.sidebarPins = pins;
     saveSettings(settings);
     // Write tombstone so a future pull from another machine that still

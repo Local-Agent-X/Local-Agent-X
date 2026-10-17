@@ -4,7 +4,9 @@
 // owns only the read-side replay built from them.
 
 import type { WebSocket } from "ws";
+import type { ServerEvent } from "../types.js";
 import { activeChats, type ActiveChat } from "./state.js";
+import { sendFrame } from "./frames.js";
 
 /**
  * True when the subscriber provably already rendered this finished turn, so a
@@ -82,11 +84,13 @@ export function replayBufferedEvents(ws: WebSocket, sessionId: string, has: Subs
   const chat = activeChats.get(sessionId);
   if (!chat) return;
   if (chat.done && subscriberHoldsTurn(chat, has)) return;
+  // The synthesized wipe and run frames are built here, not drawn from the
+  // event buffer, so they are typed by hand.
   const send = (event: unknown) =>
-    ws.send(JSON.stringify({ type: "event", sessionId, event, _replay: true }));
+    sendFrame(ws, { type: "event", sessionId, event: event as ServerEvent, _replay: true });
   for (const event of chat.events) {
     if (event.type !== "chat_op_started") continue;
-    ws.send(JSON.stringify({ type: "event", sessionId, event }));
+    sendFrame(ws, { type: "event", sessionId, event });
   }
   // Gate each wipe on sawStream/sawReasoning, not accumulator truthiness: an
   // empty accumulator after a stream event means the extractor REPLACED the
@@ -112,6 +116,6 @@ export function replayBufferedEvents(ws: WebSocket, sessionId: string, has: Subs
   }
   for (const event of chat.events) {
     if (event.type === "chat_op_started") continue;
-    ws.send(JSON.stringify({ type: "event", sessionId, event }));
+    sendFrame(ws, { type: "event", sessionId, event });
   }
 }

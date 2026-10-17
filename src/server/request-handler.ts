@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import type { GlobalFrame } from "../chat-ws/frames.js";
 import { jsonResponse } from "../server-utils.js";
 import { authorizeRequest } from "./request-auth.js";
 import { routeApiRequest } from "./api-request-router.js";
@@ -51,7 +52,7 @@ export interface RequestHandlerDeps {
   saveSession: (session: Session) => Promise<void>;
   flushSession: (id: string) => Promise<void>;
   getChatWs: () => ServerContext["chatWs"];
-  broadcastAll: (event: Record<string, unknown>) => void;
+  broadcastAll: (frame: GlobalFrame) => number;
   activeOnEventBySession: Map<string, (event: ServerEvent) => void>;
   activeBrowserSessionIdRef: { value: string };
   activeRuntimeBySession: Map<string, { provider: string; model: string }>;

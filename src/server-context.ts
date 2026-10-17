@@ -13,6 +13,7 @@ import type { AppRegistry } from "./app-runtime/index.js";
 import type { AgentRunStore, AgentTemplateStore, IssueStore, ProjectStore } from "./agent-store/index.js";
 import type { ToolDefinition, LAXConfig, ServerEvent, Session } from "./types.js";
 import type { ToolRegistry } from "./tools/tool-search.js";
+import type { GlobalFrame } from "./chat-ws/frames.js";
 
 export interface ServerContext {
   config: LAXConfig;
@@ -42,7 +43,7 @@ export interface ServerContext {
   saveSession: (session: Session) => Promise<void>;
   flushSession: (id: string) => Promise<void>;
   chatWs: { startChat: (sessionId: string) => { onEvent: (event: ServerEvent) => void; abort: AbortController }; getActiveChats: () => string[]; stopChat: (sessionId: string) => boolean; getAbortSignal: (sessionId: string) => AbortSignal | undefined; failChat: (sessionId: string, errorMessage: string) => void; failChatIfCurrent: (sessionId: string, token: AbortController, errorMessage: string) => boolean; emit: (sessionId: string, event: ServerEvent) => void };
-  broadcastAll: (event: Record<string, unknown>) => void;
+  broadcastAll: (frame: GlobalFrame) => number;
   /**
    * Per-session active event callback registry. Tools that emit progress events
    * look up the callback for the session they were invoked from, instead of

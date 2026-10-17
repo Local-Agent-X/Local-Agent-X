@@ -275,6 +275,7 @@ function handleVoiceWsMessage(e) {
     case 'voice_error':
     case 'agent_error':
     case 'stt_error':
+    case 'whisper_error':
     case 'tts_error':
       // These used to be console-only, which made real failures (crashing
       // GPU transcription) look like a dead mic. Anything the voice pipeline

@@ -267,8 +267,6 @@ export class Handler {
     agent.output.push("[paused]");
 
     this.notifyUpdate(agentId, { type: "status", data: "paused" });
-
-    EventBus.emit("handler:agent-pause", { agentId });
   }
 
   resumeAgent(agentId: string): void {
@@ -283,8 +281,6 @@ export class Handler {
     agent.output.push("[resumed]");
 
     this.notifyUpdate(agentId, { type: "status", data: "resumed" });
-
-    EventBus.emit("handler:agent-resume", { agentId });
   }
 
   // -- Cancel ---------------------------------------------------------------
@@ -302,8 +298,6 @@ export class Handler {
     this.messageBus.unsubscribe(agentId);
 
     this.notifyUpdate(agentId, { type: "status", data: "cancelled" });
-
-    EventBus.emit("handler:agent-cancel", { agentId });
   }
 
   // -- Status / Output ------------------------------------------------------
@@ -373,15 +367,17 @@ export class Handler {
 
   // -- Private --------------------------------------------------------------
 
-  /** Bump the real-progress counter for an externally-driven run. Called by
-   *  the canonical-loop driver on each tool_start (server/handler-events.ts).
-   *  buildStatus derives the live progress percentage from this — the only
-   *  signal that actually moves during an external run, since output[] only
-   *  fills at finalize. No-op if the run was already GC'd. */
-  noteAgentActivity(agentId: string): void {
+  /** Record one tool call of an externally-driven run. Called by the
+   *  canonical-loop driver on each tool_start (server/handler-events.ts).
+   *  buildStatus derives the live progress percentage from the counter — the
+   *  only signal that actually moves during an external run — and the output
+   *  log's `[tool] name...` lines are what the cron status route lists as a
+   *  sub-agent's recentTools. No-op if the run was already GC'd. */
+  noteAgentActivity(agentId: string, toolName?: string): void {
     const agent = this.agents.get(agentId);
     if (!agent) return;
     agent.toolCalls = (agent.toolCalls ?? 0) + 1;
+    if (toolName) agent.output.push(`[tool] ${toolName}...`);
   }
 
 

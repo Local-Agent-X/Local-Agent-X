@@ -34,7 +34,7 @@ function canaryWith(tools: ToolDefinition[], broadcasts: Record<string, unknown>
     security: undefined as never,
     toolPolicy: undefined as never,
     allAgentTools: tools,
-    broadcast: (event) => broadcasts.push(event),
+    broadcast: (frame) => broadcasts.push(frame as unknown as Record<string, unknown>),
   });
 }
 

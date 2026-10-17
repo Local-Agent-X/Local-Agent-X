@@ -10,6 +10,7 @@
  */
 
 import { createLogger } from "../logger.js";
+import type { ServerEvent } from "../types.js";
 const logger = createLogger("autopilot.loop");
 
 // Autopilot ops aren't tied to a single chat session — pass null so the
@@ -17,7 +18,7 @@ const logger = createLogger("autopilot.loop");
 // expects: { type: "event", sessionId, event: { type: "bg_op_*", ... } }.
 // Earlier I was sending { type: "bg_op_*", ... } at the top level, which
 // chat.js silently dropped because it checks msg.event.type, not msg.type.
-async function broadcast(event: Record<string, unknown>): Promise<void> {
+async function broadcast(event: ServerEvent): Promise<void> {
   try {
     const { broadcastAll } = await import("../chat-ws/index.js");
     // chat.js requires sessionId TRUTHY (`if (msg.type === 'event' && msg.sessionId && msg.event)`).
@@ -39,5 +40,6 @@ export async function broadcastProgress(opId: string, line: string): Promise<voi
 }
 
 export async function broadcastCompleted(opId: string, summary: string, ok: boolean): Promise<void> {
-  await broadcast({ type: "bg_op_completed", opId, status: ok ? "completed" : "failed", summary });
+  // An autopilot round reports no file list of its own.
+  await broadcast({ type: "bg_op_completed", opId, status: ok ? "completed" : "failed", summary, filesChanged: [] });
 }

@@ -25,6 +25,7 @@ import { join } from "node:path";
 import { getLaxDir } from "./lax-data-dir.js";
 import { atomicWriteFileSync } from "./server-utils.js";
 import { createLogger } from "./logger.js";
+import type { GlobalFrame } from "./chat-ws/frames.js";
 
 const logger = createLogger("user-notice");
 
@@ -45,7 +46,8 @@ interface UserNoticeLedger {
 /** Broadcast fn shape: chat-ws `broadcastAll`, returning the number of OPEN
  *  clients that actually received the payload. 0 means "nobody was
  *  listening" — the notice must stay pending. */
-export type NoticeBroadcast = (data: Record<string, unknown>) => number;
+/** Sends one frame to every open tab and says how many tabs received it. */
+export type NoticeBroadcast = (frame: GlobalFrame) => number;
 
 export const SPEND_BUDGET_NOTICE_ID = "spend-budget-defaults";
 export const SPEND_BUDGET_NOTICE_TEXT =

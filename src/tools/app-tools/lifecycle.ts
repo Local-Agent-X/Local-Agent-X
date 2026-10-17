@@ -19,7 +19,6 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { getLaxDir } from "../../lax-data-dir.js";
 import { workspaceRoot } from "../../config.js";
-import { EventBus } from "../../event-bus.js";
 import { verifyWriteLanded } from "../verify.js";
 import { ok, err, APP_TOOL_ACTOR, getAppPort } from "./shared.js";
 
@@ -100,8 +99,6 @@ export const appCreate: ToolDefinition = {
     const verified = verifyWriteLanded(htmlPath);
     if (!verified.ok) return err(verified.reason);
 
-    EventBus.emit("app:create", { id: rawId, name: def.name });
-
     return ok(
       `App "${def.name}" created (v1)\n\n` +
       `ID: ${rawId}\n` +
@@ -150,8 +147,6 @@ export const appUpdate: ToolDefinition = {
     const html = renderApp(result.app!, port);
     const dir = join(getLaxDir(), "apps", id);
     writeFileSync(join(dir, "index.html"), html, "utf-8");
-
-    EventBus.emit("app:update", { id });
     return ok(`App "${result.app!.name}" updated (v${result.app!.version}). ${result.app!.components.length} components.`);
   },
 };
@@ -197,7 +192,6 @@ export const appDelete: ToolDefinition = {
     // finalize_app_build's no-overwrite guard with no way forward.
     const result = await registry.delete(id, actor, { workspaceDir: workspaceRoot() });
     if (!result.deleted) return err(result.error || `App "${id}" not found`);
-    EventBus.emit("app:delete", { id });
     const removed = [
       result.registry ? "registry entry" : "",
       result.workspace ? "workspace folder (recycled)" : "",
@@ -246,19 +240,16 @@ export const appPermissions: ToolDefinition = {
       case "suspend": {
         const result = registry.suspend(id, actor);
         if (!result.success) return err(result.error || "Failed");
-        EventBus.emit("app:suspend", { id });
         return ok(`App "${id}" suspended. No agents can interact with it.`);
       }
       case "activate": {
         const result = registry.activate(id, actor);
         if (!result.success) return err(result.error || "Failed");
-        EventBus.emit("app:activate", { id });
         return ok(`App "${id}" activated.`);
       }
       case "archive": {
         const result = registry.archive(id, actor);
         if (!result.success) return err(result.error || "Failed");
-        EventBus.emit("app:archive", { id });
         return ok(`App "${id}" archived (read-only).`);
       }
       default:

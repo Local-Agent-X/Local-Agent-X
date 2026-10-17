@@ -1,7 +1,6 @@
 // Agency Message Bus -- Inter-agent communication layer
 
 import type { AgencyMessage, MessageType } from "./types.js";
-import { EventBus } from "../event-bus.js";
 
 type MessageHandler = (message: AgencyMessage) => void | Promise<void>;
 
@@ -26,8 +25,6 @@ export class AgencyMessageBus {
         handler(msg);
       }
     }
-
-    EventBus.emit("agency:message", { from, to, type });
   }
 
   broadcast(from: string, type: MessageType, payload: unknown): void {
@@ -44,7 +41,6 @@ export class AgencyMessageBus {
         }
       }
     }
-    EventBus.emit("agency:broadcast", { from, type });
   }
 
   subscribe(agentId: string, handler: MessageHandler): void {

@@ -16,6 +16,7 @@ import { getApprovalManager } from "../approval-manager.js";
 import { getChatHandler } from "./chat-handler.js";
 import { getLearningNoticesForSession, getMessageCountForSession } from "./state.js";
 import { broadcastToSession, terminateChat } from "./broadcast.js";
+import { sendFrame } from "./frames.js";
 import { replayBufferedEvents } from "./replay.js";
 import { handleReconnectOp } from "./reconnect-op.js";
 import { handleIdeRuntimeError } from "./ide-runtime-error.js";
@@ -67,7 +68,7 @@ export function attachMessageRouter(ctx: RouterContext): void {
     // ping frames, so the client sends {type:"ping"} and we echo
     // {type:"pong"} so it can detect half-open from its end too.
     if (type === "ping") {
-      try { ws.send(JSON.stringify({ type: "pong", ts: Date.now() })); } catch {}
+      try { sendFrame(ws, { type: "pong", ts: Date.now() }); } catch {}
       return;
     }
 
@@ -100,14 +101,14 @@ export function attachMessageRouter(ctx: RouterContext): void {
         const countFn = getMessageCountForSession();
         const messageCount = countFn ? countFn(sessionId) : 0;
         const noticesFn = getLearningNoticesForSession();
-        ws.send(JSON.stringify({
+        sendFrame(ws, {
           type: "session_snapshot",
           sessionId,
           liveOpIds,
           messageCount,
           planMode: isEnforcedPlanMode(sessionId),
           learningNotices: noticesFn ? noticesFn(sessionId) : [],
-        }));
+        });
       } catch (e) {
         logger.warn(`[ws-chat] session_snapshot failed for ${sessionId}: ${(e as Error).message}`);
       }
@@ -272,7 +273,7 @@ async function handleApprovalResponse(ws: WebSocket, msg: Record<string, unknown
     // bookkeeping. No reply needed (unchanged behavior).
     if (getApprovalManager().resolveApproval(approvalId, approved, rememberForSession)) return;
   } catch (e) {
-    ws.send(JSON.stringify({ type: "error", message: `Approval response failed: ${e}` }));
+    sendFrame(ws, { type: "error", message: `Approval response failed: ${e}` });
     return;
   }
   // Unknown in-process (restart / rediscovered durable card) — fall through

@@ -23,12 +23,10 @@
 //
 // External deps (auto-window from sibling scripts):
 //   activeChat                                          (app-state.js)
-//   _findStreamingBodyEl                                (chat-ws.js)
 //   showSecretModal, showMultiSecretModal               (secret-modal.js)
 //   updateContextBar                                    (chat-status-bar.js)
 //   feedTTS                                             (chat-voice-tts.js)
 //   VoiceSphere                                         (chat-voice-ui.js)
-//   addAgentFeed, updateAgentFeed, renderAgentCard_inline (chat-agent-feeds.js)
 //   _finalizeWsTurn                                       (chat-send-ws.js)
 //   renderMessages                                        (chat-render.js)
 
@@ -106,14 +104,8 @@ function dispatchChatStreamEvent(msg) {
   // per-turn subscriber in chat-send-ws.js / -http.js (DOM cleanup, persist).
   if (event.type === 'chat_op_started') return true;
 
-  // Resolve the live bubble for the viewing session. _findStreamingBodyEl
-  // returns the .msg-body of the most recent assistant message — same
-  // element the per-turn renderer used to hold in its closure. Only the
-  // legacy agent_spawn / agent_status HTTP-fallback branches still write
-  // into this directly; bubble DOM for stream / tool_* / approval_* /
-  // stopped / error is owned by the store + swap path now.
-  const bodyEl = viewing ? _findStreamingBodyEl(sessionId) : null;
-
+  // Bubble DOM for stream / tool_* / approval_* / stopped / error is owned by
+  // the store + swap path; the cases below are side effects only.
   switch (event.type) {
     case 'stream':
       // Side-effect-only: text painting is owned by the store + swap.
@@ -147,26 +139,6 @@ function dispatchChatStreamEvent(msg) {
       // The notice itself is rendered from store.stopNote by the swap path.
       // The console log is the only side effect we still own here.
       if (event.debug) console.info('[stopped]', event.firedBy || '?', event.debug);
-      break;
-
-    case 'agent_spawn':
-      // Legacy SSE event — kept for HTTP-fallback parity. WS path doesn't
-      // emit these; the agent-feeds sidebar uses bg_op_* instead.
-      if (event.agent && typeof addAgentFeed === 'function') addAgentFeed(event.agent);
-      if (viewing && bodyEl && event.agent && typeof renderAgentCard_inline === 'function') {
-        const wrap = document.createElement('div');
-        wrap.innerHTML = sanitizeHtml(renderAgentCard_inline(event.agent));
-        bodyEl.appendChild(wrap.firstChild);
-      }
-      break;
-
-    case 'agent_status':
-      if (event.agentId && typeof updateAgentFeed === 'function') updateAgentFeed(event.agentId, event);
-      if (viewing && bodyEl && event.agent && typeof renderAgentCard_inline === 'function') {
-        const wrap = document.createElement('div');
-        wrap.innerHTML = sanitizeHtml(renderAgentCard_inline(event.agent));
-        bodyEl.appendChild(wrap.firstChild);
-      }
       break;
   }
 

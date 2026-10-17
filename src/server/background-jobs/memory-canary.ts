@@ -2,6 +2,7 @@ import { executeToolCalls } from "../../tool-execution/index.js";
 import type { SecurityLayer } from "../../security/index.js";
 import type { ToolDefinition } from "../../types.js";
 import type { ToolPolicy } from "../../tool-policy/index.js";
+import type { GlobalFrame } from "../../chat-ws/frames.js";
 import { createLogger } from "../../logger.js";
 
 const logger = createLogger("memory.canary");
@@ -43,7 +44,7 @@ export function makeRunMemoryCanary(deps: {
   security: SecurityLayer;
   toolPolicy: ToolPolicy;
   allAgentTools: ToolDefinition[];
-  broadcast: (event: Record<string, unknown>) => void;
+  broadcast: (frame: GlobalFrame) => void;
 }): () => Promise<void> {
   const { security, toolPolicy, allAgentTools, broadcast } = deps;
 

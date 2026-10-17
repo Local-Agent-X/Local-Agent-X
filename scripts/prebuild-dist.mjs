@@ -7,9 +7,10 @@ import { execSync } from "node:child_process";
 // back to tsx-from-source, so a failed dist build must never block install.
 try {
   execSync("tsc", { stdio: "inherit" });
-  // tsc ignores .md — mirror the vendored bundled SKILL.md bodies into dist/ so
-  // the compiled server resolves them. Same copy step the `build` script runs.
-  execSync("node scripts/copy-bundled-protocols.mjs", { stdio: "inherit" });
+  // tsc ignores .md and .mjs — mirror the bundled SKILL.md bodies and the
+  // structure kit into dist/ so the compiled server resolves them. Same copy
+  // step the `build` script runs.
+  execSync("node scripts/copy-bundled-assets.mjs", { stdio: "inherit" });
 } catch {
   console.warn("[prebuild-dist] tsc failed — desktop will boot via tsx until `npm run build` succeeds");
 }

@@ -171,9 +171,14 @@ function renderStarterHtml(appName: string): string {
 }
 
 function renderAgentsMd(_appName: string): string {
-  return `# Environment
+  return `# Environment\n\n${appEnvironmentNotes()}`;
+}
 
-This app runs in a sandboxed iframe under this Content Security Policy:
+/** How a served index.html app runs: the one description of its CSP and
+ *  paths, for this starter's AGENTS.md and for the structure kit's
+ *  "Environment" section in a full-stack project. */
+export function appEnvironmentNotes(): string {
+  return `This app runs in a sandboxed iframe under this Content Security Policy:
 
     script-src 'self' 'unsafe-inline'
     style-src  'self' 'unsafe-inline'

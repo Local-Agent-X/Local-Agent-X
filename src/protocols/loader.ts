@@ -9,7 +9,7 @@
  *                          methodology bodies) and can be extended by running
  *                          scripts/import-protocols.mjs or dropping in a curated
  *                          pack repo. Copied into dist/ at build time by
- *                          scripts/copy-bundled-protocols.mjs so the compiled
+ *                          scripts/copy-bundled-assets.mjs so the compiled
  *                          server finds it at the same path-relative location.
  *   3. User overlay     — SKILL.md files in workspace/protocols/imported/<name>/
  *                          plus typed records from ~/.lax/custom-protocols.json.
@@ -42,7 +42,7 @@ const logger = createLogger("protocols.loader");
 
 // Resolve relative to this module, not process.cwd(), so bundled protocols load
 // regardless of the launch directory. Lands at src/protocols/bundled in dev and
-// dist/protocols/bundled in prod — copy-bundled-protocols.mjs mirrors it into dist.
+// dist/protocols/bundled in prod — copy-bundled-assets.mjs mirrors it into dist.
 const HERE = dirname(fileURLToPath(import.meta.url));
 
 /** The one canonical resolver for the vendored bundled-protocol directory.

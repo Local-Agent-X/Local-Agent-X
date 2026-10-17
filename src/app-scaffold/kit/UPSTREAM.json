@@ -1,0 +1,30 @@
+{
+  "codebase-map.mjs": {
+    "upstream": "scripts/codebase-map.mjs",
+    "sha256": "bd96b5a7788e9c4133bf64380e45eac583178bbee728fd9cd10374c9f589eebd"
+  },
+  "check-file-size.mjs": {
+    "upstream": "scripts/check-file-size.mjs",
+    "sha256": "1636e6f421d365d7438f515e796accc19c2fd87bad93855f29e58d1b715ea4d4"
+  },
+  "check-doc-paths.mjs": {
+    "upstream": "scripts/check-doc-paths.mjs",
+    "sha256": "951e1871ba2b3d6abcfe88693fee76503fd092daf67db7e2f0427fce37c86572"
+  },
+  "check-module-owners.mjs": {
+    "upstream": "scripts/check-module-owners.mjs",
+    "sha256": "aa3a36e4aad610c321a1fc708a7cfcbc7571d77fa91c151afa7fca47ed6ab892"
+  },
+  "check-structure.mjs": {
+    "upstream": "scripts/check-structure.mjs",
+    "sha256": "90439c503c4e9e1bc4cf325086af5007d5ec771ef6afeec8475de74797865a04"
+  },
+  "code-refs.mjs": {
+    "upstream": "scripts/code-refs.mjs",
+    "sha256": "3afbc4246d50c6eb19d3932ff46dcdab8c30708c455ba6bb186d3a304f3878b0"
+  },
+  "module-seals.test.ts.txt": {
+    "upstream": "assets/module-seals.test.ts",
+    "sha256": "ccf7f77f5fa857b98147667733b2acb722cc92d72ce4ea53171c321802a1f1d2"
+  }
+}

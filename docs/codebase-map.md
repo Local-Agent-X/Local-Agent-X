@@ -12,7 +12,7 @@ statically or by `import()` (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 68 top-level dirs · 68 live · 0 with no live importer · 1790 non-test source files · 0 god files (>400 LOC).
+**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1794 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -21,8 +21,8 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/ops/` | 158 | 29 | XL |  |
 | `src/security/` | 121 | 46 | XL |  |
 | `src/tools/` | 104 | 212 | XL |  |
-| `src/canonical-loop/` | 80 | 258 | XL |  |
-| `src/tool-execution/` | 75 | 71 | XL |  |
+| `src/canonical-loop/` | 80 | 259 | XL |  |
+| `src/tool-execution/` | 76 | 71 | XL |  |
 | `src/workspace/` | 71 | 3 | M |  |
 | `src/providers/` | 67 | 26 | XL |  |
 | `src/memory/` | 51 | 139 | XL |  |
@@ -72,6 +72,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/plugin-system/` | 7 | 10 | L |  |
 | `src/android/` | 6 | 7 | M |  |
 | `src/app-renderer/` | 6 | 7 | M |  |
+| `src/app-scaffold/` | 6 | 3 | M |  |
 | `src/credentials/` | 6 | 1 | S |  |
 | `src/mcp-client/` | 6 | 10 | L |  |
 | `src/net/` | 6 | 3 | M |  |

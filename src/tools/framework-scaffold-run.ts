@@ -16,6 +16,7 @@ import {
   viteScaffoldPlan,
   SCAFFOLD_MANIFEST_REL,
 } from "./framework-scaffold.js";
+import { applyProjectKit } from "../app-scaffold/project-kit.js";
 
 // A cold `npm create` + two `npm install`s pull a heavy tree; 5 min is loose
 // enough for a slow network yet still terminates a genuine hang (a stuck
@@ -34,6 +35,10 @@ export interface ScaffoldResult {
  * the skeleton. For an owned framework (Vite): run the official creator, install
  * Tailwind v4, overwrite vite.config with the LAX-canonical one (base path +
  * HMR), and drop a scaffold manifest the write-guard locks the baseline against.
+ *
+ * The structure kit (src/app-scaffold) goes in last: AGENTS.md, the owner
+ * table, the check scripts wired into package.json — a project the model only
+ * adds src/ code to starts with its rules and checks in place.
  *
  * Idempotent: a retry or update re-enters with the scaffold already on disk and
  * returns without re-running. A non-owned framework is a no-op — the advised
@@ -61,6 +66,7 @@ export async function runFrameworkScaffold(
   const manifestPath = resolve(appDir, SCAFFOLD_MANIFEST_REL);
   mkdirSync(dirname(manifestPath), { recursive: true });
   writeFileSync(manifestPath, JSON.stringify(plan.manifest, null, 2), "utf-8");
+  applyProjectKit(appDir, { projectName: appName });
   return { scaffolded: true, framework: "vite" };
 }
 

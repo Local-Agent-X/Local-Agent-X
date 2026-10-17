@@ -3,6 +3,7 @@ import {
   existsSync,
   mkdirSync,
   readdirSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -104,5 +105,16 @@ describe("app-build staged materialization", () => {
     materializeAppBuild(target);
 
     expect(existsSync(join(target.projectDir, "README.md"))).toBe(true);
+  });
+
+  it("the project starts with the structure kit beside the spec", () => {
+    const target = { ...input("with-kit"), architectureMd: "# Architecture" };
+    const { written } = materializeAppBuild(target);
+    expect(written).toEqual(expect.arrayContaining([
+      "spec/architecture.md", "AGENTS.md", "ARCHITECTURE.md", "scripts/check-structure.mjs", "docs/adr/0001-record-architecture-decisions.md",
+    ]));
+    const arch = readFileSync(join(target.projectDir, "ARCHITECTURE.md"), "utf-8");
+    expect(arch).toContain("`spec/architecture.md`");
+    expect(arch).toContain("`spec/plan.md`");
   });
 });

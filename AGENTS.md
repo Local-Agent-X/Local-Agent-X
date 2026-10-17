@@ -36,6 +36,7 @@ Optional for Claude Code: `scripts/refs-hint-hook.mjs` is a PostToolUse hook
 | `packages/arikernel/` | yes | Vendored security kernel. Hands off unless fixing a specific Ari bug. |
 | `src/broker-transport/vendor/` | yes | The phone↔desktop wire contract, copied from agentxos. Never hand-edit: change agentxos, then `scripts/check-vendor-sync.mjs --sync` (`vendor/README.md`). |
 | `desktop/src/contract/` | yes | The server↔desktop contract, copied from `src/desktop-contract/`. Never hand-edit: change the source, then `scripts/check-desktop-contract.mjs --sync`. |
+| `src/app-scaffold/kit/` | yes | The structure kit dropped into every project the agent builds, copied from the `/new-project` skill. Never hand-edit: change the skill, then `scripts/check-kit-sync.mjs --sync`. |
 | `dist/` | no | Build output. Never hand-edit. |
 
 A user page ("build me a calendar") is `workspace/apps/calendar/index.html`
@@ -60,7 +61,7 @@ pinned at `/apps/calendar/`, not `public/calendar.html`. <!-- doc-paths:ignore -
 
 ## Runtime invariants (what the code must keep true)
 
-- **Every model-initiated tool call goes through `src/tool-execution/`** (`executeToolCalls` / `dispatchSingleToolCall`): Ari, policy, approval, RBAC, audit live there. Harness-initiated commands (build verification, spec probes) go through `executeHarnessCommand` in the same directory.
+- **Every model-initiated tool call goes through `src/tool-execution/`** (`executeToolCalls` / `dispatchSingleToolCall`): Ari, policy, approval, RBAC, audit live there. Harness-initiated commands (build verification, spec probes, a built project's structure check) go through `executeHarnessCommand` in the same directory.
 - **Mutating `/api/*` POSTs broadcast** `broadcastAll({ type: "settings_changed", ... })` so open tabs stay in sync. Checked per route by its tests, not globally.
 - **External content enters the model through `wrapExternalContent()`** in `src/sanitize.ts`. Each network tool calls it itself.
 - **Outbound HTTP from tools goes through `canonicalFetch` / `http_request`'s guard** (`src/tools/web-egress.ts`): DNS pinning, private-IP block, strict-mode allowlist, redirect re-check. Exceptions by protocol: IMAP (email), yt-dlp (youtube).

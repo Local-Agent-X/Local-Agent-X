@@ -123,6 +123,33 @@ async function runWith(outcome: AppSmokeGateOutcome, inner: Adapter = doneInner)
   return { result, reports, gateCalls, appDir };
 }
 
+describe("AppBuildVerifyAdapter — structure gate", () => {
+  it("a project carrying the kit must pass its own structure check before anything is smoked", async () => {
+    const appDir = makeStaticAppDir();
+    let smoked = false;
+    const adapter = new AppBuildVerifyAdapter(doneInner, appDir, undefined, async () => { smoked = true; return { verdict: "pass" }; }, {
+      structureGate: async () => ({ kind: "failed", detail: "src/big.ts: 460 lines (limit 450)" }),
+    });
+    const { reports, report } = collect();
+    const result = await adapter.runTurn(turnInput(), report);
+    expect(result.terminalReason).toBe("error");
+    expect(smoked).toBe(false);
+    const err = reports.find((r) => r.kind === "error") as Extract<AdapterReport, { kind: "error" }>;
+    expect(err.code).toBe("structure_check_failed");
+    expect(err.message).toContain("src/big.ts: 460 lines");
+    expect(evidenceMessageFrom(reports)?.text).toContain("src/big.ts");
+  });
+
+  it("a project without the kit is never held to it", async () => {
+    const appDir = makeStaticAppDir();
+    const adapter = new AppBuildVerifyAdapter(doneInner, appDir, undefined, async () => ({ verdict: "pass" }), {
+      structureGate: async () => ({ kind: "skipped" }),
+    });
+    const { report } = collect();
+    expect((await adapter.runTurn(turnInput(), report)).terminalReason).toBe("done");
+  });
+});
+
 describe("AppBuildVerifyAdapter — see-before-done smoke gate", () => {
   it("a failed smoke converts the builder's done into an error terminal — attestation doesn't ship [regression]", async () => {
     const { result, reports, gateCalls, appDir } = await runWith({

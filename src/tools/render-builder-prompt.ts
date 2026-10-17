@@ -13,6 +13,7 @@ import type { AppTier } from "./app-tier.js";
 import { inferFrameworkFromPrompt, type DetectedFramework } from "./framework-detect.js";
 import { frontendScaffoldRecipeLines, harnessOwnsScaffold } from "./framework-scaffold.js";
 import { selectDesignBrief, DESIGN_ANTI_PATTERNS, DESIGN_CRAFT, DESIGN_TECHNIQUES } from "./design-brief.js";
+import { structureKitPromptLine } from "../app-scaffold/project-kit.js";
 
 const WEBSITE_NOUN_IN_PROMPT_RE =
   /\b(website|web ?site|landing page|landing|home ?page|marketing ?page|micro ?site|one[- ]?pager|business site|biz site|menu page|portfolio|splash page|brochure site)\b/i;
@@ -138,6 +139,9 @@ function renderTierBlock(
     : tier === "frontend-spa" ? frontendSpaRuleLines(appName, appDir, framework)
     : tier === "compiled-native" ? compiledRuleLines(appDir)
     : [];
+  // Every project-shaped tier starts with the structure kit (src/app-scaffold)
+  // and is held to its check at the done-claim.
+  if (lines.length > 0) lines.push(structureKitPromptLine());
   return lines.length > 0 ? "\n" + lines.join("\n") : "";
 }
 

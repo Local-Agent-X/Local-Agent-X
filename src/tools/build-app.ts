@@ -35,7 +35,8 @@ import {
   renderBuilderPrompt,
 } from "./render-builder-prompt.js";
 import { AgentTemplateStore, type AgentExecStrategy } from "../agent-store/index.js";
-import { seedAppTemplate } from "./app-tools/app-template.js";
+import { appEnvironmentNotes, seedAppTemplate } from "./app-tools/app-template.js";
+import { applyProjectKit } from "../app-scaffold/project-kit.js";
 import {
   gatherPriorBuildSessions,
   renderPriorBuildBlock,
@@ -221,6 +222,15 @@ export const buildAppTool: ToolDefinition = {
     // model must produce the real thing (its toolchain output / a real dev
     // server). One rule, both real-build tiers — a class fix, not a per-tier one.
     const realBuildTier = tier === "compiled-native" || tier === "frontend-spa";
+    // A project-shaped build starts with the structure kit (src/app-scaffold):
+    // the full-stack and compiled tiers here, the Vite tier in its scaffold
+    // step, Product Build in its materializer. The quick single-page tier has
+    // no modules to check and keeps the starter's own AGENTS.md. The kit goes
+    // in before the starter so a full-stack app's AGENTS.md is the kit's, with
+    // the served page's CSP notes as its Environment section.
+    if (!isUpdate && (tier === "full-stack" || tier === "compiled-native")) {
+      applyProjectKit(appDir, { projectName: appName, environmentNotes: tier === "full-stack" ? appEnvironmentNotes() : undefined });
+    }
     if (!isUpdate && !realBuildTier) seedAppTemplate(appDir, appName);
 
     // Updates carry the prior session's spine (original brief + last build's

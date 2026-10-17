@@ -47,6 +47,13 @@ export function npmArgv(tool: "npm" | "npx", args: string[]): ProgramArgv {
   };
 }
 
+/** A script of the harness's own (the structure kit's `node scripts/x.mjs`),
+ *  run by the node this process runs on: no PATH lookup, so nothing in the
+ *  project's cwd can stand in for node. */
+export function nodeScriptArgv(args: string[]): ProgramArgv {
+  return { file: process.execPath, args };
+}
+
 /** A fixed `npm …` or `npx …` line from the harness's own plans, which carry
  *  no quoting, as argv. */
 export function npmCommandArgv(command: string): ProgramArgv {

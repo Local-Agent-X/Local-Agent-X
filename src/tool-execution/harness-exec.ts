@@ -1,6 +1,7 @@
 // Harness-initiated shell commands: the orchestrator running the project's
-// own build between turns (build-verify) or executing a spec probe
-// (spec-probes). The MODEL did not call these, so the model-facing gates —
+// own build between turns (build-verify), executing a spec probe
+// (spec-probes), or running a built project's own structure check at its
+// done-claim (structure-check). The MODEL did not call these, so the model-facing gates —
 // policy rules, approval cards, RBAC, the threat engine — don't apply: an
 // approval card for a build the harness decided to run would be asking the
 // user to approve the harness's own check. Two gates still do, and this seam
@@ -26,7 +27,7 @@ export interface HarnessCommand {
   timeoutMs: number;
   signal?: AbortSignal;
   /** Who is running this and why — lands in the audit record. */
-  purpose: "build-verify" | "spec-probe";
+  purpose: "build-verify" | "spec-probe" | "structure-check";
   /** The op the check belongs to, for the audit record. */
   opId: string;
 }

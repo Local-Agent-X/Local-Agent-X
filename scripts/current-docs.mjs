@@ -51,6 +51,7 @@ export const currentDocs = [
   "eval/sweep-completeness/README.md",
   // Module guides (≤25 lines each; also read by self_edit and background workers)
   "src/canonical-loop/README.md",
+  "src/app-scaffold/AGENTS.md",
   "src/ari-kernel/AGENTS.md",
   "src/browser/AGENTS.md",
   "src/context/AGENTS.md",

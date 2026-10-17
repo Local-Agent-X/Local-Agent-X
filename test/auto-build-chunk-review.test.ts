@@ -746,6 +746,14 @@ describe("build-exec gate: command + entry discovery (pure)", () => {
     expect(discoverCommands(dir)).toEqual([]);
   });
 
+  it("runs a kit project's structure check first, package.json or not", () => {
+    mkdirSync(join(dir, "scripts"));
+    writeFileSync(join(dir, "scripts", "check-structure.mjs"), "");
+    expect(discoverCommands(dir)).toEqual(["node scripts/check-structure.mjs"]);
+    writeFileSync(join(dir, "package.json"), JSON.stringify({ scripts: { build: "vite build" } }));
+    expect(discoverCommands(dir)).toEqual(["node scripts/check-structure.mjs", "npm run build"]);
+  });
+
   it("returns only what exists (build without test)", () => {
     writeFileSync(join(dir, "package.json"), JSON.stringify({ scripts: { build: "tsc" } }));
     expect(discoverCommands(dir)).toEqual(["npm run build"]);

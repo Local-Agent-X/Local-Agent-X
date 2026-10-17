@@ -63,6 +63,7 @@ import { detectFramework } from "../../tools/framework-detect.js";
 import { getDesignSpec } from "../turn-loop/design-verify.js";
 import { finalizeFrameworkBuild, type FinalizeFrameworkDeps } from "./app-build-finalize.js";
 import { emitUnverifiedNote, emitVerifiedNote } from "./app-build-unverified-note.js";
+import { runAppStructureGate, type StructureGateRunner } from "./app-build-structure-gate.js";
 import { extractText } from "../turn-loop/content-extract.js";
 import {
   runAppSmokeGate,
@@ -109,6 +110,8 @@ export interface AppBuildVerifyOptions {
    *  in-canonical path never did. Production passes nothing (defaults resolve
    *  to the real dev-server module). */
   finalizeDeps?: FinalizeFrameworkDeps;
+  /** Test seam: the structure-kit check (app-build-structure-gate.ts). */
+  structureGate?: StructureGateRunner;
 }
 
 export class AppBuildVerifyAdapter implements Adapter {
@@ -116,6 +119,7 @@ export class AppBuildVerifyAdapter implements Adapter {
   private readonly brief: string;
   private readonly urlResolver: DevServerUrlResolver;
   private readonly finalizeDeps: FinalizeFrameworkDeps;
+  private readonly structureGate: StructureGateRunner;
   constructor(
     private readonly inner: Adapter,
     private readonly appDir: string,
@@ -127,6 +131,7 @@ export class AppBuildVerifyAdapter implements Adapter {
     this.brief = opts.brief ?? "";
     this.urlResolver = opts.urlResolver ?? resolveDevServerProxyUrl;
     this.finalizeDeps = opts.finalizeDeps ?? {};
+    this.structureGate = opts.structureGate ?? runAppStructureGate;
   }
   get name(): string { return this.inner.name; }
   get version(): string { return this.inner.version; }
@@ -187,6 +192,15 @@ export class AppBuildVerifyAdapter implements Adapter {
     const hybrid = scanAppForFrameworkHybrid(this.appDir);
     if (hybrid.hybrid) {
       report({ kind: "error", code: "framework_hybrid", message: formatFrameworkHybrid(hybrid.reason), retryable: false });
+      return { ...result, terminalReason: "error" };
+    }
+    // A project that carries the structure kit passes its own check before
+    // anything is smoked: the check's output is the fix list, and a smoke of a
+    // project that fails its own rules would only bury it.
+    const structure = await this.structureGate(this.appDir, input.opId);
+    if (structure.kind === "failed") {
+      this.emitFailureEvidence(input, report, structure.detail, []);
+      report({ kind: "error", code: "structure_check_failed", message: structure.detail, retryable: false });
       return { ...result, terminalReason: "error" };
     }
     // A frontend-spa build that shipped a static page instead of a real project

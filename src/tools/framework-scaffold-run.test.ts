@@ -152,6 +152,9 @@ describe("runFrameworkScaffold runs npm in the shell cage", () => {
       expect(env[CREDENTIAL]).toBeUndefined();
     });
     expect(existsSync(join(app, SCAFFOLD_MANIFEST_REL))).toBe(true);
+    // The structure kit lands with the baseline: rules and checks from turn 1.
+    expect(existsSync(join(app, "AGENTS.md"))).toBe(true);
+    expect(existsSync(join(app, "scripts", "check-structure.mjs"))).toBe(true);
   });
 
   it("fails closed while the Windows cage proof is pending: no step runs, no baseline is claimed", async () => {

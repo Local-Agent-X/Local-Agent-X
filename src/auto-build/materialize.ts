@@ -10,6 +10,7 @@ import {
 } from "node:fs";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { verifyWriteLanded } from "../tools/verify.js";
+import { projectKitFiles } from "../app-scaffold/project-kit.js";
 
 export interface ArtifactInput {
   filename: string;
@@ -118,6 +119,16 @@ function buildQueue(input: MaterializeAppBuildInput): QueuedArtifact[] {
       ? `- \`twins/\` — in-process fakes for external services.\n`
       : "");
   queued.push({ rel: "README.md", content: readme });
+  // The structure kit (src/app-scaffold): the building agents' rules, the owner
+  // table and the checks the chunk gate runs, in the same atomic write as the spec.
+  const readFirst = [
+    "`spec/product.md` — what and why",
+    ...(input.architectureMd ? ["`spec/architecture.md` — the system-level design"] : []),
+    "`spec/plan.md` — the ordered chunks and their done-when criteria",
+  ];
+  for (const file of projectKitFiles(input.projectDir, { projectName: input.projectName, readFirst })) {
+    queued.push({ rel: file.rel, content: file.content });
+  }
   validateNoCollisions(queued);
   return queued;
 }

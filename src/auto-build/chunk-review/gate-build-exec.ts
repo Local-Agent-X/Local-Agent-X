@@ -25,7 +25,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { runCaged, type CagedRunOutcome } from "../../tools/caged-spawn.js";
-import { npmCommandArgv } from "../../tools/program-argv.js";
+import { nodeScriptArgv, npmCommandArgv } from "../../tools/program-argv.js";
+import { structureCheckCommand } from "../../app-scaffold/project-kit.js";
 import { smokeUrl } from "../scenario-scorer/smoke.js";
 import type { GateFinding } from "./gates.js";
 
@@ -45,27 +46,38 @@ export type BuildExecRunner = (input: BuildExecInput) => Promise<GateFinding | n
 type CommandResult = { outcome: CagedRunOutcome; outputTail: string } | { notRun: string };
 
 /**
- * Discover which npm scripts to run from package.json. Prefer `build` then
- * `test`; skip cleanly if the script (or package.json) is absent. Returns the
- * ordered command list — empty when there's nothing runnable, in which case
+ * Discover what to run: the project's structure check when it carries the kit
+ * (src/app-scaffold — a project materialized before any code has no
+ * package.json yet, so the check is run directly, not through a script), then
+ * `build` and `test` from package.json. Skip cleanly what is absent. Returns
+ * the ordered command list — empty when there's nothing runnable, in which case
  * the gate no-ops (a project with no build/test can't be execution-verified,
  * and inventing a command would be worse than passing through to the other
  * gates).
  */
 export function discoverCommands(projectDir: string): string[] {
+  const commands: string[] = [];
+  const structure = structureCheckCommand(projectDir);
+  if (structure) commands.push(structure);
   const pkgPath = join(projectDir, "package.json");
-  if (!existsSync(pkgPath)) return [];
+  if (!existsSync(pkgPath)) return commands;
   let scripts: Record<string, string> = {};
   try {
     const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as { scripts?: Record<string, string> };
     scripts = pkg.scripts || {};
   } catch {
-    return [];
+    return commands;
   }
-  const commands: string[] = [];
   if (scripts.build) commands.push("npm run build");
   if (scripts.test) commands.push("npm test");
   return commands;
+}
+
+/** argv for one discovered command: the kit's own script by this process's
+ *  node, anything else as the fixed npm line it is. */
+function commandArgv(command: string) {
+  const [tool, ...args] = command.split(" ");
+  return tool === "node" ? nodeScriptArgv(args) : npmCommandArgv(command);
 }
 
 /**
@@ -93,7 +105,7 @@ async function runCommand(command: string, projectDir: string, signal?: AbortSig
   let output = "";
   const seen = { stdout: 0, stderr: 0 };
   try {
-    const outcome = await runCaged(npmCommandArgv(command), {
+    const outcome = await runCaged(commandArgv(command), {
       cwd: projectDir,
       env: { FORCE_COLOR: "0", CI: "1" },
       detached: process.platform !== "win32",

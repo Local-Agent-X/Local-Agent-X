@@ -68,6 +68,14 @@ Three rules carry the whole skill:
     └── <service>.md
 ```
 
+`finalize_app_build` also drops the structure kit beside the spec: `AGENTS.md`
+(the rules), `ARCHITECTURE.md` (the owner table every folder under the source
+root needs a row in), `docs/adr/`, `docs/history/`, and `scripts/` with
+`node scripts/check-structure.mjs` — the file-size ceiling, module owners, doc
+paths and the generated codebase map. The chunk gate runs it before `npm run
+build`; a chunk that leaves a module unowned or a file over the ceiling is sent
+back with the check's output.
+
 The spec/scenarios separation is the whole game. When you hand the project to
 the coding agent, you tell it explicitly: "Read `spec/`. Do not read
 `scenarios/` or `twins/`." Then you (or a separate evaluator agent without

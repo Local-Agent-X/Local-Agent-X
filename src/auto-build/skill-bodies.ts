@@ -51,7 +51,7 @@ export function loadSkillBody(name: string): string {
 
   const path = join(SKILLS_DIR, name, "SKILL.md");
   if (!existsSync(path)) {
-    throw new Error(`protocol body missing at ${path} — expected src/protocols/bundled/${name}/SKILL.md in the repo (and copied into dist/ by scripts/copy-bundled-protocols.mjs at build time)`);
+    throw new Error(`protocol body missing at ${path} — expected src/protocols/bundled/${name}/SKILL.md in the repo (and copied into dist/ by scripts/copy-bundled-assets.mjs at build time)`);
   }
 
   const raw = readFileSync(path, "utf-8");

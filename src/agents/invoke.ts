@@ -33,7 +33,7 @@ import { Handler } from "../agency/handler.js";
 import { AgentTemplateStore, ProjectStore } from "../agent-store/index.js";
 import { ProjectRosterStore } from "../project-rosters.js";
 import { EventBus } from "../event-bus.js";
-import { dispatchAgentRun, type AgentRunDriverRequest } from "./runtime.js";
+import { dispatchAgentRun, type AgentRunDriverRequest, type AgentRunDriverResult } from "./runtime.js";
 import { inheritSessionProfile } from "../autonomy/profile-store.js";
 import { createLogger } from "../logger.js";
 
@@ -263,7 +263,7 @@ export async function awaitAgentRunning(
 
 async function runAgentViaDriver(req: AgentRunDriverRequest, signal: AbortSignal): Promise<void> {
   const handler = Handler.getInstance();
-  let outcome: { result: string; success: boolean; tokens?: number };
+  let outcome: AgentRunDriverResult;
   try {
     outcome = await dispatchAgentRun(req, signal);
   } catch (e) {
@@ -276,6 +276,7 @@ async function runAgentViaDriver(req: AgentRunDriverRequest, signal: AbortSignal
     result: outcome.result,
     success: outcome.success,
     tokens: outcome.tokens,
+    opId: outcome.opId,
     error: outcome.success ? undefined : outcome.result,
   });
 }

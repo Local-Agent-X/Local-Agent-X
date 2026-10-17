@@ -86,6 +86,15 @@ function inboxClip(text, max) {
   return s.length > max ? s.slice(0, max - 1) + '…' : s;
 }
 
+// Where a finished job's result opens (a built app, a document, a report):
+// the same link the AGENTS card shows (resultLinkHtml, chat-agent-feeds-
+// render.js), so an app opens in the browser and an Office file in its program.
+function inboxOpenLink(n) {
+  var url = n.link && n.link.url;
+  if (!url || typeof resultLinkHtml !== 'function') return '';
+  return '<div class="notif-open">' + resultLinkHtml(url) + '</div>';
+}
+
 // An open approval is answered only by Approve or Decline, so it offers no
 // Done or Dismiss: either would close it without an answer.
 function renderInboxItem(n) {
@@ -104,6 +113,7 @@ function renderInboxItem(n) {
     + '<span class="notif-time">' + esc(timeAgo(n.updatedAt || n.createdAt)) + '</span></div>'
     + '<div class="notif-title">' + esc(n.title) + '</div>'
     + (n.body ? '<div class="notif-body">' + esc(n.kind === 'approval' ? n.body : inboxClip(n.body, 400)) + '</div>' : '')
+    + inboxOpenLink(n)
     + '<div class="notif-actions">' + actions
     + (state ? '<span class="notif-resolution">' + esc(state) + '</span>' : '')
     + (pinned && !awaiting ? '<button type="button" class="notif-btn" data-inbox-act="resolve">Done</button>' : '')
@@ -214,6 +224,8 @@ function bindInboxList(el) {
     var n = findInboxItem(id);
     if (!n) return;
     if (!n.readAt) inboxAct(id, 'read');
+    // The Open link navigates itself; the row's own destination is the chat.
+    if (ev.target.closest('a')) return;
     if (n.link || n.kind === 'update') openInboxLink(n);
   });
 }

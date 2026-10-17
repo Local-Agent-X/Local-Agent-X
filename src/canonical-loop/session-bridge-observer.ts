@@ -37,13 +37,12 @@ import { suspendedWorkerStatus, turnProgressLine } from "./live-workers.js";
 import { pushPendingNotification } from "../ops/pending-notifications.js";
 import { scheduleIdleNudge } from "../ops/idle-nudge.js";
 import { inboxJobResult, runLabel } from "../inbox/producers.js";
-import { cronJobIdOf } from "../cron/cron-session.js";
 
 import { toSpokenCompletion, redirectAppliedRow, isSidebarSuppressedOpType } from "./session-bridge-extractors.js";
 import { readOp } from "../ops/op-store.js";
 import { VERIFICATION_OP_TYPE } from "./verification-spend.js";
 import { resolveTerminalOpStatus, type TerminalOpStatus } from "./checkpoint-stop.js";
-import { extractAppReadyUrl, extractArtifactUrl, extractFinalAssistantText } from "./session-bridge-extractors.js";
+import { extractFinalAssistantText, resultUrlOfOp } from "./session-bridge-extractors.js";
 import type { ServerEvent } from "../types.js";
 import type { CanonicalEvent } from "./types.js";
 
@@ -199,49 +198,10 @@ function recordCanonicalEventWithSink(
               : (op?.lastFailureReason || status));
           const summary = persistedSummary.slice(0, 400);
 
-          // Surface an "Open" link on the AGENTS sidebar card. Resolution
-          // order, most specific to most generic — so a tool that emits
-          // an explicit marker wins over a generic "Created <path>" scan.
-          //
-          //   1. app_build's "APP_READY: <url>" final-assistant marker.
-          //   2. scheduled_mission → /api/cron/<jobId>/reports/latest
-          //      (rendered HTML page; resolver picks newest .md by mtime).
-          //   3. Generic artifact scan — any tool_result with a
-          //      "Created /workspace/foo.docx" / "Wrote N bytes to ..."
-          //      / "App built ... Open: ..." line. Covers
-          //      document / presentation / pdf /
-          //      spreadsheet / write / create_page / etc.
-          //
-          // The generic scan is gated to `status === "completed"` so a
-          // failed or partial run doesn't surface a half-written artifact as
-          // a link.
-          let resultUrl: string | undefined;
-          if (status === "completed") {
-            if (op?.type === OP_TYPE.appBuild) {
-              // Prefer the op's known appUrl — deterministic, provider-agnostic.
-              // Falls back to the APP_READY marker only for legacy ops that
-              // predate the appUrl field.
-              resultUrl = op.appUrl || extractAppReadyUrl(event.opId);
-            } else if (op?.type === OP_TYPE.scheduledMission) {
-              const cronJobId = cronJobIdOf(sessionId);
-              if (cronJobId) resultUrl = `/api/cron/${cronJobId}/reports/latest`;
-            }
-            // Fallback: generic artifact extraction for any op type that
-            // didn't get a specific URL above. Catches the long tail —
-            // doc/ppt/pdf/sheet/page workers all land here. getRuntimeConfig
-            // is synchronous; using require() (not import) lets us stay
-            // inside the non-async observer callback the canonical-loop
-            // invokes us from.
-            if (!resultUrl) {
-              try {
-                // eslint-disable-next-line @typescript-eslint/no-require-imports
-                const cfg = (require("../config.js") as typeof import("../config.js")).getRuntimeConfig();
-                // eslint-disable-next-line @typescript-eslint/no-require-imports
-                const workspaceDir = (require("node:path") as typeof import("node:path")).resolve(cfg.workspace);
-                resultUrl = extractArtifactUrl(event.opId, workspaceDir);
-              } catch { /* config not ready / workspace unresolvable — skip */ }
-            }
-          }
+          // The "Open" link on the AGENTS sidebar card and the inbox item:
+          // one resolver (session-bridge-extractors.ts resultUrlOfOp), only
+          // for a completed op.
+          const resultUrl = status === "completed" ? resultUrlOfOp(event.opId, op, sessionId) : undefined;
 
           if (emitBrowser) emitBrowser(sessionId, {
             type: "bg_op_completed",
@@ -286,7 +246,7 @@ function recordCanonicalEventWithSink(
           // executor, which alone knows its quality-gate verdict; verification
           // passes and headless harness runs are not the user's jobs.
           if (core && !isHeadlessSession(sessionId) && op?.type !== OP_TYPE.scheduledMission && op?.type !== VERIFICATION_OP_TYPE) {
-            inboxJobResult({ label: runLabel("Background task", task), outcome: status, summary: persistedSummary, key: `op:${event.opId}`, link: { sessionId, opId: event.opId } });
+            inboxJobResult({ label: runLabel("Background task", task), outcome: status, summary: persistedSummary, key: `op:${event.opId}`, link: { sessionId, opId: event.opId, ...(resultUrl ? { url: resultUrl } : {}) } });
           }
           if (core) {
             releaseOpFromSession(event.opId);

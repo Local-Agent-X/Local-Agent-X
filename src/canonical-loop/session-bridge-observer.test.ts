@@ -1,7 +1,8 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { rmSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
+import { getRuntimeConfig } from "../config.js";
 import { writeOp } from "../ops/op-store.js";
 import { appendCanonicalEvent, appendOpMessage } from "./store.js";
 import { trackOpForSession, listOpsForSession, setSessionBroadcaster, setSessionPersister } from "../ops/session-bridge.js";
@@ -586,6 +587,8 @@ describe("session-bridge-observer — a checkpoint-stopped op is partial, not co
       type: "bg_op_completed", status: "completed", summary: "APP_READY: /apps/whole/", resultUrl: "/apps/whole/",
     }));
     expect(pushPendingNotification).toHaveBeenCalledWith(sessionId, expect.objectContaining({ opId, status: "completed" }));
+    // The inbox item carries the same link, so the bell can open the result.
+    expect(inboxStore().list().find((i) => i.link?.opId === opId)?.link).toEqual({ sessionId, opId, url: "/apps/whole/" });
     cancelIdleNudge(sessionId);
   });
 
@@ -636,6 +639,23 @@ describe("session-bridge-observer — the user's inbox", () => {
     const items = itemFor("op_inbox_done_1");
     expect(items).toHaveLength(1);
     expect(items[0]).toMatchObject({ title: 'Background task "summarize the quarterly numbers" finished', needsYou: false });
+  });
+
+  // The path is spelled the way this platform's tools print it (a drive
+  // letter and backslashes on Windows); the link is always a /files/ path.
+  it("a document a worker created opens from the item, under /files/", () => {
+    const opId = "op_inbox_doc_1";
+    const sessionId = "sess-inbox-doc";
+    makeOp(opId, "research");
+    appendOpMessage({
+      opId, messageId: "doc-created", turnIdx: 1, seqInTurn: 1,
+      role: "tool_result", content: { text: `Created ${join(resolve(getRuntimeConfig().workspace), "reports", "q3.docx")} (12 KB)` }, createdAt: new Date().toISOString(),
+    });
+    trackOpForSession(opId, sessionId, "write the Q3 report");
+    setSessionBroadcaster(vi.fn());
+    recordCanonicalEvent(stateChanged(opId, "succeeded"));
+    cancelIdleNudge(sessionId);
+    expect(itemFor(opId)[0]?.link?.url).toBe("/files/reports/q3.docx");
   });
 
   it("a scheduled mission (the cron executor posts it), a verification pass and a headless harness op post nothing", () => {

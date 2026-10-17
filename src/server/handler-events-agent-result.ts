@@ -4,6 +4,8 @@ import type { AgentRun, AgentRunStore } from "../agent-store/index.js";
 import type { SessionStore } from "../memory/index.js";
 import type { EventBus } from "../event-bus.js";
 import { inboxJobResult } from "../inbox/producers.js";
+import { resultUrlOfOp } from "../canonical-loop/public/op-facts.js";
+import { readOp } from "../ops/op-store.js";
 import { createLogger } from "../logger.js";
 const logger = createLogger("server.handler-events");
 
@@ -18,7 +20,7 @@ export interface AgentSpawnEvent { agentId: string; name: string; role: string; 
 // status)" — never as a failure. agentCompleteChatRow + the AgentRun status
 // mapping below and the client (public/js/chat-ws-handler-misc.js) all pivot
 // on `success === false` only.
-export interface AgentResultEvent { agentId: string; result: string; success?: boolean; tokens?: number; name?: string }
+export interface AgentResultEvent { agentId: string; result: string; success?: boolean; tokens?: number; name?: string; opId?: string }
 
 /**
  * The ONE chat-row format for a finished agent — the exact bytes persisted
@@ -140,12 +142,15 @@ export function registerAgentLifecycleEvents(deps: {
       // chat reports to its orchestrator, whose own op is what the user sees;
       // an agent woken by another agent (no chat) reports to nobody else.
       if (!(isOrchestratorChild(m) && m.sessionId)) {
+        // Where the run's result opens (a built app, the newest document it
+        // created): the same resolver the background-op card uses.
+        const url = status === "succeeded" && evt.opId ? resultUrlOfOp(evt.opId, readOp(evt.opId)) : undefined;
         inboxJobResult({
           label: `Agent ${displayName}`,
           outcome: status === "failed" ? "failed" : "completed",
           summary: errorField || evt.result || "",
           key: `agent-run:${evt.agentId}`,
-          link: { agentId: evt.agentId, ...(m.sessionId ? { sessionId: m.sessionId } : {}) },
+          link: { agentId: evt.agentId, ...(m.sessionId ? { sessionId: m.sessionId } : {}), ...(url ? { url } : {}) },
         });
       }
       // Chat-initiated spawns only — an orchestrator child's report is

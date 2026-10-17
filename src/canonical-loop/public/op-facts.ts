@@ -31,3 +31,9 @@ export { resolveOpModel } from "../op-model.js";
 // yet" (ask_user) and remembers its answer for the op.
 export { readOpTurns } from "../store.js";
 export { getMiddlewareState } from "../middlewares/state.js";
+
+// Where a completed op's result opens (a built app, the newest document it
+// created, a scheduled job's report): the inbox item for a spawned agent's
+// run reads it (server/handler-events-agent-result.ts), as the background-op
+// observer does inside the loop. Its source reads the op store and config.
+export { resultUrlOfOp } from "../session-bridge-extractors.js";

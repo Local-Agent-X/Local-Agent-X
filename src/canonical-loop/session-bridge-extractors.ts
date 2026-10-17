@@ -10,10 +10,40 @@
  * reader and content extractor, plus VERIFICATION_OP_TYPE for the verdict
  * headline below (a constant, not an observer/bridge dep).
  */
+import { resolve } from "node:path";
 import { readOpMessages } from "./store.js";
 import { VERIFICATION_OP_TYPE } from "./verification-spend.js";
 import { extractText } from "./turn-loop/content-extract.js";
 import { OP_TYPE } from "../ops/op-types.js";
+import type { Op } from "../ops/types.js";
+import { cronJobIdOf } from "../cron/cron-session.js";
+import { getRuntimeConfig } from "../config.js";
+
+/**
+ * Where a completed op's result opens — the one answer the AGENTS card, the
+ * chat nudge and the inbox item share. Most specific first, so a tool that
+ * emits an explicit marker wins over a generic "Created <path>" scan:
+ *   1. an app build's known URL (op.appUrl), else its APP_READY marker;
+ *   2. a scheduled mission: the job's latest-report page;
+ *   3. the newest artifact a tool_result says it created (a document,
+ *      presentation, pdf, sheet, page, …).
+ * Only for a completed op: a failed or partial run must not offer a link to a
+ * half-written artifact.
+ */
+export function resultUrlOfOp(opId: string, op: Pick<Op, "type" | "appUrl"> | null | undefined, sessionId?: string): string | undefined {
+  let url: string | undefined;
+  if (op?.type === OP_TYPE.appBuild) url = op.appUrl || extractAppReadyUrl(opId);
+  else if (op?.type === OP_TYPE.scheduledMission) {
+    const jobId = sessionId ? cronJobIdOf(sessionId) : undefined;
+    if (jobId) url = `/api/cron/${jobId}/reports/latest`;
+  }
+  if (url) return url;
+  try {
+    return extractArtifactUrl(opId, resolve(getRuntimeConfig().workspace));
+  } catch {
+    return undefined; // config not ready / workspace unresolvable: no link
+  }
+}
 
 /** Is this per-value row's `match?` cell a NO? Tolerant of the spellings
  *  models actually emit for that column. */
@@ -140,7 +170,10 @@ export function extractArtifactUrl(opId: string, workspaceDir: string): string |
     //   "App built ... Open: http://127.0.0.1:.../" → build_app (separate APP_READY path also works)
     // We deliberately don't try to extract from prose — only from
     // structured tool_result strings, which are stable.
-    const wsAbs = workspaceDir.endsWith("/") ? workspaceDir : workspaceDir + "/";
+    // Forward slashes on both sides: a Windows tool_result spells the path
+    // with a drive letter and backslashes.
+    const slashes = (p: string) => p.replace(/\\/g, "/");
+    const wsAbs = slashes(workspaceDir).replace(/\/?$/, "/");
     for (let i = messages.length - 1; i >= 0; i--) {
       const m = messages[i];
       if (m.role !== "tool_result") continue;
@@ -153,20 +186,20 @@ export function extractArtifactUrl(opId: string, workspaceDir: string): string |
       const urlMatch = String(text).match(/Open:\s*(https?:\/\/\S+)/);
       if (urlMatch) return trimUrlNoise(urlMatch[1]);
       // Generic "Created <abs-path>" / "Wrote N bytes to <abs-path>" patterns.
-      const created = String(text).match(/(?:Created|Wrote (?:\d+ bytes? )?to|Edited)\s+(\/\S+)/);
+      const created = String(text).match(/(?:Created|Wrote (?:\d+ bytes? )?to|Edited)\s+((?:[A-Za-z]:)?[\\/]\S+)/);
       if (!created) continue;
-      const absPath = trimUrlNoise(created[1]);
+      const absPath = slashes(trimUrlNoise(created[1]));
       // Workspace-bound only — sidebar links go through the static handler.
       if (!absPath.startsWith(wsAbs)) continue;
       const rel = absPath.slice(wsAbs.length);
       // For HTML/index files we want the directory link, not the file.
       if (rel.endsWith("/index.html")) return "/apps/" + rel.slice(0, -"/index.html".length) + "/";
-      // /apps/ static handler serves anything under workspace/apps/ — for
-      // standalone workspace files (workspace/foo.docx) link via a
-      // /workspace/ path. The handler may not serve all of these yet, but
-      // the link IS a stable user-readable hint at where the artifact
-      // landed; click-through works for HTML, downloads otherwise.
-      return rel.startsWith("apps/") ? "/" + rel : "/workspace/" + rel;
+      // /apps/ serves anything under workspace/apps/; any other workspace
+      // file is served under /files/<workspace-relative path> (the agent
+      // origin, server/static-assets.ts), which the UI opens in its program
+      // or renders inline. A /workspace/ link was offered here before and
+      // nothing served it.
+      return rel.startsWith("apps/") ? "/" + rel : "/files/" + rel;
     }
   } catch { /* malformed op-messages — return undefined */ }
   return undefined;

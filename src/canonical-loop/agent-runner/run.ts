@@ -283,6 +283,7 @@ export async function runAgentViaCanonical(
       usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
       stopReason,
       committedWork,
+      opId: op.id,
     };
     if (errorMessage && stopReason === "error") result.errorMessage = errorMessage;
     return result;

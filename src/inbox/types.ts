@@ -20,6 +20,10 @@ export interface InboxLink {
    *  spawned agent's run id (AgentRun.id). */
   agentId?: string;
   issueId?: string;
+  /** "job": where the run's result opens — a built app's URL, a document it
+   *  created (a /files/ path), a scheduled job's latest report page. The bell
+   *  renders it as the item's Open link. */
+  url?: string;
 }
 
 export interface InboxAction {

@@ -66,6 +66,8 @@ export interface AgentRunDriverResult {
   result: string;
   success: boolean;
   tokens?: number;
+  /** The canonical op the run was, when it got as far as one. */
+  opId?: string;
 }
 
 export type AgentRunDriver = (

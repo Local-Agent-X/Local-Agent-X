@@ -244,6 +244,7 @@ export function registerHandlerEvents(deps: {
       }
 
       const agentOutput = extractAgentOutput(agentSession.messages);
+      const opId = agentResult.opId;
       if (mergeSuccess) {
         // Empty-output guard: a run that committed no work AND produced no
         // usable text (or only a runner status marker) finished with nothing
@@ -254,7 +255,7 @@ export function registerHandlerEvents(deps: {
           const empty = looksLikeEmptyOrErrorOnly(agentOutput);
           if (empty.isEmptyOrErrorOnly) {
             logger.warn(`[handler] Agent ${agentId} (${role}) finished with ${empty.reason} and no committed work — re-classified as error`);
-            return { result: `[Agent finished with no usable output (${empty.reason}) and committed no work]${agentOutput ? `\n\n${agentOutput}` : ""}`, success: false };
+            return { result: `[Agent finished with no usable output (${empty.reason}) and committed no work]${agentOutput ? `\n\n${agentOutput}` : ""}`, success: false, opId };
           }
         }
         // False-completion guard: the driver has both the output text AND the
@@ -263,12 +264,12 @@ export function registerHandlerEvents(deps: {
         const completion = looksLikeUnsubstantiatedCompletion(agentOutput, agentResult.committedWork ?? true);
         if (completion.isUnsubstantiated) {
           logger.warn(`[handler] Agent ${agentId} (${role}) claimed committing action ("${completion.matchedPhrase}") with no successful committing tool call — re-classified as error`);
-          return { result: `[Agent claimed a committing action ("${completion.matchedPhrase}") but made no successful committing tool call — likely a false completion]\n\n${agentOutput}`, success: false };
+          return { result: `[Agent claimed a committing action ("${completion.matchedPhrase}") but made no successful committing tool call — likely a false completion]\n\n${agentOutput}`, success: false, opId };
         }
-        return { result: agentOutput, success: true };
+        return { result: agentOutput, success: true, opId };
       }
       const branchHint = worktreeInfo ? `Changes preserved on branch agent/${agentId}. Run: git merge agent/${agentId}` : "File changes may be lost";
-      return { result: `[Agent completed but merge had conflicts — ${branchHint}]\n\n${agentOutput}`, success: false };
+      return { result: `[Agent completed but merge had conflicts — ${branchHint}]\n\n${agentOutput}`, success: false, opId };
     } catch (e) {
       // The folder the task named couldn't be isolated: say exactly why — the
       // path is the spawner's own input — so it can pick another.

@@ -61,6 +61,8 @@ describe("cron outcomes in the inbox", () => {
     const items = jobs();
     expect(items).toHaveLength(2);
     expect(items.find((i) => i.needsYou)?.title).toBe('Scheduled job "Morning news" failed');
-    expect(items.find((i) => !i.needsYou)).toMatchObject({ title: 'Scheduled job "Morning news" finished', body: "Top stories: ..." });
+    // The finished item opens the job's latest report; the failure offers no link.
+    expect(items.find((i) => !i.needsYou)).toMatchObject({ title: 'Scheduled job "Morning news" finished', body: "Top stories: ...", link: { url: "/api/cron/job-news/reports/latest" } });
+    expect(items.find((i) => i.needsYou)?.link?.url).toBeUndefined();
   });
 });

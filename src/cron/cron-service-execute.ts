@@ -149,7 +149,9 @@ function postCronOutcome(job: CronJob, summary: string, succeeded: boolean, sess
     outcome: succeeded ? "completed" : "failed",
     summary,
     key: `${succeeded ? "cron-done" : "cron-failed"}:${job.id}`,
-    ...(sessionId ? { link: { sessionId } } : {}),
+    // A finished run's report is the deliverable: the job's latest-report
+    // page (routes/bridges/cron.ts), the same link the AGENTS card gets.
+    link: { ...(sessionId ? { sessionId } : {}), ...(succeeded ? { url: `/api/cron/${job.id}/reports/latest` } : {}) },
   });
 }
 

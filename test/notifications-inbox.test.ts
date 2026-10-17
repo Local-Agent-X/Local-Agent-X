@@ -32,7 +32,11 @@ const serverItems = [
 function load(): Bell {
   document.body.innerHTML = '<span id="notif-badge" style="display:none"></span><span id="inbox-count" style="display:none"></span><div id="notif-list"></div>';
   new Function(src("shared-escape.js") + "\nglobalThis.esc = esc;")();
-  return new Function(src("notifications.js") + "\nreturn { loadInbox, handleInboxFrame, addNotification, renderNotifications };")() as Bell;
+  // The Open link is the AGENTS card's (chat-agent-feeds-render.js); its two
+  // globals are the files-link signer (shared-md.js) and the operator token.
+  g.agentFilesHref = (u: string) => u;
+  g.AUTH_TOKEN = "tok";
+  return new Function(src("chat-agent-feeds-render.js") + "\n" + src("notifications.js") + "\nreturn { loadInbox, handleInboxFrame, addNotification, renderNotifications };")() as Bell;
 }
 
 interface Panel {
@@ -79,6 +83,22 @@ describe("the bell renders the server inbox", () => {
     expect(list.querySelector(".needs-you .notif-kind")!.textContent).toBe("Agent");
     const approve = [...list.querySelectorAll("button")].find((b) => b.textContent === "Approve") as HTMLButtonElement;
     expect(approve.disabled).toBe(true);
+  });
+
+  it("a finished job with a result shows an Open link to it; clicking it marks the item read and leaves the chat alone", async () => {
+    const selectChat = vi.fn();
+    g.selectChat = selectChat;
+    g.chats = [{ id: "sess-1" }];
+    const bell = load();
+    bell.handleInboxFrame({ type: "inbox_item", created: true, unread: 3, needsYou: 1, item: { id: "inb_app", kind: "job", title: 'Background task "build a water tracker" finished', body: "done", createdAt: NOW, needsYou: false, link: { sessionId: "sess-1", opId: "op1", url: "/apps/water-tracker/" } } });
+    const row = document.querySelector('[data-inbox-id="inb_app"]')!;
+    const open = row.querySelector("a") as HTMLAnchorElement;
+    expect(open.getAttribute("href")).toBe("/apps/water-tracker/");
+    expect(open.textContent).toContain("Open: /apps/water-tracker/");
+    expect(document.querySelector('[data-inbox-id="inb_info"] a')).toBeNull();
+    open.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await vi.waitFor(() => expect(posted).toContainEqual({ path: "/api/inbox/read", body: { id: "inb_app" } }));
+    expect(selectChat).not.toHaveBeenCalled();
   });
 
   it("an inbox_item frame merges the item and toasts only when it needs the user", async () => {

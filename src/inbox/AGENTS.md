@@ -16,7 +16,7 @@
 | Kind | Where it is posted | Dedupe key |
 |---|---|---|
 | `agent-message` | `src/agents/escalation-core.ts` (an agent's escalation that resolves to the user) | none |
-| `job` | `src/canonical-loop/session-bridge-observer.ts` (background ops), `src/cron/cron-service-execute.ts` (scheduled runs), `src/server/handler-events-agent-result.ts` (spawned agents outside a chat), `approvals.ts` (an approved call's outcome) | `op:<id>`, `cron-done:` / `cron-failed:<job>`, `agent-run:<id>`, `approval-result:<item id>` |
+| `job` | `src/canonical-loop/session-bridge-observer.ts` (background ops), `src/cron/cron-service-execute.ts` (scheduled runs), `src/server/handler-events-agent-result.ts` (spawned agents outside a chat), `approvals.ts` (an approved call's outcome). A finished run's `link.url` is where its result opens: the op's result URL (`src/canonical-loop/session-bridge-extractors.ts` `resultUrlOfOp`, reached through `src/canonical-loop/public/op-facts.ts`: a built app, the newest document it created, a scheduled job's latest report), rendered by the bell as the item's Open link | `op:<id>`, `cron-done:` / `cron-failed:<job>`, `agent-run:<id>`, `approval-result:<item id>` |
 | `approval` | `src/tool-execution/deferred-call.ts` (one function, called by `require-approval.ts`, `secret-env-approval.ts`, `run-sandboxed.ts`) | `approval:<cron:job, else op or session>:<call hash>` |
 | `update` | `src/update-service.ts` `checkForUpdate` | `update:<version>` |
 | `app-error` | the bell itself, as a tab-local item (never stored here) | |

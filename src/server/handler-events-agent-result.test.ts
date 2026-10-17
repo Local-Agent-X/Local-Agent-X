@@ -10,6 +10,7 @@ import type { IntegrationRegistry } from "../integrations/index.js";
 import { registerAgentLifecycleEvents, isOrchestratorChild, agentCompleteChatRow, type PendingAgentMeta } from "./handler-events-agent-result.js";
 import { registerHandlerEvents } from "./handler-events.js";
 import { inboxStore } from "../inbox/index.js";
+import { writeOp } from "../ops/op-store.js";
 
 // Regression (2026-08-30 overnight auto-build): every chunk / retry /
 // preflight worker report landed in the user's chat as an assistant
@@ -269,6 +270,15 @@ describe("handler:agent-result — the user's inbox", () => {
       needsYou: true, body: "could not reach the API", link: { agentId: "run-inbox-1", sessionId: CHAT },
     })]);
     expect(itemFor("run-inbox-1")[0].title).toMatch(/^Agent .+ failed$/);
+  });
+
+  it("a finished run's item opens what the run built, resolved from its op", async () => {
+    const h = harness();
+    registerAgentLifecycleEvents({ eventBus: EventBus.getInstance(), ...h });
+    writeOp({ id: "op_hired_app", type: "app_build", status: "succeeded", appUrl: "/apps/hired/" } as never);
+    await EventBus.emit("handler:agent-spawn", spawnEvent("run-inbox-app", "caller-run-2", ""));
+    await EventBus.emit("handler:agent-result", { agentId: "run-inbox-app", result: "APP_READY: /apps/hired/", success: true, opId: "op_hired_app" });
+    expect(itemFor("run-inbox-app")[0]?.link).toEqual({ agentId: "run-inbox-app", url: "/apps/hired/" });
   });
 
   it("an agent woken by another agent (no chat) reports to the inbox; an orchestrator child inside a chat does not", async () => {

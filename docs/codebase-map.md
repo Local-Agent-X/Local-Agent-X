@@ -18,10 +18,10 @@ over 400 LOC (the source-hygiene ceiling).
 
 | Directory | Importers | Files | Size | God files |
 |---|--:|--:|:--:|--:|
-| `src/ops/` | 157 | 29 | XL |  |
+| `src/ops/` | 158 | 29 | XL |  |
 | `src/security/` | 121 | 46 | XL |  |
 | `src/tools/` | 104 | 210 | XL |  |
-| `src/canonical-loop/` | 79 | 258 | XL |  |
+| `src/canonical-loop/` | 80 | 258 | XL |  |
 | `src/workspace/` | 71 | 3 | M |  |
 | `src/providers/` | 67 | 26 | XL |  |
 | `src/memory/` | 51 | 139 | XL |  |
@@ -192,6 +192,7 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/secrets-types.ts` | S |
 | `src/secrets.ts` | M |
 | `src/security-tests.ts` | S |
+| `src/security-types.ts` | S |
 | `src/server-context.ts` | S |
 | `src/server-utils.ts` | M |
 | `src/settings-change-direction.ts` | S |

@@ -23,15 +23,20 @@ const header = (file) =>
 
 const sourceFiles = () => readdirSync(SOURCE_DIR).filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts"));
 
+// Line endings are the checkout's (core.autocrlf), not the contract's: compare
+// and write with LF so a CRLF working copy of both files still matches.
+const lf = (text) => text.replace(/\r\n/g, "\n");
+const readLf = (path) => lf(readFileSync(path, "utf-8"));
+
 /** The copies that differ from their source, and the copies with no source. */
 export function contractDrift() {
   const drift = [];
   const sources = sourceFiles();
   for (const file of sources) {
-    const expected = header(file) + readFileSync(join(SOURCE_DIR, file), "utf-8");
+    const expected = header(file) + readLf(join(SOURCE_DIR, file));
     const copy = join(COPY_DIR, file);
     if (!existsSync(copy)) drift.push(`desktop/src/contract/${file} is missing`);
-    else if (readFileSync(copy, "utf-8") !== expected) drift.push(`desktop/src/contract/${file} differs from src/desktop-contract/${file}`);
+    else if (readLf(copy) !== expected) drift.push(`desktop/src/contract/${file} differs from src/desktop-contract/${file}`);
   }
   if (existsSync(COPY_DIR)) {
     for (const file of readdirSync(COPY_DIR)) {
@@ -44,7 +49,7 @@ export function contractDrift() {
 export function syncContract() {
   mkdirSync(COPY_DIR, { recursive: true });
   const sources = sourceFiles();
-  for (const file of sources) writeFileSync(join(COPY_DIR, file), header(file) + readFileSync(join(SOURCE_DIR, file), "utf-8"));
+  for (const file of sources) writeFileSync(join(COPY_DIR, file), header(file) + readLf(join(SOURCE_DIR, file)));
   for (const file of readdirSync(COPY_DIR)) {
     if (!KEPT.has(file) && !sources.includes(file)) rmSync(join(COPY_DIR, file));
   }

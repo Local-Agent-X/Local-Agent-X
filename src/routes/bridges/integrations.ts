@@ -6,79 +6,8 @@ import { normalizeTransport, type IntegrationTransport } from "../../integration
 import { BUILTIN_INTEGRATIONS } from "../../integrations/builtins/index.js";
 import { canonicalFetch } from "../../tools/web-egress.js";
 import { getSmtpConfig, ownsEmailConfig, writeEmailCredentials } from "../../tools/email-config.js";
-import { isRequiredRequirement, isSecretRequirement, type CredentialRequirement } from "../../credentials/requirements.js";
-
-type InstallBody = { id: string; secretValue?: unknown; secretValues?: unknown };
-
-/** The host an HTTP integration's calls reach; null when it has none (email). */
-function apiHostOf(baseUrl: string): string | null {
-  try { return baseUrl ? new URL(baseUrl).hostname || null : null; } catch { return null; }
-}
-
-/**
- * Pairs each supplied install value with the credential it was DECLARED under.
- * `secretValues` is the multi-credential shape; a bare `secretValue` still means
- * "the primary credential", so every caller written against the single-field
- * install keeps working unchanged.
- *
- * A name the integration does not declare is rejected outright, and resolution
- * completes before anything is written, so a rejected install never leaves a
- * partial write behind. That check bounds a write to the DECLARED names only —
- * it is not a proof that this route cannot write an arbitrary secret, because
- * the declaration itself is authored over the network (POST /api/integrations
- * accepts any credential list). It is the same capability, at the same
- * privilege, that POST /api/secrets already exposes.
- *
- * There is no silent-success branch here. Every arm that cannot produce a
- * stored credential returns an error, so the route never answers 200 over a
- * vault it wrote nothing to:
- *   - a supplied value that is not a string, or is the empty string, is an
- *     error rather than a skip (the modal already refuses to submit a blank, so
- *     nothing legitimate sends one);
- *   - the PRIMARY credential must end up supplied whenever the integration
- *     declares any, because the primary is what the single-name readers
- *     (uninstall, /api/integrations/test, the tool auth path) act on — that is a
- *     property of this seam, so a declaration cannot opt out of it;
- *   - every OTHER credential must be supplied unless the declaration says the
- *     integration runs without it (`required: false`). Answering 200 over a
- *     declaration whose own terms are unmet is the same silent success the rules
- *     above remove: it marks the integration CONNECTED on a configuration that
- *     cannot work. The Settings modal enforces the identical rule client-side
- *     (it blocks submit on a blank REQUIRED field and skips a blank optional
- *     one), so the two ends of the install cannot drift;
- *   - an integration that declares NO credentials has nothing to store, so it
- *     installs cleanly on an empty body — but supplying a value for it is an
- *     error, because there is no declared name to bind that value to.
- */
-function resolveInstallValues(
-  credentials: CredentialRequirement[],
-  body: InstallBody,
-): { values: Array<{ requirement: CredentialRequirement; value: string }> } | { error: string } {
-  const declared = new Map(credentials.map(c => [c.name, c]));
-  const supplied = new Map<string, string>();
-  if (body.secretValues !== undefined) {
-    const raw = body.secretValues;
-    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { error: "secretValues must be an object" };
-    for (const [name, value] of Object.entries(raw as Record<string, unknown>)) {
-      if (!declared.has(name)) return { error: `Integration does not declare credential ${name}` };
-      if (typeof value !== "string") return { error: `Credential ${name} must be a string` };
-      if (!value) return { error: `Credential ${name} must not be empty` };
-      supplied.set(name, value);
-    }
-  }
-  if (body.secretValue !== undefined) {
-    const primary = credentials[0];
-    if (!primary) return { error: "Integration declares no credentials" };
-    if (typeof body.secretValue !== "string") return { error: `Credential ${primary.name} must be a string` };
-    if (!body.secretValue) return { error: `Credential ${primary.name} must not be empty` };
-    if (!supplied.has(primary.name)) supplied.set(primary.name, body.secretValue);
-  }
-  const primary = credentials[0];
-  if (primary && !supplied.has(primary.name)) return { error: `Credential ${primary.name} is required` };
-  const missing = credentials.find(c => isRequiredRequirement(c) && !supplied.has(c.name));
-  if (missing) return { error: `Credential ${missing.name} is required` };
-  return { values: [...supplied].map(([name, value]) => ({ requirement: declared.get(name)!, value })) };
-}
+import { isSecretRequirement } from "../../credentials/requirements.js";
+import { apiHostOf, resolveInstallValues, type InstallBody } from "./integration-install.js";
 
 /**
  * The extra query a connection probe needs on top of the endpoint's path,
@@ -86,7 +15,7 @@ function resolveInstallValues(
  *
  * This is the honest residue of the `config.id === "google"` special case, and
  * it is deliberately NOT declaration-driven. YouTube Data v3 rejects every
- * request that omits `part`, and `part` takes an enum of resource-part names —
+ * request that omits `part`, and `part` takes an enum of resource-part names â€”
  * so filling the endpoint's declared required params with any generic probe
  * value returns 400 for a PERFECTLY VALID key, and the Settings button (which
  * renders `ok: false` as "Connection failed") would tell that user their key is
@@ -95,7 +24,7 @@ function resolveInstallValues(
  * key off. An `example`/`default` on the param declaration is what would retire
  * this table; deleting it outright without one would just break the button.
  *
- * The credential's placement is a separate question and does NOT live here —
+ * The credential's placement is a separate question and does NOT live here â€”
  * see probeHeaders(), which answers it from the declaration.
  */
 const PROBE_QUERY: Record<string, string> = {
@@ -106,8 +35,8 @@ const PROBE_QUERY: Record<string, string> = {
  * The headers a connection probe sends, with the credential where the
  * INTEGRATION says it goes rather than where this route guesses.
  *
- * An integration that names its primary credential inside a declared header —
- * google's `X-Goog-Api-Key: {{GOOGLE_API_KEY}}` — gets the token substituted
+ * An integration that names its primary credential inside a declared header â€”
+ * google's `X-Goog-Api-Key: {{GOOGLE_API_KEY}}` â€” gets the token substituted
  * there. Everything that does not falls through to `Authorization: Bearer`,
  * which is what all ten bearer/bot-token builtins want and is byte-identical to
  * what they got before this existed (none of them declares a header naming its
@@ -155,7 +84,7 @@ function probeHeaders(
 /**
  * The credential name a BUILTIN's declared headers were written against.
  *
- * `secretName` is user-authored state — a saved integrations.json may point the
+ * `secretName` is user-authored state â€” a saved integrations.json may point the
  * primary at any vault entry (savedPrimaryName() in registry.ts), and the
  * registry renames the credential but NOT the shipped `headers` map, which
  * still names the default. Matching only the renamed name therefore left
@@ -166,7 +95,7 @@ function probeHeaders(
  * Keyed by builtin id, so this can only ever place the integration's OWN token
  * into the integration's OWN shipped header. A custom integration cannot claim
  * a builtin id (the registry seeds builtins first and merges by id), and even
- * if it could, the value substituted is its own primary token — never another
+ * if it could, the value substituted is its own primary token â€” never another
  * stored secret.
  */
 const BUILTIN_PRIMARY_NAME = new Map(
@@ -177,8 +106,8 @@ const BUILTIN_PRIMARY_NAME = new Map(
  * What "test this integration" means for a transport HTTP cannot carry.
  *
  * Switched on the transport rather than assuming the only one that exists
- * today. The body below is SMTP-specific — it calls getSmtpConfig() and dials
- * the mailbox — so a second non-HTTP transport falling through to it would have
+ * today. The body below is SMTP-specific â€” it calls getSmtpConfig() and dials
+ * the mailbox â€” so a second non-HTTP transport falling through to it would have
  * the Settings button report the email mailbox's health as that transport's.
  * The `never` assignment after the switch makes adding one a COMPILE error
  * instead, which is the only way this stays honest without a second list.
@@ -210,7 +139,7 @@ async function testNonHttpTransport(
  * `"" + "smtp"` and fired a request at a nonsense URL that could only ever
  * fail. This branch never builds a URL and never claims a connection it did not
  * make: a configuration that is incomplete is reported as incomplete WITHOUT a
- * network call, and a complete one is verified for real — the same
+ * network call, and a complete one is verified for real â€” the same
  * `transport.verify()` handshake `email_setup` runs, over the same
  * getSmtpConfig() the email_* tools send with, so a green answer here means the
  * mailbox actually accepted these credentials.
@@ -238,7 +167,7 @@ async function testSmtpMailbox(
     }).verify();
     return { ok: true, transport, status: "SMTP", statusText: `authenticated as ${cfg.user} at ${cfg.host}:${cfg.port}` };
   } catch (e) {
-    return { ok: false, transport, error: `SMTP ${cfg.host}:${cfg.port} — ${(e as Error).message}` };
+    return { ok: false, transport, error: `SMTP ${cfg.host}:${cfg.port} â€” ${(e as Error).message}` };
   }
 }
 
@@ -253,7 +182,7 @@ async function testSmtpMailbox(
  *
  * Routing on the DECLARED transport instead was the defect this replaces:
  * `transport` is a field the caller supplies, so any installed integration could
- * name `smtp_imap` and merge SMTP_HOST into the real mailbox's config — see
+ * name `smtp_imap` and merge SMTP_HOST into the real mailbox's config â€” see
  * ownsEmailConfig(), which is where that argument lives, so this route and the
  * store cannot drift about who may write it.
  *
@@ -261,7 +190,7 @@ async function testSmtpMailbox(
  * no builtin declares one. Dropping it is what this route used to do for EVERY
  * non-secret credential, and it is the silent success the rest of this seam
  * removes: it answers 200 and marks the integration CONNECTED over a value it
- * threw away. So it is refused instead — the same 400 a non-owner now gets, for
+ * threw away. So it is refused instead â€” the same 400 a non-owner now gets, for
  * the same reason, rather than a 200 over a discarded write.
  */
 function persistNonSecretValues(
@@ -307,12 +236,12 @@ export const handleIntegrationsRoutes: RouteHandler = async (method, url, req, r
       else nonSecret[requirement.name] = value;
     }
     // Config first: it validates before it writes, so a rejected install leaves
-    // the vault — the sensitive half — untouched.
+    // the vault â€” the sensitive half â€” untouched.
     const persisted = persistNonSecretValues(config, nonSecret, vaulted.map(v => v.name));
     if (persisted) { json(400, { error: persisted.error }); return true; }
     for (const { name, value } of vaulted) {
       // `config.name` is the human-readable service label the Secrets UI shows;
-      // it is metadata, not an ownership record — nothing reads it back.
+      // it is metadata, not an ownership record â€” nothing reads it back.
       ctx.secretsStore.set(name, value, config.name);
     }
     ctx.integrations.markInstalled(body.id, true);
@@ -347,7 +276,7 @@ export const handleIntegrationsRoutes: RouteHandler = async (method, url, req, r
     // chunk. C7 is where email first gets a real multi-credential list, and so
     // is where multi-credential cleanup becomes a real problem worth solving.
     // `secretName` is derived from credentials[0] and is "" when an integration
-    // declares none — there is then nothing to delete.
+    // declares none â€” there is then nothing to delete.
     if (config.secretName) ctx.secretsStore.delete(config.secretName);
     ctx.integrations.markInstalled(body.id, false);
     json(200, { ok: true, id: body.id }); return true;
@@ -399,7 +328,7 @@ export const handleIntegrationsRoutes: RouteHandler = async (method, url, req, r
         token,
       );
       // Route through the SSRF-pinned egress chokepoint (DNS-pin + private-IP
-      // block + per-hop redirect re-validation) instead of a raw fetch — this
+      // block + per-hop redirect re-validation) instead of a raw fetch â€” this
       // HTTP route was sending a stored credential to an attacker-influenced
       // baseUrl past the egress controls the agent's own fetch tools honor.
       const r = await canonicalFetch(testUrl, { headers, timeoutMs: 10000 });

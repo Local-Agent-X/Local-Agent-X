@@ -12,7 +12,7 @@ statically or by `import()` (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 67 top-level dirs · 67 live · 0 with no live importer · 1775 non-test source files · 0 god files (>400 LOC).
+**Totals:** 67 top-level dirs · 67 live · 0 with no live importer · 1776 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -60,7 +60,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/ari-kernel/` | 10 | 12 | L |  |
 | `src/autopilot/` | 10 | 14 | L |  |
 | `src/persistence/` | 10 | 2 | S |  |
-| `src/routes/` | 10 | 92 | XL |  |
+| `src/routes/` | 10 | 93 | XL |  |
 | `src/sync/` | 10 | 21 | L |  |
 | `src/screen-stream/` | 9 | 11 | L |  |
 | `src/agent-guards/` | 8 | 11 | L |  |
@@ -71,9 +71,9 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/plugin-system/` | 7 | 10 | L |  |
 | `src/android/` | 6 | 7 | M |  |
 | `src/app-renderer/` | 6 | 7 | M |  |
+| `src/credentials/` | 6 | 1 | S |  |
 | `src/mcp-client/` | 6 | 10 | L |  |
 | `src/net/` | 6 | 3 | M |  |
-| `src/credentials/` | 5 | 1 | S |  |
 | `src/codex-client/` | 4 | 5 | M |  |
 | `src/embedding-providers/` | 4 | 8 | M |  |
 | `src/hooks/` | 4 | 3 | M |  |

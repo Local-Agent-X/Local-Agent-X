@@ -7,9 +7,7 @@ import { AUDIENCES_BY_TOOL } from "./audience-map.js";
 import { TOOL_POLICIES } from "../tool-policy/tool-policies.js";
 import { SESSION_SCOPED_TOOLS } from "../tool-execution/resolve-tool.js";
 import { collectRuntimeToolNames } from "./runtime-tool-names.js";
-import { BROWSER_TOOL_PARAMETERS } from "./browser-tools/description.js";
-import { FLIPPABLE_SETTINGS } from "../settings-schema.js";
-import { createCoreProtocolTools } from "../protocols/index.js";
+import { knownNonToolIdentifiers } from "./tool-name-collections.js";
 import { _seedBuiltinRoles } from "../agency/agent-roles.js";
 import { builtInTemplateDefaults } from "../agent-store/template-defaults.js";
 import { DREAM_TOOL_NAMES } from "../server/background-jobs/prompts.js";
@@ -42,25 +40,6 @@ const PROMPT_SOURCES = [
 
 const registeredToolNames = collectRuntimeToolNames;
 
-/** Backticked snake_case names the prompt uses that are NOT tools and never
- *  will be: settings fields (`developer_mode`), browser and protocol actions
- *  (`new_tab`, `save_preference`), and two plain nouns. Derived from the real
- *  tables where one exists, so a renamed action can't go stale here. */
-function knownNonToolIdentifiers(): Set<string> {
-  const browserActions = (BROWSER_TOOL_PARAMETERS.properties.action as { enum: readonly string[] }).enum;
-  return new Set([
-    ...FLIPPABLE_SETTINGS.map((s) => s.field),
-    ...browserActions,
-    // The `protocol` family's inner tools: not in the model-facing catalog
-    // (the model calls `protocol` with an action), but core callers dispatch
-    // them by name, so resolver tables may legitimately list them.
-    ...createCoreProtocolTools().map((t) => t.name),
-    "save_preference", // `protocol` tool action
-    "node_modules",
-    "run_id", // what agent_spawn returns
-  ]);
-}
-
 /** Backticked snake_case identifiers in the prompt sources: the shape a tool
  *  reference takes there ("Call `search_past_sessions` when…"). Single-word
  *  tokens are ambiguous with file and env names and are not checked. */
@@ -76,67 +55,9 @@ function promptToolReferences(): Map<string, string> {
   return refs;
 }
 
-/** Hand-maintained per-tool lists scattered through src/. None of them is
- *  derived from the registry, so a renamed or removed tool leaves a dead entry
- *  that silently stops doing its job (a deny that denies nothing, an essential
- *  that never loads). Half are module-private, and importing the route and
- *  loop modules that hold them would drag their side effects into this test,
- *  so the declarations are scanned in source: every `snake_case` string
- *  literal inside the declaration must be a registered tool. `keys` lists
- *  take only the top-level record keys (their values are actions or args). */
-const TOOL_LISTS: Array<{ file: string; name: string; shape: "literals" | "keys" }> = [
-  { file: "src/tool-execution/resolve-tool.ts", name: "OPERATION_SCOPED_TOOLS", shape: "literals" },
-  { file: "src/tool-execution/resolve-tool.ts", name: "SESSION_REPEAT_SKIP_TOOLS", shape: "literals" },
-  { file: "src/tools/tier-tool-set.ts", name: "ESSENTIAL_TOOLS_ORDER", shape: "literals" },
-  { file: "src/tools/tool-search.ts", name: "ALWAYS_ON_TOOLS", shape: "literals" },
-  { file: "src/tools/tool-companions.ts", name: "TOOL_COMPANIONS", shape: "literals" },
-  { file: "src/server/voice-prompt.ts", name: "VOICE_FAST_TOOLS", shape: "literals" },
-  // What strict local-only mode cannot read off a row: the reach the row
-  // cannot name, in both directions.
-  { file: "src/local-only-policy.ts", name: "INDIRECT_NETWORK", shape: "keys" },
-  { file: "src/local-only-policy.ts", name: "LOCAL_DEVICE", shape: "keys" },
-  { file: "src/committing-tool-check.ts", name: "ARG_AWARE_TOOLS", shape: "literals" },
-  { file: "src/tool-execution/dedup-cache.ts", name: "DEDUP_SKIP", shape: "literals" },
-  { file: "src/tool-execution/heap-guard.ts", name: "HEAP_GUARD_EXEMPT_TOOLS", shape: "literals" },
-  { file: "src/ops/tools/delegated-toolset.ts", name: "DENIED_TOOL_NAMES", shape: "literals" },
-  { file: "src/routes/mcp.ts", name: "MCP_HIDDEN_TOOLS", shape: "literals" },
-  { file: "src/routes/chat/run-chat-turn/prepare-and-route.ts", name: "IDE_BLOCKED_TOOLS", shape: "literals" },
-  { file: "src/canonical-loop/step-effort.ts", name: "MECHANICAL_TOOLS", shape: "literals" },
-  { file: "src/tools/tool-kits.ts", name: "CODING_KIT", shape: "literals" },
-  { file: "src/tools/tool-kits.ts", name: "BUILDER_KIT", shape: "literals" },
-  { file: "src/agent-guards/loop-discovery.ts", name: "SPIRALABLE_TOOLS", shape: "literals" },
-  // The user-facing capability blurbs; a blurb for a removed tool is dead weight.
-  { file: "scripts/gen-agent-capabilities.ts", name: "BLURB", shape: "keys" },
-];
-
-/** The text of one `const NAME = …;` declaration: from its line to the first
- *  line that closes it at the left margin (or the line itself if one-lined). */
-function declarationText(file: string, name: string): string {
-  const lines = readFileSync(join(process.cwd(), file), "utf-8").split("\n");
-  const start = lines.findIndex((l) => new RegExp(`^(export )?const ${name}\\b`).test(l));
-  if (start < 0) throw new Error(`${name} not found in ${file} — update TOOL_LISTS`);
-  if (/;\s*$/.test(lines[start])) return lines[start];
-  const out = [lines[start]];
-  for (let i = start + 1; i < lines.length; i++) {
-    out.push(lines[i]);
-    if (/^\s{0,2}[\]}]\)?(\s*as const)?\)?;?\s*$/.test(lines[i])) break;
-  }
-  return out.join("\n");
-}
-
-function listToolReferences(): Map<string, string> {
-  const refs = new Map<string, string>();
-  const nonTools = knownNonToolIdentifiers();
-  for (const { file, name, shape } of TOOL_LISTS) {
-    const text = declarationText(file, name);
-    // Top-level keys only (two-space indent): nested keys are actions or args.
-    const re = shape === "keys"
-      ? /^ {2}"?([a-z][a-z0-9]*(?:_[a-z0-9]+)+)"?\s*:/gm
-      : /["'`]([a-z][a-z0-9]*(?:_[a-z0-9]+)+)["'`]/g;
-    for (const m of text.matchAll(re)) if (!nonTools.has(m[1])) refs.set(m[1], `${name} (${file})`);
-  }
-  return refs;
-}
+// The hand-kept lists of tool names scattered through src/ (which tools a
+// persona gets, which the small-model tier keeps, …) are checked by
+// tool-list-registry.test.ts, which finds them in the syntax tree.
 
 describe("every tool name a referrer uses is a registered tool", () => {
   let registered: Set<string>;
@@ -177,15 +98,6 @@ describe("every tool name a referrer uses is a registered tool", () => {
     const refs = promptToolReferences();
     expect(refs.size).toBeGreaterThan(0);
     expect(missing(refs.keys()).map((n) => `${n} (${refs.get(n)})`)).toEqual([]);
-  });
-
-  it("the hand-maintained per-tool lists", () => {
-    const refs = listToolReferences();
-    expect(refs.size).toBeGreaterThan(40);
-    expect(
-      missing(refs.keys()).map((n) => `${n} in ${refs.get(n)}`),
-      "a list names a tool that is not registered — the entry is dead; rename or remove it",
-    ).toEqual([]);
   });
 
   // bash is the one shell: ari_shell skipped bash's path confinement, cage,

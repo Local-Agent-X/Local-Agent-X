@@ -68,12 +68,13 @@ pinned at `/apps/calendar/`, not `public/calendar.html`. <!-- doc-paths:ignore -
 
 ## Adding a tool
 
-A tool is registered in more than one table, and most of the tables are
-hand-maintained. `npm run build` runs `check:tool-registration`
-(`src/tools/tool-registration-completeness.test.ts` over the runtime catalog,
-plugins included, plus `tool-reference-coverage.test.ts`): a tool with no
-policy entry or kernel class, or a name in a prompt or table that isn't a
-tool, fails the build. The other steps are covered by the tests named.
+A tool is registered in more than one table. `npm run build` runs
+`check:tool-registration` (`src/tools/tool-registration-completeness.test.ts`
+over the runtime catalog, plugins included, plus `tool-reference-coverage.test.ts`
+and `tool-list-registry.test.ts`): a tool with no policy entry or kernel class,
+a name in a prompt or table that isn't a tool, or a new hand-kept list of tool
+names that is neither derived from the policy rows nor registered, fails the
+build. The other steps are covered by the tests named.
 
 1. Define it under `src/tools/` and register it: `allTools` in `src/tools/registry-build.ts` for core file/retrieval tools, otherwise the owning plugin in `src/tools/plugins.ts` (memory, browser, secrets, agents, protocols, cron, apps, ...).
 2. Policy entry in the matching `src/tool-policy/tool-policies.<domain>.ts` (`core`, `network`, `memory`, `orchestration`, `apps`, `globs`). `tool-policies.data.ts` only merges them. The entry's `kernel` class decides whether Ari checks the tool at all; `capabilities` (required) says which sink classes it belongs to (`egress`, `sensitive-read`, `shell`, or `[]`), and every gate keys on that, never on the name; `pathArgs` names the args file-confinement must check, and which paths a call writes, which is what puts it in the workspace-write class; `offBoxFetch: true` requires `egress` (`capability-class-gates.test.ts`). A tool that runs a model-written shell command declares `shellCommand: { arg }`, one whose result is off-box content declares `externalContent: true`, and `output` says what its result carries (`command-output-facts.test.ts`). A send declares `destination` (where it delivers); without one it reads as an unknown destination and is asked about every time.

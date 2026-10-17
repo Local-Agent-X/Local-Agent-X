@@ -10,13 +10,14 @@
 - Registering a tool also means: a `src/tool-policy/` fragment entry (with `ariAction` if the kernel checks it), `SESSION_SCOPED_TOOLS` if it reads `_sessionId` outside its policy `pathArgs` (path-gated tools are stamped automatically); its row's `capabilities` (and `pathArgs`, if it opens paths) say which capability classes it belongs to — there are no class lists to edit.
 - A path argument resolves through `resolveAgentPath(p, sessionIdOf(args))` — the session the file-access gate resolved it with — never a hand-rolled `resolve()` or a sessionless call (`src/tool-execution/agent-path-session.test.ts`).
 - External content a tool returns is wrapped with `wrapExternalContent` (`src/sanitize.ts`) before it reaches the model.
+- A literal collection of tool names anywhere in `src/` or `scripts/` (an array, a record's keys, a switch, an `=== "x" ||` chain) is either derived from the policy rows or registered in `tool-list-registry.test.ts`, which finds every one in the syntax tree (`tool-name-collections.ts`) and checks each name against the runtime catalog. The shared kits (`tool-kits.ts`) are the one place a worker's tool set is spelled out.
 
 ## Coupled to
 | If you change | Also check | Guard |
 |---|---|---|
 | `allTools` / `plugins.ts` | `src/tool-policy/` fragment, `src/tool-registry.ts` | `tool-registration-completeness.test.ts`, `src/tool-policy-default.test.ts` |
 | `audience-map.ts` | `docs/agent-capabilities.md` (`npm run docs:generated`) | `tool-reference-coverage.test.ts` |
-| a tool's `name` | every doc, prompt and table that names it | `tool-reference-coverage.test.ts` |
+| a tool's `name` | every doc, prompt and table that names it | `tool-reference-coverage.test.ts`, `tool-list-registry.test.ts` |
 | `tier-tool-set.ts` (`ESSENTIAL_TOOLS_ORDER`) | small-tier schemas | `src/model-tiers.test.ts` |
 | a row's `undo` (read by `undo-pairs.ts`) | `src/irreversible-tools.ts`, tool selection's `withUndoCounterparts` | `undo-pairs.test.ts`, `src/irreversible-tool-floor.test.ts` |
 

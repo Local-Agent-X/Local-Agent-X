@@ -10,7 +10,8 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { TEMPLATES_FILE } from "./paths.js";
 import { ProjectRosterStore } from "../project-rosters.js";
-import { builtInTemplateDefaults, WORKER_OFFICE_TOOLS } from "./template-defaults.js";
+import { builtInTemplateDefaults } from "./template-defaults.js";
+import { OFFICE_KIT } from "../tools/tool-kits.js";
 import { renderPersonaPrompt, appBuilderPersonaRefresh } from "../tools/render-builder-prompt.js";
 import { readTrashRecord, trashRecord } from "../safe-delete.js";
 import { createLogger } from "../logger.js";
@@ -115,7 +116,7 @@ export class AgentTemplateStore {
   private migrateWorkerOfficeTools(): void {
     const t = this.templates.find(x => x.id === "builtin-worker");
     if (!t) return;
-    const missing = WORKER_OFFICE_TOOLS.filter(tool => !t.allowedTools.includes(tool));
+    const missing = OFFICE_KIT.filter(tool => !t.allowedTools.includes(tool));
     if (missing.length === 0) return;
     t.allowedTools.push(...missing);
     t.updatedAt = Date.now();

@@ -13,3 +13,8 @@ export const CODING_KIT: readonly string[] = ["read", "write", "edit", "glob", "
 /** The coding kit plus the web and an image viewer: the app-builder worker and
  *  the generic Worker template, which build against live references. */
 export const BUILDER_KIT: readonly string[] = [...CODING_KIT, "web_fetch", "web_search", "view_image"];
+
+/** The Office umbrella tools (each covers create/edit/read actions). A worker
+ *  delegated a deck/doc/sheet/pdf task needs them: its bash is denied in a
+ *  delegated session, so without these it has no route to the file at all. */
+export const OFFICE_KIT: readonly string[] = ["presentation", "document", "spreadsheet", "pdf"];

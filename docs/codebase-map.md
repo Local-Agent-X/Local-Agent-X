@@ -12,7 +12,7 @@ statically or by `import()` (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 67 top-level dirs · 67 live · 0 with no live importer · 1777 non-test source files · 0 god files (>400 LOC).
+**Totals:** 67 top-level dirs · 67 live · 0 with no live importer · 1778 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -20,7 +20,7 @@ over 400 LOC (the source-hygiene ceiling).
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 158 | 29 | XL |  |
 | `src/security/` | 121 | 46 | XL |  |
-| `src/tools/` | 107 | 211 | XL |  |
+| `src/tools/` | 108 | 212 | XL |  |
 | `src/canonical-loop/` | 80 | 258 | XL |  |
 | `src/workspace/` | 71 | 3 | M |  |
 | `src/providers/` | 67 | 26 | XL |  |
@@ -44,7 +44,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/app-runtime/` | 23 | 12 | L |  |
 | `src/sandbox/` | 23 | 14 | L |  |
 | `src/orchestrator/` | 20 | 24 | L |  |
-| `src/protocols/` | 19 | 52 | XL |  |
+| `src/protocols/` | 20 | 52 | XL |  |
 | `src/agents/` | 17 | 13 | L |  |
 | `src/anthropic-client/` | 15 | 21 | XL |  |
 | `src/autonomy/` | 15 | 4 | M |  |

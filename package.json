@@ -21,7 +21,7 @@
     "check:docs-consistency": "node scripts/check-docs-consistency.mjs",
     "check:doc-paths": "node scripts/check-doc-paths.mjs",
     "check:module-owners": "node scripts/check-module-owners.mjs",
-    "check:tool-registration": "vitest run src/tools/tool-registration-completeness.test.ts src/tools/tool-reference-coverage.test.ts",
+    "check:tool-registration": "vitest run src/tools/tool-registration-completeness.test.ts src/tools/tool-reference-coverage.test.ts src/tools/tool-list-registry.test.ts",
     "check:codebase-map": "node scripts/gen-codebase-map.mjs --check",
     "check:vendor-sync": "node scripts/check-vendor-sync.mjs",
     "check:browser-timeline": "node scripts/gen-browser-timeline.mjs --check",

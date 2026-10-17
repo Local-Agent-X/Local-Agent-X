@@ -35,6 +35,24 @@ describe("normalizeDestination — the one producer of destination keys", () => 
   });
 });
 
+// A secrets.enc from a newer build carries fields this one does not know. It
+// used to load as whatever this build understood and the next save wrote the
+// rest away; now it loads as nothing and refuses to save.
+describe("a secrets file from a newer version", () => {
+  it("loads no secrets, refuses to save, and leaves the file as it was", () => {
+    // The master key exists first (as on any install); the newer file is what
+    // an update then wrote.
+    new SecretsStore(dir).set("OLD", "v");
+    const path = join(dir, "secrets.enc");
+    const newer = JSON.stringify({ version: 3, secrets: [{ name: "FUTURE", encrypted: "00", addedAt: 1, updatedAt: 1, shape: "unknown-to-this-build" }] });
+    writeFileSync(path, newer);
+    const store = new SecretsStore(dir);
+    expect(store.list()).toEqual([]);
+    expect(() => store.set("NEW", "v")).toThrow(/newer than this build/);
+    expect(readFileSync(path, "utf-8")).toBe(newer);
+  });
+});
+
 describe("destinationDecision — the ladder", () => {
   it("the secret's own recorded origin is allowed first", () => {
     const store = new SecretsStore(dir);

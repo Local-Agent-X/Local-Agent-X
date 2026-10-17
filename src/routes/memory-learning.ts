@@ -1,10 +1,8 @@
 import type { RouteHandler } from "../server-context.js";
 import { getRuntimeConfig } from "../config.js";
 import { jsonResponse, safeParseBody } from "../server-utils.js";
-import learningService, {
-  type LearningAction,
-  type LearningDetail,
-} from "../cognition/cross-session-learning/service.js";
+import learningService from "../cognition/cross-session-learning/service.js";
+import type { LearningAction, LearningDetail } from "../cognition/cross-session-learning/service-views.js";
 
 const ID_PATTERN = /^learned-[a-f0-9]{20}$/;
 const VERSION_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;

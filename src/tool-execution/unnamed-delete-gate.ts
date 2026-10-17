@@ -46,9 +46,9 @@ import type { ToolDefinition } from "../types.js";
 import { coerceArgs, repairJson, repairMarkerKeys } from "./arg-repair.js";
 import { withoutInternalArgs } from "./internal-args.js";
 import { shellCommandOf } from "../tool-registry.js";
+import { EXTERNAL_CONTENT_EVIDENCE_RE as UNTRUSTED } from "../external-content-markers.js";
 
 export const GATED_DELETE_TOOL = "delete_file";
-const UNTRUSTED = /EXTERNAL_UNTRUSTED_CONTENT|INJECTION WARNING/i;
 
 /** A row a person wrote: a user message that is neither a harness row nor
  *  carries a harness marker. */

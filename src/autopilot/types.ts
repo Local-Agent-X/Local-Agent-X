@@ -11,6 +11,11 @@
  * conductor's phase machine.
  */
 
+/** The line a round agent writes to end the run cleanly. The nudge tells it
+ *  the marker, the round reads it back, the loop skips it in summaries. */
+export const AUTOPILOT_DONE_MARKER = "AUTOPILOT_DONE:";
+export const AUTOPILOT_DONE_RE = /^\s*AUTOPILOT_DONE:\s*(.+?)\s*$/m;
+
 export interface AutopilotConfig {
   /** User's intent string. Shown in nudges and commit messages. */
   topic: string;

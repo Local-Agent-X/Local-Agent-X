@@ -1,7 +1,10 @@
-import type { LearnedActivationKind, LearnedProtocolRecord } from "./learned-lifecycle.js";
+import type { LearnedActivationCause, LearnedActivationKind, LearnedProtocolRecord } from "./learned-lifecycle.js";
 
 const MAX_ACTIVATION_HISTORY = 100;
 const ACTIVATION_KINDS = new Set<LearnedActivationKind>(["activate", "restore", "rollback", "archive"]);
+const ACTIVATION_CAUSES = new Set<LearnedActivationCause>(["safety"]);
+const ENTRY_KEYS = "kind,previousVersionId,reason,timestamp,versionId";
+const ENTRY_KEYS_WITH_CAUSE = "cause,kind,previousVersionId,reason,timestamp,versionId";
 
 export function validateActivationHistory(record: LearnedProtocolRecord, slug: string): void {
   const value = record.activationHistory;
@@ -14,9 +17,11 @@ export function validateActivationHistory(record: LearnedProtocolRecord, slug: s
   for (const entry of value) {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw new Error(`Invalid learned protocol activation history: ${slug}`);
     const item = entry as unknown as Record<string, unknown>;
+    const keys = Object.keys(item).sort().join(",");
     if (
-      Object.keys(item).sort().join(",") !== "kind,previousVersionId,reason,timestamp,versionId"
+      (keys !== ENTRY_KEYS && keys !== ENTRY_KEYS_WITH_CAUSE)
       || !ACTIVATION_KINDS.has(item.kind as LearnedActivationKind)
+      || (item.cause !== undefined && !ACTIVATION_CAUSES.has(item.cause as LearnedActivationCause))
       || typeof item.versionId !== "string"
       || !versionIds.has(item.versionId)
       || (item.previousVersionId !== null && (typeof item.previousVersionId !== "string" || !versionIds.has(item.previousVersionId)))
@@ -41,12 +46,13 @@ export function validateActivationHistory(record: LearnedProtocolRecord, slug: s
 export function recordActivation(
   record: LearnedProtocolRecord, kind: LearnedActivationKind, versionId: string,
   previousVersionId: string | null, reason: string | undefined, timestamp: number | undefined,
+  cause?: LearnedActivationCause,
 ): void {
   const at = timestamp ?? Date.now();
   const why = reason?.trim() || `${kind[0].toUpperCase()}${kind.slice(1)} learned protocol`;
   if (!Number.isFinite(at) || at <= 0 || why.length > 200) throw new Error("Invalid learned protocol activation history entry");
   record.activationHistory = [
     ...(record.activationHistory ?? []),
-    { kind, versionId, previousVersionId, timestamp: at, reason: why },
+    { kind, versionId, previousVersionId, timestamp: at, reason: why, ...(cause ? { cause } : {}) },
   ].slice(-MAX_ACTIVATION_HISTORY);
 }

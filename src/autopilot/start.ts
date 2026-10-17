@@ -19,7 +19,7 @@ import { randomId } from "../util/ids.js";
 import { acquireLock, registerExitCleanup } from "./lock.js";
 import { runAutopilotLoop } from "./loop.js";
 import type { AutopilotConfig, StartAutopilotRequest } from "./types.js";
-import type { Operation } from "./operation-types.js";
+import { autopilotRecord, type Operation } from "./operation-types.js";
 import type { LAXConfig, ToolDefinition } from "../types.js";
 import type { AgentOptions } from "../providers/types.js";
 import { loadAnthropicTokens, isAnthropicTokenExpired, isAnthropicCliAuthenticated } from "../auth/anthropic.js";
@@ -229,7 +229,7 @@ export async function startAutopilot(
 
   const opDir = join(deps.workspaceDir, op.id);
   if (!existsSync(opDir)) mkdirSync(opDir, { recursive: true });
-  writeFileSync(join(opDir, "operation.json"), JSON.stringify(op, null, 2), "utf-8");
+  writeFileSync(join(opDir, "operation.json"), JSON.stringify(autopilotRecord(op), null, 2), "utf-8");
 
   // Pin to Anthropic for round agents when possible — see pickAutopilotProvider
   // doc above for rationale (Codex narrates and bails; Anthropic commits).
@@ -247,7 +247,7 @@ export async function startAutopilot(
       level: "info",
       message: `Round agents pinned to Anthropic (${picked.model}) for reliability — launcher was ${deps.provider}`,
     });
-    writeFileSync(join(opDir, "operation.json"), JSON.stringify(op, null, 2), "utf-8");
+    writeFileSync(join(opDir, "operation.json"), JSON.stringify(autopilotRecord(op), null, 2), "utf-8");
   }
 
   // Kick off the loop in the background. Don't await — we return immediately.

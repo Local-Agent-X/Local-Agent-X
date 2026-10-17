@@ -83,6 +83,24 @@ describe("classify", () => {
     expect(classify(undefined)).toBe("unknown");
     expect(classify(new Error("nonsense"))).toBe("unknown");
   });
+
+  // The message is often a tool's text. A path with "network" in it, a line
+  // number that contains 429, a file called dns.txt: none is a transient error,
+  // and classifying them as one retried an idempotent tool with backoff
+  // (runtime-coupling audit 2026-10-15, #15).
+  it("does not read a path, a line number or a filename as a transient failure", () => {
+    expect(classify(new Error("File not found: src/network/config.ts"))).not.toBe("network");
+    expect(isRetryable(new Error("File not found: src/network/config.ts"), { tool: tool({ class: "read-only" }) })).toBe(false);
+    expect(classify(new Error("Syntax error at line 4291"))).not.toBe("rateLimit");
+    expect(classify(new Error("No such file: dns.txt"))).not.toBe("network");
+    expect(classify(new Error("Hit a timeout_handler reference in the code"))).not.toBe("timeout");
+    expect(classify(new Error("The gateway module exports nothing"))).not.toBe("overload");
+  });
+
+  it("a status code decides before any wording does", () => {
+    expect(classify(Object.assign(new Error("the model said something about a timeout"), { status: 429 }))).toBe("rateLimit");
+    expect(classify(Object.assign(new Error("rate limit text in a 401 body"), { status: 401 }))).toBe("auth");
+  });
 });
 
 describe("isRetryableTool", () => {
@@ -125,8 +143,8 @@ describe("isRetryable", () => {
   });
 
   it("preserves the live transient set run-sandboxed relied on", () => {
-    for (const msg of ["timeout", "timed out", "ETIMEDOUT", "ECONNREFUSED", "ECONNRESET", "ENOTFOUND", "rate limit", "429", "503", "504", "network"]) {
-      expect(isRetryable(new Error(msg), { tool: tool({ class: "read-only" }) })).toBe(true);
+    for (const msg of ["timeout", "timed out", "ETIMEDOUT", "ECONNREFUSED", "ECONNRESET", "ENOTFOUND", "rate limit", "HTTP 429", "503", "504", "network error", "NetworkError when attempting to fetch resource"]) {
+      expect(isRetryable(new Error(msg), { tool: tool({ class: "read-only" }) }), msg).toBe(true);
     }
   });
 });

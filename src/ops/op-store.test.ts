@@ -8,7 +8,7 @@
  * (withOpLock) around every RMW, fail-open on a leaked lock.
  */
 import { describe, it, expect, afterAll, vi } from "vitest";
-import { mkdtempSync, mkdirSync, rmSync, existsSync, writeFileSync, utimesSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, existsSync, readFileSync, writeFileSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import type { Op } from "./types.js";
@@ -65,6 +65,50 @@ describe("writeOp — per-write unique tmp", () => {
     mkdirSync(join(opDirOf(id), "operation.json.tmp"));
     writeOp(mkOp(id, { task: "updated task" }));
     expect(readOp(id)?.task).toBe("updated task");
+  });
+});
+
+// operation.json holds two record types: the op store's Op and autopilot's
+// Operation. Every reader used to cast the parse to Op, so an autopilot record
+// came back with no `task` and op_status threw on `.slice`.
+describe("parseOp — the one shape readOp returns", () => {
+  const rawWrite = (id: string, record: unknown) => {
+    mkdirSync(opDirOf(id), { recursive: true });
+    writeFileSync(join(opDirOf(id), "operation.json"), JSON.stringify(record), "utf-8");
+  };
+
+  it("stamps kind and schema version on every write and reads them back", () => {
+    writeOp(mkOp("op_kind_stamp"));
+    const raw = JSON.parse(readFileSync(join(opDirOf("op_kind_stamp"), "operation.json"), "utf-8")) as Record<string, unknown>;
+    expect(raw).toMatchObject({ kind: "op", schemaVersion: 1, id: "op_kind_stamp" });
+    expect(readOp("op_kind_stamp")?.kind).toBe("op");
+  });
+
+  it("a record of another kind is not an Op", () => {
+    rawWrite("op_ap_kind", { kind: "autopilot", schemaVersion: 1, id: "op_ap_kind", goal: "g", phases: [], status: "running", createdAt: Date.now(), events: [] });
+    expect(readOp("op_ap_kind")).toBeNull();
+    expect(listRecentOps(50).some((op) => op.id === "op_ap_kind")).toBe(false);
+  });
+
+  it("an autopilot record written before kinds existed is not an Op either", () => {
+    rawWrite("op_ap_legacy", { id: "op_ap_legacy", goal: "g", summary: "s", phases: [], status: "running", createdAt: Date.now(), currentPhase: 0, sharedState: {}, events: [], autopilot: {}, autopilotRounds: [] });
+    expect(readOp("op_ap_legacy")).toBeNull();
+  });
+
+  it("an Op written before kinds existed still reads", () => {
+    const { kind: _k, schemaVersion: _v, ...legacy } = mkOp("op_legacy_shape");
+    rawWrite("op_legacy_shape", legacy);
+    expect(readOp("op_legacy_shape")?.task).toBe("do the thing");
+  });
+
+  it("a minimal pre-kind Op (no contextPack) is an Op: the restart sweep recovers it", () => {
+    rawWrite("op_minimal", { id: "op_minimal", type: "mission", task: "resume", lane: "background", status: "running", visibility: "private", createdAt: new Date().toISOString(), attemptCount: 0 });
+    expect(readOp("op_minimal")?.task).toBe("resume");
+  });
+
+  it("a record from a newer schema is skipped, never half-read", () => {
+    rawWrite("op_newer", { ...mkOp("op_newer"), kind: "op", schemaVersion: 2 });
+    expect(readOp("op_newer")).toBeNull();
   });
 });
 

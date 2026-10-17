@@ -4,27 +4,11 @@
  * Query, filter, and paginate the cryptographic audit log.
  */
 
-import { readFileSync, existsSync, readdirSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { ThreatLevel, DataLabel } from "../threat/threat-engine.js";
+import type { ThreatLevel } from "../threat/threat-engine.js";
 import { getLaxDir } from "../lax-data-dir.js";
-
-interface AuditEntry {
-  seq: number;
-  timestamp: string;
-  sessionId: string;
-  event: string;
-  toolName?: string;
-  decision: "allow" | "block" | "warn";
-  reason: string;
-  role?: string;
-  controlsApplied?: string[];
-  threatScore?: number;
-  threatLevel?: ThreatLevel;
-  dataLabels?: DataLabel[];
-  hash: string;
-  prevHash: string;
-}
+import { listAuditFiles, parseAuditLines, type AuditEntry } from "../threat/audit-crypto.js";
 
 export interface AuditQuery {
   /** Filter by session ID */
@@ -61,27 +45,17 @@ function getAuditDir(): string {
   return join(getLaxDir(), "audit");
 }
 
-/** List available audit log dates */
+/** List available audit log dates, newest first. */
 export function listAuditDates(): string[] {
-  const dir = getAuditDir();
-  if (!existsSync(dir)) return [];
-  return readdirSync(dir)
-    .filter(f => f.endsWith(".jsonl"))
-    .map(f => f.replace(".jsonl", ""))
-    .sort()
-    .reverse();
+  return listAuditFiles(getAuditDir()).map((f) => f.date);
 }
 
 /** Load all entries from a specific date's audit log */
 export function loadAuditLog(date: string): AuditEntry[] {
-  const filePath = join(getAuditDir(), `${date}.jsonl`);
-  if (!existsSync(filePath)) return [];
+  const file = listAuditFiles(getAuditDir()).find((f) => f.date === date);
+  if (!file) return [];
   try {
-    return readFileSync(filePath, "utf-8")
-      .trim()
-      .split("\n")
-      .filter(Boolean)
-      .map(line => JSON.parse(line) as AuditEntry);
+    return parseAuditLines(readFileSync(file.path, "utf-8"));
   } catch {
     return [];
   }

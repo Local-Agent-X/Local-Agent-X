@@ -1,7 +1,7 @@
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 
 import { createLogger } from "../logger.js";
-import { stripHarnessMarkers } from "../harness-text.js";
+import { stripHarnessMarkers, TOOL_RESULT_ROW_PREFIX } from "../harness-text.js";
 import { guardedRewrite } from "./llm-rewrite-guard.js";
 
 const logger = createLogger("context-manager");
@@ -128,7 +128,7 @@ function clip(text: string, max: number): string {
 export function buildSummaryTranscript(messages: ChatCompletionMessageParam[]): string {
   const rows = messages.map((m) => {
     const text = messageText(m);
-    const kind = m.role === "tool" || text.startsWith("[tool result]") ? "tool" : m.role === "user" ? "user" : "assistant";
+    const kind = m.role === "tool" || text.startsWith(TOOL_RESULT_ROW_PREFIX) ? "tool" : m.role === "user" ? "user" : "assistant";
     const body = kind === "tool" ? stripHarnessMarkers(text).trim() : text;
     return { line: `[${m.role}]: ${clip(body, SUMMARY_CHARS_PER_KIND[kind])}`, isUser: kind === "user", dropped: false };
   });

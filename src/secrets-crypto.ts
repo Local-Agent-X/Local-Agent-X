@@ -1,7 +1,7 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { SecretEntry, SecretsFile, SecretsFileEntry } from "./secrets-types.js";
+import { SECRETS_FILE_VERSION, type SecretEntry, type SecretsFile, type SecretsFileEntry } from "./secrets-types.js";
 
 export const MASTER_KEY_DEPENDENT_BASENAMES = [
   "secrets.enc",
@@ -86,5 +86,41 @@ export function encryptSecretsFile(
     encrypted: encrypt(secret.value, key),
   }));
   const liveNames = new Set(live.map((entry) => entry.name));
-  return { version: 2, secrets: [...live, ...quarantined.filter((entry) => !liveNames.has(entry.name))] };
+  return { version: SECRETS_FILE_VERSION, secrets: [...live, ...quarantined.filter((entry) => !liveNames.has(entry.name))] };
+}
+
+export interface DecryptedSecretsFile {
+  secrets: Map<string, SecretEntry>;
+  /** Entries whose ciphertext this key could not open, verbatim, so the next
+   *  write carries them back to disk unchanged. */
+  quarantined: SecretsFileEntry[];
+  failures: { name: string; addedAt: number; message: string }[];
+}
+
+/** The inverse of encryptSecretsFile for a file at a version this build reads:
+ *  each entry decrypts on its own, and one bad entry never costs the others. */
+export function decryptSecretsFile(raw: SecretsFile, key: Buffer): DecryptedSecretsFile {
+  const out: DecryptedSecretsFile = { secrets: new Map(), quarantined: [], failures: [] };
+  for (const entry of raw.secrets) {
+    try {
+      const value = decrypt(entry.encrypted, key);
+      out.secrets.set(entry.name, {
+        name: entry.name,
+        value,
+        service: entry.service,
+        account: entry.account,
+        url: entry.url,
+        notes: entry.notes,
+        origin: entry.origin ?? deriveOrigin(entry.url),
+        createdBySession: entry.createdBySession,
+        approvedDestinations: entry.approvedDestinations ?? entry.approvedFills,
+        addedAt: entry.addedAt,
+        updatedAt: entry.updatedAt,
+      });
+    } catch (e) {
+      out.quarantined.push(entry);
+      out.failures.push({ name: entry.name, addedAt: entry.addedAt, message: (e as Error).message });
+    }
+  }
+  return out;
 }

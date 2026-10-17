@@ -34,6 +34,32 @@ const logger = createLogger("workers.op-store");
 
 const OPS_BASE = join(getLaxDir(), "operations");
 
+/** What this module writes to operation.json, and the one shape it reads back. */
+export const OP_RECORD_KIND = "op";
+export const OP_SCHEMA_VERSION = 1;
+
+/**
+ * The Op in a parsed operation.json, or null when the file holds another
+ * record: autopilot's Operation (kind "autopilot", or — before kinds were
+ * stamped — a record with a `goal` and no `task`), or an Op written by a
+ * newer build. ~55 callers used to cast the parse blindly, so an autopilot
+ * record came back as an Op with no `task`.
+ */
+export function parseOp(raw: unknown, opId: string): Op | null {
+  if (!raw || typeof raw !== "object") return null;
+  const record = raw as Record<string, unknown>;
+  if (record.kind !== undefined && record.kind !== OP_RECORD_KIND) return null;
+  if (typeof record.schemaVersion === "number" && record.schemaVersion > OP_SCHEMA_VERSION) {
+    logger.warn(`[op-store] ${opId} is schema version ${record.schemaVersion}; this build reads ${OP_SCHEMA_VERSION} — skipped`);
+    return null;
+  }
+  // The one field every reader of an Op dereferences, and the one an
+  // autopilot record never carries. A minimal pre-kind Op (id, type, task,
+  // lane, status) is still an Op.
+  if (record.kind === undefined && typeof record.task !== "string") return null;
+  return record as unknown as Op;
+}
+
 /**
  * Interactive HOST-turn op types: the op executing the current tool-calling
  * turn (a chat turn or a voice turn). The per-session "is a peer op already
@@ -83,10 +109,11 @@ export function writeOpStrict(op: Op): boolean {
 // bounded contention retry in atomicWriteFileSync is load-bearing, not polish.
 function attemptWriteOp(op: Op, strict: boolean): Error | null {
   const target = join(opDir(op.id), "operation.json");
+  const record: Op = { kind: OP_RECORD_KIND, schemaVersion: OP_SCHEMA_VERSION, ...op };
   try {
     atomicWriteFileSync(
       target,
-      JSON.stringify(op, null, 2),
+      JSON.stringify(record, null, 2),
       { mode: 0o600 },
       injectedWriteFailure(strict),
     );
@@ -222,7 +249,7 @@ export function readOp(opId: string): Op | null {
   const path = join(opDir(opId), "operation.json");
   if (!existsSync(path)) return null;
   try {
-    return JSON.parse(readFileSync(path, "utf-8"));
+    return parseOp(JSON.parse(readFileSync(path, "utf-8")), opId);
   } catch (e) {
     logger.warn(`[op-store] failed to read op ${opId}: ${(e as Error).message}`);
     return null;

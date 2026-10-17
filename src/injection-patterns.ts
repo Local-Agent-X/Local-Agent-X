@@ -8,6 +8,8 @@
  * flagged as prompt injection.
  */
 
+import { EXTERNAL_CONTENT_TAG_RE } from "./external-content-markers.js";
+
 // ── System-tag injection stripping ──
 // Tags like <system-reminder>, <system>, <human>, <assistant> embedded in
 // tool results (e.g. from a malicious web page or evaluate() call) are
@@ -248,7 +250,7 @@ export const HARNESS_SCAFFOLD_PATTERNS: RegExp[] = [
 
 /** Markers that indicate content originated from an external/untrusted source */
 export const EXTERNAL_MARKERS = [
-  /<<<EXTERNAL_UNTRUSTED_CONTENT/i,
+  EXTERNAL_CONTENT_TAG_RE,
   /\[MARKER_SANITIZED\]/i,
   /INJECTION WARNING/i,
 ];

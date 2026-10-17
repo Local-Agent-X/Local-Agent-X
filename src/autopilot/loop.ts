@@ -8,8 +8,8 @@
 
 import { writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import type { Operation } from "./operation-types.js";
-import type { AutopilotState, BootProof, RoundResult } from "./types.js";
+import { autopilotRecord, type Operation } from "./operation-types.js";
+import { AUTOPILOT_DONE_MARKER, type AutopilotState, type BootProof, type RoundResult } from "./types.js";
 import { runAutopilotRound } from "./round-agent.js";
 import { validateRound, partitionByScope } from "./validate.js";
 import { commitRound } from "./commit.js";
@@ -373,7 +373,7 @@ function persistOp(op: Operation, workspaceDir: string): void {
     const opDir = join(workspaceDir, op.id);
     if (!existsSync(opDir)) return;
     const file = join(opDir, "operation.json");
-    writeFileSync(file, JSON.stringify(op, null, 2), "utf-8");
+    writeFileSync(file, JSON.stringify(autopilotRecord(op), null, 2), "utf-8");
   } catch (e) {
     logger.warn(`[autopilot.loop] persist failed: ${(e as Error).message}`);
   }
@@ -385,7 +385,7 @@ function extractAgentSummary(output: string): string {
   const lines = output.split("\n").map(l => l.trim()).filter(Boolean);
   // Prefer the first non-AUTOPILOT_DONE line.
   for (const line of lines) {
-    if (line.startsWith("AUTOPILOT_DONE:")) continue;
+    if (line.startsWith(AUTOPILOT_DONE_MARKER)) continue;
     return line.slice(0, 280);
   }
   return lines[0]?.slice(0, 280) || "";

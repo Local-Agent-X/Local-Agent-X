@@ -9,7 +9,7 @@
 import { type AgentOptions } from "../providers/types.js";
 import { runAgentViaCanonical } from "../canonical-loop/index.js";
 import type { Operation, OperationPhase } from "./operation-types.js";
-import type { AutopilotConfig } from "./types.js";
+import { AUTOPILOT_DONE_RE, type AutopilotConfig } from "./types.js";
 import type { ToolDefinition, LAXConfig } from "../types.js";
 import { SecurityLayer } from "../security/index.js";
 import { loadFileAccessModeAtLeast } from "../security/layer/index.js";
@@ -60,8 +60,6 @@ export interface RoundAgentResult {
   /** Wall-clock ms. */
   durationMs: number;
 }
-
-const AUTOPILOT_DONE_RE = /^\s*AUTOPILOT_DONE:\s*(.+?)\s*$/m;
 
 /** Tools the round agent gets. Mission scheduling is filtered out (no recursive scheduling). */
 function filterAutopilotTools(allTools: ToolDefinition[]): ToolDefinition[] {
@@ -198,9 +196,6 @@ export async function runAutopilotRound(
     security.removeAllowedPath(opts.autopilot.worktreePath, sessionId);
   }
 }
-
-/** Hint to the autopilot loop when it sees the marker. Keep this in sync with the regex. */
-export const AUTOPILOT_DONE_MARKER = "AUTOPILOT_DONE:";
 
 // Silence unused-import lints for types referenced only in TypeScript type position.
 type _UnusedRefs = Operation | OperationPhase;

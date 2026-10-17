@@ -222,6 +222,12 @@ export type DelegatedRuntimeDescriptor = ExactDelegatedRuntimeDescriptor | Legac
 export type OpRuntimeDescriptor = AppBuildRuntimeDescriptor | DelegatedRuntimeDescriptor;
 
 export interface Op {
+  /** The record type `operation.json` holds; stamped by op-store on write.
+   *  Autopilot writes its own Operation to the same file name under another
+   *  kind, and a record without one is one written before kinds existed. */
+  kind?: "op";
+  /** Bumped when a field changes meaning; a reader refuses a newer record. */
+  schemaVersion?: 1;
   id: string;
   /** Durable originating conversation binding for read-side projections/recovery. */
   sessionId?: string;

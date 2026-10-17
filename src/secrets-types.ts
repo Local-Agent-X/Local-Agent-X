@@ -54,8 +54,13 @@ export interface SecretsFileEntry {
   encrypted: string; // hex: iv(12) + authTag(16) + ciphertext
 }
 
+/** The newest file version this build writes and reads. A file from a newer
+ *  build is left untouched: loading it would drop the fields it does not know
+ *  and the next save would write them away. */
+export const SECRETS_FILE_VERSION = 2;
+
 export interface SecretsFile {
   /** 1: approvals were fill origins only; 2: destinations, with the connector bindings seeded. */
-  version: 1 | 2;
+  version: 1 | typeof SECRETS_FILE_VERSION;
   secrets: SecretsFileEntry[];
 }

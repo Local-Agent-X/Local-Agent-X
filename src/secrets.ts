@@ -2,16 +2,17 @@ import { readFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { getOrCreateMasterKey, type KeychainProvider } from "./keychain.js";
 import { isEmailAddress, registerRedactedSecretValue, unregisterRedactedSecretValue, vaultSecretSource } from "./security/secrets/index.js";
-import { deriveOrigin, decrypt, encryptSecretsFile } from "./secrets-crypto.js";
+import { deriveOrigin, decryptSecretsFile, encryptSecretsFile } from "./secrets-crypto.js";
 import { atomicWriteFileSync } from "./util/json-store.js";
 import { getActivePreBlessedSecrets } from "./ops/pre-bless.js";
 import { decideDestination, normalizeDestination, type DestinationDecision } from "./secret-destinations.js";
-import type {
-  SecretEntry,
-  SecretMetadata,
-  SecretMetaView,
-  SecretsFileEntry,
-  SecretsFile,
+import {
+  SECRETS_FILE_VERSION,
+  type SecretEntry,
+  type SecretMetadata,
+  type SecretMetaView,
+  type SecretsFileEntry,
+  type SecretsFile,
 } from "./secrets-types.js";
 
 import { createLogger } from "./logger.js";
@@ -76,6 +77,10 @@ export class SecretsStore {
    * incident documented in keychain.ts:217-228.
    */
   private quarantined: SecretsFileEntry[] = [];
+  /** Set when secrets.enc is from a newer build than this one: the store reads
+   *  as empty and refuses every save, so the file it cannot fully read is never
+   *  rewritten without the fields it does not know. */
+  private frozenVersion: number | null = null;
   private availabilityListeners = new Set<(change: SecretAvailabilityChange) => void>();
   public readonly keychainProvider: KeychainProvider;
 
@@ -105,49 +110,33 @@ export class SecretsStore {
       logger.error(`[secrets] CRITICAL: Failed to parse ${this.filePath}: ${(e as Error).message}. Existing secrets are unreadable. Restore from backup before adding new secrets or they will overwrite the file.`);
       return;
     }
+    if (typeof raw.version !== "number" || raw.version > SECRETS_FILE_VERSION) {
+      this.frozenVersion = typeof raw.version === "number" ? raw.version : -1;
+      logger.error(
+        `[secrets] ${this.filePath} is version ${String(raw.version)}; this build reads up to ${SECRETS_FILE_VERSION}. ` +
+        `Leaving it untouched: no secret loads and nothing is saved until the app is updated or the file is restored.`,
+      );
+      return;
+    }
     this.destinationSeedPending = raw.version === 1;
 
-    let okCount = 0;
-    let failCount = 0;
-    for (const entry of raw.secrets) {
-      try {
-        const value = decrypt(entry.encrypted, this.key);
-        // Proactively register the plaintext with the known-secret-value
-        // registry so the egress scanner / taint path / redactor can match the
-        // user's ACTUAL secrets the moment the store loads — without waiting for
-        // the value to first be used in a browser fill / clipboard write.
-        // isSecretShaped gates inside register(), so short/numeric values
-        // (ports, PINs) are skipped (no false-positive egress blocks).
-        registerRedactedSecretValue(value, vaultSecretSource(entry.name));
-        this.secrets.set(entry.name, {
-          name: entry.name,
-          value,
-          service: entry.service,
-          account: entry.account,
-          url: entry.url,
-          notes: entry.notes,
-          origin: entry.origin ?? deriveOrigin(entry.url),
-          createdBySession: entry.createdBySession,
-          approvedDestinations: entry.approvedDestinations ?? entry.approvedFills,
-          addedAt: entry.addedAt,
-          updatedAt: entry.updatedAt,
-        });
-        okCount++;
-      } catch (e) {
-        // Per-entry decrypt failure. Keep the ciphertext alive in
-        // `quarantined` so the next save() writes it back unchanged. A
-        // future boot with the correct master key (restored from
-        // backup, OS keychain restored, etc.) will decrypt it
-        // successfully and lift the quarantine.
-        this.quarantined.push(entry);
-        failCount++;
-        logger.warn(`[secrets] decrypt failed for "${entry.name}" (added ${new Date(entry.addedAt).toISOString()}): ${(e as Error).message} — quarantined, ciphertext preserved on disk`);
-      }
+    const decrypted = decryptSecretsFile(raw, this.key);
+    this.secrets = decrypted.secrets;
+    // A failed entry stays quarantined so a later boot with the right master
+    // key (restored from backup, OS keychain restored) lifts it.
+    this.quarantined = decrypted.quarantined;
+    // Register each plaintext with the known-secret-value registry so the
+    // egress scanner / taint path / redactor match the user's ACTUAL secrets
+    // the moment the store loads, not on first use. isSecretShaped gates inside
+    // register(), so short/numeric values (ports, PINs) are skipped.
+    for (const entry of this.secrets.values()) registerRedactedSecretValue(entry.value, vaultSecretSource(entry.name));
+    for (const failure of decrypted.failures) {
+      logger.warn(`[secrets] decrypt failed for "${failure.name}" (added ${new Date(failure.addedAt).toISOString()}): ${failure.message} — quarantined, ciphertext preserved on disk`);
     }
 
-    if (failCount > 0) {
+    if (decrypted.failures.length > 0) {
       logger.error(
-        `[secrets] CRITICAL: ${failCount} of ${raw.secrets.length} secrets failed to decrypt. ` +
+        `[secrets] CRITICAL: ${decrypted.failures.length} of ${raw.secrets.length} secrets failed to decrypt. ` +
         `Master key likely rotated since these entries were encrypted (see keychain.ts:217-228 for the May 2026 incident).\n` +
         `${this.quarantined.map(e => `  - ${e.name} (added ${new Date(e.addedAt).toISOString()})`).join("\n")}\n` +
         `Their ciphertext is preserved on disk and will be written back verbatim on the next save. ` +
@@ -155,7 +144,7 @@ export class SecretsStore {
         `Otherwise the values are unrecoverable — re-add the secrets via the UI; the dead entries will be replaced.`,
       );
     } else {
-      logger.info(`[secrets] Loaded ${okCount} secret${okCount === 1 ? "" : "s"}`);
+      logger.info(`[secrets] Loaded ${this.secrets.size} secret${this.secrets.size === 1 ? "" : "s"}`);
     }
   }
 
@@ -163,6 +152,9 @@ export class SecretsStore {
     secrets: ReadonlyMap<string, SecretEntry> = this.secrets,
     quarantined: readonly SecretsFileEntry[] = this.quarantined,
   ): void {
+    if (this.frozenVersion !== null) {
+      throw new Error(`The secrets file is version ${this.frozenVersion}, newer than this build reads (${SECRETS_FILE_VERSION}); update the app before changing secrets.`);
+    }
     const data = encryptSecretsFile(secrets, quarantined, this.key);
     this.writeAtomic(this.filePath, JSON.stringify(data, null, 2), { encoding: "utf-8", mode: 0o600 });
   }

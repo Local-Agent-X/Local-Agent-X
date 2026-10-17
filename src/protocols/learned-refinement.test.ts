@@ -151,7 +151,7 @@ describe("learned refinement policy", () => {
     const metrics = new Map([["v1", metric("v1")], ["v2", metric("v2")]]);
     expect(selectSafetyRecovery(record(), [receipt(1, "aborted"), receipt(2, "aborted")], metrics)).toBeNull();
     expect(selectSafetyRecovery(record(), [receipt(1, "aborted"), receipt(2, "clean"), receipt(3, "aborted")], metrics)).toEqual({
-      kind: "rollback", targetVersionId: "v2", reason: "Safety rollback: hard regression",
+      kind: "rollback", targetVersionId: "v2", reason: "Safety rollback: hard regression", cause: "safety",
     });
   });
 
@@ -162,7 +162,7 @@ describe("learned refinement policy", () => {
       kind: "rollback", targetVersionId: "v2", reason: "Safety rollback: sustained regression",
     });
     expect(selectSafetyRecovery(record(), outcomes, new Map())).toEqual({
-      kind: "archive", reason: "Safety archive: sustained regression without healthy prior",
+      kind: "archive", reason: "Safety archive: sustained regression without healthy prior", cause: "safety",
     });
   });
 

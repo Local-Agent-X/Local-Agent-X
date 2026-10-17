@@ -21,41 +21,8 @@ import {
   selectSafetyRecovery,
 } from "../../protocols/learned-refinement.js";
 import { CrossSessionLearner, LearningPersistenceUnavailableError } from "./learner.js";
-import { isReviewedProcedureCandidate, type LearnedCandidate, type LearnedCandidateState } from "./types.js";
-
-export interface LearningSummary {
-  id: string;
-  name: string;
-  /** "reviewed": proposed by the post-turn review fork; activates only on the
-   *  user's OK or independent evidence, never automatically. */
-  source: "observed" | "reviewed";
-  state: LearnedCandidateState;
-  confidence: number;
-  updatedAt: string;
-  activeVersionId: string | null;
-  versionCount: number;
-}
-
-export interface LearningVersionView {
-  id: string;
-  name: string;
-  createdAt: string;
-  active: boolean;
-  metadata: Record<string, unknown>;
-}
-
-export interface LearningDetail extends LearningSummary {
-  evidence: LearnedCandidate["evidence"];
-  history: LearnedCandidate["transitions"];
-  versions: LearningVersionView[];
-}
-
-export type LearningAction =
-  | { action: "activate"; versionId?: string; expectedActiveVersionId: string | null }
-  | { action: "reject" }
-  | { action: "archive"; expectedActiveVersionId: string | null }
-  | { action: "restore"; expectedActiveVersionId: string | null }
-  | { action: "rollback"; versionId: string; expectedActiveVersionId: string | null };
+import { isReviewedProcedureCandidate, type LearnedCandidate } from "./types.js";
+import { learningSummary, learningVersionView, type LearningAction, type LearningDetail, type LearningSummary } from "./service-views.js";
 
 export interface LearningReconcileResult {
   signals: ModuleSignal[];
@@ -67,7 +34,7 @@ export class CrossSessionLearningService {
 
   list(): LearningSummary[] {
     this.learner.refresh();
-    return this.learner.getCandidates().map((candidate) => this.summary(candidate, this.recordFor(candidate.id)));
+    return this.learner.getCandidates().map((candidate) => learningSummary(candidate, this.recordFor(candidate.id)));
   }
 
   detail(id: string): LearningDetail | null {
@@ -76,10 +43,10 @@ export class CrossSessionLearningService {
     if (!candidate) return null;
     const record = this.recordFor(id);
     return {
-      ...this.summary(candidate, record),
+      ...learningSummary(candidate, record),
       evidence: structuredClone(candidate.evidence),
       history: structuredClone(candidate.transitions),
-      versions: record ? record.versions.map((version, index) => this.versionView(version, index, record)) : [],
+      versions: record ? record.versions.map((version, index) => learningVersionView(version, index, record)) : [],
     };
   }
 
@@ -169,6 +136,7 @@ export class CrossSessionLearningService {
             versionId: recovery.targetVersionId,
             expectedActiveVersionId: record.activeVersionId,
             reason: recovery.reason,
+            cause: recovery.cause,
             timestamp: now,
           });
           changed = this.projectState(candidate.id, record, now, recovery.reason) || changed;
@@ -180,6 +148,7 @@ export class CrossSessionLearningService {
             slug: candidate.id,
             expectedActiveVersionId: record.activeVersionId,
             reason: recovery.reason,
+            cause: recovery.cause,
             timestamp: now,
           });
           changed = this.projectState(candidate.id, record, now, recovery.reason) || changed;
@@ -308,34 +277,6 @@ export class CrossSessionLearningService {
     return version;
   }
 
-  private summary(candidate: LearnedCandidate, record: LearnedProtocolRecord | null): LearningSummary {
-    const latest = record?.versions.at(-1)?.createdAt;
-    const effectiveState = record?.state === "active" ? "active"
-      : record?.state === "archived" ? "archived"
-      : record && !["rejected", "rolled-back"].includes(candidate.state) ? "candidate"
-      : candidate.state;
-    return {
-      id: candidate.id,
-      name: candidate.suggestion.name,
-      source: isReviewedProcedureCandidate(candidate) ? "reviewed" : "observed",
-      state: effectiveState,
-      confidence: candidate.confidence,
-      updatedAt: latest && Date.parse(latest) > candidate.updatedAt ? latest : new Date(candidate.updatedAt).toISOString(),
-      activeVersionId: record?.activeVersionId ?? null,
-      versionCount: record?.versions.length ?? 0,
-    };
-  }
-
-  private versionView(version: LearnedProtocolVersion, index: number, record: LearnedProtocolRecord): LearningVersionView {
-    return {
-      id: version.id,
-      name: `Version ${index + 1}`,
-      createdAt: version.createdAt,
-      active: version.id === record.activeVersionId,
-      metadata: structuredClone(version.metadata),
-    };
-  }
-
   private projectState(
     id: string,
     record: LearnedProtocolRecord,
@@ -383,11 +324,14 @@ export class CrossSessionLearningService {
     return Array.isArray(tools) && tools.length > 0;
   }
 
+  /** A version the probation monitor rolled back is never auto-activated again.
+   *  Read off the entry's `cause`; entries written before the field existed
+   *  (2026-10-17) carry only the monitor's wording, read here and nowhere else. */
   private wasSafetyRejected(record: LearnedProtocolRecord, versionId: string): boolean {
     return (record.activationHistory ?? []).some((entry) =>
       entry.kind === "rollback"
       && entry.previousVersionId === versionId
-      && entry.reason.startsWith("Safety rollback:"));
+      && (entry.cause === "safety" || (entry.cause === undefined && entry.reason.startsWith("Safety rollback:"))));
   }
 
 }

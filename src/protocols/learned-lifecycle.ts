@@ -21,9 +21,15 @@ export interface ActiveLearnedProtocolProvenance {
 
 export type LearnedActivationKind = "activate" | "restore" | "rollback" | "archive";
 
+/** Why a rollback or archive happened, when the harness decided it: "safety"
+ *  is the probation monitor (learned-refinement.ts selectSafetyRecovery), and a
+ *  version it rolled back is never re-activated automatically. Absent on a
+ *  user's own rollback and on entries written before the field existed. */
+export type LearnedActivationCause = "safety";
+
 export interface LearnedActivationHistoryEntry {
   kind: LearnedActivationKind; versionId: string; previousVersionId: string | null;
-  timestamp: number; reason: string;
+  timestamp: number; reason: string; cause?: LearnedActivationCause;
 }
 
 export interface LearnedProtocolRecord {
@@ -33,7 +39,7 @@ export interface LearnedProtocolRecord {
 }
 
 export interface LearnedMutation {
-  slug: string; expectedActiveVersionId: string | null; reason?: string; timestamp?: number;
+  slug: string; expectedActiveVersionId: string | null; reason?: string; timestamp?: number; cause?: LearnedActivationCause;
 }
 
 function sha256(text: string): string {
@@ -247,7 +253,7 @@ function activateVersion(input: LearnedMutation & { versionId: string },
   const previousVersionId = record.activeVersionId;
   record.state = "active";
   record.activeVersionId = version.id;
-  recordActivation(record, kind, version.id, previousVersionId, input.reason, input.timestamp);
+  recordActivation(record, kind, version.id, previousVersionId, input.reason, input.timestamp, input.cause);
   materializeAndSave(dir, record, body);
   return record;
 }
@@ -271,7 +277,7 @@ function archiveProtocol(input: LearnedMutation): LearnedProtocolRecord {
   const hidden = join(dir, `.SKILL.md.archive-${randomUUID()}`);
   renameSync(rootSkill, hidden);
   record.state = "archived";
-  recordActivation(record, "archive", record.activeVersionId, record.activeVersionId, input.reason, input.timestamp);
+  recordActivation(record, "archive", record.activeVersionId, record.activeVersionId, input.reason, input.timestamp, input.cause);
   try {
     saveRecord(dir, record);
   } catch (error) {

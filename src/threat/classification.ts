@@ -3,6 +3,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 import { CREDENTIAL_KEY_NAMES } from "../security/secrets/credential-patterns.js";
+import { EXTERNAL_CONTENT_BLOCK_RE, EXTERNAL_CONTENT_UNTERMINATED_RE } from "../external-content-markers.js";
 
 export type DataLabel =
   | "credentials"     // API keys, tokens, passwords
@@ -163,6 +164,6 @@ export function classifyData(content: string): DataClassification {
  *  real session secret returning in a response is caught separately as a canary. */
 export function stripExternalUntrusted(content: string): string {
   return content
-    .replace(/<<<EXTERNAL_UNTRUSTED_CONTENT id="[^"]*">>>[\s\S]*?<<<END_EXTERNAL_UNTRUSTED_CONTENT id="[^"]*">>>/g, " ")
-    .replace(/<<<EXTERNAL_UNTRUSTED_CONTENT id="[^"]*">>>[\s\S]*$/, " ");
+    .replace(EXTERNAL_CONTENT_BLOCK_RE, " ")
+    .replace(EXTERNAL_CONTENT_UNTERMINATED_RE, " ");
 }

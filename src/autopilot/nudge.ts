@@ -6,7 +6,7 @@
  * how to bow out cleanly when there's nothing useful left to do.
  */
 
-import type { AutopilotConfig } from "./types.js";
+import { AUTOPILOT_DONE_MARKER, type AutopilotConfig } from "./types.js";
 
 export interface NudgeContext {
   config: AutopilotConfig;
@@ -59,7 +59,7 @@ Use the read/edit/write/bash/grep/glob tools directly. self_edit is also availab
 ## When to stop
 If you find nothing useful left to do (tried everything sensible, or further changes would be over-engineering), reply EXACTLY this on its own line:
 
-  AUTOPILOT_DONE: <one-line reason>
+  ${AUTOPILOT_DONE_MARKER} <one-line reason>
 
 …and the system will end the run cleanly. Don't keep editing for the sake of editing.
 

@@ -12,7 +12,7 @@ statically or by `import()` (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 68 top-level dirs · 68 live · 0 with no live importer · 1789 non-test source files · 0 god files (>400 LOC).
+**Totals:** 68 top-level dirs · 68 live · 0 with no live importer · 1790 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -31,8 +31,8 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/tool-policy/` | 40 | 20 | L |  |
 | `src/util/` | 39 | 3 | S |  |
 | `src/local-runtimes/` | 38 | 25 | XL |  |
+| `src/threat/` | 38 | 13 | L |  |
 | `src/auth/` | 37 | 11 | L |  |
-| `src/threat/` | 37 | 13 | L |  |
 | `src/session/` | 36 | 7 | L |  |
 | `src/chat-ws/` | 31 | 22 | L |  |
 | `src/agency/` | 27 | 20 | XL |  |
@@ -43,14 +43,14 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/agent-request/` | 23 | 15 | L |  |
 | `src/app-runtime/` | 23 | 12 | L |  |
 | `src/sandbox/` | 23 | 14 | L |  |
+| `src/protocols/` | 21 | 52 | XL |  |
 | `src/orchestrator/` | 20 | 24 | L |  |
-| `src/protocols/` | 20 | 52 | XL |  |
 | `src/desktop-contract/` | 18 | 10 | M |  |
 | `src/agents/` | 17 | 13 | L |  |
 | `src/server/` *(entrypoint)* | 16 | 57 | XL |  |
 | `src/anthropic-client/` | 15 | 21 | XL |  |
 | `src/autonomy/` | 15 | 4 | M |  |
-| `src/cognition/` | 14 | 34 | XL |  |
+| `src/cognition/` | 14 | 35 | XL |  |
 | `src/voice/` | 14 | 74 | XL |  |
 | `src/cron/` | 13 | 10 | L |  |
 | `src/self-edit/` | 13 | 19 | L |  |
@@ -134,6 +134,7 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/embedding-singleton.ts` | S |
 | `src/event-bus.ts` | S |
 | `src/external-boundaries.ts` | S |
+| `src/external-content-markers.ts` | S |
 | `src/ffmpeg-bin.ts` | S |
 | `src/ffmpeg-run.ts` | S |
 | `src/git-safety.ts` | S |

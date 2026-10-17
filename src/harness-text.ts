@@ -25,8 +25,18 @@
  * registry fails the build too — the list of emitters is derived, never typed.
  */
 
+import { EXTERNAL_CONTENT_CLOSE_ANY_RE, EXTERNAL_CONTENT_MARKER_RE } from "./external-content-markers.js";
+
 /** Escape a literal for embedding in a RegExp source. */
 const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * The prefix the canonical loop's compaction projection puts on a tool-result
+ * row (turn-loop/compact-history.ts) so the summarizer can tell a tool's
+ * output from a person's words, and the one the summary-transcript builder
+ * (context-manager/compaction.ts) reads it back by.
+ */
+export const TOOL_RESULT_ROW_PREFIX = "[tool result]";
 
 /**
  * The turn boundaries. These live here rather than beside their renderer
@@ -94,15 +104,21 @@ export interface HarnessMarker {
 export const HARNESS_MARKERS: readonly HarnessMarker[] = [
   {
     id: "untrusted-content-wrapper",
-    pattern: /<<<\/?(?:END_)?EXTERNAL_UNTRUSTED_CONTENT(?:\s+id="[^"\n]{0,80}")?>>>/gi,
+    pattern: EXTERNAL_CONTENT_MARKER_RE,
     sample: '<<<EXTERNAL_UNTRUSTED_CONTENT id="a1b2c3">>>',
-    emitter: "sanitize.ts wrapExternalContent",
+    emitter: "sanitize.ts wrapExternalContent (markers in external-content-markers.ts)",
   },
   {
     id: "untrusted-content-wrapper-close",
-    pattern: /<<<END_EXTERNAL_UNTRUSTED_CONTENT(?:\s+id="[^"\n]{0,80}")?>>>/gi,
+    pattern: EXTERNAL_CONTENT_CLOSE_ANY_RE,
     sample: '<<<END_EXTERNAL_UNTRUSTED_CONTENT id="a1b2c3">>>',
-    emitter: "sanitize.ts wrapExternalContent",
+    emitter: "sanitize.ts wrapExternalContent (markers in external-content-markers.ts)",
+  },
+  {
+    id: "tool-result-row",
+    pattern: /\[tool result\]/g,
+    sample: TOOL_RESULT_ROW_PREFIX,
+    emitter: "canonical-loop/turn-loop/compact-history.ts",
   },
   {
     id: "harness-notice",

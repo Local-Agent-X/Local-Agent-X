@@ -56,50 +56,51 @@ function extractStatusCode(error: unknown): number | undefined {
   return undefined;
 }
 
-type Test = (msg: string, code?: number) => boolean;
+/**
+ * One category's signals: the status codes that mean it, and the phrases a
+ * message carries when no code came with it. Phrases are word-bounded and
+ * qualified: the message is often a TOOL's text — a file path, a line number,
+ * the contents of something the agent read — so "src/network/config.ts" is not
+ * a network error and "line 4291" is not a 429 (runtime-coupling audit
+ * 2026-10-15, #15). A status code is judged first, across every category,
+ * before any wording.
+ */
+interface CategorySignals { category: ErrorCategory; codes?: (code: number) => boolean; phrases: RegExp[] }
 
-const PATTERNS: Array<{ category: ErrorCategory; tests: Test[] }> = [
+const SIGNALS: CategorySignals[] = [
   {
     category: "rateLimit",
-    tests: [
-      (msg) => /rate.?limit|rate_limit|too many requests|429|throttl|quota|insufficient_quota/i.test(msg),
-      (_m, code) => code === 429,
-    ],
+    codes: (code) => code === 429,
+    phrases: [/\brate.?limit(?:s|ed|ing)?\b|\brate_limit\b|\btoo many requests\b|\bthrottl(?:ed|ing|e)\b|\bquota\b|\binsufficient_quota\b|\b429\b/i],
   },
   {
     category: "auth",
-    tests: [
-      (msg) =>
-        /unauthorized|forbidden|invalid.?api.?key|invalid_api_key|token.?expired|expired_token|permission.?denied|\b401\b|\b403\b/i.test(msg),
-      (msg) => /authentication/i.test(msg) && /fail/i.test(msg),
-      (_m, code) => code === 401 || code === 403,
+    codes: (code) => code === 401 || code === 403,
+    phrases: [
+      /\bunauthorized\b|\bforbidden\b|\binvalid.?api.?key\b|\binvalid_api_key\b|\btoken.?expired\b|\bexpired_token\b|\bpermission.?denied\b|\b401\b|\b403\b/i,
+      /\bauthentication\b[^.\n]{0,40}\bfail/i,
     ],
   },
   {
     category: "contentFilter",
-    tests: [
-      (msg) => /content_filter|content.?filter|content moderation|content policy|safety filter|moderation loop/i.test(msg),
-    ],
+    phrases: [/\bcontent_filter\b|\bcontent.?filter\b|\bcontent moderation\b|\bcontent policy\b|\bsafety filter\b|\bmoderation loop\b/i],
   },
   {
     category: "timeout",
-    tests: [
-      (msg) => /timeout|timed.?out|etimedout|esockettimedout|deadline.?exceeded/i.test(msg),
-      (_m, code) => code === 408 || code === 504,
-    ],
+    codes: (code) => code === 408 || code === 504,
+    phrases: [/\btime[d]?.?out\b|\betimedout\b|\besockettimedout\b|\bdeadline.?exceeded\b/i],
   },
   {
     category: "network",
-    tests: [
-      (msg) => /econnrefused|econnreset|enotfound|eai_again|socket hang up|network|fetch.?failed|\bdns\b/i.test(msg),
+    phrases: [
+      /\beconnrefused\b|\beconnreset\b|\benotfound\b|\beai_again\b|\bgetaddrinfo\b|\bsocket hang up\b|\bfetch failed\b|\bnetworkerror\b/i,
+      /\bnetwork (?:error|failure|unreachable|is unreachable|request failed|connection)\b|\bdns (?:lookup|resolution|error|failure)\b/i,
     ],
   },
   {
     category: "overload",
-    tests: [
-      (msg) => /overload|service unavailable|\b500\b|\b502\b|\b503\b|\b504\b|\b529\b|gateway|internal server error|capacity/i.test(msg),
-      (_m, code) => code !== undefined && code >= 500 && code < 600,
-    ],
+    codes: (code) => code >= 500 && code < 600,
+    phrases: [/\boverloaded?\b|\bservice unavailable\b|\b500\b|\b502\b|\b503\b|\b504\b|\b529\b|\bbad gateway\b|\bgateway time/i, /\binternal server error\b|\b(?:at|over) capacity\b/i],
   },
   {
     // The request is bigger than the model's window. Providers ship it as HTTP
@@ -107,33 +108,29 @@ const PATTERNS: Array<{ category: ErrorCategory; tests: Test[] }> = [
     // model's maximum context length is ..."), so the wording decides, ahead of
     // "model". Not retryable as sent: the turn loop compacts, then resends.
     category: "contextOverflow",
-    tests: [
-      (msg) => /\b(payload too large|request entity too large|max(_|imum)? tokens?|content too long|prompt is too long|maximum context length|context (length|window)\b.{0,60}\bexceed|exceeds?\b.{0,60}\bcontext (length|window)|input is too long)\b/i.test(msg),
-      (_m, code) => code === 413,
-    ],
+    codes: (code) => code === 413,
+    phrases: [/\b(payload too large|request entity too large|max(_|imum)? tokens?|content too long|prompt is too long|maximum context length|context (length|window)\b.{0,60}\bexceed|exceeds?\b.{0,60}\bcontext (length|window)|input is too long)\b/i],
   },
   {
     category: "model",
-    tests: [
-      (msg) => /context.?length|max.?tokens|token limit|\bmodel\b/i.test(msg),
-    ],
+    phrases: [/\bcontext.?length\b|\bmax.?tokens\b|\btoken limit\b|\bmodel\b/i],
   },
   {
     category: "tool",
-    tests: [
-      (msg) => /\btool\b|function.?call|invalid.?argument|schema|parameter/i.test(msg),
-    ],
+    phrases: [/\btool\b|\bfunction.?call\b|\binvalid.?argument\b|\bschema\b|\bparameter\b/i],
   },
 ];
 
-/** Map any thrown value to a single ErrorCategory. */
+/** Map any thrown value to a single ErrorCategory: by status code first, then
+ *  by wording in category order. */
 export function classify(error: unknown): ErrorCategory {
   const message = extractMessage(error);
   const code = extractStatusCode(error);
-  for (const { category, tests } of PATTERNS) {
-    for (const test of tests) {
-      if (test(message, code)) return category;
-    }
+  if (code !== undefined) {
+    for (const { category, codes } of SIGNALS) if (codes?.(code)) return category;
+  }
+  for (const { category, phrases } of SIGNALS) {
+    if (phrases.some((re) => re.test(message))) return category;
   }
   return "unknown";
 }

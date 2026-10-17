@@ -1,5 +1,5 @@
 import { createHmac, randomBytes } from "node:crypto";
-import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import { computeAuditMarkerMac, getAuditHmacKey } from "../app-runtime/audit-signing.js";
@@ -131,6 +131,43 @@ export function computeAnchorHash(a: Omit<AnchorRecord, "anchorHash">): string {
 /** `<dir>/<date>.jsonl` → `<dir>/<date>.anchors.jsonl`. */
 export function anchorPathFor(auditFilePath: string): string {
   return auditFilePath.replace(/\.jsonl$/, ".anchors.jsonl");
+}
+
+/** A daily entry file: the date and nothing else before `.jsonl`. */
+const AUDIT_FILE_RE = /^(\d{4}-\d{2}-\d{2})\.jsonl$/;
+
+export interface AuditFile { date: string; path: string }
+
+/**
+ * The daily entry files in an audit dir, newest first. The anchor files and
+ * the era marker sit beside them and are not entries: a lister that took
+ * every `.jsonl` read `<date>.anchors.jsonl` as a day, so search threw and
+ * the counts and the SIEM export carried anchor rows.
+ */
+export function listAuditFiles(dir: string): AuditFile[] {
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir)
+    .map((name) => AUDIT_FILE_RE.exec(name)?.[1])
+    .filter((date): date is string => date !== undefined)
+    .sort()
+    .reverse()
+    .map((date) => ({ date, path: join(dir, `${date}.jsonl`) }));
+}
+
+/** The entries in one daily file's text. A malformed line is skipped, not the
+ *  day: verify() is where a bad row is a finding, a viewer only reads. */
+export function parseAuditLines(text: string): AuditEntry[] {
+  const entries: AuditEntry[] = [];
+  for (const line of text.split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      const parsed = JSON.parse(line) as Partial<AuditEntry> | null;
+      if (parsed && typeof parsed.seq === "number" && typeof parsed.event === "string" && typeof parsed.hash === "string") {
+        entries.push(parsed as AuditEntry);
+      }
+    } catch { /* a truncated or foreign line is not an entry */ }
+  }
+  return entries;
 }
 
 /** Today's daily-file date stamp (UTC, YYYY-MM-DD) — drives the file name and

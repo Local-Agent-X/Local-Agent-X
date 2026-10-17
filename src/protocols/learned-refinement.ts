@@ -51,9 +51,11 @@ export function reviewedProcedureNoticeReady(candidate: LearnedCandidate): boole
   return qualifyingReviewedSessions(proposals) >= REVIEWED_PROCEDURE_NOTICE_SESSIONS;
 }
 
+/** What the probation monitor decided. `cause` is what the activation history
+ *  records, so a safety rollback is known as one by its field, not its wording. */
 export type SafetyRecovery =
-  | { kind: "rollback"; targetVersionId: string; reason: string }
-  | { kind: "archive"; reason: string };
+  | { kind: "rollback"; targetVersionId: string; reason: string; cause: "safety" }
+  | { kind: "archive"; reason: string; cause: "safety" };
 
 function field(value: unknown, key: PropertyKey): unknown {
   const read = readOwnEnumerableData(value, key);
@@ -235,10 +237,12 @@ export function selectSafetyRecovery(
       kind: "rollback",
       targetVersionId: prior.id,
       reason: hardRegression ? "Safety rollback: hard regression" : "Safety rollback: sustained regression",
+      cause: "safety",
     };
   }
   return {
     kind: "archive",
     reason: hardRegression ? "Safety archive: hard regression without healthy prior" : "Safety archive: sustained regression without healthy prior",
+    cause: "safety",
   };
 }

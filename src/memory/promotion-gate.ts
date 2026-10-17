@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { normalizeFactLine, splitDeclaredFacts, splitMultiFactBlob } from "./fact-split.js";
+import { EXTERNAL_CONTENT_EVIDENCE_RE } from "../external-content-markers.js";
 
 export type MemoryContentOrigin =
   | "user_statement" | "assistant" | "tool_observation"
@@ -251,7 +252,7 @@ export function describePromotionForHuman(promotion: MemoryPromotionClaims): str
   return `Save this to ${friendlyTarget(promotion.target)} so I can use it in future chats?\n\n“${excerpt}”`;
 }
 
-const UNTRUSTED_MARKERS = /EXTERNAL_UNTRUSTED_CONTENT|INJECTION WARNING/i;
+const UNTRUSTED_MARKERS = EXTERNAL_CONTENT_EVIDENCE_RE;
 
 /** A row's scannable text — string content as-is, structured content serialized. */
 function rowText(row: unknown): string {

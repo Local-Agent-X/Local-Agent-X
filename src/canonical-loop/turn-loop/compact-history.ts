@@ -26,6 +26,7 @@ import {
 } from "./compact-breaker.js";
 import { opMessageRowToChatParam } from "../chat-runner/message-convert.js";
 import { extractText, extractToolResultText } from "./content-extract.js";
+import { TOOL_RESULT_ROW_PREFIX } from "../../harness-text.js";
 import { createLogger } from "../../logger.js";
 
 const logger = createLogger("canonical-loop.compact-history");
@@ -43,7 +44,7 @@ export function toChatParams(messages: CanonicalMessage[]): ChatCompletionMessag
     switch (m.role) {
       case "system": return { role: "system", content: extractText(m.content) };
       case "assistant": return { role: "assistant", content: assistantText(m.content) };
-      case "tool_result": return { role: "user", content: `[tool result] ${extractToolResultText(m.content)}` };
+      case "tool_result": return { role: "user", content: `${TOOL_RESULT_ROW_PREFIX} ${extractToolResultText(m.content)}` };
       default: return { role: "user", content: extractText(m.content) }; // user + control
     }
   });

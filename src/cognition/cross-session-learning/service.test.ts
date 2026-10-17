@@ -286,7 +286,7 @@ describe("cross-session learning management service", () => {
     expect(service.list()[0]).toMatchObject({ state: "active", activeVersionId: healthy, versionCount: 2 });
     const lifecycle = await import("../../protocols/learned-lifecycle.js");
     expect(lifecycle.loadLearnedProtocol(id).activationHistory?.at(-1)).toMatchObject({
-      kind: "rollback", versionId: healthy, reason: "Safety rollback: hard regression",
+      kind: "rollback", versionId: healthy, reason: "Safety rollback: hard regression", cause: "safety",
     });
     expect(service.reconcile(mode, BASE + 8 * DAY + 21)).toEqual({ signals: [], changed: false });
   });

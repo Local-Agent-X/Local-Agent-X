@@ -44,7 +44,19 @@ export interface OperationPhase {
   output?: Record<string, unknown>;
 }
 
+/** What autopilot writes to operation.json: the same file name the op store
+ *  uses for an Op, so the record says which it is (ops/op-store.ts parseOp
+ *  skips this kind). */
+export const AUTOPILOT_RECORD_KIND = "autopilot";
+
+/** The Operation as persisted, stamped with its kind. */
+export function autopilotRecord(op: Operation): Operation {
+  return { kind: AUTOPILOT_RECORD_KIND, schemaVersion: 1, ...op };
+}
+
 export interface Operation {
+  kind?: typeof AUTOPILOT_RECORD_KIND;
+  schemaVersion?: 1;
   id: string;
   /** The user's original request, verbatim */
   goal: string;

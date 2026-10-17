@@ -25,6 +25,7 @@ import {
 import { injectionScanViews } from "./injection-views.js";
 import { MAX_INJECTION_SCAN_LENGTH } from "./safe-regex.js";
 import { stripControlChars, normalizeHomoglyphs } from "./sanitize.js";
+import { EXTERNAL_CONTENT_CLOSE_ANY_RE, EXTERNAL_CONTENT_OPEN_ANY_RE } from "./external-content-markers.js";
 import { createLogger } from "./logger.js";
 
 const logger = createLogger("sanitize.memory-taint");
@@ -122,8 +123,8 @@ export function sanitizeForMemory(content: string): string {
   let result = stripControlChars(content);
   result = normalizeHomoglyphs(result);
   // Strip any external content wrapper markers that leaked through
-  result = result.replace(/<<<EXTERNAL_UNTRUSTED_CONTENT[^>]*>>>/gi, "[external content removed]");
-  result = result.replace(/<<<END_EXTERNAL_UNTRUSTED_CONTENT[^>]*>>>/gi, "");
+  result = result.replace(EXTERNAL_CONTENT_CLOSE_ANY_RE, "");
+  result = result.replace(EXTERNAL_CONTENT_OPEN_ANY_RE, "[external content removed]");
   result = result.replace(/<metadata>[\s\S]*?<\/metadata>/gi, "");
   result = result.replace(/<content>\n?/gi, "").replace(/\n?<\/content>/gi, "");
   return result.trim();

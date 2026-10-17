@@ -1,10 +1,11 @@
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { RouteHandler } from "../../server-context.js";
 import { jsonResponse, safeErrorMessage, corsHeaders } from "../../server-utils.js";
 import { rotateAuthToken } from "../../config.js";
 import { setBrowserAuthContext } from "../../browser/index.js";
 import { redactCredentials } from "../../security/index.js";
+import { listAuditFiles } from "../../threat/audit-crypto.js";
 import { createLogger } from "../../logger.js";
 
 const logger = createLogger("routes.settings.security");
@@ -52,14 +53,13 @@ export const handleSecurityRoutes: RouteHandler = async (method, url, req, res, 
   // SIEM log export
   if (method === "GET" && url.pathname === "/api/logs/export") {
     const count = parseInt(url.searchParams.get("count") || "100", 10);
-    const auditDir = join(ctx.dataDir, "audit");
-    if (!existsSync(auditDir)) { json(200, { lines: [] }); return true; }
+    const files = listAuditFiles(join(ctx.dataDir, "audit"));
+    if (files.length === 0) { json(200, { lines: [] }); return true; }
     try {
-      const files = readdirSync(auditDir).filter(f => f.endsWith(".jsonl")).sort().reverse();
       const lines: string[] = [];
       for (const file of files) {
         if (lines.length >= count) break;
-        const content = readFileSync(join(auditDir, file), "utf-8");
+        const content = readFileSync(file.path, "utf-8");
         const fileLines = content.split("\n").filter(l => l.trim());
         lines.push(...fileLines.slice(-(count - lines.length)));
       }

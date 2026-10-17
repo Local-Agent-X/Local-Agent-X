@@ -37,7 +37,7 @@ import { ToolPolicy } from "../src/tool-policy/index.js";
 import { DEFAULT_POLICY } from "../src/tool-policy/default-rules.js";
 import { ARI_ACTION_MAP } from "../src/tool-execution/ari-action-map.js";
 import { TOOLS, GATED_KERNEL_CLASSES, hasCapability } from "../src/tool-registry.js";
-import { READ_ONLY_TOOLS, isReadOnlyCall } from "../src/tools/plan-tools.js";
+import { isReadOnlyCall } from "../src/tools/plan-tools.js";
 import { localOnlyToolDecision } from "../src/local-only-policy.js";
 import { AUDIENCES_BY_TOOL } from "../src/tools/audience-map.js";
 import { toolPrompts } from "../src/tools/result-helpers.js";
@@ -178,7 +178,6 @@ describe("ask_user — plan mode and liveness projections", () => {
     // research before changes, so it is exactly when a clarifying question is
     // most useful — and the block would come back as a `blocked` result, which
     // does NOT terminate the turn, so the model asks and then guesses anyway.
-    expect(READ_ONLY_TOOLS.has(NAME)).toBe(true);
     expect(isReadOnlyCall(NAME, { question: "prod or sandbox?" })).toBe(true);
   });
 

@@ -29,14 +29,14 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/data-lineage/` | 42 | 11 | L |  |
 | `src/util/` | 39 | 3 | S |  |
 | `src/local-runtimes/` | 38 | 25 | XL |  |
+| `src/tool-policy/` | 38 | 20 | L |  |
 | `src/auth/` | 37 | 11 | L |  |
 | `src/threat/` | 37 | 13 | L |  |
-| `src/tool-policy/` | 37 | 20 | L |  |
 | `src/session/` | 36 | 7 | L |  |
 | `src/agency/` | 27 | 20 | XL |  |
+| `src/tool-execution/` | 27 | 71 | XL |  |
 | `src/agent-store/` | 26 | 7 | L |  |
 | `src/chat-ws/` | 25 | 21 | L |  |
-| `src/tool-execution/` | 25 | 71 | XL |  |
 | `src/classifiers/` | 24 | 16 | L |  |
 | `src/context/` | 24 | 8 | L |  |
 | `src/context-manager/` | 24 | 13 | L |  |
@@ -208,7 +208,7 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/test-suite-token.ts` | S |
 | `src/test-suite.ts` | M |
 | `src/tool-mutation-check.ts` | S |
-| `src/tool-registry.ts` | S |
+| `src/tool-registry.ts` | M |
 | `src/tool-tracker.ts` | M |
 | `src/tools.ts` | S |
 | `src/trash-journal.ts` | S |

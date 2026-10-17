@@ -6,6 +6,7 @@
 
 import type { KernelClass, ToolRisk } from "../tool-registry.js";
 import type { ToolPolicyRule } from "./types.js";
+import type { CallContext } from "../tool-execution/context.js";
 
 export interface ToolRateLimit {
   maxCalls: number;
@@ -203,6 +204,16 @@ interface ToolPolicyRowFacts {
   /** Where a send delivers (DestinationSpec). A tool that sends with none is
    *  sending to an unknown destination: asked about, never waved through. */
   destination?: readonly DestinationSpec[];
+  /** Call contexts the tool is refused in, each with why (the security layer
+   *  and its rule pack read it): a scheduled job gets no browser. */
+  deniedIn?: Partial<Record<CallContext, string>>;
+  /** An "always allow" covers every later call, not just calls with the same
+   *  arguments: only for a tool that edits LAX's own bookkeeping (the task
+   *  list, the sidebar) and can reach no file, program, network or person. */
+  wholeToolGrant?: true;
+  /** A tool that reads unless one argument says otherwise: sql_query is a
+   *  read unless `readonly` is false. Plan mode reads it (isReadOnlyCall). */
+  readOnlyUnless?: { arg: string; value: unknown };
   /** Explicit policy rule(s). `tool` is stamped from the record key by
    *  deriveDefaultRules — omit it here. */
   rules?: Array<Omit<ToolPolicyRule, "tool">>;
@@ -232,6 +243,9 @@ export interface GlobPolicyEntry {
   output?: undefined;
   externalContent?: undefined;
   destination?: undefined;
+  deniedIn?: undefined;
+  wholeToolGrant?: undefined;
+  readOnlyUnless?: undefined;
   undo?: undefined;
   destructiveActions?: undefined;
   ariAction?: undefined;

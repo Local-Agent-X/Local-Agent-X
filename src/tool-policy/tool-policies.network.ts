@@ -19,6 +19,7 @@ export const TOOL_POLICIES_NETWORK: Record<string, ToolPolicyRow> = {
     // a new context, an http GET, and as a write it would be denied under web
     // taint — exactly after browsing, the only time a mobile re-render is wanted.
     kernel: "http", ariAction: { arg: "action", writes: ["click", "fill", "select", "type", "evaluate", "act"], as: "post" }, risk: "network-read", capabilities: ["egress"], timeoutMs: 30_000, liveState: "poll", externalContent: true, destination: [{ to: "browser-page" }],
+    deniedIn: { cron: "No browser in automated jobs" },
     rules: [
       { id: "flag-browser-evaluate", action: "evaluate", decision: "allow", reason: "Browser JS evaluation — autonomous by default (guarded by CSP, sensitive-page gating at the browser-tool layer, and the read-into-context blocklist — not a per-call modal). Rule kept so the supervised-mode layer can re-arm a confirm.", priority: 100 },
       // No per-action rule for `emulate`: it falls to allow-browser below
@@ -101,13 +102,16 @@ export const TOOL_POLICIES_NETWORK: Record<string, ToolPolicyRow> = {
   // "safe" and a create is a local write.
   calendar_check_availability: { kernel: "http", ariAction: "get", risk: "safe", capabilities: [] },
   calendar_list_events:        { kernel: "http", ariAction: "get", risk: "safe", capabilities: [] },
-  calendar_create_event:       { kernel: "http", ariAction: "post", risk: "workspace-write", capabilities: [] },
+  // Writes a row into the local calendar.json and sends nothing; it was
+  // labelled an http post, which put a local write under the kernel's http
+  // taint rules.
+  calendar_create_event:       { kernel: "internal", risk: "workspace-write", capabilities: [] },
   marketplace_search:          { kernel: "http", ariAction: "get", risk: "network-read", capabilities: [] },
   marketplace_list:            { kernel: "http", ariAction: "get", risk: "network-read", capabilities: [] },
   marketplace_install:         { kernel: "http", ariAction: "get", risk: "destructive", capabilities: [], undo: { irreversible: "overwrites a custom protocol record" } },
 
   // ── Database ──
-  sql_query:           { kernel: "database", ariAction: "query", risk: "workspace-write", capabilities: ["sensitive-read"] },
+  sql_query:           { kernel: "database", ariAction: "query", risk: "workspace-write", capabilities: ["sensitive-read"], readOnlyUnless: { arg: "readonly", value: false } },
   sql_explain:         { kernel: "database", ariAction: "query", risk: "safe", capabilities: [] },
   sql_schema:          { kernel: "database", ariAction: "query", risk: "safe", capabilities: [] },
   ari_database:        { kernel: "internal", risk: "workspace-write", capabilities: ["sensitive-read"], liveState: "fresh" },

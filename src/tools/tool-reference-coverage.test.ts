@@ -85,7 +85,6 @@ function promptToolReferences(): Map<string, string> {
  *  literal inside the declaration must be a registered tool. `keys` lists
  *  take only the top-level record keys (their values are actions or args). */
 const TOOL_LISTS: Array<{ file: string; name: string; shape: "literals" | "keys" }> = [
-  { file: "src/security/layer/types.ts", name: "CONTEXT_RESTRICTED_TOOLS", shape: "keys" },
   { file: "src/tool-execution/resolve-tool.ts", name: "OPERATION_SCOPED_TOOLS", shape: "literals" },
   { file: "src/tool-execution/resolve-tool.ts", name: "SESSION_REPEAT_SKIP_TOOLS", shape: "literals" },
   { file: "src/tools/tier-tool-set.ts", name: "ESSENTIAL_TOOLS_ORDER", shape: "literals" },
@@ -93,11 +92,9 @@ const TOOL_LISTS: Array<{ file: string; name: string; shape: "literals" | "keys"
   { file: "src/tools/tool-companions.ts", name: "TOOL_COMPANIONS", shape: "literals" },
   { file: "src/server/voice-prompt.ts", name: "VOICE_FAST_TOOLS", shape: "literals" },
   { file: "src/local-only-policy.ts", name: "REMOTE_ONLY_TOOLS", shape: "literals" },
-  { file: "src/tools/plan-tools.ts", name: "READ_ONLY_TOOLS", shape: "literals" },
   { file: "src/committing-tool-check.ts", name: "ARG_AWARE_TOOLS", shape: "literals" },
   { file: "src/tool-execution/dedup-cache.ts", name: "DEDUP_SKIP", shape: "literals" },
   { file: "src/tool-execution/heap-guard.ts", name: "HEAP_GUARD_EXEMPT_TOOLS", shape: "literals" },
-  { file: "src/tool-execution/create-target-path.ts", name: "CREATE_CLASS", shape: "literals" },
   { file: "src/agents/spawn-guard.ts", name: "EDIT_CAPABLE_TOOLS", shape: "literals" },
   { file: "src/ops/tools/delegated-toolset.ts", name: "DENIED_TOOL_NAMES", shape: "literals" },
   { file: "src/routes/mcp.ts", name: "MCP_HIDDEN_TOOLS", shape: "literals" },

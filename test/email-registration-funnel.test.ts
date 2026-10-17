@@ -41,7 +41,7 @@ import { ARI_ACTION_MAP } from "../src/tool-execution/ari-action-map.js";
 import { isExternalIngestingTool, clearExternalIngestion, hasExternalIngestion } from "../src/data-lineage/external.js";
 import { applyResultTaintPolicy, setPreExecuteTaintFloor } from "../src/tool-execution/sensitive-read-taint.js";
 import { hasCapability } from "../src/tool-registry.js";
-import { READ_ONLY_TOOLS, isReadOnlyCall } from "../src/tools/plan-tools.js";
+import { isReadOnlyCall } from "../src/tools/plan-tools.js";
 import { transportTools } from "../src/integrations/types.js";
 import { AUDIENCES_BY_TOOL } from "../src/tools/audience-map.js";
 import { isCommittingTool } from "../src/committing-tool-check.js";
@@ -215,7 +215,6 @@ describe("C6 — plan mode", () => {
     // EXPUNGE — so plan mode blocking them hides a genuinely read-only tool from
     // the mode whose entire purpose is research.
     for (const n of [...NEW_TOOLS, ...READ_SIBLINGS]) {
-      expect(READ_ONLY_TOOLS.has(n), n).toBe(true);
       expect(isReadOnlyCall(n, {}), n).toBe(true);
     }
   });
@@ -460,7 +459,6 @@ describe("C3 — plan mode must REFUSE both", () => {
     // that nothing it permits changes the world; a delete permitted under it
     // moves the user's mail during what they were told was research.
     for (const n of MUTATING_TOOLS) {
-      expect(READ_ONLY_TOOLS.has(n), `${n} is in plan mode's read-only set`).toBe(false);
       expect(isReadOnlyCall(n, {}), n).toBe(false);
     }
     // Not vacuous: the reads next to them ARE allowed.

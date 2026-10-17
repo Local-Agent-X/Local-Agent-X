@@ -1,6 +1,6 @@
 // ── Tool call context ──
 
-import { CAPABILITY_CLASS_MEMBERS } from "../../tool-registry.js";
+import { CAPABILITY_CLASS_MEMBERS, CONTEXT_DENIALS } from "../../tool-registry.js";
 
 export type CallContext = "local" | "api" | "delegated" | "cron";
 
@@ -34,12 +34,9 @@ export interface ToolCallContext {
  */
 export const WORKER_CONTEXTS: ReadonlySet<CallContext> = new Set<CallContext>(["delegated", "cron"]);
 
-// Tools blocked in non-local contexts (API calls, delegated agents, cron jobs)
-export const CONTEXT_RESTRICTED_TOOLS: Record<string, CallContext[]> = {
-  browser: ["cron"],                      // No browser in automated jobs
-  generate_image: ["cron"],               // Resource-intensive, block in cron
-  edit_image: ["cron"],                    // Resource-intensive off-box edit, block in cron
-};
+// Tools refused in some call context, each from its own policy row's
+// `deniedIn` (with the reason): the security layer and its rule pack read it.
+export const CONTEXT_RESTRICTED_TOOLS: Readonly<Record<string, readonly CallContext[]>> = Object.fromEntries(CONTEXT_DENIALS);
 
 // Tools that can need worktree isolation in a WORKER_CONTEXTS run: every tool
 // that writes files on some call, and every shell tool — the capability classes,

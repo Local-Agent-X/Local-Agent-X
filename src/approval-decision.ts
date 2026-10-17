@@ -21,7 +21,8 @@ import {
 import { loadProfileName, getSessionProfile } from "./autonomy/profile-store.js";
 import { classifyToolRisk } from "./autonomy/risk.js";
 import { irreversibleToolReason } from "./irreversible-tools.js";
-import { declaredPaths, hasCapability, pathSpecsForCall, policyRowOf, shellCommandOf, TOOL_PATH_ARGS } from "./tool-registry.js";
+import { declaredPaths, hasCapability, pathSpecsForCall, policyRowOf, shellCommandOf, TOOL_PATH_ARGS, wholeToolGrant } from "./tool-registry.js";
+import { TOOL_POLICIES } from "./tool-policy/tool-policies.js";
 import { declaredDestinations, destinationKey } from "./tool-execution/send-destinations.js";
 
 // Profile name cached 1s — same shape as the prior approvalMode cache.
@@ -103,14 +104,12 @@ export function applyIrreversibleFloor(
 }
 
 /**
- * Tools whose "always allow" covers every later call. Each one only edits
- * LAX's own bookkeeping — the task list and the sidebar's navigation entries —
- * so no call can reach a file, a program, a network or a person the user did
- * not already approve. Every other tool's grant is scoped by its arguments.
+ * Tools whose "always allow" covers every later call: each row that declares
+ * `wholeToolGrant` (LAX's own bookkeeping — the task list, the sidebar — which
+ * can reach no file, program, network or person the user did not already
+ * approve). Every other tool's grant is scoped by its arguments.
  */
-export const WHOLE_TOOL_GRANTS: ReadonlySet<string> = new Set([
-  "task_create", "task_update", "sidebar_pin", "sidebar_unpin", "sidebar_clear",
-]);
+export const WHOLE_TOOL_GRANTS: ReadonlySet<string> = new Set(Object.keys(TOOL_POLICIES).filter(wholeToolGrant));
 
 /**
  * Who a send reaches, as its arguments name it (send-destinations.ts), when

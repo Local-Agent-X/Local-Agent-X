@@ -32,7 +32,7 @@ import { ToolPolicy } from "../src/tool-policy/index.js";
 import { DEFAULT_POLICY } from "../src/tool-policy/default-rules.js";
 import { ARI_ACTION_MAP } from "../src/tool-execution/ari-action-map.js";
 import { TOOLS, hasCapability } from "../src/tool-registry.js";
-import { READ_ONLY_TOOLS, isReadOnlyCall } from "../src/tools/plan-tools.js";
+import { isReadOnlyCall } from "../src/tools/plan-tools.js";
 import { localOnlyToolDecision } from "../src/local-only-policy.js";
 import { AUDIENCES_BY_TOOL } from "../src/tools/audience-map.js";
 import { isCommittingTool } from "../src/committing-tool-check.js";
@@ -134,7 +134,6 @@ describe("app_rebuild — plan mode and liveness projections", () => {
     // MUTATION: add it to READ_ONLY_TOOLS. Plan mode's premise is that nothing
     // it permits changes the world; a rebuild overwrites dist/ and can stop a
     // running frontend dev server.
-    expect(READ_ONLY_TOOLS.has(NAME)).toBe(false);
     expect(isReadOnlyCall(NAME, { app: "x" })).toBe(false);
   });
 

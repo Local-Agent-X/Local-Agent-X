@@ -9,12 +9,12 @@ import type { ToolPolicyRow } from "./tool-policies.types.js";
 
 export const TOOL_POLICIES_APPS: Record<string, ToolPolicyRow> = {
   // ── Media generation / capture ──
-  generate_image: { kernel: "internal", risk: "workspace-write", capabilities: ["egress"], offBoxFetch: true, destination: [{ to: "service", name: "the image generation service" }], rateLimit: { maxCalls: 20, windowMs: 60_000, action: "block" }, rules: [{ id: "allow-generate-image", decision: "allow", reason: "Image generation allowed (rate limited)", priority: 40, constraints: { maxCallsPerSession: 20 } }] },
+  generate_image: { kernel: "internal", risk: "workspace-write", capabilities: ["egress"], offBoxFetch: true, destination: [{ to: "service", name: "the image generation service" }], deniedIn: { cron: "Image generation bills an off-box service; not in an automated job" }, rateLimit: { maxCalls: 20, windowMs: 60_000, action: "block" }, rules: [{ id: "allow-generate-image", decision: "allow", reason: "Image generation allowed (rate limited)", priority: 40, constraints: { maxCallsPerSession: 20 } }] },
   // The source image, mask and reference images are read off disk when they
   // name local files (image-tools/shared.ts resolveLocalImagePath); a URL or
   // data: value resolves inside the workspace and passes. reference_images
   // arrives as a real array or, from some models, a JSON-encoded string.
-  edit_image: { kernel: "internal", risk: "workspace-write", capabilities: ["egress"], offBoxFetch: true, destination: [{ to: "service", name: "the image generation service" }], pathArgs: [{ arg: "image", action: "read" }, { arg: "mask", action: "read" }], rateLimit: { maxCalls: 20, windowMs: 60_000, action: "block" }, rules: [{ id: "allow-edit-image", decision: "allow", reason: "Image editing allowed (rate limited)", priority: 40, constraints: { maxCallsPerSession: 20 } }] },
+  edit_image: { kernel: "internal", risk: "workspace-write", capabilities: ["egress"], offBoxFetch: true, destination: [{ to: "service", name: "the image generation service" }], deniedIn: { cron: "Image editing bills an off-box service; not in an automated job" }, pathArgs: [{ arg: "image", action: "read" }, { arg: "mask", action: "read" }], rateLimit: { maxCalls: 20, windowMs: 60_000, action: "block" }, rules: [{ id: "allow-edit-image", decision: "allow", reason: "Image editing allowed (rate limited)", priority: 40, constraints: { maxCallsPerSession: 20 } }] },
   generate_video: { kernel: "internal", risk: "workspace-write", capabilities: ["egress"], offBoxFetch: true, destination: [{ to: "service", name: "the video generation service" }], pathArgs: [{ arg: "reference_images", action: "read", json: true }], rateLimit: { maxCalls: 5, windowMs: 60_000, action: "block" }, rules: [{ id: "allow-generate-video", decision: "allow", reason: "Video generation allowed (rate limited)", priority: 40, constraints: { maxCallsPerSession: 5 } }] },
   camera_capture: { kernel: "internal", risk: "workspace-write", capabilities: ["egress"], liveState: "poll", offBoxFetch: true },
   screen_capture: { kernel: "internal", risk: "workspace-write", capabilities: ["egress"], liveState: "poll", offBoxFetch: true },
@@ -62,10 +62,13 @@ export const TOOL_POLICIES_APPS: Record<string, ToolPolicyRow> = {
   issue_checkout: { kernel: "internal", risk: "workspace-write", capabilities: [] },
   issue_release:  { kernel: "internal", risk: "workspace-write", capabilities: [] },
   issue_search:   { kernel: "internal", risk: "safe", capabilities: [] },
-  task_create:    { kernel: "internal", risk: "workspace-write", capabilities: [] },
+  // The task list and the sidebar's entries are LAX's own bookkeeping: an
+  // "always allow" covers the whole tool, since no call reaches a file, a
+  // program, a network or a person.
+  task_create:    { kernel: "internal", risk: "workspace-write", capabilities: [], wholeToolGrant: true },
   task_get:       { kernel: "internal", risk: "safe", capabilities: [], liveState: "fresh" },
   task_list:      { kernel: "internal", risk: "safe", capabilities: [], liveState: "fresh" },
-  task_update:    { kernel: "internal", risk: "workspace-write", capabilities: [] },
+  task_update:    { kernel: "internal", risk: "workspace-write", capabilities: [], wholeToolGrant: true },
 
   // ── Worker-pool (op_* globs) ──
   // context_files are read into the worker's context pack before any of the
@@ -118,9 +121,9 @@ export const TOOL_POLICIES_APPS: Record<string, ToolPolicyRow> = {
   run_build_plan:        { kernel: "internal", risk: "workspace-write", capabilities: [], timeoutMs: 0, pathArgs: [{ arg: "project_dir", action: "read" }], rules: [{ id: "allow-run-build-plan", decision: "allow", reason: "Auto-build loop kickoff", priority: 50 }] },
 
   // ── UI / state / config ──
-  sidebar_pin:    { kernel: "internal", risk: "workspace-write", capabilities: [] },
-  sidebar_unpin:  { kernel: "internal", risk: "workspace-write", capabilities: [] },
-  sidebar_clear:  { kernel: "internal", risk: "workspace-write", capabilities: [] },
+  sidebar_pin:    { kernel: "internal", risk: "workspace-write", capabilities: [], wholeToolGrant: true },
+  sidebar_unpin:  { kernel: "internal", risk: "workspace-write", capabilities: [], wholeToolGrant: true },
+  sidebar_clear:  { kernel: "internal", risk: "workspace-write", capabilities: [], wholeToolGrant: true },
   voice_visual:   { kernel: "internal", risk: "safe", capabilities: [], rules: [{ id: "allow-voice-visual", decision: "allow", reason: "Particle visualizer (UI-only side effect, rate-limited)", priority: 50 }] },
   session_status: { kernel: "internal", risk: "safe", capabilities: [], liveState: "poll", rules: [{ id: "allow-session-status", decision: "allow", reason: "Current session info", priority: 50 }] },
   // Re-surfaces the session's block notice / declassify control. UI-only:

@@ -19,46 +19,13 @@ export function clearSoftPlanMode(sessionId: string): void {
   planModeSessions.delete(sessionId);
 }
 
-export const READ_ONLY_TOOLS = new Set([
-  'read', 'grep', 'glob', 'web_search', 'web_fetch', 'view_image',
-  // sql_query is read-only only while its default readonly:true holds; the
-  // readonly:false form is a mutation and is judged by args below.
-  'sql_schema', 'sql_explain', 'clipboard_read',
-  'calendar_list_events', 'calendar_check_availability', 'email_read', 'email_search',
-  // Read-only by construction, same as their two siblings above: email_read_message
-  // issues one IMAP FETCH, email_folders one LIST. Neither STOREs, APPENDs, MOVEs
-  // or EXPUNGEs. Omitting them would have plan mode — whose whole purpose is
-  // research before changes — block the two email tools that only research.
-  'email_read_message', 'email_folders',
-  // email_delete and email_mark are DELIBERATELY absent, and this comment is the
-  // registration: they are the only two email tools that change the mailbox. A
-  // delete is not read-only under any reading — it relocates the user's mail —
-  // and email_mark rewrites user-visible read/starred state. Plan mode's whole
-  // premise is that nothing it permits alters the world, so the `email_` prefix
-  // must never become a blanket rule here.
-  // ask_user changes nothing — it delivers a question and ends the turn on it.
-  // Plan mode is the mode whose entire purpose is research before changes, so
-  // it is exactly when a clarifying question is most useful; blocking it here
-  // would return a `blocked` result, which does NOT terminate the turn
-  // (decide-outcome requires resultStatus "ok"), so the model would ask and then
-  // carry on guessing — the failure ask_user exists to remove.
-  'enter_plan_mode', 'exit_plan_mode', 'task_list', 'task_get', 'tool_search', 'ask_user',
-]);
-
-/** Read-only ACTIONS of the collapsed one-tool-many-actions office families —
- *  the name alone can't prove read-only, so plan mode checks (name, action). */
-const READ_ONLY_TOOL_ACTIONS: Record<string, ReadonlySet<string>> = {
-  spreadsheet: new Set(['read', 'query']),
-  document: new Set(['read']),
-  pdf: new Set(['read', 'extract_tables']),
-};
-
-export function isReadOnlyCall(name: string, args: Record<string, unknown>): boolean {
-  if (READ_ONLY_TOOLS.has(name)) return true;
-  if (name === 'sql_query') return args.readonly !== false;
-  const actions = READ_ONLY_TOOL_ACTIONS[name];
-  return actions !== undefined && actions.has(String(args.action ?? ''));
-}
+// What plan mode permits is what changes nothing, read off each tool's policy
+// row (tool-registry isReadOnlyCall): a tool's risk tier and the paths, kernel
+// action and destination of the call. There is no list of read-only names to
+// keep: email_delete is a write because its row says so, ask_user a read
+// because its row's risk is safe (it delivers a question and ends the turn —
+// plan mode is exactly when a clarifying question is most useful).
+export { isReadOnlyCall } from '../tool-registry.js';
 
 const enterPlanMode: ToolDefinition = {
   name: 'enter_plan_mode',

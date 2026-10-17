@@ -19,6 +19,7 @@ import { deriveTools, derivePathArgs, TOOL_POLICIES } from "./tool-policy/tool-p
 import type { PathArgSpec } from "./tool-policy/tool-policies.data.js";
 import type { DeclaredCapability, DestinationSpec, OutputKind, ToolPolicyRow } from "./tool-policy/tool-policies.types.js";
 import { getActivePluginToolMetadata } from "./plugin-system/tool-metadata.js";
+import type { CallContext } from "./tool-execution/context.js";
 export type { PathArgSpec } from "./tool-policy/tool-policies.data.js";
 
 export type KernelClass =
@@ -196,6 +197,58 @@ export function policyRowOf(name: string): ToolPolicyRow | undefined {
 /** What this tool's result carries, when masking or taint must know. */
 export function outputOf(name: string): OutputKind | undefined {
   return TOOL_POLICIES[name]?.output;
+}
+
+/** The action the Ari kernel judges this call as; "exec" for a tool with no
+ *  row (the kernel never sees an internal tool). A spec read off an argument
+ *  resolves against the call: a POST or a browser click is a write verb. */
+export function ariActionOf(name: string, args: Record<string, unknown>): string {
+  const spec = TOOL_POLICIES[name]?.ariAction;
+  if (spec === undefined) return "exec";
+  if (typeof spec === "string") return spec;
+  const value = String(args?.[spec.arg] ?? "").toLowerCase();
+  const write = spec.writes.find((w) => w.toLowerCase() === value);
+  return write ? (spec.as ?? write.toLowerCase()) : "get";
+}
+
+/** Why this tool is refused in `context`, or undefined when it is not. */
+export function deniedInContext(name: string, context: CallContext): string | undefined {
+  return TOOL_POLICIES[name]?.deniedIn?.[context];
+}
+
+/** Every tool with a context it is refused in, with those contexts. */
+export const CONTEXT_DENIALS: ReadonlyArray<readonly [string, readonly CallContext[]]> = Object.entries(TOOL_POLICIES)
+  .flatMap(([name, row]) => (row.deniedIn ? [[name, Object.keys(row.deniedIn) as CallContext[]] as const] : []));
+
+/** Does an "always allow" of this tool cover every later call? */
+export function wholeToolGrant(name: string): boolean {
+  return TOOL_POLICIES[name]?.wholeToolGrant === true;
+}
+
+const KERNEL_READ_ACTIONS: ReadonlySet<string> = new Set(["get", "head", "options", "read", "query", "search", "exec"]);
+
+/**
+ * Does this call change nothing — plan mode's one question, read off the row:
+ *   - a collapsed family (action-scoped path specs) is judged by the call's
+ *     action: every path it opens is a read (document read, pdf extract_tables);
+ *   - any other tool by its risk tier: `safe` or `network-read`, and then only
+ *     a call that opens no non-read path, is not a shell, is judged a read by
+ *     the kernel (a browser click is a post) and delivers nothing to a person
+ *     or a device (send_file reaches the user's phone);
+ *   - `readOnlyUnless` names the one argument that turns a read into a write.
+ * A tool with no row changes something until its row says otherwise.
+ */
+export function isReadOnlyCall(name: string, args: Record<string, unknown>): boolean {
+  const row = policyRowOf(name);
+  if (!row) return false;
+  if (row.readOnlyUnless) return args[row.readOnlyUnless.arg] !== row.readOnlyUnless.value;
+  const specs = pathSpecsForCall(name, args);
+  if ((row.pathArgs ?? []).some((spec) => spec.forActions)) return specs.length > 0 && specs.every((spec) => spec.action === "read");
+  if (row.risk !== "safe" && row.risk !== "network-read") return false;
+  if (hasCapability(name, "shell") || specs.some(writesAt)) return false;
+  if (!KERNEL_READ_ACTIONS.has(ariActionOf(name, args))) return false;
+  const delivers = (destinationSpecsOf(name, args) ?? []).some((d) => d.to === "recipients" || d.to === "chat" || (d.to === "user" && d.message));
+  return !delivers;
 }
 
 /** Where this call delivers, as its row declares it: the specs scoped to the

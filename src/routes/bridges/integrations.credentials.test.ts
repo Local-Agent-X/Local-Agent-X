@@ -55,9 +55,12 @@ const SINGLE = {
   id: "github",
   name: "GitHub",
   builtin: true,
+  baseUrl: "https://api.github.com",
   secretName: "GITHUB_TOKEN",
   credentials: [{ name: "GITHUB_TOKEN" }],
 };
+// A custom integration: its base URL was authored over POST /api/integrations.
+const CUSTOM = { ...SINGLE, id: "acme", name: "Acme", builtin: false, baseUrl: "https://api.acme.test" };
 // What `POST /api/integrations {id,name,baseUrl}` yields: no credential list at
 // all, so the derived primary is the empty string.
 const NO_CREDENTIALS = {
@@ -100,6 +103,8 @@ async function request(
     get: vi.fn(() => config),
     markInstalled: vi.fn(),
   };
+  const egress = { allow: vi.fn(), snapshot: vi.fn(() => ({ mode: "strict", allowlist: [], configured: true })) };
+  const broadcastAll = vi.fn();
   const req = makeReq(body);
   const res = makeRes();
   await handleIntegrationsRoutes(
@@ -107,10 +112,10 @@ async function request(
     new URL(`http://127.0.0.1${path}`),
     req as unknown as Parameters<typeof handleIntegrationsRoutes>[2],
     res as unknown as Parameters<typeof handleIntegrationsRoutes>[3],
-    { secretsStore, integrations } as unknown as Parameters<typeof handleIntegrationsRoutes>[4],
+    { secretsStore, integrations, security: { egress }, broadcastAll } as unknown as Parameters<typeof handleIntegrationsRoutes>[4],
     "operator",
   );
-  return { res, vault, secretsStore, integrations };
+  return { res, vault, secretsStore, integrations, egress, broadcastAll };
 }
 
 describe("integration install with multiple declared credentials", () => {
@@ -131,6 +136,26 @@ describe("integration install with multiple declared credentials", () => {
     expect(result.res.statusCode).toBe(200);
     expect([...result.vault]).toEqual([["GITHUB_TOKEN", "ghp-token"]]);
     expect(result.secretsStore.set).toHaveBeenCalledWith("GITHUB_TOKEN", "ghp-token", "GitHub");
+  });
+
+  // Under strict web access, a connected service's host was never allowed, so a
+  // run with nobody to click "Allow & retry" (a spawned agent, a scheduled job)
+  // was blocked at its first call. Handing over the key is the consent.
+  it("installing a built-in HTTP integration allows its API host, and tells open tabs", async () => {
+    const result = await request("/api/integrations/install", { id: "github", secretValue: "ghp-token" }, SINGLE);
+    expect(result.res.statusCode).toBe(200);
+    expect(result.egress.allow).toHaveBeenCalledWith("api.github.com");
+    expect(result.broadcastAll).toHaveBeenCalledWith({ type: "settings_changed", settings: { egress: expect.objectContaining({ mode: "strict" }) } });
+  });
+
+  it("allows no host for a custom integration (its base URL is network-authored) or one with no base URL (email)", async () => {
+    const custom = await request("/api/integrations/install", { id: "acme", secretValue: "k" }, CUSTOM);
+    expect(custom.res.statusCode).toBe(200);
+    expect(custom.egress.allow).not.toHaveBeenCalled();
+    const email = await request("/api/integrations/install", { id: "email", secretValues: { SMTP_PASS: "s", SMTP_HOST: "smtp.example.com" } });
+    expect(email.res.statusCode).toBe(200);
+    expect(email.egress.allow).not.toHaveBeenCalled();
+    expect(email.broadcastAll).not.toHaveBeenCalled();
   });
 
   it("rejects an undeclared credential name without writing anything", async () => {

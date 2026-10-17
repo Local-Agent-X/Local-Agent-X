@@ -10,6 +10,11 @@ import { isRequiredRequirement, isSecretRequirement, type CredentialRequirement 
 
 type InstallBody = { id: string; secretValue?: unknown; secretValues?: unknown };
 
+/** The host an HTTP integration's calls reach; null when it has none (email). */
+function apiHostOf(baseUrl: string): string | null {
+  try { return baseUrl ? new URL(baseUrl).hostname || null : null; } catch { return null; }
+}
+
 /**
  * Pairs each supplied install value with the credential it was DECLARED under.
  * `secretValues` is the multi-credential shape; a bare `secretValue` still means
@@ -311,6 +316,17 @@ export const handleIntegrationsRoutes: RouteHandler = async (method, url, req, r
       ctx.secretsStore.set(name, value, config.name);
     }
     ctx.integrations.markInstalled(body.id, true);
+    // Handing over a key for a service is the consent the web-access allowlist
+    // records, so its host is allowed here: under strict web access a run with
+    // nobody to click "Allow & retry" (a spawned agent, a scheduled job) was
+    // otherwise blocked at the first call. Built-ins only: a custom integration's
+    // base URL is authored over the network, by the agent as readily as by the
+    // user, and must not be a way to widen the agent's own web access.
+    const host = config.builtin ? apiHostOf(config.baseUrl) : null;
+    if (host) {
+      ctx.security.egress.allow(host);
+      ctx.broadcastAll({ type: "settings_changed", settings: { egress: ctx.security.egress.snapshot() } });
+    }
     json(200, { ok: true, id: body.id, secretName: config.secretName }); return true;
   }
   if (method === "POST" && url.pathname === "/api/integrations/uninstall") {

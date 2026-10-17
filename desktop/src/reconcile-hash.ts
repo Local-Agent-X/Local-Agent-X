@@ -1,10 +1,10 @@
 import { createHash } from "crypto";
-import { existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "fs";
+import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "fs";
 import { readFile } from "fs/promises";
 import { relative, join } from "path";
-import { homedir } from "os";
+import { laxDataDir, prebuildMarkerPath } from "./contract/data-dir.js";
 
-export const STATE_PATH = join(homedir(), ".lax", "reconcile-state.json");
+export const STATE_PATH = join(laxDataDir(), "reconcile-state.json");
 
 /**
  * A node_modules npm finished installing carries a `.package-lock.json` manifest.
@@ -67,25 +67,10 @@ export function foreignPmCorruption(dir: string): string | null {
 // ── Desktop pre-build marker (cross-side, sibling of reconcile-state.json) ──
 // The SERVER-side update pipeline (src/desktop-prebuild-marker.ts) writes this
 // file when an update's desktop pre-build fails, so the next desktop boot knows
-// a rebuild was expected and can escalate loudly if dist is still stale. The
-// two sides share the path by convention (desktop is CJS, server is ESM — they
-// cannot import each other); test/desktop-reconcile-deps.test.ts pins it.
-export const DESKTOP_PREBUILD_MARKER_PATH = join(homedir(), ".lax", "desktop-prebuild-pending.json");
-
-export interface DesktopPrebuildMarker { failedAt: string; detail: string }
-
-export function readDesktopPrebuildMarker(markerPath: string = DESKTOP_PREBUILD_MARKER_PATH): DesktopPrebuildMarker | null {
-  if (!existsSync(markerPath)) return null;
-  try {
-    const parsed = JSON.parse(readFileSync(markerPath, "utf-8"));
-    if (parsed && typeof parsed.detail === "string") return parsed as DesktopPrebuildMarker;
-  } catch { /* corrupt marker reads as absent — never blocks boot */ }
-  return null;
-}
-
-export function clearDesktopPrebuildMarker(markerPath: string = DESKTOP_PREBUILD_MARKER_PATH): void {
-  try { rmSync(markerPath, { force: true }); } catch { /* leftover marker just re-notifies */ }
-}
+// a rebuild was expected and can escalate loudly if dist is still stale. Path
+// and shape are the server↔desktop contract (contract/prebuild-marker.ts).
+export const DESKTOP_PREBUILD_MARKER_PATH = prebuildMarkerPath();
+export { clearDesktopPrebuildMarker, readDesktopPrebuildMarker, type DesktopPrebuildMarker } from "./contract/prebuild-marker.js";
 
 /**
  * Pure decision: does a boot need to SURFACE a stale desktop dist? Returns the

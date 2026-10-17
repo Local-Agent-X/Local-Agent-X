@@ -1,18 +1,9 @@
-// Centralized resolver for the LAX data directory.
-//
-// Honors `LAX_DATA_DIR` env var so non-default deployments (tests, CI,
-// containers, multi-user setups) can relocate state. Falls back to
-// `~/.lax` on the user's home directory.
-//
-// Why this exists: ~80 modules used to inline `join(homedir(), ".lax")`
-// at module load, silently ignoring LAX_DATA_DIR. That made
-// non-default configs split brain — some subsystems wrote to the env
-// path, others to `~/.lax`. Routing every callsite through one helper
-// fixes that, and gives us one place to change the default.
+// The LAX data directory, for the ~200 server modules that import it by this
+// name. The resolver itself is part of the desktop↔server contract
+// (src/desktop-contract/data-dir.ts), so the desktop app and the server agree
+// on where the pidfile, config and rollback journal live when LAX_DATA_DIR
+// relocates them.
 
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { laxDataDir } from "./desktop-contract/data-dir.js";
 
-export function getLaxDir(): string {
-  return process.env.LAX_DATA_DIR || join(homedir(), ".lax");
-}
+export const getLaxDir = laxDataDir;

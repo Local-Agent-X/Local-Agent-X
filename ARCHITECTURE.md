@@ -100,6 +100,7 @@ Paths below were verified against the tree (the generated map's importer counts
 | **Cross-machine sync** | `src/sync/` (`index.ts`) | `AgentSync` mirrors configured memory, sessions, sanitized config/UI state, and workspace data to a user-configured Git remote. The product expects a private repository but does not enforce repository visibility. |
 | **Scheduled missions / cron** | `src/cron/` (`cron-service.ts`) | |
 | **Desktop app (Electron)** | `desktop/src/` | `main.ts` (Electron main) spawns the Node server (`server-process.ts`) and runs a pre-boot reconcile/build (`reconcile.ts`); window/IPC in `window.ts`, `ipc.ts`. |
+| **Server↔desktop contract** | `src/desktop-contract/` (its `AGENTS.md`) | What the server and Electron main must agree on without importing each other: the IPC messages, env names, exit codes, data dir and its files, pidfile + pid probe, the rollback journal's shape and validator. Compiled twice: `desktop/src/contract/` is a generated copy (`scripts/check-desktop-contract.mjs --sync`, checked by `npm run build`); `test/desktop-server-contract.test.ts` holds both sides to it. |
 
 ## Looks canonical, isn't — ignore these
 

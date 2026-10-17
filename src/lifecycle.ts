@@ -17,38 +17,27 @@
 // layer for the cases libuv misses (force-kill, power-off-then-stale-file,
 // foreign-launcher).
 
-import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
-import { getLaxDir } from "./lax-data-dir.js";
+import { existsSync, writeFileSync, unlinkSync, mkdirSync } from "node:fs";
+import { laxDataDir, serverPidPath } from "./desktop-contract/data-dir.js";
+import { DESKTOP_ENV } from "./desktop-contract/env.js";
+import { EXIT_ALREADY_RUNNING } from "./desktop-contract/exit-codes.js";
+import { readServerPidFile, type ServerPidFile } from "./desktop-contract/pidfile.js";
+import { isPidAlive, isOurServerProcess } from "./desktop-contract/pid-probe.js";
 
 import { createLogger } from "./logger.js";
-import { isPidAlive, isOurServerProcess } from "./pid-probe.js";
 import { acquireDataDirLock } from "./datadir-lock.js";
 
 const logger = createLogger("lifecycle");
 
-const LAX_DIR = getLaxDir();
-const PIDFILE = join(LAX_DIR, "server.pid");
+const LAX_DIR = laxDataDir();
+const PIDFILE = serverPidPath(LAX_DIR);
 const HEARTBEAT_MS = 5_000;
 
-interface PidFile {
-  pid: number;
-  parentPid?: number;
-  startedAt: string;
-}
-
-function readPidFile(): PidFile | null {
-  if (!existsSync(PIDFILE)) return null;
-  try {
-    return JSON.parse(readFileSync(PIDFILE, "utf-8")) as PidFile;
-  } catch {
-    return null;
-  }
-}
+const readPidFile = (): ServerPidFile | null => readServerPidFile(PIDFILE);
 
 function writePidFile(parentPid: number | undefined): void {
   if (!existsSync(LAX_DIR)) mkdirSync(LAX_DIR, { recursive: true, mode: 0o700 });
-  const payload: PidFile = {
+  const payload: ServerPidFile = {
     pid: process.pid,
     parentPid,
     startedAt: new Date().toISOString(),
@@ -89,14 +78,14 @@ export async function initLifecycle(): Promise<void> {
         `[lifecycle] Refusing to start — server already running (pid ${existing.pid}, ` +
         `started ${existing.startedAt}). The launcher should kill it before respawning.`,
       );
-      process.exit(75); // EX_TEMPFAIL — recoverable, retry after kill
+      process.exit(EXIT_ALREADY_RUNNING); // recoverable: the launcher kills the holder and retries
     }
     // Stale (PID dead or recycled). Drop the file so writePidFile() below
     // writes a clean one for us.
     try { unlinkSync(PIDFILE); } catch {}
   }
 
-  const parentPidRaw = process.env.LAX_PARENT_PID;
+  const parentPidRaw = process.env[DESKTOP_ENV.PARENT_PID];
   const parentPid = parentPidRaw ? Number(parentPidRaw) : undefined;
   writePidFile(parentPid);
 

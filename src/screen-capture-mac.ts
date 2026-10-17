@@ -14,6 +14,7 @@ import { readFileSync, readdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import type { ScreenCaptureOptions, ScreenCaptureResult } from "./screen-capture.js";
+import { DESKTOP_ENV } from "./desktop-contract/env.js";
 
 const SCREENCAPTURE = "/usr/sbin/screencapture";
 const SIPS = "/usr/bin/sips";
@@ -114,7 +115,7 @@ export function captureScreenMacImpl(
       // which is what users try first — changes nothing. Tell the truth so the
       // agent stops advising a re-grant/restart that can't work.
       const denied = /could not create image|not authori|allowed to capture|CGDisplay/i.test(reason);
-      const underBridge = process.env.LAX_DESKTOP_BRIDGE === "1";
+      const underBridge = process.env[DESKTOP_ENV.BRIDGE] === "1";
       const guidance = denied && underBridge
         ? `macOS denied the capture. It ties Screen Recording to the process that runs it — here that's the Node runtime at ${process.execPath}, NOT the Local Agent X app, so granting the app alone has no effect. Fix: add that exact Node binary to System Settings → Privacy & Security → Screen & System Audio Recording (click "+", press ⌘⇧G, paste the path above), then retry.`
         : "If the image is missing or black, grant Screen Recording in System Settings → Privacy & Security → Screen & System Audio Recording, then retry.";

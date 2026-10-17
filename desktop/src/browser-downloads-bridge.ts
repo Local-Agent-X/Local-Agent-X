@@ -28,9 +28,10 @@ import {
 	type QuarantinedDownload,
 } from "./browser-partition";
 import { clearAdoptedViews, getBrowserView, listBrowserViews } from "./browser-views";
+import type { BrowserDownloadEvent } from "./contract/browser-bridge.js";
 
 /** Returns true only when the message reached the child (proc.send truth). */
-export type DownloadEventSink = (msg: Record<string, unknown>) => boolean;
+export type DownloadEventSink = (msg: BrowserDownloadEvent) => boolean;
 
 let sink: DownloadEventSink | null = null;
 
@@ -46,7 +47,7 @@ function resolveViewId(wc: WebContents | undefined): string | null {
 	return null;
 }
 
-function toWireEvent(entry: QuarantinedDownload): Record<string, unknown> {
+function toWireEvent(entry: QuarantinedDownload): BrowserDownloadEvent {
 	return {
 		type: "lax:browser-download-event",
 		// Top-level viewId: the server parses the owning session out of it

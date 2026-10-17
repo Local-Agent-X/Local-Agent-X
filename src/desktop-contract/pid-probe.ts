@@ -10,10 +10,6 @@
 //
 // The fix: pair liveness with an image-name check. If the live process
 // at that PID isn't node, the pidfile is stale and should be discarded.
-//
-// MIRROR: keep identical to src/pid-probe.ts. Both copies exist because
-// src/ (ESM, tsx-loaded) and desktop/src/ (CJS, tsc-built) compile
-// separately and can't cross-import.
 
 import { execSync } from "node:child_process";
 import { readFileSync, readlinkSync } from "node:fs";

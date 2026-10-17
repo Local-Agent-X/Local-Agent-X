@@ -8,6 +8,8 @@ import {
   type TransactionAnchor, type UpdateRollbackEntry, type UpdateRollbackJournal,
 } from "./update-rollback-state.js";
 
+import { ROLLBACK_SUPERSEDED_DIR, supersededRollbackDir } from "./desktop-contract/data-dir.js";
+
 export type { UpdateRollbackEntry, UpdateRollbackJournal } from "./update-rollback-state.js";
 
 async function digest(path: string): Promise<string> { return createHash("sha256").update(await readFile(path)).digest("hex"); }
@@ -109,12 +111,13 @@ export class UpdateRollbackTransaction {
     if (!Number.isFinite(startedAt) || !Number.isFinite(updatedAt) || updatedAt <= startedAt
       || updatedAt < currentInstall.birthtimeMs) return false;
 
-    const archive = join(this.stateRoot, `update-rollback.superseded-${journalValue.id}`);
+    const archive = supersededRollbackDir(this.stateRoot, journalValue.id);
     if (existsSync(archive)) return false;
     this.assertRawPath(this.stateRoot, "update-rollback", "journal");
-    this.assertRawPath(this.stateRoot, `update-rollback.superseded-${journalValue.id}`, "archive");
+    this.assertRawPath(this.stateRoot, join(ROLLBACK_SUPERSEDED_DIR, journalValue.id), "archive");
     const currentJournal = parseJson(this.journalPath);
     if (!validJournal(currentJournal) || hash(currentJournal) !== hash(journalValue)) return false;
+    await mkdir(dirname(archive), { recursive: true });
     await rename(this.directory, archive);
     return true;
   }

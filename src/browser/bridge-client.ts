@@ -2,6 +2,7 @@
  * authenticated relay, whose parent re-enters the same request seam. */
 
 import { createLogger } from "../logger.js";
+import { DESKTOP_ENV } from "../desktop-contract/env.js";
 import { answerEgressAsk } from "./bridge-egress.js";
 import { browserContainerRelayActivated, relayBrowserAbort, relayBrowserRequest, type BrowserRelayRequest } from "./container-bridge-relay.js";
 import { startEgressWorkerHost } from "./egress-worker-host.js";
@@ -59,7 +60,7 @@ export function browserBridgeAvailable(): boolean {
 	return browserContainerRelayActivated() || desktopBrowserBridgeAvailable();
 }
 
-const desktopBrowserBridgeAvailable = (): boolean => process.env.LAX_DESKTOP_BRIDGE === "1" && typeof process.send === "function";
+const desktopBrowserBridgeAvailable = (): boolean => process.env[DESKTOP_ENV.BRIDGE] === "1" && typeof process.send === "function";
 
 function ensureListener(): void {
 	if (listenerAttached) return;

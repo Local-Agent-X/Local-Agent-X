@@ -35,6 +35,7 @@ Optional for Claude Code: `scripts/refs-hint-hook.mjs` is a PostToolUse hook
 | `workspace/` | **no** | Per-machine user data: built apps, files. Served at `/apps/<name>/` from `workspace/apps/<name>/`. Never `rm -rf` in it. |
 | `packages/arikernel/` | yes | Vendored security kernel. Hands off unless fixing a specific Ari bug. |
 | `src/broker-transport/vendor/` | yes | The phone↔desktop wire contract, copied from agentxos. Never hand-edit: change agentxos, then `scripts/check-vendor-sync.mjs --sync` (`vendor/README.md`). |
+| `desktop/src/contract/` | yes | The server↔desktop contract, copied from `src/desktop-contract/`. Never hand-edit: change the source, then `scripts/check-desktop-contract.mjs --sync`. |
 | `dist/` | no | Build output. Never hand-edit. |
 
 A user page ("build me a calendar") is `workspace/apps/calendar/index.html`

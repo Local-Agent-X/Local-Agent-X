@@ -103,7 +103,7 @@ export const LAX_DATA_CATALOG: readonly LaxDataEntry[] = [
   ...at("card", "holds downloads the app is still checking before you get them", "browser-quarantine"),
   ...at("card", "holds the agent's queued and running work, which the app resumes", "operations", "operation-batches"),
   ...at("card", PROGRAMS, "models", "pocket-tts", "tesseract", "python-voice", "python-chatterbox", "python-voxcpm", "runtime", "workspace/voice-chat"),
-  ...at("card", UPDATES, "updates", "update-rollback", "backups", "installed-source.json", "update-history.json", "update-health.json", "desktop-prebuild-pending.json"),
+  ...at("card", UPDATES, "updates", "update-rollback", "update-rollback-superseded", "backups", "installed-source.json", "update-history.json", "update-health.json", "desktop-prebuild-pending.json"),
   ...at("card", SCHEDULE, "cron", "custom-missions.json", "mission-schedules.json", "autopilot"),
   ...at("card", AGENTS, "agent-templates.json", "agent-projects.json", "project-rosters.json"),
   ...at("card", INSTRUCTIONS, "skills", "protocols", "custom-protocols.json", "protocol-variables.json", "protocol-prefs", "orchestration-examples.json"),

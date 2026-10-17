@@ -9,17 +9,16 @@
  */
 import { app } from "electron";
 import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { initBrowserNetworkHardening } from "./browser-partition";
 import { enableLoopbackCdpEndpoint } from "./cdp-endpoint";
+import { configPath } from "./contract/data-dir.js";
 
 /** The pre-ready slice of ~/.lax/config.json. Read once, before app.ready,
  *  because Chromium parses its command line only at startup. Falls back to
  *  safe defaults when the file is missing or malformed. */
 function earlyConfig(): { port: number; nativeDriving: boolean } {
   try {
-    const c = join(homedir(), ".lax", "config.json");
+    const c = configPath();
     if (existsSync(c)) {
       const cfg = JSON.parse(readFileSync(c, "utf-8"));
       return { port: cfg.port || 7007, nativeDriving: cfg.browserNativeDriving === true };

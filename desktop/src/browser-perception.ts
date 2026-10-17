@@ -27,22 +27,10 @@
  */
 
 import type { WebContents } from "electron";
+import type { BridgeConsoleEntry, BridgeNetworkEntry, BrowserAgentViewClosed, BrowserUiEvent } from "./contract/browser-bridge.js";
 
-export interface ConsoleEntry {
-	level: string;
-	message: string;
-	ts: number;
-}
-
-export interface NetworkEntry {
-	url: string;
-	method: string;
-	status?: number;
-	error?: string;
-	resourceType?: string;
-	contentType?: string;
-	ts: number;
-}
+export type ConsoleEntry = BridgeConsoleEntry;
+export type NetworkEntry = BridgeNetworkEntry;
 
 export const RING_MAX_ENTRIES = 100;
 export const CONSOLE_MESSAGE_MAX_CHARS = 300;
@@ -100,7 +88,7 @@ export function scrubRingUrl(url: unknown): string {
 }
 
 // ── UI-event sink (desktop → server, fire-and-forget) ─────────
-type UiEventSink = (msg: Record<string, unknown>) => void;
+type UiEventSink = (msg: BrowserUiEvent | BrowserAgentViewClosed) => void;
 let uiEventSink: UiEventSink | null = null;
 
 /** Point UI events at the live server child. Re-wired on every (re)spawn
@@ -111,7 +99,7 @@ export function setBrowserUiEventSink(sink: UiEventSink | null): void {
 
 function emitUiEvent(action: string, viewId: string, target?: string): void {
 	if (!uiEventSink) return;
-	const msg: Record<string, unknown> = {
+	const msg: BrowserUiEvent = {
 		type: "lax:browser-ui-event",
 		surface: "browser",
 		action,

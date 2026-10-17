@@ -54,6 +54,7 @@ export const currentDocs = [
   "src/ari-kernel/AGENTS.md",
   "src/browser/AGENTS.md",
   "src/context/AGENTS.md",
+  "src/desktop-contract/AGENTS.md",
   "src/memory/AGENTS.md",
   "src/ops/AGENTS.md",
   "src/providers/AGENTS.md",

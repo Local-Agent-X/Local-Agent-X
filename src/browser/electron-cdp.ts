@@ -16,6 +16,7 @@
  */
 import type { Browser, Page } from "playwright";
 import { createLogger } from "../logger.js";
+import { DESKTOP_ENV } from "../desktop-contract/env.js";
 
 const logger = createLogger("browser.electron-cdp");
 
@@ -29,7 +30,7 @@ export type CdpConnector = (cdpUrl: string) => Promise<Browser>;
 /** The desktop main process hands the in-app debugging port to this server
  *  child in this variable (desktop/src/main.ts); the macOS cage reads it too,
  *  to deny caged shells that one loopback port. */
-export const ELECTRON_CDP_PORT_ENV = "LAX_ELECTRON_CDP_PORT";
+export const ELECTRON_CDP_PORT_ENV = DESKTOP_ENV.ELECTRON_CDP_PORT;
 
 /** The in-app debugging port, when native driving is on; null otherwise. */
 export function electronCdpPort(env: NodeJS.ProcessEnv = process.env): number | null {

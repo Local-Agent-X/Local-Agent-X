@@ -3,6 +3,7 @@ import { join, resolve, dirname } from "node:path";
 import { randomBytes } from "node:crypto";
 import { MIN_MAX_ITERATIONS, type LAXConfig } from "./types.js";
 import { getLaxDir } from "./lax-data-dir.js";
+import { DESKTOP_ENV } from "./desktop-contract/env.js";
 import { atomicWriteFileSync } from "./util/json-store.js";
 import { registerRedactedSecretValue } from "./security/secrets/known-secrets.js";
 import {
@@ -234,7 +235,8 @@ export function loadConfig(): LAXConfig {
   // existing files over once and persist the absolute path — after that the
   // value is non-legacy and this never runs again. Dev / standalone server
   // (no LAX_DOCUMENTS_DIR) keeps "./workspace".
-  const docsDir = process.env.LAX_DOCUMENTS_DIR ? deOneDrive(process.env.LAX_DOCUMENTS_DIR) : undefined;
+  const docsDirRaw = process.env[DESKTOP_ENV.DOCUMENTS_DIR];
+  const docsDir = docsDirRaw ? deOneDrive(docsDirRaw) : undefined;
   // iCloud-synced Documents (macOS) → keep the high-write workspace on
   // local-only disk instead of seeding it into a sync engine that evicts
   // files; otherwise nest under ~/Documents/Local Agent X/workspace so the

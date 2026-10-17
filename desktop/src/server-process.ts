@@ -19,6 +19,11 @@ import { join } from "path";
 import { homedir } from "os";
 import { getProjectRoot, reloadLAXConfig, type LAXConfig } from "./config";
 import { PID_FILE, readServerPidFile, waitForServer } from "./server-probe";
+import { teeServerStdio } from "./server-stdio-log";
+import { managedRuntimeDir } from "./contract/data-dir.js";
+import { DESKTOP_ENV } from "./contract/env.js";
+import { EXIT_ALREADY_RUNNING } from "./contract/exit-codes.js";
+import type { MainToServerMessage } from "./contract/ipc.js";
 import { checkNodeFloor } from "./node-floor";
 import { ensureManagedNode } from "./node-runtime";
 import { mergeAugmentedPath, portableNodeDirs, defaultPortableNodeRoot } from "./path-augment";
@@ -63,7 +68,8 @@ export function getServerPid(): number | null { return serverProcess?.pid ?? nul
  *  run and disarm computer control. Fire-and-forget over the IPC channel; a
  *  no-op when the server isn't running. */
 export function panicAbortServer(): void {
-  try { serverProcess?.send?.({ type: "lax:panic-abort" }); }
+  const message: MainToServerMessage = { type: "lax:panic-abort" };
+  try { serverProcess?.send?.(message); }
   catch (e) { console.warn("[desktop] panic-abort send failed:", e); }
 }
 
@@ -75,7 +81,7 @@ export function buildAugmentedPath(): string {
   // Parity-tested against RUNTIME_NODE_PATH_AUGMENTS in install-common.mjs
   // (test/native-node-path-parity.test.ts) — edit both together.
   const PATH_AUGMENTS = [
-    join(homedir(), ".lax/runtime/bin"),
+    join(managedRuntimeDir(), "bin"),
     "/opt/homebrew/bin", "/opt/homebrew/sbin",
     "/usr/local/bin", "/usr/local/sbin",
     join(homedir(), ".nvm/versions/node/current/bin"),
@@ -182,15 +188,15 @@ async function startServerInner(handlers?: ServerEventHandlers): Promise<void> {
     env: {
       ...process.env,
       PATH: augmentedPath,
-      LAX_PARENT_PID: String(process.pid),
-      LAX_DESKTOP_BRIDGE: "1",
-      LAX_DESKTOP_ELECTRON_VERSION: process.versions.electron || "",
-      LAX_DESKTOP_CHROMIUM_VERSION: process.versions.chrome || "",
+      [DESKTOP_ENV.PARENT_PID]: String(process.pid),
+      [DESKTOP_ENV.BRIDGE]: "1",
+      [DESKTOP_ENV.ELECTRON_VERSION]: process.versions.electron || "",
+      [DESKTOP_ENV.CHROMIUM_VERSION]: process.versions.chrome || "",
       // OS Documents path. May be OneDrive-redirected on Windows (Known Folder
       // Move); the server sanitizes that to the real on-disk ~/Documents — a
       // high-write agent workspace must not live under OneDrive. See config.ts.
-      LAX_DOCUMENTS_DIR: electron.app.getPath("documents"),
-      ...(bundledResourcesDir ? { LAX_BUNDLED_MODELS_DIR: bundledResourcesDir, LAX_BUNDLED_BIN_DIR: bundledResourcesDir } : {}),
+      [DESKTOP_ENV.DOCUMENTS_DIR]: electron.app.getPath("documents"),
+      ...(bundledResourcesDir ? { [DESKTOP_ENV.BUNDLED_MODELS_DIR]: bundledResourcesDir, [DESKTOP_ENV.BUNDLED_BIN_DIR]: bundledResourcesDir } : {}),
     },
     windowsHide: true,
   });
@@ -208,56 +214,24 @@ async function startServerInner(handlers?: ServerEventHandlers): Promise<void> {
     },
   });
 
-  // Tee server stdout/stderr to a real file. Electron's GUI-launched
-  // main-process console is /dev/null, so any crash-loop output is invisible
-  // unless we persist it. File is opened append so successive respawns
-  // accumulate (with a START marker so you can find the latest boot).
-  const stdioLogPath = join(homedir(), ".lax", "logs", "desktop-stdio.log");
-  try {
-    const fs = require("node:fs") as typeof import("node:fs");
-    fs.mkdirSync(join(homedir(), ".lax", "logs"), { recursive: true });
-    const stdioStream = fs.createWriteStream(stdioLogPath, { flags: "a" });
-    stdioStream.write(`\n\n══ START boot pid=${serverProcess.pid} at ${new Date().toISOString()} ══\n`);
-    serverProcess.stdout?.on("data", (data: Buffer) => {
-      const text = data.toString();
-      stdioStream.write(text);
-      const line = text.trim();
-      if (line) console.log("[server]", line);
-    });
-    serverProcess.stderr?.on("data", (data: Buffer) => {
-      const text = data.toString();
-      stdioStream.write(text);
-      recentServerStderr = (recentServerStderr + text).slice(-STDERR_TAIL_MAX);
-      const line = text.trim();
-      if (line) console.error("[server]", line);
-    });
-  } catch {
-    serverProcess.stdout?.on("data", (data: Buffer) => {
-      const line = data.toString().trim();
-      if (line) console.log("[server]", line);
-    });
-    serverProcess.stderr?.on("data", (data: Buffer) => {
-      const text = data.toString();
-      recentServerStderr = (recentServerStderr + text).slice(-STDERR_TAIL_MAX);
-      const line = text.trim();
-      if (line) console.error("[server]", line);
-    });
-  }
+  teeServerStdio(serverProcess, (text) => {
+    recentServerStderr = (recentServerStderr + text).slice(-STDERR_TAIL_MAX);
+  });
 
   serverProcess.on("exit", (code, signal) => {
     // Exit classification:
-    //   code === 0           : clean shutdown (rare except via tray Quit)
-    //   code === 75          : EX_TEMPFAIL from src/lifecycle.ts — another
-    //                          LAX server already owns the pidfile. NOT a
-    //                          crash; auto-restart would hit the same
-    //                          refusal forever. Surface to splash instead.
-    //   code !== 0 (other)   : server threw, hit OOM, or process.exit(1)
-    //   signal === "SIGKILL" : OS killed it (often OOM via macOS jetsam)
+    //   code === 0              : clean shutdown (rare except via tray Quit)
+    //   EXIT_ALREADY_RUNNING    : src/lifecycle.ts — another LAX server already
+    //                             owns the pidfile. NOT a crash; auto-restart
+    //                             would hit the same refusal forever. Surface
+    //                             to splash instead.
+    //   code !== 0 (other)      : server threw, hit OOM, or process.exit(1)
+    //   signal === "SIGKILL"    : OS killed it (often OOM via macOS jetsam)
     const wasUnclean = code !== 0 || signal != null;
     console.log(`[desktop] Server exited code=${code} signal=${signal}`);
     serverProcess = null;
 
-    if (code === 75 && !isQuitting && !isRestarting) {
+    if (code === EXIT_ALREADY_RUNNING && !isQuitting && !isRestarting) {
       const competing = readServerPidFile();
       try {
         alreadyRunningHandler?.({

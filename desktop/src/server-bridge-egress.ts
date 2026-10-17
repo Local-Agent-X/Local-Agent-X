@@ -30,6 +30,10 @@ import { connect, type Socket } from "net";
 
 import { viewIdForWebContents } from "./browser-views";
 import type { EgressDecision, EgressRequest } from "./browser-partition";
+import type { BrowserEgressAsk } from "./contract/browser-bridge.js";
+
+/** The ask without its wire tag: the pipe takes it as-is, IPC adds `type`. */
+type EgressAsk = Omit<BrowserEgressAsk, "type">;
 
 /**
  * Per-hop policy ask deadline; fail closed past it. Sized to tolerate the
@@ -79,7 +83,7 @@ export const PIPE_INFLIGHT_MAX = 256;
  *  newline is violating the protocol → drop the connection. */
 const PIPE_MAX_BUFFER_BYTES = 64 * 1024;
 
-interface PipeInflightAsk { proc: ChildProcess; ask: Record<string, unknown> }
+interface PipeInflightAsk { proc: ChildProcess; ask: EgressAsk }
 
 let pipeEndpoint: string | null = null;
 let pipeSocket: Socket | null = null;
@@ -231,7 +235,7 @@ function drainPipeInflightToIpc(): void {
 
 /** Try the pipe. False = not connected / at the in-flight cap / write threw —
  *  the caller sends THIS ask over IPC instead (behavior identical to today). */
-function sendAskOverPipe(proc: ChildProcess, id: number, ask: Record<string, unknown>): boolean {
+function sendAskOverPipe(proc: ChildProcess, id: number, ask: EgressAsk): boolean {
 	if (!pipeConnected || pipeSocket === null) return false;
 	if (pipeInflight.size >= PIPE_INFLIGHT_MAX) return false; // bounded buffer → IPC
 	pipeInflight.set(id, { proc, ask });
@@ -246,13 +250,14 @@ function sendAskOverPipe(proc: ChildProcess, id: number, ask: Record<string, unk
 	}
 }
 
-function sendAskOverIpc(proc: ChildProcess, id: number, ask: Record<string, unknown>): void {
+function sendAskOverIpc(proc: ChildProcess, id: number, ask: EgressAsk): void {
 	const finish = (allowed: boolean): void => pendingEgressAsks.get(id)?.(allowed);
+	const message: BrowserEgressAsk = { type: "lax:browser-egress-ask", ...ask };
 	try {
 		// A false return means the IPC backlog crossed its threshold, not that
 		// delivery failed. The message is still queued; only the callback error
 		// proves a send failure. Otherwise the reply/deadline owns settlement.
-		proc.send({ type: "lax:browser-egress-ask", ...ask }, (error) => {
+		proc.send(message, (error) => {
 			if (error) finish(false);
 		});
 	} catch {
@@ -282,7 +287,7 @@ export function askServerEgress(proc: ChildProcess, req: EgressRequest): Promise
 		};
 		pendingEgressAsks.set(id, finish);
 		timer = setTimeout(() => { noteTimeoutDeny(req.url); finish(false); }, EGRESS_ASK_DEADLINE_MS);
-		const ask: Record<string, unknown> = { id, url: req.url };
+		const ask: EgressAsk = { id, url: req.url };
 		if (req.method) ask.method = req.method;
 		if (req.pageUrl) ask.pageUrl = req.pageUrl;
 		if (req.body) ask.body = req.body;

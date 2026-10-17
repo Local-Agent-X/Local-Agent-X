@@ -308,7 +308,7 @@ describe("update rollback transaction", () => {
 
     await expect(tx.archiveSupersededByCompletedInstall(f.install)).resolves.toBe(true);
     expect(existsSync(tx.directory)).toBe(false);
-    expect(existsSync(join(f.state, `update-rollback.superseded-${journal.id}`, "transaction.json"))).toBe(true);
+    expect(existsSync(join(f.state, "update-rollback-superseded", journal.id, "transaction.json"))).toBe(true);
     await expect(tx.read(f.install)).resolves.toBeNull();
     expect(readFileSync(join(f.install, "src", "app.ts"), "utf-8")).toBe("reinstalled");
   });

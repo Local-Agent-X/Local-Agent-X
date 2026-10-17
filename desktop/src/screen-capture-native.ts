@@ -16,23 +16,10 @@
 // signature) is never replaced — only its on-disk JS payload changes.
 
 import { desktopCapturer, screen } from "electron";
+import type { CaptureScreenReply, CaptureScreenRequest } from "./contract/ipc.js";
 
-export interface NativeCaptureRequest {
-  monitor?: number;
-  region?: { x: number; y: number; width: number; height: number };
-  format?: "png" | "jpg";
-  quality?: number;
-  scale?: number;
-}
-
-export interface NativeCaptureResult {
-  ok: boolean;
-  imageB64?: string;
-  format?: "png" | "jpg";
-  width?: number;
-  height?: number;
-  error?: string;
-}
+export type NativeCaptureRequest = Omit<CaptureScreenRequest, "type" | "id">;
+export type NativeCaptureResult = Omit<CaptureScreenReply, "type" | "id">;
 
 /** Capture the requested display and return an encoded image. Never throws —
  *  failures come back as { ok:false, error } so a bad capture can't take down

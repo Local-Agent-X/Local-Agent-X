@@ -5,10 +5,11 @@ import {
   handleBrowserBridgeMessage,
   isBrowserBridgeMessage,
   wireBrowserEgressEvaluator,
-  type BrowserBridgeMessage,
 } from "./server-bridge-browser";
 import { captureScreenInMain } from "./screen-capture-native";
-import { handleAndroidFrameMessage, isAndroidFrameMessage, type AndroidFrameMessage } from "./android-view";
+import { handleAndroidFrameMessage } from "./android-view";
+import { isLoopbackAppUrl } from "./contract/loopback-app-url.js";
+import { isServerToMainMessage, type MainToServerMessage, type ProbeAppError, type ProbeAppReply, type ProbeAppRequest } from "./contract/ipc.js";
 
 // Fulfills native-capability requests from the server child over the IPC
 // channel using Electron main-only APIs:
@@ -26,19 +27,7 @@ import { handleAndroidFrameMessage, isAndroidFrameMessage, type AndroidFrameMess
 //     which also wires the partition egress guard to ask the server for its
 //     canonical URL policy per hop.
 
-interface TrashRequest { type: "lax:trash-item"; id: number; path: string; }
-interface RestartRequest { type: "lax:restart-server" }
-interface RelaunchRequest { type: "lax:relaunch-app" }
-interface ProbeRequest { type: "lax:probe-app"; id: number; url: string; timeoutMs?: number; wantScreenshot?: boolean }
-interface CaptureScreenRequest {
-  type: "lax:capture-screen"; id: number;
-  monitor?: number; region?: { x: number; y: number; width: number; height: number };
-  format?: "png" | "jpg"; quality?: number; scale?: number;
-}
-type ServerMessage = TrashRequest | RestartRequest | RelaunchRequest | ProbeRequest | CaptureScreenRequest | BrowserBridgeMessage | AndroidFrameMessage;
-
-interface ProbeError { kind: string; message: string; source?: string; line?: number }
-interface ProbeOutcome { ok: boolean; booted: boolean; errors: ProbeError[]; screenshotB64?: string; error?: string }
+type ProbeOutcome = Omit<ProbeAppReply, "type" | "id">;
 
 const PROBE_DEFAULT_TIMEOUT_MS = 8_000;
 const PROBE_SETTLE_MS = 1_200;                    // post-load wait so async JS errors land
@@ -56,66 +45,53 @@ export function attachServerBridge(proc: ChildProcess, handlers: ServerBridgeHan
   // asks this child (fail-closed on timeout / dead child). Re-wired on each
   // (re)spawn so the evaluator always targets the live process.
   wireBrowserEgressEvaluator(proc);
-  proc.on("message", async (msg: ServerMessage) => {
-    if (!msg || typeof msg.type !== "string") return;
-    if (isBrowserBridgeMessage(msg)) {
-      await handleBrowserBridgeMessage(proc, msg);
+  const reply = (message: MainToServerMessage): void => {
+    try { proc.send?.(message); } catch { /* child exited */ }
+  };
+  proc.on("message", async (msg: unknown) => {
+    if (isBrowserBridgeMessage(msg as { type?: unknown })) {
+      await handleBrowserBridgeMessage(proc, msg as Parameters<typeof handleBrowserBridgeMessage>[1]);
       return;
     }
-    if (isAndroidFrameMessage(msg)) {
-      handleAndroidFrameMessage(msg);
-      return;
-    }
-    if (msg.type === "lax:trash-item") {
-      let ok = false;
-      try { await shell.trashItem(msg.path); ok = true; } catch { ok = false; }
-      try { proc.send?.({ type: "lax:trash-item-result", id: msg.id, ok }); } catch { /* child exited */ }
-      return;
-    }
-    if (msg.type === "lax:probe-app") {
-      const result = await probeApp(msg); // never throws
-      try { proc.send?.({ type: "lax:probe-app-result", id: msg.id, ...result }); } catch { /* child exited */ }
-      return;
-    }
-    if (msg.type === "lax:capture-screen") {
-      // Capture in MAIN, which holds the macOS Screen Recording grant the
-      // standalone-node server child doesn't. captureScreenInMain never throws.
-      const result = await captureScreenInMain(msg);
-      try { proc.send?.({ type: "lax:capture-screen-result", id: msg.id, ...result }); } catch { /* child exited */ }
-      return;
-    }
-    if (msg.type === "lax:restart-server") {
-      console.log("[desktop] server child requested a restart");
-      try { handlers.onRestartServer(); } catch (e) { console.error("[desktop] restart handler failed", e); }
-      return;
-    }
-    if (msg.type === "lax:relaunch-app") {
-      console.log("[desktop] server child requested a full app relaunch");
-      try { handlers.onRelaunchApp(); } catch (e) { console.error("[desktop] relaunch handler failed", e); }
-      return;
+    if (!isServerToMainMessage(msg)) return;
+    switch (msg.type) {
+      case "lax:android-frame":
+        handleAndroidFrameMessage(msg);
+        return;
+      case "lax:trash-item": {
+        let ok = false;
+        try { await shell.trashItem(msg.path); ok = true; } catch { ok = false; }
+        reply({ type: "lax:trash-item-result", id: msg.id, ok });
+        return;
+      }
+      case "lax:probe-app":
+        reply({ type: "lax:probe-app-result", id: msg.id, ...(await probeApp(msg)) }); // probeApp never throws
+        return;
+      case "lax:capture-screen":
+        // Capture in MAIN, which holds the macOS Screen Recording grant the
+        // standalone-node server child doesn't. captureScreenInMain never throws.
+        reply({ type: "lax:capture-screen-result", id: msg.id, ...(await captureScreenInMain(msg)) });
+        return;
+      case "lax:restart-server":
+        console.log("[desktop] server child requested a restart");
+        try { handlers.onRestartServer(); } catch (e) { console.error("[desktop] restart handler failed", e); }
+        return;
+      case "lax:relaunch-app":
+        console.log("[desktop] server child requested a full app relaunch");
+        try { handlers.onRelaunchApp(); } catch (e) { console.error("[desktop] relaunch handler failed", e); }
+        return;
     }
   });
-}
-
-// Loopback-host guard, mirrored from the server-side sender (src/desktop-bridge
-// isLoopbackAppUrl) as defense in depth: main is the actual loadURL sink and
-// must never trust the child's URL blindly. Host grammar, not a string prefix —
-// `http://127.0.0.1:80@evil.com/` has host evil.com (the 127.0.0.1 is userinfo).
-function isLoopbackAppUrl(url: string): boolean {
-  let u: URL;
-  try { u = new URL(url); } catch { return false; }
-  if (u.protocol !== "http:") return false;
-  if (u.username || u.password) return false;
-  const host = u.hostname.toLowerCase();
-  return host === "127.0.0.1" || host === "localhost";
 }
 
 // Load the app in a hidden, sandboxed window and collect runtime evidence.
 // The window is never shown or focused and is ALWAYS destroyed. Never throws —
 // internal failures come back as { ok: false, error } so a probe can't take
-// down the bridge listener.
-async function probeApp(req: ProbeRequest): Promise<ProbeOutcome> {
-  const errors: ProbeError[] = [];
+// down the bridge listener. The loopback check is the contract's
+// (contract/loopback-app-url.ts): main is the actual loadURL sink and must
+// never trust the child's URL blindly.
+async function probeApp(req: ProbeAppRequest): Promise<ProbeOutcome> {
+  const errors: ProbeAppError[] = [];
   let win: BrowserWindow | null = null;
   try {
     if (!isLoopbackAppUrl(req.url)) {

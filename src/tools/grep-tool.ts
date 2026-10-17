@@ -13,6 +13,7 @@ import { createRequire } from "node:module";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ToolDefinition, ToolResult } from "../types.js";
+import { DESKTOP_ENV } from "../desktop-contract/env.js";
 import { ok, err } from "./result-helpers.js";
 import {
   baseMeta,
@@ -64,7 +65,7 @@ function nodeModulesRg(): string | null {
 //   2. @vscode/ripgrep in node_modules — reaches OTA users, dev, source installs;
 //   3. `rg` on PATH; then runRg falls back to the Node search if even that is gone.
 export function ripgrepBin(): string {
-  const bundled = process.env.LAX_BUNDLED_BIN_DIR;
+  const bundled = process.env[DESKTOP_ENV.BUNDLED_BIN_DIR];
   if (bundled) {
     const p = join(bundled, process.platform === "win32" ? "rg.exe" : "rg");
     if (existsSync(p)) return p;

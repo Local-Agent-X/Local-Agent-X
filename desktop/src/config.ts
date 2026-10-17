@@ -6,10 +6,12 @@
 import { app } from "electron";
 import { existsSync, readFileSync, statSync } from "fs";
 import { join, resolve } from "path";
-import { homedir } from "os";
+import { configPath, laxDataDir } from "./contract/data-dir.js";
 
-export const LAX_DIR = join(homedir(), ".lax");
-export const CONFIG_PATH = join(LAX_DIR, "config.json");
+// The data dir and config file are the server↔desktop contract: both sides
+// honour LAX_DATA_DIR, else ~/.lax.
+export const LAX_DIR = laxDataDir();
+export const CONFIG_PATH = configPath(LAX_DIR);
 export const DESKTOP_SETTINGS_PATH = join(LAX_DIR, "desktop-settings.json");
 
 // R4-08 hardening: the projectRoot in ~/.lax/config.json decides the server

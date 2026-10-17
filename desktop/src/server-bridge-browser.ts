@@ -56,15 +56,15 @@ const EXEC_ISOLATED_WORLD_ID = 1901;
 const NAVIGATE_DEFAULT_TIMEOUT_MS = 25_000;
 const CAPTURE_MAX_B64 = 2 * 1024 * 1024; // mirrors PROBE_MAX_SCREENSHOT_B64
 
-// ── Wire types (server-bridge-browser-wire.ts; re-exported for callers) ─────────
+// ── Wire types (the server↔desktop contract; re-exported for callers) ─────────
 import type {
 	BridgeInputEvent,
 	BrowserBridgeMessage,
 	BrowserLifecycleRequest,
 	BrowserNavigateRequest,
-} from "./server-bridge-browser-wire";
-export { isBrowserBridgeMessage } from "./server-bridge-browser-wire";
-export type { BridgeInputEvent, BrowserBridgeMessage, BrowserLifecycleOp } from "./server-bridge-browser-wire";
+} from "./contract/browser-bridge.js";
+export { isBrowserBridgeMessage } from "./contract/browser-bridge.js";
+export type { BridgeInputEvent, BrowserBridgeMessage, BrowserLifecycleOp } from "./contract/browser-bridge.js";
 
 /** Point the partition egress guard at the server child. Called from
  *  attachServerBridge on every (re)spawn so the closure always holds the

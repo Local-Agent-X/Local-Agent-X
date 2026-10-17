@@ -13,6 +13,7 @@ import { join } from "path";
 
 import { getMainWindow } from "./window";
 import { setQuitting } from "./server-process";
+import { laxDataDir, logsDir, serverPidPath } from "./contract/data-dir.js";
 
 // Encode an arbitrary string as a JS string literal that is safe to embed in
 // code handed to executeJavaScript. JSON.stringify alone leaves U+2028/U+2029
@@ -88,11 +89,11 @@ function handleRecoveryAction(action: string): void {
   }
   if (action === "logs") {
     const fs = require("node:fs") as typeof import("node:fs");
-    const logPath = join(require("os").homedir(), ".lax", "logs", "desktop-stdio.log");
+    const logPath = join(logsDir(), "desktop-stdio.log");
     if (fs.existsSync(logPath)) {
       require("electron").shell.openPath(logPath);
     } else {
-      require("electron").shell.openPath(join(require("os").homedir(), ".lax"));
+      require("electron").shell.openPath(laxDataDir());
     }
     return;
   }
@@ -106,9 +107,9 @@ function handleRecoveryAction(action: string): void {
     // those forces a fresh handshake that breaks any pinned/bookmarked
     // URLs the user has, and the user almost certainly doesn't want that.
     const fs = require("node:fs") as typeof import("node:fs");
-    const lax = join(require("os").homedir(), ".lax");
-    for (const file of ["reconcile-state.json", "server.pid"]) {
-      try { fs.unlinkSync(join(lax, file)); } catch { /* not present — fine */ }
+    const lax = laxDataDir();
+    for (const file of [join(lax, "reconcile-state.json"), serverPidPath(lax)]) {
+      try { fs.unlinkSync(file); } catch { /* not present — fine */ }
     }
     console.log(`[desktop] repair: wiped reconcile-state.json + server.pid, relaunching`);
     app.relaunch();

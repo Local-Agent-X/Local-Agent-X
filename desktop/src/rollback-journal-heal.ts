@@ -1,5 +1,7 @@
-import { existsSync, readFileSync, rmSync } from "fs";
-import { join } from "path";
+import { existsSync, mkdirSync, readFileSync, renameSync } from "fs";
+import { dirname } from "path";
+import { rollbackDir, rollbackJournalPath, supersededRollbackDir } from "./contract/data-dir.js";
+import { validJournal } from "./contract/rollback-journal.js";
 
 /**
  * Self-heal a wedged/legacy update-rollback journal so OTA updates can proceed.
@@ -12,40 +14,36 @@ import { join } from "path";
  * can't receive it — the OTA is the very thing that's stuck.
  *
  * This runs in the LOADER, the one component the native installer refreshes and
- * which executes before the (possibly stale) on-disk payload. Clearing the bad
- * journal here breaks the cycle: the payload's OTA then proceeds and pulls its
- * own fix on the next check.
+ * which executes before the (possibly stale) on-disk payload. Moving the bad
+ * journal aside here breaks the cycle: the payload's OTA then proceeds and pulls
+ * its own fix on the next check.
  *
- * Conservative by construction: only removes a journal that is present AND is
- * NOT a current-schema journal — i.e. it is missing a string manifestCommitment
- * or an installBase, or does not parse at all. A structurally-current journal
- * (a real in-flight transaction) is left untouched for the payload's own
- * recovery. Pure w.r.t. its `laxDir` argument and never throws — a self-heal
- * must never crash startup; worst case the box stays exactly as wedged as before.
+ * Judged by the writer's own rule: a journal `validJournal` accepts (the server's
+ * validator, contract/rollback-journal.ts) is a real in-flight transaction and is
+ * left for the payload's own recovery; anything else — a pre-schema shape, a
+ * tampered commitment, unparseable bytes — is moved aside. Moved, never deleted:
+ * the folder also holds the backups of every file the update touched, and a
+ * misjudged journal must not cost them. Never throws — a self-heal must never
+ * crash startup; worst case the box stays exactly as wedged as before.
  *
- * Returns true iff a stale journal was removed.
+ * Returns the archive path when a journal was moved aside, else null.
  */
-export function healWedgedRollbackJournal(laxDir: string): boolean {
+export function healWedgedRollbackJournal(laxDir: string): string | null {
   try {
-    const dir = join(laxDir, "update-rollback");
-    const journalPath = join(dir, "transaction.json");
-    if (!existsSync(journalPath)) return false;
-    let stale = true;
+    const journalPath = rollbackJournalPath(laxDir);
+    if (!existsSync(journalPath)) return null;
+    let parsed: unknown;
     try {
-      const journal = JSON.parse(readFileSync(journalPath, "utf-8")) as {
-        manifestCommitment?: unknown;
-        installBase?: unknown;
-      };
-      // A current-schema journal carries both a string manifestCommitment and an
-      // installBase. If either is absent it is the legacy/broken shape that wedges.
-      stale = typeof journal?.manifestCommitment !== "string" || journal?.installBase == null;
+      parsed = JSON.parse(readFileSync(journalPath, "utf-8"));
     } catch {
-      stale = true; // unparseable → definitely not a usable transaction
+      parsed = null; // unparseable → definitely not a usable transaction
     }
-    if (!stale) return false;
-    rmSync(dir, { recursive: true, force: true });
-    return true;
+    if (validJournal(parsed)) return null;
+    const archive = supersededRollbackDir(laxDir, `heal-${Date.now()}`);
+    mkdirSync(dirname(archive), { recursive: true });
+    renameSync(rollbackDir(laxDir), archive);
+    return archive;
   } catch {
-    return false;
+    return null;
   }
 }

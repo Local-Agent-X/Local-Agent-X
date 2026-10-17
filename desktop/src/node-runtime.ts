@@ -23,16 +23,16 @@
 
 import { existsSync, mkdirSync, rmSync, renameSync, readFileSync, writeFileSync } from "fs";
 import { spawn } from "child_process";
-import { join } from "path";
-import { homedir } from "os";
+import { dirname, join } from "path";
 import { createHash } from "crypto";
+import { managedRuntimeDir } from "./contract/data-dir.js";
 
 // Keep in lockstep with installer NodeBootstrap.cs NODE_FALLBACK_VERSION and
 // install.sh — the runtime, the GUI installer, and the CLI installer must
 // provision the SAME Node so native addons (better-sqlite3) share one ABI.
 const MANAGED_NODE_VERSION = "24.16.0";
 
-export const MANAGED_NODE_DIR = join(homedir(), ".lax", "runtime");
+export const MANAGED_NODE_DIR = managedRuntimeDir();
 export const MANAGED_NODE_BIN = join(MANAGED_NODE_DIR, "bin", "node");
 const VERSION_SENTINEL = join(MANAGED_NODE_DIR, ".node-version");
 
@@ -63,9 +63,9 @@ async function provision(): Promise<void> {
   const pkg = `node-v${MANAGED_NODE_VERSION}-darwin-${nodeArch()}`;
   const base = `https://nodejs.org/dist/v${MANAGED_NODE_VERSION}`;
   const staging = `${MANAGED_NODE_DIR}.new`;
-  const tgz = join(homedir(), ".lax", `${pkg}.tar.gz`);
+  const tgz = join(dirname(MANAGED_NODE_DIR), `${pkg}.tar.gz`);
   try {
-    mkdirSync(join(homedir(), ".lax"), { recursive: true });
+    mkdirSync(dirname(MANAGED_NODE_DIR), { recursive: true });
     console.log(`[desktop] provisioning app-owned Node ${MANAGED_NODE_VERSION} (${pkg})…`);
     await download(`${base}/${pkg}.tar.gz`, tgz);
     await verifyChecksum(tgz, `${pkg}.tar.gz`, `${base}/SHASUMS256.txt`);

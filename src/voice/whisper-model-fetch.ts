@@ -22,6 +22,7 @@
 import { createWriteStream, existsSync, mkdirSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
+import { DESKTOP_ENV } from "../desktop-contract/env.js";
 import { isLocalOnlyMode, LOCAL_ONLY_BLOCK_MESSAGE } from "../local-only-policy.js";
 
 export type WhisperVariant = "tiny.en" | "base.en" | "small.en";
@@ -60,7 +61,7 @@ function modelDirFor(variant: WhisperVariant): string {
   // when packaged; we look for whisper-tiny-en/, whisper-base-en/, etc.
   // directly inside it. Only the default (tiny.en) is bundled today;
   // others fall through to the normal ~/.lax/models download path.
-  const bundled = process.env.LAX_BUNDLED_MODELS_DIR;
+  const bundled = process.env[DESKTOP_ENV.BUNDLED_MODELS_DIR];
   if (bundled) {
     const bundledDir = join(bundled, `whisper-${variant.replace(".", "-")}`);
     if (existsSync(bundledDir)) return bundledDir;

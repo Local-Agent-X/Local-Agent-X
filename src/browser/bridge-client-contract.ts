@@ -1,4 +1,15 @@
-import type { BridgeConsoleEntry, BridgeNetworkEntry } from "./bridge-perception.js";
+// The server side's constants and errors for the browser bridge. The wire
+// types themselves are the desktop↔server contract (src/desktop-contract/
+// browser-bridge.ts); they are re-exported here so bridge-client's importers
+// keep one import surface.
+
+import { BROWSER_RESULT_TYPES } from "../desktop-contract/browser-bridge.js";
+
+export type {
+	BridgeConsoleEntry, BridgeInputEvent, BridgeInputModifier, BridgeKeyEvent, BridgeMouseEvent,
+	BridgeMouseWheelEvent, BridgeNetworkEntry, BridgePingResult, BridgeRect, BridgeReply,
+	BrowserLifecycleOp, BrowserViewInfo, InAppDialogSummary,
+} from "../desktop-contract/browser-bridge.js";
 
 // navigate: the desktop enforces its own load deadline (sent in the message);
 // the client waits that plus a reply grace — 28s ceiling, under the tool wedge.
@@ -11,91 +22,18 @@ export const CAPTURE_TIMEOUT_MS = 10_000;
 // Blanking every partition view before clearing storage needs a longer ceiling.
 export const CLEAR_PARTITION_TIMEOUT_MS = 12_000;
 
-export interface BridgeRect { x: number; y: number; width: number; height: number }
-export interface BrowserViewInfo {
-	viewId: string;
-	partition: string;
-	url: string;
-	title: string;
-	attached: boolean;
-	agentDriven: boolean;
-}
-// "adopt"/"release": server → desktop mirror of user-view adoption (the agent
-// took over / let go of a user tab via switch_tab), so the desktop's trust
-// resolver treats the view as agent-driven while adopted (downloads →
-// quarantine, no user-loopback carve-out) — matching the server egress gate's
-// attribution of adopted-tab requests to the driving session.
-export type BrowserLifecycleOp = "create" | "show" | "hide" | "close" | "setBounds" | "ping" | "list" | "adopt" | "release";
-export type BridgeInputModifier = "shift" | "control" | "alt" | "meta";
-export interface BridgeMouseEvent {
-	type: "mouseDown" | "mouseUp" | "mouseMove";
-	x: number;
-	y: number;
-	button?: "left" | "middle" | "right";
-	clickCount?: number;
-	modifiers?: BridgeInputModifier[];
-}
-export interface BridgeMouseWheelEvent {
-	type: "mouseWheel";
-	x: number;
-	y: number;
-	deltaX?: number;
-	deltaY?: number;
-	modifiers?: BridgeInputModifier[];
-}
-export interface BridgeKeyEvent {
-	type: "keyDown" | "keyUp" | "char";
-	keyCode: string;
-	modifiers?: BridgeInputModifier[];
-}
-export type BridgeInputEvent = BridgeMouseEvent | BridgeMouseWheelEvent | BridgeKeyEvent;
+import type { BridgePingResult, BrowserViewInfo } from "../desktop-contract/browser-bridge.js";
+
 export interface BrowserLifecycleResult {
 	view?: BrowserViewInfo;
 	views?: BrowserViewInfo[];
 	ping?: BridgePingResult;
 }
-/** Ping payload: liveness + url/title + the view's real layout bounds (the
- *  in-app viewportSize source — see in-app-observe.ts). */
-export interface BridgePingResult {
-	ok: boolean;
-	url?: string;
-	title?: string;
-	userActive?: boolean;
-	bounds?: { width: number; height: number };
-}
 export interface BrowserNavigateResult { url: string; title: string; status?: number }
 export interface UserActiveResult { userActive: true }
 export type BrowserInputResult = UserActiveResult | undefined;
-export interface InAppDialogSummary { type: string; message: string }
 
-export interface BridgeReply {
-	type: string;
-	id: number;
-	ok: boolean;
-	error?: string;
-	view?: BrowserViewInfo;
-	views?: BrowserViewInfo[];
-	ping?: BridgePingResult;
-	url?: string;
-	title?: string;
-	result?: unknown;
-	pngB64?: string;
-	allowed?: boolean;
-	userActive?: boolean;
-	status?: number;
-	entries?: BridgeConsoleEntry[];
-	network?: { entries: BridgeNetworkEntry[]; inFlight: number };
-	dialogs?: InAppDialogSummary[];
-	handled?: InAppDialogSummary | null;
-}
-
-export const RESULT_TYPES = new Set([
-	"lax:browser-lifecycle-result", "lax:browser-navigate-result",
-	"lax:browser-exec-result", "lax:browser-input-result",
-	"lax:browser-capture-result", "lax:browser-clear-partition-result",
-	"lax:browser-read-console-result", "lax:browser-read-network-result",
-	"lax:browser-dialogs-result",
-]);
+export const RESULT_TYPES: ReadonlySet<string> = new Set(BROWSER_RESULT_TYPES);
 
 export class BridgeUnavailableError extends Error {
 	constructor(op: string) {

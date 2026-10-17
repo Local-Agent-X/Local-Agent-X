@@ -10,17 +10,7 @@
  */
 
 import { getMainWindow } from "./window";
-
-export interface AndroidFrameMessage {
-	type: "lax:android-frame";
-	viewId: string;
-	/** base64-encoded PNG, one full frame. */
-	pngBase64: string;
-}
-
-export function isAndroidFrameMessage(msg: unknown): msg is AndroidFrameMessage {
-	return !!msg && typeof msg === "object" && (msg as { type?: unknown }).type === "lax:android-frame";
-}
+import type { AndroidFrameMessage } from "./contract/ipc.js";
 
 export function handleAndroidFrameMessage(msg: AndroidFrameMessage): void {
 	const win = getMainWindow();

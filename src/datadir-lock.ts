@@ -17,6 +17,7 @@
 import { createServer, connect, type Server } from "node:net";
 import { createHash } from "node:crypto";
 import { createLogger } from "./logger.js";
+import { EXIT_ALREADY_RUNNING } from "./desktop-contract/exit-codes.js";
 
 const logger = createLogger("datadir-lock");
 
@@ -69,9 +70,9 @@ export function probeLockHolder(port: number): Promise<boolean> {
  * (we are the sole instance — keep the handle for the process lifetime) or
  * null when we couldn't take the lock but boot must proceed anyway.
  *
- * If the port is already held by ANOTHER LAX server, this calls
- * process.exit(75) (EX_TEMPFAIL — the launcher can retry once the other
- * exits). Any other condition fails open: a bind error for a non-EADDRINUSE
+ * If the port is already held by ANOTHER LAX server, this exits with
+ * EXIT_ALREADY_RUNNING (the launcher can retry once the other exits). Any
+ * other condition fails open: a bind error for a non-EADDRINUSE
  * reason, or an EADDRINUSE whose holder doesn't speak our handshake, must
  * never block boot.
  */
@@ -91,7 +92,7 @@ export function acquireDataDirLock(dir: string): Promise<Server | null> {
               `[datadir-lock] Refusing to start — another LAX server already owns this data-dir ` +
               `(${dir}, lock port ${port}). Stop it first, or set LAX_DATA_DIR for a separate instance.`,
             );
-            process.exit(75); // EX_TEMPFAIL — recoverable once the other exits
+            process.exit(EXIT_ALREADY_RUNNING); // recoverable once the other exits
           }
           logger.warn(`[datadir-lock] lock port ${port} held by a non-LAX process — proceeding without the lock`);
           resolve(null);

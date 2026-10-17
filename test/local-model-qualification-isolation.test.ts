@@ -3,7 +3,7 @@ import { request } from "node:http";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
-import { isPidAlive } from "../src/pid-probe.js";
+import { isPidAlive } from "../src/desktop-contract/pid-probe.js";
 import type { LifecycleBarrierName } from "../scripts/local-qualification/lifecycle-helpers.js";
 import { RealQualificationDriver } from "../scripts/local-qualification/real-driver.js";
 import { runQualification } from "../scripts/local-qualification/run.js";

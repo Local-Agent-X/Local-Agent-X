@@ -14,6 +14,15 @@
 // mistaking an unrelated IPC parent (e.g. a vitest fork) for the desktop.
 
 import { createLogger } from "./logger.js";
+import { DESKTOP_ENV } from "./desktop-contract/env.js";
+import { isLoopbackAppUrl } from "./desktop-contract/loopback-app-url.js";
+import {
+  isMainToServerMessage,
+  type CaptureScreenReply, type CaptureScreenRequest, type ProbeAppError, type ProbeAppReply, type ServerToMainMessage,
+} from "./desktop-contract/ipc.js";
+
+export { isLoopbackAppUrl };
+export type { ProbeAppError };
 
 const logger = createLogger("desktop-bridge");
 const REPLY_TIMEOUT_MS = 5_000;
@@ -25,36 +34,25 @@ const PROBE_DEFAULT_TIMEOUT_MS = 8_000;
 // screenshot), so the IPC reply is allowed that much extra before we give up.
 const PROBE_REPLY_GRACE_MS = 5_000;
 
-/** One runtime finding from the probe window. `kind` maps onto the render-verify
- *  PreviewRuntimeError kinds: "console" | "resource" | "error" | "blank". */
-export interface ProbeAppError { kind: string; message: string; source?: string; line?: number; }
-
 /** Runtime evidence from probing a built app in an invisible desktop window. */
-export interface ProbeAppResult {
-  /** did-finish-load fired before the deadline. */
-  booted: boolean;
-  errors: ProbeAppError[];
-  /** PNG; present only when requested and under main's size cap. */
-  screenshotB64?: string;
-}
-
-// Inbound wire shape of lax:probe-app-result (ok/error are consumed here).
-interface ProbeReply { ok: boolean; booted: boolean; errors: ProbeAppError[]; screenshotB64?: string; error?: string; }
+export type ProbeAppResult = Pick<ProbeAppReply, "booted" | "errors" | "screenshotB64">;
 
 /** A screenshot captured by Electron main on the server's behalf. */
 export interface CaptureScreenResult { image: Buffer; format: "png" | "jpg"; width: number; height: number; }
-// Inbound wire shape of lax:capture-screen-result.
-interface CaptureReply { ok: boolean; imageB64?: string; format?: string; width?: number; height?: number; error?: string; }
 
 let seq = 0;
 const pending = new Map<number, (ok: boolean) => void>();
-const pendingProbes = new Map<number, (reply: ProbeReply) => void>();
-const pendingCaptures = new Map<number, (reply: CaptureReply) => void>();
+const pendingProbes = new Map<number, (reply: ProbeAppReply) => void>();
+const pendingCaptures = new Map<number, (reply: CaptureScreenReply) => void>();
 let listenerAttached = false;
 let panicHandler: (() => void) | null = null;
 
 export function desktopBridgeAvailable(): boolean {
-  return process.env.LAX_DESKTOP_BRIDGE === "1" && typeof process.send === "function";
+  return process.env[DESKTOP_ENV.BRIDGE] === "1" && typeof process.send === "function";
+}
+
+function send(message: ServerToMainMessage): void {
+  process.send!(message);
 }
 
 // Single inbound listener for every main→server message: trashItem/probeApp
@@ -63,27 +61,22 @@ export function desktopBridgeAvailable(): boolean {
 function ensureListener(): void {
   if (listenerAttached) return;
   listenerAttached = true;
-  process.on("message", (msg: { type?: string; id?: number; ok?: boolean; booted?: boolean; errors?: ProbeAppError[]; screenshotB64?: string; imageB64?: string; format?: string; width?: number; height?: number; error?: string }) => {
-    if (!msg || typeof msg.type !== "string") return;
-    if (msg.type === "lax:trash-item-result") {
-      const fn = pending.get(msg.id!);
-      if (fn) fn(!!msg.ok);
-      return;
-    }
-    if (msg.type === "lax:probe-app-result") {
-      const fn = pendingProbes.get(msg.id!);
-      if (fn) fn({ ok: !!msg.ok, booted: !!msg.booted, errors: Array.isArray(msg.errors) ? msg.errors : [], screenshotB64: msg.screenshotB64, error: msg.error });
-      return;
-    }
-    if (msg.type === "lax:capture-screen-result") {
-      const fn = pendingCaptures.get(msg.id!);
-      if (fn) fn({ ok: !!msg.ok, imageB64: msg.imageB64, format: msg.format, width: msg.width, height: msg.height, error: msg.error });
-      return;
-    }
-    if (msg.type === "lax:panic-abort") {
-      try { panicHandler?.(); }
-      catch (e) { logger.warn(`[bridge] panic handler failed: ${(e as Error).message}`); }
-      return;
+  process.on("message", (msg: unknown) => {
+    if (!isMainToServerMessage(msg)) return;
+    switch (msg.type) {
+      case "lax:trash-item-result":
+        pending.get(msg.id)?.(!!msg.ok);
+        return;
+      case "lax:probe-app-result":
+        pendingProbes.get(msg.id)?.({ ...msg, ok: !!msg.ok, booted: !!msg.booted, errors: Array.isArray(msg.errors) ? msg.errors : [] });
+        return;
+      case "lax:capture-screen-result":
+        pendingCaptures.get(msg.id)?.(msg);
+        return;
+      case "lax:panic-abort":
+        try { panicHandler?.(); }
+        catch (e) { logger.warn(`[bridge] panic handler failed: ${(e as Error).message}`); }
+        return;
     }
   });
 }
@@ -112,7 +105,7 @@ export function desktopTrashItem(path: string): Promise<boolean> {
     pending.set(id, finish);
     timer = setTimeout(() => { logger.warn(`[bridge] trashItem timed out for ${path}`); finish(false); }, REPLY_TIMEOUT_MS);
     try {
-      process.send!({ type: "lax:trash-item", id, path });
+      send({ type: "lax:trash-item", id, path });
     } catch (e) {
       logger.warn(`[bridge] trashItem send failed: ${(e as Error).message}`);
       finish(false);
@@ -120,28 +113,11 @@ export function desktopTrashItem(path: string): Promise<boolean> {
   });
 }
 
-/** True only for a plain-http URL whose HOST is a loopback address and which
- *  carries no userinfo. Parsed with the URL host grammar, not a string prefix:
- *  `http://127.0.0.1:80@evil.com/` has host `evil.com` (the `127.0.0.1` is
- *  userinfo), so a `startsWith("http://127.0.0.1")` test would wave it through
- *  and the probe would load — and screenshot — a remote origin. The invariant
- *  is "the resolved host is loopback", enforced at the one place that decides
- *  whether to send. */
-export function isLoopbackAppUrl(url: string): boolean {
-  let u: URL;
-  try { u = new URL(url); } catch { return false; }
-  if (u.protocol !== "http:") return false;        // app serving is plain http on loopback
-  if (u.username || u.password) return false;       // reject userinfo (the @-bypass)
-  const host = u.hostname.toLowerCase();
-  // Exactly the two hosts LAX serves apps on — a deliberately tight allowlist.
-  return host === "127.0.0.1" || host === "localhost";
-}
-
 /** Ask Electron main to load `url` in an invisible BrowserWindow and report
  *  runtime evidence (console errors, failed loads, blankness, optional
- *  screenshot). INVARIANT: the probe loads only local app URLs — anything whose
- *  resolved host isn't 127.0.0.1/localhost/[::1] is rejected. Resolves null if
- *  the bridge is absent (headless), the URL is non-local, main reports an
+ *  screenshot). INVARIANT: the probe loads only local app URLs
+ *  (desktop-contract/loopback-app-url.ts, checked again by main). Resolves null
+ *  if the bridge is absent (headless), the URL is non-local, main reports an
  *  internal failure, or the reply misses the deadline plus grace — callers treat
  *  null as "no evidence", never as "verified". */
 export function probeApp(url: string, opts?: { timeoutMs?: number; wantScreenshot?: boolean }): Promise<ProbeAppResult | null> {
@@ -162,7 +138,7 @@ export function probeApp(url: string, opts?: { timeoutMs?: number; wantScreensho
     });
     timer = setTimeout(() => { logger.warn(`[bridge] probeApp timed out for ${url}`); finish(null); }, timeoutMs + PROBE_REPLY_GRACE_MS);
     try {
-      process.send!({ type: "lax:probe-app", id, url, timeoutMs, wantScreenshot: opts?.wantScreenshot });
+      send({ type: "lax:probe-app", id, url, timeoutMs, wantScreenshot: opts?.wantScreenshot });
     } catch (e) {
       logger.warn(`[bridge] probeApp send failed: ${(e as Error).message}`);
       finish(null);
@@ -180,13 +156,7 @@ export function probeApp(url: string, opts?: { timeoutMs?: number; wantScreensho
  *  the bridge is absent (headless / non-desktop) or main reports a failure —
  *  the caller then falls back to the in-process CLI path (which yields the
  *  accurate TCC-denied message). */
-export function desktopCaptureScreen(opts: {
-  monitor?: number;
-  region?: { x: number; y: number; width: number; height: number };
-  format?: "png" | "jpg";
-  quality?: number;
-  scale?: number;
-}): Promise<CaptureScreenResult | null> {
+export function desktopCaptureScreen(opts: Omit<CaptureScreenRequest, "type" | "id">): Promise<CaptureScreenResult | null> {
   if (!desktopBridgeAvailable()) return Promise.resolve(null);
   ensureListener();
   const id = ++seq;
@@ -204,7 +174,7 @@ export function desktopCaptureScreen(opts: {
     });
     timer = setTimeout(() => { logger.warn("[bridge] capture-screen timed out"); finish(null); }, CAPTURE_REPLY_TIMEOUT_MS);
     try {
-      process.send!({ type: "lax:capture-screen", id, monitor: opts.monitor, region: opts.region, format: opts.format, quality: opts.quality, scale: opts.scale });
+      send({ type: "lax:capture-screen", id, monitor: opts.monitor, region: opts.region, format: opts.format, quality: opts.quality, scale: opts.scale });
     } catch (e) {
       logger.warn(`[bridge] capture-screen send failed: ${(e as Error).message}`);
       finish(null);
@@ -218,7 +188,7 @@ export function desktopCaptureScreen(opts: {
  *  bridge is absent (headless / npm run dev) so the caller can't self-restart. */
 export function desktopRestartServer(): boolean {
   if (!desktopBridgeAvailable()) return false;
-  try { process.send!({ type: "lax:restart-server" }); return true; }
+  try { send({ type: "lax:restart-server" }); return true; }
   catch (e) { logger.warn(`[bridge] restart-server send failed: ${(e as Error).message}`); return false; }
 }
 
@@ -227,7 +197,7 @@ export function desktopRestartServer(): boolean {
  *  child restart can't reload. */
 export function desktopRelaunchApp(): boolean {
   if (!desktopBridgeAvailable()) return false;
-  try { process.send!({ type: "lax:relaunch-app" }); return true; }
+  try { send({ type: "lax:relaunch-app" }); return true; }
   catch (e) { logger.warn(`[bridge] relaunch-app send failed: ${(e as Error).message}`); return false; }
 }
 
@@ -238,6 +208,6 @@ export function desktopRelaunchApp(): boolean {
  *  as the other one-way pushes above. */
 export function desktopPushAndroidFrame(viewId: string, png: Buffer): boolean {
   if (!desktopBridgeAvailable()) return false;
-  try { process.send!({ type: "lax:android-frame", viewId, pngBase64: png.toString("base64") }); return true; }
+  try { send({ type: "lax:android-frame", viewId, pngBase64: png.toString("base64") }); return true; }
   catch (e) { logger.warn(`[bridge] android-frame send failed: ${(e as Error).message}`); return false; }
 }

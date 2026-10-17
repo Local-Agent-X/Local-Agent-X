@@ -14,7 +14,7 @@
 import { describe, expect, it } from "vitest";
 import type { WebContents } from "electron";
 import { dispatchAgentInput, isMouseEvent, toElectronInputEvent } from "./browser-agent-input";
-import type { BridgeInputEvent } from "./server-bridge-browser-wire";
+import type { BridgeInputEvent } from "./contract/browser-bridge.js";
 
 function recorder() {
 	const calls: string[] = [];

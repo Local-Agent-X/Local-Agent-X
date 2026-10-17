@@ -21,7 +21,7 @@
  */
 
 import type { KeyboardInputEvent, MouseInputEvent, MouseWheelInputEvent, WebContents } from "electron";
-import type { BridgeInputEvent } from "./server-bridge-browser-wire";
+import type { BridgeInputEvent } from "./contract/browser-bridge.js";
 
 type ElectronInputEvent = MouseInputEvent | MouseWheelInputEvent | KeyboardInputEvent;
 

@@ -20,24 +20,11 @@
 import { EventBus } from "../event-bus.js";
 import { createLogger } from "../logger.js";
 import { ingestInAppDownload } from "./downloads.js";
+import type { BridgeConsoleEntry, BridgeNetworkEntry } from "../desktop-contract/browser-bridge.js";
+
+export type { BridgeConsoleEntry, BridgeNetworkEntry };
 
 const logger = createLogger("browser.bridge-perception");
-
-export interface BridgeConsoleEntry {
-	level: string;
-	message: string;
-	ts: number;
-}
-
-export interface BridgeNetworkEntry {
-	url: string;
-	method: string;
-	status?: number;
-	error?: string;
-	resourceType?: string;
-	contentType?: string;
-	ts: number;
-}
 
 /** Parse the owning sessionId from an AGENT viewId; undefined for user views. */
 export function sessionIdFromViewId(viewId: unknown): string | undefined {

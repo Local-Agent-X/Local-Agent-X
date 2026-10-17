@@ -18,7 +18,7 @@
 import { app } from "electron";
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
-import { homedir } from "os";
+import { configPath, laxDataDir } from "./contract/data-dir.js";
 import { healWedgedRollbackJournal } from "./rollback-journal-heal.js";
 
 // Pin the userData folder name BEFORE Electron resolves app.getPath('userData').
@@ -41,8 +41,9 @@ app.setName("Local Agent X");
 // un-stick a box whose OTA is wedged by a pre-schema journal — the payload fix
 // can't deliver itself through the wedged OTA. Never throws; no-op when clean.
 try {
-  if (healWedgedRollbackJournal(join(homedir(), ".lax"))) {
-    console.warn("[loader] discarded a wedged/legacy update-rollback journal; OTA updates can now proceed");
+  const archived = healWedgedRollbackJournal(laxDataDir());
+  if (archived) {
+    console.warn(`[loader] moved a wedged/legacy update-rollback journal aside to ${archived}; OTA updates can now proceed`);
   }
 } catch (e) {
   console.error(`[loader] rollback self-heal skipped: ${(e as Error).message}`);
@@ -55,7 +56,7 @@ function resolveDiskMain(): string | null {
   // loads at module-eval, and we want this loader to run BEFORE any of
   // the bundled main's modules touch the filesystem).
   try {
-    const cfgPath = join(homedir(), ".lax", "config.json");
+    const cfgPath = configPath();
     if (!existsSync(cfgPath)) return null;
     const cfg = JSON.parse(readFileSync(cfgPath, "utf-8")) as { projectRoot?: string };
     if (!cfg.projectRoot) return null;

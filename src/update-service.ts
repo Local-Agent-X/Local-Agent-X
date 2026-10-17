@@ -13,6 +13,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { safeErrorMessage } from "./server-utils.js";
+import { DESKTOP_ENV } from "./desktop-contract/env.js";
 import { isLocalOnlyMode, LOCAL_ONLY_BLOCK_MESSAGE } from "./local-only-policy.js";
 import { gitSafeCmd } from "./git-safety.js";
 import { inboxUpdateAvailable, inboxUpdateCurrent } from "./inbox/producers.js";
@@ -97,8 +98,8 @@ function stableInstallerUrl(platform: NodeJS.Platform): string | undefined {
 }
 
 async function withNativeRuntimeCheck(result: UpdateCheckResult): Promise<UpdateCheckResult> {
-  const installedElectronVersion = process.env.LAX_DESKTOP_ELECTRON_VERSION;
-  const installedChromiumVersion = process.env.LAX_DESKTOP_CHROMIUM_VERSION;
+  const installedElectronVersion = process.env[DESKTOP_ENV.ELECTRON_VERSION];
+  const installedChromiumVersion = process.env[DESKTOP_ENV.CHROMIUM_VERSION];
   // The normal browser/server-only install has no native shell to upgrade.
   if (!installedElectronVersion) return result;
 

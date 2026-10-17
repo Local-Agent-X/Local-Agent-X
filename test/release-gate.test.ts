@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
-import { isPidAlive } from "../src/pid-probe.js";
+import { isPidAlive } from "../src/desktop-contract/pid-probe.js";
 import { releaseGates } from "../scripts/release-gates.mjs";
 import { runReleaseGate } from "../scripts/release-gate.mjs";
 import { projectQualificationPackContract, qualificationBenchmarkCatalog } from "../scripts/local-qualification/benchmark-packs.mjs";

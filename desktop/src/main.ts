@@ -26,6 +26,7 @@ import {
 import { createWindow, getMainWindow, isStuckOnSplash, showWindow, toggleWindow, openAccountWindow } from "./window";
 import { resolveLoopbackCdpPort } from "./cdp-endpoint";
 import { applyChromiumLaunchFlags } from "./chromium-flags";
+import { DESKTOP_ENV } from "./contract/env.js";
 import { setupApplicationMenu } from "./app-menu";
 import { registerHotkey, registerPanicHotkey, showNotification } from "./hotkey-notifications";
 import { setupIPC } from "./ipc";
@@ -234,7 +235,7 @@ app.on("ready", async () => {
   // inherits it (via ...process.env) and can drive the in-app browser. Best
   // effort: null leaves the driver on the legacy bridge path.
   const cdpPort = await resolveLoopbackCdpPort();
-  if (cdpPort) process.env.LAX_ELECTRON_CDP_PORT = String(cdpPort);
+  if (cdpPort) process.env[DESKTOP_ENV.ELECTRON_CDP_PORT] = String(cdpPort);
 
   const killedOrphan = await reclaimOrphanServer();
   const alreadyRunning = !killedOrphan && (await isServerRunning());

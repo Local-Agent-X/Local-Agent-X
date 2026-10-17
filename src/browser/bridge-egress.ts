@@ -18,6 +18,7 @@ import { recordCanaryExfilAudit } from "../threat/canaries.js";
 import { scanPageEgress, type PageEgressRequest, type PageEgressVerdict } from "./page-egress-taint.js";
 import { adoptedViewSession, sessionIdFromViewId } from "./bridge-perception.js";
 import type { SecurityDecision } from "../types.js";
+import type { BrowserEgressAsk } from "../desktop-contract/browser-bridge.js";
 
 const logger = createLogger("browser-bridge");
 
@@ -110,17 +111,10 @@ export function enrichBlockedNavigation(e: unknown, url: string, viewId?: string
 	);
 }
 
-/** The desktop→server egress ask. `url` + `id` are required; the rest feed the
- *  taint-aware page-egress scan (absent on old/degraded senders → URL policy
- *  only, exactly the prior behavior). */
-export interface EgressAskMessage {
-	id: number;
-	url: string;
-	method?: string;
-	pageUrl?: string;
-	body?: string;
-	viewId?: string;
-}
+/** The desktop→server egress ask, minus its wire tag. `url` + `id` are
+ *  required; the rest feed the taint-aware page-egress scan (absent on
+ *  old/degraded senders → URL policy only, exactly the prior behavior). */
+export type EgressAskMessage = Omit<BrowserEgressAsk, "type">;
 
 /** The pluggable inputs decideEgressAsk evaluates against. The in-loop path
  *  binds the canonical module-backed implementations below; the egress worker

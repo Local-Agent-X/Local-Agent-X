@@ -16,6 +16,7 @@
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { DESKTOP_ENV } from "./desktop-contract/env.js";
 
 const winExt = process.platform === "win32" ? ".exe" : "";
 
@@ -43,7 +44,7 @@ function nodeModulesBin(specifier: string, binRelPath: string): string | null {
 function resolveBin(overrideEnv: string, name: string, nodeModules: () => string | null): string {
   const override = process.env[overrideEnv];
   if (override) return override;
-  const bundled = process.env.LAX_BUNDLED_BIN_DIR;
+  const bundled = process.env[DESKTOP_ENV.BUNDLED_BIN_DIR];
   if (bundled) {
     const p = join(bundled, name + winExt);
     if (existsSync(p)) return p;

@@ -12,7 +12,7 @@ statically or by `import()` (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 67 top-level dirs · 67 live · 0 with no live importer · 1779 non-test source files · 0 god files (>400 LOC).
+**Totals:** 68 top-level dirs · 68 live · 0 with no live importer · 1789 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -45,6 +45,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/sandbox/` | 23 | 14 | L |  |
 | `src/orchestrator/` | 20 | 24 | L |  |
 | `src/protocols/` | 20 | 52 | XL |  |
+| `src/desktop-contract/` | 18 | 10 | M |  |
 | `src/agents/` | 17 | 13 | L |  |
 | `src/server/` *(entrypoint)* | 16 | 57 | XL |  |
 | `src/anthropic-client/` | 15 | 21 | XL |  |
@@ -159,7 +160,6 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/ota-rolling-pointer.ts` | S |
 | `src/ota-update-state.ts` | S |
 | `src/ota-update.ts` | M |
-| `src/pid-probe.ts` | S |
 | `src/platform-root.ts` | S |
 | `src/plugin-system.ts` | M |
 | `src/probe-self-destruct.ts` | S |

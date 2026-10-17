@@ -4,24 +4,18 @@
 // call from any module without ordering constraints.
 
 import { execSync } from "child_process";
-import { existsSync, readFileSync, unlinkSync } from "fs";
-import { join } from "path";
-import { homedir } from "os";
+import { unlinkSync } from "fs";
 import { getLAXConfig } from "./config";
-import { isPidAlive, isOurServerProcess } from "./pid-probe";
+import { serverPidPath } from "./contract/data-dir.js";
+import { readServerPidFile as readPidFileAt, type ServerPidFile } from "./contract/pidfile.js";
+import { isPidAlive, isOurServerProcess } from "./contract/pid-probe.js";
 
-export const PID_FILE = join(homedir(), ".lax", "server.pid");
+export type { ServerPidFile };
 
-export interface ServerPidFile {
-  pid: number;
-  parentPid?: number;
-  startedAt: string;
-}
+export const PID_FILE = serverPidPath();
 
 export function readServerPidFile(): ServerPidFile | null {
-  if (!existsSync(PID_FILE)) return null;
-  try { return JSON.parse(readFileSync(PID_FILE, "utf-8")) as ServerPidFile; }
-  catch { return null; }
+  return readPidFileAt(PID_FILE);
 }
 
 export function killPidTree(pid: number): void {

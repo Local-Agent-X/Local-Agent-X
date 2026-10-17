@@ -12,8 +12,8 @@
 import { execFile, spawn } from "child_process";
 import { createWriteStream, mkdirSync, readFileSync } from "fs";
 import { join } from "path";
-import { homedir } from "os";
 import { dialog } from "electron";
+import { logsDir } from "./contract/data-dir.js";
 
 export interface NodeFloorStatus {
   ok: boolean;
@@ -87,7 +87,7 @@ export async function promptAndUpgradeNode(status: NodeFloorStatus): Promise<{ o
   });
   if (response !== 0) return { ok: false, detail: "Node.js upgrade declined — the server can't start on this Node version." };
 
-  const logDir = join(homedir(), ".lax", "logs");
+  const logDir = logsDir();
   const logPath = join(logDir, "node-upgrade.log");
   mkdirSync(logDir, { recursive: true });
   const log = createWriteStream(logPath, { flags: "a" });

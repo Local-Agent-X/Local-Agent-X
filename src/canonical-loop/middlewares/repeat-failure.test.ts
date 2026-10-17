@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { repeatFailureMiddleware, REPEAT_FAILURE_REASON } from "./repeat-failure.js";
 import type { CanonicalLoopContext } from "./types.js";
+import type { ToolBlockRecord } from "../../types.js";
 import { makeCanonicalLoopContext } from "./ctx.test-helper.js";
 import { buildToolResultsView } from "../turn-loop/content-extract.js";
 
@@ -9,7 +10,7 @@ function opId(): string { return `op-rf-test-${++_op}`; }
 
 function ctxFor(
   op: string,
-  results: Array<{ toolName: string; content: string; status: "ok" | "error" | "blocked" | "declined" | "timeout" | "cancelled" }>,
+  results: Array<{ toolName: string; content: string; status: "ok" | "error" | "blocked" | "declined" | "timeout" | "cancelled"; block?: ToolBlockRecord }>,
   lane: "interactive" | "build" = "build",
 ): CanonicalLoopContext {
   return makeCanonicalLoopContext({
@@ -87,6 +88,7 @@ describe("repeat-failure breaker", () => {
       toolName: "bash",
       content: "[blocked, layer=\"sandbox\"] BLOCKED (unattended): bash cannot execute",
       status: "blocked" as const,
+      block: { layer: "sandbox" as const, reason: "bash cannot execute", notice: "none" as const },
     };
     for (let i = 0; i < 4; i++) {
       await run(op, [blocked]);
@@ -104,6 +106,7 @@ describe("repeat-failure breaker", () => {
         toolName,
         content: `[blocked, layer=\"sandbox\"] BLOCKED (unattended): ${toolName} cannot execute`,
         status: "blocked",
+        block: { layer: "sandbox", reason: `${toolName} cannot execute`, notice: "none" },
       }]);
     }
     expect(result?.kind).toBe("suspend");

@@ -40,7 +40,7 @@ export const dedupCheckPhase: Phase = async (ctx: ToolCallContext) => {
     ? { ...hit.result, content: `${hit.result.content}\n\n${annotation}` }
     : hit.allowed
       ? { content: `${hit.resultContent}\n\n${annotation}` }
-      : blocked(`${hit.resultContent}\n\n${annotation}`, { recovery: "This exact call was already refused this turn. Do not repeat it; do what that refusal said instead." });
+      : blocked(`${hit.resultContent}\n\n${annotation}`, { layer: "dedup-cache", recovery: "This exact call was already refused this turn. Do not repeat it; do what that refusal said instead." });
   return HALT;
 };
 

@@ -39,7 +39,7 @@ export async function handleScreenshot(manager: BrowserBackend, secretOps: Secre
   const sensitive = sensitivePageStub(manager.getCurrentUrl());
   if (sensitive) return withheld(sensitive);
   const onScreen = await findSecretOnScreen(secretOps);
-  if (onScreen) return blocked(secretOnScreenMessage(onScreen), { browserStatus: "secret-on-screen", recovery: "Save the secret with browser_capture_to_secret as the message says, before anything changes the page; then retry." });
+  if (onScreen) return blocked(secretOnScreenMessage(onScreen), { layer: "browser-secret-on-screen", browserStatus: "secret-on-screen", recovery: "Save the secret with browser_capture_to_secret as the message says, before anything changes the page; then retry." });
   const shot = await manager.screenshot();
   if (!shot.image) return ok(shot.text);
   // Inline vision rides `_image` ONLY (audit-tool-call.ts turns it into a

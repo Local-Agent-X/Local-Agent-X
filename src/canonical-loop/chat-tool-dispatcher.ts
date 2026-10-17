@@ -15,9 +15,9 @@
  */
 import { internalToolFailureText } from "./internal-tool-failure.js";
 import { envelopeStatusToDispatchStatus, type ToolDispatcher, type ToolDispatchResult } from "./tool-dispatch.js";
-import { parseStatusHeader } from "../tools/result-helpers.js";
+import { toolMessageBlock, toolMessageMedia, toolMessageStatus } from "../tool-execution/tool-message-carry.js";
 import type { ToolCall } from "./contract-types.js";
-import type { ToolBlockRecord, ToolDefinition, ServerEvent } from "../types.js";
+import type { ToolDefinition, ServerEvent } from "../types.js";
 import type { SecurityLayer } from "../security/index.js";
 import type { ToolPolicy } from "../tool-policy/index.js";
 import type { ThreatEngine } from "../threat/threat-engine.js";
@@ -275,24 +275,23 @@ function shapeCallResult(
     }
   }
 
-  // Recover the underlying envelope status from the rendered header and
-  // carry the FLAVOR through the dispatch boundary — a policy block, a
-  // user decline, and a timeout are different signals to the ledger /
-  // telemetry / checkpoints. The only collapse is `running` → "ok":
-  // the START succeeded, the work continues async.
-  const envStatus = parseStatusHeader(rendered);
+  // The envelope status rides the tool message (tool-message-carry.ts); carry
+  // its FLAVOR through the dispatch boundary — a policy block, a user decline,
+  // and a timeout are different signals to the ledger / telemetry /
+  // checkpoints. The only collapse is `running` → "ok": the START succeeded,
+  // the work continues async.
   const canonicalStatus: ToolDispatchResult["status"] =
-    envelopeStatusToDispatchStatus(envStatus);
+    envelopeStatusToDispatchStatus(toolMessageStatus(toolMsg));
   // A refusal's advice, checked against the tools this run can call
   // (unavailable-tool-hint.ts): "use delete_file" to a worker without it fails twice.
   const content = canonicalStatus === "ok"
     ? rendered
     : noteUnavailableTools(rendered, (n) => unifiedRegistry.get(n) !== undefined, (n) => canCallByName(n, opts.opId, toolMap, opts.callContext));
 
-  // Video/large media rides a file path on the tool message (set by
-  // shapeMsg). Carry it onto the result envelope so bridge handlers can
-  // forward the file — same channel as harvested images, path not bytes.
-  const media = (toolMsg as { _media?: { kind: string; path: string; mime: string } })._media;
+  // Video/large media rides a file path on the tool message. Carry it onto
+  // the result envelope so bridge handlers can forward the file — same
+  // channel as harvested images, path not bytes.
+  const media = toolMessageMedia(toolMsg);
   const result: unknown = harvestedImages.length > 0 || media
     ? { text: content, ...(harvestedImages.length > 0 ? { images: harvestedImages } : {}), ...(media ? { media } : {}) }
     : content;
@@ -333,10 +332,10 @@ function shapeCallResult(
     }
   }
 
-  // The block record rides the tool message the same way _media does
-  // (block-record.ts); lifting it here is what lets the turn loop write it to
-  // the op's event log and tool_result row instead of only the model text.
-  const block = (toolMsg as { _block?: ToolBlockRecord })._block;
+  // The block record rides the tool message the same way _media does; lifting
+  // it here is what lets the turn loop write it to the op's event log and
+  // tool_result row instead of only the model text.
+  const block = toolMessageBlock(toolMsg);
   return {
     toolCallId: call.toolCallId,
     status: canonicalStatus,

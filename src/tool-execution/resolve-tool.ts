@@ -10,7 +10,8 @@ import { isPlanMode, isReadOnlyCall } from "../tools/plan-tools.js";
 import { logRetry } from "../retry-telemetry.js";
 import type { Phase, PhaseOutcome, ToolCallContext } from "./context.js";
 import { terminate, CONTINUE, HALT } from "./context.js";
-import { blocked } from "../tools/result-helpers.js";
+import { blocked, ok } from "../tools/result-helpers.js";
+import { toolMessage, toolMessageStatus, type CarriedToolMessage } from "./tool-message-carry.js";
 import { getRiskLevel, buildApprovalContext } from "./approval-context.js";
 import { ARI_ACTION_MAP } from "./enforce-policy.js";
 import { sessionWorkRootOf } from "../workspace/paths.js";
@@ -167,10 +168,10 @@ export function findPriorIdenticalResult(
   priorMessages: ChatCompletionMessageParam[],
 ): { result: string; turnIndex: number } | null {
   if (!priorMessages || priorMessages.length === 0) return null;
-  const resultOf = (id: string, from: number): string | null => {
+  const resultOf = (id: string, from: number): CarriedToolMessage | null => {
     for (let j = from; j < priorMessages.length; j++) {
-      const r = priorMessages[j] as unknown as { role: string; tool_call_id?: string; content?: unknown };
-      if (r.role === "tool" && r.tool_call_id === id && typeof r.content === "string") return r.content;
+      const r = priorMessages[j] as unknown as { role: string; tool_call_id?: string } & CarriedToolMessage;
+      if (r.role === "tool" && r.tool_call_id === id && typeof r.content === "string") return r;
     }
     return null;
   };
@@ -190,10 +191,13 @@ export function findPriorIdenticalResult(
       const call = ran[k];
       const identical = call.function.name === tc.name && call.function.arguments === tc.arguments;
       if (identical) {
-        const result = resultOf(call.id, i + 1);
-        if (result !== null) {
+        const prior = resultOf(call.id, i + 1);
+        if (prior !== null) {
+          const result = prior.content as string;
           if (changedSince) return null;
-          if (/(^|\n)\[error\](\r?\n|$)/i.test(result)) return null;
+          // Only a success is worth replaying: a refusal or a failure may
+          // resolve differently now (an approval granted, a file created).
+          if (toolMessageStatus(prior) !== "ok") return null;
           // A read-dedup stub carries no content; replaying it answers a
           // re-read with the same nothing (wordy, 2026-09-17).
           if (result.includes(READ_DEDUP_STUB_LEAD)) return null;
@@ -333,7 +337,7 @@ export const resolvePhase: Phase = async (ctx) => {
     const hint = `[REPEATED CALL — identical to a tool call made earlier this session. Returning the previous result without re-executing. If you need fresh data, change the arguments. Otherwise, focus on the user's current question.]\n\n${dup.result}`;
     onEvent?.({ type: "tool_end", toolName: tc.name, toolCallId: tc.id, result: hint, allowed: true, status: "ok" });
     logRetry({ kind: "custom", sessionId, tool: tc.name, detail: { reason: "session-repeat", priorTurn: dup.turnIndex } });
-    ctx.msgs.push({ role: "tool", tool_call_id: tc.id, content: hint } as ChatCompletionMessageParam);
+    ctx.msgs.push(toolMessage(tc.id, ok(hint), hint));
     return HALT;
   }
 

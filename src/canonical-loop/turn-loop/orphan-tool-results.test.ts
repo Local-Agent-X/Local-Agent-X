@@ -212,7 +212,9 @@ describe("synthesized rows through the next turn's replay", () => {
     const real = opMessageRowToChatParam(opRow(realRow("tc1"), 0));
     const synth = opMessageRowToChatParam(opRow({ role: "tool_result", content: synthesized("tc2") }, 1));
     expect(real).not.toBeNull();
-    expect(synth).toEqual({ role: "tool", tool_call_id: "tc2", content: MISSING_TOOL_RESULT_TEXT });
+    // The carried status is "error": the session-repeat guard must never
+    // replay a missing result as the answer to the retry.
+    expect(synth).toEqual({ role: "tool", tool_call_id: "tc2", content: MISSING_TOOL_RESULT_TEXT, _status: "error" });
     expect(Object.keys(synth as object)).toEqual(Object.keys(real as object));
   });
 

@@ -16,7 +16,7 @@
 // caller exactly once, never inside a probe, so no gate is double-run with a side
 // effect.
 
-import { USER_HINTS, type BlockAction, type ToolResult } from "../types.js";
+import { USER_HINTS, type BlockAction, type BlockLayer, type ToolResult } from "../types.js";
 import { checkEgressTaintWithPayload } from "../data-lineage/index.js";
 import { checkCanariesInPayload, recordCanaryExfilAudit } from "../threat/canaries.js";
 import { destinationSpecsOf, hasCapability } from "../tool-registry.js";
@@ -33,7 +33,7 @@ import { terminate, CONTINUE } from "./context.js";
 // single-gate result carries. Consumed both by the single gates (one blocker →
 // one ToolResult) and by the aggregate (many blockers → one ToolResult).
 export interface EgressBlocker {
-  layer: string;
+  layer: BlockLayer;
   label: string;
   reason: string;
   recovery: string;

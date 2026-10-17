@@ -1,9 +1,9 @@
 import type { TurnCommitEnvelope, TurnCommitProjection } from "./turn-commit-store.js";
-import type { OpMessageRow, OpTurnRow, ToolCallSummary } from "./types.js";
+import { TOOL_DISPATCH_STATUSES, type OpMessageRow, type OpTurnRow, type ToolCallSummary } from "./types.js";
 import type { Op } from "../ops/types.js";
 
 const ROLES = new Set(["system", "user", "assistant", "tool_result", "control"]);
-const TOOL_STATUSES = new Set(["ok", "error", "blocked", "declined", "timeout", "cancelled"]);
+const TOOL_STATUSES = new Set<string>(TOOL_DISPATCH_STATUSES);
 const TERMINALS = new Set(["done", "error", "cancelled", null]);
 const STATES = new Set(["queued", "running", "paused", "cancelling", "cancelled", "succeeded", "failed"]);
 const LEARNED = new Set(["clean", "partial", "aborted"]);

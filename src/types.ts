@@ -108,7 +108,9 @@ export type ToolResultStatus = "ok" | "error" | "blocked" | "declined" | "timeou
 
 // The block record + kernel quarantine shapes live in ./types/tool-block.ts
 // (400-LOC cap); re-exported so consumers keep importing from here.
-export type { KernelQuarantine, ToolBlockRecord } from "./types/tool-block.js";
+export type { BlockLayer, KernelQuarantine, ToolBlockRecord } from "./types/tool-block.js";
+export { BLOCK_LAYERS, isBlockLayer } from "./types/tool-block.js";
+import type { BlockLayer } from "./types/tool-block.js";
 
 interface ToolResultBase {
   /**
@@ -178,11 +180,12 @@ interface ToolResultBase {
 }
 
 /** `status` is optional (unset, it derives from `isError`). A blocked result
- *  must name the next step in metadata.recovery: the compiler holds every
- *  refusal to it. */
+ *  must name the gate that refused it (metadata.layer, one of BLOCK_LAYERS)
+ *  and the next step (metadata.recovery): the compiler holds every refusal to
+ *  both. */
 export type ToolResult = ToolResultBase & (
   | { status?: Exclude<ToolResultStatus, "blocked"> }
-  | { status: "blocked"; metadata: { recovery: string } & Record<string, unknown> }
+  | { status: "blocked"; metadata: { recovery: string; layer: BlockLayer } & Record<string, unknown> }
 );
 
 export interface AgentTurn {

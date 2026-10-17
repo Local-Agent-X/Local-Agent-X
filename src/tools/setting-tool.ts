@@ -77,7 +77,7 @@ export const settingTool: ToolDefinition = {
       );
     }
     const operatorOnly = operatorOnlyRefusal([fieldName]);
-    if (operatorOnly) return blocked(operatorOnly, { recovery: "Tell the user where to change it. Do not retry it another way." });
+    if (operatorOnly) return blocked(operatorOnly, { layer: "operator-only", recovery: "Tell the user where to change it. Do not retry it another way." });
 
     const parsed = spec.validate.safeParse(args.value);
     if (!parsed.success) {

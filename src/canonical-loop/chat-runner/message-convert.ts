@@ -7,6 +7,9 @@
 import { isHarnessRowKind, markHarnessRow } from "../../harness-rows.js";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { OpMessageRow } from "../types.js";
+import type { ToolBlockRecord } from "../../types.js";
+import type { ToolMessageCarry } from "../../tool-execution/tool-message-carry.js";
+import { recordedToolResultStatus } from "../turn-loop/content-extract.js";
 
 export function messageRoleToCanonicalRole(role: ChatCompletionMessageParam["role"]): "user" | "assistant" | "tool_result" | null {
   switch (role) {
@@ -181,11 +184,18 @@ export function opMessageRowToChatParam(row: OpMessageRow): ChatCompletionMessag
       role: "tool",
       tool_call_id: content.toolCallId ?? "",
       content: resultText,
-    } as ChatCompletionMessageParam & { _block?: unknown };
-    // The block record (dispatch-tools.ts writes it beside `result`) persists
-    // into session history, so a reloaded chat can rebuild the block notice.
+    } as ChatCompletionMessageParam & Partial<ToolMessageCarry>;
+    // The dispatch status and the block record (dispatch-tools.ts writes both
+    // beside `result`) persist into session history as the tool message's
+    // carry, so a reloaded chat reads them off the row (the status it shows,
+    // the block notice it rebuilds), never out of the text. A row that
+    // recorded no status (re-seeded from history) carries none, so readers
+    // fall back to its header; "cancelled" is op bookkeeping, not an envelope
+    // status, and carries none either.
+    const status = recordedToolResultStatus(content);
+    if (status && status !== "cancelled") param._status = status;
     const block = (content as { block?: unknown }).block;
-    if (block && typeof block === "object") param._block = block;
+    if (block && typeof block === "object") param._block = block as ToolBlockRecord;
     return param;
   }
   return null;

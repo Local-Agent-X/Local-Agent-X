@@ -266,6 +266,32 @@ describe("session-repeat dedup exempts stateful tools", () => {
     const msg = ctx.msgs.at(-1);
     expect(String(msg?.content)).toContain("[REPEATED CALL");
     expect(String(msg?.content)).toContain(PRIOR_RESULT);
+    // The replay is a tool message like any other: it carries its status.
+    expect((msg as { _status?: string })._status).toBe("ok");
+  });
+
+  // Only a success is replayed. The guard used to match the bare `[error]`
+  // header, so a failure whose header carried metadata (`[error, exit_code=1]`)
+  // was served back as the answer to a retry.
+  it("a prior failure is never replayed — read off the message's carry, or its header for a row written before the carry", async () => {
+    const args = { path: "notes.txt" };
+    const prior = (content: string, carry?: { _status: string }) => [
+      { role: "assistant", content: null, tool_calls: [{ id: "prior-1", type: "function", function: { name: "read", arguments: JSON.stringify(args) } }] },
+      { role: "tool", tool_call_id: "prior-1", content, ...carry },
+    ] as unknown as ChatCompletionMessageParam[];
+    for (const priorMessages of [
+      prior("[error, exit_code=1]\nboom", { _status: "error" }),
+      prior("[blocked, layer=\"security\"]\nrefused", { _status: "blocked" }),
+      prior("[error, exit_code=1]\nboom"),
+      prior("[declined]\nno"),
+    ]) {
+      const ctx = createContext({
+        tc: { id: "repeat-2", name: "read", arguments: JSON.stringify(args) },
+        toolMap: new Map(), security: {} as SecurityLayer, sessionId: "dedup-test-session", callContext: "api", priorMessages,
+      });
+      expect((await resolvePhase(ctx)).kind, String(priorMessages[1].content)).toBe("continue");
+      expect(ctx.msgs.some((m) => String(m.content).includes("[REPEATED CALL"))).toBe(false);
+    }
   });
 });
 

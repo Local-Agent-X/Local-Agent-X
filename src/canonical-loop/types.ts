@@ -225,6 +225,7 @@ export interface OpTurnRow {
  * committedWork semantics, see chat-tool-dispatcher.ts).
  */
 export type ToolDispatchStatus = Exclude<ToolResultStatus, "running"> | "cancelled";
+export const TOOL_DISPATCH_STATUSES: readonly ToolDispatchStatus[] = ["ok", "error", "blocked", "declined", "timeout", "cancelled"];
 
 /**
  * True for the statuses that meant "error" before the boundary carried the

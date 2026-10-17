@@ -104,7 +104,7 @@ export const buildPlanResumeTool: ToolDefinition = {
     required: ["project_dir"],
   },
   async execute(args): Promise<ToolResult> {
-    if (!isFeatureEnabled()) return blocked(FEATURE_FLAG_BLOCK_MESSAGE, { recovery: AUTO_BUILD_DISABLED_RECOVERY });
+    if (!isFeatureEnabled()) return blocked(FEATURE_FLAG_BLOCK_MESSAGE, { layer: "app-build", recovery: AUTO_BUILD_DISABLED_RECOVERY });
 
     const projectDir = resolveProjectDir(args.project_dir);
     if (!projectDir) return { content: "build_plan_resume requires 'project_dir'.", isError: true };

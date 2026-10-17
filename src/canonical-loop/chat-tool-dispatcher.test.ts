@@ -34,7 +34,7 @@ function echoTool(calls: { n: number }): ToolDefinition {
   } as unknown as ToolDefinition;
 }
 
-function seedPriorCall(opId: string, argsJson: string, resultText: string): void {
+function seedPriorCall(opId: string, argsJson: string, resultText: string, status: "ok" | "error" = "ok"): void {
   // Assistant turn that issued the tool call...
   appendOpMessage({
     messageId: "m-assistant", opId, turnIdx: 0, seqInTurn: 0,
@@ -46,7 +46,7 @@ function seedPriorCall(opId: string, argsJson: string, resultText: string): void
   appendOpMessage({
     messageId: "m-tool", opId, turnIdx: 0, seqInTurn: 1,
     role: "tool_result",
-    content: { toolCallId: "prior-1", result: resultText, status: "ok" },
+    content: { toolCallId: "prior-1", result: resultText, status },
     createdAt: new Date(0).toISOString(),
   } as OpMessageRow);
 }
@@ -133,7 +133,8 @@ describe("makeChatToolDispatcher wires priorMessages from op storage", () => {
 
   it("re-executes an identical call after a prior error so recovery can run", async () => {
     const opId = freshOpId();
-    seedPriorCall(opId, JSON.stringify({ v: 1 }), "[error]\ntransient bridge timeout");
+    // The row's recorded status is what the guard reads (its carry), not the text.
+    seedPriorCall(opId, JSON.stringify({ v: 1 }), "[error]\ntransient bridge timeout", "error");
 
     const calls = { n: 0 };
     const dispatcher = makeChatToolDispatcher({

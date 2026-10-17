@@ -52,7 +52,7 @@ function throughDispatchBoundary(result: Parameters<typeof renderToolResultForMo
 
 describe("dispatch boundary preserves envelope flavor", () => {
   it.each([
-    ["blocked", blocked("Refused by policy.", { recovery: "use http_request" })],
+    ["blocked", blocked("Refused by policy.", { layer: "security", recovery: "use http_request" })],
     ["declined", declined("User said no to this call.")],
     ["timeout", timeout("Deadline expired.", { partial_output: "half done" })],
   ] as const)("%s arrives at dispatch with its flavor AND is not-ok for committedWork", (flavor, envelope) => {

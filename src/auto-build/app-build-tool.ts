@@ -85,7 +85,7 @@ export const startAppBuildTool: ToolDefinition = {
   },
   async execute(args): Promise<ToolResult> {
     if (!isFeatureEnabled()) {
-      return blocked(FEATURE_FLAG_BLOCK_MESSAGE, { recovery: AUTO_BUILD_DISABLED_RECOVERY });
+      return blocked(FEATURE_FLAG_BLOCK_MESSAGE, { layer: "app-build", recovery: AUTO_BUILD_DISABLED_RECOVERY });
     }
     const concept = String(args.concept || "").trim();
     const sessionId = sessionIdOf(args)?.trim() ?? "";
@@ -220,7 +220,7 @@ export function createFinalizeAppBuildTool(
   },
   async execute(args, signal): Promise<ToolResult> {
     if (!isFeatureEnabled()) {
-      return blocked(FEATURE_FLAG_BLOCK_MESSAGE, { recovery: AUTO_BUILD_DISABLED_RECOVERY });
+      return blocked(FEATURE_FLAG_BLOCK_MESSAGE, { layer: "app-build", recovery: AUTO_BUILD_DISABLED_RECOVERY });
     }
     if (signal?.aborted) return cancellationResult();
 

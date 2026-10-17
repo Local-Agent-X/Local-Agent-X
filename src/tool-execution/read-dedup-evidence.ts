@@ -10,6 +10,7 @@
 
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 import { resolveAgentPath } from "../workspace/paths.js";
+import { toolMessageStatus } from "./tool-message-carry.js";
 
 /** Opening of the stub run-sandboxed returns; a result carrying it held no content. */
 export const READ_DEDUP_STUB_LEAD = "Unchanged since this session last read it";
@@ -39,7 +40,7 @@ export function readContentInView(messages: ChatCompletionMessageParam[] | undef
     const r = m as unknown as { tool_call_id?: string; content?: unknown };
     if (!r.tool_call_id || !readIds.has(r.tool_call_id) || typeof r.content !== "string") continue;
     if (r.content.includes(READ_DEDUP_STUB_LEAD)) continue;
-    if (/^\[(error|blocked|timeout)\b/i.test(r.content)) continue;
+    if (toolMessageStatus(r) !== "ok") continue;
     return true;
   }
   return false;

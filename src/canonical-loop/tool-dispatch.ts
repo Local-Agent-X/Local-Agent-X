@@ -21,8 +21,9 @@ export interface ToolDispatchResult {
   status: ToolDispatchStatus;
   result: unknown;
   durationMs: number;
-  /** Present iff status is "blocked": the durable, secret-free record of the
-   *  block (types.ts ToolBlockRecord), lifted off the tool message. */
+  /** The durable, secret-free record of the block (types.ts ToolBlockRecord),
+   *  lifted off the tool message. Present when status is "blocked", and on the
+   *  ok result of show_unblock_control re-surfacing a block's control. */
   block?: ToolBlockRecord;
 }
 

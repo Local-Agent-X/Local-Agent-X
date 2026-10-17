@@ -9,19 +9,20 @@
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { Session, ToolBlockRecord, ToolResultStatus } from "../types.js";
 import { isHarnessRow } from "../harness-rows.js";
-import { parseResultHeader, parseStatusHeader } from "../tools/result-helpers.js";
+import { parseResultHeader } from "../tools/result-helpers.js";
+import { toolMessageBlock, toolMessageStatus } from "../tool-execution/tool-message-carry.js";
 
 /**
  * The metadata a reloaded blocked card renders from. The persisted `_block`
- * record (message-convert.ts) is the full answer; a row without one — written
- * before the record existed, or by a path that rendered only the envelope —
- * still carries the header's scalars (layer / clearable / rule / scope), which
- * are exactly what the notice keys on. Absent both, the block is invisible on
- * reload, which is how the 2026-09-27 quarantine lost its control.
+ * record (the tool message's carry, message-convert.ts) is the full answer; a
+ * row written before the record existed still carries the header's scalars
+ * (layer / clearable / rule / scope), which are exactly what the notice keys
+ * on. Absent both, the block is invisible on reload, which is how the
+ * 2026-09-27 quarantine lost its control.
  */
 function blockMetadataOf(block: ToolBlockRecord | undefined, rendered: string): Record<string, unknown> | undefined {
   if (block) {
-    const { reason: _reason, notice: _notice, ...md } = block;
+    const { reason: _reason, notice: _notice, recovery: _recovery, ...md } = block;
     return md;
   }
   const header = parseResultHeader(rendered);
@@ -50,12 +51,11 @@ export function projectSessionForUI(session: Session): Session {
   // Index tool rows by tool_call_id so we can attach results to the
   // assistant that triggered them. JSONL preserves order, so the latest
   // result for a given id is authoritative.
-  const toolResults = new Map<string, { content: string; block?: ToolBlockRecord }>();
+  const toolResults = new Map<string, { content: string; status: ToolResultStatus; block?: ToolBlockRecord }>();
   for (const m of session.messages) {
     if (m.role !== "tool") continue;
-    const { tool_call_id: id, _block: block } = m as unknown as { tool_call_id?: string; _block?: ToolBlockRecord };
     const content = typeof m.content === "string" ? m.content : "";
-    if (id) toolResults.set(id, { content, block });
+    if (m.tool_call_id) toolResults.set(m.tool_call_id, { content, status: toolMessageStatus(m), block: toolMessageBlock(m) });
   }
 
   type ToolEvent = { type: "start" | "end"; name: string; args?: Record<string, unknown>; result?: string; allowed?: boolean; status?: ToolResultStatus; metadata?: Record<string, unknown> };
@@ -103,9 +103,9 @@ export function projectSessionForUI(session: Session): Session {
           let args: Record<string, unknown> = {};
           try { args = JSON.parse(tc.function?.arguments || "{}"); } catch {}
           pendingTools.push({ type: "start", name, args });
-          const { content: result, block } = toolResults.get(tc.id) ?? { content: "" };
+          const { content: result, status, block } = toolResults.get(tc.id) ?? { content: "", status: "ok" as const };
           const metadata = blockMetadataOf(block, result);
-          pendingTools.push({ type: "end", name, allowed: true, result: result.slice(0, 500), status: parseStatusHeader(result), ...(metadata ? { metadata } : {}) });
+          pendingTools.push({ type: "end", name, allowed: true, result: result.slice(0, 500), status, ...(metadata ? { metadata } : {}) });
         }
       }
       const text = typeof m.content === "string" ? m.content : "";

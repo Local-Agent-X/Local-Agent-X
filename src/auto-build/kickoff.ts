@@ -81,6 +81,7 @@ export function createBuildPlanKickoff(
         isError: true,
         status: "blocked",
         metadata: {
+          layer: "app-build",
           recovery: AUTO_BUILD_DISABLED_RECOVERY,
         },
       };
@@ -131,6 +132,7 @@ export function createBuildPlanKickoff(
         isError: true,
         status: "blocked",
         metadata: {
+          layer: "app-build",
           systemic_gate: systemic.gate,
           systemic_count: systemic.count,
           advisor_diagnosed: diagnostic.length > 0,
@@ -167,6 +169,7 @@ export function createBuildPlanKickoff(
       const message = (error as Error).message;
       if (message.includes("already running")) {
         return blocked(`Build plan kickoff blocked: ${message}`, {
+          layer: "app-build",
           recovery: "Use build_plan_status for the running Product Build instead of starting another.",
         });
       }

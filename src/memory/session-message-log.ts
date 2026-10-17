@@ -29,8 +29,6 @@ import { atomicWriteFileSync } from "./utils.js";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { Session } from "../types.js";
 import { COMPACTION_PREFIX } from "../types.js";
-import type { ToolResultStatus } from "../types.js";
-import { parseStatusHeader } from "../tools/result-helpers.js";
 
 export type { SessionMetaRow, SessionMessageRow, SessionSummaryRow, SessionCheckpointRow, SessionLogRow } from "./session-log-rows.js";
 import { readLegacySessionBlob, readSessionLogRows, type SessionLogRow, type SessionMetaRow, type SessionMessageRow, type SessionSummaryRow, type SessionCheckpointRow } from "./session-log-rows.js";

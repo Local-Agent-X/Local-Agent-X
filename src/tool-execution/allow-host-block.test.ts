@@ -11,7 +11,7 @@ import type { ChatCompletionMessageParam } from "openai/resources/chat/completio
 import { SecurityLayer } from "../security/index.js";
 import { assertToolCallAllowed, ToolBlocked } from "./pre-dispatch.js";
 import { enforcePolicyPhase } from "./enforce-policy.js";
-import { blockRecordOf } from "./block-record.js";
+import { blockRecordOf } from "./tool-message-carry.js";
 import { startAriKernel, stopAriKernel } from "../ari-kernel/lifecycle.js";
 import type { ToolCallContext } from "./context.js";
 

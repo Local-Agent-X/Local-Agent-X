@@ -20,7 +20,7 @@ import { emitTraceStartPhase, emitTraceCompletePhase } from "./emit-trace.js";
 import { runSandboxedPhase } from "./run-sandboxed.js";
 import { attachPublishReviewNote } from "./publish-review-gate.js";
 import { auditPhase } from "./audit-tool-call.js";
-import { resultFromRendered } from "../tools/result-helpers.js";
+import { toolMessageResult } from "./tool-message-carry.js";
 import { hasCapability, pathSpecsForCall } from "../tool-registry.js";
 import { createLogger } from "../logger.js";
 import {
@@ -170,14 +170,12 @@ export async function dispatchSingleToolCall(
     ctx.operationId,
     ctx.callContext ?? "api",
   );
-  const last = msgs[msgs.length - 1];
-  const content = typeof last?.content === "string" ? last.content : "";
-  // Recover the real envelope status from the rendered header (the inverse
-  // of renderToolResultForModel) — the canonical dispatcher does the same.
-  // Hardcoding isError:false here reported blocked/errored/timed-out calls
-  // as "ok" to every adopter of this unified entry. `running` stays
+  // The envelope the tool message carries — the canonical dispatcher reads the
+  // same carry. Hardcoding isError:false here reported blocked/errored/timed-out
+  // calls as "ok" to every adopter of this unified entry. `running` stays
   // non-error: the START succeeded, work continues async.
-  return resultFromRendered(content);
+  const toolMsg = msgs.find((m) => m.role === "tool");
+  return toolMessageResult(toolMsg ?? { content: "" });
 }
 
 // Read-only tools are implicitly safe to parallelize (they never mutate

@@ -5,9 +5,11 @@
 // middlewares an assistantContent string and to render tool results into
 // the afterToolExecution view.
 import type { CommitTurnMessage } from "../checkpoint.js";
-import type { ToolCallSummary } from "../types.js";
+import { TOOL_DISPATCH_STATUSES, type ToolCallSummary, type ToolDispatchStatus } from "../types.js";
+import { envelopeStatusToDispatchStatus } from "../tool-dispatch.js";
 import type { CanonicalToolResultView } from "../middlewares/types.js";
 import type { ToolBlockRecord } from "../../types.js";
+import { parseStatusHeader } from "../../tools/result-helpers.js";
 
 /** The payload of a tool_result row, in either stored shape: `{ toolCallId,
  *  result, status }` from the turn loop, or `{ text, toolCallId }` re-seeded
@@ -18,6 +20,21 @@ export function toolResultPayload(content: unknown): unknown {
   if (!content || typeof content !== "object") return content;
   const c = content as { text?: unknown; result?: unknown };
   return c.result !== undefined ? c.result : c.text;
+}
+
+/** The dispatch status the turn loop recorded on a tool_result row
+ *  (dispatch-tools.ts); undefined for a row re-seeded from session history,
+ *  which carries only its text. */
+export function recordedToolResultStatus(content: unknown): ToolDispatchStatus | undefined {
+  const status = content && typeof content === "object" ? (content as { status?: unknown }).status : undefined;
+  return typeof status === "string" && (TOOL_DISPATCH_STATUSES as readonly string[]).includes(status) ? (status as ToolDispatchStatus) : undefined;
+}
+
+/** A tool_result row's status: the one recorded on it, or, for a row that
+ *  carries only its text, the one its rendered header says (the same rule the
+ *  tool message's carry applies to rows written before it existed). */
+export function toolResultStatus(content: unknown): ToolDispatchStatus {
+  return recordedToolResultStatus(content) ?? envelopeStatusToDispatchStatus(parseStatusHeader(extractToolResultText(content)));
 }
 
 export function extractText(content: unknown): string {

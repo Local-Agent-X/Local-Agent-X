@@ -219,6 +219,7 @@ export const bashTool: ToolDefinition = {
         return blocked(
           `Command was killed externally in ${durationMs}ms with no output — antivirus signature.`,
           {
+            layer: "antivirus",
             exit_code: code,
             duration_ms: durationMs,
             av_suspect: true,

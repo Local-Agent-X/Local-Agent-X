@@ -19,7 +19,8 @@ import type { ThreatEngine } from "../threat/threat-engine.js";
 import type { RBACManager } from "../rbac.js";
 import { getApprovalManager } from "../approval-manager.js";
 import { unifiedRegistry } from "../tools/registry.js";
-import { parseResultHeader, parseStatusHeader } from "../tools/result-helpers.js";
+import { withoutResultHeader } from "../tools/result-helpers.js";
+import { toolMessageStatus } from "./tool-message-carry.js";
 import { executeToolCalls } from "./execute-tool.js";
 
 export interface ApprovedCallDeps {
@@ -57,12 +58,12 @@ export async function dispatchApprovedCall(
       call.sessionId, deps.onEvent, undefined, undefined, call.runId, call.opId, call.callContext,
     );
     const toolMsg = msgs.find((m) => m.role === "tool");
-    const rendered = typeof toolMsg?.content === "string" ? toolMsg.content : "";
+    if (!toolMsg) return { status: "error", text: "The call produced no result." };
+    const rendered = typeof toolMsg.content === "string" ? toolMsg.content : "";
     // The user reads this, not the model: the header and the model's next-step
     // line go, the user hint and the result stay.
-    const lines = rendered.split("\n").slice(parseResultHeader(rendered) ? 1 : 0);
-    const text = lines.filter((line) => !line.startsWith("Recovery: ")).join("\n");
-    return { status: toolMsg ? parseStatusHeader(rendered) : "error", text: toolMsg ? text : "The call produced no result." };
+    const text = withoutResultHeader(rendered).split("\n").filter((line) => !line.startsWith("Recovery: ")).join("\n");
+    return { status: toolMessageStatus(toolMsg), text };
   } finally {
     grants.revoke(grantId);
   }

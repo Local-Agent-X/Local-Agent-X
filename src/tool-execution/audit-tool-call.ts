@@ -15,7 +15,7 @@ import { spillFullResult } from "../tools/result-spill.js";
 import { budgetReadResult } from "./read-budget.js";
 import type { Phase, ToolCallContext } from "./context.js";
 import { CONTINUE } from "./context.js";
-import { carryBlockRecord } from "./block-record.js";
+import { toolMessage } from "./tool-message-carry.js";
 import { buildDenyReason, restrictedCall } from "../tool-policy/packs/threat-engine-pack.js";
 import { resolveContextWindow } from "../context-manager/model-windows.js";
 import { toolManifestTokens } from "../context-manager/request-fit.js";
@@ -228,18 +228,14 @@ export function shapeMsg(ctx: ToolCallContext, note?: string): void {
   // timestamps saying WHICH second each frame came from live there, and the
   // single-image shortcut below would throw them away.
   const imageSet = imageData ? undefined : (result as ToolResultWithImage)._images;
+  // _media (a file PATH the bridge delivers off-box) rides the carry whatever
+  // the image case — generate_image emits both _image and _media, and
+  // branching the carry per image case silently dropped its delivery. Look
+  // tools omit _media, so they stay vision-only.
   const content = imageData
     ? `Image loaded: ${imageData.path}\nQuestion: ${imageData.question}`
     : renderToolResultForModel(note ? { ...result, content: `${note}\n${result.content}` } : result);
-  const toolMessage = { role: "tool", tool_call_id: tc.id, content } as ChatCompletionMessageParam;
-  // _media (a file PATH the bridge delivers off-box) rides the tool message in
-  // ONE place, independent of _image — generate_image emits both, and branching
-  // the _media carry per-image-case silently dropped its delivery. Not fed to
-  // the model; just carried so the canonical dispatcher puts it on the result
-  // envelope. Look tools omit _media, so they stay vision-only.
-  if (result._media) (toolMessage as unknown as Record<string, unknown>)._media = result._media;
-  carryBlockRecord(toolMessage, result);
-  ctx.msgs.push(toolMessage);
+  ctx.msgs.push(toolMessage(tc.id, result, content));
   // _image additionally feeds the model the bytes as a user-vision message.
   if (imageData) {
     ctx.msgs.push({ role: "user", content: [

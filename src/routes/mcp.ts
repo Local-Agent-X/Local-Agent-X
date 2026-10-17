@@ -1,6 +1,6 @@
 import type { RouteHandler } from "../server-context.js";
 import { jsonResponse, readBody, safeErrorMessage } from "../server-utils.js";
-import { resultFromRendered } from "../tools/result-helpers.js";
+import { toolMessageResult } from "../tool-execution/tool-message-carry.js";
 
 // Tools deliberately NOT exposed to the MCP bridge (= the chat supervisor
 // running as claude CLI). These either block the supervisor's chat turn,
@@ -128,13 +128,13 @@ export const handleMcpRoutes: RouteHandler = async (method, url, req, res, ctx, 
       );
 
       const content = serializeMcpContent(results as Array<{ role: string; content: unknown }>);
-      const plainText = content.filter(block => block.type === "text").map(block => String(block.text || "")).join("\n");
+      const toolMsg = results.find((m) => m.role === "tool");
 
       json(200, {
         content: content.length > 0 ? content : [{ type: "text", text: "(no output)" }],
-        // The status header is the envelope's one rendered form; prose prefixes
-        // missed every refusal that carried a header or a user hint.
-        isError: resultFromRendered(plainText).isError === true,
+        // The envelope status rides the tool message; prose prefixes missed
+        // every refusal that carried a header or a user hint.
+        isError: toolMsg !== undefined && toolMessageResult(toolMsg).isError === true,
       });
     } catch (e) {
       json(500, { error: safeErrorMessage(e) });

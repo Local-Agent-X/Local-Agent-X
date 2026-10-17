@@ -13,6 +13,7 @@ import { blocked } from "../tools/result-helpers.js";
 import { agentMissionRefusal } from "./job-authority.js";
 
 const refused = (reason: string): ToolResult => blocked(reason, {
+  layer: "job-authority",
   recovery: "Only the user can make this change, on the Missions page. Tell them exactly what to change; to add a separate mission instead, create one under a new name.",
 });
 

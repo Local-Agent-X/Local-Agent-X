@@ -2,7 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { ServerEvent } from "./types.js";
 import { redactCredentials } from "./security/index.js";
 import { getRuntimeConfig } from "./config.js";
-import { parseStatusHeader } from "./tools/result-helpers.js";
+import { toolMessageStatus } from "./tool-execution/tool-message-carry.js";
 
 import { createLogger } from "./logger.js";
 const logger = createLogger("server-utils");
@@ -76,7 +76,7 @@ export function extractAgentOutput(messages: Array<{ role: string; content?: unk
     }
     if (msg.role === "tool") {
       const text = extractText(msg.content);
-      if (text && parseStatusHeader(text) !== "blocked" && text.length > 10) {
+      if (text && toolMessageStatus(msg) !== "blocked" && text.length > 10) {
         toolParts.push(text.length > 500 ? text.slice(0, 500) + "..." : text);
       }
     }

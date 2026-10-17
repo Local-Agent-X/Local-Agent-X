@@ -5,7 +5,7 @@
 // limit. Pre-dispatch and unknown-tool failures return BLOCK (audit still
 // runs); every other policy failure terminates the call outright.
 
-import { USER_HINTS, type ToolResult } from "../types.js";
+import { USER_HINTS, type BlockLayer, type ToolResult } from "../types.js";
 import { ariEvaluate, ariObserve, isAriActive, shouldGateInKernel, shouldObserveInKernel } from "../ari-kernel/index.js";
 import { checkSessionPolicy } from "../session/policy.js";
 import { getKernelTaintSources } from "../data-lineage/index.js";
@@ -228,7 +228,7 @@ async function runPreDispatch(ctx: ToolCallContext): Promise<PhaseOutcome> {
       ctx.policyApprovalReason = e.reason;
       return CONTINUE;
     }
-    const layerMap: Record<typeof e.stage, string> = {
+    const layerMap: Record<typeof e.stage, BlockLayer> = {
       "session-policy": "session-policy",
       "security": "security",
       "rbac": "rbac",

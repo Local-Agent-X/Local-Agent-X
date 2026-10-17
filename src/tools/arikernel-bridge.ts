@@ -199,7 +199,7 @@ function buildBridge(cfg: BridgeConfig): ToolDefinition {
           content: `${cfg.toolName} blocked: ${msg}`,
           isError: true,
           status: "blocked",
-          metadata: { arikernel: { callId: tc.id, toolClass: cfg.toolClass }, recovery: STAGE_RECOVERY.arikernel },
+          metadata: { layer: "arikernel", arikernel: { callId: tc.id, toolClass: cfg.toolClass }, recovery: STAGE_RECOVERY.arikernel },
         };
       }
     },

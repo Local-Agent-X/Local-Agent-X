@@ -36,7 +36,7 @@ function fail(e: unknown): ToolResult {
       content: e.message,
       isError: true,
       status: "blocked",
-      metadata: { recovery: "Enable \"Local Agent X\" in System Settings → Privacy & Security → Accessibility, then QUIT AND REOPEN the app (macOS only applies it on restart). Tell the user both steps — granting alone won't work until they restart." },
+      metadata: { layer: "input-driver", recovery: "Enable \"Local Agent X\" in System Settings → Privacy & Security → Accessibility, then QUIT AND REOPEN the app (macOS only applies it on restart). Tell the user both steps — granting alone won't work until they restart." },
     };
   }
   if (e instanceof InputUnsupportedError) {
@@ -44,7 +44,7 @@ function fail(e: unknown): ToolResult {
       content: e.message,
       isError: true,
       status: "blocked",
-      metadata: { recovery: "This computer cannot be driven directly. Use the browser tool for web pages and the file tools for files, and tell the user which steps they need to do by hand." },
+      metadata: { layer: "input-driver", recovery: "This computer cannot be driven directly. Use the browser tool for web pages and the file tools for files, and tell the user which steps they need to do by hand." },
     };
   }
   if (e instanceof InputAbortError) {

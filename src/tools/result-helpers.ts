@@ -1,4 +1,4 @@
-import type { ToolDefinition, ToolResult, ToolResultStatus } from "../types.js";
+import type { BlockLayer, ToolDefinition, ToolResult, ToolResultStatus } from "../types.js";
 import { withPrompt } from "./tool-prompt-builder.js";
 
 /**
@@ -23,10 +23,11 @@ export function err(content: string, metadata?: Record<string, unknown>): ToolRe
   return metadata ? { content, isError: true, status: "error", metadata } : { content, isError: true };
 }
 
-/** What a refusal carries: `recovery` is required, the next step the agent
- *  should take instead (who can change it and where, another route, or what
- *  to tell the user), so a refusal is never a dead end. */
-export type BlockedMetadata = { recovery: string } & Record<string, unknown>;
+/** What a refusal carries: `layer`, the gate that refused it (BLOCK_LAYERS),
+ *  and `recovery`, the next step the agent should take instead (who can change
+ *  it and where, another route, or what to tell the user), so a refusal is
+ *  never a dead end. */
+export type BlockedMetadata = { recovery: string; layer: BlockLayer } & Record<string, unknown>;
 
 /** Refused by policy/safety — retrying won't help. The one constructor for a
  *  blocked result (blocked-results.contract.test.ts holds every site to it). */
@@ -66,11 +67,11 @@ export function statusOf(r: ToolResult): ToolResultStatus {
 }
 
 /**
- * Parse the leading status header from a rendered tool-result string —
- * the inverse of `renderToolResultForModel`. Used by the canonical
- * ChatToolDispatcher to recover the envelope status when it only has
- * the rendered message back from `executeToolCalls`. Returns "ok" when
- * no header is present (legacy verbatim path).
+ * The status in the leading header of a rendered tool result — the inverse of
+ * `renderToolResultForModel`, for rows persisted before the tool message
+ * carried `_status` (tool-execution/tool-message-carry.ts). Live code reads
+ * the carry; nothing new parses the header. Returns "ok" when no header is
+ * present (a legacy tool's verbatim content).
  *
  * Header shape (matches renderToolResultForModel):
  *   [<status>, k=v ...]\n...
@@ -85,35 +86,25 @@ export function parseStatusHeader(rendered: string): ToolResultStatus {
 export const BLOCKED_WITHOUT_RECOVERY =
   "This was refused and named no next step. Do not retry it unchanged; tell the user what you were trying to do, and continue with the rest of the request.";
 
-/** The `Recovery:` line renderToolResultForModel wrote, or "" when there is none. */
-export function parseRecoveryLine(rendered: string): string {
-  return /^Recovery: (.*)$/m.exec(rendered)?.[1] ?? "";
-}
-
-/** An envelope rebuilt from its rendered text: the status from the header and,
- *  for a refusal, the next step from its Recovery line. */
-export function resultFromRendered(content: string): ToolResult {
-  const status = parseStatusHeader(content);
-  const isError = status !== "ok" && status !== "running";
-  return status === "blocked"
-    ? { content, isError, status, metadata: { recovery: parseRecoveryLine(content) } }
-    : { content, isError, status };
-}
-
 /** The same result with `extra` merged into its metadata. A merge only adds
  *  keys, so a refusal keeps the recovery the type requires of it. */
 export function withMetadata(result: ToolResult, extra: Record<string, unknown>): ToolResult {
   return { ...result, metadata: { ...result.metadata, ...extra } } as ToolResult;
 }
 
+/** The rendered result without its status header line — what a person reads
+ *  (the user hint, the recovery, the output), not what the model keys on. */
+export function withoutResultHeader(rendered: string): string {
+  return parseResultHeader(rendered) ? rendered.slice(rendered.indexOf("\n") + 1 || rendered.length) : rendered;
+}
+
 /**
- * Parse the whole leading header — status AND the scalar `k=v` metadata the
- * renderer put there — back out of a rendered result. The header is the one
- * envelope form every store keeps (op-messages, the session log, the model
- * text), so a consumer rebuilding a card from history reads the block's
- * layer / clearable / rule from here when no richer record was persisted.
- * Values render as JSON strings, numbers or booleans; a truncated string
- * ("...") comes back truncated. Returns null when no header is present.
+ * The whole leading header — status AND the scalar `k=v` metadata the renderer
+ * put there — parsed back out of a rendered result, for rows persisted before
+ * the tool message carried its block record (`_block`): the session projection
+ * rebuilds a legacy block's layer / clearable / rule from here. Values render
+ * as JSON strings, numbers or booleans; a truncated string ("...") comes back
+ * truncated. Returns null when no header is present.
  */
 export function parseResultHeader(rendered: string): { status: ToolResultStatus; meta: Record<string, string | number | boolean> } | null {
   if (typeof rendered !== "string") return null;

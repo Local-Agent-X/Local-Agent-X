@@ -52,8 +52,8 @@
 //     on every turn.
 
 import type { CommitTurnMessage } from "../checkpoint.js";
-import { parseStatusHeader } from "../../tools/result-helpers.js";
-import { extractToolResultText } from "./content-extract.js";
+import { withoutResultHeader } from "../../tools/result-helpers.js";
+import { extractToolResultText, toolResultStatus } from "./content-extract.js";
 import { isMutationTool } from "../../tool-mutation-check.js";
 import { isLedgerTool } from "../../committing-tool-check.js";
 import { MEMORY_WRITE_TOOLS } from "./silent-tool-check.js";
@@ -169,7 +169,7 @@ export function collectToolFailures(
   let hadTerminatingMutation = false;
   for (let i = 0; i < toolMessages.length; i++) {
     const text = extractToolResultText(toolMessages[i].content);
-    const status = parseStatusHeader(text);
+    const status = toolResultStatus(toolMessages[i].content);
     // HAZARD (pre-existing, cost raised here). This pairs toolMessages[i] with
     // toolSummary[i] BY INDEX even though both rows carry a `toolCallId` that
     // would pair them exactly. Any path that filters, reorders, or drops from
@@ -192,10 +192,11 @@ export function collectToolFailures(
       }
       continue;
     }
-    if (status === "running") continue;
+    // A cancelled call neither succeeded nor failed: the user stopped it.
+    if (status === "cancelled") continue;
     // Strip the rendered status header + collapse multi-line content so the
     // nudge stays short; full failure is still in the tool_result row.
-    const firstLine = text.replace(/^\[[^\]]*\]\n?/, "").split("\n")[0].slice(0, 200);
+    const firstLine = withoutResultHeader(text).split("\n")[0].slice(0, 200);
     failures.push(status === "declined"
       ? { tool: toolName, reason: firstLine, declined: true }
       : { tool: toolName, reason: firstLine });

@@ -286,8 +286,8 @@ describe("dedup hit emits the tool result exactly once (TD-4)", () => {
 
 // TD-7: dispatchSingleToolCall hardcoded { isError: false, status: "ok" },
 // so blocked/errored calls reported silent success to adopters of the
-// unified entry. It must recover the real status from the rendered header
-// (parseStatusHeader), like the canonical dispatcher does.
+// unified entry. It must report the status the tool message carries
+// (tool-message-carry.ts), like the canonical dispatcher does.
 describe("dispatchSingleToolCall reports the real envelope status (TD-7)", () => {
   beforeAll(() => setAriRequired(false));
   afterAll(() => setAriRequired(true));
@@ -306,7 +306,7 @@ describe("dispatchSingleToolCall reports the real envelope status (TD-7)", () =>
 
   it("a blocked tool result surfaces as status 'blocked' / isError true", async () => {
     const toolMap = new Map<string, ToolDefinition>([
-      ["deny_stub", resultTool("deny_stub", { content: "denied by gate", isError: true, status: "blocked", metadata: { recovery: "Tell the user." } })],
+      ["deny_stub", resultTool("deny_stub", { content: "denied by gate", isError: true, status: "blocked", metadata: { layer: "security", recovery: "Tell the user." } })],
     ]);
     const r = await dispatchSingleToolCall(
       { id: "x1", name: "deny_stub", args: {} },
@@ -316,9 +316,9 @@ describe("dispatchSingleToolCall reports the real envelope status (TD-7)", () =>
     expect(r.isError).toBe(true);
   });
 
-  // Seam: a declined envelope rendered by renderToolResultForModel, parsed
-  // back at the dispatch boundary (parseStatusHeader) — must land as
-  // error-not-ok while keeping its distinct 'declined' status.
+  // Seam: a declined envelope rendered by renderToolResultForModel and carried
+  // on the message — must land as error-not-ok while keeping its distinct
+  // 'declined' status.
   it("a declined tool result surfaces as status 'declined' / isError true", async () => {
     const toolMap = new Map<string, ToolDefinition>([
       ["decline_stub", resultTool("decline_stub", { content: "DECLINED by user: decline_stub. Do not retry the same call — adjust your approach or ask the user.", isError: true, status: "declined" })],

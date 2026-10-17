@@ -12,7 +12,7 @@ import { join } from "node:path";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import { enforcePolicyPhase } from "./enforce-policy.js";
 import { outboundIsTaintFree } from "./taint-scope.js";
-import { blockRecordOf } from "./block-record.js";
+import { blockRecordOf } from "./tool-message-carry.js";
 import { startAriKernel, stopAriKernel } from "../ari-kernel/lifecycle.js";
 import { recordSensitiveRead, clearSessionTaint } from "../data-lineage/index.js";
 import type { ToolCallContext } from "./context.js";

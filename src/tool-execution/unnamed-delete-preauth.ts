@@ -13,7 +13,7 @@ import type { ServerEvent, ToolDefinition } from "../types.js";
 import { decisionDenies, decisionRequiresPrompt, getApprovalManager, getRiskDecision } from "../approval-manager.js";
 import { hasExternalIngestion } from "../data-lineage/external.js";
 import { readOpMessages } from "../canonical-loop/index.js";
-import { parseStatusHeader } from "../tools/result-helpers.js";
+import { toolMessageStatus } from "./tool-message-carry.js";
 import { resolveAgentPath } from "../workspace/paths.js";
 import {
   GATED_DELETE_TOOL,
@@ -129,7 +129,7 @@ export function announceNoticedDeletes(
   if (!onEvent || noticed.length === 0) return;
   const deleted = noticed.filter((n) => {
     const row = results.find((r) => r.role === "tool" && r.tool_call_id === n.id);
-    return !!row && typeof row.content === "string" && parseStatusHeader(row.content) === "ok";
+    return !!row && toolMessageStatus(row) === "ok";
   });
   if (deleted.length === 0) return;
   onEvent({

@@ -34,6 +34,38 @@ describe("opMessageRowToChatParam — user images", () => {
   });
 });
 
+// The dispatch status and the block record the turn loop wrote on the row
+// become the session message's carry, so a reloaded chat reads the status and
+// rebuilds the block notice without parsing the rendered text.
+describe("opMessageRowToChatParam — tool results carry their envelope", () => {
+  const toolRow = (content: unknown): OpMessageRow =>
+    ({ messageId: "tm-x", opId: "op-x", turnIdx: 0, seqInTurn: 1, role: "tool_result", content, createdAt: "" }) as OpMessageRow;
+  type Carried = { role: string; content: string; _status?: string; _block?: { layer: string } };
+
+  it("the status rides as _status", () => {
+    const param = opMessageRowToChatParam(toolRow({ toolCallId: "t1", result: "[ok]\ndone", status: "ok" })) as Carried;
+    expect(param).toMatchObject({ role: "tool", content: "[ok]\ndone", _status: "ok" });
+  });
+
+  it("a refusal carries its block record beside its status", () => {
+    const block = { layer: "arikernel", reason: "r", notice: "kernel-notice", scope: "operation" };
+    const param = opMessageRowToChatParam(toolRow({ toolCallId: "t1", result: "[blocked]\nrefused", status: "blocked", block })) as Carried;
+    expect(param._status).toBe("blocked");
+    expect(param._block).toEqual(block);
+  });
+
+  it("a cancelled row carries no status: that is op bookkeeping, not an envelope", () => {
+    const param = opMessageRowToChatParam(toolRow({ toolCallId: "t1", result: "stopped", status: "cancelled" })) as Carried;
+    expect(param._status).toBeUndefined();
+  });
+
+  it("a row re-seeded from history with no status carries none, so readers see its header", () => {
+    const param = opMessageRowToChatParam(toolRow({ toolCallId: "t1", text: "[error]\nold" })) as Carried;
+    expect(param.content).toBe("[error]\nold");
+    expect(param._status).toBeUndefined();
+  });
+});
+
 describe("foldSystemRowsIntoPrompt — compaction/truncation digests reach the model", () => {
   const base = "BASE SYSTEM PROMPT";
 

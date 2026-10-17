@@ -51,11 +51,10 @@ function toolFamily(toolName: string): string {
  *  precondition is still the same failure. A shell call an unattended run
  *  could not run — parked in the user's inbox (`block.deferredTo`) or refused
  *  by the sandbox gate — is one failure whatever the command or the gate's
- *  wording: read off the block record (or the envelope header's layer when a
- *  view carries no record), never the refusal sentence. */
+ *  wording: read off the block record, never the refusal sentence. */
 function failureSig(tr: CanonicalToolResultView): string {
   const family = toolFamily(tr.toolName);
-  if (family === "shell" && (tr.block?.deferredTo !== undefined || tr.block?.layer === "sandbox" || /\[blocked, (?:[^\]]*, )?layer=["']?sandbox/.test(tr.content))) {
+  if (family === "shell" && (tr.block?.deferredTo !== undefined || tr.block?.layer === "sandbox")) {
     return "shell::unattended-sandbox";
   }
   return `${family}::${tr.content.replace(/\s+/g, " ").trim().slice(0, 200)}`;

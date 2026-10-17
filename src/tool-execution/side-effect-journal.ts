@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
 import { opDir } from "../ops/event-log.js";
 import type { ToolEffect, ToolEffectClass, ToolResult, ToolResultStatus } from "../types.js";
-import type { BlockedMetadata } from "../tools/result-helpers.js";
+import { blocked } from "../tools/result-helpers.js";
 import { withoutInternalArgs } from "./internal-args.js";
 
 export type SideEffectJournalPhase = "prepared" | "effect_returned" | "completed";
@@ -195,13 +195,8 @@ function claimOwnerAlive(claim: ExecutionClaim): boolean {
   catch (error) { return (error as NodeJS.ErrnoException).code !== "ESRCH"; }
 }
 
-function blockedResult(message: string, metadata: BlockedMetadata): ToolResult {
-  return {
-    content: message,
-    isError: true,
-    status: "blocked",
-    metadata: { layer: "side-effect-journal", reconciliation_required: true, ...metadata },
-  };
+function blockedResult(message: string, metadata: { recovery: string } & Record<string, unknown>): ToolResult {
+  return blocked(message, { layer: "side-effect-journal", reconciliation_required: true, ...metadata });
 }
 
 function ambiguousResult(entry: JournalEntry): ToolResult {

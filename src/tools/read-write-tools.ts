@@ -85,6 +85,7 @@ export const readTool: ToolDefinition = {
       // must not taint the session). A mid-read failure stays a plain error.
       if (e instanceof FileAccessDeniedError) {
         return blocked(`Refused to read ${filePath}: ${e.message}`, {
+          layer: "security",
           path: filePath,
           recovery: "This path is credential/secret material and may not be read. If a credential is needed, use a {{SECRET_NAME}} placeholder or ask the user.",
         });

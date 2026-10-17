@@ -161,6 +161,27 @@ describe("a reloaded chat rebuilds the notice from the persisted row", () => {
     expect(notice.querySelector("button")!.textContent).toContain("Declassify & retry");
   });
 
+  // The control show_unblock_control re-surfaces is an ok result; its record
+  // rides the row like a block's, so a reload shows the button again instead
+  // of a bare "ok" card (coupling 16, runtime-coupling audit 2026-10-15).
+  it("the re-surfaced control comes back from its row's record, status ok", () => {
+    const tools = toolsOf(sess([
+      user("show me the unblock button again"),
+      asstCall("t2", "show_unblock_control", {}),
+      {
+        role: "tool", tool_call_id: "t2", content: "[ok, layer=\"quarantine-notice\", clearable=\"declassify\", scope=\"session-memory\"]\nThis session is quarantined...",
+        _status: "ok",
+        _block: { layer: "quarantine-notice", reason: "This session is quarantined...", clearable: "declassify", scope: "session-memory", notice: "declassify-card" },
+      } as never,
+    ]));
+    const end = tools.find((t) => t.type === "end")!;
+    expect(end.status).toBe("ok");
+    expect(end.metadata).toEqual({ layer: "quarantine-notice", clearable: "declassify", scope: "session-memory" });
+    const notice = render(tools).querySelector(".kernel-block-notice")!;
+    expect(notice).not.toBeNull();
+    expect(notice.querySelector("button")!.textContent).toContain("Declassify & retry");
+  });
+
   it("from a row carrying the block record, the rule and scope come back too", () => {
     const tools = toolsOf(sess([
       user("continue"),

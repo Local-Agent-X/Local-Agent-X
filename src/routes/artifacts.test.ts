@@ -50,6 +50,30 @@ describe("extractSessionArtifacts", () => {
     ]);
   });
 
+  // The paths come from the tools' own rows, so every file sink surfaces: an
+  // office family's file_path on its action, edit_image's image, a delete; a
+  // glob's root is a directory, not an artifact.
+  it("surfaces every path a tool's row declares, under whatever argument name", () => {
+    const items = extractSessionArtifacts([
+      {
+        role: "assistant",
+        content: "",
+        tool_calls: [
+          { function: { name: "presentation", arguments: JSON.stringify({ action: "create", file_path: "workspace/deck.pptx" }) } },
+          { function: { name: "edit_image", arguments: JSON.stringify({ image: "workspace/logo.png", prompt: "bigger" }) } },
+          { function: { name: "delete_file", arguments: JSON.stringify({ path: "workspace/old.txt" }) } },
+          { function: { name: "glob", arguments: JSON.stringify({ path: "workspace/apps", pattern: "**/*.ts" }) } },
+          { function: { name: "web_search", arguments: JSON.stringify({ query: "path syntax" }) } },
+        ],
+      },
+    ], meta);
+    expect(items.map(i => [i.type, i.name])).toEqual([
+      ["file", "deck.pptx"],
+      ["image", "logo.png"],
+      ["file", "old.txt"],
+    ]);
+  });
+
   it("harvests /uploads image parts from array-form user content", () => {
     const items = extractSessionArtifacts([
       {

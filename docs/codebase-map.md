@@ -12,7 +12,7 @@ statically or by `import()` (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 67 top-level dirs · 67 live · 0 with no live importer · 1776 non-test source files · 0 god files (>400 LOC).
+**Totals:** 67 top-level dirs · 67 live · 0 with no live importer · 1777 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -20,16 +20,16 @@ over 400 LOC (the source-hygiene ceiling).
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 158 | 29 | XL |  |
 | `src/security/` | 121 | 46 | XL |  |
-| `src/tools/` | 104 | 210 | XL |  |
+| `src/tools/` | 107 | 211 | XL |  |
 | `src/canonical-loop/` | 80 | 258 | XL |  |
 | `src/workspace/` | 71 | 3 | M |  |
 | `src/providers/` | 67 | 26 | XL |  |
 | `src/memory/` | 51 | 139 | XL |  |
 | `src/browser/` | 46 | 86 | XL |  |
 | `src/data-lineage/` | 42 | 11 | L |  |
+| `src/tool-policy/` | 40 | 20 | L |  |
 | `src/util/` | 39 | 3 | S |  |
 | `src/local-runtimes/` | 38 | 25 | XL |  |
-| `src/tool-policy/` | 38 | 20 | L |  |
 | `src/auth/` | 37 | 11 | L |  |
 | `src/threat/` | 37 | 13 | L |  |
 | `src/session/` | 36 | 7 | L |  |

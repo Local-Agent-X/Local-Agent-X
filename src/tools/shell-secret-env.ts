@@ -17,14 +17,16 @@
  */
 import { getSecretsStoreSingleton } from "../secrets.js";
 import { registerRedactedSecretValue, vaultSecretSource } from "../security/secrets/known-secrets.js";
+import { TOOL_POLICIES } from "../tool-policy/tool-policies.js";
 
 /** Environment variable name → vault secret name. */
 export type SecretEnv = Record<string, string>;
 
-/** Every tool that takes secret_env. Its approval card (secretEnvGate) and the
- *  outbound-block recovery that points at it key on this one set; a tool that
- *  declares the parameter without being listed fails shell-secret-env.test.ts. */
-export const SECRET_ENV_TOOLS: ReadonlySet<string> = new Set(["bash", "process_start", "process_restart"]);
+/** Every tool that takes secret_env, as its row declares (`secretEnv`). Its
+ *  approval card (secretEnvGate) and the outbound-block recovery that points at
+ *  it key on this one set; a tool whose schema declares the parameter without
+ *  the row fact fails tool-registration-completeness.test.ts. */
+export const SECRET_ENV_TOOLS: ReadonlySet<string> = new Set(Object.keys(TOOL_POLICIES).filter((name) => TOOL_POLICIES[name].secretEnv === true));
 
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const SECRET_NAME = /^[A-Z][A-Z0-9_]*$/;

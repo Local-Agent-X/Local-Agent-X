@@ -28,6 +28,7 @@ import type { AgentDefinition } from "../../agents/types.js";
 import { EventBus } from "../../event-bus.js";
 import { Handler } from "../../agency/handler.js";
 import { loadSkillBody } from "../skill-bodies.js";
+import { CODING_KIT } from "../../tools/tool-kits.js";
 
 export type ChunkAgentRole = "chunk-runner-trunk" | "chunk-runner-leaf" | "scenario-fix";
 
@@ -150,7 +151,7 @@ function getDefinition(role: ChunkAgentRole): AgentDefinition {
           "Chunk runner (trunk/mixed)",
     role: "implementer",
     systemPrompt,
-    allowedTools: ["read", "write", "edit", "glob", "grep", "bash"],
+    allowedTools: [...CODING_KIT],
     description:
       role === "scenario-fix"
         ? "Fixes phase-gate scenario failures without violating spec/constitution."

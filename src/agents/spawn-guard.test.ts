@@ -43,6 +43,15 @@ describe("canEditArtifacts", () => {
   it("bash alone qualifies (discovery + mutation)", () => {
     expect(canEditArtifacts(["bash"])).toBe(true);
   });
+
+  it("every in-place editor, search root and office family qualifies, read off the rows", () => {
+    for (const tool of ["edit", "edit_lines", "multi_edit", "bulk_replace", "grep", "glob", "structural_search", "process_start", "document", "spreadsheet", "presentation", "build_app"]) {
+      expect(canEditArtifacts(["read", "write", tool]), tool).toBe(true);
+    }
+    for (const tool of ["write", "pdf", "create_chart", "web_fetch", "memory_save", "send_file"]) {
+      expect(canEditArtifacts(["read", "write", tool]), tool).toBe(false);
+    }
+  });
 });
 
 describe("spawnMismatchMessage", () => {

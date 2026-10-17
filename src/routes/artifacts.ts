@@ -12,6 +12,7 @@
 import type { RouteHandler } from "../server-context.js";
 import { jsonResponse } from "../server-utils.js";
 import { isSyntheticSessionId } from "../memory/synthetic-sessions.js";
+import { declaredPaths, pathSpecsForCall } from "../tool-registry.js";
 
 export interface ArtifactItem {
   /** image | video | file | link */
@@ -29,11 +30,11 @@ export interface ArtifactItem {
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp|svg|ico|avif)$/i;
 const VIDEO_EXT = /\.(mp4|webm|mov|avi|mkv|m4v)$/i;
 
-/** Tools whose args carry a file path worth surfacing. */
-const PATH_TOOLS = new Set([
-  "read", "write", "edit", "edit_lines", "multi_edit", "delete_file",
-  "send_image", "send_video", "view_image", "edit_image",
-]);
+/** The files a call opened, from the paths its row declares; a search root
+ *  (glob, grep) is a directory, not an artifact. */
+function callFilePaths(name: string, args: Record<string, unknown>): string[] {
+  return pathSpecsForCall(name, args).filter((spec) => !spec.searchRoot).flatMap((spec) => declaredPaths(args, spec) ?? []);
+}
 
 /** Served-media breadcrumbs embedded in tool-result text ("View: /images/x.png"). */
 const SERVED_MEDIA_RE = /\/(?:images|videos|uploads)\/[A-Za-z0-9._%-]+/g;
@@ -97,9 +98,7 @@ export function extractSessionArtifacts(
       const name = tc.function?.name || "";
       let args: Record<string, unknown> = {};
       try { args = JSON.parse(tc.function?.arguments || "{}"); } catch { /* malformed args — skip */ }
-      if (PATH_TOOLS.has(name) && typeof args.path === "string" && args.path) {
-        add(classifyPath(args.path), baseName(args.path), args.path);
-      }
+      for (const p of callFilePaths(name, args)) add(classifyPath(p), baseName(p), p);
       if (name === "web_fetch" && typeof args.url === "string" && args.url.startsWith("http")) {
         add("link", args.url.replace(/^https?:\/\//, ""), trimUrl(args.url));
       }

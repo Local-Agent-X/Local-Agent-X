@@ -12,6 +12,7 @@ import { createLogger } from "../../logger.js";
 import { WORKER_SYSTEM_PROMPT_TEMPLATE } from "./prompts.js";
 import { renderPromptSection } from "../../context/system-prompt-builder.js";
 import { OP_TYPE } from "../../ops/op-types.js";
+import { BUILDER_KIT } from "../../tools/tool-kits.js";
 
 const logger = createLogger("server.background-jobs.workers");
 
@@ -35,9 +36,7 @@ export function registerWorkerRunnerForServer(deps: WorkerRunnerDeps): void {
       const { provider, apiKey, model } = await resolveProvider(config, secretsStore, dataDir);
 
       const workerPrompt = WORKER_SYSTEM_PROMPT_TEMPLATE(workerSession.workingDir);
-      const workerTools = allAgentTools.filter(t =>
-        ["read", "write", "edit", "bash", "glob", "grep", "web_fetch", "web_search", "view_image"].includes(t.name)
-      );
+      const workerTools = allAgentTools.filter(t => BUILDER_KIT.includes(t.name));
       const session = getOrCreateSession(sessionId);
       const hasExistingApp = existsSync(join(workerSession.workingDir, "index.html"));
       const history = hasExistingApp ? session.messages.slice(-10) : [];

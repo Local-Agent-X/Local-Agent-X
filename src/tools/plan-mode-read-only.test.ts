@@ -77,7 +77,9 @@ describe("the other row-declared facts the gates read", () => {
     expect(createTargetPath("spreadsheet", { action: "write", file_path: "s.xlsx" })).toMatch(/s\.xlsx$/);
   });
 
-  it("calendar_create_event is a local write the kernel never sees", () => {
-    expect(TOOLS.calendar_create_event.kernel).toBe("internal");
+  it("the calendar tools read and write calendar.json: local, never the kernel's http class", () => {
+    for (const name of ["calendar_check_availability", "calendar_list_events", "calendar_create_event"]) {
+      expect(TOOLS[name].kernel, name).toBe("internal");
+    }
   });
 });

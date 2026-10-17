@@ -91,17 +91,19 @@ const TOOL_LISTS: Array<{ file: string; name: string; shape: "literals" | "keys"
   { file: "src/tools/tool-search.ts", name: "ALWAYS_ON_TOOLS", shape: "literals" },
   { file: "src/tools/tool-companions.ts", name: "TOOL_COMPANIONS", shape: "literals" },
   { file: "src/server/voice-prompt.ts", name: "VOICE_FAST_TOOLS", shape: "literals" },
-  { file: "src/local-only-policy.ts", name: "REMOTE_ONLY_TOOLS", shape: "literals" },
+  // What strict local-only mode cannot read off a row: the reach the row
+  // cannot name, in both directions.
+  { file: "src/local-only-policy.ts", name: "INDIRECT_NETWORK", shape: "keys" },
+  { file: "src/local-only-policy.ts", name: "LOCAL_DEVICE", shape: "keys" },
   { file: "src/committing-tool-check.ts", name: "ARG_AWARE_TOOLS", shape: "literals" },
   { file: "src/tool-execution/dedup-cache.ts", name: "DEDUP_SKIP", shape: "literals" },
   { file: "src/tool-execution/heap-guard.ts", name: "HEAP_GUARD_EXEMPT_TOOLS", shape: "literals" },
-  { file: "src/agents/spawn-guard.ts", name: "EDIT_CAPABLE_TOOLS", shape: "literals" },
   { file: "src/ops/tools/delegated-toolset.ts", name: "DENIED_TOOL_NAMES", shape: "literals" },
   { file: "src/routes/mcp.ts", name: "MCP_HIDDEN_TOOLS", shape: "literals" },
   { file: "src/routes/chat/run-chat-turn/prepare-and-route.ts", name: "IDE_BLOCKED_TOOLS", shape: "literals" },
-  { file: "src/routes/artifacts.ts", name: "PATH_TOOLS", shape: "literals" },
   { file: "src/canonical-loop/step-effort.ts", name: "MECHANICAL_TOOLS", shape: "literals" },
-  { file: "src/server/background-jobs/self-edit-surgeon-runner.ts", name: "SURGEON_TOOLS", shape: "literals" },
+  { file: "src/tools/tool-kits.ts", name: "CODING_KIT", shape: "literals" },
+  { file: "src/tools/tool-kits.ts", name: "BUILDER_KIT", shape: "literals" },
   { file: "src/agent-guards/loop-discovery.ts", name: "SPIRALABLE_TOOLS", shape: "literals" },
   // The user-facing capability blurbs; a blurb for a removed tool is dead weight.
   { file: "scripts/gen-agent-capabilities.ts", name: "BLURB", shape: "keys" },

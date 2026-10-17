@@ -14,7 +14,7 @@ export const TOOL_POLICIES_CORE: Record<string, ToolPolicyRow> = {
     // the harness backstop only abandons the promise. At an equal 120 s the
     // backstop won the race, the command kept running, and the model was told
     // the harness had failed (2026-09-17).
-    kernel: "shell", ariAction: "exec", risk: "shell", capabilities: ["sensitive-read", "shell"], timeoutMs: 130_000, shellCommand: { arg: "command", waitsForExit: true }, output: "command",
+    kernel: "shell", ariAction: "exec", risk: "shell", capabilities: ["sensitive-read", "shell"], timeoutMs: 130_000, shellCommand: { arg: "command", waitsForExit: true }, secretEnv: true, output: "command",
     rateLimit: { maxCalls: 30, windowMs: 60_000, action: "block" },
     // No `rm -rf` deny here: the irreversible-op floor (tool-execution) cards
     // every recursive delete for the user's approval. A hard deny above that
@@ -28,10 +28,10 @@ export const TOOL_POLICIES_CORE: Record<string, ToolPolicyRow> = {
       { id: "allow-bash-limited", decision: "allow", reason: "Shell allowed (rate limited, command-checked)", priority: 40, constraints: { maxCallsPerSession: 30 } },
     ],
   },
-  process_start:    { kernel: "shell", ariAction: "exec",    risk: "shell", capabilities: ["egress", "shell"], liveState: "poll", shellCommand: { arg: "command" }, output: "command" },
+  process_start:    { kernel: "shell", ariAction: "exec",    risk: "shell", capabilities: ["egress", "shell"], liveState: "poll", shellCommand: { arg: "command" }, secretEnv: true, output: "command" },
   process_status:   { kernel: "shell", ariAction: "exec",    risk: "safe", capabilities: [], liveState: "poll", output: "command" },
   process_kill:     { kernel: "shell", ariAction: "exec",    risk: "destructive", capabilities: [], liveState: "poll", undo: { pairedWith: "process_start" } },
-  process_restart:  { kernel: "shell", ariAction: "exec",    risk: "destructive", capabilities: ["egress", "shell"], liveState: "poll", shellCommand: { arg: "command" }, output: "command", undo: { pairedWith: "process_start" } },
+  process_restart:  { kernel: "shell", ariAction: "exec",    risk: "destructive", capabilities: ["egress", "shell"], liveState: "poll", shellCommand: { arg: "command" }, secretEnv: true, output: "command", undo: { pairedWith: "process_start" } },
   process_list:     { kernel: "shell", ariAction: "exec",    risk: "safe", capabilities: [], liveState: "poll", output: "command" },
 
   // ── Raw filesystem ──

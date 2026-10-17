@@ -161,13 +161,13 @@ describe("every tool whose defining file reaches the network is an off-box sink"
 });
 
 // The approval card for a vault secret handed to a process (secretEnvGate) and
-// the block recovery that points at secret_env key on SECRET_ENV_TOOLS. A tool
-// that declares the parameter without being listed would hand over the secret
-// with no card.
-describe("every tool that takes secret_env is in SECRET_ENV_TOOLS", () => {
-  it("declares it exactly when listed", () => {
+// the block recovery that points at secret_env key on SECRET_ENV_TOOLS, which
+// the rows' `secretEnv` fact derives. A tool whose schema takes the parameter
+// without the row fact would hand over the secret with no card.
+describe("every tool that takes secret_env says so on its row", () => {
+  it("the schema declares it exactly when the row does", () => {
     const declaring = names.filter((name) => "secret_env" in propsOf(tools.get(name)));
-    expect(declaring, "add the tool to SECRET_ENV_TOOLS in src/tools/shell-secret-env.ts").toEqual([...SECRET_ENV_TOOLS].sort());
+    expect(declaring, "declare `secretEnv: true` on the tool's policy row").toEqual([...SECRET_ENV_TOOLS].sort());
   });
 });
 

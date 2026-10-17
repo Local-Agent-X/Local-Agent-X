@@ -22,6 +22,7 @@ import type { ToolPolicy } from "../../tool-policy/index.js";
 import { createLogger } from "../../logger.js";
 import { renderPromptSection } from "../../context/system-prompt-builder.js";
 import { OP_TYPE } from "../../ops/op-types.js";
+import { CODING_KIT } from "../../tools/tool-kits.js";
 
 const logger = createLogger("server.background-jobs.self-edit-surgeon");
 
@@ -32,8 +33,6 @@ export interface SelfEditSurgeonRunnerDeps {
   toolPolicy: ToolPolicy;
   allAgentTools: ToolDefinition[];
 }
-
-const SURGEON_TOOLS = ["read", "write", "edit", "bash", "glob", "grep"];
 
 function surgeonPersona(worktreePath: string): string {
   return [
@@ -59,7 +58,7 @@ export function registerSelfEditSurgeonForServer(deps: SelfEditSurgeonRunnerDeps
       const sessionId = `selfedit-surgeon-${(worktreePath.split(/[\\/]/).pop() || "wt")}`;
       const security = new SecurityLayer(worktreePath, loadFileAccessModeAtLeast("common"));
       security.addAllowedPath(worktreePath, sessionId);
-      const tools = allAgentTools.filter(t => SURGEON_TOOLS.includes(t.name));
+      const tools = allAgentTools.filter(t => CODING_KIT.includes(t.name));
       const systemPrompt = surgeonPersona(worktreePath);
       const result = await runAgentViaCanonical(message, [], {
         apiKey, model,

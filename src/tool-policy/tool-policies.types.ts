@@ -99,7 +99,8 @@ export type OutputKind = "command" | "http-body" | "file-content" | "mailbox";
  *                    `message`: delivered as a message or file over a channel
  *   service        — a fixed third-party service
  *   browser-page   — the page the session's browser is on, or the sites a
- *                    navigation names (live state)
+ *                    navigation names (live state); `arg` names the URL a
+ *                    navigation opens, when the call carries one
  *   foreground-app — the desktop app with the foreground (live state)
  *   unknown        — somewhere the check cannot name, described by `label`
  * A spec with `forActions` applies to those actions only, in place of the
@@ -111,7 +112,7 @@ export type DestinationSpec = (
   | { to: "chat"; app: "Telegram" | "WhatsApp"; arg: string }
   | { to: "user"; message?: true }
   | { to: "service"; name: string }
-  | { to: "browser-page" }
+  | { to: "browser-page"; arg?: string }
   | { to: "foreground-app" }
   | { to: "unknown"; label: string }
 ) & { forActions?: readonly string[] };
@@ -195,6 +196,10 @@ interface ToolPolicyRowFacts {
    *  what the command DID (a delete really happened, tier-0 auto-allow) needs
    *  waitsForExit. */
   shellCommand?: { arg: string; waitsForExit?: true };
+  /** The tool takes `secret_env` (vault values handed to its process as
+   *  environment variables, tools/shell-secret-env.ts): the `use_secret` card
+   *  and the outbound-secret recovery cover exactly these tools. */
+  secretEnv?: true;
   /** What the result carries, when masking or taint must know (OutputKind). */
   output?: OutputKind;
   /** A successful result puts text authored off this computer in front of the
@@ -240,6 +245,7 @@ export interface GlobPolicyEntry {
   risk?: undefined;
   capabilities?: undefined;
   shellCommand?: undefined;
+  secretEnv?: undefined;
   output?: undefined;
   externalContent?: undefined;
   destination?: undefined;

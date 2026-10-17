@@ -8,7 +8,7 @@
 - Never call a tool's `execute` from outside this module: the gates in `pre-dispatch.ts` and `enforce-policy.ts` are what make policy, Ari, approval and RBAC apply.
 - Gate order in `enforce-policy.ts` (`securityAndValidationGates`) is load-bearing: name resolution runs before the kernel, so an unknown name reads as "not a tool", not as a kernel fault.
 - A kernel-gated tool's kernel action is its row's `ariAction`, which the row type requires: one that fell through to `exec` was rejected by the kernel schema — a hard block under `ariRequired`.
-- Model-supplied `_`-prefixed args are dropped (`internal-args.ts`); only `SESSION_SCOPED_TOOLS` get the trusted `_sessionId` (every tool with policy `pathArgs` is in it automatically), only `OPERATION_SCOPED_TOOLS` get `_operationId`.
+- Model-supplied `_`-prefixed args are dropped (`internal-args.ts`); only `SESSION_SCOPED_TOOLS` get the trusted `_sessionId` (every tool with policy `pathArgs` is in it automatically), only `OPERATION_SCOPED_TOOLS` get `_operationId`; every call gets `_onEvent` and `_toolCallId`. A tool reads a stamp only through its accessor in `internal-args.ts` (`sessionIdOf`, `onEventOf`, `cwdOf`, …), never `args._x`, and only the dispatch pipeline writes one (`internal-args.test.ts` scans both). The stamps are never part of a call's identity: the side-effect journal fingerprints, the kernel bridge forwards and the approval card shows `withoutInternalArgs(args)`.
 - A tool path argument is resolved with the call's session everywhere it is resolved: the file-access gate (`ctx.sessionId`), the tool (`sessionIdOf(args)`), and every check here about the same file (freshness, read-dedup, task-artifact pre-stat, the delete gates). Otherwise a work-rooted session gates `<workRoot>/x` and opens `<workspace>/x`. Guards: `agent-path-session.test.ts` (source scan), `test/work-root-gate-sink-parity.test.ts`.
 - Every tool result the model reads is screened once, in the audit phase (`injection-exposure.ts`), never in a tool or a provider: the content is never edited, a note leads the rendered text, and harness text (the wrapper's frame, `read`'s warning) is never scanned.
 - An unattended run never pauses for a person. A gate that would need one parks the call in the user's inbox (`deferred-call.ts` `parkOrRefuse`) and the run goes on: the result stays status `blocked`, `metadata.layer` `"approval"`, marked by `metadata.deferredTo` (the item id, carried on the block record), with the gate's own reason. Never a new status, and never a loop guard reading the wording.
@@ -18,7 +18,8 @@
 | If you change | Also check | Guard |
 |---|---|---|
 | a row's `ariAction` (read by `ari-action-map.ts`) | `HOST_CAPABILITY_MANIFEST` in `src/ari-kernel/manifest.ts` | `ari-action-map.test.ts` |
-| `SESSION_SCOPED_TOOLS` (`resolve-tool.ts`) | every tool body reading `_sessionId` or calling `sessionIdOf(args)`; `TOOL_PATH_ARGS` | `session-scoped-tools.test.ts` |
+| `SESSION_SCOPED_TOOLS` (`resolve-tool.ts`) | every tool body calling `sessionIdOf(args)`; `TOOL_PATH_ARGS` | `session-scoped-tools.test.ts` |
+| a stamp's name or shape (`internal-args.ts` accessors) | the stamping sites named in `internal-args.test.ts` WRITERS (`resolve-tool.ts`, `tool-runner.ts`, `enforce-policy.ts`, `plugins.ts`, `browser-tools/gates.ts`) | `internal-args.test.ts` |
 | `OPERATION_SCOPED_TOOLS` (`resolve-tool.ts`) | every tool body reading `_operationId` | none |
 | a row's `timeoutMs` (read by `tool-timeout.ts`) | a row without one gets `DEFAULT_FALLBACK` | `tool-timeout.test.ts` |
 | a row's `liveState` (read by `stateful-tools.ts`) | the session repeat skip, the 60 s dedup cache, the threat engine's loop arms (`poll` only) | `stateful-tools.test.ts` |

@@ -14,6 +14,7 @@ import type { ToolDefinition, ToolResult } from "../types.js";
 import { readSessionActions } from "../ops/action-ledger.js";
 import { isDispatchFailure } from "../canonical-loop/public/op-facts.js";
 import { OP_TYPE } from "../ops/op-types.js";
+import { sessionIdOf } from "../tool-execution/internal-args.js";
 
 function ok(content: string): ToolResult { return { content }; }
 
@@ -35,9 +36,7 @@ export function createReadMyLogsTool(getSessionId?: () => string): ToolDefinitio
       required: [],
     },
     async execute(args: Record<string, unknown>): Promise<ToolResult> {
-      const sessionId = args._sessionId
-        ? String(args._sessionId)
-        : (getSessionId ? getSessionId() : "");
+      const sessionId = sessionIdOf(args) ?? (getSessionId ? getSessionId() : "");
       if (!sessionId) {
         return ok("No session in scope — nothing to report.");
       }

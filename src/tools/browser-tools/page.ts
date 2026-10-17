@@ -12,6 +12,7 @@ import { evaluateBlockMessage, scanEvaluateScript, sensitivePageStub } from "../
 import { wrapExternalContent } from "../../sanitize.js";
 import { ok, err, appendPostActionSnapshot, withheld } from "./shared.js";
 import { blocked } from "../result-helpers.js";
+import { downloadApprovalOf } from "../../tool-execution/internal-args.js";
 
 const EVALUATE_MUTATION =
   /\.(?:click|focus|blur|remove|dispatchEvent|setAttribute|removeAttribute|append|prepend|appendChild|removeChild|insertAdjacent\w*)\s*\(|\.set\??\.\s*call\s*\(|\.(?:value|checked|selected|innerHTML|outerHTML|textContent)\s*=|\.style(?:\.\w+|\[['"][^'"]+['"]\])?\s*=|\b(?:location|window\.location|document\.location)\s*=/;
@@ -80,7 +81,7 @@ export async function handleReleaseDownload(
 ): Promise<ToolResult> {
   const id = String(args.download_id || "");
   if (!id) return err("'download_id' is required. Use action='downloads' to list quarantined downloads.");
-  const approved = args._downloadApproval as ReturnType<BrowserBackend["getDownloadApproval"]> | undefined;
+  const approved = downloadApprovalOf<ReturnType<BrowserBackend["getDownloadApproval"]>>(args);
   if (!approved) return err("Download release is missing its digest-bound approval metadata.");
   return { content: wrapExternalContent(await manager.releaseDownload(id, approved), "browser.download.release"), metadata: { browserStatus: "download-released", downloadId: id } };
 }

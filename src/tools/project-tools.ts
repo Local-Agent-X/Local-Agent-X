@@ -22,6 +22,7 @@ import { ProjectStore, type Project } from "../agent-store/index.js";
 import { seedProjectRosters } from "../project-rosters.js";
 import { readProjectBrief, updateProjectBrief } from "../memory/project-brief.js";
 import { promotionContextFromToolArgs } from "../memory/promotion-gate.js";
+import { sessionIdOf } from "../tool-execution/internal-args.js";
 
 function ok(content: string): ToolResult { return { content }; }
 function err(content: string): ToolResult { return { content, isError: true }; }
@@ -136,7 +137,7 @@ export function createProjectTools(): ToolDefinition[] {
                   content: summary,
                   source: "model-tool:project_create",
                   target: "memory:project-brief",
-                  sessionId: String(args._sessionId || "default"),
+                  sessionId: sessionIdOf(args) ?? "default",
                 }),
               });
               briefSeeded = true;
@@ -271,7 +272,7 @@ export function createProjectTools(): ToolDefinition[] {
               content,
               source: "model-tool:project_brief_update",
               target: "memory:project-brief",
-              sessionId: String(args._sessionId || "default"),
+              sessionId: sessionIdOf(args) ?? "default",
             }),
           });
           return ok(`Updated brief for '${project.name}'.`);

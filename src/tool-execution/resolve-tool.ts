@@ -18,7 +18,7 @@ import { CAPABILITY_CLASS_MEMBERS, TOOL_PATH_ARGS } from "../tool-registry.js";
 import { LIVE_STATE_TOOLS } from "./stateful-tools.js";
 import { readOpMessages } from "../canonical-loop/index.js";
 import { READ_DEDUP_STUB_LEAD } from "./read-dedup-evidence.js";
-import { isInternalArgKey } from "./internal-args.js";
+import { cwdOf, isInternalArgKey, withoutInternalArgs } from "./internal-args.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("tool-execution.resolve");
@@ -306,31 +306,18 @@ async function injectSessionState(ctx: ToolCallContext): Promise<PhaseOutcome> {
   // project dir — the same anchor its file tools resolve against, so the
   // worker's tools agree about what "here" means. Worktree (enforce-policy)
   // and autopilot cwds win; this only fills the default.
-  if (tc.name === "bash" && sessionId && !args._cwd) {
+  if (tc.name === "bash" && sessionId && !cwdOf(args)) {
     const workRoot = sessionWorkRootOf(sessionId);
     if (workRoot) args._cwd = workRoot;
   }
 
-  // Inject onEvent for tools that need to stream events. exit_plan_mode
-  // needs it to raise the plan-approval card under enforced plan mode (plus
-  // the tool-call id so the card resolves against the right call);
-  // http_request, connector_create and email_setup raise the secret
-  // destination card (secret-destination-gate.ts) the same way.
-  if (
-    tc.name === "request_secret" ||
-    tc.name === "request_secrets" ||
-    tc.name === "browser" ||
-    tc.name === "browser_fill_from_secret" ||
-    tc.name === "http_request" ||
-    tc.name === "connector_create" ||
-    tc.name === "email_setup" ||
-    tc.name === "voice_visual" ||
-    tc.name === "build_app" ||
-    tc.name === "exit_plan_mode"
-  ) {
-    args._onEvent = ctx.onEvent;
-    args._toolCallId = tc.id;
-  }
+  // Every call gets the session's event sink and its own call id: a card
+  // (plan approval, secret destination, a sensitive page), streamed progress
+  // (bash, app_rebuild) and the antivirus warning all go out through them.
+  // Stamped by name before, so bash, app_rebuild and the email tools read an
+  // undefined sink and stayed silent (runtime-coupling audit 2026-10-15, #11).
+  args._onEvent = ctx.onEvent;
+  args._toolCallId = tc.id;
   return CONTINUE;
 }
 
@@ -381,7 +368,10 @@ export const resolvePhase: Phase = async (ctx) => {
 
   ctx.riskLevel = getRiskLevel(tc.name, ctx.args, ctx.security);
   ctx.approvalContext = buildApprovalContext(tc.name, ctx.args);
-  onEvent?.({ type: "tool_start", toolName: tc.name, toolCallId: tc.id, args: ctx.args, riskLevel: ctx.riskLevel, context: ctx.approvalContext, requiresApproval: ctx.riskLevel === "high" });
+  // The event carries the model's arguments: the server's stamps are this
+  // process's channel to the tool (a sink function among them), not plain
+  // JSON a relay or a persisted turn can carry.
+  onEvent?.({ type: "tool_start", toolName: tc.name, toolCallId: tc.id, args: withoutInternalArgs(ctx.args), riskLevel: ctx.riskLevel, context: ctx.approvalContext, requiresApproval: ctx.riskLevel === "high" });
 
   // Dry-run short-circuit. tool_start has fired so observers see the
   // chosen tool, but we never dispatch — no policy eval, no approval

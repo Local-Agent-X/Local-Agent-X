@@ -102,14 +102,16 @@ function isTurnProvider(event: Record<string, unknown>): boolean {
     && typeof event.rerouted === "boolean";
 }
 
+// `args` is exactly what the model asked for: the server's `_` stamps (its
+// session, its event sink) are the dispatcher's channel to the tool and never
+// ride an event (tool-execution/internal-args.ts).
 function isToolStart(event: Record<string, unknown>): boolean {
   if (!hasExactOwnKeys(event, ["type", "toolName", "toolCallId", "args", "riskLevel", "context", "requiresApproval"])) return false;
-  if (!isPlainRecord(event.args) || !hasExactOwnKeys(event.args, ["path", "_sessionId"])) return false;
+  if (!isPlainRecord(event.args) || !hasExactOwnKeys(event.args, ["path"])) return false;
   return event.type === "tool_start"
     && event.toolName === "read"
     && isNonemptyString(event.toolCallId)
     && event.args.path === "workspace/qualification-note.txt"
-    && isNonemptyString(event.args._sessionId)
     && event.riskLevel === "low"
     && event.context === "Read file: qualification-note.txt"
     && event.requiresApproval === false;

@@ -13,6 +13,7 @@ import { join, extname } from "node:path";
 import type { ToolResult } from "../types.js";
 import { ok, err } from "./result-helpers.js";
 import { resolveAgentPath, sessionIdOf } from "../workspace/paths.js";
+import { onProgressOf } from "../tool-execution/internal-args.js";
 
 export type OutputMode = "content" | "files_with_matches" | "count";
 
@@ -164,7 +165,7 @@ export async function fallbackSearch(args: Record<string, unknown>, limit: numbe
   // metadata.truncated is the honest signal on both paths.
   let rendering = true;
   let renderCut = false;
-  const onProgress = args._onProgress as ((msg: string) => void) | undefined;
+  const onProgress = onProgressOf(args);
 
   const rootStat = await stat(root).catch(() => null);
   const files = rootStat?.isFile() ? [root] : walkDir(root, args.type as string, args.glob as string);

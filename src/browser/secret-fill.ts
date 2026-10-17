@@ -33,6 +33,7 @@ import { registerRedactedSecretValue, vaultSecretSource } from "../security/secr
 import type { SecretElementDescriptor, SecretFillOutcome } from "./secret-ops.js";
 import { sameSite } from "./registrable-domain.js";
 import { requestSecretDestinationApproval } from "../secret-destination-gate.js";
+import { onEventOf, sessionIdOf, toolCallIdOf } from "../tool-execution/internal-args.js";
 import type { ServerEvent } from "../types.js";
 
 import { createLogger } from "../logger.js";
@@ -113,7 +114,7 @@ export function createBrowserSecretFillTool(
         return err("Provide `ref` (from a recent snapshot) or `selector` (CSS).");
       }
       const pressEnter = args.press_enter === true;
-      const sessionId = args._sessionId ? String(args._sessionId) : (getSessionId ? getSessionId() : "default");
+      const sessionId = sessionIdOf(args) ?? (getSessionId ? getSessionId() : "default");
       const { withBrowserLock } = await import("./index.js");
       // This tool reaches the page through getSecretBrowserOps, NOT the browser
       // dispatcher, so the standing emulation notice has to be applied here as
@@ -231,8 +232,8 @@ export function createBrowserSecretFillTool(
           store: secretsStore, name, destination: currentOrigin, sessionId,
           purpose: `Fill ${name} into the form on ${currentOrigin}${sameOrigin ? "" : ` (it was saved for ${secretOrigin})`}`,
           toolName: "browser_fill_from_secret",
-          toolCallId: args._toolCallId ? String(args._toolCallId) : undefined,
-          onEvent: args._onEvent as ((event: ServerEvent) => void) | undefined,
+          toolCallId: toolCallIdOf(args),
+          onEvent: onEventOf(args),
         });
         if (!asked.allowed) {
           if (asked.result.status === "declined") auditLog({ event: "fill_denied", secret: name, reason: "user_declined", origin: currentOrigin, session: sessionId });

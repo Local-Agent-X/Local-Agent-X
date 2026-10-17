@@ -32,6 +32,7 @@ import type { ToolDefinition, ToolResult } from "../types.js";
 import { blocked, err, ok } from "./result-helpers.js";
 import { getMiddlewareState, readOpTurns } from "../canonical-loop/public/op-facts.js";
 import { opCommittedSubstantiveWork } from "../committing-tool-check.js";
+import { operationIdOf } from "../tool-execution/internal-args.js";
 
 /** Asking before doing anything is how a model hands work back unstarted: "what
  *  style should the deck be?" instead of a deck in a sensible style. So the
@@ -94,7 +95,7 @@ export const askUserTool: ToolDefinition = {
         "report, not a fork. Say the long part as your normal answer and ask the short decision.",
       );
     }
-    const opId = typeof args._operationId === "string" ? args._operationId : "";
+    const opId = operationIdOf(args) ?? "";
     if (opId) {
       const asked = getMiddlewareState<{ decideFirstSent: boolean }>(opId, "ask-user-decide-first", () => ({ decideFirstSent: false }));
       if (!asked.decideFirstSent && !opCommittedSubstantiveWork(readOpTurns(opId))) {

@@ -68,6 +68,7 @@ import { handleReadConsole, handleReadNetwork, handleReadResponse } from "./perc
 import { createLogger } from "../../logger.js";
 import { runWithSensitiveReadGrant, secrecyOpenWarning, sensitivePageStub } from "../../browser/guards.js";
 import { recordSiteTokens } from "../../browser/site-provenance.js";
+import { onEventOf, sessionIdOf } from "../../tool-execution/internal-args.js";
 
 // Names the action that wedged. Without it the circuit-breaker FAIL only says
 // "an action hung" — which action is left to inference. The destructive part is
@@ -126,8 +127,8 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
     async execute(args) {
       const action = String(args.action || "");
       // Use session ID from tool executor (per-request, no global state) or fall back to getter
-      const sessionId = args._sessionId ? String(args._sessionId) : (getSessionId ? getSessionId() : "default");
-      const onEvent = (args._onEvent && typeof args._onEvent === "function") ? args._onEvent as (e: { type: string; [k: string]: unknown }) => void : undefined;
+      const sessionId = sessionIdOf(args) ?? (getSessionId ? getSessionId() : "default");
+      const onEvent = onEventOf(args) as ((e: { type: string; [k: string]: unknown }) => void) | undefined;
       return withBrowserLock(sessionId, async () => {
         const manager = getBrowserManager(sessionId);
 

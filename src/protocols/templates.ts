@@ -5,6 +5,7 @@
 import type { Protocol, ProtocolStep } from "../protocols/index.js";
 import type { ToolDefinition } from "../types.js";
 import { authorProtocol } from "./authoring.js";
+import { sessionIdOf } from "../tool-execution/internal-args.js";
 
 export interface ProtocolTemplate {
   id: string;
@@ -185,7 +186,7 @@ export function createTemplateTools(): ToolDefinition[] {
             steps: protocol.steps,
             rules: protocol.rules,
             category: template.category,
-            sessionId: typeof args._sessionId === "string" ? args._sessionId : undefined,
+            sessionId: sessionIdOf(args),
           });
           if (!result.ok) {
             return {

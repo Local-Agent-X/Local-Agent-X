@@ -21,6 +21,7 @@ import {
   createPinningDispatcher,
   BROWSER_USER_AGENT,
 } from "./web-egress.js";
+import { onEventOf, sessionIdOf, toolCallIdOf } from "../tool-execution/internal-args.js";
 
 const CREDENTIAL_HEADERS = new Set(["authorization", "proxy-authorization", "cookie", "api-key", "private-token"]);
 
@@ -116,7 +117,7 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
 
       const guard = checkOutboundRequest(
         { url, method, body: args.body, headers: args.headers },
-        vouchedFor("http_request", args, String(args._sessionId ?? "")),
+        vouchedFor("http_request", args, sessionIdOf(args) ?? ""),
       );
       if (guard) return err(guard.message, guard.meta);
 
@@ -147,7 +148,7 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
       let bodyStr = args.body ? String(args.body) : undefined;
       // Every secret bound into this request must be allowed at its destination
       // (ADR 0005) before a single placeholder is resolved.
-      const sessionId = String(args._sessionId ?? "");
+      const sessionId = sessionIdOf(args) ?? "";
       const boundNames = secrets ? referencedSecretNames([...rawHeaders.map(([, v]) => v), bodyStr ?? ""].join("\n")) : [];
       if (secrets && boundNames.length > 0) {
         const missing = boundNames.filter((name) => !secrets.has(name));
@@ -156,8 +157,8 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
         }
         const gate = await gateSecretDestinations(boundNames, {
           store: secrets, destination: url, sessionId, toolName: "http_request",
-          toolCallId: args._toolCallId ? String(args._toolCallId) : undefined,
-          onEvent: args._onEvent as ((event: ServerEvent) => void) | undefined,
+          toolCallId: toolCallIdOf(args),
+          onEvent: onEventOf(args),
           purpose: (name) => `Send ${name} to ${new URL(url).host} (${method} ${url})`,
         });
         if (!gate.allowed) return gate.result;

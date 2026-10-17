@@ -6,6 +6,7 @@
  */
 
 import type { ToolDefinition, ToolResult } from "../types.js";
+import { sessionIdOf } from "../tool-execution/internal-args.js";
 import {
   kickoffBuildPlan,
   type BuildPlanKickoff,
@@ -59,7 +60,7 @@ export function createRunBuildPlanTool(
         planPath: args.plan_path,
         startingChunk: args.starting_chunk,
         maxChunks: args.max_chunks,
-        sessionId: args._sessionId,
+        sessionId: sessionIdOf(args),
         signal,
       });
     },

@@ -76,13 +76,12 @@ export const processStartTool: ToolDefinition = {
     // startSession cannot wait for a Windows cage still proving its fence or
     // still being granted the workspace, and would refuse; this tool can, so
     // the command starts once the cage is ready.
-    const abortSignal = (args._signal as AbortSignal | undefined) ?? signal;
     try {
-      await awaitCageReady(abortSignal);
+      await awaitCageReady(signal);
     } catch (e) {
       return err(`process_start: ${(e as Error).message}`);
     }
-    if (abortSignal?.aborted) return err("process_start: aborted before the command started.");
+    if (signal?.aborted) return err("process_start: aborted before the command started.");
     const res = startSession(command, cwd, env, sessionIdOf(args), secrets);
     if ("error" in res) return err(`process_start: spawn failed: ${res.error}`);
     const { session } = res;
@@ -214,13 +213,12 @@ export const processRestartTool: ToolDefinition = {
     // Before anything is killed: a cage still proving its fence after the wait,
     // or one whose grants failed, would refuse the new start, leaving the old
     // process dead and nothing in its place.
-    const abortSignal = (args._signal as AbortSignal | undefined) ?? signal;
     try {
-      await awaitCageReady(abortSignal);
+      await awaitCageReady(signal);
     } catch (e) {
       return err(`process_restart: ${(e as Error).message} Nothing was stopped or started.`);
     }
-    if (abortSignal?.aborted) return err("process_restart: aborted; nothing was stopped or started.");
+    if (signal?.aborted) return err("process_restart: aborted; nothing was stopped or started.");
     if (process.platform === "win32" && getSandboxStatus().proofPending) {
       return err(`process_restart: ${SANDBOX_PROOF_PENDING_RETRY} Nothing was stopped or started.`);
     }

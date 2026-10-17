@@ -1,5 +1,6 @@
 import type { ToolDefinition, ToolResult, ServerEvent } from "../types.js";
 import type { SecretsStore } from "../secrets.js";
+import { onEventOf } from "../tool-execution/internal-args.js";
 
 function ok(content: string): ToolResult {
   return { content };
@@ -75,7 +76,7 @@ export function createSecretTools(
 
       // Emit SSE event to trigger the frontend modal
       // Prefer per-request _onEvent (session-scoped) over constructor onEvent (may be stale global)
-      const emit = (args._onEvent as ((event: ServerEvent) => void) | undefined) || onEvent;
+      const emit = onEventOf(args) || onEvent;
       emit?.({
         type: "secret_request",
         name,
@@ -159,7 +160,7 @@ export function createSecretTools(
         );
       }
 
-      const emit = (args._onEvent as ((event: ServerEvent) => void) | undefined) || onEvent;
+      const emit = onEventOf(args) || onEvent;
       emit?.({ type: "secrets_request", secrets: missing });
 
       const skippedNote = existing.length > 0

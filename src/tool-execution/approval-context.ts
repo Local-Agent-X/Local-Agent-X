@@ -1,6 +1,7 @@
 import type { SecurityLayer } from "../security/index.js";
 import { resolveNewTabUrls } from "../security/layer/browser-egress-eval.js";
 import { shellCommandOf } from "../tool-registry.js";
+import { withoutInternalArgs } from "./internal-args.js";
 
 export function getRiskLevel(_toolName: string, _args: Record<string, unknown>, _security?: SecurityLayer): "low" | "medium" | "high" {
   return "low";
@@ -42,6 +43,6 @@ export function buildApprovalContext(toolName: string, args: Record<string, unkn
     case "build_app":
       return `Build app: ${String(args.name || "")}`;
     default:
-      return `${toolName}: ${JSON.stringify(args).slice(0, 80)}`;
+      return `${toolName}: ${JSON.stringify(withoutInternalArgs(args)).slice(0, 80)}`;
   }
 }

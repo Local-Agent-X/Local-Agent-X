@@ -5,6 +5,7 @@
  */
 
 import type { ToolDefinition } from "../../types.js";
+import { sessionIdOf } from "../../tool-execution/internal-args.js";
 import {
   awaitCanonicalOp,
   canonicalLoopEntry,
@@ -28,7 +29,7 @@ export const opSubmitTool: ToolDefinition = {
     const task = String(args.task || "").trim();
     if (!task) return { content: "op_submit requires a 'task' description.", isError: true };
 
-    const sessionId = String(args._sessionId || "");
+    const sessionId = sessionIdOf(args) ?? "";
     let op;
     try {
       op = await buildOpFromArgs(args);

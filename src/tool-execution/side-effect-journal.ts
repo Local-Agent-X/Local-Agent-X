@@ -6,6 +6,7 @@ import Database from "better-sqlite3";
 import { opDir } from "../ops/event-log.js";
 import type { ToolEffect, ToolEffectClass, ToolResult, ToolResultStatus } from "../types.js";
 import type { BlockedMetadata } from "../tools/result-helpers.js";
+import { withoutInternalArgs } from "./internal-args.js";
 
 export type SideEffectJournalPhase = "prepared" | "effect_returned" | "completed";
 
@@ -51,17 +52,19 @@ function stable(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stable);
   if (value && typeof value === "object") {
     const out: Record<string, unknown> = {};
-    for (const key of Object.keys(value as Record<string, unknown>).sort()) {
-      if (key !== "_onProgress") out[key] = stable((value as Record<string, unknown>)[key]);
-    }
+    for (const key of Object.keys(value as Record<string, unknown>).sort()) out[key] = stable((value as Record<string, unknown>)[key]);
     return out;
   }
   return value;
 }
 
+/** The call's identity is what the model asked for. The server's stamps
+ *  (session, cwd, event sink, …) are left out: a call re-dispatched from the
+ *  inbox or a retry carries the same request under different stamps, and
+ *  fingerprinting them reported it as "reused with different arguments". */
 export function sideEffectFingerprint(tool: string, args: Record<string, unknown>, effect: ToolEffect): string {
   return createHash("sha256")
-    .update(JSON.stringify({ tool, args: stable(args), effect: stable(effect) }))
+    .update(JSON.stringify({ tool, args: stable(withoutInternalArgs(args)), effect: stable(effect) }))
     .digest("hex");
 }
 

@@ -8,6 +8,7 @@
  */
 
 import type { ToolDefinition } from "../../types.js";
+import { sessionIdOf } from "../../tool-execution/internal-args.js";
 import {
   awaitOpRunning,
   canonicalLoopEntry,
@@ -35,7 +36,7 @@ export const opSubmitAsyncTool: ToolDefinition = {
     const task = String(args.task || "").trim();
     if (!task) return { content: "op_submit_async requires a 'task' description.", isError: true };
 
-    const sessionId = String(args._sessionId || "");
+    const sessionId = sessionIdOf(args) ?? "";
     if (sessionId) {
       // SAME-TASK GUARD: a submission re-asserted within the window hands
       // back the op it already spawned, whether it is repeated verbatim or

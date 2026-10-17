@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
 import type { ToolDefinition, ToolResult } from "../types.js";
+import { sessionIdOf } from "../tool-execution/internal-args.js";
 
 interface Task {
   id: string;
@@ -88,7 +89,7 @@ const taskCreate: ToolDefinition = {
     const parentId = args.parent_id as string | undefined;
     const parent = parentId && tasks.has(parentId) ? parentId : undefined;
     const ts = now();
-    const sessionId = (args._sessionId as string) || undefined;
+    const sessionId = sessionIdOf(args);
     tasks.set(id, { id, description, status: "pending", parent_id: parent, session_id: sessionId, created_at: ts, updated_at: ts });
     saveTasks(tasks);
     const note = parentId && !parent ? ` (parent ${parentId} not found — created as a root task)` : "";
@@ -146,7 +147,7 @@ const taskList: ToolDefinition = {
   },
   async execute(args: Record<string, unknown>): Promise<ToolResult> {
     let items = [...loadTasks().values()];
-    const sessionId = String(args._sessionId || "").trim();
+    const sessionId = (sessionIdOf(args) ?? "").trim();
     if (sessionId && args.all_sessions !== true) {
       items = items.filter((t) => t.session_id === sessionId);
     }
@@ -176,7 +177,7 @@ const taskGet: ToolDefinition = {
     const found = resolveTask(tasks, String(args.id ?? ""));
     if ("error" in found) return { content: found.error, isError: true };
     const { task } = found;
-    const sessionId = String(args._sessionId || "").trim();
+    const sessionId = (sessionIdOf(args) ?? "").trim();
     if (sessionId && task.session_id && task.session_id !== sessionId) {
       return { content: `Task ${args.id} not found in this session`, isError: true };
     }

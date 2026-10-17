@@ -266,9 +266,7 @@ export function sessionWorkRootOf(sessionId: string | undefined): string | undef
  *  A tool passes this into resolveAgentPath for every path argument: the
  *  file-access gate resolved the same argument with the call's session, so a
  *  session with a registered work root anchors it there on both sides. */
-export function sessionIdOf(args: Record<string, unknown>): string | undefined {
-  return typeof args._sessionId === "string" && args._sessionId ? args._sessionId : undefined;
-}
+export { sessionIdOf } from "../tool-execution/internal-args.js";
 
 // The project root — the parent of the workspace, the SAME anchor relative agent
 // paths resolve against (see resolveAgentPathFrom). The default working

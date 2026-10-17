@@ -30,7 +30,7 @@ import {
 import type { Op } from "../types.js";
 import { resourceLocksForProvider } from "../provider-matrix.js";
 import { trackOpForSession } from "../session-bridge.js";
-import { withoutInternalArgs } from "../../tool-execution/internal-args.js";
+import { operationIdOf, sessionIdOf, withoutInternalArgs } from "../../tool-execution/internal-args.js";
 import {
   buildOpFromArgs,
   configureDelegatedRuntime,
@@ -259,8 +259,8 @@ export const opSubmitBatchTool: ToolDefinition = {
       return { content: "op_submit_batch requires a non-empty 'tasks' array of distinct tasks.", isError: true };
     }
 
-    const sessionId = String(args._sessionId || "");
-    const operationId = typeof args._operationId === "string" ? args._operationId : undefined;
+    const sessionId = sessionIdOf(args) ?? "";
+    const operationId = operationIdOf(args);
     const concurrency = clampConcurrency(args.concurrency);
 
     const startMs = Date.now();

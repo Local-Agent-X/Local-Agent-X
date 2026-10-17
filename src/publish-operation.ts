@@ -29,6 +29,7 @@ import { shellCommandOf } from "./tool-registry.js";
 import {
   assignedNames, matchPublishArgv, normalizeBin, pastAssignments, unwrapPackageRunner, type GitOption, type PublishKind,
 } from "./publish-operation-table.js";
+import { cwdOf } from "./tool-execution/internal-args.js";
 
 export type { PublishKind } from "./publish-operation-table.js";
 
@@ -96,7 +97,8 @@ export function publishOperations(toolName: string, args: Record<string, unknown
  *  (`_cwd`), an explicit `cwd` argument, else the workspace — the same anchor
  *  shell-tool.ts and process-session.ts use. */
 function baseCwd(args: Record<string, unknown>): string {
-  if (typeof args._cwd === "string" && args._cwd) return resolve(args._cwd);
+  const cwd = cwdOf(args);
+  if (cwd) return resolve(cwd);
   const root = workspaceRoot();
   if (typeof args.cwd === "string" && args.cwd) return resolveDir(root, args.cwd) ?? root;
   return root;

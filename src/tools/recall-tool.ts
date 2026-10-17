@@ -11,6 +11,7 @@
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { ToolDefinition, ToolResult } from "../types.js";
 import type { OpMessageRow } from "../canonical-loop/index.js";
+import { sessionIdOf } from "../tool-execution/internal-args.js";
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 50;
@@ -248,7 +249,7 @@ export function createRecallTool(deps?: RecallDeps): ToolDefinition {
 			// selector WITHIN that set — there is no unscoped read path, and an
 			// op outside the session is indistinguishable from one that doesn't
 			// exist (same error either way; existence is not leaked).
-			const sessionId = args._sessionId ? String(args._sessionId) : "";
+			const sessionId = sessionIdOf(args) ?? "";
 			if (!sessionId) return err("No session in scope — nothing to recall.");
 			const sessionOps = d.listOps().filter(o => o.canonical?.sessionId === sessionId);
 			if (sessionOps.length === 0) return ok("No recorded operation for this conversation yet — there is no raw history to page.");

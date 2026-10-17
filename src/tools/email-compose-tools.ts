@@ -3,6 +3,7 @@ import type { ServerEvent, ToolDefinition, ToolResult } from "../types.js";
 import { getSmtpFrom, vault, writeEmailJson } from "./email-config.js";
 import { getSecretsStoreSingleton } from "../secrets.js";
 import { gateSecretDestination } from "../secret-destination-gate.js";
+import { onEventOf, sessionIdOf, toolCallIdOf } from "../tool-execution/internal-args.js";
 
 export const emailDraft: ToolDefinition = {
   name: "email_draft",
@@ -85,11 +86,11 @@ export const emailSetup: ToolDefinition = {
     if (imapHost && imapSecretName && store.has(imapSecretName)) bindings.push([imapSecretName, `imap://${imapHost}:${imapPort}`]);
     for (const [secretName, destination] of bindings) {
       const gate = await gateSecretDestination({
-        store, name: secretName, destination, sessionId: String(args._sessionId ?? ""),
+        store, name: secretName, destination, sessionId: sessionIdOf(args) ?? "",
         purpose: `Send the ${secretName} password to ${destination} as the mail login for ${secretName === smtpSecretName ? smtpUser : imapUser}`,
         toolName: "email_setup",
-        toolCallId: args._toolCallId ? String(args._toolCallId) : undefined,
-        onEvent: args._onEvent as ((event: ServerEvent) => void) | undefined,
+        toolCallId: toolCallIdOf(args),
+        onEvent: onEventOf(args),
       });
       if (!gate.allowed) return gate.result;
     }

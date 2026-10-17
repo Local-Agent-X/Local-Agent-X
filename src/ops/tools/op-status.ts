@@ -5,6 +5,7 @@
  */
 
 import type { ToolDefinition } from "../../types.js";
+import { sessionIdOf } from "../../tool-execution/internal-args.js";
 import { schedulerSnapshot, readOpTurns, readCanonicalEvents, awaitCanonicalOp } from "../../canonical-loop/index.js";
 import { readCheckpoint } from "../checkpoint.js";
 import { readEvents } from "../event-log.js";
@@ -28,7 +29,7 @@ export const opStatusTool: ToolDefinition = {
     },
   },
   async execute(args) {
-    const sessionId = String(args._sessionId || "");
+    const sessionId = sessionIdOf(args) ?? "";
 
     if (!args.op_id) {
       const snap = schedulerSnapshot();

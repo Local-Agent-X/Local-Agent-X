@@ -1,6 +1,7 @@
 import type { ServerEvent, ToolDefinition, ToolResult } from '../types.js';
 import { isEnforcedPlanMode, setEnforcedPlanMode } from '../canonical-loop/public/plan-ledger.js';
 import { getApprovalManager } from '../approval-manager.js';
+import { onEventOf, sessionIdOf, toolCallIdOf } from "../tool-execution/internal-args.js";
 
 // Session-scoped plan mode — each session tracks its own state. This set is
 // the SOFT mode the model enters/exits itself; the ENFORCED mode (user's Plan
@@ -33,7 +34,7 @@ const enterPlanMode: ToolDefinition = {
   parameters: { type: 'object', properties: {}, required: [] },
   async execute(_args: Record<string, unknown>): Promise<ToolResult> {
     // Session ID is injected via metadata by the executor
-    const sid = (_args._sessionId as string) || 'default';
+    const sid = sessionIdOf(_args) ?? 'default';
     planModeSessions.add(sid);
     return { content: 'Plan mode activated. You can only use read-only tools (read, grep, glob, web_search, web_fetch, sql_query, and the read actions of spreadsheet/document/pdf). Use exit_plan_mode when ready to make changes.' };
   },
@@ -44,7 +45,7 @@ const exitPlanMode: ToolDefinition = {
   description: 'Exit plan mode and restore full tool access. Optionally summarize what you learned. If ENFORCED plan mode is on (the user\'s Plan toggle), this instead shows the user an approval card carrying your `summary` — the plan they are approving — and only their approval ends plan mode.',
   parameters: { type: 'object', properties: { summary: { type: 'string', description: 'What you learned or planned. Under enforced plan mode this is REQUIRED: it is the plan the user is asked to approve.' } }, required: [] },
   async execute(args: Record<string, unknown>): Promise<ToolResult> {
-    const sid = (args._sessionId as string) || 'default';
+    const sid = sessionIdOf(args) ?? 'default';
     if (isEnforcedPlanMode(sid)) return exitEnforcedPlanMode(sid, args);
     planModeSessions.delete(sid);
     const summary = typeof args.summary === 'string' ? `\n\nSummary: ${args.summary}` : '';
@@ -66,7 +67,7 @@ const exitPlanMode: ToolDefinition = {
 const pendingPlanApproval = new Set<string>();
 
 async function exitEnforcedPlanMode(sid: string, args: Record<string, unknown>): Promise<ToolResult> {
-  const emit = args._onEvent as ((event: ServerEvent) => void) | undefined;
+  const emit = onEventOf(args);
   if (!emit) {
     // No interactive channel (headless/cron dispatch) — nobody can click a card.
     return { content: 'Enforced plan mode is on for this session and there is no interactive user to approve ending it. Present your plan in your reply; the user lifts plan mode with the Plan toggle.' };
@@ -81,7 +82,7 @@ async function exitEnforcedPlanMode(sid: string, args: Record<string, unknown>):
   pendingPlanApproval.add(sid);
   const approved = await getApprovalManager().requestApproval({
     toolName: 'exit_plan_mode',
-    toolCallId: (args._toolCallId as string) || `plan-exit-${sid}`,
+    toolCallId: toolCallIdOf(args) ?? `plan-exit-${sid}`,
     sessionId: sid,
     context: `Approve this plan to end plan mode and allow changes:\n\n${summary}`,
     args: { summary },

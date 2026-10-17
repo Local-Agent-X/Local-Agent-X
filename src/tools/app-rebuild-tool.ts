@@ -25,6 +25,7 @@ import { supportsStaticBuild, staticBuildDistDir, writeRunTargetManifest } from 
 import { runStaticBuild, distIsStale, type StaticBuildResult } from "./static-build-run.js";
 import { readDevServerRecord, stopDevServer, type DevServerRecord } from "./dev-server.js";
 import { ok, err, timeout as timeoutResult } from "./result-helpers.js";
+import { onEventOf } from "../tool-execution/internal-args.js";
 
 /** Injectable seams so tests don't spawn a real `vite build` or touch ~/.lax. */
 export interface AppRebuildDeps {
@@ -102,9 +103,7 @@ export async function executeAppRebuild(
 	}
 
 	const runBuild = deps.runBuild ?? runStaticBuild;
-	const onEvent = typeof args._onEvent === "function"
-		? (args._onEvent as (e: { type: string; [k: string]: unknown }) => void)
-		: undefined;
+	const onEvent = onEventOf(args) as ((e: { type: string; [k: string]: unknown }) => void) | undefined;
 	const startedAt = Date.now();
 	const built = await runBuild(appDir, detection.framework, { signal, toolName: "app_rebuild", onEvent });
 	const duration_ms = Date.now() - startedAt;

@@ -23,6 +23,7 @@ import {
   parseMessagingSessionTarget,
   type MessagingChannelId,
 } from "./session/channel-registry.js";
+import { sessionIdOf } from "./tool-execution/internal-args.js";
 
 const logger = createLogger("restart-notify");
 
@@ -74,7 +75,7 @@ export function buildRestartPingMessage(n: RestartNotice, now: number): string {
 export async function resolveNotifyTarget(
   args: Record<string, unknown>,
 ): Promise<{ channel: NotifyChannel; target: string } | null> {
-  const sid = typeof args._sessionId === "string" ? args._sessionId : "";
+  const sid = sessionIdOf(args) ?? "";
   const sessionTarget = parseMessagingSessionTarget(sid);
   if (sessionTarget) return sessionTarget;
 

@@ -30,6 +30,7 @@ import { existsSync, readdirSync } from "node:fs";
 import { dirname, basename } from "node:path";
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { blocked, withMetadata } from "../tools/result-helpers.js";
+import { sessionIdOf } from "../tool-execution/internal-args.js";
 import { AUTO_BUILD_DISABLED_RECOVERY, isFeatureEnabled, FEATURE_FLAG_ENV } from "./tool.js";
 import { kickoffBuildPlan, type BuildPlanKickoff } from "./kickoff.js";
 import { loadSkillBody } from "./skill-bodies.js";
@@ -87,7 +88,7 @@ export const startAppBuildTool: ToolDefinition = {
       return blocked(FEATURE_FLAG_BLOCK_MESSAGE, { recovery: AUTO_BUILD_DISABLED_RECOVERY });
     }
     const concept = String(args.concept || "").trim();
-    const sessionId = typeof args._sessionId === "string" ? args._sessionId.trim() : "";
+    const sessionId = sessionIdOf(args)?.trim() ?? "";
     let methodology: string;
     try {
       methodology = loadSkillBody("app-build");
@@ -305,7 +306,7 @@ export function createFinalizeAppBuildTool(
       };
     }
 
-    const sessionId = typeof args._sessionId === "string" ? args._sessionId.trim() : "";
+    const sessionId = sessionIdOf(args)?.trim() ?? "";
     if (sessionId) {
       try {
         upsertAppBuildWorkflow({ sessionId, phase: "finalized", projectDir });

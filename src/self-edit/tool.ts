@@ -42,6 +42,7 @@ import {
 import { buildSelfEditPrompt } from "./prompt.js";
 import { runSelfEditBypass } from "./bypass-runner.js";
 import { acquireGlobalSelfEditLock, releaseGlobalSelfEditLock, formatGlobalLockBusy } from "./global-lock.js";
+import { cwdOf, lastTurnOf, onProgressOf, sessionIdOf } from "../tool-execution/internal-args.js";
 
 export const selfEditTool: ToolDefinition = {
   name: "self_edit",
@@ -103,13 +104,11 @@ export const selfEditTool: ToolDefinition = {
     const task = String(args.task || "").trim();
     if (!task) return { content: "self_edit requires a 'task' description.", isError: true };
 
-    const onProgress = typeof args._onProgress === "function"
-      ? args._onProgress as (msg: string) => void
-      : () => { /* no-op when dispatcher didn't inject the channel */ };
+    const onProgress = onProgressOf(args) ?? (() => { /* no-op when dispatcher didn't inject the channel */ });
 
     // The autopilot session's worktree, stamped by the dispatcher
     // (resolve-tool.ts), which drops every `_` key the model itself sends.
-    const internalCwd = typeof args._cwd === "string" && args._cwd.trim() ? args._cwd : null;
+    const internalCwd = cwdOf(args) ?? null;
 
     // Install-type gate: the sandbox is built on git worktrees, so a packaged
     // (non-git) install can't run self_edit at all. Say that plainly instead
@@ -177,8 +176,7 @@ export const selfEditTool: ToolDefinition = {
     // OR the user's latest message is an explicit affirmative go-ahead. A
     // "mismatch", an "unsure", or a classifier outage all BLOCK: better to ask
     // for one explicit confirmation than to mutate source on a guess.
-    const lastUserMessage = typeof args._lastUserMessage === "string" ? args._lastUserMessage : "";
-    const lastAssistantMessage = typeof args._lastAssistantMessage === "string" ? args._lastAssistantMessage : "";
+    const { user: lastUserMessage, assistant: lastAssistantMessage } = lastTurnOf(args);
     if (lastUserMessage) {
       onProgress("Verifying intent against your last message…");
       const affirmative = isAffirmativeGoAhead(lastUserMessage);
@@ -234,7 +232,7 @@ export const selfEditTool: ToolDefinition = {
     // killProcessTree in the sandbox/bypass runners. Without the local
     // controller, stop only propagates through the canonical-loop signal,
     // which gets noticed at the next gate hop rather than mid-claude-spawn.
-    const sessionId = typeof args._sessionId === "string" ? args._sessionId : "";
+    const sessionId = sessionIdOf(args) ?? "";
     const controller = new AbortController();
     if (sessionId) {
       const live = getActiveSelfEdit(sessionId);

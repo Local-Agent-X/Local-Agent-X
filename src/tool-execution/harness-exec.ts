@@ -61,7 +61,7 @@ export async function executeHarnessCommand(req: HarnessCommand): Promise<Harnes
     reason: `${req.purpose}: ${req.command}`,
     controlsApplied: ["HarnessExec", "KillSwitch"],
   });
-  const r = await bashTool.execute({ command: req.command, _cwd: req.cwd, _signal: req.signal, timeout: req.timeoutMs });
+  const r = await bashTool.execute({ command: req.command, _cwd: req.cwd, timeout: req.timeoutMs }, req.signal);
   const status = statusOf(r);
   return { ok: status === "ok", status, output: r.content ?? "" };
 }

@@ -8,6 +8,7 @@
 // not their per-frame liveliness.
 
 import type { ToolDefinition, ToolResult, ServerEvent } from "../types.js";
+import { onEventOf } from "../tool-execution/internal-args.js";
 
 const ALLOWED_KINDS = new Set(["emoji", "text", "shape", "mood"]);
 const ALLOWED_SHAPES = new Set(["heart", "lightning", "ring", "spiral", "line"]);
@@ -67,7 +68,7 @@ export function createVoiceVisualTool(): ToolDefinition {
       required: ["kind", "value"],
     },
     async execute(args: Record<string, unknown>): Promise<ToolResult> {
-      const onEvent = args._onEvent as ((e: ServerEvent) => void) | undefined;
+      const onEvent = onEventOf(args);
 
       const kind = String(args.kind || "");
       if (!ALLOWED_KINDS.has(kind)) {

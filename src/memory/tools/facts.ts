@@ -14,6 +14,7 @@ import {
   TAINTED_SOURCE_SUFFIX,
 } from "../promotion-gate.js";
 import type { MemoryPromotionContext } from "../promotion-gate.js";
+import { sessionIdOf, userMessageIdOf } from "../../tool-execution/internal-args.js";
 
 // Agent-facing fact tools. Sit on top of the Facts DB primitives
 // (rememberFact / updateFact / forgetFact in index-facts-mutate.ts, plus
@@ -64,7 +65,7 @@ function authorizedSource(provenance: FactProvenance, promotion: MemoryPromotion
 
 /** The user message this call answers, stamped by the server (resolve-tool.ts
  *  USER_MESSAGE_SOURCED_TOOLS); never taken from anything the model wrote. */
-const trustedMessageId = (args: Record<string, unknown>) => (typeof args._userMessageId === "string" ? args._userMessageId : undefined);
+const trustedMessageId = userMessageIdOf;
 
 function formatToolError(prefix: string, result: { error?: string; matches?: number; preview?: string[] }): string {
   let msg = `${prefix}: ${result.error ?? "unknown error"}`;
@@ -173,7 +174,7 @@ export function createFactsTools(memory: MemoryIndex) {
             content: stampedContent,
             source: "model-tool:remember",
             target,
-            sessionId: String(args._sessionId || "default"),
+            sessionId: sessionIdOf(args) ?? "default",
           });
           if (!promotion.capability) {
             return {
@@ -304,7 +305,7 @@ export function createFactsTools(memory: MemoryIndex) {
             content,
             source: "model-tool:update_fact",
             target,
-            sessionId: String(args._sessionId || "default"),
+            sessionId: sessionIdOf(args) ?? "default",
           });
           if (!promotion.capability) {
             return {

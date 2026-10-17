@@ -10,6 +10,7 @@
 
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { getActiveTurn } from "../session/turn-lock.js";
+import { sessionIdOf } from "../tool-execution/internal-args.js";
 
 function ok(content: string): ToolResult { return { content }; }
 
@@ -26,9 +27,7 @@ export function createSessionStatusTool(getSessionId?: () => string): ToolDefini
       required: [],
     },
     async execute(args: Record<string, unknown>): Promise<ToolResult> {
-      const sessionId = args._sessionId
-        ? String(args._sessionId)
-        : (getSessionId ? getSessionId() : "default");
+      const sessionId = sessionIdOf(args) ?? (getSessionId ? getSessionId() : "default");
       const turn = getActiveTurn(sessionId);
       if (!turn) {
         return ok(

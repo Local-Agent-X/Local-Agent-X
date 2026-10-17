@@ -16,6 +16,7 @@ import { createProjectTools } from "./project-tools.js";
 import { createMcpAdminTools } from "./mcp-admin-tools.js";
 import { createMemoryTools } from "../memory/index.js";
 import { createArikernelBridgeTools } from "./arikernel-bridge.js";
+import { sessionIdOf } from "../tool-execution/internal-args.js";
 
 const SESSION_ONEVENT_TOOLS = new Set(["request_secret", "request_secrets"]);
 const ORIGINAL_BUILD_APP_EXECUTE = Symbol("originalBuildAppExecute");
@@ -35,12 +36,12 @@ export function bindBuildAppRuntime(
     ...tool,
     [ORIGINAL_BUILD_APP_EXECUTE]: originalExecute,
     execute: async (args, signal) => {
-      const sessionId = args._sessionId ? String(args._sessionId) : "";
+      const sessionId = sessionIdOf(args);
       const runtime = sessionId ? activeRuntimeBySession.get(sessionId) : undefined;
       if (!runtime) return originalExecute(args, signal);
       const enrichedArgs = { ...args };
-      if (enrichedArgs._runtimeProvider === undefined) enrichedArgs._runtimeProvider = runtime.provider;
-      if (enrichedArgs._runtimeModel === undefined) enrichedArgs._runtimeModel = runtime.model;
+      enrichedArgs._runtimeProvider ??= runtime.provider;
+      enrichedArgs._runtimeModel ??= runtime.model;
       return originalExecute(enrichedArgs, signal);
     },
   };
@@ -99,7 +100,7 @@ export const plugins: ToolPlugin[] = [
         tools[i] = {
           ...tool,
           execute: async (args, signal) => {
-            const sessionId = args._sessionId ? String(args._sessionId) : "";
+            const sessionId = sessionIdOf(args);
             const onEvent = sessionId ? ctx.activeOnEventBySession.get(sessionId) : undefined;
             const fresh = createSecretTools(ctx.secretsStore, onEvent).find(t => t.name === toolName);
             if (!fresh) throw new Error(`Tool ${toolName} not found`);

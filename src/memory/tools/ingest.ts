@@ -1,5 +1,6 @@
 import type { MemoryIndex } from "../../memory/index.js";
 import { resolveAgentPath, sessionIdOf } from "../../workspace/paths.js";
+import { onProgressOf } from "../../tool-execution/internal-args.js";
 
 // Conversation ingest tool
 export function createIngestTool(memory: MemoryIndex) {
@@ -24,7 +25,7 @@ export function createIngestTool(memory: MemoryIndex) {
       // Resolved as the file-access gate resolved it (a relative path anchors at
       // the workspace), so the path checked is the path read.
       const target = resolveAgentPath(raw, sessionIdOf(args));
-      const onProgress = typeof args._onProgress === "function" ? args._onProgress as (msg: string) => void : undefined;
+      const onProgress = onProgressOf(args);
 
       try {
         const { ingestConversations } = await import("../../conversation/ingest.js");

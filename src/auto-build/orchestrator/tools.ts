@@ -7,6 +7,7 @@
 import { existsSync } from "node:fs";
 import type { ToolDefinition, ToolResult } from "../../types.js";
 import { blocked } from "../../tools/result-helpers.js";
+import { sessionIdOf } from "../../tool-execution/internal-args.js";
 import { parsePlanFile } from "../plan-parser.js";
 import { AUTO_BUILD_DISABLED_RECOVERY, isFeatureEnabled, FEATURE_FLAG_ENV } from "../tool.js";
 import { defaultJudgmentHook } from "../chunk-review/judgment-hook.js";
@@ -151,7 +152,7 @@ export const buildPlanResumeTool: ToolDefinition = {
       };
     }
 
-    const sessionId = typeof args._sessionId === "string" ? args._sessionId : s.sessionId;
+    const sessionId = sessionIdOf(args) ?? s.sessionId;
 
     const kick = startOrchestration({
       sessionId,

@@ -52,6 +52,7 @@ import {
 } from "@arikernel/tool-executors";
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { STAGE_RECOVERY } from "../tool-execution/stage-recovery.js";
+import { sessionIdOf, withoutInternalArgs } from "../tool-execution/internal-args.js";
 import { resolveAgentPath } from "../workspace/paths.js";
 
 interface BridgeArgs {
@@ -78,24 +79,12 @@ export interface BridgeConfig {
   executor: ToolExecutor;
 }
 
-const BRIDGE_INTERNAL_KEYS = new Set([
-  "action",
-  "_capabilityGrantId",
-  "_taintLabels",
-  "_principalId",
-  "_runId",
-  "_sessionId",
-  "_onEvent",
-  "_onProgress",
-  "_cwd",
-]);
-
+/** The executor's parameters: the model's arguments without the bridge's own
+ *  `action` selector and without any `_` key — the server's stamps, and the
+ *  forged identity a model might try (`_runId`, `_taintLabels`, …). */
 function stripInternal(args: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(args)) {
-    if (!BRIDGE_INTERNAL_KEYS.has(k)) out[k] = v;
-  }
-  return out;
+  const { action: _action, ...rest } = withoutInternalArgs(args);
+  return rest;
 }
 
 // The file executor resolves a relative path against the server's cwd, which
@@ -107,7 +96,7 @@ function stripInternal(args: Record<string, unknown>): Record<string, unknown> {
 function executorParameters(cfg: BridgeConfig, args: BridgeArgs): Record<string, unknown> {
   const params = stripInternal(args);
   if (cfg.toolClass === "file" && typeof params.path === "string" && params.path) {
-    params.path = resolveAgentPath(params.path, args._sessionId);
+    params.path = resolveAgentPath(params.path, sessionIdOf(args));
   }
   return params;
 }
@@ -121,15 +110,16 @@ export function buildToolCall(cfg: BridgeConfig, args: BridgeArgs): ToolCall {
   // model-supplied `_runId` (which a compromised model could forge to launder
   // identity or slip a restrictive session policy). Fall back to a fresh id;
   // NEVER to a model-supplied value.
-  const runId = args._sessionId ?? generateId();
+  const sessionId = sessionIdOf(args);
+  const runId = sessionId ?? generateId();
   // Taint is injected by the runtime, not the caller. The model cannot
   // self-declare or self-clear taint, so `_taintLabels` is ignored. We look up
   // the live session's taint from the trusted data-lineage tracker, keyed off
   // the runtime-stamped `_sessionId` — so a sub-agent / prior sensitive read in
   // THIS session carries into the kernel's tainted-shell / tainted-egress rules.
   // Stays [] only when the session genuinely has no active taint.
-  const taintLabels: TaintLabel[] = args._sessionId
-    ? getKernelTaintSources(args._sessionId).map(source => ({
+  const taintLabels: TaintLabel[] = sessionId
+    ? getKernelTaintSources(sessionId).map(source => ({
         source: source as TaintSource,
         origin: "runtime",
         confidence: 1.0,

@@ -23,6 +23,7 @@ import { decisionRequiresPrompt, getRiskDecision } from "../../approval-decision
 import type { SensitivePageCategory } from "../../browser/sensitive-pages.js";
 import type { ToolRisk } from "../../autonomy/risk.js";
 import { createLogger } from "../../logger.js";
+import { toolCallIdOf } from "../../tool-execution/internal-args.js";
 
 const gateLog = createLogger("browser.gates");
 
@@ -82,7 +83,7 @@ export async function runPreDispatchGates(
     catch (error) { return halt(blocked(`BLOCKED: ${(error as Error).message}`, { layer: "browser-download", browserStatus: "not-releasable", recovery: "List the downloads (action='downloads') and release one whose status is quarantined." })); }
     const outcome = await getApprovalManager().requestApprovalDetailed({
       toolName: "browser.release_download",
-      toolCallId: String(args._toolCallId || `browser-release-${id}`),
+      toolCallId: toolCallIdOf(args) ?? `browser-release-${id}`,
       sessionId,
       context: "Release a quarantined browser download into workspace/downloads. The file remains unavailable to agent tools until approved.",
       args: { action: "release_download", ...approvalBinding },
@@ -122,7 +123,7 @@ export async function runPreDispatchGates(
       ));
       const outcome = await getApprovalManager().requestApprovalDetailed({
         toolName: "browser.sensitive_page_action",
-        toolCallId: String(args._toolCallId || `browser-sensitive-${sessionId}`),
+        toolCallId: toolCallIdOf(args) ?? `browser-sensitive-${sessionId}`,
         sessionId,
         context: `${pageDecision.reason} Approve only if you expect this action. Page contents and form values are intentionally omitted.`,
         args: { action, category: pageDecision.category, page: pageDecision.page },

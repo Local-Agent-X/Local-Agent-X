@@ -15,6 +15,7 @@ import type { ToolDefinition, ToolResult } from "../types.js";
 import type { SecretsStore } from "../secrets.js";
 import { getSecretBrowserOps } from "./index.js";
 import { withEmulationNotice } from "../tools/browser-tools/emulation-banner.js";
+import { sessionIdOf } from "../tool-execution/internal-args.js";
 
 function ok(content: string): ToolResult {
   return { content };
@@ -112,7 +113,7 @@ export function createBrowserSecretCaptureTool(
         );
       }
 
-      const sessionIdForLock = args._sessionId ? String(args._sessionId) : (getSessionId ? getSessionId() : "default");
+      const sessionIdForLock = sessionIdOf(args) ?? (getSessionId ? getSessionId() : "default");
       const { withBrowserLock } = await import("./index.js");
       // Same reason as secret-fill: this tool reaches the page through
       // getSecretBrowserOps, not the browser dispatcher, so while a profile is
@@ -143,7 +144,7 @@ export function createBrowserSecretCaptureTool(
         return err("attribute_selector requires the `attribute` field.");
       }
 
-      const sessionId = args._sessionId ? String(args._sessionId) : (getSessionId ? getSessionId() : "default");
+      const sessionId = sessionIdOf(args) ?? (getSessionId ? getSessionId() : "default");
       const ops = getSecretBrowserOps(sessionId);
 
       let value: string | null = null;

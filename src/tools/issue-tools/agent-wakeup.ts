@@ -2,6 +2,7 @@ import type { ToolDefinition } from "../../types.js";
 import { IssueStore, AgentTemplateStore, ProjectStore } from "../../agent-store/index.js";
 import { ProjectRosterStore } from "../../project-rosters.js";
 import { ok, err } from "./shared.js";
+import { sessionIdOf } from "../../tool-execution/internal-args.js";
 
 export const agentWakeupTool: ToolDefinition = {
   name: "agent_wakeup",
@@ -63,7 +64,7 @@ export const agentWakeupTool: ToolDefinition = {
         // A chat-driven wakeup (session without the agent- prefix) stays a
         // parentless root. No parentSessionId — the woken run's report
         // belongs to the issue thread, never to a chat transcript.
-        parentAgentId: callerRunIdFromSession(args._sessionId),
+        parentAgentId: callerRunIdFromSession(sessionIdOf(args)),
       });
     } catch (e) {
       return err(`Failed to wake ${target.name}: ${(e as Error).message}`);

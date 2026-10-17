@@ -27,6 +27,7 @@ import { taskNeedsArtifactEdit, canEditArtifacts, spawnMismatchMessage } from ".
 import { Handler } from "../agency/handler.js";
 import { delegationFrom } from "../ops/delegation.js";
 import { AgentTemplateStore } from "../agent-store/index.js";
+import { operationIdOf, sessionIdOf } from "../tool-execution/internal-args.js";
 
 function ok(content: string): ToolResult { return { content }; }
 function err(content: string): ToolResult { return { content, isError: true }; }
@@ -129,7 +130,7 @@ export function createAgentTools(): ToolDefinition[] {
       },
       async execute(args) {
         try {
-          const sessionFromArgs = args._sessionId ? String(args._sessionId) : undefined;
+          const sessionFromArgs = sessionIdOf(args);
           const scope = parseScope(args);
           const task = String(args.task);
           // Router-correctness guard: a task that needs an existing artifact
@@ -156,7 +157,7 @@ export function createAgentTools(): ToolDefinition[] {
               // the user's bans from the op calling us instead.
               delegation: delegationFrom(
                 sessionFromArgs ?? "",
-                typeof args._operationId === "string" ? args._operationId : undefined,
+                operationIdOf(args),
               ),
             },
           );
@@ -220,7 +221,7 @@ export function createAgentTools(): ToolDefinition[] {
           if (unknown.length > 0) return err(`Not tools: ${unknown.join(", ")}. Name registered tools (agent_list shows what each agent holds), or an MCP server's tools as mcp_<server>_*.`);
           // An agent may give an agent it creates any tool a spawned agent may
           // hold, plus any it holds itself — never a main-chat-only tool.
-          const grantable = grantableByCaller(args._sessionId);
+          const grantable = grantableByCaller(sessionIdOf(args));
           const refused = grantable ? requested.filter((t) => !grantable(t)) : [];
           const tools = requested.filter((t) => !refused.includes(t));
           if (tools.length === 0) return err(`None of those tools can be granted by an agent: ${refused.join(", ")}.`);

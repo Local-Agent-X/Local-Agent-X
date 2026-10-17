@@ -6,6 +6,7 @@ import { resolveWindowsShell, recordAvSuspectKill, isLikelyAvKill } from "./shel
 import { runCaged, type CagedOutput } from "./caged-spawn.js";
 import { workspaceRoot } from "../config.js";
 import { missingSecretEnvMessage, resolveSecretEnv, secretEnvOf } from "./shell-secret-env.js";
+import { cwdOf, onEventOf, onProgressOf, toolCallIdOf } from "../tool-execution/internal-args.js";
 import { vendorDriftHint } from "../protocols/vendor-drift.js";
 
 export const bashTool: ToolDefinition = {
@@ -48,14 +49,13 @@ export const bashTool: ToolDefinition = {
   async execute(args, signal?: AbortSignal) {
     const command = String(args.command);
     const timeout = (args.timeout as number) || 120_000;
-    if (!args._signal && signal) args._signal = signal;
 
     // Browser-open rejection (open/start/xdg-open <url>) now lives in the
     // shared evaluateShellCommand gate (security/shell-policy.ts), which the
     // SecurityLayer runs against every bash call pre-dispatch — so it covers
     // process_start/process_restart too, not just bash. Single source there.
-    const abortSignal = args._signal as AbortSignal | undefined;
-    const onProgress = typeof args._onProgress === "function" ? args._onProgress as (message: string) => void : undefined;
+    const abortSignal = signal;
+    const onProgress = onProgressOf(args);
     let secretEnv;
     try { secretEnv = secretEnvOf(args); } catch (e) { return err((e as Error).message); }
     const secrets = secretEnv ? resolveSecretEnv(secretEnv) : null;
@@ -114,7 +114,7 @@ export const bashTool: ToolDefinition = {
       // the same anchor relative agent paths resolve against (workspace/paths.ts)
       // — so `cat notes.txt` and write("notes.txt") mean one file, instead of
       // the shell landing a folder above it.
-      const cwd = (args._cwd as string) || workspaceRoot();
+      const cwd = cwdOf(args) || workspaceRoot();
 
       // Tool-progress streaming. Emits a `tool_progress` ServerEvent at
       // most every 500ms with the latest tail of combined stdout/stderr,
@@ -130,8 +130,8 @@ export const bashTool: ToolDefinition = {
       // also compatible with recordAvSuspectKill below, which expects
       // (e: ServerEvent) => void. Narrowing locally to ToolProgressEvent
       // produced a TS2345 mismatch on the recordAvSuspectKill(onEvent) call.
-      const onEvent = args._onEvent as ((e: ServerEvent) => void) | undefined;
-      const toolCallId = args._toolCallId as string | undefined;
+      const onEvent = onEventOf(args);
+      const toolCallId = toolCallIdOf(args);
       const PROGRESS_INTERVAL_MS = 500;
       const PROGRESS_TAIL_CHARS = 200;
       let lastProgressEmit = 0;

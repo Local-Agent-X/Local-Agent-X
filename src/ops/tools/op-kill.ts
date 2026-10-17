@@ -4,6 +4,7 @@
  */
 
 import type { ToolDefinition } from "../../types.js";
+import { sessionIdOf } from "../../tool-execution/internal-args.js";
 import { opCancel } from "../../canonical-loop/index.js";
 import { readOp, isInteractiveHostOpType } from "../op-store.js";
 import { listOpsForSession } from "../session-bridge.js";
@@ -18,7 +19,7 @@ export const opKillTool: ToolDefinition = {
   async execute(args) {
     let opId = typeof args.op_id === "string" ? args.op_id.trim() : "";
     if (!opId) {
-      const sessionId = String(args._sessionId || "");
+      const sessionId = sessionIdOf(args) ?? "";
       if (!sessionId) return { content: "op_kill needs an op_id when called outside a chat session.", isError: true };
       const liveIds = listOpsForSession(sessionId);
       const live = liveIds

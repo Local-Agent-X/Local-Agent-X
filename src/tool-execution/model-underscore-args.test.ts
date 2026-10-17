@@ -64,7 +64,13 @@ describe("model-supplied `_` arguments never reach a tool", () => {
       app_id: "notes", _unsafe: true, _cwd: dir, _sessionId: "forged", _signal: "stop", _actor: "user",
     });
     expect(args.app_id).toBe("notes");
-    expect(dataUnderscoreKeys(args)).toEqual([]);
+    // Whatever data stamps remain are the dispatcher's own values (its call
+    // id on every call, its session on a session-scoped tool), never the
+    // model's: the forged session is replaced, the rest are gone.
+    const trusted: Record<string, unknown> = { _toolCallId: "call-app_read", _sessionId: SESSION };
+    expect(args._toolCallId).toBe("call-app_read");
+    for (const key of dataUnderscoreKeys(args)) expect(args[key], key).toBe(trusted[key]);
+    for (const forged of ["_unsafe", "_cwd", "_signal", "_actor"]) expect(args[forged], forged).toBeUndefined();
   });
 
   it("self_edit never sees a model's `_unsafe`", async () => {

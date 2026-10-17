@@ -57,6 +57,7 @@ import { recordDesignSpec } from "../canonical-loop/index.js";
 import { registerAppBuildRuntime } from "./build-app-runtime.js";
 import { cliBuildDeveloperModeRefusal } from "./build-app-cli-gate.js";
 import { OP_TYPE } from "../ops/op-types.js";
+import { runtimeOf, sessionIdOf } from "../tool-execution/internal-args.js";
 
 export const APP_BUILD_OP_TYPE = OP_TYPE.appBuild;
 export const BUILD_APP_BUDGET = { maxIterations: 50, maxWallTimeMs: 0 } as const;
@@ -174,13 +175,13 @@ export const buildAppTool: ToolDefinition = {
     // present. Schema docs the right key; alias keeps back-compat.
     const prompt = String(args.prompt || args.description || "");
     const backend = String(args.backend || "auto");
-    const sessionId = String(args._sessionId || "");
-    // The chat turn handler stamps args._runtimeProvider/_runtimeModel via
-    // the bootstrap-tools wrapper around build_app. When the LLM didn't
+    const sessionId = sessionIdOf(args) ?? "";
+    // The chat turn handler stamps the chat's provider and model via the
+    // bootstrap-tools wrapper around build_app (plugins.ts). When the LLM didn't
     // pin an explicit backend, prefer the chat's active provider so the
     // dropdown selection wins over whatever's stale in ~/.lax/settings.json.
-    const runtimeProvider = args._runtimeProvider ? String(args._runtimeProvider) : undefined;
-    const forcedProvider = pickForcedProviderFromRuntime(backend, runtimeProvider);
+    const chatRuntime = runtimeOf(args);
+    const forcedProvider = pickForcedProviderFromRuntime(backend, chatRuntime.provider);
 
     const provider = resolveBuildProvider(backend, forcedProvider ? { forcedProvider } : {});
     const strategy = resolveBuildStrategy(provider);
@@ -192,8 +193,7 @@ export const buildAppTool: ToolDefinition = {
     // question instead of blind-building; harness backstop for tool-shy models.
     if (typeof resolved !== "string") return { content: formatClarify(resolved), isError: false };
     const tier = resolved;
-    const runtimeModel = args._runtimeModel ? String(args._runtimeModel) : undefined;
-    const buildModel = resolveBuildModel(provider, runtimeModel);
+    const buildModel = resolveBuildModel(provider, chatRuntime.model);
 
     const appDir = workspacePath("apps", appName);
     const port = process.env.LAX_PORT ?? "7007";

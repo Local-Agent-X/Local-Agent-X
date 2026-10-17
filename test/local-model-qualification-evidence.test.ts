@@ -21,7 +21,7 @@ function readEvents(options: ReadEventsOptions = {}): Array<Record<string, unkno
       type: "tool_start",
       toolName: "read",
       toolCallId: "read-1",
-      args: { path: options.path ?? "workspace/qualification-note.txt", _sessionId: "qualification-test" },
+      args: { path: options.path ?? "workspace/qualification-note.txt" },
       riskLevel: "low",
       context: "Read file: qualification-note.txt",
       requiresApproval: false,
@@ -252,10 +252,9 @@ describe("local qualification workspace-read evidence", () => {
     }
   });
 
-  it("recursively rejects the nonce in an otherwise valid pre-result nested field", () => {
+  it("rejects the nonce planted in a pre-result nested field of an otherwise well-formed frame", () => {
     const events = readEvents();
-    const args = events[2].args as Record<string, unknown>;
-    events[2] = { ...events[2], args: { ...args, _sessionId: READ_NONCE } };
+    events[2] = { ...events[2], args: { path: READ_NONCE } };
     expect(chatEvidence(events).readNonceSeen).toBe(false);
   });
 

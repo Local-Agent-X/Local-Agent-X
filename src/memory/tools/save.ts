@@ -10,6 +10,7 @@ import {
   MAX_PROFILE_CHARS,
 } from "../write-safely.js";
 import { createInternalMemoryContext, promotionContextFromToolArgs } from "../promotion-gate.js";
+import { sessionIdOf } from "../../tool-execution/internal-args.js";
 
 export function createSaveTools(memory: MemoryIndex) {
   return [
@@ -29,7 +30,7 @@ export function createSaveTools(memory: MemoryIndex) {
       },
       async execute(args: Record<string, unknown>) {
         const rawContent = String(args.content || "");
-        const sessionId = args._sessionId ? String(args._sessionId) : undefined;
+        const sessionId = sessionIdOf(args);
 
         // Misfired-durable-fact guard. memory_save only writes a TRANSIENT
         // daily-log line and only accepts `content`. A worker that passes
@@ -125,7 +126,7 @@ export function createSaveTools(memory: MemoryIndex) {
               content: `${field}: ${value}`,
               source: "model-tool:memory_set_user_field",
               target,
-              sessionId: String(args._sessionId || "default"),
+              sessionId: sessionIdOf(args) ?? "default",
             }),
           });
         } catch (e) {
@@ -306,7 +307,7 @@ export function createSaveTools(memory: MemoryIndex) {
               content: newContent,
               source: "model-tool:memory_update_profile",
               target,
-              sessionId: String(args._sessionId || "default"),
+              sessionId: sessionIdOf(args) ?? "default",
             }),
           });
         } catch (e) {

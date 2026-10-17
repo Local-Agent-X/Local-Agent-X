@@ -51,6 +51,7 @@ import { buildPlanStatusTool, buildPlanResumeTool } from "../auto-build/orchestr
 import { autopilotTools } from "../autopilot/tools.js";
 import { opTools } from "../ops/tools.js";
 import { recallTool } from "./recall-tool.js";
+import { sessionIdOf } from "../tool-execution/internal-args.js";
 // Legacy skill_list/skill_run tools removed — protocol(action:'list'/'get') covers the same surface.
 // SKILL.md files are still recognized as an import format via src/protocols/skill-md-parser.ts.
 
@@ -113,7 +114,7 @@ export const allTools: ToolDefinition[] = applyPrompts([
         return { content: `Today's usage: ${today.inputTokens.toLocaleString()} input + ${today.outputTokens.toLocaleString()} output tokens | Cost: $${today.costUsd.toFixed(2)}` };
       }
       const since = period === "week" ? Date.now() - 7 * 86400000 : undefined;
-      const sessionFilter = period === "session" ? (args.sessionId as string || args._sessionId as string || undefined) : (args.sessionId as string | undefined);
+      const sessionFilter = period === "session" ? (args.sessionId as string || sessionIdOf(args)) : (args.sessionId as string | undefined);
       const summary = getUsageSummary({ since, sessionId: sessionFilter });
       const lines = [`Usage Report (${period})`, `Total: ${summary.totalInputTokens.toLocaleString()} in + ${summary.totalOutputTokens.toLocaleString()} out | $${summary.totalCostUsd.toFixed(2)}`, "", "By Model:"];
       for (const [model, data] of Object.entries(summary.byModel)) {

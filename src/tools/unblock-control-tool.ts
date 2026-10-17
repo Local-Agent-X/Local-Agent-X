@@ -8,6 +8,7 @@
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { getTaintSummary } from "../data-lineage/index.js";
 import { readKernelQuarantine } from "../ari-kernel/index.js";
+import { operationIdOf, sessionIdOf } from "../tool-execution/internal-args.js";
 
 export const showUnblockControlTool: ToolDefinition = {
   name: "show_unblock_control",
@@ -17,8 +18,8 @@ export const showUnblockControlTool: ToolDefinition = {
   readOnly: true,
   parameters: { type: "object", properties: {}, required: [] },
   async execute(args: Record<string, unknown>): Promise<ToolResult> {
-    const sessionId = String(args._sessionId || "default");
-    const opId = typeof args._operationId === "string" ? args._operationId : undefined;
+    const sessionId = sessionIdOf(args) ?? "default";
+    const opId = operationIdOf(args);
 
     const taint = getTaintSummary(sessionId);
     if (taint.count > 0) {

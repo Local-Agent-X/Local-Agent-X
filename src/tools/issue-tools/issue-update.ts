@@ -2,6 +2,7 @@ import type { ToolDefinition } from "../../types.js";
 import { IssueStore, AgentTemplateStore, type IssueStatus } from "../../agent-store/index.js";
 import { ProjectRosterStore } from "../../project-rosters.js";
 import { ok, err, rosterForIssue } from "./shared.js";
+import { sessionIdOf } from "../../tool-execution/internal-args.js";
 
 export const issueUpdateTool: ToolDefinition = {
   name: "issue_update",
@@ -75,7 +76,7 @@ export const issueUpdateTool: ToolDefinition = {
                 // spawn parent — the manager's wake nests under it in the
                 // AGENTS panel / AgentRunStore lineage. Undefined for a
                 // chat-session caller (manager renders as a root).
-                parentAgentId: callerRunIdFromSession(args._sessionId),
+                parentAgentId: callerRunIdFromSession(sessionIdOf(args)),
                 // The triage brief above is composed here start to finish;
                 // only `issue.title` interpolates, as a quoted subject line. No
                 // agent or human prose rides in it, so it is machine text by

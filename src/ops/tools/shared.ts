@@ -32,6 +32,7 @@ import { broadcastToSession, readRecentSessionMessages } from "../session-bridge
 import { delegatedToolsetForOp } from "./delegated-toolset.js";
 import { resolveSubmittedWorkRoot } from "./work-root.js";
 import { clearSessionWorkRoot, resolveAgentPath, setSessionWorkRoot } from "../../workspace/paths.js";
+import { operationIdOf, sessionIdOf } from "../../tool-execution/internal-args.js";
 import type { Op, OpLane, OpVisibility } from "../types.js";
 
 export interface SubmitArgs {
@@ -189,13 +190,13 @@ export async function buildOpFromArgs(rawArgs: Record<string, unknown>): Promise
   // discussed, not in a vacuum. The agent's curated fields (success_criteria,
   // constraints, context_files) still take precedence; this is the safety net
   // for when the agent under-specifies the handoff.
-  const sessionId = typeof rawArgs._sessionId === "string" ? rawArgs._sessionId : "";
+  const sessionId = sessionIdOf(rawArgs) ?? "";
   const parentSessionMessages = sessionId ? readRecentSessionMessages(sessionId) : [];
 
   // The task is the calling agent's own words: stamp the op that wrote it (the
   // agents panel's run-lineage tree) and the user's bans recorded on that op,
   // which the worker inherits instead of mining this text for them.
-  const callerOpId = typeof rawArgs._operationId === "string" ? rawArgs._operationId : undefined;
+  const callerOpId = operationIdOf(rawArgs);
   const { parentOpId, inheritedConstraints } = delegationFrom(sessionId, callerOpId);
   const preferredProvider = typeof args.preferred_provider === "string"
     ? args.preferred_provider

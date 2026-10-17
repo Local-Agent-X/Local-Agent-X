@@ -2,6 +2,7 @@ import { resolve, relative } from "node:path";
 import { RETRIEVAL_RESULTS_INSTRUCTION } from "../../../harness-text.js";
 import type { MemoryIndex } from "../../../memory/index.js";
 import { excerptNote } from "../../retrieval-format.js";
+import { sessionIdOf } from "../../../tool-execution/internal-args.js";
 
 export function memorySearchTool(memory: MemoryIndex) {
   return {
@@ -53,7 +54,7 @@ export function memorySearchTool(memory: MemoryIndex) {
       // _sessionId is injected by tool-executor for SESSION_SCOPED_TOOLS.
       // When present, default behavior is same-session + profile only.
       // Past sessions require the explicit `search_past_sessions` tool.
-      const sessionId = args._sessionId ? String(args._sessionId) : undefined;
+      const sessionId = sessionIdOf(args);
 
       const results = await memory.search(query, {
         maxResults,

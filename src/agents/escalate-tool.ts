@@ -18,6 +18,7 @@ import type { ToolDefinition, ToolResult } from "../types.js";
 import { Handler } from "../agency/handler.js";
 import { performEscalation } from "./escalation-core.js";
 import { callerRunIdFromSession } from "./invoke.js";
+import { sessionIdOf } from "../tool-execution/internal-args.js";
 
 function ok(content: string): ToolResult { return { content }; }
 function err(content: string): ToolResult { return { content, isError: true }; }
@@ -67,7 +68,7 @@ export const agentEscalate: ToolDefinition = {
     const context = String(args.context || "").trim();
     const urgency = String(args.urgency || "").trim();
     const issueId = args.issueId ? String(args.issueId) : undefined;
-    const sessionId = String(args._sessionId || "");
+    const sessionId = sessionIdOf(args) ?? "";
 
     if (!to) return err("agent_escalate requires `to` ('manager' | 'user' | <agentId>).");
     if (!context) return err("agent_escalate requires `context` describing the situation.");

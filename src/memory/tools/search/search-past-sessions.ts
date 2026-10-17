@@ -3,6 +3,7 @@ import type { MemorySearchResult } from "../../types.js";
 import { findMatchingApps } from "./app-matcher.js";
 import { excerptNote } from "../../retrieval-format.js";
 import { readPastMessage } from "./past-message.js";
+import { sessionIdOf } from "../../../tool-execution/internal-args.js";
 
 export interface PastSessionsQueryOptions {
   maxResults?: number;
@@ -65,7 +66,7 @@ export function searchPastSessionsTool(memory: MemoryIndex) {
       // sessionId still threaded so the tool can mark which results came
       // from the *current* session vs. prior ones (rare overlap, but
       // possible if the model calls this within an active session).
-      const sessionId = args._sessionId ? String(args._sessionId) : undefined;
+      const sessionId = sessionIdOf(args);
 
       const [sessionResults, appMatches] = await Promise.all([
         searchPastSessions(memory, query, { maxResults, since, sessionId }),

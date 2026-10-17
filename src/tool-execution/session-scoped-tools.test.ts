@@ -53,10 +53,12 @@ async function registeredTools(): Promise<ToolDefinition[]> {
   return tools;
 }
 
-// A property read or a sessionIdOf(args) call, not a mention: execute bodies
-// keep their comments, and a comment naming the key reads nothing.
+// A sessionIdOf(args) call (the one accessor, internal-args.ts) or a raw
+// property read, not a mention: execute bodies keep their comments, and a
+// comment naming the key reads nothing. The transformed source calls the
+// imported accessor as `(0, ns.sessionIdOf)(args)`.
 function readsSessionId(tool: ToolDefinition): boolean {
-  return /\._sessionId\b|\bsessionIdOf\(/.test(String(tool.execute));
+  return /\._sessionId\b|sessionIdOf\)?\(/.test(String(tool.execute));
 }
 
 async function stampedArgs(name: string, sessionId: string, args: Record<string, unknown>): Promise<Record<string, unknown>> {

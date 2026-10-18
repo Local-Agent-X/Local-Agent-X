@@ -16,7 +16,13 @@
  * else should re-derive the flag list:
  *   composeGitArgs — argv arrays (execFileSync / spawn)
  *   gitSafeCmd     — shell command strings (execSync)
+ *
+ * and {@link gitExecutable}, the program the argv runners spawn.
  */
+
+import { execFileSync } from "node:child_process";
+import { statSync } from "node:fs";
+import { resolve } from "node:path";
 
 /** Config flags prepended to EVERY git invocation the app makes. */
 export const GIT_SAFETY_ARGS: readonly string[] = ["-c", "gc.auto=0"];
@@ -34,4 +40,42 @@ export function composeGitArgs(args: string[] | string): string[] {
  */
 export function gitSafeCmd(cmd: string): string {
   return /^git\s/.test(cmd) ? cmd.replace(/^git\s/, `git ${GIT_SAFETY_ARGS.join(" ")} `) : cmd;
+}
+
+/**
+ * The git a Git for Windows install runs for `git`, from the exec path that git
+ * reports: `--exec-path` is <prefix>/libexec/git-core and the real git is
+ * <prefix>/bin/git.exe, for a standard install and PortableGit alike, whatever
+ * the prefix (mingw64, clangarm64). Null when that file is not there: a git
+ * that is not Git for Windows' has no launcher in front of it.
+ */
+export function realGitBeside(execPath: string): string | null {
+  const candidate = resolve(execPath, "..", "..", "bin", "git.exe");
+  return statSync(candidate, { throwIfNoEntry: false })?.isFile() ? candidate : null;
+}
+
+let resolvedGit: string | undefined;
+
+/**
+ * The program the argv runners spawn: on Windows the git that does the work,
+ * not Git for Windows' launcher.
+ *
+ * `git` on a Windows PATH is the launcher (<Git>\cmd\git.exe or
+ * <Git>\bin\git.exe), which runs the real git as its own child. A runner that
+ * kills its child (execFileSync on timeout or past maxBuffer) ended only the
+ * launcher, and the real git ran on in the repo, holding the folder open.
+ * Spawned directly, the child the runner kills is the git that is working.
+ * Elsewhere, or when no real git is found, the name stays `git`.
+ */
+export function gitExecutable(): string {
+  if (process.platform !== "win32") return "git";
+  if (resolvedGit) return resolvedGit;
+  let execPath: string;
+  try {
+    execPath = execFileSync("git", ["--exec-path"], { encoding: "utf-8", timeout: 10_000, windowsHide: true }).trim();
+  } catch {
+    return "git"; // not cached: a git installed later is found on the next call
+  }
+  resolvedGit = realGitBeside(execPath) ?? "git";
+  return resolvedGit;
 }

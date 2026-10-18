@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { createLogger } from "../logger.js";
-import { composeGitArgs } from "../git-safety.js";
+import { composeGitArgs, gitExecutable } from "../git-safety.js";
 import { killProcessTree } from "../process-tree-kill.js";
 
 export const logger = createLogger("agency.worktree");
@@ -104,11 +104,15 @@ function toArgv(args: string[] | string): string[] {
  * delete) at that checkout instead of the app's own %TEMP% worktree base,
  * destroying it. Every call site now names its target explicitly; a caller that
  * genuinely wants the ambient repo passes `process.cwd()` on purpose.
+ *
+ * execFileSync ends a timed-out or over-limit call by killing its own child
+ * and nothing under it, so the child must be the git doing the work, not Git
+ * for Windows' launcher: {@link gitExecutable}.
  */
 export function git(args: string[] | string, cwd: string): string {
   const argv = toArgv(args);
   try {
-    return execFileSync("git", composeGitArgs(argv), {
+    return execFileSync(gitExecutable(), composeGitArgs(argv), {
       cwd,
       encoding: "utf-8",
       timeout: GIT_TIMEOUT_MS,
@@ -136,7 +140,7 @@ export function git(args: string[] | string, cwd: string): string {
 export function gitAsync(args: string[] | string, cwd: string): Promise<string> {
   const argv = toArgv(args);
   return new Promise((resolveGit, rejectGit) => {
-    const child = spawn("git", composeGitArgs(argv), {
+    const child = spawn(gitExecutable(), composeGitArgs(argv), {
       cwd,
       windowsHide: true,
       env: process.env,
@@ -153,10 +157,10 @@ export function gitAsync(args: string[] | string, cwd: string): Promise<string> 
       clearTimeout(timer);
       rejectGit(new Error(`git ${argv.join(" ")} failed: ${detail}`));
     };
-    // The whole tree, not the child: on Windows `git` is Git for Windows'
-    // launcher, which runs the real git (mingw64/bin/git.exe) as ITS child. A
-    // plain kill ended only the launcher; the real git ran on, streaming and
-    // holding the repo folder open after the promise had already failed.
+    // The whole tree, not the child: git runs hooks as its own children. When
+    // the child was Git for Windows' launcher, a plain kill ended only the
+    // launcher; the real git ran on, streaming and holding the repo folder open
+    // after the promise had already failed.
     const timer = setTimeout(() => { timedOut = true; killProcessTree(child, "SIGKILL"); }, GIT_TIMEOUT_MS);
     // setEncoding decodes ACROSS chunk boundaries — a multi-byte character split
     // by a 64 KiB pipe read is held until its remaining bytes arrive. Appending

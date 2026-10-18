@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { git, gitAsync, GIT_OUTPUT_CAP, WORKTREE_BASE } from "./worktree-core.js";
 import { bootSweepSafeForRepo, reapAppOwnWorktrees } from "./worktree-boot-sweep.js";
-import { composeGitArgs, GIT_SAFETY_ARGS, gitSafeCmd } from "../git-safety.js";
+import { composeGitArgs, GIT_SAFETY_ARGS, gitExecutable, gitSafeCmd, realGitBeside } from "../git-safety.js";
 
 // ── Fixtures ────────────────────────────────────────────────────────────────
 const roots: string[] = [];
@@ -159,6 +159,49 @@ describe("gitAsync", () => {
     });
     expect(asyncTurns).toBeGreaterThan(0);
     expect(syncTurns).toBe(0);
+  });
+});
+
+// ── git(): an over-limit or timed-out call leaves no git behind ──────────────
+describe("git() limits", () => {
+  it("throws at its timeout, and git is gone when it does", () => {
+    const repo = initRepo();
+    // git waits on a hook that outlives the 30 s limit. execFileSync kills its
+    // own child and nothing under it. On Windows that child was Git for
+    // Windows' launcher, and the real git ran on in the repo, so the folder
+    // could not be removed (EPERM) — no retries here. The output limit cannot
+    // stand in for the timeout: past maxBuffer a git that is writing dies on
+    // the closed pipe anyway, and a hook that floods the pipe has processes of
+    // its own dying in the repo right then. The hook lives outside the repo, as
+    // a linked worktree's hooks do (in the common dir), so the folder is held
+    // only if git is.
+    const hooks = mkdtempSync(join(tmpdir(), "lax-gitsafety-hooks-"));
+    roots.push(hooks);
+    writeFileSync(join(hooks, "post-checkout"), "#!/bin/sh\nsleep 45\n", { mode: 0o755 });
+    run(repo, ["config", "core.hooksPath", hooks]);
+    expect(() => git(["checkout", "-q", "-b", "slow-hook"], repo)).toThrow(/^git checkout -q -b slow-hook failed: .*ETIMEDOUT/);
+    expect(() => rmSync(dirname(repo), { recursive: true, force: true })).not.toThrow();
+  }, 120_000);
+});
+
+// ── gitExecutable: the runners spawn the real git, not a launcher ─────────────
+describe("gitExecutable", () => {
+  it("finds <prefix>/bin/git.exe from <prefix>/libexec/git-core, else nothing", () => {
+    const root = mkdtempSync(join(tmpdir(), "lax-gitsafety-prefix-"));
+    roots.push(root);
+    const execPath = join(root, "mingw64", "libexec", "git-core");
+    mkdirSync(execPath, { recursive: true });
+    expect(realGitBeside(execPath)).toBeNull();
+    mkdirSync(join(root, "mingw64", "bin"));
+    writeFileSync(join(root, "mingw64", "bin", "git.exe"), "");
+    expect(realGitBeside(execPath)).toBe(join(root, "mingw64", "bin", "git.exe"));
+  });
+
+  it.skipIf(process.platform !== "win32")("is, on Windows, the git beside git's own exec path", () => {
+    const real = realGitBeside(run(tmpdir(), ["--exec-path"]));
+    expect(real).not.toBeNull();
+    expect(gitExecutable()).toBe(real);
+    expect(execFileSync(gitExecutable(), ["--version"], { encoding: "utf-8" })).toMatch(/^git version /);
   });
 });
 

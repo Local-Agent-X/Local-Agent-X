@@ -5,6 +5,7 @@ import { canonicalFetch } from "../web-egress.js";
 import { getRuntimeConfig } from "../../config.js";
 import { ok, err, okWithImage, resolveMediaProvider, mediaProviderLabel, withMediaNote, workspaceDir } from "./shared.js";
 import { requestCodexImage } from "./codex-images.js";
+import { noFreeMediaMessage, paidMediaApisAllowed } from "./paid-media.js";
 import { CODEX_IMAGE_MODEL } from "../../codex-client/images.js";
 
 /** Stable Diffusion server URL — configurable via config.sdServerUrl */
@@ -132,7 +133,7 @@ async function generateViaCodex(prompt: string, token: string): Promise<ToolResu
 
 export const generateImageTool: ToolDefinition = {
   name: "generate_image",
-  compactDescription: "Generate a NEW image from a text prompt; it cannot edit an existing one (use edit_image). Uses the chat model's engine (Grok or ChatGPT), else the default in Settings; `provider` forces a backend.",
+  compactDescription: "Generate a NEW image from a text prompt; it cannot edit one (use edit_image). Uses the chat model's engine, else the Settings default; paid API keys only if the user allows them. `provider` forces a backend.",
   description:
     "Generate a NEW image from a text prompt — creates from scratch, does NOT see any existing image. " +
     "To MODIFY an image the user gave you (recolor, change/add/remove part of a photo), use edit_image instead — " +
@@ -140,6 +141,8 @@ export const generateImageTool: ToolDefinition = {
     "Defaults to the engine of the model the user chats on: a Grok chat uses xAI Grok Imagine; a ChatGPT or OpenAI chat uses the ChatGPT subscription (gpt-image-2) when signed in, else OpenAI DALL-E (API key). " +
     "Any other chat uses the default engine from Settings → Media (Grok or ChatGPT), or the other one when that isn't connected (the result says so), else local Stable Diffusion. " +
     "Pass `provider` to force a specific backend for one call (e.g. user says 'make this with Grok'). " +
+    "A paid API key (OpenAI, or xAI without the SuperGrok sign-in) is used only when the user has turned on 'Allow paid API keys for images and video' in Settings → Media; " +
+    "otherwise only the ChatGPT and SuperGrok sign-ins and local Stable Diffusion are used, and a request for a paid backend is refused — tell the user, do not retry another way. " +
     "Use detailed prompts for best results.",
   parameters: {
     type: "object",
@@ -174,7 +177,7 @@ export const generateImageTool: ToolDefinition = {
       },
       provider: {
         type: "string",
-        description: "Optional. Force a backend for this one image: 'grok' (xAI), 'chatgpt' (ChatGPT subscription), 'openai' (DALL-E, API key), or 'local' (Stable Diffusion). Omit to use the default. Pass this when the user names a generator.",
+        description: "Optional. Force a backend for this one image: 'grok' (xAI), 'chatgpt' (ChatGPT subscription), 'openai' (DALL-E, paid API key), or 'local' (Stable Diffusion). Omit to use the default. Pass this when the user names a generator.",
       },
     },
     required: ["prompt"],
@@ -183,7 +186,8 @@ export const generateImageTool: ToolDefinition = {
     const prompt = String(args.prompt || "");
     if (!prompt.trim()) return err("Prompt is required.");
 
-    const { provider, apiKey, forced, note } = await resolveMediaProvider(args.provider as string | undefined);
+    const { provider, apiKey, forced, note, refusal } = await resolveMediaProvider(args.provider as string | undefined);
+    if (refusal) return err(refusal);
     if (forced && provider !== "local" && !apiKey) {
       return err(`${mediaProviderLabel(provider)} isn't connected — connect it in Settings, or omit the provider override to use the default.`);
     }
@@ -212,6 +216,7 @@ export const generateImageTool: ToolDefinition = {
       });
       if (!healthRes.ok) throw new Error("not ok");
     } catch {
+      if (!forced && !paidMediaApisAllowed()) return err(noFreeMediaMessage("image"));
       return err(
         "No API image generation available and Stable Diffusion server is not running.\n" +
         "Start it with bash: python workspace/sd-server/server.py\n" +

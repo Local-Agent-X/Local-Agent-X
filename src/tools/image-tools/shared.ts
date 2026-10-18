@@ -12,8 +12,10 @@ import { getRuntimeConfig } from "../../config.js";
 import { loadSettings } from "../../settings.js";
 import type { SecretsStore } from "../../secrets.js";
 import { resolveCredential } from "../../auth/resolve.js";
+import { isBillableSource } from "../../cost-tracker.js";
 import { resolveAgentPath } from "../../workspace/paths.js";
 import { imageEngineSetting, type ImageEngine } from "./image-engine.js";
+import { paidMediaApisAllowed, paidMediaOffMessage } from "./paid-media.js";
 
 export function ok(content: string): ToolResult { return { content }; }
 export function err(content: string): ToolResult { return { content, isError: true }; }
@@ -58,17 +60,25 @@ export function initImageTools(secrets: SecretsStore) {
   _secretsStore = secrets;
 }
 
+type MediaCredential = { apiKey: string; paid: boolean };
+
 /** Resolve the credential for a media backend id. For xai this prefers the
  *  SuperGrok / X Premium+ OAuth bearer over a raw API key — same wire shape,
  *  but draws from subscription quota instead of API spend. `codex` is the
  *  ChatGPT sign-in's token (refreshed by src/auth/), `openai` the API key.
- *  `local` needs no key. */
-async function keyForProvider(provider: string): Promise<string | undefined> {
-  if (provider === "xai" || provider === "openai" || provider === "codex") {
-    return (await resolveCredential(provider))?.credential || undefined;
-  }
-  return undefined;
+ *  `local` needs no key. `paid` comes from the credential's source, by the
+ *  same rule the spend cap bills by (cost-tracker isBillableSource): a
+ *  sign-in is not paid per use, an API key from the store, env or config is. */
+async function mediaCredential(provider: string): Promise<MediaCredential | null> {
+  if (provider !== "xai" && provider !== "openai" && provider !== "codex") return null;
+  const resolved = await resolveCredential(provider);
+  if (!resolved?.credential) return null;
+  return { apiKey: resolved.credential, paid: isBillableSource(resolved.source) };
 }
+
+/** A credential a media call may use: any sign-in, and an API key only while
+ *  the user allows paid API keys for images and video. */
+const usable = (c: MediaCredential | null): c is MediaCredential => !!c && (!c.paid || paidMediaApisAllowed());
 
 /** A media backend id as the user knows it, for error text. A chat provider
  *  with no media backend of its own reads as OpenAI, the API-key default. */
@@ -98,11 +108,11 @@ type Backend = { provider: string; apiKey: string };
 
 /** The connected backend of an engine, or null. ChatGPT is the subscription
  *  sign-in when there is one, so the image bills the plan rather than API
- *  spend, else the OpenAI API key. */
+ *  spend, else the OpenAI API key. A paid key counts only while allowed. */
 async function connectedBackend(engine: ImageEngine): Promise<Backend | null> {
   for (const provider of engine === "grok" ? ["xai"] : ["codex", "openai"]) {
-    const apiKey = await keyForProvider(provider);
-    if (apiKey) return { provider, apiKey };
+    const credential = await mediaCredential(provider);
+    if (usable(credential)) return { provider, apiKey: credential.apiKey };
   }
   return null;
 }
@@ -127,6 +137,9 @@ export type ResolvedMedia = {
   /** Set when the default engine wasn't connected and the other one was
    *  used; the tool adds it to its result so the switch is never silent. */
   note?: string;
+  /** Set when the explicit backend's only credential is a paid API key and
+   *  paid keys are off: the tool returns it as its error, and calls nothing. */
+  refusal?: string;
 };
 
 /**
@@ -148,13 +161,21 @@ export type ResolvedMedia = {
  * `forced` is true only in case 1 so the caller can surface a clear error
  * when the user explicitly names a backend that isn't connected (rather than
  * silently falling back to local SD).
+ *
+ * While paid API keys are off (`allowPaidMediaApis`, Settings → Media), an API
+ * key is no candidate anywhere above, and an explicit backend whose credential
+ * is one comes back with a `refusal` naming the setting, never rerouted.
  */
 export async function resolveMediaProvider(
   explicit?: string,
   kind: "image" | "video" = "image",
 ): Promise<ResolvedMedia> {
   const forced = normalizeMediaProvider(explicit);
-  if (forced) return { provider: forced, apiKey: await keyForProvider(forced), forced: true };
+  if (forced) {
+    const credential = await mediaCredential(forced);
+    if (credential && !usable(credential)) return { provider: forced, forced: true, refusal: paidMediaOffMessage(kind) };
+    return { provider: forced, apiKey: credential?.apiKey, forced: true };
+  }
 
   if (kind === "video") {
     const grok = await connectedBackend("grok");

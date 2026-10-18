@@ -7,6 +7,7 @@ import { canonicalFetch } from "../web-egress.js";
 import { createLogger } from "../../logger.js";
 import { getRuntimeConfig } from "../../config.js";
 import { ok, err, okWithVideo, resolveMediaProvider, resolveLocalImagePath, imageFileToDataUrl, findRecentLocalImage, workspaceDir, PROMPT_REFS_EARLIER_IMAGE } from "./shared.js";
+import { noFreeMediaMessage, paidMediaApisAllowed } from "./paid-media.js";
 
 const xaiLogger = createLogger("image-tools.xai");
 
@@ -153,10 +154,12 @@ async function generateViaXaiVideo(
 
 export const generateVideoTool: ToolDefinition = {
   name: "generate_video",
-  compactDescription: "Generate a short MP4 video from a text prompt. Defaults to xAI Grok Imagine when connected, else local CogVideoX; pass `provider` to force one. On WhatsApp/Telegram it is auto-delivered — never call send_video too.",
+  compactDescription: "Generate a short MP4 video from a prompt: xAI Grok Imagine when connected (an API key only if the user allows paid keys), else local CogVideoX. On WhatsApp/Telegram it is auto-delivered — never call send_video too.",
   description:
     "Generate a short video from a text prompt. Defaults to xAI Grok Imagine whenever xAI is connected, whatever the chat model " +
     "(text-to-video, ~60-240s, up to 15s duration, optional reference images; ChatGPT has no video here). " +
+    "An xAI API key (paid per video) is used only when the user has turned on 'Allow paid API keys for images and video' in Settings → Media; " +
+    "the SuperGrok sign-in always works, and a request for a paid backend while it is off is refused — tell the user, do not retry another way. " +
     "Otherwise falls back to local CogVideoX (must be running on port 7861, ~6 second outputs). " +
     "Pass `provider` to force a backend for one call. Videos saved as MP4. " +
     "On WhatsApp/Telegram the generated video is delivered to the user automatically — do NOT also call send_video for it.",
@@ -197,10 +200,11 @@ export const generateVideoTool: ToolDefinition = {
 
     // Resolve backend: explicit override → Grok when connected → local
     // CogVideoX, the only local video path.
-    const { provider, apiKey, forced } = await resolveMediaProvider(args.provider as string | undefined, "video");
+    const { provider, apiKey, forced, refusal } = await resolveMediaProvider(args.provider as string | undefined, "video");
     if (forced && (provider === "openai" || provider === "codex")) {
       return err(`${provider === "codex" ? "ChatGPT" : "OpenAI"} has no video API here — use 'grok' or 'local' for video.`);
     }
+    if (refusal) return err(refusal);
     if (forced && provider === "xai" && !apiKey) {
       return err("Grok/xAI isn't connected — connect it in Settings, or omit the provider override to use the default.");
     }
@@ -246,6 +250,7 @@ export const generateVideoTool: ToolDefinition = {
       });
       if (!healthRes.ok) throw new Error("not ok");
     } catch {
+      if (!forced && !paidMediaApisAllowed()) return err(noFreeMediaMessage("video"));
       return err(
         "Video server is not running.\n" +
         "Start it with bash: python workspace/sd-server/video-server.py\n" +

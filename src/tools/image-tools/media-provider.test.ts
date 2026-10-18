@@ -1,7 +1,9 @@
 // Which backend an image, edit or video call lands on: an explicit backend
 // first, then the engine of the chat provider, then the user's default engine
 // (`imageEngine`), then the other engine with a note saying so. Credentials,
-// settings and the network are mocked throughout.
+// settings and the network are mocked throughout. Paid API keys are allowed
+// here (`allowPaidMediaApis`), so this is the behavior with the switch on;
+// paid-media.test.ts covers it off.
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -18,10 +20,15 @@ let creds: Record<string, string | undefined> = {};
 let settingsBag: Record<string, unknown> = {};
 const fetchCalls: Array<{ url: string; opts: { headers?: Record<string, string> } }> = [];
 
+// A sign-in (`codex`) resolves as "oauth"; the OpenAI and xAI keys as stored keys.
 vi.mock("../../auth/resolve.js", () => ({
-  resolveCredential: async (provider: string) => (creds[provider] ? { provider, credential: creds[provider], source: "oauth" } : null),
+  resolveCredential: async (provider: string) =>
+    (creds[provider] ? { provider, credential: creds[provider], source: provider === "codex" ? "oauth" : "secrets-store" } : null),
 }));
-vi.mock("../../settings.js", async (orig) => ({ ...(await orig<typeof import("../../settings.js")>()), loadSettings: () => settingsBag }));
+vi.mock("../../settings.js", async (orig) => ({
+  ...(await orig<typeof import("../../settings.js")>()),
+  loadSettings: () => ({ allowPaidMediaApis: true, ...settingsBag }),
+}));
 vi.mock("../web-egress.js", async (orig) => ({
   ...(await orig<typeof import("../web-egress.js")>()),
   canonicalFetch: vi.fn(async (url: string, opts: (typeof fetchCalls)[number]["opts"] = {}) => {

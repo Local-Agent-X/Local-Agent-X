@@ -23,6 +23,7 @@ import {
   isCredentialHeader,
 } from "./web-egress.js";
 import { onEventOf, sessionIdOf, toolCallIdOf } from "../tool-execution/internal-args.js";
+import { paidMediaApisAllowed, paidMediaEndpointKind, paidMediaOffMessage } from "./image-tools/paid-media.js";
 
 export { isCredentialHeader } from "./web-egress.js";
 
@@ -141,6 +142,10 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
       // (ADR 0005) before a single placeholder is resolved.
       const sessionId = sessionIdOf(args) ?? "";
       const boundNames = secrets ? referencedSecretNames([...rawHeaders.map(([, v]) => v), bodyStr ?? ""].join("\n")) : [];
+      // A vault secret is an API key, and on a provider's image or video route
+      // it is billed per use: the same switch as generate_image's governs it.
+      const paidMedia = boundNames.length > 0 ? paidMediaEndpointKind(url) : null;
+      if (paidMedia && !paidMediaApisAllowed()) return err(paidMediaOffMessage(paidMedia));
       if (secrets && boundNames.length > 0) {
         const missing = boundNames.filter((name) => !secrets.has(name));
         if (missing.length > 0) {

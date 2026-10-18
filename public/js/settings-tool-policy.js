@@ -28,6 +28,8 @@ async function loadToolPolicyToggles() {
     applyLocalOnlyUi(s.localOnlyMode === true);
     // Default image engine (Settings → Media) defaults to Grok.
     paintImageEngine(s.imageEngine === 'chatgpt' ? 'chatgpt' : 'grok');
+    // Paid API keys for images and video default OFF (=== true).
+    setToolPolicyToggle('cfg-toggle-paid-media', s.allowPaidMediaApis === true);
     // Deliverable verification pass defaults ON (!== false).
     setToolPolicyToggle('tp-toggle-verify-deliverables', s.verifyDeliverables !== false);
     // Regression-audit gate's optional second-provider target. Empty (default)

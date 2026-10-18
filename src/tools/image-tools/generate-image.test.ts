@@ -15,7 +15,12 @@ const PNG_1x1 = Buffer.from(
   "hex",
 );
 
-vi.mock("../../auth/resolve.js", () => ({ resolveCredential: async () => ({ credential: "test-key" }) }));
+vi.mock("../../auth/resolve.js", () => ({ resolveCredential: async () => ({ credential: "test-key", source: "secrets-store" }) }));
+// The OpenAI API key is a paid key: allowed here (Settings → Media switch on).
+vi.mock("../../settings.js", async (orig) => ({
+  ...(await orig<typeof import("../../settings.js")>()),
+  loadSettings: () => ({ allowPaidMediaApis: true }),
+}));
 vi.mock("../web-egress.js", () => ({
   canonicalFetch: async (url: string) => {
     if (url.includes("/images/generations")) {

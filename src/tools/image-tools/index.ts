@@ -7,6 +7,7 @@
  *   codex-images.ts   — the ChatGPT-subscription call both use
  *   generate-video.ts — generate_video (xAI Grok Imagine / local CogVideoX)
  *   shared.ts         — provider resolution, ok/err, recent-image fallback
+ *   paid-media.ts     — the Settings → Media switch for paid API keys
  */
 
 import type { ToolDefinition } from "../../types.js";

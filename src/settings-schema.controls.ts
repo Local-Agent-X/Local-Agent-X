@@ -268,4 +268,12 @@ export const CONTROL_SETTINGS: ReadonlyArray<FlippableSetting> = [
     broadcast: true,
     description: "Default image engine (grok or chatgpt; grok when unset) for generate_image/edit_image when the chat provider has none of its own. A Grok chat always uses Grok and a ChatGPT/OpenAI chat uses ChatGPT; if this engine isn't connected the other one is used and the result says so. Video is Grok whenever xAI is connected. The model can still force a backend per call via the tool's `provider` arg.",
   },
+  {
+    field: "allowPaidMediaApis",
+    owner: "protected", where: "Settings → Media → Image Generation",
+    validate: z.boolean(),
+    runtime: false,
+    broadcast: true,
+    description: "Allow paid API keys for images and video. Off by default: generate_image, edit_image (masked edits included) and generate_video then never use an OpenAI or xAI API key, which is billed per image or video, only the ChatGPT and SuperGrok sign-ins and local Stable Diffusion / CogVideoX; a request for a paid backend is refused. On: API keys are used as before, a sign-in still preferred over a key for the same engine",
+  },
 ];

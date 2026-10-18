@@ -19,10 +19,17 @@ type Reply = { ok: boolean; status: number; json: () => Promise<unknown>; text: 
 let reply: (url: string) => Reply | Promise<Reply>;
 const fetchCalls: Array<{ url: string; opts: { method?: string; headers?: Record<string, string>; body?: unknown } }> = [];
 
+// The ChatGPT sign-in resolves as "oauth", the API keys as stored keys, and
+// paid keys are allowed, so the API-key paths below run as they do with the
+// Settings → Media switch on.
 vi.mock("../../auth/resolve.js", () => ({
-  resolveCredential: async (provider: string) => (creds[provider] ? { provider, credential: creds[provider], source: "oauth" } : null),
+  resolveCredential: async (provider: string) =>
+    (creds[provider] ? { provider, credential: creds[provider], source: provider === "codex" ? "oauth" : "secrets-store" } : null),
 }));
-vi.mock("../../settings.js", async (orig) => ({ ...(await orig<typeof import("../../settings.js")>()), loadSettings: () => settingsBag }));
+vi.mock("../../settings.js", async (orig) => ({
+  ...(await orig<typeof import("../../settings.js")>()),
+  loadSettings: () => ({ allowPaidMediaApis: true, ...settingsBag }),
+}));
 vi.mock("../web-egress.js", async (orig) => ({
   ...(await orig<typeof import("../web-egress.js")>()),
   canonicalFetch: vi.fn(async (url: string, opts: (typeof fetchCalls)[number]["opts"] = {}) => {

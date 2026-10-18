@@ -59,6 +59,7 @@ const WIDENING: Record<string, unknown> = {
   browserMode: "advanced-shared", toolApproval: "auto",
   embeddingProvider: "openai", embeddingModel: "text-embedding-3-small", voiceMode: "browser",
   voiceSttProvider: "groq", voiceTier4Provider: "edge-tts",
+  allowPaidMediaApis: true,
 };
 const CURRENT: Record<string, unknown> = { toolApproval: "confirm-all", browserMode: "isolated" };
 const readCurrent = (field: string) => CURRENT[field];

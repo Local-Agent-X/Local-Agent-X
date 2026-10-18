@@ -9,6 +9,7 @@ import {
   findRecentLocalImage, workspaceDir, PROMPT_REFS_EARLIER_IMAGE,
 } from "./shared.js";
 import { requestCodexImage } from "./codex-images.js";
+import { noFreeMediaMessage, paidMediaApisAllowed, PAID_MEDIA_SETTING_LABEL } from "./paid-media.js";
 import { CODEX_IMAGE_MODEL } from "../../codex-client/images.js";
 
 interface LoadedImage { buf: Buffer; mime: string; filename: string; source: string; }
@@ -177,7 +178,7 @@ async function editViaCodex(prompt: string, token: string, image: LoadedImage): 
 
 export const editImageTool: ToolDefinition = {
   name: "edit_image",
-  compactDescription: "Edit an EXISTING image (recolor, change, add or remove part) keeping the rest — ALWAYS use this, not generate_image, when the user gives you a photo. A `mask` routes to OpenAI (transparent = regenerate, opaque = keep).",
+  compactDescription: "Edit an EXISTING image (recolor, change, add or remove part) keeping the rest — ALWAYS use this, not generate_image, for a user's photo. A `mask` needs an OpenAI API key; paid keys only if the user allows them.",
   description:
     "Edit an EXISTING image instead of generating a new one — recolor, change, add, or remove part of a " +
     "photo while keeping the rest. ALWAYS use this (not generate_image) when the user gives you a photo to " +
@@ -187,7 +188,9 @@ export const editImageTool: ToolDefinition = {
     "Grok and ChatGPT edits are prompt-driven, no mask. Routes to OpenAI " +
     "gpt-image-1 when a `mask` is supplied or OpenAI is forced — only OpenAI does pixel-locked masked edits " +
     "(transparent mask pixels = regenerate, opaque = preserve exactly). For a precise 'change ONLY X' edit, " +
-    "supplying a mask + OpenAI gives the cleanest result.",
+    "supplying a mask + OpenAI gives the cleanest result. " +
+    "A paid API key (OpenAI, or xAI without the SuperGrok sign-in), masked edits included, is used only when the user has turned on " +
+    "'Allow paid API keys for images and video' in Settings → Media; otherwise it is refused — tell the user, do not retry another way.",
   parameters: {
     type: "object",
     properties: {
@@ -244,7 +247,8 @@ export const editImageTool: ToolDefinition = {
     const size = typeof args.size === "string" && args.size.trim() ? args.size.trim() : "auto";
     const quality = args.quality === undefined ? true : Boolean(args.quality);
 
-    const { provider, apiKey, forced, note } = await resolveMediaProvider(args.provider as string | undefined);
+    const resolved = await resolveMediaProvider(args.provider as string | undefined);
+    const { provider, apiKey, forced, note, refusal } = resolved;
 
     // Mask = pixel-locked editing, which only OpenAI gpt-image-1 supports. Never
     // silently route a masked request to xAI (which would ignore the mask).
@@ -255,16 +259,22 @@ export const editImageTool: ToolDefinition = {
           `has no mask support. Drop the mask to edit on ${provider}, or connect an OpenAI API key.`,
         );
       }
-      const openaiKey = provider === "openai" ? apiKey : (await resolveMediaProvider("openai")).apiKey;
-      if (!openaiKey) {
+      const openai = provider === "openai" ? resolved : await resolveMediaProvider("openai");
+      if (openai.refusal) {
+        return err(`${openai.refusal} Masked edits run only on an OpenAI API key (gpt-image-1); drop the mask for a prompt-only edit on a ChatGPT or SuperGrok sign-in.`);
+      }
+      if (!openai.apiKey) {
         return err(
           "Masked editing needs OpenAI (gpt-image-1) — the only backend that regenerates just the masked " +
-          "region. Connect OpenAI in Settings → Providers, or drop the mask to do a prompt-only edit on your current provider.",
+          "region. Connect OpenAI in Settings → Providers" +
+          (paidMediaApisAllowed() ? "" : ` and turn on '${PAID_MEDIA_SETTING_LABEL}' in Settings → Media (billed per image)`) +
+          ", or drop the mask to do a prompt-only edit on your current provider.",
         );
       }
-      try { return await editViaOpenai(prompt, openaiKey, image, mask, size); }
+      try { return await editViaOpenai(prompt, openai.apiKey, image, mask, size); }
       catch (e) { return err(`OpenAI image edit failed: ${(e as Error).message}`); }
     }
+    if (refusal) return err(refusal);
 
     // No mask — prompt-driven edit on the resolved backend.
     if (provider === "xai" && apiKey) {
@@ -276,6 +286,7 @@ export const editImageTool: ToolDefinition = {
       try { return withMediaNote(await editViaOpenai(prompt, apiKey, image, null, size), note); }
       catch (e) { return err(`OpenAI image edit failed: ${(e as Error).message}`); }
     }
+    if (!forced && !paidMediaApisAllowed()) return err(noFreeMediaMessage("edit"));
     return err(
       provider === "local"
         ? "Local Stable Diffusion has no image-edit endpoint — editing needs xAI Grok, a ChatGPT sign-in or OpenAI. Connect one in Settings → Providers."

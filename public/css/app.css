@@ -1080,7 +1080,7 @@ body.platform-win .settings-overlay{top:32px}
 .toggle-row{display:flex;align-items:center;justify-content:space-between;padding:8px 0}
 .toggle-label{font-size:.78rem}
 .toggle-desc{font-size:.65rem;color:var(--muted)}
-.toggle{width:40px;height:22px;border-radius:11px;border:1px solid var(--border);background:var(--bg);cursor:pointer;position:relative;transition:all .2s}
+.toggle{flex-shrink:0;width:40px;height:22px;border-radius:11px;border:1px solid var(--border);background:var(--bg);cursor:pointer;position:relative;transition:all .2s}
 .toggle.on{background:color-mix(in srgb, var(--accent) 20%, transparent);border-color:var(--accent)}
 .toggle::after{content:'';position:absolute;width:16px;height:16px;border-radius:50%;background:var(--muted);top:2px;left:2px;transition:all .2s}
 .toggle.on::after{left:20px;background:var(--accent)}

@@ -8,8 +8,8 @@
 //     several 10 s mark-compacts mid-turn, the last straw being a glob whose
 //     result had nowhere to go. A refused call gets a normal `blocked` envelope
 //     telling the model to finish from what it has. Nothing is thrown or
-//     killed; read-only tools count too. Control/terminal tools
-//     (HEAP_GUARD_EXEMPT_TOOLS) are never refused.
+//     killed; read-only tools count too. Control/terminal tools (a row's
+//     `runControl`) are never refused.
 //
 //   maxParallelToolBatch — at most N parallel-safe calls in flight per
 //     Promise.all sub-batch (LAX_MAX_PARALLEL_TOOLS, default 8), so a 20-glob
@@ -24,6 +24,7 @@
 import { getHeapStatistics } from "node:v8";
 import type { ToolResult } from "../types.js";
 import { blocked } from "../tools/result-helpers.js";
+import { isRunControl } from "../tool-registry.js";
 
 /** The two v8.getHeapStatistics fields the guard reads. */
 export interface HeapStats { used_heap_size: number; heap_size_limit: number }
@@ -36,24 +37,15 @@ export interface HeapGuardTurn { warned: boolean }
 export const DEFAULT_HEAP_GUARD_RATIO = 0.85;
 export const DEFAULT_MAX_PARALLEL_TOOL_BATCH = 8;
 
-// Control/terminal tools the guard never refuses. Their results are a few
-// bytes, so refusing them frees nothing — and refusing ask_user is actively
-// harmful: turn-loop/ask-user-terminal.ts:55 only surfaces a question whose
-// resultStatus is "ok", so a refused ask_user cannot end the turn, which is
-// exactly the exit the refusal message steers the model toward. Only
-// control/termination belongs here — never a read/search/fetch tool, however
-// small its typical result.
-export const HEAP_GUARD_EXEMPT_TOOLS: ReadonlySet<string> = new Set([
-  "ask_user",                                          // terminal: ends the turn with a question
-  "agent_escalate",                                    // terminal: hands the run to a human
-  "task_create", "task_update",                        // bookkeeping the model must do to stop cleanly
-  "session_status",                                    // status readout
-  "process_status", "process_list", "process_kill",    // see / stop what is running
-  "send_file",                                         // delivers an already-finished artifact
-]);
-
+// Control/terminal tools (each row's `runControl`) the guard never refuses.
+// Their results are a few bytes, so refusing them frees nothing — and refusing
+// ask_user is actively harmful: turn-loop/ask-user-terminal.ts only surfaces a
+// question whose resultStatus is "ok", so a refused ask_user cannot end the
+// turn, which is exactly the exit the refusal message steers the model toward.
+// Only control/termination qualifies — never a read/search/fetch tool, however
+// small its typical result (heap-guard.test.ts fences it).
 export function isHeapGuardExempt(toolName: string): boolean {
-  return HEAP_GUARD_EXEMPT_TOOLS.has(toolName);
+  return isRunControl(toolName);
 }
 
 const MB = 1024 * 1024;

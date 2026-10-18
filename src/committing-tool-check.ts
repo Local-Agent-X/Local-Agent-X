@@ -7,8 +7,8 @@
 // only — see rowCommittedWork below for why), and the loop detectors.
 //
 // Two layers over one rule set:
-//   - isCommittingTool(name)       — name only. Multi-action tools
-//     (ARG_AWARE_TOOLS) are too coarse to judge by name and answer false here.
+//   - isCommittingTool(name)       — name only. Multi-action tools (a row's
+//     `committing` spec) are too coarse to judge by name and answer false here.
 //   - isCommittingCall(name, args) — the accurate verdict. Args exist only at
 //     dispatch time, so turn-loop/dispatch-tools.ts asks there and persists the
 //     answer on the ToolCallSummary row for the op-level checks to read back.
@@ -29,7 +29,7 @@
 // step needed for every downstream consumer.
 
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
-import { TOOLS, type ToolRisk } from "./tool-registry.js";
+import { TOOLS, ariActionOf, committingSpecOf, destinationSpecsOf, pathSpecsForCall, policyRowOf, type ToolRisk } from "./tool-registry.js";
 import { getActivePluginToolMetadata } from "./plugin-system/tool-metadata.js";
 
 /** Risk classes that count as committing for failover + progress checks. */
@@ -44,22 +44,11 @@ const COMMITTING_RISKS: ReadonlySet<ToolRisk> = new Set<ToolRisk>([
   "publish",
 ]);
 
-/** Tools whose risk classification is too coarse — they need arg-aware
- *  inspection to decide committingness. committingArgReason handles these
- *  properly with method/action checks; at the name-only isCommittingTool
- *  layer we conservatively return false (matches the pre-derivation
- *  behavior). Callers with args available should prefer isCommittingCall. */
-const ARG_AWARE_TOOLS: ReadonlySet<string> = new Set<string>([
-  "http_request",  // GET/HEAD idempotent; POST/PUT/DELETE/PATCH committing
-  "browser",       // click on commit-style buttons is committing
-  "pdf",           // read/extract_tables idempotent; create/merge committing
-]);
-
-/** pdf actions that only read. Anything else on the tool writes a file. */
-const PDF_READONLY_ACTIONS: ReadonlySet<string> = new Set<string>(["read", "extract_tables"]);
-
-
-const COMMITTING_HTTP_METHODS = new Set(["POST", "PUT", "DELETE", "PATCH"]);
+// A tool whose risk tier is too coarse declares how its calls are judged on
+// its row (`committing`: kernel-write, path-write, commit-button).
+// committingArgReason reads that spec; at the name-only isCommittingTool layer
+// such a tool conservatively answers false (matches the pre-derivation
+// behavior). Callers with args available should prefer isCommittingCall.
 
 const COMMITTING_BROWSER_ACTION_BUTTONS = /\b(send|submit|pay|confirm|delete|checkout|publish|post|buy|purchase|remove|transfer|sign\s*up|register)\b/i;
 
@@ -74,54 +63,63 @@ export interface CommittingFinding {
   reason: string;
 }
 
-/** The arg-aware verdict for one ARG_AWARE_TOOLS call: the reason it commits,
- *  or null when it does not. UNKNOWN args are treated as committing by the
- *  writers and ignored by browser, exactly as the per-call try/catch used to.
+/** The arg-aware verdict for one call of a tool with a `committing` spec: the
+ *  reason it commits, or null when it does not. UNKNOWN args are treated as
+ *  committing by the writers and ignored by a commit-button tool, exactly as
+ *  the per-call try/catch used to.
  *
  *  "Unknown" is NOT simply "not an object". Every adapter's parseArgs wraps
  *  JSON it could not parse in `{_raw: "…"}` — a perfectly good record — so a
  *  call whose args never parsed reaches dispatch looking like a defaulted GET.
- *  http_request checks for that below; without it dispatch stamps
+ *  kernel-write checks for that below; without it dispatch stamps
  *  `committing: false` on the very call detectCommittingCalls (which sees the
- *  parse failure as `undefined`) calls committing. `pdf` needs no such check:
- *  a record with no `action` already falls through to the committing default. */
+ *  parse failure as `undefined`) calls committing. path-write needs no such
+ *  check: a record with no `action` opens no declared path, which already
+ *  falls through to the committing default. */
 function committingArgReason(name: string, args: unknown): string | null {
   const rec = isRecord(args) ? args : null;
 
-  // http_request is idempotent for GET/HEAD but not for POST/PUT/DELETE/PATCH
-  if (name === "http_request") {
-    if (!rec) return "http_request with unparseable args"; // err on the side of committing
-    // parseArgs' failure wrapper, or a record carrying neither field, says
-    // nothing about the method — that is unknown, not GET.
-    if ("_raw" in rec || (rec.method === undefined && rec.url === undefined)) {
-      return "http_request with unparseable args";
+  switch (committingSpecOf(name)) {
+    // The kernel's verb, read off the argument its row names (http_request's
+    // method): GET/HEAD idempotent, a write verb committing.
+    case "kernel-write": {
+      const spec = policyRowOf(name)?.ariAction;
+      const verbArg = typeof spec === "object" ? spec.arg : undefined;
+      const siteArg = destinationSpecsOf(name, rec ?? {})?.find((d) => d.to === "site");
+      const target = siteArg && "arg" in siteArg ? siteArg.arg : undefined;
+      // parseArgs' failure wrapper, or a record carrying neither the verb nor
+      // the target, says nothing about the verb — that is unknown, not a read.
+      if (!rec || "_raw" in rec || (verbArg !== undefined && rec[verbArg] === undefined && (target === undefined || rec[target] === undefined))) {
+        return `${name} with unparseable args`;
+      }
+      const verb = ariActionOf(name, rec);
+      if (KERNEL_READ_VERBS.has(verb)) return null;
+      return `${verb.toUpperCase()} ${String(target ? rec[target] ?? "" : "").slice(0, 120)}`;
     }
-    const method = String(rec.method || "GET").toUpperCase();
-    if (!COMMITTING_HTTP_METHODS.has(method)) return null;
-    return `${method} ${String(rec.url || "").slice(0, 120)}`;
+    // The paths its action opens: a call that only reads them commits nothing
+    // (pdf read/extract_tables); a write, or an action no spec knows, does.
+    // The tier cannot express this — it is workspace-write because the tool
+    // CAN write, which made reading a contract look like doing work.
+    case "path-write": {
+      const specs = pathSpecsForCall(name, rec ?? {});
+      if (specs.length > 0 && specs.every((s) => s.action === "read")) return null;
+      return `${name}.${String(rec?.action || "") || "unknown"} writes a file`;
+    }
+    // A click on a commit-shaped control (send, pay, delete…).
+    case "commit-button": {
+      if (!rec) return null;
+      const action = String(rec.action || "");
+      if (action !== "click" && action !== "click_text" && action !== "act") return null;
+      const target = String(rec.text || rec.value || rec.selector || "");
+      if (!COMMITTING_BROWSER_ACTION_BUTTONS.test(target)) return null;
+      return `${name}.${action} on "${target.slice(0, 60)}"`;
+    }
   }
-
-  // pdf reads and table extraction commit nothing; create/merge write a file.
-  // Registry risk cannot express this — it is workspace-write because the
-  // tool CAN write, which made reading a contract look like doing work.
-  if (name === "pdf") {
-    const action = rec ? String(rec.action || "") : ""; // unknown → committing
-    if (PDF_READONLY_ACTIONS.has(action)) return null;
-    return `pdf.${action || "unknown"} writes a file`;
-  }
-
-  // browser tool: look for clicks on commit-style buttons
-  if (name === "browser") {
-    if (!rec) return null;
-    const action = String(rec.action || "");
-    if (action !== "click" && action !== "click_text" && action !== "act") return null;
-    const target = String(rec.text || rec.value || rec.selector || "");
-    if (!COMMITTING_BROWSER_ACTION_BUTTONS.test(target)) return null;
-    return `browser.${action} on "${target.slice(0, 60)}"`;
-  }
-
   return null;
 }
+
+/** Kernel verbs that change nothing at the far end. */
+const KERNEL_READ_VERBS: ReadonlySet<string> = new Set(["get", "head", "options"]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -133,16 +131,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  *
  *  It MUST match isCommittingTool's order: a plugin registration DECLARES the
  *  tool committing and outranks the arg inspection.
- *  Checking ARG_AWARE_TOOLS first (as this used to) meant a plugin registering
- *  a tool NAMED `browser` / `pdf` / `http_request` got judged by the built-in
- *  tool's arg grammar — args it does not share — so dispatch stamped
+ *  Checking the arg-aware tools first (as this used to) meant a plugin
+ *  registering a tool NAMED `browser` / `pdf` / `http_request` got judged by
+ *  the built-in tool's arg grammar — args it does not share — so dispatch stamped
  *  `committing: false` on a call the name-only layer calls committing, and that
  *  narrowing persisted on the row forever. Conservative direction wins: a
  *  declaration is a fact about the tool, an arg grammar is a guess about the
  *  call. */
 function committingCallReason(name: string, args: unknown): string | null {
   if (getActivePluginToolMetadata(name)) return `${name} is non-idempotent`;
-  if (ARG_AWARE_TOOLS.has(name)) return committingArgReason(name, args);
+  if (committingSpecOf(name)) return committingArgReason(name, args);
   return isCommittingTool(name) ? `${name} is non-idempotent` : null;
 }
 
@@ -188,13 +186,13 @@ export function turnPerformedCommittingCall(
  *  Decision order (committingCallReason mirrors it exactly — keep them in step):
  *    1. Active plugin tool metadata (plugin/integration tools are outside the
  *       registry taxonomy; registering one is the declaration).
- *    2. Arg-aware tools (http_request, browser, pdf) return false here —
- *       they need args for an accurate verdict; use isCommittingCall
- *       when args are in scope.
+ *    2. A tool with a `committing` spec (http_request, browser, pdf) returns
+ *       false here — it needs args for an accurate verdict; use
+ *       isCommittingCall when args are in scope.
  *    3. Registry-derived: any tool whose `risk` is in COMMITTING_RISKS. */
 export function isCommittingTool(name: string): boolean {
   if (getActivePluginToolMetadata(name)) return true;
-  if (ARG_AWARE_TOOLS.has(name)) return false;
+  if (committingSpecOf(name)) return false;
   const entry = TOOLS[name];
   if (!entry) return false;
   return COMMITTING_RISKS.has(entry.risk);
@@ -269,7 +267,7 @@ export function isLedgerTool(name: string): boolean {
  *      why the gate lives HERE and not in each caller.
  *   2. The recorded per-call verdict wins when present; a row written before
  *      the field existed (undefined) falls back to the name-only
- *      isCommittingTool — which answers false for the ARG_AWARE_TOOLS, exactly
+ *      isCommittingTool — which answers false for the arg-aware tools, exactly
  *      as those rows have always been read. Zero rows on disk carry the field
  *      today, so back-compat is the whole behavior for existing history.
  *

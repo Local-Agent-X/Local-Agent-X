@@ -12,10 +12,10 @@ import {
   setHeapStatsForTests,
   newHeapGuardTurn,
   isHeapGuardExempt,
-  HEAP_GUARD_EXEMPT_TOOLS,
   DEFAULT_HEAP_GUARD_RATIO,
   DEFAULT_MAX_PARALLEL_TOOL_BATCH,
 } from "./heap-guard.js";
+import { policyRowOf, toolsWhere } from "../tool-registry.js";
 
 const GB = 1024 * 1024 * 1024;
 
@@ -131,18 +131,28 @@ describe("parseMaxParallelTools / maxParallelToolBatch (LAX_MAX_PARALLEL_TOOLS)"
 });
 
 describe("exempt control/terminal tools", () => {
-  it("exempts exactly the named control/terminal tools", () => {
-    expect([...HEAP_GUARD_EXEMPT_TOOLS].sort()).toEqual([
+  const exempt = toolsWhere((row) => row.runControl === true);
+
+  it("exempts exactly the rows that declare runControl", () => {
+    expect([...exempt].sort()).toEqual([
       "agent_escalate", "ask_user", "process_kill", "process_list", "process_status",
       "send_file", "session_status", "task_create", "task_update",
     ]);
-    for (const name of HEAP_GUARD_EXEMPT_TOOLS) expect(isHeapGuardExempt(name)).toBe(true);
+    for (const name of exempt) expect(isHeapGuardExempt(name)).toBe(true);
   });
 
   it("never exempts a read/search/fetch tool, however small its result", () => {
     for (const name of ["read", "glob", "grep", "web_fetch", "web_search", "spreadsheet", "bash", "op_status", "op_wait"]) {
       expect(isHeapGuardExempt(name)).toBe(false);
     }
+  });
+
+  it("a runControl row is never a sensitive read, external content or a discovery lookup", () => {
+    const reader = exempt.filter((name) => {
+      const row = policyRowOf(name)!;
+      return row.capabilities.includes("sensitive-read") || row.externalContent === true || row.loop?.discovery === true;
+    });
+    expect(reader, "a read/search/fetch tool must stay refusable under heap pressure").toEqual([]);
   });
 });
 

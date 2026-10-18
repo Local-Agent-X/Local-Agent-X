@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { TOOLS, GATED_KERNEL_CLASSES } from "../tool-registry.js";
 import { ARI_ACTION_MAP } from "./enforce-policy.js";
+import { TOOL_POLICIES } from "../tool-policy/tool-policies.js";
 
 // The kernel firewall validates `action` against each tool class's schema —
 // http accepts only HTTP verbs, file accepts read/write, etc. A kernel-gated
@@ -31,6 +32,15 @@ describe("ARI_ACTION_MAP coverage — every kernel-gated tool maps to a schema-v
       `kernel-gated tools with no ARI_ACTION_MAP entry — every call will throw ` +
       `"Unknown action 'exec'" and block in ariRequired mode: ${missing.join(", ")}`,
     ).toEqual([]);
+  });
+
+  // ariEvaluate judges a secret-vault call as its row's action whatever the
+  // caller passes (the canonical capture / fill / clipboard in audit logs and
+  // behavioral rules), so each row must name one fixed verb.
+  it("every secret-vault tool's row names one fixed action", () => {
+    const vault = Object.entries(TOOLS).filter(([, e]) => e.kernel === "secret-vault").map(([name]) => name);
+    expect(vault.length).toBeGreaterThan(0);
+    expect(vault.filter((name) => typeof TOOL_POLICIES[name]?.ariAction !== "string")).toEqual([]);
   });
 
   it("every mapped action is valid for its tool's kernel class", () => {

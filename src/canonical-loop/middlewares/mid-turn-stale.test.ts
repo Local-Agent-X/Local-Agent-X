@@ -93,7 +93,7 @@ describe("mid-turn-stale — monotonous-action branch", () => {
     expect(second.kind).toBe("abort");
   });
 
-  // KNOWN LIMIT: `browser`, `pdf` and `http_request` are the ARG_AWARE_TOOLS —
+  // KNOWN LIMIT: `browser`, `pdf` and `http_request` are the arg-aware tools (a row `committing` spec) —
   // isCommittingTool answers false for all three, so the RAW name-only tally
   // this brake reads stays EMPTY on a turn whose only real work was a "Place
   // order" click, and the second strike aborts on top of the placed order.

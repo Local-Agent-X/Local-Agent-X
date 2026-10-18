@@ -15,7 +15,7 @@ import { getSandboxStatus } from "../../sandbox/index.js";
 import { evaluateWebFetch, validateUrlWithDns } from "./network-policy.js";
 import { evaluateBrowser as evaluateBrowserAction } from "./browser-egress-eval.js";
 import { kernelClassForTool } from "../../ari-kernel/tool-class-map.js";
-import { TOOL_PATH_ARGS, declaredPaths, hasCapability, pathSpecsForCall, type KernelClass, type PathArgSpec } from "../../tool-registry.js";
+import { TOOL_PATH_ARGS, declaredPaths, destinationSpecsOf, hasCapability, pathSpecsForCall, type KernelClass, type PathArgSpec } from "../../tool-registry.js";
 import { sessionWorkRootOf } from "../../workspace/paths.js";
 import { evaluateByKernelClass as evaluateKernelClassPolicy } from "./kernel-class-policy.js";
 import { loadLocalServicePorts, liveLocalServicePorts, loadFileAccessMode, loadInlineEvalPolicy, manualRuntimeHostPorts } from "./security-config.js";
@@ -229,6 +229,10 @@ export class SecurityLayer {
     }
 
     let decision: SecurityDecision;
+    // An http-class tool addressed by URL (its row's site destination) is
+    // judged by where the URL points, and a call naming none is refused: the
+    // gate cannot judge a destination it cannot see.
+    const site = kernelClass === "http" ? destinationSpecsOf(toolName, args)?.find((d) => d.to === "site") : undefined;
 
     // Tools whose ARGUMENTS carry the routing signal (command, url) get an
     // explicit case; everything else falls to kernel-class dispatch.
@@ -256,14 +260,14 @@ export class SecurityLayer {
         allowedPathCheck: (rp, sid) => this.isInAllowedPaths(rp, sid),
         sessionId: ctx.sessionId,
       });
-    } else if (toolName === "web_fetch" || toolName === "http_request") {
+    } else if (site?.to === "site") {
       // manualRuntimeHostPorts() is read fresh per call (like the connect-time
       // re-check path) so a Settings add/remove takes effect without a restart.
       decision = evaluateWebFetch(
         this.egress.allowlist,
         this.egress.configured,
         String(SecurityLayer._selfPort || "7007"),
-        String(args.url || ""),
+        String(args[site.arg] || ""),
         this.egress.mode,
         this.effectiveLocalServicePorts(),
         manualRuntimeHostPorts(),

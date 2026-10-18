@@ -14,24 +14,19 @@
  * kill-switch" setting in the schema has a matching gate here.
  */
 import type { LAXConfig } from "../types.js";
-import { hasCapability } from "../tool-registry.js";
+import { killSwitchOf } from "../tool-registry.js";
 
 /** Config fields that act as category kill-switches over tool dispatch. */
-export type KillSwitchField =
-  | "enableShell"
-  | "enableHttp"
-  | "enableBrowser"
-  | "enableComputerControl";
+export type KillSwitchField = NonNullable<ReturnType<typeof killSwitchOf>>;
 
 export interface KillSwitchGate {
-  /** FLIPPABLE_SETTINGS field this gate reads (must be owner "protected" there). */
+  /** FLIPPABLE_SETTINGS field this gate reads (must be owner "protected" there).
+   *  The tools it covers are the ones whose row names it (killSwitchOf). */
   field: KillSwitchField;
   /** Human category name used in the reason line ("Shell Access is disabled…"). */
   label: string;
   /** Grammatical number of the label ("HTTP Requests ARE disabled"). */
   plural?: boolean;
-  /** Which tool names the switch covers. */
-  matches: (toolName: string) => boolean;
   /** Optional gate-specific tail appended to the generated recovery text. */
   extraRecovery?: string;
 }
@@ -43,23 +38,19 @@ export const KILL_SWITCH_GATES: ReadonlyArray<KillSwitchGate> = [
     // them on while Shell is off would silently bypass the user's toggle.
     field: "enableShell",
     label: "Shell Access",
-    matches: (t) => hasCapability(t, "shell"),
     extraRecovery: "Other tools (write/edit/http_request) still work.",
   },
   {
-    // ari_http is the kernel's own HTTP tool: the same arbitrary request to
-    // any host, so leaving it on while HTTP is off would bypass the toggle.
+    // An arbitrary request to any host (http_request, the kernel's ari_http).
     // web_fetch (reading a page) is deliberately NOT covered: switching off
     // API calls and outbound requests is not switching off reading the web.
     field: "enableHttp",
     label: "HTTP Requests",
     plural: true,
-    matches: (t) => t === "http_request" || t === "ari_http",
   },
   {
     field: "enableBrowser",
     label: "Browser",
-    matches: (t) => t.startsWith("browser"),
   },
   {
     // High-risk opt-in, off by default. On macOS the OS Accessibility
@@ -67,7 +58,6 @@ export const KILL_SWITCH_GATES: ReadonlyArray<KillSwitchGate> = [
     // gate on the user-facing kill-switch.
     field: "enableComputerControl",
     label: "Computer control (mouse/keyboard)",
-    matches: (t) => t === "computer",
     extraRecovery:
       "On macOS the OS Accessibility permission is also required (System Settings → Privacy & Security → Accessibility) — the setting alone isn't enough there.",
   },
@@ -104,8 +94,9 @@ export function killSwitchBlock(
   toolName: string,
   cfg: Partial<Pick<LAXConfig, KillSwitchField>>,
 ): KillSwitchBlock | null {
+  const field = killSwitchOf(toolName);
   for (const gate of KILL_SWITCH_GATES) {
-    if (!gate.matches(toolName)) continue;
+    if (gate.field !== field) continue;
     if (cfg[gate.field] !== false) continue;
     return {
       field: gate.field,

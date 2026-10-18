@@ -6,7 +6,7 @@ import {
   localProviderDecision,
 } from "./local-only-policy.js";
 import type { LAXConfig } from "./types.js";
-import { CAPABILITY_CLASS_MEMBERS, TOOLS } from "./tool-registry.js";
+import { CAPABILITY_CLASS_MEMBERS, TOOLS, hasCapability, toolsWhere } from "./tool-registry.js";
 import { configSchema } from "./config-schema.js";
 import { isProtectedSetting } from "./settings-schema.js";
 
@@ -48,7 +48,7 @@ describe("strict local-only policy matrix", () => {
 
   // Each decision is read off the tool's policy row: a URL-addressed tool by
   // where the call points, any other by its kernel class, shell capability,
-  // risk tier or destination. The two explicit maps cover what no row says.
+  // risk tier, destination or, where none of those says it, its `reach`.
   it.each([
     ["http_request", { url: "https://example.com" }, false],
     ["http_request", { url: "http://127.0.0.1:7007/api/health" }, true],
@@ -111,6 +111,17 @@ describe("strict local-only policy matrix", () => {
     for (const name of ["read", "write", "edit", "glob", "memory_save", "task_create", "spreadsheet", "document", "sql_schema", "agent_status"]) {
       expect(decided(name), name).toBe(true);
     }
+  });
+
+  // `reach` is the fact a row states only when no other fact says where the
+  // tool goes. Each kind must change the decision, or it is a dead declaration.
+  it("an indirect-network tool is blocked even pointed at loopback, and a local-device tool is a shell tool let through", () => {
+    const indirect = toolsWhere((row) => row.reach?.kind === "indirect-network");
+    expect(indirect).toEqual(expect.arrayContaining(["build_app", "apply_update", "connector_create", "youtube_analyze"]));
+    for (const name of indirect) expect(localOnlyToolDecision(name, { url: "http://127.0.0.1:5173" }, strict).allowed, name).toBe(false);
+    const device = toolsWhere((row) => row.reach?.kind === "local-device");
+    expect(device).toEqual(["android"]);
+    for (const name of device) expect(hasCapability(name, "shell"), `${name}: local-device only means something on a shell tool`).toBe(true);
   });
 
   it.each([

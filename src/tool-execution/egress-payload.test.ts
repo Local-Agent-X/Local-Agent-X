@@ -5,11 +5,11 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import type { ToolDefinition } from "../types.js";
 import { collectRuntimeTools } from "../tools/runtime-tool-names.js";
-import { CAPABILITY_CLASS_MEMBERS, hasCapability } from "../tool-registry.js";
+import { CAPABILITY_CLASS_MEMBERS, hasCapability, localArgsOf, toolsWhere } from "../tool-registry.js";
 import { generateCanaries, registerSessionCanaries, clearSessionCanaries } from "../threat/canaries.js";
 import { egressGuardGate } from "./enforce-policy.js";
 import { probeCanary, probeEgressGuard } from "./egress-gates.js";
-import { egressPayload, LOCAL_CONTROL_ARGS } from "./egress-payload.js";
+import { egressPayload } from "./egress-payload.js";
 import { makeCtx } from "./capability-class-gates.test-helper.js";
 
 const SECRET = "AKIA0000000000000000"; // AWS access-key shape
@@ -35,7 +35,7 @@ function declaredParams(tool: string): Record<string, ParamSchema> {
 function payloadParams(): Array<[tool: string, param: string, schema: ParamSchema]> {
   return egressTools().flatMap((tool) =>
     Object.entries(declaredParams(tool))
-      .filter(([param]) => !LOCAL_CONTROL_ARGS[tool]?.has(param))
+      .filter(([param]) => !localArgsOf(tool).includes(param))
       .map(([param, schema]): [string, string, ParamSchema] => [tool, param, schema]));
 }
 
@@ -82,8 +82,10 @@ describe("the outbound scans cover every argument of every egress tool", () => {
   });
 
   it("every local-control exemption names an egress tool and a parameter it declares", () => {
-    const stale = Object.entries(LOCAL_CONTROL_ARGS).flatMap(([tool, args]) =>
-      [...args].filter((a) => !hasCapability(tool, "egress") || !(a in declaredParams(tool))).map((a) => `${tool}.${a}`));
+    const declaring = toolsWhere((row) => (row.localArgs?.length ?? 0) > 0);
+    expect(declaring).toEqual(expect.arrayContaining(["browser", "computer"]));
+    const stale = declaring.flatMap((tool) =>
+      localArgsOf(tool).filter((a) => !hasCapability(tool, "egress") || !(a in declaredParams(tool))).map((a) => `${tool}.${a}`));
     expect(stale).toEqual([]);
   });
 });

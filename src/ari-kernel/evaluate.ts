@@ -9,6 +9,7 @@ import { lookupHostGrantId } from "./grants.js";
 import { ensureAriKernelScope, refreshAriKernelScope } from "./lifecycle.js";
 import type { KernelQuarantine } from "../types.js";
 import { readKernelQuarantine } from "./quarantine.js";
+import { policyRowOf } from "../tool-registry.js";
 
 const logger = createLogger("ari-kernel");
 
@@ -21,15 +22,6 @@ export interface AriVerdict {
    *  it or merely ran into it. */
   quarantine?: KernelQuarantine;
 }
-
-// Per-tool action override: secret-vault tools have a fixed action mapping
-// (capture / fill / clipboard) regardless of what the executor passes in.
-// ARI sees the canonical action in audit logs and behavioral rules.
-const SECRET_VAULT_ACTION_MAP: Record<string, string> = {
-  browser_capture_to_secret: "capture",
-  browser_fill_from_secret: "fill",
-  clipboard_write_from_secret: "clipboard",
-};
 
 export async function ariEvaluate(
   toolName: string,
@@ -71,8 +63,11 @@ export async function ariEvaluate(
   // exactly the same limitation the agent's own http_request POST has under that
   // preset. Whether to permit outbound MCP/http writes is a preset/profile
   // decision, not something this mapping should silently force.)
-  const effectiveAction =
-    SECRET_VAULT_ACTION_MAP[toolName] ?? (isMcpToolName(toolName) ? "get" : action);
+  // A secret-vault tool is judged as its row's fixed action (capture / fill /
+  // clipboard) whatever the caller passes, so ARI sees the canonical action in
+  // audit logs and behavioral rules.
+  const vaultAction = toolClass === "secret-vault" ? policyRowOf(toolName)?.ariAction : undefined;
+  const effectiveAction = typeof vaultAction === "string" ? vaultAction : isMcpToolName(toolName) ? "get" : action;
 
   try {
     const execRequest: Record<string, unknown> = {

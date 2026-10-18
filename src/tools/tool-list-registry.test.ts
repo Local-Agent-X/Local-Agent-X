@@ -63,16 +63,8 @@ const REGISTRY: readonly Registered[] = [
   { file: "src/canonical-loop/turn-loop/silent-tool-check.ts", owner: "SILENT_FIRE_AND_FORGET_TOOLS" },
   { file: "src/canonical-loop/middlewares/mid-turn-stale.ts", owner: "SPIN_PRONE_ACTION_TOOLS" },
   { file: "src/tool-tracker.ts", owner: "CATEGORY_TOOLS" },
-  { file: "src/tool-execution/heap-guard.ts", owner: "HEAP_GUARD_EXEMPT_TOOLS" },
-  { file: "src/committing-tool-check.ts", owner: "ARG_AWARE_TOOLS" },
   // What the resolver stamps into which call.
-  { file: "src/tool-execution/egress-payload.ts", owner: "LOCAL_CONTROL_ARGS" },
-  { file: "src/ari-kernel/evaluate.ts", owner: "SECRET_VAULT_ACTION_MAP" },
-  { file: "src/tool-execution/kill-switch-gates.ts", owner: ".matches" },
-  { file: "src/security/layer/layer-core.ts", owner: "evaluate()" },
   // What strict local-only mode cannot read off a row (both directions).
-  { file: "src/local-only-policy.ts", owner: "INDIRECT_NETWORK" },
-  { file: "src/local-only-policy.ts", owner: "LOCAL_DEVICE" },
   // Wire and corpus fixtures.
   { file: "src/anthropic-client/oauth-direct.ts", owner: "CLASSIFIER_FINGERPRINT_TOOLS" },
   { file: "src/canonical-loop/adapters/tool-call-text-corpus.ts", owner: "CORPUS_TOOL_NAMES" },

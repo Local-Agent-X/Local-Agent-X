@@ -3,7 +3,7 @@ import {
   activatePluginToolMetadata,
   deactivatePluginToolMetadata,
 } from "./plugin-system/tool-metadata.js";
-import type { KernelClass, ToolRisk } from "./tool-registry.js";
+import { policyRowOf, toolsWhere, type KernelClass, type ToolRisk } from "./tool-registry.js";
 import {
   isCommittingTool,
   isCommittingCall,
@@ -290,7 +290,7 @@ describe("summary rows written before the verdict existed", () => {
 
 describe("the two layers share ONE precedence order", () => {
   // The defect: isCommittingTool checked the plugin registry FIRST, while
-  // isCommittingCall checked ARG_AWARE_TOOLS first. A plugin registering a tool
+  // isCommittingCall checked the arg-aware tools first. A plugin registering a tool
   // NAMED `browser` / `pdf` / `http_request` was therefore judged by the
   // BUILT-IN tool's arg grammar — args it does not share — so the name-only
   // layer said committing while dispatch stamped `committing: false` on the
@@ -360,5 +360,32 @@ describe("the two layers share ONE precedence order", () => {
     expect(detectCommittingCalls(navigate)).toHaveLength(1);
     deactivatePluginToolMetadata("browser", meta.ownerId, token);
     expect(detectCommittingCalls(navigate)).toHaveLength(0);
+  });
+});
+
+// A row's `committing` spec reads other facts on the same row; a spec on a row
+// without them would judge every call by a default it cannot see.
+describe("every committing spec has the row facts it reads", () => {
+  const withSpec = (spec: string) => toolsWhere((row) => row.committing === spec);
+
+  it("covers the three arg-aware tools", () => {
+    expect(toolsWhere((row) => row.committing !== undefined).sort()).toEqual(["browser", "http_request", "pdf"]);
+  });
+
+  it("kernel-write: the kernel verb is read off an argument, and the call has a site it reaches", () => {
+    for (const name of withSpec("kernel-write")) {
+      const row = policyRowOf(name)!;
+      expect(typeof row.ariAction, name).toBe("object");
+      expect(row.destination?.some((d) => d.to === "site"), name).toBe(true);
+    }
+  });
+
+  it("path-write: the path specs are scoped by action, so a read action can be told from a write", () => {
+    for (const name of withSpec("path-write")) {
+      const specs = policyRowOf(name)!.pathArgs ?? [];
+      expect(specs.length, name).toBeGreaterThan(0);
+      expect(specs.every((s) => s.forActions), name).toBe(true);
+      expect(specs.some((s) => s.action === "read") && specs.some((s) => s.action !== "read"), name).toBe(true);
+    }
   });
 });

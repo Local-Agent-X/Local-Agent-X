@@ -5,28 +5,17 @@
 //
 // Every value the model wrote is payload, whatever the argument is called and
 // whichever tool it was handed to. The only arguments left out are the ones
-// named in LOCAL_CONTROL_ARGS, which steer the tool on this machine and never
-// leave it. A tool or argument nobody thought about is therefore scanned in
-// full: forgetting one fails closed, where a list of the arguments to read
-// failed open for every egress tool it did not name.
+// the tool's row names as `localArgs`, which steer the tool on this machine
+// and never leave it: which action, which element, where the pointer goes,
+// which keys make a chord. A click or a mouse move must read as carrying
+// nothing, or the taint floor blocks the pointer after any sensitive read and
+// the kernel's taint scope can no longer clear a click. A tool or argument
+// nobody thought about is scanned in full: forgetting one fails closed, where
+// a list of the arguments to read failed open for every egress tool it did
+// not name.
 
 import { isInternalArgKey } from "./internal-args.js";
-import { callPaths } from "../tool-registry.js";
-
-/**
- * Arguments that address or steer a tool locally and carry nothing anywhere:
- * which action, which element, where the pointer goes, which keys make a
- * chord. They are not payload because a click or a mouse move must read as
- * carrying nothing; otherwise the taint floor blocks the pointer after any
- * sensitive read, and the kernel's taint scope can no longer clear a click.
- * Each entry must name a parameter the tool declares (egress-payload.test.ts).
- */
-export const LOCAL_CONTROL_ARGS: Readonly<Record<string, ReadonlySet<string>>> = {
-  // The element a click or fill acts on; the page never receives the ref or selector.
-  browser: new Set(["action", "ref", "selector"]),
-  // Only typed `text` reaches the other app as data.
-  computer: new Set(["action", "x", "y", "from_x", "from_y", "to_x", "to_y", "button", "target", "keys"]),
-};
+import { callPaths, localArgsOf } from "../tool-registry.js";
 
 // Remote http(s)/data: references aren't local-file reads.
 const isLocalFileRef = (v: unknown): v is string => typeof v === "string" && v !== "" && !/^(https?:|data:)/i.test(v);
@@ -53,9 +42,9 @@ function collect(value: unknown, parts: string[]): void {
  *  and are never payload. */
 export function egressPayload(name: string, args: Record<string, unknown>): { text: string; attachmentPaths: string[] } {
   const parts: string[] = [];
-  const local = LOCAL_CONTROL_ARGS[name];
+  const local = localArgsOf(name);
   for (const [key, value] of Object.entries(args)) {
-    if (isInternalArgKey(key) || local?.has(key)) continue;
+    if (isInternalArgKey(key) || local.includes(key)) continue;
     collect(value, parts);
   }
 

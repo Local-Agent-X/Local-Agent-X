@@ -12,7 +12,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { computerRedirectBlock, KILL_SWITCH_GATES, killSwitchBlock, screenCaptureRedirectBlock } from "./kill-switch-gates.js";
-import { CAPABILITY_CLASS_MEMBERS } from "../tool-registry.js";
+import { CAPABILITY_CLASS_MEMBERS, hasCapability, killSwitchOf, toolsWhere } from "../tool-registry.js";
 import { FLIPPABLE_SETTINGS, PROTECTED_SETTINGS } from "../settings-schema.js";
 import { securitySettingsLine } from "../manifest-generator/summary.js";
 import { USER_HINTS } from "../types.js";
@@ -46,6 +46,27 @@ describe("kill-switch gate registry contract", () => {
     expect(killSwitchBlock("ari_http", off)).not.toBeNull();
     expect(killSwitchBlock("web_fetch", off)).toBeNull();
     expect(killSwitchBlock("ari_http", ALL_ON)).toBeNull();
+  });
+
+  // Which switch covers a tool is its row's `killSwitch`. A new tool of a
+  // switched kind must name the switch, or the user's toggle leaves it on.
+  it("every tool of a switched kind declares its switch on its row", () => {
+    const missing = (rule: string, names: string[], field: string) =>
+      names.filter((n) => killSwitchOf(n) !== field).map((n) => `${n}: ${rule} → killSwitch "${field}"`);
+    const viaDestination = (to: string, extra?: (d: { allowlisted?: true }) => boolean) =>
+      toolsWhere((row) => (row.destination ?? []).some((d) => d.to === to && (!extra || extra(d as { allowlisted?: true }))));
+    expect([
+      ...missing("named browser*", toolsWhere(() => true).filter((n) => n.startsWith("browser")), "enableBrowser"),
+      ...missing("delivers to the browser page", viaDestination("browser-page"), "enableBrowser"),
+      ...missing("sends an arbitrary request (allowlisted site)", viaDestination("site", (d) => d.allowlisted === true), "enableHttp"),
+      ...missing("drives the foreground app", viaDestination("foreground-app"), "enableComputerControl"),
+    ]).toEqual([]);
+  });
+
+  it("a tool is covered by one switch: a declared switch never sits on a shell tool", () => {
+    const declared = toolsWhere((row) => row.killSwitch !== undefined);
+    expect(declared).toEqual(expect.arrayContaining(["browser", "http_request", "ari_http", "computer"]));
+    expect(declared.filter((n) => hasCapability(n, "shell"))).toEqual([]);
   });
 
   it("every gate's recovery names the `setting` tool and the exact field", () => {

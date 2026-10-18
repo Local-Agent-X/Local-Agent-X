@@ -140,6 +140,20 @@ describe("SecurityLayer kernel-class dispatch", () => {
       });
       expect(d.allowed).toBe(false);
     });
+
+    // Which tools take that gate is read off the row (an http-class tool with
+    // a site destination), not a list of two names.
+    it("any http tool addressed by URL is SSRF-checked, and refused when it names no URL", () => {
+      const sec = makeLayer();
+      expect(sec.evaluate({ toolName: "youtube_analyze", args: { url: "http://169.254.169.254/x" }, sessionId: "t" }).allowed).toBe(false);
+      expect(sec.evaluate({ toolName: "youtube_analyze", args: {}, sessionId: "t" }).allowed).toBe(false);
+      expect(sec.evaluate({ toolName: "web_fetch", args: {}, sessionId: "t" }).allowed).toBe(false);
+    });
+
+    it("an http tool whose row names no site still passes with no URL (its destination is fixed inside it)", () => {
+      const sec = makeLayer();
+      expect(sec.evaluate({ toolName: "email_folders", args: {}, sessionId: "t" }).allowed).toBe(true);
+    });
   });
 
   // ── 4: Browser unchanged ──

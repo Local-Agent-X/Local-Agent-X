@@ -25,7 +25,8 @@ import { humanActedLast } from "./in-app-browser";
 import { cacheGet, cacheSet, clearDecisionCache, extractUploadBody } from "./browser-partition-net";
 import { installPermissionHandlers } from "./browser-partition-permissions";
 import { registerEmbeddedChromeIdentitySession } from "./embedded-chrome-identity";
-const PARTITION_PREFIX = "persist:lax-profile-";
+import { BROWSER_PARTITION_PREFIX } from "./contract/browser-bridge";
+const PARTITION_PREFIX = BROWSER_PARTITION_PREFIX;
 // Deliberately versioned. The original default profile was created while the
 // embedded browser identity changed across releases, leaving Chromium challenge
 // state that survives normal cookie/cache clearing. Bump this only for an

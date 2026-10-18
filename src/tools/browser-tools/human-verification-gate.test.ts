@@ -55,6 +55,21 @@ describe("browser human-verification dispatch gate", () => {
 		expect(dispatch).not.toHaveBeenCalled();
 	});
 
+	it("in an unattended run the block is marked for the user's inbox; the agent still never solves it", async () => {
+		const click = vi.fn(async () => "dispatched");
+		seam.manager.click = click;
+		const parked = await tool().execute({ action: "click", selector: "#verify", _sessionId: "challenge-session", _callContext: "cron" });
+		expect(parked.metadata?.browserStatus).toBe("human-verification-required");
+		expect(String(parked.metadata?.needsUser)).toContain("CAPTCHA");
+		// The user's grant is not a solved challenge: with the check still on
+		// screen the action stays blocked.
+		const granted = await tool().execute({ action: "click", selector: "#verify", _sessionId: "challenge-session", _callContext: "cron", _userGrant: "grant-1" });
+		expect(granted.metadata?.browserStatus).toBe("human-verification-required");
+		expect(click).not.toHaveBeenCalled();
+		const attended = await tool().execute({ action: "click", selector: "#verify", _sessionId: "challenge-session" });
+		expect(attended.metadata?.needsUser).toBeUndefined();
+	});
+
 	it("allows navigation away without scanning or interacting with the challenge", async () => {
 		const navigate = vi.fn(async () => "Navigated away.");
 		const snapshot = vi.fn(async () => "Page: Example — https://example.com/");

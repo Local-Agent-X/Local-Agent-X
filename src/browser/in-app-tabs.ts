@@ -43,6 +43,9 @@ export class InAppTab {
 		/** true = this backend created the view and closes it; false = adopted user view. */
 		readonly owned: boolean,
 		created = false,
+		/** The partition an owned tab's view is created on; the desktop's shared
+		 *  signed-in profile when undefined. An adopted view already exists. */
+		readonly partition?: string,
 	) {
 		this.created = created;
 		this.page = asObservePage(new BridgeObservePage(viewId, this.state, () => this.closed));
@@ -58,8 +61,8 @@ export class TabList {
 	/** Monotonic new_tab counter — an N is never reused within a backend's lifetime. */
 	private nextTabNumber = 2;
 
-	constructor(private readonly firstViewId: string) {
-		this.tabs = [new InAppTab(firstViewId, true)];
+	constructor(private readonly firstViewId: string, private readonly partition?: string) {
+		this.tabs = [new InAppTab(firstViewId, true, false, partition)];
 	}
 
 	get active(): InAppTab {
@@ -82,7 +85,7 @@ export class TabList {
 
 	/** Mint the next agent-owned tab (viewId `<first>-t<N>`) and make it active. */
 	openOwned(): InAppTab {
-		const tab = new InAppTab(`${this.firstViewId}-t${this.nextTabNumber++}`, true);
+		const tab = new InAppTab(`${this.firstViewId}-t${this.nextTabNumber++}`, true, false, this.partition);
 		this.tabs.push(tab);
 		this.activeIdx = this.tabs.length - 1;
 		return tab;
@@ -149,7 +152,7 @@ export class TabList {
 export async function ensureTabView(tab: InAppTab): Promise<void> {
 	if (tab.created && !tab.closed) return;
 	try {
-		await browserLifecycle("create", tab.viewId);
+		await (tab.partition ? browserLifecycle("create", tab.viewId, { partition: tab.partition }) : browserLifecycle("create", tab.viewId));
 	} catch (e) {
 		if (!(e instanceof Error) || !e.message.includes("already exists")) throw e;
 	}

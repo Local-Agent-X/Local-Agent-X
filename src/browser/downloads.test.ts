@@ -350,11 +350,25 @@ describe("browser sensitive-page gates", () => {
     expect((await handleObserve(manager)).status).toBe("blocked");
   });
 
-  it("does not release downloads when no interactive approval channel exists", async () => {
+  it("does not release downloads when no interactive approval channel exists; the refusal is marked for the user's inbox", async () => {
+    const paths = dirs();
+    const archive = await inspectBrowserDownload({
+      ...paths, sessionId: "approval-test", sourceUrl: "https://files.test/held.zip", pageUrl: "https://files.test/",
+      suggestedFilename: "held.zip", contentType: "application/zip", stream: stream(await zip({ "a.txt": "held" })),
+    });
+    const browser = createBrowserTools()[0];
+    const result = await browser.execute({ action: "release_download", download_id: archive.id, _sessionId: "approval-test" });
+    expect(result.status).toBe("blocked");
+    expect(result.content).toMatch(/explicit user approval/i);
+    expect(String(result.metadata?.needsUser)).toContain(archive.id);
+  });
+
+  it("an unknown download id is refused as not releasable before any approval question", async () => {
     const browser = createBrowserTools()[0];
     const result = await browser.execute({ action: "release_download", download_id: "dl-test", _sessionId: "approval-test" });
     expect(result.status).toBe("blocked");
-    expect(result.content).toMatch(/explicit user approval/i);
+    expect(result.metadata?.browserStatus).toBe("not-releasable");
+    expect(result.metadata?.needsUser).toBeUndefined();
   });
 
   it("binds the interactive approval card to inspected digest, size, and type metadata", async () => {

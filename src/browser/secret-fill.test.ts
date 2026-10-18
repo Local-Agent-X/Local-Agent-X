@@ -364,6 +364,32 @@ describe("browser_fill_from_secret — where a login may be filled", () => {
     expect(result.metadata?.recovery).toContain("Settings → Secrets");
     expect(approvals.asked).toHaveLength(0);
   });
+
+  // A scheduled job's login: nobody is watching, so the first-use ask becomes
+  // a needs-you refusal the dispatch pipeline parks in the user's inbox.
+  it("in an unattended run the refusal is marked for the user's inbox, and no card is raised", async () => {
+    pageOrigin = "https://login.example.com";
+    ladder = "ask";
+    currentOps = buildOps({ outcome: { kind: "landed" } });
+    const result = await createBrowserSecretFillTool(buildStore(), () => "cron-login-1").execute({ name: SECRET_NAME, selector: "#pw", _onEvent: () => {}, _callContext: "cron" });
+    expect(result.isError).toBe(true);
+    expect(String(result.metadata?.needsUser)).toContain(`Fill ${SECRET_NAME} into the form on https://login.example.com`);
+    expect(approvals.asked).toHaveLength(0);
+    assertNoSecretLeak([result.content, String(result.metadata?.needsUser), ...auditCalls]);
+  });
+
+  it("the user's yes from the inbox fills once, raises no card and persists nothing for the origin", async () => {
+    pageOrigin = "https://login.example.com";
+    ladder = "ask";
+    currentOps = buildOps({ outcome: { kind: "landed" } });
+    const store = buildStore();
+    const result = await createBrowserSecretFillTool(store, () => "cron-login-1").execute({ name: SECRET_NAME, selector: "#pw", _onEvent: () => {}, _callContext: "cron", _userGrant: "grant-9" });
+    expect(result.isError).not.toBe(true);
+    expect(result.content).toContain("from their inbox, for this fill only");
+    expect(approvals.asked).toHaveLength(0);
+    expect(store.approveDestination).not.toHaveBeenCalled();
+    assertNoSecretLeak([result.content, ...auditCalls]);
+  });
 });
 
 describe("browser_fill_from_secret — by snapshot ref", () => {

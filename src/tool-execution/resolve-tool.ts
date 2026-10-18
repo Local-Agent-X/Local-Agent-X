@@ -43,6 +43,9 @@ export const SESSION_SCOPED_TOOLS = new Set([
   "connector_create", "email_setup",
   // agent_create caps what an agent may grant by the calling run's own tools.
   "agent_spawn", "agent_create", "browser_capture_to_secret", "browser_fill_from_secret",
+  // generate_image reads the engine pinned to a scheduled run's session
+  // (image-tools/image-engine.ts); edit_image has path args and is stamped below.
+  "generate_image",
   "session_status", "request_secret", "request_secrets",
   // show_unblock_control reads THIS session's taint registry; the trusted
   // stamp is what keeps it from being pointed at another session's state.
@@ -320,8 +323,13 @@ async function injectSessionState(ctx: ToolCallContext): Promise<PhaseOutcome> {
   // (bash, app_rebuild) and the antivirus warning all go out through them.
   // Stamped by name before, so bash, app_rebuild and the email tools read an
   // undefined sink and stayed silent (runtime-coupling audit 2026-10-15, #11).
+  // The call context rides along so a gate inside a tool (a sensitive page, a
+  // credential fill) knows no person is watching an unattended run and returns
+  // a needs-you result for the pipeline to park (deferred-call.ts), instead of
+  // raising a card into a sink nobody answers.
   args._onEvent = ctx.onEvent;
   args._toolCallId = tc.id;
+  args._callContext = ctx.callContext;
   return CONTINUE;
 }
 

@@ -61,13 +61,14 @@ function dataUnderscoreKeys(args: Record<string, unknown>): string[] {
 describe("model-supplied `_` arguments never reach a tool", () => {
   it("drops every `_` key a model sends and keeps its declared arguments", async () => {
     const args = await received("app_read", {
-      app_id: "notes", _unsafe: true, _cwd: dir, _sessionId: "forged", _signal: "stop", _actor: "user",
+      app_id: "notes", _unsafe: true, _cwd: dir, _sessionId: "forged", _signal: "stop", _actor: "user", _callContext: "cron",
     });
     expect(args.app_id).toBe("notes");
     // Whatever data stamps remain are the dispatcher's own values (its call
-    // id on every call, its session on a session-scoped tool), never the
-    // model's: the forged session is replaced, the rest are gone.
-    const trusted: Record<string, unknown> = { _toolCallId: "call-app_read", _sessionId: SESSION };
+    // id and call context on every call, its session on a session-scoped
+    // tool), never the model's: the forged session and context are replaced,
+    // the rest are gone.
+    const trusted: Record<string, unknown> = { _toolCallId: "call-app_read", _sessionId: SESSION, _callContext: "local" };
     expect(args._toolCallId).toBe("call-app_read");
     for (const key of dataUnderscoreKeys(args)) expect(args[key], key).toBe(trusted[key]);
     for (const forged of ["_unsafe", "_cwd", "_signal", "_actor"]) expect(args[forged], forged).toBeUndefined();

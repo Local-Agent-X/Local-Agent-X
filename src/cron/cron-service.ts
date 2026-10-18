@@ -36,8 +36,19 @@ import {
 } from "./cron-service-types.js";
 import { runJob } from "./cron-service-execute.js";
 import type { ProfileName } from "../autonomy/profiles.js";
+import type { ImageEngine } from "../tools/image-tools/image-engine.js";
 
 export type { CronJob, CronSettings, ExecuteResult, ExecuteContext, ExecuteHandler } from "./cron-service-types.js";
+
+/** The optional fields a job is created with, beyond name, schedule and prompt. */
+export interface CronJobOptions {
+  provider?: string;
+  model?: string;
+  profile?: ProfileName;
+  tz?: string;
+  imageEngine?: ImageEngine;
+  useSignedInBrowser?: boolean;
+}
 
 const logger = createLogger("cron-service");
 
@@ -214,7 +225,7 @@ export class CronService {
     return runJob(this, job, opts);
   }
 
-  create(name: string, schedule: string, prompt: string, systemJob?: boolean, opts?: { provider?: string; model?: string; profile?: ProfileName; tz?: string }): CronJob {
+  create(name: string, schedule: string, prompt: string, systemJob?: boolean, opts?: CronJobOptions): CronJob {
     if (prompt.length > 5000) throw new Error("Cron job prompt too long (max 5000 characters)");
     if (!schedule || schedule.trim().length === 0) throw new Error("Schedule is required");
     if (opts?.tz && !isValidTimeZone(opts.tz)) {
@@ -246,6 +257,8 @@ export class CronService {
       ...(opts?.model ? { model: opts.model } : {}),
       ...(opts?.profile ? { profile: opts.profile } : {}),
       ...(opts?.tz ? { tz: opts.tz } : {}),
+      ...(opts?.imageEngine ? { imageEngine: opts.imageEngine } : {}),
+      ...(opts?.useSignedInBrowser ? { useSignedInBrowser: true } : {}),
     };
     this.jobs_internal.set(id, job);
     this.saveJobs();

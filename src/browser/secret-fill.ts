@@ -33,7 +33,7 @@ import { registerRedactedSecretValue, vaultSecretSource } from "../security/secr
 import type { SecretElementDescriptor, SecretFillOutcome } from "./secret-ops.js";
 import { sameSite } from "./registrable-domain.js";
 import { requestSecretDestinationApproval } from "../secret-destination-gate.js";
-import { onEventOf, sessionIdOf, toolCallIdOf } from "../tool-execution/internal-args.js";
+import { onEventOf, sessionIdOf, toolCallIdOf, unattendedCall, userGrantOf } from "../tool-execution/internal-args.js";
 import type { ServerEvent } from "../types.js";
 
 import { createLogger } from "../logger.js";
@@ -223,10 +223,13 @@ export function createBrowserSecretFillTool(
       // A sibling origin is never filled silently: only the user's own yes for
       // that pair skips the ask there.
       const decision = !sameOrigin && (ladder === "session" || ladder === "pre_bless") ? "ask" : ladder;
-      let gateOutcome: "account-name" | "asked" | DestinationDecision = accountName ? "account-name" : decision;
+      let gateOutcome: "account-name" | "asked" | "granted" | DestinationDecision = accountName ? "account-name" : decision;
 
       // Not yet approved here: ask the user in the chat, once per origin,
-      // instead of sending them to Settings mid-login.
+      // instead of sending them to Settings mid-login. The user's yes to this
+      // exact call from their inbox (an unattended run parked it) stands in for
+      // the card, for this one fill: nothing is persisted for the origin.
+      if (gateOutcome === "ask" && userGrantOf(args)) gateOutcome = "granted";
       if (gateOutcome === "ask") {
         const asked = await requestSecretDestinationApproval({
           store: secretsStore, name, destination: currentOrigin, sessionId,
@@ -234,6 +237,7 @@ export function createBrowserSecretFillTool(
           toolName: "browser_fill_from_secret",
           toolCallId: toolCallIdOf(args),
           onEvent: onEventOf(args),
+          unattended: unattendedCall(args),
         });
         if (!asked.allowed) {
           if (asked.result.status === "declined") auditLog({ event: "fill_denied", secret: name, reason: "user_declined", origin: currentOrigin, session: sessionId });
@@ -311,6 +315,7 @@ export function createBrowserSecretFillTool(
         gateOutcome === "session" ? "approved (same session captured this secret)" :
         gateOutcome === "approved" ? "approved (user-saved approval for this origin)" :
         gateOutcome === "asked" ? "approved by the user just now for this origin" :
+        gateOutcome === "granted" ? "approved by the user from their inbox, for this fill only" :
         "approved (operation pre-blessed this secret)";
 
       return ok(

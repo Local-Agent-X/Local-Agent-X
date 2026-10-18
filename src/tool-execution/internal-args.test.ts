@@ -8,14 +8,15 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import ts from "typescript";
 import fg from "fast-glob";
-import { sessionIdOf, cwdOf, onEventOf, withoutInternalArgs } from "./internal-args.js";
+import { sessionIdOf, cwdOf, onEventOf, withoutInternalArgs, callContextOf, unattendedCall, userGrantOf } from "./internal-args.js";
 
 const ACCESSORS = "src/tool-execution/internal-args.ts";
 
 /** Where a stamp is written, and why there. */
 const WRITERS: Record<string, string> = {
-  "src/tool-execution/resolve-tool.ts": "the dispatcher stamps session, operation, message, turn, cwd, event sink and call id",
+  "src/tool-execution/resolve-tool.ts": "the dispatcher stamps session, operation, message, turn, cwd, event sink, call id and call context",
   "src/tool-execution/tool-runner.ts": "the runner stamps its progress sink per attempt",
+  "src/tool-execution/run-sandboxed.ts": "the sandbox phase stamps the user's one-shot grant for a gate inside the tool",
   "src/tool-execution/enforce-policy.ts": "the worktree gate anchors bash at the agent's worktree",
   "src/tools/plugins.ts": "the build_app binding stamps the chat turn's provider and model",
   "src/tools/browser-tools/gates.ts": "the download gate binds its approval for the page action that follows",
@@ -75,5 +76,12 @@ describe("server-stamped arguments are read through internal-args.ts only", () =
     expect(cwdOf({ _cwd: "  " })).toBeUndefined();
     expect(onEventOf({ _onEvent: "not a function" })).toBeUndefined();
     expect(withoutInternalArgs({ path: "a", _sessionId: "s1", _onEvent: () => {} })).toEqual({ path: "a" });
+    expect(callContextOf({ _callContext: "cron" })).toBe("cron");
+    expect(callContextOf({ _callContext: "mars" })).toBeUndefined();
+    expect(unattendedCall({ _callContext: "cron" })).toBe(true);
+    expect(unattendedCall({ _callContext: "local" })).toBe(false);
+    expect(unattendedCall({})).toBe(false);
+    expect(userGrantOf({ _userGrant: "grant-1" })).toBe("grant-1");
+    expect(userGrantOf({ _userGrant: 3 })).toBeUndefined();
   });
 });

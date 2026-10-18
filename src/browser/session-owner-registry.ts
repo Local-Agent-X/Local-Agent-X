@@ -14,6 +14,8 @@
  * and invoke options are available.
  */
 
+import { join } from "node:path";
+import { getLaxDir } from "../lax-data-dir.js";
 import { getTaintSummary, propagateTaint } from "../data-lineage/index.js";
 import { getSessionCanaries, registerSessionCanaries } from "../threat/canaries.js";
 import {
@@ -21,8 +23,40 @@ import {
   CONTAINER_BROWSER_ACTING_SESSION,
   CONTAINER_BROWSER_OWNER_SESSION,
 } from "./container-bridge-transport.js";
+import { BROWSER_PARTITION_PREFIX } from "../desktop-contract/browser-bridge.js";
 
 export const DEFAULT_BROWSER_SESSION_ID = "default";
+
+/**
+ * Whose sign-ins a session's browser carries. "signed-in" is the user's own
+ * agent browser profile (every chat, and the default before this existed);
+ * "job" is a scheduled job's own profile, one per job, persisted across its
+ * runs, with none of the user's logins in it. The cron runner registers a
+ * job's profile with its run session; instance.ts applies it on both backends
+ * (the in-app view's partition, the CDP arm's dedicated Chrome profile dir).
+ */
+export type BrowserProfile = { kind: "signed-in" } | { kind: "job"; jobId: string };
+
+export const SIGNED_IN_BROWSER_PROFILE: BrowserProfile = { kind: "signed-in" };
+
+/** The profile a scheduled job's runs browse on, unless the job opted into
+ *  the user's signed-in browser (CronJob.useSignedInBrowser). */
+export function jobBrowserProfile(jobId: string, useSignedInBrowser: boolean | undefined): BrowserProfile {
+  return useSignedInBrowser === true ? SIGNED_IN_BROWSER_PROFILE : { kind: "job", jobId };
+}
+
+const safeJobId = (jobId: string): string => jobId.replace(/[^A-Za-z0-9_-]/g, "-");
+
+/** The in-app partition a job's views live on: the desktop refuses any name
+ *  outside the profile namespace (browser-partition.ts). */
+export function jobBrowserPartition(jobId: string): string {
+  return `${BROWSER_PARTITION_PREFIX}job-${safeJobId(jobId)}`;
+}
+
+/** The CDP arm's Chrome profile dir for a job, under the data dir. */
+export function jobBrowserProfileDir(jobId: string): string {
+  return join(getLaxDir(), "browser-job-profiles", safeJobId(jobId));
+}
 
 export interface SessionOwner {
   /** Agent definition id that owns this session, when a spawned agent (not
@@ -30,6 +64,8 @@ export interface SessionOwner {
   agentId?: string;
   /** Canonical chat/root session whose tabs this acting session drives. */
   browserSessionId?: string;
+  /** The sign-ins the session's browser carries; the user's own when unset. */
+  browserProfile?: BrowserProfile;
 }
 
 const registry = new Map<string, SessionOwner>();
@@ -41,10 +77,18 @@ const aggregatedCanarySignatures = new Map<string, string>();
 export function registerSessionOwner(sessionId: string, owner: SessionOwner): void {
   const key = sessionId || DEFAULT_BROWSER_SESSION_ID;
   const existing = registry.get(key) ?? {};
+  const profile = owner.browserProfile ?? existing.browserProfile;
   registry.set(key, {
     agentId: owner.agentId ?? existing.agentId,
     browserSessionId: owner.browserSessionId ?? existing.browserSessionId ?? key,
+    ...(profile ? { browserProfile: profile } : {}),
   });
+}
+
+/** The profile the browser a session drives carries: the one registered on
+ *  the browser session it resolves to, else the user's own. */
+export function resolveBrowserProfile(sessionId: string): BrowserProfile {
+  return getSessionOwner(resolveBrowserSessionId(sessionId))?.browserProfile ?? SIGNED_IN_BROWSER_PROFILE;
 }
 
 /** Register an execution session under its parent chat/agent lineage. The

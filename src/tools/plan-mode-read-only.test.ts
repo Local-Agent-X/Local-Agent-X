@@ -100,8 +100,8 @@ describe("plan mode keys a send on where its row says it delivers", () => {
 });
 
 describe("the other row-declared facts the gates read", () => {
-  it("a scheduled job gets no browser and no image generation, as the rows say", () => {
-    expect(CONTEXT_RESTRICTED_TOOLS).toEqual({ browser: ["cron"], generate_image: ["cron"], edit_image: ["cron"] });
+  it("no row denies a tool by call context: a scheduled job browses and makes images, gated per call", () => {
+    expect(CONTEXT_RESTRICTED_TOOLS).toEqual({});
   });
 
   it("an always-allow covers the whole tool only for LAX's own bookkeeping", () => {

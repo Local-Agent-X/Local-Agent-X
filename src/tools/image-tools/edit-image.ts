@@ -247,7 +247,7 @@ export const editImageTool: ToolDefinition = {
     const size = typeof args.size === "string" && args.size.trim() ? args.size.trim() : "auto";
     const quality = args.quality === undefined ? true : Boolean(args.quality);
 
-    const resolved = await resolveMediaProvider(args.provider as string | undefined);
+    const resolved = await resolveMediaProvider(args.provider as string | undefined, "image", sessionId);
     const { provider, apiKey, forced, note, refusal } = resolved;
 
     // Mask = pixel-locked editing, which only OpenAI gpt-image-1 supports. Never

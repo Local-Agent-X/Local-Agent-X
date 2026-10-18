@@ -111,6 +111,7 @@ export const LAX_DATA_CATALOG: readonly LaxDataEntry[] = [
   ...at("card", VOICE_ID, "voice-auth", "speakers"),
   ...at("card", BROWSER, "chrome-profile", "chrome-profile-pw", "chrome-chat-profiles", "browser-history.json", "browser-bookmarks.json",
     "browser-continuity-state.json", "browser-continuity-cache-state.json"),
+  ...at("card", "is a scheduled job's own browser profile: the sign-ins, cookies and history its runs keep", "browser-job-profiles"),
   ...at("card", ACCOUNT, "anthropic-auth.json", "xai-auth.json", "agentxos-account.json", "agentxos-identity.json", "email.json",
     "secrets-vault.json", "whatsapp-auth"),
   ...at("card", AUDIT, "audit", "ari-audit.db"),

@@ -13,6 +13,9 @@
 // (withoutInternalArgs: the journal fingerprint, the kernel bridge, the
 // approval card).
 import type { ServerEvent } from "../types.js";
+import type { CallContext } from "./context.js";
+
+const CALL_CONTEXTS: readonly CallContext[] = ["local", "api", "delegated", "cron"];
 
 /** Whether `key` is a server-stamped argument name rather than a model one. */
 export function isInternalArgKey(key: string): boolean {
@@ -44,6 +47,27 @@ export function operationIdOf(args: Args): string | undefined {
 /** The id of this tool call, for a card that must resolve against it. */
 export function toolCallIdOf(args: Args): string | undefined {
   return text(args._toolCallId);
+}
+
+/** Where the call came from (stamped on every dispatched call). */
+export function callContextOf(args: Args): CallContext | undefined {
+  return CALL_CONTEXTS.find((c) => c === args._callContext);
+}
+
+/** True when no person is watching the run this call belongs to: a gate
+ *  inside the tool that would show a card returns a needs-you result instead
+ *  (deferred-call.ts needsUser), and the pipeline parks it. An unstamped call
+ *  (a direct caller) reads as attended, as before the stamp existed. */
+export function unattendedCall(args: Args): boolean {
+  const context = callContextOf(args);
+  return context !== undefined && context !== "local";
+}
+
+/** The user's one-shot yes to this exact call, given from the inbox and taken
+ *  by the pipeline before execute (run-sandboxed.ts): a gate inside the tool
+ *  that would ask a person proceeds on it. */
+export function userGrantOf(args: Args): string | undefined {
+  return text(args._userGrant);
 }
 
 /** The session's event sink: progress, cards, warnings. Stamped on every

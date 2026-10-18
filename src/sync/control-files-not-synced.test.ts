@@ -96,4 +96,19 @@ describe("a mission from the sync repo runs with this computer's own grant", () 
     expect(pullCronJobs(dataDir, syncDir, config({ syncCronJobs: true }))).toEqual(["nightly"]);
     expect(pulled(dataDir)[0].profile).toBe("Power");
   });
+
+  it("the signed-in browser is a grant too: dropped when only the repo gives it, kept when this computer did", () => {
+    const { dataDir, syncDir } = dirs();
+    write(syncDir, [job({ useSignedInBrowser: true })]);
+    expect(pullCronJobs(dataDir, syncDir, config({ syncCronJobs: true }))).toEqual(["nightly"]);
+    expect(pulled(dataDir)[0].useSignedInBrowser).toBeUndefined();
+    write(dataDir, [job({ useSignedInBrowser: true })]);
+    write(syncDir, [job({})]);
+    expect(pullCronJobs(dataDir, syncDir, config({ syncCronJobs: true }))).toEqual([]);
+    expect(pulled(dataDir)[0].useSignedInBrowser).toBe(true);
+    // The engine is no grant: it travels with the mission.
+    write(syncDir, [job({ imageEngine: "chatgpt" })]);
+    pullCronJobs(dataDir, syncDir, config({ syncCronJobs: true }));
+    expect(pulled(dataDir)[0].imageEngine).toBe("chatgpt");
+  });
 });

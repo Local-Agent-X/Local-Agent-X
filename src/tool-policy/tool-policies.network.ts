@@ -18,8 +18,10 @@ export const TOOL_POLICIES_NETWORK: Record<string, ToolPolicyRow> = {
     // Its kernel writes leave out `emulate`: that re-opens the current URL in
     // a new context, an http GET, and as a write it would be denied under web
     // taint — exactly after browsing, the only time a mobile re-render is wanted.
+    // A scheduled job browses on its own profile (browser/session-owner-registry.ts);
+    // an action that would show a person a card parks in the inbox instead
+    // (browser-tools/gates.ts, tool-execution/deferred-call.ts).
     kernel: "http", ariAction: { arg: "action", writes: ["click", "fill", "select", "type", "evaluate", "act"], as: "post" }, risk: "network-read", capabilities: ["egress"], timeoutMs: 30_000, liveState: "poll", externalContent: true, destination: [{ to: "browser-page", arg: "url" }],
-    deniedIn: { cron: "No browser in automated jobs" },
     rules: [
       { id: "flag-browser-evaluate", action: "evaluate", decision: "allow", reason: "Browser JS evaluation — autonomous by default (guarded by CSP, sensitive-page gating at the browser-tool layer, and the read-into-context blocklist — not a per-call modal). Rule kept so the supervised-mode layer can re-arm a confirm.", priority: 100 },
       // No per-action rule for `emulate`: it falls to allow-browser below

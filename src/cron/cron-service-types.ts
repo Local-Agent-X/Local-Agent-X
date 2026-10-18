@@ -8,6 +8,7 @@
 
 import type { CronRunStatus } from "./run-history.js";
 import type { ProfileName } from "../autonomy/profiles.js";
+import type { ImageEngine } from "../tools/image-tools/image-engine.js";
 
 export interface CronJob {
   id: string;
@@ -26,10 +27,14 @@ export interface CronJob {
    *  time from settings.json + the legacy anthropic→sonnet-4-6 pin). */
   provider?: string;
   model?: string;
-  /** Per-job browser profile override. When set, the scheduled run drives
-   *  this profile's saved logins (partition / userDataDir) instead of the
-   *  "default" profile — so a repeat-task cron agent operates already signed
-   *  in. Empty/undefined = the "default" profile. */
+  /** The engine the job's runs make images with (generate_image / edit_image),
+   *  pinned to the run's session by the cron runner. Undefined = the Settings →
+   *  Media default. Cost stays with the paid-API switch either way. */
+  imageEngine?: ImageEngine;
+  /** The job's runs browse on the user's own signed-in agent profile instead of
+   *  the job's own profile. Authority the user grants (job-authority.ts), like
+   *  `profile`: the agent may not set it, and sync never carries it in. */
+  useSignedInBrowser?: boolean;
   /** Per-job autonomy profile. Overrides the global profile for this job's
    *  unattended run only (see setSessionProfile). Undefined = inherit the
    *  global profile — under which ask-tier actions block unattended. */

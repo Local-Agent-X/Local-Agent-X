@@ -86,6 +86,8 @@ function handleSettingsChanged(msg) {
   if (msg.settings.plugins && typeof loadPluginBundles === 'function') loadPluginBundles();
   if (msg.settings.secrets && typeof loadSecrets === 'function') loadSecrets();
   if (msg.settings.mcpServers && typeof loadMcpServers === 'function') loadMcpServers();
+  // A mission was created or edited (another tab, the agent): re-read the list.
+  if (msg.settings.missions && typeof loadCronJobs === 'function') loadCronJobs();
 }
 
 // Settings the Tool Policy card draws besides the three kill-switches above;

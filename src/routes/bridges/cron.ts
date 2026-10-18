@@ -2,9 +2,20 @@ import type { RouteHandler } from "../../server-context.js";
 import { jsonResponse, safeParseBody, safeErrorMessage } from "../../server-utils.js";
 import { isProfileName } from "../../autonomy/profiles.js";
 import { agentMissionRefusal } from "../../cron/job-authority.js";
+import { isImageEngine } from "../../tools/image-tools/image-engine.js";
+
+/** Why a job body's image engine or browser choice is not one, or null. An
+ *  empty engine clears the field back to the Settings → Media default. */
+function missionFieldError(body: { imageEngine?: unknown; useSignedInBrowser?: unknown }): string | null {
+  if (body.imageEngine !== undefined && body.imageEngine !== "" && !isImageEngine(body.imageEngine)) return `Invalid imageEngine "${String(body.imageEngine)}": grok or chatgpt`;
+  if (body.useSignedInBrowser !== undefined && typeof body.useSignedInBrowser !== "boolean") return "useSignedInBrowser must be true or false";
+  return null;
+}
 
 export const handleCronRoutes: RouteHandler = async (method, url, req, res, ctx, role) => {
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
+  // Every tab's Missions list redraws from the broadcast (chat-ws-handler-misc.js).
+  const missionsChanged = () => ctx.broadcastAll({ type: "settings_changed", settings: { missions: true } });
 
   // ── Scheduled Missions ──
   if (method === "GET" && (url.pathname === "/api/missions" || url.pathname === "/api/cron" || url.pathname === "/api/schedules")) {
@@ -39,7 +50,7 @@ export const handleCronRoutes: RouteHandler = async (method, url, req, res, ctx,
     return true;
   }
   if (method === "POST" && url.pathname === "/api/cron") {
-    const body = await safeParseBody(req) as { name?: string; schedule?: string; prompt?: string; systemJob?: boolean; provider?: string; model?: string; profile?: string; tz?: string };
+    const body = await safeParseBody(req) as { name?: string; schedule?: string; prompt?: string; systemJob?: boolean; provider?: string; model?: string; profile?: string; tz?: string; imageEngine?: unknown; useSignedInBrowser?: unknown };
     if (!body.name || !body.schedule || !body.prompt) { json(400, { error: "name, schedule, and prompt are required" }); return true; }
     if (role === "agent") {
       // A name already in use rewrites that mission's schedule and prompt (CronService.create).
@@ -48,22 +59,37 @@ export const handleCronRoutes: RouteHandler = async (method, url, req, res, ctx,
       if (refusal) { json(403, { error: refusal }); return true; }
     }
     if (body.profile !== undefined && !isProfileName(body.profile)) { json(400, { error: `Invalid profile "${body.profile}"` }); return true; }
+    const fieldError = missionFieldError(body);
+    if (fieldError) { json(400, { error: fieldError }); return true; }
     const tz = typeof body.tz === "string" && body.tz.trim() ? body.tz.trim() : undefined;
-    try { json(200, { ok: true, job: ctx.cronService.create(body.name, body.schedule, body.prompt, body.systemJob, { provider: body.provider, model: body.model, profile: body.profile, tz }) }); }
-    catch (e) { json(400, { error: safeErrorMessage(e) }); }
+    try {
+      const job = ctx.cronService.create(body.name, body.schedule, body.prompt, body.systemJob, {
+        provider: body.provider, model: body.model, profile: body.profile, tz,
+        ...(isImageEngine(body.imageEngine) ? { imageEngine: body.imageEngine } : {}),
+        ...(body.useSignedInBrowser === true ? { useSignedInBrowser: true } : {}),
+      });
+      missionsChanged();
+      json(200, { ok: true, job });
+    } catch (e) { json(400, { error: safeErrorMessage(e) }); }
     return true;
   }
   if (method === "PATCH" && url.pathname.startsWith("/api/cron/")) {
     const id = url.pathname.split("/").pop()!;
-    const body = await safeParseBody(req); if (body === null) { json(400, { error: "Invalid JSON" }); return true; }
+    const body = await safeParseBody(req) as Record<string, unknown> | null; if (body === null) { json(400, { error: "Invalid JSON" }); return true; }
     if (role === "agent") {
       const refusal = agentMissionRefusal(body, ctx.cronService.get(id));
       if (refusal) { json(403, { error: refusal }); return true; }
     }
-    if ((body as { profile?: unknown }).profile !== undefined && !isProfileName((body as { profile?: unknown }).profile)) { json(400, { error: "Invalid profile" }); return true; }
+    if (body.profile !== undefined && !isProfileName(body.profile)) { json(400, { error: "Invalid profile" }); return true; }
+    const fieldError = missionFieldError(body);
+    if (fieldError) { json(400, { error: fieldError }); return true; }
+    // "" clears the engine back to the default; false clears the browser grant.
+    if (body.imageEngine === "") body.imageEngine = undefined;
+    if (body.useSignedInBrowser === false) body.useSignedInBrowser = undefined;
     try {
       const job = ctx.cronService.update(id, body);
       if (!job) { json(404, { error: "Job not found" }); return true; }
+      missionsChanged();
       json(200, { ok: true, job });
     } catch (e) { json(400, { error: safeErrorMessage(e) }); }
     return true;

@@ -10,8 +10,13 @@
 // under a one-shot grant: every gate re-runs, and each gate that would park,
 // refuse or prompt for want of a person takes the grant instead
 // (takeUserGrant). The gates that park: the approval phase's unattended
-// branch (require-approval.ts), the secret_env card (secret-env-approval.ts)
-// and the unattended shell gate (run-sandboxed.ts).
+// branch (require-approval.ts), the secret_env card (secret-env-approval.ts),
+// the unattended shell gate (run-sandboxed.ts), and every gate inside a tool
+// that marks its refusal `needsUser` (tools/result-helpers.ts): the browser's
+// sensitive-page, download-release and CAPTCHA gates (browser-tools/gates.ts)
+// and the credential fill's first-use ask (secret-destination-gate.ts). Those
+// cannot reach the inbox themselves, so run-sandboxed.ts parks their result
+// (parkNeedsUser) and hands them the user's grant as `_userGrant`.
 //
 // The parked result stays status "blocked": statusOf, the renderers, the
 // phone and the loop guards read that status. What marks it parked is the
@@ -27,6 +32,7 @@ import { OP_TYPE } from "../ops/op-types.js";
 import { runLabel } from "../inbox/producers.js";
 import { inboxApprovalRequest } from "../inbox/approvals.js";
 import { cronJobIdOf } from "../cron/cron-session.js";
+import { takeNeedsUser } from "../tools/result-helpers.js";
 
 const PARKED_TEXT =
   "This call is now waiting in the user's inbox for their yes; if they approve it, it runs then, on its own. " +
@@ -83,6 +89,17 @@ export function parkOrRefuse(ctx: ToolCallContext, reason: string, refusal: Tool
     status: "blocked",
     metadata: { ...gateMetadata, layer: "approval", deferredTo: itemId, recovery: PARKED_RECOVERY },
   };
+}
+
+/**
+ * A tool's own refusal for want of a person (`metadata.needsUser`), parked the
+ * way a pipeline gate's is; any other result, or an attended run, unchanged
+ * apart from the mark, which the model never needs.
+ */
+export function parkNeedsUser(ctx: ToolCallContext, result: ToolResult): ToolResult {
+  const marked = takeNeedsUser(result);
+  if (!marked) return result;
+  return parkOrRefuse(ctx, marked.reason, marked.result);
 }
 
 /**

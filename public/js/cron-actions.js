@@ -38,10 +38,29 @@ function populateMissionModels(provider) {
   }
 }
 
+// The mission's image engine: the same two buttons Settings → Media uses, plus
+// "Use the default" (an empty engine = the Settings → Media pick).
+function pickMissionImageEngine(groupId, engine) {
+  const group = document.getElementById(groupId);
+  if (!group) return;
+  group.dataset.engine = engine;
+  group.querySelectorAll('.seg-btn').forEach(b => {
+    const on = b.dataset.engine === engine;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
+}
+function missionImageEngine(groupId) {
+  return document.getElementById(groupId)?.dataset.engine || '';
+}
+
 function openMissionModal() {
   const o = document.getElementById('mission-modal-overlay'); if (!o) return;
   o.classList.add('visible');
   initMissionModelSelector();
+  pickMissionImageEngine('new-cron-image-engine', '');
+  const signedIn = document.getElementById('new-cron-signed-in-browser');
+  if (signedIn) signedIn.checked = false;
   // Mount the schedule picker fresh each open (defaults to this device's zone,
   // Daily mode). The picker owns schedule + timezone end-to-end.
   SchedulePicker.mount(document.getElementById('new-cron-sched-picker'), {});
@@ -63,11 +82,14 @@ async function addCronJob() {
   const provider = document.getElementById('new-cron-provider')?.value || '';
   const model = (provider && document.getElementById('new-cron-model')?.value) || '';
   const profile = document.getElementById('new-cron-profile')?.value || '';
+  const imageEngine = missionImageEngine('new-cron-image-engine');
   const body = { name, schedule: sched.schedule, prompt };
   if (provider) body.provider = provider;
   if (model) body.model = model;
   if (profile) body.profile = profile;
   if (sched.tz) body.tz = sched.tz;
+  if (imageEngine) body.imageEngine = imageEngine;
+  if (document.getElementById('new-cron-signed-in-browser')?.checked) body.useSignedInBrowser = true;
   try {
     const data = await apiPost('/api/cron', body);
     if (data.ok && data.job) {
@@ -115,6 +137,9 @@ function editCronJob() {
   // picker reverse-maps a cron/interval back into the right mode (Daily/Weekly/
   // Interval) when it can, falling back to "Type it" for complex expressions.
   SchedulePicker.mount(document.getElementById('cron-edit-sched-picker'), { schedule: selectedJob.schedule, tz: selectedJob.tz || '' });
+  pickMissionImageEngine('cron-edit-image-engine', selectedJob.imageEngine || '');
+  const signedIn = document.getElementById('cron-edit-signed-in-browser');
+  if (signedIn) signedIn.checked = selectedJob.useSignedInBrowser === true;
   document.getElementById('cron-edit-form').style.display = '';
   document.getElementById('cron-default-actions').style.display = 'none';
   const promptEl = document.getElementById('cron-detail-prompt');
@@ -140,11 +165,17 @@ async function saveCronJobEdits() {
   if (!sched.ok) { alert(sched.error || 'Please set a valid schedule.'); return; }
   // Always send tz (even "") so editing a job can CLEAR a timezone back to
   // server local — the server treats an empty tz as "use server local time".
+  // Likewise an empty imageEngine clears back to the Settings → Media default
+  // and useSignedInBrowser:false takes the mission off the user's logins.
   try {
     const res = await fetch(API + '/api/cron/' + selectedJob.id, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + AUTH_TOKEN },
-      body: JSON.stringify({ name, schedule: sched.schedule, prompt, tz: sched.tz || '' }),
+      body: JSON.stringify({
+        name, schedule: sched.schedule, prompt, tz: sched.tz || '',
+        imageEngine: missionImageEngine('cron-edit-image-engine'),
+        useSignedInBrowser: document.getElementById('cron-edit-signed-in-browser')?.checked === true,
+      }),
     });
     const data = await res.json();
     if (data.error) throw new Error(data.error);

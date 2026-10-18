@@ -14,7 +14,7 @@ import type { SecretsStore } from "../../secrets.js";
 import { resolveCredential } from "../../auth/resolve.js";
 import { isBillableSource } from "../../cost-tracker.js";
 import { resolveAgentPath } from "../../workspace/paths.js";
-import { imageEngineSetting, type ImageEngine } from "./image-engine.js";
+import { imageEngineSetting, sessionImageEngine, type ImageEngine } from "./image-engine.js";
 import { paidMediaApisAllowed, paidMediaOffMessage } from "./paid-media.js";
 
 export function ok(content: string): ToolResult { return { content }; }
@@ -148,8 +148,11 @@ export type ResolvedMedia = {
  * Image, by precedence:
  *   1. explicit per-call override ("generate this with grok") → forced.
  *      Explicit `openai` is always the API key.
- *   2. the engine of the chat provider: Grok for xAI, ChatGPT for the
- *      ChatGPT sign-in or the OpenAI API-key provider (connectedBackend).
+ *   2. the run's own engine (a scheduled job's `imageEngine`, pinned to the
+ *      call's session), else the engine of the chat provider: Grok for xAI,
+ *      ChatGPT for the ChatGPT sign-in or the OpenAI API-key provider
+ *      (connectedBackend). A run's engine stands in for the chat provider's,
+ *      since the user's chat is not what a scheduled run is running on.
  *   3. any other chat provider: the default engine (`imageEngine`, Settings →
  *      Media); when it isn't connected, the other engine, with a `note`.
  *   4. neither engine connected: the chat provider, which the tools treat
@@ -164,11 +167,13 @@ export type ResolvedMedia = {
  *
  * While paid API keys are off (`allowPaidMediaApis`, Settings → Media), an API
  * key is no candidate anywhere above, and an explicit backend whose credential
- * is one comes back with a `refusal` naming the setting, never rerouted.
+ * is one comes back with a `refusal` naming the setting, never rerouted. A
+ * run's engine changes none of that: `usable` judges every credential.
  */
 export async function resolveMediaProvider(
   explicit?: string,
   kind: "image" | "video" = "image",
+  sessionId?: string,
 ): Promise<ResolvedMedia> {
   const forced = normalizeMediaProvider(explicit);
   if (forced) {
@@ -183,11 +188,12 @@ export async function resolveMediaProvider(
   }
 
   const chatProvider = activeChatProvider();
-  const chatEngine = engineOfChatProvider(chatProvider);
+  const runEngine = sessionImageEngine(sessionId);
+  const chatEngine = runEngine ?? engineOfChatProvider(chatProvider);
   const chatBackend = chatEngine && await connectedBackend(chatEngine);
   if (chatBackend) return { ...chatBackend, forced: false };
 
-  const preferred = imageEngineSetting();
+  const preferred = runEngine ?? imageEngineSetting();
   const preferredBackend = await connectedBackend(preferred);
   if (preferredBackend) return { ...preferredBackend, forced: false };
   const other: ImageEngine = preferred === "grok" ? "chatgpt" : "grok";

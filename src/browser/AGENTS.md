@@ -8,7 +8,7 @@
 - `browserMode` defaults to `in-app` (`src/config-schema.ts`). `resolveBrowserRoute()` is the one fallback matrix: a non-`in-app` mode, `LAX_BROWSER_HEADLESS=1`, or no desktop bridge routes to CDP and says why. Don't add a second routing decision.
 - Both backends implement every `BrowserBackend` method; tool-layer security (sensitive-page guards, download approval, egress taint, mutex) sits above the interface and stays backend-agnostic.
 - Secret values touch a page only through `SecretBrowserOps` (`secret-ops.ts`): credential-field selectors, exact origin binding, first-use approval — never via `fill()` / `evaluate()`, which echo page content back to the model.
-- Every mode uses an agent-owned profile, never the user's own browser profile.
+- Every mode uses an agent-owned profile, never the user's own browser profile. Which agent-owned profile is the session's registered `browserProfile` (`session-owner-registry.ts` `resolveBrowserProfile`): the shared signed-in one by default; a scheduled job's run gets the job's own (in-app: the partition `jobBrowserPartition` names on the lifecycle `create`; CDP: a dedicated Chrome on `jobBrowserProfileDir`, under the data dir) unless the user set `useSignedInBrowser` on the job. `instance.ts` is the one place that applies it.
 
 ## Coupled to
 | If you change | Also check | Guard |

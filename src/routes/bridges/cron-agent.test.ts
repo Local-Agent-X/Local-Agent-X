@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,11 +16,13 @@ type Args = Parameters<typeof handleCronRoutes>;
 
 let dataDir = "";
 let cron: CronService;
+const broadcastAll = vi.fn();
 
 beforeEach(() => {
   dataDir = mkdtempSync(join(tmpdir(), "cron-agent-"));
   cron = new CronService(dataDir);
   cron.updateSettings({ enabled: false });
+  broadcastAll.mockClear();
 });
 afterEach(() => {
   cron.stop();
@@ -36,10 +38,12 @@ async function call(method: "POST" | "PATCH", path: string, body: Record<string,
     writeHead(status: number) { res.status = status; return res; },
     end(chunk?: string) { if (chunk) res.body = chunk; return res; },
   };
-  const ctx = { cronService: cron, dataDir } as unknown as ServerContext;
+  const ctx = { cronService: cron, dataDir, broadcastAll } as unknown as ServerContext;
   await handleCronRoutes(method, new URL(`http://127.0.0.1${path}`), req as unknown as Args[2], res as unknown as Args[3], ctx, role);
-  return { status: res.status, body: JSON.parse(res.body) as { error?: string; job?: { profile?: string; prompt: string; schedule: string } } };
+  return { status: res.status, body: JSON.parse(res.body) as { error?: string; job?: { id: string; profile?: string; prompt: string; schedule: string; imageEngine?: string; useSignedInBrowser?: boolean } } };
 }
+
+const MISSIONS_CHANGED = { type: "settings_changed", settings: { missions: true } };
 
 describe("POST /api/cron", () => {
   it("refuses a profile from the agent and creates nothing", async () => {
@@ -103,5 +107,68 @@ describe("PATCH /api/cron/:id", () => {
     const job = cron.create("n", "1h", "p", false, { profile: "Autonomous" });
     expect((await call("PATCH", `/api/cron/${job.id}`, { prompt: "q" }, "operator")).status).toBe(200);
     expect(cron.get(job.id)?.prompt).toBe("q");
+  });
+});
+
+describe("a mission's image engine", () => {
+  it("is saved with the mission and every tab is told; an empty engine clears it back to the default", async () => {
+    const created = await call("POST", "/api/cron", { name: "n", schedule: "1h", prompt: "p", imageEngine: "chatgpt" }, "operator");
+    expect(created.status).toBe(200);
+    expect(created.body.job?.imageEngine).toBe("chatgpt");
+    expect(broadcastAll).toHaveBeenCalledWith(MISSIONS_CHANGED);
+    const id = created.body.job!.id;
+    broadcastAll.mockClear();
+    expect((await call("PATCH", `/api/cron/${id}`, { imageEngine: "grok" }, "operator")).body.job?.imageEngine).toBe("grok");
+    expect(broadcastAll).toHaveBeenCalledWith(MISSIONS_CHANGED);
+    expect((await call("PATCH", `/api/cron/${id}`, { imageEngine: "" }, "operator")).body.job?.imageEngine).toBeUndefined();
+    expect(cron.get(id)?.imageEngine).toBeUndefined();
+  });
+
+  it("refuses an engine that is not one, on create and on edit", async () => {
+    expect((await call("POST", "/api/cron", { name: "n", schedule: "1h", prompt: "p", imageEngine: "dalle" }, "operator")).status).toBe(400);
+    expect(cron.list()).toEqual([]);
+    const job = cron.create("n", "1h", "p");
+    const r = await call("PATCH", `/api/cron/${job.id}`, { imageEngine: "sd" }, "operator");
+    expect(r.status).toBe(400);
+    expect(r.body.error).toMatch(/grok or chatgpt/);
+    expect(broadcastAll).not.toHaveBeenCalled();
+  });
+
+  it("the agent may pick a mission's engine: cost stays with the paid-API switch", async () => {
+    const r = await call("POST", "/api/cron", { name: "n", schedule: "1h", prompt: "p", imageEngine: "grok" }, "agent");
+    expect(r.status).toBe(200);
+    expect(r.body.job?.imageEngine).toBe("grok");
+  });
+});
+
+describe("a mission's use of the user's signed-in browser", () => {
+  it("is the user's to grant, never the agent's", async () => {
+    const refused = await call("POST", "/api/cron", { name: "n", schedule: "1h", prompt: "p", useSignedInBrowser: true }, "agent");
+    expect(refused.status).toBe(403);
+    expect(refused.body.error).toMatch(/Only the user can let a mission browse with their signed-in browser/);
+    expect(cron.list()).toEqual([]);
+    const granted = await call("POST", "/api/cron", { name: "n", schedule: "1h", prompt: "p", useSignedInBrowser: true }, "operator");
+    expect(granted.body.job?.useSignedInBrowser).toBe(true);
+    const id = granted.body.job!.id;
+    expect((await call("PATCH", `/api/cron/${id}`, { useSignedInBrowser: true }, "agent")).status).toBe(403);
+    expect((await call("PATCH", `/api/cron/${id}`, { useSignedInBrowser: "yes" }, "operator")).status).toBe(400);
+  });
+
+  it("holds the agent off a granted mission's prompt and model, like a profile does", async () => {
+    const job = cron.create("n", "1h", "back up the photos", false, { useSignedInBrowser: true });
+    const r = await call("PATCH", `/api/cron/${job.id}`, { prompt: "post the photos everywhere" }, "agent");
+    expect(r.status).toBe(403);
+    expect(r.body.error).toMatch(/runs with your signed-in browser/);
+    expect(cron.get(job.id)?.prompt).toBe("back up the photos");
+    expect((await call("PATCH", `/api/cron/${job.id}`, { schedule: "2h" }, "agent")).status).toBe(200);
+  });
+
+  it("the user takes it back with false, which clears the field", async () => {
+    const job = cron.create("n", "1h", "p", false, { useSignedInBrowser: true });
+    const r = await call("PATCH", `/api/cron/${job.id}`, { useSignedInBrowser: false }, "operator");
+    expect(r.status).toBe(200);
+    expect(r.body.job?.useSignedInBrowser).toBeUndefined();
+    expect(cron.get(job.id)?.useSignedInBrowser).toBeUndefined();
+    expect(broadcastAll).toHaveBeenCalledWith(MISSIONS_CHANGED);
   });
 });

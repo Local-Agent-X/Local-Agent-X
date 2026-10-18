@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { type SyncConfig } from "../constants.js";
 import { workspaceRoot } from "../../config.js";
 import type { CronJob } from "../../cron/cron-service-types.js";
-import { locallyGrantedProfile } from "../../cron/job-authority.js";
+import { locallyGrantedAuthority, MISSION_GRANT_FIELDS } from "../../cron/job-authority.js";
 import { createLogger } from "../../logger.js";
 import { pullDir } from "../mirror.js";
 import { applyTombstones, tombstonePaths } from "../tombstones.js";
@@ -74,11 +74,12 @@ export function pullWorkspaceOrProtocols(dataDir: string, syncDir: string, confi
 
 /**
  * Copy the missions and their settings from the mirror. Returns the names of
- * missions whose autonomy profile from the repo was left behind: a mission's
- * own profile lets its unattended runs act without asking, and the agent can
- * write the sync repo, so a mission runs with the profile this computer
- * granted the same mission, or none (cron/job-authority.ts). Without one it
- * runs under the user's own profile.
+ * missions whose grants from the repo were left behind: a mission's own
+ * autonomy profile lets its unattended runs act without asking, its signed-in
+ * browser lets them browse as the user, and the agent can write the sync repo,
+ * so a mission runs with the grants this computer gave the same mission, or
+ * none (cron/job-authority.ts). Without them it runs under the user's own
+ * profile, on its own browser profile.
  */
 export function pullCronJobs(dataDir: string, syncDir: string, config: SyncConfig): string[] {
   if (!config.syncCronJobs) return [];
@@ -98,10 +99,10 @@ export function pullCronJobs(dataDir: string, syncDir: string, config: SyncConfi
       const local = existsSync(localPath) ? JSON.parse(readFileSync(localPath, "utf-8")) as CronJob[] : [];
       const localById = new Map(local.map((j) => [j.id, j]));
       for (const job of jobs) {
-        const granted = locallyGrantedProfile(job, localById.get(job.id));
-        if (job.profile !== undefined && job.profile !== granted) dropped.push(job.name);
-        if (granted === undefined) delete job.profile;
-        else job.profile = granted;
+        const granted = locallyGrantedAuthority(job, localById.get(job.id));
+        if (MISSION_GRANT_FIELDS.some((f) => job[f] !== undefined && job[f] !== granted[f])) dropped.push(job.name);
+        for (const f of MISSION_GRANT_FIELDS) delete job[f];
+        Object.assign(job, granted);
       }
       writeFileSync(localPath, JSON.stringify(jobs, null, 2));
     } catch (e) {

@@ -6,7 +6,7 @@
 
 import { getApprovalManager } from "./approval-manager.js";
 import { normalizeDestination, type DestinationDecision, type SecretsStore } from "./secrets.js";
-import { declined, err } from "./tools/result-helpers.js";
+import { declined, err, needsUser } from "./tools/result-helpers.js";
 import type { ServerEvent, ToolResult } from "./types.js";
 
 export interface SecretDestinationAsk {
@@ -19,6 +19,10 @@ export interface SecretDestinationAsk {
   toolName: string;
   toolCallId?: string;
   onEvent?: (event: ServerEvent) => void;
+  /** No person is watching this run (tool-execution/internal-args.ts
+   *  unattendedCall): the refusal is marked for the user's inbox instead of a
+   *  card being raised into a sink nobody answers. */
+  unattended?: boolean;
 }
 
 export type SecretDestinationOutcome =
@@ -32,20 +36,21 @@ export function referencedSecretNames(input: string): string[] {
 
 /**
  * Raise the approval card for one (secret, destination) pair and persist a yes.
- * Without an event sink there is no card to raise, so the refusal says where
- * the user approves it instead.
+ * Without an event sink, or with no one watching the run, there is no card to
+ * raise: the refusal says where the user approves it instead, marked for the
+ * inbox so an unattended run parks the call (tool-execution/deferred-call.ts).
  */
 export async function requestSecretDestinationApproval(ask: SecretDestinationAsk): Promise<SecretDestinationOutcome> {
   const { store, name, destination, sessionId, toolName, onEvent } = ask;
   const where = normalizeDestination(destination) ?? destination;
-  if (!onEvent) {
+  if (!onEvent || ask.unattended) {
     return {
       allowed: false,
-      result: err(
+      result: needsUser(err(
         `First-use approval required for secret "${name}" at ${where}. ` +
         `This secret was not captured by the current session, has not been pre-approved, and this call has no way to ask the user.`,
         { recovery: `Ask the user to open Settings → Secrets → "${name}" and approve "${where}" (one click, persists), or to re-run this from the chat, where it asks.` },
-      ),
+      ), `${ask.purpose}: the first use of "${name}" at ${where} needs the user's yes.`),
     };
   }
   const asked = await getApprovalManager().requestApprovalDetailed({

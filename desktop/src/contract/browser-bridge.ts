@@ -7,6 +7,12 @@
 
 export interface BridgeRect { x: number; y: number; width: number; height: number }
 
+/** Every browser view lives on a partition in this namespace: the desktop
+ *  refuses any other (browser-partition.ts), since the bare default session
+ *  carries the app's own token. The server names a scheduled job's profile
+ *  with it (browser/session-owner-registry.ts jobBrowserPartition). */
+export const BROWSER_PARTITION_PREFIX = "persist:lax-profile-";
+
 export interface BrowserViewInfo {
   viewId: string;
   partition: string;
@@ -58,6 +64,9 @@ export interface BrowserLifecycleRequest {
   /** The agent session driving the surface (op "show") — attributes the anchor
    *  follow so the desktop records a per-session anchor (never a cross-session steal). */
   sessionId?: string;
+  /** The partition the view lives on (op "create"); the shared signed-in
+   *  profile when absent. A scheduled job's views name the job's own. */
+  partition?: string;
 }
 export interface BrowserNavigateRequest { type: "lax:browser-navigate"; id: number; viewId: string; url: string; timeoutMs?: number; sessionId?: string }
 export interface BrowserExecRequest { type: "lax:browser-exec"; id: number; viewId: string; script: string; world?: "isolated"; allFrames?: boolean }

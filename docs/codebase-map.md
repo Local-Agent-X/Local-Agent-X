@@ -20,7 +20,7 @@ over 400 LOC (the source-hygiene ceiling).
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 158 | 29 | XL |  |
 | `src/security/` | 121 | 46 | XL |  |
-| `src/tools/` | 105 | 215 | XL |  |
+| `src/tools/` | 110 | 215 | XL |  |
 | `src/canonical-loop/` | 79 | 259 | XL |  |
 | `src/tool-execution/` | 77 | 71 | XL |  |
 | `src/workspace/` | 71 | 3 | M |  |

@@ -75,7 +75,8 @@ import {
 } from "./instance.js";
 import { BrowserManager } from "./manager.js";
 import { ElectronInAppBackend } from "./in-app-backend.js";
-import { _resetSessionOwnerRegistry, registerChildSessionOwner } from "./session-owner-registry.js";
+import { WindowsChatChromeRuntime } from "./windows-chat-chrome-runtime.js";
+import { _resetSessionOwnerRegistry, jobBrowserProfileDir, registerChildSessionOwner, registerSessionOwner } from "./session-owner-registry.js";
 import { EMULATION_PRESETS, setSessionEmulation, _resetSessionEmulationForTest } from "./emulation.js";
 
 function setInApp(bridge = true): void {
@@ -202,6 +203,47 @@ describe("resolveBrowserBackendKind — fallback matrix", () => {
 		state.bridge = true;
 		const m1 = getBrowserManager("agent-run");
 		expect(m1).toBeInstanceOf(BrowserManager);
+	});
+});
+
+// A scheduled job's run browses on the job's own profile — none of the user's
+// sign-ins — unless the user let it use their signed-in browser
+// (CronJob.useSignedInBrowser). On both backends the identity comes from the
+// profile the cron runner registered for the run's session.
+describe("a scheduled job's browser profile", () => {
+	const JOB_RUN = "cron-cron_j1-1700000000000";
+	const ownProfile = () => registerSessionOwner(JOB_RUN, { browserProfile: { kind: "job", jobId: "cron_j1" } });
+	const signedIn = () => registerSessionOwner(JOB_RUN, { browserProfile: { kind: "signed-in" } });
+
+	it("in-app: the job's views live on the job's own partition; a chat's on the shared profile", () => {
+		setInApp();
+		ownProfile();
+		expect((getBrowserManager(JOB_RUN) as ElectronInAppBackend).partition).toBe("persist:lax-profile-job-cron_j1");
+		expect((getBrowserManager("chat-1") as ElectronInAppBackend).partition).toBeUndefined();
+	});
+
+	it("in-app: the opt-in puts the job on the user's signed-in profile", () => {
+		setInApp();
+		signedIn();
+		expect((getBrowserManager(JOB_RUN) as ElectronInAppBackend).partition).toBeUndefined();
+	});
+
+	it("cdp: the job gets a dedicated Chrome on its own profile dir; a chat stays on the shared Chrome", () => {
+		state.browserMode = "isolated";
+		ownProfile();
+		const job = getBrowserManager(JOB_RUN) as BrowserManager;
+		const runtime = (job as unknown as { runtime: unknown }).runtime;
+		expect(runtime).toBeInstanceOf(WindowsChatChromeRuntime);
+		expect((runtime as WindowsChatChromeRuntime).profileDir).toBe(jobBrowserProfileDir("cron_j1"));
+		const chat = getBrowserManager("chat-1") as BrowserManager;
+		expect((chat as unknown as { runtime: unknown }).runtime).not.toBeInstanceOf(WindowsChatChromeRuntime);
+	});
+
+	it("cdp: the opt-in puts the job on the shared Chrome, like a chat", () => {
+		state.browserMode = "isolated";
+		signedIn();
+		const job = getBrowserManager(JOB_RUN) as BrowserManager;
+		expect((job as unknown as { runtime: unknown }).runtime).not.toBeInstanceOf(WindowsChatChromeRuntime);
 	});
 });
 

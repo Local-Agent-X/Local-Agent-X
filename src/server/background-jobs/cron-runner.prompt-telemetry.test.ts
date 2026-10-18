@@ -38,7 +38,9 @@ vi.mock("../../autonomy/profile-store.js", () => ({
 vi.mock("../../browser/session-owner-registry.js", () => ({
   registerSessionOwner: vi.fn(),
   clearSessionOwner: vi.fn(),
+  jobBrowserProfile: vi.fn(() => ({ kind: "job", jobId: "job" })),
 }));
+vi.mock("../../browser/index.js", () => ({ closeBrowser: vi.fn(async () => undefined) }));
 
 import { registerCronRunner } from "./cron-runner.js";
 

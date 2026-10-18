@@ -91,8 +91,12 @@ export class ElectronInAppBackend implements BrowserBackend {
 	constructor(
 		private readonly sessionId: string,
 		viewId: string,
+		/** The partition the session's views live on; the shared signed-in
+		 *  profile when undefined (instance.ts picks it from the session's
+		 *  registered browser profile). */
+		readonly partition?: string,
 	) {
-		this.tabs = new TabList(viewId);
+		this.tabs = new TabList(viewId, partition);
 	}
 
 	// ── Active-tab accessors (every action routes through the active tab) ──

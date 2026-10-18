@@ -3,7 +3,7 @@ import { BrowserManager } from "./manager.js";
 import type { BrowserBackend } from "./backend.js";
 import { ElectronInAppBackend } from "./in-app-backend.js";
 import { sessionIdFromViewId, setAgentViewClosedHandler } from "./bridge-perception.js";
-import { resolveBrowserSessionId } from "./session-owner-registry.js";
+import { jobBrowserPartition, jobBrowserProfileDir, resolveBrowserProfile, resolveBrowserSessionId } from "./session-owner-registry.js";
 import { closeSharedBrowser, forceKillSharedBrowser } from "./runtime.js";
 import { clearAllSessionEmulation, clearSessionEmulation, getSessionEmulation } from "./emulation.js";
 import {
@@ -114,10 +114,14 @@ function peerPagesExcept(self: BrowserManager): Page[] {
 function ensureCdpManager(key: string, dedicatedWindowsChrome = false): BrowserManager {
 	let manager = cdpManagers.get(key);
 	if (!manager) {
-		// Resolve the chat-scoped browser session and
-		// run-prep) and bind the manager to it. CDP behavior is unchanged — the
-		// use the shared persistent identity.
-		const runtime = dedicatedWindowsChrome ? new WindowsChatChromeRuntime(key) : undefined;
+		// Bind the manager to the chat-scoped browser session. The shared Chrome
+		// carries the user's signed-in identity; a scheduled job's session gets a
+		// dedicated Chrome on the job's own profile dir instead (its sign-ins
+		// persist across the job's runs, and none of the user's are in it).
+		const profile = resolveBrowserProfile(key);
+		const runtime = profile.kind === "job"
+			? new WindowsChatChromeRuntime(key, jobBrowserProfileDir(profile.jobId))
+			: dedicatedWindowsChrome ? new WindowsChatChromeRuntime(key) : undefined;
 		manager = new BrowserManager(key, getRuntimeConfig().browserMode, runtime);
 		manager.setPeerPages(() => peerPagesExcept(manager!));
 		manager.setIdleHandler(() => {
@@ -140,7 +144,11 @@ function ensureInAppBackend(key: string): ElectronInAppBackend {
 	let entry = inAppBackends.get(key);
 	if (!entry) {
 		const viewId = inAppViewId(key);
-		entry = { backend: new ElectronInAppBackend(key, viewId), viewId };
+		// A scheduled job's views live on the job's own partition; every other
+		// session's on the desktop's shared signed-in profile (its default).
+		const profile = resolveBrowserProfile(key);
+		const partition = profile.kind === "job" ? jobBrowserPartition(profile.jobId) : undefined;
+		entry = { backend: new ElectronInAppBackend(key, viewId, partition), viewId };
 		// No idle handler for in-app backends (unlike the CDP path): views are
 		// cheap, pool-owned on the desktop side, and hold no Chrome process of
 		// their own — there is no shared browser to tear down when idle. They

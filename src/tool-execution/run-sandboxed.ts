@@ -22,7 +22,7 @@ import { checkFreshness, recordFileSeen, unchangedSinceSeen, seenViewFromReadRes
 import { READ_DEDUP_STUB_LEAD, readContentInView } from "./read-dedup-evidence.js";
 import { getModelView } from "./model-view.js";
 import { unattendedShellBlock } from "./unattended-shell-gate.js";
-import { parkOrRefuse, takeUserGrant } from "./deferred-call.js";
+import { parkNeedsUser, parkOrRefuse, takeUserGrant } from "./deferred-call.js";
 import { createToolRunner } from "./tool-runner.js";
 import { recordTaskArtifact } from "../data-lineage/task-artifacts.js";
 import { CREATE_CLASS, createTargetPath } from "./create-target-path.js";
@@ -79,6 +79,13 @@ export const runSandboxedPhase: Phase = async (ctx) => {
     ctx.result = shellBlock.metadata?.proofPending ? shellBlock : parkOrRefuse(ctx, shellBlock.content, shellBlock);
     return CONTINUE;
   }
+
+  // The user's yes to this exact call, given from the inbox: a gate inside the
+  // tool that would ask a person (a sensitive page, a credential fill) reads
+  // it off the call and proceeds. A grant exists only for the one call the
+  // user approved, so taking it here consumes nothing another call could use.
+  const userGrant = takeUserGrant(ctx);
+  if (userGrant) args._userGrant = userGrant;
 
   // Progress messages double as the timeout path's partial-output capture:
   // withTimeout orphans the execute promise on expiry, so whatever the tool
@@ -182,6 +189,9 @@ export const runSandboxedPhase: Phase = async (ctx) => {
     // the result, swaps in the redaction stub when sensitive bytes would reach
     // the model, and commits taint ONLY for bytes actually delivered.
     ctx.result = applyResultTaintPolicy(tc.name, args, sessionId, ctx.result, floor);
+    // A refusal the tool made for want of a person is parked for the user's
+    // yes in an unattended run, as a pipeline gate's would be (deferred-call.ts).
+    if (ctx.result) ctx.result = parkNeedsUser(ctx, ctx.result);
     // An exit code says the shell ran, not that the delete happened: a delete
     // whose targets are still there is reported as not done (verify-shell-deletes.ts).
     // Only once the command has exited: a background command is still running.

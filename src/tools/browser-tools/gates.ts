@@ -16,14 +16,14 @@ import { err } from "./shared.js";
 import { recordProgress, resetProgress } from "../../browser/progress-tracker.js";
 import { sensitivePageActionDecision } from "../../browser/guards.js";
 import { getApprovalManager } from "../../approval-manager.js";
-import { blocked, declined } from "../result-helpers.js";
+import { blocked, declined, needsUser } from "../result-helpers.js";
 import { HUMAN_VERIFICATION_MESSAGE, HUMAN_VERIFICATION_RECOVERY, requiresHumanVerification } from "../../browser/human-verification.js";
 import { RESET_ACTIONS, TRACKED_ACTIONS, READ_ONLY_ACTIONS, HUMAN_VERIFICATION_BLOCKED_ACTIONS } from "./action-tables.js";
 import { decisionRequiresPrompt, getRiskDecision } from "../../approval-decision.js";
 import type { SensitivePageCategory } from "../../browser/sensitive-pages.js";
 import type { ToolRisk } from "../../autonomy/risk.js";
 import { createLogger } from "../../logger.js";
-import { toolCallIdOf } from "../../tool-execution/internal-args.js";
+import { toolCallIdOf, unattendedCall, userGrantOf } from "../../tool-execution/internal-args.js";
 
 const gateLog = createLogger("browser.gates");
 
@@ -57,6 +57,12 @@ export type PreDispatchOutcome =
 /**
  * The pre-dispatch approval gates. `args` is mutated in place on the
  * release_download path (`_downloadApproval`), exactly as before.
+ *
+ * A card needs a person. When none is watching (an unattended run, or no
+ * event sink at all) the gate returns its refusal marked `needsUser`, and the
+ * dispatch pipeline parks the call in the user's inbox (deferred-call.ts);
+ * their Approve re-runs the call with `_userGrant`, which stands in for the
+ * card here. Nothing is asked into a sink nobody answers.
  */
 export async function runPreDispatchGates(
   action: string,
@@ -66,6 +72,8 @@ export async function runPreDispatchGates(
   onEvent: ((e: { type: string; [k: string]: unknown }) => void) | undefined,
 ): Promise<PreDispatchOutcome> {
   const halt = (result: ToolResult): PreDispatchOutcome => ({ kind: "halt", result });
+  const nobodyToAsk = !onEvent || unattendedCall(args);
+  const granted = userGrantOf(args) !== undefined;
   // Set when an ask-level secret-read approval unlocked this page's
   // stub; the dispatch tail then runs inside runWithSensitiveReadGrant
   // so the unlock is visible to exactly this call's async chain
@@ -74,26 +82,28 @@ export async function runPreDispatchGates(
   if (action === "release_download") {
     const id = String(args.download_id || "");
     if (!id) return halt(err("'download_id' is required. Use action='downloads' first."));
-    if (!onEvent) return halt(blocked(
-      "BLOCKED: quarantined downloads can only be released from an interactive session with explicit user approval.",
-      { layer: "browser-download", browserStatus: "approval-required", recovery: "This run cannot ask the user. Tell them which download is waiting in quarantine; they can approve releasing it when they next chat with you." },
-    ));
     let approvalBinding: ReturnType<BrowserBackend["getDownloadApproval"]>;
     try { approvalBinding = manager.getDownloadApproval(id); }
     catch (error) { return halt(blocked(`BLOCKED: ${(error as Error).message}`, { layer: "browser-download", browserStatus: "not-releasable", recovery: "List the downloads (action='downloads') and release one whose status is quarantined." })); }
-    const outcome = await getApprovalManager().requestApprovalDetailed({
-      toolName: "browser.release_download",
-      toolCallId: toolCallIdOf(args) ?? `browser-release-${id}`,
-      sessionId,
-      context: "Release a quarantined browser download into workspace/downloads. The file remains unavailable to agent tools until approved.",
-      args: { action: "release_download", ...approvalBinding },
-      alwaysAsk: true,
-      emit: onEvent as (event: ServerEvent) => void,
-    });
-    if (!outcome.approved) return halt(declined(
-      "Download release was not approved; the file remains quarantined.",
-      { layer: "browser-download", browserStatus: "quarantined", downloadId: id },
-    ));
+    if (!granted) {
+      if (nobodyToAsk) return halt(needsUser(blocked(
+        "BLOCKED: quarantined downloads can only be released from an interactive session with explicit user approval.",
+        { layer: "browser-download", browserStatus: "approval-required", recovery: "This run cannot ask the user. Tell them which download is waiting in quarantine; they can approve releasing it when they next chat with you." },
+      ), `Release quarantined browser download ${id} into workspace/downloads.`));
+      const outcome = await getApprovalManager().requestApprovalDetailed({
+        toolName: "browser.release_download",
+        toolCallId: toolCallIdOf(args) ?? `browser-release-${id}`,
+        sessionId,
+        context: "Release a quarantined browser download into workspace/downloads. The file remains unavailable to agent tools until approved.",
+        args: { action: "release_download", ...approvalBinding },
+        alwaysAsk: true,
+        emit: onEvent as (event: ServerEvent) => void,
+      });
+      if (!outcome.approved) return halt(declined(
+        "Download release was not approved; the file remains quarantined.",
+        { layer: "browser-download", browserStatus: "quarantined", downloadId: id },
+      ));
+    }
     args._downloadApproval = approvalBinding;
   } else {
     const pageUrl = manager.getCurrentUrl();
@@ -117,23 +127,25 @@ export async function runPreDispatchGates(
         gateLog.info(`sensitive-page ${action} on ${pageDecision.category} ran without a prompt — the autonomy profile allows browser actions`);
         return { kind: "proceed", grantedReadUrl: null };
       }
-      if (!onEvent) return halt(blocked(
-        `BLOCKED: ${pageDecision.reason} Explicit approval is unavailable in this run.`,
-        { layer: "browser-sensitive-page", browserStatus: "approval-required", category: pageDecision.category, recovery: "This run cannot ask the user. Tell them what you need to do on this page; they can do it, or approve it when they next chat with you." },
-      ));
-      const outcome = await getApprovalManager().requestApprovalDetailed({
-        toolName: "browser.sensitive_page_action",
-        toolCallId: toolCallIdOf(args) ?? `browser-sensitive-${sessionId}`,
-        sessionId,
-        context: `${pageDecision.reason} Approve only if you expect this action. Page contents and form values are intentionally omitted.`,
-        args: { action, category: pageDecision.category, page: pageDecision.page },
-        alwaysAsk: true,
-        emit: onEvent as (event: ServerEvent) => void,
-      });
-      if (!outcome.approved) return halt(declined(
-        `Sensitive-page ${action} was not approved; no browser action was performed.`,
-        { layer: "browser-sensitive-page", browserStatus: "declined", category: pageDecision.category },
-      ));
+      if (!granted) {
+        if (nobodyToAsk) return halt(needsUser(blocked(
+          `BLOCKED: ${pageDecision.reason} Explicit approval is unavailable in this run.`,
+          { layer: "browser-sensitive-page", browserStatus: "approval-required", category: pageDecision.category, recovery: "This run cannot ask the user. Tell them what you need to do on this page; they can do it, or approve it when they next chat with you." },
+        ), `${pageDecision.reason} (${action} on ${pageDecision.page})`));
+        const outcome = await getApprovalManager().requestApprovalDetailed({
+          toolName: "browser.sensitive_page_action",
+          toolCallId: toolCallIdOf(args) ?? `browser-sensitive-${sessionId}`,
+          sessionId,
+          context: `${pageDecision.reason} Approve only if you expect this action. Page contents and form values are intentionally omitted.`,
+          args: { action, category: pageDecision.category, page: pageDecision.page },
+          alwaysAsk: true,
+          emit: onEvent as (event: ServerEvent) => void,
+        });
+        if (!outcome.approved) return halt(declined(
+          `Sensitive-page ${action} was not approved; no browser action was performed.`,
+          { layer: "browser-sensitive-page", browserStatus: "declined", category: pageDecision.category },
+        ));
+      }
       // Ask-level secret READ approved: the dispatch tail below runs
       // inside the read-grant async context for exactly this page
       // URL, covering the post-dispatch stub backstop too — approved
@@ -146,20 +158,28 @@ export async function runPreDispatchGates(
 
 /**
  * Blocks advancing actions while a human-verification challenge is on screen.
- * Returns the block result, or null when dispatch may proceed.
+ * Returns the block result, or null when dispatch may proceed. The agent never
+ * solves the challenge, so a user's grant changes nothing here; in an
+ * unattended run the block is marked for the inbox so the person learns the
+ * job is stuck on it, and their Approve retries the action once they have
+ * completed the check in the job's browser.
  */
 export async function humanVerificationBlock(
   action: string,
   manager: BrowserBackend,
+  args: Record<string, unknown> = {},
 ): Promise<ToolResult | null> {
   if (HUMAN_VERIFICATION_BLOCKED_ACTIONS.has(action)) {
     const observation = await manager.observe();
     if (requiresHumanVerification(observation)) {
-      return blocked(HUMAN_VERIFICATION_MESSAGE, {
+      const result = blocked(HUMAN_VERIFICATION_MESSAGE, {
         layer: "browser-human-verification",
         browserStatus: "human-verification-required",
         recovery: HUMAN_VERIFICATION_RECOVERY,
       });
+      return unattendedCall(args)
+        ? needsUser(result, "A CAPTCHA or anti-bot check is on screen in the job's browser, and only a person can complete it. Complete it there first; Approve then retries this action.")
+        : result;
     }
   }
   return null;

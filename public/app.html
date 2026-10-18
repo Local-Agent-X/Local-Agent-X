@@ -1407,6 +1407,18 @@
             <label class="field-label">Agent Instructions</label>
             <textarea class="field-input" id="cron-edit-prompt" rows="8" style="font-family:var(--mono);font-size:.8rem;width:100%"></textarea>
           </div>
+          <div class="field" style="margin-bottom:8px">
+            <label class="field-label">Images <span style="color:var(--muted);font-weight:400">— the engine this mission makes images with</span></label>
+            <div class="seg-control" id="cron-edit-image-engine" role="group" aria-label="Image engine" data-engine="">
+              <button type="button" class="seg-btn active" data-engine="" aria-pressed="true" onclick="pickMissionImageEngine('cron-edit-image-engine','')">Use the default</button>
+              <button type="button" class="seg-btn" data-engine="grok" aria-pressed="false" onclick="pickMissionImageEngine('cron-edit-image-engine','grok')">Grok</button>
+              <button type="button" class="seg-btn" data-engine="chatgpt" aria-pressed="false" onclick="pickMissionImageEngine('cron-edit-image-engine','chatgpt')">ChatGPT</button>
+            </div>
+          </div>
+          <div class="field" style="margin-bottom:8px">
+            <label class="field-label" style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="cron-edit-signed-in-browser"/> Use my signed-in browser</label>
+            <div class="field-hint">Off: the mission browses on its own profile, with none of your logins. On: it browses as you, signed in to every site you are — only for a mission you trust with your accounts.</div>
+          </div>
           <div class="btn-row">
             <button class="action-btn primary" onclick="saveCronJobEdits()">Save Changes</button>
             <button class="action-btn secondary" onclick="cancelCronEdit()">Cancel</button>
@@ -1447,6 +1459,17 @@
             <option value="Power">Power — everything except money &amp; secrets</option>
             <option value="Developer">Developer — shell &amp; destructive with rollback</option>
           </select>
+        </div>
+        <div class="field"><label class="field-label">Images <span style="color:var(--muted);font-weight:400">— the engine this mission makes images with</span></label>
+          <div class="seg-control" id="new-cron-image-engine" role="group" aria-label="Image engine" data-engine="">
+            <button type="button" class="seg-btn active" data-engine="" aria-pressed="true" onclick="pickMissionImageEngine('new-cron-image-engine','')">Use the default</button>
+            <button type="button" class="seg-btn" data-engine="grok" aria-pressed="false" onclick="pickMissionImageEngine('new-cron-image-engine','grok')">Grok</button>
+            <button type="button" class="seg-btn" data-engine="chatgpt" aria-pressed="false" onclick="pickMissionImageEngine('new-cron-image-engine','chatgpt')">ChatGPT</button>
+          </div>
+        </div>
+        <div class="field">
+          <label class="field-label" style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="new-cron-signed-in-browser"/> Use my signed-in browser</label>
+          <div class="field-hint">Off: the mission browses on its own profile, with none of your logins. On: it browses as you, signed in to every site you are — only for a mission you trust with your accounts.</div>
         </div>
         <div class="btn-row" style="margin-top:16px;justify-content:flex-end">
           <button class="action-btn secondary" onclick="closeMissionModal()">Cancel</button>

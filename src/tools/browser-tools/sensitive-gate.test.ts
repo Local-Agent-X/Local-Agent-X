@@ -129,3 +129,79 @@ describe("sensitive-page ACTIONS follow the user's autonomy profile", () => {
 		finally { clearSessionProfile("prof-bank"); }
 	});
 });
+
+// In an unattended run (a scheduled job) the event sink exists but nobody
+// answers a card. Each card-raising gate returns its refusal marked needsUser
+// instead, which the dispatch pipeline parks in the user's inbox
+// (tool-execution/deferred-call.ts), and the user's Approve re-runs the call
+// with `_userGrant`, which stands in for the card.
+describe("in an unattended run, a card becomes a needs-you refusal", () => {
+	const BANK_PAGE = "https://www.chase.com/pay";
+	const unattended = { _sessionId: "cron-bank", _onEvent: () => {}, _callContext: "cron" };
+
+	it("a bank click under Power: no card, the refusal says why a person is needed, nothing dispatched", async () => {
+		setSessionProfile("cron-bank", "Power");
+		try {
+			seam.manager.getCurrentUrl = () => BANK_PAGE;
+			const click = vi.fn(async () => "Clicked: Pay");
+			seam.manager.click = click;
+			const r = await tool().execute({ action: "click", selector: "#pay", ...unattended });
+			expect(seam.approval).not.toHaveBeenCalled();
+			expect(click).not.toHaveBeenCalled();
+			expect(r.status).toBe("blocked");
+			expect(r.metadata).toMatchObject({ browserStatus: "approval-required", needsUser: expect.stringContaining("financial account page") });
+			expect(String(r.metadata?.needsUser)).toContain("click on https://www.chase.com/pay");
+		} finally { clearSessionProfile("cron-bank"); }
+	});
+
+	it("the user's grant stands in for the card: the click runs, still with no card", async () => {
+		setSessionProfile("cron-bank", "Power");
+		try {
+			seam.manager.getCurrentUrl = () => BANK_PAGE;
+			// The dispatch tail past the gate: the CAPTCHA check observes, the
+			// progress guard fingerprints.
+			seam.manager.observe = async () => ({ title: "Pay", currentRefs: [], crossOriginIframes: [] });
+			seam.manager.fingerprint = async () => "fp-1";
+			const click = vi.fn(async () => "Clicked: Pay");
+			seam.manager.click = click;
+			const r = await tool().execute({ action: "click", selector: "#pay", ...unattended, _userGrant: "grant-1" });
+			expect(seam.approval).not.toHaveBeenCalled();
+			expect(click).toHaveBeenCalledOnce();
+			expect(r.metadata?.needsUser).toBeUndefined();
+		} finally { clearSessionProfile("cron-bank"); }
+	});
+
+	it("a secret read on a vault page is marked, and the grant unlocks the read for that one call", async () => {
+		seam.manager.readConsole = async () => "SECRET-CONSOLE-LINE";
+		const parked = await tool().execute({ action: "read_console", ...unattended });
+		expect(seam.approval).not.toHaveBeenCalled();
+		expect(parked.metadata).toMatchObject({ browserStatus: "approval-required", needsUser: expect.stringContaining("password manager") });
+		expect(String(parked.content)).not.toContain("SECRET-CONSOLE-LINE");
+		const granted = await tool().execute({ action: "read_console", ...unattended, _userGrant: "grant-2" });
+		expect(String(granted.content)).toContain("SECRET-CONSOLE-LINE");
+		expect(seam.approval).not.toHaveBeenCalled();
+	});
+
+	it("a quarantined download's release is marked, and the grant releases it", async () => {
+		seam.manager.getCurrentUrl = () => "https://example.com/files";
+		const binding = { id: "d1", digest: "sha256:abc" };
+		seam.manager.getDownloadApproval = () => binding;
+		const release = vi.fn(async () => "released d1");
+		seam.manager.releaseDownload = release;
+		const parked = await tool().execute({ action: "release_download", download_id: "d1", ...unattended });
+		expect(seam.approval).not.toHaveBeenCalled();
+		expect(release).not.toHaveBeenCalled();
+		expect(parked.metadata).toMatchObject({ browserStatus: "approval-required", needsUser: expect.stringContaining("download d1") });
+		const granted = await tool().execute({ action: "release_download", download_id: "d1", ...unattended, _userGrant: "grant-3" });
+		expect(release).toHaveBeenCalledWith("d1", binding);
+		expect(String(granted.content)).toContain("released d1");
+	});
+
+	it("an attended run with a sink still gets the card, as before", async () => {
+		seam.approval.mockResolvedValue({ approved: true });
+		seam.manager.readConsole = async () => "SECRET-CONSOLE-LINE";
+		const r = await tool().execute({ action: "read_console", _sessionId: "chat-1", _onEvent: () => {}, _callContext: "local" });
+		expect(seam.approval).toHaveBeenCalledOnce();
+		expect(r.metadata?.needsUser).toBeUndefined();
+	});
+});

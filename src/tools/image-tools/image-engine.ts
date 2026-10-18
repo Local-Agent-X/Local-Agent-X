@@ -3,13 +3,35 @@
  * call uses when the chat model has no image backend of its own. Read by
  * resolveMediaProvider (shared.ts); kept apart from it so the boot-time
  * migration loads nothing but the settings file.
+ *
+ * A run can carry its own engine: a scheduled job's `imageEngine`
+ * (cron-service-types.ts) is set on the run's session by the cron runner and
+ * cleared when the run ends, the way its autonomy profile is
+ * (autonomy/profile-store.ts setSessionProfile). The image tools read it
+ * through the session stamped on their call, never from a global.
  */
 import { loadSettings, saveSettings } from "../../settings.js";
 import { IMAGE_ENGINES } from "../../settings-schema.controls.js";
 
 export type ImageEngine = (typeof IMAGE_ENGINES)[number];
 
-const isImageEngine = (v: unknown): v is ImageEngine => (IMAGE_ENGINES as readonly unknown[]).includes(v);
+export const isImageEngine = (v: unknown): v is ImageEngine => (IMAGE_ENGINES as readonly unknown[]).includes(v);
+
+const sessionEngines = new Map<string, ImageEngine>();
+
+/** Pin a run's image engine to its session for the run's lifetime. */
+export function setSessionImageEngine(sessionId: string, engine: ImageEngine): void {
+  sessionEngines.set(sessionId, engine);
+}
+
+export function clearSessionImageEngine(sessionId: string): void {
+  sessionEngines.delete(sessionId);
+}
+
+/** The engine pinned to a run's session, if the run carries one. */
+export function sessionImageEngine(sessionId: string | undefined): ImageEngine | undefined {
+  return sessionId ? sessionEngines.get(sessionId) : undefined;
+}
 
 /** The saved default image engine; Grok when none is saved. */
 export function imageEngineSetting(): ImageEngine {

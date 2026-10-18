@@ -7,6 +7,7 @@ import { ok, err, okWithImage, resolveMediaProvider, mediaProviderLabel, withMed
 import { requestCodexImage } from "./codex-images.js";
 import { noFreeMediaMessage, paidMediaApisAllowed } from "./paid-media.js";
 import { CODEX_IMAGE_MODEL } from "../../codex-client/images.js";
+import { sessionIdOf } from "../../tool-execution/internal-args.js";
 
 /** Stable Diffusion server URL — configurable via config.sdServerUrl */
 function getSDServerUrl(): string { return getRuntimeConfig().sdServerUrl; }
@@ -186,7 +187,7 @@ export const generateImageTool: ToolDefinition = {
     const prompt = String(args.prompt || "");
     if (!prompt.trim()) return err("Prompt is required.");
 
-    const { provider, apiKey, forced, note, refusal } = await resolveMediaProvider(args.provider as string | undefined);
+    const { provider, apiKey, forced, note, refusal } = await resolveMediaProvider(args.provider as string | undefined, "image", sessionIdOf(args));
     if (refusal) return err(refusal);
     if (forced && provider !== "local" && !apiKey) {
       return err(`${mediaProviderLabel(provider)} isn't connected — connect it in Settings, or omit the provider override to use the default.`);

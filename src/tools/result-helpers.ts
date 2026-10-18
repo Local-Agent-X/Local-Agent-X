@@ -86,6 +86,25 @@ export function parseStatusHeader(rendered: string): ToolResultStatus {
 export const BLOCKED_WITHOUT_RECOVERY =
   "This was refused and named no next step. Do not retry it unchanged; tell the user what you were trying to do, and continue with the rest of the request.";
 
+/**
+ * A refusal from a gate inside a tool that would have shown a person a card
+ * (a sensitive page, a credential fill, a quarantined download, a CAPTCHA) and
+ * found no one watching the run: `metadata.needsUser` carries why a person is
+ * needed, in their words. The dispatch pipeline parks such a call in the
+ * user's inbox for an unattended run (tool-execution/deferred-call.ts
+ * parkNeedsUser) and the run goes on; an attended run keeps the refusal.
+ */
+export function needsUser(result: ToolResult, reason: string): ToolResult {
+  return { ...result, metadata: { ...result.metadata, needsUser: reason } } as ToolResult;
+}
+
+/** The reason a result says a person is needed, and the result without the mark. */
+export function takeNeedsUser(result: ToolResult): { reason: string; result: ToolResult } | null {
+  const { needsUser: reason, ...metadata } = result.metadata ?? {};
+  if (typeof reason !== "string" || !reason) return null;
+  return { reason, result: { ...result, metadata } as ToolResult };
+}
+
 /** The same result with `extra` merged into its metadata. A merge only adds
  *  keys, so a refusal keeps the recovery the type requires of it. */
 export function withMetadata(result: ToolResult, extra: Record<string, unknown>): ToolResult {

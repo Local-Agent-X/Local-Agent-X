@@ -17,6 +17,8 @@ import { SecurityLayer } from "../security/index.js";
 import { inboxStore } from "../inbox/index.js";
 import { clearSessionProfile, setSessionProfile } from "../autonomy/profile-store.js";
 import { setAriRequired } from "../ari-kernel/state.js";
+import { blocked, needsUser } from "../tools/result-helpers.js";
+import { callContextOf, userGrantOf } from "./internal-args.js";
 import type { CallContext, ToolCallContext } from "./context.js";
 import type { ToolDefinition, ToolResult } from "../types.js";
 
@@ -178,5 +180,122 @@ describe("a scheduled run through the real dispatcher", () => {
       expect(deleted).toEqual([target]);
       expect(parked()).toHaveLength(1);
     } finally { clearSessionProfile(session); }
+  });
+});
+
+// A gate inside a tool (the browser's sensitive-page, download and CAPTCHA
+// gates, the credential fill's first-use ask) cannot reach the inbox itself:
+// it marks its refusal needsUser (tools/result-helpers.ts) and the pipeline
+// parks that call the way it parks its own gates' refusals.
+describe("a gate inside the tool that found no one to ask", () => {
+  beforeAll(() => setAriRequired(false));
+  afterAll(() => setAriRequired(true));
+
+  const stub = (name: string, execute: ToolDefinition["execute"], readOnly = false) =>
+    ({ name, description: "stub", parameters: { type: "object", properties: {} }, readOnly, execute }) as unknown as ToolDefinition;
+  const taskList = stub("task_list", async () => ({ content: "no tasks" }), true);
+  const REASON = "This high-risk browser action targets a financial account page. (click on https://www.chase.com/pay)";
+  const refusal = () => blocked("BLOCKED: This high-risk browser action targets a financial account page. Explicit approval is unavailable in this run.", {
+    layer: "browser-sensitive-page", browserStatus: "approval-required", recovery: "This run cannot ask the user.",
+  });
+
+  it("has its needs-you refusal parked, the run goes on, and the user's Approve runs it with the grant", async () => {
+    const session = "cron-shop-1700000000000";
+    const seen: Array<{ context: string | undefined; grant: string | undefined }> = [];
+    const browser = stub("browser", async (a) => {
+      seen.push({ context: callContextOf(a), grant: userGrantOf(a) });
+      return userGrantOf(a) ? { content: "Clicked: Pay" } : needsUser(refusal(), REASON);
+    });
+    const tools = new Map([["browser", browser], ["task_list", taskList]]);
+    const security = new SecurityLayer(join(dir, "workspace"), "workspace");
+    const msgs = await executeToolCalls(
+      [
+        { id: "c1", name: "browser", arguments: JSON.stringify({ action: "click", selector: "#pay" }) },
+        { id: "c2", name: "task_list", arguments: "{}" },
+      ],
+      tools, security, undefined, undefined, undefined, undefined, session,
+      undefined, undefined, undefined, undefined, "op_shop_1", "cron",
+    );
+    expect(seen).toEqual([{ context: "cron", grant: undefined }]);
+    const item = parked()[0];
+    expect(item?.deferredCall).toMatchObject({ toolName: "browser", args: { action: "click", selector: "#pay" }, cronJobId: "shop", callContext: "cron" });
+    expect(item.body).toContain(`Why it needs you: ${REASON}`);
+    const [first, second] = msgs.filter((m) => m.role === "tool").map((m) => String(m.content));
+    expect(first).toMatch(/^\[blocked, /);
+    expect(first).toContain(`deferredTo="${item.id}"`);
+    expect(first).toContain('layer="approval"');
+    expect(first).not.toContain("needsUser");
+    expect(second).toContain("no tasks");
+
+    const approved = await dispatchApprovedCall(item.deferredCall!, item.id, { tools: [browser, taskList], security });
+    expect(approved.status).toBe("ok");
+    expect(approved.text).toContain("Clicked: Pay");
+    expect(seen[1]).toMatchObject({ context: "cron" });
+    expect(seen[1]?.grant).toMatch(/^grant-/);
+    expect(parked()).toHaveLength(1);
+  });
+
+  it("an attended run keeps the tool's own refusal: unparked, and the mark never reaches the model", async () => {
+    const browser = stub("browser", async () => needsUser(refusal(), REASON));
+    const security = new SecurityLayer(join(dir, "workspace"), "workspace");
+    const msgs = await executeToolCalls(
+      [{ id: "c1", name: "browser", arguments: JSON.stringify({ action: "click", selector: "#pay" }) }],
+      new Map([["browser", browser]]), security, undefined, undefined, undefined, undefined, "chat-1",
+      undefined, undefined, undefined, undefined, undefined, "local",
+    );
+    const rendered = String(msgs.find((m) => m.role === "tool")?.content);
+    expect(rendered).toMatch(/^\[blocked, /);
+    expect(rendered).toContain('layer="browser-sensitive-page"');
+    expect(rendered).not.toContain("deferredTo");
+    expect(rendered).not.toContain("needsUser");
+    expect(parked()).toHaveLength(0);
+  });
+});
+
+// With the blanket denial gone, a scheduled run browses its own work and reads
+// the public pages the web-access policy allows with no card, and makes images.
+describe("a scheduled run's browser and image calls", () => {
+  beforeAll(() => setAriRequired(false));
+  afterAll(() => setAriRequired(true));
+
+  const session = "cron-site-1700000000000";
+  const run = async (opId: string, security: SecurityLayer, tools: Map<string, ToolDefinition>, calls: Array<{ name: string; args: Record<string, unknown> }>) => {
+    const msgs = await executeToolCalls(
+      calls.map((c, i) => ({ id: `${opId}-c${i}`, name: c.name, arguments: JSON.stringify(c.args) })),
+      tools, security, undefined, undefined, undefined, undefined, session,
+      undefined, undefined, undefined, undefined, opId, "cron",
+    );
+    return msgs.filter((m) => m.role === "tool").map((m) => String(m.content));
+  };
+
+  it("drives this install's app pages, a localhost dev server and an allowed public host; an unlisted host is refused by policy, not parked", async () => {
+    const workspace = join(dir, "workspace");
+    mkdirSync(workspace, { recursive: true });
+    const security = new SecurityLayer(workspace, "workspace");
+    security.egress.setMode("strict");
+    security.egress.allow("example.com");
+    const visited: string[] = [];
+    const browser = { name: "browser", description: "stub", parameters: { type: "object", properties: {} }, execute: async (a: Record<string, unknown>) => { visited.push(String(a.url)); return { content: `Navigated to: ${String(a.url)}` }; } } as unknown as ToolDefinition;
+    const out = await run("op_site_browse", security, new Map([["browser", browser]]), [
+      { name: "browser", args: { action: "navigate", url: "http://127.0.0.1:7007/apps/calendar/" } },
+      { name: "browser", args: { action: "navigate", url: "http://localhost:5173/" } },
+      { name: "browser", args: { action: "navigate", url: "https://example.com/docs" } },
+      { name: "browser", args: { action: "screenshot" } },
+      { name: "browser", args: { action: "navigate", url: "https://evil.example.net/" } },
+    ]);
+    expect(visited).toEqual(["http://127.0.0.1:7007/apps/calendar/", "http://localhost:5173/", "https://example.com/docs", "undefined"]);
+    expect(out.slice(0, 4).every((r) => !/^\[blocked, /.test(r))).toBe(true);
+    expect(out[4]).toMatch(/^\[blocked, /);
+    expect(out[4]).not.toContain("deferredTo");
+    expect(parked()).toHaveLength(0);
+  });
+
+  it("makes an image: the run reaches the tool, which decides the engine and what it may bill", async () => {
+    const security = new SecurityLayer(join(dir, "workspace"), "workspace");
+    const prompts: string[] = [];
+    const generate = { name: "generate_image", description: "stub", parameters: { type: "object", properties: {} }, execute: async (a: Record<string, unknown>) => { prompts.push(String(a.prompt)); return { content: "made" }; } } as unknown as ToolDefinition;
+    const [out] = await run("op_site_image", security, new Map([["generate_image", generate]]), [{ name: "generate_image", args: { prompt: "a calendar icon" } }]);
+    expect(prompts).toEqual(["a calendar icon"]);
+    expect(out).toContain("made");
   });
 });

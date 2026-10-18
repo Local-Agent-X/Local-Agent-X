@@ -18,7 +18,9 @@ import { createLogger } from "../../logger.js";
 import { CRON_SYSTEM_PROMPT } from "./prompts.js";
 import { stripCronPreamble, stripSaveInstructions } from "./prompt-cleaning.js";
 import { setSessionProfile, clearSessionProfile } from "../../autonomy/profile-store.js";
-import { registerSessionOwner, clearSessionOwner } from "../../browser/session-owner-registry.js";
+import { registerSessionOwner, clearSessionOwner, jobBrowserProfile } from "../../browser/session-owner-registry.js";
+import { closeBrowser } from "../../browser/index.js";
+import { setSessionImageEngine, clearSessionImageEngine } from "../../tools/image-tools/image-engine.js";
 import { remeasurePromptTelemetry } from "../../prompt-telemetry.js";
 import { toolSchemaFormatForDispatch } from "../../providers/shared/tool-shape.js";
 import { renderPromptSection } from "../../context/system-prompt-builder.js";
@@ -141,8 +143,13 @@ export function registerCronRunner(deps: CronRunnerDeps): void {
       // Pin this run's tool-approval decisions to the job's profile (if set).
       // Without it, ask-tier tools the job needs (network-write, comms, money)
       // block unattended under the global profile. Cleared in finally so the
-      // override never outlives the run.
+      // override never outlives the run. The job's image engine and browser
+      // profile ride the same session the same way: the image tools read the
+      // engine off their call's session, and the browser opens on the job's own
+      // profile (no saved logins) unless the user let it use theirs.
       if (jobMeta?.profile) setSessionProfile(sessionId, jobMeta.profile);
+      if (jobMeta?.imageEngine) setSessionImageEngine(sessionId, jobMeta.imageEngine);
+      registerSessionOwner(sessionId, { browserProfile: jobBrowserProfile(jobId, jobMeta?.useSignedInBrowser) });
       result = await runAgentViaCanonical(wrappedPrompt, [], {
         apiKey: prepared.apiKey,
         model: cronModel,
@@ -164,6 +171,10 @@ export function registerCronRunner(deps: CronRunnerDeps): void {
     } finally {
       cronService.unregisterRunAbort(jobId);
       clearSessionProfile(sessionId);
+      clearSessionImageEngine(sessionId);
+      // The run's browser goes with the run: its profile persists on disk, the
+      // view does not outlive the session that drove it.
+      void closeBrowser(sessionId).catch((e: Error) => logger.warn(`[cron] Job ${jobId}: browser close failed: ${e.message}`));
       clearSessionOwner(sessionId);
       releaseAgentWorkspace(workspace, cronSecurity, sessionId);
     }

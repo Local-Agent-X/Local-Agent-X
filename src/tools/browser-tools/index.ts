@@ -153,7 +153,7 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
           // and the open-warning runs as ONE unit so an approved read grant
           // can scope to exactly this call's async context.
           const runGated = async (): Promise<ToolResult> => {
-          const verificationBlock = await humanVerificationBlock(action, manager);
+          const verificationBlock = await humanVerificationBlock(action, manager, args);
           if (verificationBlock) return verificationBlock;
           const toolMs = getToolTimeout(BROWSER_TOOL_NAME);
           // ONE budget for every bridge op this action issues. A screenshot

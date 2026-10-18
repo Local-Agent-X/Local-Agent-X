@@ -299,10 +299,12 @@ function requireWebContents(viewId: string): WebContents {
 function lifecycle(msg: BrowserLifecycleRequest): Record<string, unknown> {
 	switch (msg.op) {
 		case "create": {
-			// Bridge-created views are always agent-driving and use the same
-			// persistent identity as user-owned views.
-			// the renderer's own foreground view is created via browser-ipc.ts.
-			return { view: createBrowserView(msg.viewId, { partition: SHARED_BROWSER_PARTITION, bounds: msg.bounds, agentDriven: true }) };
+			// Bridge-created views are always agent-driving. They live on the same
+			// persistent identity as user-owned views unless the server names a
+			// partition (a scheduled job's own profile); createBrowserView refuses
+			// one outside the profile namespace. The renderer's own foreground view
+			// is created via browser-ipc.ts.
+			return { view: createBrowserView(msg.viewId, { partition: msg.partition ?? SHARED_BROWSER_PARTITION, bounds: msg.bounds, agentDriven: true }) };
 		}
 		case "show":
 			// Route through browser-ipc's surfacing path (currentViewId + nav

@@ -3,29 +3,23 @@
 // The shape of the problem (spend-budget migration, v4 in db-migrations.ts):
 // a migration rewrites the user's config at boot, and the owner asked for a
 // migrate-AND-tell-them-once rollout. But `up()` cannot tell anyone: migrations
-// are awaited in server/index.ts BEFORE createHttpServer binds, so at migration
-// time there is no socket and no client. And an in-memory "already told them"
-// flag is wrong too — a user who never opens the UI between boots would either
-// miss the notice entirely or be told again on every restart.
+// are awaited in server/index.ts BEFORE the inbox's live frames have anyone to
+// reach, and a notice that depended on an open tab was missed by a user who
+// never opened the UI between boots, or told again on every restart.
 //
-// So this is restart-notify.ts's marker/drain shape, aimed at the UI instead of
-// the messaging bridges: the migration RECORDS a pending notice on disk, and a
-// post-bind drain BROADCASTS it once a real client is connected, then records
-// delivery on disk. Durability is the file, not a flag, so exactly-once holds
-// across restarts.
-//
-// Delivery is a plain top-level chat-ws broadcast (`{type:"user_notice"}`),
-// deliberately NOT a ServerEvent — same class as `system_health`. A ServerEvent
-// is session-scoped and must cross the process relay's allowlists; this notice
-// belongs to no session and is emitted by the server process that owns the
-// WebSocket, so it never touches the relay.
+// So this is restart-notify.ts's marker/drain shape, aimed at the user inbox
+// (src/inbox/): the migration RECORDS a pending notice on disk, and the
+// post-bind drain posts it to the inbox once, then records delivery on disk.
+// The inbox is durable and shared by every screen (the bell, the phone), so
+// delivery never depends on which screen is connected; the ledger's delivered
+// marker is what keeps a re-run migration from queueing it twice.
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { getLaxDir } from "./lax-data-dir.js";
 import { atomicWriteFileSync } from "./server-utils.js";
 import { createLogger } from "./logger.js";
-import type { GlobalFrame } from "./chat-ws/frames.js";
+import { inboxUserNotice } from "./inbox/producers.js";
 
 const logger = createLogger("user-notice");
 
@@ -42,12 +36,6 @@ interface UserNoticeLedger {
    *  recordUserNotice (a re-run can't re-queue what was already shown). */
   delivered: Array<{ id: string; deliveredAt: number }>;
 }
-
-/** Broadcast fn shape: chat-ws `broadcastAll`, returning the number of OPEN
- *  clients that actually received the payload. 0 means "nobody was
- *  listening" — the notice must stay pending. */
-/** Sends one frame to every open tab and says how many tabs received it. */
-export type NoticeBroadcast = (frame: GlobalFrame) => number;
 
 export const SPEND_BUDGET_NOTICE_ID = "spend-budget-defaults";
 export const SPEND_BUDGET_NOTICE_TEXT =
@@ -126,65 +114,17 @@ export function markUserNoticeDelivered(id: string): void {
 }
 
 /**
- * Try once to deliver every pending notice. A notice is only marked delivered
- * when at least one OPEN client received it — a broadcast into an empty room
- * leaves it pending for the next attempt (or the next boot), which is what
- * makes "a user who never opened the UI still gets it" true.
- *
- * Returns the ids actually delivered.
+ * Post every pending notice to the user inbox, once. A notice the inbox could
+ * not record (its file unwritable) stays pending for the next boot. Called
+ * once from server/index.ts after the socket is up; when nothing is pending
+ * this costs one file read. Returns the ids delivered.
  */
-export function drainUserNotices(broadcast: NoticeBroadcast): string[] {
-  const pending = readPendingUserNotices();
-  if (pending.length === 0) return [];
+export function drainUserNotices(): string[] {
   const delivered: string[] = [];
-  for (const notice of pending) {
-    let sent = 0;
-    try {
-      sent = broadcast({ type: "user_notice", noticeId: notice.id, text: notice.text });
-    } catch (e) {
-      logger.warn(`[user-notice] broadcast of "${notice.id}" failed: ${(e as Error).message}`);
-      continue;
-    }
-    if (sent > 0) {
-      markUserNoticeDelivered(notice.id);
-      delivered.push(notice.id);
-    }
+  for (const notice of readPendingUserNotices()) {
+    if (!inboxUserNotice({ id: notice.id, text: notice.text })) continue;
+    markUserNoticeDelivered(notice.id);
+    delivered.push(notice.id);
   }
   return delivered;
-}
-
-export interface NoticeDrainOptions {
-  /** How often to retry while nobody is connected yet. */
-  intervalMs?: number;
-  /** Stop retrying after this long; the notice stays pending for next boot. */
-  maxWaitMs?: number;
-}
-
-/**
- * Post-bind drain. Called once from server/index.ts right after the HTTP/WS
- * server is created. If nothing is pending this costs one file read and starts
- * no timer at all — the common case for every boot after the first.
- *
- * Returns a stop() for tests and for a caller that wants to cancel the wait.
- */
-export function startUserNoticeDrain(
-  broadcast: NoticeBroadcast,
-  opts: NoticeDrainOptions = {},
-): () => void {
-  if (readPendingUserNotices().length === 0) return () => {};
-  const intervalMs = opts.intervalMs ?? 2_000;
-  const maxWaitMs = opts.maxWaitMs ?? 10 * 60_000;
-  const startedAt = Date.now();
-
-  drainUserNotices(broadcast);
-  if (readPendingUserNotices().length === 0) return () => {};
-
-  const timer = setInterval(() => {
-    drainUserNotices(broadcast);
-    if (readPendingUserNotices().length === 0 || Date.now() - startedAt > maxWaitMs) {
-      clearInterval(timer);
-    }
-  }, intervalMs);
-  timer.unref?.();
-  return () => clearInterval(timer);
 }

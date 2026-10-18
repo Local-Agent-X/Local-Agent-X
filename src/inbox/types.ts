@@ -10,7 +10,11 @@
 import type { Role } from "../rbac.js";
 import type { CallContext } from "../tool-execution/context.js";
 
-export const INBOX_KINDS = ["agent-message", "job", "update", "app-error", "approval"] as const;
+/** "notice": a one-time notice worth keeping (a default the app changed under
+ *  the user), posted by `src/user-notice.ts`. The bell's tab-local "app-error"
+ *  items are never stored or sent, so they are not a kind here; the phone's
+ *  contract (agentxos `inbox.ts`) carries exactly these. */
+export const INBOX_KINDS = ["agent-message", "job", "update", "approval", "notice"] as const;
 export type InboxKind = (typeof INBOX_KINDS)[number];
 
 export interface InboxLink {
@@ -99,7 +103,11 @@ export interface InboxCounts {
 /** Bare UI control frames over chat-ws broadcastAll (not ServerEvents; same
  *  family as settings_changed / learning_changed). `inbox_item` carries a new
  *  or changed item; `inbox_changed` tells every tab to refetch after a user
- *  action in any tab. */
+ *  action in any tab (or on any device). Both reach the phone through the
+ *  broker chat bridge, so their shape is the phone contract (agentxos
+ *  `inbox.ts`; `src/broker-transport/inbox-contract.test.ts`): `item` on
+ *  `inbox_changed` is the item's new state when one visible item is concerned,
+ *  so the phone applies the change without asking for the list again. */
 export type InboxFrame =
   | ({ type: "inbox_item"; item: InboxItem; created: boolean } & InboxCounts)
-  | ({ type: "inbox_changed"; action: "read" | "read_all" | "dismiss" | "resolve" | "approve" | "decline"; id?: string } & InboxCounts);
+  | ({ type: "inbox_changed"; action: "read" | "read_all" | "dismiss" | "resolve" | "approve" | "decline"; id?: string; item?: InboxItem } & InboxCounts);

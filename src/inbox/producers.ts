@@ -1,6 +1,6 @@
 // Item builders for each producer. The owners (escalation-core, the session
 // bridge observer, the cron executor, the agent-result listener,
-// update-service) decide WHEN something happened; these decide what the user
+// update-service, user-notice) decide WHEN something happened; these decide what the user
 // reads, how it dedupes and whether it needs them. A call parked for the
 // user's yes has its own builders in approvals.ts.
 
@@ -81,4 +81,11 @@ export function inboxUpdateAvailable(u: { version: string; commit: string; notes
 /** The install is current: an open update notice is no longer true. */
 export function inboxUpdateCurrent(): void {
   resolveInboxWhere((item) => item.kind === "update");
+}
+
+/** A one-time notice the app owes the user (a default it changed under them):
+ *  recorded durably here, so it is read on whichever screen they open next.
+ *  Returns whether the inbox took it. */
+export function inboxUserNotice(n: { id: string; text: string }): boolean {
+  return postToInbox({ kind: "notice", title: n.text, body: "", needsYou: false, key: `notice:${n.id}` }) !== null;
 }

@@ -15,6 +15,7 @@ exchange:
 | HTTP tunnel frames, body cap | `tunnel.ts` |
 | Chat frames and the events the phone reads | `chat.ts` |
 | The desktop's background jobs: events, snapshot, controls | `workers.ts` |
+| The user inbox: snapshot, live changes, the phone's answers | `inbox.ts` |
 | Approvals on the chat channel | `approval.ts` |
 | How a `replace` frame rewrites a turn's timeline | `timeline.ts` |
 | Voice control plane | `voice.ts` |
@@ -41,7 +42,8 @@ fails while it is stale). Regenerate it after a re-sync that changes `timeline.t
 
 `src/broker-transport/chat-contract.test.ts` checks at compile time that every chat
 event the desktop emits under a type the phone reads fits `chat.ts`;
-`workers-contract.test.ts` does the same for the `bg_op_*` events and `workers.ts`.
+`workers-contract.test.ts` does the same for the `bg_op_*` events and `workers.ts`, and
+`inbox-contract.test.ts` for the inbox items and frames and `inbox.ts`.
 
 The desktop-side glue (the `ws`-backed `SocketAdapter`, the dialers, the bridges) lives
 one level up in `../`, not here.

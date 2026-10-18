@@ -253,7 +253,7 @@ export async function startServer(config: LAXConfig) {
 
   const { server, chatWs } = phaseSync("createHttpServer", () => createHttpServer(requestHandler, { config, dataDir }));
   chatWsHolder.value = chatWs;
-  (await import("../user-notice.js")).startUserNoticeDrain(broadcastAll); // one-shot notices a migration recorded but could not emit (no socket yet)
+  (await import("../user-notice.js")).drainUserNotices(); // one-shot notices a migration recorded: into the inbox, once
 
   // Desktop panic hotkey (main → lax:panic-abort): the one reliable way to halt
   // an agent that's driving the mouse/keyboard — stop every in-flight run and

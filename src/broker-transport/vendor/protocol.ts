@@ -7,7 +7,7 @@
 // Two contracts live in this package:
 //   - the broker WebSocket (this file): what each device and the broker exchange;
 //   - device to device, over the peer the broker introduced (link.ts, control.ts,
-//     tunnel.ts, chat.ts, workers.ts, voice.ts): the broker never sees these frames.
+//     tunnel.ts, chat.ts, workers.ts, inbox.ts, voice.ts): the broker never sees these frames.
 //
 // COMPATIBILITY RULE. Phones and desktops update on their own schedules, so any build
 // in the field may talk to any other. Within one BROKER_PROTOCOL_VERSION a change may
@@ -29,6 +29,7 @@ export * from "./approval.js";
 export * from "./voice.js";
 export * from "./timeline.js";
 export * from "./workers.js";
+export * from "./inbox.js";
 
 export type DeviceRole = "desktop" | "phone";
 

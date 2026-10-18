@@ -1,8 +1,8 @@
 # inbox
 
-**Owns:** The user inbox: the durable list of things the app needs to tell the person using it (an agent asking for them, a background or scheduled job's outcome, a call an unattended run parked for their yes, an available update). The item model, its storage under `<lax data dir>/inbox.json`, retention, dedupe, the `inbox_item` / `inbox_changed` WS frames, the item builders each producer calls, and the user's answer to an approval (`approvals.ts`). The bell (`public/js/notifications.js`) is its view; `src/routes/inbox.ts` is its HTTP surface.
-**Does not own:** `src/ops/pending-notifications.ts`, which queues op completions for the AGENT's next system prompt, not the user's. Desktop toasts (the bell raises them through `window.desktop`). One-shot boot banners (`src/user-notice.ts`). When a job, escalation or deferral happens: that stays with its owner, which calls one builder here. How an approved call runs: `src/tool-execution/approved-call.ts` (the route hands it to `approveInboxItem` as the runner).
-**Entry:** `index.ts` — `postToInbox`, `listInbox`, `inboxStore`, `toInboxView`, `resolveInboxWhere`; `producers.ts` — `inboxAgentEscalation`, `inboxJobResult`, `inboxUpdateAvailable`, `inboxUpdateCurrent`; `approvals.ts` — `inboxApprovalRequest`, `approveInboxItem`, `declineInboxItem`.
+**Owns:** The user inbox: the durable list of things the app needs to tell the person using it (an agent asking for them, a background or scheduled job's outcome, a call an unattended run parked for their yes, an available update, a one-time notice worth keeping). The item model, its storage under `<lax data dir>/inbox.json`, retention, dedupe, the `inbox_item` / `inbox_changed` WS frames, the item builders each producer calls, and the user's answer to an approval (`approvals.ts`). The bell (`public/js/notifications.js`) and the phone's inbox screen are its views; `src/routes/inbox.ts` is its HTTP surface, and `src/chat-ws/inbox-frames.ts` answers the phone's `inbox_list` / `inbox_read` / `inbox_act` frames through that route's `mutateInbox` / `actOnInbox`.
+**Does not own:** `src/ops/pending-notifications.ts`, which queues op completions for the AGENT's next system prompt, not the user's. Desktop toasts (the bell raises them through `window.desktop`). When a job, escalation, deferral or boot notice happens: that stays with its owner, which calls one builder here. How an approved call runs: `src/tool-execution/approved-call.ts` (the route hands it to `approveInboxItem` as the runner). The phone's half of the frames: agentxos `inbox.ts`, vendored at `src/broker-transport/vendor/inbox.ts` (`src/broker-transport/inbox-contract.test.ts` holds the two in step).
+**Entry:** `index.ts` — `postToInbox`, `listInbox`, `inboxStore`, `toInboxView`, `resolveInboxWhere`; `producers.ts` — `inboxAgentEscalation`, `inboxJobResult`, `inboxUpdateAvailable`, `inboxUpdateCurrent`, `inboxUserNotice`; `approvals.ts` — `inboxApprovalRequest`, `approveInboxItem`, `declineInboxItem`, `INBOX_REFUSAL_TEXT`.
 
 ## Invariants
 - An item with `needsYou` stays until the user resolves or dismisses it: retention never prunes it by age or by the cap (`store.ts` `applyRetention`). Everything else goes 30 days after it last changed, and the cap evicts dismissed, then read, then unread, oldest first.
@@ -19,7 +19,9 @@
 | `job` | `src/canonical-loop/session-bridge-observer.ts` (background ops), `src/cron/cron-service-execute.ts` (scheduled runs), `src/server/handler-events-agent-result.ts` (spawned agents outside a chat), `approvals.ts` (an approved call's outcome). A finished run's `link.url` is where its result opens: the op's result URL (`src/canonical-loop/session-bridge-extractors.ts` `resultUrlOfOp`, reached through `src/canonical-loop/public/op-facts.ts`: a built app, the newest document it created, a scheduled job's latest report), rendered by the bell as the item's Open link | `op:<id>`, `cron-done:` / `cron-failed:<job>`, `agent-run:<id>`, `approval-result:<item id>` |
 | `approval` | `src/tool-execution/deferred-call.ts` (one function, called by `require-approval.ts`, `secret-env-approval.ts`, `run-sandboxed.ts`) | `approval:<cron:job, else op or session>:<call hash>` |
 | `update` | `src/update-service.ts` `checkForUpdate` | `update:<version>` |
-| `app-error` | the bell itself, as a tab-local item (never stored here) | |
+| `notice` | `src/user-notice.ts` `drainUserNotices` (a notice a migration recorded at boot, e.g. the spend-cap defaults) | `notice:<notice id>` |
+
+The bell also renders tab-local `app-error` items (a UI action in that tab that failed); they are never stored or sent, so they are not a kind here.
 
 ## Coupled to
 | If you change | Also check | Guard |
@@ -27,5 +29,7 @@
 | `DeferredCallRecord` (`types.ts`) | what `deferred-call.ts` records and what `approved-call.ts` dispatches from it | `src/tool-execution/deferred-call.test.ts`, `src/tool-execution/approved-call.test.ts` |
 | the cron session id format (`src/cron/cron-session.ts`) | the per-job approval key | `src/tool-execution/deferred-call.test.ts` |
 
+| the `InboxItem` / `InboxFrame` shapes (`types.ts`) | the phone contract (agentxos `inbox.ts`): within a protocol version, only add | `src/broker-transport/inbox-contract.test.ts` (compile-time) |
+
 ## Tests
-`npx vitest run src/inbox src/routes/inbox.test.ts src/routes/inbox-act.test.ts test/notifications-inbox.test.ts` (PowerShell on Windows)
+`npx vitest run src/inbox src/routes/inbox.test.ts src/routes/inbox-act.test.ts src/chat-ws/message-router.inbox.test.ts src/broker-transport/inbox-contract.test.ts src/user-notice.test.ts test/notifications-inbox.test.ts` (PowerShell on Windows)

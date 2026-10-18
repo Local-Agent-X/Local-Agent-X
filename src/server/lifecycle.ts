@@ -3,6 +3,8 @@ import { writeFileSync } from "node:fs";
 import { getLaxDir } from "../lax-data-dir.js";
 import { join } from "node:path";
 import { setupChatWebSocket } from "../chat-ws/index.js";
+import { setInboxAnswerer } from "../chat-ws/inbox-frames.js";
+import { actOnInbox, mutateInbox } from "../routes/inbox.js";
 import { runSecurityAudit, printAuditReport } from "../security/layer/index.js";
 import { startAriKernel } from "../ari-kernel/index.js";
 import { getSharedAuditTrail } from "../threat/audit-trail.js";
@@ -84,6 +86,12 @@ export function wireWsChat(deps: {
   buildCtx: () => import("../server-context.js").ServerContext;
 }): void {
   const { chatWs, buildCtx } = deps;
+  // The phone's inbox answers (inbox_read / inbox_act on the chat socket) run
+  // the same route functions a click in the desktop's bell does.
+  setInboxAnswerer({
+    mutate: (action, id) => mutateInbox(buildCtx(), action, id) !== null,
+    act: (id, action) => actOnInbox(buildCtx(), id, action),
+  });
   chatWs.onChat(async (sessionId, message, attachments, meta) => {
     const _imgCount = (attachments || []).filter((a: any) => a?.isImage).length;
     console.log(`[chat-diag] lifecycle onChat sess=${sessionId.slice(-8)} len=${message.length}`);

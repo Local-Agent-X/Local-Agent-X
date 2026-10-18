@@ -3,10 +3,10 @@
 // Every test here points LAX_DATA_DIR at a throwaway directory before the
 // modules under test resolve it (getLaxDir reads the env per call), so the
 // developer's real ~/.lax config.json / migration-version.json / user-notices
-// ledger are never read or written.
+// ledger / inbox.json are never read or written.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -34,28 +34,28 @@ function readConfig(): Record<string, unknown> {
   return JSON.parse(readFileSync(join(dataDir, "config.json"), "utf-8"));
 }
 
-/** A "boot": run migrations, then drain post-bind against a fake client count. */
-async function boot(openClients: number): Promise<Record<string, unknown>[]> {
+/** A "boot": run migrations, then drain into the inbox. Returns the inbox's notices. */
+async function boot(): Promise<{ delivered: string[]; notices: Array<{ title: string; kind: string }> }> {
   vi.resetModules();
   const { runMigrations } = await import("./db-migrations.js");
   await runMigrations(dataDir);
-  const { startUserNoticeDrain } = await import("./user-notice.js");
-  const seen: Record<string, unknown>[] = [];
-  startUserNoticeDrain((frame) => { seen.push(frame as unknown as Record<string, unknown>); return openClients; }, { intervalMs: 5, maxWaitMs: 20 });
-  return seen;
+  const { drainUserNotices } = await import("./user-notice.js");
+  const delivered = drainUserNotices();
+  const { listInbox } = await import("./inbox/index.js");
+  return { delivered, notices: listInbox().items.filter((i) => i.kind === "notice").map((i) => ({ title: i.title, kind: i.kind })) };
 }
 
 describe("spend-budget one-shot notice", () => {
-  it("delivers exactly once for an install that had stored 0s, then never again", async () => {
+  it("lands in the inbox exactly once for an install that had stored 0s, then never again", async () => {
     writeConfig({ dailyBudgetUsd: 0, sessionBudgetUsd: 0 });
 
-    const first = await boot(1);
+    const first = await boot();
     expect(readConfig()).toMatchObject({ dailyBudgetUsd: 75, sessionBudgetUsd: 15 });
-    expect(first).toHaveLength(1);
-    expect(first[0]).toMatchObject({ type: "user_notice", noticeId: "spend-budget-defaults" });
-    expect(first[0].text).toBe(
-      "Spend caps are now on by default: $75/day and $15/session. On a subscription login the cost is shown but is never a real charge and never stops anything. Set either to 0 in Settings for no cap.",
-    );
+    expect(first.delivered).toEqual(["spend-budget-defaults"]);
+    expect(first.notices).toEqual([{
+      kind: "notice",
+      title: "Spend caps are now on by default: $75/day and $15/session. On a subscription login the cost is shown but is never a real charge and never stops anything. Set either to 0 in Settings for no cap.",
+    }]);
 
     // The delivered marker is on disk, not in memory.
     const ledger = JSON.parse(readFileSync(join(dataDir, "user-notices.json"), "utf-8"));
@@ -63,36 +63,42 @@ describe("spend-budget one-shot notice", () => {
     expect(ledger.delivered.map((d: { id: string }) => d.id)).toEqual(["spend-budget-defaults"]);
 
     // MUTATION TARGET: delete markUserNoticeDelivered's write and this goes red.
-    const second = await boot(1);
-    expect(second).toEqual([]);
+    const second = await boot();
+    expect(second.delivered).toEqual([]);
+    expect(second.notices).toHaveLength(1);
   });
 
   it("says nothing to an install that never had 0s", async () => {
     writeConfig({ dailyBudgetUsd: 20, sessionBudgetUsd: 5 });
-    const seen = await boot(1);
-    expect(seen).toEqual([]);
+    const { delivered, notices } = await boot();
+    expect(delivered).toEqual([]);
+    expect(notices).toEqual([]);
     expect(readConfig()).toMatchObject({ dailyBudgetUsd: 20, sessionBudgetUsd: 5 });
     expect(existsSync(join(dataDir, "user-notices.json"))).toBe(false);
   });
 
-  it("stays pending when no UI client is connected, and lands on a later boot", async () => {
+  it("needs no open screen: the inbox keeps it for whichever screen opens next", async () => {
     writeConfig({ dailyBudgetUsd: 0, sessionBudgetUsd: 0 });
+    const { broadcastAll } = await import("./chat-ws/broadcast.js");
+    const { clients } = await import("./chat-ws/state.js");
+    expect(clients.size).toBe(0);
+    expect(broadcastAll({ type: "projects_changed" })).toBe(0); // nobody connected
+    const { delivered } = await boot();
+    expect(delivered).toEqual(["spend-budget-defaults"]);
+    const { hasDeliveredUserNotice } = await import("./user-notice.js");
+    expect(hasDeliveredUserNotice("spend-budget-defaults")).toBe(true);
+  });
 
-    // Boot 1: migration runs, notice queued, but zero open clients.
-    const headless = await boot(0);
-    expect(headless).toHaveLength(1); // attempted...
-    const { readPendingUserNotices, hasDeliveredUserNotice } = await import("./user-notice.js");
-    expect(readPendingUserNotices()).toHaveLength(1); // ...but not marked delivered
-    expect(hasDeliveredUserNotice("spend-budget-defaults")).toBe(false);
-
-    // Boot 2 with a client: the migration is done (version ledger), yet the
-    // notice still gets shown — durability is the file, not an in-memory flag.
-    const withClient = await boot(1);
-    expect(withClient).toHaveLength(1);
-    expect(withClient[0]).toMatchObject({ noticeId: "spend-budget-defaults" });
-
-    // Boot 3: silent.
-    expect(await boot(1)).toEqual([]);
+  it("stays pending when the inbox could not record it, and lands on a later boot", async () => {
+    const { recordUserNotice, drainUserNotices, readPendingUserNotices } = await import("./user-notice.js");
+    recordUserNotice("later", "hello");
+    // An inbox.json that is a directory cannot be written: postToInbox returns null.
+    mkdirSync(join(dataDir, "inbox.json"));
+    expect(drainUserNotices()).toEqual([]);
+    expect(readPendingUserNotices()).toHaveLength(1);
+    rmSync(join(dataDir, "inbox.json"), { recursive: true, force: true });
+    expect(drainUserNotices()).toEqual(["later"]);
+    expect(readPendingUserNotices()).toEqual([]);
   });
 
   it("re-queues nothing when the migration marker is asked to record twice", async () => {
@@ -100,59 +106,21 @@ describe("spend-budget one-shot notice", () => {
     recordUserNotice("dupe", "hello");
     recordUserNotice("dupe", "hello");
     expect(readPendingUserNotices()).toHaveLength(1);
-    expect(drainUserNotices(() => 1)).toEqual(["dupe"]);
+    expect(drainUserNotices()).toEqual(["dupe"]);
     recordUserNotice("dupe", "hello");
     expect(readPendingUserNotices()).toEqual([]);
   });
 
-  it("starts no timer and leaves no ledger when nothing is pending", async () => {
-    const { startUserNoticeDrain } = await import("./user-notice.js");
-    const broadcast = vi.fn(() => 1);
-    startUserNoticeDrain(broadcast);
-    expect(broadcast).not.toHaveBeenCalled();
+  it("leaves no ledger and no inbox when nothing is pending", async () => {
+    const { drainUserNotices } = await import("./user-notice.js");
+    expect(drainUserNotices()).toEqual([]);
     expect(existsSync(join(dataDir, "user-notices.json"))).toBe(false);
+    expect(existsSync(join(dataDir, "inbox.json"))).toBe(false);
   });
 
   it("does not touch the real ~/.lax", () => {
     // Guard against a future edit that resolves the dir at module load.
     expect(process.env.LAX_DATA_DIR).toBe(dataDir);
     expect(dataDir.includes(".lax")).toBe(false);
-  });
-});
-
-describe("user_notice delivery path", () => {
-  it("rides the real broadcastAll to every open client, verbatim", async () => {
-    // The notice is a top-level chat-ws message, NOT a session ServerEvent, so
-    // the process relay's SESSION_EVENT_TYPES allowlist is not in its path at
-    // all — same class as `system_health`. This asserts against the REAL
-    // broadcastAll and the REAL clients map, not a mock socket layer.
-    const { broadcastAll } = await import("./chat-ws/broadcast.js");
-    const { clients, browserClients } = await import("./chat-ws/state.js");
-    const sent: string[] = [];
-    const ws = { readyState: 1, send: (p: string) => sent.push(p) };
-    clients.set(ws as never, new Set<string>());
-    browserClients.add(ws as never); // a tab, not the phone bridge: delivery counts it
-    try {
-      const { drainUserNotices, recordUserNotice, SPEND_BUDGET_NOTICE_ID, SPEND_BUDGET_NOTICE_TEXT } =
-        await import("./user-notice.js");
-      recordUserNotice(SPEND_BUDGET_NOTICE_ID, SPEND_BUDGET_NOTICE_TEXT);
-      expect(drainUserNotices(broadcastAll)).toEqual([SPEND_BUDGET_NOTICE_ID]);
-      expect(sent).toHaveLength(1);
-      expect(JSON.parse(sent[0])).toEqual({
-        type: "user_notice",
-        noticeId: SPEND_BUDGET_NOTICE_ID,
-        text: SPEND_BUDGET_NOTICE_TEXT,
-      });
-    } finally {
-      clients.delete(ws as never);
-    }
-  });
-
-  it("keeps the notice pending when broadcastAll reaches nobody", async () => {
-    const { broadcastAll } = await import("./chat-ws/broadcast.js");
-    const { drainUserNotices, recordUserNotice, readPendingUserNotices } = await import("./user-notice.js");
-    recordUserNotice("lonely", "nobody home");
-    expect(drainUserNotices(broadcastAll)).toEqual([]);
-    expect(readPendingUserNotices()).toHaveLength(1);
   });
 });

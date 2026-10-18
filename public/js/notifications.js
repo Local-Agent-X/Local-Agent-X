@@ -30,7 +30,7 @@ var _inboxLocal = [];
 var _inboxUnread = 0;
 var MAX_LOCAL_ITEMS = 20;
 var INBOX_KIND_LABEL = {
-  'agent-message': 'Agent', job: 'Job', update: 'Update', 'app-error': 'Error', approval: 'Needs your OK',
+  'agent-message': 'Agent', job: 'Job', update: 'Update', notice: 'Notice', 'app-error': 'Error', approval: 'Needs your OK',
 };
 var INBOX_RESOLUTION_LABEL = { approved: 'Approved', declined: 'Declined', failed: 'Approved, could not run' };
 var _inboxAnswering = {};

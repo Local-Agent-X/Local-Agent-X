@@ -91,10 +91,15 @@ describe("mutating POSTs", () => {
       expect(r.status).toBe(200);
       expect(r.body).toMatchObject({ ok: true });
       expect(r.broadcastAll).toHaveBeenCalledTimes(1);
+      // The frame carries the item's new state so the phone applies it without
+      // refetching; a dismissed item is gone, so that frame carries only its id.
+      const stillVisible = c.withId && c.action !== "dismiss";
       expect(r.broadcastAll).toHaveBeenCalledWith({
         type: "inbox_changed", action: c.action, ...(c.withId ? { id: urgent.id } : {}),
+        ...(stillVisible ? { item: expect.objectContaining({ id: urgent.id }) } : {}),
         unread: r.body!.unread, needsYou: r.body!.needsYou,
       });
+      if (stillVisible) expect(JSON.stringify(r.broadcastAll.mock.calls[0])).not.toContain("deferredCall");
     });
   }
 

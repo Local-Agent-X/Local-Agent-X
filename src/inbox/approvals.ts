@@ -113,6 +113,14 @@ export type InboxActResult =
   | { ok: true; resolution: InboxResolution; outcome?: string; resultId?: string; error?: string }
   | { ok: false; refused: "missing" | "not-approval" | "answered" };
 
+/** Why an answer was refused, as the user reads it (the HTTP route's error
+ *  body, the phone's error frame). */
+export const INBOX_REFUSAL_TEXT: Record<Extract<InboxActResult, { ok: false }>["refused"], string> = {
+  missing: "No such inbox item",
+  "not-approval": "That item is not waiting for an approval",
+  answered: "That approval was already answered",
+};
+
 export function declineInboxItem(id: string): InboxActResult {
   const claim = inboxStore().claimApproval(id, "declined");
   return claim.kind === "claimed" ? { ok: true, resolution: "declined" } : { ok: false, refused: claim.kind };

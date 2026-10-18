@@ -43,7 +43,6 @@ export type GlobalFrame =
   | { type: "learning_changed"; id: string; action: string }
   | { type: "history_changed"; sessionId: string }
   | { type: "system_health"; subsystem: string; state: "ok" | "failing"; message?: string }
-  | { type: "user_notice"; noticeId: string; text: string }
   | InboxFrame
   | ({ type: "agent-spawn"; displayName: string; rawName: string; parentSessionId: string; parentAgentId: string | null } & Omit<AgentSpawnEvent, "systemPrompt">)
   | { type: "agent-update"; agentId: string; status?: string; totalTokens?: number; [key: string]: unknown }
@@ -57,7 +56,7 @@ export type GlobalFrameType = GlobalFrame["type"];
 export const GLOBAL_FRAME_TYPES = [
   "event", "active_chats", "session_snapshot", "pong", "error", "approval_resolved", "settings_changed", "sidebar_pins_changed",
   "sidebar_clear_chats", "app-files-changed", "app:state", "app:event", "projects_changed", "learning_changed",
-  "history_changed", "system_health", "user_notice", "inbox_item", "inbox_changed",
+  "history_changed", "system_health", "inbox_item", "inbox_changed",
   "agent-spawn", "agent-update", "agent-output", "agent-complete",
 ] as const satisfies readonly GlobalFrameType[];
 

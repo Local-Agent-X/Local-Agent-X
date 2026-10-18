@@ -143,6 +143,17 @@ describe("a default engine that isn't connected", () => {
     expect(edit.content).toMatch(/Made with ChatGPT; Grok isn't connected\.$/);
   });
 
+  it("a failed call made nothing, so it carries no \"Made with\" note", async () => {
+    settingsBag = { provider: "anthropic", imageEngine: "grok" };
+    creds = { codex: TOKEN };
+    const { canonicalFetch } = await import("../web-egress.js");
+    vi.mocked(canonicalFetch).mockResolvedValueOnce({ ok: false, status: 429, json: async () => ({}), text: async () => "rate limited" } as never);
+    const gen = await generateImageTool.execute({ prompt: "a fox" });
+    expect(gen.isError).toBe(true);
+    expect(gen.content).toMatch(/ChatGPT image generation failed \(429\)/);
+    expect(gen.content).not.toMatch(/Made with/);
+  });
+
   it("a connected default adds no note", async () => {
     settingsBag = { provider: "anthropic", imageEngine: "grok" };
     const gen = await generateImageTool.execute({ prompt: "a fox" });

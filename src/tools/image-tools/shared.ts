@@ -177,9 +177,10 @@ export async function resolveMediaProvider(
   return { provider: chatProvider, forced: false };
 }
 
-/** `result` with the resolver's note, if any, as its last line. */
+/** `result` with the resolver's note, if any, as its last line. A failed call
+ *  made nothing, so it is not told "Made with …". */
 export function withMediaNote(result: ToolResult, note: string | undefined): ToolResult {
-  return note ? { ...result, content: `${result.content}\n${note}` } : result;
+  return note && !result.isError ? { ...result, content: `${result.content}\n${note}` } : result;
 }
 
 /** Find the most recent image across uploads + workspace/images. Used as

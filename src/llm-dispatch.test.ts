@@ -316,6 +316,21 @@ describe("dispatch request shape (fetch stubbed — no network)", () => {
       expect(sentBody().model).toBe("gpt-oss:120b");
     });
 
+    it("the background model answers without a thinking pass unless the caller asks for one", async () => {
+      // 2026-10-18: the resolver's 80 tokens went to reasoning on qwen3.6:27b
+      // and the OP= line never came, on every call.
+      await dispatch({ prompt: "ping", provider: "ollama" });
+      expect(sentBody().think).toBe(false);
+      fetchSpy.mockClear();
+      await dispatch({ prompt: "ping", provider: "ollama", think: true });
+      expect(sentBody().think).toBe(true);
+    });
+
+    it("a caller that names its model keeps the runtime's thinking default", async () => {
+      await dispatch({ prompt: "ping", provider: "ollama", ollamaModel: "gpt-oss:120b" });
+      expect("think" in sentBody()).toBe(false);
+    });
+
     it("no pin and no local chat model → null WITHOUT a wire call, never a guessed model", async () => {
       providerContext = { provider: "anthropic", apiKey: "k", model: "claude-opus-5-5" };
       expect(await dispatch({ prompt: "ping", provider: "ollama" })).toBeNull();

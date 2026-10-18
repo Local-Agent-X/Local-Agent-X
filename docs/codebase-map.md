@@ -148,7 +148,7 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/keychain.ts` | M |
 | `src/lax-data-dir.ts` | S |
 | `src/lifecycle.ts` | S |
-| `src/llm-dispatch.ts` | S |
+| `src/llm-dispatch.ts` | M |
 | `src/local-only-policy.ts` | S |
 | `src/logger.ts` | S |
 | `src/mcp-bridge.ts` | S |

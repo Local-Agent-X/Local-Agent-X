@@ -198,10 +198,16 @@ export async function dispatch(opts: DispatchOptions): Promise<string | null> {
       logger.warn("no local background model (no localClassifierModel and no local chat model) — skipping dispatch");
       return null;
     }
+    // The background model is usually the chat model now, and a thinking chat
+    // model spends a short output budget reasoning: the memory resolver's 80
+    // tokens ran out before its OP= line on every qwen3.6:27b call
+    // (2026-10-18). A background completion wants the answer; a caller that
+    // wants a reasoning pass says so.
+    const think = opts.think ?? false;
     if (background.localTarget) {
-      return dispatch({ ...opts, provider: "local", ollamaModel: background.model, localTarget: background.localTarget });
+      return dispatch({ ...opts, think, provider: "local", ollamaModel: background.model, localTarget: background.localTarget });
     }
-    return callOllama(opts.prompt, background.model, temp, maxTokens, timeout, undefined, opts.think);
+    return callOllama(opts.prompt, background.model, temp, maxTokens, timeout, undefined, think);
   }
   if (provider === "local") {
     const target = opts.localTarget;

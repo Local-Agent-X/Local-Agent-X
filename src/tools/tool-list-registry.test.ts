@@ -67,8 +67,6 @@ const REGISTRY: readonly Registered[] = [
   { file: "src/committing-tool-check.ts", owner: "ARG_AWARE_TOOLS" },
   // What the resolver stamps into which call.
   { file: "src/tool-execution/egress-payload.ts", owner: "LOCAL_CONTROL_ARGS" },
-  { file: "src/tools/plugins.ts", owner: "SESSION_ONEVENT_TOOLS" },
-  { file: "src/tools/plugins.ts", owner: "ARI_BRIDGE_CLASS" },
   { file: "src/ari-kernel/evaluate.ts", owner: "SECRET_VAULT_ACTION_MAP" },
   { file: "src/tool-execution/kill-switch-gates.ts", owner: ".matches" },
   { file: "src/security/layer/layer-core.ts", owner: "evaluate()" },

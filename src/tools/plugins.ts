@@ -15,10 +15,9 @@ import { createAgentTools } from "../agents/tools.js";
 import { createProjectTools } from "./project-tools.js";
 import { createMcpAdminTools } from "./mcp-admin-tools.js";
 import { createMemoryTools } from "../memory/index.js";
-import { createArikernelBridgeTools } from "./arikernel-bridge.js";
+import { createArikernelBridgeTools, kernelBridgeClass } from "./arikernel-bridge.js";
 import { sessionIdOf } from "../tool-execution/internal-args.js";
 
-const SESSION_ONEVENT_TOOLS = new Set(["request_secret", "request_secrets"]);
 const ORIGINAL_BUILD_APP_EXECUTE = Symbol("originalBuildAppExecute");
 
 type RuntimeBoundBuildApp = ToolDefinition & {
@@ -47,13 +46,6 @@ export function bindBuildAppRuntime(
   };
   return runtimeBound;
 }
-
-const ARI_BRIDGE_CLASS: Record<string, "file" | "http" | "database" | "retrieval"> = {
-  ari_file: "file",
-  ari_http: "http",
-  ari_database: "database",
-  ari_retrieval: "retrieval",
-};
 
 export const plugins: ToolPlugin[] = [
   {
@@ -87,28 +79,11 @@ export const plugins: ToolPlugin[] = [
     },
   },
   {
+    // request_secret / request_secrets raise their card on the calling
+    // session's event sink, which the dispatcher stamps on every call.
     id: "secrets",
     register(ctx) {
-      const tools = createSecretTools(ctx.secretsStore, undefined);
-      // request_secret / request_secrets emit events back to the calling
-      // session. Wrap them so each call looks up the session's onEvent at
-      // execute time via _sessionId injected by the tool executor.
-      for (let i = 0; i < tools.length; i++) {
-        const tool = tools[i];
-        if (!SESSION_ONEVENT_TOOLS.has(tool.name)) continue;
-        const toolName = tool.name;
-        tools[i] = {
-          ...tool,
-          execute: async (args, signal) => {
-            const sessionId = sessionIdOf(args);
-            const onEvent = sessionId ? ctx.activeOnEventBySession.get(sessionId) : undefined;
-            const fresh = createSecretTools(ctx.secretsStore, onEvent).find(t => t.name === toolName);
-            if (!fresh) throw new Error(`Tool ${toolName} not found`);
-            return fresh.execute(args, signal);
-          },
-        };
-      }
-      return tools;
+      return createSecretTools(ctx.secretsStore, undefined);
     },
   },
   {
@@ -211,7 +186,7 @@ export const plugins: ToolPlugin[] = [
     register(ctx) {
       const tools = createArikernelBridgeTools();
       for (const bridge of tools) {
-        const cls = ARI_BRIDGE_CLASS[bridge.name];
+        const cls = kernelBridgeClass(bridge);
         ctx.registry.register(bridge, {
           defer: true,
           tags: ["arikernel", "kernel-bridge", ...(cls ? [cls] : [])],

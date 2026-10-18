@@ -53,7 +53,6 @@ export async function bootstrapTools(deps: {
     memoryIndex: deps.memoryIndex,
     cronService: deps.cronService,
     dataDir: deps.dataDir,
-    activeOnEventBySession,
     activeBrowserSessionIdRef,
     activeRuntimeBySession,
     registry: toolRegistry,

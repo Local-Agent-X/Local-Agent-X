@@ -24,7 +24,6 @@ export async function collectRuntimeTools(): Promise<Map<string, ToolDefinition>
     memoryIndex: {},
     cronService: {},
     dataDir,
-    activeOnEventBySession: new Map(),
     activeBrowserSessionIdRef: { value: "" },
     activeRuntimeBySession: new Map(),
     registry: unifiedRegistry,

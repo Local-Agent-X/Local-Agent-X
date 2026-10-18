@@ -29,7 +29,7 @@
  * Trust-critical envelope sanitization:
  *   The bridge derives runId / principalId / taint / grant from TRUSTED
  *   RUNTIME CONTEXT, never from `_`-prefixed model args. The runtime stamps a
- *   trusted `_sessionId` for these tools (resolve-tool.ts SESSION_SCOPED_TOOLS);
+ *   trusted `_sessionId` for these tools (each row `reads` "session");
  *   that — not the model-supplied `_runId`/`_principalId` — is what keys
  *   session-policy and run identity. Forged `_runId`/`_principalId`/
  *   `_capabilityGrantId`/`_taintLabels` are dropped for security decisions.
@@ -57,7 +57,7 @@ import { resolveAgentPath } from "../workspace/paths.js";
 
 interface BridgeArgs {
   action?: string;
-  // Trusted runtime-injected context (see resolve-tool.ts SESSION_SCOPED_TOOLS).
+  // Trusted runtime-injected context (the row `reads` "session").
   // This is the ONLY identity field the bridge trusts.
   _sessionId?: string;
   // Model-supplied `_`-fields. Present in the type so we can explicitly
@@ -177,8 +177,16 @@ function toLaxResult(toolName: string, ari: AriToolResult): ToolResult {
   };
 }
 
+const bridgeClassOf = new WeakMap<ToolDefinition, ToolClass>();
+
+/** The kernel executor class a bridge tool runs on (its BridgeConfig), for the
+ *  registry's class-keyed view; undefined for any other tool. */
+export function kernelBridgeClass(tool: ToolDefinition): ToolClass | undefined {
+  return bridgeClassOf.get(tool);
+}
+
 function buildBridge(cfg: BridgeConfig): ToolDefinition {
-  return {
+  const tool: ToolDefinition = {
     name: cfg.toolName,
     description: cfg.description,
     parameters: {
@@ -204,6 +212,8 @@ function buildBridge(cfg: BridgeConfig): ToolDefinition {
       }
     },
   };
+  bridgeClassOf.set(tool, cfg.toolClass);
+  return tool;
 }
 
 /**

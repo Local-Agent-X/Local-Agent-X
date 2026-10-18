@@ -3,6 +3,7 @@ import { jsonResponse, safeErrorMessage } from "../../../server-utils.js";
 import { createLogger } from "../../../logger.js";
 import { execSync as _execSync } from "node:child_process";
 import { npmAugmentedEnv, resetNpmAugmentedEnvCache } from "../../../anthropic-client/cli-path.js";
+import { CODEX_BASE_URL } from "../../../codex-client/types.js";
 
 const logger = createLogger("routes.bridges.auth");
 
@@ -14,7 +15,17 @@ export const handleCoreAuthRoutes: RouteHandler = async (method, url, req, res, 
     try {
       const { initiateOAuthLogin } = await import("../../../auth/index.js");
       const { authUrl, promise } = initiateOAuthLogin();
-      promise.then(() => logger.info("OAuth login completed")).catch((e) => logger.warn("OAuth login failed:", e.message));
+      promise.then(() => {
+        logger.info("OAuth login completed");
+        // Signing in with ChatGPT is the consent the web-access allowlist
+        // records for the backend the subscription's tools call (images), as
+        // connecting a built-in integration allows its API host: under strict
+        // web access a run with nobody to click "Allow & retry" is otherwise
+        // blocked at the first call. Chat itself is provider transport, not
+        // gated by this list.
+        ctx.security.egress.allow(new URL(CODEX_BASE_URL).hostname);
+        ctx.broadcastAll({ type: "settings_changed", settings: { egress: ctx.security.egress.snapshot() } });
+      }).catch((e) => logger.warn("OAuth login failed:", e.message));
       json(200, { ok: true, authUrl });
     } catch (e) { json(500, { error: safeErrorMessage(e) }); }
     return true;

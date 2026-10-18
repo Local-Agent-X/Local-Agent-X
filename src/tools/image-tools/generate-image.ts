@@ -3,7 +3,9 @@ import { join } from "node:path";
 import type { ToolDefinition, ToolResult } from "../../types.js";
 import { canonicalFetch } from "../web-egress.js";
 import { getRuntimeConfig } from "../../config.js";
-import { ok, err, okWithImage, resolveMediaProvider, workspaceDir } from "./shared.js";
+import { ok, err, okWithImage, resolveMediaProvider, mediaProviderLabel, workspaceDir } from "./shared.js";
+import { requestCodexImage } from "./codex-images.js";
+import { CODEX_IMAGE_MODEL } from "../../codex-client/images.js";
 
 /** Stable Diffusion server URL — configurable via config.sdServerUrl */
 function getSDServerUrl(): string { return getRuntimeConfig().sdServerUrl; }
@@ -109,6 +111,25 @@ async function generateViaOpenai(prompt: string, apiKey: string): Promise<ToolRe
   );
 }
 
+/** Generate via the ChatGPT subscription (the Codex backend's image route). */
+async function generateViaCodex(prompt: string, token: string): Promise<ToolResult> {
+  const out = await requestCodexImage(token, prompt);
+  if ("result" in out) return out.result;
+  const imagesDir = workspaceDir("images");
+  if (!existsSync(imagesDir)) mkdirSync(imagesDir, { recursive: true });
+  const filename = `chatgpt_${Date.now()}.png`;
+  const savePath = join(imagesDir, filename);
+  writeFileSync(savePath, out.buffer);
+
+  return okWithImage(
+    `Image generated via ChatGPT (${CODEX_IMAGE_MODEL})!\n` +
+    `Prompt: ${prompt}\n` +
+    `Saved: ${savePath}\n` +
+    `View: /images/${filename}`,
+    { b64: out.buffer.toString("base64"), path: savePath, question: `Generated image: ${prompt}` },
+  );
+}
+
 export const generateImageTool: ToolDefinition = {
   name: "generate_image",
   compactDescription: "Generate a NEW image from a text prompt — it cannot see or edit an existing image; to modify a photo the user gave you, use edit_image. Defaults to xAI Grok Imagine when connected; pass `provider` to force a backend.",
@@ -116,7 +137,7 @@ export const generateImageTool: ToolDefinition = {
     "Generate a NEW image from a text prompt — creates from scratch, does NOT see any existing image. " +
     "To MODIFY an image the user gave you (recolor, change/add/remove part of a photo), use edit_image instead — " +
     "this tool cannot edit and passing a reference image here is ignored. " +
-    "Defaults to xAI Grok Imagine whenever xAI is connected (toggle in Settings → Media); otherwise falls back to OpenAI DALL-E or local Stable Diffusion. " +
+    "Defaults to xAI Grok Imagine whenever xAI is connected (toggle in Settings → Media); otherwise the ChatGPT subscription (gpt-image-2) when the user signed in with ChatGPT and chats on it or on OpenAI, then OpenAI DALL-E (API key) or local Stable Diffusion. " +
     "Pass `provider` to force a specific backend for one call (e.g. user says 'make this with Grok'). " +
     "Use detailed prompts for best results.",
   parameters: {
@@ -152,7 +173,7 @@ export const generateImageTool: ToolDefinition = {
       },
       provider: {
         type: "string",
-        description: "Optional. Force a backend for this one image: 'grok' (xAI), 'openai' (DALL-E), or 'local' (Stable Diffusion). Omit to use the default. Pass this when the user names a generator.",
+        description: "Optional. Force a backend for this one image: 'grok' (xAI), 'chatgpt' (ChatGPT subscription), 'openai' (DALL-E, API key), or 'local' (Stable Diffusion). Omit to use the default. Pass this when the user names a generator.",
       },
     },
     required: ["prompt"],
@@ -163,13 +184,15 @@ export const generateImageTool: ToolDefinition = {
 
     const { provider, apiKey, forced } = await resolveMediaProvider(args.provider as string | undefined);
     if (forced && provider !== "local" && !apiKey) {
-      return err(`${provider === "xai" ? "Grok/xAI" : "OpenAI"} isn't connected — connect it in Settings, or omit the provider override to use the default.`);
+      return err(`${mediaProviderLabel(provider)} isn't connected — connect it in Settings, or omit the provider override to use the default.`);
     }
 
     if (provider === "xai" && apiKey) {
       try { return await generateViaXai(prompt, apiKey, args.aspect as string | undefined, Boolean(args.quality)); }
       catch (e) { return err(`xAI image generation failed: ${(e as Error).message}`); }
     }
+
+    if (provider === "codex" && apiKey) return generateViaCodex(prompt, apiKey);
 
     if (provider === "openai" && apiKey) {
       try { return await generateViaOpenai(prompt, apiKey); }

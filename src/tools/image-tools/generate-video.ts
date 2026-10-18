@@ -198,8 +198,8 @@ export const generateVideoTool: ToolDefinition = {
     // Resolve backend: explicit override → Grok-when-connected default →
     // active provider. CogVideoX is the only local video path.
     const { provider, apiKey, forced } = await resolveMediaProvider(args.provider as string | undefined);
-    if (forced && provider === "openai") {
-      return err("OpenAI has no video API — use 'grok' or 'local' for video.");
+    if (forced && (provider === "openai" || provider === "codex")) {
+      return err(`${provider === "codex" ? "ChatGPT" : "OpenAI"} has no video API here — use 'grok' or 'local' for video.`);
     }
     if (forced && provider === "xai" && !apiKey) {
       return err("Grok/xAI isn't connected — connect it in Settings, or omit the provider override to use the default.");

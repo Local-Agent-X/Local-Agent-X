@@ -2,11 +2,14 @@ import { writeFileSync, readFileSync, mkdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import type { ToolDefinition, ToolResult } from "../../types.js";
 import { sessionIdOf } from "../../workspace/paths.js";
+import { FormData } from "undici";
 import { canonicalFetch } from "../web-egress.js";
 import {
-  ok, err, okWithImage, resolveMediaProvider, resolveLocalImagePath,
+  ok, err, okWithImage, resolveMediaProvider, resolveLocalImagePath, mediaProviderLabel,
   findRecentLocalImage, workspaceDir, PROMPT_REFS_EARLIER_IMAGE,
 } from "./shared.js";
+import { requestCodexImage } from "./codex-images.js";
+import { CODEX_IMAGE_MODEL } from "../../codex-client/images.js";
 
 interface LoadedImage { buf: Buffer; mime: string; filename: string; source: string; }
 
@@ -72,6 +75,9 @@ async function editViaOpenai(
   mask: LoadedImage | null,
   size: string,
 ): Promise<ToolResult> {
+  // undici's own FormData: canonicalFetch is undici's fetch, which recognizes
+  // only its own class as multipart (Node's global FormData would be sent as a
+  // string).
   const form = new FormData();
   form.append("model", "gpt-image-1");
   form.append("prompt", prompt);
@@ -79,11 +85,11 @@ async function editViaOpenai(
   if (mask) form.append("mask", new Blob([mask.buf], { type: "image/png" }), "mask.png");
   if (size && size !== "auto") form.append("size", size);
 
-  const res = await fetch("https://api.openai.com/v1/images/edits", {
+  const res = await canonicalFetch("https://api.openai.com/v1/images/edits", {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}` }, // FormData sets the multipart Content-Type + boundary
     body: form,
-    signal: AbortSignal.timeout(180_000),
+    timeoutMs: 180_000,
   });
   if (!res.ok) {
     const errText = await res.text();
@@ -156,13 +162,27 @@ async function editViaXai(
   ], prompt);
 }
 
+/** Edit via the ChatGPT subscription — the source rides as a data URL in the
+ *  JSON body. Prompt-driven: the route takes no mask. */
+async function editViaCodex(prompt: string, token: string, image: LoadedImage): Promise<ToolResult> {
+  const out = await requestCodexImage(token, prompt, [`data:${image.mime};base64,${image.buf.toString("base64")}`]);
+  if ("result" in out) return out.result;
+  return saveEdited(out.buffer, [
+    `Image edited via ChatGPT (${CODEX_IMAGE_MODEL})!`,
+    `Prompt: ${prompt}`,
+    `Source: ${image.source}`,
+    `Prompt-driven edit (the ChatGPT route takes no mask — describe precise changes in the prompt).`,
+  ], prompt);
+}
+
 export const editImageTool: ToolDefinition = {
   name: "edit_image",
   compactDescription: "Edit an EXISTING image (recolor, change, add or remove part) keeping the rest — ALWAYS use this, not generate_image, when the user gives you a photo. A `mask` routes to OpenAI (transparent = regenerate, opaque = keep).",
   description:
     "Edit an EXISTING image instead of generating a new one — recolor, change, add, or remove part of a " +
     "photo while keeping the rest. ALWAYS use this (not generate_image) when the user gives you a photo to " +
-    "modify. Defaults to xAI Grok Imagine when connected (prompt-driven edit, no mask); routes to OpenAI " +
+    "modify. Defaults to xAI Grok Imagine when connected (prompt-driven edit, no mask), else ChatGPT when the " +
+    "user signed in with ChatGPT (gpt-image-2, prompt-driven, no mask); routes to OpenAI " +
     "gpt-image-1 when a `mask` is supplied or OpenAI is forced — only OpenAI does pixel-locked masked edits " +
     "(transparent mask pixels = regenerate, opaque = preserve exactly). For a precise 'change ONLY X' edit, " +
     "supplying a mask + OpenAI gives the cleanest result.",
@@ -191,7 +211,7 @@ export const editImageTool: ToolDefinition = {
       },
       provider: {
         type: "string",
-        description: "Optional. Force a backend: 'grok' (xAI), 'openai' (gpt-image-1, supports masks), or 'local' (unsupported for editing). Omit to use the default.",
+        description: "Optional. Force a backend: 'grok' (xAI), 'chatgpt' (ChatGPT subscription, no masks), 'openai' (gpt-image-1 with an API key, supports masks), or 'local' (unsupported for editing). Omit to use the default.",
       },
     },
     required: ["prompt"],
@@ -229,8 +249,8 @@ export const editImageTool: ToolDefinition = {
     if (mask) {
       if (forced && provider !== "openai") {
         return err(
-          `Masked edits run on OpenAI gpt-image-1 only — ${provider === "xai" ? "xAI Grok" : "local SD"} editing ` +
-          `has no mask support. Drop the mask to edit on ${provider}, or connect OpenAI.`,
+          `Masked edits run on OpenAI gpt-image-1 (API key) only — ${mediaProviderLabel(provider)} editing ` +
+          `has no mask support. Drop the mask to edit on ${provider}, or connect an OpenAI API key.`,
         );
       }
       const openaiKey = provider === "openai" ? apiKey : (await resolveMediaProvider("openai")).apiKey;
@@ -249,14 +269,15 @@ export const editImageTool: ToolDefinition = {
       try { return await editViaXai(prompt, apiKey, image, quality); }
       catch (e) { return err(`xAI image edit failed: ${(e as Error).message}`); }
     }
+    if (provider === "codex" && apiKey) return editViaCodex(prompt, apiKey, image);
     if (provider === "openai" && apiKey) {
       try { return await editViaOpenai(prompt, apiKey, image, null, size); }
       catch (e) { return err(`OpenAI image edit failed: ${(e as Error).message}`); }
     }
     return err(
       provider === "local"
-        ? "Local Stable Diffusion has no image-edit endpoint — editing needs xAI Grok or OpenAI. Connect one in Settings → Providers."
-        : `${provider === "xai" ? "xAI Grok" : "OpenAI"} isn't connected. Connect it in Settings → Providers to edit images.`,
+        ? "Local Stable Diffusion has no image-edit endpoint — editing needs xAI Grok, a ChatGPT sign-in or OpenAI. Connect one in Settings → Providers."
+        : `${mediaProviderLabel(provider)} isn't connected. Connect it in Settings → Providers to edit images.`,
     );
   },
 };

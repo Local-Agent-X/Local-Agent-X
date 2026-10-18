@@ -2,8 +2,9 @@
  * Image / video generation tools — aggregator.
  *
  * The 3 tool definitions live in src/tools/image-tools/:
- *   generate-image.ts — generate_image (xAI / OpenAI / local SD)
- *   edit-image.ts     — edit_image (OpenAI gpt-image-1 masked edit)
+ *   generate-image.ts — generate_image (xAI / ChatGPT / OpenAI / local SD)
+ *   edit-image.ts     — edit_image (xAI / ChatGPT / OpenAI gpt-image-1 masked edit)
+ *   codex-images.ts   — the ChatGPT-subscription call both use
  *   generate-video.ts — generate_video (xAI Grok Imagine / local CogVideoX)
  *   shared.ts         — provider resolution, ok/err, recent-image fallback
  */

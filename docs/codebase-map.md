@@ -12,7 +12,7 @@ statically or by `import()` (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1794 non-test source files · 0 god files (>400 LOC).
+**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1796 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -20,7 +20,7 @@ over 400 LOC (the source-hygiene ceiling).
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 158 | 29 | XL |  |
 | `src/security/` | 121 | 46 | XL |  |
-| `src/tools/` | 104 | 212 | XL |  |
+| `src/tools/` | 104 | 213 | XL |  |
 | `src/canonical-loop/` | 80 | 259 | XL |  |
 | `src/tool-execution/` | 76 | 71 | XL |  |
 | `src/workspace/` | 71 | 3 | M |  |
@@ -67,6 +67,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/screen-stream/` | 9 | 11 | L |  |
 | `src/agent-guards/` | 8 | 11 | L |  |
 | `src/bridge-voice/` | 8 | 5 | M |  |
+| `src/codex-client/` | 8 | 6 | M |  |
 | `src/telegram-bridge/` | 8 | 6 | M |  |
 | `src/auto-build/` | 7 | 52 | XL |  |
 | `src/plugin-system/` | 7 | 10 | L |  |
@@ -76,7 +77,6 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/credentials/` | 6 | 1 | S |  |
 | `src/mcp-client/` | 6 | 10 | L |  |
 | `src/net/` | 6 | 3 | M |  |
-| `src/codex-client/` | 4 | 5 | M |  |
 | `src/embedding-providers/` | 4 | 8 | M |  |
 | `src/hooks/` | 4 | 3 | M |  |
 | `src/language-intel/` | 4 | 5 | M |  |

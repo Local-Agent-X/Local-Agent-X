@@ -4,7 +4,10 @@
 import type { ReasoningItem } from "../codex-message-convert.js";
 import type { ClassificationResult } from "../response-classifier.js";
 
-export const CODEX_URL = "https://chatgpt.com/backend-api/codex/responses";
+/** The ChatGPT Codex backend every subscription route hangs off: Responses
+ *  (`/responses`) for chat, `/images/generations` and `/images/edits` for images. */
+export const CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex";
+export const CODEX_URL = `${CODEX_BASE_URL}/responses`;
 
 export interface CodexTool {
   type: "function";

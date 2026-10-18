@@ -196,19 +196,17 @@ describe("every policy glob covers a tool that exists", () => {
 describe("the off-box reads that bypassed canonicalFetch stay routed through it", () => {
   // skills-install.ts fetched GitHub with the global fetch (no SSRF pin, no
   // web-access policy); edit-image.ts fetched a model-named image URL the
-  // same way. Both now go through canonicalFetch, and the only `fetch(` left
-  // in edit-image.ts is the hardcoded provider endpoint whose multipart body
-  // canonicalFetch cannot carry.
+  // same way. Both now go through canonicalFetch, and so does edit-image.ts's
+  // multipart OpenAI edit, since canonicalFetch carries an undici FormData.
   it("skills-install.ts has no bare fetch call", () => {
     const text = readFileSync(join(process.cwd(), "src", "protocols", "skills-install.ts"), "utf-8");
     expect(text).toContain("canonicalFetch");
     expect(text).not.toMatch(/\bfetch\(/);
   });
 
-  it("edit-image.ts bare-fetches only the fixed OpenAI endpoint", () => {
+  it("edit-image.ts has no bare fetch call", () => {
     const text = readFileSync(join(process.cwd(), "src", "tools", "image-tools", "edit-image.ts"), "utf-8");
     expect(text).toContain("canonicalFetch");
-    const bare = [...text.matchAll(/\bfetch\(([^,)]*)/g)].map((m) => m[1].trim());
-    expect(bare).toEqual(['"https://api.openai.com/v1/images/edits"']);
+    expect(text).not.toMatch(/(?<![A-Za-z])fetch\(/);
   });
 });

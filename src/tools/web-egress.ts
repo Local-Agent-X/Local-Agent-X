@@ -1,4 +1,4 @@
-import { Agent, fetch as undiciFetch } from "undici";
+import { Agent, fetch as undiciFetch, type FormData } from "undici";
 import type { RequestInit as UndiciRequestInit, Response as UndiciResponse } from "undici";
 import { getInternalAgentToken } from "../rbac.js";
 import type { BlockAction } from "../types.js";
@@ -221,9 +221,11 @@ export interface CanonicalFetchOptions {
   /** A caller's abort (a tool's own deadline), combined with the timeout. */
   signal?: AbortSignal;
   /** HTTP method (default GET) and body, for provider API calls (image/video
-   *  generation). Neither changes the SSRF checks; a redirect re-sends both. */
+   *  generation). Neither changes the SSRF checks; a redirect re-sends both.
+   *  A multipart body must be undici's own FormData (Node's global one is not
+   *  recognized by this fetch). */
   method?: string;
-  body?: string;
+  body?: string | FormData;
 }
 
 /** Schemes a canonicalFetch is allowed to dial. A redirect that bounces to

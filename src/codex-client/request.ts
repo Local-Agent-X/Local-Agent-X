@@ -20,13 +20,14 @@ export function extractAccountIdFromJwt(token: string): string | null {
   }
 }
 
-export function buildHeaders(token: string): Record<string, string> {
+/** The identity every ChatGPT Codex backend route needs: the subscription
+ *  bearer, the account it bills (from the JWT) and a first-party originator.
+ *  Route-specific headers (the Responses stream's Accept, OpenAI-Beta) are the
+ *  caller's. */
+export function buildAuthHeaders(token: string): Record<string, string> {
   const accountId = extractAccountIdFromJwt(token);
   const headers: Record<string, string> = {
     Authorization: `Bearer ${token}`,
-    "Content-Type": "application/json",
-    Accept: "text/event-stream",
-    "OpenAI-Beta": "responses=experimental",
     // The chatgpt.com/backend-api/codex Cloudflare layer whitelists a small set
     // of first-party originators (codex_cli_rs, codex_vscode, codex_sdk_ts).
     // A non-whitelisted originator ("pi") is served a degraded, reasoning-stripped
@@ -39,6 +40,15 @@ export function buildHeaders(token: string): Record<string, string> {
   };
   if (accountId) headers["chatgpt-account-id"] = accountId;
   return headers;
+}
+
+export function buildHeaders(token: string): Record<string, string> {
+  return {
+    ...buildAuthHeaders(token),
+    "Content-Type": "application/json",
+    Accept: "text/event-stream",
+    "OpenAI-Beta": "responses=experimental",
+  };
 }
 
 export interface BuildBodyInput {
@@ -110,7 +120,8 @@ export function buildRequestBody(input: BuildBodyInput): Record<string, unknown>
   // documented as supported on the public Responses API. The chatgpt.com
   // codex/responses OAuth endpoint reasons on it for ~120-200 tokens and
   // then produces zero output (empty stream, classified as reasoning_timeout).
-  // Removed pending a working request shape for this endpoint.
+  // Images go through the backend's standalone images routes instead, as the
+  // Codex CLI's own image tool does (./images.ts).
 
   // Codex endpoint does not support temperature
 

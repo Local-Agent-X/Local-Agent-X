@@ -57,15 +57,25 @@ export function initImageTools(secrets: SecretsStore) {
   _secretsStore = secrets;
 }
 
-/** Resolve the API key for a media backend id. For xai/openai this prefers
- *  the SuperGrok / X Premium+ (or OpenAI) OAuth bearer over a raw API key —
- *  same wire shape, but draws from subscription quota instead of API spend.
+/** Resolve the credential for a media backend id. For xai this prefers the
+ *  SuperGrok / X Premium+ OAuth bearer over a raw API key — same wire shape,
+ *  but draws from subscription quota instead of API spend. `codex` is the
+ *  ChatGPT sign-in's token (refreshed by src/auth/), `openai` the API key.
  *  `local` needs no key. */
 async function keyForProvider(provider: string): Promise<string | undefined> {
-  if (provider === "xai" || provider === "openai") {
+  if (provider === "xai" || provider === "openai" || provider === "codex") {
     return (await resolveCredential(provider))?.credential || undefined;
   }
   return undefined;
+}
+
+/** A media backend id as the user knows it, for error text. A chat provider
+ *  with no media backend of its own reads as OpenAI, the API-key default. */
+export function mediaProviderLabel(provider: string): string {
+  if (provider === "xai") return "Grok/xAI";
+  if (provider === "codex") return "ChatGPT (subscription sign-in)";
+  if (provider === "local") return "local Stable Diffusion";
+  return "OpenAI (API key)";
 }
 
 /** Get the active chat provider + its API key from settings + secrets. */
@@ -83,6 +93,7 @@ function normalizeMediaProvider(name?: string): string | null {
   if (!n) return null;
   if (["xai", "grok", "grok-imagine", "imagine", "x"].includes(n)) return "xai";
   if (["openai", "dalle", "dall-e", "dall·e", "gpt"].includes(n)) return "openai";
+  if (["chatgpt", "codex"].includes(n)) return "codex";
   if (["local", "sd", "stable-diffusion", "stable", "cogvideox", "cog"].includes(n)) return "local";
   return null;
 }
@@ -92,11 +103,13 @@ function normalizeMediaProvider(name?: string): string | null {
  *   1. explicit per-call override ("generate this with grok") → forced
  *   2. media default: prefer Grok whenever xAI is connected, unless the user
  *      turned off `preferGrokForMedia` in Settings → Media
- *   3. the active chat provider (getActiveProvider)
+ *   3. the active chat provider (getActiveProvider). For OpenAI the ChatGPT
+ *      subscription (`codex`) is preferred over the API key when both are
+ *      connected, so the image bills the plan rather than API spend.
  *
  * `forced` is true only in case 1 so the caller can surface a clear error
  * when the user explicitly names a backend that isn't connected (rather than
- * silently falling back to local SD).
+ * silently falling back to local SD). Explicit `openai` is always the API key.
  */
 export async function resolveMediaProvider(
   explicit?: string,
@@ -109,7 +122,12 @@ export async function resolveMediaProvider(
     const apiKey = await keyForProvider("xai");
     if (apiKey) return { provider: "xai", apiKey, forced: false };
   }
-  return { ...(await getActiveProvider()), forced: false };
+  const active = await getActiveProvider();
+  if (active.provider === "openai") {
+    const token = await keyForProvider("codex");
+    if (token) return { provider: "codex", apiKey: token, forced: false };
+  }
+  return { ...active, forced: false };
 }
 
 /** Find the most recent image across uploads + workspace/images. Used as

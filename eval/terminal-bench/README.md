@@ -11,7 +11,7 @@ the same conditions and the task's own tests decide pass or fail.
 | `lax_agent.py` | The Harbor agent (`lax_agent:LaxAgent`). Copies the bundle into the container and calls `drive.mjs`. |
 | `drive.mjs` | Runs inside the container: boots a headless LAX on a fresh data dir with the task's working directory as the workspace, sends the instruction as one chat turn, waits, stops the server. |
 | `seed.mjs` | The data dir each task starts from (provider and model, Autonomous profile, unrestricted file access inside the throwaway container). Tested by `test/terminal-bench-seed.test.ts`. |
-| `bundle.mjs` | Builds the Linux bundle: HEAD's tree, `dist/`, production `node_modules` compiled for linux-x64 in a Debian bullseye container, and a Node binary. |
+| `bundle.mjs` | Builds the Linux bundle from one commit, entirely inside a Debian bullseye container: compiled `dist/`, production `node_modules` for linux-x64, and a Node binary. |
 
 Nothing here changes product defaults. Each task gets its own empty data dir,
 so nothing learned on one task reaches the next.
@@ -21,12 +21,14 @@ so nothing learned on one task reaches the next.
 Needs Docker (with NVIDIA GPU support for the GPU tasks) and Harbor
 (`uv tool install harbor==0.24.0`).
 
-1. Build and commit, then build the bundle (from the repo root):
-   `npm run build`, then `npx tsx eval/terminal-bench/bundle.mjs`. It writes
-   `~/.cache/lax-terminal-bench/lax-linux-x64.tgz`; `--out` changes that.
-2. Local models: start LM Studio's server with **Serve on Local Network** on,
-   so containers can reach it at `http://host.docker.internal:1234`. Another
-   address goes in `LAX_TB_LOCAL_URL`.
+1. Build the bundle from a commit (from the repo root):
+   `node eval/terminal-bench/bundle.mjs --ref main`. It compiles inside
+   Docker, so the checkout's own `dist/` and `node_modules` don't matter, and
+   writes `~/.cache/lax-terminal-bench/lax-linux-x64.tgz` (`--out` changes that).
+2. Local models: start LM Studio's server. Containers reach it at
+   `http://host.docker.internal:1234`; Docker Desktop forwards that to the
+   host's loopback, so LM Studio's default 127.0.0.1 binding works (checked
+   on Windows, 2026-10-18). Another address goes in `LAX_TB_LOCAL_URL`.
 3. Run, with this folder on `PYTHONPATH`:
 
    ```

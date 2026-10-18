@@ -1,20 +1,20 @@
 #!/usr/bin/env node
 // Builds the Linux bundle the Harbor agent (lax_agent.py) copies into every
-// Terminal-Bench task container: the committed tree at HEAD, the built dist/
-// (and the vendored kernel's dist/), production node_modules compiled for
-// linux-x64, and a Node binary to run it all.
+// Terminal-Bench task container: one commit's tree, compiled for Linux, with
+// production node_modules and a Node binary to run it.
 //
-//   npx tsx eval/terminal-bench/bundle.mjs [--out <file.tgz>] [--image node:24-bullseye]
+//   node eval/terminal-bench/bundle.mjs [--ref main] [--out <file.tgz>] [--image node:24-bullseye]
 //
-// Needs Docker. node_modules are installed inside a Debian bullseye container
-// (glibc 2.31) so the native addons load on the Ubuntu 20.04+ / Debian 11+
-// images most tasks use; a musl (Alpine) task image cannot run them.
+// Everything is built inside a container from `git archive <ref>`, so the
+// bundle is exactly that commit's code: uncommitted edits, a stale dist/ or
+// a Windows node_modules in the checkout never reach it. Debian bullseye
+// (glibc 2.31) keeps the native addons loadable on the Ubuntu 20.04+ /
+// Debian 11+ images most tasks use; a musl (Alpine) task image cannot run them.
 import { execFileSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { assertDistMatchesSource } from "../op-outcomes/isolated.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -23,51 +23,36 @@ function arg(name, fallback) {
   return i >= 0 && i + 1 < process.argv.length ? process.argv[i + 1] : fallback;
 }
 
+const ref = arg("ref", "HEAD");
 const out = resolve(arg("out", join(homedir(), ".cache", "lax-terminal-bench", "lax-linux-x64.tgz")));
 const image = arg("image", "node:24-bullseye");
-const git = (...a) => execFileSync("git", ["-C", repoRoot, ...a], { encoding: "utf8" });
-
-// The bundle is one commit's code: a dirty tree would ship edits no commit records.
-const dirty = git("status", "--porcelain", "--untracked-files=no").trim();
-if (dirty) {
-  console.error(`refusing to bundle a dirty tree; commit or stash first:\n${dirty}`);
-  process.exit(2);
-}
-assertDistMatchesSource(repoRoot);
-const head = git("rev-parse", "HEAD").trim();
+const commit = execFileSync("git", ["-C", repoRoot, "rev-parse", "--verify", `${ref}^{commit}`], { encoding: "utf8" }).trim();
 
 const stage = mkdtempSync(join(tmpdir(), "lax-tb-bundle-"));
 try {
-  const tarPath = join(stage, "head.tar");
-  execFileSync("git", ["-C", repoRoot, "archive", "--format=tar", "-o", tarPath, "HEAD"]);
-  const tree = join(stage, "lax");
-  mkdirSync(tree);
-  execFileSync("tar", ["-xf", tarPath, "-C", tree]);
-  rmSync(tarPath);
-
-  // Build output is gitignored: copy what the server loads at runtime.
-  cpSync(join(repoRoot, "dist"), join(tree, "dist"), { recursive: true });
-  const kernel = join(repoRoot, "packages", "arikernel");
-  for (const pkg of readdirSync(kernel)) {
-    const dist = join(kernel, pkg, "dist");
-    if (existsSync(dist) && statSync(dist).isDirectory()) cpSync(dist, join(tree, "packages", "arikernel", pkg, "dist"), { recursive: true });
-  }
-
+  execFileSync("git", ["-C", repoRoot, "archive", "--format=tar", "-o", join(stage, "src.tar"), commit]);
   mkdirSync(dirname(out), { recursive: true });
-  // --ignore-scripts skips the root postinstall (it builds the kernel and
-  // installs git hooks, both done above or not wanted); `npm rebuild` then
-  // runs only the dependencies' own install scripts, which fetch or compile
-  // their Linux binaries.
+  // Built in the container's own filesystem, not on the bind mount: an npm
+  // install over a Windows mount is many times slower.
+  // --ignore-scripts skips the root postinstall (git hooks, a prebuilt-dist
+  // step); the build steps it would trigger run explicitly below, and
+  // `npm rebuild` then runs only the dependencies' own install scripts,
+  // which fetch or compile their Linux binaries.
   const script = [
     "set -euo pipefail",
-    "cd /lax",
-    "npm ci --omit=dev --ignore-scripts --no-audit --no-fund",
+    "mkdir -p /lax && tar -xf /stage/src.tar -C /lax && cd /lax",
+    "npm ci --ignore-scripts --no-audit --no-fund",
+    "node scripts/build-ari.js",
+    "npx tsc",
+    "node scripts/copy-bundled-assets.mjs",
+    `echo ${commit} > dist/.builtref`,
+    "npm prune --omit=dev --ignore-scripts --no-audit --no-fund",
     "npm rebuild --foreground-scripts",
     "mkdir -p .node/bin && cp \"$(command -v node)\" .node/bin/node",
     `tar -czf /out/${basename(out)} -C /lax .`,
   ].join(" && ");
-  execFileSync("docker", ["run", "--rm", "-v", `${tree}:/lax`, "-v", `${dirname(out)}:/out`, image, "bash", "-c", script], { stdio: "inherit" });
-  console.log(`bundle: ${out}\ncommit: ${head}\nimage: ${image}`);
+  execFileSync("docker", ["run", "--rm", "-v", `${stage}:/stage:ro`, "-v", `${dirname(out)}:/out`, image, "bash", "-c", script], { stdio: "inherit" });
+  console.log(`bundle: ${out}\ncommit: ${commit}\nimage: ${image}`);
 } finally {
   rmSync(stage, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
 }

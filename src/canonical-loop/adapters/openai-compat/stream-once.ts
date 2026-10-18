@@ -18,6 +18,7 @@ import type { AdapterReport } from "../../adapter-contract.js";
 import type { ProviderRequest } from "../../../providers/adapter/types.js";
 import { hasInjects } from "../../../agent-loop/inject-queue.js";
 import { isLoopbackOrPrivateUrl } from "../../../local-only-policy.js";
+import { markServingChat } from "../../../local-runtimes/residency.js";
 import { createLogger } from "../../../logger.js";
 import { refusalError } from "../model-stop.js";
 import { extractToolCallsFromText } from "../tool-call-text-extractor.js";
@@ -55,8 +56,11 @@ export async function streamOnce(
   // a false trip there would cut a healthy paid stream). Watches answer-text
   // deltas only: reasoning models legitimately produce repetitive
   // chain-of-thought, and thinking is bounded by max_tokens regardless.
-  const guard =
-    req.baseURL && isLoopbackOrPrivateUrl(req.baseURL) ? createDegenerateStreamGuard() : null;
+  const local = !!req.baseURL && isLoopbackOrPrivateUrl(req.baseURL);
+  const guard = local ? createDegenerateStreamGuard() : null;
+  // A background call to this model now would wait behind this request, so
+  // short-budget classifiers skip instead of queueing (residency.ts).
+  const endServing = local ? markServingChat(req.model) : undefined;
   try {
     // Chat Completions for every provider in this family, except a
     // discovered local Ollama runtime, which rides native /api/chat
@@ -160,6 +164,8 @@ export async function streamOnce(
     const message = (e as Error).message ?? String(e);
     if (!out.firstError) out.firstError = { code: "transport_exception", message };
     report({ kind: "error", code: "transport_exception", message, retryable: false });
+  } finally {
+    endServing?.();
   }
   out.rawText = out.assembledText;
   // Reasoning-only fallback. The model reasoned the entire output

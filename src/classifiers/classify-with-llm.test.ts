@@ -12,6 +12,7 @@ vi.mock("../llm-dispatch.js", () => ({ dispatch: dispatchMock }));
 const mocks = vi.hoisted(() => ({
   ctx: { provider: "xai", apiKey: "k", model: "grok-4.3" },
   isModelResident: vi.fn(async (): Promise<boolean | null> => null),
+  isServingChat: vi.fn((_model: string): boolean => false),
   warmModel: vi.fn(),
   dispatchNumCtx: vi.fn(async (): Promise<number | undefined> => 16_384),
 }));
@@ -20,6 +21,7 @@ vi.mock("../providers/resolve-provider-context.js", () => ({
 }));
 vi.mock("../local-runtimes/residency.js", () => ({
   isModelResident: mocks.isModelResident,
+  isServingChat: mocks.isServingChat,
   warmModel: mocks.warmModel,
   dispatchNumCtx: mocks.dispatchNumCtx,
   MODEL_KEEP_ALIVE: "30m",
@@ -162,6 +164,48 @@ describe("classify-with-llm local cold-skip", () => {
     mocks.ctx = { provider: "xai", apiKey: "k", model: "grok-4.3" };
     await classifyYesNo({ category: "test", role: "routing", systemPrompt: "s", userPrompt: "u", timeoutMs: 2000 });
     expect(mocks.isModelResident).not.toHaveBeenCalled();
+  });
+});
+
+describe("classify-with-llm local busy-skip", () => {
+  beforeEach(() => {
+    dispatchMock.mockClear();
+    mocks.isModelResident.mockReset();
+    mocks.warmModel.mockClear();
+    mocks.isServingChat.mockReset();
+    mocks.isServingChat.mockReturnValue(false);
+    mocks.ctx = { provider: "local", apiKey: "", model: "qwen3.6:27b" };
+  });
+  afterEach(() => {
+    mocks.isServingChat.mockReturnValue(false);
+    mocks.ctx = { provider: "xai", apiKey: "k", model: "grok-4.3" };
+  });
+
+  it("the model is serving a chat request → no dispatch, no probe, no warm, null", async () => {
+    // 2026-10-14: 2-4s classifiers on the chat model queued behind 30s+
+    // prefills and timed out, each leaving a dead request in the queue.
+    mocks.isServingChat.mockImplementation((model) => model === "qwen3.6:27b");
+    const out = await classifyYesNo({ category: "test", role: "review", systemPrompt: "s", userPrompt: "u", timeoutMs: 3000 });
+    expect(out).toBeNull();
+    expect(dispatchMock).not.toHaveBeenCalled();
+    expect(mocks.isModelResident).not.toHaveBeenCalled();
+    expect(mocks.warmModel).not.toHaveBeenCalled();
+  });
+
+  it("a long budget still runs on a busy model — it can wait its turn", async () => {
+    mocks.isServingChat.mockReturnValue(true);
+    dispatchMock.mockResolvedValueOnce("YES");
+    const out = await classifyYesNo({ category: "test", role: "review", systemPrompt: "s", userPrompt: "u", timeoutMs: 30_000 });
+    expect(out).toBe(true);
+    expect(dispatchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("a different busy model does not stop this one", async () => {
+    mocks.isServingChat.mockImplementation((model) => model === "gpt-oss:120b");
+    mocks.isModelResident.mockResolvedValueOnce(true);
+    dispatchMock.mockResolvedValueOnce("NO");
+    expect(await classifyYesNo({ category: "test", role: "review", systemPrompt: "s", userPrompt: "u", timeoutMs: 3000 })).toBe(false);
+    expect(dispatchMock).toHaveBeenCalledTimes(1);
   });
 });
 

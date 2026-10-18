@@ -10,6 +10,8 @@
  *     short-budget callers can skip a call that cannot succeed in time.
  *   warmModel()       — fire-and-forget load with keep_alive so the NEXT
  *     call runs hot.
+ *   isServingChat()   — is a chat request to the model in flight right now,
+ *     so a short-budget call would only wait in the runtime's queue.
  *
  * Deliberately config-blind: callers pass the baseUrl they would have
  * dispatched to. Consumers: the classifier cold-skip (classify-with-llm.ts);
@@ -129,6 +131,36 @@ async function loadedModel(
     logger.debug(`residency probe failed (${baseUrl}): ${(e as Error).message}`);
     return null;
   }
+}
+
+// Chat requests this process has in flight, per local model. A runtime works
+// one request per loaded model at a time unless it was started with parallel
+// slots, so a background call sent while a chat turn is prefilling queues
+// behind it: classifiers with 2-4s budgets timed out waiting behind 30s+
+// prefills on qwen3.6:27b (2026-10-14), each a wasted request in the runtime's
+// queue. Keyed by model alone: chat and dispatch spell the same runtime's host
+// differently (127.0.0.1 vs localhost), and two runtimes serving one model id
+// at once is not a case worth a missed skip.
+const servingChat = new Map<string, number>();
+
+/** Count a chat request to `model` as in flight; the returned function ends it
+ *  (idempotent, so a finally that runs twice can't drive the count negative). */
+export function markServingChat(model: string): () => void {
+  const key = ollamaModelKey(model);
+  servingChat.set(key, (servingChat.get(key) ?? 0) + 1);
+  let ended = false;
+  return () => {
+    if (ended) return;
+    ended = true;
+    const left = (servingChat.get(key) ?? 1) - 1;
+    if (left > 0) servingChat.set(key, left);
+    else servingChat.delete(key);
+  };
+}
+
+/** True while this process has a chat request to `model` in flight. */
+export function isServingChat(model: string): boolean {
+  return servingChat.has(ollamaModelKey(model));
 }
 
 /**

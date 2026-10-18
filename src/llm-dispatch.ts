@@ -29,10 +29,11 @@
 
 import { resolveProviderContext } from "./providers/resolve-provider-context.js";
 import { backgroundModelFor, PROVIDERS } from "./providers/registry.js";
+import { resolveBackgroundModel } from "./providers/background-model.js";
 import type { ProviderId } from "./providers/provider-ids.js";
 import type { ProviderRequest } from "./providers/adapter/types.js";
 import { createLogger } from "./logger.js";
-import { callOllama, resolveOllamaDispatchModel } from "./llm-dispatch/ollama.js";
+import { callOllama } from "./llm-dispatch/ollama.js";
 import { callAnthropic, callCodex, callOpenAI, callOpenAICompatible, callXai } from "./llm-dispatch/hosted.js";
 
 const logger = createLogger("llm-dispatch");
@@ -163,6 +164,22 @@ export async function detectProvider(): Promise<LLMProvider | null> {
   return null;
 }
 
+/**
+ * The model a local dispatch runs on when the caller names none: the answer
+ * resolveBackgroundModel gives every background caller (the user's
+ * localClassifierModel pin, else the chat model). Picking the smallest
+ * installed model instead loaded a second model beside the chat model, and the
+ * two together overfilled the GPU: the chat model's prefill ran 3-14x slower
+ * for as long as the small one stayed resident (2026-10-14 measurements).
+ */
+async function localBackgroundModel(): Promise<{ model: string; localTarget?: LocalDispatchTarget } | null> {
+  const ctx = await resolveProviderContext();
+  const chatModel = ctx?.provider === "local" ? ctx.model : "";
+  const { model, certifiedLocalTarget } = await resolveBackgroundModel("local", chatModel);
+  if (!model) return null;
+  return { model, localTarget: certifiedLocalTarget ? { ...certifiedLocalTarget, apiKey: ctx?.apiKey ?? "" } : undefined };
+}
+
 /** Single-shot text completion. Returns null on any failure. */
 export async function dispatch(opts: DispatchOptions): Promise<string | null> {
   const provider = opts.provider === "auto" || !opts.provider
@@ -175,12 +192,16 @@ export async function dispatch(opts: DispatchOptions): Promise<string | null> {
   const timeout = opts.timeoutMs ?? DEFAULTS.timeoutMs;
 
   if (provider === "ollama") {
-    const ollamaModel = opts.ollamaModel ?? await resolveOllamaDispatchModel();
-    if (!ollamaModel) {
-      logger.warn("no chat-capable Ollama model installed — skipping dispatch");
+    if (opts.ollamaModel) return callOllama(opts.prompt, opts.ollamaModel, temp, maxTokens, timeout, undefined, opts.think);
+    const background = await localBackgroundModel();
+    if (!background) {
+      logger.warn("no local background model (no localClassifierModel and no local chat model) — skipping dispatch");
       return null;
     }
-    return callOllama(opts.prompt, ollamaModel, temp, maxTokens, timeout, undefined, opts.think);
+    if (background.localTarget) {
+      return dispatch({ ...opts, provider: "local", ollamaModel: background.model, localTarget: background.localTarget });
+    }
+    return callOllama(opts.prompt, background.model, temp, maxTokens, timeout, undefined, opts.think);
   }
   if (provider === "local") {
     const target = opts.localTarget;

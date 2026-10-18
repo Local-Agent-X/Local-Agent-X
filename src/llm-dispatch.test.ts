@@ -12,6 +12,21 @@ vi.mock("./local-runtimes/index.js", () => ({
   refreshLocalRuntimes: vi.fn(async () => localRuntimes ?? []),
 }));
 
+// The user's chat provider and their localClassifierModel pin: the two inputs
+// providers/background-model.ts answers "which model runs background work" from.
+let providerContext: { provider: string; apiKey: string; model: string } | null = { provider: "local", apiKey: "", model: "qwen3.6:27b" };
+let pinnedClassifier: string | undefined;
+vi.mock("./providers/resolve-provider-context.js", () => ({
+  resolveProviderContext: vi.fn(async () => providerContext),
+}));
+vi.mock("./settings.js", async (importOriginal) => {
+  const real = await importOriginal<typeof import("./settings.js")>();
+  return {
+    ...real,
+    getSetting: ((key: string) => (key === "localClassifierModel" ? pinnedClassifier : real.getSetting(key))) as typeof real.getSetting,
+  };
+});
+
 import { dispatch, dispatchBackgroundModel, dispatchStructuredOutputEnabled } from "./llm-dispatch.js";
 import { resolveCredential } from "./auth/resolve.js";
 import { streamAnthropicResponse } from "./anthropic-client/index.js";
@@ -263,46 +278,46 @@ describe("dispatch request shape (fetch stubbed — no network)", () => {
     expect("response_format" in body).toBe(false);
   });
 
-  // Regression 2026-07-15: DEFAULTS.ollamaModel pinned "llama3:8b" since April.
-  // It was never installed on this box, so every classifier dispatch 404'd
-  // /api/generate and surfaced as "empty response". No code changed — the
-  // machine's model inventory did. The installed set is the only source of
-  // truth for which local model exists.
-  describe("ollama model comes from what's INSTALLED, never a hardcoded id", () => {
-    it("picks an installed model — and specifically not the old llama3:8b pin", async () => {
+  // A dispatch that names no model runs on the one background model
+  // providers/background-model.ts picks: the user's pin, else the chat model.
+  // Regression 2026-10-14: the smallest installed model was picked instead, so
+  // the memory resolver loaded llama3.2:3b beside the 27B chat model and the
+  // pair overfilled the GPU (chat prefill 3-14x slower while both were loaded).
+  describe("an unnamed local model is the background model, never the smallest installed", () => {
+    const WITH_SMALL = ollamaRuntime([
+      { id: "gpt-oss:120b", contextWindow: null, tools: true, sizeBytes: 65e9 },
+      { id: "qwen3.6:27b", contextWindow: null, tools: true, sizeBytes: 17e9 },
+      { id: "llama3.2:3b-classifier", contextWindow: null, tools: false, sizeBytes: 2e9 },
+    ]);
+
+    beforeEach(() => {
+      localRuntimes = [WITH_SMALL];
+      providerContext = { provider: "local", apiKey: "", model: "qwen3.6:27b" };
+      pinnedClassifier = undefined;
+    });
+    afterEach(() => {
+      providerContext = { provider: "local", apiKey: "", model: "qwen3.6:27b" };
+      pinnedClassifier = undefined;
+    });
+
+    it("runs on the chat model when nothing is pinned, though a smaller model is installed", async () => {
       await dispatch({ prompt: "ping", provider: "ollama" });
       expect(sentBody().model).toBe("qwen3.6:27b");
     });
 
-    it("prefers the smallest chat model — these are single-shot classifier prompts", async () => {
+    it("runs on the user's localClassifierModel pin when there is one", async () => {
+      pinnedClassifier = "llama3.2:3b-classifier";
       await dispatch({ prompt: "ping", provider: "ollama" });
-      expect(sentBody().model).not.toBe("gpt-oss:120b");
+      expect(sentBody().model).toBe("llama3.2:3b-classifier");
     });
 
-    it("never dispatches to an embedding model (it cannot generate)", async () => {
-      localRuntimes = [ollamaRuntime([
-        { id: "mxbai-embed-large:latest", contextWindow: 512, tools: false, sizeBytes: 0.6e9 },
-        { id: "qwen3.6:27b", contextWindow: null, tools: true, sizeBytes: 17e9 },
-      ])];
-      await dispatch({ prompt: "ping", provider: "ollama" });
-      expect(sentBody().model).toBe("qwen3.6:27b");
-    });
-
-    it("an explicit caller override still wins", async () => {
+    it("an explicit caller model still wins", async () => {
       await dispatch({ prompt: "ping", provider: "ollama", ollamaModel: "gpt-oss:120b" });
       expect(sentBody().model).toBe("gpt-oss:120b");
     });
 
-    it("degrades to null WITHOUT a wire call when nothing chat-capable is installed", async () => {
-      localRuntimes = [ollamaRuntime([
-        { id: "mxbai-embed-large:latest", contextWindow: 512, tools: false, sizeBytes: 0.6e9 },
-      ])];
-      expect(await dispatch({ prompt: "ping", provider: "ollama" })).toBeNull();
-      expect(fetchSpy).not.toHaveBeenCalled();
-    });
-
-    it("degrades to null WITHOUT a wire call when Ollama isn't running at all", async () => {
-      localRuntimes = [];
+    it("no pin and no local chat model → null WITHOUT a wire call, never a guessed model", async () => {
+      providerContext = { provider: "anthropic", apiKey: "k", model: "claude-opus-5-5" };
       expect(await dispatch({ prompt: "ping", provider: "ollama" })).toBeNull();
       expect(fetchSpy).not.toHaveBeenCalled();
     });

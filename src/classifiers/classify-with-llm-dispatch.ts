@@ -11,8 +11,8 @@
  * Contract: resolveProviderCall is awaited ONCE by the caller and returns a
  * TAGGED result, not a bare Promise — `{ kind: "call", promise }` for the
  * caller to race against its wallclock timeout exactly as before, or
- * `{ kind: "skip" }` when no call happened (an unsupported provider, or a
- * local cold-skip that already kicked a background warm). A bare
+ * `{ kind: "skip" }` when no call happened (an unsupported provider, a local
+ * cold-skip that already kicked a background warm, or a local busy-skip). A bare
  * `Promise<Promise<string|null> | null>` return type looks equivalent but
  * ISN'T: `await` transparently flattens nested promises (Promise/A+), so
  * `await resolveProviderCall(...)` would silently await the INNER call to
@@ -21,7 +21,7 @@
  * unflattened.
  */
 import { getRuntimeConfig } from "../config.js";
-import { dispatchNumCtx, isModelResident, warmModel } from "../local-runtimes/residency.js";
+import { dispatchNumCtx, isModelResident, isServingChat, warmModel } from "../local-runtimes/residency.js";
 import { localModelSizeBytes } from "../llm-dispatch/ollama.js";
 import type { Logger } from "../logger.js";
 
@@ -164,6 +164,15 @@ export async function resolveProviderCall(input: ProviderCallInput): Promise<Pro
     // as they always did. Residency unknown (unreachable / older runtime)
     // → proceed as before; the probe itself gets only a slice of the
     // budget so a hung /api/ps can never eat a sub-2s wallclock.
+    // Busy-skip, the same shape for the other way a short call cannot fit: the
+    // model is loaded but this process is streaming a chat request to it, and
+    // the runtime would queue this call behind that request's prefill (30s+
+    // on a 27B). Dispatching would only time out and leave a dead request in
+    // the queue. Same budget line as the cold-skip.
+    if (timeoutMs < COLD_SKIP_MAX_BUDGET_MS && isServingChat(model)) {
+      logger.info(`busy-skip: ${model} is serving a chat request — a ${timeoutMs}ms call would wait behind it (provider=${provider})`);
+      return SKIP;
+    }
     const ollamaBase = certifiedLocalTarget?.kind === "ollama"
       ? certifiedLocalTarget.endpointBaseUrl.replace(/\/+$/, "")
       : getRuntimeConfig().ollamaUrl.replace(/\/+$/, "");

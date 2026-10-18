@@ -10,7 +10,11 @@
  *   - NOOP:   the new "fact" is duplicate or contradicted by stronger existing evidence
  *
  * Design principles:
- *   - Uses whichever LLM is already configured (Ollama → Anthropic → OpenAI → NOOP fallback)
+ *   - Uses whichever LLM is already configured (llm-dispatch picks provider and model)
+ *   - A fact is dropped only on an explicit NOOP verdict. No answer (timeout,
+ *     no LLM), an unreadable answer, or UPDATE/DELETE naming no real candidate
+ *     is ADD: retainSmart skips a NOOP, so a resolver that could not decide
+ *     would otherwise discard what the user just said. A duplicate costs less.
  *   - Zero cost if the user doesn't opt in (retainSmart is separate from retain)
  *   - Returns a structured decision, no side effects — caller applies the operation
  *   - Temperature 0, short max_tokens, cheap models only
@@ -38,10 +42,7 @@ export interface ResolverOptions {
   timeoutMs?: number;
 }
 
-/**
- * Classify a new fact against existing similar candidates.
- * Returns NOOP with reason="no LLM available" if nothing is configured — safe fallback.
- */
+/** Classify a new fact against existing similar candidates. */
 export async function resolveFact(
   newFact: string,
   candidates: ResolverCandidate[],
@@ -55,9 +56,6 @@ export async function resolveFact(
   const raw = await dispatch({
     prompt,
     provider: opts.provider,
-    // No hardcoded fallback: an id that isn't installed 404s. Undefined lets
-    // llm-dispatch pick a model this box actually has (smallest-first, which
-    // is what the old qwen2.5:3b pin was reaching for).
     ollamaModel: opts.model,
     anthropicModel: opts.model,
     openaiModel: opts.model,
@@ -65,7 +63,7 @@ export async function resolveFact(
     maxTokens: 80,
     timeoutMs: opts.timeoutMs ?? 15_000,
   });
-  if (!raw) return { op: "NOOP", reason: "no LLM available — defaulted to NOOP (skip)" };
+  if (!raw) return { op: "ADD", reason: "resolver gave no answer — kept as a new fact" };
 
   return parseDecision(raw, candidates);
 }
@@ -107,7 +105,8 @@ function parseDecision(raw: string, candidates: ResolverCandidate[]): ResolverDe
   // Reason can span to end-of-line OR end-of-string, tolerant of quotes/backticks
   const reasonMatch = text.match(/REASON\s*=\s*["'`]?([^"'`\n]+?)["'`]?\s*(?:$|\n)/i);
 
-  const op = (opMatch?.[1].toUpperCase() || "NOOP") as ResolverOp;
+  if (!opMatch) return { op: "ADD", reason: "resolver reply unreadable — kept as a new fact" };
+  const op = opMatch[1].toUpperCase() as ResolverOp;
   const reason = (reasonMatch?.[1] || "unparsed").trim().slice(0, 120);
   let targetId: number | undefined;
   if (targetMatch && targetMatch[1] !== "-") {
@@ -116,9 +115,8 @@ function parseDecision(raw: string, candidates: ResolverCandidate[]): ResolverDe
     if (candidates.some(c => c.id === id)) targetId = id;
   }
 
-  // Guard: UPDATE/DELETE without a valid target → downgrade to NOOP
   if ((op === "UPDATE" || op === "DELETE") && targetId === undefined) {
-    return { op: "NOOP", reason: `LLM returned ${op} without valid target — defaulted to NOOP` };
+    return { op: "ADD", reason: `resolver returned ${op} without a valid target — kept as a new fact` };
   }
 
   return { op, targetId, reason };

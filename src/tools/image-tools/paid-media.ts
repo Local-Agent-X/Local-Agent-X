@@ -2,14 +2,27 @@
  * The paid-API switch for images and video (Settings → Media,
  * `allowPaidMediaApis`, off unless the user turns it on). While it is off no
  * image or video call may use a per-use-billed API key: resolveMediaProvider
- * (shared.ts) drops those credentials, and http_request refuses a stored
- * secret sent to a provider's image or video route. Kept apart from shared.ts
- * so http_request reads it without loading the image tools.
+ * (shared.ts) drops those credentials, http_request refuses a stored secret
+ * sent to a provider's image or video route, and secret_env refuses to hand a
+ * provider's key to a shell command (the caged shell's proxy sees only the
+ * host of a TLS call, never its route). Kept apart from shared.ts so
+ * http_request and the shell read it without loading the image tools.
  */
 import { loadSettings } from "../../settings.js";
+import { PROVIDERS } from "../../providers/registry.js";
 
 /** The Settings → Media label; public/app.html shows the same words. */
 export const PAID_MEDIA_SETTING_LABEL = "Allow paid API keys for images and video";
+
+/** What a paid key buys: an OpenAI key images, an xAI key images and video. */
+export type PaidMediaKind = "image" | "video" | "image or video";
+
+/** The providers whose API key generate_image, edit_image and generate_video
+ *  bill per use, and what each key buys. `codex` is the ChatGPT sign-in, never
+ *  a key. Each provider's vault entry is its registry `envKey`. */
+export const PAID_MEDIA_KEY_PROVIDERS = { openai: "image", xai: "image or video" } as const satisfies Record<string, PaidMediaKind>;
+
+export type PaidMediaKeyProvider = keyof typeof PAID_MEDIA_KEY_PROVIDERS;
 
 /** True only when the user turned the switch on. */
 export function paidMediaApisAllowed(): boolean {
@@ -17,8 +30,21 @@ export function paidMediaApisAllowed(): boolean {
 }
 
 /** The refusal for an explicit paid backend while the switch is off. */
-export function paidMediaOffMessage(kind: "image" | "video"): string {
+export function paidMediaOffMessage(kind: PaidMediaKind): string {
   return `Paid API ${kind} generation is off — turn on '${PAID_MEDIA_SETTING_LABEL}' in Settings → Media.`;
+}
+
+/** The per-use-billed media provider whose API key a vault secret is, or null:
+ *  the entry that provider reads, or another entry holding the same value. A
+ *  sign-in token is never a vault entry, so it is never one. */
+export function paidMediaKeyProvider(
+  secretName: string, value: string | undefined, store: { get(name: string): string | undefined } | null,
+): PaidMediaKeyProvider | null {
+  for (const provider of Object.keys(PAID_MEDIA_KEY_PROVIDERS) as PaidMediaKeyProvider[]) {
+    const entry = PROVIDERS[provider].envKey;
+    if (secretName === entry || (value !== undefined && store?.get(entry) === value)) return provider;
+  }
+  return null;
 }
 
 /** What to tell the user when no free backend could take the call and the

@@ -15,6 +15,8 @@ vi.mock("../approval-manager.js", () => ({
   decisionDenies: (d: string) => d === "deny",
   decisionRequiresPrompt: (d: string) => d === "ask",
 }));
+// Paid API keys for images and video are off, as on a fresh install.
+vi.mock("../settings.js", async (orig) => ({ ...(await orig<typeof import("../settings.js")>()), loadSettings: () => ({}) }));
 
 const { secretEnvGate } = await import("./secret-env-approval.js");
 const { computeArgsFingerprint } = await import("../approval-decision.js");
@@ -76,6 +78,16 @@ describe.each(["bash", "process_start", "process_restart"])("secretEnvGate on %s
 
   it("a call without secret_env is not its business", async () => {
     expect(await secretEnvGate(ctx({ args: { command: "ls" } }))).toEqual({ kind: "continue" });
+    expect(requests).toHaveLength(0);
+  });
+
+  it("a media provider's API key is refused before any card while paid API keys for images and video are off", async () => {
+    for (const rule of ["ask", "allow"]) {
+      state.rule = rule;
+      const gate = await secretEnvGate(ctx({ args: { command: "curl https://api.openai.com/v1/images/generations", secret_env: { OPENAI_API_KEY: "OPENAI_API_KEY" } } }));
+      expect(gate.kind).toBe("blocked");
+      expect((gate as { result: { content: string } }).result.content).toContain("Paid API image generation is off");
+    }
     expect(requests).toHaveLength(0);
   });
 });

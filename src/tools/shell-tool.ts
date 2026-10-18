@@ -5,7 +5,7 @@ import { detectTargetShell, translateForShell, powershellCmdletHint, quotedGlobH
 import { resolveWindowsShell, recordAvSuspectKill, isLikelyAvKill } from "./shell-env.js";
 import { runCaged, type CagedOutput } from "./caged-spawn.js";
 import { workspaceRoot } from "../config.js";
-import { missingSecretEnvMessage, resolveSecretEnv, secretEnvOf } from "./shell-secret-env.js";
+import { resolveSecretEnv, secretEnvOf } from "./shell-secret-env.js";
 import { cwdOf, onEventOf, onProgressOf, toolCallIdOf } from "../tool-execution/internal-args.js";
 import { vendorDriftHint } from "../protocols/vendor-drift.js";
 
@@ -59,9 +59,7 @@ export const bashTool: ToolDefinition = {
     let secretEnv;
     try { secretEnv = secretEnvOf(args); } catch (e) { return err((e as Error).message); }
     const secrets = secretEnv ? resolveSecretEnv(secretEnv) : null;
-    if (secrets && "missing" in secrets) {
-      return err(missingSecretEnvMessage(secrets.missing));
-    }
+    if (secrets && "refusal" in secrets) return err(secrets.refusal);
     const scrub = secrets ? secrets.scrub : (text: string) => text;
 
     const isWin = process.platform === "win32";

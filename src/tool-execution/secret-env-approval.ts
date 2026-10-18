@@ -14,7 +14,7 @@
  */
 import { USER_HINTS, type ToolResult } from "../types.js";
 import { decisionDenies, decisionRequiresPrompt, getApprovalManager, getRiskDecision, type ApprovalDenyReason } from "../approval-manager.js";
-import { SECRET_ENV_TOOLS, secretEnvOf, secretEnvProgram } from "../tools/shell-secret-env.js";
+import { paidMediaSecretEnvRefusal, SECRET_ENV_TOOLS, secretEnvOf, secretEnvProgram } from "../tools/shell-secret-env.js";
 import { spawnCommandOf } from "../tools/process-session.js";
 import type { ToolCallContext } from "./context.js";
 import { parkOrRefuse, takeUserGrant } from "./deferred-call.js";
@@ -36,6 +36,13 @@ export async function secretEnvGate(ctx: ToolCallContext): Promise<SecretEnvGate
   const names = [...new Set(Object.values(secretEnv))].sort();
   const blockedResult = (content: string, recovery: string): ToolResult =>
     ({ content, isError: true, status: "blocked", metadata: { layer: "approval", userHint: USER_HINTS.policy, recovery } });
+  // A paid media key the Settings → Media switch keeps from the shell: refused
+  // before anyone is asked, since no yes to the card can stand in for the switch.
+  const paidMedia = paidMediaSecretEnvRefusal(secretEnv);
+  if (paidMedia) {
+    return { kind: "blocked", result: blockedResult(paidMedia,
+      "Tell the user the switch is off, or use generate_image / generate_video with a signed-in backend. Continue with the rest of the request.") };
+  }
   if (decisionDenies(rule)) {
     return { kind: "blocked", result: blockedResult(`BLOCKED by profile: this profile does not let a vault secret (${names.join(", ")}) be handed to a command. Use http_request with {{SECRET_NAME}} in a header, or ask the user to run the command.`,
       "Send the secret with http_request and a {{SECRET_NAME}} placeholder, or give the user the command to run themselves. Continue with the rest of the request.") };

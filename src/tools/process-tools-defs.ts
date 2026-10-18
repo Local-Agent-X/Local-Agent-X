@@ -32,7 +32,7 @@ import {
   tailLines,
   sleep,
 } from "./process-session.js";
-import { missingSecretEnvMessage, resolveSecretEnv, secretEnvOf, type ResolvedSecretEnv, type SecretEnv } from "./shell-secret-env.js";
+import { resolveSecretEnv, secretEnvOf, type ResolvedSecretEnv, type SecretEnv } from "./shell-secret-env.js";
 
 const SECRET_ENV_PARAM = {
   type: "object",
@@ -43,7 +43,7 @@ const SECRET_ENV_PARAM = {
 function sessionSecrets(names: SecretEnv | null): { names: SecretEnv; resolved: ResolvedSecretEnv } | undefined | string {
   if (!names) return undefined;
   const resolved = resolveSecretEnv(names);
-  return "missing" in resolved ? missingSecretEnvMessage(resolved.missing) : { names, resolved };
+  return "refusal" in resolved ? resolved.refusal : { names, resolved };
 }
 
 // ── process_start ────────────────────────────────────────────────────────

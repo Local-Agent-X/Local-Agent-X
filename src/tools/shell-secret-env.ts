@@ -14,10 +14,16 @@
  * (a background process's buffers are scrubbed on every read, process-session.ts).
  * Whether the call needs the user's yes is the profile's `secrets` rule
  * (tool-execution/secret-env-approval.ts).
+ *
+ * A media provider's API key (OPENAI_API_KEY, XAI_API_KEY) is not handed over
+ * while paid API keys for images and video are off: a command holding it could
+ * buy images or video on it, and the shell's egress proxy sees only the host of
+ * a TLS call, so the route cannot be judged where the traffic leaves.
  */
 import { getSecretsStoreSingleton } from "../secrets.js";
 import { registerRedactedSecretValue, vaultSecretSource } from "../security/secrets/known-secrets.js";
 import { TOOL_POLICIES } from "../tool-policy/tool-policies.js";
+import { PAID_MEDIA_KEY_PROVIDERS, paidMediaApisAllowed, paidMediaKeyProvider, paidMediaOffMessage } from "./image-tools/paid-media.js";
 
 /** Environment variable name → vault secret name. */
 export type SecretEnv = Record<string, string>;
@@ -69,12 +75,30 @@ export interface ResolvedSecretEnv {
 const MIN_CUT_OFF = 4;
 
 /** The refusal for secrets the vault does not hold, in one wording for every tool. */
-export function missingSecretEnvMessage(missing: string[]): string {
+function missingSecretEnvMessage(missing: string[]): string {
   return `secret_env: not in the vault: ${missing.join(", ")}. Ask the user for it with request_secrets, then retry.`;
 }
 
-/** Read the named secrets from the vault. Missing ones are reported by name. */
-export function resolveSecretEnv(secretEnv: SecretEnv): ResolvedSecretEnv | { missing: string[] } {
+/** The refusal when a named secret is a media provider's per-use-billed API
+ *  key and paid API keys for images and video are off; null otherwise. The
+ *  same switch generate_image and http_request answer to. */
+export function paidMediaSecretEnvRefusal(secretEnv: SecretEnv): string | null {
+  if (paidMediaApisAllowed()) return null;
+  const store = getSecretsStoreSingleton();
+  for (const secretName of new Set(Object.values(secretEnv))) {
+    const provider = paidMediaKeyProvider(secretName, store?.get(secretName), store);
+    if (!provider) continue;
+    const kind = PAID_MEDIA_KEY_PROVIDERS[provider];
+    return `secret_env: ${secretName} is a per-use-billed ${kind} API key, and a command holding it could spend it. ${paidMediaOffMessage(kind)}`;
+  }
+  return null;
+}
+
+/** Read the named secrets from the vault. A refusal names the missing
+ *  secrets, or the paid media key the switch keeps from the shell. */
+export function resolveSecretEnv(secretEnv: SecretEnv): ResolvedSecretEnv | { refusal: string } {
+  const paidMedia = paidMediaSecretEnvRefusal(secretEnv);
+  if (paidMedia) return { refusal: paidMedia };
   const store = getSecretsStoreSingleton();
   const env: Record<string, string> = {};
   const values: Array<{ name: string; value: string }> = [];
@@ -86,7 +110,7 @@ export function resolveSecretEnv(secretEnv: SecretEnv): ResolvedSecretEnv | { mi
     values.push({ name: secretName, value });
     registerRedactedSecretValue(value, vaultSecretSource(secretName));
   }
-  if (missing.length > 0) return { missing };
+  if (missing.length > 0) return { refusal: missingSecretEnvMessage(missing) };
   const scrub = (text: string): string => values.reduce((t, { name, value }) => t.split(value).join(`[secret ${name}]`), text);
   const scrubOpenEnded = (text: string): string => {
     const t = scrub(text);

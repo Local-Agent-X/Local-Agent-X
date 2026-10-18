@@ -65,9 +65,9 @@ import type { Op } from "../src/ops/types.js";
 // ── the production status seam ──────────────────────────────────────────────
 
 /**
- * The exact pipeline chat-tool-dispatcher.ts:250-252 runs to derive the status
- * dispatch-tools.ts commits on the tool_result row. tool-execution's
- * dispatchSingleToolCall (execute-tool.ts:132) recovers status the same way.
+ * The exact pipeline chat-tool-dispatcher.ts runs to derive the status
+ * dispatch-tools.ts commits on the tool_result row; the MCP bridge
+ * (routes/mcp.ts, via toolMessageResult) recovers status the same way.
  */
 function committedStatus(result: ToolResult): ToolDispatchStatus {
   return envelopeStatusToDispatchStatus(parseStatusHeader(renderToolResultForModel(result)));

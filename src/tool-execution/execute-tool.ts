@@ -1,7 +1,7 @@
 // Tool-call orchestrator. Composes the phase chain
 // (resolve → policy → approval → sandbox → audit) and provides the parallel
-// batcher + single-call dispatcher used by chat-tool-dispatcher, mcp,
-// and tests.
+// batcher, `executeToolCalls` — the one entry every model-issued call takes
+// (chat-tool-dispatcher, the MCP bridge, the approved-call re-dispatch).
 
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { ToolDefinition, ToolResult, ServerEvent } from "../types.js";
@@ -20,7 +20,6 @@ import { emitTraceStartPhase, emitTraceCompletePhase } from "./emit-trace.js";
 import { runSandboxedPhase } from "./run-sandboxed.js";
 import { attachPublishReviewNote } from "./publish-review-gate.js";
 import { auditPhase } from "./audit-tool-call.js";
-import { toolMessageResult } from "./tool-message-carry.js";
 import { hasCapability, pathSpecsForCall } from "../tool-registry.js";
 import { createLogger } from "../logger.js";
 import {
@@ -32,9 +31,7 @@ const logger = createLogger("tool-execution");
 
 // One heap sample shared by every call in a parallel (sub-)batch, plus that
 // turn's warn latch. The serial lane (one call per batch) samples per call —
-// v8.getHeapStatistics is ~0.5 µs, immaterial — and dispatchSingleToolCall
-// (MCP / arikernel bridge) takes its own sample and its own latch per call, so
-// "warn once per turn" is a batch-lane guarantee only.
+// v8.getHeapStatistics is ~0.5 µs, immaterial.
 interface HeapGuard { pressure: HeapPressure; turn: HeapGuardTurn }
 
 // Refuse to START a call when the heap is at the guard ratio (heap-guard.ts).
@@ -75,8 +72,8 @@ async function executeSingleTool(
   runId?: string,
   operationId?: string,
   callContext: CallContext = "api",
-  // The batcher passes one shared sample + turn per (sub-)batch; a bare call
-  // (dispatchSingleToolCall) defaults to its own sample and its own warn-turn.
+  // One shared sample + turn per (sub-)batch, from the batcher; a caller
+  // without one samples per call.
   heap: HeapGuard = { pressure: sampleHeapPressure(), turn: newHeapGuardTurn() },
 ): Promise<ChatCompletionMessageParam[]> {
   const ctx = createContext({ tc, toolMap, security, toolPolicy, threatEngine, rbac, callerRole, sessionId, runId, operationId, callContext, onEvent, signal, priorMessages });
@@ -123,59 +120,6 @@ async function executeSingleTool(
 
   await auditPhase(ctx);
   return ctx.msgs;
-}
-
-export interface UnifiedDispatchCtx {
-  toolMap: Map<string, ToolDefinition>;
-  security: SecurityLayer;
-  toolPolicy?: ToolPolicy;
-  threatEngine?: ThreatEngine;
-  rbac?: RBACManager;
-  callerRole?: Role;
-  sessionId?: string;
-  runId?: string;
-  operationId?: string;
-  callContext?: CallContext;
-  onEvent?: (event: ServerEvent) => void;
-  signal?: AbortSignal;
-  priorMessages?: ChatCompletionMessageParam[];
-}
-
-// Single dispatch entry — input ToolCall, output ToolResult. Internally
-// routes through executeSingleTool so the gate chain, retries, hooks,
-// circuit-breaker, rate limit, approval, and budgeting all run exactly
-// once per dispatch. Closes F2 part 2: any code path that previously
-// routed through a parallel dispatcher (the AriKernel `ToolExecutor.execute`
-// path, the old `ExecutorRegistry.get`-then-execute pattern) calls this
-// instead. Capability tokens / taint labels surface as fields on
-// ToolResult.metadata.arikernel rather than a separate execution stack.
-export async function dispatchSingleToolCall(
-  call: { id: string; name: string; arguments?: string; args?: Record<string, unknown> },
-  ctx: UnifiedDispatchCtx,
-): Promise<ToolResult> {
-  const argsStr = call.arguments ?? JSON.stringify(call.args ?? {});
-  const msgs = await executeSingleTool(
-    { id: call.id, name: call.name, arguments: argsStr },
-    ctx.toolMap,
-    ctx.security,
-    ctx.toolPolicy,
-    ctx.threatEngine,
-    ctx.rbac,
-    ctx.callerRole,
-    ctx.sessionId,
-    ctx.onEvent,
-    ctx.signal,
-    ctx.priorMessages,
-    ctx.runId,
-    ctx.operationId,
-    ctx.callContext ?? "api",
-  );
-  // The envelope the tool message carries — the canonical dispatcher reads the
-  // same carry. Hardcoding isError:false here reported blocked/errored/timed-out
-  // calls as "ok" to every adopter of this unified entry. `running` stays
-  // non-error: the START succeeded, work continues async.
-  const toolMsg = msgs.find((m) => m.role === "tool");
-  return toolMessageResult(toolMsg ?? { content: "" });
 }
 
 // Read-only tools are implicitly safe to parallelize (they never mutate

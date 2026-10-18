@@ -15,9 +15,9 @@
  *      invokeDefinition (which dispatches through the registered
  *      AgentRunDriver).
  *
- *   2. The tool-execution primitives (executeToolCalls,
- *      dispatchSingleToolCall) may only be deep-imported from inside
- *      src/tool-execution/ or the canonical-loop bridge. Outside callers
+ *   2. The tool-execution primitive (executeToolCalls) may only be
+ *      deep-imported from inside src/tool-execution/ or the canonical-loop
+ *      bridge. Outside callers
  *      go through the public barrel src/tool-execution/index.ts so any
  *      future pipeline restructure inside src/tool-execution/ doesn't
  *      fan out across consumers.
@@ -198,7 +198,7 @@ const SPINE_RULES: readonly SpineRule[] = [
     // door, and it only buys us anything if nobody imports past it.
     // (index.js is excluded from the pattern: importing the barrel IS
     // the sanctioned path; importing anything deeper is the violation.)
-    symbols: ["executeToolCalls", "dispatchSingleToolCall"],
+    symbols: ["executeToolCalls"],
     importPathPattern: /tool-execution\/(?!index\.js$)/,
     useInstead:
       "the public barrel src/tool-execution/index.ts (`import { executeToolCalls } from \"../tool-execution/index.js\"`) so internal pipeline restructure doesn't fan out.",

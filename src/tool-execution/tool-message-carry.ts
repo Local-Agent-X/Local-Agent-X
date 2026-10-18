@@ -143,8 +143,8 @@ export function isFailureStatus(status: ToolResultStatus): boolean {
 
 /**
  * The result envelope a tool message stands for, rebuilt from its carry: the
- * single-call entry (dispatchSingleToolCall) and the MCP bridge return this,
- * where they used to parse the header. A refusal keeps the gate and the next
+ * MCP bridge (routes/mcp.ts) and the single-call test helper return this,
+ * where the header used to be parsed. A refusal keeps the gate and the next
  * step its record carries.
  */
 export function toolMessageResult(message: CarriedToolMessage): ToolResult {

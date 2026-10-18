@@ -2,7 +2,7 @@
 
 **Owns:** The dispatch pipeline every model-issued tool call passes through — resolve → policy (Ari + rule packs) → approval → sandbox → audit.
 **Does not own:** Tool definitions and the registry → `src/tools/`; policy rows → `src/tool-policy/`; the kernel itself → `src/ari-kernel/`.
-**Entry:** `index.ts` — `executeToolCalls` / `dispatchSingleToolCall` for model calls; `executeHarnessCommand` (`harness-exec.ts`) for harness-initiated shell (build-verify, spec-probes, a built project's structure-check): kill switch + audit only, no policy/approval/RBAC; `dispatchApprovedCall` (`approved-call.ts`) to run a call the user approved from the inbox, through `executeToolCalls`.
+**Entry:** `index.ts` — `executeToolCalls` for model calls (the one entry; a test that needs one call's envelope uses `dispatch-one.test-helper.ts`); `executeHarnessCommand` (`harness-exec.ts`) for harness-initiated shell (build-verify, spec-probes, a built project's structure-check): kill switch + audit only, no policy/approval/RBAC; `dispatchApprovedCall` (`approved-call.ts`) to run a call the user approved from the inbox, through `executeToolCalls`.
 
 ## Invariants
 - Never call a tool's `execute` from outside this module: the gates in `pre-dispatch.ts` and `enforce-policy.ts` are what make policy, Ari, approval and RBAC apply.

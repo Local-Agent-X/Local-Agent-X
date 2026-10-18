@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { BLOCKED_WITHOUT_RECOVERY, blocked, renderToolResultForModel } from "../tools/result-helpers.js";
 import { STAGE_RECOVERY } from "./stage-recovery.js";
-import { dispatchSingleToolCall } from "./execute-tool.js";
+import { dispatchOne } from "./dispatch-one.test-helper.js";
 import { toolMessage, toolMessageResult } from "./tool-message-carry.js";
 import { _clearDedupCacheForTests } from "./dedup-cache.js";
 import { setAriRequired } from "../ari-kernel/state.js";
@@ -95,14 +95,14 @@ describe("the recovery reaches the model", () => {
 
     it("a tool's own refusal keeps its recovery", async () => {
       const toolMap = new Map([["refuser", stub("refuser", blocked("no", { layer: "security", recovery: "Use the other route." }))]]);
-      const r = await dispatchSingleToolCall({ id: "c1", name: "refuser", args: {} }, { toolMap, security: undefined as never, callContext: "api" });
+      const r = await dispatchOne({ id: "c1", name: "refuser", args: {} }, { toolMap, security: undefined as never, callContext: "api" });
       expect(r.status).toBe("blocked");
       expect(r.metadata?.recovery).toBe("Use the other route.");
     });
 
     it("a stage refusal that names its own next step keeps it", async () => {
       const toolMap = new Map([["write", stub("write", { content: "wrote" })]]);
-      const r = await dispatchSingleToolCall(
+      const r = await dispatchOne(
         { id: "c2", name: "write", args: { path: "a.txt", content: "x" } },
         { toolMap, security: undefined as never, callContext: "api", rbac, callerRole: "readonly" },
       );
@@ -112,7 +112,7 @@ describe("the recovery reaches the model", () => {
 
     it("a threat-monitor pause says what can still be done", async () => {
       const toolMap = new Map([["http_request", stub("http_request", { content: "sent" })]]);
-      const r = await dispatchSingleToolCall(
+      const r = await dispatchOne(
         { id: "c3", name: "http_request", args: { url: "https://example.com" } },
         { toolMap, security: undefined as never, callContext: "api", threatEngine: restricted, sessionId: "contract-threat-sess" },
       );

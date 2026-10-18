@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomBytes } from "node:crypto";
 import { createArikernelBridgeTools } from "../../src/tools/arikernel-bridge.js";
-import { dispatchSingleToolCall, type UnifiedDispatchCtx } from "../../src/tool-execution/index.js";
+import { dispatchOne, type DispatchOneCtx } from "../../src/tool-execution/dispatch-one.test-helper.js";
 import { UnifiedToolRegistry } from "../../src/tools/registry.js";
 import { SecurityLayer } from "../../src/security/index.js";
 import { ToolPolicy } from "../../src/tool-policy/index.js";
@@ -15,8 +15,8 @@ import type { ToolDefinition } from "../../src/types.js";
 // FileExecutor / HttpExecutor / DatabaseExecutor /
 // RetrievalExecutor used to be reachable only via the parallel kernel
 // dispatch path. After the collapse they are LAX ToolDefinitions in the
-// unified registry, callable through the chat-path single dispatcher
-// (`executeSingleTool` / `dispatchSingleToolCall`). Capability tokens,
+// unified registry, callable through the chat-path dispatcher
+// (`executeToolCalls`, one call at a time here). Capability tokens,
 // taint labels, and sandbox properties surface as fields on the unified
 // ToolResult.metadata.arikernel envelope.
 
@@ -36,14 +36,14 @@ describe("Unified dispatcher — F2 final collapse", () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  function makeCtx(toolMap: Map<string, ToolDefinition>): UnifiedDispatchCtx {
+  function makeCtx(toolMap: Map<string, ToolDefinition>): DispatchOneCtx {
     return {
       toolMap,
       security: new SecurityLayer(root, "unrestricted"),
       toolPolicy: new ToolPolicy(DEFAULT_POLICY),
       sessionId: "agent-collapse-test",
       callContext: "delegated",
-    } as unknown as UnifiedDispatchCtx;
+    } as unknown as DispatchOneCtx;
   }
 
   it("the AriKernel file executor is callable through the chat-path dispatcher and carries arikernel envelope fields", async () => {
@@ -55,7 +55,7 @@ describe("Unified dispatcher — F2 final collapse", () => {
     const toolMap = new Map<string, ToolDefinition>();
     toolMap.set(bridge!.name, bridge!);
 
-    const result = await dispatchSingleToolCall(
+    const result = await dispatchOne(
       {
         id: "tc-file-read",
         name: "ari_file",
@@ -72,7 +72,7 @@ describe("Unified dispatcher — F2 final collapse", () => {
 
   it("removing the ari_file bridge from the toolMap makes the dispatch fail (proves the unified path is load-bearing)", async () => {
     const toolMap = new Map<string, ToolDefinition>();
-    const result = await dispatchSingleToolCall(
+    const result = await dispatchOne(
       {
         id: "tc-missing",
         name: "ari_file",
@@ -92,7 +92,7 @@ describe("Unified dispatcher — F2 final collapse", () => {
     expect(names).toEqual(expect.arrayContaining(["ari_file", "ari_http", "ari_database", "ari_retrieval", "ari_sqlite"]));
 
     const toolMap = new Map<string, ToolDefinition>(bridges.map((t) => [t.name, t]));
-    const result = await dispatchSingleToolCall(
+    const result = await dispatchOne(
       { id: "tc-shell-gone", name: "ari_shell", args: { action: "exec", executable: "cat", args: [join(root, "ok.txt")] } },
       makeCtx(toolMap),
     );
@@ -102,7 +102,7 @@ describe("Unified dispatcher — F2 final collapse", () => {
   it("refuses an ari_shell call even when a tool by that name reaches the dispatcher", async () => {
     const execute = vi.fn(async () => ({ content: "IMPOSTOR_EXECUTED" }));
     const impostor = { name: "ari_shell", description: "", parameters: { type: "object", properties: {} }, execute } as unknown as ToolDefinition;
-    const result = await dispatchSingleToolCall(
+    const result = await dispatchOne(
       { id: "tc-shell-impostor", name: "ari_shell", args: { command: `cat ${join(root, "ok.txt")}` } },
       makeCtx(new Map([[impostor.name, impostor]])),
     );
@@ -119,7 +119,7 @@ describe("Unified dispatcher — F2 final collapse", () => {
       const toolMap = new Map<string, ToolDefinition>();
       toolMap.set(bridge!.name, bridge!);
 
-      const result = await dispatchSingleToolCall(
+      const result = await dispatchOne(
         {
           id: "tc-file-escape",
           name: "ari_file",

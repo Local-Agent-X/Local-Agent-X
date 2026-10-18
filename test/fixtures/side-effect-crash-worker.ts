@@ -1,5 +1,5 @@
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
-import { dispatchSingleToolCall } from "../../src/tool-execution/execute-tool.js";
+import { dispatchOne } from "../../src/tool-execution/dispatch-one.test-helper.js";
 import { _setSideEffectJournalHookForTests } from "../../src/tool-execution/side-effect-journal.js";
 import { setAriRequired } from "../../src/ari-kernel/state.js";
 import type { ToolDefinition, ToolResult } from "../../src/types.js";
@@ -45,7 +45,7 @@ const tool: ToolDefinition = {
   },
 };
 
-const result = await dispatchSingleToolCall(
+const result = await dispatchOne(
   { id: toolCallId, name: tool.name, args: { operationKey, payload: "fixed" } },
   {
     toolMap: new Map([[tool.name, tool]]),

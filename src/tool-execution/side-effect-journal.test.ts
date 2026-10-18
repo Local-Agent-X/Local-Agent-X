@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { opDir } from "../ops/event-log.js";
 import { setAriRequired } from "../ari-kernel/state.js";
 import type { ToolDefinition, ToolResult } from "../types.js";
-import { dispatchSingleToolCall } from "./execute-tool.js";
+import { dispatchOne } from "./dispatch-one.test-helper.js";
 import { hasAmbiguousSideEffects } from "./side-effect-journal.js";
 
 const opIds: string[] = [];
@@ -32,7 +32,7 @@ async function dispatch(
   args: Record<string, unknown>,
   sessionId: string,
 ): Promise<ToolResult> {
-  return dispatchSingleToolCall(
+  return dispatchOne(
     { id: "stable-call", name: tool.name, args },
     {
       toolMap: new Map([[tool.name, tool]]),

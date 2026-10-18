@@ -61,7 +61,7 @@ pinned at `/apps/calendar/`, not `public/calendar.html`. <!-- doc-paths:ignore -
 
 ## Runtime invariants (what the code must keep true)
 
-- **Every model-initiated tool call goes through `src/tool-execution/`** (`executeToolCalls` / `dispatchSingleToolCall`): Ari, policy, approval, RBAC, audit live there. Harness-initiated commands (build verification, spec probes, a built project's structure check) go through `executeHarnessCommand` in the same directory.
+- **Every model-initiated tool call goes through `src/tool-execution/`** (`executeToolCalls`, the one entry): Ari, policy, approval, RBAC, audit live there. Harness-initiated commands (build verification, spec probes, a built project's structure check) go through `executeHarnessCommand` in the same directory.
 - **Mutating `/api/*` POSTs broadcast** `broadcastAll({ type: "settings_changed", ... })` so open tabs stay in sync. Checked per route by its tests, not globally.
 - **External content enters the model through `wrapExternalContent()`** in `src/sanitize.ts`. Each network tool calls it itself.
 - **Outbound HTTP from tools goes through `canonicalFetch` / `http_request`'s guard** (`src/tools/web-egress.ts`): DNS pinning, private-IP block, strict-mode allowlist, redirect re-check. Exceptions by protocol: IMAP (email), yt-dlp (youtube).

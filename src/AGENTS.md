@@ -19,7 +19,7 @@ directly are not subject to any of this.
 | Module | Owns | Rule |
 |---|---|---|
 | `canonical-loop/` | the agent turn loop | **Sealed.** Outside code imports only `canonical-loop/index.js` or a `canonical-loop/public/*.js` sub-barrel (`interface-seal.test.ts`). Chat enters via `runChatViaCanonical`; agents, cron and self-edit via `runAgentViaCanonical`; both are exported from `index.ts`. |
-| `tool-execution/` | tool-call lifecycle: Ari, policy, approval, RBAC, audit | Every model tool call goes through `executeToolCalls` / `dispatchSingleToolCall`. |
+| `tool-execution/` | tool-call lifecycle: Ari, policy, approval, RBAC, audit | Every model tool call goes through `executeToolCalls`, the one entry. |
 | `tool-policy/` | the per-tool policy table | Default-deny. New entries go in the `tool-policies.<domain>.ts` fragment, never the `.data.ts` barrel. |
 | `ari-kernel/` | the in-process security kernel gateway | **Sealed** (`src/module-seals.test.ts`): import `ari-kernel/index.js` (or the `tool-class-map.js` leaf). Don't add a second kernel. |
 | `sandbox/` | cage selection + the platform cage backends | **Sealed**: `sandbox/index.js`, `types`, `server-confine`, or a backend leaf (`seatbelt`, `bwrap`, `win-cage*`, `docker-execution-runtime`). |

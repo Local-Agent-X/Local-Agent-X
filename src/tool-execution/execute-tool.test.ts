@@ -26,7 +26,8 @@ const { log } = vi.hoisted(() => {
 });
 vi.mock("../logger.js", () => ({ createLogger: () => log }));
 
-import { executeToolCalls, dispatchSingleToolCall } from "./execute-tool.js";
+import { executeToolCalls } from "./execute-tool.js";
+import { dispatchOne } from "./dispatch-one.test-helper.js";
 import { setHeapStatsForTests } from "./heap-guard.js";
 import { _clearDedupCacheForTests, dedupRecord } from "./dedup-cache.js";
 import { setAriRequired } from "../ari-kernel/state.js";
@@ -284,11 +285,11 @@ describe("dedup hit emits the tool result exactly once (TD-4)", () => {
   });
 });
 
-// TD-7: dispatchSingleToolCall hardcoded { isError: false, status: "ok" },
-// so blocked/errored calls reported silent success to adopters of the
-// unified entry. It must report the status the tool message carries
-// (tool-message-carry.ts), like the canonical dispatcher does.
-describe("dispatchSingleToolCall reports the real envelope status (TD-7)", () => {
+// TD-7: a single-call reader once hardcoded { isError: false, status: "ok" },
+// so blocked/errored calls reported silent success. The envelope rebuilt from
+// the tool message must report the status it carries (tool-message-carry.ts),
+// like the canonical dispatcher does.
+describe("a single call's envelope reports the real status (TD-7)", () => {
   beforeAll(() => setAriRequired(false));
   afterAll(() => setAriRequired(true));
   beforeEach(() => _clearDedupCacheForTests());
@@ -308,7 +309,7 @@ describe("dispatchSingleToolCall reports the real envelope status (TD-7)", () =>
     const toolMap = new Map<string, ToolDefinition>([
       ["deny_stub", resultTool("deny_stub", { content: "denied by gate", isError: true, status: "blocked", metadata: { layer: "security", recovery: "Tell the user." } })],
     ]);
-    const r = await dispatchSingleToolCall(
+    const r = await dispatchOne(
       { id: "x1", name: "deny_stub", args: {} },
       { toolMap, security: undefined as never, callContext: "api" },
     );
@@ -323,7 +324,7 @@ describe("dispatchSingleToolCall reports the real envelope status (TD-7)", () =>
     const toolMap = new Map<string, ToolDefinition>([
       ["decline_stub", resultTool("decline_stub", { content: "DECLINED by user: decline_stub. Do not retry the same call — adjust your approach or ask the user.", isError: true, status: "declined" })],
     ]);
-    const r = await dispatchSingleToolCall(
+    const r = await dispatchOne(
       { id: "x1d", name: "decline_stub", args: {} },
       { toolMap, security: undefined as never, callContext: "api" },
     );
@@ -336,7 +337,7 @@ describe("dispatchSingleToolCall reports the real envelope status (TD-7)", () =>
     const toolMap = new Map<string, ToolDefinition>([
       ["err_stub", resultTool("err_stub", { content: "boom", isError: true, status: "error" })],
     ]);
-    const r = await dispatchSingleToolCall(
+    const r = await dispatchOne(
       { id: "x2", name: "err_stub", args: {} },
       { toolMap, security: undefined as never, callContext: "api" },
     );
@@ -348,7 +349,7 @@ describe("dispatchSingleToolCall reports the real envelope status (TD-7)", () =>
     const toolMap = new Map<string, ToolDefinition>([
       ["ok_stub", resultTool("ok_stub", { content: "fine", isError: false })],
     ]);
-    const r = await dispatchSingleToolCall(
+    const r = await dispatchOne(
       { id: "x3", name: "ok_stub", args: {} },
       { toolMap, security: undefined as never, callContext: "api" },
     );
@@ -644,7 +645,7 @@ describe("heap guard + parallel batch width (C11)", () => {
   it("(e) the unified single-call entry (MCP / arikernel bridge) reports the refusal as blocked", async () => {
     heapAt(0.95);
     const a = probe("probe_a");
-    const r = await dispatchSingleToolCall(
+    const r = await dispatchOne(
       { id: "s1", name: "probe_a", args: { i: 1 } },
       { toolMap: new Map([["probe_a", a.tool]]), security: undefined as never, callContext: "api" },
     );

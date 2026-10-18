@@ -18,7 +18,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import { resolvePhase } from "./resolve-tool.js";
-import { dispatchSingleToolCall } from "./execute-tool.js";
+import { dispatchOne } from "./dispatch-one.test-helper.js";
 import { createContext } from "./context.js";
 import type { SecurityLayer } from "../security/index.js";
 import { resolveAgentPath, sessionIdOf, setSessionWorkRoot, clearSessionWorkRoot } from "../workspace/paths.js";
@@ -133,7 +133,7 @@ describe("app-build trusted session stamping (canonical dispatch seam)", () => {
     const tool = name === "start_app_build"
       ? startAppBuildTool
       : dispatchFinalizeAppBuildTool;
-    return dispatchSingleToolCall(
+    return dispatchOne(
       { id: `call-${name}`, name, args },
       {
         toolMap: new Map([[name, tool]]),

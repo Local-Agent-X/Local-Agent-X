@@ -186,16 +186,19 @@ describe("durable worktree recovery", () => {
     const f = fixture("non-blocking");
     writeFileSync(join(f.path, "work.txt"), "pending\n");
 
-    let ticks = 0;
-    const timer = setInterval(() => { ticks++; }, 10);
+    // Loop turns, not timer ticks: a setImmediate fires once per event-loop
+    // iteration, so any wait on a child counts however fast the machine is. A
+    // 10ms interval scored 0 whenever the whole classification beat it.
+    let turns = 0;
+    let immediate = setImmediate(function turn() { turns++; immediate = setImmediate(turn); });
     try { await reconcileWorktreeBase(f.base, () => false); }
-    finally { clearInterval(timer); }
+    finally { clearImmediate(immediate); }
 
     // Classification used to run entirely on execFileSync, so this `async`
     // function never actually yielded — a Promise.all over several bases
     // serialized into one long block and nothing else on the loop ran for its
     // whole duration. On the all-sync form this scores exactly 0.
-    expect(ticks).toBeGreaterThan(0);
+    expect(turns).toBeGreaterThan(0);
   });
 
   it("does not count quarantined recoveries against the active cap", async () => {

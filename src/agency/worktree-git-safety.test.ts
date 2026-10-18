@@ -143,20 +143,22 @@ describe("gitAsync", () => {
     const repo = initRepo();
     // The shape every worktree op has: several git invocations in a row with
     // nothing between them. Synchronously that is dead air for their sum.
-    const ticksDuring = async (run: () => unknown): Promise<number> => {
-      let ticks = 0;
-      const timer = setInterval(() => { ticks++; }, 5);
-      try { await run(); } finally { clearInterval(timer); }
-      return ticks;
+    // Counted in loop turns (one setImmediate per iteration), not timer ticks:
+    // six fast rev-parses can finish inside a 5ms interval and score 0.
+    const turnsDuring = async (run: () => unknown): Promise<number> => {
+      let turns = 0;
+      let immediate = setImmediate(function turn() { turns++; immediate = setImmediate(turn); });
+      try { await run(); } finally { clearImmediate(immediate); }
+      return turns;
     };
-    const asyncTicks = await ticksDuring(async () => {
+    const asyncTurns = await turnsDuring(async () => {
       for (let i = 0; i < 6; i++) await gitAsync(["rev-parse", "HEAD"], repo);
     });
-    const syncTicks = await ticksDuring(() => {
+    const syncTurns = await turnsDuring(() => {
       for (let i = 0; i < 6; i++) git(["rev-parse", "HEAD"], repo);
     });
-    expect(asyncTicks).toBeGreaterThan(0);
-    expect(syncTicks).toBe(0);
+    expect(asyncTurns).toBeGreaterThan(0);
+    expect(syncTurns).toBe(0);
   });
 });
 

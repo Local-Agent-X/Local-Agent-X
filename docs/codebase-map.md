@@ -12,7 +12,7 @@ statically or by `import()` (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1800 non-test source files · 0 god files (>400 LOC).
+**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1799 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -20,11 +20,11 @@ over 400 LOC (the source-hygiene ceiling).
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 158 | 29 | XL |  |
 | `src/security/` | 121 | 46 | XL |  |
-| `src/tools/` | 110 | 215 | XL |  |
+| `src/tools/` | 105 | 215 | XL |  |
 | `src/canonical-loop/` | 79 | 259 | XL |  |
-| `src/tool-execution/` | 78 | 71 | XL |  |
+| `src/tool-execution/` | 76 | 71 | XL |  |
 | `src/workspace/` | 71 | 3 | M |  |
-| `src/providers/` | 68 | 26 | XL |  |
+| `src/providers/` | 67 | 26 | XL |  |
 | `src/memory/` | 51 | 139 | XL |  |
 | `src/browser/` | 46 | 86 | XL |  |
 | `src/data-lineage/` | 42 | 11 | L |  |
@@ -34,7 +34,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/threat/` | 38 | 13 | L |  |
 | `src/auth/` | 37 | 11 | L |  |
 | `src/session/` | 36 | 7 | L |  |
-| `src/chat-ws/` | 30 | 23 | L |  |
+| `src/chat-ws/` | 31 | 22 | L |  |
 | `src/agency/` | 27 | 20 | XL |  |
 | `src/agent-store/` | 26 | 7 | L |  |
 | `src/classifiers/` | 24 | 16 | L |  |
@@ -44,8 +44,8 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/app-runtime/` | 23 | 12 | L |  |
 | `src/sandbox/` | 23 | 14 | L |  |
 | `src/protocols/` | 21 | 52 | XL |  |
-| `src/desktop-contract/` | 20 | 10 | M |  |
 | `src/orchestrator/` | 20 | 24 | L |  |
+| `src/desktop-contract/` | 18 | 10 | M |  |
 | `src/agents/` | 17 | 13 | L |  |
 | `src/server/` *(entrypoint)* | 16 | 57 | XL |  |
 | `src/anthropic-client/` | 15 | 21 | XL |  |
@@ -54,9 +54,8 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/voice/` | 14 | 74 | XL |  |
 | `src/cron/` | 13 | 10 | L |  |
 | `src/self-edit/` | 13 | 19 | L |  |
-| `src/broker-transport/` | 12 | 39 | XL |  |
 | `src/whatsapp-bridge/` | 12 | 8 | L |  |
-| `src/inbox/` | 11 | 5 | M |  |
+| `src/broker-transport/` | 11 | 38 | XL |  |
 | `src/integrations/` | 11 | 15 | M |  |
 | `src/agent-loop/` | 10 | 1 | S |  |
 | `src/ari-kernel/` | 10 | 12 | L |  |
@@ -64,6 +63,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/persistence/` | 10 | 2 | S |  |
 | `src/routes/` | 10 | 93 | XL |  |
 | `src/sync/` | 10 | 21 | L |  |
+| `src/inbox/` | 9 | 5 | M |  |
 | `src/screen-stream/` | 9 | 11 | L |  |
 | `src/agent-guards/` | 8 | 11 | L |  |
 | `src/bridge-voice/` | 8 | 5 | M |  |
@@ -73,7 +73,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/plugin-system/` | 7 | 10 | L |  |
 | `src/android/` | 6 | 7 | M |  |
 | `src/app-renderer/` | 6 | 7 | M |  |
-| `src/app-scaffold/` | 6 | 3 | M |  |
+| `src/app-scaffold/` | 6 | 4 | M |  |
 | `src/credentials/` | 6 | 1 | S |  |
 | `src/mcp-client/` | 6 | 10 | L |  |
 | `src/net/` | 6 | 3 | M |  |
@@ -221,7 +221,6 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/update-git-rollback.ts` | S |
 | `src/update-pipeline.ts` | M |
 | `src/update-recovery.ts` | S |
-| `src/update-rollback-prune.ts` | S |
 | `src/update-rollback-state.ts` | S |
 | `src/update-rollback.ts` | M |
 | `src/update-service.ts` | M |

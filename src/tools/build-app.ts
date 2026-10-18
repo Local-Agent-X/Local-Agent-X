@@ -313,6 +313,7 @@ export const buildAppTool: ToolDefinition = {
       adapterSessionId: sessionId || undefined,
       model: buildModel,
       tier,
+      isUpdate,
     };
 
     const runtime = registerAppBuildRuntime(op, op.runtimeDescriptor);

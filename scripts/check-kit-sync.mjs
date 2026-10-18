@@ -26,9 +26,10 @@ const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 export const KIT_DIR = join(repoRoot, "src", "app-scaffold", "kit");
 const manifestPath = join(KIT_DIR, "UPSTREAM.json");
 
-/** Vendored name → path inside the skill. The seal test is stored with a .txt
- *  suffix so neither vitest nor tsc treats the template as this repo's code. */
+/** Vendored name → path inside the skill. The seal tests are stored with a .txt
+ *  suffix so neither vitest, pytest nor tsc treats a template as this repo's code. */
 export const KIT_FILES = {
+  "project-languages.mjs": "scripts/project-languages.mjs",
   "codebase-map.mjs": "scripts/codebase-map.mjs",
   "check-file-size.mjs": "scripts/check-file-size.mjs",
   "check-doc-paths.mjs": "scripts/check-doc-paths.mjs",
@@ -36,6 +37,7 @@ export const KIT_FILES = {
   "check-structure.mjs": "scripts/check-structure.mjs",
   "code-refs.mjs": "scripts/code-refs.mjs",
   "module-seals.test.ts.txt": "assets/module-seals.test.ts",
+  "test_module_seals.py.txt": "assets/test_module_seals.py",
 };
 
 const lf = (text) => text.replace(/\r\n/g, "\n");

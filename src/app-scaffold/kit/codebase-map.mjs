@@ -7,8 +7,10 @@
  * Resolves static AND dynamic imports — a plain grep for "from" misses
  * `import("./x.js")` and mislabels live modules as dead.
  *
- * Languages: JS/TS (relative specifiers, .js→.ts ESM remapping, index files)
- * and Python (relative + root-anchored absolute imports).
+ * Languages, what a module is and how imports resolve: project-languages.mjs
+ * (JS/TS, Python, Rust, Go). The default source roots come from the project
+ * file at the repo root (Cargo.toml → src; go.mod → internal/, cmd/, pkg/;
+ * otherwise src); --root overrides them and may repeat.
  *
  * Usage:
  *   node codebase-map.mjs                      write the map
@@ -17,18 +19,19 @@
  *   node codebase-map.mjs --deps <path> --depth N
  *                                              who a change reaches, hop by hop, and the tests to run
  * Options:
- *   --root <dir>      source root (default: src)
+ *   --root <dir>      source root (repeatable; default: the project kind's roots)
  *   --out <file>      output markdown (default: docs/codebase-map.md)
  *   --max-loc <n>     oversized-file threshold (default: 450)
- *   --entry <dir>     top-level dir reached at runtime, not by import (repeatable)
+ *   --entry <module>  module reached at runtime, not by import (repeatable; `auth` or `src/auth`)
  *
  * The output only changes on events worth reviewing — a module added or
  * removed, a new cross-module dependency or cycle, an importer count change, a
  * module going dead, a file crossing the size limit, a size-tier flip — so
  * --check can gate the build without failing on trivial edits.
  */
-import { existsSync, readFileSync, readdirSync, statSync, writeFileSync, mkdirSync } from "node:fs";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { dirname, relative, resolve, sep } from "node:path";
+import { defaultRoots, importContext, importTargets, isTestPath, moduleOf, walkSource } from "./project-languages.mjs";
 
 const args = process.argv.slice(2);
 const opt = (name, dflt) => {
@@ -38,104 +41,29 @@ const opt = (name, dflt) => {
 const optAll = (name) => args.flatMap((a, i) => (a === name ? [args[i + 1]] : []));
 
 const REPO = process.cwd();
-const ROOT = resolve(REPO, opt("--root", "src"));
+const ROOTS = (optAll("--root").length ? optAll("--root") : defaultRoots(REPO)).map((r) => resolve(REPO, r));
 const OUT = resolve(REPO, opt("--out", "docs/codebase-map.md"));
 const MAX_LOC = Number(opt("--max-loc", "450"));
 const ENTRIES = new Set(optAll("--entry"));
 const CHECK = args.includes("--check");
 const DEPS = opt("--deps", null);
 
-// vendor/ and third_party/ hold code we ship but don't own — not mapped, not size-checked.
-const SKIP_DIRS = new Set(["node_modules", "dist", "build", ".git", "__pycache__", ".venv", "venv", "coverage", ".next", "vendor", "third_party"]);
-const JS_EXT = [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"];
-const isSource = (p) => (JS_EXT.some((e) => p.endsWith(e)) && !p.endsWith(".d.ts")) || p.endsWith(".py");
-const isTest = (p) => {
-	const rel = relative(ROOT, p).split(sep).join("/");
-	const base = rel.split("/").pop();
-	return /\.(test|spec)\.[^.]+$/.test(base) || /^test_.*\.py$/.test(base) || /_test\.py$/.test(base) ||
-		/(^|\/)(__tests__|tests?)\//.test(rel);
+const posix = (p) => relative(REPO, p).split(sep).join("/");
+const isTest = (p) => isTestPath(posix(p));
+const LOOSE = "(root files)";
+
+// A project before its first source file has an empty tree, not a broken one.
+const rootOf = new Map(); // file -> its source root
+for (const root of ROOTS) if (existsSync(root)) for (const f of walkSource(root)) rootOf.set(f, root);
+const files = [...rootOf.keys()];
+const display = new Map(); // module key -> the path a doc names (`src/auth/`, `src/auth.rs`)
+const unitOf = (f) => {
+	const m = moduleOf(f, rootOf.get(f), REPO);
+	if (!m) return LOOSE;
+	if (!display.has(m.key) || m.display.endsWith("/")) display.set(m.key, m.display);
+	return m.key;
 };
-const posix = (p) => relative(ROOT, p).split(sep).join("/");
-const unitOf = (p) => {
-	const parts = posix(p).split("/");
-	return parts.length > 1 ? parts[0] : "(root files)";
-};
-
-function walk(dir) {
-	const out = [];
-	for (const name of readdirSync(dir).sort()) {
-		if (SKIP_DIRS.has(name)) continue;
-		const p = join(dir, name);
-		if (statSync(p).isDirectory()) out.push(...walk(p));
-		else if (isSource(p)) out.push(p);
-	}
-	return out;
-}
-
-const JS_SPEC = /(?:from\s*|import\s*\(\s*|require\s*\(\s*|import\s+)["'`]([^"'`]+)["'`]/g;
-const PY_FROM = /^\s*from\s+(\.*[\w.]*)\s+import\s+(.+)$/gm;
-const PY_IMPORT = /^\s*import\s+([\w.]+(?:\s*,\s*[\w.]+)*)/gm;
-
-function resolveJs(fromFile, spec) {
-	if (!spec.startsWith(".")) return null;
-	const base = resolve(dirname(fromFile), spec);
-	const stem = base.replace(/\.(m|c)?jsx?$/, "");
-	const candidates = [base, ...JS_EXT.map((e) => stem + e), ...JS_EXT.map((e) => join(base, "index" + e))];
-	return candidates.find((c) => existsSync(c) && statSync(c).isFile()) ?? null;
-}
-
-function resolvePyModule(dotted, anchorDirs) {
-	const rel = dotted.split(".").join(sep);
-	for (const anchor of anchorDirs) {
-		for (const c of [join(anchor, rel + ".py"), join(anchor, rel, "__init__.py")]) {
-			if (existsSync(c)) return c;
-		}
-	}
-	return null;
-}
-
-function pyTargets(fromFile, text) {
-	const out = [];
-	const anchors = [ROOT, dirname(ROOT)];
-	for (const m of text.matchAll(PY_FROM)) {
-		const [, mod, names] = m;
-		const dots = mod.match(/^\.*/)[0].length;
-		let anchorDirs = anchors;
-		let dotted = mod.slice(dots);
-		if (dots > 0) {
-			let d = dirname(fromFile);
-			for (let i = 1; i < dots; i++) d = dirname(d);
-			anchorDirs = [d];
-		}
-		const pkg = dotted ? resolvePyModule(dotted, anchorDirs) : null;
-		if (pkg) out.push(pkg);
-		// `from pkg import submodule` targets the submodule file when one exists.
-		for (const n of names.replace(/[()]/g, "").split(",")) {
-			const name = n.trim().split(/\s+/)[0];
-			if (!/^\w+$/.test(name)) continue;
-			const sub = resolvePyModule(dotted ? `${dotted}.${name}` : name, anchorDirs);
-			if (sub) out.push(sub);
-		}
-	}
-	for (const m of text.matchAll(PY_IMPORT)) {
-		for (const dotted of m[1].split(",")) {
-			const hit = resolvePyModule(dotted.trim(), anchors);
-			if (hit) out.push(hit);
-		}
-	}
-	return out;
-}
-
-function importsOf(file) {
-	const text = readFileSync(file, "utf8");
-	if (file.endsWith(".py")) return pyTargets(file, text);
-	const out = [];
-	for (const m of text.replace(/\\\//g, "/").matchAll(JS_SPEC)) {
-		const hit = resolveJs(file, m[1]);
-		if (hit) out.push(hit);
-	}
-	return out;
-}
+const isEntry = (key) => ENTRIES.has(key) || ENTRIES.has(key.split("/").pop());
 
 const locOf = (file) => {
 	const text = readFileSync(file, "utf8");
@@ -143,12 +71,11 @@ const locOf = (file) => {
 };
 const tier = (loc) => (loc < 250 ? "S" : loc < 1000 ? "M" : loc < 3000 ? "L" : "XL");
 
-// A project before its first source file has an empty tree, not a broken one.
-const files = existsSync(ROOT) ? walk(ROOT) : [];
 const prod = files.filter((f) => !isTest(f));
 const inTree = new Set(files);
+const ctx = importContext(REPO, ROOTS);
 const allEdges = new Map(); // file -> Set(target files inside the mapped tree), tests included
-for (const f of files) allEdges.set(f, new Set(importsOf(f).filter((t) => t !== f && inTree.has(t))));
+for (const f of files) allEdges.set(f, new Set(importTargets(f, ctx).filter((t) => t !== f && inTree.has(t))));
 const edges = new Map(prod.map((f) => [f, allEdges.get(f)])); // the wiring: non-test files only
 
 if (DEPS) {
@@ -180,7 +107,7 @@ if (DEPS) {
 		const total = [...m.values()].reduce((n, s) => n + s.size, 0);
 		console.log(`\n## ${title} (${total} files across ${m.size} modules)`);
 		for (const [unit, s] of [...m].sort((a, b) => b[1].size - a[1].size)) {
-			console.log(`\n${unit}/ (${s.size})`);
+			console.log(`\n${display.get(unit) ?? unit} (${s.size})`);
 			for (const p of [...s].sort()) console.log(`  ${p}`);
 		}
 	};
@@ -209,12 +136,13 @@ for (const [f, ts] of edges) {
 		const to = unitOf(t);
 		if (to === from) continue;
 		units.get(to).importers.add(posix(f));
-		if (to !== "(root files)") units.get(from).dependsOn.add(to);
+		if (to !== LOOSE) units.get(from).dependsOn.add(to);
 	}
 }
 for (const [u, rec] of units) if (rec.files === 0) units.delete(u);
 
-const rows = [...units].filter(([u]) => u !== "(root files)").sort((a, b) => b[1].importers.size - a[1].importers.size || a[0].localeCompare(b[0]));
+const rows = [...units].filter(([u]) => u !== LOOSE).sort((a, b) => b[1].importers.size - a[1].importers.size || a[0].localeCompare(b[0]));
+const name = (u) => `\`${display.get(u) ?? u}\``;
 
 // Module cycles: groups of modules that each reach the others through imports
 // (strongly connected components of the module graph, Tarjan). Two modules in
@@ -253,15 +181,15 @@ function moduleCycles() {
 	return out.sort((a, b) => b.length - a.length || a[0].localeCompare(b[0]));
 }
 const cycles = moduleCycles();
-const dead = rows.filter(([u, r]) => r.importers.size === 0 && !ENTRIES.has(u));
+const dead = rows.filter(([u, r]) => r.importers.size === 0 && !isEntry(u));
 const oversized = [...units.values()].flatMap((r) => r.oversized).sort();
-const loose = units.get("(root files)")?.files ?? 0;
-const rootRel = relative(REPO, ROOT).split(sep).join("/");
+const loose = units.get(LOOSE)?.files ?? 0;
+const rootsRel = ROOTS.map((r) => `\`${posix(r)}/\``).join(", ");
 
 const lines = [
 	"# Codebase map (generated — do not edit)",
 	"",
-	`Regenerate with the map script; the build fails when this file is stale. Source root: \`${rootRel}/\`.`,
+	`Regenerate with the map script; the build fails when this file is stale. Source root${ROOTS.length > 1 ? "s" : ""}: ${rootsRel}.`,
 	"This file owns the facts that drift. ARCHITECTURE.md owns the meaning.",
 	"",
 	`**Definitions** — *Importers*: distinct non-test files outside the module that import it (static or dynamic). ` +
@@ -274,7 +202,7 @@ const lines = [
 	"",
 	"| Module | Importers | Files | Size | Oversized |",
 	"|---|--:|--:|:--:|--:|",
-	...rows.map(([u, r]) => `| \`${rootRel}/${u}/\`${ENTRIES.has(u) ? " *(entrypoint)*" : ""} | ${r.importers.size} | ${r.files} | ${tier(r.loc)} | ${r.oversized.length || ""} |`),
+	...rows.map(([u, r]) => `| ${name(u)}${isEntry(u) ? " *(entrypoint)*" : ""} | ${r.importers.size} | ${r.files} | ${tier(r.loc)} | ${r.oversized.length || ""} |`),
 	"",
 	"## Module dependencies",
 	"",
@@ -282,21 +210,21 @@ const lines = [
 	"",
 	"| Module | Depends on |",
 	"|---|---|",
-	...rows.map(([u, r]) => `| \`${u}/\` | ${[...r.dependsOn].sort().map((d) => `\`${d}\``).join(", ") || "—"} |`),
+	...rows.map(([u, r]) => `| ${name(u)} | ${[...r.dependsOn].sort().map(name).join(", ") || "—"} |`),
 	"",
 	"## Module cycles",
 	"",
 	"Modules that reach each other through imports. They can't be changed or tested apart; break a new cycle rather than extend it.",
 	"",
-	cycles.length ? cycles.map((g) => `- ${g.map((u) => `\`${u}/\``).join(" ⇄ ")}`).join("\n") : "None.",
+	cycles.length ? cycles.map((g) => `- ${g.map(name).join(" ⇄ ")}`).join("\n") : "None.",
 	"",
 	"## No live importer",
 	"",
-	dead.length ? dead.map(([u]) => `- \`${rootRel}/${u}/\` — dead, or reached at runtime (then pass \`--entry ${u}\`)`).join("\n") : "None.",
+	dead.length ? dead.map(([u]) => `- ${name(u)} — dead, or reached at runtime (then pass \`--entry ${u}\`)`).join("\n") : "None.",
 	"",
 	"## Oversized files",
 	"",
-	oversized.length ? oversized.map((p) => `- \`${rootRel}/${p}\``).join("\n") : "None.",
+	oversized.length ? oversized.map((p) => `- \`${p}\``).join("\n") : "None.",
 	"",
 ];
 const output = lines.join("\n");

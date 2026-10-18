@@ -59,6 +59,9 @@ export interface AppBuildAdapterOptions {
   /** The user's RAW build brief (pre-render) — what the verify gate's vision
    *  judge compares the final render against. Omitted → judge skipped. */
   brief?: string;
+  /** This op creates the app (not an update): the verify gate may give a
+   *  project the model scaffolded itself the structure kit at its done-claim. */
+  newBuild?: boolean;
   /** Persona prompt for the in-canonical-sub-agent strategy (renderPersonaPrompt). */
   systemPrompt: string;
   sessionId?: string;
@@ -150,6 +153,7 @@ export async function createAppBuildAdapter(opts: AppBuildAdapterOptions): Promi
       });
   return new AppBuildVerifyAdapter(inner, opts.appDir, opts.tier, opts.smokeGate, {
     brief: opts.brief,
+    newBuild: opts.newBuild,
     judge: opts.visionJudge,
     finalizeDeps: opts.finalizeDeps,
     urlResolver: opts.urlResolver,

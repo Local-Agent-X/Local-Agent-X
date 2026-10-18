@@ -15,11 +15,15 @@
  */
 import { describe, expect, it } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
-import { join, relative, resolve, sep } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
-// Directory containing this test = the source root. Adjust if the test lives elsewhere.
-const SRC = fileURLToPath(new URL(".", import.meta.url));
+/** The source root the seals are relative to, as a path from this file's
+ *  directory: "." when the test sits in the root (`src/`, Astro's `src/`,
+ *  a Next app-dir project's `app/`), "lib" for a SvelteKit test in `src/`
+ *  whose modules live under `src/lib/`, "../src" for a test kept in `test/`. */
+const SOURCE_ROOT = ".";
+const SRC = resolve(dirname(fileURLToPath(import.meta.url)), SOURCE_ROOT);
 
 interface Seal {
 	/** Module directory, relative to SRC. */

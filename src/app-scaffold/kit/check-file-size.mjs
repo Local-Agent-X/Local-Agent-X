@@ -73,7 +73,12 @@ const allowed = new Set(
 );
 const errors = [];
 for (const [p, loc] of oversized) {
-	if (!allowed.has(p)) errors.push(`${p}: ${loc} lines (limit ${MAX_LOC}) — split it by responsibility`);
+	if (!allowed.has(p)) {
+		errors.push(
+			`${p}: ${loc} lines (limit ${MAX_LOC}) — split it by responsibility, or, if it is a generated file ` +
+				`that must stay large, add its path to ${rel(ALLOW)}`,
+		);
+	}
 }
 for (const p of allowed) {
 	if (!oversized.has(p)) errors.push(`${p}: listed in ${rel(ALLOW)} but no longer oversized (or gone) — delete the line`);

@@ -48,7 +48,6 @@
  *
  * Runner + judge + URL resolver live in app-build-smoke-gate.ts (400-LOC cap).
  */
-import { existsSync } from "node:fs";
 import { basename } from "node:path";
 import type { Adapter, AdapterReport, TurnInput, TurnResult } from "../adapter-contract.js";
 import {
@@ -62,7 +61,7 @@ import type { AppTier } from "../../tools/app-tier.js";
 import { detectFramework } from "../../tools/framework-detect.js";
 import { getDesignSpec } from "../turn-loop/design-verify.js";
 import { finalizeFrameworkBuild, type FinalizeFrameworkDeps } from "./app-build-finalize.js";
-import { emitUnverifiedNote, emitVerifiedNote } from "./app-build-unverified-note.js";
+import { emitFailureEvidence, emitUnverifiedNote, emitVerifiedNote } from "./app-build-unverified-note.js";
 import { runAppStructureGate, type StructureGateRunner } from "./app-build-structure-gate.js";
 import { extractText } from "../turn-loop/content-extract.js";
 import {
@@ -86,14 +85,10 @@ export {
   type DevServerUrlResolver,
 } from "./app-build-smoke-gate.js";
 
-/** First line of the evidence user-message a failed gate appends to
- *  op_messages. build-session-context keys off it to thread the failure —
- *  text and screenshots — into the next update build's context. */
-export const VERIFY_EVIDENCE_MARKER = "=== BUILD VERIFY EVIDENCE ===";
-
-/** Leader of the durable assistant note a PASSING but unverified build emits.
- *  Re-exported so callers have one import surface for this adapter's markers. */
-export { SMOKE_NO_BROWSER_MARKER } from "./app-build-unverified-note.js";
+/** The markers of the durable rows this adapter emits (app-build-unverified-
+ *  note.ts): the failure evidence a rejected build leaves for its fixer, and the
+ *  note a PASSING but unverified build leaves. One import surface for callers. */
+export { SMOKE_NO_BROWSER_MARKER, VERIFY_EVIDENCE_MARKER } from "./app-build-unverified-note.js";
 
 export interface AppBuildVerifyOptions {
   /** The user's raw build brief — what the vision judge compares the render
@@ -112,6 +107,11 @@ export interface AppBuildVerifyOptions {
   finalizeDeps?: FinalizeFrameworkDeps;
   /** Test seam: the structure-kit check (app-build-structure-gate.ts). */
   structureGate?: StructureGateRunner;
+  /** This op CREATES the app (build_app's `isUpdate` was false). A new build of
+   *  a project-shaped tier adopts the structure kit at its done-claim when the
+   *  model scaffolded the project itself; an update never does. Unknown (a
+   *  persisted op from before the field) counts as an update. */
+  newBuild?: boolean;
 }
 
 export class AppBuildVerifyAdapter implements Adapter {
@@ -120,6 +120,7 @@ export class AppBuildVerifyAdapter implements Adapter {
   private readonly urlResolver: DevServerUrlResolver;
   private readonly finalizeDeps: FinalizeFrameworkDeps;
   private readonly structureGate: StructureGateRunner;
+  private readonly newBuild: boolean;
   constructor(
     private readonly inner: Adapter,
     private readonly appDir: string,
@@ -132,40 +133,10 @@ export class AppBuildVerifyAdapter implements Adapter {
     this.urlResolver = opts.urlResolver ?? resolveDevServerProxyUrl;
     this.finalizeDeps = opts.finalizeDeps ?? {};
     this.structureGate = opts.structureGate ?? runAppStructureGate;
+    this.newBuild = opts.newBuild ?? false;
   }
   get name(): string { return this.inner.name; }
   get version(): string { return this.inner.version; }
-
-  /**
-   * Durable failure evidence: a canonical user row with the gate's verdict
-   * text AND the screenshot(s) as image refs. Rides message_finalized so
-   * commitTurn persists it even on this error terminal; the images carry
-   * filePath (bytes are read at request time by the transports), so the row
-   * stays small on disk. The next update build's context seeding
-   * (build-session-context) picks it up by VERIFY_EVIDENCE_MARKER and hands
-   * the fixer the pixels, not just prose.
-   */
-  private emitFailureEvidence(
-    input: TurnInput,
-    report: (r: AdapterReport) => void,
-    detail: string,
-    screenshotPaths: Array<string | undefined>,
-  ): void {
-    const images = screenshotPaths
-      .filter((p): p is string => typeof p === "string" && existsSync(p))
-      .map((p) => ({ url: "", name: basename(p), filePath: p }));
-    report({
-      kind: "message_finalized",
-      message: {
-        messageId: `um-${input.opId}-${input.turnIdx}-verify-evidence`,
-        role: "user",
-        content: {
-          text: `${VERIFY_EVIDENCE_MARKER}\n${detail}`,
-          ...(images.length > 0 ? { images } : {}),
-        },
-      },
-    });
-  }
 
   async runTurn(input: TurnInput, report: (r: AdapterReport) => void): Promise<TurnResult> {
     // Watch the builder's OWN final assistant row on its way past. It carries
@@ -196,10 +167,14 @@ export class AppBuildVerifyAdapter implements Adapter {
     }
     // A project that carries the structure kit passes its own check before
     // anything is smoked: the check's output is the fix list, and a smoke of a
-    // project that fails its own rules would only bury it.
-    const structure = await this.structureGate(this.appDir, input.opId);
+    // project that fails its own rules would only bury it. A new build of a
+    // project-shaped tier that scaffolded its own project (a creator the
+    // harness does not run) gets the kit here first; the single-page tier is
+    // not a project and an update is never retrofitted uninvited.
+    const adoptKit = this.newBuild && this.tier !== "quick-html" ? { projectName: basename(this.appDir) } : undefined;
+    const structure = await this.structureGate(this.appDir, input.opId, { adoptKit });
     if (structure.kind === "failed") {
-      this.emitFailureEvidence(input, report, structure.detail, []);
+      emitFailureEvidence(input, report, structure.detail, []);
       report({ kind: "error", code: "structure_check_failed", message: structure.detail, retryable: false });
       return { ...result, terminalReason: "error" };
     }
@@ -301,7 +276,7 @@ export class AppBuildVerifyAdapter implements Adapter {
     const shots = [smoke.screenshotPath, smoke.interactionScreenshotPath];
     if (smoke.verdict === "fail") {
       const detail = smoke.detail ?? "smoke failed";
-      this.emitFailureEvidence(input, report, detail, shots);
+      emitFailureEvidence(input, report, detail, shots);
       // Third distinct code, for the same reason app_no_servable_target is the
       // second: "the app is broken" and "this machine could not run the gate"
       // are structurally different outcomes, and a caller that reads only the
@@ -354,7 +329,7 @@ export class AppBuildVerifyAdapter implements Adapter {
           `Screenshots: ${judgeShots.join(", ")} — read/view them before claiming a fix.`;
         // Evidence first (screenshots + reason), so a repolish pass has
         // something concrete to work from.
-        this.emitFailureEvidence(input, report, detail, shots);
+        emitFailureEvidence(input, report, detail, shots);
         // Then the durable note, which keeps the deliverable: it restates
         // APP_READY so op_wait / op_status / the phone card still hand back the
         // app instead of a complaint about it.

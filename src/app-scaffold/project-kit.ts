@@ -6,27 +6,31 @@
  * healthy.
  *
  * Applied where a project is created — the Vite scaffold, Product Build's
- * materialization, build_app's other real tiers — and never to an existing
- * tree: every file that exists is left alone, so a later retrofit is the same
- * call, made on request.
+ * materialization, build_app's other real tiers — or adopted at the first
+ * done-claim of a new build whose project the model scaffolded itself
+ * (`adoptProjectKit`), and never to an existing tree beyond that: every file
+ * that exists is left alone, so a later retrofit is the same call, made on
+ * request. What the kit writes follows the project kind on disk
+ * (project-kind.ts): the roots its checks scan, and the seal test its test
+ * runner runs.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
-  KIT_SCRIPTS, KIT_SEAL_TEST, STRUCTURE_CHECK_COMMAND, STRUCTURE_CHECK_SCRIPT, readKitFile,
+  KIT_SCRIPTS, KIT_SEAL_TEST, KIT_SEAL_TEST_PY, STRUCTURE_CHECK_COMMAND, STRUCTURE_CHECK_SCRIPT, readKitFile,
 } from "./kit-files.js";
+import { detectProjectKind, hasDependency, hasProjectFile } from "./project-kind.js";
 import { renderAdr0001, renderHistoryReadme, renderKitAgentsMd, renderKitArchitectureMd, type KitDocOptions } from "./render-docs.js";
 
 export { STRUCTURE_CHECK_COMMAND, STRUCTURE_CHECK_SCRIPT } from "./kit-files.js";
-export { structureKitPromptLine } from "./render-docs.js";
+export { structureKitAdoptionPromptLine, structureKitPromptLine } from "./render-docs.js";
 
 /** The kit's file-size ceiling: the /new-project default for new projects. */
 export const KIT_MAX_LOC = 450;
-const DEFAULT_SOURCE_ROOT = "src";
 
 export interface ProjectKitOptions {
   projectName: string;
-  /** Default `src`. */
+  /** Overrides the root the project kind implies (project-kind.ts). */
   sourceRoot?: string;
   /** See KitDocOptions.readFirst. */
   readFirst?: string[];
@@ -56,28 +60,33 @@ function readPackageJson(projectDir: string): PackageJson | null {
   }
 }
 
-const hasDependency = (pkg: PackageJson | null, name: string): boolean =>
-  !!(pkg?.dependencies?.[name] ?? pkg?.devDependencies?.[name]);
+/** The pytest template assumes tests/ beside src/; its one root constant is
+ *  rewritten for any other root. */
+function pytestSealTest(root: string): string {
+  return readKitFile(KIT_SEAL_TEST_PY).replace('SOURCE_ROOT = "../src"', `SOURCE_ROOT = "../${root}"`);
+}
 
 /**
  * The kit's files for a project, before any is written. Pure apart from reading
- * the vendored scripts, so a staged writer (Product Build's materializer) can
- * queue them with its own artifacts.
+ * the vendored scripts and the project's own files, so a staged writer (Product
+ * Build's materializer) can queue them with its own artifacts.
  */
 export function projectKitFiles(
   projectDir: string,
   opts: ProjectKitOptions,
   now: Date = new Date(),
 ): KitFile[] {
-  const sourceRoot = opts.sourceRoot ?? DEFAULT_SOURCE_ROOT;
-  const pkg = readPackageJson(projectDir);
+  const kind = detectProjectKind(projectDir);
+  const sourceRoots = opts.sourceRoot ? [opts.sourceRoot] : kind.sourceRoots;
   const docs: KitDocOptions = {
     projectName: opts.projectName,
-    sourceRoot,
-    sourceRootPresent: existsSync(join(projectDir, sourceRoot)),
+    sourceRoots,
+    absentRoots: sourceRoots.filter((r) => !existsSync(join(projectDir, r))),
     maxLoc: KIT_MAX_LOC,
-    npmScripts: pkg !== null,
-    typescript: hasDependency(pkg, "typescript"),
+    npmScripts: readPackageJson(projectDir) !== null,
+    typescript: kind.typescript,
+    language: kind.language,
+    sealTest: kind.sealTest,
     readFirst: opts.readFirst,
     environmentNotes: opts.environmentNotes,
   };
@@ -88,9 +97,12 @@ export function projectKitFiles(
     { rel: "docs/history/README.md", content: renderHistoryReadme() },
     ...KIT_SCRIPTS.map((name) => ({ rel: `scripts/${name}`, content: readKitFile(name) })),
   ];
-  // The seal test needs a runner; without vitest it would be a file nothing runs.
-  if (hasDependency(pkg, "vitest")) {
-    files.push({ rel: `${sourceRoot}/module-seals.test.ts`, content: readKitFile(KIT_SEAL_TEST) });
+  // The seal test needs a runner; without one it would be a file nothing runs.
+  // Rust and Go ship none: the compiler enforces the boundary.
+  if (kind.sealTest === "vitest") {
+    files.push({ rel: `${sourceRoots[0]}/module-seals.test.ts`, content: readKitFile(KIT_SEAL_TEST) });
+  } else if (kind.sealTest === "pytest") {
+    files.push({ rel: "tests/test_module_seals.py", content: pytestSealTest(sourceRoots[0]) });
   }
   return files;
 }
@@ -105,9 +117,9 @@ export interface ApplyKitResult {
 
 /**
  * Write the kit into an existing project directory and, when it has a
- * package.json, wire `check:structure` / `docs:map` / `deps` (/ `refs`) and put
- * the check in front of `build`. Idempotent: existing files and existing
- * scripts are never overwritten.
+ * package.json, wire `check:structure` / `docs:map` / `deps` (/ `refs`, and
+ * `test` for the seal test) and put the check in front of `build`. Idempotent:
+ * existing files and existing scripts are never overwritten.
  */
 export function applyProjectKit(projectDir: string, opts: ProjectKitOptions): ApplyKitResult {
   const written: string[] = [];
@@ -122,6 +134,19 @@ export function applyProjectKit(projectDir: string, opts: ProjectKitOptions): Ap
   return { written, skipped, wiredNpmScripts: wireNpmScripts(projectDir) };
 }
 
+/**
+ * The kit for a project someone else created: a framework creator the model
+ * ran (Next, Nuxt, SvelteKit, Astro, Remix need an empty directory, so the
+ * kit cannot go in first). Applied when the directory holds a project file
+ * and no kit yet; null when there is nothing to adopt, so a caller can tell
+ * "applied" from "nothing to do". The caller decides that this is a NEW
+ * build: an existing app is never retrofitted uninvited.
+ */
+export function adoptProjectKit(projectDir: string, opts: ProjectKitOptions): ApplyKitResult | null {
+  if (structureCheckCommand(projectDir) !== null || !hasProjectFile(projectDir)) return null;
+  return applyProjectKit(projectDir, opts);
+}
+
 /** The kit's npm scripts, added only where absent; `build` runs the structure
  *  check first unless it already does. Returns whether anything changed. */
 function wireNpmScripts(projectDir: string): boolean {
@@ -133,6 +158,7 @@ function wireNpmScripts(projectDir: string): boolean {
     "docs:map": "node scripts/codebase-map.mjs",
     deps: "node scripts/codebase-map.mjs --deps",
     ...(hasDependency(pkg, "typescript") ? { refs: "node scripts/code-refs.mjs" } : {}),
+    ...(hasDependency(pkg, "vitest") ? { test: "vitest run" } : {}),
   };
   let changed = false;
   for (const [name, command] of Object.entries(wanted)) {

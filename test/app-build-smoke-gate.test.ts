@@ -14,7 +14,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import type { Adapter, AdapterReport, TurnInput } from "../src/canonical-loop/adapter-contract.js";
 import {
   AppBuildVerifyAdapter,
@@ -147,6 +147,28 @@ describe("AppBuildVerifyAdapter — structure gate", () => {
     });
     const { report } = collect();
     expect((await adapter.runTurn(turnInput(), report)).terminalReason).toBe("done");
+  });
+
+  // A creator the harness does not run (Next, Nuxt, …) needs an empty dir, so
+  // the kit is adopted at the first done-claim: only for a NEW build of a
+  // project-shaped tier. An update, the single-page tier and an op of unknown
+  // intent (persisted before the field) are never retrofitted.
+  it.each([
+    ["new frontend-spa build", { newBuild: true, tier: "frontend-spa" }, { projectName: "" }],
+    ["new full-stack build", { newBuild: true, tier: "full-stack" }, { projectName: "" }],
+    ["new build, tier unknown", { newBuild: true, tier: undefined }, { projectName: "" }],
+    ["new quick-html build", { newBuild: true, tier: "quick-html" }, undefined],
+    ["update", { newBuild: false, tier: "frontend-spa" }, undefined],
+    ["intent unknown", { newBuild: undefined, tier: "frontend-spa" }, undefined],
+  ] as const)("hands the structure gate the kit adoption only for a new project-shaped build: %s", async (_name, build, adopt) => {
+    const appDir = makeStaticAppDir();
+    const seen: unknown[] = [];
+    const adapter = new AppBuildVerifyAdapter(doneInner, appDir, build.tier, async () => ({ verdict: "pass" }), {
+      newBuild: build.newBuild,
+      structureGate: async (_dir, _opId, opts) => { seen.push(opts?.adoptKit); return { kind: "skipped" }; },
+    });
+    await adapter.runTurn(turnInput(), collect().report);
+    expect(seen).toEqual([adopt ? { projectName: basename(appDir) } : undefined]);
   });
 });
 

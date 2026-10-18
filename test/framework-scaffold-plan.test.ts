@@ -39,6 +39,12 @@ describe("viteScaffoldPlan", () => {
     const css = viteScaffoldPlan("x").files.find((f) => f.path === "src/index.css");
     expect(css?.content).toContain('@import "tailwindcss"');
   });
+  it("installs vitest as a dev dependency so the kit's seal test has a runner, at the current version like the creator's own deps", () => {
+    const commands = viteScaffoldPlan("x").commands;
+    expect(commands).toContain("npm install --save-dev vitest");
+    expect(commands.indexOf("npm install --save-dev vitest")).toBeGreaterThan(commands.indexOf("npm install"));
+    expect(commands.some((c) => /vitest@/.test(c))).toBe(false);
+  });
   it("owns package.json + config, not src/", () => {
     const owned = viteScaffoldPlan("x").manifest.ownedPaths;
     expect(owned).toContain("package.json");

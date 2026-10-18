@@ -335,6 +335,16 @@ describe("renderPerBuildContext — tier-specific RULES (the honest boundary)", 
     expect(out).not.toContain("FULL-STACK MODE");
   });
 
+  it("frontend-spa: the kit line matches when the kit arrives — present from the start for the owned Vite baseline, adopted at the first done-claim for a creator the model runs", () => {
+    const vite = renderPerBuildContext({ ...SAMPLE_CREATE, tier: "frontend-spa" });
+    expect(vite).toContain("The project carries AGENTS.md and ARCHITECTURE.md");
+    expect(vite).not.toContain("the harness adds the structure kit");
+    const next = renderPerBuildContext({ ...SAMPLE_CREATE, prompt: "Build a Next.js todo app", tier: "frontend-spa" });
+    expect(next).toContain("When you first report done, the harness adds the structure kit");
+    expect(next).not.toContain("The project carries AGENTS.md");
+    expect(next).toContain("node scripts/check-structure.mjs");
+  });
+
   it("frontend-spa suppresses the seeded-starter line (no seed for it either)", () => {
     const out = renderPerBuildContext({ ...SAMPLE_CREATE, tier: "frontend-spa" });
     expect(out).not.toContain("An index.html starter + AGENTS.md have been seeded");

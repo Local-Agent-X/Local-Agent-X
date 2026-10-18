@@ -17,6 +17,7 @@ export const STRUCTURE_CHECK_COMMAND = `node ${STRUCTURE_CHECK_SCRIPT}`;
 
 /** The scripts every kit project gets, by their path in the project. */
 export const KIT_SCRIPTS = [
+  "project-languages.mjs",
   "codebase-map.mjs",
   "check-file-size.mjs",
   "check-doc-paths.mjs",
@@ -25,9 +26,10 @@ export const KIT_SCRIPTS = [
   "code-refs.mjs",
 ] as const;
 
-/** The module-seal test template, stored with a .txt suffix so it is never
- *  this repo's test. */
+/** The module-seal test templates (vitest, pytest), stored with a .txt suffix
+ *  so neither is ever this repo's test. */
 export const KIT_SEAL_TEST = "module-seals.test.ts.txt";
+export const KIT_SEAL_TEST_PY = "test_module_seals.py.txt";
 
 export function readKitFile(name: string): string {
   return readFileSync(join(KIT_DIR, name), "utf-8");

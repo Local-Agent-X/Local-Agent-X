@@ -200,6 +200,7 @@ export function registerAppBuildRuntime(
       systemPrompt: descriptor.systemPrompt,
       model: descriptor.model,
       tier: descriptor.tier,
+      newBuild: descriptor.isUpdate === false,
       sessionId: descriptor.adapterSessionId ?? op.id,
     });
   });

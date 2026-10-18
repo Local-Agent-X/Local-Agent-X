@@ -1,7 +1,9 @@
 /**
- * The durable "nobody ever opened this app" note that a PASSING app_build turn
- * emits when the smoke gate could not launch a browser, and (composeVerifiedNote
- * below) the receipt it emits when the gate did open the app and it passed.
+ * The durable rows the app_build verify gate emits: the failure evidence a
+ * rejected build leaves for its fixer (emitFailureEvidence), the "nobody ever
+ * opened this app" note a PASSING turn emits when the smoke gate could not
+ * launch a browser, and (composeVerifiedNote below) the receipt it emits when
+ * the gate did open the app and it passed.
  *
  * Why it is not just a stream chunk: a `[verify] smoke gate skipped` chunk dies
  * with the live bubble, so the user would never learn — after the fact — that
@@ -25,7 +27,44 @@
  * builder's own report. The URL sits near the TOP because both op_wait (2000
  * chars) and op_status (1500) truncate the tail.
  */
+import { existsSync } from "node:fs";
+import { basename } from "node:path";
 import type { AdapterReport, TurnInput } from "../adapter-contract.js";
+
+/** First line of the evidence user-message a failed gate appends to
+ *  op_messages. build-session-context keys off it to thread the failure —
+ *  text and screenshots — into the next update build's context. */
+export const VERIFY_EVIDENCE_MARKER = "=== BUILD VERIFY EVIDENCE ===";
+
+/**
+ * Durable failure evidence: a canonical user row with the gate's verdict text
+ * AND the screenshot(s) as image refs. Rides message_finalized so commitTurn
+ * persists it even on an error terminal; the images carry filePath (bytes are
+ * read at request time by the transports), so the row stays small on disk.
+ * The next update build's context seeding (build-session-context) picks it up
+ * by VERIFY_EVIDENCE_MARKER and hands the fixer the pixels, not just prose.
+ */
+export function emitFailureEvidence(
+  input: TurnInput,
+  report: (r: AdapterReport) => void,
+  detail: string,
+  screenshotPaths: Array<string | undefined>,
+): void {
+  const images = screenshotPaths
+    .filter((p): p is string => typeof p === "string" && existsSync(p))
+    .map((p) => ({ url: "", name: basename(p), filePath: p }));
+  report({
+    kind: "message_finalized",
+    message: {
+      messageId: `um-${input.opId}-${input.turnIdx}-verify-evidence`,
+      role: "user",
+      content: {
+        text: `${VERIFY_EVIDENCE_MARKER}\n${detail}`,
+        ...(images.length > 0 ? { images } : {}),
+      },
+    },
+  });
+}
 
 /** Leader of the note. Tests and any future reader key off this, not prose. */
 export const SMOKE_NO_BROWSER_MARKER = "NOT VERIFIED —";

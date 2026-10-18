@@ -155,6 +155,10 @@ export interface AppBuildRuntimeDescriptor {
   adapterSessionId?: string;
   model?: string;
   tier?: "quick-html" | "frontend-spa" | "full-stack" | "compiled-native";
+  /** build_app's caller intent: false creates the app, true modifies an
+   *  existing one. Absent on ops persisted before the field; readers treat
+   *  that as an update (the safe reading: never retrofit an existing app). */
+  isUpdate?: boolean;
 }
 
 export type DelegatedProviderRuntime = "anthropic" | "codex" | "gemini-native" | "openai-compat";

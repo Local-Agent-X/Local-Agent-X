@@ -41,6 +41,7 @@
     "test": "tsx src/test-suite.ts",
     "test:unit": "vitest run",
     "test:desktop": "vitest run --config desktop/vitest.config.ts",
+    "test:scaffold-live": "vitest run --config vitest.scaffold-live.config.ts",
     "test:prepare": "tsx -e \"import { writeManifest } from './src/manifest-generator/index.ts'; writeManifest()\"",
     "test:release-full": "npm run check:release-environment && npm run test:prepare && npm run test:unit && npm run test:desktop && npm run test:replay && npm run test:integration",
     "test:integration": "node scripts/run-api-integration.mjs",

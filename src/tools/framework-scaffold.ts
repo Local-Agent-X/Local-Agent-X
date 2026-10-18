@@ -62,6 +62,14 @@ const SCAFFOLDS: Record<Exclude<DetectedFramework, "static" | "unknown">, Framew
 	},
 };
 
+/** Every framework's official creator command, for the live scaffold test
+ *  (test/scaffold-live.test.ts) that runs each one for real. */
+export function scaffoldCreators(): Array<{ framework: keyof typeof SCAFFOLDS; label: string; creator: string }> {
+	return (Object.keys(SCAFFOLDS) as Array<keyof typeof SCAFFOLDS>).map((framework) => ({
+		framework, label: SCAFFOLDS[framework].label, creator: SCAFFOLDS[framework].creator,
+	}));
+}
+
 /** Resolve the scaffold for a prompt-inferred framework; unnamed/static → Vite default. */
 function scaffoldFor(framework: DetectedFramework): FrameworkScaffold {
 	if (framework === "static" || framework === "unknown") return SCAFFOLDS.vite;
@@ -115,14 +123,18 @@ export function harnessOwnsScaffold(framework: DetectedFramework): boolean {
 }
 
 /** The deterministic Vite + React + TS + Tailwind-v4 baseline the harness runs
- *  and owns. Pure — command/file STRINGS only; execution lives in
- *  build-app-spawn.ts (the audited subprocess boundary). */
+ *  and owns, with vitest as the test runner so the structure kit's module-seal
+ *  test (src/app-scaffold) has something to run it. Pure — command/file STRINGS
+ *  only; execution lives in build-app-spawn.ts (the audited subprocess
+ *  boundary). Dependencies are installed at their current versions, like the
+ *  creator's own: the point of running the creator is today's baseline. */
 export function viteScaffoldPlan(appName: string): ScaffoldPlan {
 	return {
 		commands: [
 			"npm create vite@latest . -- --template react-ts",
 			"npm install",
 			"npm install tailwindcss @tailwindcss/vite",
+			"npm install --save-dev vitest",
 		],
 		files: [
 			{ path: "vite.config.ts", content: viteConfigText(appName) },

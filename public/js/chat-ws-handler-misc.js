@@ -54,6 +54,11 @@ function handleSettingsChanged(msg) {
   if ('skillReviewEnabled' in msg.settings && typeof renderSkillReviewEnabled === 'function') {
     renderSkillReviewEnabled(msg.settings.skillReviewEnabled);
   }
+  // The classifier model pin (Settings → AI & Models → Local Runtimes): the
+  // picker repaints from the broadcast value, over the models it last listed.
+  if ('localClassifierModel' in msg.settings && typeof renderLocalClassifierModel === 'function') {
+    renderLocalClassifierModel(msg.settings.localClassifierModel);
+  }
   // Web access (mode + allowed sites) changed from the chat's "Allow & retry"
   // notice or another tab: the Settings section redraws from the broadcast.
   if (msg.settings.egress && typeof renderWebAccess === 'function') {
@@ -67,7 +72,8 @@ function handleSettingsChanged(msg) {
   }
   // The rest of the Tool Policy card (supervised browser, secrecy ladder,
   // strict local-only, UI event bus, deliverable verification, the regression
-  // audit target): re-read the card, which draws every one of them.
+  // audit target) and the switches its loader paints on other tabs (paid media,
+  // provider failover): re-read the card, which draws every one of them.
   if (TOOL_POLICY_CARD_FIELDS.some(k => k in msg.settings) && typeof loadToolPolicyToggles === 'function') {
     loadToolPolicyToggles();
   }
@@ -84,7 +90,7 @@ function handleSettingsChanged(msg) {
 
 // Settings the Tool Policy card draws besides the three kill-switches above;
 // src/chat-ws/frames.test.ts holds this list against the keys the server sends.
-const TOOL_POLICY_CARD_FIELDS = ['supervisedBrowser', 'browserSecrecy', 'localOnlyMode', 'enableUiEventBus', 'verifyDeliverables', 'regressionAuditProvider', 'regressionAuditModel', 'imageEngine', 'allowPaidMediaApis'];
+const TOOL_POLICY_CARD_FIELDS = ['supervisedBrowser', 'browserSecrecy', 'localOnlyMode', 'enableUiEventBus', 'verifyDeliverables', 'regressionAuditProvider', 'regressionAuditModel', 'imageEngine', 'allowPaidMediaApis', 'allowRuntimeFailover'];
 
 function handleSidebarPinsChanged(msg) {
   try {

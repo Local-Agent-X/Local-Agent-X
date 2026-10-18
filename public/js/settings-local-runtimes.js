@@ -127,12 +127,14 @@ async function loadLocalRuntimesEditor() {
     list.dataset.wired = '1';
   }
   try {
-    const [data, setup] = await Promise.all([
+    const [data, setup, settings] = await Promise.all([
       apiJson('/api/local-runtimes'),
       apiJson('/api/setup/status').catch(() => ({ hardwareProfile: null })),
+      apiJson('/api/settings').catch(() => ({})),
     ]);
     const manual = data.manual || [];
     const discovered = data.runtimes || [];
+    renderLocalClassifierPicker(installedLocalModelIds(discovered), settings.localClassifierModel);
     const profile = setup && typeof setup === 'object' ? setup.hardwareProfile || null : null;
     const advisories = new Map((Array.isArray(profile?.modelAdvisories) ? profile.modelAdvisories : [])
       .filter((item) => item && typeof item === 'object' && typeof item.model === 'string')
@@ -255,4 +257,51 @@ async function removeLocalRuntime(baseUrl) {
   } catch {}
   await loadLocalRuntimesEditor();
   window.refreshProviderPicker?.();
+}
+
+// ── Background model for classifiers (the localClassifierModel setting) ──
+//
+// The picker offers every model the discovered runtimes serve; the blank
+// option is the provider's own background model, which for `local` and
+// `ollama-cloud` is the chat model (src/providers/background-model.ts). A pin
+// that names a model no runtime serves any more stays selectable and flagged,
+// so it can be seen and cleared instead of vanishing while still in force.
+
+let localClassifierInstalled = [];
+
+function installedLocalModelIds(discovered) {
+  return [...new Set(discovered.flatMap((runtime) => (Array.isArray(runtime.models) ? runtime.models : []).map((model) => model.id)))].sort();
+}
+
+function renderLocalClassifierPicker(installed, pinned) {
+  const select = document.getElementById('cfg-local-classifier-model');
+  if (!select) return;
+  localClassifierInstalled = installed;
+  const current = typeof pinned === 'string' ? pinned.trim() : '';
+  const options = ['<option value="">None — the provider\'s background model (your chat model)</option>']
+    .concat(installed.map((id) => `<option value="${esc(id)}">${esc(id)}</option>`));
+  if (current && !installed.includes(current)) options.push(`<option value="${esc(current)}">${esc(current)} (not installed)</option>`);
+  select.innerHTML = options.join('');
+  select.value = current;
+}
+
+// Another tab or the agent changed the pin: repaint over the models last listed.
+function renderLocalClassifierModel(value) {
+  renderLocalClassifierPicker(localClassifierInstalled, value);
+}
+
+// Saves through the generic settings route; on failure the card is re-read so
+// the picker shows the value that actually persisted.
+async function saveLocalClassifierModel(value) {
+  try {
+    const r = await apiFetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ localClassifierModel: value }),
+    });
+    if (!r.ok) throw new Error('save failed');
+  } catch (e) {
+    console.warn('[local-runtimes] classifier model save failed', e);
+    loadLocalRuntimesEditor();
+  }
 }

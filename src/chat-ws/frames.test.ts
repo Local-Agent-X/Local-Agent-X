@@ -36,11 +36,8 @@ const NO_BROWSER_CONSUMER: Record<string, string> = {
   "app:event": "consumed by the app runtime's own clients, not the chat shell",
 };
 
-/** `settings_changed` keys the tab deliberately does not redraw for. */
-const SETTINGS_WITHOUT_TAB_HANDLER: Record<string, string> = {
-  allowRuntimeFailover: "no card shows it; the server reads it when a run's provider fails",
-  localClassifierModel: "no card shows it; the server reads it when a classifier call is routed",
-};
+/** `settings_changed` keys the tab deliberately does not redraw for, each with why. */
+const SETTINGS_WITHOUT_TAB_HANDLER: Record<string, string> = {};
 
 interface Consumed { name: string; where: string }
 

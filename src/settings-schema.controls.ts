@@ -24,7 +24,7 @@ export const CONTROL_SETTINGS: ReadonlyArray<FlippableSetting> = [
     validate: z.boolean(),
     runtime: false,
     broadcast: true,
-    description: "Explicit opt-in for autonomous cross-provider or cross-model recovery. Off by default; exact-runtime retries remain autonomous and bounded",
+    description: "Switch a failed background run to another connected provider or model (on an auth, billing, rate-limit, overload, server-error or timeout failure) and resume it from its last checkpoint; the switch is announced as a line in that run's activity feed. Off by default: a failed run waits and retries on the provider the user chose. Chat turns never switch; exact-runtime retries stay autonomous and bounded",
   },
   // ── Runtime-bound (server reads, must mirror to config.json) ──
   {
@@ -241,7 +241,7 @@ export const CONTROL_SETTINGS: ReadonlyArray<FlippableSetting> = [
     validate: z.string(),
     runtime: false,
     broadcast: true,
-    description: "Local model to run classifiers/background work on (e.g. llama3.2:3b). Only applies to the 'local' and 'ollama-cloud' providers, which have no declared background model. Empty = auto-pick the smallest small non-reasoning model found by the local-runtimes sweep, else fall back to your chat model. Pick a SMALL non-reasoning model: classifiers get an 8s budget and a thinking or 27B+ model burns it and silently returns no verdict",
+    description: "Local model to run classifiers/background work on (e.g. llama3.2:3b). Only applies to the 'local' and 'ollama-cloud' providers, which have no declared background model. Empty = the chat model (nothing smaller is chosen for you: src/providers/background-model.ts). Pick a SMALL non-reasoning model: classifiers get an 8s budget and a thinking or 27B+ model burns it and silently returns no verdict",
   },
   {
     field: "reasoningEffort",

@@ -32,6 +32,8 @@ async function loadToolPolicyToggles() {
     setToolPolicyToggle('cfg-toggle-paid-media', s.allowPaidMediaApis === true);
     // Deliverable verification pass defaults ON (!== false).
     setToolPolicyToggle('tp-toggle-verify-deliverables', s.verifyDeliverables !== false);
+    // Provider failover for background runs (Settings → AI & Models) defaults OFF (=== true).
+    setToolPolicyToggle('cfg-toggle-runtime-failover', s.allowRuntimeFailover === true);
     // Regression-audit gate's optional second-provider target. Empty (default)
     // = same-model fresh-context audit; the select's blank option covers that.
     const auditProviderSelect = document.getElementById('tp-select-regression-audit-provider');

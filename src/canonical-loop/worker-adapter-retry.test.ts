@@ -10,12 +10,21 @@
  * halves: committed work does NOT suppress the retry, and the attempt cap
  * still ends it.
  */
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Op } from "../ops/types.js";
 import type { OpTurnRow } from "./types.js";
+
+// The real failover runs underneath; one test below hands it a switch, since a
+// genuine one needs a second credentialed provider on the box.
+const failoverMock = vi.hoisted(() => ({ attempt: vi.fn() }));
+vi.mock("./runtime-failover.js", async (importOriginal) => {
+  const real = await importOriginal<typeof import("./runtime-failover.js")>();
+  failoverMock.attempt.mockImplementation(real.attemptRuntimeFailover);
+  return { ...real, attemptRuntimeFailover: failoverMock.attempt };
+});
 
 // op-store binds its base dir at import, so the override must land first.
 const previousDataDir = process.env.LAX_DATA_DIR;
@@ -23,9 +32,10 @@ const dataDir = mkdtempSync(join(tmpdir(), "lax-worker-adapter-retry-"));
 process.env.LAX_DATA_DIR = dataDir;
 
 const { handleAdapterRetry } = await import("./worker-adapter-retry.js");
-const { insertOpTurn, readOpTurns } = await import("./store.js");
+const { insertOpTurn, readOpTurns, readCanonicalEvents } = await import("./store.js");
 const { readOp, writeOp } = await import("../ops/op-store.js");
 const { opCommittedWork } = await import("../committing-tool-check.js");
+const { trackOpForSession, setSessionBroadcaster } = await import("../ops/session-bridge.js");
 
 afterAll(() => {
   if (previousDataDir === undefined) delete process.env.LAX_DATA_DIR;
@@ -114,5 +124,31 @@ describe("handleAdapterRetry recovery gating", () => {
     expect(outcome).toBe("exhausted");
     expect(readOp(opId)?.canonical?.state).toBe("failed");
     expect(readOp(opId)?.lastFailureReason).toBe("adapter_retry_exhausted:server_error");
+  });
+});
+
+// The owner's rule: no silent fallback. A switch to another provider (the
+// allowRuntimeFailover opt-in) is announced where the run's other notices go —
+// a progress line of that run in its session's activity feed, which the
+// session-bridge observer draws from the op's own canonical `error` event.
+describe("a runtime failover says so", () => {
+  it("names the provider and model the run moved to, as a line in the run's activity feed", async () => {
+    const opId = uid("failover");
+    const op = writeRunningOp(opId);
+    trackOpForSession(opId, `sess-${opId}`, "adapter retry contract");
+    const broadcast = vi.fn();
+    setSessionBroadcaster(broadcast);
+    failoverMock.attempt.mockResolvedValueOnce({ kind: "switched", delayMs: 5_000, targetIdentity: "openai:gpt-5", provider: "openai", model: "gpt-5" });
+
+    expect(await handleAdapterRetry(op, "rate_limit", "429 rate limit exceeded")).toBe("retrying");
+
+    const announced = readCanonicalEvents(opId).find((e) => e.type === "error" && (e.body as { code?: string } | null)?.code === "runtime_failover");
+    expect((announced?.body as { message: string }).message).toContain("openai/gpt-5");
+    const lines = broadcast.mock.calls
+      .map(([, ev]) => ev as { type: string; opId?: string; line?: string })
+      .filter((ev) => ev.type === "bg_op_progress" && ev.opId === opId)
+      .map((ev) => ev.line ?? "");
+    expect(lines.some((line) => line.includes("runtime_failover") && line.includes("openai/gpt-5"))).toBe(true);
+    expect(readOp(opId)?.canonical?.state).toBe("queued");
   });
 });

@@ -42,8 +42,13 @@ const lf = (text) => text.replace(/\r\n/g, "\n");
 const readLf = (path) => lf(readFileSync(path, "utf-8"));
 const hashOf = (text) => createHash("sha256").update(text).digest("hex");
 
+/** The skill checkout to compare against. NEW_PROJECT_SKILL_DIR, when set, is
+ *  the one place looked at (a path with no skill there means "skip the
+ *  upstream half", said aloud below — for a build while the skill is being
+ *  edited); otherwise the user's installed skill. */
 export function findUpstream() {
-  const candidates = [process.env.NEW_PROJECT_SKILL_DIR, join(homedir(), ".claude", "skills", "new-project")].filter(Boolean);
+  const env = process.env.NEW_PROJECT_SKILL_DIR;
+  const candidates = env !== undefined ? [env] : [join(homedir(), ".claude", "skills", "new-project")];
   return candidates.find((dir) => existsSync(join(dir, "scripts", "codebase-map.mjs"))) ?? null;
 }
 

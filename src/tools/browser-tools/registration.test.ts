@@ -8,11 +8,10 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("../../config.js", () => ({ getRuntimeConfig: () => ({ browserSecrecy: "ask" }) }));
 
-import { BROWSER_TOOL_DESCRIPTION, BROWSER_TOOL_PARAMETERS } from "./description.js";
+import { BROWSER_TOOL_DESCRIPTION, BROWSER_TOOL_PARAMETERS, describeBrowserCall } from "./description.js";
 import { RESET_ACTIONS, TRACKED_ACTIONS, READ_ONLY_ACTIONS, HUMAN_VERIFICATION_BLOCKED_ACTIONS } from "./action-tables.js";
 import { sensitivePageActionDecision } from "../../browser/sensitive-pages.js";
 import { deriveAriAction } from "../../tool-execution/ari-action-map.js";
-import { buildApprovalContext } from "../../tool-execution/approval-context.js";
 import { TOOL_POLICIES_NETWORK } from "../../tool-policy/tool-policies.network.js";
 
 const BANK = "https://chase.com/account";
@@ -60,11 +59,11 @@ describe("browser action registration: emulate", () => {
   });
 
   it("8. renders a truthful approval label naming the device / size and that the login drops", () => {
-    const label = buildApprovalContext("browser", { action: "emulate", device: "iphone" });
+    const label = describeBrowserCall({ action: "emulate", device: "iphone" });
     expect(label).toMatch(/emulated/i);
     expect(label).toMatch(/iphone/);
     expect(label).toMatch(/login is dropped/i);
-    const sized = buildApprovalContext("browser", { action: "emulate", viewport_width: 360, viewport_height: 640 });
+    const sized = describeBrowserCall({ action: "emulate", viewport_width: 360, viewport_height: 640 });
     expect(sized).toContain("360x640");
   });
 
@@ -118,7 +117,7 @@ describe("browser action registration: layout_report", () => {
   });
 
   it("8. has no bespoke approval label — the generic one is truthful for a read", () => {
-    expect(buildApprovalContext("browser", { action: "layout_report" })).toBe("Browser: layout_report");
+    expect(describeBrowserCall({ action: "layout_report" })).toBe("Browser: layout_report");
   });
 
   it("9. is covered by the browser tool policy's catch-all allow, with no per-action override", () => {

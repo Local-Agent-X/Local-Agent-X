@@ -13,7 +13,7 @@ import { checkEditSyntax, syntaxRejectionMessage } from "./syntax-validate.js";
 import { checkHardcodedHomePath } from "./portable-path-check.js";
 import { checkAppWrite, writeGuardRejectionMessage } from "./app-tools/write-guard.js";
 import { createLogger } from "../logger.js";
-import { appUrlHint, servedFileHint } from "./file-hints.js";
+import { appUrlHint, cardFileName, servedFileHint } from "./file-hints.js";
 import { connectorManifestWriteRejection } from "./connector-write-guard.js";
 import {
   locateOccurrences,
@@ -127,6 +127,7 @@ export const editTool: ToolDefinition = {
   effect: { class: "non-idempotent" },
   description:
     "Edit a file by replacing a string. Matching is forgiving — it tolerates CRLF/LF and indentation differences, so you don't need byte-perfect whitespace, but the content must be right. PREFER THIS over `bash sed/awk/heredoc` for targeted edits (no length limit; bash is capped at 2000 chars). Pass replace_all:true to change every occurrence. If you know the line numbers from a recent read, edit_lines is even more reliable; to make several changes at once, use multi_edit; for the SAME replacement across many files, use bulk_replace.",
+  describeCall: (args) => `Edit file: ${cardFileName(args.path)}`,
   parameters: {
     type: "object",
     properties: {

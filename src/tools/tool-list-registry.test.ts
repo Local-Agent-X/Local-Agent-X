@@ -65,12 +65,7 @@ const REGISTRY: readonly Registered[] = [
   { file: "src/tool-tracker.ts", owner: "CATEGORY_TOOLS" },
   { file: "src/tool-execution/heap-guard.ts", owner: "HEAP_GUARD_EXEMPT_TOOLS" },
   { file: "src/committing-tool-check.ts", owner: "ARG_AWARE_TOOLS" },
-  { file: "src/tool-execution/approval-context.ts", owner: "buildApprovalContext()" },
   // What the resolver stamps into which call.
-  { file: "src/tool-execution/resolve-tool.ts", owner: "SESSION_SCOPED_TOOLS" },
-  { file: "src/tool-execution/resolve-tool.ts", owner: "OPERATION_SCOPED_TOOLS" },
-  { file: "src/tool-execution/resolve-tool.ts", owner: "USER_MESSAGE_SOURCED_TOOLS" },
-  { file: "src/tool-execution/resolve-tool.ts", owner: "injectSessionState()" },
   { file: "src/tool-execution/egress-payload.ts", owner: "LOCAL_CONTROL_ARGS" },
   { file: "src/tools/plugins.ts", owner: "SESSION_ONEVENT_TOOLS" },
   { file: "src/tools/plugins.ts", owner: "ARI_BRIDGE_CLASS" },

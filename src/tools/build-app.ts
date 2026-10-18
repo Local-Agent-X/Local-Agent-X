@@ -159,6 +159,7 @@ export const buildAppTool: ToolDefinition = {
   compactDescription: "Build a complete web app in workspace/apps/. Returns an op id immediately; the build streams progress and emits APP_READY: <url> when done. For NEW apps and LARGE rewrites — small edits use read + edit.",
   description:
     "Build a complete web app in workspace/apps/. Returns an op id immediately; the build runs as an app_build canonical op (sidebar streams progress; APP_READY: <url> emits on completion). Use this for NEW apps and LARGE rewrites. For small edits to existing apps, prefer read + edit directly.",
+  describeCall: (args) => `Build app: ${String(args.name || "")}`,
   parameters: {
     type: "object",
     properties: {

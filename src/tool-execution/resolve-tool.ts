@@ -15,7 +15,8 @@ import { toolMessage, toolMessageStatus, type CarriedToolMessage } from "./tool-
 import { getRiskLevel, buildApprovalContext } from "./approval-context.js";
 import { ARI_ACTION_MAP } from "./enforce-policy.js";
 import { sessionWorkRootOf } from "../workspace/paths.js";
-import { CAPABILITY_CLASS_MEMBERS, TOOL_PATH_ARGS } from "../tool-registry.js";
+import { anchorsShellAtCwd, CAPABILITY_CLASS_MEMBERS, readsStamp } from "../tool-registry.js";
+import type { TrustedStamp } from "../tool-policy/tool-policies.types.js";
 import { LIVE_STATE_TOOLS } from "./stateful-tools.js";
 import { readOpMessages } from "../canonical-loop/index.js";
 import { READ_DEDUP_STUB_LEAD } from "./read-dedup-evidence.js";
@@ -30,92 +31,6 @@ const dryRunSessions = new Set<string>();
 export function markDryRunSession(sessionId: string): void { dryRunSessions.add(sessionId); }
 /** Clear the dry-run flag — call from a finally block. */
 export function unmarkDryRunSession(sessionId: string): void { dryRunSessions.delete(sessionId); }
-
-// Tools that need session-scoped state stamped into their args.
-export const SESSION_SCOPED_TOOLS = new Set([
-  "enter_plan_mode", "exit_plan_mode", "usage_report",
-  "browser",
-  // http_request's own outbound check vouches for IDs the destination's site
-  // showed this session (site-provenance.ts vouchedFor), as the egress gate does.
-  "http_request",
-  // connector_create and email_setup run the secret destination ladder, whose
-  // same-session rung is keyed on the trusted session.
-  "connector_create", "email_setup",
-  // agent_create caps what an agent may grant by the calling run's own tools.
-  "agent_spawn", "agent_create", "browser_capture_to_secret", "browser_fill_from_secret",
-  // generate_image reads the engine pinned to a scheduled run's session
-  // (image-tools/image-engine.ts); edit_image has path args and is stamped below.
-  "generate_image",
-  "session_status", "request_secret", "request_secrets",
-  // show_unblock_control reads THIS session's taint registry; the trusted
-  // stamp is what keeps it from being pointed at another session's state.
-  "show_unblock_control",
-  "voice_visual",
-  // task_create stamps the session onto the task so the open-steps completion
-  // gate can scope "unfinished work" to this conversation; task_list/task_get
-  // filter by it (task-tools.ts).
-  "task_create", "task_update", "task_list", "task_get",
-  // op_kill with no op_id kills THIS session's newest op; op_submit_batch
-  // threads the session into every task it submits.
-  "op_submit", "op_submit_async", "op_submit_batch", "op_wait", "op_status", "op_kill",
-  // read_my_logs reads this conversation's action ledger, never another's.
-  "read_my_logs",
-  // restart / apply_update ping the requester back on the channel the request
-  // came in on (restart-notify.ts resolveNotifyTarget).
-  "restart", "apply_update",
-  // The collapsed family's name, not the inner protocol_* names: dispatch only
-  // ever sees `protocol`, and its inner actions record the calling session.
-  "protocol",
-  // A build reports to, and its workflow state belongs to, the chat that
-  // started or resumed it (kickoff.ts; orchestrator/tools.ts).
-  "run_build_plan", "build_plan_resume",
-  "memory_search", "search_past_sessions", "memory_save", "remember", "update_fact",
-  // recall resolves session→op from the trusted _sessionId (recall-tool.ts).
-  "recall",
-  "memory_set_user_field", "memory_update_profile",
-  "project_brief_update", "project_create",
-  "self_edit",
-  "build_app", "start_app_build", "finalize_app_build",
-  // The design gate records delivery per session (app-tools/design-gate.ts),
-  // and a write checks the same session's record.
-  "app_design_brief",
-  "agent_escalate",
-  // agent_wakeup / issue_update wake other agents through the canonical
-  // invoke door; the trusted _sessionId is how they derive the calling RUN
-  // for spawn lineage (callerRunIdFromSession in agents/invoke.ts) so the
-  // woken agent nests under its caller instead of rendering as a root.
-  "agent_wakeup", "issue_update",
-  // AriKernel bridge synonyms: stamp the trusted `_sessionId` so the bridge
-  // derives runId/principal from trusted context (arikernel-bridge.ts), not
-  // from forged model-supplied `_runId`/`_principalId`.
-  "ari_file", "ari_http", "ari_database", "ari_retrieval", "ari_sqlite",
-  // The file-access gate judges process_start/_restart's cwd and the sql_*
-  // database path with the call's session (kernel-class-policy.ts); the tool
-  // resolves the same argument with this stamp.
-  "process_start", "process_restart", "sql_query", "sql_schema", "sql_explain",
-  // Every tool whose path arguments the file-access gate judges: the gate
-  // resolved each one with this call's session, so the tool resolves it with
-  // the same one (sessionIdOf(args)). Without the stamp a work-rooted session
-  // (auto-build chunk worker, IDE project) gates <workRoot>/x and opens
-  // <workspace>/x (live failure 2026-07-02: a worker's relative read).
-  ...Object.keys(TOOL_PATH_ARGS),
-]);
-
-// `protocol` is the model-facing collapsed family; the inner name stays for
-// direct/core callers. A nested `params._operationId` never reaches the inner
-// tool (collapse-family.ts drops a model's `_` keys there), so the flat stamp
-// is the only one. show_unblock_control reads the kernel scope of the op it
-// runs in, which is keyed by the trusted operation id, never a model-supplied one.
-// The delegation tools key spawn lineage and the child's inherited bans on the
-// CALLING op (ops/delegation.ts) — the trusted id, not a guess from the session.
-const OPERATION_SCOPED_TOOLS = new Set([
-  "protocol", "protocol_get", "show_unblock_control", "ask_user",
-  "agent_spawn", "op_submit", "op_submit_async", "op_submit_batch",
-]);
-
-// Memory writes that record the user message they answered (facts.source_message_id),
-// so a fact can point at the exact words it came from.
-const USER_MESSAGE_SOURCED_TOOLS = new Set(["remember", "update_fact"]);
 
 /** The latest user-authored row of this operation — the message the call answers. */
 export function latestUserMessageId(operationId: string): string | undefined {
@@ -249,16 +164,20 @@ async function parseArgs(ctx: ToolCallContext): Promise<void> {
   }
 }
 
+// The run state each tool reads is its policy row's `reads` (TrustedStamp in
+// tool-policies.types.ts). A path-gated tool always gets the session: the gate
+// resolved its paths with it, so the tool resolves them with the same one, or
+// a work-rooted session gates <workRoot>/x and opens <workspace>/x (live
+// failure 2026-07-02). A nested `params._operationId` never reaches a
+// collapsed family's action (collapse-family.ts drops a model's `_` keys), so
+// the flat stamp is the only one.
 async function injectSessionState(ctx: ToolCallContext): Promise<PhaseOutcome> {
   const { tc, args, sessionId, priorMessages } = ctx;
+  const reads = (stamp: TrustedStamp) => readsStamp(tc.name, stamp);
 
-  if (SESSION_SCOPED_TOOLS.has(tc.name)) {
-    args._sessionId = sessionId || "default";
-  }
-  if (OPERATION_SCOPED_TOOLS.has(tc.name)) {
-    args._operationId = ctx.operationId;
-  }
-  if (USER_MESSAGE_SOURCED_TOOLS.has(tc.name) && ctx.operationId) {
+  if (reads("session")) args._sessionId = sessionId || "default";
+  if (reads("operation")) args._operationId = ctx.operationId;
+  if (reads("userMessage") && ctx.operationId) {
     const id = latestUserMessageId(ctx.operationId);
     if (id) args._userMessageId = id;
   }
@@ -269,20 +188,17 @@ async function injectSessionState(ctx: ToolCallContext): Promise<PhaseOutcome> {
     args.file_path = `${args.file_path}.png`;
   }
 
-  // Inject the chat's current project into agent_* tool calls so the
-  // canonical scope (catalog filter + tool gate) flows from chat → spawn
-  // automatically. Explicit project_id wins.
-  if ((tc.name === "agent_spawn" || tc.name === "agent_list" || tc.name === "agent_create") && sessionId) {
-    if (!args.project_id) {
-      const { getSessionProject } = await import("../session/project.js");
-      const pid = getSessionProject(sessionId);
-      if (pid) args.project_id = pid;
-    }
+  // The chat's current project flows into the call so the canonical scope
+  // (catalog filter + tool gate) follows chat → spawn. Explicit project_id wins.
+  if (reads("project") && sessionId && !args.project_id) {
+    const { getSessionProject } = await import("../session/project.js");
+    const pid = getSessionProject(sessionId);
+    if (pid) args.project_id = pid;
   }
 
-  // Inject conversational context for tools that need to sanity-check their
-  // task against user intent (currently self_edit's intent gate).
-  if (tc.name === "self_edit" && Array.isArray(priorMessages)) {
+  // The last exchange, for a tool that sanity-checks its task against the
+  // user's intent (self_edit's intent gate).
+  if (reads("lastTurn") && Array.isArray(priorMessages)) {
     const reversed = [...priorMessages].reverse();
     const lastUser = reversed.find(m => m?.role === "user" && typeof m.content === "string");
     const lastAssistant = reversed.find(m => m?.role === "assistant" && typeof m.content === "string");
@@ -290,9 +206,9 @@ async function injectSessionState(ctx: ToolCallContext): Promise<PhaseOutcome> {
     if (lastAssistant?.content) args._lastAssistantMessage = String(lastAssistant.content);
   }
 
-  // Autopilot: route bash/self_edit at the worktree CWD and enforce the
-  // per-shift self_edit ceiling.
-  if (sessionId && (tc.name === "self_edit" || tc.name === "bash")) {
+  // Autopilot: anchor a cwd-reading call (bash, self_edit) at the run's
+  // checkout and enforce the per-shift self_edit ceiling.
+  if (sessionId && reads("cwd")) {
     try {
       const { isAutopilotSession, getAutopilotWorktree, trackSelfEditCall } = await import("../autopilot/registry.js");
       if (isAutopilotSession(sessionId)) {
@@ -309,11 +225,11 @@ async function injectSessionState(ctx: ToolCallContext): Promise<PhaseOutcome> {
     } catch { /* registry import failed — fail open, autopilot just not active */ }
   }
 
-  // A work-rooted session (auto-build chunk worker) anchors bash at its
-  // project dir — the same anchor its file tools resolve against, so the
-  // worker's tools agree about what "here" means. Worktree (enforce-policy)
-  // and autopilot cwds win; this only fills the default.
-  if (tc.name === "bash" && sessionId && !cwdOf(args)) {
+  // A work-rooted session (auto-build chunk worker) anchors a cwd-reading
+  // shell command at its project dir — the same anchor its file tools resolve
+  // against, so the worker's tools agree about what "here" means. Worktree
+  // (enforce-policy) and autopilot cwds win; this only fills the default.
+  if (anchorsShellAtCwd(tc.name) && sessionId && !cwdOf(args)) {
     const workRoot = sessionWorkRootOf(sessionId);
     if (workRoot) args._cwd = workRoot;
   }
@@ -379,7 +295,7 @@ export const resolvePhase: Phase = async (ctx) => {
   if (injected.kind === "halt") return injected;
 
   ctx.riskLevel = getRiskLevel(tc.name, ctx.args, ctx.security);
-  ctx.approvalContext = buildApprovalContext(tc.name, ctx.args);
+  ctx.approvalContext = buildApprovalContext(ctx.toolMap.get(tc.name), tc.name, ctx.args);
   // The event carries the model's arguments: the server's stamps are this
   // process's channel to the tool (a sink function among them), not plain
   // JSON a relay or a persisted turn can carry.

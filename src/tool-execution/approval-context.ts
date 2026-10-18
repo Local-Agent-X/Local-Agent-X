@@ -1,5 +1,5 @@
 import type { SecurityLayer } from "../security/index.js";
-import { resolveNewTabUrls } from "../security/layer/browser-egress-eval.js";
+import type { ToolDefinition } from "../types.js";
 import { shellCommandOf } from "../tool-registry.js";
 import { withoutInternalArgs } from "./internal-args.js";
 
@@ -7,42 +7,11 @@ export function getRiskLevel(_toolName: string, _args: Record<string, unknown>, 
   return "low";
 }
 
-export function buildApprovalContext(toolName: string, args: Record<string, unknown>): string {
-  // Whichever tool runs it (its row's shellCommand), a command reads as one.
+/** One line saying what this call does, for the approval card and tool_start:
+ *  a shell command as the command (whichever tool runs it — its row's
+ *  shellCommand), else the tool's own describeCall, else its name and args. */
+export function buildApprovalContext(tool: ToolDefinition | undefined, toolName: string, args: Record<string, unknown>): string {
   const command = shellCommandOf(toolName, args);
   if (command !== undefined) return `Run command: "${command.slice(0, 150)}"`;
-  switch (toolName) {
-    case "write":
-      return `Create file: ${String(args.path || "").split(/[/\\]/).pop()} (${String(args.content || "").length} chars)`;
-    case "edit":
-      return `Edit file: ${String(args.path || "").split(/[/\\]/).pop()}`;
-    case "read":
-      return `Read file: ${String(args.path || "").split(/[/\\]/).pop()}`;
-    case "browser": {
-      const a = String(args.action || "");
-      if (a === "new_tab") {
-        const resolved = resolveNewTabUrls(args);
-        if (!resolved.error && resolved.urls.length > 1) {
-          return `Open ${resolved.urls.length} websites: ${resolved.urls.join(", ")}`;
-        }
-        if (!resolved.error && resolved.urls.length === 1) return `Open website: ${resolved.urls[0]}`;
-      }
-      if (a === "navigate") return `Open website: ${args.url || ""}`;
-      if (a === "evaluate") return `Run script in browser: ${String(args.script || "").slice(0, 80)}`;
-      if (a === "emulate") {
-        const device = args.device ? String(args.device) : "";
-        const size = args.viewport_width && args.viewport_height ? `${args.viewport_width}x${args.viewport_height}` : "";
-        return `Re-open this page in an emulated browser${device || size ? ` (${[device, size].filter(Boolean).join(" ")})` : ""} — a fresh context, so the current login is dropped`;
-      }
-      return `Browser: ${a}`;
-    }
-    case "http_request":
-      return `API call: ${args.method || "GET"} ${String(args.url || "").slice(0, 100)}`;
-    case "web_fetch":
-      return `Fetch webpage: ${String(args.url || "").slice(0, 100)}`;
-    case "build_app":
-      return `Build app: ${String(args.name || "")}`;
-    default:
-      return `${toolName}: ${JSON.stringify(withoutInternalArgs(args)).slice(0, 80)}`;
-  }
+  return tool?.describeCall?.(args) ?? `${toolName}: ${JSON.stringify(withoutInternalArgs(args)).slice(0, 80)}`;
 }

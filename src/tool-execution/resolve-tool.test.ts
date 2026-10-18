@@ -4,7 +4,7 @@
  *
  * Regression (Jul 2 2026 food-truck-tracker run): the work-root registry, the
  * resolver, and the security-gate parity all existed and were unit-green, but
- * SESSION_SCOPED_TOOLS didn't include the file tools, so the executor never
+ * the session-stamp list didn't include the file tools, so the executor never
  * stamped _sessionId into their args — sessionIdOf() returned undefined and
  * the registry was dead code in live runs. The chunk worker's relative read
  * resolved to the workspace parent and only recovered because the model

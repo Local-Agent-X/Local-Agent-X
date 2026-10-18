@@ -1,19 +1,22 @@
-// SESSION_SCOPED_TOOLS is a hand list that has to name every tool reading the
-// trusted `_sessionId`. A model's own `_` keys are dropped at dispatch, so a
-// reader left off the list never sees a session at all: restart, apply_update,
-// op_kill, op_submit_batch, read_my_logs and protocol all had session branches
-// nothing could reach. The contract below derives the readers from the
-// registered tools' own execute bodies instead of trusting the list. It sees a
-// direct read only; a tool that reads through a helper (restart and
-// apply_update via resolveNotifyTarget) is pinned by the dispatch tests.
+// The run state the dispatcher stamps into a call is the tool's own policy
+// row's `reads` (TrustedStamp, tool-policies.types.ts). A model's own `_` keys
+// are dropped at dispatch, so a tool that reads a stamp its row does not
+// declare never sees one: restart, apply_update, op_kill, op_submit_batch,
+// read_my_logs and protocol all had session branches nothing could reach while
+// the declaration was a hand list. The contract below derives the readers from
+// the registered tools' own execute bodies and requires each to declare what
+// it reads. It sees a direct read only; a tool that reads through a helper
+// (restart and apply_update via resolveNotifyTarget) is pinned by the dispatch
+// tests.
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ToolDefinition } from "../types.js";
 import type { SecurityLayer } from "../security/index.js";
 import type { ToolPluginContext } from "../tools/plugin.js";
+import type { TrustedStamp } from "../tool-policy/tool-policies.types.js";
 import { allTools } from "../tools/registry-build.js";
 import { plugins } from "../tools/plugins.js";
 import { unifiedRegistry } from "../tools/registry.js";
@@ -24,8 +27,9 @@ import { createProtocolFamilyTools } from "../protocols/protocol-tool.js";
 import { collapseFamily } from "../tools/shared/collapse-family.js";
 import { resolveNotifyTarget } from "../restart-notify.js";
 import { buildMessagingSessionId } from "../session/channel-registry.js";
-import { resolvePhase, SESSION_SCOPED_TOOLS } from "./resolve-tool.js";
-import { TOOL_PATH_ARGS } from "../tool-registry.js";
+import { setSessionProject } from "../session/project.js";
+import { resolvePhase } from "./resolve-tool.js";
+import { readsStamp, TOOL_PATH_ARGS, toolsWhere } from "../tool-registry.js";
 import { createContext } from "./context.js";
 
 // The set boot registers: the static catalog, every plugin, and the two paths
@@ -37,7 +41,6 @@ async function registeredTools(): Promise<ToolDefinition[]> {
     memoryIndex: {},
     cronService: {},
     dataDir,
-    activeOnEventBySession: new Map(),
     activeBrowserSessionIdRef: { value: "" },
     activeRuntimeBySession: new Map(),
     registry: unifiedRegistry,
@@ -53,32 +56,49 @@ async function registeredTools(): Promise<ToolDefinition[]> {
   return tools;
 }
 
-// A sessionIdOf(args) call (the one accessor, internal-args.ts) or a raw
-// property read, not a mention: execute bodies keep their comments, and a
-// comment naming the key reads nothing. The transformed source calls the
-// imported accessor as `(0, ns.sessionIdOf)(args)`.
-function readsSessionId(tool: ToolDefinition): boolean {
-  return /\._sessionId\b|sessionIdOf\)?\(/.test(String(tool.execute));
-}
+// A read through the stamp's accessor (internal-args.ts) or a raw property
+// read, not a mention: execute bodies keep their comments, and a comment
+// naming the key reads nothing. The transformed source calls an imported
+// accessor as `(0, ns.sessionIdOf)(args)`. `project` fills a model argument
+// and has no accessor, so no body can be scanned for it.
+const READ_OF: Record<Exclude<TrustedStamp, "project">, RegExp> = {
+  session: /\._sessionId\b|sessionIdOf\)?\(/,
+  operation: /\._operationId\b|operationIdOf\)?\(/,
+  userMessage: /\._userMessageId\b|userMessageIdOf\)?\(/,
+  lastTurn: /\._last(?:User|Assistant)Message\b|lastTurnOf\)?\(/,
+  cwd: /\._cwd\b|cwdOf\)?\(/,
+};
+const STAMPS = Object.keys(READ_OF) as Array<keyof typeof READ_OF>;
 
-async function stampedArgs(name: string, sessionId: string, args: Record<string, unknown>): Promise<Record<string, unknown>> {
+const reads = (tool: ToolDefinition, stamp: keyof typeof READ_OF) => READ_OF[stamp].test(String(tool.execute));
+
+async function stampedArgs(name: string, sessionId: string, args: Record<string, unknown>, operationId?: string): Promise<Record<string, unknown>> {
   const ctx = createContext({
     tc: { id: `call-${name}`, name, arguments: JSON.stringify(args) },
     toolMap: new Map(),
     security: {} as SecurityLayer,
     sessionId,
+    operationId,
     callContext: "local",
   });
   expect((await resolvePhase(ctx)).kind).toBe("continue");
   return ctx.args;
 }
 
-describe("every tool that reads the trusted session is stamped with it", () => {
-  it("registered tools whose execute reads `_sessionId`", async () => {
-    const readers = [...new Set((await registeredTools()).filter(readsSessionId).map((tool) => tool.name))];
-    // The scan has to see the readers it is guarding, or it proves nothing.
-    expect(readers).toEqual(expect.arrayContaining(["op_kill", "op_submit_batch", "read_my_logs", "self_edit"]));
-    expect(readers.filter((name) => !SESSION_SCOPED_TOOLS.has(name))).toEqual([]);
+describe("every tool that reads a trusted stamp declares it on its row", () => {
+  it.each(STAMPS)("registered tools whose execute reads the %s stamp", async (stamp) => {
+    const readers = [...new Set((await registeredTools()).filter((tool) => reads(tool, stamp)).map((tool) => tool.name))];
+    const undeclared = readers.filter((name) => !readsStamp(name, stamp));
+    expect(undeclared, `add "${stamp}" to \`reads\` on the tool's row in src/tool-policy/tool-policies.<domain>.ts`).toEqual([]);
+  });
+
+  it("the scan sees the readers it is guarding, or it proves nothing", async () => {
+    const tools = await registeredTools();
+    const readersOf = (stamp: keyof typeof READ_OF) => tools.filter((tool) => reads(tool, stamp)).map((tool) => tool.name);
+    expect(readersOf("session")).toEqual(expect.arrayContaining(["op_kill", "op_submit_batch", "read_my_logs", "self_edit"]));
+    expect(readersOf("operation")).toEqual(expect.arrayContaining(["ask_user", "show_unblock_control"]));
+    expect(readersOf("userMessage")).toEqual(expect.arrayContaining(["remember"]));
+    expect(readersOf("cwd")).toEqual(expect.arrayContaining(["bash"]));
   });
 
   it("every tool whose paths the file-access gate judges receives the session the gate resolved them with", async () => {
@@ -90,17 +110,19 @@ describe("every tool that reads the trusted session is stamped with it", () => {
     }
   });
 
-  it("a collapsed family is stamped under its own name when an inner action reads the session", () => {
+  it("a collapsed family declares every stamp an inner action reads, under its own name", () => {
     const family = createProtocolFamilyTools()[0].name;
-    const innerReaders = createCoreProtocolTools()
-      .filter((tool) => tool.name.startsWith(`${family}_`) && readsSessionId(tool));
-    expect(innerReaders.length).toBeGreaterThan(0);
-    expect(SESSION_SCOPED_TOOLS.has(family)).toBe(true);
+    const inner = createCoreProtocolTools().filter((tool) => tool.name.startsWith(`${family}_`));
+    const innerReads = STAMPS.filter((stamp) => inner.some((tool) => reads(tool, stamp)));
+    expect(innerReads).toEqual(expect.arrayContaining(["session", "operation"]));
+    for (const stamp of innerReads) expect(readsStamp(family, stamp), stamp).toBe(true);
   });
 });
 
-describe("the stamp replaces whatever session the model names", () => {
+describe("the stamp replaces whatever the model names", () => {
   const SESSION = "session-scoped-trusted";
+
+  afterEach(() => setSessionProject(SESSION, null));
 
   it("each formerly unstamped reader receives the calling session", async () => {
     for (const name of [
@@ -110,6 +132,26 @@ describe("the stamp replaces whatever session the model names", () => {
       const args = await stampedArgs(name, SESSION, { _sessionId: "someone-else" });
       expect(args._sessionId, name).toBe(SESSION);
     }
+  });
+
+  it("a tool that reads the operation receives the calling op, never the model's", async () => {
+    for (const name of toolsWhere((row) => row.reads?.includes("operation") === true)) {
+      const args = await stampedArgs(name, SESSION, { _operationId: "forged-op" }, "op-trusted");
+      expect(args._operationId, name).toBe("op-trusted");
+    }
+  });
+
+  it("a tool that declares no session stamp is never handed one", async () => {
+    expect(readsStamp("web_search", "session")).toBe(false);
+    const args = await stampedArgs("web_search", SESSION, { query: "x" });
+    expect(args._sessionId).toBeUndefined();
+  });
+
+  it("the session's project fills project_id only for a tool that declares it, and an explicit one wins", async () => {
+    setSessionProject(SESSION, "proj-chat");
+    expect((await stampedArgs("agent_spawn", SESSION, { task: "x" })).project_id).toBe("proj-chat");
+    expect((await stampedArgs("agent_spawn", SESSION, { task: "x", project_id: "proj-named" })).project_id).toBe("proj-named");
+    expect((await stampedArgs("op_submit_async", SESSION, { task: "x" })).project_id).toBeUndefined();
   });
 
   it("restart pings back on the channel the request came in on", async () => {

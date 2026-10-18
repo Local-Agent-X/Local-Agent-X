@@ -12,7 +12,7 @@ import { fileNotFoundError } from "./edit-recovery.js";
 import { binaryContainerRejection, checkEditSyntax, syntaxRejectionMessage } from "./syntax-validate.js";
 import { checkHardcodedHomePath } from "./portable-path-check.js";
 import { checkAppWrite, writeGuardRejectionMessage } from "./app-tools/write-guard.js";
-import { appUrlHint, servedFileHint } from "./file-hints.js";
+import { appUrlHint, cardFileName, servedFileHint } from "./file-hints.js";
 import { connectorManifestWriteRejection } from "./connector-write-guard.js";
 import { buildImportAppendix, isJsFamilyFile } from "./read-imports.js";
 import { deleteFolderToTrash } from "./delete-folder.js";
@@ -41,6 +41,7 @@ export const readTool: ToolDefinition = {
     "Read a file from the filesystem, with line numbers. PowerPoint (.pptx) and Word (.docx) files come back as extracted text — slide by slide, with speaker notes, for a deck. A file comes back whole when it fits in one result; when it does not, the result shows the lines that fit and names the offset to continue from — read again with that offset. Do not chunk a short file with offset/limit yourself.",
   readOnly: true,
   concurrencySafe: true,
+  describeCall: (args) => `Read file: ${cardFileName(args.path)}`,
   parameters: {
     type: "object",
     properties: {
@@ -195,6 +196,7 @@ export const writeTool: ToolDefinition = {
   compactDescription: "Write full file contents; creates the file and parent directories. PREFER THIS over a bash heredoc for any file creation or full rewrite — bash commands are capped at 2000 chars.",
   effect: { class: "idempotent-mutation" },
   description: "Write file contents. PREFER THIS over `bash` heredoc (cat <<EOF > file) for any file creation or full rewrite — write has no length limit, bash commands are capped at 2000 chars and will be rejected. Creates the file and parent directories if they don't exist.",
+  describeCall: (args) => `Create file: ${cardFileName(args.path)} (${String(args.content || "").length} chars)`,
   parameters: {
     type: "object",
     properties: {

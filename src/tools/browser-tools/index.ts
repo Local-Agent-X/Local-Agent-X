@@ -33,6 +33,7 @@ import {
   BROWSER_TOOL_DESCRIPTION,
   BROWSER_TOOL_COMPACT_DESCRIPTION,
   BROWSER_TOOL_PARAMETERS,
+  describeBrowserCall,
 } from "./description.js";
 import { READ_ONLY_ACTIONS } from "./action-tables.js";
 import { applyProgressGuard, humanVerificationBlock, runPreDispatchGates } from "./gates.js";
@@ -124,6 +125,7 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
     description: BROWSER_TOOL_DESCRIPTION,
     compactDescription: BROWSER_TOOL_COMPACT_DESCRIPTION,
     parameters: BROWSER_TOOL_PARAMETERS,
+    describeCall: describeBrowserCall,
     async execute(args) {
       const action = String(args.action || "");
       // Use session ID from tool executor (per-request, no global state) or fall back to getter

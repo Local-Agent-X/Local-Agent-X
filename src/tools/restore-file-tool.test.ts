@@ -4,7 +4,7 @@
  * The round-trip runs through the REAL dispatch pipeline (executeToolCalls:
  * resolve → policy → approval → sandbox), so a registration omission fails
  * here as a live failure, not just in the contract suites: the trusted
- * _sessionId stamp (SESSION_SCOPED_TOOLS) is what locates the task-trash
+ * _sessionId stamp (its path args stamp it) is what locates the task-trash
  * scope, and the policy allow rule is what lets the call through at all.
  *
  * Also pinned: the REGISTRY-COHERENCE invariant. delete_file un-enrolls the

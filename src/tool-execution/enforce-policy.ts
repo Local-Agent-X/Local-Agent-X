@@ -9,7 +9,7 @@ import { USER_HINTS, type BlockLayer, type ToolResult } from "../types.js";
 import { ariEvaluate, ariObserve, isAriActive, shouldGateInKernel, shouldObserveInKernel } from "../ari-kernel/index.js";
 import { checkSessionPolicy } from "../session/policy.js";
 import { getKernelTaintSources } from "../data-lineage/index.js";
-import { hasCapability, pathSpecsForCall } from "../tool-registry.js";
+import { anchorsShellAtCwd, hasCapability, pathSpecsForCall } from "../tool-registry.js";
 import { taintedShellBlockReason, knownSecretShellBlock, blockedSelfVerifyGuidance, SHELL_TAINT_DENY_SOURCES } from "./shell-block-guidance.js";
 import { getHookEngine } from "../hooks/hook-engine.js";
 import { checkCircuit, circuitArgsSig } from "../circuit-breaker.js";
@@ -199,7 +199,7 @@ async function rewriteWorktreePaths(ctx: ToolCallContext): Promise<void> {
       if (raw === undefined && !spec.searchRoot) continue;
       args[spec.arg] = rewritePathForWorktree(raw === undefined ? undefined : String(raw), wtPath, spec.searchRoot);
     }
-    if (tc.name === "bash") args._cwd = wtPath;
+    if (anchorsShellAtCwd(tc.name)) args._cwd = wtPath;
   } catch { /* worktree module not available */ }
 }
 

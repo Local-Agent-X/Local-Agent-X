@@ -3,9 +3,28 @@
  * schema. Split out so the dispatcher file stays focused on behavior.
  */
 
-import { MAX_BROWSER_URL_LENGTH, MAX_NEW_TAB_URLS } from "../../security/layer/browser-egress-eval.js";
+import { MAX_BROWSER_URL_LENGTH, MAX_NEW_TAB_URLS, resolveNewTabUrls } from "../../security/layer/browser-egress-eval.js";
 
 export const BROWSER_TOOL_NAME = "browser";
+
+/** How a browser call reads on the approval card: every site a new_tab opens,
+ *  the page a navigate opens, the script an evaluate runs. */
+export function describeBrowserCall(args: Record<string, unknown>): string {
+  const a = String(args.action || "");
+  if (a === "new_tab") {
+    const resolved = resolveNewTabUrls(args);
+    if (!resolved.error && resolved.urls.length > 1) return `Open ${resolved.urls.length} websites: ${resolved.urls.join(", ")}`;
+    if (!resolved.error && resolved.urls.length === 1) return `Open website: ${resolved.urls[0]}`;
+  }
+  if (a === "navigate") return `Open website: ${args.url || ""}`;
+  if (a === "evaluate") return `Run script in browser: ${String(args.script || "").slice(0, 80)}`;
+  if (a === "emulate") {
+    const device = args.device ? String(args.device) : "";
+    const size = args.viewport_width && args.viewport_height ? `${args.viewport_width}x${args.viewport_height}` : "";
+    return `Re-open this page in an emulated browser${device || size ? ` (${[device, size].filter(Boolean).join(" ")})` : ""} — a fresh context, so the current login is dropped`;
+  }
+  return `Browser: ${a}`;
+}
 
 export const BROWSER_TOOL_DESCRIPTION =
   "Control a REAL Chrome browser (visible window on user's desktop) to interact with web pages. " +

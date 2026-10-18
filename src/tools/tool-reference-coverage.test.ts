@@ -5,7 +5,6 @@ import { allTools } from "./registry-build.js";
 import { unifiedRegistry } from "./registry.js";
 import { AUDIENCES_BY_TOOL } from "./audience-map.js";
 import { TOOL_POLICIES } from "../tool-policy/tool-policies.js";
-import { SESSION_SCOPED_TOOLS } from "../tool-execution/resolve-tool.js";
 import { collectRuntimeToolNames } from "./runtime-tool-names.js";
 import { knownNonToolIdentifiers } from "./tool-name-collections.js";
 import { _seedBuiltinRoles } from "../agency/agent-roles.js";
@@ -72,12 +71,10 @@ describe("every tool name a referrer uses is a registered tool", () => {
     expect(missing(Object.keys(AUDIENCES_BY_TOOL))).toEqual([]);
   });
 
+  // Every fact a row states (the stamps it reads, a companion, a category) is
+  // keyed by the row, so a dead row is the only way a fact names a dead tool.
   it("policy tables (glob keys aside)", () => {
     expect(missing(Object.keys(TOOL_POLICIES).filter((k) => !k.includes("*")))).toEqual([]);
-  });
-
-  it("the resolver's session-scoped list", () => {
-    expect(missing(SESSION_SCOPED_TOOLS)).toEqual([]);
   });
 
   // A role's tools become its agent's allowedTools (src/agents/catalog.ts): a
@@ -107,6 +104,5 @@ describe("every tool name a referrer uses is a registered tool", () => {
     expect(unifiedRegistry.get("ari_shell")).toBeUndefined();
     expect(Object.keys(TOOL_POLICIES)).not.toContain("ari_shell");
     expect(Object.keys(AUDIENCES_BY_TOOL)).not.toContain("ari_shell");
-    expect(SESSION_SCOPED_TOOLS.has("ari_shell")).toBe(false);
   });
 });

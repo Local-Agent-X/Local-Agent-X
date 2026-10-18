@@ -51,7 +51,7 @@ export function memorySearchTool(memory: MemoryIndex) {
       const sourceType = args.source_type ? String(args.source_type) : undefined;
       const dateFrom = args.date_from ? String(args.date_from) : undefined;
       const dateTo = args.date_to ? String(args.date_to) : undefined;
-      // _sessionId is injected by tool-executor for SESSION_SCOPED_TOOLS.
+      // _sessionId is stamped by the dispatcher (the row `reads` "session").
       // When present, default behavior is same-session + profile only.
       // Past sessions require the explicit `search_past_sessions` tool.
       const sessionId = sessionIdOf(args);

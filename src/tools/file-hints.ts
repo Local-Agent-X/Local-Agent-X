@@ -13,6 +13,11 @@ export function appUrlHint(absoluteFilePath: string): string {
   return ` — App URL: ${appUrl} (include this URL verbatim in your reply to the user so it renders as a clickable link).`;
 }
 
+/** The file name a path argument names, for a one-line card (describeCall). */
+export function cardFileName(path: unknown): string {
+  return String(path || "").split(/[/\\]/).pop() ?? "";
+}
+
 /** The app id when the path is inside an installed app's directory, else null. */
 export function appIdFromPath(absoluteFilePath: string): string | null {
   const m = absoluteFilePath.replace(/\\/g, "/").match(/\/workspace\/apps\/([^/]+)\//);

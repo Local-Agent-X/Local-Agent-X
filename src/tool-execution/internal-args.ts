@@ -34,12 +34,12 @@ const fn = <T>(value: unknown): T | undefined => (typeof value === "function" ? 
 
 /** The session the dispatcher ran this call in — the one the file-access gate
  *  resolved its paths with, so every sink resolves with the same one. Stamped
- *  on SESSION_SCOPED_TOOLS and every tool with policy pathArgs (resolve-tool.ts). */
+ *  on a tool whose row `reads` "session", and on every tool with pathArgs. */
 export function sessionIdOf(args: Args): string | undefined {
   return text(args._sessionId);
 }
 
-/** The operation the call belongs to (OPERATION_SCOPED_TOOLS). */
+/** The operation the call belongs to (a row that `reads` "operation"). */
 export function operationIdOf(args: Args): string | undefined {
   return text(args._operationId);
 }
@@ -87,7 +87,7 @@ export function cwdOf(args: Args): string | undefined {
   return text(typeof args._cwd === "string" ? args._cwd.trim() : undefined);
 }
 
-/** The user message a memory write answers (USER_MESSAGE_SOURCED_TOOLS). */
+/** The user message a memory write answers (a row that `reads` "userMessage"). */
 export function userMessageIdOf(args: Args): string | undefined {
   return text(args._userMessageId);
 }

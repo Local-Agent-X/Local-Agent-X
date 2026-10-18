@@ -81,27 +81,24 @@ function eqChainLiterals(node: ts.Expression, out: string[] = []): string[] {
   return out;
 }
 
-/** Is this collection about tools? Three tool names make a list; fewer do
- *  when nothing else is in it and either a named constant holds it or two
- *  of them are multi-word names. A lone `=== "build_app"` is a branch, and
- *  `read`/`write` inside a function are also file grants, permission levels
- *  and office actions. */
-function namesTools(names: string[], owner: string, isTool: (name: string) => boolean): boolean {
-  const toolCount = names.filter(isTool).length;
-  if (toolCount >= 3) return toolCount / names.length >= 0.5;
-  if (toolCount === 0 || toolCount !== names.length) return false;
-  return /^[A-Z][A-Z0-9_]+$/.test(owner) || (toolCount >= 2 && names.some((n) => n.includes("_")));
+/** Is this collection about tools? Two tool names make a list, whatever else
+ *  is in it and whoever holds it; a lone `=== "build_app"` is a branch. A
+ *  collection of words that are also tool names but are not about tools (file
+ *  grants, permission levels, office actions) is declared so, with why, in
+ *  tool-list-registry.test.ts. */
+function namesTools(names: string[], isTool: (name: string) => boolean): boolean {
+  return names.filter(isTool).length >= 2;
 }
 
-/** Every collection under `root`'s src/ and scripts/ whose literals are
- *  mostly tool names. */
+/** Every collection under `root`'s src/ and scripts/ that names two or more
+ *  tools. */
 export function scanToolNameCollections(root: string, isTool: (name: string) => boolean): ToolNameCollection[] {
   const found: ToolNameCollection[] = [];
   for (const file of [...sourceFiles(join(root, "src")), ...sourceFiles(join(root, "scripts"))]) {
     const source = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true);
     const record = (node: ts.Node, names: string[], kind: ToolNameCollection["kind"]) => {
       const owner = ownerOf(node);
-      if (!namesTools(names, owner, isTool)) return;
+      if (!namesTools(names, isTool)) return;
       const { line } = source.getLineAndCharacterOfPosition(node.getStart());
       found.push({ file: relative(root, file).replace(/\\/g, "/"), line: line + 1, owner, kind, names });
     };

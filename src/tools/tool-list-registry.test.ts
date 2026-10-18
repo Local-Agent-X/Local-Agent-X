@@ -36,7 +36,6 @@ const REGISTRY: readonly Registered[] = [
   { file: "src/canonical-loop/adapters/tool-call-text-corpus.ts", owner: "CORPUS_TOOL_NAMES" },
   { file: "src/agent-guards/livelock-shapes.test-helper.ts", owner: "LIVELOCK_SHAPES", literal: "name-set" },
   { file: "src/test-suite.ts", owner: "expected" },
-  { file: "src/server/background-jobs/skill-review-prompt.ts", owner: "SKILL_REVIEW_TOOL_NAMES" },
 ];
 
 /** The tables of tool names the rest of the registry is checked against:
@@ -54,6 +53,19 @@ const SOURCES_OF_TRUTH: readonly Registered[] = [
 /** Collections of words that are also tool names but are not about tools. */
 const NOT_TOOL_LISTS: ReadonlyArray<Registered & { why: string }> = [
   { file: "src/tools/spreadsheet-tools.ts", owner: ".actions", why: "the family's actions (read/write/edit/query)" },
+  { file: "src/tools/document-tools.ts", owner: ".actions", why: "the family's actions (create/read/edit/template)" },
+  { file: "src/tool-policy/tool-policies.apps.ts", owner: ".forActions", why: "the family actions a path spec applies to" },
+  { file: "src/tool-policy/tool-policies.types.ts", owner: "OP_CATEGORIES", why: "what an op was mostly doing (browser, computer, coding are categories)" },
+  { file: "src/cognition/cross-session-learning/types.ts", owner: "actionShape()", why: "the op-outcome record's category values, a persisted format" },
+  { file: "src/app-runtime/validation.ts", owner: "levels", why: "an app's access levels (read/write/admin)" },
+  { file: "src/tools/app-tools/lifecycle.ts", owner: "execute()", why: "an app's access levels (read/write/admin)" },
+  { file: "src/sandbox/win-cage-grants.ts", owner: "granted", why: "filesystem grant kinds (read/write)" },
+  { file: "src/sandbox/win-cage-grants.ts", owner: "grantsNeeded()", why: "filesystem grant kinds (read/write)" },
+  { file: "src/routes/security.ts", owner: "handleSecurityRoutes", why: "the tool-policy toggle's switch names (bash/http/browser); http is not a tool" },
+  { file: "src/routes/security.ts", owner: "ruleMap", why: "the tool-policy toggle's switch names, keyed to policy rule ids" },
+  { file: "src/protocols/skill-md-parser.ts", owner: "CATEGORY_MAP", why: "words in a skill's name, mapped to its display category" },
+  { file: "src/canonical-loop/adapters/tool-call-text-corpus.ts", owner: ".tools", why: "a corpus case's offered tool set, with a near-miss name (read_file) on purpose" },
+  { file: "scripts/local-qualification/lifecycle-helpers.ts", owner: "LIFECYCLE_BARRIERS", why: "the qualification lifecycle's barrier steps (write is a step)" },
 ];
 
 const key = (c: { file: string; owner: string }) => `${c.file} ${c.owner}`;
@@ -66,7 +78,7 @@ describe("every hand-kept list of tool names is registered, and every registered
   it("scans the source tree", async () => {
     registered = await collectRuntimeToolNames();
     found = scanToolNameCollections(process.cwd(), (n) => registered.has(n));
-    expect(found.length).toBeGreaterThan(10);
+    expect(found.length).toBeGreaterThan(20);
   });
 
   it("a collection the scan finds is registered, a source of truth, or declared not a tool list", () => {

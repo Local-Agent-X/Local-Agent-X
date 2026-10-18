@@ -223,3 +223,58 @@ describe("a fact records the user message it was saved from (schema v19)", () =>
     expect(r.fact!.sourceMessageId ?? null).toBeNull();
   });
 });
+
+// LM Studio eval 2026-10-18: the agent saved "Odalys is Sam's cousin." and
+// "Odalys owns a sailboat named Kestrel Nine, docked at slip 14 in Port Avila."
+// from one message; extraction of that same message then saved "User's cousin
+// Odalys keeps her sailboat … slip 14" beside them, and the correction to slip
+// 31 ended one copy while the other still said 14.
+describe("extraction does not save a second copy of what the agent saved from the same message", () => {
+  const message = "um-op_chat_turn_a-0-0-1";
+  function agentSaved(content: string, sourceMessageId = message): void {
+    authorizeTestFactMutations(memory);
+    expect(memory.rememberFact(content, { kind: "world", sourceMessageId }).ok).toBe(true);
+  }
+  const liveContents = () => (db().prepare("SELECT content FROM facts WHERE valid_to IS NULL ORDER BY id").all() as Array<{ content: string }>).map((r) => r.content);
+
+  beforeEach(() => { vi.mocked(resolveFact).mockClear(); });
+
+  it("a restatement the agent's facts from that message already say, together, is not saved — and costs no resolver call", async () => {
+    agentSaved("@Odalys is Sam's cousin.");
+    agentSaved("@Odalys owns a sailboat named Kestrel Nine, docked at slip 14 in Port Avila.");
+    const cousin = await memory.retainSmart("- W(c=0.95) @Odalys is the user's cousin", "auto-extract", 0, { sourceMessageId: message });
+    const boat = await memory.retainSmart("- S(c=0.90) User's cousin @Odalys keeps her sailboat, the Kestrel Nine, at slip 14 in Port Avila.", "auto-extract", 0, { sourceMessageId: message });
+    expect(cousin.facts).toHaveLength(0);
+    expect(boat.facts).toHaveLength(0);
+    expect(boat.decisions[0]).toMatchObject({ op: "NOOP", reason: "already saved from the same message" });
+    expect(resolveFact).not.toHaveBeenCalled();
+    expect(liveContents()).toHaveLength(2);
+  });
+
+  it("what the agent missed from that message is still saved", async () => {
+    agentSaved("@Odalys is Sam's cousin.");
+    const { facts } = await memory.retainSmart("- S User's cousin @Odalys keeps her sailboat, the Kestrel Nine, at slip 14 in Port Avila.", "auto-extract", 0, { sourceMessageId: message });
+    expect(facts.map((f) => f.content)).toEqual(["User's cousin Odalys keeps her sailboat, the Kestrel Nine, at slip 14 in Port Avila."]);
+  });
+
+  it("a different number is a different claim", async () => {
+    agentSaved("@Odalys keeps the Kestrel Nine at slip 14 in Port Avila.");
+    const { facts } = await memory.retainSmart("- S @Odalys keeps the Kestrel Nine at slip 31 in Port Avila.", "auto-extract", 0, { sourceMessageId: message });
+    expect(facts).toHaveLength(1);
+  });
+
+  it("facts saved from another message do not count", async () => {
+    agentSaved("@Odalys owns a sailboat named Kestrel Nine, docked at slip 14 in Port Avila.", "um-op_chat_turn_earlier-0-0-1");
+    await memory.retainSmart("- S User's cousin @Odalys keeps her sailboat, the Kestrel Nine, at slip 14 in Port Avila.", "auto-extract", 0, { sourceMessageId: message });
+    expect(resolveFact).toHaveBeenCalledTimes(1);
+  });
+
+  it("a refused change with a new number is kept: slip 31 is not 'already stored' as slip 14", async () => {
+    authorizeTestFactMutations(memory);
+    const [slip] = memory.retain("- W @Odalys keeps the Kestrel Nine, docked at slip 14 in Port Avila", "agent-tool");
+    db().prepare("UPDATE facts SET provenance = 'user_statement' WHERE id = ?").run(slip.id!);
+    vi.mocked(resolveFact).mockResolvedValueOnce({ op: "UPDATE", targetId: slip.id!, reason: "new slip" });
+    const { facts } = await memory.retainSmart("- W @Odalys keeps the Kestrel Nine, docked at slip 31 in Port Avila", "auto-extract");
+    expect(facts.map((f) => f.content)).toEqual(["Odalys keeps the Kestrel Nine, docked at slip 31 in Port Avila"]);
+  });
+});

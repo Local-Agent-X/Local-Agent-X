@@ -5,6 +5,6 @@
 export { executeToolCalls } from "./execute-tool.js";
 export { executeHarnessCommand } from "./harness-exec.js";
 export { dispatchApprovedCall, resolveApprovedTool } from "./approved-call.js";
-export { markDryRunSession, unmarkDryRunSession } from "./resolve-tool.js";
+export { latestUserMessageId, markDryRunSession, unmarkDryRunSession } from "./resolve-tool.js";
 export { getRiskLevel, buildApprovalContext } from "./approval-context.js";
 export { ToolBlocked } from "./errors.js";

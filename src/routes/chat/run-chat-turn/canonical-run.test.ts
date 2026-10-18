@@ -183,6 +183,9 @@ describe("persistTurnState — persist-profile hygiene (committed op rows)", () 
 		const persisted = persistTurn.mock.calls[0][0] as { turnMessages: unknown[] | null };
 		expect(persisted.turnMessages).toHaveLength(4);
 		expect(persisted.turnMessages?.[2]).toMatchObject({ role: "tool", tool_call_id: "tc1", content: TOOL_RESULT_BYTES });
+		// ...and the user row the turn answered — the id remember stamps on its
+		// facts, so extraction can tell what the agent already saved.
+		expect(persistTurn.mock.calls[0][0]).toMatchObject({ userMessageId: "m1" });
 	});
 
 	it("a projection that throws mid-loop hands the end-of-turn pass null — a truncated prefix never counts as recovered", async () => {

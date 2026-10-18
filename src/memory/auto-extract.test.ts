@@ -400,6 +400,19 @@ describe("autoExtractAndSave — Phase 2 write paths", () => {
     expect(resolveFactSpy).toHaveBeenCalledTimes(1);
     expect(liveFactsWhere("content = ?", "User prefers responses without filler")).toHaveLength(1);
   });
+
+  // persistTurn hands extraction the user message the turn answered; what the
+  // agent's remember already saved from that message is not saved again.
+  it("a statement the agent already saved from the same user message is not saved a second time", async () => {
+    const { authorizeTestFactMutations } = await import("./test-promotion.test-helper.js");
+    authorizeTestFactMutations(memory);
+    memory.rememberFact("@Odalys is Sam's cousin.", { kind: "world", sourceMessageId: "um-op_1-0-0-a" });
+    memory.rememberFact("@Odalys owns a sailboat named Kestrel Nine, docked at slip 14 in Port Avila.", { kind: "world", sourceMessageId: "um-op_1-0-0-a" });
+    __nextReturn = { ongoing_state: ["User's cousin Odalys keeps her sailboat, the Kestrel Nine, at slip 14 in Port Avila."] };
+    await autoExtractAndSave(memory, "my cousin Odalys keeps her sailboat, the Kestrel Nine, at slip 14 in Port Avila", "saved", undefined, false, "um-op_1-0-0-a");
+    expect(liveFactsCount()).toBe(2);
+    expect(resolveFactSpy).not.toHaveBeenCalled();
+  });
 });
 
 // Session external-content gate (D6), decided per fact against the ingested

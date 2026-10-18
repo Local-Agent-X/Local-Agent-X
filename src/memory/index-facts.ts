@@ -7,7 +7,7 @@ import { deriveEntitySlugs, loadKnownEntitySlugs } from "./entity-derive.js";
 // GC + validity accounting moved to index-facts-purge.ts (LOC cap).
 export { purgeInvalidatedFacts, validityStats } from "./index-facts-purge.js";
 // Ending a fact's validity, and who may: index-facts-invalidate.ts (LOC cap).
-import { alreadySaid, invalidateFact, resolverMayEnd } from "./index-facts-invalidate.js";
+import { alreadySaid, invalidateFact, resolverMayEnd, savedFromMessage } from "./index-facts-invalidate.js";
 export { invalidateFact, type InvalidationActor } from "./index-facts-invalidate.js";
 
 import { createLogger } from "../logger.js";
@@ -138,7 +138,7 @@ export async function retainSmart(
   text: string,
   sourceFile: string,
   sourceLine = 0,
-  opts?: { candidateLimit?: number; resolverOpts?: { provider?: "ollama" | "anthropic" | "openai" | "auto"; model?: string }; promotion?: MemoryPromotionContext; occurredAt?: number | null }
+  opts?: { candidateLimit?: number; resolverOpts?: { provider?: "ollama" | "anthropic" | "openai" | "auto"; model?: string }; promotion?: MemoryPromotionContext; occurredAt?: number | null; sourceMessageId?: string }
 ): Promise<{ facts: RetainedFact[]; decisions: Array<{ content: string; op: string; targetId?: number; reason: string }> }> {
   assertMemoryPromotionAllowed(text, opts?.promotion?.target ?? "memory:retain", opts?.promotion);
   const { resolveFact } = await import("./resolver.js");
@@ -158,6 +158,11 @@ export async function retainSmart(
     const validEntities = deriveEntitySlugs(parsed.content, parsed.entities, knownSlugs);
     for (const s of validEntities) knownSlugs.add(s);
 
+    if (opts?.sourceMessageId && savedFromMessage(db, parsed.content, opts.sourceMessageId)) {
+      logger.info(`[memory] nothing saved — the agent already saved this from the same message: ${parsed.content.slice(0, 80)}`);
+      decisions.push({ content: parsed.content, op: "NOOP", reason: "already saved from the same message" });
+      continue;
+    }
     const candidates = findResolverCandidates(db, hasFts, parsed.content, validEntities, candidateLimit);
     const decision = await resolveFact(parsed.content, candidates, opts?.resolverOpts);
     decisions.push({ content: parsed.content, op: decision.op, targetId: decision.targetId, reason: decision.reason });

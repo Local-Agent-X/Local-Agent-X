@@ -36,6 +36,7 @@ export async function autoExtractAndSave(
   assistantResponse: string,
   sessionId?: string,
   hasExternalTaint?: boolean,
+  userMessageId?: string,
 ): Promise<void> {
   // Session-level external-content gate (D6), decided PER FACT. When the
   // SESSION ingested external content (web/http/browser/MCP; see
@@ -262,13 +263,13 @@ export async function autoExtractAndSave(
   // no near-duplicate candidate).
   if (facts.preference_rule) {
     const promotion = promotionFor(facts.preference_rule, "memory:retain", "preference_rule", 0.85);
-    if (promotion && await saveFactSmart(memory, facts.preference_rule, "opinion", 0.85, promotion, factSourceFile)) {
+    if (promotion && await saveFactSmart(memory, facts.preference_rule, "opinion", 0.85, promotion, factSourceFile, userMessageId)) {
       logger.info(`[memory] Auto-saved preference: ${facts.preference_rule}`);
     }
   }
   if (facts.biographical_event) {
     const promotion = promotionFor(facts.biographical_event, "memory:retain", "biographical_event", 0.9);
-    if (promotion && await saveFactSmart(memory, facts.biographical_event, "experience", 0.9, promotion, factSourceFile)) {
+    if (promotion && await saveFactSmart(memory, facts.biographical_event, "experience", 0.9, promotion, factSourceFile, userMessageId)) {
       logger.info(`[memory] Auto-saved biographical event: ${facts.biographical_event}`);
     }
   }
@@ -282,7 +283,7 @@ export async function autoExtractAndSave(
     for (const [index, rel] of facts.relationships.entries()) {
       const content = `@${rel.name} is the user's ${rel.relation}`;
       const promotion = promotionFor(content, "memory:retain", "relationships", 0.95, index);
-      if (promotion && await saveFactSmart(memory, content, "world", 0.95, promotion, factSourceFile)) {
+      if (promotion && await saveFactSmart(memory, content, "world", 0.95, promotion, factSourceFile, userMessageId)) {
         logger.info(`[memory] Auto-saved relationship: ${rel.relation} = ${rel.name}`);
       }
     }
@@ -299,7 +300,7 @@ export async function autoExtractAndSave(
   if (facts.personal_affinity) {
     for (const [index, affinity] of facts.personal_affinity.entries()) {
       const promotion = promotionFor(affinity, "memory:retain", "personal_affinity", 0.85, index);
-      if (promotion && await saveFactSmart(memory, affinity, "opinion", 0.85, promotion, factSourceFile)) {
+      if (promotion && await saveFactSmart(memory, affinity, "opinion", 0.85, promotion, factSourceFile, userMessageId)) {
         logger.info(`[memory] Auto-saved affinity: ${affinity}`);
       }
     }
@@ -317,7 +318,7 @@ export async function autoExtractAndSave(
   if (facts.ongoing_state) {
     for (const [index, state] of facts.ongoing_state.entries()) {
       const promotion = promotionFor(state, "memory:retain", "ongoing_state", 0.9, index);
-      if (promotion && await saveFactSmart(memory, state, "observation", 0.9, promotion, factSourceFile)) {
+      if (promotion && await saveFactSmart(memory, state, "observation", 0.9, promotion, factSourceFile, userMessageId)) {
         logger.info(`[memory] Auto-saved ongoing state: ${state}`);
       }
     }
@@ -355,7 +356,9 @@ const KIND_LETTER: Record<FactKind, string> = {
 //
 // `sourceFile` is the persisted audit label recall keys its trust rendering
 // off: the plain user-statement label, or the tainted-external one for a fact
-// saved while the session held external content.
+// saved while the session held external content. `sourceMessageId` is the
+// user message extracted from: what the agent already saved from it this turn
+// is not saved a second time (savedFromMessage).
 async function saveFactSmart(
   memory: MemoryIndex,
   content: string,
@@ -363,6 +366,7 @@ async function saveFactSmart(
   confidence: number,
   promotion: MemoryPromotionContext,
   sourceFile: string,
+  sourceMessageId?: string,
 ): Promise<boolean> {
   const bullet = `- ${KIND_LETTER[kind]}(c=${confidence.toFixed(2)}) ${content.trim()}`;
   try {
@@ -374,7 +378,7 @@ async function saveFactSmart(
     });
     // True only when a fact was stored: the resolver may NOOP or be refused,
     // and the callers' "Auto-saved …" line read as a save that never happened.
-    const { facts } = await memory.retainSmart(gated, sourceFile, 0, { promotion });
+    const { facts } = await memory.retainSmart(gated, sourceFile, 0, { promotion, sourceMessageId });
     return facts.length > 0;
   } catch (e) {
     logger.warn(`[memory] ${kind} write failed: ${(e as Error).message}`);

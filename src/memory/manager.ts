@@ -67,6 +67,9 @@ export interface PersistTurnInput {
   skip?: boolean;
   /** Tag the daily-log entry so today_context can filter by current session. */
   sessionId?: string;
+  /** The user row this turn answered — the id remember / update_fact stamp on
+   *  the facts they save, so extraction can skip what the agent already saved. */
+  userMessageId?: string;
   /**
    * The session ingested external (untrusted) content this run — web_fetch /
    * http_request / browser / MCP results (see data-lineage/external.ts).
@@ -233,7 +236,7 @@ export class MemoryManager {
   async persistTurn(input: PersistTurnInput): Promise<void> {
     if (input.skip) return;
     try {
-      await autoExtractAndSave(this.index, input.userMessage, input.agentResponse, input.sessionId, input.hasExternalTaint);
+      await autoExtractAndSave(this.index, input.userMessage, input.agentResponse, input.sessionId, input.hasExternalTaint, input.userMessageId);
     } catch (e) {
       logger.warn("autoExtractAndSave failed:", (e as Error).message);
     }

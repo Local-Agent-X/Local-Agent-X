@@ -348,11 +348,13 @@ export async function persistTurnState(input: PersistInput): Promise<void> {
       // gate. Computed HERE at persist time so the background end-of-turn
       // pass sees the state of the turn that spawned it.
       const { hasExternalIngestion } = await import("../../../data-lineage/external.js");
+      const { latestUserMessageId } = await import("../../../tool-execution/index.js");
       await ctx.memoryManager.persistTurn({
         userMessage: message,
         agentResponse: assistantText,
         skip: isTrivialCanonical,
         sessionId,
+        userMessageId: canonicalOpId ? latestUserMessageId(canonicalOpId) : undefined,
         hasExternalTaint: hasExternalIngestion(sessionId),
         // This turn's OWN rows (user, tool calls, tool results, injects, final
         // reply) for the end-of-turn marker scan — every row, no anchor; null

@@ -46,7 +46,7 @@ export abstract class MemoryFactsBase {
     text: string,
     sourceFile: string,
     sourceLine = 0,
-    opts?: { candidateLimit?: number; resolverOpts?: { provider?: "ollama" | "anthropic" | "openai" | "auto"; model?: string }; promotion?: MemoryPromotionContext; occurredAt?: number | null }
+    opts?: { candidateLimit?: number; resolverOpts?: { provider?: "ollama" | "anthropic" | "openai" | "auto"; model?: string }; promotion?: MemoryPromotionContext; occurredAt?: number | null; sourceMessageId?: string }
   ): Promise<{ facts: RetainedFact[]; decisions: Array<{ content: string; op: string; targetId?: number; reason: string }> }> {
     const result = await Facts.retainSmart(this.db, this.hasFts, text, sourceFile, sourceLine, opts);
     this.refreshEntityPages(result.facts);

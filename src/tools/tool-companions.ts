@@ -26,6 +26,11 @@ export const TOOL_COMPANIONS: Readonly<Record<string, readonly string[]>> = {
   // delete_file's own result text offers the undo. Shipping the offer without
   // the tool is a promise the harness cannot keep.
   delete_file: ["restore_file"],
+  // forget's description sends a correction to update_fact ("A correction is
+  // update_fact, not forget"). LM Studio eval 2026-10-18 (qwen3.6-27b, medium
+  // tier): forget shipped without it, and told the boat had moved to slip 31
+  // the model saved the new slip beside the old one, so slip 14 stayed current.
+  forget: ["update_fact"],
 };
 
 /** Every companion required by `names`, excluding names already present.

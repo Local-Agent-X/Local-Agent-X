@@ -1,8 +1,8 @@
-// Every package the server's own code imports must be a runtime dependency.
+// Every package the server's own code imports must be in a production install.
 //
-// A package listed only in devDependencies is absent from a production
-// install (`npm ci --omit=dev`), and a static import of it crashes the module
-// that holds it at load. src/language-intel imported `typescript`, a dev
+// A package listed only in devDependencies is absent from one
+// (`npm ci --omit=dev`), and a static import of it crashes the module that
+// holds it at load. src/language-intel imported `typescript`, a dev
 // dependency, and the Terminal-Bench Linux bundle (eval/terminal-bench/)
 // crashed on boot with ERR_MODULE_NOT_FOUND (2026-10-18). Today's installs
 // happen to include dev packages, which is why nothing else noticed.
@@ -13,13 +13,21 @@ import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
 const ROOT = join(import.meta.dirname, "..");
-const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
-const RUNTIME = new Set([
-  ...Object.keys(pkg.dependencies ?? {}),
-  ...Object.keys(pkg.optionalDependencies ?? {}),
-  ...Object.keys(pkg.peerDependencies ?? {}),
-]);
+// The lockfile is what says whether a production install contains a package:
+// a dependency of a runtime dependency (sharp, pdfjs-dist) is installed and
+// its lock entry is not `dev`; a devDependency's entry is `dev` (or
+// `devOptional`) and `npm ci --omit=dev` leaves it out.
+const LOCK: Record<string, { dev?: boolean; devOptional?: boolean }> =
+  JSON.parse(readFileSync(join(ROOT, "package-lock.json"), "utf8")).packages;
 const BUILTIN = new Set(builtinModules.flatMap((m) => [m, `node:${m}`]));
+
+/** Why a production install would not have `name`, or null when it would. */
+function missingInProduction(name: string): string | null {
+  const entry = LOCK[`node_modules/${name}`];
+  if (!entry) return "not in package-lock.json";
+  if (entry.dev || entry.devOptional) return "dev-only: npm ci --omit=dev leaves it out";
+  return null;
+}
 
 /** Files that only tests load: they may import test tooling. */
 function isTestOnly(rel: string): boolean {
@@ -65,23 +73,27 @@ function runtimeSpecifiers(file: string): string[] {
 }
 
 describe("runtime imports", () => {
-  it("every package src/ imports at runtime is a dependency, not a devDependency", () => {
+  it("every package src/ imports at runtime is in a production install", () => {
     const offenders: string[] = [];
     for (const file of sourceFiles(join(ROOT, "src"))) {
       for (const spec of runtimeSpecifiers(file)) {
         const name = packageOf(spec);
-        if (name && !RUNTIME.has(name)) offenders.push(`${relative(ROOT, file)} imports "${spec}" (${name} is not in dependencies)`);
+        const why = name && missingInProduction(name);
+        if (why) offenders.push(`${relative(ROOT, file)} imports "${spec}" (${name}: ${why})`);
       }
     }
     expect(offenders).toEqual([]);
   });
 
-  it("finds a value import and ignores a type-only one", () => {
-    // The scanner itself: a regression here would let the check above pass vacuously.
+  it("the scanner sees value imports, and the lock check tells dev-only packages apart", () => {
+    // A regression in either would let the check above pass vacuously.
     const probe = join(ROOT, "src", "language-intel", "ts-provider.ts");
     expect(runtimeSpecifiers(probe)).toContain("typescript");
     expect(packageOf("@arikernel/core/sub")).toBe("@arikernel/core");
     expect(packageOf("node:fs")).toBeNull();
     expect(packageOf("./local.js")).toBeNull();
+    expect(missingInProduction("vitest")).toMatch(/dev-only/);
+    expect(missingInProduction("better-sqlite3")).toBeNull();
+    expect(missingInProduction("no-such-package-xyz")).toMatch(/not in package-lock/);
   });
 });

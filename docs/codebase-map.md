@@ -20,14 +20,14 @@ over 400 LOC (the source-hygiene ceiling).
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 159 | 29 | XL |  |
 | `src/security/` | 123 | 46 | XL |  |
-| `src/tools/` | 111 | 215 | XL |  |
+| `src/tools/` | 114 | 215 | XL |  |
 | `src/tool-execution/` | 80 | 72 | XL |  |
 | `src/canonical-loop/` | 79 | 260 | XL |  |
 | `src/workspace/` | 71 | 3 | M |  |
 | `src/providers/` | 68 | 26 | XL |  |
 | `src/memory/` | 51 | 139 | XL |  |
 | `src/browser/` | 46 | 86 | XL |  |
-| `src/tool-policy/` | 44 | 21 | L |  |
+| `src/tool-policy/` | 45 | 21 | L |  |
 | `src/data-lineage/` | 43 | 11 | L |  |
 | `src/local-runtimes/` | 39 | 25 | XL |  |
 | `src/threat/` | 39 | 13 | L |  |

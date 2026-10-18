@@ -22,6 +22,7 @@
 import type { ToolDefinition } from "../../types.js";
 import { resolveToolsForRequest, unifiedRegistry } from "../../tools/tool-search.js";
 import { WORKTREE_REQUIRED_TOOLS } from "../../security/layer/types.js";
+import { toolsTagged } from "../../tool-registry.js";
 import type { OpLane } from "../types.js";
 
 /** Lanes a delegated op can be scheduled on (OpLane minus the agent_spawn lane). */
@@ -39,15 +40,13 @@ export interface DelegatedBelt {
  *  WORKTREE_REQUIRED_TOOLS, so each call still passes the delegated gate.
  *  The other worktree-required spellings (ari_file, process_start,
  *  bulk_replace) stay denied on every lane. */
-export const BUILD_MUTATION_TOOLS: readonly string[] = [
-  "write", "edit", "multi_edit", "edit_lines", "delete_file", "restore_file", "bash",
-];
+export const BUILD_MUTATION_TOOLS: readonly string[] = toolsTagged("file-write", "file-edit", "file-edit-variant", "file-delete", "shell");
 
 /**
  * Tools a delegated worker must NEVER receive, regardless of what the
  * spawned-agent audience carries. Why each group:
  *
- *  - op_submit / op_submit_async / op_submit_batch / agent_spawn: no
+ *  - the `delegation` tools (op_submit*, agent_spawn): no
  *    recursion-depth guard exists in this repo — a worker that can spawn
  *    workers is unbounded fan-out.
  *  - mission_schedule_* (prefix, see DENIED_TOOL_PREFIXES): scheduling stays
@@ -59,13 +58,7 @@ export const BUILD_MUTATION_TOOLS: readonly string[] = [
  *    fail recreates the confused-worker failure this campaign fixed. A build
  *    worker with a work root takes BUILD_MUTATION_TOOLS back out of this set.
  */
-const DENIED_TOOL_NAMES: ReadonlySet<string> = new Set([
-  "op_submit",
-  "op_submit_async",
-  "op_submit_batch",
-  "agent_spawn",
-  ...WORKTREE_REQUIRED_TOOLS,
-]);
+const DENIED_TOOL_NAMES: ReadonlySet<string> = new Set([...toolsTagged("delegation"), ...WORKTREE_REQUIRED_TOOLS]);
 
 const DENIED_TOOL_PREFIXES: readonly string[] = ["mission_schedule_"];
 

@@ -6,16 +6,14 @@
 // agentic loops on the spoken critical path — not a handful of focused,
 // obviously-named tools. Heavy/long work delegates to a worker (op_submit_async).
 
-/** Tools the voice turn may call. Mission scheduling is DIRECT (never delegated
- *  — a worker must not install recurring jobs); mission_schedule_delete stays
- *  off voice (destructive, belongs in text/UI where the target is unambiguous).
- *  screen_capture + ocr answer "what's on my screen" on demand. */
-export const VOICE_FAST_TOOLS = [
-  "op_submit_async", "op_status", "web_search", "browser",
-  "screen_capture", "ocr",
-  "mission_schedule_list", "mission_schedule_create", "mission_schedule_update",
-  "mission_schedule_toggle", "mission_schedule_reports",
-] as const;
+import { toolsTagged } from "../tool-registry.js";
+
+/** Tools the voice turn may call: every row tagged `voice-fast`. Mission
+ *  scheduling is DIRECT (never delegated — a worker must not install recurring
+ *  jobs); mission_schedule_delete is not voice-fast (destructive, belongs in
+ *  text/UI where the target is unambiguous). screen_capture + ocr answer
+ *  "what's on my screen" on demand. */
+export const VOICE_FAST_TOOLS: readonly string[] = toolsTagged("voice-fast");
 
 /** The `## Voice mode` tail appended to the prepared system prompt. */
 export function buildVoiceTail(visualsEnabled: boolean): string {

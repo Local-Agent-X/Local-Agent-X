@@ -74,9 +74,9 @@ A tool is registered in more than one table. `npm run build` runs
 `check:tool-registration` (`src/tools/tool-registration-completeness.test.ts`
 over the runtime catalog, plugins included, plus `tool-reference-coverage.test.ts`
 and `tool-list-registry.test.ts`): a tool with no policy entry or kernel class,
-a name in a prompt or table that isn't a tool, or a new hand-kept list of tool
-names that is neither derived from the policy rows nor registered, fails the
-build. The other steps are covered by the tests named.
+a name in a prompt or table that isn't a tool, a row without `tags`, or a new
+collection naming two or more tools that is neither derived from the policy
+rows nor registered, fails the build. The other steps are covered by the tests named.
 
 1. Define it under `src/tools/` and register it: `allTools` in `src/tools/registry-build.ts` for core file/retrieval tools, otherwise the owning plugin in `src/tools/plugins.ts` (memory, browser, secrets, agents, protocols, cron, apps, ...).
 2. Policy entry in the matching `src/tool-policy/tool-policies.<domain>.ts` (`core`, `network`, `memory`, `orchestration`, `apps`, `globs`). `tool-policies.data.ts` only merges them. The entry's `kernel` class decides whether Ari checks the tool at all; `capabilities` (required) says which sink classes it belongs to (`egress`, `sensitive-read`, `shell`, or `[]`), and every gate keys on that, never on the name; `pathArgs` names the args file-confinement must check, and which paths a call writes, which is what puts it in the workspace-write class; `offBoxFetch: true` requires `egress` (`capability-class-gates.test.ts`). A tool that runs a model-written shell command declares `shellCommand: { arg }`, one whose result is off-box content declares `externalContent: true`, and `output` says what its result carries (`command-output-facts.test.ts`). A send declares `destination` (where it delivers); without one it reads as an unknown destination and is asked about every time.
@@ -84,6 +84,7 @@ build. The other steps are covered by the tests named.
 4. A kernel-gated row (any `kernel` but `internal`) requires `ariAction`, the action the kernel judges a call as; it must be valid for the class (`exec` only for shell; `ari-action-map.test.ts`).
 5. If destructive: the row's `risk: "destructive"` requires `undo` (the tool that reverses it, why it is recoverable, or why nothing can; the type will not build without it). A family with some destructive actions lists them in `destructiveActions`. If publish-shaped: the row's `publish` (`publish-operation.test.ts`).
 6. If its body reads a trusted stamp (`sessionIdOf`, `operationIdOf`, `userMessageIdOf`, `lastTurnOf`, `cwdOf`): `reads` on the row (`session-scoped-tools.test.ts` scans every body; a tool with `pathArgs` gets the session without it). Every other fact about the tool is a row field too, each documented in `tool-policies.types.ts` with whether absence is a legal default or a declaration a test requires: `localArgs`, `runControl`, `committing`, `killSwitch`, `reach`, `loop`, `memoryWrite`, `category`, `hiddenFrom`, `transport`, `publish`, `prompt`, `companions`. Optional on the row: `timeoutMs` (fallback 120 s; 0 for a tool that runs for minutes) and `liveState` (`poll` / `fresh`, when an identical repeat can return something new). Optional on the tool: `compactDescription` for small models, `describeCall` for its line on the approval card.
+7. `tags` on the row (required, `[]` when none fits): what the tool is for, from `TOOL_TAGS` in `src/tool-policy/tool-tags.ts`. Every role, kit, template, background job and surface chooses its tools by tag (`selectTools` in `src/tools/tool-kits.ts`), so the tags are what put the tool in them; a set that needs one tool its tags don't cover names it as an exception with the reason. `essentialRank` puts it in the capped tiers' essential order, and `blurb` is a main-chat tool's line in `docs/agent-capabilities.md` (then `npm run docs:generated`).
 
 ## When in doubt
 

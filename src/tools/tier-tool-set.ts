@@ -12,6 +12,7 @@
  */
 import { classifyModel, type ModelTier } from "../model-tiers.js";
 import { companionsFor } from "./tool-companions.js";
+import { policyRowOf, toolsWhere } from "../tool-registry.js";
 
 export const MEDIUM_INTENT_SLOTS = 2;
 
@@ -89,68 +90,56 @@ export function toolCapTierForProvider(provider: string, model: string): ModelTi
 
 
 /**
- * Priority-ordered list of tools that MUST stay in the shrunken set
- * when we cap. Covers the 80% of agent operations.
+ * Priority-ordered tools that MUST stay in the shrunken set when we cap:
+ * every row with an `essentialRank`, by rank. Covers the 80% of agent
+ * operations. Why the ranks fall where they do:
+ *
+ *   1-8   read, write, edit, bash, http_request, browser, self_edit (agent
+ *         self-repair via Claude Code), memory_save: the weak cut keeps these.
+ *   9     memory_search.
+ *   10-11 delete_file, restore_file: the recoverable delete and its undo.
+ *         Without them a capped set keeps only `bash`, whose delete is
+ *         permanent, while the prompt's delete rule and the shell refusals point
+ *         the model at delete_file. 2026-09-26 (EXP-29, qwen3:8b): refused an
+ *         `rd`, it called delete_file as <tool_call> TEXT, 3/3, because the tool
+ *         was not in its schema. Below the weak cut on purpose.
+ *   12    build_app: flagship capability ("build me an app/game/site" is a
+ *         primary reason this product exists), so it cannot be left to compete
+ *         for the intent slots. BELOW the weak cut on purpose: weak 1-13B models
+ *         can't drive a build loop, and promoting it would evict memory_save
+ *         from every weak model's set. Live 2026-07-15: absent here, build_app
+ *         fell out of a local 27B's schema and the model improvised
+ *         bash("build_app --name …"). See MEDIUM_INTENT_SLOTS.
+ *   13-16 memory_update_profile, memory_set_user_field, remember, forget: the
+ *         profile and Facts DB writers. Without them a model told "stop X" falls
+ *         back to memory_save (daily log only), which doesn't trigger the
+ *         HEART.md / USER.md contradiction sweep, so contradictory rules
+ *         accumulate. memory_update_profile is the load-bearing one.
+ *   17-20 web_fetch, web_search, glob, grep.
+ *   21-23 generate_image, edit_image, generate_video: media gen is first-class
+ *         for medium-tier providers (xAI Grok, Gemini). Filter+RAG-gated, "generate
+ *         an image" silently dropped the tool when RAG wasn't warm or the cap
+ *         squeezed it out; edit_image rides along so "edit this photo" sees the
+ *         source pixels instead of a from-scratch generate.
+ *   24-27 presentation, document, spreadsheet, pdf: deliverable producers, for
+ *         build_app's reason: when the user asks for the artifact ITSELF the
+ *         tool that produces it is the whole task. Live 2026-09-16: across 27
+ *         muse turns the two intent slots went to edit_lines+multi_edit on 21
+ *         (both redundant with `edit`) and `presentation` won once; asked for a
+ *         PowerPoint on a turn it lost, the model wrote a placeholder .pptx and
+ *         reported the deck built. The family umbrellas: four names buy every
+ *         create/edit/read action.
+ *   28-30 list_secrets, clipboard_write_from_secret, request_secret: the
+ *         credential path. Missing, the model degrades DANGEROUSLY: 2026-09-08 a
+ *         medium local model asked to deploy with a vault-stored token read
+ *         ~/.vercel/auth.json (tainting the session and blocking its own
+ *         egress), then asked the user to paste the token in chat. These are the
+ *         only route from a stored credential to a working command that never
+ *         puts the value in the model's context; list_secrets is how it learns
+ *         the credential is there.
  */
-export const ESSENTIAL_TOOLS_ORDER: readonly string[] = [
-  "read", "write", "edit", "bash",
-  "http_request", "browser",
-  "self_edit",                      // agent self-repair via Claude Code
-  "memory_save", "memory_search",
-  // The recoverable delete and its undo. Without them a capped set keeps only
-  // `bash`, whose delete is permanent — while the prompt's delete rule and the
-  // shell refusals point the model at delete_file. 2026-09-26 (EXP-29, qwen3:8b):
-  // refused an `rd`, it called delete_file as <tool_call> TEXT, 3/3, because the
-  // tool was not in its schema. Below the weak cut on purpose (weak keeps its 8).
-  "delete_file", "restore_file",
-  // Flagship capability — "build me an app/game/site" is a primary reason this
-  // product exists, so it cannot be left to compete for the intent slots. It
-  // sits BELOW the weak-tier cut (first 8) on purpose: weak 1-13B models can't
-  // drive a build loop, and promoting it above would evict memory_save from
-  // every weak model's set. Medium+ is where builds actually land.
-  // Live 2026-07-15: absent from this list, build_app fell out of a local 27B's
-  // schema entirely and the model improvised bash("build_app --name …") — the
-  // catalog-order intent slot went to another tool. See MEDIUM_INTENT_SLOTS.
-  "build_app",
-  // Profile + Facts DB writers — without these in the medium-tier set,
-  // models like grok-4-fast that get a "stop X" / "use Y" preference
-  // fall back to memory_save (daily log only) which doesn't trigger the
-  // HEART.md / USER.md contradiction sweep, so contradictory rules
-  // accumulate. memory_update_profile is the load-bearing one; the
-  // others give the agent precise verbs for scalars / facts / retractions.
-  "memory_update_profile", "memory_set_user_field", "remember", "forget",
-  "web_fetch", "web_search",
-  "glob", "grep",
-  // Media gen — first-class capabilities for medium-tier providers (xAI
-  // Grok via SuperGrok, Gemini, etc.). Used to be filter+RAG-gated which
-  // meant "generate an image" would silently drop the tool when RAG
-  // wasn't warmed yet or the cap squeezed it out. edit_image rides here too
-  // so "edit this photo" reaches the model instead of falling back to a
-  // from-scratch generate_image that never sees the source pixels.
-  "generate_image", "edit_image", "generate_video",
-  // Deliverable producers, here for the same reason build_app is: when the
-  // user asks for the artifact ITSELF ("make me a deck/doc/sheet/pdf"), the
-  // tool that produces it is the whole task, and a medium model has only
-  // MEDIUM_INTENT_SLOTS of headroom to find it. Live 2026-09-16: across 27
-  // muse turns the two slots went to edit_lines+multi_edit on 21 of them —
-  // both redundant with the essential `edit` — and `presentation` won a slot
-  // exactly once. Asked for a PowerPoint on a turn where it lost, the model
-  // had no way to make one, so it improvised `write("…​.pptx", "placeholder")`
-  // and reported the deck as built. These are the family umbrellas (one tool,
-  // many actions), so four names buy every create/edit/read action.
-  "presentation", "document", "spreadsheet", "pdf",
-  // The credential path, for the same reason the media tools are here and not
-  // behind the intent filter: when it is missing the model does not degrade
-  // gracefully, it degrades DANGEROUSLY. Live 2026-09-08, a medium local model
-  // asked to deploy with a vault-stored token: clipboard_write_from_secret was
-  // filtered out, so it tried to read ~/.vercel/auth.json (tainting the session
-  // and blocking its own egress), then finished by asking the user to "paste
-  // the token value here" in plain chat. These three are the only route from a
-  // stored credential to a working command that never puts the value in the
-  // model's context, and list_secrets is what lets it know the credential is
-  // there at all.
-  "list_secrets", "clipboard_write_from_secret", "request_secret",
-];
+export const ESSENTIAL_TOOLS_ORDER: readonly string[] = toolsWhere((row) => row.essentialRank !== undefined)
+  .sort((a, b) => (policyRowOf(a)?.essentialRank ?? 0) - (policyRowOf(b)?.essentialRank ?? 0));
 
 /** Longest parameter `description` a medium/weak schema keeps verbatim. */
 export const COMPACT_PARAM_DESCRIPTION_MAX = 120;

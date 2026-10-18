@@ -4,7 +4,7 @@
 // owns the seeding loop; this module owns the definitions.
 
 import { renderPersonaPrompt } from "../tools/render-builder-prompt.js";
-import { BUILDER_KIT, OFFICE_KIT } from "../tools/tool-kits.js";
+import { BUILDER_KIT, OFFICE_KIT, selectTools } from "../tools/tool-kits.js";
 import type { AgentTemplate } from "./template-store.js";
 
 /** Catalog of built-in template definitions. A function (not a const) so
@@ -18,7 +18,7 @@ export function builtInTemplateDefaults(): Array<Omit<AgentTemplate, "createdAt"
       role: "researcher",
       description: "Quick research — searches the web, reads pages, and returns a concise summary with sources.",
       systemPrompt: "You are a research agent. Search the web for current, authoritative information on the given topic. Read the most relevant pages. Return a clear, structured summary with key findings and source URLs. Be concise — aim for 300-500 words. Cite your sources inline.",
-      allowedTools: ["web_search", "web_fetch", "http_request", "read", "write"],
+      allowedTools: selectTools({ tags: ["web-search", "web-read", "http-api", "file-read", "file-write"] }),
       icon: "🔍",
     },
     {
@@ -27,7 +27,7 @@ export function builtInTemplateDefaults(): Array<Omit<AgentTemplate, "createdAt"
       role: "deep-researcher",
       description: "Thorough multi-source research with citations, cross-referencing, and structured report output.",
       systemPrompt: "You are a deep research agent. Conduct thorough research on the given topic using multiple sources. Cross-reference claims across sources. Structure your output as a report with: Executive Summary, Key Findings (numbered), Evidence & Sources (with URLs), Limitations/Caveats, and Recommendations. Aim for completeness over brevity. Always distinguish between well-supported findings and preliminary/contested claims.\n\nYou were spawned with one task — you don't have a conversation channel back to the user. NEVER ask the user to clarify, resend the topic, or confirm scope. The task you received at spawn IS your scope; if anything is ambiguous, make a reasonable interpretation and note it in Limitations/Caveats.\n\nWhen a source fails (HTTP 4xx/5xx, timeout, blocked): pivot. Call web_search for alternative URLs, try a different domain, or read a related source. Two or three failed fetches is not a reason to give up — it's a reason to broaden your search. Only give up after exhausting reasonable alternatives, and even then your output must be a partial report with what you DID find plus a Limitations section naming what you couldn't reach — not an empty 'please send the topic' message.",
-      allowedTools: ["web_fetch", "web_search", "http_request", "read", "write"],
+      allowedTools: selectTools({ tags: ["web-read", "web-search", "http-api", "file-read", "file-write"] }),
       icon: "📚",
     },
     {
@@ -36,7 +36,7 @@ export function builtInTemplateDefaults(): Array<Omit<AgentTemplate, "createdAt"
       role: "coder",
       description: "Writes, edits, and tests code. Can create full apps, fix bugs, and run commands.",
       systemPrompt: "You are a coding agent. Write clean, working code to accomplish the task. Use the file tools to read existing code, write new files, and edit existing ones. Run bash commands to test your work. When building apps, create all necessary files and verify they work. Report what you built and how to use it.",
-      allowedTools: ["read", "write", "edit", "bash", "build_app"],
+      allowedTools: selectTools({ tags: ["file-read", "file-write", "file-edit", "shell"], plus: { build_app: "builds a whole app in one call" } }),
       icon: "💻",
     },
     {
@@ -45,7 +45,7 @@ export function builtInTemplateDefaults(): Array<Omit<AgentTemplate, "createdAt"
       role: "reviewer",
       description: "Audits code for bugs, security issues, performance problems, and best practices.",
       systemPrompt: "You are a code review agent. Read the specified files or codebase area. Look for: bugs, security vulnerabilities, performance issues, code smells, missing error handling, and deviations from best practices. Structure your output as: Critical Issues, Warnings, Suggestions, and a Summary. Be specific — include file paths, line numbers, and concrete fix suggestions.",
-      allowedTools: ["read", "bash"],
+      allowedTools: selectTools({ tags: ["file-read", "shell"] }),
       icon: "🔎",
     },
     {
@@ -54,7 +54,7 @@ export function builtInTemplateDefaults(): Array<Omit<AgentTemplate, "createdAt"
       role: "browser",
       description: "Web automation — navigates sites, extracts data, fills forms, takes screenshots.",
       systemPrompt: "You are a browser automation agent. Use the browser tool to navigate websites, interact with pages, extract data, and complete web-based tasks. Take screenshots when useful. Report what you found or accomplished with relevant data extracted.",
-      allowedTools: ["browser", "web_fetch", "read", "write"],
+      allowedTools: selectTools({ tags: ["web-browse", "web-read", "file-read", "file-write"] }),
       icon: "🌐",
     },
     {
@@ -63,7 +63,7 @@ export function builtInTemplateDefaults(): Array<Omit<AgentTemplate, "createdAt"
       role: "writer",
       description: "Creates content — reports, documentation, emails, articles, summaries.",
       systemPrompt: "You are a writing agent. Create well-structured, clear content for the given task. Match the appropriate tone and format (technical docs, business email, blog post, report, etc.). Use proper headings, sections, and formatting. Save the output to a file if requested. Focus on clarity and usefulness over word count.",
-      allowedTools: ["read", "write", "web_fetch"],
+      allowedTools: selectTools({ tags: ["file-read", "file-write", "web-read"] }),
       icon: "✍️",
     },
     {
@@ -72,7 +72,7 @@ export function builtInTemplateDefaults(): Array<Omit<AgentTemplate, "createdAt"
       role: "analyst",
       description: "Reads data files, runs analysis scripts, and produces insights with visualizations.",
       systemPrompt: "You are a data analysis agent. Read the specified data files, analyze them using appropriate methods (statistics, aggregation, pattern detection), and produce clear insights. Write analysis scripts if needed. Structure output as: Data Overview, Key Findings, Patterns/Anomalies, and Recommendations. Include specific numbers and metrics.",
-      allowedTools: ["read", "write", "bash", "edit"],
+      allowedTools: selectTools({ tags: ["file-read", "file-write", "shell", "file-edit"] }),
       icon: "📊",
     },
     {
@@ -81,7 +81,7 @@ export function builtInTemplateDefaults(): Array<Omit<AgentTemplate, "createdAt"
       role: "sysadmin",
       description: "Checks system health, reads logs, manages processes, diagnoses issues.",
       systemPrompt: "You are a system administration agent. Check system health, read log files, inspect running processes, and diagnose issues. Use bash commands to gather information. Report your findings clearly: what's healthy, what needs attention, and recommended actions. Be careful — never run destructive commands.",
-      allowedTools: ["bash", "read"],
+      allowedTools: selectTools({ tags: ["shell", "file-read"] }),
       icon: "🖥️",
     },
     {
@@ -99,7 +99,7 @@ export function builtInTemplateDefaults(): Array<Omit<AgentTemplate, "createdAt"
       role: "App Builder",
       description: "Builds web apps in workspace/apps/. Strategy varies per provider.",
       systemPrompt: renderPersonaPrompt(),
-      allowedTools: ["write", "read", "edit", "bash", "glob"],
+      allowedTools: selectTools({ tags: ["file-write", "file-read", "file-edit", "shell"], plus: { glob: "lists the app's files; it took the place of the unregistered list_directory" } }),
       icon: "🛠",
       providerStrategy: {
         // Every provider now builds via the in-canonical default (LAX drives
@@ -150,20 +150,10 @@ END-OF-WAKE INVARIANT — before you stop, every report's state is one of:
   (c) blocked but you resolved it this cycle.
 
 No silent stalls under your watch. If you wake up and find one, that's the first thing you fix.`,
-      allowedTools: [
-        "agent_whoami",
-        "agent_team_list",
-        "agent_wakeup",
-        "agent_escalate",
-        "issue_list",
-        "issue_create",
-        "issue_update",
-        "issue_search",
-        "issue_release",
-        "read",
-        "write",
-        "web_search",
-      ],
+      allowedTools: selectTools({
+        tags: ["team", "issues", "file-read", "file-write", "web-search"],
+        except: { issue_checkout: "routes work and never claims an issue itself" },
+      }),
       icon: "🧑‍💼",
       defaultModel: { provider: "anthropic", model: "claude-opus-4-8" },
     },
@@ -193,7 +183,7 @@ Decision framework:
 - The user IS the board. When they ask you to do something, do it directly.
 - Protect focus — don't let the team get distracted by low-priority work
 - Hold the long view while executing the near-term`,
-      allowedTools: ["issue_create", "issue_list", "issue_update", "issue_search", "issue_checkout", "issue_release", "agent_team_list", "agent_whoami", "agent_wakeup", "agent_create", "agent_escalate", "read", "web_fetch"],
+      allowedTools: selectTools({ tags: ["issues", "team", "file-read", "web-read"], plus: { agent_create: "hires: creates an agent for a skill the team lacks" } }),
       icon: "👔",
     },
   ];

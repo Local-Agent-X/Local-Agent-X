@@ -146,4 +146,4 @@ demand via tool search and aren't all listed here.)
 - `presentation`
 
 ---
-_66 capabilities · 48 with a description · 18 awaiting a blurb (add to scripts/gen-agent-capabilities.ts)._
+_66 capabilities · 48 with a description · 18 awaiting a blurb (add one to the tool's policy row)._

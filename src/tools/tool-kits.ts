@@ -39,13 +39,14 @@ export function selectTools(selection: ToolSelection): string[] {
 /** What a coding worker needs: read, discover, modify, run. The self_edit
  *  surgeon, the auto-build chunk runners and the app-builder worker all start
  *  from it; the builder adds the web and a viewer. */
-export const CODING_KIT: readonly string[] = ["read", "write", "edit", "glob", "grep", "bash"];
+export const CODING_KIT_TAGS: readonly ToolTag[] = ["file-read", "file-write", "file-edit", "file-search", "shell"];
+export const CODING_KIT: readonly string[] = toolsTagged(...CODING_KIT_TAGS);
 
 /** The coding kit plus the web and an image viewer: the app-builder worker and
  *  the generic Worker template, which build against live references. */
-export const BUILDER_KIT: readonly string[] = [...CODING_KIT, "web_fetch", "web_search", "view_image"];
+export const BUILDER_KIT: readonly string[] = toolsTagged(...CODING_KIT_TAGS, "web-read", "web-search", "image-view");
 
 /** The Office umbrella tools (each covers create/edit/read actions). A worker
  *  delegated a deck/doc/sheet/pdf task needs them: its bash is denied in a
  *  delegated session, so without these it has no route to the file at all. */
-export const OFFICE_KIT: readonly string[] = ["presentation", "document", "spreadsheet", "pdf"];
+export const OFFICE_KIT: readonly string[] = toolsTagged("office-doc");

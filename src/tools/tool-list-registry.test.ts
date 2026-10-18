@@ -4,56 +4,39 @@ import { knownNonToolIdentifiers, scanToolNameCollections, type ToolNameCollecti
 
 // Hand-kept lists of tool names rot: a renamed or removed tool leaves a dead
 // entry that silently stops doing its job (a deny that denies nothing, an
-// essential that never loads, a category that never matches). Every list that
-// stated a fact about a tool — which stamps it reads, how the loop reads it,
-// what switch turns it off, where it reaches — is now a field on the tool's
-// policy row (src/tool-policy/tool-policies.types.ts) and derived there. The
-// ones left are editorial — which tools a persona gets, which the small-model
-// tier keeps — and every one of them is registered below, so this test can
-// check each name against the catalog the runtime actually registers. A
-// collection the scan finds that is registered nowhere fails: either register
-// it here, or derive it from a row fact so there is nothing to register.
+// essential that never loads, a category that never matches). Every fact about
+// a tool is a field on its policy row (src/tool-policy/tool-policies.types.ts),
+// and every set of tools a role, kit, template, job or surface gets is chosen
+// by what the tools are for (the row's `tags`, src/tools/tool-kits.ts
+// selectTools). What is left is registered below, so this test can check each
+// name against the catalog the runtime actually registers: the deliberate
+// exceptions a selection names beside its tags, and the literals of formats
+// that are not ours. Any collection naming two or more tools that is
+// registered nowhere fails: derive it from the rows, register it here, or
+// declare it not a tool list with why.
 
 interface Registered {
   file: string;
   /** The declaration that owns the collection: `CONST_NAME`, `.property` (every
    *  such property in the file), or `fn()`. */
   owner: string;
-  /** What each literal is when not a tool name: a prefix (`memory_`) that
-   *  must match a registered tool, or a comma-joined set of names (a turn's
-   *  tool shape, `http_request,http_request`). */
-  literal?: "prefix" | "name-set";
+  /** Each literal is a comma-joined set of names (a turn's tool shape,
+   *  `http_request,http_request`), every one of which must be a tool. */
+  literal?: "name-set";
 }
 
-/** Editorial tool lists: a human choice no row fact expresses. */
 const REGISTRY: readonly Registered[] = [
-  // Which tools a role, template, worker or background job gets.
-  { file: "src/agency/agent-roles.ts", owner: ".suggestedTools" },
-  { file: "src/agent-store/template-defaults.ts", owner: ".allowedTools" },
-  { file: "src/rbac.ts", owner: ".allowedTools" },
-  { file: "src/tools/tool-kits.ts", owner: "CODING_KIT" },
-  { file: "src/tools/tool-kits.ts", owner: "BUILDER_KIT" },
-  { file: "src/tools/tool-kits.ts", owner: "OFFICE_KIT" },
-  { file: "src/server/background-jobs/prompts.ts", owner: "DREAM_TOOL_NAMES" },
-  { file: "src/canonical-loop/publish-review-submit.ts", owner: "REVIEWER_TOOLS" },
-  { file: "src/ops/tools/delegated-toolset.ts", owner: "BUILD_MUTATION_TOOLS" },
-  { file: "src/ops/tools/delegated-toolset.ts", owner: "DENIED_TOOL_NAMES" },
-  // Which tools a surface shows or hides.
-  { file: "src/tools/tier-tool-set.ts", owner: "ESSENTIAL_TOOLS_ORDER" },
-  { file: "src/tools/tool-search.ts", owner: "ALWAYS_ON_TOOLS" },
-  { file: "src/server/voice-prompt.ts", owner: "VOICE_FAST_TOOLS" },
-  { file: "src/agent-request/tool-filter.ts", owner: ".toolPrefixes", literal: "prefix" },
-  { file: "src/agent-request/prepare-request/product-build-routing.ts", owner: "BUILD_WORKFLOW_TOOLS" },
-  { file: "src/agent-request/prepare-request/product-build-routing.ts", owner: ".allowedWorkflowTools" },
-  { file: "src/agent-request/prepare-request/tool-selection.ts", owner: "INLINE_BUILD_TOOLS" },
-  { file: "src/server/background-jobs/skill-review-prompt.ts", owner: "SKILL_REVIEW_TOOL_NAMES" },
-  // The user-facing capability blurbs; a blurb for a removed tool is dead weight.
-  { file: "scripts/gen-agent-capabilities.ts", owner: "BLURB" },
-  // Wire and corpus fixtures.
+  // Deliberate exceptions beside a tag selection, each with its reason in the
+  // record. One-name exceptions are checked by selectTools itself.
+  { file: "src/agency/agent-roles.ts", owner: ".plus" },
+  { file: "src/rbac.ts", owner: ".plus" },
+  { file: "src/agent-request/prepare-request/tool-selection.ts", owner: "ALSO_BUILDS" },
+  // Outside formats and test data: names as another system spells them.
   { file: "src/anthropic-client/oauth-direct.ts", owner: "CLASSIFIER_FINGERPRINT_TOOLS" },
   { file: "src/canonical-loop/adapters/tool-call-text-corpus.ts", owner: "CORPUS_TOOL_NAMES" },
   { file: "src/agent-guards/livelock-shapes.test-helper.ts", owner: "LIVELOCK_SHAPES", literal: "name-set" },
   { file: "src/test-suite.ts", owner: "expected" },
+  { file: "src/server/background-jobs/skill-review-prompt.ts", owner: "SKILL_REVIEW_TOOL_NAMES" },
 ];
 
 /** The tables of tool names the rest of the registry is checked against:
@@ -83,7 +66,7 @@ describe("every hand-kept list of tool names is registered, and every registered
   it("scans the source tree", async () => {
     registered = await collectRuntimeToolNames();
     found = scanToolNameCollections(process.cwd(), (n) => registered.has(n));
-    expect(found.length).toBeGreaterThan(40);
+    expect(found.length).toBeGreaterThan(10);
   });
 
   it("a collection the scan finds is registered, a source of truth, or declared not a tool list", () => {
@@ -91,7 +74,7 @@ describe("every hand-kept list of tool names is registered, and every registered
     const unregistered = found.filter((c) => !entryFor(c, tables)).map((c) => `${c.file}:${c.line} ${c.owner} (${c.kind}: ${c.names.slice(0, 6).join(", ")}${c.names.length > 6 ? ", …" : ""})`);
     expect(
       unregistered,
-      "a new hand-kept list of tool names: derive it from the policy rows (src/tool-registry.ts accessors) or register it in REGISTRY above so dead names are caught",
+      "a new hand-kept list of tool names: select it by tag (src/tools/tool-kits.ts selectTools) or derive it from another row fact (src/tool-registry.ts accessors); a deliberate exception or an outside format goes in REGISTRY above so dead names are caught, a collection that is not about tools in NOT_TOOL_LISTS with why",
     ).toEqual([]);
   });
 
@@ -107,8 +90,7 @@ describe("every hand-kept list of tool names is registered, and every registered
       const entry = entryFor(c, REGISTRY);
       if (!entry) continue;
       const isLive = (name: string): boolean =>
-        entry.literal === "prefix" ? [...registered].some((t) => t.startsWith(name))
-        : entry.literal === "name-set" ? name.split(",").every((n) => registered.has(n))
+        entry.literal === "name-set" ? name.split(",").every((n) => registered.has(n))
         : registered.has(name) || nonTools.has(name);
       for (const name of c.names) if (!isLive(name)) dead.push(`${name} in ${c.owner} (${c.file}:${c.line})`);
     }

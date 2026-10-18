@@ -1,5 +1,7 @@
 import type { ToolDefinition } from "../types.js";
 import { resolveToolsForRequest } from "../tools/tool-search.js";
+import { toolsTagged } from "../tool-registry.js";
+import type { ToolTag } from "../tool-policy/tool-tags.js";
 
 // ── Smart Tool Filtering ──
 // Always include core tools. Add extras if the user's message hints at them.
@@ -10,8 +12,10 @@ import { resolveToolsForRequest } from "../tools/tool-search.js";
 // literal-tool-call detector, which the main-chat resolver injects into
 // resolveToolsForRequest. Keywords only ADD tools; nothing here removes one.
 
-// Keywords that trigger including specific tool groups
-const TOOL_KEYWORD_MAP: Array<{ keywords: RegExp; exclude?: RegExp; toolPrefixes: string[] }> = [
+// Keywords that trigger including specific tool groups: the tools for a purpose
+// (`tags`, read off the rows), a name family by prefix, or one tool by name.
+interface KeywordRoute { keywords: RegExp; exclude?: RegExp; tags?: readonly ToolTag[]; toolPrefixes?: readonly string[] }
+export const TOOL_KEYWORD_MAP: readonly KeywordRoute[] = [
   { keywords: /spreadsheet|excel|xlsx|csv|sheet/i, toolPrefixes: ["spreadsheet"] },
   { keywords: /\bdocs?\b|document|docx|\bword\b/i, toolPrefixes: ["document"] },
   // "power point" (spaced), "ppt", and "slide deck"/"deck" are how users
@@ -29,15 +33,15 @@ const TOOL_KEYWORD_MAP: Array<{ keywords: RegExp; exclude?: RegExp; toolPrefixes
   // tool's own failure text tells the model to "Run image_search for
   // replacement URLs" — a local 27B did exactly that and was told the tool did
   // not exist (2026-09-19).
-  { keywords: /image|photo|generate.*image|draw|picture|\bedit\b/i, toolPrefixes: ["generate_image", "edit_image", "generate_video", "image_search", "ocr"] },
+  { keywords: /image|photo|generate.*image|draw|picture|\bedit\b/i, tags: ["image"], toolPrefixes: ["generate_video"] },
   {
     keywords: /screen\s*shot|\bdesktop\b|\bmonitor\b|whole screen|my screen/i,
     exclude: /\b(browser|web\s*page|tab|site|website)\b/i,
     toolPrefixes: ["screen_capture"],
   },
   { keywords: /camera|webcam/i, toolPrefixes: ["camera_"] },
-  { keywords: /transcrib|what.*(said|says)|voice\s*note|recording|podcast|audio|\bmp3\b|\bwav\b|\bm4a\b/i, toolPrefixes: ["transcribe_media"] },
-  { keywords: /\bvideo\b|\bwatch\b|\bmp4\b|\bclip\b|\bfootage\b/i, toolPrefixes: ["read_video_frames", "transcribe_media"] },
+  { keywords: /transcrib|what.*(said|says)|voice\s*note|recording|podcast|audio|\bmp3\b|\bwav\b|\bm4a\b/i, tags: ["audio"] },
+  { keywords: /\bvideo\b|\bwatch\b|\bmp4\b|\bclip\b|\bfootage\b/i, tags: ["audio"], toolPrefixes: ["read_video_frames"] },
   // App tools surface on "app/dashboard/tracker" mentions. Sidebar tools are a
   // SEPARATE rule that requires an explicit sidebar/pin/unpin keyword — the
   // old combined rule was the root cause of Codex reflexively pinning apps
@@ -54,11 +58,6 @@ const TOOL_KEYWORD_MAP: Array<{ keywords: RegExp; exclude?: RegExp; toolPrefixes
   // "open project ABC's issues" → issue_list).
   { keywords: /\bproject\b/i, toolPrefixes: ["project_", "issue_"] },
   { keywords: /instagram|twitter|tiktok|social|post on/i, toolPrefixes: ["mission_"] },
-  { keywords: /config|setting/i, toolPrefixes: ["config_"] },
-  { keywords: /skill/i, toolPrefixes: ["skill_"] },
-  { keywords: /rollback|undo.*mission/i, toolPrefixes: ["mission_rollback_"] },
-  { keywords: /chain|pipeline/i, toolPrefixes: ["mission_chain_"] },
-  { keywords: /template/i, toolPrefixes: ["mission_template"] },
   { keywords: /marketplace/i, toolPrefixes: ["marketplace_"] },
   // Rules below back the 2026-07-13 eager-tier demotions (audience-map.ts):
   // each demoted tool stays one keyword away — no tool_search round-trip on
@@ -68,11 +67,11 @@ const TOOL_KEYWORD_MAP: Array<{ keywords: RegExp; exclude?: RegExp; toolPrefixes
   { keywords: /telegram/i, toolPrefixes: ["telegram_"] },
   { keywords: /whats\s*app/i, toolPrefixes: ["whatsapp_"] },
   { keywords: /\brestart\b|\breboot\b/i, toolPrefixes: ["restart"] },
-  { keywords: /check.*updates?\b|updates?\s+(the\s+)?(app|yourself)|new version|upgrade/i, toolPrefixes: ["check_for_updates", "apply_update"] },
+  { keywords: /check.*updates?\b|updates?\s+(the\s+)?(app|yourself)|new version|upgrade/i, tags: ["updates"] },
   { keywords: /\bmcp\b/i, toolPrefixes: ["mcp_add_server"] },
-  { keywords: /protocol/i, toolPrefixes: ["protocol"] },
-  { keywords: /\bvideo\b/i, toolPrefixes: ["send_video", "generate_video"] },
-  { keywords: /secret|api.?key|credential|\btoken\b/i, toolPrefixes: ["request_secret", "list_secrets"] },
+  { keywords: /protocol|skill/i, toolPrefixes: ["protocol"] },
+  { keywords: /\bvideo\b/i, tags: ["video"] },
+  { keywords: /secret|api.?key|credential|\btoken\b/i, tags: ["secret-store"] },
   // Deferred tier: the block notice / declassify control lives on a card that
   // a collapsed group or a reload can hide; these are the words a user reaches
   // for when they want it back.
@@ -111,14 +110,11 @@ function detectLiteralToolCalls(message: string, allTools: ToolDefinition[]): Se
  */
 function keywordRouter(message: string, allTools: ToolDefinition[]): Set<string> {
   const out = new Set<string>();
-  for (const { keywords, exclude, toolPrefixes } of TOOL_KEYWORD_MAP) {
+  for (const { keywords, exclude, tags = [], toolPrefixes = [] } of TOOL_KEYWORD_MAP) {
     if (keywords.test(message) && !exclude?.test(message)) {
+      const tagged = new Set(toolsTagged(...tags));
       for (const tool of allTools) {
-        for (const prefix of toolPrefixes) {
-          if (tool.name.startsWith(prefix) || tool.name === prefix) {
-            out.add(tool.name);
-          }
-        }
+        if (tagged.has(tool.name) || toolPrefixes.some((prefix) => tool.name.startsWith(prefix))) out.add(tool.name);
       }
     }
   }

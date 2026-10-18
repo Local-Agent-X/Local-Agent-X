@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { USER_HINTS } from "./types.js";
 import { AGENT_DENIED_ENDPOINTS, agentDeniedRouteFor, endpointUnder } from "./rbac-agent-denials.js";
+import { selectTools } from "./tools/tool-kits.js";
 
 /**
  * Basic RBAC (Role-Based Access Control)
@@ -66,7 +67,14 @@ const ROLE_PERMISSIONS: Record<Role, {
     // No egress tools, no secrets, no browser — operator only
     // Users can read/write local files and use memory, but can't send data externally
     // bash is allowed but SecurityLayer blocks network tools within it
-    allowedTools: ["read", "write", "edit", "bash", "memory_search", "memory_get", "memory_save", "memory_recall", "memory_reflect", "memory_update_profile", "memory_stats"],
+    allowedTools: selectTools({
+      tags: ["file-read", "file-write", "file-edit", "shell", "memory-search"],
+      plus: {
+        memory_save: "appends to the daily log",
+        memory_reflect: "refreshes what memory concludes from what it holds",
+        memory_update_profile: "updates the user's own profile",
+      },
+    }),
     deniedEndpoints: ["/api/secrets", "/api/audit", "/api/tokens"],
   },
   readonly: {

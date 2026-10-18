@@ -1,5 +1,6 @@
 import type { Audience, ToolDefinition, ToolResult } from "../types.js";
 import { UnifiedToolRegistry } from "./registry.js";
+import { selectTools } from "./tool-kits.js";
 
 /**
  * Canonical per-request tool resolver.
@@ -60,18 +61,16 @@ export interface ResolveRequest {
   literalCallDetector?: (message: string, allTools: ToolDefinition[]) => Set<string>;
 }
 
-const ALWAYS_ON_TOOLS: ReadonlySet<string> = new Set([
-  "issue_create", "issue_list", "issue_update", "issue_search",
-  "issue_checkout", "issue_release",
-  "agent_whoami", "agent_team_list", "agent_wakeup",
-  // Every agent on a project can read and update the shared project brief.
-  "project_brief_read", "project_brief_update",
-  // Planning/bookkeeping: the open-steps completion gate (canonical-loop)
-  // seeds and enforces a step plan on every worker run, so the task tools
-  // ride along regardless of how narrow the template's allow-list is. They
-  // mutate nothing but ~/.lax/tasks.json — not a capability escalation.
-  "task_create", "task_update", "task_list", "task_get",
-]);
+// How an agent coordinates with its team: the issue tracker, its team, the
+// shared project brief every agent on a project can read and update, and the
+// task tools (the open-steps completion gate in canonical-loop seeds and
+// enforces a step plan on every worker run, so they ride along regardless of
+// how narrow the template's allow-list is; they mutate nothing but
+// ~/.lax/tasks.json, not a capability escalation).
+const ALWAYS_ON_TOOLS: ReadonlySet<string> = new Set(selectTools({
+  tags: ["issues", "team", "project-brief", "tasks"],
+  except: { agent_escalate: "reaches a person (the manager or the user's inbox), so a template grants it" },
+}));
 
 /**
  * Availability gate for one tool. See ToolDefinition.available in src/types.ts.

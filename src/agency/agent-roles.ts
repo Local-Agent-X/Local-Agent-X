@@ -4,6 +4,7 @@ import {
   WRITER_PROMPT, CODER_PROMPT, REVIEWER_PROMPT, SOCIAL_MEDIA_PROMPT,
   ANALYST_PROMPT, MONITOR_PROMPT, DESIGNER_PROMPT, OPS_PROMPT, COMMUNICATOR_PROMPT,
 } from "./role-prompts.js";
+import { selectTools } from "../tools/tool-kits.js";
 
 export interface AgentRole {
   name: string;
@@ -28,74 +29,64 @@ const BUILT_IN_ROLES: Record<string, AgentRole> = {
       "   - Cite inline, right after the sentence each source supports — never a trailing 'Sources' pile. Prefer primary sources over commentary; cite more than one when they corroborate a load-bearing claim.\n" +
       "   - Surface conflicting sources explicitly with both sides, mark unverified claims as such, and date-stamp findings since web content changes.\n" +
       "   - Close with a short conclusion and concrete next steps or open questions.",
-    suggestedTools: ["web_search", "web_fetch", "browser", "read", "write"],
+    suggestedTools: selectTools({ tags: ["web-search", "web-read", "web-browse", "file-read", "file-write"] }),
   },
   writer: {
     name: "writer",
     description: "Write content, edit, format, adapt tone and style",
     systemPrompt: WRITER_PROMPT,
-    suggestedTools: ["write", "read", "web_search"],
+    suggestedTools: selectTools({ tags: ["file-write", "file-read", "web-search"] }),
   },
   coder: {
     name: "coder",
     description: "Write code, debug, refactor, create files",
     systemPrompt: CODER_PROMPT,
-    suggestedTools: ["read", "write", "bash", "web_search"],
+    suggestedTools: selectTools({ tags: ["file-read", "file-write", "shell", "web-search"] }),
   },
   reviewer: {
     name: "reviewer",
     description: "Review work from other agents, suggest improvements, catch errors",
     systemPrompt: REVIEWER_PROMPT,
-    suggestedTools: ["read"],
+    suggestedTools: selectTools({ tags: ["file-read"] }),
   },
   "social-media": {
     name: "social-media",
     description: "Post to platforms, format captions, manage media",
     systemPrompt: SOCIAL_MEDIA_PROMPT,
-    suggestedTools: [
-      "web_search",
-      "browser",
-      "http_request",
-      "write",
-      "read",
-    ],
+    suggestedTools: selectTools({ tags: ["web-search", "web-browse", "http-api", "file-write", "file-read"] }),
   },
   analyst: {
     name: "analyst",
     description: "Analyze data, create reports, find patterns",
     systemPrompt: ANALYST_PROMPT,
-    suggestedTools: ["read", "write", "bash", "web_search"],
+    suggestedTools: selectTools({ tags: ["file-read", "file-write", "shell", "web-search"] }),
   },
   monitor: {
     name: "monitor",
     description: "Watch for changes, check status, alert on issues",
     systemPrompt: MONITOR_PROMPT,
-    suggestedTools: ["bash", "web_search", "browser", "read", "telegram_send"],
+    suggestedTools: selectTools({ tags: ["shell", "web-search", "web-browse", "file-read"], plus: { telegram_send: "alerts the user on the chat they connected" } }),
   },
   designer: {
     name: "designer",
     description: "Generate images, create layouts, design assets",
     systemPrompt: DESIGNER_PROMPT,
-    suggestedTools: ["generate_image", "write", "read", "web_search"],
+    suggestedTools: selectTools({ tags: ["file-write", "file-read", "web-search"], plus: { generate_image: "makes the image assets it designs" } }),
   },
   ops: {
     name: "ops",
     description: "Deploy, manage servers, run scripts, handle infrastructure",
     systemPrompt: OPS_PROMPT,
-    suggestedTools: ["bash", "read", "write"],
+    suggestedTools: selectTools({ tags: ["shell", "file-read", "file-write"] }),
   },
   communicator: {
     name: "communicator",
     description: "Send emails, Slack messages, manage notifications",
     systemPrompt: COMMUNICATOR_PROMPT,
-    suggestedTools: [
-      "email_send",
-      "http_request",
-      "telegram_send",
-      "write",
-      "read",
-      "web_search",
-    ],
+    suggestedTools: selectTools({
+      tags: ["http-api", "file-write", "file-read", "web-search"],
+      plus: { email_send: "sends the email it writes", telegram_send: "sends the notification it writes" },
+    }),
   },
 };
 

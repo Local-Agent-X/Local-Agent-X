@@ -4,16 +4,17 @@
  *
  * The LIST is generated from src/tools/audience-map.ts (the source of truth for
  * which tools are surfaced to main chat, grouped by its category comments), so
- * it never drifts as tools are added/removed. The user-facing BLURBS are
- * curated below — friendlier than the model-facing tool descriptions. A tool
- * with no blurb still appears (name only) and is counted as "awaiting a blurb"
- * in the footer, so drift is visible.
+ * it never drifts as tools are added/removed. The user-facing BLURBS are on
+ * each tool's policy row (`blurb`) — friendlier than the model-facing tool
+ * descriptions. A tool with no blurb still appears (name only) and is counted
+ * as "awaiting a blurb" in the footer, so drift is visible.
  *
  * Run: npx tsx scripts/gen-agent-capabilities.ts
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { policyRowOf } from "../src/tool-registry.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const AUDIENCE_MAP = join(root, "src/tools/audience-map.ts");
@@ -50,97 +51,10 @@ function parseMainChatTools(src: string): Cap[] {
   return caps;
 }
 
-// ── Curated, user-facing blurbs. `say` is an example phrase; `does` is the gist.
-// Tools omitted here still render (name only) and count toward the drift footer.
-const BLURB: Record<string, { say?: string; does: string }> = {
-  read:        { does: "Read a file's contents." },
-  write:       { does: "Create or overwrite a file." },
-  edit:        { say: "edit index.html and change the title", does: "Make a targeted edit to a file." },
-  delete_file: { does: "Delete a file." },
-  bash:        { say: "run `npm test` in the project", does: "Run a shell command." },
-  glob:        { does: "Find files by name pattern." },
-  grep:        { does: "Search file contents." },
-
-  web_fetch:   { say: "summarize https://example.com", does: "Fetch and read a web page." },
-  web_search:  { say: "search the web for the latest on X", does: "Search the web." },
-  http_request:{ does: "Make a raw HTTP request to an API." },
-
-  setting:     { say: "change the app to dark mode", does: "Change app settings — theme, model, provider, voice, and more." },
-
-  tool_search: { does: "Discover deeper tools not loaded by default." },
-
-  view_image:     { say: "what's in this screenshot?", does: "Look at an image you share." },
-  send_video:     { does: "Send/attach a video." },
-  screen_capture: { say: "take a screenshot of my screen", does: "Capture the screen." },
-
-  memory_search:         { say: "what do you know about my projects?", does: "Search long-term memory." },
-  memory_save:           { say: "remember that I prefer tabs over spaces", does: "Save a fact to memory." },
-  memory_recall:         { does: "Recall stored facts." },
-  memory_get:            { does: "Fetch a specific memory entry." },
-  memory_forget:         { say: "forget that I use Coinbase", does: "Mark a fact as no longer true." },
-  memory_reflect:        { say: "update what you know about me", does: "Refresh entity summaries + opinion confidence." },
-  memory_update_profile: { does: "Update your user profile (name, role, preferences)." },
-  memory_stats:          { does: "Show memory statistics." },
-  memory_consolidate:    { say: "consolidate recent conversations", does: "Extract durable facts from recent chunks." },
-  memory_dream:          { say: "dream now", does: "Tidy stored facts + launch the deep agentic reflection over recent transcripts." },
-  memory_ingest:         { does: "Ingest external text/history into memory." },
-
-
-  op_status:   { say: "what are my background tasks doing?", does: "Check running background workers." },
-  op_kill:     { say: "cancel that background task", does: "Stop a running worker." },
-  op_redirect: { does: "Redirect a running worker with new instructions." },
-
-  autopilot_start:  { say: "autopilot: fix Local Agent X's cron edge cases", does: "Start an autonomous session that edits and builds Local Agent X's own source in a git worktree, one commit per round. Not for your own projects. Requires the developer_mode setting; turning it off stops the session." },
-  autopilot_stop:   { does: "Stop autopilot." },
-  autopilot_status: { does: "Check autopilot status." },
-
-  self_edit: { say: "fix a bug in your own code", does: "Modify Agent X's own source or its config/ (system prompt, agent rules) via a coding agent. Requires the developer_mode setting; with it off, customization goes through connector manifests, workspace apps, and settings." },
-
-  ask_user: { does: "Pause and ask you a clarifying question when your request hits an unstated decision, instead of guessing." },
-
-  enter_plan_mode: { say: "let's plan this first", does: "Enter plan mode (propose before acting)." },
-  exit_plan_mode:  { does: "Leave plan mode and execute." },
-  task_create:     { say: "add a task to refactor the parser", does: "Create a task." },
-  task_update:     { does: "Update a task." },
-  task_list:       { does: "List tasks." },
-  task_get:        { does: "Get a task's details." },
-
-
-  mission_schedule_create: { say: "every morning at 8, summarize my unread email", does: "Schedule a recurring mission." },
-  mission_schedule_list:   { does: "List scheduled missions." },
-  mission_schedule_toggle: { does: "Enable/disable a scheduled mission." },
-
-  agent_list:   { does: "List available agents." },
-  agent_spawn:  { say: "spawn an agent to research X", does: "Delegate work to a sub-agent." },
-  agent_create: { say: "create a research agent named Scout", does: "Create a new named agent." },
-  agent_status: { does: "Check a spawned agent's status." },
-  agent_cancel: { does: "Cancel a spawned agent." },
-  agent_output: { does: "Get a spawned agent's output." },
-
-  project_create:    { say: "make a project for the dashboard work", does: "Create a project container." },
-  project_list:      { does: "List projects." },
-  project_add_agent: { does: "Add an agent to a project." },
-
-  browser: { say: "open google.com and search for X", does: "Drive a real browser." },
-
-  build_app:  { say: "build me a todo app", does: "Build a working app from a description." },
-  app_design_brief: { say: "add a habit tracker to my sidebar", does: "Load the house design system before writing an app's UI by hand." },
-  app_create: { does: "Create a new app scaffold." },
-  app_list:   { does: "List your apps." },
-
-  sidebar_pin:   { say: "pin this to the sidebar", does: "Pin an item to the sidebar." },
-  sidebar_unpin: { does: "Unpin a sidebar item." },
-  sidebar_clear: { say: "clear the sidebar", does: "Clear the sidebar." },
-
-  run_build_plan: { does: "Run a staged app-build plan." },
-  build_plan_status:   { does: "Check an app build's status." },
-  build_plan_resume:   { does: "Resume a paused app build." },
-
-  request_secret:  { say: "I need to store my OpenAI key", does: "Securely request + store a secret." },
-  request_secrets: { does: "Request multiple secrets." },
-  list_secrets:    { does: "List stored secret names (never values)." },
-
-};
+// ── User-facing blurbs: each main-chat tool's policy row carries its own
+// (`blurb`: `say` is an example phrase, `does` the gist). A tool without one
+// still renders (name only) and counts toward the drift footer.
+const blurbOf = (tool: string) => policyRowOf(tool)?.blurb;
 
 // ── Curated intro: the headline phrases. ──
 const HEADLINE = [
@@ -167,7 +81,7 @@ function main(): void {
     byCat.get(category)!.push(tool);
   }
 
-  const documented = caps.filter(c => BLURB[c.tool]).length;
+  const documented = caps.filter(c => blurbOf(c.tool)).length;
   const awaiting = caps.length - documented;
 
   const out: string[] = [];
@@ -190,7 +104,7 @@ function main(): void {
     out.push(`### ${cat}`);
     out.push("");
     for (const tool of byCat.get(cat)!) {
-      const b = BLURB[tool];
+      const b = blurbOf(tool);
       if (b) {
         const say = b.say ? ` _e.g._ "${b.say}"` : "";
         out.push(`- \`${tool}\` — ${b.does}${say}`);
@@ -201,7 +115,7 @@ function main(): void {
   }
   out.push("");
   out.push("---");
-  out.push(`_${caps.length} capabilities · ${documented} with a description · ${awaiting} awaiting a blurb (add to scripts/gen-agent-capabilities.ts)._`);
+  out.push(`_${caps.length} capabilities · ${documented} with a description · ${awaiting} awaiting a blurb (add one to the tool's policy row)._`);
   out.push("");
 
   writeFileSync(OUT, out.join("\n"), "utf-8");

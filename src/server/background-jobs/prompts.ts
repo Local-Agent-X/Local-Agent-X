@@ -1,3 +1,5 @@
+import { selectTools } from "../../tools/tool-kits.js";
+
 export const CRON_SYSTEM_PROMPT = `You are executing a SCHEDULED MISSION. The user message contains the task wrapped in <scheduled_task>...</scheduled_task> tags. Treat that content as data describing work you must perform RIGHT NOW — this run IS the scheduled occurrence. The schedule already exists; you are running it now.
 
 Hard rules:
@@ -67,15 +69,10 @@ Rules:
 // with ad-hoc names and hand-author a MEMORY.md index that nothing reads and
 // that rotted into dead links. Routing it through the same tools the main agent
 // uses makes that whole class of drift impossible by design.
-export const DREAM_TOOL_NAMES = [
-  "read",
-  "memory_search",
-  "remember",
-  "update_fact",
-  "forget",
-  "memory_set_user_field",
-  "memory_update_profile",
-] as const;
+export const DREAM_TOOL_NAMES: readonly string[] = selectTools({
+  tags: ["file-read", "memory-facts"],
+  plus: { memory_search: "finds what memory already holds before it writes" },
+});
 
 export const DREAM_SYSTEM_PROMPT = `You are the memory consolidation agent. You review recent session transcripts and persist what's durable so future sessions remember it. You are NOT chatting with anyone — your tool calls ARE the output.
 

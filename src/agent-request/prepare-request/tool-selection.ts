@@ -68,10 +68,17 @@ export interface ToolSelectionResult {
 // Every tool that writes files or runs commands is a way to build (the
 // capability classes, so a synonym or a new tool joins by its policy row), plus
 // the few that build or steer a build by other means.
+const ALSO_BUILDS: Readonly<Record<string, string>> = {
+  process_status: "watches the dev server an inline build started",
+  process_kill: "stops and so steers an inline build's process",
+  send_image: "surfaces the built artifact",
+  connector_create: "wires the app's data source",
+  self_edit: "builds by changing the engine's own source",
+};
 const INLINE_BUILD_TOOLS: ReadonlySet<string> = new Set([
   ...CAPABILITY_CLASS_MEMBERS["workspace-write"],
   ...CAPABILITY_CLASS_MEMBERS.shell,
-  "process_status", "process_kill", "send_image", "connector_create", "self_edit",
+  ...Object.keys(ALSO_BUILDS),
 ]);
 
 /** Remove the inline-build tools so a forced build_app turn can't ALSO build

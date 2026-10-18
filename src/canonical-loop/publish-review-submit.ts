@@ -47,6 +47,7 @@ import { extractFinalAssistantText } from "./session-bridge-extractors.js";
 import { awaitCanonicalOp, canonicalLoopEntry } from "./index.js";
 import { opCancel } from "./control-api.js";
 import { createLogger } from "../logger.js";
+import { toolsTagged } from "../tool-registry.js";
 
 const logger = createLogger("canonical-loop.publish-review");
 
@@ -81,7 +82,7 @@ export function _setPublishReviewDeadlineMsForTests(ms: number | null): void {
   deadlineMsOverride = ms;
 }
 
-const REVIEWER_TOOLS: ReadonlySet<string> = new Set(["read", "grep", "glob"]);
+const REVIEWER_TOOLS: ReadonlySet<string> = new Set(toolsTagged("file-read", "file-search"));
 
 export interface PublishReviewRequest {
   changeSet: ChangeSet;

@@ -3,6 +3,7 @@ import {
   resolveAppBuildContinuation,
   type AppBuildContinuationResolution,
 } from "../../auto-build/workflow-resolver.js";
+import { toolsTagged } from "../../tool-registry.js";
 
 export type ProductBuildAction =
   | "build_app"
@@ -113,7 +114,7 @@ export function productBuildMethodologyTurn(firstTurn: boolean): ProductBuildTur
   return {
     kind: "methodology",
     action: "conversation",
-    allowedWorkflowTools: ["start_app_build", "finalize_app_build"],
+    allowedWorkflowTools: toolsTagged("app-build-spec"),
     reason: "This session is already running the /app-build methodology.",
     directive:
       "The /app-build Product Build methodology is active. Continue its spec-first planning conversation. " +
@@ -122,14 +123,8 @@ export function productBuildMethodologyTurn(firstTurn: boolean): ProductBuildTur
   };
 }
 
-const BUILD_WORKFLOW_TOOLS = new Set([
-  "build_app",
-  "start_app_build",
-  "finalize_app_build",
-  "run_build_plan",
-  "build_plan_status",
-  "build_plan_resume",
-]);
+const BUILD_WORKFLOW_TOOLS = new Set(toolsTagged("app-build"));
+
 
 export function applyProductBuildToolRoute(
   tools: ToolDefinition[],

@@ -17,22 +17,29 @@ import { execFileSync } from "node:child_process";
 
 export const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
-/** Absolute .git/hooks for this checkout, or null outside a git repo (tarball installs). */
+/** The hooks directory git runs for this checkout, or null outside a git repo
+ *  (tarball installs). `--git-path hooks` is git's own answer: the common
+ *  directory every worktree shares (or core.hooksPath), never a worktree's
+ *  private git dir, which git does not read hooks from. */
 export function resolveHooksDir() {
-  let gitDir;
+  let hooksDir;
   try {
-    gitDir = execFileSync("git", ["rev-parse", "--git-dir"], { cwd: REPO_ROOT, encoding: "utf-8" }).trim();
+    hooksDir = execFileSync("git", ["rev-parse", "--git-path", "hooks"], { cwd: REPO_ROOT, encoding: "utf-8" }).trim();
   } catch {
     return null;
   }
-  // A worktree's `git rev-parse --git-dir` is relative to the worktree root.
-  if (!gitDir.startsWith("/") && !/^[A-Za-z]:/.test(gitDir)) gitDir = join(REPO_ROOT, gitDir);
-  return join(gitDir, "hooks");
+  // Relative to the directory git ran in.
+  if (!hooksDir.startsWith("/") && !/^[A-Za-z]:/.test(hooksDir)) hooksDir = join(REPO_ROOT, hooksDir);
+  return hooksDir;
 }
 
-/** POSIX path to a repo script, safe to embed in the `sh` a hook runs. */
+/** Path to a repo script for the `sh` a hook runs, resolved when the hook runs
+ *  to the checkout git is committing in. Every worktree shares one hooks
+ *  directory: an absolute path baked in at install ran the installing
+ *  checkout's script from every worktree, which regenerated that checkout's
+ *  docs and staged them into the other worktree's commit. */
 export function hookScriptPath(relative) {
-  return `${REPO_ROOT.split("\\").join("/")}/${relative}`;
+  return `$(git rev-parse --show-toplevel)/${relative}`;
 }
 
 /**

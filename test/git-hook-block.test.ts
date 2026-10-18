@@ -11,8 +11,9 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { execFileSync } from "node:child_process";
 
-import { mergeHookBlock, installHookBlock, hookScriptPath } from "../scripts/git-hook-block.mjs";
+import { mergeHookBlock, installHookBlock, hookScriptPath, resolveHooksDir } from "../scripts/git-hook-block.mjs";
 
 const DOCS = { id: "lax-generated-docs", body: "node regen.mjs --staged-only || exit $?" };
 const EVAL = { id: "lax-eval-gate", body: "node eval-gate.mjs || exit $?" };
@@ -98,5 +99,21 @@ describe("installHookBlock — writes into .git/hooks", () => {
     // read as escapes and the hook would silently never run.
     expect(hookScriptPath("scripts/regen-generated-docs.mjs")).not.toContain("\\");
     expect(hookScriptPath("scripts/regen-generated-docs.mjs")).toContain("/scripts/regen-generated-docs.mjs");
+  });
+
+  it("installs where git runs hooks: the shared directory, never a worktree's private git dir", () => {
+    const hooksDir = resolveHooksDir()!.split("\\").join("/");
+    expect(hooksDir).not.toMatch(/\/\.git\/worktrees\//);
+    const common = execFileSync("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], { encoding: "utf-8" }).trim();
+    expect(hooksDir.toLowerCase()).toBe(`${common}/hooks`.split("\\").join("/").toLowerCase());
+  });
+
+  it("resolves the script in the checkout being committed, not the one that installed the hook", () => {
+    // Worktrees share one hooks directory; a baked-in absolute path ran the
+    // installing checkout's script for every worktree's commit.
+    const path = hookScriptPath("scripts/regen-generated-docs.mjs");
+    expect(path).toBe("$(git rev-parse --show-toplevel)/scripts/regen-generated-docs.mjs");
+    const top = execFileSync("sh", ["-c", `echo "${path}"`], { encoding: "utf-8" }).trim();
+    expect(top).toBe(`${execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf-8" }).trim()}/scripts/regen-generated-docs.mjs`);
   });
 });

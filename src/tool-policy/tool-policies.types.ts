@@ -9,6 +9,7 @@ import type { ToolPolicyRule } from "./types.js";
 import type { CallContext } from "../tool-execution/context.js";
 import type { PublishKind } from "../publish-operation-table.js";
 import type { IntegrationTransport } from "../integrations/types.js";
+import type { ToolSelectionFacts } from "./tool-tags.js";
 
 export interface ToolRateLimit {
   maxCalls: number;
@@ -247,7 +248,7 @@ export interface LoopFacts {
 /** One concrete tool's row. Every fact a gate needs about the tool lives here,
  *  so a new tool answers each question once, and the type will not build
  *  without the answers. */
-export type ToolPolicyRow = ToolPolicyRowFacts & RiskFacts & KernelFacts;
+export type ToolPolicyRow = ToolPolicyRowFacts & ToolSelectionFacts & RiskFacts & KernelFacts;
 
 interface ToolPolicyRowFacts {
   /** How long a call may run before the harness abandons it (tool-timeout.ts);
@@ -381,7 +382,7 @@ interface ToolPolicyRowFacts {
 /** A glob family ("memory_*") or the global "*" cap: a shared rule or rate
  *  limit, never a tool's facts. */
 export type GlobPolicyEntry = Pick<ToolPolicyRowFacts, "rules" | "rateLimit"> & {
-  [K in Exclude<keyof ToolPolicyRowFacts, "rules" | "rateLimit"> | "kernel" | "risk" | "undo" | "ariAction"]?: undefined;
+  [K in Exclude<keyof ToolPolicyRowFacts, "rules" | "rateLimit"> | keyof ToolSelectionFacts | "kernel" | "risk" | "undo" | "ariAction"]?: undefined;
 };
 
 export type ToolPolicyEntry = ToolPolicyRow | GlobPolicyEntry;

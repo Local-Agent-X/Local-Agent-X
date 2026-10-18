@@ -21,7 +21,7 @@ export const TOOL_POLICIES_NETWORK: Record<string, ToolPolicyRow> = {
     // A scheduled job browses on its own profile (browser/session-owner-registry.ts);
     // an action that would show a person a card parks in the inbox instead
     // (browser-tools/gates.ts, tool-execution/deferred-call.ts).
-    kernel: "http", ariAction: { arg: "action", writes: ["click", "fill", "select", "type", "evaluate", "act"], as: "post" }, risk: "network-read", capabilities: ["egress"], timeoutMs: 30_000, liveState: "poll", externalContent: true, destination: [{ to: "browser-page", arg: "url" }],
+    kernel: "http", ariAction: { arg: "action", writes: ["click", "fill", "select", "type", "evaluate", "act"], as: "post" }, risk: "network-read", capabilities: ["egress"], tags: ["web-browse", "voice-fast"], essentialRank: 6, blurb: { say: "open google.com and search for X", does: "Drive a real browser." }, timeoutMs: 30_000, liveState: "poll", externalContent: true, destination: [{ to: "browser-page", arg: "url" }],
     // The element a click or fill acts on: the page never receives the ref or selector.
     localArgs: ["action", "ref", "selector"],
     reads: ["session"], killSwitch: "enableBrowser", committing: "commit-button", loop: { spinProne: true }, category: "browser",
@@ -43,12 +43,12 @@ export const TOOL_POLICIES_NETWORK: Record<string, ToolPolicyRow> = {
   // local write) rather than "secrets" (which gates the exfiltration-capable
   // fill_from_secret / request_secret). A name that already exists is refused
   // inside the tool (the model never overwrites a record), not by a prompt.
-  browser_capture_to_secret: { kernel: "secret-vault", ariAction: "capture", risk: "workspace-write", capabilities: [], reads: ["session"], killSwitch: "enableBrowser", rules: [{ id: "allow-browser-capture-to-secret", decision: "allow", reason: "Capture page value into encrypted vault (value never enters model context)", priority: 50 }] },
-  browser_fill_from_secret:  { kernel: "secret-vault", ariAction: "fill", risk: "secrets", capabilities: [], reads: ["session"], killSwitch: "enableBrowser", rules: [{ id: "allow-browser-fill-from-secret", decision: "allow", reason: "Fill vault value into page input (origin-bound, selector-whitelisted, approval-gated)", priority: 50 }] },
+  browser_capture_to_secret: { kernel: "secret-vault", ariAction: "capture", risk: "workspace-write", capabilities: [], tags: [], reads: ["session"], killSwitch: "enableBrowser", rules: [{ id: "allow-browser-capture-to-secret", decision: "allow", reason: "Capture page value into encrypted vault (value never enters model context)", priority: 50 }] },
+  browser_fill_from_secret:  { kernel: "secret-vault", ariAction: "fill", risk: "secrets", capabilities: [], tags: [], reads: ["session"], killSwitch: "enableBrowser", rules: [{ id: "allow-browser-fill-from-secret", decision: "allow", reason: "Fill vault value into page input (origin-bound, selector-whitelisted, approval-gated)", priority: 50 }] },
   // Its own outbound check vouches for IDs the destination's site showed this
   // session (site-provenance.ts vouchedFor), as the egress gate does.
   http_request: {
-    kernel: "http", ariAction: { arg: "method", writes: ["POST", "PUT", "PATCH", "DELETE"] }, risk: "network-write", capabilities: ["egress"], timeoutMs: 60_000, output: "http-body", externalContent: true, offBoxFetch: true,
+    kernel: "http", ariAction: { arg: "method", writes: ["POST", "PUT", "PATCH", "DELETE"] }, risk: "network-write", capabilities: ["egress"], tags: ["http-api"], essentialRank: 5, blurb: { does: "Make a raw HTTP request to an API." }, timeoutMs: 60_000, output: "http-body", externalContent: true, offBoxFetch: true,
     destination: [{ to: "site", arg: "url", allowlisted: true }],
     reads: ["session"], killSwitch: "enableHttp", committing: "kernel-write", category: "research",
     rateLimit: { maxCalls: 20, windowMs: 60_000, action: "block" },
@@ -56,46 +56,46 @@ export const TOOL_POLICIES_NETWORK: Record<string, ToolPolicyRow> = {
   },
   // The kernel's own HTTP tool: the same arbitrary request http_request makes,
   // so the HTTP Requests switch covers it too.
-  ari_http: { kernel: "internal", risk: "network-write", capabilities: ["egress"], output: "http-body", externalContent: true, offBoxFetch: true, destination: [{ to: "site", arg: "url", allowlisted: true }], reads: ["session"], killSwitch: "enableHttp" },
+  ari_http: { kernel: "internal", risk: "network-write", capabilities: ["egress"], tags: [], output: "http-body", externalContent: true, offBoxFetch: true, destination: [{ to: "site", arg: "url", allowlisted: true }], reads: ["session"], killSwitch: "enableHttp" },
   // Reading a page is not an HTTP request in the switch's sense: no killSwitch.
   web_fetch: {
-    kernel: "http", ariAction: "get", risk: "network-read", capabilities: ["egress"], timeoutMs: 60_000, output: "http-body", externalContent: true, offBoxFetch: true,
+    kernel: "http", ariAction: "get", risk: "network-read", capabilities: ["egress"], tags: ["web-read"], essentialRank: 17, blurb: { say: "summarize https://example.com", does: "Fetch and read a web page." }, timeoutMs: 60_000, output: "http-body", externalContent: true, offBoxFetch: true,
     destination: [{ to: "site", arg: "url" }], category: "research",
     rateLimit: { maxCalls: 20, windowMs: 60_000, action: "block" },
     rules: [{ id: "allow-webfetch-limited", decision: "allow", reason: "Web fetch allowed (rate limited, SSRF-checked, content-wrapped)", priority: 40, constraints: { maxCallsPerSession: 60 } }],
   },
   compare_pages: {
-    kernel: "http", ariAction: "get", risk: "network-read", capabilities: ["egress"], externalContent: true, offBoxFetch: true,
+    kernel: "http", ariAction: "get", risk: "network-read", capabilities: ["egress"], tags: [], externalContent: true, offBoxFetch: true,
     rateLimit: { maxCalls: 20, windowMs: 60_000, action: "block" },
     rules: [{ id: "allow-compare-pages", decision: "allow", reason: "Structural two-page compare (read-only, rate limited, SSRF-checked, content-wrapped)", priority: 40, constraints: { maxCallsPerSession: 60 } }],
   },
   // Both ship the model's query off-box and read what comes back: the same
   // tier as web_fetch, not the local-read tier.
   web_search: {
-    kernel: "http", ariAction: "get", risk: "network-read", capabilities: ["egress"], timeoutMs: 15_000, externalContent: true, offBoxFetch: true, destination: [{ to: "service", name: "the web search engine" }],
+    kernel: "http", ariAction: "get", risk: "network-read", capabilities: ["egress"], tags: ["web-search", "voice-fast"], essentialRank: 18, blurb: { say: "search the web for the latest on X", does: "Search the web." }, timeoutMs: 15_000, externalContent: true, offBoxFetch: true, destination: [{ to: "service", name: "the web search engine" }],
     loop: { discovery: true, searchKey: "query" }, category: "research",
     prompt: "Use web_search to find URLs, then web_fetch to read specific pages.",
     rules: [{ id: "allow-web-search", decision: "allow", reason: "Web search", priority: 50 }],
   },
-  image_search:        { kernel: "http", ariAction: "get", risk: "network-read", capabilities: ["egress"], externalContent: true, offBoxFetch: true, destination: [{ to: "service", name: "the web search engine" }], category: "research", rules: [{ id: "allow-image-search", decision: "allow", reason: "Web image search (read-only)", priority: 50 }] },
-  youtube_analyze:     { kernel: "http", ariAction: "get", risk: "network-read", capabilities: ["egress"], externalContent: true, offBoxFetch: true, destination: [{ to: "site", arg: "url" }], category: "research", reach: { kind: "indirect-network", why: "yt-dlp fetches outside the egress guard, so a loopback URL proves nothing" } },
+  image_search:        { kernel: "http", ariAction: "get", risk: "network-read", capabilities: ["egress"], tags: ["image"], externalContent: true, offBoxFetch: true, destination: [{ to: "service", name: "the web search engine" }], category: "research", rules: [{ id: "allow-image-search", decision: "allow", reason: "Web image search (read-only)", priority: 50 }] },
+  youtube_analyze:     { kernel: "http", ariAction: "get", risk: "network-read", capabilities: ["egress"], tags: [], externalContent: true, offBoxFetch: true, destination: [{ to: "site", arg: "url" }], category: "research", reach: { kind: "indirect-network", why: "yt-dlp fetches outside the egress guard, so a loopback URL proves nothing" } },
   // Downloads land on disk under output_dir, which the tool confines to the
   // workspace itself (asset-tools.ts workspaceOutputDir); declared here too so
   // the file-access mode's write rules and the control-file gate see it.
-  extract_site_assets: { kernel: "http", ariAction: "get", risk: "workspace-write", capabilities: ["egress"], externalContent: true, destination: [{ to: "site", arg: "url" }], pathArgs: [{ arg: "output_dir", action: "write" }], rules: [{ id: "allow-extract-site-assets", decision: "allow", reason: "Web asset extraction (downloads into the workspace)", priority: 50 }] },
+  extract_site_assets: { kernel: "http", ariAction: "get", risk: "workspace-write", capabilities: ["egress"], tags: [], externalContent: true, destination: [{ to: "site", arg: "url" }], pathArgs: [{ arg: "output_dir", action: "write" }], rules: [{ id: "allow-extract-site-assets", decision: "allow", reason: "Web asset extraction (downloads into the workspace)", priority: 50 }] },
 
   // ── External services (Gmail / Calendar / Marketplace) ──
   // The smtp_imap tools are email's whole interface, named in this order in
   // the integration's context (integrations/types.ts transportTools).
   // email_send attaches local files by path.
-  email_send:                  { kernel: "http", ariAction: "post", risk: "external-comms", capabilities: ["egress"], destination: [{ to: "recipients", args: ["to", "cc", "bcc"] }], transport: "smtp_imap", category: "connector", pathArgs: [{ arg: "attachments", action: "read", json: true }] },
-  email_read:                  { kernel: "http", ariAction: "get", risk: "network-read", capabilities: ["sensitive-read"], output: "mailbox", externalContent: true, transport: "smtp_imap" },
-  email_search:                { kernel: "http", ariAction: "get", risk: "network-read", capabilities: ["sensitive-read"], output: "mailbox", externalContent: true, transport: "smtp_imap" },
+  email_send:                  { kernel: "http", ariAction: "post", risk: "external-comms", capabilities: ["egress"], tags: [], destination: [{ to: "recipients", args: ["to", "cc", "bcc"] }], transport: "smtp_imap", category: "connector", pathArgs: [{ arg: "attachments", action: "read", json: true }] },
+  email_read:                  { kernel: "http", ariAction: "get", risk: "network-read", capabilities: ["sensitive-read"], tags: [], output: "mailbox", externalContent: true, transport: "smtp_imap" },
+  email_search:                { kernel: "http", ariAction: "get", risk: "network-read", capabilities: ["sensitive-read"], tags: [], output: "mailbox", externalContent: true, transport: "smtp_imap" },
   // One message in full (IMAP FETCH) and the mailbox list (IMAP LIST). Both are
   // reads over the same transport as email_read/email_search and carry the same
   // risk class — neither writes, sends, or takes a path argument.
-  email_read_message:          { kernel: "http", ariAction: "get", risk: "network-read", capabilities: ["sensitive-read"], output: "mailbox", externalContent: true, transport: "smtp_imap" },
-  email_folders:               { kernel: "http", ariAction: "get", risk: "network-read", capabilities: [], externalContent: true, transport: "smtp_imap" },
+  email_read_message:          { kernel: "http", ariAction: "get", risk: "network-read", capabilities: ["sensitive-read"], tags: [], output: "mailbox", externalContent: true, transport: "smtp_imap" },
+  email_folders:               { kernel: "http", ariAction: "get", risk: "network-read", capabilities: [], tags: [], externalContent: true, transport: "smtp_imap" },
   // email_delete is the canonical destructive class (delete_file, memory_forget,
   // process_kill) and that is what wires the autonomy gating: profiles.ts maps
   // it to deny / ask / allow-with-rollback per profile. It can carry that class
@@ -108,37 +108,37 @@ export const TOOL_POLICIES_NETWORK: Record<string, ToolPolicyRow> = {
   // them under email/web taint, so a turn that has read third-party mail
   // cannot then trash or re-flag it — the shape of an injected "delete all my
   // email". Mapping either to "get" would be lying to the kernel.
-  email_delete:                { kernel: "http", ariAction: "delete", risk: "destructive", capabilities: [], externalContent: true, transport: "smtp_imap", undo: { recoverable: "moves the message to the mailbox's Trash — never an expunge (email-imap decision E1)" } },
-  email_mark:                  { kernel: "http", ariAction: "post", risk: "workspace-write", capabilities: [], externalContent: true, transport: "smtp_imap" },
-  email_draft:                 { kernel: "http", ariAction: "post", risk: "workspace-write", capabilities: [], category: "connector" },
+  email_delete:                { kernel: "http", ariAction: "delete", risk: "destructive", capabilities: [], tags: [], externalContent: true, transport: "smtp_imap", undo: { recoverable: "moves the message to the mailbox's Trash — never an expunge (email-imap decision E1)" } },
+  email_mark:                  { kernel: "http", ariAction: "post", risk: "workspace-write", capabilities: [], tags: [], externalContent: true, transport: "smtp_imap" },
+  email_draft:                 { kernel: "http", ariAction: "post", risk: "workspace-write", capabilities: [], tags: [], category: "connector" },
   // email_setup's verify step connects to the model-named SMTP host with the
   // vault password: an off-box sink. It runs the secret destination ladder,
   // whose same-session rung is keyed on the trusted session.
-  email_setup:                 { kernel: "http", ariAction: "post", risk: "workspace-write", capabilities: ["egress"], offBoxFetch: true, reads: ["session"] },
-  telegram_send:               { kernel: "http", ariAction: "post", risk: "external-comms", capabilities: ["egress"], offBoxFetch: true, destination: [{ to: "chat", app: "Telegram", arg: "chat_id" }], category: "connector", rules: [{ id: "allow-telegram-send", decision: "allow", reason: "Proactive owner DM over the Telegram bridge (egress-gated, confined to authorized chats)", priority: 50 }] },
-  whatsapp_send:               { kernel: "http", ariAction: "post", risk: "external-comms", capabilities: ["egress"], offBoxFetch: true, destination: [{ to: "chat", app: "WhatsApp", arg: "phone" }], category: "connector", rules: [{ id: "allow-whatsapp-send", decision: "allow", reason: "Proactive owner DM over the WhatsApp bridge (egress-gated, confined to authorized numbers)", priority: 50 }] },
+  email_setup:                 { kernel: "http", ariAction: "post", risk: "workspace-write", capabilities: ["egress"], tags: [], offBoxFetch: true, reads: ["session"] },
+  telegram_send:               { kernel: "http", ariAction: "post", risk: "external-comms", capabilities: ["egress"], tags: [], offBoxFetch: true, destination: [{ to: "chat", app: "Telegram", arg: "chat_id" }], category: "connector", rules: [{ id: "allow-telegram-send", decision: "allow", reason: "Proactive owner DM over the Telegram bridge (egress-gated, confined to authorized chats)", priority: 50 }] },
+  whatsapp_send:               { kernel: "http", ariAction: "post", risk: "external-comms", capabilities: ["egress"], tags: [], offBoxFetch: true, destination: [{ to: "chat", app: "WhatsApp", arg: "phone" }], category: "connector", rules: [{ id: "allow-whatsapp-send", decision: "allow", reason: "Proactive owner DM over the WhatsApp bridge (egress-gated, confined to authorized numbers)", priority: 50 }] },
   // The calendar is the local calendar.json in the data dir (calendar-tools.ts):
   // nothing leaves the box and no third party sees an event, so the reads are
   // "safe" and a create is a local write. All three are kernel internal: an
   // http label put local reads and writes under the kernel's http taint rules
   // and read them as network tools in strict local-only mode.
-  calendar_check_availability: { kernel: "internal", risk: "safe", capabilities: [] },
-  calendar_list_events:        { kernel: "internal", risk: "safe", capabilities: [] },
-  calendar_create_event:       { kernel: "internal", risk: "workspace-write", capabilities: [] },
-  marketplace_search:          { kernel: "http", ariAction: "get", risk: "network-read", capabilities: [] },
-  marketplace_list:            { kernel: "http", ariAction: "get", risk: "network-read", capabilities: [] },
-  marketplace_install:         { kernel: "http", ariAction: "get", risk: "destructive", capabilities: [], undo: { irreversible: "overwrites a custom protocol record" } },
+  calendar_check_availability: { kernel: "internal", risk: "safe", capabilities: [], tags: [] },
+  calendar_list_events:        { kernel: "internal", risk: "safe", capabilities: [], tags: [] },
+  calendar_create_event:       { kernel: "internal", risk: "workspace-write", capabilities: [], tags: [] },
+  marketplace_search:          { kernel: "http", ariAction: "get", risk: "network-read", capabilities: [], tags: [] },
+  marketplace_list:            { kernel: "http", ariAction: "get", risk: "network-read", capabilities: [], tags: [] },
+  marketplace_install:         { kernel: "http", ariAction: "get", risk: "destructive", capabilities: [], tags: [], undo: { irreversible: "overwrites a custom protocol record" } },
 
   // ── Database ──
   // The file-access gate judges the sql_* database path with the call's
   // session (kernel-class-policy.ts); the tool resolves it with the same one.
   sql_query: {
-    kernel: "database", ariAction: "query", risk: "workspace-write", capabilities: ["sensitive-read"], readOnlyUnless: { arg: "readonly", value: false }, reads: ["session"],
+    kernel: "database", ariAction: "query", risk: "workspace-write", capabilities: ["sensitive-read"], tags: [], readOnlyUnless: { arg: "readonly", value: false }, reads: ["session"],
     prompt: "Read-only by default. Run sql_schema first to see available tables.",
   },
-  sql_explain:         { kernel: "database", ariAction: "query", risk: "safe", capabilities: [], reads: ["session"] },
-  sql_schema:          { kernel: "database", ariAction: "query", risk: "safe", capabilities: [], reads: ["session"] },
-  ari_database:        { kernel: "internal", risk: "workspace-write", capabilities: ["sensitive-read"], liveState: "fresh", reads: ["session"] },
-  ari_sqlite:          { kernel: "internal", risk: "workspace-write", capabilities: ["sensitive-read"], reads: ["session"] },
+  sql_explain:         { kernel: "database", ariAction: "query", risk: "safe", capabilities: [], tags: [], reads: ["session"] },
+  sql_schema:          { kernel: "database", ariAction: "query", risk: "safe", capabilities: [], tags: [], reads: ["session"] },
+  ari_database:        { kernel: "internal", risk: "workspace-write", capabilities: ["sensitive-read"], tags: [], liveState: "fresh", reads: ["session"] },
+  ari_sqlite:          { kernel: "internal", risk: "workspace-write", capabilities: ["sensitive-read"], tags: [], reads: ["session"] },
 
 };

@@ -69,7 +69,7 @@ describe("plan mode's read-only verdict comes from the row", () => {
 describe("plan mode keys a send on where its row says it delivers", () => {
   const PROBE = "plan_probe_send";
   const sendShaped = (destination?: DestinationSpec[], ariAction: "read" | "post" = "read"): ToolPolicyRow =>
-    ({ kernel: "file", ariAction, risk: "safe", capabilities: ["egress"], offBoxFetch: true, ...(destination ? { destination } : {}) });
+    ({ kernel: "file", ariAction, risk: "safe", capabilities: ["egress"], tags: [], offBoxFetch: true, ...(destination ? { destination } : {}) });
   afterEach(() => { delete TOOL_POLICIES[PROBE]; });
 
   it("admits a send to the user, and refuses the same row sent to a recipient, a chat, or somewhere it cannot name", () => {

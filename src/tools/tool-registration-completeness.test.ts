@@ -36,6 +36,7 @@ import { TOOL_PATH_ARGS } from "../tool-registry.js";
 import { TOOL_POLICIES } from "../tool-policy/tool-policies.data.js";
 import { matchGlob } from "../tool-policy/matchers.js";
 import { SECRET_ENV_TOOLS } from "./shell-secret-env.js";
+import { TOOL_TAGS } from "../tool-policy/tool-tags.js";
 
 let tools: Map<string, ToolDefinition>;
 let names: string[];
@@ -189,6 +190,18 @@ describe("every row fact that names a tool or an argument names a live one", () 
       return key && !(key in propsOf(tools.get(name))) ? [`${name}.${key}`] : [];
     });
     expect(dead).toEqual([]);
+  });
+
+  it("every runtime tool's row says what the tool is for, and every tag is some tool's", () => {
+    const unanswered = names.filter((name) => !Array.isArray(TOOL_POLICIES[name]?.tags));
+    expect(unanswered, "add `tags` (TOOL_TAGS, src/tool-policy/tool-tags.ts; `[]` when none fits) to the row").toEqual([]);
+    const carried = new Set(Object.values(TOOL_POLICIES).flatMap((row) => row.tags ?? []));
+    expect(TOOL_TAGS.filter((tag) => !carried.has(tag)), "a tag no row carries selects nothing").toEqual([]);
+  });
+
+  it("the essential ranks are unique and run 1..N", () => {
+    const ranks = Object.values(TOOL_POLICIES).flatMap((row) => (row.essentialRank === undefined ? [] : [row.essentialRank])).sort((a, b) => a - b);
+    expect(ranks).toEqual(ranks.map((_, i) => i + 1));
   });
 
   it("a prompt belongs to a tool in allTools, the only set applyPrompts sees", () => {

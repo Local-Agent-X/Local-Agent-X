@@ -13,15 +13,15 @@ export const TOOL_POLICIES_APPS: Record<string, ToolPolicyRow> = {
   // paid-API switch (image-tools/paid-media.ts), the same in every context.
   // generate_image reads the engine pinned to a scheduled run's session
   // (image-tools/image-engine.ts); edit_image's path args stamp it anyway.
-  generate_image: { kernel: "internal", risk: "workspace-write", capabilities: ["egress"], offBoxFetch: true, timeoutMs: 300_000, destination: [{ to: "service", name: "the image generation service" }], reads: ["session"], rateLimit: { maxCalls: 20, windowMs: 60_000, action: "block" }, rules: [{ id: "allow-generate-image", decision: "allow", reason: "Image generation allowed (rate limited)", priority: 40, constraints: { maxCallsPerSession: 20 } }] },
+  generate_image: { kernel: "internal", risk: "workspace-write", capabilities: ["egress"], tags: ["image"], essentialRank: 21, offBoxFetch: true, timeoutMs: 300_000, destination: [{ to: "service", name: "the image generation service" }], reads: ["session"], rateLimit: { maxCalls: 20, windowMs: 60_000, action: "block" }, rules: [{ id: "allow-generate-image", decision: "allow", reason: "Image generation allowed (rate limited)", priority: 40, constraints: { maxCallsPerSession: 20 } }] },
   // The source image, mask and reference images are read off disk when they
   // name local files (image-tools/shared.ts resolveLocalImagePath); a URL or
   // data: value resolves inside the workspace and passes. reference_images
   // arrives as a real array or, from some models, a JSON-encoded string.
-  edit_image: { kernel: "internal", risk: "workspace-write", capabilities: ["egress"], offBoxFetch: true, timeoutMs: 300_000, destination: [{ to: "service", name: "the image generation service" }], pathArgs: [{ arg: "image", action: "read" }, { arg: "mask", action: "read" }], rateLimit: { maxCalls: 20, windowMs: 60_000, action: "block" }, rules: [{ id: "allow-edit-image", decision: "allow", reason: "Image editing allowed (rate limited)", priority: 40, constraints: { maxCallsPerSession: 20 } }] },
-  generate_video: { kernel: "internal", risk: "workspace-write", capabilities: ["egress"], offBoxFetch: true, destination: [{ to: "service", name: "the video generation service" }], pathArgs: [{ arg: "reference_images", action: "read", json: true }], rateLimit: { maxCalls: 5, windowMs: 60_000, action: "block" }, rules: [{ id: "allow-generate-video", decision: "allow", reason: "Video generation allowed (rate limited)", priority: 40, constraints: { maxCallsPerSession: 5 } }] },
-  camera_capture: { kernel: "internal", risk: "workspace-write", capabilities: ["egress"], liveState: "poll", offBoxFetch: true },
-  screen_capture: { kernel: "internal", risk: "workspace-write", capabilities: ["egress"], liveState: "poll", offBoxFetch: true, category: "computer" },
+  edit_image: { kernel: "internal", risk: "workspace-write", capabilities: ["egress"], tags: ["image"], essentialRank: 22, offBoxFetch: true, timeoutMs: 300_000, destination: [{ to: "service", name: "the image generation service" }], pathArgs: [{ arg: "image", action: "read" }, { arg: "mask", action: "read" }], rateLimit: { maxCalls: 20, windowMs: 60_000, action: "block" }, rules: [{ id: "allow-edit-image", decision: "allow", reason: "Image editing allowed (rate limited)", priority: 40, constraints: { maxCallsPerSession: 20 } }] },
+  generate_video: { kernel: "internal", risk: "workspace-write", capabilities: ["egress"], tags: ["video"], essentialRank: 23, offBoxFetch: true, destination: [{ to: "service", name: "the video generation service" }], pathArgs: [{ arg: "reference_images", action: "read", json: true }], rateLimit: { maxCalls: 5, windowMs: 60_000, action: "block" }, rules: [{ id: "allow-generate-video", decision: "allow", reason: "Video generation allowed (rate limited)", priority: 40, constraints: { maxCallsPerSession: 5 } }] },
+  camera_capture: { kernel: "internal", risk: "workspace-write", capabilities: ["egress"], tags: [], liveState: "poll", offBoxFetch: true },
+  screen_capture: { kernel: "internal", risk: "workspace-write", capabilities: ["egress"], tags: ["voice-fast"], blurb: { say: "take a screenshot of my screen", does: "Capture the screen." }, liveState: "poll", offBoxFetch: true, category: "computer" },
   // Mouse/keyboard actuation. kernel:"internal" — it has no data-I/O sink the
   // kernel taint-checks; it's an ACTUATOR. The policy rule allows it so it isn't
   // default-denied; the REAL gates are the off-by-default enableComputerControl
@@ -30,9 +30,9 @@ export const TOOL_POLICIES_APPS: Record<string, ToolPolicyRow> = {
   // autonomous profiles still gate the call).
   // Only typed `text` reaches the other app as data: the pointer and chord
   // arguments carry nothing.
-  computer:       { kernel: "internal", risk: "shell", capabilities: ["egress"], liveState: "poll", destination: [{ to: "foreground-app" }],
+  computer:       { kernel: "internal", risk: "shell", capabilities: ["egress"], tags: [], liveState: "poll", destination: [{ to: "foreground-app" }],
     localArgs: ["action", "x", "y", "from_x", "from_y", "to_x", "to_y", "button", "target", "keys"], killSwitch: "enableComputerControl", category: "computer", rules: [{ id: "allow-computer", decision: "allow", reason: "Mouse/keyboard control allowed at policy layer; gated by enableComputerControl + OS permission + risk tier", priority: 40 }] },
-  ocr:            { kernel: "internal", risk: "safe", capabilities: [], pathArgs: [{ arg: "path", action: "read" }], rules: [{ id: "allow-ocr", decision: "allow", reason: "OCR text extraction (read-only)", priority: 50 }] },
+  ocr:            { kernel: "internal", risk: "safe", capabilities: [], tags: ["image", "voice-fast"], pathArgs: [{ arg: "path", action: "read" }], rules: [{ id: "allow-ocr", decision: "allow", reason: "OCR text extraction (read-only)", priority: 50 }] },
   // Genuinely "shell": every action spawns a real adb/emulator subprocess
   // (unlike `computer`, which drives OS input APIs with no child process at
   // all) — kernel:"shell" gives it the real taint/audit pipeline instead of
@@ -43,17 +43,17 @@ export const TOOL_POLICIES_APPS: Record<string, ToolPolicyRow> = {
   // gets denied outright, which would brick tap/screenshot/etc here).
   // Typed text lands in whatever app is on the device's screen, which the
   // check cannot name; open_url sends the URL to its site.
-  android:        { kernel: "shell", ariAction: "exec", risk: "shell", capabilities: ["shell"], destination: [{ to: "site", arg: "url", forActions: ["open_url"] }, { to: "unknown", label: "the app on the Android device" }],
+  android:        { kernel: "shell", ariAction: "exec", risk: "shell", capabilities: ["shell"], tags: [], destination: [{ to: "site", arg: "url", forActions: ["open_url"] }, { to: "unknown", label: "the app on the Android device" }],
     reach: { kind: "local-device", why: "adb reaches a plugged-in device or an emulator on this box" }, pathArgs: [{ arg: "apk_path", action: "read" }], rules: [{ id: "allow-android", decision: "allow", reason: "Android emulator/device control allowed at policy layer (subprocess spawn via adb/emulator, same tier as bash)", priority: 40 }] },
 
   // ── Apps (app_* glob) ──
-  app_create:      { kernel: "internal", risk: "workspace-write", capabilities: [] },
-  app_update:      { kernel: "internal", risk: "workspace-write", capabilities: [] },
-  app_read:        { kernel: "internal", risk: "safe", capabilities: [] },
-  app_action:      { kernel: "internal", risk: "workspace-write", capabilities: [] },
-  app_query:       { kernel: "internal", risk: "safe", capabilities: [] },
-  app_list:        { kernel: "internal", risk: "safe", capabilities: [] },
-  app_delete:      { kernel: "internal", risk: "destructive", capabilities: [], undo: { irreversible: "an app's files; the workspace mirror is the recovery path" } },
+  app_create:      { kernel: "internal", risk: "workspace-write", capabilities: [], tags: [], blurb: { does: "Create a new app scaffold." } },
+  app_update:      { kernel: "internal", risk: "workspace-write", capabilities: [], tags: [] },
+  app_read:        { kernel: "internal", risk: "safe", capabilities: [], tags: [] },
+  app_action:      { kernel: "internal", risk: "workspace-write", capabilities: [], tags: [] },
+  app_query:       { kernel: "internal", risk: "safe", capabilities: [], tags: [] },
+  app_list:        { kernel: "internal", risk: "safe", capabilities: [], tags: [], blurb: { does: "List your apps." } },
+  app_delete:      { kernel: "internal", risk: "destructive", capabilities: [], tags: [], undo: { irreversible: "an app's files; the workspace mirror is the recovery path" } },
   // Every action mutates the app registry — grant/revoke rewrite an app's ACL,
   // suspend/activate/archive flip its lifecycle state. There is no read-only
   // action (app_read/app_query are the readers), so the tier is the sibling
@@ -61,24 +61,24 @@ export const TOOL_POLICIES_APPS: Record<string, ToolPolicyRow> = {
   // false: a real permission grant scored as zero committed work and did not
   // suppress failover, so a replayed turn could double-grant. All actions are
   // reversible, so it is not "destructive" like app_delete.
-  app_permissions: { kernel: "internal", risk: "workspace-write", capabilities: [] },
+  app_permissions: { kernel: "internal", risk: "workspace-write", capabilities: [], tags: [] },
 
   // ── Issues / tasks (issue_* / task_* globs) ──
-  issue_create:   { kernel: "internal", risk: "workspace-write", capabilities: [] },
-  issue_list:     { kernel: "internal", risk: "safe", capabilities: [], loop: { discovery: true } },
+  issue_create:   { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["issues"] },
+  issue_list:     { kernel: "internal", risk: "safe", capabilities: [], tags: ["issues"], loop: { discovery: true } },
   // Wakes other agents through the canonical invoke door (spawn lineage from the session).
-  issue_update:   { kernel: "internal", risk: "workspace-write", capabilities: [], reads: ["session"] },
-  issue_checkout: { kernel: "internal", risk: "workspace-write", capabilities: [] },
-  issue_release:  { kernel: "internal", risk: "workspace-write", capabilities: [], publish: { nothing: "releases the agent's lock on a task-board issue; nothing leaves the machine" } },
-  issue_search:   { kernel: "internal", risk: "safe", capabilities: [], loop: { discovery: true } },
+  issue_update:   { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["issues"], reads: ["session"] },
+  issue_checkout: { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["issues"] },
+  issue_release:  { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["issues"], publish: { nothing: "releases the agent's lock on a task-board issue; nothing leaves the machine" } },
+  issue_search:   { kernel: "internal", risk: "safe", capabilities: [], tags: ["issues"], loop: { discovery: true } },
   // The task list and the sidebar's entries are LAX's own bookkeeping: an
   // "always allow" covers the whole tool, since no call reaches a file, a
   // program, a network or a person. A task carries the session that made it,
   // so the open-steps gate scopes "unfinished work" to this conversation.
-  task_create:    { kernel: "internal", risk: "workspace-write", capabilities: [], wholeToolGrant: true, reads: ["session"], runControl: true, prompt: "Use for multi-step work. Tasks persist across messages." },
-  task_get:       { kernel: "internal", risk: "safe", capabilities: [], liveState: "fresh", reads: ["session"] },
-  task_list:      { kernel: "internal", risk: "safe", capabilities: [], liveState: "fresh", reads: ["session"], loop: { discovery: true } },
-  task_update:    { kernel: "internal", risk: "workspace-write", capabilities: [], wholeToolGrant: true, reads: ["session"], runControl: true },
+  task_create:    { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["tasks"], blurb: { say: "add a task to refactor the parser", does: "Create a task." }, wholeToolGrant: true, reads: ["session"], runControl: true, prompt: "Use for multi-step work. Tasks persist across messages." },
+  task_get:       { kernel: "internal", risk: "safe", capabilities: [], tags: ["tasks"], blurb: { does: "Get a task's details." }, liveState: "fresh", reads: ["session"] },
+  task_list:      { kernel: "internal", risk: "safe", capabilities: [], tags: ["tasks"], blurb: { does: "List tasks." }, liveState: "fresh", reads: ["session"], loop: { discovery: true } },
+  task_update:    { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["tasks"], blurb: { does: "Update a task." }, wholeToolGrant: true, reads: ["session"], runControl: true },
 
   // ── Worker-pool (op_* globs) ──
   // context_files are read into the worker's context pack before any of the
@@ -86,77 +86,77 @@ export const TOOL_POLICIES_APPS: Record<string, ToolPolicyRow> = {
   // lineage and the child's inherited bans on the calling op; op_kill with no
   // op_id kills THIS session's newest op. op_wait/op_submit block the chat
   // turn, so the MCP supervisor never sees them.
-  op_submit:         { kernel: "internal", risk: "workspace-write", capabilities: [], timeoutMs: 0, reads: ["session", "operation"], hiddenFrom: { mcp: "it is op_submit_async + op_wait in one call, so it blocks the chat turn the same way" }, pathArgs: [{ arg: "context_files", action: "read" }] },
-  op_submit_async:   { kernel: "internal", risk: "workspace-write", capabilities: [], timeoutMs: 0, reads: ["session", "operation"], pathArgs: [{ arg: "context_files", action: "read" }] },
-  op_submit_batch:   { kernel: "internal", risk: "workspace-write", capabilities: [], reads: ["session", "operation"], pathArgs: [{ arg: "tasks", each: "context_files", action: "read" }] },
+  op_submit:         { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["delegation"], timeoutMs: 0, reads: ["session", "operation"], hiddenFrom: { mcp: "it is op_submit_async + op_wait in one call, so it blocks the chat turn the same way" }, pathArgs: [{ arg: "context_files", action: "read" }] },
+  op_submit_async:   { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["delegation", "voice-fast"], timeoutMs: 0, reads: ["session", "operation"], pathArgs: [{ arg: "context_files", action: "read" }] },
+  op_submit_batch:   { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["delegation"], reads: ["session", "operation"], pathArgs: [{ arg: "tasks", each: "context_files", action: "read" }] },
   // op_wait enforces its own timeout_ms and has a graceful "op keeps running,
   // call op_status" branch; a harness timeout would make that unreachable.
-  op_wait:           { kernel: "internal", risk: "safe", capabilities: [], timeoutMs: 0, liveState: "poll", reads: ["session"], loop: { discovery: true }, hiddenFrom: { mcp: "it blocks the chat turn; the supervisor lets auto-notify surface results" } },
-  op_status:         { kernel: "internal", risk: "safe", capabilities: [], liveState: "poll", reads: ["session"], loop: { discovery: true } },
-  op_kill:           { kernel: "internal", risk: "destructive", capabilities: [], liveState: "poll", reads: ["session"], undo: { irreversible: "a running operation", uncarded: "stops a run; nothing the user owns is destroyed, and the stop is usually the user's own" } },
-  op_redirect:       { kernel: "internal", risk: "workspace-write", capabilities: [] },
+  op_wait:           { kernel: "internal", risk: "safe", capabilities: [], tags: [], timeoutMs: 0, liveState: "poll", reads: ["session"], loop: { discovery: true }, hiddenFrom: { mcp: "it blocks the chat turn; the supervisor lets auto-notify surface results" } },
+  op_status:         { kernel: "internal", risk: "safe", capabilities: [], tags: ["voice-fast"], blurb: { say: "what are my background tasks doing?", does: "Check running background workers." }, liveState: "poll", reads: ["session"], loop: { discovery: true } },
+  op_kill:           { kernel: "internal", risk: "destructive", capabilities: [], tags: [], blurb: { say: "cancel that background task", does: "Stop a running worker." }, liveState: "poll", reads: ["session"], undo: { irreversible: "a running operation", uncarded: "stops a run; nothing the user owns is destroyed, and the stop is usually the user's own" } },
+  op_redirect:       { kernel: "internal", risk: "workspace-write", capabilities: [], tags: [], blurb: { does: "Redirect a running worker with new instructions." } },
 
   // ── Autopilot (autopilot_* glob) ──
-  autopilot_start:  { kernel: "internal", risk: "workspace-write", capabilities: [] },
-  autopilot_status: { kernel: "internal", risk: "safe", capabilities: [], liveState: "fresh" },
-  autopilot_stop:   { kernel: "internal", risk: "destructive", capabilities: [], undo: { pairedWith: "autopilot_start" } },
+  autopilot_start:  { kernel: "internal", risk: "workspace-write", capabilities: [], tags: [], blurb: { say: "autopilot: fix Local Agent X's cron edge cases", does: "Start an autonomous session that edits and builds Local Agent X's own source in a git worktree, one commit per round. Not for your own projects. Requires the developer_mode setting; turning it off stops the session." } },
+  autopilot_status: { kernel: "internal", risk: "safe", capabilities: [], tags: [], blurb: { does: "Check autopilot status." }, liveState: "fresh" },
+  autopilot_stop:   { kernel: "internal", risk: "destructive", capabilities: [], tags: [], blurb: { does: "Stop autopilot." }, undo: { pairedWith: "autopilot_start" } },
 
   // ── App-build pipeline ──
   // Returns the design system text and records that this session has it
   // (design-gate.ts); reads only the app folder's listing.
-  app_design_brief:      { kernel: "internal", risk: "safe", capabilities: [], reads: ["session"], rules: [{ id: "allow-app-design-brief", decision: "allow", reason: "Read the house design system before writing app UI", priority: 50 }] },
+  app_design_brief:      { kernel: "internal", risk: "safe", capabilities: [], tags: [], blurb: { say: "add a habit tracker to my sidebar", does: "Load the house design system before writing an app's UI by hand." }, reads: ["session"], rules: [{ id: "allow-app-design-brief", decision: "allow", reason: "Read the house design system before writing app UI", priority: 50 }] },
   // The app-build ops (build_app, start/finalize_app_build, run_build_plan),
   // self_edit, op_submit*/op_wait and agent_spawn/agent_create run for minutes
   // by design: timeoutMs 0, since killing a real long-runner is the bigger bug.
   // A build reports to, and its workflow state belongs to, the chat that
   // started or resumed it; its builder installs packages and fetches assets.
-  build_app:             { kernel: "internal", risk: "workspace-write", capabilities: [], timeoutMs: 0, reads: ["session"], category: "coding",
+  build_app:             { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["app-build"], essentialRank: 12, blurb: { say: "build me a todo app", does: "Build a working app from a description." }, timeoutMs: 0, reads: ["session"], category: "coding",
     reach: { kind: "indirect-network", why: "its builder installs packages and fetches assets" }, hiddenFrom: { ide: "an in-editor chat does not spawn builds" },
     rules: [{ id: "allow-build-app", decision: "allow", reason: "Build workspace apps", priority: 50 }] },
   // The manifest names the upstream the connector proxy will then reach, so
   // the call is gated as the off-box sink it opens. It runs the secret
   // destination ladder, whose same-session rung is keyed on the session.
-  connector_create:      { kernel: "internal", risk: "workspace-write", capabilities: ["egress"], offBoxFetch: true, reads: ["session"], category: "connector",
+  connector_create:      { kernel: "internal", risk: "workspace-write", capabilities: ["egress"], tags: [], offBoxFetch: true, reads: ["session"], category: "connector",
     reach: { kind: "indirect-network", why: "routes an app's traffic to the upstream it names" }, rules: [{ id: "allow-connector-create", decision: "allow", reason: "Define an external-API connector manifest (data file; egress stays gated by the per-manifest allow-list + connector proxy)", priority: 50 }] },
   // Spawns a real dev-server subprocess (via process-session) for a full-stack
   // app, so it's classed "shell" like process_start — the spawned command gets
   // the kernel shell defense pipeline + audit — NOT "internal" like its
   // connector_create sibling, which only writes a manifest. Allowed via the
   // app_* glob (same as app_create/app_delete).
-  app_serve_backend:     { kernel: "shell", ariAction: "exec", risk: "shell", capabilities: ["egress", "shell"], shellCommand: { arg: "command" }, output: "command" },
-  app_serve_frontend:    { kernel: "shell", ariAction: "exec", risk: "shell", capabilities: ["egress", "shell"], shellCommand: { arg: "command" }, output: "command" },   // spawns a frontend dev server — same sink as app_serve_backend
+  app_serve_backend:     { kernel: "shell", ariAction: "exec", risk: "shell", capabilities: ["egress", "shell"], tags: [], shellCommand: { arg: "command" }, output: "command" },
+  app_serve_frontend:    { kernel: "shell", ariAction: "exec", risk: "shell", capabilities: ["egress", "shell"], tags: [], shellCommand: { arg: "command" }, output: "command" },   // spawns a frontend dev server — same sink as app_serve_backend
   // Spawns the framework's production build (npx vite build) via the canonical
   // static-build runner — same sink class as app_serve_*; allowed via the app_*
   // glob. Its runner has its own 240 s deadline and returns a timed-out
   // envelope, so the harness timeout sits above it or the envelope is never seen.
-  app_rebuild:           { kernel: "shell", ariAction: "exec", risk: "shell", capabilities: ["egress", "shell"], timeoutMs: 300_000, output: "command" },
-  create_page:           { kernel: "internal", risk: "workspace-write", capabilities: [], rules: [{ id: "allow-create-page", decision: "allow", reason: "Create custom pages", priority: 50 }] },
-  start_app_build:       { kernel: "internal", risk: "workspace-write", capabilities: [], timeoutMs: 0, reads: ["session"], reach: { kind: "indirect-network", why: "its builder installs packages and fetches assets" }, rules: [{ id: "allow-start-app-build", decision: "allow", reason: "App-build kickoff handle", priority: 50 }] },
+  app_rebuild:           { kernel: "shell", ariAction: "exec", risk: "shell", capabilities: ["egress", "shell"], tags: [], timeoutMs: 300_000, output: "command" },
+  create_page:           { kernel: "internal", risk: "workspace-write", capabilities: [], tags: [], rules: [{ id: "allow-create-page", decision: "allow", reason: "Create custom pages", priority: 50 }] },
+  start_app_build:       { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["app-build", "app-build-spec"], timeoutMs: 0, reads: ["session"], reach: { kind: "indirect-network", why: "its builder installs packages and fetches assets" }, rules: [{ id: "allow-start-app-build", decision: "allow", reason: "App-build kickoff handle", priority: 50 }] },
   // finalize creates project_dir and writes the spec into it; run reads the
   // plan under it (the build's own writes run under the worker's gates).
-  finalize_app_build:    { kernel: "internal", risk: "workspace-write", capabilities: [], timeoutMs: 0, reads: ["session"], reach: { kind: "indirect-network", why: "its builder installs packages and fetches assets" }, pathArgs: [{ arg: "project_dir", action: "write" }], rules: [{ id: "allow-finalize-app-build", decision: "allow", reason: "App-build finalize handle", priority: 50 }] },
-  build_plan_resume:     { kernel: "internal", risk: "workspace-write", capabilities: [], reads: ["session"], pathArgs: [{ arg: "project_dir", action: "read" }], rules: [{ id: "allow-build-plan-resume", decision: "allow", reason: "Auto-build resume handle", priority: 50 }] },
-  build_plan_status:     { kernel: "internal", risk: "safe", capabilities: [], liveState: "fresh", pathArgs: [{ arg: "project_dir", action: "read" }], rules: [{ id: "allow-build-plan-status", decision: "allow", reason: "Auto-build status read", priority: 50 }] },
-  run_build_plan:        { kernel: "internal", risk: "workspace-write", capabilities: [], timeoutMs: 0, reads: ["session"], reach: { kind: "indirect-network", why: "its builder installs packages and fetches assets" }, pathArgs: [{ arg: "project_dir", action: "read" }], rules: [{ id: "allow-run-build-plan", decision: "allow", reason: "Auto-build loop kickoff", priority: 50 }] },
+  finalize_app_build:    { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["app-build", "app-build-spec"], timeoutMs: 0, reads: ["session"], reach: { kind: "indirect-network", why: "its builder installs packages and fetches assets" }, pathArgs: [{ arg: "project_dir", action: "write" }], rules: [{ id: "allow-finalize-app-build", decision: "allow", reason: "App-build finalize handle", priority: 50 }] },
+  build_plan_resume:     { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["app-build"], blurb: { does: "Resume a paused app build." }, reads: ["session"], pathArgs: [{ arg: "project_dir", action: "read" }], rules: [{ id: "allow-build-plan-resume", decision: "allow", reason: "Auto-build resume handle", priority: 50 }] },
+  build_plan_status:     { kernel: "internal", risk: "safe", capabilities: [], tags: ["app-build"], blurb: { does: "Check an app build's status." }, liveState: "fresh", pathArgs: [{ arg: "project_dir", action: "read" }], rules: [{ id: "allow-build-plan-status", decision: "allow", reason: "Auto-build status read", priority: 50 }] },
+  run_build_plan:        { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["app-build"], blurb: { does: "Run a staged app-build plan." }, timeoutMs: 0, reads: ["session"], reach: { kind: "indirect-network", why: "its builder installs packages and fetches assets" }, pathArgs: [{ arg: "project_dir", action: "read" }], rules: [{ id: "allow-run-build-plan", decision: "allow", reason: "Auto-build loop kickoff", priority: 50 }] },
 
   // ── UI / state / config ──
-  sidebar_pin:    { kernel: "internal", risk: "workspace-write", capabilities: [], wholeToolGrant: true },
-  sidebar_unpin:  { kernel: "internal", risk: "workspace-write", capabilities: [], wholeToolGrant: true },
-  sidebar_clear:  { kernel: "internal", risk: "workspace-write", capabilities: [], wholeToolGrant: true },
+  sidebar_pin:    { kernel: "internal", risk: "workspace-write", capabilities: [], tags: [], blurb: { say: "pin this to the sidebar", does: "Pin an item to the sidebar." }, wholeToolGrant: true },
+  sidebar_unpin:  { kernel: "internal", risk: "workspace-write", capabilities: [], tags: [], blurb: { does: "Unpin a sidebar item." }, wholeToolGrant: true },
+  sidebar_clear:  { kernel: "internal", risk: "workspace-write", capabilities: [], tags: [], blurb: { say: "clear the sidebar", does: "Clear the sidebar." }, wholeToolGrant: true },
   // Morphing the sphere is the whole effect: a voice turn that drove a wrap-up
   // after it re-spoke its reply.
-  voice_visual:   { kernel: "internal", risk: "safe", capabilities: [], reads: ["session"], loop: { silent: true }, rules: [{ id: "allow-voice-visual", decision: "allow", reason: "Particle visualizer (UI-only side effect, rate-limited)", priority: 50 }] },
-  session_status: { kernel: "internal", risk: "safe", capabilities: [], liveState: "poll", reads: ["session"], runControl: true, rules: [{ id: "allow-session-status", decision: "allow", reason: "Current session info", priority: 50 }] },
+  voice_visual:   { kernel: "internal", risk: "safe", capabilities: [], tags: [], reads: ["session"], loop: { silent: true }, rules: [{ id: "allow-voice-visual", decision: "allow", reason: "Particle visualizer (UI-only side effect, rate-limited)", priority: 50 }] },
+  session_status: { kernel: "internal", risk: "safe", capabilities: [], tags: [], liveState: "poll", reads: ["session"], runControl: true, rules: [{ id: "allow-session-status", decision: "allow", reason: "Current session info", priority: 50 }] },
   // Re-surfaces the session's block notice / declassify control. UI-only:
   // it reads taint + kernel run state and never clears either (the click is
   // the user's, through /api/security/declassify). The trusted stamps keep it
   // from being pointed at another session's or op's state.
-  show_unblock_control: { kernel: "internal", risk: "safe", capabilities: [], reads: ["session", "operation"], rules: [{ id: "allow-show-unblock-control", decision: "allow", reason: "Show the user the unblock control for this session (read-only)", priority: 50 }] },
+  show_unblock_control: { kernel: "internal", risk: "safe", capabilities: [], tags: [], reads: ["session", "operation"], rules: [{ id: "allow-show-unblock-control", decision: "allow", reason: "Show the user the unblock control for this session (read-only)", priority: 50 }] },
   // Reads this conversation's action ledger, never another's.
-  read_my_logs:   { kernel: "internal", risk: "safe", capabilities: [], reads: ["session"], rules: [{ id: "allow-read-my-logs", decision: "allow", reason: "Agent's own action history (read-only)", priority: 50 }] },
-  setting:        { kernel: "internal", risk: "workspace-write", capabilities: [], rules: [{ id: "allow-setting", decision: "allow", reason: "Agent settings flip (toggles, theme, provider — runtime state user can also change via UI)", priority: 50 }] },
-  clipboard_read:  { kernel: "internal", risk: "safe", capabilities: [], liveState: "poll" },
-  clipboard_write: { kernel: "internal", risk: "workspace-write", capabilities: ["egress"], destination: [{ to: "user" }] },
+  read_my_logs:   { kernel: "internal", risk: "safe", capabilities: [], tags: [], reads: ["session"], rules: [{ id: "allow-read-my-logs", decision: "allow", reason: "Agent's own action history (read-only)", priority: 50 }] },
+  setting:        { kernel: "internal", risk: "workspace-write", capabilities: [], tags: [], blurb: { say: "change the app to dark mode", does: "Change app settings — theme, model, provider, voice, and more." }, rules: [{ id: "allow-setting", decision: "allow", reason: "Agent settings flip (toggles, theme, provider — runtime state user can also change via UI)", priority: 50 }] },
+  clipboard_read:  { kernel: "internal", risk: "safe", capabilities: [], tags: [], liveState: "poll" },
+  clipboard_write: { kernel: "internal", risk: "workspace-write", capabilities: ["egress"], tags: [], destination: [{ to: "user" }] },
 
   // ── Platform self-management (restart + updates over messaging) ──
   // internal: a fixed system action, no agent-controlled I/O sink for the kernel
@@ -164,18 +164,18 @@ export const TOOL_POLICIES_APPS: Record<string, ToolPolicyRow> = {
   // conversational confirm, and (apply_update) the sandbox build/boot/smoke gate.
   // Both ping the requester back on the channel the request came in on
   // (restart-notify.ts resolveNotifyTarget).
-  restart:           { kernel: "internal", risk: "workspace-write", capabilities: [], reads: ["session"], rules: [{ id: "allow-restart", decision: "allow", reason: "Restart the server to pick up new code (desktop-gated, cooldown, pings on recovery)", priority: 50 }] },
-  check_for_updates: { kernel: "internal", risk: "network-read", capabilities: [], rules: [{ id: "allow-check-for-updates", decision: "allow", reason: "Check the main branch for a newer version (read-only)", priority: 50 }] },
-  apply_update:      { kernel: "internal", risk: "destructive", capabilities: [], reads: ["session"], reach: { kind: "indirect-network", why: "downloads the update" }, undo: { irreversible: "the installed app", uncarded: "the update pipeline owns rollback" }, rules: [{ id: "allow-apply-update", decision: "allow", reason: "Download + sandbox-validate + apply a platform update, then relaunch (same gates as self_edit)", priority: 50 }] },
+  restart:           { kernel: "internal", risk: "workspace-write", capabilities: [], tags: [], reads: ["session"], rules: [{ id: "allow-restart", decision: "allow", reason: "Restart the server to pick up new code (desktop-gated, cooldown, pings on recovery)", priority: 50 }] },
+  check_for_updates: { kernel: "internal", risk: "network-read", capabilities: [], tags: ["updates"], rules: [{ id: "allow-check-for-updates", decision: "allow", reason: "Check the main branch for a newer version (read-only)", priority: 50 }] },
+  apply_update:      { kernel: "internal", risk: "destructive", capabilities: [], tags: ["updates"], reads: ["session"], reach: { kind: "indirect-network", why: "downloads the update" }, undo: { irreversible: "the installed app", uncarded: "the update pipeline owns rollback" }, rules: [{ id: "allow-apply-update", decision: "allow", reason: "Download + sandbox-validate + apply a platform update, then relaunch (same gates as self_edit)", priority: 50 }] },
 
   // ── Diagnostics / planning ──
-  doctor:          { kernel: "internal", risk: "safe", capabilities: [], rules: [{ id: "allow-doctor", decision: "allow", reason: "System self-diagnostics (read-only)", priority: 50 }] },
-  usage_report:    { kernel: "internal", risk: "safe", capabilities: [], reads: ["session"], rules: [{ id: "allow-usage-report", decision: "allow", reason: "Token usage / cost report (read-only)", priority: 50 }] },
-  tool_search:     { kernel: "internal", risk: "safe", capabilities: [], liveState: "fresh", rules: [{ id: "allow-tool-search", decision: "allow", reason: "Discover available tools", priority: 50 }] },
-  list_monitors:   { kernel: "internal", risk: "safe", capabilities: [], rules: [{ id: "allow-list-monitors", decision: "allow", reason: "Enumerate available display monitors", priority: 50 }] },
+  doctor:          { kernel: "internal", risk: "safe", capabilities: [], tags: [], rules: [{ id: "allow-doctor", decision: "allow", reason: "System self-diagnostics (read-only)", priority: 50 }] },
+  usage_report:    { kernel: "internal", risk: "safe", capabilities: [], tags: [], reads: ["session"], rules: [{ id: "allow-usage-report", decision: "allow", reason: "Token usage / cost report (read-only)", priority: 50 }] },
+  tool_search:     { kernel: "internal", risk: "safe", capabilities: [], tags: [], blurb: { does: "Discover deeper tools not loaded by default." }, liveState: "fresh", rules: [{ id: "allow-tool-search", decision: "allow", reason: "Discover available tools", priority: 50 }] },
+  list_monitors:   { kernel: "internal", risk: "safe", capabilities: [], tags: [], rules: [{ id: "allow-list-monitors", decision: "allow", reason: "Enumerate available display monitors", priority: 50 }] },
   // Plan mode is per session.
-  enter_plan_mode: { kernel: "internal", risk: "safe", capabilities: [], reads: ["session"], prompt: "Enter plan mode to research before making changes. Only read tools available.", rules: [{ id: "allow-enter-plan", decision: "allow", reason: "Enter read-only plan mode", priority: 50 }] },
-  exit_plan_mode:  { kernel: "internal", risk: "safe", capabilities: [], timeoutMs: 0, reads: ["session"], rules: [{ id: "allow-exit-plan", decision: "allow", reason: "Exit plan mode", priority: 50 }] },
+  enter_plan_mode: { kernel: "internal", risk: "safe", capabilities: [], tags: [], blurb: { say: "let's plan this first", does: "Enter plan mode (propose before acting)." }, reads: ["session"], prompt: "Enter plan mode to research before making changes. Only read tools available.", rules: [{ id: "allow-enter-plan", decision: "allow", reason: "Enter read-only plan mode", priority: 50 }] },
+  exit_plan_mode:  { kernel: "internal", risk: "safe", capabilities: [], tags: [], blurb: { does: "Leave plan mode and execute." }, timeoutMs: 0, reads: ["session"], rules: [{ id: "allow-exit-plan", decision: "allow", reason: "Exit plan mode", priority: 50 }] },
   // Pure interaction: no I/O sink at all — the question lands in the user's own
   // transcript, so there is nothing for the kernel to taint-check (internal) and
   // nothing to lose if it fires unapproved (safe). Same shape as its
@@ -186,7 +186,7 @@ export const TOOL_POLICIES_APPS: Record<string, ToolPolicyRow> = {
   // The heap guard never refuses it: only an ok ask_user can end the turn, which
   // is the exit the guard's refusal steers the model toward.
   ask_user: {
-    kernel: "internal", risk: "safe", capabilities: [], reads: ["operation"], runControl: true,
+    kernel: "internal", risk: "safe", capabilities: [], tags: [], blurb: { does: "Pause and ask you a clarifying question when your request hits an unstated decision, instead of guessing." }, reads: ["operation"], runControl: true,
     prompt: "Calling ask_user ENDS your turn with that question as your answer — the reply comes back as the user's next message. Reserve it for a fork where guessing wastes real work or is irreversible (prod vs sandbox, which account, an unrecoverable delete). Never for confirmations you can infer, permission for work already assigned, or progress reports.",
     rules: [{ id: "allow-ask-user", decision: "allow", reason: "Ask the user a question and end the turn on it (no I/O sink)", priority: 50 }],
   },
@@ -203,34 +203,34 @@ export const TOOL_POLICIES_APPS: Record<string, ToolPolicyRow> = {
   // adding a tool action without updating this table blocks rather than
   // bypasses. Risk is the worst tier across actions (reads now share the
   // family's workspace-write tier — over-asks, never under-asks).
-  spreadsheet: { kernel: "internal", risk: "workspace-write", capabilities: [], rules: [{ id: "allow-spreadsheet", decision: "allow", reason: "Spreadsheet read/write", priority: 50 }],
+  spreadsheet: { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["office-doc"], essentialRank: 26, rules: [{ id: "allow-spreadsheet", decision: "allow", reason: "Spreadsheet read/write", priority: 50 }],
     prompt: "Use for Excel/CSV — never write Python pandas scripts. action:'write' takes data as a JSON array of objects (keys become headers).", pathArgs: [
     { arg: "file_path", action: "read",  forActions: ["read", "query"] },
     { arg: "file_path", action: "write", forActions: ["write", "edit"] },
   ] },
-  document: { kernel: "internal", risk: "workspace-write", capabilities: [], rules: [{ id: "allow-document", decision: "allow", reason: "Word document create/read/edit", priority: 50 }],
+  document: { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["office-doc"], essentialRank: 25, rules: [{ id: "allow-document", decision: "allow", reason: "Word document create/read/edit", priority: 50 }],
     prompt: "action:'create' content is markdown with \\n newlines. # for headings, - for bullets, **bold**.", pathArgs: [
     { arg: "file_path", action: "write",     forActions: ["create", "edit"] },
     { arg: "file_path", action: "read",      forActions: ["read"] },
     { arg: "template_path", action: "read",  forActions: ["template"] },
     { arg: "output_path", action: "write",   forActions: ["template"] },
   ] },
-  presentation: { kernel: "internal", risk: "workspace-write", capabilities: [], rules: [{ id: "allow-presentation", decision: "allow", reason: "PowerPoint create/edit", priority: 50 }],
+  presentation: { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["office-doc"], essentialRank: 24, rules: [{ id: "allow-presentation", decision: "allow", reason: "PowerPoint create/edit", priority: 50 }],
     prompt: "action:'from_outline' outlines MUST use # for slide titles and - for bullets, separated by \\n.", pathArgs: [
     { arg: "file_path", action: "write", forActions: ["create", "add_slide", "from_outline", "from_template", "edit"] },
     { arg: "template_path", action: "read", forActions: ["from_template"] },
   ] },
   // Its tier is workspace-write because it CAN write; whether a call commits
   // is read off the path specs its action opens (a read commits nothing).
-  pdf: { kernel: "internal", risk: "workspace-write", capabilities: [], committing: "path-write", rules: [{ id: "allow-pdf", decision: "allow", reason: "PDF read/generate/merge", priority: 50 }],
+  pdf: { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["office-doc"], essentialRank: 27, committing: "path-write", rules: [{ id: "allow-pdf", decision: "allow", reason: "PDF read/generate/merge", priority: 50 }],
     prompt: "action:'create' content uses # for headings, \\n\\n for paragraph breaks.", pathArgs: [
     { arg: "file_path", action: "write", forActions: ["create"] },
     { arg: "file_path", action: "read",  forActions: ["read", "extract_tables"] },
     { arg: "files", action: "read", json: true, forActions: ["merge"] },
     { arg: "output_path", action: "write",      forActions: ["merge"] },
   ] },
-  create_chart:     { kernel: "internal", risk: "workspace-write", capabilities: [], pathArgs: [{ arg: "file_path", action: "write" }], rules: [{ id: "allow-create-chart", decision: "allow", reason: "Chart PNG generation (workspace-confined)", priority: 50 }] },
+  create_chart:     { kernel: "internal", risk: "workspace-write", capabilities: [], tags: [], pathArgs: [{ arg: "file_path", action: "write" }], rules: [{ id: "allow-create-chart", decision: "allow", reason: "Chart PNG generation (workspace-confined)", priority: 50 }] },
   // The thumbnail is written beside the file (<file>.preview.png); the tool
   // gates that write itself through evaluateFileAccess (preview-tools.ts).
-  preview_document: { kernel: "internal", risk: "workspace-write", capabilities: [], pathArgs: [{ arg: "file_path", action: "read" }],  rules: [{ id: "allow-preview-document", decision: "allow", reason: "Generated-file self-check (writes a sibling thumbnail)", priority: 50 }] },
+  preview_document: { kernel: "internal", risk: "workspace-write", capabilities: [], tags: [], pathArgs: [{ arg: "file_path", action: "read" }],  rules: [{ id: "allow-preview-document", decision: "allow", reason: "Generated-file self-check (writes a sibling thumbnail)", priority: 50 }] },
 };

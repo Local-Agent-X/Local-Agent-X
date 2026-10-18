@@ -21,6 +21,7 @@ import type {
   CommittingSpec, DeclaredCapability, DestinationSpec, LoopFacts, OpCategory, OutputKind, ToolKillSwitch, ToolPolicyRow,
   ToolSurface, TrustedStamp,
 } from "./tool-policy/tool-policies.types.js";
+import type { ToolTag } from "./tool-policy/tool-tags.js";
 import { getActivePluginToolMetadata } from "./plugin-system/tool-metadata.js";
 import type { CallContext } from "./tool-execution/context.js";
 export type { PathArgSpec } from "./tool-policy/tool-policies.data.js";
@@ -231,6 +232,11 @@ export function wholeToolGrant(name: string): boolean {
 /** Every concrete tool whose row satisfies `fact`, in table order. */
 export function toolsWhere(fact: (row: ToolPolicyRow) => boolean): string[] {
   return Object.entries(TOOL_POLICIES).flatMap(([name, row]) => (row.kernel !== undefined && fact(row) ? [name] : []));
+}
+
+/** Every concrete tool whose row carries any of `tags`, in table order. */
+export function toolsTagged(...tags: readonly ToolTag[]): string[] {
+  return toolsWhere((row) => row.tags.some((tag) => tags.includes(tag)));
 }
 
 /** Does the dispatcher stamp `stamp` into this tool's calls? The session is

@@ -107,4 +107,22 @@ describe("ensureWorkspaceLink ephemeral guard", () => {
     expect(lstatSync(link).isSymbolicLink()).toBe(true);
     expect(resolve(readlinkSync(link))).toBe(resolve(realWs));
   });
+
+  // A test or smoke run from a checkout with no workspace of its own (a CI
+  // runner, a worktree) or an empty one: linking it to the run's temp
+  // workspace would change the checkout and dangle once temp is cleaned.
+  it.each(["absent", "empty"] as const)("never links a durable folder's %s workspace to an ephemeral target", (layout) => {
+    const checkout = mkdtempSync(join(process.cwd(), ".guard-checkout-"));
+    cleanup.push(checkout);
+    const link = join(checkout, "workspace");
+    if (layout === "empty") mkdirSync(link);
+    const ephHost = mkdtempSync(join(tmpdir(), "lax-eph-"));
+    cleanup.push(ephHost);
+
+    ensureWorkspaceLink(join(ephHost, "app", "workspace"), link);
+
+    if (layout === "absent") expect(existsSync(link)).toBe(false);
+    else expect(lstatSync(link).isDirectory()).toBe(true);
+    expect(existsSync(join(ephHost, "app"))).toBe(false);
+  });
 });

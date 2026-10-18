@@ -297,11 +297,12 @@ export function loadConfig(): LAXConfig {
     if (!workspaceEnv) applyDiskMutation({ workspace: fallback });
   }
 
-  // The static file server (and a few tools) read from config.workspace, while
-  // most file tools resolve agent paths against <cwd>/workspace. They MUST be
-  // the same directory or generated files 404 / land where nothing serves
-  // them. When the workspace was relocated off the cwd, bridge the two with a
-  // junction so every reader and writer converges on one physical directory.
+  // Agent paths and the static file server resolve through config.workspace;
+  // <cwd>/workspace is what a person (or a cwd-relative script) opens in the
+  // install folder. They MUST be the same directory or files land where
+  // nothing finds them. When the workspace was relocated off the cwd, bridge
+  // the two with a junction so every reader and writer converges on one
+  // physical directory.
   if (allowWorkspaceMutation) ensureWorkspaceLink(config.workspace);
 
   // Inject actual app URL into system prompt (works with any port)

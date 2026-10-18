@@ -12,7 +12,7 @@ import {
   renameSync,
   cpSync,
 } from "node:fs";
-import { join, resolve, sep } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import { homedir, tmpdir } from "node:os";
 import { getLaxDir } from "../lax-data-dir.js";
 import { createLogger } from "../logger.js";
@@ -143,6 +143,18 @@ export function ensureWorkspaceLink(workspace: string, linkOverride?: string): v
   // empty, pins 404, workspace scattered through the repo root).
   if (existsSync(join(target, ".git"))) {
     logger.error(`[config] refusing to point workspace at ${target}: it is a git checkout, not a workspace — leaving the workspace link untouched`);
+    return;
+  }
+  // Guard: never bridge a durable folder to an EPHEMERAL (temp) workspace. A
+  // test or smoke run that points the workspace at a temp folder from a
+  // checkout would otherwise create <checkout>/workspace as a link into temp —
+  // a change to the checkout that outlives the run and dangles once temp is
+  // cleaned. Agent paths resolve through config.workspace (./paths.ts), so a
+  // run like that needs no link. Judged by where the link sits, not what it
+  // resolves to: a checkout's link left pointing into temp is still the
+  // checkout's.
+  if (isEphemeralPath(target) && !isEphemeralPath(dirname(link))) {
+    logger.debug(`[config] not linking ${link} to the temporary workspace ${target}`);
     return;
   }
   // Guard: never migrate or relink a real, populated workspace into an

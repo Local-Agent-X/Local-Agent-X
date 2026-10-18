@@ -42,6 +42,19 @@ mkdirSync(laxDir, { recursive: true });
 writeFileSync(join(laxDir, "settings.json"), JSON.stringify({ model: "claude-sonnet-4-6" }), "utf-8");
 process.env.HOME = home;
 process.env.USERPROFILE = home;
+// No test touches the checkout's workspace/ — per-machine user data — unless it
+// opts in. The default config's "./workspace" is that folder, so any test that
+// wrote through the workspace (a fixture, a thumbnail, an opened database)
+// wrote into it: two did (2026-10-16), and another test asserts nothing
+// changed it. Each file gets a workspace of its own instead, nested under its
+// temp folder because the file-access gate allows the workspace's PARENT — a
+// workspace directly in tmpdir would put every tmpdir fixture inside the zone.
+// An env override, so it holds for a test that points HOME or LAX_DATA_DIR
+// elsewhere; ensureWorkspaceLink never links the checkout to a temp workspace.
+// A test that exercises the default workspace deletes it.
+const workspaceHost = mkdtempSync(join(tmpdir(), "lax-workspace-"));
+process.env.LAX_WORKSPACE = join(workspaceHost, "app", "workspace");
+mkdirSync(process.env.LAX_WORKSPACE, { recursive: true });
 // Never route a test's safe-delete into the developer's real OS Trash — force
 // the ~/.lax fallback so trash assertions are deterministic and self-contained.
 process.env.LAX_NO_NATIVE_TRASH = "1";
@@ -83,4 +96,5 @@ globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
 
 afterAll(() => {
   rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  rmSync(workspaceHost, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 });

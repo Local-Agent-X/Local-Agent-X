@@ -191,9 +191,13 @@ describe("update rollback transaction", () => {
   });
 
   it("validates a large backup journal at phase boundaries, not once per file", async () => {
+    // The count is the proof, so the file count only has to dwarf the bound:
+    // revalidating per file scores at least one per file (16+), phase
+    // boundaries score at most 5. Each file still costs dozens of path-chain
+    // walks, so a bigger batch buys nothing but wall time on a slow runner.
     const f = fixture();
     const paths: string[] = [];
-    for (let index = 0; index < 128; index++) {
+    for (let index = 0; index < 16; index++) {
       const path = join("src", `bulk-${index}.ts`);
       writeFileSync(join(f.install, path), String(index));
       paths.push(path);

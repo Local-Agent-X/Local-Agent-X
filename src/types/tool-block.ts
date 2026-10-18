@@ -25,8 +25,9 @@ export const BLOCK_LAYERS = [
   /** Not a refusal: show_unblock_control re-surfacing a block's control on an
    *  ok result, so the chat renders the same notice. */
   "quarantine-notice",
-  /** A producer outside the type system (a plugin tool's blocked result)
-   *  named no layer. Never written by the engine. */
+  /** A refusal from nowhere the engine can name: a producer outside the type
+   *  system named no layer and no active plugin owns the tool (an active
+   *  plugin's is attributed to it as "plugin"). Never written by the engine. */
   "unknown",
 ] as const;
 
@@ -74,6 +75,9 @@ export interface KernelQuarantine {
 export interface ToolBlockRecord {
   layer: BlockLayer;
   layers?: BlockLayer[];
+  /** With layer "plugin": the plugin that refused (its owner id), so the chat
+   *  can say which and the repeat-failure breaker groups by it. */
+  plugin?: string;
   /** First line of the block reason, capped; never the payload. */
   reason: string;
   /** The next step the model was given (the rendered `Recovery:` line);

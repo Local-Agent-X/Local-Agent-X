@@ -59,6 +59,7 @@ export function blockRecordOf(result: ToolResult): ToolBlockRecord | undefined {
   return {
     layer,
     ...(layers ? { layers } : {}),
+    ...(layer === "plugin" && typeof md.plugin === "string" && md.plugin ? { plugin: md.plugin } : {}),
     reason: (result.content.split("\n")[0] ?? "").slice(0, REASON_MAX),
     ...(recovery ? { recovery } : {}),
     ...(clearable ? { clearable } : {}),

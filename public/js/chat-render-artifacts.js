@@ -331,7 +331,11 @@ function _renderAssistantToolArtifacts(bodyEl, data) {
             ? (endEvt.status === 'timeout' ? '✗ Timed out' : '✗ Failed')
             : (endEvt.status === 'declined' ? '✋ Declined'
               : (endEvt.status === 'blocked' || endEvt.allowed === false ? '⚠ Blocked' : '✓ Done'));
-          card.querySelector('.tool-detail').textContent = detailText || fallback;
+          // A plugin's refusal names the plugin (the block record's `plugin`,
+          // layer "plugin"), so the card says which one refused.
+          const md = endEvt.metadata || {};
+          const refusedBy = endEvt.status === 'blocked' && md.layer === 'plugin' && md.plugin ? 'Plugin ' + md.plugin + ' refused: ' : '';
+          card.querySelector('.tool-detail').textContent = refusedBy + (detailText || fallback);
           attachMediaPreview(card, te.name, rawResult, endEvt.media);
         }
       }

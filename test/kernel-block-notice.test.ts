@@ -118,6 +118,15 @@ describe("the security-block notice is on the row, not in the collapsed group", 
     expect(btn.textContent).toContain("Declassify & retry");
   });
 
+  it("a plugin's refusal names the plugin on its card and gets no kernel notice", () => {
+    const body = render([
+      { type: "start", name: "weather_lookup", toolCallId: "p", args: {} },
+      { type: "end", name: "weather_lookup", toolCallId: "p", status: "blocked", result: "[blocked, layer=\"plugin\", plugin=\"weather-plugin\"]\nquota exceeded", metadata: { layer: "plugin", plugin: "weather-plugin" } },
+    ]);
+    expect(body.querySelector(".tool-detail")!.textContent).toMatch(/^Plugin weather-plugin refused: /);
+    expect(body.querySelector(".kernel-block-notice")).toBeNull();
+  });
+
   it("a block the user cannot clear at all (canary, allowlist) gets no notice", () => {
     const body = render([
       { type: "start", name: "http_request", toolCallId: "d", args: {} },

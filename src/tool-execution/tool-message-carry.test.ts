@@ -15,7 +15,9 @@ import { setAriRequired } from "../ari-kernel/state.js";
 import { _clearDedupCacheForTests } from "./dedup-cache.js";
 import { executeToolCalls } from "./execute-tool.js";
 import { markDryRunSession, unmarkDryRunSession } from "./resolve-tool.js";
+import type { ToolCallContext } from "./context.js";
 import { showUnblockControlTool } from "../tools/unblock-control-tool.js";
+import { activatePluginToolMetadata, deactivatePluginToolMetadata } from "../plugin-system/tool-metadata.js";
 import { registerRedactedSecretValue, unregisterRedactedSecretValue } from "../security/secrets/index.js";
 import { blockRecordOf, mediaRefOf, toolMessage, toolMessageMetadata, toolMessageResult, toolMessageStatus } from "./tool-message-carry.js";
 
@@ -115,11 +117,51 @@ describe("readers take the carry, and the header only for a row written before i
     expect(toolMessageResult(toolMessage("c3", { content: "started", status: "running", session_id: "s" })).isError).toBe(false);
   });
 
-  it("a refusal from outside the type system reads as layer unknown, with a next step", () => {
+  it("a refusal from nowhere we can name reads as layer unknown, with a next step", () => {
     const plugin = { content: "nope", isError: true, status: "blocked", metadata: { recovery: "" } } as unknown as ToolResult;
     const record = blockRecordOf(plugin)!;
     expect(record.layer).toBe("unknown");
     expect(record.recovery).not.toBe("");
+  });
+});
+
+// A plugin tool's refusal arrives with no layer; the dispatch boundary
+// attributes it to the plugin that owns the tool, so the chat can say which
+// one refused and the breaker groups by it. "unknown" is for a refusal with
+// no owner at all.
+describe("a plugin tool's refusal is attributed to the plugin", () => {
+  beforeAll(() => setAriRequired(false));
+  afterAll(() => setAriRequired(true));
+
+  // The audit phase's attribution seam, driven directly: a plugin tool's
+  // own refusal goes through the shell-class gates in a full dispatch, which
+  // is a different test; this is the stamp and what the message carries.
+  it("at the audit phase: layer plugin, with the owner's id on the record and the metadata", async () => {
+    const { attributePluginRefusal } = await import("./audit-tool-call.js");
+    const token = Symbol("weather-plugin");
+    activatePluginToolMetadata("weather_lookup", { ownerId: "weather-plugin", activationToken: token, kernel: "shell", risk: "shell" });
+    try {
+      const refusal = { content: "nope: quota exceeded", isError: true, status: "blocked", metadata: { recovery: "" } } as unknown as ToolResult;
+      const ctx = { tc: { id: "c-plugin", name: "weather_lookup", arguments: "{}" }, result: refusal } as unknown as ToolCallContext;
+      attributePluginRefusal(ctx);
+      const msg = toolMessage("c-plugin", ctx.result!) as { _block?: Record<string, unknown>; _metadata?: Record<string, unknown> };
+      expect(msg._block).toMatchObject({ layer: "plugin", plugin: "weather-plugin" });
+      expect(msg._metadata).toMatchObject({ layer: "plugin", plugin: "weather-plugin" });
+      expect(toolMessageResult(msg as never).metadata?.layer).toBe("plugin");
+
+      // Not a plugin tool: the stamp is not applied, the record reads unknown.
+      const other = { tc: { id: "c-x", name: "carry_stub", arguments: "{}" }, result: refusal } as unknown as ToolCallContext;
+      attributePluginRefusal(other);
+      expect(blockRecordOf(other.result!)!.layer).toBe("unknown");
+    } finally {
+      deactivatePluginToolMetadata("weather_lookup", "weather-plugin", token);
+    }
+  });
+
+  it("a refusal that already names its layer is left alone", () => {
+    const record = blockRecordOf(blocked("no", { layer: "security", recovery: "Ask.", plugin: "weather-plugin" }))!;
+    expect(record.layer).toBe("security");
+    expect(record).not.toHaveProperty("plugin");
   });
 });
 

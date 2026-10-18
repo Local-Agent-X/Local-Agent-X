@@ -15,6 +15,7 @@
  */
 import { hasCapability } from "../../tool-registry.js";
 import { withoutResultHeader } from "../../tools/result-helpers.js";
+import { getActivePluginToolMetadata } from "../../plugin-system/tool-metadata.js";
 import { isWorkerOp, type CanonicalMiddleware, type CanonicalToolResultView } from "./types.js";
 import { getMiddlewareState } from "./state.js";
 import { isDispatchFailure } from "../types.js";
@@ -43,8 +44,15 @@ function createState(): RepeatFailureState {
   return { sig: "", family: "", count: 0 };
 }
 
-function toolFamily(toolName: string): string {
-  return hasCapability(toolName, "shell") ? "shell" : toolName;
+/** The family a result counts against: every shell-backed tool is one, a
+ *  plugin's tools are one (named by the refusal's block record, or by the
+ *  plugin that owns the tool when the record carries none), every other tool
+ *  is its own. */
+function toolFamily(tr: Pick<CanonicalToolResultView, "toolName" | "block">): string {
+  if (tr.block?.layer === "plugin" && tr.block.plugin) return `plugin:${tr.block.plugin}`;
+  const owner = getActivePluginToolMetadata(tr.toolName)?.ownerId;
+  if (owner) return `plugin:${owner}`;
+  return hasCapability(tr.toolName, "shell") ? "shell" : tr.toolName;
 }
 
 /** Tool name + normalized head of the error text. Args are deliberately NOT
@@ -57,7 +65,7 @@ function toolFamily(toolName: string): string {
  *  header: the header prints `duration_ms`, which differs on every run, so
  *  five identical `exit_code=1` failures never matched while it was in. */
 function failureSig(tr: CanonicalToolResultView): string {
-  const family = toolFamily(tr.toolName);
+  const family = toolFamily(tr);
   if (family === "shell" && (tr.block?.deferredTo !== undefined || tr.block?.layer === "sandbox")) {
     return "shell::unattended-sandbox";
   }
@@ -76,7 +84,7 @@ export const repeatFailureMiddleware: CanonicalMiddleware = {
       if (!isDispatchFailure(tr.status)) {
         // Only success in the same tool family proves the agent escaped the
         // failure. Unrelated reads must not hide a shell loop.
-        if (toolFamily(tr.toolName) === state.family && (tr.status === "ok" || tr.status === "cancelled")) {
+        if (toolFamily(tr) === state.family && (tr.status === "ok" || tr.status === "cancelled")) {
           state.sig = "";
           state.family = "";
           state.count = 0;
@@ -85,7 +93,7 @@ export const repeatFailureMiddleware: CanonicalMiddleware = {
       }
       const sig = failureSig(tr);
       if (sig === state.sig) state.count++;
-      else { state.sig = sig; state.family = toolFamily(tr.toolName); state.count = 1; }
+      else { state.sig = sig; state.family = toolFamily(tr); state.count = 1; }
 
       if (state.count >= ABORT_AT) {
         const message =

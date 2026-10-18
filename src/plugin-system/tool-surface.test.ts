@@ -123,7 +123,12 @@ describe("PluginToolSurface", () => {
 
     expect(registry.get("revocable_action")).toBeUndefined();
     expect(live).toEqual([]);
-    expect(await stale.execute({})).toEqual(expect.objectContaining({ status: "blocked", isError: true }));
+    // The refusal names the plugin, so the chat can say which one and the
+    // repeat-failure breaker groups by it.
+    expect(await stale.execute({})).toEqual(expect.objectContaining({
+      status: "blocked", isError: true,
+      metadata: expect.objectContaining({ layer: "plugin", plugin: owner }),
+    }));
     expect(kernelClassForTool("revocable_action")).toBeUndefined();
     expect(isMutationTool("revocable_action")).toBe(false);
     expect(isProgressTool("revocable_action")).toBe(false);

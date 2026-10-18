@@ -4,8 +4,9 @@
 // hooks need visibility into block messages too.
 
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
-import { USER_HINTS, type ToolResult, type ToolChip } from "../types.js";
-import { renderToolResultForModel, statusOf } from "../tools/result-helpers.js";
+import { USER_HINTS, isBlockLayer, type ToolResult, type ToolChip } from "../types.js";
+import { renderToolResultForModel, statusOf, withMetadata } from "../tools/result-helpers.js";
+import { getActivePluginToolMetadata } from "../plugin-system/tool-metadata.js";
 import { closeUnterminatedExternalBlocks } from "../sanitize.js";
 import { getHookEngine } from "../hooks/hook-engine.js";
 import { logToolUsage } from "./tool-usage-telemetry.js";
@@ -309,7 +310,20 @@ function recordProvenance(ctx: ToolCallContext): void {
   } catch { /* lineage is best-effort — never break the call */ }
 }
 
+// A plugin tool's refusal arrives from outside the type system, so it can name
+// no layer. The dispatch boundary attributes it to the plugin that owns the
+// tool (layer "plugin", `plugin` its owner id): the chat says which plugin
+// refused and the repeat-failure breaker groups by it. "unknown" is left for
+// a refusal from nowhere we can name. Exported for the carry test.
+export function attributePluginRefusal(ctx: ToolCallContext): void {
+  const result = ctx.result!;
+  if (statusOf(result) !== "blocked" || isBlockLayer(result.metadata?.layer)) return;
+  const owner = getActivePluginToolMetadata(ctx.tc.name)?.ownerId;
+  if (owner) ctx.result = withMetadata(result, { layer: "plugin", plugin: owner });
+}
+
 export const auditPhase: Phase = async (ctx) => {
+  attributePluginRefusal(ctx);
   evaluateThreat(ctx);
   applyBudget(ctx);
   firePostHook(ctx);

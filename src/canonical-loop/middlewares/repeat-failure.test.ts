@@ -159,6 +159,23 @@ describe("repeat-failure breaker", () => {
     expect((await drive(opId(), [shellFail(10, 1), shellFail(11, 1), shellFail(12, 127)])).kind).toBe("continue");
   });
 
+  // A plugin's tools are one family, named by the refusal's block record: two
+  // of its tools failing the same way is one unresolved failure, not two.
+  it("groups a plugin's refusals by the plugin named on the block record", async () => {
+    const op = opId();
+    const refusal = (toolName: string) => ({
+      toolName,
+      content: "[blocked, layer=\"plugin\"]\nquota exceeded",
+      status: "blocked" as const,
+      block: { layer: "plugin" as const, plugin: "weather-plugin", reason: "quota exceeded", notice: "none" as const },
+    });
+    await run(op, [refusal("weather_lookup")]);
+    await run(op, [refusal("weather_forecast")]);
+    const r3 = await run(op, [refusal("weather_lookup")]);
+    expect(r3.kind).toBe("nudge");
+    expect((r3 as { message: string }).message).toContain("plugin:weather-plugin");
+  });
+
   it("keeps abort semantics for interactive turns", async () => {
     const op = opId();
     for (let i = 0; i < 4; i++) await run(op, [fail()]);

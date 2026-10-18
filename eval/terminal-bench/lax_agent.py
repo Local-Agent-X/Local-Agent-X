@@ -59,7 +59,11 @@ class LaxAgent(BaseInstalledAgent):
                 f"LAX bundle not found at {bundle}; build it with "
                 "`node eval/terminal-bench/bundle.mjs` or set LAX_TB_BUNDLE"
             )
-        await self.ensure_system_dependencies(environment, ("tar", "gzip"))
+        # tar and gzip are essential packages on the Debian/Ubuntu images tasks
+        # use, and Harbor's installer has no entry for either, so check, not install.
+        probe = await environment.exec(command="command -v tar && command -v gzip", user="root")
+        if probe.return_code != 0:
+            raise RuntimeError("the task image has no tar or gzip; the LAX bundle cannot be unpacked")
         await environment.upload_file(bundle, "/installed-agent/lax.tgz")
         owner = environment.default_user
         chown = f" && chown -R {shlex.quote(str(owner))} {INSTALL_DIR}" if owner is not None else ""

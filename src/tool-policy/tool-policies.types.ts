@@ -48,10 +48,12 @@ export interface PathArgSpec {
    *  worktree (tool-execution/worktree-paths.ts) instead of opened. */
   searchRoot?: true;
   /** After the call succeeds the session knows this one file's current bytes —
-   *  it read them, or it wrote them. An `edit` spec carrying it also requires
-   *  that knowledge first: an in-place edit is refused against a file that
-   *  changed since the session last saw it (tool-execution/run-sandboxed.ts
-   *  stale-read guard). */
+   *  it read them, or it wrote them whole. A spec that changes the file also
+   *  requires that knowledge first (tool-execution/run-sandboxed.ts stale-read
+   *  guard): an `edit` spec always, since an in-place edit targets bytes the
+   *  session must have seen; a `write` spec when the file already exists, since
+   *  a whole-file write replaces bytes the session never saw. Creating a file
+   *  needs nothing. */
   knowsContent?: true;
 }
 

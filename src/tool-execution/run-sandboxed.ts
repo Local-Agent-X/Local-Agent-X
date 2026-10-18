@@ -66,9 +66,9 @@ function failureRow(e: unknown, reconciliation: ToolResult | null, progressLog: 
 export const runSandboxedPhase: Phase = async (ctx) => {
   const { tc, tool, args, sessionId, signal, onEvent } = ctx;
   // The path spec, if any, whose file the session knows after this call
-  // (tool-policies.types.ts knowsContent); an in-place edit of it is guarded.
+  // (tool-policies.types.ts knowsContent); changing that file is guarded.
   const contentKnown = pathSpecsForCall(tc.name, args).find((spec) => spec.knowsContent);
-  const freshnessGuarded = contentKnown?.action === "edit" ? contentKnown : undefined;
+  const freshnessGuarded = contentKnown && contentKnown.action !== "read" ? contentKnown : undefined;
   if (!tool) return CONTINUE;
 
   // A cage still proving its fence answers in seconds; that one is a retry,
@@ -92,23 +92,27 @@ export const runSandboxedPhase: Phase = async (ctx) => {
     onEvent?.({ type: "tool_progress", toolName: tc.name, toolCallId: tc.id, message } as ServerEvent);
   };
 
-  // Stale-read guard: refuse an edit against a file this session hasn't seen
-  // the current bytes of. Runs before execute (and before circuit-breaker
-  // accounting) so a "re-read first" never trips the breaker — it's guidance,
-  // not a tool failure.
+  // Stale-read guard: refuse to change a file this session hasn't seen the
+  // current bytes of — an in-place edit always, a whole-file write when there
+  // is a file to replace (a new file has nothing to be stale against). Runs
+  // before execute (and before circuit-breaker accounting) so a "re-read
+  // first" never trips the breaker — it's guidance, not a tool failure.
   const guardedPath = args[freshnessGuarded?.arg ?? ""];
   if (freshnessGuarded && typeof guardedPath === "string" && guardedPath) {
     // Path resolution / freshness is best-effort: a malformed path is the
     // tool's job to report, not ours to crash on, so swallow and fall through.
     let resolved: string | null = null;
     try { resolved = resolveAgentPath(guardedPath, sessionId); } catch { /* let the tool handle it */ }
-    const fresh = resolved ? checkFreshness(sessionId, resolved) : "ok";
+    const inPlace = freshnessGuarded.action === "edit";
+    const guarded = resolved !== null && (inPlace || existsSync(resolved));
+    const fresh = resolved && guarded ? checkFreshness(sessionId, resolved) : "ok";
     if (resolved && fresh !== "ok") {
+      const verb = inPlace ? "edit" : "overwrite";
       ctx.result = blocked(
         fresh === "unseen"
-          ? `Refusing to edit ${resolved}: this session hasn't read it. Read the file first so your edit targets its current contents.`
-          : `Refusing to edit ${resolved}: it changed on disk since this session last read it. Re-read it — your old_string or line numbers may be stale.`,
-        { recovery: `Call read with path="${args.path}", then retry this edit.`, layer: "stale-read-guard" },
+          ? `Refusing to ${verb} ${resolved}: this session hasn't read it. Read the file first so you ${inPlace ? "edit its current contents" : "know what you are replacing"}.`
+          : `Refusing to ${verb} ${resolved}: it changed on disk since this session last read it. Re-read it — ${inPlace ? "your old_string or line numbers may be stale" : "the file is not what you saw"}.`,
+        { recovery: `Call read with path="${args.path}", then retry this ${inPlace ? "edit" : "write"}.`, layer: "stale-read-guard" },
       );
       return CONTINUE;
     }

@@ -22,6 +22,7 @@
 | `secretEnv` | `SECRET_ENV_TOOLS` (`src/tools/shell-secret-env.ts`): the `use_secret` card and the outbound-secret recovery; the tool's schema must take `secret_env` | `src/tools/tool-registration-completeness.test.ts` |
 | `kernel`, `risk`, a `shell` capability, `destination` (what strict local-only mode blocks: `localOnlyToolDecision` in `src/local-only-policy.ts`; a `site` or `browser-page` destination is judged by the call's URL) | the two maps there for reach no row names (`INDIRECT_NETWORK`, `LOCAL_DEVICE`) | `src/local-only-policy.test.ts` |
 | an `edit` path spec, a family's `edit` action, a `searchRoot`, `shellCommand` (`EDIT_CAPABLE_TOOLS` in `src/agents/spawn-guard.ts`) | which roles a task that edits an existing artifact may be delegated to | `src/agents/spawn-guard.test.ts` |
+| `knowsContent` on a path spec (read by the stale-read guard in `src/tool-execution/run-sandboxed.ts`) | an `edit` spec is refused against a file the session has not seen current; a `write` spec is refused the same way when the file already exists (a whole-file write replaces it); a `read` spec only records the sight | `src/tool-execution/run-sandboxed.test.ts` |
 | `pathArgs` (also read by the Artifacts tab, `src/routes/artifacts.ts`) | every declared path a session touched is surfaced there | `src/routes/artifacts.test.ts` |
 | `merge-defaults.ts` | the stamped default policy written on first run | `merge-defaults.test.ts` |
 | a pack in `packs/` | `src/tool-execution/pre-dispatch.ts` | `packs/spend-cap-pack.test.ts`, `packs/threat-engine-pack.test.ts` |

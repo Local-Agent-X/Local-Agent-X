@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { runSandboxedPhase } from "./run-sandboxed.js";
 import type { CallContext, ToolCallContext } from "./context.js";
-import { readTool, editTool } from "../tools/file-tools.js";
+import { readTool, editTool, writeTool } from "../tools/file-tools.js";
 import type { ToolDefinition } from "../types.js";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 import { renderToolResultForModel } from "../tools/result-helpers.js";
@@ -101,6 +101,67 @@ describe("stale-read guard (run-sandboxed integration)", () => {
     expect(res.status).toBe("blocked");
     expect(res.content).toMatch(/changed on disk/);
     expect(readFileSync(file, "utf-8")).toBe("changed underneath\n"); // untouched
+  });
+});
+
+// A whole-file write replaces every byte of an existing file: unseen, it is the
+// same stale mental model as an unseen edit, and the loss is silent (the file
+// is simply gone under the new content). The guard applies because the write
+// row's spec carries knowsContent, not because the tool is named write.
+describe("stale-read guard over a whole-file write (run-sandboxed integration)", () => {
+  it("refuses to overwrite an existing file the session has not read, and writes nothing", async () => {
+    const file = tmpFile("user's notes\n");
+    const res = await run(writeTool, { path: file, content: "replaced\n" }, freshSession());
+    expect(res.status).toBe("blocked");
+    expect(res.metadata?.layer).toBe("stale-read-guard");
+    expect(res.content).toMatch(/hasn't read it/);
+    expect(String(res.metadata?.recovery)).toMatch(/Call read with path=/);
+    expect(readFileSync(file, "utf-8")).toBe("user's notes\n");
+  });
+
+  it("allows the overwrite once the session has read the file, and the write counts as seeing the new bytes", async () => {
+    const file = tmpFile("v1\n");
+    const s = freshSession();
+    await run(readTool, { path: file }, s);
+    const first = await run(writeTool, { path: file, content: "v2\n" }, s);
+    expect(first.isError).toBeFalsy();
+    expect(readFileSync(file, "utf-8")).toBe("v2\n");
+    // The session wrote v2, so it knows v2: a second write needs no re-read.
+    const second = await run(writeTool, { path: file, content: "v3\n" }, s);
+    expect(second.isError).toBeFalsy();
+    expect(readFileSync(file, "utf-8")).toBe("v3\n");
+  });
+
+  it("creating a new file is never guarded", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lax-guard-new-"));
+    dirs.add(dir);
+    const file = join(dir, "fresh.txt");
+    const res = await run(writeTool, { path: file, content: "brand new\n" }, freshSession());
+    expect(res.isError).toBeFalsy();
+    expect(readFileSync(file, "utf-8")).toBe("brand new\n");
+  });
+
+  it("refuses the overwrite when the file changed on disk since the session read it", async () => {
+    const file = tmpFile("v1\n");
+    const s = freshSession();
+    await run(readTool, { path: file }, s);
+    writeFileSync(file, "someone else's v2\n", "utf-8");
+    const res = await run(writeTool, { path: file, content: "v3\n" }, s);
+    expect(res.status).toBe("blocked");
+    expect(res.metadata?.layer).toBe("stale-read-guard");
+    expect(res.content).toMatch(/changed on disk/);
+    expect(readFileSync(file, "utf-8")).toBe("someone else's v2\n");
+  });
+
+  it("a read after a write returns the content, never the dedup stub (no read is in view)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lax-guard-rw-"));
+    dirs.add(dir);
+    const file = join(dir, "w.txt");
+    const s = freshSession();
+    await run(writeTool, { path: file, content: "written by me\n" }, s);
+    const res = await run(readTool, { path: file }, s);
+    expect(res.metadata?.unchanged).toBeUndefined();
+    expect(res.content).toContain("written by me");
   });
 });
 

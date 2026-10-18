@@ -248,6 +248,29 @@ describe("cross-host redirect egress re-check", () => {
     expect(res.content).toContain("PAGE FROM B");
   });
 
+  // A provider bearer sent to one origin must not ride a redirect to another:
+  // the image tools send API keys and subscription tokens through canonicalFetch.
+  it("canonicalFetch drops credential headers on a cross-origin hop, keeps them on a same-origin one", async () => {
+    const sent: Array<{ url: string; headers: Record<string, string> }> = [];
+    undiciMock.handler = (url, opts) => {
+      sent.push({ url, headers: { ...((opts as { headers?: Record<string, string> }).headers ?? {}) } });
+      if (url === "https://api.provider.example/v1/images") return fakeResponse({ status: 302, headers: { location: "/v1/images/2" } });
+      if (url === "https://api.provider.example/v1/images/2") return fakeResponse({ status: 302, headers: { location: "https://cdn.other.example/blob" } });
+      return fakeResponse({ status: 200, body: "ok" });
+    };
+    await canonicalFetch("https://api.provider.example/v1/images", {
+      method: "POST", body: "{}",
+      headers: { Authorization: "Bearer sk-live", "x-api-key": "k", "Content-Type": "application/json" },
+    });
+    expect(sent.map((s) => s.url)).toEqual([
+      "https://api.provider.example/v1/images",
+      "https://api.provider.example/v1/images/2",
+      "https://cdn.other.example/blob",
+    ]);
+    expect(sent[1].headers.Authorization).toBe("Bearer sk-live");
+    expect(sent[2].headers).toEqual({ "Content-Type": "application/json" });
+  });
+
   // ── C4: the app-build verify loop, end to end ────────────────────────────
   // The agent serves an app (record on disk at ~/.lax/dev-servers/<id>.json),
   // fetches its own server, and gets 302'd to the dev server on a LOOPBACK

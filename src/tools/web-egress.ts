@@ -211,6 +211,20 @@ export function createPinningDispatcher(): Agent {
   });
 }
 
+const CREDENTIAL_HEADERS = new Set(["authorization", "proxy-authorization", "cookie", "api-key", "private-token"]);
+
+/** A request header that carries a credential: the named ones and anything
+ *  ending in -token or -key (x-api-key, x-auth-key, x-api-token, …). An
+ *  Idempotency-Key is a retry handle, not a credential. Both redirect loops
+ *  that follow a hop to another origin (http_request, canonicalFetch) drop
+ *  these, as a browser does. */
+export function isCredentialHeader(name: string): boolean {
+  const n = name.toLowerCase();
+  if (CREDENTIAL_HEADERS.has(n)) return true;
+  if (n.endsWith("idempotency-key")) return false;
+  return /-(token|key)$/.test(n);
+}
+
 export interface CanonicalFetchOptions {
   /** Request headers (merged as-is; no secret resolution here). */
   headers?: Record<string, string>;
@@ -305,6 +319,13 @@ export async function canonicalFetch(
     assertHttpScheme(location);
     assertRedirectEgressAllowed(currentUrl, location);
     await assertLiteralIpEgressAllowed(location);
+    // A provider's bearer (an image API key, a subscription token) is for the
+    // origin it was sent to: a hop to another origin goes without it.
+    if (new URL(location).origin !== new URL(currentUrl).origin) {
+      fetchOpts.headers = Object.fromEntries(
+        Object.entries(fetchOpts.headers as Record<string, string>).filter(([name]) => !isCredentialHeader(name)),
+      );
+    }
     currentUrl = location;
     r = await undiciFetch(currentUrl, fetchOpts);
     redirects++;

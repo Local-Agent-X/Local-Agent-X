@@ -20,20 +20,11 @@ import {
   reachesOwnServer,
   createPinningDispatcher,
   BROWSER_USER_AGENT,
+  isCredentialHeader,
 } from "./web-egress.js";
 import { onEventOf, sessionIdOf, toolCallIdOf } from "../tool-execution/internal-args.js";
 
-const CREDENTIAL_HEADERS = new Set(["authorization", "proxy-authorization", "cookie", "api-key", "private-token"]);
-
-/** A request header that carries a credential: the named ones and anything
- *  ending in -token or -key (x-api-key, x-auth-key, x-api-token, …). An
- *  Idempotency-Key is a retry handle, not a credential. */
-export function isCredentialHeader(name: string): boolean {
-  const n = name.toLowerCase();
-  if (CREDENTIAL_HEADERS.has(n)) return true;
-  if (n.endsWith("idempotency-key")) return false;
-  return /-(token|key)$/.test(n);
-}
+export { isCredentialHeader } from "./web-egress.js";
 
 /** A redirect to an origin where a bound secret is not approved: the hop is
  *  never sent, so neither the body nor a credential header reaches it. */

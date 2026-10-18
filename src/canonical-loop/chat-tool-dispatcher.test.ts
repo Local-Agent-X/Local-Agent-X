@@ -154,6 +154,40 @@ describe("makeChatToolDispatcher wires priorMessages from op storage", () => {
   });
 });
 
+// The result's metadata rides the tool message (tool-message-carry.ts) and is
+// lifted onto the dispatch result, so the turn loop writes it to the row; a
+// tool that timed itself is the per-call duration, not the batch wall-clock.
+describe("the dispatch result carries the tool message's metadata", () => {
+  beforeAll(() => setAriRequired(false));
+  afterAll(() => setAriRequired(true));
+
+  const withResult = (name: string, result: ToolResult): ToolDefinition => ({
+    name, description: "", parameters: { type: "object", properties: {} }, readOnly: true,
+    execute: async (): Promise<ToolResult> => result,
+  }) as unknown as ToolDefinition;
+
+  it("exit code, duration and the rest ride `metadata`; durationMs is the tool's own", async () => {
+    const dispatcher = makeChatToolDispatcher({
+      tools: [withResult("timed_stub", { content: "boom", isError: true, status: "error", metadata: { exit_code: 1, duration_ms: 42, sandbox: "guarded" } })],
+      security: undefined as never, sessionId: "s-metadata", callContext: "local", opId: freshOpId(),
+    });
+    const res = await dispatcher.dispatch({ toolCallId: "call-md", tool: "timed_stub", args: {} });
+    expect(res.status).toBe("error");
+    expect(res.metadata).toMatchObject({ exit_code: 1, duration_ms: 42, sandbox: "guarded" });
+    expect(res.durationMs).toBe(42);
+  });
+
+  it("a result without metadata carries none and keeps the wall-clock duration", async () => {
+    const dispatcher = makeChatToolDispatcher({
+      tools: [withResult("plain_stub", { content: "fine" })],
+      security: undefined as never, sessionId: "s-no-metadata", callContext: "local", opId: freshOpId(),
+    });
+    const res = await dispatcher.dispatch({ toolCallId: "call-plain", tool: "plain_stub", args: {} });
+    expect(res.metadata).toBeUndefined();
+    expect(res.durationMs).toBeGreaterThanOrEqual(0);
+  });
+});
+
 // A second station's session (2026-09-26): the model called `switch_tab` — an
 // action of `browser` — as a tool. The kernel ran before the unknown-tool check, so
 // the model was told "not in TOOL_CLASS_MAP — classify it … app bug", and the

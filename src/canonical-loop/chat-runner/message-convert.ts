@@ -196,6 +196,14 @@ export function opMessageRowToChatParam(row: OpMessageRow): ChatCompletionMessag
     if (status && status !== "cancelled") param._status = status;
     const block = (content as { block?: unknown }).block;
     if (block && typeof block === "object") param._block = block as ToolBlockRecord;
+    const metadata = (content as { metadata?: unknown }).metadata;
+    if (metadata && typeof metadata === "object") param._metadata = metadata as Record<string, unknown>;
+    // The media path rides the result envelope (chat-tool-dispatcher.ts); a
+    // reloaded chat rebuilds the inline preview from it, not from the text.
+    const media = (content as { result?: { media?: unknown } }).result?.media;
+    if (media && typeof media === "object" && typeof (media as { path?: unknown }).path === "string") {
+      param._media = media as ToolMessageCarry["_media"];
+    }
     return param;
   }
   return null;

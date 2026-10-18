@@ -52,6 +52,7 @@ import type { CanonicalLane } from "./types.js";
 import { reconcilePublishedTurnCommitsForRecovery } from "./checkpoint.js";
 import { checkProcessExecutionRecoveryOwnership } from "./process-execution-claim.js";
 import { routeContainerRecovery } from "./container-recovery-routing.js";
+import { restoreSessionTaintForOp } from "./recovery-taint.js";
 
 const logger = createLogger("canonical-loop.recovery");
 export type RecoveryOutcomeKind =
@@ -159,6 +160,9 @@ function finishRecoveredOp(
 ): RecoveryOutcome {
   // Rebuild process-local state; op_turn/op_messages remain authoritative.
   rehydrateRecoveredRuntime(op);
+  // The session taint its delivered reads committed is process-local too
+  // (recovery-taint.ts): without this a replacement worker's egress ran clean.
+  restoreSessionTaintForOp(op);
   const sessionId = op.canonical?.sessionId;
   if (sessionId) trackOpForSession(op.id, sessionId, op.task);
 

@@ -119,6 +119,17 @@ describe("runBuildVerifyGate", () => {
     }
   });
 
+  it("the command's exit code from the carry decides the verdict over the status it rendered", async () => {
+    const r = await runBuildVerifyGate(op, {
+      editedPaths: ["/proj/src/a.ts"],
+      probe,
+      exec: vi.fn(async () => ({ ok: true, status: "ok" as const, exitCode: 2, output: "src/a.ts(3,5): error TS2339" })),
+    });
+    expect(r.shouldRetry).toBe(true);
+    expect(r.nudge).toContain("TS2339");
+    expect(recordOrchestratorVerify).toHaveBeenCalledWith("op-bv", false);
+  });
+
   it("green build's confirmation stays size-free (sizes are a separate op-end note)", async () => {
     const r = await runBuildVerifyGate(op, { editedPaths: ["/proj/src/a.ts"], probe, exec: vi.fn(GREEN) });
     expect(r.verifiedClean).toBe(true);

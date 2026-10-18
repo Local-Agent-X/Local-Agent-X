@@ -137,6 +137,28 @@ describe("repeat-failure breaker", () => {
     expect(result?.kind).toBe("suspend");
   });
 
+  // A shell failure's header prints duration_ms, which differs on every run, so
+  // keyed on the rendered text five identical `exit_code=1` failures never
+  // matched. The exit code comes off the carry; the text below the header is
+  // the rest of the signature.
+  it("a shell failure keys on the carried exit code, not the header's run-to-run duration", async () => {
+    const shellFail = (durationMs: number, exitCode = 1) => ({
+      toolName: "bash",
+      toolCallId: "tc",
+      content: `[error, exit_code=${exitCode}, duration_ms=${durationMs}]\nnpm ERR! missing script: test`,
+      status: "error" as const,
+      metadata: { exit_code: exitCode, duration_ms: durationMs },
+    });
+    const drive = async (op: string, results: ReturnType<typeof shellFail>[]) => {
+      let r: Awaited<ReturnType<typeof run>> | undefined;
+      for (const res of results) r = await repeatFailureMiddleware.afterToolExecution!(makeCanonicalLoopContext({ op: { id: op, lane: "build" }, toolResults: [res] }));
+      return r!;
+    };
+    expect((await drive(opId(), [shellFail(57), shellFail(61), shellFail(1203)])).kind).toBe("nudge");
+    // A different exit code is a different failure: the streak restarts.
+    expect((await drive(opId(), [shellFail(10, 1), shellFail(11, 1), shellFail(12, 127)])).kind).toBe("continue");
+  });
+
   it("keeps abort semantics for interactive turns", async () => {
     const op = opId();
     for (let i = 0; i < 4; i++) await run(op, [fail()]);

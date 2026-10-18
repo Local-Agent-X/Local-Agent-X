@@ -331,5 +331,29 @@ export function applyResultTaintPolicy(
       `${toolName} result delivered without the redaction stub — session tainted for egress (${pending.map(p => p.target.slice(0, 60)).join(", ")})`,
     );
   }
+  // The taint this delivery committed, on the result's metadata: the floor's
+  // pairs (kept, not retracted) and the content-bearing records. The tool
+  // message carries it, so a session whose op resumes after a restart is
+  // tainted again from its rows (canonical-loop/recovery-taint.ts); the
+  // in-memory registry alone forgot every read at the restart.
+  const committed = taintSourcesOf([...floor.pairs, ...pending]);
+  if (result && committed.length > 0) result = withMetadata(result, { taint_sources: committed });
   return result;
+}
+
+/** The persisted shape of a taint record: source and target only, deduped.
+ *  Never the fingerprints — a resumed session re-records these content-less,
+ *  which the egress check treats as unclearable until declassified. */
+export interface PersistedTaintSource { source: TaintSource; target: string }
+
+function taintSourcesOf(pairs: ReadonlyArray<{ source: TaintSource; target: string }>): PersistedTaintSource[] {
+  const seen = new Set<string>();
+  const out: PersistedTaintSource[] = [];
+  for (const { source, target } of pairs) {
+    const key = `${source}:${target}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ source, target });
+  }
+  return out;
 }

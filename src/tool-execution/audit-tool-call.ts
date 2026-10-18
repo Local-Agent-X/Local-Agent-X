@@ -15,7 +15,7 @@ import { spillFullResult } from "../tools/result-spill.js";
 import { budgetReadResult } from "./read-budget.js";
 import type { Phase, ToolCallContext } from "./context.js";
 import { CONTINUE } from "./context.js";
-import { toolMessage } from "./tool-message-carry.js";
+import { mediaRefOf, toolMessage } from "./tool-message-carry.js";
 import { buildDenyReason, restrictedCall } from "../tool-policy/packs/threat-engine-pack.js";
 import { resolveContextWindow } from "../context-manager/model-windows.js";
 import { toolManifestTokens } from "../context-manager/request-fit.js";
@@ -315,7 +315,8 @@ export const auditPhase: Phase = async (ctx) => {
   firePostHook(ctx);
   recordUsage(ctx);
   recordProvenance(ctx);
-  ctx.onEvent?.({ type: "tool_end", toolName: ctx.tc.name, toolCallId: ctx.tc.id, result: ctx.result!.content, allowed: ctx.allowed, status: statusOf(ctx.result!), metadata: ctx.result!.metadata });
+  const media = mediaRefOf(ctx.result!._media);
+  ctx.onEvent?.({ type: "tool_end", toolName: ctx.tc.name, toolCallId: ctx.tc.id, result: ctx.result!.content, allowed: ctx.allowed, status: statusOf(ctx.result!), metadata: ctx.result!.metadata, ...(media ? { media } : {}) });
   harvestChip(ctx);
   shapeMsg(ctx, screenToolResult(ctx));
   return CONTINUE;

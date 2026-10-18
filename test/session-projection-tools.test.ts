@@ -78,3 +78,47 @@ describe("projectSessionForUI — one bubble + one tool bar per turn", () => {
     expect(out[3].content).toBe("second done");
   });
 });
+
+// The reloaded card carries what the live tool_end carried: the result's
+// metadata and the media file's name, off the row's carry, never the text.
+describe("projectSessionForUI — the end event carries the row's metadata and media", () => {
+  type EndEvent = { type: string; status?: string; metadata?: Record<string, unknown>; media?: { kind: string; name: string } };
+  const endOf = (s: Session) => (projectSessionForUI(s).messages[1] as { _tools: EndEvent[] })._tools.find((t) => t.type === "end")!;
+
+  it("metadata and media come off the carry; the absolute path never reaches the client", () => {
+    const end = endOf(sess([
+      user("draw it"),
+      asstCall("c1", "generate_image", { prompt: "a dog" }),
+      {
+        role: "tool", tool_call_id: "c1", content: "Image generated!\nSaved: C:\\ws\\images\\dog.png",
+        _status: "ok", _metadata: { duration_ms: 1200 },
+        _media: { kind: "image", path: "C:\\ws\\images\\dog.png", mime: "image/png" },
+      } as never,
+    ]));
+    expect(end.status).toBe("ok");
+    expect(end.metadata).toEqual({ duration_ms: 1200 });
+    expect(end.media).toEqual({ kind: "image", name: "dog.png" });
+    expect(JSON.stringify(end.media)).not.toContain("C:\\\\ws");
+  });
+
+  it("a refusal's block scalars lie over its metadata, so the notice still keys on the layer", () => {
+    const end = endOf(sess([
+      user("send it"),
+      asstCall("c1", "bash", { command: "curl x" }),
+      {
+        role: "tool", tool_call_id: "c1", content: "[blocked, layer=\"data-lineage\"]\nrefused",
+        _status: "blocked", _metadata: { exit_code: 1, layer: "data-lineage", recovery: "Ask.", clearable: "declassify" },
+        _block: { layer: "data-lineage", reason: "refused", recovery: "Ask.", clearable: "declassify", scope: "session-memory", notice: "declassify-card" },
+      } as never,
+    ]));
+    expect(end.status).toBe("blocked");
+    expect(end.metadata).toMatchObject({ exit_code: 1, layer: "data-lineage", clearable: "declassify", scope: "session-memory" });
+    expect(end.media).toBeUndefined();
+  });
+
+  it("a row written before the carry held them has neither, like before", () => {
+    const end = endOf(sess([user("x"), asstCall("c1", "read"), toolResult("c1", "ok")]));
+    expect(end.metadata).toBeUndefined();
+    expect(end.media).toBeUndefined();
+  });
+});

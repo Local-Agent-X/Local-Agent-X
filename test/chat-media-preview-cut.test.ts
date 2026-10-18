@@ -64,5 +64,65 @@ describe("a tool result cut for the chat never carries half a media path", () =>
       expect(names).toContain(FILE);
       expect(names.every((n) => n === FILE)).toBe(true);
     });
+
+    // An event carrying the media name needs no URL rescue: the preview reads
+    // the carry, and the text is cut plainly.
+    it("keeps the carried media on the end event and cuts the text plainly", () => {
+      const media = { kind: "image", name: FILE };
+      store.startTurn("media-carry", 0);
+      store.applyEvent("media-carry", { type: "tool_start", toolName: "generate_image", toolCallId: "c1", args: {} });
+      store.applyEvent("media-carry", { type: "tool_end", toolName: "generate_image", toolCallId: "c1", allowed: true, status: "ok", result: RESULT, media });
+      const end = store.get("media-carry")!.toolEvents.find((t) => t.type === "end")! as { result?: string; media?: unknown };
+      expect(end.media).toEqual(media);
+      expect(end.result!.length).toBeLessThanOrEqual(UI_TOOL_RESULT_MAX_CHARS);
+      expect(end.result).not.toContain("View:");
+      expect(namesIn(end.result!).every((n) => n === FILE)).toBe(true);
+    });
+  });
+});
+
+// The preview itself: the carried media name is the answer when present; the
+// text scan serves only a row persisted before the carry existed.
+describe("attachMediaPreview prefers the carried media over the text", () => {
+  type Attach = (card: HTMLElement, toolName: string, result: string, media?: { kind: string; name: string }) => void;
+  let attach: Attach;
+  beforeAll(() => {
+    // eslint-disable-next-line no-new-func
+    attach = new Function(`${readFileSync(join(here, "../public/js/chat-tool-cards.js"), "utf8")}; return attachMediaPreview;`)() as Attach;
+  });
+
+  function cardInBody(): { card: HTMLElement; body: HTMLElement } {
+    document.body.innerHTML = "";
+    const body = document.createElement("div");
+    body.className = "msg-body";
+    const card = document.createElement("div");
+    body.appendChild(card);
+    document.body.appendChild(body);
+    return { card, body };
+  }
+  const srcs = (body: HTMLElement) => [...body.querySelectorAll("img")].map((img) => img.getAttribute("src"));
+
+  it("renders the carried file and ignores every path the text names", () => {
+    const { card, body } = cardInBody();
+    attach(card, "generate_image", "Saved: C:\\ws\\images\\stale_1.png\nView: /images/stale_2.png", { kind: "image", name: FILE });
+    expect(srcs(body)).toEqual([`/images/${FILE}`]);
+  });
+
+  it("a video carry renders a player at its route", () => {
+    const { card, body } = cardInBody();
+    attach(card, "generate_video", "done", { kind: "video", name: "clip.mp4" });
+    expect([...body.querySelectorAll("video")].map((v) => v.getAttribute("src"))).toEqual(["/videos/clip.mp4"]);
+  });
+
+  it("a row without the carry still scans its text (persisted before the carry)", () => {
+    const { card, body } = cardInBody();
+    attach(card, "generate_image", RESULT);
+    expect(srcs(body)).toEqual([`/images/${FILE}`]);
+  });
+
+  it("a tool that produces no preview media renders nothing even with a carry", () => {
+    const { card, body } = cardInBody();
+    attach(card, "send_image", "sent", { kind: "image", name: FILE });
+    expect(srcs(body)).toEqual([]);
   });
 });

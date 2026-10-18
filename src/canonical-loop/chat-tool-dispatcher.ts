@@ -15,7 +15,7 @@
  */
 import { internalToolFailureText } from "./internal-tool-failure.js";
 import { envelopeStatusToDispatchStatus, type ToolDispatcher, type ToolDispatchResult } from "./tool-dispatch.js";
-import { toolMessageBlock, toolMessageMedia, toolMessageStatus } from "../tool-execution/tool-message-carry.js";
+import { toolMessageBlock, toolMessageMedia, toolMessageMetadata, toolMessageStatus } from "../tool-execution/tool-message-carry.js";
 import type { ToolCall } from "./contract-types.js";
 import type { ToolDefinition, ServerEvent } from "../types.js";
 import type { SecurityLayer } from "../security/index.js";
@@ -304,11 +304,13 @@ function shapeCallResult(
   // kind "file" (send_file) is pull-delivery: the client fetches the staged
   // /uploads ref from the result text — the messenger bridges have no
   // sendDocument verb, so enqueuing it would just strand a checkpoint file.
+  // An image that already rides as bytes (generate_image / edit_image emit
+  // `_image` and `_media` for the same file) is delivered once, as the bytes.
   const bridgeMedia = media && media.kind !== "file" ? media : undefined;
   if (opts.opId && (harvestedImages.length > 0 || bridgeMedia)) {
     enqueueBridgeMedia(opts.opId, {
       imageB64: harvestedImages.map(i => i.b64),
-      imagePath: bridgeMedia?.kind === "image" ? bridgeMedia.path : undefined,
+      imagePath: bridgeMedia?.kind === "image" && harvestedImages.length === 0 ? bridgeMedia.path : undefined,
       videoPath: bridgeMedia?.kind === "video" ? bridgeMedia.path : undefined,
     });
   }
@@ -332,15 +334,20 @@ function shapeCallResult(
     }
   }
 
-  // The block record rides the tool message the same way _media does; lifting
-  // it here is what lets the turn loop write it to the op's event log and
-  // tool_result row instead of only the model text.
+  // The block record and the metadata ride the tool message the same way
+  // _media does; lifting them here is what lets the turn loop write them to the
+  // op's event log and tool_result row instead of only the model text. A
+  // tool that timed itself (`duration_ms`) is the per-call figure; the batch
+  // wall-clock is the fallback for one that did not.
   const block = toolMessageBlock(toolMsg);
+  const metadata = toolMessageMetadata(toolMsg);
+  const own = metadata?.duration_ms;
   return {
     toolCallId: call.toolCallId,
     status: canonicalStatus,
     result,
-    durationMs,
+    durationMs: typeof own === "number" && Number.isFinite(own) && own >= 0 ? own : durationMs,
     ...(block ? { block } : {}),
+    ...(metadata ? { metadata } : {}),
   };
 }

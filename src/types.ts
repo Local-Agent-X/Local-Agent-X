@@ -173,8 +173,10 @@ interface ToolResultBase {
    * the model can't ingest them as image_url. The WhatsApp/Telegram bridge
    * reads the file off disk and forwards it (image/video only — documents are
    * pulled by the client from the staged /uploads ref instead). Set by
-   * generate_video and send_video (video), send_image (image), and send_file
-   * (file, with `name` as the user-facing filename). Not fed to the model.
+   * generate_video and send_video (video), generate_image, edit_image and
+   * send_image (image), and send_file (file, with `name` as the user-facing
+   * filename). Not fed to the model; the chat's inline preview reads its name
+   * off the tool_end event and the persisted carry.
    */
   _media?: { kind: "image" | "video" | "file"; path: string; mime: string; name?: string };
 }

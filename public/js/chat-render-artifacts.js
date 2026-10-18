@@ -332,7 +332,7 @@ function _renderAssistantToolArtifacts(bodyEl, data) {
             : (endEvt.status === 'declined' ? '✋ Declined'
               : (endEvt.status === 'blocked' || endEvt.allowed === false ? '⚠ Blocked' : '✓ Done'));
           card.querySelector('.tool-detail').textContent = detailText || fallback;
-          attachMediaPreview(card, te.name, rawResult);
+          attachMediaPreview(card, te.name, rawResult, endEvt.media);
         }
       }
       _updateActivityOutcome(bodyEl, toolEvents, data.stopNote);

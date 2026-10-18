@@ -307,8 +307,7 @@ function updateToolProgress(container, toolName, message) {
 }
 
 // Inline media preview for generate_image / edit_image / generate_video tool
-// results. Scans the result text for /images/<filename> or /videos/<filename>
-// URLs and injects an <img> / <video> directly into the assistant's message
+// results. Injects an <img> / <video> directly into the assistant's message
 // body — NOT inside the collapsed Agent activity dropdown. The dropdown
 // keeps the tool metadata; the image is the artifact and belongs in the
 // chat at full size.
@@ -316,8 +315,28 @@ function updateToolProgress(container, toolName, message) {
 // Static routes /images/ and /videos/ require ?token= for auth (request-
 // handler.ts gates them). AUTH_TOKEN comes from shared.js.
 const MEDIA_PREVIEW_TOOLS = new Set(['generate_image', 'edit_image', 'generate_video']);
-function attachMediaPreview(card, toolName, result) {
-  if (!card || !result) return;
+
+// The files a tool result produced, as /images/<file> | /videos/<file> routes.
+// `media` (the tool_end event's and the reloaded row's carry: the file's name
+// under its route, from the server's `_media`) is the answer when present. The
+// text scan serves only rows persisted before the carry existed (2026-10-18):
+// a ready URL (/images/X.png), or the bare "workspace\images\X.png" path the
+// projection once persisted instead of the result.
+function mediaRoutesOf(result, media) {
+  if (media && typeof media.name === 'string' && media.name && (media.kind === 'image' || media.kind === 'video')) {
+    return ['/' + media.kind + 's/' + media.name];
+  }
+  const found = [];
+  if (!result) return found;
+  const urlRe = /\/(?:images|videos)\/[A-Za-z0-9._-]+/g;
+  for (const m of result.matchAll(urlRe)) found.push(m[0]);
+  const pathRe = /workspace[\\/](images|videos)[\\/]([A-Za-z0-9._-]+)/g;
+  for (const m of result.matchAll(pathRe)) found.push('/' + m[1] + '/' + m[2]);
+  return found;
+}
+
+function attachMediaPreview(card, toolName, result, media) {
+  if (!card || (!result && !media)) return;
   if (!MEDIA_PREVIEW_TOOLS.has(toolName)) return;
 
   // Find the assistant message body to host the preview. Fall back to the
@@ -325,18 +344,7 @@ function attachMediaPreview(card, toolName, result) {
   const host = card.closest('.msg-body') || card.closest('.msg.assistant') || card.parentElement;
   if (!host) return;
 
-  // Two shapes carry the artifact location:
-  //  • live tool_end text has a ready URL:  /images/X.png  or  /videos/X.mp4
-  //  • reloaded sessions carry the model-facing form the UI projection
-  //    persisted instead of the original result — "Image loaded:
-  //    workspace\images\X.png" — a bare backslash path with no URL. Without
-  //    matching that, generated images vanish on every chat reload.
-  // Normalize both to the auth-gated /images|/videos/<file> static route.
-  const found = [];
-  const urlRe = /\/(?:images|videos)\/[A-Za-z0-9._-]+/g;
-  for (const m of result.matchAll(urlRe)) found.push(m[0]);
-  const pathRe = /workspace[\\/](images|videos)[\\/]([A-Za-z0-9._-]+)/g;
-  for (const m of result.matchAll(pathRe)) found.push('/' + m[1] + '/' + m[2]);
+  const found = mediaRoutesOf(result, media);
   // Dedupe — tool results commonly emit the same artifact twice (e.g. "Saved
   // at workspace\images\X.png ... URL: /images/X.png") which would otherwise
   // produce two side-by-side previews of the same image.

@@ -111,8 +111,11 @@ export type ServerEvent =
   | { type: "tool_progress"; toolName: string; toolCallId?: string; message: string; opId?: string }
   /** `metadata` is the tool result's envelope metadata (layer/recovery/userHint,
    *  …) so the UI can key affordances off the blocking layer — e.g. the
-   *  declassify-and-retry action on a data-lineage/tainted-shell block. */
-  | { type: "tool_end"; toolName: string; toolCallId?: string; result: string; allowed: boolean; status?: ToolResultStatus; metadata?: Record<string, unknown>; opId?: string }
+   *  declassify-and-retry action on a data-lineage/tainted-shell block.
+   *  `media` names the file a media result produced (its name under the
+   *  `/images/` or `/videos/` route; tool-message-carry.ts `mediaRefOf`), so the
+   *  chat's inline preview reads it instead of scanning the text for a path. */
+  | { type: "tool_end"; toolName: string; toolCallId?: string; result: string; allowed: boolean; status?: ToolResultStatus; metadata?: Record<string, unknown>; media?: { kind: "image" | "video" | "file"; name: string }; opId?: string }
   // Internal onEvent-channel signal: the running per-op token total, relayed
   // from a canonical turn_committed's usage by the agent-runner so a caller's
   // onEvent closure (e.g. the agent-run driver in handler-events.ts) can key it

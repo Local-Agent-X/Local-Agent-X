@@ -70,13 +70,16 @@ export function buildToolResultsView(
   extract: (content: unknown) => string = extractToolResultText,
 ): CanonicalToolResultView[] {
   return messages.map((message, index) => {
-    const block = (message.content as { block?: ToolBlockRecord } | null)?.block;
+    const row = message.content as { block?: ToolBlockRecord; metadata?: Record<string, unknown> } | null;
+    const block = row?.block;
+    const metadata = row?.metadata;
     return {
       toolName: summary[index]?.tool ?? "unknown",
       toolCallId: (message.content as { toolCallId?: string })?.toolCallId ?? "",
       content: extract(message.content),
       status: summary[index]?.resultStatus,
       ...(block && typeof block === "object" ? { block } : {}),
+      ...(metadata && typeof metadata === "object" ? { metadata } : {}),
     };
   });
 }

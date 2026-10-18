@@ -138,11 +138,13 @@ const realProbe: FsProbe = {
   },
 };
 
-/** A check's outcome: `status` (the harness's tool status) decides the verdict
- *  through checkVerdict; without one (a test double), `ok` does. */
+/** A check's outcome: `status` (the harness's tool status) and the command's
+ *  `exitCode` (its result metadata) decide the verdict through checkVerdict;
+ *  without a status (a test double), `ok` does. */
 interface CheckRun {
   ok: boolean;
   status?: ToolResultStatus;
+  exitCode?: number;
   output: string;
 }
 
@@ -150,11 +152,11 @@ interface CheckRun {
  *  green, and never call one that didn't run (blocked, timed out) red. */
 async function defaultExec(command: string, cwd: string, opId: string): Promise<CheckRun> {
   const r = await executeHarnessCommand({ command, cwd, timeoutMs: BUILD_TIMEOUT_MS, purpose: "build-verify", opId });
-  return { ok: r.ok, status: r.status, output: r.output };
+  return { ok: r.ok, status: r.status, exitCode: r.exitCode, output: r.output };
 }
 
 function verdictOf(run: CheckRun): CheckVerdict {
-  return run.status !== undefined ? checkVerdict(run.status) : run.ok ? "passed" : "failed";
+  return run.status !== undefined ? checkVerdict(run.status, run.exitCode) : run.ok ? "passed" : "failed";
 }
 
 /** Head-truncate compiler output: the first errors are the root causes (a

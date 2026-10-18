@@ -64,6 +64,23 @@ describe("opMessageRowToChatParam — tool results carry their envelope", () => 
     expect(param.content).toBe("[error]\nold");
     expect(param._status).toBeUndefined();
   });
+
+  // The metadata and the media path the dispatcher lifted off the tool message
+  // ride the row (dispatch-tools.ts) and come back as the message's carry.
+  it("the result's metadata rides as _metadata and the media path as _media", () => {
+    const metadata = { exit_code: 1, duration_ms: 57, sandboxMode: "guarded" };
+    const media = { kind: "image", path: "C:\\ws\\images\\x.png", mime: "image/png" };
+    const param = opMessageRowToChatParam(toolRow({ toolCallId: "t1", result: { text: "[error]\nboom", media }, status: "error", metadata })) as Carried & { _metadata?: unknown; _media?: unknown };
+    expect(param.content).toBe("[error]\nboom");
+    expect(param._metadata).toEqual(metadata);
+    expect(param._media).toEqual(media);
+  });
+
+  it("a row written before the carry held them carries neither", () => {
+    const param = opMessageRowToChatParam(toolRow({ toolCallId: "t1", result: "[ok]\ndone", status: "ok" })) as Carried & { _metadata?: unknown; _media?: unknown };
+    expect(param).not.toHaveProperty("_metadata");
+    expect(param).not.toHaveProperty("_media");
+  });
 });
 
 describe("foldSystemRowsIntoPrompt — compaction/truncation digests reach the model", () => {

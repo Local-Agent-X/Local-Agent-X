@@ -169,10 +169,7 @@ export async function dispatchTools(
         durationMs: out.durationMs,
         committing: committing[idx],
       });
-      toolMessages.push({
-        role: "tool_result",
-        content: { toolCallId: call.toolCallId, result: out.result, status: out.status, ...(out.block ? { block: out.block } : {}) },
-      });
+      toolMessages.push({ role: "tool_result", content: toolResultRow(call, out) });
     });
     return { toolMessages, toolSummary };
   }
@@ -216,12 +213,22 @@ export async function dispatchTools(
       committing,
     });
     const role: CanonicalMessageRole = "tool_result";
-    toolMessages.push({
-      role,
-      content: { toolCallId: call.toolCallId, result: out.result, status: out.status, ...(out.block ? { block: out.block } : {}) },
-    });
+    toolMessages.push({ role, content: toolResultRow(call, out) });
   }
   return { toolMessages, toolSummary };
+}
+
+/** The tool_result row's content: the result, its status, and the block record
+ *  and metadata the dispatcher lifted off the tool message (message-convert.ts
+ *  turns them back into the session message's carry). */
+function toolResultRow(call: ToolCall, out: ToolDispatchResult): Record<string, unknown> {
+  return {
+    toolCallId: call.toolCallId,
+    result: out.result,
+    status: out.status,
+    ...(out.block ? { block: out.block } : {}),
+    ...(out.metadata ? { metadata: out.metadata } : {}),
+  };
 }
 
 function hashArgs(args: unknown): string {

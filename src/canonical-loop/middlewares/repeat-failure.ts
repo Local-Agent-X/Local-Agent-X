@@ -14,6 +14,7 @@
  * Keys on the dispatcher's real resultStatus, not error-shaped text.
  */
 import { hasCapability } from "../../tool-registry.js";
+import { withoutResultHeader } from "../../tools/result-helpers.js";
 import { isWorkerOp, type CanonicalMiddleware, type CanonicalToolResultView } from "./types.js";
 import { getMiddlewareState } from "./state.js";
 import { isDispatchFailure } from "../types.js";
@@ -51,13 +52,19 @@ function toolFamily(toolName: string): string {
  *  precondition is still the same failure. A shell call an unattended run
  *  could not run — parked in the user's inbox (`block.deferredTo`) or refused
  *  by the sandbox gate — is one failure whatever the command or the gate's
- *  wording: read off the block record, never the refusal sentence. */
+ *  wording: read off the block record, never the refusal sentence. A command
+ *  that exited keys on its exit code from the carry and the body below the
+ *  header: the header prints `duration_ms`, which differs on every run, so
+ *  five identical `exit_code=1` failures never matched while it was in. */
 function failureSig(tr: CanonicalToolResultView): string {
   const family = toolFamily(tr.toolName);
   if (family === "shell" && (tr.block?.deferredTo !== undefined || tr.block?.layer === "sandbox")) {
     return "shell::unattended-sandbox";
   }
-  return `${family}::${tr.content.replace(/\s+/g, " ").trim().slice(0, 200)}`;
+  const exitCode = tr.metadata?.exit_code;
+  const text = typeof exitCode === "number" ? withoutResultHeader(tr.content) : tr.content;
+  const head = text.replace(/\s+/g, " ").trim().slice(0, 200);
+  return typeof exitCode === "number" ? `${family}::exit_code=${exitCode}::${head}` : `${family}::${head}`;
 }
 
 export const repeatFailureMiddleware: CanonicalMiddleware = {

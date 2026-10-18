@@ -52,9 +52,13 @@ export interface CanonicalToolResultView {
    *  flavor (blocked/declined/timeout are distinct from error); middlewares
    *  that only care ok-vs-failure use isDispatchFailure from ../types.js. */
   status?: ToolDispatchStatus;
-  /** The block record when the call was blocked (tool-execution/block-record.ts):
+  /** The block record when the call was blocked (tool-execution/tool-message-carry.ts):
    *  structured layer and `deferredTo`, for guards that must not parse wording. */
   block?: ToolBlockRecord;
+  /** The result's metadata as the tool message carried it (`exit_code`,
+   *  `duration_ms`, …), for guards that must not parse the header. Absent on a
+   *  result that had none. */
+  metadata?: Record<string, unknown>;
 }
 
 /**

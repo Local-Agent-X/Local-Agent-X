@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-const execute = vi.fn(async (_args: Record<string, unknown>) => ({ content: "built", metadata: { status: "ok" } }));
+const execute = vi.fn(async (_args: Record<string, unknown>): Promise<{ content: string; metadata: { status: string; exit_code?: number } }> => ({ content: "built", metadata: { status: "ok" } }));
 const record = vi.fn();
 let enableShell: boolean | undefined = true;
 
@@ -40,6 +40,12 @@ describe("executeHarnessCommand", () => {
     expect(r.output).toContain("disabled in Settings");
     expect(execute).not.toHaveBeenCalled();
     expect(record).toHaveBeenCalledWith(expect.objectContaining({ decision: "block", sessionId: "op2" }));
+  });
+
+  it("hands back the command's exit code from the result's metadata", async () => {
+    execute.mockResolvedValueOnce({ content: "error TS2339", metadata: { status: "error", exit_code: 2 } });
+    const r = await executeHarnessCommand({ command: "npm run typecheck", cwd: "/p", timeoutMs: 1000, purpose: "build-verify", opId: "op4" });
+    expect(r).toEqual({ ok: false, status: "error", exitCode: 2, output: "error TS2339" });
   });
 
   it("an unset kill switch fails open, like every other gate", async () => {

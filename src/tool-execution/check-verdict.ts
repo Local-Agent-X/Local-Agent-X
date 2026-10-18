@@ -17,7 +17,12 @@ import type { ToolResultStatus } from "../types.js";
 
 export type CheckVerdict = "passed" | "failed" | "none";
 
-export function checkVerdict(status: ToolResultStatus | "cancelled" | undefined): CheckVerdict {
+/** `exitCode` is the command's own exit code when the result carries one
+ *  (`metadata.exit_code`); it decides between passed and failed for a command
+ *  that ran. The status alone decides whether it ran at all. */
+export function checkVerdict(status: ToolResultStatus | "cancelled" | undefined, exitCode?: number): CheckVerdict {
+  const ran = status === "ok" || status === "error";
+  if (ran && typeof exitCode === "number") return exitCode === 0 ? "passed" : "failed";
   if (status === "ok") return "passed";
   if (status === "error") return "failed";
   return "none";

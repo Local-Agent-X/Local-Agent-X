@@ -11,4 +11,13 @@ describe("checkVerdict", () => {
       expect(checkVerdict(s), String(s)).toBe("none");
     }
   });
+  it("the command's own exit code decides a run that happened; it never makes one that did not", () => {
+    expect(checkVerdict("ok", 0)).toBe("passed");
+    expect(checkVerdict("error", 2)).toBe("failed");
+    expect(checkVerdict("ok", 2)).toBe("failed");
+    expect(checkVerdict("error", 0)).toBe("passed");
+    for (const s of ["blocked", "timeout", "declined", "cancelled", undefined] as const) {
+      expect(checkVerdict(s, 0), String(s)).toBe("none");
+    }
+  });
 });

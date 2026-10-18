@@ -34,14 +34,18 @@ export function workspaceDir(subdir: string): string {
 /** Like ok(), but rides the generated image bytes on `_image` so the chat
  *  tool dispatcher harvests them — feeds the model the image AND lets the
  *  WhatsApp/Telegram bridge auto-forward it as a photo. Without this,
- *  generate_image returns only a localhost URL the phone can't open. */
+ *  generate_image returns only a localhost URL the phone can't open. The saved
+ *  file's PATH rides `_media` beside the bytes: that is the carry the chat's
+ *  inline preview and a reloaded session read, instead of scanning the text. */
 export function okWithImage(
   content: string,
   image: { b64: string; path: string; question: string; mime?: string },
 ): ToolResult {
+  const mime = image.mime || "image/png";
   return {
     content,
-    _image: { mime: image.mime || "image/png", b64: image.b64, path: image.path, question: image.question },
+    _image: { mime, b64: image.b64, path: image.path, question: image.question },
+    _media: { kind: "image", path: image.path, mime },
   };
 }
 

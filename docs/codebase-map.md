@@ -18,16 +18,16 @@ over 400 LOC (the source-hygiene ceiling).
 
 | Directory | Importers | Files | Size | God files |
 |---|--:|--:|:--:|--:|
-| `src/ops/` | 158 | 29 | XL |  |
-| `src/security/` | 121 | 46 | XL |  |
-| `src/tools/` | 105 | 215 | XL |  |
-| `src/canonical-loop/` | 79 | 259 | XL |  |
-| `src/tool-execution/` | 76 | 71 | XL |  |
+| `src/ops/` | 159 | 29 | XL |  |
+| `src/security/` | 122 | 46 | XL |  |
+| `src/tools/` | 106 | 215 | XL |  |
+| `src/canonical-loop/` | 79 | 260 | XL |  |
+| `src/tool-execution/` | 77 | 71 | XL |  |
 | `src/workspace/` | 71 | 3 | M |  |
 | `src/providers/` | 67 | 26 | XL |  |
 | `src/memory/` | 51 | 139 | XL |  |
 | `src/browser/` | 46 | 86 | XL |  |
-| `src/data-lineage/` | 42 | 11 | L |  |
+| `src/data-lineage/` | 43 | 11 | L |  |
 | `src/tool-policy/` | 40 | 20 | L |  |
 | `src/local-runtimes/` | 39 | 25 | XL |  |
 | `src/util/` | 39 | 3 | S |  |

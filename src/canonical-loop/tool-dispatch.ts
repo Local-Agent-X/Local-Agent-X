@@ -25,6 +25,10 @@ export interface ToolDispatchResult {
    *  lifted off the tool message. Present when status is "blocked", and on the
    *  ok result of show_unblock_control re-surfacing a block's control. */
   block?: ToolBlockRecord;
+  /** The result's metadata as the tool message carries it (scrubbed;
+   *  tool-message-carry.ts), lifted so the turn loop writes it onto the
+   *  tool_result row and the middlewares read exit codes off it. */
+  metadata?: Record<string, unknown>;
 }
 
 /**

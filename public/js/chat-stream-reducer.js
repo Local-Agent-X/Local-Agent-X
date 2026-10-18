@@ -202,9 +202,11 @@
         // path cut mid-name became a second, broken preview (2026-10-17).
         // The reload projection (src/memory/session-ui-projection.ts
         // uiToolResultText) cuts the same way.
+        // An event carrying `media` needs none of that: the preview reads the
+        // carry, so the text is cut plainly.
         const raw = event.result || '';
         let result = raw.length > 500 ? raw.slice(0, 500).replace(/[^\n]*$/, '') : raw;
-        const mediaUrl = raw.match(/\/(?:images|videos)\/[A-Za-z0-9._-]+/);
+        const mediaUrl = event.media ? null : raw.match(/\/(?:images|videos)\/[A-Za-z0-9._-]+/);
         if (mediaUrl && !result.includes(mediaUrl[0])) {
           result = result.trimEnd() + '\nView: ' + mediaUrl[0];
         }
@@ -212,8 +214,10 @@
         // `metadata` is the result envelope's metadata (layer/recovery/…) —
         // kept so the renderer can key affordances off the blocking layer
         // (declassify-and-retry on a data-lineage / tainted-shell block).
+        // `media` names the file a media result produced; the inline preview
+        // reads it first and scans the text only for a row without one.
         if (!event.toolCallId || !e.toolEvents.some(t => t.type === 'end' && t.toolCallId === event.toolCallId)) {
-          e.toolEvents.push({ type: 'end', name: event.toolName, toolCallId: event.toolCallId, allowed: event.allowed, status: event.status, result, metadata: event.metadata });
+          e.toolEvents.push({ type: 'end', name: event.toolName, toolCallId: event.toolCallId, allowed: event.allowed, status: event.status, result, metadata: event.metadata, media: event.media });
         }
         e.toolsSinceText = true;
         B.markBlockBoundary(e);

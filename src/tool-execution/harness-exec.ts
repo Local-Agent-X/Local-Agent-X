@@ -37,6 +37,8 @@ export interface HarnessCommandResult {
   ok: boolean;
   /** The tool-result status ("ok", "error", "timeout", …); "blocked" when the kill switch refused. */
   status: ToolResultStatus;
+  /** The command's exit code from the result's metadata, when it exited. */
+  exitCode?: number;
   output: string;
 }
 
@@ -64,5 +66,6 @@ export async function executeHarnessCommand(req: HarnessCommand): Promise<Harnes
   });
   const r = await bashTool.execute({ command: req.command, _cwd: req.cwd, timeout: req.timeoutMs }, req.signal);
   const status = statusOf(r);
-  return { ok: status === "ok", status, output: r.content ?? "" };
+  const exitCode = r.metadata?.exit_code;
+  return { ok: status === "ok", status, ...(typeof exitCode === "number" ? { exitCode } : {}), output: r.content ?? "" };
 }

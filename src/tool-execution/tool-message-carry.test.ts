@@ -4,6 +4,7 @@
 // carry over the header, and the layer names the chat keys on are the ones the
 // gates can produce.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import fg from "fast-glob";
 import ts from "typescript";
@@ -15,7 +16,8 @@ import { _clearDedupCacheForTests } from "./dedup-cache.js";
 import { executeToolCalls } from "./execute-tool.js";
 import { markDryRunSession, unmarkDryRunSession } from "./resolve-tool.js";
 import { showUnblockControlTool } from "../tools/unblock-control-tool.js";
-import { blockRecordOf, toolMessage, toolMessageResult, toolMessageStatus } from "./tool-message-carry.js";
+import { registerRedactedSecretValue, unregisterRedactedSecretValue } from "../security/secrets/index.js";
+import { blockRecordOf, mediaRefOf, toolMessage, toolMessageMetadata, toolMessageResult, toolMessageStatus } from "./tool-message-carry.js";
 
 const CARRY = "src/tool-execution/tool-message-carry.ts";
 
@@ -38,8 +40,15 @@ describe("every tool message the pipeline emits carries its status", () => {
       new Map([[tool.name, tool]]), undefined as never, undefined, undefined, undefined, undefined,
       opts.sessionId ?? "carry-test-session", undefined, undefined, opts.priorMessages, undefined, undefined, "api",
     );
-    return msgs.filter((m) => m.role === "tool") as Array<{ content?: unknown; _status?: string; _block?: unknown }>;
+    return msgs.filter((m) => m.role === "tool") as Array<{ content?: unknown; _status?: string; _block?: unknown; _metadata?: Record<string, unknown> }>;
   }
+
+  it("the result's metadata rides the message through the pipeline", async () => {
+    const [msg] = await dispatch(stub("carry_stub", ok("ran", { exit_code: 3, duration_ms: 12, sandboxMode: "guarded" })));
+    expect(msg._metadata).toMatchObject({ exit_code: 3, duration_ms: 12, sandboxMode: "guarded" });
+    const [plain] = await dispatch(stub("carry_stub", ok("fine")));
+    expect(plain).not.toHaveProperty("_metadata");
+  });
 
   it("a success, a failure, a refusal, a running start", async () => {
     const cases: Array<[ToolResult, string]> = [
@@ -111,6 +120,63 @@ describe("readers take the carry, and the header only for a row written before i
     const record = blockRecordOf(plugin)!;
     expect(record.layer).toBe("unknown");
     expect(record.recovery).not.toBe("");
+  });
+});
+
+describe("the whole metadata rides the message, scrubbed", () => {
+  const shaped = "sk_live_" + "a".repeat(24);
+  // A registered value with no catalog shape: the operator token's form.
+  const known = createHash("sha256").update("carry-known-secret").digest("hex");
+
+  it("every key is kept and every string, nested, goes through the secret redaction", () => {
+    registerRedactedSecretValue(known);
+    try {
+      const message = toolMessage("c1", ok("done", {
+        exit_code: 0, duration_ms: 12, truncated: false, recovery: "none needed",
+        nested: { token: `Bearer ${shaped}`, count: 2 }, list: [shaped, 7], note: `use ${known} next`,
+      }));
+      const md = toolMessageMetadata(message)!;
+      expect(Object.keys(md).sort()).toEqual(["duration_ms", "exit_code", "list", "nested", "note", "recovery", "truncated"]);
+      expect(md.exit_code).toBe(0);
+      expect(md.truncated).toBe(false);
+      expect((md.nested as { count: number }).count).toBe(2);
+      expect(JSON.stringify(md)).not.toContain(shaped);
+      expect(JSON.stringify(md)).not.toContain(known);
+      expect(md.recovery).toBe("none needed");
+    } finally {
+      unregisterRedactedSecretValue(known);
+    }
+  });
+
+  it("stderr is dropped when the content already repeats it, kept when it does not", () => {
+    // Longer than the header's 60-char cut, so only the body can repeat it.
+    const stderr = "fatal: not a git repository (or any of the parent directories): .git — run git init first";
+    const repeated = toolMessage("c2", { content: `out\n${stderr}`, isError: true, status: "error", metadata: { exit_code: 128, stderr } });
+    expect(toolMessageMetadata(repeated)).toEqual({ exit_code: 128 });
+    const separate = toolMessage("c3", { content: "Command timed out.", isError: true, status: "timeout", metadata: { duration_ms: 1000, stderr } });
+    expect(toolMessageMetadata(separate)).toEqual({ duration_ms: 1000, stderr });
+  });
+
+  it("the accessor is undefined for a row written before the carry held it", () => {
+    expect(toolMessageMetadata({ content: "[ok, exit_code=0]\nfine", _status: "ok" })).toBeUndefined();
+    expect(toolMessageMetadata({ content: "legacy" })).toBeUndefined();
+  });
+
+  it("the carry is written by toolMessage() alone", () => {
+    const offenders: string[] = [];
+    for (const file of fg.sync(["src/**/*.ts"], { ignore: ["**/*.test.ts", "**/*.test-helper.ts", "**/vendor/**", CARRY] })) {
+      const text = readFileSync(file, "utf8");
+      // message-convert.ts rebuilds the carry from the row the dispatcher wrote;
+      // it is the row's reader, not a second writer.
+      if (/\b_metadata\s*=/.test(text) && !file.replace(/\\/g, "/").endsWith("chat-runner/message-convert.ts")) offenders.push(file);
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it("a media ref names the file under its route, never its path on disk", () => {
+    expect(mediaRefOf({ kind: "image", path: "C:\\Users\\p\\ws\\images\\dog.png", mime: "image/png" })).toEqual({ kind: "image", name: "dog.png" });
+    expect(mediaRefOf({ kind: "video", path: "/home/p/ws/videos/clip.mp4", mime: "video/mp4" })).toEqual({ kind: "video", name: "clip.mp4" });
+    expect(mediaRefOf(undefined)).toBeUndefined();
   });
 });
 

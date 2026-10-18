@@ -258,10 +258,20 @@ export class OTAManager {
   }
 
   async recoverPendingUpdate(installDir: string): Promise<void> {
-    await this.rollback.archiveSupersededByCompletedInstall(installDir);
+    // The install is known good on two paths: a later completed install
+    // displaced the journal, or the update it records was verified. Only then
+    // are the superseded archives spare, and only then are the old ones pruned.
+    const superseded = await this.rollback.archiveSupersededByCompletedInstall(installDir);
     let pending = await this.rollback.read(installDir);
-    if (!pending) return;
-    if (pending.status === "verified") { await this.rollback.clearVerified(); return; }
+    if (!pending) {
+      if (superseded) await this.rollback.pruneSupersededArchives();
+      return;
+    }
+    if (pending.status === "verified") {
+      await this.rollback.clearVerified();
+      await this.rollback.pruneSupersededArchives();
+      return;
+    }
     if (pending.status !== "restored") {
       pending = await this.rollback.restore(installDir, pending.targetVersion, "interrupted update transaction");
     }

@@ -9,6 +9,7 @@ import {
 } from "./update-rollback-state.js";
 
 import { ROLLBACK_SUPERSEDED_DIR, supersededRollbackDir } from "./desktop-contract/data-dir.js";
+import { pruneSupersededRollbackArchives } from "./update-rollback-prune.js";
 
 export type { UpdateRollbackEntry, UpdateRollbackJournal } from "./update-rollback-state.js";
 
@@ -219,6 +220,15 @@ export class UpdateRollbackTransaction {
 
   async clearRestored(): Promise<void> { await this.clear("restored"); }
   async clearVerified(): Promise<void> { await this.clear("verified"); }
+
+  /** Remove the superseded archives (update-rollback-prune.ts) once the install
+   *  is known good: a journal still on disk, whatever its state, keeps every
+   *  archive, since the backups it may need are only known to be spare once it
+   *  is gone. Returns the tags removed. */
+  async pruneSupersededArchives(now?: number): Promise<string[]> {
+    if (existsSync(this.journalPath)) return [];
+    return pruneSupersededRollbackArchives(this.stateRoot, now);
+  }
   private async ensureStateRoot(): Promise<void> {
     if (!existsSync(this.stateRoot)) {
       let ancestor = dirname(this.stateRoot);

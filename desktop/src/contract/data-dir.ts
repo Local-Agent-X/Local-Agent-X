@@ -51,7 +51,9 @@ export function rollbackJournalPath(dataDir: string = laxDataDir()): string {
 
 /** Where a superseded or unusable rollback transaction is moved aside, by the
  *  server after a completed install (by journal id) and by the desktop's
- *  pre-boot heal (by time). Never deleted: the backups inside stay recoverable. */
+ *  pre-boot heal (by time). Neither deletes what it moves: the server prunes
+ *  the folder only once a later update is known good (update-rollback-prune.ts),
+ *  removing archives older than 30 days and always keeping the newest two. */
 export const ROLLBACK_SUPERSEDED_DIR = "update-rollback-superseded";
 
 export function supersededRollbackDir(dataDir: string, tag: string): string {

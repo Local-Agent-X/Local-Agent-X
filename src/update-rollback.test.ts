@@ -1,5 +1,5 @@
 import {
-  existsSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync,
+  existsSync, lstatSync, lutimesSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -394,6 +394,79 @@ describe("update rollback transaction", () => {
 
     await new UpdateRollbackTransaction(f.state).restore(f.install, target, "retry");
     expect(readFileSync(join(f.install, path), "utf-8")).toBe("old");
+  });
+});
+
+// The archives a completed reinstall or the desktop's heal moved aside were
+// never removed. Pruned once the install is known good: older than 30 days,
+// always keeping the newest two, never while a journal is on disk.
+describe("superseded rollback archives", () => {
+  const DAY = 24 * 60 * 60 * 1000;
+  const NOW = Date.parse("2026-10-18T12:00:00Z");
+  const archiveDir = (state: string, tag: string) => join(state, "update-rollback-superseded", tag);
+
+  function archive(state: string, tag: string, ageDays: number): string {
+    const dir = archiveDir(state, tag);
+    mkdirSync(join(dir, "artifacts"), { recursive: true });
+    writeFileSync(join(dir, "transaction.json"), "{}");
+    writeFileSync(join(dir, "artifacts", "app.ts"), "backup");
+    const at = new Date(NOW - ageDays * DAY);
+    utimesSync(dir, at, at);
+    return dir;
+  }
+
+  it("removes archives older than 30 days and keeps young ones", async () => {
+    const f = fixture();
+    const tx = new UpdateRollbackTransaction(f.state);
+    for (const [tag, age] of [["ninety", 90], ["sixty", 60], ["thirty", 30], ["five", 5], ["today", 0]] as const) archive(f.state, tag, age);
+    expect((await tx.pruneSupersededArchives(NOW)).sort()).toEqual(["ninety", "sixty"]);
+    for (const tag of ["thirty", "five", "today"]) expect(existsSync(archiveDir(f.state, tag)), tag).toBe(true);
+    for (const tag of ["ninety", "sixty"]) expect(existsSync(archiveDir(f.state, tag)), tag).toBe(false);
+  });
+
+  it("keeps the newest two whatever their age", async () => {
+    const f = fixture();
+    const tx = new UpdateRollbackTransaction(f.state);
+    for (const [tag, age] of [["oldest", 400], ["older", 200], ["old", 100]] as const) archive(f.state, tag, age);
+    expect(await tx.pruneSupersededArchives(NOW)).toEqual(["oldest"]);
+    expect(existsSync(archiveDir(f.state, "older"))).toBe(true);
+    expect(existsSync(archiveDir(f.state, "old"))).toBe(true);
+    expect(await tx.pruneSupersededArchives(NOW)).toEqual([]);
+  });
+
+  it("removes nothing while a rollback journal is on disk, whatever its state", async () => {
+    const f = fixture();
+    const tx = new UpdateRollbackTransaction(f.state);
+    for (const [tag, age] of [["a", 400], ["b", 300], ["c", 200]] as const) archive(f.state, tag, age);
+    await tx.begin(f.install, "a".repeat(40), "b".repeat(40), [join("src", "app.ts")]);
+    expect(await tx.pruneSupersededArchives(NOW)).toEqual([]);
+    await tx.markApplied("b".repeat(40));
+    await tx.markVerified("b".repeat(40));
+    expect(await tx.pruneSupersededArchives(NOW)).toEqual([]);
+    expect(existsSync(archiveDir(f.state, "a"))).toBe(true);
+    await tx.clearVerified();
+    expect(await tx.pruneSupersededArchives(NOW)).toEqual(["a"]);
+  });
+
+  it("is a no-op without the folder", async () => {
+    const f = fixture();
+    expect(await new UpdateRollbackTransaction(f.state).pruneSupersededArchives(NOW)).toEqual([]);
+  });
+
+  it("skips a linked entry instead of following it", async () => {
+    if (!CAN_CREATE_DIRECTORY_LINK) return;
+    const f = fixture();
+    const outside = join(f.root, "outside");
+    mkdirSync(outside);
+    writeFileSync(join(outside, "keep.txt"), "mine");
+    for (const [tag, age] of [["x", 400], ["y", 300], ["z", 200]] as const) archive(f.state, tag, age);
+    const link = archiveDir(f.state, "linked");
+    symlinkSync(outside, link, "junction");
+    const at = new Date(NOW - 500 * DAY);
+    lutimesSync(link, at, at);
+    expect(await new UpdateRollbackTransaction(f.state).pruneSupersededArchives(NOW)).toEqual(["x"]);
+    expect(existsSync(join(outside, "keep.txt"))).toBe(true);
+    expect(lstatSync(link).isSymbolicLink()).toBe(true);
   });
 });
 

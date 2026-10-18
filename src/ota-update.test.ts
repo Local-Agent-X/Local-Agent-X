@@ -8,7 +8,7 @@
  * are integration-level and exercised live, not here.
  */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, realpathSync, rmSync, existsSync, mkdirSync, writeFileSync, readFileSync, symlinkSync, lstatSync, statSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync, existsSync, mkdirSync, writeFileSync, readFileSync, symlinkSync, lstatSync, statSync, utimesSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -225,6 +225,45 @@ describe("OTAManager — applyUpdate is userData-safe", () => {
       .toBeGreaterThanOrEqual(statSync(join(installDir, "src", "index.ts")).mtimeMs);
     expect(statSync(join(installDir, "desktop", "dist", "main.js")).mtimeMs)
       .toBeGreaterThanOrEqual(statSync(join(installDir, "desktop", "src", "main.ts")).mtimeMs);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("prunes old superseded archives only on a boot after a verified update, never after a rollback", async () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "lax-ota-prune-")));
+    const installDir = join(root, "install");
+    const pkgDir = join(root, "pkg");
+    mkdirSync(join(installDir, "src"), { recursive: true });
+    mkdirSync(join(pkgDir, "src"), { recursive: true });
+    writeFileSync(join(installDir, "src", "app.ts"), "OLD");
+    writeFileSync(join(pkgDir, "src", "app.ts"), "NEW");
+    execFileSync("tar", ["czf", "rel.tar.gz", "pkg"], { cwd: root });
+    const lax = join(root, "lax");
+    const target = "deadbeefcafebabe0000000000000000feedface";
+    const m = new OTAManager("o", "r", lax);
+    const DAY = 24 * 60 * 60 * 1000;
+    const archives = { ancient: 400, old: 100, fresh: 1 };
+    for (const [tag, ageDays] of Object.entries(archives)) {
+      const dir = join(lax, "update-rollback-superseded", tag);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "transaction.json"), "{}");
+      const at = new Date(Date.now() - ageDays * DAY);
+      utimesSync(dir, at, at);
+    }
+    const kept = () => Object.keys(archives).filter((tag) => existsSync(join(lax, "update-rollback-superseded", tag))).sort();
+
+    // An applied but unverified update is rolled back at boot: not known good, nothing pruned.
+    await m.applyUpdate(join(root, "rel.tar.gz"), installDir, "rolling", target);
+    await m.recoverPendingUpdate(installDir);
+    expect(readFileSync(join(installDir, "src", "app.ts"), "utf-8")).toBe("OLD");
+    expect(kept()).toEqual(["ancient", "fresh", "old"]);
+
+    // A verified update: the next boot clears its journal and prunes, keeping the newest two.
+    await m.applyUpdate(join(root, "rel.tar.gz"), installDir, "rolling", target);
+    await m.confirmUpdate(target);
+    await m.recoverPendingUpdate(installDir);
+    expect(readFileSync(join(installDir, "src", "app.ts"), "utf-8")).toBe("NEW");
+    expect(existsSync(join(lax, "update-rollback"))).toBe(false);
+    expect(kept()).toEqual(["fresh", "old"]);
     rmSync(root, { recursive: true, force: true });
   });
 

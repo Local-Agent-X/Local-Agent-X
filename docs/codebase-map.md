@@ -24,7 +24,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/canonical-loop/` | 79 | 259 | XL |  |
 | `src/tool-execution/` | 77 | 71 | XL |  |
 | `src/workspace/` | 71 | 3 | M |  |
-| `src/providers/` | 67 | 26 | XL |  |
+| `src/providers/` | 68 | 26 | XL |  |
 | `src/memory/` | 51 | 139 | XL |  |
 | `src/browser/` | 46 | 86 | XL |  |
 | `src/data-lineage/` | 42 | 11 | L |  |
@@ -45,7 +45,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/sandbox/` | 23 | 14 | L |  |
 | `src/protocols/` | 21 | 52 | XL |  |
 | `src/orchestrator/` | 20 | 24 | L |  |
-| `src/desktop-contract/` | 18 | 10 | M |  |
+| `src/desktop-contract/` | 19 | 10 | M |  |
 | `src/agents/` | 17 | 13 | L |  |
 | `src/server/` *(entrypoint)* | 16 | 57 | XL |  |
 | `src/anthropic-client/` | 15 | 21 | XL |  |
@@ -221,6 +221,7 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/update-git-rollback.ts` | S |
 | `src/update-pipeline.ts` | M |
 | `src/update-recovery.ts` | S |
+| `src/update-rollback-prune.ts` | S |
 | `src/update-rollback-state.ts` | S |
 | `src/update-rollback.ts` | M |
 | `src/update-service.ts` | M |

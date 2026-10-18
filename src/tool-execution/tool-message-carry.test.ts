@@ -206,13 +206,55 @@ describe("the re-surfaced control is a record on an ok result", () => {
 describe("block layers are one closed set on both sides", () => {
   const src = fg.sync(["src/**/*.ts"], { ignore: ["**/*.test.ts", "**/*.test-helper.ts", "**/vendor/**"] }).map((f) => readFileSync(f, "utf8")).join("\n");
 
-  it("every layer the chat keys on is one a gate produces", () => {
-    const client = readFileSync("public/js/chat-declassify-action.js", "utf8");
-    const named = new Set<string>();
-    for (const m of client.matchAll(/md\.layer === '([^']+)'/g)) named.add(m[1]);
-    for (const m of /LEGACY_TAINT_LAYERS = \[([^\]]*)\]/.exec(client)![1].matchAll(/'([^']+)'/g)) named.add(m[1]);
-    expect(named.size).toBeGreaterThan(0);
-    for (const layer of named) expect(BLOCK_LAYERS, layer).toContain(layer);
+  // Every quoted string the chat compares against a `layer` / `layers` value,
+  // however it compares: `===` / `!==`, `.includes(...)` on a layers array or
+  // on a named list, a `switch`, an index into a table. A regex for one
+  // spelling let every other one escape.
+  it("every layer the chat keys on, however it is compared, is one a gate produces", () => {
+    const LAYER_REF = /\blayers?\b/;
+    const named = new Map<string, string>();
+    for (const file of fg.sync(["public/js/chat-*.js"])) {
+      const source = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+      const where = (node: ts.Node) => `${file.replace(/\\/g, "/")}:${source.getLineAndCharacterOfPosition(node.getStart()).line + 1}`;
+      const lists = new Map<string, ts.ArrayLiteralExpression>();
+      const literal = (n: ts.Node): string | undefined =>
+        ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n) ? n.text : undefined;
+      const name = (n: ts.Node, value: string | undefined) => { if (value !== undefined) named.set(value, where(n)); };
+      const nameList = (arr: ts.ArrayLiteralExpression) => { for (const el of arr.elements) name(el, literal(el)); };
+      const refersToLayer = (n: ts.Node) => LAYER_REF.test(n.getText());
+      const visit = (node: ts.Node): void => {
+        if (ts.isVariableDeclaration(node) && node.initializer && ts.isArrayLiteralExpression(node.initializer)) {
+          lists.set(node.name.getText(), node.initializer);
+          if (/layers?/i.test(node.name.getText())) nameList(node.initializer);
+        }
+        if (ts.isBinaryExpression(node) && [ts.SyntaxKind.EqualsEqualsEqualsToken, ts.SyntaxKind.ExclamationEqualsEqualsToken, ts.SyntaxKind.EqualsEqualsToken, ts.SyntaxKind.ExclamationEqualsToken].includes(node.operatorToken.kind)) {
+          if (refersToLayer(node.left)) name(node.right, literal(node.right));
+          if (refersToLayer(node.right)) name(node.left, literal(node.left));
+        }
+        if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
+          const target = node.expression.expression;
+          const method = node.expression.name.text;
+          if (["includes", "indexOf", "has", "startsWith"].includes(method) && refersToLayer(target)) {
+            for (const arg of node.arguments) name(arg, literal(arg));
+          }
+          if (["includes", "indexOf", "has"].includes(method) && node.arguments.some(refersToLayer)) {
+            if (ts.isArrayLiteralExpression(target)) nameList(target);
+            else if (ts.isIdentifier(target) && lists.has(target.text)) nameList(lists.get(target.text)!);
+          }
+        }
+        if (ts.isSwitchStatement(node) && refersToLayer(node.expression)) {
+          for (const clause of node.caseBlock.clauses) if (ts.isCaseClause(clause)) name(clause.expression, literal(clause.expression));
+        }
+        if (ts.isElementAccessExpression(node) && refersToLayer(node.argumentExpression) && ts.isObjectLiteralExpression(node.expression)) {
+          for (const prop of node.expression.properties) if (prop.name) name(prop.name, literal(prop.name) ?? (ts.isIdentifier(prop.name) ? prop.name.text : undefined));
+        }
+        ts.forEachChild(node, visit);
+      };
+      visit(source);
+    }
+    // The comparisons the chat is known to make; the collector must see them.
+    for (const known of ["arikernel", "quarantine-notice", "data-lineage", "tainted-shell"]) expect([...named.keys()], known).toContain(known);
+    for (const [layer, at] of named) expect(BLOCK_LAYERS, `${layer} at ${at}`).toContain(layer);
   });
 
   it("every declared layer is produced somewhere, and 'unknown' by nothing", () => {

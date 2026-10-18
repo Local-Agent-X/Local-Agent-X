@@ -17,7 +17,10 @@
 
 import { deriveTools, derivePathArgs, TOOL_POLICIES } from "./tool-policy/tool-policies.js";
 import type { PathArgSpec } from "./tool-policy/tool-policies.data.js";
-import type { DeclaredCapability, DestinationSpec, OutputKind, ToolPolicyRow } from "./tool-policy/tool-policies.types.js";
+import type {
+  CommittingSpec, DeclaredCapability, DestinationSpec, LoopFacts, OpCategory, OutputKind, ToolKillSwitch, ToolPolicyRow,
+  ToolSurface, TrustedStamp,
+} from "./tool-policy/tool-policies.types.js";
 import { getActivePluginToolMetadata } from "./plugin-system/tool-metadata.js";
 import type { CallContext } from "./tool-execution/context.js";
 export type { PathArgSpec } from "./tool-policy/tool-policies.data.js";
@@ -223,6 +226,87 @@ export const CONTEXT_DENIALS: ReadonlyArray<readonly [string, readonly CallConte
 /** Does an "always allow" of this tool cover every later call? */
 export function wholeToolGrant(name: string): boolean {
   return TOOL_POLICIES[name]?.wholeToolGrant === true;
+}
+
+/** Every concrete tool whose row satisfies `fact`, in table order. */
+export function toolsWhere(fact: (row: ToolPolicyRow) => boolean): string[] {
+  return Object.entries(TOOL_POLICIES).flatMap(([name, row]) => (row.kernel !== undefined && fact(row) ? [name] : []));
+}
+
+/** Does the dispatcher stamp `stamp` into this tool's calls? The session is
+ *  stamped on every tool with pathArgs as well: the gate resolved its paths
+ *  with that session, so the tool must resolve them with the same one. */
+export function readsStamp(name: string, stamp: TrustedStamp): boolean {
+  const row = TOOL_POLICIES[name];
+  return row?.reads?.includes(stamp) === true || (stamp === "session" && (row?.pathArgs?.length ?? 0) > 0);
+}
+
+/** Is this a shell command whose working directory the dispatcher supplies
+ *  (an agent's worktree, a session's work root)? A tool that only opens
+ *  paths has them rewritten instead. */
+export function anchorsShellAtCwd(name: string): boolean {
+  return readsStamp(name, "cwd") && TOOL_POLICIES[name]?.shellCommand !== undefined;
+}
+
+/** The arguments of this egress tool that steer it locally and carry nothing. */
+export function localArgsOf(name: string): readonly string[] {
+  return TOOL_POLICIES[name]?.localArgs ?? [];
+}
+
+/** Is this a control or terminal tool the heap guard never refuses? */
+export function isRunControl(name: string): boolean {
+  return TOOL_POLICIES[name]?.runControl === true;
+}
+
+/** How this tool's calls are judged committing, when not by its risk tier. */
+export function committingSpecOf(name: string): CommittingSpec | undefined {
+  return TOOL_POLICIES[name]?.committing;
+}
+
+/** The kill-switch that turns this tool off: its row's, or Shell Access for
+ *  every shell-class tool (the process_* family spawns the same subprocess). */
+export function killSwitchOf(name: string): ToolKillSwitch | "enableShell" | undefined {
+  return TOOL_POLICIES[name]?.killSwitch ?? (hasCapability(name, "shell") ? "enableShell" : undefined);
+}
+
+/** Where this tool reaches that no other fact on its row says. */
+export function reachOf(name: string): ToolPolicyRow["reach"] {
+  return TOOL_POLICIES[name]?.reach;
+}
+
+/** How the loop reads this tool's calls; `{}` for a tool that says nothing. */
+export function loopFactsOf(name: string): LoopFacts {
+  return TOOL_POLICIES[name]?.loop ?? {};
+}
+
+/** Does this tool write the agent's memory with nothing to read back? */
+export function isMemoryWrite(name: string): boolean {
+  return TOOL_POLICIES[name]?.memoryWrite === true;
+}
+
+/** What an op using this tool was doing, when the tool says. */
+export function categoryOf(name: string): Exclude<OpCategory, "general"> | undefined {
+  return TOOL_POLICIES[name]?.category;
+}
+
+/** Why this tool is kept off `surface`, or undefined when it is shown there. */
+export function hiddenFrom(name: string, surface: ToolSurface): string | undefined {
+  return TOOL_POLICIES[name]?.hiddenFrom?.[surface];
+}
+
+/** Whether this tool ships something to others, as its row says. */
+export function publishFactOf(name: string): ToolPolicyRow["publish"] {
+  return TOOL_POLICIES[name]?.publish;
+}
+
+/** The usage steer the system prompt carries for this tool. */
+export function promptOf(name: string): string | undefined {
+  return TOOL_POLICIES[name]?.prompt;
+}
+
+/** The tools that must ship whenever this one does. */
+export function companionsOf(name: string): readonly string[] {
+  return TOOL_POLICIES[name]?.companions ?? [];
 }
 
 const KERNEL_READ_ACTIONS: ReadonlySet<string> = new Set(["get", "head", "options", "read", "query", "search", "exec"]);

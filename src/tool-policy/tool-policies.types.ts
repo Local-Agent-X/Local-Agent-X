@@ -7,6 +7,8 @@
 import type { KernelClass, ToolRisk } from "../tool-registry.js";
 import type { ToolPolicyRule } from "./types.js";
 import type { CallContext } from "../tool-execution/context.js";
+import type { PublishKind } from "../publish-operation-table.js";
+import type { IntegrationTransport } from "../integrations/types.js";
 
 export interface ToolRateLimit {
   maxCalls: number;
@@ -175,6 +177,73 @@ type KernelFacts =
  */
 export type LiveState = "poll" | "fresh";
 
+/**
+ * State the dispatcher supplies to a call from the run it belongs to
+ * (tool-execution/resolve-tool.ts injectSessionState), read by the tool
+ * through its accessor in tool-execution/internal-args.ts:
+ *   session     — the trusted `_sessionId`; a tool with `pathArgs` gets it
+ *                 whether or not it declares it, since the file-access gate
+ *                 resolved its paths with that session
+ *   operation   — `_operationId`, the op the call runs in
+ *   userMessage — `_userMessageId`, the user message the call answers
+ *   lastTurn    — `_lastUserMessage` / `_lastAssistantMessage`, the exchange
+ *                 before the call, for a tool that checks its task against it
+ *   project     — the session's current project fills `project_id` when the
+ *                 call names none
+ *   cwd         — `_cwd`: an autopilot run anchors the call at its checkout;
+ *                 for a tool that also runs a shell command (`shellCommand`),
+ *                 an agent's worktree or the session's work root does too
+ * A tool body that reads a stamp through its accessor must declare it, or the
+ * stamp is never set and the read sees nothing (session-scoped-tools.test.ts
+ * scans every registered body). `project` fills a model argument and has no
+ * accessor to scan: absent means the call keeps the project it names.
+ */
+export type TrustedStamp = "session" | "operation" | "userMessage" | "lastTurn" | "project" | "cwd";
+
+/**
+ * How a tool whose risk tier is too coarse to call it committing by name is
+ * judged per call (committing-tool-check.ts): a replay would double its effect.
+ *   kernel-write  — when the kernel action read off the call (ariAction) is a
+ *                   write verb; arguments that did not parse count as a write
+ *   path-write    — when the call opens a path for other than a read, or names
+ *                   an action its path specs do not know
+ *   commit-button — when it clicks a commit-shaped control (send, pay, delete…)
+ */
+export type CommittingSpec = "kernel-write" | "path-write" | "commit-button";
+
+/** The Settings → Security kill-switch that turns a tool off. `enableShell` is
+ *  never declared: it is read off the `shell` capability. */
+export type ToolKillSwitch = "enableHttp" | "enableBrowser" | "enableComputerControl";
+
+/** A surface a tool is kept off, with why: the MCP bridge the chat supervisor
+ *  runs as (hidden from its list, refused on call) or an IDE session's schema. */
+export type ToolSurface = "mcp" | "ide";
+
+/** What an op was mostly doing, by the tools it used (tool-tracker.ts): the
+ *  first category in this order with a tool used wins. `general` is no tool. */
+export const OP_CATEGORIES = ["browser", "computer", "coding", "connector", "research"] as const;
+export type OpCategory = (typeof OP_CATEGORIES)[number] | "general";
+
+/** How the loop reads a call (agent-guards/, canonical-loop/):
+ *   discovery  — a read-only lookup an agent spins on when it cannot find
+ *                something (loop-discovery.ts); must be risk safe/network-read
+ *   searchKey  — the argument whose normalized value identifies "the same
+ *                search", so a re-run with another scope still counts as one
+ *                and a redundant re-search is caught (loop-discovery.ts)
+ *   mechanical — file mechanics whose result a model consumes without
+ *                deliberation; an adapter may down-shift effort (step-effort.ts)
+ *   silent     — its whole effect is a UI side effect with nothing to read
+ *                back, so a narrated turn needs no wrap-up (silent-tool-check.ts)
+ *   spinProne  — a real side effect that can be repeated turn after turn against
+ *                a goal it cannot reach (mid-turn-stale.ts) */
+export interface LoopFacts {
+  discovery?: true;
+  searchKey?: string;
+  mechanical?: true;
+  silent?: true;
+  spinProne?: true;
+}
+
 /** One concrete tool's row. Every fact a gate needs about the tool lives here,
  *  so a new tool answers each question once, and the type will not build
  *  without the answers. */
@@ -239,31 +308,80 @@ interface ToolPolicyRowFacts {
    *  (capability-class-gates.test.ts). A tool that only hits loopback (localhost
    *  Stable Diffusion / 127.0.0.1) is NOT off-box and must NOT be marked. */
   offBoxFetch?: boolean;
+  // The facts below say what each absence means. "Required" ones are enforced
+  // by the test named; the others default to the safe or neutral reading.
+
+  /** The run state the dispatcher stamps into the call (TrustedStamp).
+   *  REQUIRED for every stamp the tool's body reads (session-scoped-tools.test.ts);
+   *  a tool with pathArgs gets `session` without declaring it. */
+  reads?: readonly TrustedStamp[];
+  /** Arguments of an egress tool that address or steer it on this machine and
+   *  carry nothing anywhere (which action, which element, where the pointer
+   *  goes): the outbound scans skip them, so a click reads as carrying nothing.
+   *  Absent: every argument is payload (fails closed). Each must be a parameter
+   *  of an egress tool (egress-payload.test.ts). */
+  localArgs?: readonly string[];
+  /** A control or terminal tool whose result is a few bytes (ask_user, task
+   *  bookkeeping, process control, a status readout, delivering a finished
+   *  artifact): refusing it under heap pressure frees nothing and can strand
+   *  the turn, so the heap guard never does. Absent: refused like any call.
+   *  Never a sensitive read or external content (heap-guard.test.ts). */
+  runControl?: true;
+  /** See CommittingSpec. Absent: committing by risk tier, the conservative
+   *  reading. Each spec needs the row facts it reads (committing-tool-check.test.ts). */
+  committing?: CommittingSpec;
+  /** See ToolKillSwitch. REQUIRED on a tool named `browser*` or delivering to
+   *  the browser page (enableBrowser), on one sending an arbitrary request (an
+   *  `allowlisted` site destination: enableHttp) and on one driving the
+   *  foreground app (enableComputerControl) — kill-switch-gates.test.ts. */
+  killSwitch?: ToolKillSwitch;
+  /** Where the tool reaches that no other fact on the row says, for strict
+   *  local-only mode: `indirect-network` (a builder's installs, an update
+   *  download, a manifest the proxy serves later, a subprocess outside the
+   *  egress guard) is blocked; `local-device` (adb to a plugged-in phone) lets
+   *  a shell tool through. Absent: judged by the row's other facts; a shell
+   *  tool without `local-device` is blocked (fails closed). */
+  reach?: { kind: "indirect-network" | "local-device"; why: string };
+  /** See LoopFacts. Absent: no loop reading. A discovery tool is read-only, a
+   *  mechanical one is a file tool, a searchKey is a declared parameter
+   *  (loop-detection.test.ts, step-effort.test.ts, tool-registration-completeness.test.ts). */
+  loop?: LoopFacts;
+  /** Writes the agent's memory and returns nothing the model needs to read
+   *  back: silent for the wrap-up question, and the agent's own bookkeeping
+   *  rather than work on the user's request for the termination question
+   *  (turn-loop/tool-failure-summary.ts). One fact, two decisions, by design.
+   *  Absent: neither. Only a mutation tool (test/tool-failure-summary.test.ts). */
+  memoryWrite?: true;
+  /** See OpCategory. Absent: the tool says nothing about what the op was doing. */
+  category?: Exclude<OpCategory, "general">;
+  /** Surfaces the tool is kept off (ToolSurface), each with why. Absent: shown. */
+  hiddenFrom?: Partial<Record<ToolSurface, string>>;
+  /** The non-HTTP wire this tool carries for an integration: the tools that
+   *  declare a transport, in table order, are that integration's whole
+   *  interface (integrations/types.ts transportTools). Absent: not one of them. */
+  transport?: Exclude<IntegrationTransport, "http">;
+  /** Whether the tool ships something to a place other people consume
+   *  (publish-operation.ts): the kind it publishes, or why a publish-shaped
+   *  name ships nothing. REQUIRED on a tool named deploy/publish/release/push
+   *  (publish-operation.test.ts); absent elsewhere: a shell command it runs is
+   *  still read for publishes. */
+  publish?: { kind: PublishKind } | { nothing: string };
+  /** The usage steer the system prompt's "Tool Best Practices" section carries
+   *  for this tool (tools/tool-prompt-builder.ts applyPrompts). Absent: none.
+   *  Only on a tool in allTools, the set it is applied to
+   *  (tool-registration-completeness.test.ts). */
+  prompt?: string;
+  /** Tools that must ship whenever this one does, because its own result text
+   *  promises them (delete_file offers restore_file): the tier cap keeps them
+   *  (tools/tool-companions.ts). Absent: none. Each is a registered tool
+   *  (tool-registration-completeness.test.ts). */
+  companions?: readonly string[];
 }
 
 /** A glob family ("memory_*") or the global "*" cap: a shared rule or rate
  *  limit, never a tool's facts. */
-export interface GlobPolicyEntry {
-  rules?: Array<Omit<ToolPolicyRule, "tool">>;
-  rateLimit?: ToolRateLimit;
-  kernel?: undefined;
-  risk?: undefined;
-  capabilities?: undefined;
-  shellCommand?: undefined;
-  secretEnv?: undefined;
-  output?: undefined;
-  externalContent?: undefined;
-  destination?: undefined;
-  deniedIn?: undefined;
-  wholeToolGrant?: undefined;
-  readOnlyUnless?: undefined;
-  undo?: undefined;
-  destructiveActions?: undefined;
-  ariAction?: undefined;
-  timeoutMs?: undefined;
-  liveState?: undefined;
-  pathArgs?: undefined;
-  offBoxFetch?: undefined;
-}
+export type GlobPolicyEntry = Pick<ToolPolicyRowFacts, "rules" | "rateLimit"> & {
+  [K in Exclude<keyof ToolPolicyRowFacts, "rules" | "rateLimit"> | "kernel" | "risk" | "undo" | "ariAction"]?: undefined;
+};
 
 export type ToolPolicyEntry = ToolPolicyRow | GlobPolicyEntry;

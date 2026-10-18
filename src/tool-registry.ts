@@ -233,8 +233,10 @@ const KERNEL_READ_ACTIONS: ReadonlySet<string> = new Set(["get", "head", "option
  *     action: every path it opens is a read (document read, pdf extract_tables);
  *   - any other tool by its risk tier: `safe` or `network-read`, and then only
  *     a call that opens no non-read path, is not a shell, is judged a read by
- *     the kernel (a browser click is a post) and delivers nothing to a person
- *     or a device (send_file reaches the user's phone);
+ *     the kernel (a browser click is a post) and delivers nothing to anyone
+ *     but the user (a recipient, a chat, somewhere the check cannot name). Its
+ *     row's `destination` says who: a send to the user's own device
+ *     (send_file) is part of planning;
  *   - `readOnlyUnless` names the one argument that turns a read into a write.
  * A tool with no row changes something until its row says otherwise.
  */
@@ -247,7 +249,7 @@ export function isReadOnlyCall(name: string, args: Record<string, unknown>): boo
   if (row.risk !== "safe" && row.risk !== "network-read") return false;
   if (hasCapability(name, "shell") || specs.some(writesAt)) return false;
   if (!KERNEL_READ_ACTIONS.has(ariActionOf(name, args))) return false;
-  const delivers = (destinationSpecsOf(name, args) ?? []).some((d) => d.to === "recipients" || d.to === "chat" || (d.to === "user" && d.message));
+  const delivers = (destinationSpecsOf(name, args) ?? []).some((d) => d.to === "recipients" || d.to === "chat" || d.to === "unknown");
   return !delivers;
 }
 

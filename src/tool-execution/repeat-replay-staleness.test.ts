@@ -83,6 +83,14 @@ describe("the guard still does its job when nothing changed", () => {
     expect(findPriorIdenticalResult(now("read", READ), history)?.result).toBe("contents");
   });
 
+  it("a send to the user's own device in between changes nothing a read returns", () => {
+    const history = [
+      assistant(call("r1", "read", READ)), result("r1", "contents"),
+      assistant(call("f1", "send_file", { path: "grade_school.py" })), result("f1", "Sent"),
+    ];
+    expect(findPriorIdenticalResult(now("read", READ), history)?.result).toBe("contents");
+  });
+
   it("the newest identical call is the one replayed", () => {
     const history = [
       assistant(call("r1", "read", READ)), result("r1", "old"),

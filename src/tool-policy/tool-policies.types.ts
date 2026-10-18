@@ -99,6 +99,9 @@ export type OutputKind = "command" | "http-body" | "file-content" | "mailbox";
  *   chat           — a messaging chat the user authorized in Settings, by `arg`
  *   user           — only the user (their device, clipboard, own channel);
  *                    `message`: delivered as a message or file over a channel
+ *                    (leaves the box: local-only mode and the egress-refutation
+ *                    pack read it). Plan mode admits either form: a plan or
+ *                    mockup sent to the user is part of planning
  *   service        — a fixed third-party service
  *   browser-page   — the page the session's browser is on, or the sites a
  *                    navigation names (live state); `arg` names the URL a

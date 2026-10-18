@@ -170,6 +170,11 @@ export async function callOpenAICompatible(
   responseFormat?: ProviderRequest["responseFormat"],
   explicitApiKey?: string,
   images?: string[],
+  /** "none" asks a thinking model to answer without a reasoning pass. LM Studio
+   *  honours it (qwen3.6-27b: 19 tokens in 0.5s instead of 80 tokens of thinking
+   *  and an empty answer, 2026-10-18); chat_template_kwargs.enable_thinking it
+   *  ignores. Absent → the body is byte-identical to before. */
+  reasoningEffort?: "none",
 ): Promise<string | null> {
   try {
     const resolved = credentialProvider ? await resolveCredential(credentialProvider) : null;
@@ -191,6 +196,7 @@ export async function callOpenAICompatible(
         body: JSON.stringify({
           model, temperature, max_tokens: maxTokens,
           messages: [{ role: "user", content: userContent }],
+          ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
           // Structured output on the OpenAI wire shape. Absent → the body is
           // byte-identical to before responseFormat existed.
           ...(rf

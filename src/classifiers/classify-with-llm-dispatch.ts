@@ -48,6 +48,8 @@ export interface ProviderCallInput {
   defaultTimeoutMs: number;
   linkedSignal: AbortSignal;
   certifiedLocalTarget: Awaited<ReturnType<typeof import("../providers/background-model.js").resolveBackgroundModel>>["certifiedLocalTarget"];
+  /** The runtime serving the local chat model, when the classifier runs on it. */
+  chatRuntime?: Awaited<ReturnType<typeof import("../providers/background-model.js").resolveBackgroundModel>>["chatRuntime"];
   logger: Logger;
 }
 
@@ -61,7 +63,7 @@ const SKIP: ProviderCallResult = { kind: "skip" };
 export async function resolveProviderCall(input: ProviderCallInput): Promise<ProviderCallResult> {
   const {
     provider, apiKey, model, systemPrompt, userPrompt, role,
-    maxChars, maxTokens, timeoutMs, defaultTimeoutMs, linkedSignal, certifiedLocalTarget, logger,
+    maxChars, maxTokens, timeoutMs, defaultTimeoutMs, linkedSignal, certifiedLocalTarget, chatRuntime, logger,
   } = input;
 
   // Per-provider call. Each branch uses the same client the main chat
@@ -173,9 +175,23 @@ export async function resolveProviderCall(input: ProviderCallInput): Promise<Pro
       logger.info(`busy-skip: ${model} is serving a chat request — a ${timeoutMs}ms call would wait behind it (provider=${provider})`);
       return SKIP;
     }
+    // On the chat model, the call goes to the runtime serving chat. An
+    // OpenAI-compatible one (LM Studio, vLLM) has no /api/ps to ask, and the
+    // model is the one answering chat, so it is loaded: no cold-skip probe.
+    const localRuntime = chatRuntime && !certifiedLocalTarget ? { ...chatRuntime, apiKey: apiKey || "ollama" } : undefined;
+    if (localRuntime && localRuntime.kind !== "ollama") {
+      return callResult((async () => {
+        const { dispatch } = await import("../llm-dispatch.js");
+        return await dispatch({
+          prompt: `${systemPrompt}\n\n---\n\n${userPrompt}`,
+          provider: "ollama", ollamaModel: model, localRuntime,
+          temperature: 0, maxTokens, timeoutMs, think: false,
+        });
+      })());
+    }
     const ollamaBase = certifiedLocalTarget?.kind === "ollama"
       ? certifiedLocalTarget.endpointBaseUrl.replace(/\/+$/, "")
-      : getRuntimeConfig().ollamaUrl.replace(/\/+$/, "");
+      : (localRuntime?.endpointBaseUrl ?? getRuntimeConfig().ollamaUrl).replace(/\/+$/, "");
     if (timeoutMs < COLD_SKIP_MAX_BUDGET_MS
       && (!certifiedLocalTarget || certifiedLocalTarget.kind === "ollama")) {
       const probeMs = Math.min(2000, Math.max(500, Math.floor(timeoutMs / 3)));
@@ -201,7 +217,7 @@ export async function resolveProviderCall(input: ProviderCallInput): Promise<Pro
         ollamaModel: model,
         ...(certifiedLocalTarget
           ? { localTarget: { ...certifiedLocalTarget, apiKey } }
-          : {}),
+          : localRuntime ? { localRuntime } : {}),
         temperature: 0, maxTokens, timeoutMs,
         // A classifier wants the answer; a thinking pass spent a review
         // gate's whole budget and returned nothing (muse, 2026-09-17).

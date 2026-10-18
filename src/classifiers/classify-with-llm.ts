@@ -34,7 +34,7 @@
 
 import { createLogger, type Logger } from "../logger.js";
 import { resolveProviderContext } from "../providers/resolve-provider-context.js";
-import { resolveBackgroundModel } from "../providers/background-model.js";
+import { chatRuntimeFor, resolveBackgroundModel } from "../providers/background-model.js";
 import { resolveProviderCall } from "./classify-with-llm-dispatch.js";
 import type { ProviderId } from "../providers/provider-ids.js";
 
@@ -220,6 +220,9 @@ export async function classifyWithLLM<T>(opts: ClassifyOptions<T>): Promise<T | 
       return null;
     }
   }
+  // A classifier on the local chat model (no pin, or a review) goes where chat goes.
+  const chatRuntime = background?.chatRuntime
+    ?? (provider === "local" && !certifiedLocalTarget && model === ctx.model ? await chatRuntimeFor(model) : undefined);
 
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   if (breakerIsOpen(provider, model, logger)) return null;
@@ -263,7 +266,7 @@ export async function classifyWithLLM<T>(opts: ClassifyOptions<T>): Promise<T | 
       provider, apiKey, model,
       systemPrompt: opts.systemPrompt, userPrompt: opts.userPrompt, role: opts.role,
       maxChars, maxTokens, timeoutMs, defaultTimeoutMs: DEFAULT_TIMEOUT_MS,
-      linkedSignal, certifiedLocalTarget, logger,
+      linkedSignal, certifiedLocalTarget, chatRuntime, logger,
     });
     if (resolved.kind === "skip") return null;
     const providerCall = resolved.promise;

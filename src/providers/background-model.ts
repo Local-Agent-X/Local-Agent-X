@@ -35,10 +35,16 @@
 import { PROVIDERS, backgroundModelFor } from "./registry.js";
 import type { ProviderId } from "./provider-ids.js";
 import type { CertifiedLocalClassifierTarget } from "../local-runtimes/classifier-model.js";
+import type { LocalRuntimeKind } from "../local-runtimes/types.js";
 
 export interface BackgroundModelResolution {
   model: string;
   certifiedLocalTarget?: CertifiedLocalClassifierTarget;
+  /** When background work runs on the local chat model: the discovered runtime
+   *  serving it, the same one chat requests go to (resolve-target.ts,
+   *  getRuntimeForModel). Not a guess between runtimes — the answer chat
+   *  already acts on. Absent means default Ollama, as for chat. */
+  chatRuntime?: { runtimeId: string; kind: LocalRuntimeKind; endpointBaseUrl: string; chatBaseUrl: string };
 }
 
 /** True for providers whose model list is populated at runtime, not declared. */
@@ -81,7 +87,31 @@ export async function resolveBackgroundModel(
       }
       return { model: pinned };
     }
+
+    // No pin: the chat model, at the runtime serving chat.
+    if (provider === "local" && fallback) {
+      const chatRuntime = await chatRuntimeFor(fallback);
+      if (chatRuntime) return { model: fallback, chatRuntime };
+    }
   }
 
   return { model: backgroundModelFor(provider, fallback) };
+}
+
+/**
+ * The discovered runtime serving local `chatModel`, by the rule chat requests
+ * route by (resolve-target.ts, getRuntimeForModel); undefined means default
+ * Ollama, as chat falls back. Every background path used to assume default
+ * Ollama, so with LM Studio serving the chat model every classifier
+ * cold-skipped ("not resident" — Ollama never had it) and every memory call
+ * 404'd (2026-10-18).
+ */
+export async function chatRuntimeFor(chatModel: string): Promise<BackgroundModelResolution["chatRuntime"]> {
+  try {
+    const { getRuntimeForModel } = await import("../local-runtimes/index.js");
+    const rt = getRuntimeForModel(chatModel);
+    return rt ? { runtimeId: rt.id, kind: rt.kind, endpointBaseUrl: rt.endpoint.baseUrl, chatBaseUrl: rt.chatBaseUrl } : undefined;
+  } catch {
+    return undefined; // discovery unreadable — default Ollama, exactly as chat falls back
+  }
 }

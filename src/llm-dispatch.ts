@@ -51,6 +51,16 @@ export interface LocalDispatchTarget {
   apiKey: string;
 }
 
+/** The discovered runtime serving the chat model, where a background call on
+ *  that model goes: the same runtime chat requests go to (resolve-target.ts).
+ *  Default Ollama may not have the model at all when LM Studio serves chat. */
+export interface LocalRuntimeRoute {
+  kind: "ollama" | "openai-compat";
+  endpointBaseUrl: string;
+  chatBaseUrl: string;
+  apiKey: string;
+}
+
 export interface DispatchOptions {
   prompt: string;
   provider?: LLMProvider | "auto";
@@ -62,6 +72,8 @@ export interface DispatchOptions {
   codexModel?: string;
   /** Exact, already-admitted local runtime selected from current certification evidence. */
   localTarget?: LocalDispatchTarget;
+  /** Ollama provider only: send `ollamaModel` to this runtime instead of default Ollama. */
+  localRuntime?: LocalRuntimeRoute;
   /** Sampling temperature (default 0). */
   temperature?: number;
   /** Max output tokens (default 200). */
@@ -172,12 +184,31 @@ export async function detectProvider(): Promise<LLMProvider | null> {
  * two together overfilled the GPU: the chat model's prefill ran 3-14x slower
  * for as long as the small one stayed resident (2026-10-14 measurements).
  */
-async function localBackgroundModel(): Promise<{ model: string; localTarget?: LocalDispatchTarget } | null> {
+async function localBackgroundModel(): Promise<{ model: string; localTarget?: LocalDispatchTarget; localRuntime?: LocalRuntimeRoute } | null> {
   const ctx = await resolveProviderContext();
   const chatModel = ctx?.provider === "local" ? ctx.model : "";
-  const { model, certifiedLocalTarget } = await resolveBackgroundModel("local", chatModel);
+  const { model, certifiedLocalTarget, chatRuntime } = await resolveBackgroundModel("local", chatModel);
   if (!model) return null;
-  return { model, localTarget: certifiedLocalTarget ? { ...certifiedLocalTarget, apiKey: ctx?.apiKey ?? "" } : undefined };
+  return {
+    model,
+    localTarget: certifiedLocalTarget ? { ...certifiedLocalTarget, apiKey: ctx?.apiKey ?? "" } : undefined,
+    localRuntime: chatRuntime ? { ...chatRuntime, apiKey: ctx?.apiKey || "ollama" } : undefined,
+  };
+}
+
+/** A local model at the runtime that serves it: Ollama's native generate, or
+ *  the OpenAI-compatible chat endpoint (LM Studio, vLLM, llama.cpp). */
+function callLocalRuntime(
+  runtime: LocalRuntimeRoute | undefined, prompt: string, model: string,
+  temperature: number, maxTokens: number, timeoutMs: number, think: boolean | undefined,
+): Promise<string | null> {
+  if (runtime && runtime.kind !== "ollama") {
+    return callOpenAICompatible(
+      "local", null, runtime.chatBaseUrl, prompt, model, temperature, maxTokens, timeoutMs,
+      undefined, runtime.apiKey, undefined, think === false ? "none" : undefined,
+    );
+  }
+  return callOllama(prompt, model, temperature, maxTokens, timeoutMs, runtime?.endpointBaseUrl, think);
 }
 
 /** Single-shot text completion. Returns null on any failure. */
@@ -192,7 +223,9 @@ export async function dispatch(opts: DispatchOptions): Promise<string | null> {
   const timeout = opts.timeoutMs ?? DEFAULTS.timeoutMs;
 
   if (provider === "ollama") {
-    if (opts.ollamaModel) return callOllama(opts.prompt, opts.ollamaModel, temp, maxTokens, timeout, undefined, opts.think);
+    if (opts.ollamaModel) {
+      return callLocalRuntime(opts.localRuntime, opts.prompt, opts.ollamaModel, temp, maxTokens, timeout, opts.think);
+    }
     const background = await localBackgroundModel();
     if (!background) {
       logger.warn("no local background model (no localClassifierModel and no local chat model) — skipping dispatch");
@@ -207,7 +240,7 @@ export async function dispatch(opts: DispatchOptions): Promise<string | null> {
     if (background.localTarget) {
       return dispatch({ ...opts, think, provider: "local", ollamaModel: background.model, localTarget: background.localTarget });
     }
-    return callOllama(opts.prompt, background.model, temp, maxTokens, timeout, undefined, think);
+    return callLocalRuntime(background.localRuntime, opts.prompt, background.model, temp, maxTokens, timeout, think);
   }
   if (provider === "local") {
     const target = opts.localTarget;
@@ -221,7 +254,7 @@ export async function dispatch(opts: DispatchOptions): Promise<string | null> {
     }
     return callOpenAICompatible(
       "local", null, target.chatBaseUrl, opts.prompt, opts.ollamaModel,
-      temp, maxTokens, timeout, undefined, target.apiKey,
+      temp, maxTokens, timeout, undefined, target.apiKey, undefined, opts.think === false ? "none" : undefined,
     );
   }
   // A screenshot riding along (vision) grades with the model the user is

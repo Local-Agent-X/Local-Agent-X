@@ -9,6 +9,9 @@ const state = vi.hoisted(() => ({
   targetChecks: [] as boolean[],
   discoveredModel: null as string | null,
   pinnedModel: "",
+  // The discovered runtime serving the chat model (getRuntimeForModel), as chat
+  // routing sees it; null = no discovered runtime, so default Ollama.
+  chatRuntime: null as { id: string; kind: "ollama" | "openai-compat"; endpoint: { baseUrl: string }; chatBaseUrl: string; models: Array<{ id: string }> } | null,
 }));
 
 vi.mock("../src/providers/resolve-provider-context.js", () => ({
@@ -36,6 +39,8 @@ vi.mock("../src/local-runtimes/index.js", () => ({
   pickCertifiedLocalClassifierTarget: () => state.certifiedTarget,
   pickLocalClassifierModel: () => state.discoveredModel,
   isCertifiedLocalClassifierTargetCurrent: () => state.targetChecks.shift() ?? state.targetCurrent,
+  getRuntimeForModel: (id: string) =>
+    state.chatRuntime && state.chatRuntime.models.some((m) => m.id === id) ? state.chatRuntime : null,
 }));
 
 import { classifyWithLLM } from "../src/classifiers/classify-with-llm.js";
@@ -91,6 +96,7 @@ beforeEach(() => {
   state.targetChecks = [];
   state.discoveredModel = null;
   state.pinnedModel = "";
+  state.chatRuntime = null;
   // Residency probes are cached for ~1s so one dispatch doesn't ask /api/ps
   // twice; each case here scripts its own answer for the same base URL.
   _resetResidencyCache();
@@ -273,5 +279,62 @@ describe("certified local background endpoint ownership", () => {
       localTarget: { ...SECOND_OLLAMA_TARGET, apiKey: "ollama" },
     })).resolves.toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("background work on the local chat model goes where chat goes", () => {
+  const LM_STUDIO = {
+    id: "openai-compat@127.0.0.1:1234",
+    kind: "openai-compat" as const,
+    endpoint: { baseUrl: "http://127.0.0.1:1234" },
+    chatBaseUrl: "http://127.0.0.1:1234/v1",
+    models: [{ id: "chat:27b" }],
+  };
+
+  // 2026-10-18: LM Studio served the chat model; every classifier asked
+  // Ollama's /api/ps, was told "not resident" and skipped, and every memory
+  // call 404'd at Ollama, which never had the model.
+  it("a classifier with no pin reaches LM Studio, never Ollama, and asks for no reasoning pass", async () => {
+    state.chatRuntime = LM_STUDIO;
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      expect(String(input)).toBe("http://127.0.0.1:1234/v1/chat/completions");
+      const body = JSON.parse(String(init?.body)) as { model: string; reasoning_effort?: string };
+      expect(body.model).toBe("chat:27b");
+      expect(body.reasoning_effort).toBe("none");
+      return jsonResponse({ choices: [{ message: { content: "OK" } }] });
+    });
+
+    await expect(classify()).resolves.toBe("OK");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes(":11434"))).toBe(false);
+  });
+
+  it("an unnamed background dispatch (the memory resolver's call) reaches LM Studio too", async () => {
+    state.chatRuntime = LM_STUDIO;
+    const urls: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      urls.push(String(input));
+      const body = JSON.parse(String(init?.body)) as { model: string; reasoning_effort?: string };
+      expect(body).toMatchObject({ model: "chat:27b", reasoning_effort: "none" });
+      return jsonResponse({ choices: [{ message: { content: "OP=NOOP TARGET=- REASON=duplicate" } }] });
+    });
+
+    await expect(dispatch({ prompt: "resolve", provider: "ollama", maxTokens: 80 })).resolves.toBe("OP=NOOP TARGET=- REASON=duplicate");
+    expect(urls).toEqual(["http://127.0.0.1:1234/v1/chat/completions"]);
+  });
+
+  it("a chat model on a second Ollama is probed and called there, not at default Ollama", async () => {
+    state.chatRuntime = { ...LM_STUDIO, id: "ollama@127.0.0.1:22434", kind: "ollama", endpoint: { baseUrl: "http://127.0.0.1:22434" }, chatBaseUrl: "http://127.0.0.1:22434/v1" };
+    const urls: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      urls.push(url);
+      if (url.endsWith("/api/ps")) return jsonResponse({ models: [{ name: "chat:27b" }] });
+      return jsonResponse({ response: "OK" });
+    });
+
+    await expect(classify()).resolves.toBe("OK");
+    expect(urls.every((url) => url.startsWith("http://127.0.0.1:22434/"))).toBe(true);
+    expect(urls.some((url) => url.endsWith("/api/generate"))).toBe(true);
   });
 });

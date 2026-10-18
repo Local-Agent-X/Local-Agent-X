@@ -22,7 +22,7 @@ import { buildAgentRuntimeSurface } from "../../src/canonical-loop/agent-runner/
 import { SecurityLayer } from "../../src/security/index.js";
 import { buildToolRegistry } from "../../src/tools.js";
 import { unifiedRegistry } from "../../src/tools/registry.js";
-import { writeTool } from "../../src/tools/file-tools.js";
+import { readTool, writeTool } from "../../src/tools/file-tools.js";
 import type { ToolDefinition } from "../../src/types.js";
 import { setRuntimeConfig } from "../../src/config.js";
 import { configSchema } from "../../src/config-schema.js";
@@ -111,7 +111,10 @@ function exactDescriptor(): NonNullable<Op["runtimeDescriptor"]> {
       apiKey: "ollama",
       model: "restart-proof-model",
       systemPrompt: "Continue the durable operation from its canonical checkpoint.",
-      tools: mutation === "plugin-runtime" ? [restartPluginTool] : [writeTool],
+      // The replay turn reads the ledger before it overwrites it: a session may
+      // replace only a file it has seen (the stale-read guard holds `write` to
+      // that), and the resumed op runs in a fresh worker process that has seen nothing.
+      tools: mutation === "plugin-runtime" ? [restartPluginTool] : mutation === "replay-from-zero" ? [readTool, writeTool] : [writeTool],
       security: new SecurityLayer(process.env.LAX_DATA_DIR!, "unrestricted"),
       callContext: "api",
     }, "session-across-restart"),
@@ -307,6 +310,12 @@ function startProvider(requests: CapturedRequest[]): Promise<Server> {
       if (isChatRequest) chatRequests += 1;
       res.writeHead(200, { "content-type": "text/event-stream", connection: "close" });
       if (mutation === "replay-from-zero" && isChatRequest && chatRequests === 1) {
+        // Turn one: read the ledger, so the whole-file write that follows is
+        // against bytes this worker process has seen (stale-read guard).
+        const args = JSON.stringify({ path: sideEffectLedger });
+        res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: "call-read", type: "function", function: { name: "read", arguments: args } }] }, finish_reason: null }] })}\n\n`);
+        res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] })}\n\n`);
+      } else if (mutation === "replay-from-zero" && isChatRequest && chatRequests === 2) {
         const content = [
           JSON.stringify({ opId, effect: "write", callId: "call-1" }),
           JSON.stringify({ opId, effect: "write", callId: "call-replayed" }),

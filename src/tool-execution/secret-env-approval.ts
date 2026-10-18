@@ -41,7 +41,7 @@ export async function secretEnvGate(ctx: ToolCallContext): Promise<SecretEnvGate
   const paidMedia = paidMediaSecretEnvRefusal(secretEnv);
   if (paidMedia) {
     return { kind: "blocked", result: blockedResult(paidMedia,
-      "Tell the user the switch is off, or use generate_image / generate_video with a signed-in backend. Continue with the rest of the request.") };
+      "For an image or video, use generate_image / generate_video with a signed-in backend, or tell the user the switch is off. For any other call to that provider, use http_request with {{SECRET_NAME}}: it judges the route, so a non-media call still goes through. Continue with the rest of the request.") };
   }
   if (decisionDenies(rule)) {
     return { kind: "blocked", result: blockedResult(`BLOCKED by profile: this profile does not let a vault secret (${names.join(", ")}) be handed to a command. Use http_request with {{SECRET_NAME}} in a header, or ask the user to run the command.`,

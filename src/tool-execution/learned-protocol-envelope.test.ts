@@ -89,10 +89,13 @@ function activeLearned(label: string, allowedTools: string[] | null = ["read"]) 
   return draft;
 }
 
+// Selection goes through the `protocol` family, the only name dispatch sees:
+// its row declares the operation stamp the inner `protocol_get` reads.
 async function select(slug: string, operationId: string): Promise<void> {
-  const tool = protocolGet();
+  const tool = createProtocolFamilyTools().find((candidate) => candidate.name === "protocol");
+  if (!tool) throw new Error("protocol tool not found");
   const ctx = createContext({
-    tc: { id: "select", name: tool.name, arguments: JSON.stringify({ name: slug, _operationId: "forged" }) },
+    tc: { id: "select", name: tool.name, arguments: JSON.stringify({ action: "get", params: { name: slug }, _operationId: "forged" }) },
     toolMap: new Map([[tool.name, tool]]),
     security: undefined as never,
     operationId,

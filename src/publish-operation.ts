@@ -25,7 +25,7 @@ import { commandPositions } from "./security/layer/shell-command-positions.js";
 import { execBasename } from "./security/layer/shell-lex.js";
 import { mapMsysDrivePath } from "./workspace/paths.js";
 import { workspaceRoot } from "./config.js";
-import { shellCommandOf } from "./tool-registry.js";
+import { publishFactOf, shellCommandOf } from "./tool-registry.js";
 import {
   assignedNames, matchPublishArgv, normalizeBin, pastAssignments, unwrapPackageRunner, type GitOption, type PublishKind,
 } from "./publish-operation-table.js";
@@ -57,20 +57,12 @@ export interface PublishOperation {
   explicitTarget?: string;
 }
 
-/**
- * Registered LAX tools whose whole purpose is to publish or deploy, by name.
- * None exists today: deploys run through the shell (the CLIs above) or a
- * connector's HTTP API. publish-operation.test.ts scans the tool registry for
- * deploy/publish/release-shaped names and fails on any that is in neither this
- * table nor NOT_PUBLISH_TOOLS, so the next one is classified on purpose.
- */
-export const PUBLISH_TOOLS: Readonly<Record<string, PublishKind>> = {};
-
-/** Registered tools whose NAME looks like publishing but which do not ship
- *  anything, with the reason. */
-export const NOT_PUBLISH_TOOLS: Readonly<Record<string, string>> = {
-  issue_release: "releases the agent's lock on a task-board issue; nothing leaves the machine",
-};
+// A LAX tool whose whole purpose is to publish or deploy says so on its row
+// (`publish: { kind }`). None exists today: deploys run through the shell (the
+// CLIs above) or a connector's HTTP API. publish-operation.test.ts scans the
+// rows for deploy/publish/release-shaped names and fails on any that declares
+// neither a kind nor why it ships nothing, so the next one is classified on
+// purpose.
 
 /** The first publish this call would perform, or null. */
 export function publishOperation(toolName: string, args: Record<string, unknown>): PublishOperation | null {
@@ -83,8 +75,8 @@ export function publishOperation(toolName: string, args: Record<string, unknown>
  */
 export function publishOperations(toolName: string, args: Record<string, unknown>): PublishOperation[] {
   const tool = toolName.toLowerCase();
-  const byName = PUBLISH_TOOLS[tool];
-  if (byName) return [{ kind: byName, label: tool, tool, cwd: baseCwd(args) }];
+  const fact = publishFactOf(tool);
+  if (fact && "kind" in fact) return [{ kind: fact.kind, label: tool, tool, cwd: baseCwd(args) }];
   // Every tool that runs a model-authored shell command (its row's commandArg).
   const command = shellCommandOf(tool, args);
   if (!command) return [];

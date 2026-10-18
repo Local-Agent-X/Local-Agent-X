@@ -4,6 +4,7 @@
  * These get injected into the system prompt to teach the LLM best practices.
  */
 import type { ToolDefinition } from "../types.js";
+import { promptOf } from "../tool-registry.js";
 
 interface ToolWithPrompt extends ToolDefinition {
   _prompt?: () => string;
@@ -16,6 +17,15 @@ export function withPrompt(tool: ToolDefinition, promptFn: () => string, categor
   t._prompt = promptFn;
   if (category) t._category = category;
   return t;
+}
+
+/** Attach each tool's usage steer, its policy row's `prompt`. */
+export function applyPrompts(tools: ToolDefinition[]): ToolDefinition[] {
+  for (const t of tools) {
+    const text = promptOf(t.name);
+    if (text) withPrompt(t, () => text);
+  }
+  return tools;
 }
 
 /** Collect all tool prompt() outputs into a system prompt section */

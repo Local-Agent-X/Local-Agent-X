@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { join, resolve } from "node:path";
-import { NOT_PUBLISH_TOOLS, PUBLISH_TOOLS, publishOperation, publishOperations } from "./publish-operation.js";
-import { TOOLS } from "./tool-registry.js";
+import { publishOperation, publishOperations } from "./publish-operation.js";
+import { TOOLS, publishFactOf, toolsWhere } from "./tool-registry.js";
 
 const BASE = resolve("/work/repo");
 const bash = (command: string) => publishOperation("bash", { command, _cwd: BASE });
@@ -176,13 +176,15 @@ describe("publishOperation — the directory the command publishes from", () => 
 });
 
 describe("registered tools with publish-shaped names are classified on purpose", () => {
-  it("every deploy/publish/release/push-named tool is in PUBLISH_TOOLS or NOT_PUBLISH_TOOLS", () => {
+  it("every deploy/publish/release/push-named tool declares `publish` on its row", () => {
     const shaped = Object.keys(TOOLS).filter((name) => /deploy|publish|release|(^|_)push(_|$)/.test(name));
-    const unclassified = shaped.filter((name) => !(name in PUBLISH_TOOLS) && !(name in NOT_PUBLISH_TOOLS));
-    expect(unclassified, "classify these in src/publish-operation.ts").toEqual([]);
+    expect(shaped).toContain("issue_release");
+    const unclassified = shaped.filter((name) => publishFactOf(name) === undefined);
+    expect(unclassified, "declare `publish: { kind }` or `publish: { nothing: why }` on the row").toEqual([]);
   });
 
-  it("NOT_PUBLISH_TOOLS names only tools that exist", () => {
-    for (const name of Object.keys(NOT_PUBLISH_TOOLS)) expect(TOOLS[name], name).toBeDefined();
+  it("a row's publish kind makes every call of it a publish", () => {
+    expect(publishOperation("issue_release", {})).toBeNull();
+    expect(toolsWhere((row) => row.publish !== undefined && "kind" in row.publish)).toEqual([]);
   });
 });

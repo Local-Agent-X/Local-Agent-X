@@ -4,14 +4,15 @@ import { knownNonToolIdentifiers, scanToolNameCollections, type ToolNameCollecti
 
 // Hand-kept lists of tool names rot: a renamed or removed tool leaves a dead
 // entry that silently stops doing its job (a deny that denies nothing, an
-// essential that never loads, a category that never matches). Most such lists
-// were replaced by facts on the policy rows (src/tool-policy/) and derived
-// there. The ones left are editorial — which tools a persona gets, which the
-// small-model tier keeps, which a guard treats as discovery — and every one of
-// them is registered below, so this test can check each name against the
-// catalog the runtime actually registers. A collection the scan finds that is
-// registered nowhere fails: either register it here, or derive it from a row
-// fact so there is nothing to register.
+// essential that never loads, a category that never matches). Every list that
+// stated a fact about a tool — which stamps it reads, how the loop reads it,
+// what switch turns it off, where it reaches — is now a field on the tool's
+// policy row (src/tool-policy/tool-policies.types.ts) and derived there. The
+// ones left are editorial — which tools a persona gets, which the small-model
+// tier keeps — and every one of them is registered below, so this test can
+// check each name against the catalog the runtime actually registers. A
+// collection the scan finds that is registered nowhere fails: either register
+// it here, or derive it from a row fact so there is nothing to register.
 
 interface Registered {
   file: string;
@@ -40,23 +41,14 @@ const REGISTRY: readonly Registered[] = [
   // Which tools a surface shows or hides.
   { file: "src/tools/tier-tool-set.ts", owner: "ESSENTIAL_TOOLS_ORDER" },
   { file: "src/tools/tool-search.ts", owner: "ALWAYS_ON_TOOLS" },
-  { file: "src/tools/tool-companions.ts", owner: "TOOL_COMPANIONS" },
   { file: "src/server/voice-prompt.ts", owner: "VOICE_FAST_TOOLS" },
-  { file: "src/routes/mcp.ts", owner: "MCP_HIDDEN_TOOLS" },
-  { file: "src/routes/chat/run-chat-turn/prepare-and-route.ts", owner: "IDE_BLOCKED_TOOLS" },
   { file: "src/agent-request/tool-filter.ts", owner: ".toolPrefixes", literal: "prefix" },
   { file: "src/agent-request/prepare-request/product-build-routing.ts", owner: "BUILD_WORKFLOW_TOOLS" },
   { file: "src/agent-request/prepare-request/product-build-routing.ts", owner: ".allowedWorkflowTools" },
   { file: "src/agent-request/prepare-request/tool-selection.ts", owner: "INLINE_BUILD_TOOLS" },
-  { file: "src/integrations/types.ts", owner: "TRANSPORT_TOOLS" },
-  { file: "src/tools/result-helpers.ts", owner: "toolPrompts" },
-  { file: "src/publish-operation.ts", owner: "NOT_PUBLISH_TOOLS" },
   { file: "src/server/background-jobs/skill-review-prompt.ts", owner: "SKILL_REVIEW_TOOL_NAMES" },
   // The user-facing capability blurbs; a blurb for a removed tool is dead weight.
   { file: "scripts/gen-agent-capabilities.ts", owner: "BLURB" },
-  // How the loop reads a call: discovery, repeats, effort, silence, category.
-  // What the resolver stamps into which call.
-  // What strict local-only mode cannot read off a row (both directions).
   // Wire and corpus fixtures.
   { file: "src/anthropic-client/oauth-direct.ts", owner: "CLASSIFIER_FINGERPRINT_TOOLS" },
   { file: "src/canonical-loop/adapters/tool-call-text-corpus.ts", owner: "CORPUS_TOOL_NAMES" },

@@ -10,8 +10,8 @@
  * This is the RUNTIME mirror of CHECK 1 in
  * scripts/check-integration-conformance.mjs. The gate parses source text; this
  * reads the descriptions the model is actually shipped, after applyPrompts()
- * has composed them — so a steer appended at registration time (a toolPrompts
- * entry, a decorator) fails here even though the source scan cannot see it.
+ * has composed them — so a steer appended at registration time (a row's
+ * `prompt`, a decorator) fails here even though the source scan cannot see it.
  * Keep the two STEERS lists identical.
  *
  * The patterns match ROUTING, not vendor names. Naming a vendor is legitimate

@@ -1,5 +1,4 @@
-import type { BlockLayer, ToolDefinition, ToolResult, ToolResultStatus } from "../types.js";
-import { withPrompt } from "./tool-prompt-builder.js";
+import type { BlockLayer, ToolResult, ToolResultStatus } from "../types.js";
 
 /**
  * Tool-result builders.
@@ -206,30 +205,4 @@ export function renderToolResultForModel(r: ToolResult): string {
   }
   if (r.content) lines.push(r.content);
   return lines.join("\n");
-}
-
-export const toolPrompts: Record<string, () => string> = {
-  read: () => "Use read for files instead of bash cat/head/tail. Supports offset/limit for large files. When exploring code, pass include_imports:true to get the file's local imports in the same call instead of follow-up reads.",
-  write: () => "Use write for new files instead of bash echo/heredoc. Read existing files before overwriting.",
-  edit: () => "Use edit for targeted find-and-replace instead of bash sed/awk. Read the file first.",
-  bash: () => "Only use bash for shell commands. Never use it for file read/write/search — use dedicated tools. Probe for installed tools with targeted commands (command -v / where / Get-Command); never dump the environment (printenv/env/set) — secret-shaped output is redacted and wastes the call.",
-  glob: () => "Use glob for finding files by name pattern. Faster than bash find/ls.",
-  grep: () => "ALWAYS use grep for content search. Never bash grep/rg. Supports regex, type filtering, 3 output modes. content mode includes surrounding context per hit by default — follow-up reads of hit files are usually unnecessary.",
-  web_search: () => "Use web_search to find URLs, then web_fetch to read specific pages.",
-  spreadsheet: () => "Use for Excel/CSV — never write Python pandas scripts. action:'write' takes data as a JSON array of objects (keys become headers).",
-  document: () => "action:'create' content is markdown with \\n newlines. # for headings, - for bullets, **bold**.",
-  presentation: () => "action:'from_outline' outlines MUST use # for slide titles and - for bullets, separated by \\n.",
-  pdf: () => "action:'create' content uses # for headings, \\n\\n for paragraph breaks.",
-  sql_query: () => "Read-only by default. Run sql_schema first to see available tables.",
-  enter_plan_mode: () => "Enter plan mode to research before making changes. Only read tools available.",
-  ask_user: () => "Calling ask_user ENDS your turn with that question as your answer — the reply comes back as the user's next message. Reserve it for a fork where guessing wastes real work or is irreversible (prod vs sandbox, which account, an unrecoverable delete). Never for confirmations you can infer, permission for work already assigned, or progress reports.",
-  task_create: () => "Use for multi-step work. Tasks persist across messages.",
-};
-
-export function applyPrompts(tools: ToolDefinition[]): ToolDefinition[] {
-  for (const t of tools) {
-    const fn = toolPrompts[t.name];
-    if (fn) withPrompt(t, fn);
-  }
-  return tools;
 }

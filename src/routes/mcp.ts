@@ -1,22 +1,18 @@
 import type { RouteHandler } from "../server-context.js";
 import { jsonResponse, readBody, safeErrorMessage } from "../server-utils.js";
 import { toolMessageResult } from "../tool-execution/tool-message-carry.js";
+import { hiddenFrom } from "../tool-registry.js";
 
 // Tools deliberately NOT exposed to the MCP bridge (= the chat supervisor
-// running as claude CLI). These either block the supervisor's chat turn,
-// or duplicate a canonical primitive the supervisor should use instead.
-// Autopilot and scripted flows still reach these via the inline tool path;
-// only the user-facing supervisor needs them hidden.
+// running as claude CLI) are each row's `hiddenFrom.mcp`, with why: they block
+// the supervisor's chat turn, or duplicate a canonical primitive it should use
+// instead. Autopilot and scripted flows still reach them via the inline tool
+// path; only the user-facing supervisor needs them hidden.
 //
 // As of the canonical agent design (docs/history/canonical-agent-design.md) and
 // the Reverse Uno fix (2026-05-11), `agent_spawn` IS the canonical
 // delegation primitive — it must be exposed via MCP so Claude picks it
 // naturally.
-const MCP_HIDDEN_TOOLS = new Set<string>([
-  "op_wait",      // blocks the chat turn — supervisor should let auto-notify surface results
-  "op_submit",    // sugar = op_submit_async + op_wait, same blocking problem
-  "agent_message",// reply-to-agent primitive used inside agency, not by user-facing supervisor
-]);
 
 function serializeMcpContent(results: Array<{ role: string; content: unknown }>): Array<Record<string, unknown>> {
   const blocks: Array<Record<string, unknown>> = [];
@@ -67,7 +63,7 @@ export const handleMcpRoutes: RouteHandler = async (method, url, req, res, ctx, 
 
   if (method === "GET" && url.pathname === "/api/mcp/tools") {
     const tools = ctx.allAgentTools
-      .filter(t => !MCP_HIDDEN_TOOLS.has(t.name))
+      .filter(t => !hiddenFrom(t.name, "mcp"))
       .map(t => ({
         name: t.name,
         description: t.description,
@@ -81,8 +77,9 @@ export const handleMcpRoutes: RouteHandler = async (method, url, req, res, ctx, 
     try {
       const body = JSON.parse(await readBody(req)) as { name: string; arguments?: Record<string, unknown>; sessionId?: string };
       if (!body.name) { json(400, { error: "name required" }); return true; }
-      if (MCP_HIDDEN_TOOLS.has(body.name)) {
-        json(403, { error: `tool '${body.name}' is not available via MCP — use op_submit_async + auto-notify instead` });
+      const hidden = hiddenFrom(body.name, "mcp");
+      if (hidden) {
+        json(403, { error: `tool '${body.name}' is not available via MCP: ${hidden}` });
         return true;
       }
 

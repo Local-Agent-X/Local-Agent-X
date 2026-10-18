@@ -4,6 +4,7 @@ import type { ServerEvent } from "../../../types.js";
 import type { PreparedAgentRequest } from "../../../agent-request/types.js";
 import type { ChannelKind } from "../../../agent-request/types.js";
 import { createLogger } from "../../../logger.js";
+import { hiddenFrom } from "../../../tool-registry.js";
 
 const logger = createLogger("routes.chat.prepare");
 
@@ -92,18 +93,14 @@ export async function emitContextStatus(
   } catch { /* best-effort telemetry */ }
 }
 
-const IDE_BLOCKED_TOOLS = new Set([
-  "agent_spawn", "build_app", "agent_status",
-  "agent_cancel", "agent_pause", "agent_resume", "agent_message",
-]);
-
-/** IDE sessions: strip delegation tools so an in-editor chat can't spawn workers. */
+/** IDE sessions: strip the delegation tools (each row's `hiddenFrom.ide`) so
+ *  an in-editor chat can't spawn or steer workers. */
 export function filterToolsForSession(
   tools: PreparedAgentRequest["tools"],
   sessionId: string,
 ): PreparedAgentRequest["tools"] {
   const isIdeSession = sessionId.startsWith("ide-");
-  return isIdeSession ? tools.filter(t => !IDE_BLOCKED_TOOLS.has(t.name)) : tools;
+  return isIdeSession ? tools.filter(t => !hiddenFrom(t.name, "ide")) : tools;
 }
 
 /** Strip `>>discuss` prefix if present so the routing decision can act on raw intent. */

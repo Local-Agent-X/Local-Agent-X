@@ -12,8 +12,10 @@
 //
 // Tables with their own forward checks, not repeated here: Ari action map
 // (ari-action-map.test.ts), offBoxFetch ⇒ egress
-// (capability-class-gates.test.ts), the write family (write-family-drift),
-// session-scoped `_sessionId` readers (session-scoped-tools.test.ts).
+// (capability-class-gates.test.ts), the write family (write-family-drift), the
+// stamps a body reads (`reads`, session-scoped-tools.test.ts), the kill-switch
+// a tool of a switched kind names (kill-switch-gates.test.ts), the publish
+// fact a publish-shaped name needs (publish-operation.test.ts).
 //
 // The second half runs in the NEGATIVE direction: a tool that takes a
 // path-shaped argument must declare it in `pathArgs` (or say why not), and a
@@ -168,6 +170,31 @@ describe("every tool that takes secret_env says so on its row", () => {
   it("the schema declares it exactly when the row does", () => {
     const declaring = names.filter((name) => "secret_env" in propsOf(tools.get(name)));
     expect(declaring, "declare `secretEnv: true` on the tool's policy row").toEqual([...SECRET_ENV_TOOLS].sort());
+  });
+});
+
+// The row facts that name something else — another tool, one of the tool's own
+// arguments — are checked against the catalog, so a renamed tool or parameter
+// fails here instead of leaving a fact that silently stops doing its job.
+describe("every row fact that names a tool or an argument names a live one", () => {
+  it("a companion is a registered tool", () => {
+    const dead = Object.entries(TOOL_POLICIES).flatMap(([name, row]) =>
+      (row.companions ?? []).filter((c) => !tools.has(c)).map((c) => `${name} → ${c}`));
+    expect(dead, "a companion the tier cap would try to ship does not exist").toEqual([]);
+  });
+
+  it("a search key is a parameter the tool declares", () => {
+    const dead = Object.entries(TOOL_POLICIES).flatMap(([name, row]) => {
+      const key = row.loop?.searchKey;
+      return key && !(key in propsOf(tools.get(name))) ? [`${name}.${key}`] : [];
+    });
+    expect(dead).toEqual([]);
+  });
+
+  it("a prompt belongs to a tool in allTools, the only set applyPrompts sees", () => {
+    const core = new Set(allTools.map((t) => t.name));
+    const stranded = Object.entries(TOOL_POLICIES).filter(([name, row]) => row.prompt && !core.has(name)).map(([name]) => name);
+    expect(stranded, "this prompt never reaches the system prompt").toEqual([]);
   });
 });
 

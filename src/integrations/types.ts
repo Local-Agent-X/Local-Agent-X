@@ -1,4 +1,5 @@
 import type { CredentialRequirement } from "../credentials/requirements.js";
+import { toolsWhere } from "../tool-registry.js";
 
 export type { CredentialRequirement };
 
@@ -26,26 +27,10 @@ export interface IntegrationEndpoint {
  * integration behaved before this field existed, so adding it narrows nothing
  * until a declaration opts in. `"smtp_imap"` marks an integration `http_request`
  * provably cannot carry: it has no HTTP base URL, and its "endpoints" are
- * smtp/imap pseudo-paths that only the dedicated tools below can act on.
+ * smtp/imap pseudo-paths that only the tools that declare it can act on.
  */
-export type IntegrationTransport = "http" | "smtp_imap";
-
-/**
- * The tools that actually carry each non-HTTP transport. Declared rather than
- * inferred so the agent context can name a real interface instead of a "Base
- * URL:" line the integration cannot serve — an empty base URL plus a pseudo-path
- * is an invitation to call http_request and get nothing.
- */
-const TRANSPORT_TOOLS: Record<Exclude<IntegrationTransport, "http">, string[]> = {
-  // This list REPLACES the "Base URL:" line for a transport that has none, so
-  // it is the model's only statement of what email can be reached with. Naming
-  // some of the tools is worse than naming none: a model told the interface is
-  // {send, read, search} will not reach for email_read_message to open the mail
-  // it just listed, nor email_folders to resolve a folder name it is guessing
-  // at. Appended in registration order so the three original names keep their
-  // position in the rendered sentence.
-  smtp_imap: ["email_send", "email_read", "email_search", "email_read_message", "email_folders", "email_delete", "email_mark"],
-};
+export const NON_HTTP_TRANSPORTS = ["smtp_imap"] as const;
+export type IntegrationTransport = "http" | (typeof NON_HTTP_TRANSPORTS)[number];
 
 /**
  * The transport a config is stored and read under: the declared one when this
@@ -57,24 +42,26 @@ const TRANSPORT_TOOLS: Record<Exclude<IntegrationTransport, "http">, string[]> =
  * id/name/baseUrl — so a value outside this union reaches the readers however
  * carefully the type is written. Degrading it to the shape every integration had
  * before the field existed is the same call the `endpoints` guard makes, for the
- * same reason: unindexable input reaching TRANSPORT_TOOLS threw out of
- * getAgentContext() and killed the whole request.
- *
- * TRANSPORT_TOOLS is the membership test rather than a second list of names, so
- * a transport can never be "known" and yet have no tools. hasOwn, not `in`:
- * `"toString" in TRANSPORT_TOOLS` is true and resolves to a function with no
- * `.join`.
+ * same reason: unindexable input reaching the transport lookup threw out of
+ * getAgentContext() and killed the whole request. A known transport has tools
+ * (types.test.ts holds every one to at least one).
  */
 export function normalizeTransport(transport: unknown): IntegrationTransport {
-  if (transport === "http") return "http";
-  return typeof transport === "string" && Object.hasOwn(TRANSPORT_TOOLS, transport)
-    ? (transport as IntegrationTransport)
-    : "http";
+  return (NON_HTTP_TRANSPORTS as readonly unknown[]).includes(transport) ? (transport as IntegrationTransport) : "http";
 }
 
-/** The tools a non-HTTP transport is reached through; empty for `"http"`. */
+/**
+ * The tools a non-HTTP transport is reached through — the rows that declare it
+ * as their `transport`, in table order; empty for `"http"`. Declared rather
+ * than inferred so the agent context can name a real interface instead of a
+ * "Base URL:" line the integration cannot serve. It REPLACES that line, so it
+ * is the model's only statement of what email can be reached with: naming
+ * some of the tools is worse than naming none (a model told the interface is
+ * {send, read, search} will not reach for email_read_message to open the mail
+ * it just listed, nor email_folders to resolve a folder name it is guessing at).
+ */
 export function transportTools(transport: IntegrationTransport): string[] {
-  return transport === "http" ? [] : TRANSPORT_TOOLS[transport];
+  return transport === "http" ? [] : toolsWhere((row) => row.transport === transport);
 }
 
 /**

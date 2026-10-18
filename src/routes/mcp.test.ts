@@ -26,6 +26,25 @@ function makeRes() {
   return res;
 }
 
+describe("tools hidden from the MCP supervisor (each row's hiddenFrom.mcp)", () => {
+  const tool = (name: string) => ({ name, description: name, parameters: { type: "object" }, execute: vi.fn() }) as unknown as ToolDefinition;
+  const ctx = { allAgentTools: [tool("op_wait"), tool("op_submit"), tool("op_submit_async"), tool("agent_message"), tool("agent_spawn")] } as unknown as Parameters<typeof handleMcpRoutes>[4];
+
+  it("leaves them out of the list and keeps the canonical primitives in", async () => {
+    const res = makeRes();
+    await handleMcpRoutes("GET", new URL("http://127.0.0.1/api/mcp/tools"), makeReq({}) as never, res as never, ctx, "operator");
+    const names = (JSON.parse(res.body) as { tools: Array<{ name: string }> }).tools.map((t) => t.name);
+    expect(names.sort()).toEqual(["agent_spawn", "op_submit_async"]);
+  });
+
+  it("refuses a call to one with the row's reason", async () => {
+    const res = makeRes();
+    await handleMcpRoutes("POST", new URL("http://127.0.0.1/api/mcp/call"), makeReq({ name: "op_wait" }) as never, res as never, ctx, "operator");
+    expect(res.statusCode).toBe(403);
+    expect(JSON.parse(res.body).error).toContain("blocks the chat turn");
+  });
+});
+
 describe("MCP call-context provenance", () => {
   let dataDir: string;
   let previousDataDir: string | undefined;

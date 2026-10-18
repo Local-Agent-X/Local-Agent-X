@@ -57,7 +57,11 @@ export const TOOL_POLICIES_MEMORY: Record<string, ToolPolicyRow> = {
   memory_update_profile: { kernel: "internal", risk: "workspace-write", capabilities: [], reads: ["session"], memoryWrite: true },
   remember:    { kernel: "internal", risk: "workspace-write", capabilities: [], reads: ["session", "userMessage"], memoryWrite: true, rules: [{ id: "allow-remember", decision: "allow", reason: "Save durable fact to Facts DB (internal)", priority: 50 }] },
   update_fact: { kernel: "internal", risk: "workspace-write", capabilities: [], reads: ["session", "userMessage"], memoryWrite: true, rules: [{ id: "allow-update-fact", decision: "allow", reason: "Correct a fact in the Facts DB (internal)", priority: 50 }] },
-  forget:      { kernel: "internal", risk: "destructive", capabilities: [], memoryWrite: true, undo: { recoverable: "a soft delete of one fact; its history is kept" }, rules: [{ id: "allow-forget", decision: "allow", reason: "Soft-delete a fact in the Facts DB (internal)", priority: 50 }] },
+  // forget's description sends a correction to update_fact ("A correction is
+  // update_fact, not forget"). LM Studio eval 2026-10-18 (qwen3.6-27b, medium
+  // tier): forget shipped without it, and told the boat had moved to slip 31
+  // the model saved the new slip beside the old one, so slip 14 stayed current.
+  forget:      { kernel: "internal", risk: "destructive", capabilities: [], memoryWrite: true, companions: ["update_fact"], undo: { recoverable: "a soft delete of one fact; its history is kept" }, rules: [{ id: "allow-forget", decision: "allow", reason: "Soft-delete a fact in the Facts DB (internal)", priority: 50 }] },
 
   // ── Self-edit — sandboxed, but the merge mutates running source ──
   // Its intent gate checks the task against the last exchange; an autopilot

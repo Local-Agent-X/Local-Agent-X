@@ -124,7 +124,7 @@ describe("integration conformance gate", () => {
     expect(out).toMatch(/one of the two is a lie/);
   });
 
-  it("hard-fails when it can no longer parse TRANSPORT_TOOLS, instead of auditing blind", () => {
+  it("hard-fails when it can no longer parse NON_HTTP_TRANSPORTS, instead of auditing blind", () => {
     // NON_HTTP_TRANSPORTS is read out of src/integrations/types.ts rather than
     // re-listed, so a shape change there empties the set — and an EMPTY set is
     // not a safe default: every declared non-HTTP transport becomes "one
@@ -133,9 +133,10 @@ describe("integration conformance gate", () => {
     // indistinguishable from a parser that stopped working. Hence the guard,
     // which is why the message is asserted and not just the exit code.
     //
-    // The mutation is a legal TS shape change (a quoted key), not a syntax
-    // break, so it is exactly the drift the guard exists for.
-    const { code, out } = withSource(TYPES, t => t.replace(/^  smtp_imap:/m, '  "smtp_imap":'));
+    // The mutation is a legal TS shape change (a type annotation in place of
+    // `as const`), not a syntax break, so it is exactly the drift the guard
+    // exists for.
+    const { code, out } = withSource(TYPES, t => t.replace('NON_HTTP_TRANSPORTS = ["smtp_imap"] as const', 'NON_HTTP_TRANSPORTS: readonly ["smtp_imap"] = ["smtp_imap"]'));
 
     expect(code).toBe(1);
     expect(out).toMatch(/parsed 0 non-HTTP transports/);
@@ -169,7 +170,7 @@ describe("integration conformance gate", () => {
     expect(JSON.parse(readFileSync(BASELINE, "utf8")).known).toEqual([]);
     expect(readFileSync(EMAIL, "utf8")).toContain('transport: "smtp_imap"');
     expect(readFileSync(GITHUB, "utf8")).toContain('baseUrl: "https://api.github.com"');
-    expect(readFileSync(TYPES, "utf8")).toContain("\n  smtp_imap: [");
+    expect(readFileSync(TYPES, "utf8")).toContain('NON_HTTP_TRANSPORTS = ["smtp_imap"] as const');
     expect(runGate().code).toBe(0);
   });
 });

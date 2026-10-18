@@ -15,23 +15,13 @@
  * because the undo it had used three times in the baseline was no longer in
  * its schema. EXP-5's entire recovery mechanism, removed by a size limit.
  *
- * So the relation is data, not prose, and the cap resolves it. Companions ride
- * OUTSIDE the cap for the same reason `tool_search` does (model-tiers.ts
- * withDiscovery): a capability limit may decide how MUCH a model can do, and
- * must never silently void a guarantee the product already made.
+ * So the relation is data, not prose — each tool's policy row names its
+ * `companions` — and the cap resolves it. Companions ride OUTSIDE the cap for
+ * the same reason `tool_search` does (model-tiers.ts withDiscovery): a
+ * capability limit may decide how MUCH a model can do, and must never silently
+ * void a guarantee the product already made.
  */
-
-/** name → tools that must ship whenever it does. */
-export const TOOL_COMPANIONS: Readonly<Record<string, readonly string[]>> = {
-  // delete_file's own result text offers the undo. Shipping the offer without
-  // the tool is a promise the harness cannot keep.
-  delete_file: ["restore_file"],
-  // forget's description sends a correction to update_fact ("A correction is
-  // update_fact, not forget"). LM Studio eval 2026-10-18 (qwen3.6-27b, medium
-  // tier): forget shipped without it, and told the boat had moved to slip 31
-  // the model saved the new slip beside the old one, so slip 14 stayed current.
-  forget: ["update_fact"],
-};
+import { companionsOf } from "../tool-registry.js";
 
 /** Every companion required by `names`, excluding names already present.
  *  Not transitive by design: a companion needing its own companion is a chain
@@ -40,7 +30,7 @@ export function companionsFor(names: Iterable<string>): string[] {
   const have = new Set(names);
   const out: string[] = [];
   for (const name of have) {
-    for (const companion of TOOL_COMPANIONS[name] ?? []) {
+    for (const companion of companionsOf(name)) {
       if (!have.has(companion) && !out.includes(companion)) out.push(companion);
     }
   }

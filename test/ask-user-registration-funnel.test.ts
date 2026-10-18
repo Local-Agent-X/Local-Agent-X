@@ -40,7 +40,7 @@ import { TOOLS, GATED_KERNEL_CLASSES, hasCapability } from "../src/tool-registry
 import { isReadOnlyCall } from "../src/tools/plan-tools.js";
 import { localOnlyToolDecision } from "../src/local-only-policy.js";
 import { AUDIENCES_BY_TOOL } from "../src/tools/audience-map.js";
-import { toolPrompts } from "../src/tools/result-helpers.js";
+import { promptOf } from "../src/tool-registry.js";
 import { isCommittingTool } from "../src/committing-tool-check.js";
 import { isMutationTool, isProgressTool } from "../src/tool-mutation-check.js";
 
@@ -203,10 +203,10 @@ describe("ask_user — strict local-only mode", () => {
 
 describe("ask_user — the prompt section", () => {
   it("ships a tool prompt that says the turn ENDS and scopes when to use it", () => {
-    // MUTATION: drop the toolPrompts entry. The registration is then complete
+    // MUTATION: drop the row's `prompt`. The registration is then complete
     // and the tool is still barely used (or over-used): a question tool is the
     // one tool a model will over-reach for, and the only lever on that is prose.
-    const prompt = toolPrompts[NAME]();
+    const prompt = promptOf(NAME) ?? "";
     expect(prompt.toLowerCase()).toContain("ends your turn");
     expect(prompt.toLowerCase()).toMatch(/never|do not|don't/);
   });

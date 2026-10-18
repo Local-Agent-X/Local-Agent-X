@@ -230,7 +230,7 @@ describe("C6 — plan mode", () => {
 
 describe("C6 — the smtp_imap transport's declared tools", () => {
   it("names every email tool that carries the transport, not just the first three", () => {
-    // MUTATION: leave the new tools out. TRANSPORT_TOOLS is what getAgentContext()
+    // MUTATION: leave `transport` off a new tool's row. transportTools is what getAgentContext()
     // renders in place of the "Base URL:" line email cannot have — a list naming
     // 3 of 5 tells the model the other two do not exist.
     const tools = transportTools("smtp_imap");

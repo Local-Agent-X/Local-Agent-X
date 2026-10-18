@@ -162,16 +162,16 @@ function credentialNames(text) {
 }
 
 /**
- * The non-HTTP transports this build knows, read out of TRANSPORT_TOOLS in
+ * The non-HTTP transports this build knows, read out of NON_HTTP_TRANSPORTS in
  * src/integrations/types.ts rather than re-listed here. A second list would
  * drift, and the drift would be silent in exactly the direction that matters:
  * a transport the code honours but this gate does not would be reported as a
  * broken HTTP API forever (which is the bug this check just had).
  */
 const TYPES_TEXT = readFileSync(join(root, "src/integrations/types.ts"), "utf8");
-const TRANSPORT_BLOCK = TYPES_TEXT.match(/TRANSPORT_TOOLS[^=]*=\s*\{([\s\S]*?)\n\};/);
+const TRANSPORT_BLOCK = TYPES_TEXT.match(/NON_HTTP_TRANSPORTS\s*=\s*\[([^\]]*)\]\s*as const/);
 const NON_HTTP_TRANSPORTS = new Set(
-  [...(TRANSPORT_BLOCK?.[1] ?? "").matchAll(/^\s*(\w+)\s*:/gm)].map((m) => m[1]),
+  [...(TRANSPORT_BLOCK?.[1] ?? "").matchAll(/["'](\w+)["']/g)].map((m) => m[1]),
 );
 if (NON_HTTP_TRANSPORTS.size === 0) {
   console.error("check-integration-conformance: FAIL — parsed 0 non-HTTP transports from src/integrations/types.ts (shape changed? update this script).");

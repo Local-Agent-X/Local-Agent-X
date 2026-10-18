@@ -49,6 +49,7 @@ export const currentDocs = [
   "eval/instruction-compliance/README.md",
   "eval/op-outcomes/README.md",
   "eval/sweep-completeness/README.md",
+  "eval/terminal-bench/README.md",
   // Module guides (≤25 lines each; also read by self_edit and background workers)
   "src/canonical-loop/README.md",
   "src/app-scaffold/AGENTS.md",

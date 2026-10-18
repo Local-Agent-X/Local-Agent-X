@@ -1,11 +1,14 @@
 // The wrapper writes the markers; eight gates recognize them. Each reader is
 // held to the writer's actual output here, so a reworded wrapper cannot slip
 // past the memory gate, the threat classifier's stripper, the result screen or
-// the harness-text scrubber in silence.
+// the harness-text scrubber in silence. Two readers cannot import the module —
+// the system prompt and the chat page — so their copies are pinned below.
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   EXTERNAL_CONTENT_BLOCK_RE, EXTERNAL_CONTENT_CLOSE_ANY_RE, EXTERNAL_CONTENT_EVIDENCE_RE, EXTERNAL_CONTENT_MARKER_RE,
-  EXTERNAL_CONTENT_OPEN_ANY_RE, EXTERNAL_CONTENT_TAG_RE, EXTERNAL_CONTENT_UNTERMINATED_RE,
+  EXTERNAL_CONTENT_OPEN_ANY_RE, EXTERNAL_CONTENT_TAG, EXTERNAL_CONTENT_TAG_RE, EXTERNAL_CONTENT_UNTERMINATED_RE,
   externalContentClose, externalContentOpen, externalContentOpens,
 } from "./external-content-markers.js";
 import { closeUnterminatedExternalBlocks, screenUntrustedText, wrapExternalContent } from "./sanitize.js";
@@ -61,4 +64,26 @@ describe("the wrapper's output is what every reader recognizes", () => {
     const cut = wrapped.slice(0, wrapped.indexOf("</content>"));
     expect(closeUnterminatedExternalBlocks(cut)).toContain(externalContentClose(id!));
   });
+});
+
+describe("the two copies that cannot import the module move with a rename", () => {
+  const wrapped = wrapExternalContent(BODY, "web_fetch", { url: "https://example.com/" });
+
+  it("the system prompt tells the model about the marker the wrapper writes", () => {
+    const prompt = readFileSync(join(process.cwd(), "config", "system-prompt.md"), "utf-8");
+    expect(prompt).toContain(`<<<${EXTERNAL_CONTENT_TAG}`);
+  });
+
+  it("the chat page's cleanup regex replaces a real wrapped block whole, leaving nothing of it", () => {
+    const page = readFileSync(join(process.cwd(), "public", "js", "chat-render-artifacts.js"), "utf-8");
+    const cleanup = /\.replace\(\/((?:\\.|[^/\\\n])+)\/([a-z]*),\s*'\[content loaded\]'\)/.exec(page);
+    expect(cleanup, "chat-render-artifacts.js replaces a wrapped block with '[content loaded]'").not.toBeNull();
+    const re = new RegExp(cleanup![1]!, cleanup![2]);
+    const block = wrapped.slice(0, wrapped.indexOf(externalContentClose(id(wrapped))) + externalContentClose(id(wrapped)).length);
+    expect(`before ${block} after`.replace(re, "[content loaded]")).toBe("before [content loaded] after");
+    expect(wrapped.replace(re, "[content loaded]")).not.toContain(BODY);
+    expect(wrapped.replace(re, "[content loaded]")).not.toContain(EXTERNAL_CONTENT_TAG);
+  });
+
+  function id(text: string): string { return externalContentOpens(text)[0]!.id; }
 });

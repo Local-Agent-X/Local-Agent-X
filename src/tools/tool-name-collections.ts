@@ -54,7 +54,7 @@ function sourceFiles(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-/** A property of a record a constant holds (`TOOL_COMPANIONS.delete_file`) is
+/** A property of a record a constant holds (`A_TABLE.delete_file`) is
  *  owned by the constant; a property deeper in (`.allowedTools` of each
  *  template) is owned by its name, which every such property shares. */
 function ownerOf(node: ts.Node): string {

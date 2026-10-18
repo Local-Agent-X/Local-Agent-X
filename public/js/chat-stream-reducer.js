@@ -198,8 +198,12 @@
         // <img>/<video>. Long video prompts routinely push the trailing
         // `View: /videos/...` line past the cap, leaving the chat bubble
         // with the tool-detail text but no inline player or link.
+        // The cut drops the unfinished last line: a `Saved: …\images\x.png`
+        // path cut mid-name became a second, broken preview (2026-10-17).
+        // The reload projection (src/memory/session-ui-projection.ts
+        // uiToolResultText) cuts the same way.
         const raw = event.result || '';
-        let result = raw.slice(0, 500);
+        let result = raw.length > 500 ? raw.slice(0, 500).replace(/[^\n]*$/, '') : raw;
         const mediaUrl = raw.match(/\/(?:images|videos)\/[A-Za-z0-9._-]+/);
         if (mediaUrl && !result.includes(mediaUrl[0])) {
           result = result.trimEnd() + '\nView: ' + mediaUrl[0];

@@ -30,6 +30,17 @@ function blockMetadataOf(block: ToolBlockRecord | undefined, rendered: string): 
   return header.meta;
 }
 
+/** The tool-result text a reloaded card carries. Cut at a line boundary: the
+ *  chat scans it for `workspace/images/<file>` and `/images/<file>`, and a
+ *  path cut mid-name became a second, broken image preview (2026-10-17). The
+ *  live reducer (public/js/chat-stream-reducer.js) cuts the same way. */
+export const UI_TOOL_RESULT_MAX_CHARS = 500;
+export function uiToolResultText(result: string): string {
+  return result.length > UI_TOOL_RESULT_MAX_CHARS
+    ? result.slice(0, UI_TOOL_RESULT_MAX_CHARS).replace(/[^\n]*$/, "")
+    : result;
+}
+
 /**
  * UI projection of a Session. Same model state, different shape: drops
  * `tool` rows, replaces `tool_calls` on assistants with a synthetic
@@ -105,7 +116,7 @@ export function projectSessionForUI(session: Session): Session {
           pendingTools.push({ type: "start", name, args });
           const { content: result, status, block } = toolResults.get(tc.id) ?? { content: "", status: "ok" as const };
           const metadata = blockMetadataOf(block, result);
-          pendingTools.push({ type: "end", name, allowed: true, result: result.slice(0, 500), status, ...(metadata ? { metadata } : {}) });
+          pendingTools.push({ type: "end", name, allowed: true, result: uiToolResultText(result), status, ...(metadata ? { metadata } : {}) });
         }
       }
       const text = typeof m.content === "string" ? m.content : "";

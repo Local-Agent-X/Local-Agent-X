@@ -42,7 +42,9 @@ const SCAFFOLDS: Record<Exclude<DetectedFramework, "static" | "unknown">, Framew
 	},
 	nuxt: {
 		label: "Nuxt",
-		creator: "npx nuxi@latest init . --packageManager npm --gitInit false",
+		// nuxi 4 refuses a non-interactive terminal without --template, and refuses
+		// the existing (empty) app dir without --force (live 2026-10-18).
+		creator: "npx nuxi@latest init . --template minimal --force --packageManager npm --gitInit false",
 		basePatch: (n) => `Set \`app.baseURL: '/apps/${n}/'\` in nuxt.config. Nuxt owns its own bundler — do NOT add a standalone vite.config.`,
 	},
 	sveltekit: {

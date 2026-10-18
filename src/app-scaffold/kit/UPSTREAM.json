@@ -13,7 +13,7 @@
   },
   "check-doc-paths.mjs": {
     "upstream": "scripts/check-doc-paths.mjs",
-    "sha256": "951e1871ba2b3d6abcfe88693fee76503fd092daf67db7e2f0427fce37c86572"
+    "sha256": "393c477a2b5104a436900f36f2b5321f235de9b1fc079f33a14be4d1628f41bc"
   },
   "check-module-owners.mjs": {
     "upstream": "scripts/check-module-owners.mjs",

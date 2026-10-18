@@ -64,13 +64,19 @@ const onlyOwnershipFailed = (out: string): boolean =>
 
 describe.skipIf(!LIVE)("scaffold live: every creator, then the kit, then the project's own checks", () => {
   it.each(scaffoldCreators())("$label", ({ framework, creator }) => {
-    const dir = mkdtempSync(join(tmpdir(), `lax-scaffold-live-${framework}-`));
-    dirs.push(dir);
+    // A real app dir is workspace/apps/<lowercase-name>; creators derive the
+    // package name from the directory and reject npm-invalid names.
+    const parent = mkdtempSync(join(tmpdir(), `lax-scaffold-live-${framework}-`));
+    dirs.push(parent);
+    const dir = join(parent, "live-app");
+    mkdirSync(dir);
     const log = scaffold(framework, creator, dir);
     expect(existsSync(join(dir, "package.json")), log).toBe(true);
 
+    // A creator may ship its own AGENTS.md (Astro's minimal template does);
+    // the kit never overwrites a file that exists, so that one is skipped.
     const kit = applyProjectKit(dir, { projectName: "live-app" });
-    expect(kit.written, log).toEqual(expect.arrayContaining(["AGENTS.md", "ARCHITECTURE.md", `scripts/check-structure.mjs`]));
+    expect(kit.written, log).toEqual(expect.arrayContaining(["ARCHITECTURE.md", "scripts/check-structure.mjs"]));
     expect(kit.wiredNpmScripts).toBe(true);
 
     const check = run(`node ${STRUCTURE_CHECK_SCRIPT}`, dir);
@@ -81,6 +87,6 @@ describe.skipIf(!LIVE)("scaffold live: every creator, then the kit, then the pro
       const test = run("npm test", dir);
       expect(test.status, test.out).toBe(0);
     }
-    console.log(`[scaffold-live] ${framework}: creator ok, kit ${kit.written.length} files, structure ${check.status === 0 ? "green" : "ownership rows pending"}, test script ${pkg.scripts?.test ? "passed" : "none"}`);
+    console.log(`[scaffold-live] ${framework}: creator ok, kit ${kit.written.length} files written (${kit.skipped.join(", ") || "none"} already there), structure ${check.status === 0 ? "green" : "ownership rows pending"}, test script ${pkg.scripts?.test ? "passed" : "none"}`);
   });
 });

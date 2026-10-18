@@ -49,7 +49,9 @@ function defaultDocs() {
 function gitIgnored(paths) {
 	if (!paths.length) return new Set();
 	try {
-		const out = execFileSync("git", ["check-ignore", "-v", "--no-index", "--stdin"], { cwd: REPO, input: paths.join("\n"), encoding: "utf8" });
+		// stderr dropped: outside a git repository (a built app's folder) git prints a
+		// fatal and the paths are simply not ignored.
+		const out = execFileSync("git", ["check-ignore", "-v", "--no-index", "--stdin"], { cwd: REPO, input: paths.join("\n"), encoding: "utf8", stdio: ["pipe", "pipe", "ignore"] });
 		return parseIgnored(out);
 	} catch (err) {
 		return parseIgnored(String(err.stdout ?? ""));

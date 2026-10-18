@@ -23,23 +23,31 @@
 
 import { policyRowOf, TOOL_PATH_ARGS } from "../tool-registry.js";
 import { TOOL_POLICIES } from "../tool-policy/tool-policies.js";
+import type { CallContext } from "../tool-execution/context.js";
+import { shellAllowedInContext } from "../tool-execution/unattended-shell-gate.js";
 
-/** Tools that let a worker locate and modify existing artifacts, read off
- *  their rows: an edit of a declared path (an `edit` path spec, or a family's
- *  `edit` action) modifies in place and fails on a file that is not there; a
- *  search root (glob, grep) is the discovery a targeted edit needs; a
- *  model-authored shell command does both; `build_app` owns the whole
- *  app-artifact lifecycle. A plain `write` does NOT qualify — a writer that
- *  can't find the artifact is exactly the goal-substitution failure this guard
- *  exists to stop. */
+/** Tools that let a worker locate and modify existing artifacts in any run,
+ *  read off their rows: an edit of a declared path (an `edit` path spec, or a
+ *  family's `edit` action) modifies in place and fails on a file that is not
+ *  there; a search root (glob, grep) is the discovery a targeted edit needs;
+ *  `build_app` owns the whole app-artifact lifecycle. A plain `write` does NOT
+ *  qualify — a writer that can't find the artifact is exactly the
+ *  goal-substitution failure this guard exists to stop. */
 function editCapable(name: string): boolean {
   const specs = TOOL_PATH_ARGS[name] ?? [];
   return specs.some((s) => s.action === "edit" || s.forActions?.includes("edit") || s.searchRoot === true)
-    || policyRowOf(name)?.shellCommand !== undefined
     || name === "build_app";
 }
 
 export const EDIT_CAPABLE_TOOLS: ReadonlySet<string> = new Set(Object.keys(TOOL_POLICIES).filter(editCapable));
+
+/** A model-authored shell command locates and modifies too — in a run that may
+ *  use the shell. An unattended run without a confined sandbox parks every
+ *  shell call for a person (tool-execution/unattended-shell-gate.ts), so a role
+ *  whose only edit path is the shell would stall there, not edit. */
+function shellEditCapable(name: string): boolean {
+  return policyRowOf(name)?.shellCommand !== undefined;
+}
 
 const EDIT_INTENT =
   /\b(add|insert|update|edit|modify|append|integrate|remove|delete|fix|change)\b[^.!?\n]{0,60}\b(my|the|our|this|that|existing)\b[^.!?\n]{0,40}\b(app|apps|dashboard|site|website|page|file|files|project|collection|tracker|database|spreadsheet|doc|document|code|repo)\b/i;
@@ -49,9 +57,12 @@ export function taskNeedsArtifactEdit(task: string): boolean {
   return EDIT_INTENT.test(task);
 }
 
-/** True when the toolset can locate + modify existing artifacts. */
-export function canEditArtifacts(allowedTools: readonly string[]): boolean {
-  return allowedTools.some((t) => EDIT_CAPABLE_TOOLS.has(t));
+/** True when the toolset can locate + modify existing artifacts in a run of
+ *  `runContext` — the context the spawn is about to create, so the shell term
+ *  is judged by the gate that run's shell calls will meet. */
+export function canEditArtifacts(allowedTools: readonly string[], runContext: CallContext): boolean {
+  return allowedTools.some((t) => EDIT_CAPABLE_TOOLS.has(t))
+    || (shellAllowedInContext(runContext) && allowedTools.some(shellEditCapable));
 }
 
 /** Actionable rejection for a capability-mismatched spawn. Lists capable

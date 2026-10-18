@@ -1,9 +1,21 @@
-import { getSandboxStatus, SANDBOX_PROOF_PENDING_RETRY } from "../sandbox/index.js";
+import { getSandboxStatus, SANDBOX_PROOF_PENDING_RETRY, type SandboxStatus } from "../sandbox/index.js";
 import { WORKER_CONTEXTS } from "../security/layer/index.js";
 import { hasCapability } from "../tool-registry.js";
 import { blocked } from "../tools/result-helpers.js";
 import type { ToolResult } from "../types.js";
 import type { CallContext } from "./context.js";
+
+/** Whether a run in `callContext` may use the shell at all: an attended run
+ *  always; a worker run (delegated agent or scheduled job) or an API run only
+ *  inside a confined sandbox or on a host the user acknowledged — its work
+ *  root anchors the command, it does not contain it. The one definition of
+ *  "shell allowed here": the gate below refuses on it, and the spawn guard
+ *  (agents/spawn-guard.ts) judges a role's edit capability for the run it
+ *  will be in by it. */
+export function shellAllowedInContext(callContext: CallContext, sandbox: SandboxStatus = getSandboxStatus()): boolean {
+  if (callContext === "local") return true;
+  return WORKER_CONTEXTS.has(callContext) ? sandbox.delegatedShellAllowed : sandbox.apiShellAllowed;
+}
 
 export function unattendedShellBlock(
   toolName: string,
@@ -12,11 +24,7 @@ export function unattendedShellBlock(
   if (!hasCapability(toolName, "shell") || callContext === "local") return null;
 
   const sandbox = getSandboxStatus();
-  // A worker run (delegated agent or scheduled job) runs shell only inside a
-  // confined sandbox or on a host the user acknowledged; its work root anchors
-  // the command, it does not contain it.
-  const contextAllowed = WORKER_CONTEXTS.has(callContext) ? sandbox.delegatedShellAllowed : sandbox.apiShellAllowed;
-  if (contextAllowed) return null;
+  if (shellAllowedInContext(callContext, sandbox)) return null;
 
   // Not a host to acknowledge yet: the Windows cage is still proving its fence,
   // and its answer lands within seconds.

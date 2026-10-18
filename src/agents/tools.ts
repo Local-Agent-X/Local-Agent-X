@@ -134,15 +134,17 @@ export function createAgentTools(): ToolDefinition[] {
           const scope = parseScope(args);
           const task = String(args.task);
           // Router-correctness guard: a task that needs an existing artifact
-          // edited must go to a worker that can locate + edit one. The error
-          // names capable agents so the caller re-routes — it never
+          // edited must go to a worker that can locate + edit one in the run
+          // this spawn creates — a delegated run (server/handler-events.ts),
+          // where a shell call is parked unless the sandbox confines it. The
+          // error names capable agents so the caller re-routes — it never
           // discourages delegating itself (always-delegate modes depend on
           // this distinction). See spawn-guard.ts.
           const def = AgentCatalog.getInstance().get(String(args.agent), scope);
-          if (def && taskNeedsArtifactEdit(task) && !canEditArtifacts(def.allowedTools)) {
+          if (def && taskNeedsArtifactEdit(task) && !canEditArtifacts(def.allowedTools, "delegated")) {
             const capable = AgentCatalog.getInstance()
               .list(scope)
-              .filter((d) => canEditArtifacts(d.allowedTools));
+              .filter((d) => canEditArtifacts(d.allowedTools, "delegated"));
             return err(spawnMismatchMessage(def.role, def.allowedTools, capable));
           }
           const ref = invokeAgent(

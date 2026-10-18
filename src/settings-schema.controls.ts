@@ -14,6 +14,9 @@ const TOOL_POLICY = "Settings → Security → Tool Policy";
 const SKILL_LEARNING = "Settings → Memory → Skill learning";
 const SPENDING_LIMITS = "Settings → Usage → Spending limits";
 
+/** The engines `imageEngine` may name (src/tools/image-tools/image-engine.ts). */
+export const IMAGE_ENGINES = ["grok", "chatgpt"] as const;
+
 export const CONTROL_SETTINGS: ReadonlyArray<FlippableSetting> = [
   {
     field: "allowRuntimeFailover",
@@ -258,10 +261,11 @@ export const CONTROL_SETTINGS: ReadonlyArray<FlippableSetting> = [
     description: "Unlocks self_edit and autopilot on the platform's own source code. Off by default — customizations go through connectors (~/.lax/connectors), workspace apps, and settings, which all survive updates. Turning this on forks this install's core code: platform updates must then merge with the local edits.",
   },
   {
-    field: "preferGrokForMedia",
+    field: "imageEngine",
     owner: "agent",
-    validate: z.boolean(),
+    validate: z.enum(IMAGE_ENGINES),
     runtime: false,
-    description: "When ON (default), generate_image/generate_video use xAI Grok Imagine whenever xAI is connected, regardless of the active chat provider. The model can still force a backend per call via the tool's `provider` arg.",
+    broadcast: true,
+    description: "Default image engine (grok or chatgpt; grok when unset) for generate_image/edit_image when the chat provider has none of its own. A Grok chat always uses Grok and a ChatGPT/OpenAI chat uses ChatGPT; if this engine isn't connected the other one is used and the result says so. Video is Grok whenever xAI is connected. The model can still force a backend per call via the tool's `provider` arg.",
   },
 ];

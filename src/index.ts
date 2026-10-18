@@ -258,6 +258,14 @@ try {
   logger.warn(`[settings] Appearance-default migration skipped: ${(e as Error).message}`);
 }
 
+// One-time move of preferGrokForMedia to the default image engine.
+try {
+  const { migrateImageEngineSetting } = await import("./tools/image-tools/image-engine.js");
+  if (migrateImageEngineSetting()) logger.info("[settings] Migrated preferGrokForMedia to imageEngine");
+} catch (e) {
+  logger.warn(`[settings] Image-engine migration skipped: ${(e as Error).message}`);
+}
+
 setRuntimeConfig(config);
 
 // Check auth status

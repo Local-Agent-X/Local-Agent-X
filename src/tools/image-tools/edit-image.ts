@@ -5,7 +5,7 @@ import { sessionIdOf } from "../../workspace/paths.js";
 import { FormData } from "undici";
 import { canonicalFetch } from "../web-egress.js";
 import {
-  ok, err, okWithImage, resolveMediaProvider, resolveLocalImagePath, mediaProviderLabel,
+  ok, err, okWithImage, resolveMediaProvider, resolveLocalImagePath, mediaProviderLabel, withMediaNote,
   findRecentLocalImage, workspaceDir, PROMPT_REFS_EARLIER_IMAGE,
 } from "./shared.js";
 import { requestCodexImage } from "./codex-images.js";
@@ -181,8 +181,10 @@ export const editImageTool: ToolDefinition = {
   description:
     "Edit an EXISTING image instead of generating a new one — recolor, change, add, or remove part of a " +
     "photo while keeping the rest. ALWAYS use this (not generate_image) when the user gives you a photo to " +
-    "modify. Defaults to xAI Grok Imagine when connected (prompt-driven edit, no mask), else ChatGPT when the " +
-    "user signed in with ChatGPT (gpt-image-2, prompt-driven, no mask); routes to OpenAI " +
+    "modify. Defaults to the engine of the model the user chats on (a Grok chat edits on xAI Grok Imagine; a " +
+    "ChatGPT or OpenAI chat on the ChatGPT subscription, gpt-image-2, when signed in, else OpenAI), and any other " +
+    "chat to the default engine from Settings → Media (Grok or ChatGPT), or the other one when that isn't connected; " +
+    "Grok and ChatGPT edits are prompt-driven, no mask. Routes to OpenAI " +
     "gpt-image-1 when a `mask` is supplied or OpenAI is forced — only OpenAI does pixel-locked masked edits " +
     "(transparent mask pixels = regenerate, opaque = preserve exactly). For a precise 'change ONLY X' edit, " +
     "supplying a mask + OpenAI gives the cleanest result.",
@@ -242,7 +244,7 @@ export const editImageTool: ToolDefinition = {
     const size = typeof args.size === "string" && args.size.trim() ? args.size.trim() : "auto";
     const quality = args.quality === undefined ? true : Boolean(args.quality);
 
-    const { provider, apiKey, forced } = await resolveMediaProvider(args.provider as string | undefined);
+    const { provider, apiKey, forced, note } = await resolveMediaProvider(args.provider as string | undefined);
 
     // Mask = pixel-locked editing, which only OpenAI gpt-image-1 supports. Never
     // silently route a masked request to xAI (which would ignore the mask).
@@ -266,12 +268,12 @@ export const editImageTool: ToolDefinition = {
 
     // No mask — prompt-driven edit on the resolved backend.
     if (provider === "xai" && apiKey) {
-      try { return await editViaXai(prompt, apiKey, image, quality); }
+      try { return withMediaNote(await editViaXai(prompt, apiKey, image, quality), note); }
       catch (e) { return err(`xAI image edit failed: ${(e as Error).message}`); }
     }
-    if (provider === "codex" && apiKey) return editViaCodex(prompt, apiKey, image);
+    if (provider === "codex" && apiKey) return withMediaNote(await editViaCodex(prompt, apiKey, image), note);
     if (provider === "openai" && apiKey) {
-      try { return await editViaOpenai(prompt, apiKey, image, null, size); }
+      try { return withMediaNote(await editViaOpenai(prompt, apiKey, image, null, size), note); }
       catch (e) { return err(`OpenAI image edit failed: ${(e as Error).message}`); }
     }
     return err(

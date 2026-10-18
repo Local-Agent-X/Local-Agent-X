@@ -77,13 +77,6 @@ describe("which backend an image call resolves to", () => {
     expect(await resolveMediaProvider("openai")).toEqual({ provider: "openai", apiKey: "sk-api", forced: true });
   });
 
-  it("Grok still wins when xAI is connected and preferred", async () => {
-    creds = { codex: TOKEN, xai: "xai-key" };
-    expect((await resolveMediaProvider()).provider).toBe("xai");
-    settingsBag = { provider: "codex", preferGrokForMedia: false };
-    expect((await resolveMediaProvider()).provider).toBe("codex");
-  });
-
   it("an active ChatGPT chat provider resolves to the subscription", async () => {
     expect(await resolveMediaProvider()).toEqual({ provider: "codex", apiKey: TOKEN, forced: false });
   });
@@ -94,11 +87,6 @@ describe("which backend an image call resolves to", () => {
     expect((await resolveMediaProvider()).provider).toBe("codex");
     creds = { openai: "sk-api" };
     expect(await resolveMediaProvider()).toEqual({ provider: "openai", apiKey: "sk-api", forced: false });
-  });
-
-  it("another chat provider does not pick up a ChatGPT sign-in", async () => {
-    settingsBag = { provider: "anthropic" };
-    expect((await resolveMediaProvider()).provider).toBe("anthropic");
   });
 });
 

@@ -26,7 +26,8 @@ async function loadToolPolicyToggles() {
     setToolPolicyToggle('tp-toggle-remote', s.enableRemoteControl === true);
     setToolPolicyToggle('tp-toggle-local-only', s.localOnlyMode === true);
     applyLocalOnlyUi(s.localOnlyMode === true);
-    setToolPolicyToggle('cfg-toggle-grok-media', s.preferGrokForMedia !== false);
+    // Default image engine (Settings → Media) defaults to Grok.
+    paintImageEngine(s.imageEngine === 'chatgpt' ? 'chatgpt' : 'grok');
     // Deliverable verification pass defaults ON (!== false).
     setToolPolicyToggle('tp-toggle-verify-deliverables', s.verifyDeliverables !== false);
     // Regression-audit gate's optional second-provider target. Empty (default)
@@ -67,6 +68,20 @@ async function toolPolicySelect(field, value) {
     console.warn('[tool-policy] save failed', e);
     loadToolPolicyToggles();
   }
+}
+
+function paintImageEngine(engine) {
+  document.querySelectorAll('#cfg-image-engine .seg-btn').forEach(b => {
+    const on = b.dataset.engine === engine;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
+}
+
+// Paint the pick right away; toolPolicySelect re-reads the card on failure.
+function setImageEngine(engine) {
+  paintImageEngine(engine);
+  return toolPolicySelect('imageEngine', engine);
 }
 
 async function toolPolicyToggle(field, el) {

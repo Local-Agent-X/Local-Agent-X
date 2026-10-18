@@ -13,6 +13,7 @@ import { loadSettings } from "../../settings.js";
 import type { SecretsStore } from "../../secrets.js";
 import { resolveCredential } from "../../auth/resolve.js";
 import { resolveAgentPath } from "../../workspace/paths.js";
+import { imageEngineSetting, type ImageEngine } from "./image-engine.js";
 
 export function ok(content: string): ToolResult { return { content }; }
 export function err(content: string): ToolResult { return { content, isError: true }; }
@@ -78,11 +79,32 @@ export function mediaProviderLabel(provider: string): string {
   return "OpenAI (API key)";
 }
 
-/** Get the active chat provider + its API key from settings + secrets. */
-export async function getActiveProvider(): Promise<{ provider: string; apiKey?: string }> {
-  const s = loadSettings() as { provider?: string };
-  const provider = s.provider || "local";
-  return { provider, apiKey: await keyForProvider(provider) };
+/** The provider the user chats on (settings.provider). */
+function activeChatProvider(): string {
+  return (loadSettings() as { provider?: string }).provider || "local";
+}
+
+/** The image engine a chat provider belongs to, or null for one with none
+ *  (Anthropic, Gemini, local, ...). */
+function engineOfChatProvider(provider: string): ImageEngine | null {
+  if (provider === "xai") return "grok";
+  if (provider === "codex" || provider === "openai") return "chatgpt";
+  return null;
+}
+
+const ENGINE_NAME: Record<ImageEngine, string> = { grok: "Grok", chatgpt: "ChatGPT" };
+
+type Backend = { provider: string; apiKey: string };
+
+/** The connected backend of an engine, or null. ChatGPT is the subscription
+ *  sign-in when there is one, so the image bills the plan rather than API
+ *  spend, else the OpenAI API key. */
+async function connectedBackend(engine: ImageEngine): Promise<Backend | null> {
+  for (const provider of engine === "grok" ? ["xai"] : ["codex", "openai"]) {
+    const apiKey = await keyForProvider(provider);
+    if (apiKey) return { provider, apiKey };
+  }
+  return null;
 }
 
 /** Map a user/model-supplied backend name to a canonical id. Returns null
@@ -98,36 +120,66 @@ function normalizeMediaProvider(name?: string): string | null {
   return null;
 }
 
+export type ResolvedMedia = {
+  provider: string;
+  apiKey?: string;
+  forced: boolean;
+  /** Set when the default engine wasn't connected and the other one was
+   *  used; the tool adds it to its result so the switch is never silent. */
+  note?: string;
+};
+
 /**
- * Resolve which backend an image/video tool should use, by precedence:
- *   1. explicit per-call override ("generate this with grok") → forced
- *   2. media default: prefer Grok whenever xAI is connected, unless the user
- *      turned off `preferGrokForMedia` in Settings → Media
- *   3. the active chat provider (getActiveProvider). For OpenAI the ChatGPT
- *      subscription (`codex`) is preferred over the API key when both are
- *      connected, so the image bills the plan rather than API spend.
+ * Resolve which backend an image or video tool should use.
+ *
+ * Image, by precedence:
+ *   1. explicit per-call override ("generate this with grok") → forced.
+ *      Explicit `openai` is always the API key.
+ *   2. the engine of the chat provider: Grok for xAI, ChatGPT for the
+ *      ChatGPT sign-in or the OpenAI API-key provider (connectedBackend).
+ *   3. any other chat provider: the default engine (`imageEngine`, Settings →
+ *      Media); when it isn't connected, the other engine, with a `note`.
+ *   4. neither engine connected: the chat provider, which the tools treat
+ *      as local Stable Diffusion.
+ *
+ * Video has no ChatGPT backend, so it is Grok whenever xAI is connected and
+ * the image setting never moves it; otherwise local CogVideoX.
  *
  * `forced` is true only in case 1 so the caller can surface a clear error
  * when the user explicitly names a backend that isn't connected (rather than
- * silently falling back to local SD). Explicit `openai` is always the API key.
+ * silently falling back to local SD).
  */
 export async function resolveMediaProvider(
   explicit?: string,
-): Promise<{ provider: string; apiKey?: string; forced: boolean }> {
+  kind: "image" | "video" = "image",
+): Promise<ResolvedMedia> {
   const forced = normalizeMediaProvider(explicit);
   if (forced) return { provider: forced, apiKey: await keyForProvider(forced), forced: true };
 
-  const s = loadSettings() as { preferGrokForMedia?: boolean };
-  if (s.preferGrokForMedia !== false) {
-    const apiKey = await keyForProvider("xai");
-    if (apiKey) return { provider: "xai", apiKey, forced: false };
+  if (kind === "video") {
+    const grok = await connectedBackend("grok");
+    return grok ? { ...grok, forced: false } : { provider: "local", forced: false };
   }
-  const active = await getActiveProvider();
-  if (active.provider === "openai") {
-    const token = await keyForProvider("codex");
-    if (token) return { provider: "codex", apiKey: token, forced: false };
+
+  const chatProvider = activeChatProvider();
+  const chatEngine = engineOfChatProvider(chatProvider);
+  const chatBackend = chatEngine && await connectedBackend(chatEngine);
+  if (chatBackend) return { ...chatBackend, forced: false };
+
+  const preferred = imageEngineSetting();
+  const preferredBackend = await connectedBackend(preferred);
+  if (preferredBackend) return { ...preferredBackend, forced: false };
+  const other: ImageEngine = preferred === "grok" ? "chatgpt" : "grok";
+  const otherBackend = await connectedBackend(other);
+  if (otherBackend) {
+    return { ...otherBackend, forced: false, note: `Made with ${ENGINE_NAME[other]}; ${ENGINE_NAME[preferred]} isn't connected.` };
   }
-  return { ...active, forced: false };
+  return { provider: chatProvider, forced: false };
+}
+
+/** `result` with the resolver's note, if any, as its last line. */
+export function withMediaNote(result: ToolResult, note: string | undefined): ToolResult {
+  return note ? { ...result, content: `${result.content}\n${note}` } : result;
 }
 
 /** Find the most recent image across uploads + workspace/images. Used as

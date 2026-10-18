@@ -20,7 +20,6 @@ async function saveSettings() {
     model,
     temperature: parseFloat(document.getElementById('cfg-temperature')?.value || '0.7'),
     port: portVal ? parseInt(portVal, 10) : undefined,
-    imageEngine: document.getElementById('cfg-image-engine')?.value,
     sttEngine: document.getElementById('cfg-stt-engine')?.value,
     ttsEngine: document.getElementById('cfg-tts-engine')?.value,
     ttsVoice: document.getElementById('cfg-tts-voice')?.value,
@@ -103,7 +102,7 @@ async function loadSettings() {
     const modelInput = document.getElementById('cfg-model');
     if (modelInput && s.model) modelInput.dataset.saved = s.model;
     if (s.provider) onProviderChange(s.provider, true);
-    set('cfg-image-engine', s.imageEngine); set('cfg-stt-engine', s.sttEngine);
+    set('cfg-stt-engine', s.sttEngine);
     set('cfg-tts-engine', s.ttsEngine); set('cfg-tts-voice', s.ttsVoice); set('cfg-sandbox', s.sandbox);
     set('cfg-xtts-voice', s.xttsVoice);
     set('cfg-voice-engine', s.voiceEngine || 'tier4');

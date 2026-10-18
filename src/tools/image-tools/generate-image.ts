@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { ToolDefinition, ToolResult } from "../../types.js";
 import { canonicalFetch } from "../web-egress.js";
 import { getRuntimeConfig } from "../../config.js";
-import { ok, err, okWithImage, resolveMediaProvider, mediaProviderLabel, workspaceDir } from "./shared.js";
+import { ok, err, okWithImage, resolveMediaProvider, mediaProviderLabel, withMediaNote, workspaceDir } from "./shared.js";
 import { requestCodexImage } from "./codex-images.js";
 import { CODEX_IMAGE_MODEL } from "../../codex-client/images.js";
 
@@ -132,12 +132,13 @@ async function generateViaCodex(prompt: string, token: string): Promise<ToolResu
 
 export const generateImageTool: ToolDefinition = {
   name: "generate_image",
-  compactDescription: "Generate a NEW image from a text prompt — it cannot see or edit an existing image; to modify a photo the user gave you, use edit_image. Defaults to xAI Grok Imagine when connected; pass `provider` to force a backend.",
+  compactDescription: "Generate a NEW image from a text prompt; it cannot edit an existing one (use edit_image). Uses the chat model's engine (Grok or ChatGPT), else the default in Settings; `provider` forces a backend.",
   description:
     "Generate a NEW image from a text prompt — creates from scratch, does NOT see any existing image. " +
     "To MODIFY an image the user gave you (recolor, change/add/remove part of a photo), use edit_image instead — " +
     "this tool cannot edit and passing a reference image here is ignored. " +
-    "Defaults to xAI Grok Imagine whenever xAI is connected (toggle in Settings → Media); otherwise the ChatGPT subscription (gpt-image-2) when the user signed in with ChatGPT and chats on it or on OpenAI, then OpenAI DALL-E (API key) or local Stable Diffusion. " +
+    "Defaults to the engine of the model the user chats on: a Grok chat uses xAI Grok Imagine; a ChatGPT or OpenAI chat uses the ChatGPT subscription (gpt-image-2) when signed in, else OpenAI DALL-E (API key). " +
+    "Any other chat uses the default engine from Settings → Media (Grok or ChatGPT), or the other one when that isn't connected (the result says so), else local Stable Diffusion. " +
     "Pass `provider` to force a specific backend for one call (e.g. user says 'make this with Grok'). " +
     "Use detailed prompts for best results.",
   parameters: {
@@ -182,20 +183,20 @@ export const generateImageTool: ToolDefinition = {
     const prompt = String(args.prompt || "");
     if (!prompt.trim()) return err("Prompt is required.");
 
-    const { provider, apiKey, forced } = await resolveMediaProvider(args.provider as string | undefined);
+    const { provider, apiKey, forced, note } = await resolveMediaProvider(args.provider as string | undefined);
     if (forced && provider !== "local" && !apiKey) {
       return err(`${mediaProviderLabel(provider)} isn't connected — connect it in Settings, or omit the provider override to use the default.`);
     }
 
     if (provider === "xai" && apiKey) {
-      try { return await generateViaXai(prompt, apiKey, args.aspect as string | undefined, Boolean(args.quality)); }
+      try { return withMediaNote(await generateViaXai(prompt, apiKey, args.aspect as string | undefined, Boolean(args.quality)), note); }
       catch (e) { return err(`xAI image generation failed: ${(e as Error).message}`); }
     }
 
-    if (provider === "codex" && apiKey) return generateViaCodex(prompt, apiKey);
+    if (provider === "codex" && apiKey) return withMediaNote(await generateViaCodex(prompt, apiKey), note);
 
     if (provider === "openai" && apiKey) {
-      try { return await generateViaOpenai(prompt, apiKey); }
+      try { return withMediaNote(await generateViaOpenai(prompt, apiKey), note); }
       catch (e) { return err(`OpenAI image generation failed: ${(e as Error).message}`); }
     }
 

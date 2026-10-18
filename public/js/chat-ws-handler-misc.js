@@ -84,7 +84,7 @@ function handleSettingsChanged(msg) {
 
 // Settings the Tool Policy card draws besides the three kill-switches above;
 // src/chat-ws/frames.test.ts holds this list against the keys the server sends.
-const TOOL_POLICY_CARD_FIELDS = ['supervisedBrowser', 'browserSecrecy', 'localOnlyMode', 'enableUiEventBus', 'verifyDeliverables', 'regressionAuditProvider', 'regressionAuditModel', 'preferGrokForMedia'];
+const TOOL_POLICY_CARD_FIELDS = ['supervisedBrowser', 'browserSecrecy', 'localOnlyMode', 'enableUiEventBus', 'verifyDeliverables', 'regressionAuditProvider', 'regressionAuditModel', 'imageEngine'];
 
 function handleSidebarPinsChanged(msg) {
   try {

@@ -155,8 +155,8 @@ export const generateVideoTool: ToolDefinition = {
   name: "generate_video",
   compactDescription: "Generate a short MP4 video from a text prompt. Defaults to xAI Grok Imagine when connected, else local CogVideoX; pass `provider` to force one. On WhatsApp/Telegram it is auto-delivered — never call send_video too.",
   description:
-    "Generate a short video from a text prompt. Defaults to xAI Grok Imagine whenever xAI is connected " +
-    "(text-to-video, ~60-240s, up to 15s duration, optional reference images; toggle in Settings → Media). " +
+    "Generate a short video from a text prompt. Defaults to xAI Grok Imagine whenever xAI is connected, whatever the chat model " +
+    "(text-to-video, ~60-240s, up to 15s duration, optional reference images; ChatGPT has no video here). " +
     "Otherwise falls back to local CogVideoX (must be running on port 7861, ~6 second outputs). " +
     "Pass `provider` to force a backend for one call. Videos saved as MP4. " +
     "On WhatsApp/Telegram the generated video is delivered to the user automatically — do NOT also call send_video for it.",
@@ -195,9 +195,9 @@ export const generateVideoTool: ToolDefinition = {
     const prompt = String(args.prompt || "");
     if (!prompt.trim()) return err("Prompt is required.");
 
-    // Resolve backend: explicit override → Grok-when-connected default →
-    // active provider. CogVideoX is the only local video path.
-    const { provider, apiKey, forced } = await resolveMediaProvider(args.provider as string | undefined);
+    // Resolve backend: explicit override → Grok when connected → local
+    // CogVideoX, the only local video path.
+    const { provider, apiKey, forced } = await resolveMediaProvider(args.provider as string | undefined, "video");
     if (forced && (provider === "openai" || provider === "codex")) {
       return err(`${provider === "codex" ? "ChatGPT" : "OpenAI"} has no video API here — use 'grok' or 'local' for video.`);
     }

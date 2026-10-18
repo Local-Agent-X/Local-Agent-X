@@ -6,7 +6,7 @@ import { admitEndpoint } from "../src/local-runtimes/admission.js";
 import { candidateEndpoints, manualRuntimeEntries } from "../src/local-runtimes/endpoints.js";
 import { PROFILE_NAMES } from "../src/autonomy/profiles.js";
 // @ts-expect-error — plain .mjs eval module, no type declarations
-import { DEFAULT_LOCAL_URL, buildSeed, parseModel, writeSeed } from "../eval/terminal-bench/seed.mjs";
+import { DEFAULT_LOCAL_URL, SERVER_ENV, buildSeed, parseModel, writeSeed } from "../eval/terminal-bench/seed.mjs";
 
 describe("terminal-bench seed: Harbor model names", () => {
   it("maps lmstudio/ and local/ to LAX's local provider, keeping the model id whole", () => {
@@ -45,6 +45,27 @@ describe("terminal-bench seed: the data dir a task starts from", () => {
     expect(profile).toBe("Autonomous");
     expect(JSON.parse(seed["security.json"])).toEqual({ fileAccessMode: "unrestricted" });
     expect(JSON.parse(seed["settings.json"]).localRuntimes[0].baseUrl).toBe("http://host.docker.internal:4321");
+  });
+
+  it("lets an HTTP-driven turn run shell inside the container, through the product's own acknowledgement", async () => {
+    dir = mkdtempSync(join(tmpdir(), "tb-seed-"));
+    writeSeed(dir, buildSeed({ modelName: "lmstudio/m" }));
+    const saved = { data: process.env.LAX_DATA_DIR, sandbox: process.env.LAX_SANDBOX };
+    process.env.LAX_DATA_DIR = dir;
+    process.env.LAX_SANDBOX = SERVER_ENV.LAX_SANDBOX;
+    try {
+      const { getSandboxStatus } = await import("../src/sandbox/index.js");
+      const status = getSandboxStatus();
+      expect(status.selectedMode).toBe("host");
+      expect(status.confined).toBe(false);
+      // The gate an "api" chat turn's bash call passes (unattended-shell-gate.ts).
+      expect(status.apiShellAllowed).toBe(true);
+      rmSync(join(dir, "sandbox-host-acknowledgement.json"));
+      expect(getSandboxStatus().apiShellAllowed).toBe(false);
+    } finally {
+      if (saved.data === undefined) delete process.env.LAX_DATA_DIR; else process.env.LAX_DATA_DIR = saved.data;
+      if (saved.sandbox === undefined) delete process.env.LAX_SANDBOX; else process.env.LAX_SANDBOX = saved.sandbox;
+    }
   });
 
   it("writes every file under the data dir, nested paths included", () => {

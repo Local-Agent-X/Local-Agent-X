@@ -17,13 +17,13 @@
 // a task container has neither.
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { createWriteStream, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, createWriteStream, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { driveChat } from "../grok-coding-parity/lib.mjs";
-import { DEFAULT_LOCAL_URL, buildSeed, writeSeed } from "./seed.mjs";
+import { DEFAULT_LOCAL_URL, SERVER_ENV, buildSeed, writeSeed } from "./seed.mjs";
 
 const BOOT_TIMEOUT_MS = 180_000;
 // Harbor enforces each task's own agent timeout; this only has to outlast it.
@@ -93,6 +93,7 @@ async function main() {
     stdio: ["ignore", "pipe", "pipe"],
     env: {
       ...process.env,
+      ...SERVER_ENV,
       LAX_DATA_DIR: dataDir,
       LAX_WORKSPACE: workspace,
       LAX_PORT: String(port),
@@ -124,6 +125,14 @@ async function main() {
     result.endedAt = new Date().toISOString();
     mkdirSync(dirname(resolve(outPath)), { recursive: true });
     writeFileSync(outPath, JSON.stringify(result, null, 2));
+    // The data dir holds the op's forensics (operations/, logs/, audit) and
+    // lives in the container's /tmp, which goes away with the container. A
+    // copy beside the result comes back with the trial's logs.
+    try {
+      cpSync(dataDir, join(dirname(resolve(outPath)), "lax-data"), { recursive: true });
+    } catch (e) {
+      console.error(`could not copy the data dir: ${e.message}`);
+    }
   }
   console.log(JSON.stringify({ secs: result.secs, toolCalls: result.toolCalls, err: result.err, harnessError: result.harnessError }));
   process.exit(exitCode);

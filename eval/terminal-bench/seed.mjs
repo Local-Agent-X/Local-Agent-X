@@ -10,6 +10,16 @@ import { dirname, join } from "node:path";
 /** Where LM Studio's server is reached from inside a task container. */
 export const DEFAULT_LOCAL_URL = "http://host.docker.internal:1234";
 
+/**
+ * Environment the server runs with. A chat sent over HTTP is an "api" call,
+ * and unattended shell there needs a confining sandbox or the user's
+ * acknowledgement of the unconfined host (src/sandbox/index.ts). LAX's
+ * Linux cage (bubblewrap) cannot start inside a Docker container, so the run
+ * selects the host mode explicitly and the seed acknowledges it, as a user
+ * does in Settings > Security: the task container is the boundary.
+ */
+export const SERVER_ENV = { LAX_SANDBOX: "host" };
+
 /** Harbor model prefixes LAX runs, mapped to the LAX provider id. */
 const PROVIDER_BY_PREFIX = {
   lmstudio: "local",
@@ -45,11 +55,13 @@ export function parseModel(modelName) {
  * - security.json: unrestricted file access. The task container is the
  *   boundary and is thrown away after the run; tasks install packages and
  *   edit files outside the working directory.
+ * - sandbox-host-acknowledgement.json: the acknowledgement for SERVER_ENV's
+ *   host mode (see above).
  * - memory/USER.md, memory/IDENTITY.md: a named user and agent, as the eval
  *   rigs seed (eval/op-outcomes/isolated.mjs), so the first reply is not the
  *   first-run identity ask.
  */
-export function buildSeed({ modelName, localUrl = DEFAULT_LOCAL_URL }) {
+export function buildSeed({ modelName, localUrl = DEFAULT_LOCAL_URL, now = new Date() }) {
   const { provider, model } = parseModel(modelName);
   const settings = { provider, model };
   if (provider === "local") {
@@ -59,6 +71,7 @@ export function buildSeed({ modelName, localUrl = DEFAULT_LOCAL_URL }) {
     "settings.json": JSON.stringify(settings),
     "autonomy-profile.json": JSON.stringify({ profile: "Autonomous" }),
     "security.json": JSON.stringify({ fileAccessMode: "unrestricted" }),
+    "sandbox-host-acknowledgement.json": JSON.stringify({ acknowledged: true, selectedMode: SERVER_ENV.LAX_SANDBOX, acknowledgedAt: now.toISOString() }),
     "memory/USER.md": "# About Me\n\n- Name: Sam\n",
     "memory/IDENTITY.md": "# Agent Identity\n\n- Name: Agent X\n",
   };

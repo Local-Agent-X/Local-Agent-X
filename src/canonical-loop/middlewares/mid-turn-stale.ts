@@ -27,6 +27,7 @@ import { isDispatchFailure } from "../types.js";
 import { createLogger } from "../../logger.js";
 import { autonomousStrategyPivot, restorePersistedPivot } from "./strategy-pivot.js";
 import { createHash } from "node:crypto";
+import { loopFactsOf } from "../../tool-registry.js";
 
 const logger = createLogger("canonical-loop.mid-turn-stale");
 
@@ -35,14 +36,14 @@ const STALE_WINDOW = 3;
 
 // Tools that produce a real side effect (so they count as evidence) yet can be
 // called turn after turn against a goal they can't reach — the
-// "productive-looking spin". Browser is the observed case (scrape /
-// consent-wall loops); http_request is the obvious next member if it ever shows
-// the same pattern. EVERY browser call reaches here, committing-looking or not:
-// the gate below reads the NAME-ONLY tally, and `browser` is false there no
-// matter what it clicked. An arg-aware split ("a navigate/scrape loop is spin,
-// a submitted order is work") was tried and reverted — the measurement that
-// killed it is in the beforeTurn comment.
-const SPIN_PRONE_ACTION_TOOLS: ReadonlySet<string> = new Set(["browser"]);
+// "productive-looking spin": each row's `loop.spinProne`. Browser is the
+// observed case (scrape / consent-wall loops); http_request is the obvious
+// next member if it ever shows the same pattern. EVERY browser call reaches
+// here, committing-looking or not: the gate below reads the NAME-ONLY tally,
+// and `browser` is false there no matter what it clicked. An arg-aware split
+// ("a navigate/scrape loop is spin, a submitted order is work") was tried and
+// reverted — the measurement that killed it is in the beforeTurn comment.
+const isSpinProne = (tool: string): boolean => loopFactsOf(tool).spinProne === true;
 
 interface MidTurnStaleState {
   // Branch 1 two-strike flag.
@@ -185,7 +186,7 @@ export const midTurnStaleMiddleware: CanonicalMiddleware = {
     }
     let dominant = "";
     const okTools = new Set(okResults.map(result => result.toolName));
-    if (okTools.size === 1 && SPIN_PRONE_ACTION_TOOLS.has([...okTools][0])) {
+    if (okTools.size === 1 && isSpinProne([...okTools][0])) {
       const only = [...okTools][0];
       const fingerprint = okResults.map(result => {
         const call = ctx.toolCalls.find(candidate => candidate.toolCallId === result.toolCallId);

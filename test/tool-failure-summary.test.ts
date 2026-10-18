@@ -8,9 +8,10 @@ import {
 } from "../src/canonical-loop/turn-loop/tool-failure-summary.js";
 import { isLedgerTool } from "../src/committing-tool-check.js";
 import { _resetMiddlewareStates } from "../src/canonical-loop/middlewares/state.js";
-import { MEMORY_WRITE_TOOLS } from "../src/canonical-loop/turn-loop/silent-tool-check.js";
 import { isMutationTool } from "../src/tool-mutation-check.js";
-import { TOOLS } from "../src/tool-registry.js";
+import { TOOLS, isMemoryWrite, toolsWhere } from "../src/tool-registry.js";
+
+const MEMORY_WRITE_TOOLS = toolsWhere((row) => row.memoryWrite === true);
 
 function tm(text: string, toolCallId = "call-1") {
   return { role: "tool_result" as const, content: { text, toolCallId } };
@@ -397,13 +398,13 @@ describe("collectToolFailures — memory writes are bookkeeping, not a terminato
     expect(r.hadTerminatingMutation).toBe(false);
   });
 
-  it("covers the whole MEMORY_WRITE_TOOLS list, not one name", () => {
-    // ITERATE THE EXPORTED SET, never a hand-copy. This used to hardcode five
-    // names, so any tool added to silent-tool-check.ts was silently uncovered.
-    // Asserting hadSuccessfulMutation too pins the carve-out's premise: every
-    // name in the list really is a mutation tool, so excluding it from question
-    // B is a decision and not a no-op.
-    expect(MEMORY_WRITE_TOOLS.size).toBeGreaterThan(1);
+  it("covers every row that declares memoryWrite, not one name", () => {
+    // ITERATE THE ROWS, never a hand-copy. This used to hardcode five names, so
+    // any tool added to the list was silently uncovered. Asserting
+    // hadSuccessfulMutation too pins the carve-out's premise: every row that
+    // declares it really is a mutation tool, so excluding it from question B is
+    // a decision and not a no-op.
+    expect(MEMORY_WRITE_TOOLS.length).toBeGreaterThan(1);
     for (const tool of MEMORY_WRITE_TOOLS) {
       const r = collectToolFailures([ok("done")], [{ tool }]);
       expect({ tool, mutation: r.hadSuccessfulMutation, terminating: r.hadTerminatingMutation })
@@ -428,22 +429,22 @@ describe("collectToolFailures — memory writes are bookkeeping, not a terminato
   });
 
   // DELETE ME WHEN FIXED — pins a KNOWN GAP, not desired behavior.
-  // The carve-out reuses silent-tool-check.ts:MEMORY_WRITE_TOOLS, which lists
-  // `forget` / `memory_save` but NOT the SEVEN memory_* tools below. Each is
+  // The carve-out reads each row's `memoryWrite`, which `forget` / `memory_save`
+  // declare but the SEVEN memory_* tools below do not. Each is
   // workspace-write or destructive in tool-policy/tool-policies.memory.ts, so
   // isMutationTool answers true and hadTerminatingMutation stays true: paired
   // with a data-returning call they still terminate and still strand the
   // result. This test previously named `memory_forget` alone and prescribed a
   // fix that would have closed 1 of 7 — hence the derived-set case below.
-  // Fix = add all seven to MEMORY_WRITE_TOOLS (none returns anything the model
-  // needs to read back), then delete BOTH tests; the list-coverage case above
-  // iterates the Set and picks them up with no further edit.
+  // Fix = declare memoryWrite on all seven rows (none returns anything the
+  // model needs to read back), then delete BOTH tests; the coverage case above
+  // iterates the rows and picks them up with no further edit.
   const KNOWN_GAP_MEMORY_TOOLS = [
     "memory_consolidate", "memory_dream", "memory_forget", "memory_forget_imports",
     "memory_ingest", "memory_reflect", "memory_reindex",
   ];
 
-  it("KNOWN GAP: seven memory_* mutation tools are absent from MEMORY_WRITE_TOOLS and still terminate", () => {
+  it("KNOWN GAP: seven memory_* mutation tools do not declare memoryWrite and still terminate", () => {
     for (const tool of KNOWN_GAP_MEMORY_TOOLS) {
       const r = collectToolFailures([ok("done")], [{ tool }]);
       expect({ tool, mutation: r.hadSuccessfulMutation, terminating: r.hadTerminatingMutation })
@@ -455,7 +456,7 @@ describe("collectToolFailures — memory writes are bookkeeping, not a terminato
     // Derived from the registry rather than restated, so a newly-registered
     // memory_* write tool fails HERE instead of quietly widening the gap.
     const derived = Object.keys(TOOLS)
-      .filter(n => n.startsWith("memory_") && isMutationTool(n) && !MEMORY_WRITE_TOOLS.has(n))
+      .filter(n => n.startsWith("memory_") && isMutationTool(n) && !isMemoryWrite(n))
       .sort();
     expect(derived).toEqual([...KNOWN_GAP_MEMORY_TOOLS].sort());
   });

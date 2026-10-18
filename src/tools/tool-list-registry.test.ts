@@ -55,14 +55,6 @@ const REGISTRY: readonly Registered[] = [
   // The user-facing capability blurbs; a blurb for a removed tool is dead weight.
   { file: "scripts/gen-agent-capabilities.ts", owner: "BLURB" },
   // How the loop reads a call: discovery, repeats, effort, silence, category.
-  { file: "src/agent-guards/loop-discovery.ts", owner: "SPIRALABLE_TOOLS" },
-  { file: "src/agent-guards/loop-discovery.ts", owner: "REPEAT_SEARCH_TOOLS" },
-  { file: "src/agent-guards/loop-discovery.ts", owner: "hint" },
-  { file: "src/canonical-loop/step-effort.ts", owner: "MECHANICAL_TOOLS" },
-  { file: "src/canonical-loop/turn-loop/silent-tool-check.ts", owner: "MEMORY_WRITE_TOOLS" },
-  { file: "src/canonical-loop/turn-loop/silent-tool-check.ts", owner: "SILENT_FIRE_AND_FORGET_TOOLS" },
-  { file: "src/canonical-loop/middlewares/mid-turn-stale.ts", owner: "SPIN_PRONE_ACTION_TOOLS" },
-  { file: "src/tool-tracker.ts", owner: "CATEGORY_TOOLS" },
   // What the resolver stamps into which call.
   // What strict local-only mode cannot read off a row (both directions).
   // Wire and corpus fixtures.

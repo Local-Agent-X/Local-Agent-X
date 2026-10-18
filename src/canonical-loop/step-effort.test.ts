@@ -5,6 +5,7 @@ import {
   MECHANICAL_TOOLS,
 } from "./step-effort.js";
 import type { CanonicalMessage } from "./contract-types.js";
+import { policyRowOf } from "../tool-registry.js";
 
 // Shapes mirror what the loop actually stores: adapters finalize assistant
 // rows with `content.toolCalls: [{id, name, arguments}]`; dispatch-tools.ts
@@ -121,6 +122,10 @@ describe("classifyStepEffort", () => {
     expect([...MECHANICAL_TOOLS].sort()).toEqual([
       "edit", "edit_lines", "glob", "grep", "multi_edit", "read", "structural_search", "write",
     ]);
+  });
+
+  it("a mechanical row is a file tool: no shell, no network, no artifact family", () => {
+    expect([...MECHANICAL_TOOLS].filter((name) => policyRowOf(name)?.kernel !== "file")).toEqual([]);
   });
 });
 

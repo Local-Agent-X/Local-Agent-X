@@ -6,7 +6,8 @@
 
 import { describe, it, expect } from "vitest";
 import { checkToolLoops, hasSeenSuccessfulCommittingCall, noteToolResults, createLoopState, NO_PROGRESS_LIMIT, NUDGE_CEILING, SPIRALABLE_TOOLS, type LoopState } from "./loop-detection.js";
-import { TOOLS } from "../tool-registry.js";
+import { discoveryNudge, searchKeyOf } from "./loop-discovery.js";
+import { TOOLS, toolsWhere } from "../tool-registry.js";
 
 type Call = { name: string; arguments: string };
 const lsCall: Call = { name: "bash", arguments: JSON.stringify({ cmd: "ls workspace/apps/" }) };
@@ -349,10 +350,14 @@ describe("checkToolLoops — interactive nudge ceiling (runaway backstop)", () =
 });
 
 describe("SPIRALABLE_TOOLS fence — every discovery tool is read-only", () => {
-  // The discovery set is the one curated list left (no risk tier models
+  // The discovery set is each row's `loop.discovery` (no risk tier models
   // "discovery spin"). Fence it with the taxonomy so a mutating tool can never
   // be mistaken for a harmless lookup — that would let a real loop reset the
   // wrong counter.
+  it("the set is the rows that declare it, and covers the lookups agents spin on", () => {
+    expect([...SPIRALABLE_TOOLS]).toEqual(expect.arrayContaining(["read", "grep", "glob", "web_search", "op_status", "task_list"]));
+  });
+
   it("no spiralable tool is mutating (risk ∈ {safe, network-read})", () => {
     for (const name of SPIRALABLE_TOOLS) {
       const risk = TOOLS[name]?.risk;
@@ -363,5 +368,19 @@ describe("SPIRALABLE_TOOLS fence — every discovery tool is read-only", () => {
 
   it("the fence is not vacuous — a write-class tool would fail it", () => {
     expect(["safe", "network-read"]).not.toContain(TOOLS["write"]?.risk);
+  });
+
+  it("a search key is read off the argument the row names, and only for a discovery tool", () => {
+    expect(searchKeyOf("grep", JSON.stringify({ pattern: "B|A", path: "src" }))).toBe(searchKeyOf("grep", JSON.stringify({ pattern: "a|b" })));
+    expect(searchKeyOf("web_search", JSON.stringify({ query: "Vite config" }))).toBe("web_search:vite config");
+    expect(searchKeyOf("read", JSON.stringify({ path: "a" }))).toBeNull();
+    const keyed = toolsWhere((row) => row.loop?.searchKey !== undefined);
+    expect(keyed.sort()).toEqual(["grep", "web_search"]);
+    for (const name of keyed) expect(SPIRALABLE_TOOLS.has(name), name).toBe(true);
+  });
+
+  it("a file-tool spin is pointed at the file tools that act; any other at the answer", () => {
+    expect(discoveryNudge("grep", 8)).toContain("write/edit/bash");
+    expect(discoveryNudge("op_status", 8)).not.toContain("write/edit/bash");
   });
 });

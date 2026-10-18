@@ -1,4 +1,5 @@
 import type { ToolCall } from "../contract-types.js";
+import { isMemoryWrite, loopFactsOf } from "../../tool-registry.js";
 
 /**
  * Tool calls whose side effect is visible to the user without a follow-up
@@ -10,33 +11,14 @@ import type { ToolCall } from "../contract-types.js";
  * Data-returning tools (screenshot, evaluate, web_fetch, bash, etc.) are
  * NOT silent — the model legitimately needs the next turn to interpret
  * the result.
- */
-
-// Fire-and-forget tools whose entire effect is a UI side-effect with no result
-// the model needs to read back. Without this, a voice turn that morphs the
-// sphere (voice_visual) was treated as needing a follow-up turn — the model
-// re-spoke its reply, so the user heard/saw it twice.
-const SILENT_FIRE_AND_FORGET_TOOLS = new Set([
-  "voice_visual",
-]);
-
-/** Memory writes — nothing comes back for a follow-up turn to interpret.
  *
- *  Exported because turn-loop/tool-failure-summary.ts reads the SAME list for
- *  the termination question ("is this the agent's own bookkeeping rather than
- *  work on the user's request?"). One list, two decisions, deliberately: a
- *  fourth hand-maintained memory-tool list is the drift this campaign is
- *  closing. The coupling has a direction — adding a tool here that DOES return
- *  data would suppress its wrap-up turn in both places, so only add tools whose
- *  result the model genuinely never needs to read back. */
-export const MEMORY_WRITE_TOOLS = new Set([
-  "remember",
-  "update_fact",
-  "forget",
-  "memory_save",
-  "memory_set_user_field",
-  "memory_update_profile",
-]);
+ * Silent by row: a fire-and-forget UI tool (`loop.silent` — a voice turn that
+ * morphed the sphere drove a wrap-up and re-spoke its reply) and a memory
+ * write (`memoryWrite`). turn-loop/tool-failure-summary.ts reads the same
+ * memoryWrite fact for the termination question, one fact for two decisions:
+ * a row that declares it but DOES return data would suppress its wrap-up turn
+ * in both places.
+ */
 
 const SILENT_BROWSER_ACTIONS = new Set([
   "navigate", "new_tab", "close", "switch_tab", "close_tab", "back", "forward", "reload",
@@ -44,8 +26,7 @@ const SILENT_BROWSER_ACTIONS = new Set([
 ]);
 
 export function isSilentToolCall(c: ToolCall): boolean {
-  if (SILENT_FIRE_AND_FORGET_TOOLS.has(c.tool)) return true;
-  if (MEMORY_WRITE_TOOLS.has(c.tool)) return true;
+  if (loopFactsOf(c.tool).silent === true || isMemoryWrite(c.tool)) return true;
   if (c.tool === "browser") {
     const action = (c.args as { action?: string } | null)?.action;
     return typeof action === "string" && SILENT_BROWSER_ACTIONS.has(action);

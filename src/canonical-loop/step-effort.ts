@@ -9,6 +9,7 @@
 // Kill switch: LAX_STEP_EFFORT=off → every step classifies "standard".
 
 import type { TurnInput } from "./adapter-contract.js";
+import { toolsWhere } from "../tool-registry.js";
 import {
   capEffort,
   DEFAULT_REASONING_EFFORT,
@@ -21,27 +22,13 @@ export type StepEffort = "standard" | "mechanical";
 
 /**
  * File-mechanics tools whose results a model consumes without needing deep
- * deliberation to decide its next move. Names verified against the tool
- * definitions registered in src/tools/registry-build.ts:
- *   read, write            — src/tools/read-write-tools.ts
- *   edit, edit_lines,
- *   multi_edit             — src/tools/edit-tools.ts
- *   glob                   — src/tools/glob-tool.ts
- *   grep                   — src/tools/grep-tool.ts
- *   structural_search      — src/tools/structural-search-tool.ts
- * Deliberately narrow: bash, web_*, process_*, and every artifact tool stay
- * "standard" — their results routinely change the plan.
+ * deliberation to decide its next move: each row's `loop.mechanical` (read,
+ * write, the edit family, glob, grep, structural_search). Deliberately narrow:
+ * bash, web_*, process_*, and every artifact tool stay "standard" — their
+ * results routinely change the plan (step-effort.test.ts fences it to file
+ * tools).
  */
-export const MECHANICAL_TOOLS: ReadonlySet<string> = new Set([
-  "read",
-  "grep",
-  "glob",
-  "edit",
-  "write",
-  "multi_edit",
-  "edit_lines",
-  "structural_search",
-]);
+export const MECHANICAL_TOOLS: ReadonlySet<string> = new Set(toolsWhere((row) => row.loop?.mechanical === true));
 
 /**
  * Default routing floor for mechanical steps is "low", NOT "minimal": gpt-5.6

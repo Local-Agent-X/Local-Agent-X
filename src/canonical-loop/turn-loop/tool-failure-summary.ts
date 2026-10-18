@@ -56,7 +56,7 @@ import { withoutResultHeader } from "../../tools/result-helpers.js";
 import { extractToolResultText, toolResultStatus } from "./content-extract.js";
 import { isMutationTool } from "../../tool-mutation-check.js";
 import { isLedgerTool } from "../../committing-tool-check.js";
-import { MEMORY_WRITE_TOOLS } from "./silent-tool-check.js";
+import { isMemoryWrite } from "../../tool-registry.js";
 import { getMiddlewareState } from "../middlewares/state.js";
 import {
   createConstraintLedger, formatConstraintReminder, noteFailures,
@@ -119,10 +119,10 @@ export interface ToolFailureSummary {
    *     model writes its to-do list, narrates the plan, provider reports no stop
    *     reason — used to resolve `done` and transition the op to `succeeded`
    *     having done none of the work it just planned.
-   *  2. MEMORY WRITES. Every name in MEMORY_WRITE_TOOLS is workspace-write or
-   *     destructive, so isMutationTool answers true for all of them. (The
-   *     converse does NOT hold — seven memory_* mutation tools are missing from
-   *     that list; see the KNOWN GAP test in test/tool-failure-summary.test.ts.)
+   *  2. MEMORY WRITES. Every row that declares `memoryWrite` is workspace-write
+   *     or destructive, so isMutationTool answers true for all of them. (The
+   *     converse does NOT hold — seven memory_* mutation tools do not declare
+   *     it; see the KNOWN GAP test in test/tool-failure-summary.test.ts.)
    *     A turn that pairs `memory_save` with a DATA-RETURNING call (bash, read,
    *     web_fetch) then terminated on the memory write and stranded the result
    *     the model had not yet surfaced. A memory-ONLY turn is unaffected — but
@@ -146,8 +146,8 @@ export interface ToolFailureSummary {
  * predicate is defined here: isLedgerTool is imported from the ONE definition
  * in committing-tool-check.ts (a leaf whose only imports are tool-registry.ts
  * and plugin-system/tool-metadata.ts — the same two ../../tool-mutation-check.js
- * above already pulls, so this adds zero transitive dependencies), and
- * MEMORY_WRITE_TOOLS from the sibling silent-tool-check.ts (type-only imports).
+ * above already pulls, so this adds zero transitive dependencies), and a
+ * memory write is its row's `memoryWrite` (tool-registry.ts isMemoryWrite).
  * The previous local copy of `startsWith("task_")` was the third of three, and
  * three copies gating three different failure directions is this campaign's
  * root failure class.
@@ -157,7 +157,7 @@ export interface ToolFailureSummary {
  * excluded from termination. See the hazard note on isLedgerTool.
  */
 function isBookkeepingTool(name: string): boolean {
-  return isLedgerTool(name) || MEMORY_WRITE_TOOLS.has(name);
+  return isLedgerTool(name) || isMemoryWrite(name);
 }
 
 export function collectToolFailures(

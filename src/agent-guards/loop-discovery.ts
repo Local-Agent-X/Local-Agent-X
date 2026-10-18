@@ -13,6 +13,7 @@
  * existing importers (agent-guards/index.ts, the fence test) keep their path.
  */
 import { parseToolArgs } from "./loop-progress.js";
+import { loopFactsOf, policyRowOf, toolsWhere } from "../tool-registry.js";
 
 const ANON_PATTERN = "__anon__";
 
@@ -29,27 +30,18 @@ function normalizeGrepPattern(pattern?: string): string {
 }
 
 // Read-only discovery / lookup tools an agent spins on when it can't find
-// something. No risk-taxonomy tier models "discovery spin", so this stays a
-// curated list — but every member MUST be read-only (a fence test in
-// loop-detection.test.ts asserts risk in {safe, network-read}), so a mutating
-// tool can never be mistaken for a harmless lookup. Worker-pool status checks
-// (op_status / op_wait / agent_status) get polled in a tight loop — a chat
-// agent polled op_status 16x in one turn — so they're spiralable too.
+// something: each row's `loop.discovery`. No risk-taxonomy tier models
+// "discovery spin", so the row says it — but every member MUST be read-only (a
+// fence test in loop-detection.test.ts asserts risk in {safe, network-read}),
+// so a mutating tool can never be mistaken for a harmless lookup. Worker-pool
+// status checks (op_status / op_wait / agent_status) get polled in a tight
+// loop — a chat agent polled op_status 16x in one turn — so they're
+// spiralable too.
 //
 // Mutation / progress classification (which tools reset the no-progress and
 // discovery counters) lives in tool-mutation-check.ts, derived from the risk
-// taxonomy. Only this discovery set is curated.
-export const SPIRALABLE_TOOLS = new Set([
-  "glob", "web_search", "read", "grep",
-  "agent_whoami", "agent_team_list", "issue_list", "issue_search",
-  "memory_search", "memory_recall", "memory_get",
-  "task_list",
-  "op_status", "op_wait", "agent_status", "agent_output",
-]);
-
-/** Tools whose repeated identical SEARCH (the pattern, not the call bytes) is
- *  the waste signal. Curated + read-only, like SPIRALABLE_TOOLS. */
-const REPEAT_SEARCH_TOOLS = new Set(["grep", "web_search"]);
+// taxonomy.
+export const SPIRALABLE_TOOLS: ReadonlySet<string> = new Set(toolsWhere((row) => row.loop?.discovery === true));
 
 // Re-running the SAME search this many times is redundant: the answer won't
 // change without an intervening edit, and even with edits between, re-
@@ -73,15 +65,15 @@ export function discoveryLimitFor(weak: boolean): number {
 }
 
 /** A stable key for "the same search", or null for a non-search call. Keys on
- *  the search PATTERN/QUERY (normalized), NOT the full args — so a re-grep
- *  with a different glob/scope still collapses to one key. */
+ *  the argument the row names as its `loop.searchKey` (grep's pattern,
+ *  web_search's query), normalized, NOT the full args — so a re-grep with a
+ *  different glob/scope still collapses to one key. */
 export function searchKeyOf(name: string, argsJson: string): string | null {
-  if (!REPEAT_SEARCH_TOOLS.has(name)) return null;
+  const keyArg = loopFactsOf(name).searchKey;
+  if (!keyArg) return null;
   const args = parseToolArgs(argsJson);
   if (!args) return null;
-  const raw = typeof args.pattern === "string" ? args.pattern
-    : typeof args.query === "string" ? args.query
-    : null;
+  const raw = typeof args[keyArg] === "string" ? args[keyArg] as string : null;
   if (!raw) return null;
   return `${name}:${normalizeGrepPattern(raw)}`;
 }
@@ -129,9 +121,10 @@ export function findDiscoveryLoop(
 
 /** Pivot-toward-action wording for a discovery spin. The model usually has
  *  enough context by call N — what it needs is permission to switch tactics,
- *  not an instruction to give up. */
+ *  not an instruction to give up. A spin on a file tool (read, glob, grep) is
+ *  pointed at the file tools that act on what it read. */
 export function discoveryNudge(tool: string, count: number): string {
-  const hint = (tool === "read" || tool === "glob" || tool === "grep")
+  const hint = policyRowOf(tool)?.kernel === "file"
     ? " You have enough context — switch tactic: use write/edit/bash to act on what you've already read, or ask the user a focused question if you're truly stuck."
     : " You have enough context — produce the answer or take the next concrete action.";
   return `SYSTEM: ${tool} called ${count} times this turn — that's a discovery loop signal.${hint} Do not call ${tool} again unless you have a specific new file/path/term to look up.`;

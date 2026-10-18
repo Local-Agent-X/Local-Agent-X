@@ -1,6 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { getLaxDir } from "./lax-data-dir.js";
+import { categoryOf } from "./tool-registry.js";
+import { OP_CATEGORIES, type OpCategory } from "./tool-policy/tool-policies.types.js";
 
 interface ToolCallRecord {
 	name: string;
@@ -32,19 +34,7 @@ const OP_OUTCOMES_FILE = "op-outcomes.json";
 // give up. Keyed by category and model because a blended "browser 60% clean"
 // across Grok + Claude is meaningless — separating them is the whole question.
 
-export type OpCategory = "browser" | "computer" | "coding" | "connector" | "research" | "general";
 export type OpOutcome = "clean" | "partial" | "aborted";
-
-// First family with a tool used wins, so an op that browsed and then web-fetched
-// still reads as "browser" — the drive category the gates care about. No match →
-// "general".
-const CATEGORY_TOOLS: ReadonlyArray<readonly [OpCategory, readonly string[]]> = [
-	["browser", ["browser"]],
-	["computer", ["computer", "computer_click", "computer_type", "computer_press", "computer_move", "computer_drag", "computer_position", "screen_capture"]],
-	["coding", ["write", "edit", "edit_lines", "multi_edit", "bulk_replace", "bash", "build_app", "delete_file", "restore_file"]],
-	["connector", ["email_send", "email_draft", "telegram_send", "whatsapp_send", "connector_create", "send_image", "send_video"]],
-	["research", ["web_search", "web_fetch", "http_request", "image_search", "youtube_analyze"]],
-];
 
 /**
  * Normalize a tool name observed out of band (CLI/MCP path) to its canonical
@@ -64,12 +54,13 @@ export function normalizeObservedToolName(raw: string): string {
 	return raw;
 }
 
+/** What the op was doing, by each used tool's row `category`. The first
+ *  category in OP_CATEGORIES order with a tool used wins, so an op that browsed
+ *  and then web-fetched still reads as "browser" — the drive category the gates
+ *  care about. No match → "general". */
 export function classifyOpCategory(toolsUsed: Set<string>): OpCategory {
-	const normalized = new Set([...toolsUsed].map(normalizeObservedToolName));
-	for (const [category, names] of CATEGORY_TOOLS) {
-		if (names.some((n) => normalized.has(n))) return category;
-	}
-	return "general";
+	const used = new Set([...toolsUsed].map((name) => categoryOf(normalizeObservedToolName(name))));
+	return OP_CATEGORIES.find((category) => used.has(category)) ?? "general";
 }
 
 interface OpOutcomeEntry { total: number; clean: number; partial: number; aborted: number; gaveUpNudged?: number; }

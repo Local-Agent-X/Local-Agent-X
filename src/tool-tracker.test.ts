@@ -15,6 +15,8 @@ import {
 	getToolSuccessRate,
 	getRecentFailures,
 } from "./tool-tracker.js";
+import { toolsWhere } from "./tool-registry.js";
+import { OP_CATEGORIES } from "./tool-policy/tool-policies.types.js";
 
 // op-outcome persistence resolves getLaxDir() lazily, so redirecting the write
 // off ~/.lax in beforeAll (not at import) is enough. Restore so the env doesn't
@@ -32,7 +34,8 @@ afterAll(() => {
 describe("classifyOpCategory", () => {
   it("ranks drive tools ahead of read-only ones", () => {
     expect(classifyOpCategory(new Set(["browser", "web_fetch"]))).toBe("browser");
-    expect(classifyOpCategory(new Set(["web_fetch", "computer_click"]))).toBe("computer");
+    expect(classifyOpCategory(new Set(["web_fetch", "computer"]))).toBe("computer");
+    expect(classifyOpCategory(new Set(["web_fetch", "screen_capture"]))).toBe("computer");
     expect(classifyOpCategory(new Set(["write", "web_search"]))).toBe("coding");
     expect(classifyOpCategory(new Set(["email_send"]))).toBe("connector");
     expect(classifyOpCategory(new Set(["web_search"]))).toBe("research");
@@ -41,6 +44,13 @@ describe("classifyOpCategory", () => {
   it("falls back to general for uncategorized or empty tool sets", () => {
     expect(classifyOpCategory(new Set(["task_list"]))).toBe("general");
     expect(classifyOpCategory(new Set())).toBe("general");
+    expect(classifyOpCategory(new Set(["no_such_tool"]))).toBe("general");
+  });
+
+  it("every category has a tool that declares it on its row", () => {
+    for (const category of OP_CATEGORIES) {
+      expect(toolsWhere((row) => row.category === category).length, category).toBeGreaterThan(0);
+    }
   });
 
   it("normalizes MCP-prefixed observed tool names before matching", () => {

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { isSilentToolCall } from "./silent-tool-check.js";
 import type { ToolCall } from "../contract-types.js";
+import { toolsWhere } from "../../tool-registry.js";
 
 function call(tool: string, args: unknown = {}): ToolCall {
   return { id: "1", toolCallId: "1", tool, args } as unknown as ToolCall;
@@ -13,8 +14,15 @@ describe("isSilentToolCall", () => {
     expect(isSilentToolCall(call("voice_visual", { kind: "mood", value: "happy" }))).toBe(true);
   });
 
-  it("memory writes are silent", () => {
-    expect(isSilentToolCall(call("memory_save"))).toBe(true);
+  it("memory writes are silent — every row that declares memoryWrite", () => {
+    const writes = toolsWhere((row) => row.memoryWrite === true);
+    expect(writes).toEqual(expect.arrayContaining(["memory_save", "remember", "forget"]));
+    for (const tool of writes) expect(isSilentToolCall(call(tool)), tool).toBe(true);
+  });
+
+  it("a fire-and-forget row is silent; a memory read is not", () => {
+    for (const tool of toolsWhere((row) => row.loop?.silent === true)) expect(isSilentToolCall(call(tool)), tool).toBe(true);
+    expect(isSilentToolCall(call("memory_search"))).toBe(false);
   });
 
   it("silent browser actions are silent; data-returning ones are not", () => {

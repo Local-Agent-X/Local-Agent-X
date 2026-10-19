@@ -105,11 +105,13 @@ const SIGNALS: CategorySignals[] = [
   {
     // The request is bigger than the model's window. Providers ship it as HTTP
     // 400 (Anthropic "prompt is too long: X tokens > Y maximum", OpenAI "This
-    // model's maximum context length is ..."), so the wording decides, ahead of
-    // "model". Not retryable as sent: the turn loop compacts, then resends.
+    // model's maximum context length is ..."; Ollama / llama.cpp "request
+    // (65541 tokens) exceeds the available context size"), so the wording
+    // decides, ahead of "model". Not retryable as sent: the turn loop
+    // compacts, then resends.
     category: "contextOverflow",
     codes: (code) => code === 413,
-    phrases: [/\b(payload too large|request entity too large|max(_|imum)? tokens?|content too long|prompt is too long|maximum context length|context (length|window)\b.{0,60}\bexceed|exceeds?\b.{0,60}\bcontext (length|window)|input is too long)\b/i],
+    phrases: [/\b(payload too large|request entity too large|max(_|imum)? tokens?|content too long|prompt is too long|maximum context length|context (length|window|size)\b.{0,60}\bexceed|exceeds?\b.{0,60}\bcontext (length|window|size)|input is too long)\b/i],
   },
   {
     category: "model",

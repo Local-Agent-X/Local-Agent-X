@@ -65,6 +65,17 @@ describe("the adapter's own over-window refusal is recovered, not terminal", () 
     clearOverflowAttempts("op-provider");
   });
 
+  // Terminal-Bench (2026-10-18, cad-model): Ollama's llama.cpp runner says
+  // "context size", and the wording rule knew only "length" and "window", so
+  // this overflow ended the op as a transport error instead of compacting.
+  it("recognizes Ollama / llama.cpp's over-window wording", () => {
+    const message = "transport_error: 400 request (65541 tokens) exceeds the available context size (65536 tokens), try increasing it";
+    expect(classify(message)).toBe("contextOverflow");
+    const result = recoverReportedAdapterError(op("op-ollama"), { code: "transport_error", message, retryable: false }, 3, idle);
+    expect(result?.terminalReason).toBeNull();
+    clearOverflowAttempts("op-ollama");
+  });
+
   it("stays bounded — a view that cannot be shrunk still ends eventually", () => {
     const err = { code: CONTEXT_WINDOW_EXCEEDED_CODE, message: PREFLIGHT_MESSAGE, retryable: false };
     expect(recoverReportedAdapterError(op("op-bounded"), err, 1, idle)).toBeDefined();

@@ -26,6 +26,13 @@ vi.mock("../src/workspace/paths.js", async (importOriginal) => {
   };
 });
 
+// create_chart's sink is where its path resolves, not how the chart is drawn:
+// drawing loads sharp's native library cold, which on a busy Windows runner
+// outlasted the test's timeout. Rendering has its own tests (chart-tools.test.ts).
+vi.mock("../src/tools/shared/office-chart.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/tools/shared/office-chart.js")>()),
+  renderChartPng: async () => Buffer.alloc(128),
+}));
 import type { ToolDefinition } from "../src/types.js";
 import { workspaceRoot } from "../src/config.js";
 import { setSessionWorkRoot, clearSessionWorkRoot, sessionIdOf, sessionWorkRootOf, realpathDeep } from "../src/workspace/paths.js";

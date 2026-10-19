@@ -3,7 +3,8 @@
 // change fixes: (a) detached spawn lets process_kill actually terminate the
 // child, and (b) process_restart replaces a tracked session with a new one.
 
-import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
+import { describe, it, expect, afterAll, afterEach, beforeEach, vi } from "vitest";
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -86,11 +87,31 @@ import {
 import { SESSIONS, startSession } from "./process-session.js";
 import type { ToolResult } from "../types.js";
 
-// A node one-liner that stays alive until killed.
+// A node one-liner that stays alive until killed. It says "ready" once it runs,
+// so a test kills it only after it exists: on Windows a session is a shell
+// starting node, and a kill that lands while the shell is still creating node
+// misses it — node then starts as an orphan, holds the file's workspace as its
+// working directory, and the setup's teardown fails the file with EBUSY. It
+// also exits once its parent is gone, so no orphan outlives the file.
 const nodeExecutable = process.platform === "win32"
   ? process.execPath.replace(/\\/g, "/")
   : process.execPath;
-const FOREVER = `"${nodeExecutable}" -e "setInterval(()=>{},1000)"`;
+const MARK = `lax-process-tools-${process.pid}`;
+const FOREVER = `"${nodeExecutable}" -e "console.log('ready');setInterval(()=>{try{process.kill(process.ppid,0)}catch{process.exit(0)}},250)" ${MARK}`;
+
+// Last line of defence, and the evidence if the above ever misses: any stand-in
+// of this file still running is reported and stopped before the setup removes
+// the workspace it may be standing in.
+afterAll(() => {
+  if (process.platform !== "win32") return;
+  const query = `Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object { $_.CommandLine -like '*${MARK}*' }`;
+  try {
+    const left = execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `@(${query}).Count; ${query} | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }`], { encoding: "utf-8", windowsHide: true, timeout: 30_000 }).trim();
+    if (left !== "0") console.warn(`[process-tools.test] ${left} stand-in process(es) outlived their session and were stopped`);
+  } catch (e) {
+    console.warn(`[process-tools.test] could not check for leftover stand-ins: ${(e as Error).message}`);
+  }
+}, 40_000);
 
 // Track every session we start so afterEach can reap leaks even on failure.
 const spawned = new Set<string>();
@@ -103,7 +124,18 @@ async function startForever(): Promise<string> {
   const r = await processStartTool.execute({ command: FOREVER });
   const id = sessionIdOf(r);
   if (id) spawned.add(id);
+  await untilStarted(id);
   return id;
+}
+
+/** Until the session's program has said it runs, or the session is over. */
+async function untilStarted(sessionId: string, timeoutMs = 8000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const session = SESSIONS.get(sessionId);
+    if (!session || session.exitedAt !== null || session.stdout.includes("ready") || Date.now() >= deadline) return;
+    await new Promise(r => setTimeout(r, 25));
+  }
 }
 
 async function isRunning(sessionId: string): Promise<boolean> {
@@ -125,6 +157,7 @@ async function pollRunning(sessionId: string, want: boolean, timeoutMs = 8000): 
 // and the setup's teardown fails the whole file with EBUSY.
 afterEach(async () => {
   for (const id of spawned) {
+    await untilStarted(id);
     try { await processKillTool.execute({ session_id: id }); } catch { /* best effort */ }
     await pollRunning(id, false, 5000);
   }

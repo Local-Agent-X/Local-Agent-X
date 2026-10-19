@@ -28,9 +28,12 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      # The Node LAX ships (its managed runtime is Node 24, with npm 11): the
+      # creators run under it on a user's machine, and npm 10's resolver
+      # crashed inside nuxi's install on the Node 22 runner (2026-10-19).
       - uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
 
       - name: Install dependencies

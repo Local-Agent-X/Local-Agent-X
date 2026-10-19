@@ -46,8 +46,12 @@ const SCAFFOLDS: Record<Exclude<DetectedFramework, "static" | "unknown" | "remix
 	nuxt: {
 		label: "Nuxt",
 		// nuxi 4 refuses a non-interactive terminal without --template, and refuses
-		// the existing (empty) app dir without --force (live 2026-10-18).
-		creator: "npx nuxi@latest init . --template minimal --force --packageManager npm --gitInit false",
+		// the existing (empty) app dir without --force (live 2026-10-18). Its
+		// boolean flags take the --no- form: `--gitInit false` still made a repo
+		// inside the app, and without --no-install it ran npm itself, where npm
+		// 10's resolver crashed (live 2026-10-19). The install is the build's own
+		// step, as for every other creator.
+		creator: "npx nuxi@latest init . --template minimal --force --packageManager npm --no-install --no-gitInit",
 		basePatch: (n) => `Set \`app.baseURL: '/apps/${n}/'\` in nuxt.config. Nuxt owns its own bundler — do NOT add a standalone vite.config.`,
 	},
 	sveltekit: {

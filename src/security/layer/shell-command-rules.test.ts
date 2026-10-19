@@ -257,7 +257,8 @@ describe("a privilege refusal on a server already running as root", () => {
 
   it("still refuses the sudo, and says to run the command without it", () => {
     withUid(0, () => {
-      expect(sudo().kind === "rule" && sudo().rule.id).toBe("privilege");
+      const hit = sudo();
+      expect(hit.kind === "rule" ? hit.rule.id : null).toBe("privilege");
       expect(commandRuleReason(sudo())).toContain(ALREADY_ROOT_WAY_OUT);
       expect(commandRuleRecovery(sudo())).toBe(ALREADY_ROOT_WAY_OUT);
     });

@@ -6,12 +6,13 @@ import { admitEndpoint } from "../src/local-runtimes/admission.js";
 import { candidateEndpoints, manualRuntimeEntries } from "../src/local-runtimes/endpoints.js";
 import { PROFILE_NAMES } from "../src/autonomy/profiles.js";
 // @ts-expect-error — plain .mjs eval module, no type declarations
-import { DEFAULT_LOCAL_URL, SERVER_ENV, buildSeed, parseModel, writeSeed } from "../eval/terminal-bench/seed.mjs";
+import { DEFAULT_LOCAL_URL, DEFAULT_OLLAMA_URL, SERVER_ENV, buildSeed, parseModel, writeSeed } from "../eval/terminal-bench/seed.mjs";
 
 describe("terminal-bench seed: Harbor model names", () => {
-  it("maps lmstudio/ and local/ to LAX's local provider, keeping the model id whole", () => {
-    expect(parseModel("lmstudio/qwen3.6-27b")).toEqual({ provider: "local", model: "qwen3.6-27b" });
-    expect(parseModel("local/org/model-q6")).toEqual({ provider: "local", model: "org/model-q6" });
+  it("maps lmstudio/, local/ and ollama/ to LAX's local provider, keeping the model id whole", () => {
+    expect(parseModel("lmstudio/qwen3.6-27b")).toMatchObject({ provider: "local", model: "qwen3.6-27b", runtime: { kind: "openai-compat" } });
+    expect(parseModel("local/org/model-q6")).toMatchObject({ provider: "local", model: "org/model-q6" });
+    expect(parseModel("ollama/qwen3.6:27b")).toMatchObject({ provider: "local", model: "qwen3.6:27b", runtime: { kind: "ollama", url: DEFAULT_OLLAMA_URL } });
   });
 
   it("refuses a name without a provider or model, and a provider it does not run yet", () => {
@@ -36,6 +37,14 @@ describe("terminal-bench seed: the data dir a task starts from", () => {
     expect(swept).toContain(DEFAULT_LOCAL_URL);
     expect(candidateEndpoints({ provider: "local" }).map((c) => c.endpoint.baseUrl)).not.toContain(DEFAULT_LOCAL_URL);
     expect(admitEndpoint(DEFAULT_LOCAL_URL, new Set()).allowed).toBe(false);
+  });
+
+  it("names an Ollama model's runtime as Ollama, which the product then sweeps", () => {
+    const settings = JSON.parse(buildSeed({ modelName: "ollama/qwen3.6:27b" })["settings.json"]);
+    expect(settings).toMatchObject({ provider: "local", model: "qwen3.6:27b" });
+    expect(manualRuntimeEntries(settings)).toEqual([{ kind: "ollama", baseUrl: DEFAULT_OLLAMA_URL, label: "Ollama" }]);
+    const ollama = candidateEndpoints(settings).find((c) => c.endpoint.baseUrl === DEFAULT_OLLAMA_URL);
+    expect(ollama?.kind).toBe("ollama");
   });
 
   it("runs Autonomous with unrestricted file access, a profile the product knows", () => {

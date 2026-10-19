@@ -46,13 +46,19 @@ Each trial's logs land under `/logs/agent/` in the trial folder:
 
 | `-m` | LAX provider |
 |---|---|
-| `lmstudio/<model>`, `local/<model>` | `local`, reaching LM Studio through a hand-added runtime entry |
+| `lmstudio/<model>`, `local/<model>` | `local`, reaching LM Studio (`host.docker.internal:1234`) through a hand-added runtime entry |
+| `ollama/<model>` (e.g. `ollama/qwen3.6:27b`) | `local`, reaching Ollama (`host.docker.internal:11434`) the same way |
 
 Subscription providers are not wired yet.
 
 ## Comparing harnesses
 
 Compare harnesses on the same model and the same tasks. For a local model,
-point every harness at the same LM Studio server and the same model file, for
-example Codex through `OPENAI_BASE_URL`. Tasks that need the GPU compete with
+point every harness at the same server and the same model file. Codex runs
+against Ollama (`-a codex -m openai/qwen3.6:27b` with
+`OPENAI_BASE_URL=http://host.docker.internal:11434/v1` and any
+`OPENAI_API_KEY`); against LM Studio its first request fails, because the
+Qwen chat template LM Studio uses rejects a system message that is not the
+first message, and Codex sends one mid-conversation. Through that API Codex
+gets Ollama's default context window (64k on a 32 GB GPU); LAX sizes its own. Tasks that need the GPU compete with
 a local model for VRAM; when they are skipped, skip them for every harness.

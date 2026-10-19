@@ -7,8 +7,9 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-/** Where LM Studio's server is reached from inside a task container. */
+/** Where LM Studio's and Ollama's servers are reached from inside a task container. */
 export const DEFAULT_LOCAL_URL = "http://host.docker.internal:1234";
+export const DEFAULT_OLLAMA_URL = "http://host.docker.internal:11434";
 
 /**
  * Environment the server runs with. A chat sent over HTTP is an "api" call,
@@ -20,15 +21,21 @@ export const DEFAULT_LOCAL_URL = "http://host.docker.internal:1234";
  */
 export const SERVER_ENV = { LAX_SANDBOX: "host" };
 
-/** Harbor model prefixes LAX runs, mapped to the LAX provider id. */
-const PROVIDER_BY_PREFIX = {
-  lmstudio: "local",
-  local: "local",
+/**
+ * Harbor model prefixes LAX runs: the LAX provider id, and the local runtime
+ * that serves the model (its kind as src/local-runtimes/endpoints.ts names
+ * it, and its default address from inside a task container).
+ */
+const RUNTIME_BY_PREFIX = {
+  lmstudio: { provider: "local", kind: "openai-compat", url: DEFAULT_LOCAL_URL, label: "LM Studio" },
+  local: { provider: "local", kind: "openai-compat", url: DEFAULT_LOCAL_URL, label: "LM Studio" },
+  ollama: { provider: "local", kind: "ollama", url: DEFAULT_OLLAMA_URL, label: "Ollama" },
 };
 
 /**
- * Split a Harbor `-m` value (`lmstudio/qwen3.6-27b`) into LAX's provider and
- * model id. The model id keeps any further slashes (`local/org/model`).
+ * Split a Harbor `-m` value (`lmstudio/qwen3.6-27b`, `ollama/qwen3.6:27b`)
+ * into LAX's provider, model id and runtime. The model id keeps any further
+ * slashes (`local/org/model`).
  */
 export function parseModel(modelName) {
   const slash = typeof modelName === "string" ? modelName.indexOf("/") : -1;
@@ -36,11 +43,11 @@ export function parseModel(modelName) {
     throw new Error(`model must be <provider>/<model>, got ${JSON.stringify(modelName)}`);
   }
   const prefix = modelName.slice(0, slash).toLowerCase();
-  const provider = PROVIDER_BY_PREFIX[prefix];
-  if (!provider) {
-    throw new Error(`provider "${prefix}" is not supported yet; use one of: ${Object.keys(PROVIDER_BY_PREFIX).join(", ")}`);
+  const runtime = RUNTIME_BY_PREFIX[prefix];
+  if (!runtime) {
+    throw new Error(`provider "${prefix}" is not supported yet; use one of: ${Object.keys(RUNTIME_BY_PREFIX).join(", ")}`);
   }
-  return { provider, model: modelName.slice(slash + 1) };
+  return { provider: runtime.provider, model: modelName.slice(slash + 1), runtime };
 }
 
 /**
@@ -61,11 +68,12 @@ export function parseModel(modelName) {
  *   rigs seed (eval/op-outcomes/isolated.mjs), so the first reply is not the
  *   first-run identity ask.
  */
-export function buildSeed({ modelName, localUrl = DEFAULT_LOCAL_URL, now = new Date() }) {
-  const { provider, model } = parseModel(modelName);
+export function buildSeed({ modelName, localUrl, now = new Date() }) {
+  const { provider, model, runtime } = parseModel(modelName);
   const settings = { provider, model };
   if (provider === "local") {
-    settings.localRuntimes = [{ kind: "openai-compat", baseUrl: localUrl.replace(/\/+$/, ""), label: "LM Studio" }];
+    const baseUrl = (localUrl || runtime.url).replace(/\/+$/, "");
+    settings.localRuntimes = [{ kind: runtime.kind, baseUrl, label: runtime.label }];
   }
   return {
     "settings.json": JSON.stringify(settings),

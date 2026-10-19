@@ -23,7 +23,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { driveChat } from "../grok-coding-parity/lib.mjs";
-import { DEFAULT_LOCAL_URL, SERVER_ENV, buildSeed, writeSeed } from "./seed.mjs";
+import { SERVER_ENV, buildSeed, writeSeed } from "./seed.mjs";
 
 const BOOT_TIMEOUT_MS = 180_000;
 // Harbor enforces each task's own agent timeout; this only has to outlast it.
@@ -68,7 +68,8 @@ async function main() {
   const instructionFile = arg("instruction-file");
   const outPath = arg("out", "lax-result.json");
   const serverLog = arg("server-log", "lax-server.log");
-  const localUrl = arg("local-url", process.env.LAX_TB_LOCAL_URL || DEFAULT_LOCAL_URL);
+  // Unset: the runtime's default address for the model's prefix (seed.mjs).
+  const localUrl = arg("local-url", process.env.LAX_TB_LOCAL_URL || undefined);
   const timeoutMs = Number(arg("timeout-ms", DEFAULT_TURN_TIMEOUT_MS));
   if (!modelName || !instructionFile) {
     console.error("usage: drive.mjs --model <provider>/<model> --instruction-file <path> [--out <json>] [--server-log <path>]");

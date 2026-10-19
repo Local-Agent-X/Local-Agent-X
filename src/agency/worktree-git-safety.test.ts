@@ -1,7 +1,8 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { git, gitAsync, GIT_OUTPUT_CAP, WORKTREE_BASE } from "./worktree-core.js";
@@ -202,6 +203,22 @@ describe("gitExecutable", () => {
     expect(real).not.toBeNull();
     expect(gitExecutable()).toBe(real);
     expect(execFileSync(gitExecutable(), ["--version"], { encoding: "utf-8" })).toMatch(/^git version /);
+  });
+
+  it("is what every sync runner spawns: none names the launcher", () => {
+    // A sync runner's timeout or maxBuffer kills its own child only, so one
+    // that spawns `git` by name leaves the real git running on Windows. The
+    // one bare call left is gitExecutable's own --exec-path lookup.
+    const src = join(dirname(fileURLToPath(import.meta.url)), "..");
+    const sourceFiles = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) return sourceFiles(path);
+      return entry.isFile() && path.endsWith(".ts") && !path.endsWith(".test.ts") ? [path] : [];
+    });
+    const bare = sourceFiles(src).flatMap((path) =>
+      [...readFileSync(path, "utf-8").matchAll(/\b(?:execFileSync|spawnSync)\(\s*["'`]git["'`]/g)]
+        .map(() => relative(src, path).replace(/\\/g, "/")));
+    expect(bare).toEqual(["git-safety.ts"]);
   });
 });
 

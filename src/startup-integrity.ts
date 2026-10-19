@@ -24,6 +24,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 
+import { gitExecutable } from "./git-safety.js";
 import { createLogger } from "./logger.js";
 const logger = createLogger("startup-integrity");
 
@@ -82,7 +83,7 @@ function tryAutoRestore(missingPaths: string[]): { restored: boolean; error?: st
   const arikernelPaths = missingPaths.filter(p => p.startsWith("packages/arikernel/"));
   if (arikernelPaths.length === 0) return { restored: false, error: "no arikernel paths to restore" };
   try {
-    execFileSync("git", ["checkout", "HEAD", "--", "packages/arikernel/"], {
+    execFileSync(gitExecutable(), ["checkout", "HEAD", "--", "packages/arikernel/"], {
       cwd: process.cwd(),
       stdio: ["ignore", "pipe", "pipe"],
       timeout: 15_000,

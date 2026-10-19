@@ -3,7 +3,7 @@ import { constants, existsSync } from "node:fs";
 import { lstat, mkdir, open, readFile, rename, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import {
-  createJournal, directoryIdentity, durableJson, hash, parseJson, safePathChain, safeRelative, sameIdentity, samePath,
+  createJournal, directoryIdentity, durableJson, hash, parseJson, pathChainChecker, safePathChain, safeRelative, sameIdentity, samePath,
   UPDATE_ROLLBACK_ANCHOR, UPDATE_ROLLBACK_VERSION, validAnchor, validJournal,
   type TransactionAnchor, type UpdateRollbackEntry, type UpdateRollbackJournal,
 } from "./update-rollback-state.js";
@@ -239,14 +239,16 @@ export class UpdateRollbackTransaction {
     directoryIdentity(this.stateRoot);
   }
   private assertJournal(journal: UpdateRollbackJournal, expectedInstallRoot = journal.installRoot): void {
-    if (!samePath(journal.installRoot, expectedInstallRoot) || !samePath(journal.stateRoot, this.stateRoot)
-      || !sameIdentity(journal.installBase, directoryIdentity(journal.installRoot))
-      || !sameIdentity(journal.stateBase, directoryIdentity(this.stateRoot))) throw this.ambiguous();
-    for (const entry of journal.entries) this.assertEntryPaths(journal, entry);
+    if (!samePath(journal.installRoot, expectedInstallRoot) || !samePath(journal.stateRoot, this.stateRoot)) throw this.ambiguous();
+    this.assertEntryChains(journal, journal.entries);
   }
 
   private assertRawPath(base: string, path: string, kind: string): void {
-    if (!safePathChain(base, path)) throw new Error(`Update rollback ${kind} path became linked or escaped: ${path}`);
+    if (!safePathChain(base, path)) throw this.linked(kind, path);
+  }
+
+  private linked(kind: string, path: string): Error {
+    return new Error(`Update rollback ${kind} path became linked or escaped: ${path}`);
   }
 
   private assertPath(journal: UpdateRollbackJournal, base: string, path: string): void {
@@ -255,14 +257,31 @@ export class UpdateRollbackTransaction {
   }
 
   private assertEntryPaths(journal: UpdateRollbackJournal, entry: UpdateRollbackEntry): void {
-    this.assertJournalBases(journal);
-    this.assertRawPath(journal.installRoot, entry.path, "install");
-    this.assertRawPath(this.stateRoot, join("update-rollback", "artifacts", entry.path), "backup");
+    this.assertEntryChains(journal, [entry]);
   }
 
-  private assertJournalBases(journal: UpdateRollbackJournal): void {
-    if (!sameIdentity(journal.installBase, directoryIdentity(journal.installRoot))
-      || !sameIdentity(journal.stateBase, directoryIdentity(this.stateRoot))) throw this.ambiguous();
+  /** The bases, then each entry's install and backup chains, in one synchronous
+   *  pass. Each base's chains share one checker seeded with the real path the
+   *  base check just read: a sweep over the journal costs about one lstat per
+   *  entry, not two walks of both bases from the drive root per entry. Every
+   *  file operation still runs assertEntryPaths right before it touches disk. */
+  private assertEntryChains(journal: UpdateRollbackJournal, entries: UpdateRollbackEntry[]): void {
+    const real = this.assertJournalBases(journal);
+    const install = pathChainChecker(journal.installRoot, real.install);
+    const backup = pathChainChecker(this.stateRoot, real.state);
+    for (const entry of entries) {
+      if (!install(entry.path)) throw this.linked("install", entry.path);
+      const backupPath = join("update-rollback", "artifacts", entry.path);
+      if (!backup(backupPath)) throw this.linked("backup", backupPath);
+    }
+  }
+
+  private assertJournalBases(journal: UpdateRollbackJournal): { install: string; state: string } {
+    const install = directoryIdentity(journal.installRoot);
+    if (!sameIdentity(journal.installBase, install)) throw this.ambiguous();
+    const state = directoryIdentity(this.stateRoot);
+    if (!sameIdentity(journal.stateBase, state)) throw this.ambiguous();
+    return { install: install.real, state: state.real };
   }
 
   private assertBound(journal: UpdateRollbackJournal): void {

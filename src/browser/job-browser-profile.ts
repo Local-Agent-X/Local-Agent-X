@@ -15,7 +15,8 @@ import { getLaxDir } from "../lax-data-dir.js";
 import { browserClearPartition } from "./bridge-client.js";
 import { BridgeUnavailableError } from "./bridge-client-contract.js";
 import { closeJobProfileBrowsers } from "./instance.js";
-import { jobBrowserPartition, jobBrowserProfileDir } from "./session-owner-registry.js";
+import { holdJobBrowserProfileShut, jobBrowserPartition, jobBrowserProfileDir } from "./session-owner-registry.js";
+import { stopChromesOnProfileDir } from "./windows-chat-chrome-runtime.js";
 
 export async function clearJobBrowserProfile(jobId: string): Promise<void> {
   const dir = jobBrowserProfileDir(jobId);
@@ -23,13 +24,23 @@ export async function clearJobBrowserProfile(jobId: string): Promise<void> {
   if (dirname(dir) !== join(getLaxDir(), "browser-job-profiles")) {
     throw new Error(`Refusing to clear browser profile "${dir}": not one job's profile dir`);
   }
-  await closeJobProfileBrowsers(jobId);
-  // Retries: on Windows a just-closed Chrome can hold its profile's files for a moment.
-  await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  // Shut while it is wiped: a run still going cannot open a browser on it
+  // mid-wipe (a deleted job's stays shut for good: setJobExistsCheck).
+  const reopen = holdJobBrowserProfileShut(jobId);
   try {
-    await browserClearPartition(jobBrowserPartition(jobId));
-  } catch (error) {
-    // Not under the desktop app: there is no in-app partition to clear.
-    if (!(error instanceof BridgeUnavailableError)) throw error;
+    await closeJobProfileBrowsers(jobId);
+    // And any Chrome still on the dir that no backend holds any more: one
+    // mid-launch, or one a finished run's own close is still taking down.
+    await stopChromesOnProfileDir(dir);
+    // Retries: on Windows a just-closed Chrome can hold its profile's files for a moment.
+    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    try {
+      await browserClearPartition(jobBrowserPartition(jobId));
+    } catch (error) {
+      // Not under the desktop app: there is no in-app partition to clear.
+      if (!(error instanceof BridgeUnavailableError)) throw error;
+    }
+  } finally {
+    reopen();
   }
 }

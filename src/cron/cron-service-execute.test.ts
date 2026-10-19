@@ -26,6 +26,7 @@ function service(handler: ExecuteHandler): CronService {
     timers: new Map(),
     history: { append: () => {} },
     saveJobs: () => {},
+    changes: { raise: () => {} },
     executeJob: async () => {},
   } as unknown as CronService;
 }

@@ -24,8 +24,20 @@ const defaultDependencies: RuntimeDependencies = {
   launch: launchAgentChrome,
 };
 
+/** Every runtime that has launched, or is launching, a Chrome on a profile dir,
+ *  until it is stopped: what stopChromesOnProfileDir waits out. */
+const liveByProfileDir = new Map<string, Set<WindowsChatChromeRuntime>>();
+
+/** Stop every Chrome on a profile dir and resolve once each is gone, including
+ *  one still launching and one another caller is already closing — so nothing
+ *  is writing the dir when the caller removes it (job-browser-profile.ts). */
+export async function stopChromesOnProfileDir(profileDir: string): Promise<void> {
+  await Promise.all([...(liveByProfileDir.get(profileDir) ?? [])].map((runtime) => runtime.stop()));
+}
+
 export class WindowsChatChromeRuntime implements BrowserContextRuntime {
   private launchPromise: Promise<BrowserContext> | null = null;
+  private stopping: Promise<void> | null = null;
   private browser: Browser | null = null;
   private context: BrowserContext | null = null;
   private launchCleanup: (() => Promise<void>) | null = null;
@@ -35,6 +47,8 @@ export class WindowsChatChromeRuntime implements BrowserContextRuntime {
     readonly sessionId: string,
     readonly profileDir = windowsChatChromeProfileDir(sessionId),
     private readonly dependencies: RuntimeDependencies = defaultDependencies,
+    /** Throws when no Chrome may launch on the profile now (a deleted job's). */
+    private readonly checkLaunch: () => void = () => {},
   ) {}
 
   async acquire(
@@ -46,6 +60,10 @@ export class WindowsChatChromeRuntime implements BrowserContextRuntime {
     if (engine !== "chromium") throw new Error("Windows chat Chrome supports only the Chromium engine");
     if (this.context && this.browser?.isConnected()) return this.context;
     if (!this.launchPromise) {
+      this.checkLaunch();
+      let live = liveByProfileDir.get(this.profileDir);
+      if (!live) liveByProfileDir.set(this.profileDir, live = new Set());
+      live.add(this);
       this.launchPromise = this.launchChrome().finally(() => { this.launchPromise = null; });
     }
     return this.launchPromise;
@@ -79,7 +97,15 @@ export class WindowsChatChromeRuntime implements BrowserContextRuntime {
   }
 
   async release(_context: BrowserContext, _mode: BrowserMode): Promise<void> {
-    await this.close();
+    await this.stop();
+  }
+
+  /** Close this Chrome once any launch in flight lands (else it would come up
+   *  after the close, with nobody owning it). Concurrent callers share the one
+   *  stop, so each resolves only when the process is gone. */
+  stop(): Promise<void> {
+    this.stopping ??= this.close().finally(() => { this.stopping = null; });
+    return this.stopping;
   }
 
   async reset(): Promise<void> {
@@ -96,6 +122,7 @@ export class WindowsChatChromeRuntime implements BrowserContextRuntime {
   }
 
   private async close(): Promise<void> {
+    if (this.launchPromise) await this.launchPromise.catch(() => {});
     const browser = this.browser;
     const cleanup = this.launchCleanup;
     const proxy = this.proxy;
@@ -103,8 +130,17 @@ export class WindowsChatChromeRuntime implements BrowserContextRuntime {
     this.context = null;
     this.launchCleanup = null;
     this.proxy = null;
-    if (browser) await browser.close().catch(() => {});
-    if (cleanup) await cleanup();
-    if (proxy) await proxy.close();
+    try {
+      if (browser) await browser.close().catch(() => {});
+      if (cleanup) await cleanup();
+      if (proxy) await proxy.close();
+    } finally {
+      // Gone only once the process is; a launch begun meanwhile keeps it live.
+      const live = liveByProfileDir.get(this.profileDir);
+      if (live && !this.launchPromise && !this.browser) {
+        live.delete(this);
+        if (live.size === 0) liveByProfileDir.delete(this.profileDir);
+      }
+    }
   }
 }

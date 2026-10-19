@@ -42,6 +42,8 @@ async function loadCronJobs() {
     const data = await apiJson('/api/cron');
     cronJobs = data.missions || data.jobs || [];
   } catch { cronJobs = []; }
+  // A stopped run's end arrives as a missions frame: its row stops saying STOPPING.
+  for (const id of cronStopping) if (!cronJobs.some(j => j.id === id && j.isRunning)) cronStopping.delete(id);
   renderCronList();
 }
 

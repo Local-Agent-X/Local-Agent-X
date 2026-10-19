@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import { CronService } from "../../cron/cron-service.js";
+import { broadcastMissionChanges } from "../../cron/mission-changes.js";
 import { jobBrowserProfileDir } from "../../browser/session-owner-registry.js";
 import { getLaxDir } from "../../lax-data-dir.js";
 import { handleCronRoutes } from "./cron.js";
@@ -24,8 +25,16 @@ beforeEach(() => {
   dataDir = mkdtempSync(join(tmpdir(), "cron-agent-"));
   cron = new CronService(dataDir);
   cron.updateSettings({ enabled: false });
+  // The server's wiring (registerCronRunner): the service's change notices are the broadcasts.
+  broadcastMissionChanges(cron, broadcastAll);
   broadcastAll.mockClear();
 });
+
+/** Let a setup step's own notice land, then forget it. */
+async function settled(): Promise<void> {
+  await Promise.resolve();
+  broadcastAll.mockClear();
+}
 afterEach(() => {
   cron.stop();
   rmSync(dataDir, { recursive: true, force: true });
@@ -130,6 +139,7 @@ describe("a mission's image engine", () => {
     expect((await call("POST", "/api/cron", { name: "n", schedule: "1h", prompt: "p", imageEngine: "dalle" }, "operator")).status).toBe(400);
     expect(cron.list()).toEqual([]);
     const job = cron.create("n", "1h", "p");
+    await settled();
     const r = await call("PATCH", `/api/cron/${job.id}`, { imageEngine: "sd" }, "operator");
     expect(r.status).toBe(400);
     expect(r.body.error).toMatch(/grok or chatgpt/);
@@ -175,46 +185,83 @@ describe("a mission's use of the user's signed-in browser", () => {
   });
 });
 
-// Every tab's Missions list redraws from the broadcast: a route that changes a
-// mission without it leaves the other tabs showing the old state.
-describe("each mutating mission route tells every tab", () => {
+// Every tab's Missions list redraws from the broadcast: a change to a mission
+// that does not reach it leaves the other tabs showing the old state. The
+// service raises it (cron/mission-changes.ts), once per change.
+describe("each mutating mission route tells every tab, once", () => {
+  it("create and edit", async () => {
+    const created = await call("POST", "/api/cron", { name: "n", schedule: "1h", prompt: "p" }, "operator");
+    expect(broadcastAll).toHaveBeenCalledTimes(1);
+    expect(broadcastAll).toHaveBeenCalledWith(MISSIONS_CHANGED);
+    broadcastAll.mockClear();
+    await call("PATCH", `/api/cron/${created.body.job!.id}`, { prompt: "q" }, "operator");
+    expect(broadcastAll).toHaveBeenCalledTimes(1);
+  });
+
   it("toggle", async () => {
     const job = cron.create("n", "1h", "p");
+    await settled();
     expect((await call("POST", `/api/cron/${job.id}/toggle`, {}, "operator")).status).toBe(200);
+    expect(broadcastAll).toHaveBeenCalledTimes(1);
     expect(broadcastAll).toHaveBeenCalledWith(MISSIONS_CHANGED);
   });
 
-  it("run now", async () => {
+  it("run now: once as the run starts, once as it ends", async () => {
     const job = cron.create("n", "1h", "p");
+    let finish!: (output: string) => void;
+    cron.onExecute(() => new Promise<string>((resolve) => { finish = resolve; }));
+    await settled();
     expect((await call("POST", `/api/cron/${job.id}/run`, {}, "operator")).status).toBe(200);
-    expect(broadcastAll).toHaveBeenCalledWith(MISSIONS_CHANGED);
+    await Promise.resolve();
+    expect(broadcastAll).toHaveBeenCalledTimes(1);
+    expect(cron.isRunning(job.id)).toBe(true);
+    finish("done");
+    await vi.waitFor(() => expect(broadcastAll).toHaveBeenCalledTimes(2));
+    expect(cron.isRunning(job.id)).toBe(false);
   });
 
-  it("cancel, when a run was in flight to cancel", async () => {
+  it("cancel: the tabs hear when the stopped run ends", async () => {
     const job = cron.create("n", "1h", "p");
+    const stop = new AbortController();
+    cron.onExecute(() => {
+      cron.registerRunAbort(job.id, stop);
+      return new Promise<string>((resolve) => { stop.signal.addEventListener("abort", () => resolve("stopped")); });
+    });
     expect((await call("POST", `/api/cron/${job.id}/cancel`, {}, "operator")).body).toMatchObject({ cancelled: false });
-    expect(broadcastAll).not.toHaveBeenCalled();
-    cron.registerRunAbort(job.id, new AbortController());
+    const run = cron.executeJob(job, { manual: true });
+    await settled();
     expect((await call("POST", `/api/cron/${job.id}/cancel`, {}, "operator")).body).toMatchObject({ cancelled: true });
-    expect(broadcastAll).toHaveBeenCalledWith(MISSIONS_CHANGED);
+    await run;
+    expect(broadcastAll).toHaveBeenCalledTimes(1);
+    expect(cron.isRunning(job.id)).toBe(false);
   });
 
   it("delete, when there was a mission to delete", async () => {
     expect((await call("DELETE", "/api/cron/nope", {}, "operator")).body).toMatchObject({ deleted: false });
     expect(broadcastAll).not.toHaveBeenCalled();
     const job = cron.create("n", "1h", "p");
+    await settled();
     expect((await call("DELETE", `/api/cron/${job.id}`, {}, "operator")).body).toMatchObject({ deleted: true });
+    expect(broadcastAll).toHaveBeenCalledTimes(1);
     expect(broadcastAll).toHaveBeenCalledWith(MISSIONS_CHANGED);
   });
 
   it("clear error", async () => {
     const job = cron.create("n", "1h", "p");
+    await settled();
     expect((await call("POST", `/api/cron/${job.id}/clear-error`, {}, "operator")).status).toBe(200);
+    expect(broadcastAll).toHaveBeenCalledTimes(1);
+  });
+
+  it("settings", async () => {
+    expect((await call("POST", "/api/cron/settings", { maxConcurrent: 2 }, "operator")).status).toBe(200);
+    expect(broadcastAll).toHaveBeenCalledTimes(1);
     expect(broadcastAll).toHaveBeenCalledWith(MISSIONS_CHANGED);
   });
 
   it("clear sign-ins wipes the mission's own browser profile and keeps the mission", async () => {
     const job = cron.create("n", "1h", "p");
+    await settled();
     const own = jobBrowserProfileDir(job.id);
     const signedIn = join(getLaxDir(), "chrome-profile");
     for (const dir of [own, signedIn]) { mkdirSync(dir, { recursive: true }); writeFileSync(join(dir, "Cookies"), "c"); }
@@ -222,11 +269,13 @@ describe("each mutating mission route tells every tab", () => {
     expect(existsSync(own)).toBe(false);
     expect(existsSync(join(signedIn, "Cookies"))).toBe(true);
     expect(cron.get(job.id)?.enabled).toBe(true);
+    expect(broadcastAll).toHaveBeenCalledTimes(1);
     expect(broadcastAll).toHaveBeenCalledWith(MISSIONS_CHANGED);
   });
 
   it("clear sign-ins is the user's, never the agent's", async () => {
     const job = cron.create("n", "1h", "p");
+    await settled();
     mkdirSync(jobBrowserProfileDir(job.id), { recursive: true });
     expect((await call("POST", `/api/cron/${job.id}/clear-sign-ins`, {}, "agent")).status).toBe(403);
     expect(existsSync(jobBrowserProfileDir(job.id))).toBe(true);
@@ -237,6 +286,7 @@ describe("each mutating mission route tells every tab", () => {
     for (const action of ["toggle", "run", "cancel", "clear-error", "clear-sign-ins"]) {
       expect((await call("POST", `/api/cron/nope/${action}`, {}, "operator")).status).toBe(404);
     }
+    await Promise.resolve();
     expect(broadcastAll).not.toHaveBeenCalled();
   });
 });

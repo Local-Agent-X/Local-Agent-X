@@ -35,11 +35,14 @@ vi.mock("../../autonomy/profile-store.js", () => ({
   setSessionProfile: vi.fn(),
   clearSessionProfile: vi.fn(),
 }));
+const { broadcastAll, setJobExistsCheck } = vi.hoisted(() => ({ broadcastAll: vi.fn(), setJobExistsCheck: vi.fn() }));
 vi.mock("../../browser/session-owner-registry.js", () => ({
   registerSessionOwner: vi.fn(),
   clearSessionOwner: vi.fn(),
   jobBrowserProfile: vi.fn(() => ({ kind: "job", jobId: "job" })),
+  setJobExistsCheck,
 }));
+vi.mock("../../chat-ws/index.js", () => ({ broadcastAll }));
 vi.mock("../../browser/index.js", () => ({ closeBrowser: vi.fn(async () => undefined) }));
 
 import { registerCronRunner } from "./cron-runner.js";
@@ -87,6 +90,7 @@ describe("scheduled mission prompt telemetry", () => {
     let execute: ((jobId: string, prompt: string, context: unknown) => Promise<unknown>) | undefined;
     const cronService = {
       onExecute: vi.fn((handler) => { execute = handler; }),
+      onChange: vi.fn(),
       get: vi.fn(() => ({ id: "job-1", name: "Daily research" })),
       registerRunAbort: vi.fn(),
       unregisterRunAbort: vi.fn(),
@@ -145,5 +149,32 @@ describe("scheduled mission prompt telemetry", () => {
     expect(allowedPaths.size).toBe(0);
     expect(JSON.stringify(options.promptTelemetry)).not.toContain(preparedPrompt);
     expect(JSON.stringify(options.promptTelemetry)).not.toContain("research the market");
+  });
+});
+
+// The server's half of "every change to the missions list reaches every open
+// tab": the cron service's change notice becomes the frame tabs redraw from,
+// and a job the service no longer has can never open its browser profile.
+describe("the server's cron wiring", () => {
+  it("broadcasts the service's change notices and shuts a deleted job's browser profile", () => {
+    let changed: (() => void) | undefined;
+    const jobs = new Set(["job-1"]);
+    const cronService = {
+      onExecute: vi.fn(),
+      onChange: vi.fn((listener: () => void) => { changed = listener; }),
+      get: vi.fn((id: string) => (jobs.has(id) ? { id } : null)),
+    };
+    registerCronRunner({
+      config: { workspace } as never, dataDir: workspace, memoryIndex: {} as never, memoryManager: {} as never,
+      secretsStore: {} as never, toolPolicy: {} as never, cronService: cronService as never,
+      integrations: {} as never, allAgentTools: [], bridgeTools: [], cronReportsDir: workspace,
+      getOrCreateSession: vi.fn(), saveSession: vi.fn(async () => {}),
+    });
+    changed!();
+    expect(broadcastAll).toHaveBeenCalledWith({ type: "settings_changed", settings: { missions: true } });
+    const exists = setJobExistsCheck.mock.calls[0][0] as (jobId: string) => boolean;
+    expect(exists("job-1")).toBe(true);
+    jobs.delete("job-1");
+    expect(exists("job-1")).toBe(false);
   });
 });

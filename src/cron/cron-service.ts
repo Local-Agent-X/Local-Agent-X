@@ -35,6 +35,7 @@ import {
   type ExecuteHandler,
 } from "./cron-service-types.js";
 import { runJob } from "./cron-service-execute.js";
+import { MissionChangeNotice } from "./mission-changes.js";
 import type { ProfileName } from "../autonomy/profiles.js";
 import type { ImageEngine } from "../tools/image-tools/image-engine.js";
 
@@ -72,6 +73,8 @@ export class CronService {
   private lastFileMtime = 0;
   /** @internal accessed by cron-service-execute.ts */
   history: RunHistoryStore;
+  /** @internal raised by cron-service-execute.ts too: a change open tabs show (mission-changes.ts) */
+  readonly changes = new MissionChangeNotice();
 
   constructor(dataDir: string) {
     this.dataDir = dataDir;
@@ -127,6 +130,7 @@ export class CronService {
 
   /** @internal called by cron-service-execute.ts */
   saveJobs(): void {
+    this.changes.raise();
     // Atomic write: write to .tmp, fsync via close, then rename. Avoids
     // half-written jobs.json being readable by a concurrent reloadIfChanged
     // that would crash on JSON.parse mid-write. Mirrors POSIX-safe save
@@ -154,6 +158,7 @@ export class CronService {
   }
 
   onExecute(handler: ExecuteHandler): void { this.executeHandler = handler; }
+  onChange(listener: () => void): void { this.changes.listen(listener); }
 
   /** Computed next-run time for a job, in ISO. Returns null if disabled / unscheduled. */
   getNextRunAt(job: CronJob): string | null {
@@ -379,6 +384,7 @@ export class CronService {
   updateSettings(updates: Partial<CronSettings>): void {
     this.settings = { ...this.settings, ...updates };
     writeFileSync(this.settingsFile, JSON.stringify(this.settings, null, 2), "utf-8");
+    this.changes.raise();
     if (this.settings.enabled) this.start();
     else this.stop();
   }

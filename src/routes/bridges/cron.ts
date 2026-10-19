@@ -2,6 +2,7 @@ import type { RouteHandler } from "../../server-context.js";
 import { jsonResponse, safeParseBody, safeErrorMessage } from "../../server-utils.js";
 import { isProfileName } from "../../autonomy/profiles.js";
 import { agentMissionRefusal } from "../../cron/job-authority.js";
+import { MISSIONS_CHANGED_FRAME } from "../../cron/mission-changes.js";
 import { isImageEngine } from "../../tools/image-tools/image-engine.js";
 
 /** Why a job body's image engine or browser choice is not one, or null. An
@@ -14,8 +15,8 @@ function missionFieldError(body: { imageEngine?: unknown; useSignedInBrowser?: u
 
 export const handleCronRoutes: RouteHandler = async (method, url, req, res, ctx, role) => {
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
-  // Every tab's Missions list redraws from the broadcast (chat-ws-handler-misc.js).
-  const missionsChanged = () => ctx.broadcastAll({ type: "settings_changed", settings: { missions: true } });
+  // A route that changes a mission tells every tab through CronService, which
+  // raises one notice per change (cron/mission-changes.ts); routes don't broadcast.
 
   // ── Scheduled Missions ──
   if (method === "GET" && (url.pathname === "/api/missions" || url.pathname === "/api/cron" || url.pathname === "/api/schedules")) {
@@ -68,7 +69,6 @@ export const handleCronRoutes: RouteHandler = async (method, url, req, res, ctx,
         ...(isImageEngine(body.imageEngine) ? { imageEngine: body.imageEngine } : {}),
         ...(body.useSignedInBrowser === true ? { useSignedInBrowser: true } : {}),
       });
-      missionsChanged();
       json(200, { ok: true, job });
     } catch (e) { json(400, { error: safeErrorMessage(e) }); }
     return true;
@@ -89,20 +89,16 @@ export const handleCronRoutes: RouteHandler = async (method, url, req, res, ctx,
     try {
       const job = ctx.cronService.update(id, body);
       if (!job) { json(404, { error: "Job not found" }); return true; }
-      missionsChanged();
       json(200, { ok: true, job });
     } catch (e) { json(400, { error: safeErrorMessage(e) }); }
     return true;
   }
   if (method === "DELETE" && url.pathname.match(/^\/api\/cron\/[^/]+$/)) {
-    const deleted = await ctx.cronService.delete(url.pathname.split("/").pop()!);
-    if (deleted) missionsChanged();
-    json(200, { ok: true, deleted }); return true;
+    json(200, { ok: true, deleted: await ctx.cronService.delete(url.pathname.split("/").pop()!) }); return true;
   }
   if (method === "POST" && url.pathname.match(/^\/api\/cron\/[^/]+\/toggle$/)) {
     const job = ctx.cronService.toggle(url.pathname.split("/")[3]);
     if (!job) { json(404, { error: "Job not found" }); return true; }
-    missionsChanged();
     json(200, { ok: true, job }); return true;
   }
   if (method === "POST" && url.pathname.match(/^\/api\/cron\/[^/]+\/run$/)) {
@@ -111,22 +107,19 @@ export const handleCronRoutes: RouteHandler = async (method, url, req, res, ctx,
     if (!job) { json(404, { error: "Job not found" }); return true; }
     json(200, { ok: true, message: `Job "${job.name}" triggered` });
     ctx.cronService.executeJob(job, { manual: true }).catch(() => {});
-    missionsChanged();
     return true;
   }
   if (method === "POST" && url.pathname.match(/^\/api\/cron\/[^/]+\/cancel$/)) {
     const id = url.pathname.split("/")[3];
     if (!ctx.cronService.get(id)) { json(404, { error: "Job not found" }); return true; }
-    const cancelled = ctx.cronService.cancelRun(id);
-    if (cancelled) missionsChanged();
-    json(200, { ok: true, cancelled });
+    // The tabs hear when the stopped run ends; asking it to stop changes nothing they show.
+    json(200, { ok: true, cancelled: ctx.cronService.cancelRun(id) });
     return true;
   }
   if (method === "POST" && url.pathname.match(/^\/api\/cron\/[^/]+\/clear-error$/)) {
     const id = url.pathname.split("/")[3];
     const cleared = ctx.cronService.clearLastError(id);
     if (!cleared) { json(404, { error: "Job not found" }); return true; }
-    missionsChanged();
     json(200, { ok: true, job: ctx.cronService.get(id) });
     return true;
   }
@@ -140,7 +133,8 @@ export const handleCronRoutes: RouteHandler = async (method, url, req, res, ctx,
       const { clearJobBrowserProfile } = await import("../../browser/job-browser-profile.js");
       await clearJobBrowserProfile(id);
     } catch (e) { json(500, { error: safeErrorMessage(e) }); return true; }
-    missionsChanged();
+    // Not a change to the job, so the service raises nothing: tell the tabs here.
+    ctx.broadcastAll(MISSIONS_CHANGED_FRAME);
     json(200, { ok: true });
     return true;
   }

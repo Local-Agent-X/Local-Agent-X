@@ -54,6 +54,7 @@ export async function runJob(
   svc.concurrencyDeferCount.delete(job.id);
 
   svc.running.add(job.id);
+  svc.changes.raise();
   const startedAt = new Date().toISOString();
   const startMs = Date.now();
   try {

@@ -18,7 +18,9 @@ import { createLogger } from "../../logger.js";
 import { CRON_SYSTEM_PROMPT } from "./prompts.js";
 import { stripCronPreamble, stripSaveInstructions } from "./prompt-cleaning.js";
 import { setSessionProfile, clearSessionProfile } from "../../autonomy/profile-store.js";
-import { registerSessionOwner, clearSessionOwner, jobBrowserProfile } from "../../browser/session-owner-registry.js";
+import { registerSessionOwner, clearSessionOwner, jobBrowserProfile, setJobExistsCheck } from "../../browser/session-owner-registry.js";
+import { broadcastAll } from "../../chat-ws/index.js";
+import { broadcastMissionChanges } from "../../cron/mission-changes.js";
 import { closeBrowser } from "../../browser/index.js";
 import { setSessionImageEngine, clearSessionImageEngine } from "../../tools/image-tools/image-engine.js";
 import { remeasurePromptTelemetry } from "../../prompt-telemetry.js";
@@ -71,6 +73,11 @@ export function registerCronRunner(deps: CronRunnerDeps): void {
     cronService, integrations, allAgentTools, bridgeTools, cronReportsDir,
     getOrCreateSession, saveSession,
   } = deps;
+
+  // Every change to the missions list reaches every open tab, and a deleted
+  // job's browser profile never opens again (its run may still be stopping).
+  broadcastMissionChanges(cronService, broadcastAll);
+  setJobExistsCheck((jobId) => cronService.get(jobId) !== null);
 
   cronService.onExecute(async (jobId, prompt, _ctx) => {
     const missionStartMs = Date.now();

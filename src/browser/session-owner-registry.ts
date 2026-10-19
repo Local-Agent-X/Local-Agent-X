@@ -59,6 +59,42 @@ export function jobBrowserProfileDir(jobId: string): string {
   return join(getLaxDir(), "browser-job-profiles", safeJobId(jobId));
 }
 
+let jobExists: (jobId: string) => boolean = () => true;
+/** Job id → how many wipes of its profile are under way. */
+const profilesBeingCleared = new Map<string, number>();
+
+/** The server's answer to "is this job still scheduled" (registerCronRunner):
+ *  a deleted job's profile never opens again, so a run its delete aborted
+ *  cannot relaunch a browser that writes the profile back after the wipe. */
+export function setJobExistsCheck(check: (jobId: string) => boolean): void { jobExists = check; }
+
+/** Hold a job's profile shut while clearJobBrowserProfile wipes it. */
+export function holdJobBrowserProfileShut(jobId: string): () => void {
+  profilesBeingCleared.set(jobId, (profilesBeingCleared.get(jobId) ?? 0) + 1);
+  return () => {
+    const left = (profilesBeingCleared.get(jobId) ?? 1) - 1;
+    if (left > 0) profilesBeingCleared.set(jobId, left);
+    else profilesBeingCleared.delete(jobId);
+  };
+}
+
+/** May a browser open on this job's own profile now? Checked when a backend is
+ *  minted on it and again when its Chrome launches (instance.ts). */
+export function jobBrowserProfileOpen(jobId: string): boolean {
+  return !profilesBeingCleared.has(jobId) && jobExists(jobId);
+}
+
+export function assertJobBrowserProfileOpen(jobId: string): void {
+  if (!jobBrowserProfileOpen(jobId)) throw new JobBrowserProfileShutError(jobId);
+}
+
+export class JobBrowserProfileShutError extends Error {
+  constructor(jobId: string) {
+    super(`The browser profile of scheduled job ${jobId} is shut: the job was deleted, or its sign-ins are being cleared`);
+    this.name = "JobBrowserProfileShutError";
+  }
+}
+
 export interface SessionOwner {
   /** Agent definition id that owns this session, when a spawned agent (not
    *  main chat) drives it. */
@@ -165,6 +201,8 @@ export function aggregateBrowserSessionLineage(sessionId: string): string {
 
 /** Test-only: wipe the registry so fixtures don't bleed between cases. */
 export function _resetSessionOwnerRegistry(): void {
+  jobExists = () => true;
+  profilesBeingCleared.clear();
   registry.clear();
   aggregatedTaintCounts.clear();
   aggregatedCanarySignatures.clear();

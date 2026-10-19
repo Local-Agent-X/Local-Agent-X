@@ -3,7 +3,7 @@ import { BrowserManager } from "./manager.js";
 import type { BrowserBackend } from "./backend.js";
 import { ElectronInAppBackend } from "./in-app-backend.js";
 import { sessionIdFromViewId, setAgentViewClosedHandler } from "./bridge-perception.js";
-import { jobBrowserPartition, jobBrowserProfileDir, resolveBrowserProfile, resolveBrowserSessionId } from "./session-owner-registry.js";
+import { assertJobBrowserProfileOpen, jobBrowserPartition, jobBrowserProfileDir, resolveBrowserProfile, resolveBrowserSessionId } from "./session-owner-registry.js";
 import { closeSharedBrowser, forceKillSharedBrowser } from "./runtime.js";
 import { clearAllSessionEmulation, clearSessionEmulation, getSessionEmulation } from "./emulation.js";
 import {
@@ -122,7 +122,7 @@ function ensureCdpManager(key: string, dedicatedWindowsChrome = false): BrowserM
 		// persist across the job's runs, and none of the user's are in it).
 		const profile = resolveBrowserProfile(key);
 		const runtime = profile.kind === "job"
-			? new WindowsChatChromeRuntime(key, jobBrowserProfileDir(profile.jobId))
+			? new WindowsChatChromeRuntime(key, jobBrowserProfileDir(profile.jobId), undefined, () => assertJobBrowserProfileOpen(profile.jobId))
 			: dedicatedWindowsChrome ? new WindowsChatChromeRuntime(key) : undefined;
 		manager = new BrowserManager(key, getRuntimeConfig().browserMode, runtime);
 		if (profile.kind === "job") cdpJobProfiles.set(manager, profile.jobId);
@@ -150,6 +150,7 @@ function ensureInAppBackend(key: string): ElectronInAppBackend {
 		// A scheduled job's views live on the job's own partition; every other
 		// session's on the desktop's shared signed-in profile (its default).
 		const profile = resolveBrowserProfile(key);
+		if (profile.kind === "job") assertJobBrowserProfileOpen(profile.jobId);
 		const partition = profile.kind === "job" ? jobBrowserPartition(profile.jobId) : undefined;
 		entry = { backend: new ElectronInAppBackend(key, viewId, partition), viewId };
 		// No idle handler for in-app backends (unlike the CDP path): views are

@@ -46,10 +46,14 @@ export interface CutOffTurnInput {
 }
 
 /**
- *   "redrive"   → nudge queued; the caller re-opens the turn and trims the
- *                 committed text with trimCutOffText.
- *   "exhausted" → the limit is spent; the caller ends the turn with
- *                 CUT_OFF_TERMINAL.
+ * Both verdicts mean the caller commits the draft through trimCutOffText:
+ *   "redrive"   → re-open the turn. The nudge is best-effort: when the op's
+ *                 nudge budget is spent it is refused, and the trimmed
+ *                 draft's own marker still says what to do next. Before, a
+ *                 refused nudge left the full draft in history and the next
+ *                 request outgrew the window (cad-model, 2026-10-19).
+ *   "exhausted" → CUT_OFF_REDRIVE_LIMIT re-drives in a row are spent; end
+ *                 the turn with CUT_OFF_TERMINAL.
  *   null        → not a cut-off turn, or one another decision already owns.
  */
 export function evaluateCutOffTurn(in_: CutOffTurnInput): "redrive" | "exhausted" | null {
@@ -59,9 +63,8 @@ export function evaluateCutOffTurn(in_: CutOffTurnInput): "redrive" | "exhausted
   // An adapter error, a middleware abort or a suspend decided this turn.
   if (in_.terminalReason === "error" || in_.middlewareAborted || in_.middlewareSuspended) return null;
   if (state.consecutive >= CUT_OFF_REDRIVE_LIMIT) return "exhausted";
-  const nudged = appendNudgeAsUserMessage(in_.op.id, in_.turnIdx + 1, CUT_OFF_NUDGE,
+  appendNudgeAsUserMessage(in_.op.id, in_.turnIdx + 1, CUT_OFF_NUDGE,
     { name: "cut-off-turn", reason: "cut-off-turn", outcome: "nudge" });
-  if (!nudged) return null;
   state.consecutive += 1;
   return "redrive";
 }
@@ -69,5 +72,5 @@ export function evaluateCutOffTurn(in_: CutOffTurnInput): "redrive" | "exhausted
 /** The tail of a cut-off draft, marked as such, for the committed history. */
 export function trimCutOffText(text: string): string {
   if (text.length <= CUT_OFF_KEPT_CHARS) return text;
-  return `[This reply was cut off at the output limit; only its last ${CUT_OFF_KEPT_CHARS} characters are kept.]\n…${text.slice(-CUT_OFF_KEPT_CHARS)}`;
+  return `[This reply was cut off at the output limit before any tool call; only its last ${CUT_OFF_KEPT_CHARS} characters are kept. Continue by making the next tool call.]\n…${text.slice(-CUT_OFF_KEPT_CHARS)}`;
 }

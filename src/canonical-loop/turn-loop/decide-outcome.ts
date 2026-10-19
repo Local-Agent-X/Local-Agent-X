@@ -150,13 +150,12 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
       : (adapterTerminalReason ?? (adapterError ? "error" : null));
 
   // A reply the output limit cut off is not an answer (cut-off-turn.ts): it is
-  // re-driven to act, or ends honestly once the re-drives are spent.
+  // re-driven to act, or ends honestly once the re-drives are spent. Either
+  // way only its tail goes into history.
   const cutOff = evaluateCutOffTurn({ op, turnIdx, providerStop: in_.providerStop, toolCalls,
     terminalReason, middlewareAborted, middlewareSuspended });
-  if (cutOff === "redrive") {
-    terminalReason = null;
-    allMessages = replaceAssistantText(allMessages, trimCutOffText(assistantText));
-  }
+  if (cutOff) allMessages = replaceAssistantText(allMessages, trimCutOffText(assistantText));
+  if (cutOff === "redrive") terminalReason = null;
 
   // Two questions, two fields (tool-failure-summary.ts) — see mutationCommitted.
   const failureSummary = collectToolFailures(toolMessages, toolSummary);

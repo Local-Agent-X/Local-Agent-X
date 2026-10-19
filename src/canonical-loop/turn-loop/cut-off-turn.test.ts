@@ -65,9 +65,17 @@ describe("evaluateCutOffTurn", () => {
     expect(appendNudgeAsUserMessage).not.toHaveBeenCalled();
   });
 
-  it("does not claim a re-drive when the nudge could not be queued", () => {
-    appendNudgeAsUserMessage.mockReturnValueOnce(false);
-    expect(evaluateCutOffTurn(turn())).toBeNull();
+  // cad-model (2026-10-19): the op's nudge budget was spent, the nudge was
+  // refused, and the turn fell through with its full 47k-char draft in history;
+  // the next request outgrew the window. The re-drive stands without the nudge.
+  it("still re-drives, within the same bound, when the nudge budget is spent", () => {
+    appendNudgeAsUserMessage.mockReturnValue(false);
+    try {
+      for (let i = 0; i < CUT_OFF_REDRIVE_LIMIT; i++) expect(evaluateCutOffTurn(turn({ turnIdx: i }))).toBe("redrive");
+      expect(evaluateCutOffTurn(turn({ turnIdx: CUT_OFF_REDRIVE_LIMIT }))).toBe("exhausted");
+    } finally {
+      appendNudgeAsUserMessage.mockReturnValue(true);
+    }
   });
 });
 
@@ -81,6 +89,7 @@ describe("trimCutOffText", () => {
     const kept = trimCutOffText(draft);
     expect(kept.length).toBeLessThan(CUT_OFF_KEPT_CHARS + 200);
     expect(kept.startsWith("[This reply was cut off at the output limit")).toBe(true);
+    expect(kept).toContain("Continue by making the next tool call.");
     expect(kept.endsWith("the last step was")).toBe(true);
   });
 });

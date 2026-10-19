@@ -1933,6 +1933,19 @@ describe("decideTurnOutcome — a reply the output limit cut off", () => {
     const r = await decideTurnOutcome(cutOffTurn({ turnIdx: CUT_OFF_REDRIVE_LIMIT }));
     expect(r.terminalReason).toBe("done");
     expect(r.allMessages.some(m => m.role === "assistant" && (m.content as { text?: string }).text === CUT_OFF_TERMINAL)).toBe(true);
+    // The draft is trimmed on the last turn too: nothing commits it in full.
+    expect(String((r.allMessages[0].content as { text: string }).text).length).toBeLessThan(CUT_OFF_KEPT_CHARS + 200);
+  });
+
+  it("trims and re-drives even when the op's nudge budget refuses the nudge", async () => {
+    vi.mocked(appendNudgeAsUserMessage).mockReturnValue(false);
+    try {
+      const r = await decideTurnOutcome(cutOffTurn());
+      expect(r.terminalReason).toBeNull();
+      expect(String((r.allMessages[0].content as { text: string }).text).length).toBeLessThan(CUT_OFF_KEPT_CHARS + 200);
+    } finally {
+      vi.mocked(appendNudgeAsUserMessage).mockReturnValue(true);
+    }
   });
 
   it("leaves a finished reply alone", async () => {

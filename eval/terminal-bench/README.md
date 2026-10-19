@@ -10,7 +10,7 @@ the same conditions and the task's own tests decide pass or fail.
 |---|---|
 | `lax_agent.py` | The Harbor agent (`lax_agent:LaxAgent`). Copies the bundle into the container and calls `drive.mjs`. |
 | `drive.mjs` | Runs inside the container: boots a headless LAX on a fresh data dir with the task's working directory as the workspace, sends the instruction as one chat turn, waits, stops the server. |
-| `seed.mjs` | The data dir each task starts from (provider and model, Autonomous profile, unrestricted file access inside the throwaway container). Tested by `test/terminal-bench-seed.test.ts`. |
+| `seed.mjs` | The data dir each task starts from (provider and model, Autonomous profile, unrestricted file access with the disposable-sandbox switch on, inside the throwaway container). Tested by `test/terminal-bench-seed.test.ts`. |
 | `bundle.mjs` | Builds the Linux bundle from one commit, entirely inside a Debian bullseye container: compiled `dist/`, production `node_modules` for linux-x64, and a Node binary. |
 
 Nothing here changes product defaults. Each task gets its own empty data dir,

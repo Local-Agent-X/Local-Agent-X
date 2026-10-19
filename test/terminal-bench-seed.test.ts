@@ -52,7 +52,7 @@ describe("terminal-bench seed: the data dir a task starts from", () => {
     const profile = JSON.parse(seed["autonomy-profile.json"]).profile;
     expect(PROFILE_NAMES).toContain(profile);
     expect(profile).toBe("Autonomous");
-    expect(JSON.parse(seed["security.json"])).toEqual({ fileAccessMode: "unrestricted" });
+    expect(JSON.parse(seed["security.json"])).toEqual({ fileAccessMode: "unrestricted", disposableSandbox: true });
     expect(JSON.parse(seed["settings.json"]).localRuntimes[0].baseUrl).toBe("http://host.docker.internal:4321");
   });
 
@@ -74,6 +74,21 @@ describe("terminal-bench seed: the data dir a task starts from", () => {
     } finally {
       if (saved.data === undefined) delete process.env.LAX_DATA_DIR; else process.env.LAX_DATA_DIR = saved.data;
       if (saved.sandbox === undefined) delete process.env.LAX_SANDBOX; else process.env.LAX_SANDBOX = saved.sandbox;
+    }
+  });
+
+  // nginx-request-logging (2026-10-19): edit/write refused /etc/nginx and /var/www.
+  it("lets the file tools write system folders inside the container, through the product's own switch", async () => {
+    dir = mkdtempSync(join(tmpdir(), "tb-seed-"));
+    writeSeed(dir, buildSeed({ modelName: "lmstudio/m" }));
+    const saved = process.env.LAX_DATA_DIR;
+    process.env.LAX_DATA_DIR = dir;
+    try {
+      const { evaluateFileAccess } = await import("../src/security/layer/file-access.js");
+      const target = process.platform === "win32" ? "C:\\Windows\\System32\\drivers\\etc\\hosts" : "/etc/nginx/nginx.conf";
+      expect(evaluateFileAccess(join(dir, "workspace"), "unrestricted", () => false, "write", target).allowed).toBe(true);
+    } finally {
+      if (saved === undefined) delete process.env.LAX_DATA_DIR; else process.env.LAX_DATA_DIR = saved;
     }
   });
 

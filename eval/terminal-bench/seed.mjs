@@ -59,9 +59,11 @@ export function parseModel(modelName) {
  *   exact host:port match).
  * - autonomy-profile.json: Autonomous, because no one is there to answer an
  *   approval card.
- * - security.json: unrestricted file access. The task container is the
+ * - security.json: unrestricted file access, and the disposable-sandbox
+ *   switch (src/security/layer/disposable-sandbox.ts) that lifts the system-
+ *   directory and outside-home write floors. The task container is the
  *   boundary and is thrown away after the run; tasks install packages and
- *   edit files outside the working directory.
+ *   edit /etc, /var and other files outside the working directory.
  * - sandbox-host-acknowledgement.json: the acknowledgement for SERVER_ENV's
  *   host mode (see above).
  * - memory/USER.md, memory/IDENTITY.md: a named user and agent, as the eval
@@ -78,7 +80,7 @@ export function buildSeed({ modelName, localUrl, now = new Date() }) {
   return {
     "settings.json": JSON.stringify(settings),
     "autonomy-profile.json": JSON.stringify({ profile: "Autonomous" }),
-    "security.json": JSON.stringify({ fileAccessMode: "unrestricted" }),
+    "security.json": JSON.stringify({ fileAccessMode: "unrestricted", disposableSandbox: true }),
     "sandbox-host-acknowledgement.json": JSON.stringify({ acknowledged: true, selectedMode: SERVER_ENV.LAX_SANDBOX, acknowledgedAt: now.toISOString() }),
     "memory/USER.md": "# About Me\n\n- Name: Sam\n",
     "memory/IDENTITY.md": "# Agent Identity\n\n- Name: Agent X\n",

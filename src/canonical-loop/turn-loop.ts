@@ -7,16 +7,14 @@
  * Tools, events, and persistence stay behind their canonical boundaries;
  * adapters only emit reports.
  */
-import type { Adapter, AdapterReport, TurnResult } from "./adapter-contract.js";
-import type { CanonicalMessage, ToolCall } from "./contract-types.js";
+import type { Adapter } from "./adapter-contract.js";
 import type { ProviderStateEnvelope } from "./types.js";
 import type { CommitTurnMessage } from "./checkpoint.js";
 import type { Op } from "../ops/types.js";
 import type { DriveTurnResult, DriveTurnOptions, MiddlewareDirective } from "./turn-loop/types.js";
 import type { FiredMiddlewareResult } from "./middlewares/host.js";
 import { resolveTurnLoopDeps, type TurnLoopDeps } from "./turn-loop/turn-deps.js";
-import { recoverAdapterThrow, clearAdapterThrowStreak } from "./turn-loop/adapter-throw-recovery.js";
-import { recoverReportedAdapterError } from "./turn-loop/reported-adapter-recovery.js";
+import { runModelCall, modelCallSignals } from "./turn-loop/model-call.js";
 import { idleSuspension, middlewareSuspension, suspendedTurn } from "./turn-loop/suspension.js";
 import { applyCommittedDirective } from "./turn-loop/apply-directive.js";
 import { bankEarnedFires, firedResultFire } from "./turn-loop/guard-fire.js";
@@ -50,13 +48,6 @@ function directiveFromPhaseResult(res: FiredMiddlewareResult): MiddlewareDirecti
 
 export type { DriveTurnResult, DriveTurnOptions } from "./turn-loop/types.js";
 export type { TurnLoopDeps } from "./turn-loop/turn-deps.js";
-// Consecutive THROWN adapter errors per op — provider hangs/timeouts the
-// adapter couldn't convert into a kind:"error" report. Bounds the feed-back-
-// and-continue recovery (below) so a hard-down provider gives up after a few
-// stalls instead of spinning the op's whole wall-clock budget (2h on a chat
-// turn). In-memory by design: a worker crash/recovery resets the count, and
-// op recovery has its own bound (heartbeat.ts retryPolicy). Cleared on any
-// successful model call and when the cap is hit.
 export async function driveTurn(
   op: Op,
   adapter: Adapter,
@@ -124,111 +115,11 @@ export async function driveTurn(
 
   const input = await buildTurnInput(op, turnIdx, pendingRedirect);
 
-  const finalized: CanonicalMessage[] = [];
-  const toolCalls: ToolCall[] = [];
-  const observedTools: string[] = [];
-  // `heartbeat` = reasoning model streaming chain-of-thought (adapter-contract.ts).
-  let sawReasoning = false;
-  let sawStreamContent = false;
-  let adapterError: { code: string; message: string; retryable: boolean } | null = null;
+  const modelCall = await runModelCall(op, adapter, input, turnIdx, { emit, publishStreamChunk, createIdleWatchdog, readIdleTimeoutMs, extractText });
+  if (modelCall.kind === "ended") return modelCall.turnResult;
+  const { call } = modelCall;
+  const { result, toolCalls, observedTools, assistantText, modelMs } = call;
   let middlewareDirective: MiddlewareDirective | null = null;
-
-  // Idle-event detection — provider-agnostic. Watches the report stream
-  // for ANY activity (stream chunks, tool calls, finalized messages,
-  // errors). If nothing arrives for idleMs the adapter is assumed stuck
-  // and we abort with reason "idle-stalled" so transports that recognize
-  // it (warm-pool's reason matcher) can hard-kill the underlying CLI/HTTP
-  // connection. Lives behind a shared watchdog so any future adapter
-  // (xai, gemini, local) inherits it.
-  let idleFired = false;
-  const idleMs = readIdleTimeoutMs();
-  const watchdog = createIdleWatchdog({
-    idleMs,
-    onTimeout: () => {
-      idleFired = true;
-      adapterError = { code: "stalled", message: `no adapter reports for ${idleMs}ms — model presumed stuck`, retryable: false };
-      // Fire-and-forget — don't await; runTurn may still need a beat to
-      // unwind. The reason propagates through the abort signal so
-      // transports that watch reason (warm-pool kill on /idle|stalled|stop/)
-      // do the right thing.
-      void adapter.abort(new Error("idle-stalled"));
-    },
-  });
-
-  // Time-component split for soak: how much of the turn was spent inside
-  // the adapter's model call vs dispatching tools. Together with
-  // commitMs (small, not separately tracked) and any caller-side prep,
-  // they reconstruct where the turn's wall-clock went.
-  const modelStart = Date.now();
-  let result: TurnResult;
-  try {
-    result = await adapter.runTurn(input, (r: AdapterReport) => {
-      watchdog.noteActivity();
-      if (r.kind === "heartbeat") { sawReasoning = true; return; }
-      if (r.kind === "reasoning_chunk") {
-        // Live chain-of-thought. Rides the same ephemeral stream bus as text
-        // (bus-only, never persisted) with a `reasoning` marker so the pump
-        // maps it to a `reasoning` ServerEvent instead of answer text.
-        sawReasoning = true;
-        sawStreamContent = true;
-        publishStreamChunk(op.id, { reasoning: true, delta: r.delta });
-        return;
-      }
-      if (r.kind === "stream_chunk") {
-        sawStreamContent = true;
-        publishStreamChunk(op.id, r.body);
-        return;
-      }
-      if (r.kind === "stream_redact") {
-        // The adapter post-processed its already-streamed text (e.g.
-        // tool-call extraction) and wants the UI to retract part of it.
-        // Re-uses the stream-chunk publish path with a `replace: true`
-        // marker so the client can swap the bubble's text rather than
-        // append.
-        publishStreamChunk(op.id, { replace: true, text: r.replacementText });
-        return;
-      }
-      if (r.kind === "message_finalized") {
-        finalized.push(r.message);
-        return;
-      }
-      if (r.kind === "tool_call_requested") {
-        toolCalls.push(r.call);
-        return;
-      }
-      if (r.kind === "tool_observed") {
-        observedTools.push(r.tool);
-        return;
-      }
-      if (r.kind === "error") {
-        adapterError = { code: r.code, message: r.message, retryable: r.retryable };
-        emit(op.id, "error", { code: r.code, message: r.message, retryable: r.retryable });
-      }
-    });
-  } catch (e) {
-    // Thrown (unreported) adapter error — see adapter-throw-recovery.ts.
-    watchdog.disarm();
-    return recoverAdapterThrow(op, e, turnIdx);
-  }
-  watchdog.disarm();
-  // A model call that actually returned (success, or a reported kind:"error")
-  // breaks the THROWN-error streak — the provider is responding again.
-  clearAdapterThrowStreak(op.id);
-  // A REPORTED over-window error (adapter converted the provider's
-  // context_overflow/413 into kind:"error" instead of throwing) gets the same
-  // forced-compact-and-retry as the thrown path — without this it would ride
-  // adapterError straight to terminal "error" and kill the op. Bounded by the
-  // recovery's own attempt cap; success clears the counter below.
-  // (read via a typed local: adapterError is assigned inside the stream
-  // callback, which TS's narrowing can't see — it types the direct read `never`)
-  const reportedError = adapterError as { code: string; message: string; retryable: boolean } | null;
-  const recoveredReport = recoverReportedAdapterError(op, reportedError, turnIdx, {
-    streamed: sawStreamContent, finalized: finalized.length,
-    toolCalls: toolCalls.length, observedTools: observedTools.length,
-  });
-  if (recoveredReport) return recoveredReport;
-  void idleFired; // surfaced via adapterError; reserved for telemetry
-  const modelMs = Date.now() - modelStart;
 
   // Cancel-aware bail BEFORE tool dispatch and BEFORE commit. The adapter
   // has already returned (via abort or natural completion); the worker's
@@ -244,10 +135,6 @@ export async function driveTurn(
   // appends a synthetic build_app call) — we use the same array reference
   // turn-loop will dispatch from, so any synthetic call lands in the
   // toolCalls list before dispatchTools fires.
-  const assistantText = finalized
-    .filter(m => m.role === "assistant")
-    .map(m => extractText(m.content))
-    .join("");
   const afterModelCtx = contextComposer.build({
     toolCalls,
     assistantContent: assistantText,
@@ -258,12 +145,12 @@ export async function driveTurn(
   // Thread this turn's REAL reasoning/usage signals so the empty-turn handling
   // can tell a reasoning-burn turn from a genuinely empty one (HE-5).
   const usageOut = (result.providerState?.providerPayload as { usageOutputTokens?: unknown } | undefined)?.usageOutputTokens;
-  afterModelCtx.hasReasoning = sawReasoning;
+  afterModelCtx.hasReasoning = call.sawReasoning;
   afterModelCtx.modelEnded = result.modelStop === "ended";
   afterModelCtx.completionTokens = typeof usageOut === "number" ? usageOut : undefined;
   const afterModelRes = await runMiddlewarePhase(afterModelCtx, "afterModelCall", middlewareStack);
   middlewareDirective = directiveFromPhaseResult(afterModelRes);
-  middlewareDirective ??= idleSuspension(op.lane, reportedError);
+  middlewareDirective ??= idleSuspension(op.lane, call.adapterError);
   const toolDispatchStart = Date.now();
   const skipToolDispatch = middlewareDirective?.kind === "abort"
     || (middlewareDirective?.kind === "nudge" && middlewareDirective.skipToolDispatch === true);
@@ -303,7 +190,6 @@ export async function driveTurn(
     viewCompacted: input.viewCompacted === true,
   };
   const middlewareAborted = middlewareDirective?.kind === "abort";
-  const payloadStop = (providerState.providerPayload as Record<string, unknown> | undefined)?.stopReason;
 
   // Decide terminal reason + assemble the commit-message list, running the
   // retract / failure-nudge / continuation-guard / render-verify side
@@ -312,25 +198,9 @@ export async function driveTurn(
     op,
     turnIdx,
     middlewareDirective,
-    finalized,
     toolMessages,
     toolSummary,
-    toolCalls,
-    observedTools,
-    assistantText,
-    adapterTerminalReason: result.terminalReason ?? null,
-    // The model's REAL stop signal (end_turn / stop), when the provider
-    // carried it. decide-outcome trusts this to terminate even a non-silent
-    // tool turn in one pass; absence → it falls back to shape inference.
-    modelSignaledDone: result.modelStop === "ended",
-    modelWantsToContinue: result.modelStop === "continue",
-    // Reasoning is bus-only (never persisted into finalized), so decide-outcome
-    // can't infer it from assistantText/finalized — thread the turn's real
-    // signal so its interactive empty-turn terminator never truncates a
-    // reasoning-only turn (HE-5).
-    hasReasoning: sawReasoning,
-    adapterError,
-    providerStop: typeof payloadStop === "string" ? payloadStop : undefined,
+    ...modelCallSignals(call),
   });
 
   // Cancel-aware bail AFTER decideTurnOutcome, BEFORE commit: a Stop during its

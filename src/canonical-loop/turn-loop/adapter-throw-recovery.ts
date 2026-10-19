@@ -21,6 +21,13 @@ import { appendNudgeAsUserMessage } from "./nudges.js";
 import { classify } from "../../resilience-policy.js";
 import { forceCompactNext } from "./compact-history.js";
 
+// Consecutive THROWN adapter errors per op — provider hangs/timeouts the
+// adapter couldn't convert into a kind:"error" report. Bounds the feed-back-
+// and-continue recovery so a hard-down provider gives up after a few stalls
+// instead of spinning the op's whole wall-clock budget (2h on a chat turn).
+// In-memory by design: a worker crash/recovery resets the count, and op
+// recovery has its own bound (heartbeat.ts retryPolicy). Cleared on any
+// successful model call (model-call.ts) and when the cap is hit.
 const adapterThrowStreaks = new Map<string, number>();
 const ADAPTER_ERROR_CAP = 2;
 

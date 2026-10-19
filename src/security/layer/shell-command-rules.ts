@@ -52,15 +52,27 @@ const WAY_OUT: Record<CommandRule["category"], string> = {
   opener: "To show a web page use the browser tool; for a file, tell the user where it is.",
 };
 
+// On a server already running as root (a container, a box root administers)
+// sudo adds nothing, and "tell the user" sends the model to ask for what it
+// already has: on Terminal-Bench (nginx-request-logging, 2026-10-19) it gave
+// up on `sudo apt-get install nginx`. The rule still refuses the sudo.
+export const ALREADY_ROOT_WAY_OUT =
+  "This server already runs as root, so the command needs no privilege change: run the same command without it.";
+
+function wayOut(category: CommandRule["category"]): string {
+  const root = typeof process.getuid === "function" && process.getuid() === 0;
+  return category === "privilege" && root ? ALREADY_ROOT_WAY_OUT : WAY_OUT[category];
+}
+
 export function commandRuleReason(hit: CommandRuleVerdict): string {
   if (hit.kind === "too-deep") return TOO_DEEP_REASON;
-  return `Blocked: "${hit.bin}" ${hit.rule.why}. ${WAY_OUT[hit.rule.category]} ` +
+  return `Blocked: "${hit.bin}" ${hit.rule.why}. ${wayOut(hit.rule.category)} ` +
     "Retrying the same command will be denied again.";
 }
 
 /** The way out alone, for the decision's `recovery` field. */
 export function commandRuleRecovery(hit: CommandRuleVerdict): string {
-  return hit.kind === "too-deep" ? "Run the inner command directly." : WAY_OUT[hit.rule.category];
+  return hit.kind === "too-deep" ? "Run the inner command directly." : wayOut(hit.rule.category);
 }
 
 export const TOO_DEEP_REASON =

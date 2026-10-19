@@ -67,7 +67,7 @@ export function createCronTools(cron: CronService): ToolDefinition[] {
         required: ["id"],
       },
       async execute(args) {
-        const deleted = cron.delete(String(args.id));
+        const deleted = await cron.delete(String(args.id));
         return { content: deleted ? "Job deleted." : "Job not found." };
       },
     },

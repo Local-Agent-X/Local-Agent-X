@@ -9,6 +9,7 @@
 - Both backends implement every `BrowserBackend` method; tool-layer security (sensitive-page guards, download approval, egress taint, mutex) sits above the interface and stays backend-agnostic.
 - Secret values touch a page only through `SecretBrowserOps` (`secret-ops.ts`): credential-field selectors, exact origin binding, first-use approval — never via `fill()` / `evaluate()`, which echo page content back to the model.
 - Every mode uses an agent-owned profile, never the user's own browser profile. Which agent-owned profile is the session's registered `browserProfile` (`session-owner-registry.ts` `resolveBrowserProfile`): the shared signed-in one by default; a scheduled job's run gets the job's own (in-app: the partition `jobBrowserPartition` names on the lifecycle `create`; CDP: a dedicated Chrome on `jobBrowserProfileDir`, under the data dir) unless the user set `useSignedInBrowser` on the job. `instance.ts` is the one place that applies it.
+- A job's own profile is wiped only by `clearJobBrowserProfile` (`job-browser-profile.ts`), for the Missions page's "Clear sign-ins" (`POST /api/cron/:id/clear-sign-ins`) and for every job delete (`CronService.delete`). It closes the job's live browsers first (`closeJobProfileBrowsers` in `instance.ts`), then removes the profile dir — refusing any path that is not exactly one entry under `browser-job-profiles` — and clears the partition over the desktop bridge (`lax:browser-clear-partition`). It never names the signed-in profile.
 
 ## Coupled to
 | If you change | Also check | Guard |
@@ -18,6 +19,7 @@
 | `secret-ops.ts` | `secret-fill.ts`, `secret-capture.ts`, `src/tools/browser-tools/index.ts` | `secret-ops.test.ts`, `secret-fill.test.ts`, `secret-capture.test.ts` |
 | `runtime.ts` (the shared Chrome process) | `launcher.ts`, `continuity-cache.ts` | `continuity-persistence.test.ts` |
 | `bridge-client.ts` | `desktop/src/browser-views.ts`, `bridge-client-contract.ts` | `bridge-client.test.ts` |
+| `job-browser-profile.ts` / `session-owner-registry.ts` job paths | `src/cron/cron-service.ts` (`delete`), `src/routes/bridges/cron.ts` | `job-browser-profile.test.ts`, `test/cron-service.test.ts`, `src/routes/bridges/cron-agent.test.ts` |
 
 ## Tests
 `npx vitest run src/browser` (PowerShell on Windows)

@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import { CronService } from "../../cron/cron-service.js";
+import { jobBrowserProfileDir } from "../../browser/session-owner-registry.js";
+import { getLaxDir } from "../../lax-data-dir.js";
 import { handleCronRoutes } from "./cron.js";
 import type { Role } from "../../rbac.js";
 import type { ServerContext } from "../../server-context.js";
@@ -211,8 +213,28 @@ describe("each mutating mission route tells every tab", () => {
     expect(broadcastAll).toHaveBeenCalledWith(MISSIONS_CHANGED);
   });
 
+  it("clear sign-ins wipes the mission's own browser profile and keeps the mission", async () => {
+    const job = cron.create("n", "1h", "p");
+    const own = jobBrowserProfileDir(job.id);
+    const signedIn = join(getLaxDir(), "chrome-profile");
+    for (const dir of [own, signedIn]) { mkdirSync(dir, { recursive: true }); writeFileSync(join(dir, "Cookies"), "c"); }
+    expect((await call("POST", `/api/cron/${job.id}/clear-sign-ins`, {}, "operator")).status).toBe(200);
+    expect(existsSync(own)).toBe(false);
+    expect(existsSync(join(signedIn, "Cookies"))).toBe(true);
+    expect(cron.get(job.id)?.enabled).toBe(true);
+    expect(broadcastAll).toHaveBeenCalledWith(MISSIONS_CHANGED);
+  });
+
+  it("clear sign-ins is the user's, never the agent's", async () => {
+    const job = cron.create("n", "1h", "p");
+    mkdirSync(jobBrowserProfileDir(job.id), { recursive: true });
+    expect((await call("POST", `/api/cron/${job.id}/clear-sign-ins`, {}, "agent")).status).toBe(403);
+    expect(existsSync(jobBrowserProfileDir(job.id))).toBe(true);
+    expect(broadcastAll).not.toHaveBeenCalled();
+  });
+
   it("not for a mission that does not exist", async () => {
-    for (const action of ["toggle", "run", "cancel", "clear-error"]) {
+    for (const action of ["toggle", "run", "cancel", "clear-error", "clear-sign-ins"]) {
       expect((await call("POST", `/api/cron/nope/${action}`, {}, "operator")).status).toBe(404);
     }
     expect(broadcastAll).not.toHaveBeenCalled();

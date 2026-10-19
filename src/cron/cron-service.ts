@@ -283,7 +283,9 @@ export class CronService {
     return job;
   }
 
-  delete(id: string): boolean {
+  /** Resolves once the job's own browser profile is wiped too; the job itself
+   *  is gone before the first await. */
+  async delete(id: string): Promise<boolean> {
     const timer = this.timers_internal.get(id);
     if (timer) { clearInterval(timer); this.timers_internal.delete(id); }
     // Abort any in-flight run for this job. Without this, a delete while
@@ -301,6 +303,11 @@ export class CronService {
     if (deleted) {
       this.saveJobs();
       this.history.purge(id);
+      // Its sign-ins go with it: nothing else would ever remove that profile.
+      try {
+        const { clearJobBrowserProfile } = await import("../browser/job-browser-profile.js");
+        await clearJobBrowserProfile(id);
+      } catch (e) { logger.warn(`[cron] Deleted job ${id}: its browser profile was not cleared: ${(e as Error).message}`); }
     }
     return deleted;
   }

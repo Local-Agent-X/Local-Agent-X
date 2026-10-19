@@ -39,6 +39,8 @@ export {
 // Identity ownership is selected explicitly by browserMode.
 const cdpManagers = new Map<string, BrowserManager>();
 const inAppBackends = new Map<string, { backend: ElectronInAppBackend; viewId: string }>();
+/** The job whose own profile a CDP manager's dedicated Chrome runs on. */
+const cdpJobProfiles = new WeakMap<BrowserManager, string>();
 
 /**
  * Keys whose cdpManagers entry was minted UNDER the emulation route — i.e. the
@@ -123,6 +125,7 @@ function ensureCdpManager(key: string, dedicatedWindowsChrome = false): BrowserM
 			? new WindowsChatChromeRuntime(key, jobBrowserProfileDir(profile.jobId))
 			: dedicatedWindowsChrome ? new WindowsChatChromeRuntime(key) : undefined;
 		manager = new BrowserManager(key, getRuntimeConfig().browserMode, runtime);
+		if (profile.kind === "job") cdpJobProfiles.set(manager, profile.jobId);
 		manager.setPeerPages(() => peerPagesExcept(manager!));
 		manager.setIdleHandler(() => {
 			if (cdpManagers.get(key) === manager) {
@@ -242,7 +245,23 @@ export async function releaseEmulatedBrowser(sessionId: string = "default"): Pro
 }
 
 export async function closeBrowser(sessionId: string = "default"): Promise<void> {
-	const key = resolveBrowserSessionId(sessionId || "default");
+	await closeBrowserSession(resolveBrowserSessionId(sessionId || "default"));
+}
+
+/** Close every live browser on a scheduled job's own profile: the dedicated
+ *  Chrome holding its profile dir (CDP) and the views on its partition
+ *  (in-app). The wipe of that profile (job-browser-profile.ts) runs after, so
+ *  no running browser holds the dir open or re-persists a cookie past it. A
+ *  run still in flight mints a fresh browser at its next call, signed out. */
+export async function closeJobProfileBrowsers(jobId: string): Promise<void> {
+	const partition = jobBrowserPartition(jobId);
+	const keys = new Set<string>();
+	for (const [key, { backend }] of inAppBackends) if (backend.partition === partition) keys.add(key);
+	for (const [key, manager] of cdpManagers) if (cdpJobProfiles.get(manager) === jobId) keys.add(key);
+	for (const key of keys) await closeBrowserSession(key);
+}
+
+async function closeBrowserSession(key: string): Promise<void> {
 	forgetReportedRoute(key);
 	// Device emulation dies with the session: a reused session id must never
 	// inherit the previous session's phone viewport / spoofed user agent.

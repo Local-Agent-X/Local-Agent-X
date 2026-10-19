@@ -95,7 +95,7 @@ export const handleCronRoutes: RouteHandler = async (method, url, req, res, ctx,
     return true;
   }
   if (method === "DELETE" && url.pathname.match(/^\/api\/cron\/[^/]+$/)) {
-    const deleted = ctx.cronService.delete(url.pathname.split("/").pop()!);
+    const deleted = await ctx.cronService.delete(url.pathname.split("/").pop()!);
     if (deleted) missionsChanged();
     json(200, { ok: true, deleted }); return true;
   }
@@ -128,6 +128,20 @@ export const handleCronRoutes: RouteHandler = async (method, url, req, res, ctx,
     if (!cleared) { json(404, { error: "Job not found" }); return true; }
     missionsChanged();
     json(200, { ok: true, job: ctx.cronService.get(id) });
+    return true;
+  }
+  // "Clear sign-ins": wipe the job's own browser profile. The job keeps its
+  // schedule and next browses signed out. Never the user's signed-in profile.
+  if (method === "POST" && url.pathname.match(/^\/api\/cron\/[^/]+\/clear-sign-ins$/)) {
+    const id = url.pathname.split("/")[3];
+    if (role === "agent") { json(403, { error: "Only the user can clear a mission's sign-ins" }); return true; }
+    if (!ctx.cronService.get(id)) { json(404, { error: "Job not found" }); return true; }
+    try {
+      const { clearJobBrowserProfile } = await import("../../browser/job-browser-profile.js");
+      await clearJobBrowserProfile(id);
+    } catch (e) { json(500, { error: safeErrorMessage(e) }); return true; }
+    missionsChanged();
+    json(200, { ok: true });
     return true;
   }
   // Per-job run history (newest first)

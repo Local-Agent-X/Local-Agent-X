@@ -1,8 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CronService } from "../src/cron/cron-service.js";
+import { jobBrowserProfileDir } from "../src/browser/session-owner-registry.js";
+import { getLaxDir } from "../src/lax-data-dir.js";
 
 let dataDir: string;
 let cron: CronService;
@@ -55,13 +57,28 @@ describe("CronService — list / toggle / delete / nextRunAt", () => {
     expect(resumed?.consecutiveFailures).toBe(0);
   });
 
-  it("delete() removes the job and purges history", () => {
+  it("delete() removes the job and purges history", async () => {
     const job = cron.create("doomed", "1h", "x");
-    expect(cron.delete(job.id)).toBe(true);
+    expect(await cron.delete(job.id)).toBe(true);
     expect(cron.get(job.id)).toBeNull();
     expect(cron.list().some(j => j.id === job.id)).toBe(false);
     // Idempotent: second delete returns false.
-    expect(cron.delete(job.id)).toBe(false);
+    expect(await cron.delete(job.id)).toBe(false);
+  });
+
+  it("delete() removes the job's own browser profile, and never the user's signed-in one", async () => {
+    const job = cron.create("doomed", "1h", "x");
+    const own = jobBrowserProfileDir(job.id);
+    const other = jobBrowserProfileDir("cron_other");
+    const signedIn = join(getLaxDir(), "chrome-profile");
+    for (const dir of [own, other, signedIn]) {
+      mkdirSync(join(dir, "Default"), { recursive: true });
+      writeFileSync(join(dir, "Default", "Cookies"), "c");
+    }
+    expect(await cron.delete(job.id)).toBe(true);
+    expect(existsSync(own)).toBe(false);
+    expect(existsSync(join(other, "Default", "Cookies"))).toBe(true);
+    expect(existsSync(join(signedIn, "Default", "Cookies"))).toBe(true);
   });
 
   it("getNextRunAt() returns null when settings disabled or job paused", () => {

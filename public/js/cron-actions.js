@@ -129,6 +129,21 @@ async function deleteCronJob() {
   } catch (e) { alert('Failed: ' + e.message); }
 }
 
+async function clearCronSignIns() {
+  if (!selectedJob) return;
+  if (!confirm(`Clear the sign-ins of "${selectedJob.name}"?\n\nIt keeps running on schedule, signed out of every site it had signed in to. Your own signed-in browser is not touched.`)) return;
+  try {
+    const data = await apiPost('/api/cron/' + selectedJob.id + '/clear-sign-ins', {});
+    if (data && data.error) throw new Error(data.error);
+    const btn = document.getElementById('cron-clear-sign-ins-btn');
+    if (btn) {
+      btn.textContent = 'Sign-ins cleared';
+      btn.disabled = true;
+      setTimeout(() => { btn.textContent = 'Clear sign-ins'; btn.disabled = false; }, 2500);
+    }
+  } catch (e) { alert('Failed to clear sign-ins: ' + e.message); }
+}
+
 function editCronJob() {
   if (!selectedJob) return;
   document.getElementById('cron-edit-name').value = selectedJob.name || '';

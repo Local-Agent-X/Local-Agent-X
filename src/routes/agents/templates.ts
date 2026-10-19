@@ -78,7 +78,7 @@ export const handleAgentTemplateRoutes: RouteHandler = async (method, url, req, 
     const projectId = body?.projectId as string | undefined;
     if (!projectId) { json(400, { error: "projectId is required — fire is always a Project action" }); return true; }
     const { ProjectRosterStore } = await import("../../project-rosters.js");
-    try { ctx.cronService.delete(`heartbeat:${projectId}:${id}`); } catch { /* might not exist */ }
+    try { await ctx.cronService.delete(`heartbeat:${projectId}:${id}`); } catch { /* might not exist */ }
     const removed = ProjectRosterStore.getInstance().remove(projectId, id);
     ctx.projectStore.removeAgent(projectId, id);
     json(removed ? 200 : 404, { ok: removed }); return true;

@@ -205,6 +205,9 @@ function renderCronDetail() {
   applyCronRunButtonState(selectedJob);
   const clearErrBtn = document.getElementById('cron-clear-error-btn');
   if (clearErrBtn) clearErrBtn.style.display = selectedJob.lastErrorMessage ? '' : 'none';
+  // A mission on the user's signed-in browser has no sign-ins of its own to clear.
+  const clearSignInsBtn = document.getElementById('cron-clear-sign-ins-btn');
+  if (clearSignInsBtn) clearSignInsBtn.style.display = selectedJob.useSignedInBrowser ? 'none' : '';
 
   loadCronReports(selectedJob.id);
   loadCronHistory(selectedJob.id);

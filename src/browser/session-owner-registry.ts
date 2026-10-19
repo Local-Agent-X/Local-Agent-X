@@ -53,7 +53,8 @@ export function jobBrowserPartition(jobId: string): string {
   return `${BROWSER_PARTITION_PREFIX}job-${safeJobId(jobId)}`;
 }
 
-/** The CDP arm's Chrome profile dir for a job, under the data dir. */
+/** The CDP arm's Chrome profile dir for a job, under the data dir. Removed,
+ *  with the partition, only by clearJobBrowserProfile (job-browser-profile.ts). */
 export function jobBrowserProfileDir(jobId: string): string {
   return join(getLaxDir(), "browser-job-profiles", safeJobId(jobId));
 }

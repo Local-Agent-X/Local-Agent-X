@@ -64,6 +64,7 @@ import {
 	getCdpBrowserManager,
 	closeBrowser,
 	closeAllBrowsers,
+	closeJobProfileBrowsers,
 	resetWedgedBrowser,
 	inAppViewId,
 	resolveBrowserBackendKind,
@@ -245,6 +246,22 @@ describe("a scheduled job's browser profile", () => {
 		const job = getBrowserManager(JOB_RUN) as BrowserManager;
 		expect((job as unknown as { runtime: unknown }).runtime).not.toBeInstanceOf(WindowsChatChromeRuntime);
 	});
+
+	it.each([["in-app", setInApp], ["cdp", () => { state.browserMode = "isolated"; }]] as const)(
+		"%s: clearing a job's profile closes the job's live browser, and no chat's or other job's",
+		async (_arm, route) => {
+			route();
+			ownProfile();
+			registerSessionOwner("cron-cron_j2-1", { browserProfile: { kind: "job", jobId: "cron_j2" } });
+			const job = getBrowserManager(JOB_RUN);
+			const otherJob = getBrowserManager("cron-cron_j2-1");
+			const chat = getBrowserManager("chat-1");
+			await closeJobProfileBrowsers("cron_j1");
+			expect(getBrowserManager(JOB_RUN)).not.toBe(job);
+			expect(getBrowserManager("cron-cron_j2-1")).toBe(otherJob);
+			expect(getBrowserManager("chat-1")).toBe(chat);
+		},
+	);
 });
 
 describe("inAppViewId determinism", () => {

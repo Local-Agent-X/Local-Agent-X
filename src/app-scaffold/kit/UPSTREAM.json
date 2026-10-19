@@ -1,7 +1,7 @@
 {
   "project-languages.mjs": {
     "upstream": "scripts/project-languages.mjs",
-    "sha256": "0e1528391bf37e5abb0ef9e598c1dfa0eecab30411785535bb100b771abd13f9"
+    "sha256": "b1af4a1896b43da5e9f2eef77fa3c158b8da268307b5c69cb4d090d5d70d6db8"
   },
   "codebase-map.mjs": {
     "upstream": "scripts/codebase-map.mjs",
@@ -13,7 +13,7 @@
   },
   "check-doc-paths.mjs": {
     "upstream": "scripts/check-doc-paths.mjs",
-    "sha256": "393c477a2b5104a436900f36f2b5321f235de9b1fc079f33a14be4d1628f41bc"
+    "sha256": "816c10c7c9573d4edfc30d267295bbdbae264572bf47e9c29dcdbb2502eb9257"
   },
   "check-module-owners.mjs": {
     "upstream": "scripts/check-module-owners.mjs",

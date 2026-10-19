@@ -19,6 +19,7 @@ import { dirname, join } from "node:path";
 import {
   KIT_SCRIPTS, KIT_SEAL_TEST, KIT_SEAL_TEST_PY, STRUCTURE_CHECK_COMMAND, STRUCTURE_CHECK_SCRIPT, readKitFile,
 } from "./kit-files.js";
+import { recordCreatorDocs } from "./creator-docs.js";
 import { detectProjectKind, hasDependency, hasProjectFile } from "./project-kind.js";
 import { renderAdr0001, renderHistoryReadme, renderKitAgentsMd, renderKitArchitectureMd, type KitDocOptions } from "./render-docs.js";
 
@@ -113,15 +114,23 @@ export interface ApplyKitResult {
   skipped: string[];
   /** package.json gained the kit's scripts (and `build` runs the check first). */
   wiredNpmScripts: boolean;
+  /** Docs that came with the project (a framework creator's README), recorded
+   *  so the doc-path check skips them until they are edited (creator-docs.ts). */
+  creatorDocs: string[];
 }
 
 /**
  * Write the kit into an existing project directory and, when it has a
  * package.json, wire `check:structure` / `docs:map` / `deps` (/ `refs`, and
  * `test` for the seal test) and put the check in front of `build`. Idempotent:
- * existing files and existing scripts are never overwritten.
+ * existing files and existing scripts are never overwritten. On the kit's
+ * first landing the docs already there are recorded as the creator's: every
+ * caller applies it where a project was just created. The one soft spot is
+ * adoption at a new build's first done-claim, where the model may already
+ * have edited a creator's README; that README is checked once it changes.
  */
 export function applyProjectKit(projectDir: string, opts: ProjectKitOptions): ApplyKitResult {
+  const firstLanding = structureCheckCommand(projectDir) === null;
   const written: string[] = [];
   const skipped: string[] = [];
   for (const file of projectKitFiles(projectDir, opts)) {
@@ -131,7 +140,8 @@ export function applyProjectKit(projectDir: string, opts: ProjectKitOptions): Ap
     writeFileSync(abs, file.content, "utf-8");
     written.push(file.rel);
   }
-  return { written, skipped, wiredNpmScripts: wireNpmScripts(projectDir) };
+  const creatorDocs = firstLanding ? recordCreatorDocs(projectDir, new Set(written)) : [];
+  return { written, skipped, wiredNpmScripts: wireNpmScripts(projectDir), creatorDocs };
 }
 
 /**

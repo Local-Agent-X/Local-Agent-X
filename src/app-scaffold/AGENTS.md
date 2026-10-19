@@ -9,6 +9,7 @@
 - `kit/` reaches `dist/` through `scripts/copy-bundled-assets.mjs`; `kit-files.ts` resolves it relative to itself, never `process.cwd()`.
 - The kit never overwrites a file that exists and never runs on an existing app uninvited: callers apply it where a project is created, or adopt it once at a new build's first done-claim; a retrofit of an existing project is the same call, made on request.
 - A doc the kit writes names only paths that exist when it is written (its own `check-doc-paths` would fail otherwise): a source root is named as a path only when it is present.
+- The docs a project came with (a framework creator's README) are recorded on the kit's first landing in `scripts/doc-paths-stock.json` (`creator-docs.ts`, the only writer); the kit's `check-doc-paths` skips one while its hash matches. The record's format is the kit script's header; `project-kit.test.ts` runs the vendored check on a record this module wrote. <!-- doc-paths:ignore: a path in the built project, not here -->
 - The root rule in `project-kind.ts` restates the kit script's own (`kit/project-languages.mjs`, `defaultRoots`); `project-kind.test.ts` runs the script on the same fixtures, so the docs and the checks always name the same folders.
 
 ## Coupled to
@@ -16,6 +17,7 @@
 |---|---|---|
 | `STRUCTURE_CHECK_SCRIPT` / `STRUCTURE_CHECK_COMMAND` | the chunk gate's command list, the verify adapter's done gate, the build prompt lines | `project-kit.test.ts`, `test/auto-build-chunk-review.test.ts` |
 | the kit's file list (`projectKitFiles`) | Product Build's artifact queue must not collide with it (`spec/`, `scenarios/`, `twins/`, `README.md`) | `src/auto-build/materialize.test.ts` |
+| the stock-docs record (`STOCK_DOCS_MANIFEST`, `stockDocHash`) | the kit's `check-doc-paths.mjs` reads it beside itself | `project-kit.test.ts` (the doc-path describes) |
 | a kit script's flags or its root rule | `check-structure.mjs` forwards `--root` / `--max-loc`; `project-kind.ts` | the skill's probes; `project-kit.test.ts` runs the vendored copy; `project-kind.test.ts` |
 | the Vite plan's test runner (`viteScaffoldPlan`) | the seal test ships only with a runner; `wireNpmScripts` adds `test` | `test/framework-scaffold-plan.test.ts`, `project-kit.test.ts` |
 

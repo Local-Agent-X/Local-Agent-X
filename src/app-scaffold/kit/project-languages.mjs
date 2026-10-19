@@ -1,9 +1,10 @@
 /**
  * The language table the structure scripts share. One row per language says
  * which files are source, which are tests, how an import is written and how
- * it resolves to a file, where the source roots are by default, and what a
- * module is. codebase-map.mjs, check-module-owners.mjs and check-structure.mjs
- * import this file, so a project copies it beside them; nothing else reads it.
+ * it resolves to a file, where the source roots are by default, what a module
+ * is, and which folders its builds write. codebase-map.mjs,
+ * check-module-owners.mjs, check-doc-paths.mjs and check-structure.mjs import
+ * this file, so a project copies it beside them; nothing else reads it.
  * Supporting a language is adding a row here, not a special case there.
  *
  * What a module is, per language:
@@ -170,6 +171,9 @@ export const LANGUAGES = [
 			if (!existsSync(join(repo, "src")) && existsSync(join(repo, "app"))) return ["app"];
 			return ["src"];
 		},
+		// Vite and Astro build to dist/, React Router to build/, Next to .next/ (out/
+		// when exported), Nuxt to .nuxt/ and .output/; the rest are generated types.
+		buildOutputs: ["dist", "build", "out", ".next", ".nuxt", ".output", ".svelte-kit", ".astro", ".react-router"],
 		moduleOf: topLevelDirModule,
 		imports: (file, text) => [...text.replace(/\\\//g, "/").matchAll(JS_SPEC)].flatMap((m) => resolveJs(file, m[1])),
 	},
@@ -180,6 +184,7 @@ export const LANGUAGES = [
 		isTest: (base) => /^test_.*\.py$/.test(base) || /_test\.py$/.test(base),
 		projectFiles: ["pyproject.toml", "setup.py", "requirements.txt"],
 		roots: () => ["src"],
+		buildOutputs: ["dist", "build"],
 		moduleOf: topLevelDirModule,
 		imports: pyTargets,
 	},
@@ -190,6 +195,7 @@ export const LANGUAGES = [
 		isTest: () => false,
 		projectFiles: ["Cargo.toml"],
 		roots: () => ["src"],
+		buildOutputs: ["target"],
 		moduleOf: (root, parts, repo) => {
 			if (parts.length > 1) return topLevelDirModule(root, parts, repo);
 			const name = basename(parts[0], ".rs");
@@ -209,6 +215,7 @@ export const LANGUAGES = [
 		isTest: (base) => /_test\.go$/.test(base),
 		projectFiles: ["go.mod"],
 		roots: (repo) => ["internal", "cmd", "pkg"].filter((d) => existsSync(join(repo, d))),
+		buildOutputs: [], // `go build` writes beside the source or into GOBIN, no output folder
 		moduleOf: (root, parts, repo) => {
 			const dir = join(root, ...parts.slice(0, -1));
 			const key = posix(relative(repo, dir));
@@ -217,6 +224,10 @@ export const LANGUAGES = [
 		imports: goTargets,
 	},
 ];
+
+/** Every language's build-output folder names: a doc that names one points at
+ *  something a build makes, not a missing path. */
+export const BUILD_OUTPUT_DIRS = new Set(LANGUAGES.flatMap((l) => l.buildOutputs));
 
 export const languageOf = (file) => LANGUAGES.find((l) => l.extensions.some((e) => file.endsWith(e))) ?? null;
 

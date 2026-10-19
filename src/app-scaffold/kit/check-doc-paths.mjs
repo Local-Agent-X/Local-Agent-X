@@ -8,18 +8,34 @@
  * docs/adr/ — are skipped on purpose: they describe the past.
  *
  * Skipped spans: URLs, absolute or home paths (/api/x, ~/.cfg), globs,
- * placeholders (<name>, {x}), and anything under a gitignored directory
- * (per-machine paths). Put `doc-paths:ignore` on a line to exempt an
+ * placeholders (<name>, {x}), build output (`./dist/`, `build/client/`: the
+ * directories project-languages.mjs lists per language, which exist only after
+ * a build), and anything under a gitignored directory (per-machine paths). The
+ * ignore rules are the enclosing repository's; in a folder outside any
+ * repository, or one its repository ignores whole, they are the folder's own
+ * .gitignore files (git is pointed at an empty scratch repository with the
+ * folder as its work tree). Put `doc-paths:ignore` on a line to exempt an
  * intentional example of a path that should not exist.
+ *
+ * Skipped docs: a doc a framework creator wrote (an Astro or React Router
+ * template's README names the template's folders, not this project's) is
+ * skipped while its content is unchanged, and checked like any other once
+ * edited. doc-paths-stock.json beside this script records them, written when
+ * the project is set up from a creator's output:
+ *   { "docs": { "README.md": "<sha256 hex of the text, CRLF read as LF>" } }
  *
  * Usage: node check-doc-paths.mjs [--verbose] [doc.md ...]
  *   --verbose also lists gitignored paths the docs name (per-machine, not failures).
  * Default docs: AGENTS.md, CLAUDE.md, ARCHITECTURE.md, README.md, every nested
  * AGENTS.md / CLAUDE.md / README.md, and docs/**.md except history and ADRs.
+ * A doc named on the command line is checked even when it is a stock doc.
  */
-import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
+import { BUILD_OUTPUT_DIRS } from "./project-languages.mjs";
 
 const REPO = process.cwd();
 // vendor/ and third_party/ docs are someone else's — their paths point into their own repos.
@@ -46,15 +62,34 @@ function defaultDocs() {
 	});
 }
 
+const git = (args, input) => spawnSync("git", args, { cwd: REPO, input, encoding: "utf8", stdio: ["pipe", "pipe", "ignore"] });
+
+// The enclosing repository's rules apply unless there is none, or it ignores
+// this whole folder (a built app under an ignored workspace/, where every
+// missing path would otherwise read as ignored).
+function ownRulesOnly() {
+	const prefix = git(["rev-parse", "--show-prefix"]);
+	if (prefix.status !== 0) return true;
+	if (!prefix.stdout.trim()) return false;
+	return parseIgnored(git(["check-ignore", "-v", "--no-index", "."]).stdout ?? "").size > 0;
+}
+
 function gitIgnored(paths) {
 	if (!paths.length) return new Set();
+	let scratch = null;
 	try {
-		// stderr dropped: outside a git repository (a built app's folder) git prints a
-		// fatal and the paths are simply not ignored.
-		const out = execFileSync("git", ["check-ignore", "-v", "--no-index", "--stdin"], { cwd: REPO, input: paths.join("\n"), encoding: "utf8", stdio: ["pipe", "pipe", "ignore"] });
-		return parseIgnored(out);
-	} catch (err) {
-		return parseIgnored(String(err.stdout ?? ""));
+		const args = ["check-ignore", "-v", "--no-index", "--stdin"];
+		if (ownRulesOnly()) {
+			scratch = mkdtempSync(join(tmpdir(), "doc-paths-git-"));
+			execFileSync("git", ["init", "--bare", "-q", scratch], { stdio: "ignore" });
+			args.unshift(`--git-dir=${scratch}`, `--work-tree=${REPO}`);
+		}
+		// check-ignore exits 1 when nothing is ignored; stdout is the answer either way.
+		return parseIgnored(git(args, paths.join("\n")).stdout ?? "");
+	} catch {
+		return new Set(); // no git on this machine: nothing counts as ignored
+	} finally {
+		if (scratch) rmSync(scratch, { recursive: true, force: true });
 	}
 }
 
@@ -109,13 +144,29 @@ const existsBySuffix = (spec) => {
 	return false;
 };
 
-const docs = process.argv.slice(2).length ? process.argv.slice(2).map((p) => resolve(REPO, p)) : defaultDocs();
+const isBuildOutput = (spec) => BUILD_OUTPUT_DIRS.has(spec.replace(/^\.\//, "").split("/")[0]);
+
+const contentHash = (text) => createHash("sha256").update(text.replace(/\r\n/g, "\n")).digest("hex");
+function readStockDocs() {
+	try {
+		return JSON.parse(readFileSync(new URL("./doc-paths-stock.json", import.meta.url), "utf8")).docs ?? {};
+	} catch {
+		return {}; // no record, or an unreadable one: every doc is checked
+	}
+}
+
+const named = process.argv.slice(2).filter((a) => !a.startsWith("--"));
+const docs = named.length ? named.map((p) => resolve(REPO, p)) : defaultDocs();
+const stockDocs = named.length ? {} : readStockDocs();
+const stockSkipped = [];
 const misses = [];
 for (const doc of docs) {
-	const lines = readFileSync(doc, "utf8").split("\n");
-	lines.forEach((line, i) => {
+	const text = readFileSync(doc, "utf8");
+	if (stockDocs[rel(doc)] === contentHash(text)) { stockSkipped.push(rel(doc)); continue; }
+	text.split("\n").forEach((line, i) => {
 		if (line.includes("doc-paths:ignore")) return;
 		for (const spec of candidates(line)) {
+			if (isBuildOutput(spec)) continue;
 			const fromRoot = resolve(REPO, spec);
 			const fromDoc = resolve(dirname(doc), spec);
 			if (existsSync(fromRoot) || existsSync(fromDoc) || existsBySuffix(spec)) continue;
@@ -139,4 +190,5 @@ if (real.length) {
 	console.error("Fix the path, delete the stale claim, or mark an intentional example with doc-paths:ignore.");
 	process.exit(1);
 }
-console.log(`Doc paths OK (${docs.length} docs checked).`);
+const stockNote = stockSkipped.length ? `; ${stockSkipped.join(", ")} unchanged from the framework creator, skipped` : "";
+console.log(`Doc paths OK (${docs.length - stockSkipped.length} docs checked${stockNote}).`);

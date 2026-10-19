@@ -15,6 +15,10 @@ const KIT_DIR = join(dirname(fileURLToPath(import.meta.url)), "kit");
 export const STRUCTURE_CHECK_SCRIPT = "scripts/check-structure.mjs";
 export const STRUCTURE_CHECK_COMMAND = `node ${STRUCTURE_CHECK_SCRIPT}`;
 
+/** The framework creator's docs the doc-path check skips until edited; the
+ *  check reads it beside itself (kit/check-doc-paths.mjs header). */
+export const STOCK_DOCS_MANIFEST = "scripts/doc-paths-stock.json";
+
 /** The scripts every kit project gets, by their path in the project. */
 export const KIT_SCRIPTS = [
   "project-languages.mjs",

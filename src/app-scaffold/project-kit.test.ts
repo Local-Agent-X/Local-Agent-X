@@ -7,6 +7,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { adoptProjectKit, applyProjectKit, projectKitFiles, structureCheckCommand, STRUCTURE_CHECK_SCRIPT } from "./project-kit.js";
+import { stockDocHash } from "./creator-docs.js";
+import { STOCK_DOCS_MANIFEST } from "./kit-files.js";
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "lax-project-kit-")); });
@@ -171,6 +173,114 @@ describe("adoptProjectKit — the kit for a project the model created", () => {
     expect(first?.written).toEqual(expect.arrayContaining(["AGENTS.md", "scripts/check-structure.mjs"]));
     expect(structureCheckCommand(dir)).toBe("node scripts/check-structure.mjs");
     expect(adoptProjectKit(dir, { projectName: "Site" }), "already carries the kit").toBeNull();
+  });
+});
+
+// A framework creator's README names the template's folders (Astro's minimal
+// starter: `src/components/`, which it does not create).
+const ASTRO_README = "# Astro Starter Kit\n\nPut components in `src/components/`.\n";
+
+function docPaths(cwd: string): { status: number | null; out: string } {
+  // The ceiling keeps git from finding a repository above the scratch dir.
+  const env = { ...process.env, GIT_CEILING_DIRECTORIES: dirname(cwd) };
+  // The kit's docs name the map, which check-structure writes before this check.
+  spawnSync(process.execPath, [join(cwd, "scripts/codebase-map.mjs")], { cwd, encoding: "utf-8" });
+  const r = spawnSync(process.execPath, [join(cwd, "scripts/check-doc-paths.mjs")], { cwd, encoding: "utf-8", env });
+  return { status: r.status, out: r.stdout + r.stderr };
+}
+
+describe("the doc-path check and the docs a framework creator wrote", () => {
+  beforeEach(() => {
+    file("package.json", JSON.stringify({ dependencies: { astro: "^5.0.0" } }));
+    file("src/env.d.ts", "/// <reference types=\"astro/client\" />\n");
+    file("README.md", ASTRO_README);
+    file("AGENTS.md", "# Astro's own agent notes\n");
+  });
+
+  it("records the docs that came with the project, never the kit's own", () => {
+    const result = applyProjectKit(dir, { projectName: "Site" });
+    expect(result.creatorDocs.sort()).toEqual(["AGENTS.md", "README.md"]);
+    const stock = JSON.parse(read(STOCK_DOCS_MANIFEST)) as { docs: Record<string, string> };
+    expect(stock.docs["README.md"]).toBe(stockDocHash(ASTRO_README));
+    expect(Object.keys(stock.docs)).not.toContain("ARCHITECTURE.md");
+    expect(applyProjectKit(dir, { projectName: "Site" }).creatorDocs, "a second application records nothing").toEqual([]);
+  });
+
+  it("skips a stock README while it is unchanged, line endings aside", () => {
+    applyProjectKit(dir, { projectName: "Site" });
+    const r = docPaths(dir);
+    expect(r.status, r.out).toBe(0);
+    expect(r.out).toContain("README.md unchanged from the framework creator, skipped");
+    file("README.md", ASTRO_README.replace(/\n/g, "\r\n"));
+    expect(docPaths(dir).status).toBe(0);
+  });
+
+  it("checks the README like any other doc once it is edited", () => {
+    applyProjectKit(dir, { projectName: "Site" });
+    file("README.md", ASTRO_README + "\nOur pages live in `src/pages/`.\n");
+    const r = docPaths(dir);
+    expect(r.status).toBe(1);
+    expect(r.out).toContain("README.md:3 → src/components/");
+    expect(r.out).toContain("README.md:5 → src/pages/");
+  });
+
+  it("a project with no docs of its own gets no record", () => {
+    rmSync(join(dir, "README.md"));
+    rmSync(join(dir, "AGENTS.md"));
+    expect(applyProjectKit(dir, { projectName: "Site" }).creatorDocs).toEqual([]);
+    expect(existsSync(join(dir, STOCK_DOCS_MANIFEST))).toBe(false);
+  });
+});
+
+describe("the doc-path check: build output and ignore rules", () => {
+  beforeEach(() => {
+    file("package.json", JSON.stringify(vitePackage));
+    file("src/main.ts", "export const main = 1;\n");
+    applyProjectKit(dir, { projectName: "App" });
+  });
+
+  it("build output named in a doc is never missing; a missing source path still is", () => {
+    file("docs/build.md", "Output: `./dist/`, `build/client/entry.js`, `.next/`.\n");
+    expect(docPaths(dir).status, docPaths(dir).out).toBe(0);
+    file("docs/build.md", "Output: `./dist/`; entry `src/ghost.ts`.\n");
+    const r = docPaths(dir);
+    expect(r.status).toBe(1);
+    expect(r.out).toContain("src/ghost.ts");
+    expect(r.out).not.toContain("dist");
+  });
+
+  it("outside any git repository the project's own .gitignore still applies", () => {
+    file(".gitignore", "cache/\n");
+    file("docs/cache.md", "Per-machine: `cache/index.json`. Real: `src/ghost.ts`.\n");
+    const r = docPaths(dir);
+    expect(r.status).toBe(1);
+    expect(r.out).toContain("src/ghost.ts");
+    expect(r.out).not.toContain("cache/index.json");
+    expect(r.out).not.toContain("fatal");
+  });
+
+  it("inside a repository that ignores the whole project, only the project's own rules apply", () => {
+    // workspace/apps/<name> under the dev checkout, whose .gitignore has `workspace/`.
+    const outer = mkdtempSync(join(tmpdir(), "lax-doc-paths-outer-"));
+    try {
+      spawnSync("git", ["init", "-q", outer]);
+      writeFileSync(join(outer, ".gitignore"), "apps/\n");
+      const project = join(outer, "apps", "site");
+      mkdirSync(join(project, "docs"), { recursive: true });
+      for (const f of projectKitFiles(dir, { projectName: "App" })) {
+        mkdirSync(dirname(join(project, f.rel)), { recursive: true });
+        writeFileSync(join(project, f.rel), f.content);
+      }
+      writeFileSync(join(project, ".gitignore"), "cache/\n");
+      writeFileSync(join(project, "docs", "notes.md"), "`cache/index.json` and `src/ghost.ts`\n");
+      spawnSync(process.execPath, [join(project, "scripts/codebase-map.mjs")], { cwd: project });
+      const r = spawnSync(process.execPath, [join(project, "scripts/check-doc-paths.mjs")], { cwd: project, encoding: "utf-8" });
+      expect(r.status, r.stdout + r.stderr).toBe(1);
+      expect(r.stderr).toContain("src/ghost.ts");
+      expect(r.stderr).not.toContain("cache/index.json");
+    } finally {
+      rmSync(outer, { recursive: true, force: true });
+    }
   });
 });
 

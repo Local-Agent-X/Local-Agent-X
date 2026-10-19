@@ -208,6 +208,13 @@ describe("scanAppForFakedFrontend — catches a frontend-spa build faked as a st
     expect(scanAppForFakedFrontend(dir).faked).toBe(false);
   });
 
+  it("passes a REAL React Router project (its framework packages, not react itself, prove it)", () => {
+    const dir = makeApp({
+      "package.json": JSON.stringify({ name: "rr", dependencies: { "@react-router/node": "^8.4.0" }, devDependencies: { "@react-router/dev": "^8.4.0" } }),
+    });
+    expect(scanAppForFakedFrontend(dir).faked).toBe(false);
+  });
+
   it("formats an actionable message pointing at a real scaffold + app_serve_frontend", () => {
     const msg = formatFakedFrontend("there is no package.json");
     expect(msg).toContain("app_serve_frontend");

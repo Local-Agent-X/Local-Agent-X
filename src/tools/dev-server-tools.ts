@@ -159,7 +159,7 @@ export const appServeFrontendTool: ToolDefinition = {
     type: "object",
     properties: {
       app_id: { type: "string", description: "The app's directory name (workspace/apps/<app_id>)." },
-      command: { type: "string", description: "Command that starts the dev server, e.g. 'npm install && npm run dev'. Optional — when omitted, LAX auto-detects the framework (Next/Nuxt/SvelteKit/Astro/Remix/Vite) from the project and runs its dev command on the given port." },
+      command: { type: "string", description: "Command that starts the dev server, e.g. 'npm install && npm run dev'. Optional — when omitted, LAX auto-detects the framework (Next/Nuxt/SvelteKit/Astro/React Router/Remix/Vite) from the project and runs its dev command on the given port." },
       port: { type: "number", description: "The localhost port the dev server listens on (also the HMR client port)." },
       cwd: { type: "string", description: "Working directory. Defaults to workspace/apps/<app_id>." },
     },

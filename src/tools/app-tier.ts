@@ -87,7 +87,7 @@ const COMPILED_NATIVE_RE = new RegExp(
 const FRONTEND_SPA_RE = new RegExp(
   [
     // build-step toolchains / metaframeworks (a real dev server)
-    "\\b(?:vite|webpack|rollup|parcel|esbuild|next\\.?js|nuxt|svelte\\s?kit|remix|astro|gatsby)\\b",
+    "\\b(?:vite|webpack|rollup|parcel|esbuild|next\\.?js|nuxt|svelte\\s?kit|remix|react[\\s-]?router|astro|gatsby)\\b",
     // frontend frameworks WITH an artifact noun (implies a build step)
     "\\b(?:react|vue|angular|svelte|solid|preact)(?:\\.?js)?\\s+(?:app|project|application|spa|frontend|front-?end|site|dashboard|component|ui)\\b",
   ].join("|"),

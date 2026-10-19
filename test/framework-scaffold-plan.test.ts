@@ -21,7 +21,7 @@ describe("harnessOwnsScaffold", () => {
     expect(harnessOwnsScaffold("static")).toBe(true);
   });
   it("leaves named metaframeworks on the advised-creator path", () => {
-    for (const f of ["nextjs", "nuxt", "sveltekit", "astro", "remix"] as const) {
+    for (const f of ["nextjs", "nuxt", "sveltekit", "astro", "remix", "react-router"] as const) {
       expect(harnessOwnsScaffold(f)).toBe(false);
     }
   });

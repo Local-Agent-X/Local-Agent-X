@@ -123,8 +123,18 @@ describe("frontendScaffoldRecipeLines — framework-aware, never both", () => {
     expect(frontendScaffoldRecipeLines("x", "astro").join("\n")).toContain("npm create astro@latest .");
   });
 
+  it("a Remix ask is scaffolded with React Router's creator, never the deprecated create-remix", () => {
+    for (const fw of ["react-router", "remix"] as const) {
+      const lines = frontendScaffoldRecipeLines("recipe-box", fw).join("\n");
+      expect(lines).toContain("React Router (formerly Remix)");
+      expect(lines).toContain("npx create-react-router@latest . --no-install --no-git-init --no-agent-skills --yes");
+      expect(lines).toContain("basename: '/apps/recipe-box/'");
+      expect(lines).not.toContain("create-remix");
+    }
+  });
+
   it("never tells the agent to hand-author the skeleton files", () => {
-    for (const fw of ["vite", "unknown", "nextjs", "nuxt", "sveltekit", "astro"] as const) {
+    for (const fw of ["vite", "unknown", "nextjs", "nuxt", "sveltekit", "astro", "react-router"] as const) {
       const lines = frontendScaffoldRecipeLines("x", fw).join("\n");
       expect(lines).toContain("do NOT hand-write");
       // No recipe should enumerate a hand-written package.json dep list anymore.

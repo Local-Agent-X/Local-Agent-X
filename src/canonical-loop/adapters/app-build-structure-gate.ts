@@ -5,7 +5,7 @@
  * codebase map regenerated. A project without the kit is never held to it.
  *
  * A NEW build whose project the model scaffolded itself (a framework creator
- * the harness does not run — Next, Nuxt, SvelteKit, Astro, Remix — needs an
+ * the harness does not run — Next, Nuxt, SvelteKit, Astro, React Router — needs an
  * empty directory, so the kit could not go in first) adopts the kit here, at
  * its first done-claim, and is then checked like any other. An update of an
  * existing app never is: the caller says which this is (`adoptKit`), and says

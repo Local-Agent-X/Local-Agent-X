@@ -10,8 +10,9 @@
  * as target in the EMPTY app dir — it scaffolds in place, no prompts, at current
  * versions), and the LAX base-path patch to apply AFTER, which lives in a
  * DIFFERENT config key per framework (so assets resolve under the /apps/<id>/
- * proxy). `verified` marks the two creators checked non-interactive at runtime
- * (Vite, Next); the rest carry each tool's documented non-interactive flags.
+ * proxy). `verified` marks the creators checked non-interactive at runtime
+ * (Vite, Next, React Router); the rest carry each tool's documented
+ * non-interactive flags.
  * `framework` is the prompt intent (inferFrameworkFromPrompt); anything unnamed
  * falls back to Vite + React, LAX's lightest, most reliable SPA stack.
  */
@@ -27,7 +28,9 @@ interface FrameworkScaffold {
 	verified?: boolean;
 }
 
-const SCAFFOLDS: Record<Exclude<DetectedFramework, "static" | "unknown">, FrameworkScaffold> = {
+// "remix" is a kind detected on disk (an existing Remix v2 app), never one a
+// new project is created as: a Remix ask is a React Router project.
+const SCAFFOLDS: Record<Exclude<DetectedFramework, "static" | "unknown" | "remix">, FrameworkScaffold> = {
 	vite: {
 		label: "Vite + React",
 		creator: "npm create vite@latest . -- --template react-ts",
@@ -57,10 +60,12 @@ const SCAFFOLDS: Record<Exclude<DetectedFramework, "static" | "unknown">, Framew
 		creator: "npm create astro@latest . -- --template minimal --typescript strict --no-install --no-git --skip-houston --yes",
 		basePatch: (n) => `Set \`base: '/apps/${n}/'\` in astro.config. Astro owns its own bundler — do NOT add a standalone vite.config.`,
 	},
-	remix: {
-		label: "Remix",
-		creator: "npx create-remix@latest . --no-install --no-git-init --yes",
-		basePatch: (n) => `Set the vite \`base: '/apps/${n}/'\`. One framework only — do NOT add a second standalone vite.config.`,
+	// Remix merged into React Router (v7 on); create-remix is deprecated upstream.
+	"react-router": {
+		label: "React Router (formerly Remix)",
+		creator: "npx create-react-router@latest . --no-install --no-git-init --no-agent-skills --yes",
+		basePatch: (n) => `Set \`basename: '/apps/${n}/'\` in react-router.config.ts AND the matching vite \`base: '/apps/${n}/'\` in its vite.config.ts (routes and assets both live under the proxy). React Router's Vite plugin is its bundler — do NOT add a second standalone vite.config.`,
+		verified: true,
 	},
 };
 
@@ -75,6 +80,7 @@ export function scaffoldCreators(): Array<{ framework: keyof typeof SCAFFOLDS; l
 /** Resolve the scaffold for a prompt-inferred framework; unnamed/static → Vite default. */
 function scaffoldFor(framework: DetectedFramework): FrameworkScaffold {
 	if (framework === "static" || framework === "unknown") return SCAFFOLDS.vite;
+	if (framework === "remix") return SCAFFOLDS["react-router"];
 	return SCAFFOLDS[framework] ?? SCAFFOLDS.vite;
 }
 

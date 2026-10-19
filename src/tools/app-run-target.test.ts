@@ -32,7 +32,7 @@ describe("supportsStaticBuild / staticBuildCommand", () => {
 		expect(staticBuildCommand("vite")).toBe("npx vite build");
 	});
 	it("SSR frameworks and static/unknown are not static-buildable", () => {
-		for (const f of ["nextjs", "nuxt", "sveltekit", "astro", "remix", "static", "unknown"] as const) {
+		for (const f of ["nextjs", "nuxt", "sveltekit", "astro", "remix", "react-router", "static", "unknown"] as const) {
 			expect(supportsStaticBuild(f)).toBe(false);
 			expect(staticBuildCommand(f)).toBeNull();
 		}

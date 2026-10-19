@@ -63,6 +63,22 @@ describe("detectFramework — config files (highest precision)", () => {
     expect(det.devCommand(5301)).toContain("remix vite:dev");
   });
 
+  it("a React Router app (create-react-router's layout) → react-router with its own CLI, not plain vite", () => {
+    writeFileSync(join(dir, "vite.config.ts"), "export default {}\n");
+    writeFileSync(join(dir, "react-router.config.ts"), "export default { ssr: true }\n");
+    writePkg({ "react-router": "^8.4.0", "@react-router/node": "^8.4.0" }, { "@react-router/dev": "^8.4.0", vite: "^8.0.0" });
+    const det = detectFramework(dir);
+    expect(det.framework).toBe("react-router");
+    expect(det.evidence).toBe("react-router.config.ts");
+    expect(det.devCommand(5302)).toBe("npm install && npx react-router dev --port 5302 --host 127.0.0.1 --strictPort");
+  });
+
+  it("the routing library alone (react-router in a Vite SPA) stays vite", () => {
+    writeFileSync(join(dir, "vite.config.ts"), "export default {}\n");
+    writePkg({ "react-router": "^8.4.0", react: "^19.0.0" }, { vite: "^8.0.0" });
+    expect(detectFramework(dir).framework).toBe("vite");
+  });
+
   it("precedence: a metaframework dep beats a bare vite.config (Next with a vitest vite.config → nextjs)", () => {
     // Next/Astro/Nuxt commonly ship a vite.config only for vitest and need no
     // config file of their own — the dep must win, else vite binds the port and
@@ -90,6 +106,7 @@ describe("detectFramework — package.json dependency fallback", () => {
     ["@sveltejs/kit", "sveltekit"],
     ["astro", "astro"],
     ["@remix-run/node", "remix"],
+    ["@react-router/dev", "react-router"],
     ["vite", "vite"],
   ];
   for (const [dep, framework] of cases) {
@@ -252,8 +269,11 @@ describe("inferFrameworkFromPrompt — prompt text → intended framework", () =
     ["scaffold a SvelteKit blog", "sveltekit"],
     ["svelte kit portfolio", "sveltekit"],
     ["an Astro docs site", "astro"],
-    ["a Remix todo app", "remix"],
+    ["a Remix todo app", "react-router"],
+    ["a React Router v7 storefront", "react-router"],
+    ["build it in React Router framework mode", "react-router"],
     ["a Vite + React SPA", "vite"],
+    ["a Vite app with React Router for the pages", "vite"],
   ];
   for (const [prompt, expected] of cases) {
     it(`"${prompt}" → ${expected}`, () => {

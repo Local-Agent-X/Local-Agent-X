@@ -30,6 +30,8 @@ describe("classifyAppTier — frontend-spa (build-step frontend, live dev server
     "a react dashboard application",
     "make me a svelte kit site",
     "a vue frontend with vite",
+    "a Remix storefront",
+    "a recipe site on React Router",
   ])("flags %j as frontend-spa", (prompt) => {
     expect(classifyAppTier(prompt)).toBe("frontend-spa");
   });

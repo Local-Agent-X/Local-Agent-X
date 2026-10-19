@@ -146,7 +146,7 @@ export function applyProjectKit(projectDir: string, opts: ProjectKitOptions): Ap
 
 /**
  * The kit for a project someone else created: a framework creator the model
- * ran (Next, Nuxt, SvelteKit, Astro, Remix need an empty directory, so the
+ * ran (Next, Nuxt, SvelteKit, Astro, React Router need an empty directory, so the
  * kit cannot go in first). Applied when the directory holds a project file
  * and no kit yet; null when there is nothing to adopt, so a caller can tell
  * "applied" from "nothing to do". The caller decides that this is a NEW

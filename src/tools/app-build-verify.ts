@@ -272,7 +272,7 @@ export function formatUnverifiedNativeParity(violations: NativeParityViolation[]
 // Framework / build-tool deps that prove a real project was scaffolded (matched
 // against package.json text — covers dependencies and devDependencies alike).
 const FRONTEND_FRAMEWORK_DEP_RE =
-  /"(?:vite|@vitejs\/[a-z-]+|next|nuxt|svelte|@sveltejs\/kit|@remix-run\/[a-z-]+|astro|gatsby|react|react-dom|vue|@angular\/core|solid-js|preact|webpack|parcel|rollup|esbuild)"\s*:/i;
+  /"(?:vite|@vitejs\/[a-z-]+|next|nuxt|svelte|@sveltejs\/kit|@remix-run\/[a-z-]+|@react-router\/[a-z-]+|react-router|astro|gatsby|react|react-dom|vue|@angular\/core|solid-js|preact|webpack|parcel|rollup|esbuild)"\s*:/i;
 
 export function scanAppForFakedFrontend(appDir: string): { faked: boolean; reason: string } {
   const pkgPath = join(appDir, "package.json");

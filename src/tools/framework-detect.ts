@@ -17,7 +17,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 export type DetectedFramework =
-  | "nextjs" | "nuxt" | "sveltekit" | "astro" | "remix" | "vite" | "static" | "unknown";
+  | "nextjs" | "nuxt" | "sveltekit" | "astro" | "remix" | "react-router" | "vite" | "static" | "unknown";
 
 export interface FrameworkDetection {
   framework: DetectedFramework;
@@ -29,13 +29,15 @@ export interface FrameworkDetection {
 
 // SvelteKit's dev server IS vite, so it gets the `vite dev` form. Remix here is
 // the modern vite-based CLI (`remix vite:dev`); the legacy compiler (detected
-// via remix.config.js) overrides this with plain `remix dev` below.
+// via remix.config.js) overrides this with plain `remix dev` below. React
+// Router (v7 on, what Remix became) is a separate kind: its own CLI.
 const DEV_COMMANDS: Partial<Record<DetectedFramework, (port: number) => string>> = {
   nextjs: (p) => `npm install && npx next dev --port ${p}`,
   nuxt: (p) => `npm install && npx nuxt dev --port ${p}`,
   sveltekit: (p) => `npm install && npx vite dev --port ${p} --host 127.0.0.1 --strictPort`,
   astro: (p) => `npm install && npx astro dev --port ${p} --host 127.0.0.1`,
   remix: (p) => `npm install && npx remix vite:dev --port ${p} --host 127.0.0.1`,
+  "react-router": (p) => `npm install && npx react-router dev --port ${p} --host 127.0.0.1 --strictPort`,
   vite: (p) => `npm install && npx vite --port ${p} --host 127.0.0.1 --strictPort`,
 };
 
@@ -87,7 +89,11 @@ const PROMPT_FRAMEWORK_SIGNALS: ReadonlyArray<readonly [RegExp, DetectedFramewor
   [/\bnuxt(?:\.?js)?\b/i, "nuxt"],
   [/\bsvelte\s?kit\b/i, "sveltekit"],
   [/\bastro\b/i, "astro"],
-  [/\bremix\b/i, "remix"],
+  // Remix merged into React Router, so a Remix ask is built with React Router.
+  // A bare "React Router" is usually the routing library inside a Vite SPA;
+  // only a version or "framework" names the framework.
+  [/\bremix\b/i, "react-router"],
+  [/\breact[\s-]?router\s+(?:v?\d+|framework)\b/i, "react-router"],
   [/\bvite\b/i, "vite"],
 ];
 
@@ -130,6 +136,10 @@ export function detectFramework(appDir: string): FrameworkDetection {
   }
   const vite = firstConfig(appDir, "vite.config");
   if (vite && remixDep) return make("remix", `${vite} + package.json dependency "${remixDep}"`);
+  // Ahead of vite.config: a React Router app carries one for its Vite plugin,
+  // and plain `vite` would serve it without the framework.
+  const reactRouter = firstConfig(appDir, "react-router.config");
+  if (reactRouter) return make("react-router", reactRouter);
 
   // 2) A metaframework DEPENDENCY outranks a bare vite.config. Next/Nuxt/Astro/
   // Kit projects routinely ship a vite.config solely for vitest, and Next/Astro
@@ -148,6 +158,7 @@ export function detectFramework(appDir: string): FrameworkDetection {
     if (deps[dep]) return make(framework, `package.json dependency "${dep}"`);
   }
   if (remixDep) return make("remix", `package.json dependency "${remixDep}"`);
+  if (deps["@react-router/dev"]) return make("react-router", `package.json dependency "@react-router/dev"`);
 
   // 3) Vite — config file or bare dep — once metaframeworks are ruled out.
   if (vite) return make("vite", vite);

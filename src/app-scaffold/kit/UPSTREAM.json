@@ -1,7 +1,7 @@
 {
   "project-languages.mjs": {
     "upstream": "scripts/project-languages.mjs",
-    "sha256": "b1af4a1896b43da5e9f2eef77fa3c158b8da268307b5c69cb4d090d5d70d6db8"
+    "sha256": "6e79e38c08993016995b8e721ee753fc595d14a1800f0dbd4eb578b630075e37"
   },
   "codebase-map.mjs": {
     "upstream": "scripts/codebase-map.mjs",

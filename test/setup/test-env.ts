@@ -94,7 +94,11 @@ globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
   return realFetch(input, init);
 }) as typeof fetch;
 
+// Windows releases a folder some time after the last process in it exits (and
+// an indexer or scanner may hold it briefly), so removal retries longer there:
+// rmSync backs off linearly, 100 ms more per try, ~3.6 s over 8 tries.
+const RM_RETRY = { maxRetries: process.platform === "win32" ? 8 : 5, retryDelay: 100 };
 afterAll(() => {
-  rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
-  rmSync(workspaceHost, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  rmSync(home, { recursive: true, force: true, ...RM_RETRY });
+  rmSync(workspaceHost, { recursive: true, force: true, ...RM_RETRY });
 });

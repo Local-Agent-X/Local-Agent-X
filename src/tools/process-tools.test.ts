@@ -120,9 +120,13 @@ async function pollRunning(sessionId: string, want: boolean, timeoutMs = 8000): 
   return (await isRunning(sessionId)) === want;
 }
 
+// The kill returns before the child is gone. Wait for it to exit: on Windows a
+// live child's working directory (the file's temp workspace) cannot be removed,
+// and the setup's teardown fails the whole file with EBUSY.
 afterEach(async () => {
   for (const id of spawned) {
     try { await processKillTool.execute({ session_id: id }); } catch { /* best effort */ }
+    await pollRunning(id, false, 5000);
   }
   spawned.clear();
 });

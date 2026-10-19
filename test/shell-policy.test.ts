@@ -267,12 +267,14 @@ describe("detectObfuscation", () => {
     expect(detectObfuscation("echo \\162\\155")).toBeNull();
   });
 
-  it("flags base64 -d decode", () => {
-    expect(detectObfuscation("echo abc | base64 -d")).toMatch(/base64 decode/);
-  });
-
-  it("flags `xxd -r` reverse hex decode", () => {
-    expect(detectObfuscation("echo abc | xxd -r")).toMatch(/hex decode/);
+  // Decoding is ordinary; decoded text handed to a shell or interpreter in the
+  // same command is what hides a command (Terminal-Bench, 2026-10-19: refusing
+  // every decode cost vulnerable-secret and extract-elf).
+  it("flags base64 -d and `xxd -r` only when the decoded text is run", () => {
+    expect(detectObfuscation("echo abc | base64 -d | sh")).toMatch(/decoded text is passed to a shell/);
+    expect(detectObfuscation("echo abc | xxd -r | bash")).toMatch(/decoded text is passed to a shell/);
+    expect(detectObfuscation("echo abc | base64 -d")).toBeNull();
+    expect(detectObfuscation("echo abc | xxd -r")).toBeNull();
   });
 
   it("`rev` is refused as the command that runs, not by detectObfuscation's word scan", () => {
@@ -281,8 +283,9 @@ describe("detectObfuscation", () => {
     expect(evaluateShellCommand("git rev-parse HEAD").allowed).toBe(true);
   });
 
-  it("flags overlong commands (>2000 chars)", () => {
-    expect(detectObfuscation("a" + "b".repeat(2100))).toMatch(/2000 characters/);
+  it("flags an overlong command (>2000 chars) that carries an encoded blob, not one that is merely long", () => {
+    expect(detectObfuscation("a" + "b".repeat(2100))).toMatch(/long encoded blob/);
+    expect(detectObfuscation("echo " + "word ".repeat(450))).toBeNull();
   });
 
   it("returns null for benign commands", () => {

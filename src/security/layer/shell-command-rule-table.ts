@@ -141,8 +141,9 @@ export const COMMAND_RULES: readonly CommandRule[] = [
     (a) => lower(a[0]) === "find-generic-password" || lower(a[0]) === "find-internet-password"),
 
   // ── Obfuscation ──
-  binWith("base64-decode", "obfuscation", "decodes hidden content, a common way to smuggle a command", ["base64"],
-    (a) => a.some((x) => x === "--decode" || /^-[a-zA-Z]*[dD]/.test(x))),
+  // A base64 decode by itself is not here: decoding is ordinary, and the
+  // dangerous use (decoded text handed to a shell or interpreter in the same
+  // command) is refused by detectObfuscation in shell-detectors.ts.
   binWith("encoded-powershell", "obfuscation", "runs a base64-encoded PowerShell command the checks cannot read",
     ["powershell", "pwsh"], (a) => a.some(isEncodedCommandFlag)),
   // The command word only: `git rev-parse`, `git rev-list` and a `rev` inside

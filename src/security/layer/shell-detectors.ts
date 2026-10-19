@@ -12,9 +12,10 @@ import {
   INTERP_EVAL_FLAGS,
   RENAME_ESCAPE_EVAL_FLAGS,
 } from "./shell-rules.js";
-import { execBasename, resolveRealArgv0, splitShellSegments, stripQuotedSpans, tokenizeCommand } from "./shell-lex.js";
+import { execBasename, resolveRealArgv0, resolveRealArgv0Index, splitShellSegments, stripQuotedSpans, tokenizeCommand } from "./shell-lex.js";
 import { realpathDeep } from "./file-access.js";
 import type { InlineEvalPolicy } from "./types.js";
+import { DECODE_EXEC_REFUSAL, ENCODED_PAYLOAD_REFUSAL, NESTED_COMMAND_WAY_OUT } from "./shell-refusals.js";
 
 // Re-export the lexing primitives that this module's consumers (shell-policy,
 // shell-write-detector) import from here, so the split into shell-lex.ts
@@ -26,26 +27,39 @@ export { splitShellSegments, stripQuotedSpans, tokenizeCommand } from "./shell-l
 // they spell with every rule, so a hidden `rm` is refused as `rm` while a
 // `sed 's/\x1b…'` that strips color codes is not refused at all.
 export function detectObfuscation(command: string): string | null {
-  // Base64 inline decoding (echo BASE64 | base64 -d)
-  if (/base64\s+(-d|--decode)/i.test(command)) {
-    return "Blocked: base64 decode in command (possible obfuscation)";
-  }
-  // xxd / od reverse (decode hex to binary)
-  if (/\bxxd\s+-r\b/i.test(command) || /\bod\b.*-A\s*x/i.test(command)) {
-    return "Blocked: hex decode tool (possible obfuscation)";
+  // Decoding (base64 -d, xxd -r) is ordinary work: a JWT, a hex dump, data a
+  // binary carries. What hides a command from every rule here is handing the
+  // decoded text to a shell or interpreter in the same command (`echo … |
+  // base64 -d | sh`), so that pairing is what is refused. Refusing every
+  // decode cost real tasks (Terminal-Bench vulnerable-secret, extract-elf,
+  // 2026-10-19). `od` only dumps, it never decodes, so it is not checked.
+  const decodes = /\bbase64\b[^|;&\n]*\s(?:-d|-D|--decode)\b/i.test(command)
+    || /\bxxd\b[^|;&\n]*\s-[a-z]*r[a-z]*\b/i.test(command);
+  if (decodes && splitShellSegments(command).some((s) => DECODED_TEXT_RUNNERS.has(resolveRealArgv0(tokenizeCommand(s)) ?? ""))) {
+    return DECODE_EXEC_REFUSAL;
   }
   // String concatenation tricks: a='r'; b='m'; $a$b
   // We already block $ metacharacter, but check for quoted var assignment patterns
   if (/\b[a-z]=['"][a-z]{1,3}['"]/i.test(command) && command.split("=").length > 3) {
     return "Blocked: suspicious variable assignment pattern (possible string concatenation obfuscation)";
   }
-  // Very long commands are suspicious (likely encoded payloads)
-  if (command.length > 2000) {
-    return "Blocked: command exceeds 2000 characters (possible encoded payload)";
+  // A long command is ordinary (a full python -c self-test, a JSON body); a
+  // long command carrying one unbroken run of base64/hex is the payload shape.
+  if (command.length > 2000 && ENCODED_BLOB.test(command)) {
+    return ENCODED_PAYLOAD_REFUSAL;
   }
 
   return null;
 }
+
+/** Commands that would run text handed to them on stdin or as an argument. */
+const DECODED_TEXT_RUNNERS: ReadonlySet<string> = new Set([
+  "sh", "bash", "zsh", "dash", "ksh", "fish", "python", "perl", "ruby", "node", "php",
+  "pwsh", "powershell", "eval", "source", ".", "xargs", "exec",
+]);
+
+/** An unbroken run of base64/hex characters long enough to hide a program. */
+const ENCODED_BLOB = /[A-Za-z0-9+/=_-]{400,}/;
 
 // ── Secret-placeholder injection into shell commands ──
 // `{{SECRET_NAME}}` placeholders resolve ONLY in http_request (into headers,
@@ -162,34 +176,72 @@ export function detectInterpreterEscape(command: string): string | null {
 // space, is not misread as a group).
 export function detectNestedCommandExecution(command: string): string | null {
   if (/`/.test(command)) {
-    return "Blocked: backtick command substitution runs a nested command whose argv the network/denylist scan can't see. Use $(( )) for arithmetic, or run the inner command directly.";
+    return `Blocked: backtick command substitution runs a nested command whose argv the network/denylist scan can't see. Use $(( )) for arithmetic. ${NESTED_COMMAND_WAY_OUT}`;
   }
-  // $( command-sub, but NOT $(( arithmetic (negative lookahead on the 2nd paren).
-  if (/\$\((?!\()/.test(command)) {
-    return "Blocked: $(...) command substitution runs a nested command whose argv the network/denylist scan can't see. Arithmetic $(( )) and parameter ${...} expansion are allowed; run the inner command directly instead.";
+  // $( command-sub, but NOT $(( arithmetic (negative lookahead on the 2nd paren),
+  // and not one that only runs a plain read-only command (onlyPlainSubstitutions).
+  if (/\$\((?!\()/.test(command) && !onlyPlainSubstitutions(command)) {
+    return `Blocked: $(...) command substitution runs a nested command whose argv the network/denylist scan can't see. Arithmetic $(( )) and parameter \${...} expansion are allowed. ${NESTED_COMMAND_WAY_OUT}`;
   }
   // bash 5.3 function/value substitution: `${ cmd; }` / `${| cmd; }` RUN a
   // command; `${` + whitespace/`|` distinguishes funsub from a `${NAME}` param.
   if (/\$\{[\s|]/.test(command)) {
-    return "Blocked: ${ ...; } function substitution runs a nested command whose argv the network/denylist scan can't see. Use ${NAME} parameter expansion, or run the inner command directly.";
+    return `Blocked: \${ ...; } function substitution runs a nested command whose argv the network/denylist scan can't see. Use \${NAME} parameter expansion. ${NESTED_COMMAND_WAY_OUT}`;
   }
   // Process substitution <(...) / >(...) — quote-stripped so a literal `>(`
   // inside quotes isn't misread (the operator is not quote-expandable).
   if (/[<>]\(/.test(stripQuotedSpans(command))) {
-    return "Blocked: process substitution <(...) / >(...) runs a nested command whose argv the network/denylist scan can't inspect.";
+    return `Blocked: process substitution <(...) / >(...) runs a nested command whose argv the network/denylist scan can't inspect. ${NESTED_COMMAND_WAY_OUT}`;
   }
   // Subshell ( ... ) and brace-group { ...; } at a command position. `((` at a
   // segment start is an arithmetic command (no nested command) and is allowed.
   for (const segment of splitShellSegments(command)) {
     const t = segment.trim();
     if (t.startsWith("(") && !t.startsWith("((")) {
-      return "Blocked: a ( subshell ) runs its contents as a nested command the network/denylist scan can't inspect. Run the command without the subshell.";
+      return `Blocked: a ( subshell ) runs its contents as a nested command the network/denylist scan can't inspect. Run the command without the subshell. ${NESTED_COMMAND_WAY_OUT}`;
     }
     if (/^\{\s/.test(t)) {
-      return "Blocked: a { brace group; } runs its contents as a nested command the network/denylist scan can't inspect. Run the command without the group.";
+      return `Blocked: a { brace group; } runs its contents as a nested command the network/denylist scan can't inspect. Run the command without the group. ${NESTED_COMMAND_WAY_OUT}`;
     }
   }
   return null;
+}
+
+// `$(...)` that only reads a fact about the machine or the checkout
+// (`cd $(git rev-parse --show-toplevel)`, `mkdir -p $(dirname out/x)`) runs no
+// command the scans could miss, so it is not refused. Kept narrow on purpose
+// (see the header above: no parser for nested shell): the body must be plain
+// words with no shell syntax at all, so it cannot hold a second command, and
+// its command must be one that only reads. It may not stand in a command
+// word either: `$(dirname /usr/bin/curl)/curl x` would run a program no argv
+// scan sees. Anything else stays refused.
+const PLAIN_SUBSTITUTION = /\$\((?!\()([^()$`'";&|<>{}\\\n\r]*)\)/g;
+const READ_ONLY_SUBSTITUTION_BINS: ReadonlySet<string> = new Set([
+  "pwd", "basename", "dirname", "realpath", "readlink", "nproc", "uname", "whoami", "id",
+]);
+const READ_ONLY_GIT = new Set(["rev-parse", "describe", "symbolic-ref"]);
+
+function isReadOnlySubstitution(body: string): boolean {
+  const tokens = tokenizeCommand(body.trim());
+  const bin = tokens.length > 0 ? execBasename(tokens[0]) : "";
+  if (READ_ONLY_SUBSTITUTION_BINS.has(bin)) return true;
+  if (bin === "date") return !tokens.some((t) => t === "-s" || t.startsWith("--set"));
+  if (bin === "git") return READ_ONLY_GIT.has(tokens[1] ?? "") || (tokens[1] === "branch" && tokens[2] === "--show-current" && tokens.length === 3);
+  return false;
+}
+
+export function onlyPlainSubstitutions(command: string): boolean {
+  let unsafe = false;
+  const rest = command.replace(PLAIN_SUBSTITUTION, (_, body: string) => {
+    if (!isReadOnlySubstitution(body)) unsafe = true;
+    return "";
+  });
+  if (unsafe || /\$\((?!\()/.test(rest)) return false;
+  return !splitShellSegments(command).some((segment) => {
+    const tokens = tokenizeCommand(segment);
+    const at = resolveRealArgv0Index(tokens);
+    return at !== null && tokens[at].includes("$(");
+  });
 }
 
 // ── argv[0] dangerous-command basenames ──

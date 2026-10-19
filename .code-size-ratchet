@@ -79,7 +79,7 @@ src/routes/settings/system.ts#handleSystemRoutes 129
 src/sandbox/docker-execution-runtime.ts 363
 src/security/layer/file-access.ts#evaluateFileAccess 113
 src/security/layer/kernel-class-policy.ts#evaluateByKernelClass 132
-src/security/layer/shell-policy.ts#evaluateShellCommand 132
+src/security/layer/shell-policy.ts#evaluateShellCommand 127
 src/self-edit/sandbox.ts#runSelfEditInSandbox 198
 src/self-edit/tool.ts#selfEditTool.execute 117
 src/server/background-jobs/cron-runner.ts#cronService.onExecute:callback 170

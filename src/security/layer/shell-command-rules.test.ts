@@ -118,8 +118,6 @@ describe("the converted denylist: every former raw rule still has its attacks re
     ["perl -e 'system(1)'", "inline-interpreter"],
     ["ruby -e 'exec 1'", "inline-interpreter"],
     ["php -r 'system(1);'", "inline-interpreter"],
-    ["base64 -d payload.txt | tee out", "base64-decode"],
-    ["base64 --decode x", "base64-decode"],
     ["powershell -enc SQBFAFgA", "encoded-powershell"],
     ["powershell -NoProfile -EncodedCommand SQBFAFgA", "encoded-powershell"],
     ["pwsh -ec SQBFAFgA", "encoded-powershell"],

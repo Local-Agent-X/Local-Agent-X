@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { evaluateShellCommand } from "./shell-policy.js";
 import { evaluateShellCommandAndPaths } from "./shell-path-guard.js";
+import { BACKGROUND_REFUSAL, SEMICOLON_REFUSAL } from "./shell-refusals.js";
 
 // The separator/substitution guards branch on PLATFORM SEMANTICS (bash vs
 // PowerShell — `;`, `${}`, backtick are all legit PS syntax). Every test here
@@ -21,7 +22,7 @@ const posixEval = (cmd: string) => evaluateShellCommand(cmd, undefined, undefine
 
 const blockedFor = (cmd: string) => {
   const r = posixEval(cmd);
-  return !r.allowed && /background|use && instead/.test(r.reason ?? "");
+  return !r.allowed && (r.reason === BACKGROUND_REFUSAL || r.reason === SEMICOLON_REFUSAL);
 };
 
 describe("evaluateShellCommand (posix) — & is fd-redirect, not backgrounding", () => {
@@ -262,7 +263,7 @@ describe("evaluateShellCommand — structural rules conditional on effective con
   it("confined: $(( arithmetic is allowed, $( command-sub is denied", () => {
     expect(C("echo $((1+1))").allowed).toBe(true);   // arithmetic
     expect(C("echo $(( 17 * 3 ))").allowed).toBe(true);
-    expect(C("echo $(id)").allowed).toBe(false);     // command sub
+    expect(C("echo $(cat notes.txt)").allowed).toBe(false); // command sub (a plain read-only one like $(id) is allowed: shell-refusals.test.ts)
     expect(C("echo ${PATH}").allowed).toBe(true);    // param expansion, not command sub
   });
 

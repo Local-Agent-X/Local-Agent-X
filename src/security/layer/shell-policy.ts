@@ -19,6 +19,8 @@ import {
   detectNestedCommandExecution,
   tokenizeCommand,
 } from "./shell-detectors.js";
+import { BACKGROUND_REFUSAL, NESTED_COMMAND_WAY_OUT, NEWLINE_REFUSAL, SEMICOLON_REFUSAL } from "./shell-refusals.js";
+import { isDisposableSandbox } from "./disposable-sandbox.js";
 
 // Re-exported for the existing public surface (importers reference it from
 // "./shell-policy.js"); the implementation now lives in shell-detectors.ts.
@@ -73,6 +75,16 @@ function deniedCommandBlock(matched: string, scope: "pipe segment" | "command"):
   };
 }
 
+/** The command separator a bash command chains with outside quotes (newline,
+ *  a bare &, ;), refused with the way that works (shell-refusals.ts), or null.
+ *  `unquoted` is the command with its quoted spans stripped. */
+function separatorRefusal(unquoted: string): string | null {
+  if (/[\r\n]/.test(unquoted)) return NEWLINE_REFUSAL;
+  if (/(?<![&|<>])&(?![&|>])/.test(unquoted)) return BACKGROUND_REFUSAL;
+  if (/;/.test(unquoted)) return SEMICOLON_REFUSAL;
+  return null;
+}
+
 // `inlineEval`/`workspace` gate the R4-11/R4-13 inline-eval interpreter-escape
 // refusal: it fires when the policy is "refuse" and needs the workspace tree to
 // decide the rename-escape (part b). Both are optional so the redundant
@@ -121,7 +133,10 @@ export function evaluateShellCommand(
   // `<(…)`): their nested argv escapes the argv0 scans, so relaxing them under
   // confinement would open vectors like `echo $(dig evil.com)`. See
   // detectNestedCommandExecution.
-  const structuralRulesApply = sandboxConfined !== true || platform === "win32";
+  // A machine the operator declared disposable (disposable-sandbox.ts) is its
+  // own boundary, so these string heuristics stand down there too; the egress
+  // switch below does not, because no cage proxies that machine's network.
+  const structuralRulesApply = (sandboxConfined !== true && !isDisposableSandbox()) || platform === "win32";
   // ── Egress switch ──
   // The network rules (the "network-client" argv rule, the inline-network
   // body scan, EGRESS_TEXT_PATTERNS) exist because a host shell can reach any
@@ -304,7 +319,7 @@ export function evaluateShellCommand(
       // the RAW command because `$(`/backtick inside DOUBLE quotes are still
       // bash-expanded; a single-quoted occurrence is a rare, harmless FP.
       if (/`/.test(command) || /\$\(/.test(command) || /\$\{/.test(command)) {
-        return { allowed: false, reason: "Blocked: shell metacharacters detected (backtick or command substitution).", userHint: USER_HINTS.commandShell };
+        return { allowed: false, reason: `Blocked: $(...), \${...} and backticks expand at run time, where the checks cannot follow them on a machine without LAX's sandbox. ${NESTED_COMMAND_WAY_OUT}`, userHint: USER_HINTS.commandShell };
       }
       // Separators — newline, ;, bare & — count only OUTSIDE quotes, so quote-strip
       // first. A newline or `;` INSIDE a quoted argument (a multi-line
@@ -317,13 +332,8 @@ export function evaluateShellCommand(
       // command separator (like ;) and stays blocked.
       // The & exclusions also spare fd-redirect forms — 2>&1, >&2, &>file all carry
       // a literal & that is job-control NOTHING (it's a descriptor dup/merge).
-      const unquoted = stripQuotedSpans(command);
-      if (/[\r\n]/.test(unquoted)) {
-        return { allowed: false, reason: "Blocked: a newline outside quotes chains commands. Put multi-line code inside a single quoted -c/-e argument, e.g. python3 -c 'line1\\nline2', or write it to a file and run that.", userHint: USER_HINTS.commandShell };
-      }
-      if (/;/.test(unquoted) || /(?<![&|<>])&(?![&|>])/.test(unquoted)) {
-        return { allowed: false, reason: "Blocked: use && instead of ; for chaining, and don't background processes with &.", userHint: USER_HINTS.commandShell };
-      }
+      const separator = separatorRefusal(stripQuotedSpans(command));
+      if (separator) return { allowed: false, reason: separator, userHint: USER_HINTS.commandShell };
     }
   }
 

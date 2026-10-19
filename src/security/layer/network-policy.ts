@@ -7,6 +7,8 @@ import { getLaxDir } from "../../lax-data-dir.js";
 import { createLogger } from "../../logger.js";
 import {
   LOCAL_SERVICE_RECOVERY,
+  LOOPBACK_WAY_OUT,
+  PRIVATE_ADDRESS_WAY_OUT,
   canonicalizeHost,
   isPrivateIPv4,
   isPrivateIPv6,
@@ -133,7 +135,7 @@ export function evaluateWebFetch(
   // EVERY loopback port reachable by name, since a name is neither a dotted-quad
   // nor an encoded IP and would sail through to the permissive egress default.
   if (LOOPBACK_HOSTNAMES.has(host)) {
-    return { allowed: false, reason: `Blocked: ${host}${parsed.port ? ":" + parsed.port : ""} is a loopback port that is neither this agent's own server nor a registered local service`, userHint: USER_HINTS.network, recovery: LOCAL_SERVICE_RECOVERY };
+    return { allowed: false, reason: `Blocked: ${host}${parsed.port ? ":" + parsed.port : ""} is a loopback port that is neither this agent's own server nor a registered local service. ${LOOPBACK_WAY_OUT}`, userHint: USER_HINTS.network, recovery: LOCAL_SERVICE_RECOVERY };
   }
 
   // Check blocked hostnames
@@ -145,7 +147,7 @@ export function evaluateWebFetch(
   // IPv4 — strict decimal only; octal (0177.0.0.1) and hex (0x7f.0.0.1) are blocked
   if (/^\d+\.\d+\.\d+\.\d+$/.test(host) || /^0x[0-9a-f]/i.test(host) || /^0[0-7]+\./.test(host)) {
     if (isPrivateIPv4(host) && !operatorNamed) {
-      return { allowed: false, reason: `Blocked: ${host} is a private/reserved IPv4 address`, userHint: USER_HINTS.network, recovery: LOCAL_SERVICE_RECOVERY };
+      return { allowed: false, reason: `Blocked: ${host} is a private/reserved IPv4 address. ${PRIVATE_ADDRESS_WAY_OUT}`, userHint: USER_HINTS.network, recovery: LOCAL_SERVICE_RECOVERY };
     }
   }
   // Block hex integer IPs (e.g., 0x7f000001 = 127.0.0.1)
@@ -164,7 +166,7 @@ export function evaluateWebFetch(
       return { allowed: false, reason: `Blocked: malformed IPv6 address brackets in ${host}`, userHint: USER_HINTS.network };
     }
     if (isPrivateIPv6(cleanHost) && !operatorNamed) {
-      return { allowed: false, reason: `Blocked: ${host} is a private/reserved IPv6 address`, userHint: USER_HINTS.network, recovery: LOCAL_SERVICE_RECOVERY };
+      return { allowed: false, reason: `Blocked: ${host} is a private/reserved IPv6 address. ${PRIVATE_ADDRESS_WAY_OUT}`, userHint: USER_HINTS.network, recovery: LOCAL_SERVICE_RECOVERY };
     }
   }
 

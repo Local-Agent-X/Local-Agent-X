@@ -10,6 +10,12 @@
  * Everything that protects LAX itself (its install, control files, secrets)
  * still holds, and so does the shell's catastrophic-delete floor.
  *
+ * It also stands down shell-policy.ts's command-shape heuristics (separators,
+ * backgrounding, script writes, inline-eval forms), as a confining sandbox
+ * does: they approximate a process boundary the machine itself now is. The
+ * network rules, the nested-command check, decode-and-run, rm and the denylist
+ * stay on.
+ *
  * Read from disk on every call, like the other security.json switches in
  * security-config.ts, so a decision never runs on a stale value. A leaf module
  * because file-access.ts needs it and security-config.ts's imports would make

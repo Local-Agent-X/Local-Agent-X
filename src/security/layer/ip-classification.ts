@@ -13,6 +13,15 @@ export const LOCAL_SERVICE_RECOVERY =
   'the port to "localServicePorts" in their security settings (~/.lax/security.json) — you cannot edit that file. ' +
   "Otherwise verify the service via process_status/process_list or the filesystem instead of HTTP.";
 
+// The short form of the same way out, carried in the refusal's `reason`: one
+// dispatch path drops `recovery` (see shell-policy.ts), and a model that only
+// read "neither this agent's own server nor a registered local service" kept
+// retrying on Terminal-Bench (nginx-request-logging, 2026-10-19).
+export const LOOPBACK_WAY_OUT =
+  "If the server is yours, start it with process_start and retry once it is listening; a server the user runs can be added to localServicePorts in their security settings.";
+export const PRIVATE_ADDRESS_WAY_OUT =
+  "Private and LAN addresses are refused to protect the local network: reach your own server on 127.0.0.1 after starting it with process_start; for another device on the network, ask the user.";
+
 /**
  * Canonicalize a URL host for policy comparison: lowercase, remove IPv6 URL
  * brackets, and strip one trailing DNS dot. WHATWG `new URL()` preserves both

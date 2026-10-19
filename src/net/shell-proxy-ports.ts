@@ -56,12 +56,15 @@ export function shellProxyPortsOverride(raw: string | undefined = process.env[SH
   return { from, to };
 }
 
-/** The ranges in `netsh int ipv4 show excludedportrange protocol=tcp` output. */
+/** The ranges in `netsh int ipv4 show excludedportrange protocol=tcp` output
+ *  that refuse a bind. An administered exclusion (marked *) does not: it only
+ *  keeps the range out of the blocks Windows hands out, and installing the
+ *  cage puts the proxy's own range there (scripts/win-cage/provision.ps1). */
 export function parseExcludedPortRanges(netshOutput: string): PortRange[] {
   const ranges: PortRange[] = [];
   for (const line of netshOutput.split(/\r?\n/)) {
-    const m = /^\s*(\d{1,5})\s+(\d{1,5})\b/.exec(line);
-    if (m) ranges.push({ from: Number(m[1]), to: Number(m[2]) });
+    const m = /^\s*(\d{1,5})\s+(\d{1,5})\s*(\*)?\s*$/.exec(line);
+    if (m && !m[3]) ranges.push({ from: Number(m[1]), to: Number(m[2]) });
   }
   return ranges;
 }

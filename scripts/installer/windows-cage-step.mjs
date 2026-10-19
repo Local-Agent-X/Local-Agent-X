@@ -56,6 +56,7 @@ export async function runWindowsCageStep(context) {
   const result = processes.spawnSync("powershell", args, { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] });
   const output = `${result.stdout || ""}${result.stderr || ""}`.trim();
   if (result.status === 0) reporter.ok("Shell network cage installed — agent shells are confined on this machine");
+  else if (result.status === 15) reporter.warn("Shell network cage installed — agent shells are confined — but Windows would not reserve its proxy ports; if a restart hands them to another program, repair the cage from Settings → Security.");
   else if (result.status === 10) reporter.warn("Administrator approval was declined — agent shells run unconfined until the cage is installed from Settings → Security.");
   else reporter.warn(`The shell network cage could not be installed (exit ${result.status}${output ? `: ${output.split("\n").slice(-1)[0]}` : ""}) — agent shells run unconfined until it is installed from Settings → Security.`);
   reporter.stepDone("netcage");

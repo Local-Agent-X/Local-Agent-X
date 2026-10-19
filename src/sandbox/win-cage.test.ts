@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // `hold` set, a fence probe waits in `held` until the test answers it.
 // The provisioning script is spawned, never run: `spawned` keeps its argv.
 type ProbeDone = (error: Error | null, stdout: string) => void;
-const child = vi.hoisted(() => ({ status: "", probe: "", hold: false, held: [] as Array<(error: Error | null, stdout: string) => void>, scripts: [] as string[], spawned: [] as string[][] }));
+const child = vi.hoisted(() => ({ status: "", probe: "", hold: false, held: [] as Array<(error: Error | null, stdout: string) => void>, scripts: [] as string[], spawned: [] as string[][], exitCode: 0 }));
 vi.mock("node:child_process", async (importOriginal) => {
   const { EventEmitter } = await import("node:events");
   return {
@@ -21,7 +21,7 @@ vi.mock("node:child_process", async (importOriginal) => {
     spawn: (_cmd: string, args: string[]) => {
       child.spawned.push(args);
       const proc = Object.assign(new EventEmitter(), { stdout: new EventEmitter(), stderr: new EventEmitter() });
-      setTimeout(() => proc.emit("exit", 0), 0);
+      setTimeout(() => proc.emit("exit", child.exitCode), 0);
       return proc;
     },
   };
@@ -99,7 +99,7 @@ describe("win-cage — where the helper may live", () => {
     expect(underUserProfile("C:\\ProgramData\\Local Agent X\\bin\\srt-win.exe", "C:\\Users\\peter")).toBe(false);
   });
 });
-import { closeShellEgressProxy, ensureShellEgressProxy } from "../net/shell-egress-proxy.js";
+import { closeShellEgressProxy, currentShellEgressProxyUrl, ensureShellEgressProxy } from "../net/shell-egress-proxy.js";
 import { SHELL_PROXY_PORT_CANDIDATES, ShellProxyPortsUnavailableError } from "../net/shell-proxy-ports.js";
 
 // The permit was once compared with the proxy's DEFAULT range, so a run with
@@ -116,6 +116,7 @@ describe("win-cage — the loopback permit", () => {
     ports.error = null;
     ports.bound = [];
     child.spawned = [];
+    child.exitCode = 0;
   });
   afterEach(async () => {
     await closeShellEgressProxy();
@@ -147,6 +148,21 @@ describe("win-cage — the loopback permit", () => {
     expect(argv[argv.indexOf("-PortRange") + 1]).toBe("47090-47099");
   });
 
+  it("stops the app's own proxy before provisioning, so its bound port cannot block the reservation", async () => {
+    ports.range = { from: 47090, to: 47099 };
+    await ensureShellEgressProxy();
+    expect(currentShellEgressProxyUrl()).not.toBeNull();
+    await installWinCage();
+    expect(currentShellEgressProxyUrl()).toBeNull();
+  });
+
+  it("a cage installed without its port reservation (exit 15) is installed, and says what is missing", async () => {
+    child.exitCode = 15;
+    const result = await installWinCage();
+    expect(result).toMatchObject({ ok: true, code: 15 });
+    expect(result.detail).toMatch(/would not reserve the shell proxy's ports/);
+  });
+
   it("removing the cage from Settings keeps its helper, so it can be installed again", async () => {
     await uninstallWinCage();
     expect(child.spawned.at(-1)).toContain("-Uninstall");
@@ -169,6 +185,14 @@ describe("win-cage — the provisioning script keeps the helper unless the app i
     expect(provision().match(/Remove-Item -LiteralPath \$binDir/g)).toHaveLength(1);
     const uninstaller = readFileSync(join(process.cwd(), "scripts", "uninstall", "lax-uninstall.ps1"), "utf-8");
     expect(uninstaller).toContain("-File $provision -Uninstall -RemoveHelper");
+  });
+
+  it("reserves the range only after the helper installed it, releases it on every removal, and records it outside the helper's folder", () => {
+    const script = provision();
+    expect(script.indexOf("Add-PortReservation $PortRange")).toBeGreaterThan(script.indexOf("& $installed @installArgs"));
+    expect(script).toMatch(/Remove-PortReservation\r?\n\s+Write-Output "The cage is removed\."/);
+    expect(script).toContain('$reservationFile = Join-Path $env:ProgramData "Local Agent X\\proxy-port-reservation.txt"');
+    expect(script).toMatch(/exit 15/);
   });
 
   it("carries -Force and -RemoveHelper through its own elevation, and -Force to the helper's --force", () => {
@@ -236,6 +260,7 @@ describe("win-cage — the helper's status, read the way the settings page needs
     expect(installExitDetail(4)).toMatch(/port range/);
     expect(installExitDetail(10)).toMatch(/cancelled/);
     expect(installExitDetail(13)).toMatch(/different port range/);
+    expect(installExitDetail(15)).toMatch(/would not reserve/);
     expect(installExitDetail(99)).toMatch(/code 99/);
   });
 });

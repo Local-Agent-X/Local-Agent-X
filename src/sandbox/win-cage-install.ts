@@ -10,6 +10,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path/win32";
 import { _resetWinCageProbe, resolveWinCageHelper, winCageLoopbackPermit, type WinCageStatus } from "./win-cage.js";
 import type { PortRange } from "../net/shell-proxy-ports.js";
+import { closeShellEgressProxy } from "../net/shell-egress-proxy.js";
 
 const INSTALL_EXIT: Record<number, string> = {
   0: "installed",
@@ -20,7 +21,11 @@ const INSTALL_EXIT: Record<number, string> = {
   12: "the network filters could not be installed",
   13: "already installed with a different port range or user; remove it first",
   14: "the sandbox user could not be provisioned",
+  15: "installed, but Windows would not reserve the shell proxy's ports for it, so a restart that hands them to another program will need a repair",
 };
+
+/** Codes after which the cage is installed and working. */
+const INSTALLED = new Set([0, 15]);
 
 export function installExitDetail(code: number): string {
   return INSTALL_EXIT[code] ?? `the helper exited with code ${code}`;
@@ -39,7 +44,11 @@ export function stagedWinCageHelper(projectRoot = process.cwd()): string | null 
   return existsSync(staged) ? staged : null;
 }
 
-function runProvision(args: string[]): Promise<{ ok: boolean; code: number; detail: string }> {
+async function runProvision(args: string[]): Promise<{ ok: boolean; code: number; detail: string }> {
+  // The script reserves (or releases) the proxy's port range, which Windows
+  // may refuse while a port of it is bound. The proxy starts again for the
+  // next shell that needs it.
+  await closeShellEgressProxy();
   return new Promise((resolve) => {
     const child = spawn(join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
       ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", provisionScript(), ...args],
@@ -52,7 +61,7 @@ function runProvision(args: string[]): Promise<{ ok: boolean; code: number; deta
       const c = code ?? -1;
       _resetWinCageProbe();
       const last = out.trim().split("\n").slice(-1)[0]?.trim();
-      resolve({ ok: c === 0, code: c, detail: c === 0 ? installExitDetail(0) : `${installExitDetail(c)}${last ? ` — ${last}` : ""}` });
+      resolve({ ok: INSTALLED.has(c), code: c, detail: c === 0 ? installExitDetail(0) : `${installExitDetail(c)}${last ? ` — ${last}` : ""}` });
     });
   });
 }

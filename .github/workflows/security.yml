@@ -200,9 +200,21 @@ jobs:
           path: packages/srt-win/target/release/srt-win.exe
           if-no-files-found: error
 
+      # A range below Windows' dynamic port range (one of the app's own
+      # candidates, src/net/shell-proxy-ports.ts), which no runner's Hyper-V
+      # can have reserved, so the reservation below is checked every run.
       - name: Provision the cage
         shell: pwsh
-        run: pwsh scripts/win-cage/provision.ps1 -Helper packages/srt-win/target/release/srt-win.exe -PortRange 60090-60099
+        run: pwsh scripts/win-cage/provision.ps1 -Helper packages/srt-win/target/release/srt-win.exe -PortRange 47090-47099
+
+      # Reserved in Windows' port table, where the blocks Hyper-V, WSL2 and
+      # Docker take at boot cannot cover it, and still bindable by the proxy.
+      - name: The proxy's range is reserved and bindable
+        shell: pwsh
+        run: |
+          $rows = netsh interface ipv4 show excludedportrange protocol=tcp
+          if (-not ($rows | Select-String '^\s*47090\s+47099\s+\*\s*$')) { $rows; throw "47090-47099 is not an administered port exclusion" }
+          node -e "require('net').createServer().once('error', (e) => { console.error(e.message); process.exit(1) }).listen(47090, '127.0.0.1', function () { this.close() })"
 
       - name: Escape matrix as the sandbox account
         shell: pwsh
@@ -212,6 +224,12 @@ jobs:
         if: always()
         shell: pwsh
         run: pwsh scripts/win-cage/provision.ps1 -Uninstall
+
+      - name: Removing the cage releases the reservation
+        shell: pwsh
+        run: |
+          $rows = netsh interface ipv4 show excludedportrange protocol=tcp
+          if ($rows | Select-String '^\s*47090\s+47099\s+\*\s*$') { $rows; throw "47090-47099 is still reserved after -Uninstall" }
 
   # The Windows unit job cannot be a required check while it times out on the
   # slow-runner flake class (issue #5), yet the cage, file-gate and egress code

@@ -25,8 +25,9 @@ function installRoot(portOwner: string): string {
   return root;
 }
 
-function run(root: string) {
+function run(root: string, provisionStatus = 0) {
   const warnings: string[] = [];
+  const oks: string[] = [];
   const provisions: string[][] = [];
   const chooserEnv: Array<NodeJS.ProcessEnv | undefined> = [];
   const context = {
@@ -34,16 +35,16 @@ function run(root: string) {
     env: { PATH: process.env.PATH },
     installRoot: root,
     dataDirectory: join(root, "data"),
-    reporter: { step: () => true, stepDone: () => {}, log: () => {}, ok: () => {}, warn: (m: string) => warnings.push(m) },
+    reporter: { step: () => true, stepDone: () => {}, log: () => {}, ok: (m: string) => oks.push(m), warn: (m: string) => warnings.push(m) },
     processes: {
       spawnSync: (cmd: string, args: string[], opts: { env?: NodeJS.ProcessEnv }) => {
-        if (cmd === "powershell") { provisions.push(args); return { status: 0, stdout: "", stderr: "" }; }
+        if (cmd === "powershell") { provisions.push(args); return { status: provisionStatus, stdout: "", stderr: "" }; }
         chooserEnv.push(opts.env);
         return spawnSync(cmd, args, opts as Parameters<typeof spawnSync>[2]);
       },
     },
   };
-  return { context, warnings, provisions, chooserEnv };
+  return { context, warnings, oks, provisions, chooserEnv };
 }
 
 describe("installer windows cage step: the loopback permit", () => {
@@ -70,5 +71,17 @@ describe("installer windows cage step: the loopback permit", () => {
     expect(provisions).toEqual([]);
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toMatch(/not installed: No loopback port range is free.*60063-60162/);
+  });
+
+  // Exit 15: the fence is in, only the port reservation was refused. The
+  // cage works, so the step must not say it failed to install.
+  it("a cage installed without its port reservation is reported installed, with the repair it may need", async () => {
+    const root = installRoot("export async function shellProxyPortRange() { return { from: 47090, to: 47099 }; }\n");
+    const { context, warnings, oks } = run(root, 15);
+    await runWindowsCageStep(context);
+    expect(oks).toEqual([]);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatch(/installed — agent shells are confined — but Windows would not reserve its proxy ports/);
+    expect(warnings[0]).not.toMatch(/could not be installed/);
   });
 });

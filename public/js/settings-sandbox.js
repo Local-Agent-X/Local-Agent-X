@@ -115,6 +115,9 @@ async function windowsCageAction(action) {
     scheduleSandboxRecheck(d.proofPending === true);
     if (d.windowsCage) renderWindowsCage(d.windowsCage);
     else await loadSandboxMode();
+    // Installed with a caveat (the proxy's ports were not reserved): said
+    // after the render, which writes the panel's usual line.
+    if (r.ok && d.code && d.detail && detail) detail.textContent = 'Windows network cage: ' + d.detail;
   } catch (e) {
     console.warn('[sandbox] windows cage ' + action + ' failed', e);
     if (btn) btn.disabled = false;

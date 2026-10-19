@@ -52,11 +52,21 @@ function probe(over: Partial<PortRangeProbe> & { persisted?: PortRange | null } 
 const [FIRST, SECOND, THIRD] = SHELL_PROXY_PORT_CANDIDATES;
 
 describe("shell proxy port range — the choice", () => {
-  it("reads the Windows reserved ranges from netsh's listing", () => {
+  it("reads the Windows reserved ranges from netsh's listing; an administered one (*) still binds, so it is not one", () => {
     expect(parseExcludedPortRanges(NETSH)).toEqual([
-      { from: 1462, to: 1462 }, { from: 50000, to: 50059 }, { from: 59957, to: 60056 }, { from: 60063, to: 60162 }, { from: 64501, to: 64600 },
+      { from: 1462, to: 1462 }, { from: 59957, to: 60056 }, { from: 60063, to: 60162 }, { from: 64501, to: 64600 },
     ]);
     expect(parseExcludedPortRanges("")).toEqual([]);
+  });
+
+  // Installing the cage reserves the proxy's range as an administered
+  // exclusion. Read as taken, it would move the proxy off the very range the
+  // reservation keeps for it, and the fence would permit a range nothing binds.
+  it("keeps the range the cage reserved for it", async () => {
+    const reservedForUs = `${NETSH.replace("     60063       60162\n", "")}     ${FIRST.from}       ${FIRST.to}     *\n`;
+    const p = probe({ persisted: FIRST, excludedPortRanges: async () => reservedForUs });
+    expect(await selectShellProxyPortRange(p)).toEqual(FIRST);
+    expect(p.persistedTo).toEqual([]);
   });
 
   it("skips a candidate overlapping a Windows-reserved range without trying to bind it, and records the choice", async () => {

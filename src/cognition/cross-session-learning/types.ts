@@ -2,6 +2,7 @@ import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { isProxy } from "node:util/types";
 import { getLaxDir } from "../../lax-data-dir.js";
+import { isOpCategory, type OpCategory } from "../../tool-policy/tool-policies.types.js";
 import {
   INVALID_PROPERTY, MISSING_PROPERTY, denseArray, exactKeys, hasEvidenceIdentity,
   optional, ownDataValue, plainRecord, safeJson, stringArray,
@@ -36,7 +37,7 @@ export interface ActionEntry extends PersistedLearnedEvidenceIdentity {
   details: string;
   timestamp: number;
   outcome?: "clean" | "partial" | "aborted";
-  category?: "browser" | "computer" | "coding" | "connector" | "research" | "general";
+  category?: OpCategory;
   tools?: string[];
   model?: string;
 }
@@ -288,7 +289,7 @@ function actionShape(value: unknown, terminal: boolean): value is ActionEntry {
   const outcome = ownDataValue(value, "outcome"), category = ownDataValue(value, "category"), opId = ownDataValue(value, "opId");
   return type === "op_outcome" && typeof opId === "string" && !!opId
     && typeof outcome === "string" && ["clean", "partial", "aborted"].includes(outcome)
-    && typeof category === "string" && ["browser", "computer", "coding", "connector", "research", "general"].includes(category)
+    && isOpCategory(category)
     && stringArray(ownDataValue(value, "tools"), 1000) && optional(value, "model", (entry) => typeof entry === "string");
 }
 

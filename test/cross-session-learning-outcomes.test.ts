@@ -8,9 +8,11 @@ import { getInsights, suggestAutomation } from "../src/cognition/cross-session-l
 import type { ActionEntry } from "../src/cognition/cross-session-learning/types.js";
 import {
   hasEvidenceIdentity,
+  isExactTerminalTelemetryAction,
   TERMINAL_TELEMETRY_IDENTITY,
   WORKFLOW_TACTIC_IDENTITY,
 } from "../src/cognition/cross-session-learning/types.js";
+import { OP_CATEGORIES } from "../src/tool-policy/tool-policies.types.js";
 
 function outcome(
   opId: string,
@@ -211,5 +213,21 @@ describe("outcome-aware workflow patterns", () => {
     } as unknown as ActionEntry;
 
     expect(detectWorkflowPatterns([terminal, workflow], 1)).toEqual([]);
+  });
+});
+
+describe("terminal telemetry categories", () => {
+  // The tracker names the category from OP_CATEGORIES; a reader with its own
+  // copy would silently drop the outcomes of a category added later.
+  it("every category the tracker can record survives a save and reload", () => {
+    for (const category of [...OP_CATEGORIES, "general"] as const) {
+      const saved = JSON.parse(JSON.stringify({ ...outcome("o1", "s1", "clean", ["read"], 1), category }));
+      expect(isExactTerminalTelemetryAction(saved), category).toBe(true);
+    }
+  });
+
+  it("rejects a category the tracker never records", () => {
+    const saved = JSON.parse(JSON.stringify({ ...outcome("o1", "s1", "clean", ["read"], 1), category: "media" }));
+    expect(isExactTerminalTelemetryAction(saved)).toBe(false);
   });
 });

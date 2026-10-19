@@ -224,6 +224,8 @@ export type ToolSurface = "mcp" | "ide";
  *  first category in this order with a tool used wins. `general` is no tool. */
 export const OP_CATEGORIES = ["browser", "computer", "coding", "connector", "research"] as const;
 export type OpCategory = (typeof OP_CATEGORIES)[number] | "general";
+export const isOpCategory = (value: unknown): value is OpCategory =>
+  value === "general" || (OP_CATEGORIES as readonly unknown[]).includes(value);
 
 /** How the loop reads a call (agent-guards/, canonical-loop/):
  *   discovery  — a read-only lookup an agent spins on when it cannot find

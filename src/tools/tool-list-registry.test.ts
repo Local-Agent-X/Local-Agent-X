@@ -56,7 +56,6 @@ const NOT_TOOL_LISTS: ReadonlyArray<Registered & { why: string }> = [
   { file: "src/tools/document-tools.ts", owner: ".actions", why: "the family's actions (create/read/edit/template)" },
   { file: "src/tool-policy/tool-policies.apps.ts", owner: ".forActions", why: "the family actions a path spec applies to" },
   { file: "src/tool-policy/tool-policies.types.ts", owner: "OP_CATEGORIES", why: "what an op was mostly doing (browser, computer, coding are categories)" },
-  { file: "src/cognition/cross-session-learning/types.ts", owner: "actionShape()", why: "the op-outcome record's category values, a persisted format" },
   { file: "src/app-runtime/validation.ts", owner: "levels", why: "an app's access levels (read/write/admin)" },
   { file: "src/tools/app-tools/lifecycle.ts", owner: "execute()", why: "an app's access levels (read/write/admin)" },
   { file: "src/sandbox/win-cage-grants.ts", owner: "granted", why: "filesystem grant kinds (read/write)" },

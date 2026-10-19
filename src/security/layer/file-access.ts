@@ -10,6 +10,7 @@ import { resolveAgentPathFrom, realpathDeep, sessionWorkRootOf } from "../../wor
 import { getLaxDir } from "../../lax-data-dir.js";
 import { pathIsWithin } from "./path-within.js";
 import { INSTALL_CHANGE_ROUTE, protectedFolderOf } from "./install-root.js";
+import { DISPOSABLE_SANDBOX_HINT, isDisposableSandbox } from "./disposable-sandbox.js";
 
 // The containment predicate lives in a leaf (install-root.ts needs it too);
 // re-exported so its many consumers keep importing it from here.
@@ -274,19 +275,20 @@ export function evaluateFileAccess(
       // Hard-block writes to system directories — even unrestricted mode can't
       // touch these. SYSTEM_DIR_PATTERNS is the SHARED authority (also the shell
       // rm catastrophic floor) so "system directory" means the same thing for
-      // writes and deletes.
+      // writes and deletes. Both floors here lift on a machine the operator
+      // declared disposable (disposable-sandbox.ts), read only when one is hit.
       if (changesFile(action)) {
         for (const sysDir of SYSTEM_DIR_PATTERNS) {
-          if (sysDir.test(realPath)) {
-            return { allowed: false, reason: `Blocked: cannot write to system directory even in unrestricted mode`, userHint: USER_HINTS.fileSystem };
+          if (sysDir.test(realPath) && !isDisposableSandbox()) {
+            return { allowed: false, reason: `Blocked: cannot write to system directory even in unrestricted mode. ${DISPOSABLE_SANDBOX_HINT}`, userHint: USER_HINTS.fileSystem };
           }
         }
         const projectRoot = resolve(workspace, "..");
         const inProject = pathIsWithin(projectRoot, realPath);
         const inHome = pathIsWithin(homeDir, realPath);
         const inAllowed = allowedPathCheck(realPath, sessionId);
-        if (!inProject && !inHome && !inAllowed) {
-          return { allowed: false, reason: "Blocked: cannot write outside home directory even in unrestricted mode", userHint: USER_HINTS.fileSystem };
+        if (!inProject && !inHome && !inAllowed && !isDisposableSandbox()) {
+          return { allowed: false, reason: `Blocked: cannot write outside home directory even in unrestricted mode. ${DISPOSABLE_SANDBOX_HINT}`, userHint: USER_HINTS.fileSystem };
         }
       }
       // Reads: allowed everywhere

@@ -6,6 +6,7 @@ import { isTaskArtifact } from "../../data-lineage/task-artifacts.js";
 import type { FileAccessMode, InlineEvalPolicy } from "./types.js";
 import { evaluateFileAccess } from "./file-access.js";
 import { evaluateShellCommand } from "./shell-policy.js";
+import { detectScriptWrite } from "./shell-detectors.js";
 import {
   execBasename, isShellReparseFlag, resolveRealArgv0Index, splitShellSegments, tokenizeCommand,
 } from "./shell-lex.js";
@@ -141,6 +142,28 @@ export function evaluateShellPaths(command: string, ctx: ShellPathGuardCtx): Sec
 }
 
 /**
+ * detectScriptWrite sends a shell file edit (`sed -i`, a heredoc into a file)
+ * to the write/edit tools. When those tools would refuse the same target, the
+ * redirect is a dead end: on Terminal-Bench (nginx-request-logging,
+ * 2026-10-19) the model went back and forth between the two refusals for
+ * /etc/nginx and gave up. The target's real refusal is reported instead.
+ */
+function redirectOrTargetRefusal(command: string, decision: SecurityDecision, ctx: ShellPathGuardCtx): SecurityDecision {
+  if (decision.reason !== detectScriptWrite(command)) return decision;
+  for (const tok of extractPathTokens(command)) {
+    const write = evaluateFileAccess(ctx.workspace, ctx.fileAccessMode, ctx.allowedPathCheck, "write", tok.path, ctx.sessionId);
+    if (!write.allowed) {
+      return {
+        allowed: false,
+        reason: `Blocked: this shell edit targets "${tok.path}", and the write/edit tools refuse that path too, so they are no way around it. ${write.reason}`,
+        userHint: USER_HINTS.fileSystem,
+      };
+    }
+  }
+  return decision;
+}
+
+/**
  * Single two-step gate for ANY bash-spawning path: (1) command-shape vetting
  * (denylist / obfuscation / metachars) via evaluateShellCommand, then (2)
  * file-access confinement via evaluateShellPaths. bash (layer-core) AND the
@@ -156,7 +179,7 @@ export function evaluateShellCommandAndPaths(command: string, ctx: ShellPathGuar
   // redundant secondary scan in process-session runs AFTER it. ctx.sandboxConfined
   // rides through so the structural heuristics stand down under a confined backend.
   const cmdDecision = evaluateShellCommand(command, ctx.inlineEvalPolicy ?? "refuse", ctx.workspace, ctx.fileAccessMode, undefined, ctx.sandboxConfined);
-  if (!cmdDecision.allowed) return cmdDecision;
+  if (!cmdDecision.allowed) return redirectOrTargetRefusal(command, cmdDecision, ctx);
   // ALWAYS-ON (mode-independent) self-brick guard: refuse a shell command that
   // would DELETE or OVERWRITE the platform's own protected engine source. The
   // write/edit/delete_file tools are already gated by protected-files

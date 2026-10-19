@@ -1,0 +1,40 @@
+name: Scaffold live
+
+# Weekly run of test/scaffold-live.test.ts: every framework creator the build
+# harness hands out (src/tools/framework-scaffold.ts) plus the harness-owned
+# Vite plan is run for real, the structure kit is applied and checked, and the
+# dev server framework-detect picks must answer HTTP. Creators change their
+# flags, templates and layouts without notice; a red run IS the alert that one
+# moved, before a user's build finds out. It downloads every creator and its
+# dependencies, so it is too slow and too network-bound to gate a PR. Fix by
+# updating the creator command, the detection, or the kit (through the
+# /new-project skill), then re-run it with "Run workflow". This job never
+# commits or opens PRs.
+
+on:
+  schedule:
+    # Mondays 11:00 UTC — an hour after the weekly pricing recheck.
+    - cron: '0 11 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scaffold-live:
+    name: Framework creators, kit, dev servers
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run every creator for real
+        run: npm run test:scaffold-live

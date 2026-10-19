@@ -1,7 +1,8 @@
 /**
  * Injectable collaborator seams for the turn conductor (../turn-loop.ts).
- * Every helper driveTurn calls directly is declared here as an optional
- * override on its trailing deps parameter, so the conductor's control flow
+ * Every helper driveTurn or one of its step modules (model-call.ts,
+ * middleware-phases.ts, after-commit.ts) calls is declared here as an optional
+ * override on driveTurn's trailing deps parameter, so the conductor's control flow
  * (cancel ordering, middleware phase short-circuits, commit gating) is
  * testable through one interface without vi.mock.
  *

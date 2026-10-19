@@ -75,19 +75,37 @@ loop runs zero middlewares.
 
 ## `turn-loop.ts` vs `turn-loop/`
 
-`turn-loop.ts` (400 lines, at the ceiling) is the conductor: it exports
-`driveTurn()` and owns only control flow — cancel checks, the three
-middleware-phase short-circuits, the `commitTurn` call and
-`bankEarnedFires` after it. Every helper it calls lives in `turn-loop/`
-(~49 source files) and reaches it through the injectable seam
-`turn-loop/turn-deps.ts`, so the conductor is testable without `vi.mock`:
-`build-input.ts` (history + `compact-history.ts`, which delegates to
-`src/context-manager/`), `inject-drain.ts`, `dispatch-tools.ts`,
-`decide-outcome*.ts` + `continuation-guard.ts` + `terminal-epilogue.ts`
-(terminal reason and the closing message), `nudges.ts` + `nudge-budget.ts`,
-`guard-fire.ts`, `suspension.ts` + `adapter-throw-recovery.ts`,
-`idle-watchdog.ts`, `record-outcome.ts`. Add behaviour in `turn-loop/`, never
-in the conductor.
+`turn-loop.ts` is the conductor: `driveTurn()` is the turn's sequence of
+steps and nothing else — each step is a call into the `turn-loop/` module
+named after its job, plus the three cancel checks between them. Every
+collaborator reaches it through the injectable seam `turn-loop/turn-deps.ts`
+(each step module takes the slice it calls), so the sequence is testable
+without `vi.mock` (`turn-loop.test.ts`). To find where something happens in a
+turn, find its step:
+
+| # | Step | Module (`turn-loop/`) |
+|--:|---|---|
+| 1 | Re-materialize a pivot the previous turn committed | `nudges.ts` `recoverCommittedStrategyPivot` |
+| 2 | Snapshot the pending redirect, then emit `turn_started` (a redirect arriving after this applies next turn) | `build-input.ts` `readPendingRedirect` |
+| 3 | Drain mid-turn user injects into `op_messages` (`chat_turn` / `agent_spawn` only) | `inject-drain.ts` |
+| 4 | beforeTurn middlewares: abort or suspend end the turn, a nudge lands on this turn | `middleware-phases.ts` |
+| 5 | Assemble the turn input (history, compaction) | `build-input.ts` + `compact-history.ts` (delegates to `src/context-manager/`) |
+| 6 | The model call: idle watchdog, report-stream fold, thrown / reported error recovery, model time | `model-call.ts` (+ `idle-watchdog.ts`, `adapter-throw-recovery.ts`, `reported-adapter-recovery.ts`) |
+| — | Cancel check | conductor |
+| 7 | afterModelCall middlewares: the first sticky directive, or the idle-watchdog suspend on a stalled worker lane | `middleware-phases.ts` (+ `suspension.ts`) |
+| 8 | Tool dispatch, skipped on an abort or a dispatch-skipping nudge | `dispatch-tools.ts` |
+| — | Cancel check | conductor |
+| 9 | afterToolExecution middlewares, only when no directive is set | `middleware-phases.ts` |
+| 10 | Decide the terminal reason and assemble the commit messages (verify gates, retract, failure nudge, continuation guard, epilogue) | `decide-outcome*.ts` + `continuation-guard.ts` + `terminal-epilogue.ts` |
+| — | Cancel check (a Stop during the verify gates) | conductor |
+| 11 | Commit the turn: the row is built, then written atomically | `commit-input.ts` → `../checkpoint.ts` `commitTurn` |
+| 12 | What waits for the durable turn, in order: skill review, app snapshot, earned guard fires, the directive's nudge / abort bubble / suspend record | `after-commit.ts` (→ `record-outcome.ts`, `snapshot-apps.ts`, `guard-fire.ts`, `apply-directive.ts`) |
+
+Shared by the steps: `nudges.ts` + `nudge-budget.ts` (synthetic user
+messages), `guard-fire.ts` (the one `middleware_fired` writer),
+`content-extract.ts`, `context-composition.ts` (the per-turn middleware
+context). Add behaviour to the step module that owns it, never to the
+conductor.
 
 ## Middleware order
 
@@ -150,7 +168,7 @@ an invocation. `outcome` (`GuardOutcome`, required on every `GuardFire`):
 | `gave-up` | `decide-outcome-verify-gates.ts` render-verify `capReached` — held an adverse verdict, no retries left. |
 
 Fires whose effect is contingent on the commit ride `DecideOutcomeResult.earnedFires`
-and are banked by `turn-loop.ts` after `commitTurn`; fires already spent are
+and are banked by `turn-loop/after-commit.ts` after `commitTurn`; fires already spent are
 minted at the branch. `appendHonestTerminal` (`turn-loop/empty-turn-termination.ts`)
 has exactly two call sites — its own `empty-turn` terminal and the gate
 terminal in `turn-loop/decide-outcome.ts` — and only the second is counted, so

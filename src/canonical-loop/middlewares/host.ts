@@ -96,9 +96,9 @@ export function buildCanonicalLoopContext(args: BuildContextArgs): CanonicalLoop
   // that produced that wiring in the first place.
   //
   // Why a middleware holding a ctx must read these instead of calling
-  // readOpTurns itself: THIS function runs three times per turn — turn-loop.ts
-  // rebuilds the context at beforeTurn (L110), afterModelCall (L249) and
-  // afterToolExecution (L282) — so its walk is already 3 per turn, and every
+  // readOpTurns itself: THIS function runs three times per turn —
+  // turn-loop/middleware-phases.ts rebuilds the context at beforeTurn,
+  // afterModelCall and afterToolExecution — so its walk is already 3 per turn, and every
   // reader that walks the op again is multiplied by the same 3. Exactly one
   // per-turn re-walk was actually removed when these sets landed: open-steps'
   // afterModelCall (opCommittedSubstantiveWork(readOpTurns(...))), and only on

@@ -1,7 +1,7 @@
 /**
  * Premature-completion guard — a worker op (NOT chat) ends with a
  * final-sounding paragraph, zero tool calls, and nothing committed. The
- * turn-loop reads noTools+text as "done" (turn-loop.ts ~307-316) and the op
+ * turn-loop reads noTools+text as "done" (turn-loop/decide-outcome.ts) and the op
  * completes having taken no action toward the task. Force one more turn.
  *
  * Interactive ops (chat + voice) legitimately answer tool-lessly, so `when`

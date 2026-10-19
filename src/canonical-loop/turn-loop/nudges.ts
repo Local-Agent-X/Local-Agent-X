@@ -82,7 +82,7 @@ export function recoverCommittedStrategyPivot(opId: string, sourceTurnIdx: numbe
   // The pivot MECHANISM is shared: loop-detection, mid-turn-stale and
   // strategy-pivot all fire nudges carrying metadata.strategyPivot. Naming this
   // fire "strategy-pivot" would file three guards under one name and leave the
-  // other two reading 0, so turn-loop.ts persists the originating middleware on
+  // other two reading 0, so commit-input.ts persists the originating middleware on
   // the turn row and this replays it. `unknown` covers only rows committed
   // before that field existed — there is genuinely no name to recover there.
   return appendNudgeAsUserMessage(

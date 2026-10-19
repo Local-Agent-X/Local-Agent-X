@@ -42,7 +42,7 @@ import type { Op } from "../../ops/types.js";
  * The fire is EARNED, not minted here: this veto's entire effect is an
  * in-memory `terminalReason = null` on its way to a commitTurn that driveTurn's
  * cancel bail can still skip, so a row written now would assert a turn that
- * never committed. turn-loop.ts banks the list past that bail
+ * never committed. after-commit.ts banks the list past that bail
  * (guard-fire.ts bankEarnedFires).
  */
 export function continuationVetoedTerminal(

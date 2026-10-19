@@ -42,8 +42,8 @@
  *                    confirmation (terminal-epilogue.ts pushes
  *                    `build-verify-ok-*` and contributes the fire inside the
  *                    same `!endedPartial` branch, so a partial-ending op that
- *                    suppresses the message banks nothing). turn-loop.ts banks
- *                    both after commitTurn (bankEarnedFires below). Slice by
+ *                    suppresses the message banks nothing). after-commit.ts
+ *                    banks both after commitTurn (bankEarnedFires below). Slice by
  *                    `name` for one gate — see the terminal caveat below.
  *   reopen           the turn's terminal was VETOED and another turn driven
  *                    WITHOUT saying anything: a user follow-up that landed
@@ -183,7 +183,7 @@ export function recordGuardFire(opId: string, turnIdx: number, fire: GuardFire):
 }
 
 /** Bank fires earned by effects that ACTUALLY LANDED on a now-durable turn.
- *  Called by turn-loop.ts after commitTurn, alongside applyCommittedDirective.
+ *  Called by after-commit.ts after commitTurn, alongside applyCommittedDirective.
  *
  *  Two hazards make this the only correct place, and a gate can see neither
  *  from inside `evaluate`. A later gate's reopen discards the terminal an
@@ -240,7 +240,7 @@ export const CONTINUATION_INJECT_FIRE: GuardFire = {
   outcome: "reopen",
 };
 
-/** A sticky directive already carries its firer's name (turn-loop.ts stamps it)
+/** A sticky directive already carries its firer's name (middleware-phases.ts stamps it)
  *  and its own kind, which IS the outcome — a nudge directive can only produce
  *  a nudge fire. Deriving it beats restating it: the three directive kinds and
  *  the first three outcomes are the same three verdicts. */

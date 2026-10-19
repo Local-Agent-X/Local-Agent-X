@@ -82,7 +82,7 @@ export interface DecideOutcomeInput {
    * no trace of it, and the interactive empty-turn terminator below needs the
    * signal explicitly to tell a genuinely-empty turn (nothing produced, spins
    * to maxTurns) from a reasoning-only turn (the model "thought" and stopped),
-   * which must NOT be terminated. Threaded from turn-loop.ts (`sawReasoning`).
+   * which must NOT be terminated. Threaded from model-call.ts (`sawReasoning`).
    */
   hasReasoning: boolean;
   adapterError: { code: string; message: string } | null;
@@ -291,7 +291,7 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
 
   // Fires earned by an effect that actually landed on this turn. Returned, not
   // emitted: everything appended below is in-memory until commitTurn, and
-  // driveTurn's cancel bail sits between here and it. turn-loop.ts banks these
+  // driveTurn's cancel bail sits between here and it. after-commit.ts banks these
   // once the turn is durable (guard-fire.ts bankEarnedFires). Declared ahead of
   // the continuation guard because that guard's silent branch earns one too.
   const earnedFires: GuardFire[] = [];

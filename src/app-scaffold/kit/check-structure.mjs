@@ -9,6 +9,7 @@
  * Usage:
  *   node check-structure.mjs [--root src]... [--check]
  *        [--max-code 400] [--warn-code 320] [--max-fn 100] [--warn-fn 60] [--ratchet .code-size-ratchet]
+ *        [--typescript <dir of a typescript package with the compiler API>]
  *
  * Without --check the map is REGENERATED (the build keeps it current, and the
  * commit carries it); with --check a stale map fails instead, which is what CI
@@ -26,8 +27,11 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { defaultRoots } from "./project-languages.mjs";
 import { limitArgs, limitsFromArgs } from "./code-size.mjs";
+import { applyTypeScriptFlag } from "./typescript-api.mjs";
 
 const args = process.argv.slice(2);
+// The checks below are spawned and inherit it (typescript-api.mjs).
+applyTypeScriptFlag(args);
 const opt = (name) => {
 	const i = args.indexOf(name);
 	return i >= 0 ? [name, args[i + 1]] : [];

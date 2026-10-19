@@ -5,11 +5,11 @@
   },
   "codebase-map.mjs": {
     "upstream": "scripts/codebase-map.mjs",
-    "sha256": "e932527837fedbc34d2bd09de9193460de913d54b762319e0a940e3be133df6d"
+    "sha256": "7bd35dc5dbaf9c7a0a249aceb2138d83d646f479b82a3075b263e48533892534"
   },
   "code-size.mjs": {
     "upstream": "scripts/code-size.mjs",
-    "sha256": "ea9865732a7a83b7813eec0b734cfe16b5f515bb512066de5f5a6006aca955c7"
+    "sha256": "1d024d4657d57e4143b746677f5d9064247f20678c5b1fbfb4f906ab37f30284"
   },
   "code-size-cfamily.mjs": {
     "upstream": "scripts/code-size-cfamily.mjs",
@@ -21,7 +21,7 @@
   },
   "check-code-size.mjs": {
     "upstream": "scripts/check-code-size.mjs",
-    "sha256": "d64ef3e4a38429565b8c4ee9aaf17b151db8c4b044bcccbf29cae0f6b9b11c73"
+    "sha256": "6207d0694b2fc5654d31b0b47cc2d12ed47218fe587f8c0d8414190db5346f34"
   },
   "check-doc-paths.mjs": {
     "upstream": "scripts/check-doc-paths.mjs",
@@ -33,11 +33,15 @@
   },
   "check-structure.mjs": {
     "upstream": "scripts/check-structure.mjs",
-    "sha256": "2c99e2983cb397aeb31895b63392983d465923f1f6f252a6671d202e5a041236"
+    "sha256": "c11b08545e1590025158e6287d04a03ff765f7e4012ff4f822e7a83fc60cecca"
   },
   "code-refs.mjs": {
     "upstream": "scripts/code-refs.mjs",
-    "sha256": "3afbc4246d50c6eb19d3932ff46dcdab8c30708c455ba6bb186d3a304f3878b0"
+    "sha256": "588ccb0b1fc482b258a6c776682468fde7d2de7db983df571098d2594a24c12f"
+  },
+  "typescript-api.mjs": {
+    "upstream": "scripts/typescript-api.mjs",
+    "sha256": "2f00f763c1d1fe31cd1096640b8968bab3971cab23aa8f82cc57df5f842303f6"
   },
   "module-seals.test.ts.txt": {
     "upstream": "assets/module-seals.test.ts",

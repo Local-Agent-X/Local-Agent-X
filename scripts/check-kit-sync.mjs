@@ -39,6 +39,7 @@ export const KIT_FILES = {
   "check-module-owners.mjs": "scripts/check-module-owners.mjs",
   "check-structure.mjs": "scripts/check-structure.mjs",
   "code-refs.mjs": "scripts/code-refs.mjs",
+  "typescript-api.mjs": "scripts/typescript-api.mjs",
   "module-seals.test.ts.txt": "assets/module-seals.test.ts",
   "test_module_seals.py.txt": "assets/test_module_seals.py",
 };

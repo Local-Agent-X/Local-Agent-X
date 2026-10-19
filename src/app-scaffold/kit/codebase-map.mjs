@@ -36,8 +36,10 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, relative, resolve, sep } from "node:path";
 import { defaultRoots, importContext, importTargets, isTestPath, moduleOf, walkSource } from "./project-languages.mjs";
 import { bandOf, limitsFromArgs, measureSource, nearingSection, sizeItems } from "./code-size.mjs";
+import { applyTypeScriptFlag } from "./typescript-api.mjs";
 
 const args = process.argv.slice(2);
+applyTypeScriptFlag(args);
 const opt = (name, dflt) => {
 	const i = args.indexOf(name);
 	return i >= 0 ? args[i + 1] : dflt;

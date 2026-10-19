@@ -52,6 +52,7 @@ import { runChunkReview, runChunkReviewWithJudgment } from "../src/auto-build/ch
 import type { JudgmentHook } from "../src/auto-build/chunk-review/judgment-hook.js";
 import type { BuildExecRunner } from "../src/auto-build/chunk-review/gate-build-exec.js";
 import { discoverCommands, findStaticEntry, runBuildExecGate } from "../src/auto-build/chunk-review/gate-build-exec.js";
+import { structureCheckCommand } from "../src/app-scaffold/project-kit.js";
 import { SANDBOX_PROOF_PENDING_RETRY } from "../src/sandbox/index.js";
 import { parseChunkReport } from "../src/auto-build/chunk-review/report-parser.js";
 import {
@@ -761,9 +762,10 @@ describe("build-exec gate: command + entry discovery (pure)", () => {
   it("runs a kit project's structure check first, package.json or not", () => {
     mkdirSync(join(dir, "scripts"));
     writeFileSync(join(dir, "scripts", "check-structure.mjs"), "");
-    expect(discoverCommands(dir)).toEqual(["node scripts/check-structure.mjs"]);
+    expect(discoverCommands(dir)).toEqual([structureCheckCommand(dir)]);
+    expect(structureCheckCommand(dir)).toMatch(/^node scripts\/check-structure\.mjs --typescript "/);
     writeFileSync(join(dir, "package.json"), JSON.stringify({ scripts: { build: "vite build" } }));
-    expect(discoverCommands(dir)).toEqual(["node scripts/check-structure.mjs", "npm run build"]);
+    expect(discoverCommands(dir)).toEqual([structureCheckCommand(dir), "npm run build"]);
   });
 
   it("returns only what exists (build without test)", () => {

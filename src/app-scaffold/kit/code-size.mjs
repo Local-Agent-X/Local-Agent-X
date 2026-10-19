@@ -14,12 +14,13 @@
  *             not its parent.
  *
  * How, per language:
- *   TS/JS   the project's TypeScript compiler (its `typescript` package): each
+ *   TS/JS   the TypeScript compiler API (typescript-api.mjs finds one): each
  *           token of the syntax tree marks the lines from its start to its end,
  *           so a template literal or a regex containing `//` is code. Functions:
  *           declarations, methods, constructors, accessors, and function
- *           expressions and arrow functions with a block body. Without
- *           `typescript` installed, a lexer approximates the line count and
+ *           expressions and arrow functions with a block body. Without a
+ *           TypeScript that has the compiler API (typescript-api.mjs; TypeScript
+ *           7's package has none), a lexer approximates the line count and
  *           function sizes are not measured (the check says so).
  *   Python  code-size-python.mjs (docstrings and bare strings are comments; def).
  *   Go/Rust code-size-cfamily.mjs (string-, char- and comment-aware; func/fn
@@ -28,8 +29,7 @@
  * codebase-map.mjs and check-code-size.mjs import this file, so a project
  * copies it with them.
  */
-import { createRequire } from "node:module";
-import { join } from "node:path";
+import { loadTypeScript } from "./typescript-api.mjs";
 import { languageOf } from "./project-languages.mjs";
 import { measureBraceLanguage } from "./code-size-cfamily.mjs";
 import { measurePython } from "./code-size-python.mjs";
@@ -51,18 +51,6 @@ export function limitsFromArgs(args) {
 
 /** The same caps as flags, for a script that hands them on. */
 export const limitArgs = (limits) => Object.entries(FLAGS).flatMap(([key, flag]) => [flag, String(limits[key])]);
-
-const loaded = new Map(); // repo -> the typescript module, or null
-function typescriptFor(repo) {
-	if (!loaded.has(repo)) {
-		let ts = null;
-		for (const from of [join(repo, "package.json"), import.meta.url]) {
-			try { ts = createRequire(from)("typescript"); break; } catch { /* try the next */ }
-		}
-		loaded.set(repo, ts);
-	}
-	return loaded.get(repo);
-}
 
 function scriptKind(ts, file) {
 	if (/\.tsx$/.test(file)) return ts.ScriptKind.TSX;
@@ -161,13 +149,13 @@ function measureTypeScript(ts, file, text) {
  * The code lines of one source file and, where measured, each function's own
  * code lines: `{ code, functions: [{ name, line, code }] | null, approximate }`.
  * `functions` is null when the language's function sizes are not measured
- * (JS/TS without the `typescript` package).
+ * (JS/TS without a TypeScript that has the compiler API: typescript-api.mjs).
  */
 export function measureSource(file, text, repo = process.cwd()) {
 	const lang = languageOf(file)?.id;
 	if (lang === "python") return { ...measurePython(text), approximate: false };
 	if (lang === "go" || lang === "rust") return { ...measureBraceLanguage(text, lang), approximate: false };
-	const ts = typescriptFor(repo);
+	const { ts } = loadTypeScript(repo);
 	if (ts) return { ...measureTypeScript(ts, file, text), approximate: false };
 	return { ...measureBraceLanguage(text, "js"), approximate: true };
 }

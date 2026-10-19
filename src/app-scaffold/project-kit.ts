@@ -15,6 +15,7 @@
  * runner runs.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import {
   KIT_SCRIPTS, KIT_SEAL_TEST, KIT_SIZE_CAPS, KIT_SEAL_TEST_PY, STRUCTURE_CHECK_COMMAND, STRUCTURE_CHECK_SCRIPT, readKitFile,
@@ -185,7 +186,21 @@ function wireNpmScripts(projectDir: string): boolean {
 }
 
 /** The command a harness gate runs for a project that carries the kit, or null
- *  for a project that does not (one without the kit is never held to it). */
+ *  for a project that does not (one without the kit is never held to it). It
+ *  hands the kit this install's own TypeScript: a project on TypeScript 7 (what
+ *  current Vite templates pin) has no compiler API to parse with, and the kit
+ *  would otherwise measure it without function sizes (typescript-api.mjs). */
 export function structureCheckCommand(projectDir: string): string | null {
-  return existsSync(join(projectDir, STRUCTURE_CHECK_SCRIPT)) ? STRUCTURE_CHECK_COMMAND : null;
+  if (!existsSync(join(projectDir, STRUCTURE_CHECK_SCRIPT))) return null;
+  const typescript = ownTypeScriptDir();
+  return typescript ? `${STRUCTURE_CHECK_COMMAND} --typescript "${typescript}"` : STRUCTURE_CHECK_COMMAND;
+}
+
+/** This install's `typescript` package folder, forward-slashed for any shell; null when it has none. */
+export function ownTypeScriptDir(): string | null {
+  try {
+    return dirname(createRequire(import.meta.url).resolve("typescript/package.json")).split("\\").join("/");
+  } catch {
+    return null;
+  }
 }

@@ -7,9 +7,12 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, 
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { adoptProjectKit, applyProjectKit, projectKitFiles, structureCheckCommand, STRUCTURE_CHECK_SCRIPT } from "./project-kit.js";
+import { adoptProjectKit, applyProjectKit, ownTypeScriptDir, projectKitFiles, structureCheckCommand, STRUCTURE_CHECK_SCRIPT } from "./project-kit.js";
 import { stockDocHash } from "./creator-docs.js";
 import { STOCK_DOCS_MANIFEST } from "./kit-files.js";
+
+// The gates run the check with this install's own TypeScript (project-kit.ts).
+const GATE_COMMAND = `node scripts/check-structure.mjs --typescript "${ownTypeScriptDir()}"`;
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "lax-project-kit-")); });
@@ -59,7 +62,7 @@ describe("applyProjectKit on a scaffolded TypeScript project", () => {
     const agents = read("AGENTS.md");
     expect(agents).toContain("`npm run check:structure`");
     expect(agents).toContain("`src/module-seals.test.ts` holds the seal table");
-    expect(structureCheckCommand(dir)).toBe("node scripts/check-structure.mjs");
+    expect(structureCheckCommand(dir)).toBe(GATE_COMMAND);
   });
 
   it("is idempotent: a second application writes nothing and changes nothing", () => {
@@ -203,7 +206,7 @@ describe("adoptProjectKit — the kit for a project the model created", () => {
     file("app/page.tsx", "export default function Page() { return null; }\n");
     const first = adoptProjectKit(dir, { projectName: "Site" });
     expect(first?.written).toEqual(expect.arrayContaining(["AGENTS.md", "scripts/check-structure.mjs"]));
-    expect(structureCheckCommand(dir)).toBe("node scripts/check-structure.mjs");
+    expect(structureCheckCommand(dir)).toBe(GATE_COMMAND);
     expect(adoptProjectKit(dir, { projectName: "Site" }), "already carries the kit").toBeNull();
   });
 });
@@ -337,5 +340,38 @@ describe("projectKitFiles for a project with no code yet (Product Build)", () =>
 
   it("a project without the kit has no structure command", () => {
     expect(structureCheckCommand(dir)).toBeNull();
+  });
+});
+
+// A current Vite template pins TypeScript 7, whose package exports only its
+// version: the kit crashed reading ts.ScriptTarget off it (live run, 2026-10-19).
+describe("the kit on a TypeScript 7 project", () => {
+  const typescript7 = () => {
+    file("node_modules/typescript/package.json", JSON.stringify({ name: "typescript", version: "7.0.2", main: "./lib/version.cjs" }));
+    file("node_modules/typescript/lib/version.cjs", "module.exports = { version: '7.0.2' };\n");
+  };
+
+  it("the gates hand over this install's TypeScript, which has the compiler API", () => {
+    const own = ownTypeScriptDir()!;
+    const ts = createRequire(join(own, "package.json"))(own) as { createSourceFile?: unknown; ScriptTarget?: unknown };
+    expect(typeof ts.createSourceFile).toBe("function");
+    expect(typeof ts.ScriptTarget).toBe("object");
+  });
+
+  it("measures without crashing and says why; with the gates' TypeScript it measures functions too", () => {
+    file("package.json", JSON.stringify({ ...vitePackage, devDependencies: { ...vitePackage.devDependencies, typescript: "~7.0.2" } }));
+    file("src/main.ts", "export function add(a: number, b: number): number {\n  return a + b;\n}\n");
+    typescript7();
+    applyProjectKit(dir, { projectName: "app" });
+
+    const plain = check(dir);
+    expect(plain.out).not.toMatch(/TypeError/);
+    expect(plain.out).toMatch(/version 7\.0\.2 has no compiler API/);
+    expect(plain.out).toMatch(/Code-size check passed \(\d+ files, 0 functions/);
+
+    const r = spawnSync(process.execPath, [join(dir, STRUCTURE_CHECK_SCRIPT), "--typescript", ownTypeScriptDir()!], { cwd: dir, encoding: "utf-8" });
+    const withOwn = r.stdout + r.stderr;
+    expect(withOwn).not.toMatch(/no compiler API/);
+    expect(withOwn).toMatch(/Code-size check passed \(\d+ files, [1-9]\d* functions/);
   });
 });

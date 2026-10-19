@@ -39,6 +39,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { bandOf, capOf, limitsFromArgs, measureSource, sizeItems, unitOf } from "./code-size.mjs";
+import { applyTypeScriptFlag, loadTypeScript, missingCompilerNote } from "./typescript-api.mjs";
 import { defaultRoots, isTestPath, walkSource } from "./project-languages.mjs";
 
 const NEARING_HEADING = "Nearing the size cap (a warning; it never fails):";
@@ -50,6 +51,7 @@ const STEERING =
 const NEAR_LISTED = 25;
 
 const args = process.argv.slice(2);
+applyTypeScriptFlag(args);
 const opt = (name, dflt) => {
 	const i = args.indexOf(name);
 	return i >= 0 ? args[i + 1] : dflt;
@@ -156,8 +158,8 @@ if (near.length) {
 	console.log(`  When one of these grows, ${STEERING.charAt(0).toLowerCase()}${STEERING.slice(1)}`);
 }
 if (approximate) {
-	console.log(`${approximate} JS/TS files were measured without the TypeScript compiler (\`typescript\` is not installed): ` +
-		"line counts are approximate and function sizes were not measured.");
+	console.log(`${approximate} JS/TS files were measured without the TypeScript compiler: line counts are approximate and ` +
+		`function sizes were not measured, because ${missingCompilerNote(loadTypeScript(REPO).rejected)}`);
 }
 
 const problems = [];

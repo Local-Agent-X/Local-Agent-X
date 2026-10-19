@@ -36,6 +36,7 @@ export const KIT_SCRIPTS = [
   "check-module-owners.mjs",
   "check-structure.mjs",
   "code-refs.mjs",
+  "typescript-api.mjs",
 ] as const;
 
 /** The module-seal test templates (vitest, pytest), stored with a .txt suffix

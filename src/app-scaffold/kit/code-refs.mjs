@@ -24,9 +24,9 @@
  * Needs the project's own `typescript` package. Python is not covered: use the
  * codebase map's --deps for module-level questions and a search for symbols.
  */
-import { createRequire } from "node:module";
 import { existsSync, readFileSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
+import { applyTypeScriptFlag, loadTypeScript, missingCompilerNote } from "./typescript-api.mjs";
 
 const args = process.argv.slice(2);
 const opt = (name, dflt) => {
@@ -45,11 +45,10 @@ if (!QUERY && !DUPLICATES) {
 	process.exit(2);
 }
 
-let ts;
-try {
-	ts = createRequire(join(REPO, "package.json"))("typescript");
-} catch {
-	console.error("code-refs needs the project's own `typescript` package (npm i -D typescript).");
+applyTypeScriptFlag(args);
+const { ts, rejected } = loadTypeScript(REPO);
+if (!ts) {
+	console.error(`code-refs needs the TypeScript compiler API: ${missingCompilerNote(rejected)}`);
 	process.exit(2);
 }
 if (!existsSync(PROJECT)) {

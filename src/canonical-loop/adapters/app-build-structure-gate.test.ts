@@ -17,6 +17,7 @@ vi.mock("../../tool-execution/index.js", () => ({
 }));
 
 import { runAppStructureGate } from "./app-build-structure-gate.js";
+import { structureCheckCommand } from "../../app-scaffold/project-kit.js";
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "lax-structure-gate-")); harness.commands = []; harness.ok = true; harness.output = "check-structure: OK"; });
@@ -40,7 +41,7 @@ describe("runAppStructureGate", () => {
     expect(outcome).toEqual({ kind: "passed" });
     expect(existsSync(join(dir, "AGENTS.md"))).toBe(true);
     expect(existsSync(join(dir, "scripts", "check-structure.mjs"))).toBe(true);
-    expect(harness.commands).toEqual([{ command: "node scripts/check-structure.mjs", cwd: dir, opId: "op_1" }]);
+    expect(harness.commands).toEqual([{ command: structureCheckCommand(dir), cwd: dir, opId: "op_1" }]);
   });
 
   it("without the adoption flag (an update) a kit-less project is left alone and skipped", async () => {

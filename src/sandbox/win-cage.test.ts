@@ -44,7 +44,7 @@ vi.mock("../net/egress-proxy-core.js", async (importOriginal) => ({
 }));
 
 import { _resetWinCageProbe, onWinCageProofSettled, parseHelperStatus, underUserProfile, winCageEnforces, winCageEnforcesSync, winCageEnvOverlay, winCageHelperDir, winCageLoopbackPermit, winCageProbePending, winCageProofView, wrapForWinCage, WIN_CAGE_HELPER_ENV, WIN_CAGE_HELPER_MAX_PERMIT_WIDTH, WIN_CAGE_SANDBOX_USER, WIN_CAGE_SUBLAYER_GUID, type WinCageProof } from "./win-cage.js";
-import { installExitDetail, installWinCage, stagedWinCageHelper } from "./win-cage-install.js";
+import { installExitDetail, installWinCage, stagedWinCageHelper, uninstallWinCage, winCageInstallView } from "./win-cage-install.js";
 import { winCageReadGrants } from "./win-cage-grants.js";
 
 describe("win-cage — what the caged shell is granted to read", () => {
@@ -137,6 +137,22 @@ describe("win-cage — the loopback permit", () => {
     }
   });
 
+  it("a repair reruns the install over the cage it finds (--force); a plain install does not", async () => {
+    ports.range = { from: 47090, to: 47099 };
+    await installWinCage();
+    expect(child.spawned.at(-1)).not.toContain("-Force");
+    await installWinCage({ repair: true });
+    const argv = child.spawned.at(-1)!;
+    expect(argv).toContain("-Force");
+    expect(argv[argv.indexOf("-PortRange") + 1]).toBe("47090-47099");
+  });
+
+  it("removing the cage from Settings keeps its helper, so it can be installed again", async () => {
+    await uninstallWinCage();
+    expect(child.spawned.at(-1)).toContain("-Uninstall");
+    expect(child.spawned.at(-1)).not.toContain("-RemoveHelper");
+  });
+
   it("no free range installs nothing and says why", async () => {
     ports.error = new ShellProxyPortsUnavailableError(["60090-60099 overlaps the range Windows reserved (60063-60162)"]);
     const result = await installWinCage();
@@ -146,12 +162,71 @@ describe("win-cage — the loopback permit", () => {
   });
 });
 
+describe("win-cage — the provisioning script keeps the helper unless the app is uninstalled", () => {
+  const provision = () => readFileSync(join(process.cwd(), "scripts", "win-cage", "provision.ps1"), "utf-8");
+  it("deletes the helper's folder only under -RemoveHelper, which only the app's uninstaller passes", () => {
+    expect(provision()).toMatch(/if \(\$RemoveHelper\) \{ Remove-Item -LiteralPath \$binDir/);
+    expect(provision().match(/Remove-Item -LiteralPath \$binDir/g)).toHaveLength(1);
+    const uninstaller = readFileSync(join(process.cwd(), "scripts", "uninstall", "lax-uninstall.ps1"), "utf-8");
+    expect(uninstaller).toContain("-File $provision -Uninstall -RemoveHelper");
+  });
+
+  it("carries -Force and -RemoveHelper through its own elevation, and -Force to the helper's --force", () => {
+    expect(provision()).toContain('if ($Force) { $argv += "-Force" }');
+    expect(provision()).toContain('if ($RemoveHelper) { $argv += "-RemoveHelper" }');
+    expect(provision()).toContain('if ($Force) { $installArgs += "--force" }');
+  });
+});
+
+describe("win-cage — what Settings is told beyond the helper's status", () => {
+  const prevHelper = process.env[WIN_CAGE_HELPER_ENV];
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "lax-cage-view-"));
+    vi.stubEnv("ProgramData", dir);
+    delete process.env[WIN_CAGE_HELPER_ENV];
+    ports.error = null;
+    ports.range = { from: 47090, to: 47099 };
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    if (prevHelper === undefined) delete process.env[WIN_CAGE_HELPER_ENV]; else process.env[WIN_CAGE_HELPER_ENV] = prevHelper;
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("with no helper on the computer, nothing can install, and the user is told to re-run the installer", async () => {
+    const view = await winCageInstallView({ helper: null, installed: false, detail: "" });
+    expect(view.installable).toBe(false);
+    expect(view.detail).toMatch(/Re-run the Local Agent X installer/);
+  });
+
+  it("a removed cage's kept helper can install it again", async () => {
+    const helper = join(dir, "srt-win.exe");
+    writeFileSync(helper, "");
+    process.env[WIN_CAGE_HELPER_ENV] = helper;
+    expect(await winCageInstallView({ helper, installed: false, detail: "Not installed." })).toEqual({ installable: true });
+  });
+
+  it("an installed permit naming another range is a mismatch to repair; the same range, or an unreadable one, is not", async () => {
+    const helper = join(dir, "srt-win.exe");
+    writeFileSync(helper, "");
+    process.env[WIN_CAGE_HELPER_ENV] = helper;
+    expect(await winCageInstallView({ helper, installed: true, portRange: "60090-60099", detail: "" }))
+      .toEqual({ installable: true, permitMismatch: { installed: "60090-60099", proxy: "47090-47099" } });
+    expect(await winCageInstallView({ helper, installed: true, portRange: "47090-47099", detail: "" })).toEqual({ installable: true });
+    expect(await winCageInstallView({ helper, installed: true, detail: "" })).toEqual({ installable: true });
+  });
+});
+
 describe("win-cage — the helper's status, read the way the settings page needs it", () => {
   it("is installed only when the user exists, the credential is stored, and the marker names a SID", () => {
     const fresh = '{"ambient":{"paths":[]},"user":{"ca_cert_pem":null,"cred_present":false,"marker_user_sid":null,"marker_version":null,"real_user_sid":"S-1-5-21-1","user":{"exists":false,"name":"srt-sandbox"}},"wfp":{"filters":0,"state":"cannot-read"}}';
     expect(parseHelperStatus(fresh)).toEqual({ installed: false });
     const ready = '{"user":{"cred_present":true,"marker_user_sid":"S-1-5-21-9-1005","user":{"exists":true,"name":"srt-sandbox"}},"wfp":{"state":"cannot-read","port_range":"60090-60099"}}';
     expect(parseHelperStatus(ready)).toEqual({ installed: true, userSid: "S-1-5-21-9-1005", portRange: "60090-60099" });
+    // The helper prints the range as [low, high] when it can read the filters.
+    const elevated = '{"user":{"cred_present":true,"marker_user_sid":"S-1-5-21-9-1005","user":{"exists":true}},"wfp":{"state":"installed","port_range":[60090,60099]}}';
+    expect(parseHelperStatus(elevated).portRange).toBe("60090-60099");
     // A user without its credential is a half install, not an install.
     expect(parseHelperStatus('{"user":{"cred_present":false,"marker_user_sid":"S-1-5-21-9-1005","user":{"exists":true}}}').installed).toBe(false);
   });

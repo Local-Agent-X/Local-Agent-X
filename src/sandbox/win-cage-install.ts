@@ -8,12 +8,12 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 // Windows paths whatever the host, as in win-cage.ts.
 import { join } from "node:path/win32";
-import { _resetWinCageProbe, resolveWinCageHelper, winCageLoopbackPermit } from "./win-cage.js";
+import { _resetWinCageProbe, resolveWinCageHelper, winCageLoopbackPermit, type WinCageStatus } from "./win-cage.js";
 import type { PortRange } from "../net/shell-proxy-ports.js";
 
 const INSTALL_EXIT: Record<number, string> = {
   0: "installed",
-  2: "the cage helper is not present",
+  2: "the cage's helper is not on this computer; re-run the Local Agent X installer to add it",
   3: "the cage helper's signature was rejected",
   4: "no loopback port range for the shell egress proxy",
   10: "the administrator prompt was cancelled",
@@ -57,11 +57,20 @@ function runProvision(args: string[]): Promise<{ ok: boolean; code: number; deta
   });
 }
 
-/** Provision the sandbox user and the fence. One administrator prompt. The
- *  helper comes from the machine-wide folder when it is already there, else
- *  from the copy the installer staged with this install. */
-export async function installWinCage(): Promise<{ ok: boolean; code: number; detail: string }> {
-  const helper = resolveWinCageHelper() ?? stagedWinCageHelper();
+/** The helper an install would use: the machine-wide one when it is there
+ *  (a removed cage keeps it), else the copy the installer staged with this
+ *  install. Null: only re-running the installer can bring the cage. */
+export function winCageInstallSource(): string | null {
+  return resolveWinCageHelper() ?? stagedWinCageHelper();
+}
+
+/** Provision the sandbox user and the fence. One administrator prompt.
+ *  `repair` reruns every install step over an installed cage (the helper's
+ *  --force): it rewrites a permit that names a range the proxy no longer binds
+ *  (the proxy moved off a range Windows reserved), which the helper otherwise
+ *  refuses (exit 13), and completes a broken install. */
+export async function installWinCage(opts: { repair?: boolean } = {}): Promise<{ ok: boolean; code: number; detail: string }> {
+  const helper = winCageInstallSource();
   if (!helper) return { ok: false, code: 2, detail: installExitDetail(2) };
   let permit: PortRange;
   try {
@@ -69,10 +78,37 @@ export async function installWinCage(): Promise<{ ok: boolean; code: number; det
   } catch (e) {
     return { ok: false, code: 4, detail: `${installExitDetail(4)} — ${(e as Error).message}` };
   }
-  return runProvision(["-Helper", helper, "-PortRange", `${permit.from}-${permit.to}`]);
+  return runProvision(["-Helper", helper, "-PortRange", `${permit.from}-${permit.to}`, ...(opts.repair ? ["-Force"] : [])]);
 }
 
-/** Remove the fence, the sandbox user and the machine-wide helper. One administrator prompt. */
+/** Remove the fence and the sandbox user. One administrator prompt. The
+ *  helper stays, so Settings can install the cage again; only the app's own
+ *  uninstaller deletes it (scripts/uninstall/lax-uninstall.ps1). */
 export function uninstallWinCage(): Promise<{ ok: boolean; code: number; detail: string }> {
   return runProvision(["-Uninstall"]);
+}
+
+/** What Settings needs beyond the helper's status: whether an install can
+ *  run at all, and an installed permit that names a range the proxy no
+ *  longer binds (readable only when the helper can read the filters), which
+ *  a repair fixes in one prompt. */
+export async function winCageInstallView(status: WinCageStatus): Promise<{ installable: boolean; detail?: string; permitMismatch?: { installed: string; proxy: string } }> {
+  const installable = status.helper !== null || stagedWinCageHelper() !== null;
+  if (!status.helper) {
+    return {
+      installable,
+      detail: installable
+        ? "Not installed: bash runs unconfined on this machine until the cage is installed (one administrator prompt)."
+        : "Not installed, and the cage's helper is not on this computer. Re-run the Local Agent X installer to add the Windows network cage.",
+    };
+  }
+  if (!status.installed || !status.portRange) return { installable };
+  let proxy: PortRange;
+  try {
+    proxy = await winCageLoopbackPermit();
+  } catch {
+    return { installable };
+  }
+  const want = `${proxy.from}-${proxy.to}`;
+  return status.portRange === want ? { installable } : { installable, permitMismatch: { installed: status.portRange, proxy: want } };
 }

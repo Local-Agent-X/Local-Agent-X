@@ -283,7 +283,7 @@ if (Test-Path -LiteralPath $cageHelper) {
     $provision = Join-Path $PSScriptRoot '..\win-cage\provision.ps1'
     if (-not (Test-Path -LiteralPath $provision)) { $provision = Join-Path (Get-ProjectRoot) 'scripts\win-cage\provision.ps1' }
     if (Test-Path -LiteralPath $provision) {
-      & powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $provision -Uninstall | Out-Null
+      & powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $provision -Uninstall -RemoveHelper | Out-Null
       if ($LASTEXITCODE -eq 0) { $script:Removed += 'shell network cage (sandbox account + firewall fence)' }
       else { $script:Skipped += "shell network cage (exit $LASTEXITCODE; run 'srt-win.exe uninstall' from $cageHelper as administrator)" }
     } else {

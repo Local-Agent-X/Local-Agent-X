@@ -2,8 +2,8 @@
   Local Agent X - Windows shell network cage provisioning.
 
   The ONE implementation of "install the cage": the standalone installer runs
-  it on a fresh install, the app runs it from Settings, and the uninstaller
-  runs it with -Uninstall. It needs administrator rights, so when it is not
+  it on a fresh install, the app runs it from Settings (install, update,
+  remove), and the app's uninstaller runs it with -Uninstall -RemoveHelper. It needs administrator rights, so when it is not
   elevated it relaunches itself once through UAC and returns that run's exit
   code.
 
@@ -16,7 +16,13 @@
        user profile, so a helper there fails with "access denied".
     3. Runs the helper's install: the lax-sandbox account, its logon denials,
        and the WFP fence under LAX's own sublayer, permitting loopback only to
-       the shell egress proxy's port range.
+       the shell egress proxy's port range. -Force replaces an install whose
+       range differs (the app moved its proxy off a range Windows reserved):
+       the fence is rewritten in place, the account kept.
+
+  -Uninstall removes the fence and the account and keeps the helper, so
+  Settings can install the cage again with no installer. -RemoveHelper also
+  deletes the helper: only the app's own uninstaller passes it.
 
   Exit codes: the helper's own (0 installed, 10 UAC cancelled, 12 filters,
   13 different range already installed, 14 user), plus 2 helper missing,
@@ -34,7 +40,9 @@ param(
   # installer that carried it). Nothing is checked when that executable is
   # itself unsigned: a developer build.
   [string]$SignerLike = "",
-  [switch]$Uninstall
+  [switch]$Force,
+  [switch]$Uninstall,
+  [switch]$RemoveHelper
 )
 
 $ErrorActionPreference = "Stop"
@@ -61,7 +69,9 @@ if (-not (Test-Admin)) {
   if ($PortRange) { $argv += @("-PortRange", $PortRange) }
   if ($Helper) { $argv += @("-Helper", "`"$Helper`"") }
   if ($SignerLike) { $argv += @("-SignerLike", "`"$SignerLike`"") }
+  if ($Force) { $argv += "-Force" }
   if ($Uninstall) { $argv += "-Uninstall" }
+  if ($RemoveHelper) { $argv += "-RemoveHelper" }
   try {
     $p = Start-Process -FilePath "powershell.exe" -ArgumentList $argv -Verb RunAs -Wait -PassThru -WindowStyle Hidden
   } catch {
@@ -76,7 +86,7 @@ if ($Uninstall) {
     & $installed uninstall --sublayer-guid $SublayerGuid
     $code = $LASTEXITCODE
     if ($code -ne 0) { exit $code }
-    Remove-Item -LiteralPath $binDir -Recurse -Force -ErrorAction SilentlyContinue
+    if ($RemoveHelper) { Remove-Item -LiteralPath $binDir -Recurse -Force -ErrorAction SilentlyContinue }
   }
   Write-Output "The cage is removed."
   exit 0
@@ -104,5 +114,7 @@ New-Item -ItemType Directory -Force -Path $binDir | Out-Null
 if ((Resolve-Path -LiteralPath $Helper).Path -ne $installed) {
   Copy-Item -LiteralPath $Helper -Destination $installed -Force
 }
-& $installed install --sublayer-guid $SublayerGuid --sandbox-user $SandboxUser --proxy-port-range $PortRange
+$installArgs = @("install", "--sublayer-guid", $SublayerGuid, "--sandbox-user", $SandboxUser, "--proxy-port-range", $PortRange)
+if ($Force) { $installArgs += "--force" }
+& $installed @installArgs
 exit $LASTEXITCODE

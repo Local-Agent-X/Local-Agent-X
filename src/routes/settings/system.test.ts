@@ -148,7 +148,7 @@ describe("sandbox status acknowledgement API", () => {
       expect(response.body).toMatchObject({ effectiveMode: "guarded", confined: true });
       expect(response.body.windowsCage).toEqual({
         helper: "C:\\ProgramData\\Local Agent X\\bin\\srt-win.exe", installed: true, detail: "Installed (modelled).",
-        proofPending: false, grantFailure,
+        installable: true, proofPending: false, grantFailure,
       });
     } finally {
       Object.defineProperty(process, "platform", { value: realPlatform });

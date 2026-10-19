@@ -100,14 +100,18 @@ export interface WinCageStatus {
 /** The helper's `status` JSON, the fields this module reads. */
 interface HelperStatus {
   user?: { cred_present?: boolean; marker_user_sid?: string | null; user?: { exists?: boolean; name?: string } };
-  wfp?: { state?: string; port_range?: string };
+  /** `port_range` is the helper's `[low, high]`; present only when it could
+   *  read the filters (an elevated caller). */
+  wfp?: { state?: string; port_range?: [number, number] | string };
 }
 
 export function parseHelperStatus(json: string): { installed: boolean; userSid?: string; portRange?: string } {
   const s = JSON.parse(json) as HelperStatus;
   const sid = s.user?.marker_user_sid ?? undefined;
   const installed = s.user?.user?.exists === true && s.user?.cred_present === true && typeof sid === "string";
-  return { installed, ...(sid ? { userSid: sid } : {}), ...(s.wfp?.port_range ? { portRange: s.wfp.port_range } : {}) };
+  const range = s.wfp?.port_range;
+  const portRange = Array.isArray(range) ? `${range[0]}-${range[1]}` : range;
+  return { installed, ...(sid ? { userSid: sid } : {}), ...(portRange ? { portRange } : {}) };
 }
 
 export function runHelper(helper: string, args: string[], opts: { input?: string; timeoutMs?: number; cwd?: string } = {}): { code: number; stdout: string; stderr: string } {
@@ -287,7 +291,7 @@ async function probeFence(helper: string, installedPermit: string | undefined): 
   }
   // The helper reports the installed permit only when it can read it.
   if (installedPermit && installedPermit !== `${range.from}-${range.to}`) {
-    return { ok: false, installed: true, reason: `the cage permits loopback ports ${installedPermit} but the shell egress proxy binds ${range.from}-${range.to}; remove and reinstall the cage so its permit names the proxy's range` };
+    return { ok: false, installed: true, reason: `the cage permits loopback ports ${installedPermit} but the shell egress proxy binds ${range.from}-${range.to}; repair the cage in Settings → Security (one administrator prompt) so its permit names the proxy's range` };
   }
   const script = `
     const net = require("node:net"); const { execFileSync } = require("node:child_process");
@@ -321,7 +325,7 @@ async function probeFence(helper: string, installedPermit: string | undefined): 
     return { ok: false, installed: true, reason: `the fence probe could not run: ${(e as Error).message.split("\n")[0]}` };
   }
   if (result.offBox !== "blocked") return { ok: false, installed: true, reason: `the fence is not active: a connect from the cage to an off-machine address was ${result.offBox}` };
-  if (result.loopback !== "reached") return { ok: false, installed: true, reason: `loopback is not reachable from the cage: a connect to a port of the proxy's range ${range.from}-${range.to} was ${result.loopback}; if the cage was installed with another range, remove and reinstall it` };
+  if (result.loopback !== "reached") return { ok: false, installed: true, reason: `loopback is not reachable from the cage: a connect to a port of the proxy's range ${range.from}-${range.to} was ${result.loopback}; if the cage was installed with another range, repair it in Settings → Security` };
   return { ok: true, installed: true, reason: "" };
 }
 

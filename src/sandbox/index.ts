@@ -331,7 +331,7 @@ function guardedUnavailableError(): string {
   if (process.platform !== "win32") return "The kernel cage is not available on this machine (needs macOS, or Linux with unprivileged user namespaces) — bash runs unconfined here.";
   if (winCageProbePending()) return SANDBOX_PROOF_PENDING_RETRY;
   const broken = winCageProofView().proofFailure;
-  if (broken) return `The Windows network cage is installed but not working (${broken}) — bash runs unconfined until it passes its check; remove and reinstall it from Settings → Security.`;
+  if (broken) return `The Windows network cage is installed but not working (${broken}) — bash runs unconfined until it passes its check; fix it from Settings → Security.`;
   return `The Windows network cage is not active (${winCageUnusableReason() ?? "not proven"}) — install it from Settings → Security first; bash runs unconfined until then.`;
 }
 

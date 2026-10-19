@@ -70,25 +70,39 @@ function renderSandboxStatus(d) {
 }
 
 // The Windows network cage (src/sandbox/win-cage.ts): shown only when the
-// server reports it, i.e. on Windows. Installing or removing it takes one
-// administrator prompt, which appears on the desktop, not in this page.
+// server reports it, i.e. on Windows. Installing, repairing or removing it
+// takes one administrator prompt, which appears on the desktop, not in this
+// page. Install shows whenever an install can run (`installable`: a removed
+// cage keeps its helper); Repair whenever an installed cage fails its check,
+// which includes a permit naming a range the proxy no longer binds.
+const WINDOWS_CAGE_BUTTONS = {
+  install: { id: 'sandbox-windows-cage-install', label: 'Install the Windows network cage (one administrator prompt)' },
+  repair: { id: 'sandbox-windows-cage-repair', label: 'Repair the Windows network cage (one administrator prompt)' },
+  uninstall: { id: 'sandbox-windows-cage-uninstall', label: 'Remove the Windows network cage' },
+};
 function renderWindowsCage(cage) {
   const box = document.getElementById('sandbox-windows-cage');
   if (!box) return;
   if (!cage) { box.style.display = 'none'; return; }
   box.style.display = '';
   const detail = document.getElementById('sandbox-windows-cage-detail');
-  const install = document.getElementById('sandbox-windows-cage-install');
-  const uninstall = document.getElementById('sandbox-windows-cage-uninstall');
-  const broken = cage.installed && cage.proofFailure ? ' It is installed but not working: ' + cage.proofFailure + '.' : '';
-  if (detail) detail.textContent = 'Windows network cage: ' + (cage.detail || '') + broken;
-  const helperMissing = !cage.helper;
-  if (install) { install.style.display = cage.installed || helperMissing ? 'none' : ''; install.disabled = false; install.textContent = 'Install the Windows network cage (one administrator prompt)'; }
-  if (uninstall) { uninstall.style.display = cage.installed ? '' : 'none'; uninstall.disabled = false; }
+  const mismatch = cage.installed && cage.permitMismatch
+    ? ' It permits loopback ports ' + cage.permitMismatch.installed + ", but the shell's network proxy now uses " + cage.permitMismatch.proxy + ': repair it to match.' : '';
+  const broken = !mismatch && cage.installed && cage.proofFailure ? ' It is installed but not working: ' + cage.proofFailure + '.' : '';
+  if (detail) detail.textContent = 'Windows network cage: ' + (cage.detail || '') + mismatch + broken;
+  const show = {
+    install: !cage.installed && cage.installable === true,
+    repair: cage.installed && !!(cage.permitMismatch || cage.proofFailure),
+    uninstall: cage.installed,
+  };
+  for (const [action, { id, label }] of Object.entries(WINDOWS_CAGE_BUTTONS)) {
+    const btn = document.getElementById(id);
+    if (btn) { btn.style.display = show[action] ? '' : 'none'; btn.disabled = false; btn.textContent = label; }
+  }
 }
 
 async function windowsCageAction(action) {
-  const btn = document.getElementById(action === 'install' ? 'sandbox-windows-cage-install' : 'sandbox-windows-cage-uninstall');
+  const btn = document.getElementById(WINDOWS_CAGE_BUTTONS[action].id);
   const detail = document.getElementById('sandbox-windows-cage-detail');
   if (btn) { btn.disabled = true; btn.textContent = 'Waiting for the administrator prompt…'; }
   try {
@@ -107,6 +121,7 @@ async function windowsCageAction(action) {
   }
 }
 function installWindowsCage() { return windowsCageAction('install'); }
+function repairWindowsCage() { return windowsCageAction('repair'); }
 function uninstallWindowsCage() { return windowsCageAction('uninstall'); }
 
 // The section re-renders on every status change, so an option disabled while

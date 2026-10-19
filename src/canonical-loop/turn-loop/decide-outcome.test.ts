@@ -84,6 +84,7 @@ import { MISSING_TOOL_RESULT_TEXT } from "./orphan-tool-results.js";
 import { appendNudgeAsUserMessage } from "./nudges.js";
 import { failedCallNudge } from "./failed-call-gate.js";
 import { REASONING_ONLY_NUDGE } from "./empty-turn-termination.js";
+import { CUT_OFF_KEPT_CHARS, CUT_OFF_NUDGE, CUT_OFF_REDRIVE_LIMIT, CUT_OFF_TERMINAL } from "./cut-off-turn.js";
 import { createLogger } from "../../logger.js";
 
 const op = { id: "op-test", type: "chat_turn", ownerId: "local-user" } as unknown as Op;
@@ -1900,4 +1901,43 @@ describe("decideTurnOutcome — skipped dispatch commits no orphan tool call", (
     expect(log.info.mock.calls.map(c => String(c[0])).join("\n")).not.toContain("synthesized tool_result");
   });
 
+});
+
+describe("decideTurnOutcome — a reply the output limit cut off", () => {
+  // The Terminal-Bench shape (2026-10-18): a thinking model wrote ~37k tokens
+  // of analysis, hit the limit (stop "length") with no tool call, and the
+  // adapter's shape inference called it "done". The op ended as a success.
+  const runaway = "Let me analyze this task carefully. " + "x".repeat(60_000);
+  const cutOffTurn = (over: Partial<DecideOutcomeInput> = {}) => input({
+    finalized: [{ messageId: "am1", role: "assistant", content: { text: runaway } }],
+    toolMessages: [], toolSummary: [], toolCalls: [],
+    assistantText: runaway, adapterTerminalReason: "done", providerStop: "length",
+    modelWantsToContinue: true, ...over,
+  });
+
+  beforeEach(() => { vi.clearAllMocks(); _resetMiddlewareStates(); });
+
+  it("re-opens the turn, nudges the model to act, and keeps only the draft's tail", async () => {
+    const r = await decideTurnOutcome(cutOffTurn());
+    expect(r.terminalReason).toBeNull();
+    expect(vi.mocked(appendNudgeAsUserMessage)).toHaveBeenCalledWith("op-test", 1, CUT_OFF_NUDGE, expect.anything());
+    const text = String((r.allMessages[0].content as { text: string }).text);
+    expect(text.length).toBeLessThan(CUT_OFF_KEPT_CHARS + 200);
+    expect(text).toContain("cut off at the output limit");
+  });
+
+  it("ends with an honest terminal once the re-drives are spent, not a silent done", async () => {
+    for (let i = 0; i < CUT_OFF_REDRIVE_LIMIT; i++) {
+      expect((await decideTurnOutcome(cutOffTurn({ turnIdx: i }))).terminalReason).toBeNull();
+    }
+    const r = await decideTurnOutcome(cutOffTurn({ turnIdx: CUT_OFF_REDRIVE_LIMIT }));
+    expect(r.terminalReason).toBe("done");
+    expect(r.allMessages.some(m => m.role === "assistant" && (m.content as { text?: string }).text === CUT_OFF_TERMINAL)).toBe(true);
+  });
+
+  it("leaves a finished reply alone", async () => {
+    const r = await decideTurnOutcome(cutOffTurn({ providerStop: "stop", modelSignaledDone: true, modelWantsToContinue: false }));
+    expect(r.terminalReason).toBe("done");
+    expect(vi.mocked(appendNudgeAsUserMessage)).not.toHaveBeenCalledWith("op-test", 1, CUT_OFF_NUDGE, expect.anything());
+  });
 });

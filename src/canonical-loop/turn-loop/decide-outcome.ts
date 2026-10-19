@@ -34,6 +34,7 @@ import { continuationVetoedTerminal } from "./continuation-guard.js";
 import type { GuardFire } from "./guard-fire.js";
 import { appendEmptyTurnTerminal, appendHonestTerminal, evaluateEmptyInteractiveTurn, redriveAnnouncedOnlyTurn } from "./empty-turn-termination.js";
 import { appendMissingToolResults } from "./orphan-tool-results.js";
+import { CUT_OFF_TERMINAL, evaluateCutOffTurn, trimCutOffText } from "./cut-off-turn.js";
 import { createLogger } from "../../logger.js";
 import { recordP1Outcome } from "./p1-metrics.js";
 import { narrationPromisesFollowup } from "./p1-followup-detector.js";
@@ -148,6 +149,15 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
       ? null
       : (adapterTerminalReason ?? (adapterError ? "error" : null));
 
+  // A reply the output limit cut off is not an answer (cut-off-turn.ts): it is
+  // re-driven to act, or ends honestly once the re-drives are spent.
+  const cutOff = evaluateCutOffTurn({ op, turnIdx, providerStop: in_.providerStop, toolCalls,
+    terminalReason, middlewareAborted, middlewareSuspended });
+  if (cutOff === "redrive") {
+    terminalReason = null;
+    allMessages = replaceAssistantText(allMessages, trimCutOffText(assistantText));
+  }
+
   // Two questions, two fields (tool-failure-summary.ts) — see mutationCommitted.
   const failureSummary = collectToolFailures(toolMessages, toolSummary);
 
@@ -232,7 +242,7 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
     terminalReason === null &&
     !middlewareAborted &&
     !middlewareSuspended &&
-    !announcedOnlyRedrive &&
+    !announcedOnlyRedrive && cutOff !== "redrive" &&
     (modelSignaledDone || silentTerminates || noTools || mutationTerminates) &&
     assistantText.trim().length > 0
   ) {
@@ -245,7 +255,8 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
   // A fully-empty interactive turn the main gate left null gets ONE bounded silent
   // re-drive, then an honest terminal whose MESSAGE is deferred to after the
   // continuation guard + gate chain settle so a re-opened turn never shows it.
-  const emptyEval = evaluateEmptyInteractiveTurn({
+  // A cut-off re-drive already queued its nudge; the empty-turn one would be a second.
+  const emptyEval = cutOff === "redrive" ? { terminalReason, emptyInteractiveTerminal: null } : evaluateEmptyInteractiveTurn({
     op, turnIdx, assistantText, toolCalls, hasReasoning,
     terminalReason, middlewareAborted, middlewareSuspended, modelSignaledDone,
     providerStop: in_.providerStop,
@@ -361,6 +372,9 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
   if (honestTerminal && terminalReason === "done") {
     appendHonestTerminal(op.id, turnIdx, allMessages, honestTerminal.text, "gate-terminal");
     earnedFires.push(honestTerminal.fire);
+  }
+  if (cutOff === "exhausted" && terminalReason === "done") {
+    appendHonestTerminal(op.id, turnIdx, allMessages, CUT_OFF_TERMINAL, "cut-off");
   }
 
   // Terminal epilogue (terminal-epilogue.ts): loud-partial warning,

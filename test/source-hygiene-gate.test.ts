@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -20,6 +20,7 @@ const RLO = ch(0x202e);
 const source = (payload: string) => `export const a = 1;\nconst key = "x" + "${payload}" + "y";\n`;
 
 const gateScript = fileURLToPath(new URL("../scripts/check-source-hygiene.mjs", import.meta.url));
+const kitDir = fileURLToPath(new URL("../src/app-scaffold/kit", import.meta.url));
 const roots: string[] = [];
 
 afterEach(() => roots.splice(0).forEach((root) => rmSync(root, { recursive: true, force: true })));
@@ -35,6 +36,8 @@ function runGate(files: Record<string, string>) {
 	roots.push(root);
 	mkdirSync(join(root, "scripts"), { recursive: true });
 	copyFileSync(gateScript, join(root, "scripts", "check-source-hygiene.mjs"));
+	// The size half runs the structure kit's script, found beside the gate.
+	cpSync(kitDir, join(root, "src", "app-scaffold", "kit"), { recursive: true });
 	for (const [rel, text] of Object.entries(files)) {
 		const target = join(root, rel);
 		mkdirSync(join(target, ".."), { recursive: true });
@@ -150,6 +153,24 @@ describe("exotic code point gate, end to end", () => {
 
 		const exempt = runGate({ "src/rotten.test.ts": source(RLO) });
 		expect(exempt.status, exempt.output).toBe(0);
+	});
+
+	it("runs the structure kit's size check with this repo's caps: code lines over 350 fail, comments are free", () => {
+		const code = (n: number) => Array.from({ length: n }, (_, i) => `export const v${i} = ${i};`).join("\n") + "\n";
+		const comments = "// a comment line, which never counts\n".repeat(500);
+
+		const over = runGate({ "src/big.ts": code(351) });
+		expect(over.status, over.output).toBe(1);
+		expect(over.output).toContain("src/big.ts: 351 code lines (cap 350)");
+		expect(over.output).toContain("named after the job");
+
+		const documented = runGate({ "src/documented.ts": comments + code(300) });
+		expect(documented.status, documented.output).toBe(0);
+		expect(documented.output).toContain("Nearing the size cap");
+		expect(documented.output).toContain("src/documented.ts: 300 code lines (cap 350)");
+
+		const ratcheted = runGate({ "src/big.ts": code(351), ".code-size-ratchet": "src/big.ts 351\n" });
+		expect(ratcheted.status, ratcheted.output).toBe(0);
 	});
 
 	it("exits 0 on a clean tree", () => {

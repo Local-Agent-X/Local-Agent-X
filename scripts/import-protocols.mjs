@@ -13,7 +13,7 @@
  *   node scripts/import-protocols.mjs --refresh       # delete cache, re-clone
  *
  * Constraints:
- *   - Stays under 400 LOC.
+ *   - Stays within the code-size caps (AGENTS.md).
  *   - No npm deps. Uses node:fs, node:child_process for git clone.
  *   - Idempotent: re-running with the same cache produces the same output.
  */

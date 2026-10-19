@@ -17,17 +17,15 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
-  KIT_SCRIPTS, KIT_SEAL_TEST, KIT_SEAL_TEST_PY, STRUCTURE_CHECK_COMMAND, STRUCTURE_CHECK_SCRIPT, readKitFile,
+  KIT_SCRIPTS, KIT_SEAL_TEST, KIT_SIZE_CAPS, KIT_SEAL_TEST_PY, STRUCTURE_CHECK_COMMAND, STRUCTURE_CHECK_SCRIPT, readKitFile,
 } from "./kit-files.js";
 import { recordCreatorDocs } from "./creator-docs.js";
 import { detectProjectKind, hasDependency, hasProjectFile } from "./project-kind.js";
 import { renderAdr0001, renderHistoryReadme, renderKitAgentsMd, renderKitArchitectureMd, type KitDocOptions } from "./render-docs.js";
 
-export { STRUCTURE_CHECK_COMMAND, STRUCTURE_CHECK_SCRIPT } from "./kit-files.js";
+export { KIT_SIZE_CAPS, STRUCTURE_CHECK_COMMAND, STRUCTURE_CHECK_SCRIPT } from "./kit-files.js";
 export { structureKitAdoptionPromptLine, structureKitPromptLine } from "./render-docs.js";
-
-/** The kit's file-size ceiling: the /new-project default for new projects. */
-export const KIT_MAX_LOC = 450;
+export { structureWarningNote } from "./structure-check-output.js";
 
 export interface ProjectKitOptions {
   projectName: string;
@@ -83,7 +81,7 @@ export function projectKitFiles(
     projectName: opts.projectName,
     sourceRoots,
     absentRoots: sourceRoots.filter((r) => !existsSync(join(projectDir, r))),
-    maxLoc: KIT_MAX_LOC,
+    sizeCaps: KIT_SIZE_CAPS,
     npmScripts: readPackageJson(projectDir) !== null,
     typescript: kind.typescript,
     language: kind.language,

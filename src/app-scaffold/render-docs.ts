@@ -5,7 +5,7 @@
  * placeholder left in a guidance doc is a stale claim on day one, and the
  * project's own doc-path check would fail on it.
  */
-import { STRUCTURE_CHECK_COMMAND } from "./kit-files.js";
+import { KIT_SIZE_CAPS, STRUCTURE_CHECK_COMMAND } from "./kit-files.js";
 import type { ProjectLanguage, SealTestRunner } from "./project-kind.js";
 
 export interface KitDocOptions {
@@ -17,7 +17,8 @@ export interface KitDocOptions {
    *  project is materialized before any code, so its docs must not name a
    *  folder that is not there yet (its own doc-path check would fail). */
   absentRoots: string[];
-  maxLoc: number;
+  /** The size caps the kit's check holds the project to, in code lines. */
+  sizeCaps: { file: number; fileWarn: number; fn: number; fnWarn: number };
   /** The project has a package.json the kit wired `npm run` scripts into. */
   npmScripts: boolean;
   /** TypeScript project: `code-refs` answers symbol questions. */
@@ -56,6 +57,18 @@ function moduleRule(o: KitDocOptions): string {
       ? `a module (a top-level folder or \`.rs\` file under \`src/\`) needs a row in ARCHITECTURE.md naming it as \`src/<module>/\` or \`src/<module>.rs\``
       : `a folder under the source root needs a row in ARCHITECTURE.md naming it as \`${root}/<module>/\``;
   return `- **Every module has an owner on record.** ${named.replace(/^a /, "A ")} and saying what it owns and what it does not, or its own AGENTS.md.`;
+}
+
+/** The size rule and why it exists: so the next reader (an agent) can find
+ *  its way, which is also why comments never count against it. */
+function sizeRule(o: KitDocOptions): string {
+  const c = o.sizeCaps;
+  return [
+    `- **Size caps, in code lines: ${c.file} per file, ${c.fn} per function.** A line counts when it holds code; comment and blank lines are free. A function's count is its own: a function nested in it counts for itself. The check warns from ${c.fileWarn} (file) and ${c.fnWarn} (function) and lists those in \`docs/codebase-map.md\` under "Nearing the size cap".`,
+    "  - Why: you and the next agent find your way by reading a whole file or function. Past the cap it is almost always doing a second job.",
+    "  - Near or over the cap: find the job that grew and move it into a module (or function) named after that job. Never delete comments to fit (they don't count), and never name the split, the file or the commit after the limit (\"part 2\", \"under the 400-line cap\").",
+    "  - `.code-size-ratchet` (absent in a new project) lists anything that was over a cap, at its recorded size; it may only shrink.",
+  ].join("\n");
 }
 
 function boundaryRule(o: KitDocOptions): string[] {
@@ -117,7 +130,7 @@ ${commands.join("\n")}
 
 ## Code rules (the structure check enforces them)
 
-- **No source file over ${o.maxLoc} lines.** Split by responsibility before it gets there. A generated file that must stay large is listed in \`.file-size-allow\` (one path per line); that list only shrinks.
+${sizeRule(o)}
 ${moduleRule(o)}
 - **Every path a doc names exists.** Move a file, fix the docs that name it.
 - **One responsibility per file and per module.** A new capability gets its own module, not a corner of an existing one.
@@ -195,12 +208,12 @@ For the current design, start at [ARCHITECTURE.md](../../ARCHITECTURE.md).
 
 /** The one line a build prompt uses to point the model at the kit. */
 export function structureKitPromptLine(): string {
-  return `- The project carries AGENTS.md and ARCHITECTURE.md — read AGENTS.md first. Every folder you add under the source root needs its row in ARCHITECTURE.md, and no source file may pass 450 lines. \`${STRUCTURE_CHECK_COMMAND}\` runs when you report done and must pass; run it yourself before that.`;
+  return `- The project carries AGENTS.md and ARCHITECTURE.md — read AGENTS.md first. Every folder you add under the source root needs its row in ARCHITECTURE.md, and no file may pass ${KIT_SIZE_CAPS.file} code lines nor a function ${KIT_SIZE_CAPS.fn} (comments are free; near the cap, move the job that grew into a module named after it). \`${STRUCTURE_CHECK_COMMAND}\` runs when you report done and must pass; run it yourself before that.`;
 }
 
 /** The same promise for a project the model scaffolds itself (a framework
  *  creator the harness does not run): the kit arrives at the first done
  *  report, so the line cannot claim the files are already there. */
 export function structureKitAdoptionPromptLine(): string {
-  return `- When you first report done, the harness adds the structure kit to the project (AGENTS.md, ARCHITECTURE.md with an owner table, \`${STRUCTURE_CHECK_COMMAND}\`) and runs that check: every folder under the source root needs a row in ARCHITECTURE.md saying what it owns, and no source file may pass 450 lines. If the check fails, fix what it lists and report done again.`;
+  return `- When you first report done, the harness adds the structure kit to the project (AGENTS.md, ARCHITECTURE.md with an owner table, \`${STRUCTURE_CHECK_COMMAND}\`) and runs that check: every folder under the source root needs a row in ARCHITECTURE.md saying what it owns, and no file may pass ${KIT_SIZE_CAPS.file} code lines nor a function ${KIT_SIZE_CAPS.fn} (comments are free). If the check fails, fix what it lists and report done again.`;
 }

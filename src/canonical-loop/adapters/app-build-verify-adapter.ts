@@ -61,7 +61,7 @@ import type { AppTier } from "../../tools/app-tier.js";
 import { detectFramework } from "../../tools/framework-detect.js";
 import { getDesignSpec } from "../turn-loop/design-verify.js";
 import { finalizeFrameworkBuild, type FinalizeFrameworkDeps } from "./app-build-finalize.js";
-import { emitFailureEvidence, emitUnverifiedNote, emitVerifiedNote } from "./app-build-unverified-note.js";
+import { emitFailureEvidence, emitStructureNote, emitUnverifiedNote, emitVerifiedNote } from "./app-build-unverified-note.js";
 import { runAppStructureGate, type StructureGateRunner } from "./app-build-structure-gate.js";
 import { extractText } from "../turn-loop/content-extract.js";
 import {
@@ -88,7 +88,7 @@ export {
 /** The markers of the durable rows this adapter emits (app-build-unverified-
  *  note.ts): the failure evidence a rejected build leaves for its fixer, and the
  *  note a PASSING but unverified build leaves. One import surface for callers. */
-export { SMOKE_NO_BROWSER_MARKER, VERIFY_EVIDENCE_MARKER } from "./app-build-unverified-note.js";
+export { SMOKE_NO_BROWSER_MARKER, STRUCTURE_NOTE_MARKER, VERIFY_EVIDENCE_MARKER } from "./app-build-unverified-note.js";
 
 export interface AppBuildVerifyOptions {
   /** The user's raw build brief — what the vision judge compares the render
@@ -177,6 +177,10 @@ export class AppBuildVerifyAdapter implements Adapter {
       emitFailureEvidence(input, report, structure.detail, []);
       report({ kind: "error", code: "structure_check_failed", message: structure.detail, retryable: false });
       return { ...result, terminalReason: "error" };
+    }
+    if (structure.kind === "passed" && structure.note) {
+      report({ kind: "stream_chunk", body: { delta: `[structure] ${structure.note}\n` } });
+      emitStructureNote(input, report, structure.note);
     }
     // A frontend-spa build that shipped a static page instead of a real project
     // FAKED it — the invariant that closes the live-Vite-fake class. Tier-gated

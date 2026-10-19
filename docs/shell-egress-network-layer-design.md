@@ -117,7 +117,7 @@ messages — audit invariant.
 
 Each chunk gets the standard treatment: canonical-check (extend the proxy, no
 forks), blast-radius on `buildSanitizedEnv` and the seatbelt profile (both are
-shared anchors), tests per chunk, 400-LOC gate.
+shared anchors), tests per chunk, the code-size caps.
 
 ## Risks / open questions
 

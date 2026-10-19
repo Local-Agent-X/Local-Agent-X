@@ -161,6 +161,15 @@ describe("distillSharpenedContext", () => {
     expect(out).toContain("Chunk 4");
   });
 
+  it("carries only the newest structure note: it describes the tree as it is now", () => {
+    const out = distillSharpenedContext([
+      { chunkNumber: 1, report: reportWith({}), structureNote: "nearing the size cap: src/old.ts: 330 code lines (cap 400)" },
+      { chunkNumber: 2, report: reportWith({}), structureNote: "nearing the size cap: src/new.ts: 340 code lines (cap 400)" },
+      { chunkNumber: 3, report: reportWith({}) },
+    ]);
+    expect(out).toBe("- Structure check after chunk 2: nearing the size cap: src/new.ts: 340 code lines (cap 400)");
+  });
+
   it("clips runaway prose so a rolling context can't bloat the prompt", () => {
     const huge = "x".repeat(2000);
     const out = distillSharpenedContext([{ chunkNumber: 9, report: reportWith({ note: huge }) }]);

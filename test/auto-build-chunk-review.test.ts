@@ -711,6 +711,18 @@ describe("build-exec gate: observed failure overrides a clean report", () => {
     expect(hookCalled).toBe(false); // exec gate short-circuited before the hook
   });
 
+  it("a passing structure check's size note rides the proceed outcome to the next chunk", async () => {
+    const chunk = chunkFromFixture(loadFixture("chunk-clean-proceed.json"));
+    const notingExec: BuildExecRunner = async (input) => {
+      input.onStructureNote?.("nearing the size cap: src/game.ts: 330 code lines (cap 400)");
+      return null;
+    };
+    const outcome = await withExec(chunk, notingExec);
+    expect(outcome.action).toBe("proceed");
+    expect(outcome.structureNote).toContain("src/game.ts: 330 code lines");
+    expect(outcome.findings.some((f) => f.gate === "build-exec")).toBe(false);
+  });
+
   it("fails open — a crashing build-exec runner leaves the mechanical proceed intact", async () => {
     const chunk = chunkFromFixture(loadFixture("chunk-clean-proceed.json"));
     const throwingExec: BuildExecRunner = async () => { throw new Error("playwright missing"); };

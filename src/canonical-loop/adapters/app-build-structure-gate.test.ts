@@ -8,18 +8,18 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-const harness = vi.hoisted(() => ({ commands: [] as Array<{ command: string; cwd: string; opId: string }>, ok: true }));
+const harness = vi.hoisted(() => ({ commands: [] as Array<{ command: string; cwd: string; opId: string }>, ok: true, output: "check-structure: OK" }));
 vi.mock("../../tool-execution/index.js", () => ({
   executeHarnessCommand: async (req: { command: string; cwd: string; opId: string }) => {
     harness.commands.push({ command: req.command, cwd: req.cwd, opId: req.opId });
-    return harness.ok ? { ok: true, status: "ok", output: "check-structure: OK" } : { ok: false, status: "ok", output: "src/big.ts: 460 lines" };
+    return harness.ok ? { ok: true, status: "ok", output: harness.output } : { ok: false, status: "ok", output: "src/big.ts: 460 code lines (cap 400)" };
   },
 }));
 
 import { runAppStructureGate } from "./app-build-structure-gate.js";
 
 let dir: string;
-beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "lax-structure-gate-")); harness.commands = []; harness.ok = true; });
+beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "lax-structure-gate-")); harness.commands = []; harness.ok = true; harness.output = "check-structure: OK"; });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
 const file = (rel: string, text = "") => {
@@ -61,6 +61,20 @@ describe("runAppStructureGate", () => {
     harness.ok = false;
     const outcome = await runAppStructureGate(dir, "op_1", { adoptKit: { projectName: "site" } });
     expect(outcome.kind).toBe("failed");
-    expect(outcome.kind === "failed" && outcome.detail).toContain("src/big.ts: 460 lines");
+    expect(outcome.kind === "failed" && outcome.detail).toContain("src/big.ts: 460 code lines (cap 400)");
+    expect(outcome.kind === "failed" && outcome.detail).toContain("move it into a module named after that job");
+  });
+
+  it("a passing check that lists items nearing a size cap passes with a note for the next turn", async () => {
+    nextProject();
+    harness.output = [
+      "Nearing the size cap (a warning; it never fails):",
+      "  app/page.tsx: 330 code lines (cap 400)",
+      "  When one of these grows, ...",
+      "check-structure: OK",
+    ].join("\n");
+    const outcome = await runAppStructureGate(dir, "op_1", { adoptKit: { projectName: "site" } });
+    expect(outcome.kind).toBe("passed");
+    expect(outcome.kind === "passed" && outcome.note).toContain("app/page.tsx: 330 code lines (cap 400)");
   });
 });

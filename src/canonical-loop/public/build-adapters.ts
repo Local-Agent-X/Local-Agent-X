@@ -24,7 +24,7 @@ export type {
 	TurnResult,
 } from "../adapter-contract.js";
 
-export { VERIFY_EVIDENCE_MARKER } from "../adapters/app-build-verify-adapter.js";
+export { STRUCTURE_NOTE_MARKER, VERIFY_EVIDENCE_MARKER } from "../adapters/app-build-verify-adapter.js";
 
 export { withTransportRetry } from "../adapters/transport-retry.js";
 

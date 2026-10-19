@@ -66,6 +66,28 @@ export function emitFailureEvidence(
   });
 }
 
+/** First line of the row a PASSING structure check leaves when something in
+ *  the project is nearing a size cap. build-session-context keys off it to
+ *  hand the note to the next update build of the app. */
+export const STRUCTURE_NOTE_MARKER = "=== STRUCTURE CHECK NOTE ===";
+
+/**
+ * The structure note for the building agent, durable like the failure
+ * evidence (a user row on message_finalized, so commitTurn numbers it): the
+ * next update build reads it through build-session-context. A user row, not
+ * an assistant one, so it never becomes the op's final text.
+ */
+export function emitStructureNote(input: TurnInput, report: (r: AdapterReport) => void, note: string): void {
+  report({
+    kind: "message_finalized",
+    message: {
+      messageId: `um-${input.opId}-${input.turnIdx}-structure-note`,
+      role: "user",
+      content: { text: `${STRUCTURE_NOTE_MARKER}\n${note}` },
+    },
+  });
+}
+
 /** Leader of the note. Tests and any future reader key off this, not prose. */
 export const SMOKE_NO_BROWSER_MARKER = "NOT VERIFIED —";
 

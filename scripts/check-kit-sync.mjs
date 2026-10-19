@@ -31,7 +31,10 @@ const manifestPath = join(KIT_DIR, "UPSTREAM.json");
 export const KIT_FILES = {
   "project-languages.mjs": "scripts/project-languages.mjs",
   "codebase-map.mjs": "scripts/codebase-map.mjs",
-  "check-file-size.mjs": "scripts/check-file-size.mjs",
+  "code-size.mjs": "scripts/code-size.mjs",
+  "code-size-cfamily.mjs": "scripts/code-size-cfamily.mjs",
+  "code-size-python.mjs": "scripts/code-size-python.mjs",
+  "check-code-size.mjs": "scripts/check-code-size.mjs",
   "check-doc-paths.mjs": "scripts/check-doc-paths.mjs",
   "check-module-owners.mjs": "scripts/check-module-owners.mjs",
   "check-structure.mjs": "scripts/check-structure.mjs",

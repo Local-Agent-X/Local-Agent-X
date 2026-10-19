@@ -1,6 +1,6 @@
 ---
 name: refactor-godfiles
-description: Auto-pilot splitting of god files (>400 LOC source files) in this repo. Runs in conservative batches of 3 parallel sub-agents with isolated worktrees, merges + pushes after each green batch, halts on regression. Use when the user invokes /refactor-godfiles, or asks to "split the rest of the god files" / "keep refactoring oversized files."
+description: Auto-pilot splitting of oversized files and functions (over this repo's code-line caps; comments are free) in this repo. Runs in conservative batches of 3 parallel sub-agents with isolated worktrees, merges + pushes after each green batch, halts on regression. Use when the user invokes /refactor-godfiles, or asks to "split the rest of the god files" / "keep refactoring oversized files."
 user-invocable: true
 allowed-tools:
   - Read
@@ -16,14 +16,16 @@ allowed-tools:
 
 # /refactor-godfiles — Batched autopilot for splitting oversized files
 
-The repo has a hard 400-LOC cap. This skill drives the long tail of splits
+The repo caps CODE lines per file and per function (AGENTS.md; comment and
+blank lines are free), and `.code-size-ratchet` holds what was already over a
+cap at its recorded size. This skill drives the long tail of splits
 without the user having to baby-sit each one. It runs in conservative
 batches so a bad split halts work before contaminating many files.
 
 ## Scope rules (what to touch, what to skip)
 
 **Split:** source `.ts`/`.js`/`.py` files under `src/`, `packages/`, `python/`
-that exceed 400 LOC.
+listed in `.code-size-ratchet` (a file, or a `file#function`).
 
 **Skip — never split:**
 - `test/**` and any `*.test.ts` / `*.test.js` / `*.spec.ts` files. Tests
@@ -33,7 +35,7 @@ that exceed 400 LOC.
 - `public/vendor/**`, anything with `.min.` in the name — vendor code.
 - Type-barrel files (`types.ts`, `index.ts` that are just re-exports).
   Splitting a barrel just creates more barrels.
-- `scripts/**` over 400 LOC — usually one-off setup scripts; ask before
+- `scripts/**` over the cap — usually one-off setup scripts; ask before
   splitting.
 - Any file whose top-of-file comment or recent commit history says it's
   about to be deleted, rewritten, or moved.
@@ -55,8 +57,7 @@ that exceed 400 LOC.
 Find the current god-file list with:
 
 ```
-git ls-files | grep -E '\.(ts|js|mjs|cjs|py)$' | grep -v vendor/ | grep -v '\.min\.' \
-  | xargs wc -l 2>/dev/null | awk '$1 > 400 && $2 != "total"' | sort -rn
+grep -v '^#' .code-size-ratchet | sort -k2 -rn
 ```
 
 Classify each candidate into `split` / `skip` / `human-judgment` using the
@@ -78,16 +79,20 @@ list is dramatically different from what they expect, they redirect first.
 
 Use the `Agent` tool with `subagent_type: "claude"` and
 `isolation: "worktree"`. Brief each agent with this template (substitute
-file path + LOC count + any file-specific risk notes):
+item + code-line count + any file-specific risk notes):
 
 ```
-Split [FILE_PATH] ([CURRENT_LOC] LOC) into focused modules, each under 400 LOC.
+Split [ITEM] ([CURRENT] code lines) by finding the job that grew in it and
+moving that job into a module (or function) named after the job, so every
+piece is under the code-line cap.
 
 Invoke the `/senior-engineer` skill first and follow that methodology
 throughout.
 
 Context — what's already established in this repo:
-- 400 LOC cap is a hard rule in this repo.
+- The code-line caps are a hard rule (AGENTS.md). Only code lines count:
+  never delete comments to fit, and never name a split, file or commit after
+  the limit.
 - Match the splitting style of prior `refactor(<module>): split into N
   modules` commits: extract cohesive responsibilities and keep the
   original filename as a re-export barrel so callers don't break.
@@ -111,10 +116,11 @@ Constraints:
 - No behavior changes. Pure structural refactor.
 - No new comments explaining what code does — only WHY comments if
   non-obvious.
-- Every resulting file must be <400 LOC.
+- Every resulting file and function must be under its cap; then lower the
+  ratchet with `node scripts/check-source-hygiene.mjs --tighten`.
 - Don't touch unrelated files.
 
-Report back: new file list with LOC counts, test results, commit SHA on
+Report back: new file list with code-line counts, test results, commit SHA on
 the worktree branch, and any behavioral concerns you noticed (don't fix
 them, just flag).
 ```
@@ -163,7 +169,7 @@ Stop and wait for human review on any of:
 
 ### 7. Progress tracking
 
-Use `TodoWrite` to maintain a single list with one entry per god file,
+Use `TodoWrite` to maintain a single list with one entry per ratchet item,
 states: `pending` → `in_progress` → `completed` / `skipped` / `failed`.
 Update after each batch. The user can see at any moment which files are
 done, which are queued, which failed.
@@ -177,7 +183,7 @@ done, which are queued, which failed.
   narrate per-agent.
 - On halt: clear explanation of what stopped you and what the user needs
   to decide.
-- On completion: final summary with total files split, LOC reduced, total
+- On completion: final summary with total items split, code lines moved, total
   commits pushed.
 
 Don't repeatedly ask "should I continue?" — the user invoked the skill
@@ -189,7 +195,7 @@ because they want it to run. Stop only on the conditions above.
   outpaces speed gain.
 - Skipping the per-batch test gate to save time. The whole point of
   batching is so a bad split fails small.
-- Splitting a test file because it's >400 LOC. Tests are not god files.
+- Splitting a test file because it's long. Tests are not god files.
 - Splitting `types.ts` or barrel `index.ts` files. They're already
   re-export barrels.
 - Re-running a failed agent on the same file without diagnosing why it
@@ -199,6 +205,6 @@ because they want it to run. Stop only on the conditions above.
 
 ## One-liner
 
-> **Batched autopilot of 400-LOC splits. 3 in parallel, gated on tsc + tests
+> **Batched autopilot of size-cap splits along design seams. 3 in parallel, gated on tsc + tests
 > + push after each batch, halt on the first regression or behavioral
 > concern.**

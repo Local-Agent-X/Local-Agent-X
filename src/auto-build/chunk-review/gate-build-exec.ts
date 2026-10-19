@@ -26,24 +26,29 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { runCaged, type CagedRunOutcome } from "../../tools/caged-spawn.js";
 import { nodeScriptArgv, npmCommandArgv } from "../../tools/program-argv.js";
-import { structureCheckCommand } from "../../app-scaffold/project-kit.js";
+import { structureCheckCommand, structureWarningNote } from "../../app-scaffold/project-kit.js";
 import { smokeUrl } from "../scenario-scorer/smoke.js";
 import type { GateFinding } from "./gates.js";
 
 const BUILD_TIMEOUT_MS = 180_000;
 const SMOKE_LOAD_TIMEOUT_MS = 30_000;
 const OUTPUT_TAIL_CHARS = 800;
+/** Output kept per command: enough for the structure check's warning band. */
+const OUTPUT_KEPT_CHARS = 16_000;
 
 export interface BuildExecInput {
   projectDir: string;
   signal?: AbortSignal;
+  /** Called when the project's structure check PASSES but lists items nearing
+   *  a size cap: a note for the next chunk's worker, never a finding. */
+  onStructureNote?: (note: string) => void;
 }
 
 /** Injectable so tests don't spawn a real build/browser. */
 export type BuildExecRunner = (input: BuildExecInput) => Promise<GateFinding | null>;
 
 /** How the command ended with the tail of its output, or why it never ran. */
-type CommandResult = { outcome: CagedRunOutcome; outputTail: string } | { notRun: string };
+type CommandResult = { outcome: CagedRunOutcome; output: string; outputTail: string } | { notRun: string };
 
 /**
  * Discover what to run: the project's structure check when it carries the kit
@@ -116,10 +121,10 @@ async function runCommand(command: string, projectDir: string, signal?: AbortSig
         output += captured.stdout.slice(seen.stdout) + captured.stderr.slice(seen.stderr);
         seen.stdout = captured.stdout.length;
         seen.stderr = captured.stderr.length;
-        if (output.length > OUTPUT_TAIL_CHARS * 4) output = output.slice(-OUTPUT_TAIL_CHARS * 4);
+        if (output.length > OUTPUT_KEPT_CHARS) output = output.slice(-OUTPUT_KEPT_CHARS);
       },
     });
-    return { outcome, outputTail: output.slice(-OUTPUT_TAIL_CHARS) };
+    return { outcome, output, outputTail: output.slice(-OUTPUT_TAIL_CHARS) };
   } catch (e) {
     return { notRun: (e as Error).message };
   }
@@ -142,6 +147,7 @@ export const runBuildExecGate: BuildExecRunner = async (input) => {
   if (signal?.aborted) return null;
 
   const commands = discoverCommands(projectDir);
+  const structure = structureCheckCommand(projectDir);
   for (const command of commands) {
     if (signal?.aborted) return null;
     const result = await runCommand(command, projectDir, signal);
@@ -164,6 +170,17 @@ export const runBuildExecGate: BuildExecRunner = async (input) => {
           `but the build/test command hangs. Output tail: ${truncate(result.outputTail, 400) || "(none)"}`,
       };
     }
+    if (result.outcome.code !== 0 && command === structure) {
+      return {
+        gate: "build-exec",
+        action: "halt",
+        reasoning:
+          `\`${command}\` exited ${result.outcome.code}: the project breaks its own structure rules (AGENTS.md). ` +
+          `For a size failure, find the job that grew and move it into a module named after that job; ` +
+          `comments don't count, so never delete them to fit, and never name the split after the limit. ` +
+          `Output tail: ${result.outputTail.trim() || "(none)"}`,
+      };
+    }
     if (result.outcome.code !== 0) {
       return {
         gate: "build-exec",
@@ -173,6 +190,10 @@ export const runBuildExecGate: BuildExecRunner = async (input) => {
           `This is the "says fixed but isn't" case; do not trust the report's TESTS line. ` +
           `Output tail: ${truncate(result.outputTail, 500) || "(none)"}`,
       };
+    }
+    if (command === structure) {
+      const note = structureWarningNote(result.output);
+      if (note) input.onStructureNote?.(note);
     }
   }
 

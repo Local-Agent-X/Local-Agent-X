@@ -9,7 +9,7 @@ import {
   evidenceImagesFromPriorSessions,
   type PriorBuildEntry,
 } from "./build-session-context.js";
-import { VERIFY_EVIDENCE_MARKER } from "../canonical-loop/public/build-adapters.js";
+import { STRUCTURE_NOTE_MARKER, VERIFY_EVIDENCE_MARKER } from "../canonical-loop/public/build-adapters.js";
 
 const store = vi.hoisted(() => ({
   ops: [] as Array<Record<string, unknown>>,
@@ -101,6 +101,23 @@ describe("gate evidence — verify-adapter row → prior-build memory → next b
 
     const images = evidenceImagesFromPriorSessions(entries);
     expect(images).toEqual([{ url: "", name: "smoke.png", filePath: liveShot }]);
+  });
+
+  it("a passing build's structure note reaches the next build's context", () => {
+    store.ops = [{
+      id: "op_prior", type: "app_build", appUrl: "http://x/apps/maze/index.html",
+      status: "completed", createdAt: "2026-07-06T23:00:00.000Z",
+    }];
+    store.rows = {
+      op_prior: [
+        { role: "user", content: { text: `${STRUCTURE_NOTE_MARKER}\nnearing the size cap: src/game.ts: 330 code lines (cap 400)` } },
+        { role: "assistant", content: { text: "APP_READY: http://x/apps/maze/index.html" } },
+      ],
+    };
+    const entries = gatherPriorBuildSessions("http://x/apps/maze/index.html", "app_build");
+    expect(entries[0].structureNote).toBe("nearing the size cap: src/game.ts: 330 code lines (cap 400)");
+    expect(entries[0].gateFailure).toBeUndefined();
+    expect(renderPriorBuildBlock(entries)).toContain("structure check note: nearing the size cap: src/game.ts");
   });
 
   it("an op with no marker row yields no gateFailure and no images", () => {

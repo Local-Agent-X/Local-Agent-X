@@ -93,7 +93,7 @@ export function chunkProcessFailureOutcome(
 export async function runChunkOnce(opts: RunChunkOnceOptions): Promise<ChunkReviewOutcome> {
   const sharpenedContext = opts.priorOutcomes && opts.priorOutcomes.length > 0
     ? distillSharpenedContext(
-        opts.priorOutcomes.map(o => ({ chunkNumber: o.chunkNumber, report: o.outcome.report })),
+        opts.priorOutcomes.map(o => ({ chunkNumber: o.chunkNumber, report: o.outcome.report, structureNote: o.outcome.structureNote })),
       )
     : undefined;
 

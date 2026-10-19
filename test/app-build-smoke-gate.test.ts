@@ -18,6 +18,7 @@ import { basename, join } from "node:path";
 import type { Adapter, AdapterReport, TurnInput } from "../src/canonical-loop/adapter-contract.js";
 import {
   AppBuildVerifyAdapter,
+  STRUCTURE_NOTE_MARKER,
   VERIFY_EVIDENCE_MARKER,
   SMOKE_NO_BROWSER_MARKER,
   type AppSmokeGateOutcome,
@@ -128,7 +129,7 @@ describe("AppBuildVerifyAdapter — structure gate", () => {
     const appDir = makeStaticAppDir();
     let smoked = false;
     const adapter = new AppBuildVerifyAdapter(doneInner, appDir, undefined, async () => { smoked = true; return { verdict: "pass" }; }, {
-      structureGate: async () => ({ kind: "failed", detail: "src/big.ts: 460 lines (limit 450)" }),
+      structureGate: async () => ({ kind: "failed", detail: "src/big.ts: 460 code lines (cap 400)" }),
     });
     const { reports, report } = collect();
     const result = await adapter.runTurn(turnInput(), report);
@@ -136,8 +137,23 @@ describe("AppBuildVerifyAdapter — structure gate", () => {
     expect(smoked).toBe(false);
     const err = reports.find((r) => r.kind === "error") as Extract<AdapterReport, { kind: "error" }>;
     expect(err.code).toBe("structure_check_failed");
-    expect(err.message).toContain("src/big.ts: 460 lines");
+    expect(err.message).toContain("src/big.ts: 460 code lines");
     expect(evidenceMessageFrom(reports)?.text).toContain("src/big.ts");
+  });
+
+  it("a passing check's size note becomes a durable row for the next build, and the build still passes", async () => {
+    const appDir = makeStaticAppDir();
+    const note = "The structure check passed, but these are nearing the size cap: src/a.ts: 330 code lines (cap 400).";
+    const adapter = new AppBuildVerifyAdapter(doneInner, appDir, undefined, async () => ({ verdict: "pass" }), {
+      structureGate: async () => ({ kind: "passed", note }),
+    });
+    const { reports, report } = collect();
+    expect((await adapter.runTurn(turnInput(), report)).terminalReason).toBe("done");
+    const rows = reports.filter((r): r is Extract<AdapterReport, { kind: "message_finalized" }> => r.kind === "message_finalized");
+    const noteRow = rows.find((r) => r.message.role === "user" && JSON.stringify(r.message.content).includes(STRUCTURE_NOTE_MARKER));
+    expect(noteRow).toBeDefined();
+    expect(JSON.stringify(noteRow!.message.content)).toContain("src/a.ts: 330 code lines (cap 400)");
+    expect(rows.filter((r) => r.message.role === "assistant").every((r) => !JSON.stringify(r.message.content).includes(STRUCTURE_NOTE_MARKER))).toBe(true);
   });
 
   it("a project without the kit is never held to it", async () => {

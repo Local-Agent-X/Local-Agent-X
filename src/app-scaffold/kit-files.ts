@@ -15,6 +15,11 @@ const KIT_DIR = join(dirname(fileURLToPath(import.meta.url)), "kit");
 export const STRUCTURE_CHECK_SCRIPT = "scripts/check-structure.mjs";
 export const STRUCTURE_CHECK_COMMAND = `node ${STRUCTURE_CHECK_SCRIPT}`;
 
+/** The kit's size caps in code lines: the /new-project defaults
+ *  (kit/code-size.mjs, DEFAULT_LIMITS), which a built project runs with.
+ *  project-kit.test.ts proves the vendored check enforces the file cap. */
+export const KIT_SIZE_CAPS = { file: 400, fileWarn: 320, fn: 100, fnWarn: 60 } as const;
+
 /** The framework creator's docs the doc-path check skips until edited; the
  *  check reads it beside itself (kit/check-doc-paths.mjs header). */
 export const STOCK_DOCS_MANIFEST = "scripts/doc-paths-stock.json";
@@ -23,7 +28,10 @@ export const STOCK_DOCS_MANIFEST = "scripts/doc-paths-stock.json";
 export const KIT_SCRIPTS = [
   "project-languages.mjs",
   "codebase-map.mjs",
-  "check-file-size.mjs",
+  "code-size.mjs",
+  "code-size-cfamily.mjs",
+  "code-size-python.mjs",
+  "check-code-size.mjs",
   "check-doc-paths.mjs",
   "check-module-owners.mjs",
   "check-structure.mjs",

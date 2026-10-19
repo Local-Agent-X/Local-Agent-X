@@ -32,7 +32,7 @@
  *       as unreviewable. That is affordable only because ROOTS excludes
  *       test/: test/browser-layout-report-script.test.ts:611 feeds a raw
  *       U+0001 to a sanitizer on purpose. There is no ignore-comment
- *       mechanism and GRANDFATHERED covers only the LOC gate, so widening
+ *       mechanism (the size ratchet covers only the size caps), so widening
  *       ROOTS to test/ is a breaking change — it would need an escape hatch
  *       or that line rewritten via String.fromCharCode first.
  *
@@ -57,19 +57,40 @@
  *    control and bidi ranges with backslash-u escapes, so its own source is
  *    itself clean under every rule above.)
  *
- * 2. No NEW file over 400 LOC. The repo standard is one responsibility
- *    per file; god files get split. Existing oversized files are
- *    grandfathered below as known debt (burn down via /refactor-godfiles)
- *    — the gate's job is to stop the list from growing, not to flip the
- *    build red on day one.
+ * 2. The code-size caps, by the structure kit's own script
+ *    (src/app-scaffold/kit/check-code-size.mjs), so this repo and every
+ *    project its agents build run one implementation. Only CODE lines count:
+ *    comment and blank lines are free. A file may hold 350 code lines (a
+ *    warning from 280), a function 100 of its own (a warning from 60). What
+ *    was over a cap when the caps were adopted is listed, at its size, in
+ *    .code-size-ratchet; an entry may only shrink. Re-seed it (deterministic:
+ *    the same tree writes the same file) with
+ *    `node scripts/check-source-hygiene.mjs --write-ratchet`, lower it with
+ *    `--tighten`.
  */
 import { readFileSync, readdirSync, statSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const ROOTS = ["src", "desktop/src", "public/js"];
-const MAX_LOC = 400;
+/** This repo's caps, in the kit's flags. The codebase map reads them too. */
+export const LAX_SIZE_LIMITS = { maxCode: 350, warnCode: 280, maxFn: 100, warnFn: 60 };
+const KIT_SIZE_CHECK = join(repoRoot, "src", "app-scaffold", "kit", "check-code-size.mjs");
+const SELF = "node scripts/check-source-hygiene.mjs";
+
+/** argv for the kit's size check over this repo; `extra` passes --write-ratchet / --tighten on. */
+export function codeSizeArgs(extra = []) {
+  return [
+    KIT_SIZE_CHECK,
+    ...ROOTS.flatMap((r) => ["--root", r]),
+    "--max-code", String(LAX_SIZE_LIMITS.maxCode), "--warn-code", String(LAX_SIZE_LIMITS.warnCode),
+    "--max-fn", String(LAX_SIZE_LIMITS.maxFn), "--warn-fn", String(LAX_SIZE_LIMITS.warnFn),
+    "--ratchet", ".code-size-ratchet", "--self", SELF,
+    ...extra,
+  ];
+}
 const LINE_SEP = String.fromCharCode(0x2028);
 const PARA_SEP = String.fromCharCode(0x2029);
 // C0 except tab (0009), LF (000A) and CR (000D), then DEL (007F) and C1.
@@ -78,10 +99,6 @@ const CONTROL_ALL = new RegExp(CONTROL.source, "g");
 // Bidi overrides and isolates: they reorder rendering, not execution.
 const BIDI = /[\u202A-\u202E\u2066-\u2069]/;
 const BIDI_ALL = new RegExp(BIDI.source, "g");
-
-// Oversized files that predate the LOC gate. Do not add to this list to
-// silence the gate — split the file instead.
-const GRANDFATHERED = new Set([]);
 
 const baseName = (rel) => rel.split("/").pop();
 const isTest = (rel) => /\.test\.(ts|js)$/.test(baseName(rel));
@@ -99,12 +116,6 @@ function walk(dir) {
     else if (isSource(name)) out.push(p);
   }
   return out;
-}
-
-function countLines(text) {
-  const lines = text.split(/\r\n|\r|\n/);
-  if (lines.length && lines[lines.length - 1] === "") lines.pop();
-  return lines.length;
 }
 
 /**
@@ -141,19 +152,10 @@ export function exoticCodePointErrors(rel, text, { test = false } = {}) {
 function main() {
   const files = ROOTS.flatMap((r) => walk(join(repoRoot, r)));
   const charErrors = [];
-  const locErrors = [];
 
   for (const file of files) {
     const rel = relative(repoRoot, file).replace(/\\/g, "/");
-    const text = readFileSync(file, "utf-8");
-    const test = isTest(rel);
-
-    charErrors.push(...exoticCodePointErrors(rel, text, { test }));
-
-    if (!test && !GRANDFATHERED.has(rel)) {
-      const n = countLines(text);
-      if (n > MAX_LOC) locErrors.push(`${rel}  ${n} LOC (max ${MAX_LOC}) — split it`);
-    }
+    charErrors.push(...exoticCodePointErrors(rel, readFileSync(file, "utf-8"), { test: isTest(rel) }));
   }
 
   let failed = false;
@@ -162,13 +164,11 @@ function main() {
     console.error("Raw exotic code points in source:");
     for (const e of charErrors) console.error("  " + e);
   }
-  if (locErrors.length) {
-    failed = true;
-    console.error(`Files over ${MAX_LOC} LOC (not grandfathered):`);
-    for (const e of locErrors) console.error("  " + e);
-  }
+  const passOn = process.argv.slice(2).filter((a) => a === "--write-ratchet" || a === "--tighten");
+  const size = spawnSync(process.execPath, codeSizeArgs(passOn), { cwd: repoRoot, stdio: "inherit" });
+  if (size.status !== 0) failed = true;
   if (failed) process.exit(1);
-  console.log(`check-source-hygiene: OK (${files.length} files; ${GRANDFATHERED.size} grandfathered)`);
+  console.log(`check-source-hygiene: OK (${files.length} files)`);
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();

@@ -21,17 +21,21 @@
  * Options:
  *   --root <dir>      source root (repeatable; default: the project kind's roots)
  *   --out <file>      output markdown (default: docs/codebase-map.md)
- *   --max-loc <n>     oversized-file threshold (default: 450)
+ *   --max-code <n> --warn-code <n> --max-fn <n> --warn-fn <n>
+ *                     the size caps, in code lines (code-size.mjs; defaults 400 / 320 / 100 / 60):
+ *                     what is over them is listed as oversized, what is in the warning band as nearing
  *   --entry <module>  module reached at runtime, not by import (repeatable; `auth` or `src/auth`)
  *
  * The output only changes on events worth reviewing — a module added or
  * removed, a new cross-module dependency or cycle, an importer count change, a
- * module going dead, a file crossing the size limit, a size-tier flip — so
+ * module going dead, a file or function crossing a size cap or moving ten code
+ * lines within the warning band, a size-tier flip — so
  * --check can gate the build without failing on trivial edits.
  */
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, relative, resolve, sep } from "node:path";
 import { defaultRoots, importContext, importTargets, isTestPath, moduleOf, walkSource } from "./project-languages.mjs";
+import { bandOf, limitsFromArgs, measureSource, nearingSection, sizeItems } from "./code-size.mjs";
 
 const args = process.argv.slice(2);
 const opt = (name, dflt) => {
@@ -43,7 +47,7 @@ const optAll = (name) => args.flatMap((a, i) => (a === name ? [args[i + 1]] : []
 const REPO = process.cwd();
 const ROOTS = (optAll("--root").length ? optAll("--root") : defaultRoots(REPO)).map((r) => resolve(REPO, r));
 const OUT = resolve(REPO, opt("--out", "docs/codebase-map.md"));
-const MAX_LOC = Number(opt("--max-loc", "450"));
+const LIMITS = limitsFromArgs(args);
 const ENTRIES = new Set(optAll("--entry"));
 const CHECK = args.includes("--check");
 const DEPS = opt("--deps", null);
@@ -65,10 +69,7 @@ const unitOf = (f) => {
 };
 const isEntry = (key) => ENTRIES.has(key) || ENTRIES.has(key.split("/").pop());
 
-const locOf = (file) => {
-	const text = readFileSync(file, "utf8");
-	return text.split("\n").length - (text.endsWith("\n") ? 1 : 0);
-};
+const sizeItemsOf = (file) => sizeItems(posix(file), measureSource(file, readFileSync(file, "utf8"), REPO));
 const tier = (loc) => (loc < 250 ? "S" : loc < 1000 ? "M" : loc < 3000 ? "L" : "XL");
 
 const prod = files.filter((f) => !isTest(f));
@@ -120,15 +121,17 @@ if (DEPS) {
 }
 
 const units = new Map();
+const sized = []; // every non-test file and function, measured in code lines
 for (const f of files) {
 	const u = unitOf(f);
 	if (!units.has(u)) units.set(u, { files: 0, loc: 0, oversized: [], importers: new Set(), dependsOn: new Set() });
 	if (isTest(f)) continue;
 	const rec = units.get(u);
-	const loc = locOf(f);
+	const items = sizeItemsOf(f);
+	sized.push(...items);
 	rec.files += 1;
-	rec.loc += loc;
-	if (loc > MAX_LOC) rec.oversized.push(posix(f));
+	rec.loc += items[0].size;
+	rec.oversized.push(...items.filter((it) => bandOf(it, LIMITS) === "over").map((it) => it.key));
 }
 for (const [f, ts] of edges) {
 	const from = unitOf(f);
@@ -183,6 +186,7 @@ function moduleCycles() {
 const cycles = moduleCycles();
 const dead = rows.filter(([u, r]) => r.importers.size === 0 && !isEntry(u));
 const oversized = [...units.values()].flatMap((r) => r.oversized).sort();
+const nearing = nearingSection(sized, LIMITS);
 const loose = units.get(LOOSE)?.files ?? 0;
 const rootsRel = ROOTS.map((r) => `\`${posix(r)}/\``).join(", ");
 
@@ -193,10 +197,11 @@ const lines = [
 	"This file owns the facts that drift. ARCHITECTURE.md owns the meaning.",
 	"",
 	`**Definitions** — *Importers*: distinct non-test files outside the module that import it (static or dynamic). ` +
-		`*Size*: S <250 · M <1k · L <3k · XL ≥3k non-test lines. *Oversized*: non-test files over ${MAX_LOC} lines.`,
+		`*Size*: S <250 · M <1k · L <3k · XL ≥3k non-test code lines (comments and blank lines are free). ` +
+		`*Oversized*: non-test files over ${LIMITS.maxCode} code lines, and functions (\`file#function\`) over ${LIMITS.maxFn} of their own.`,
 	"",
 	`**Totals:** ${rows.length} modules · ${dead.length} with no importer · ${prod.length} non-test source files · ` +
-		`${loose} loose files at the source root · ${oversized.length} oversized files.`,
+		`${loose} loose files at the source root · ${oversized.length} oversized · ${nearing.length} nearing the size cap.`,
 	"",
 	"## Modules",
 	"",
@@ -222,9 +227,18 @@ const lines = [
 	"",
 	dead.length ? dead.map(([u]) => `- ${name(u)} — dead, or reached at runtime (then pass \`--entry ${u}\`)`).join("\n") : "None.",
 	"",
-	"## Oversized files",
+	"## Oversized",
+	"",
+	"Over a size cap: the size check fails unless its ratchet lists them at their recorded size.",
 	"",
 	oversized.length ? oversized.map((p) => `- \`${p}\``).join("\n") : "None.",
+	"",
+	"## Nearing the size cap",
+	"",
+	`In the warning band (a file over ${LIMITS.warnCode} code lines, a function over ${LIMITS.warnFn}), largest first. ` +
+		"Before adding to one, find the job that grew and move it to a module named after that job; comments are free, so never cut them to fit.",
+	"",
+	nearing.length ? nearing.join("\n") : "None.",
 	"",
 ];
 const output = lines.join("\n");
@@ -239,5 +253,5 @@ if (CHECK) {
 } else {
 	mkdirSync(dirname(OUT), { recursive: true });
 	writeFileSync(OUT, output);
-	console.log(`wrote ${relative(REPO, OUT)} (${rows.length} modules, ${dead.length} dead, ${cycles.length} cycles, ${oversized.length} oversized)`);
+	console.log(`wrote ${relative(REPO, OUT)} (${rows.length} modules, ${dead.length} dead, ${cycles.length} cycles, ${oversized.length} oversized, ${nearing.length} nearing the size cap)`);
 }

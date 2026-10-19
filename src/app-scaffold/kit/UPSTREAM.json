@@ -5,11 +5,23 @@
   },
   "codebase-map.mjs": {
     "upstream": "scripts/codebase-map.mjs",
-    "sha256": "cc3b06e2263a638a305647e7ed0dd6533a1e0348cd2b28c9480bad478bc4210e"
+    "sha256": "e932527837fedbc34d2bd09de9193460de913d54b762319e0a940e3be133df6d"
   },
-  "check-file-size.mjs": {
-    "upstream": "scripts/check-file-size.mjs",
-    "sha256": "0d7f3f1d6f068dba588f6eb62c66e86891b506f41c274e3b2dd1cb1e83a8f69a"
+  "code-size.mjs": {
+    "upstream": "scripts/code-size.mjs",
+    "sha256": "ea9865732a7a83b7813eec0b734cfe16b5f515bb512066de5f5a6006aca955c7"
+  },
+  "code-size-cfamily.mjs": {
+    "upstream": "scripts/code-size-cfamily.mjs",
+    "sha256": "dfafd6ead6c1070791e02d9c121a216f55d90f2d2d841e6f0f274bdd5ba4f0d5"
+  },
+  "code-size-python.mjs": {
+    "upstream": "scripts/code-size-python.mjs",
+    "sha256": "7a5e49b5b76fd23cc0dfc0c27d1d0387c9970b3cc848ee631bb21971b57ce00f"
+  },
+  "check-code-size.mjs": {
+    "upstream": "scripts/check-code-size.mjs",
+    "sha256": "d64ef3e4a38429565b8c4ee9aaf17b151db8c4b044bcccbf29cae0f6b9b11c73"
   },
   "check-doc-paths.mjs": {
     "upstream": "scripts/check-doc-paths.mjs",
@@ -21,7 +33,7 @@
   },
   "check-structure.mjs": {
     "upstream": "scripts/check-structure.mjs",
-    "sha256": "1cf97ae18d526618387b61d62f7c7352f69bb9dfaef96b436516963c114ed6ab"
+    "sha256": "2c99e2983cb397aeb31895b63392983d465923f1f6f252a6671d202e5a041236"
   },
   "code-refs.mjs": {
     "upstream": "scripts/code-refs.mjs",

@@ -3,7 +3,8 @@
 // that never failed has not been tested.
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { adoptProjectKit, applyProjectKit, projectKitFiles, structureCheckCommand, STRUCTURE_CHECK_SCRIPT } from "./project-kit.js";
@@ -77,12 +78,43 @@ describe("applyProjectKit on a scaffolded TypeScript project", () => {
     expect(existsSync(join(dir, "docs", "codebase-map.md"))).toBe(true);
   });
 
-  it("fails on a file over the ceiling, naming it and the way out", () => {
+  it("fails on a file over the code-line cap, naming it and the way out; comment lines are free", () => {
     applyProjectKit(dir, { projectName: "App" });
-    file("src/big.ts", Array.from({ length: 460 }, (_, i) => `export const v${i} = ${i};`).join("\n") + "\n");
+    const code = (n: number) => Array.from({ length: n }, (_, i) => `export const v${i} = ${i};`).join("\n") + "\n";
+    file("src/big.ts", code(401));
     const r = check(dir);
     expect(r.status).toBe(1);
-    expect(r.out).toContain("src/big.ts: 460 lines (limit 450) — split it by responsibility, or, if it is a generated file that must stay large, add its path to .file-size-allow");
+    expect(r.out).toContain("src/big.ts: 401 code lines (cap 400)");
+    expect(r.out).toContain("move that job into a module (or function) named after the job");
+    expect(r.out).toContain("never delete comments to fit");
+    // The failing check prints last, so a gate that keeps only the tail sees it.
+    expect(r.out.trimEnd().split("\n").slice(-12).join("\n")).toContain("src/big.ts: 401 code lines");
+
+    file("src/big.ts", "// why this file exists, at length\n".repeat(600) + code(330));
+    const documented = check(dir);
+    expect(documented.status, documented.out).toBe(0);
+    expect(documented.out).toContain("Nearing the size cap (a warning; it never fails):");
+    expect(documented.out).toContain("src/big.ts: 330 code lines (cap 400)");
+    expect(read("docs/codebase-map.md")).toContain("- `src/big.ts` — 330+ code lines (cap 400)");
+  });
+
+  it("fails on a function over its own-code-line cap; a nested function counts for itself", () => {
+    applyProjectKit(dir, { projectName: "App" });
+    // Function sizes come from the project's own compiler, as after `npm install`.
+    mkdirSync(join(dir, "node_modules"), { recursive: true });
+    symlinkSync(dirname(createRequire(import.meta.url).resolve("typescript/package.json")), join(dir, "node_modules", "typescript"), "junction");
+    const body = (n: number) => Array.from({ length: n }, (_, i) => `  const v${i} = ${i};`).join("\n");
+    file("src/fn.ts", `export function outer() {\n${body(70)}\n  const inner = () => {\n${body(70)}\n  };\n  return inner;\n}\n`);
+    const nested = check(dir);
+    expect(nested.status, nested.out).toBe(0);
+    // 70 lines of its own plus its signature, `const inner = …`, `};`, `return`, `}`.
+    expect(nested.out).toContain("src/fn.ts#outer: 75 own code lines (cap 100)");
+    expect(nested.out).toContain("src/fn.ts#inner: 72 own code lines (cap 100)");
+
+    file("src/fn.ts", `export function outer() {\n${body(101)}\n}\n`);
+    const over = check(dir);
+    expect(over.status).toBe(1);
+    expect(over.out).toContain("src/fn.ts#outer: 103 own code lines (cap 100)");
   });
 
   it("fails on a module with no owner row until ARCHITECTURE.md names it", () => {

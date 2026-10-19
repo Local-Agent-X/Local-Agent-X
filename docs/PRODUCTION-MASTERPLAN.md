@@ -158,7 +158,7 @@ reproduces the current pattern (fix, push, red) faster.
   its regression test does not close the item.
 
 **Hard limits on the agent (already in AGENTS.md, restated as gates):** no
-file over 400 LOC, no bypass of `src/tool-execution/`, no tool without its
+file or function over its code-line cap (350 / 100), no bypass of `src/tool-execution/`, no tool without its
 seven registration sites, no secrets in source, no self_edit paths that skip
 the kernel.
 

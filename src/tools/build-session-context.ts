@@ -18,7 +18,7 @@
 import { existsSync } from "node:fs";
 import { listOps } from "../ops/op-store.js";
 import { readOpMessages, firstUserMessageText } from "../canonical-loop/index.js";
-import { VERIFY_EVIDENCE_MARKER } from "../canonical-loop/public/build-adapters.js";
+import { STRUCTURE_NOTE_MARKER, VERIFY_EVIDENCE_MARKER } from "../canonical-loop/public/build-adapters.js";
 
 /** Most recent prior builds included. Newest last (chronological read). */
 const MAX_PRIOR_OPS = 3;
@@ -42,6 +42,9 @@ export interface PriorBuildEntry {
   /** Screenshot evidence the gate attached to its rejection. filePath refs
    *  only — bytes are read at request time by the transports. */
   evidence?: Array<{ name: string; filePath: string }>;
+  /** What the project's passing structure check said is nearing a size cap:
+   *  where the next change should split along a seam instead of growing. */
+  structureNote?: string;
 }
 
 /**
@@ -63,6 +66,7 @@ export function gatherPriorBuildSessions(appUrl: string, opType: string): PriorB
     const rows = readOpMessages(op.id);
     const finalReport = lastAssistantText(rows);
     const gate = lastVerifyEvidence(rows);
+    const structureNote = lastMarkedUserText(rows, STRUCTURE_NOTE_MARKER);
     if (!brief && !finalReport && !gate) continue;
     entries.push({
       createdAt: op.createdAt,
@@ -70,6 +74,7 @@ export function gatherPriorBuildSessions(appUrl: string, opType: string): PriorB
       brief: brief.slice(0, BRIEF_CAP),
       finalReport: finalReport.slice(0, REPORT_CAP),
       ...(gate ? { gateFailure: gate.detail.slice(0, GATE_CAP), evidence: gate.evidence } : {}),
+      ...(structureNote ? { structureNote: structureNote.slice(0, GATE_CAP) } : {}),
     });
   }
   return entries;
@@ -101,6 +106,16 @@ function lastVerifyEvidence(
     return { detail: text.slice(VERIFY_EVIDENCE_MARKER.length).trim(), evidence };
   }
   return null;
+}
+
+/** The newest user row that starts with `marker`, without the marker. */
+function lastMarkedUserText(rows: ReturnType<typeof readOpMessages>, marker: string): string {
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const c = rows[i].role === "user" ? (rows[i].content as { text?: unknown } | null) : null;
+    const text = c && typeof c === "object" && typeof c.text === "string" ? c.text : "";
+    if (text.startsWith(marker)) return text.slice(marker.length).trim();
+  }
+  return "";
 }
 
 /**
@@ -161,6 +176,7 @@ export function renderPriorBuildBlock(entries: PriorBuildEntry[]): string | null
     const lines = [`[${day}] brief: ${e.brief || "(unavailable)"}`];
     if (e.finalReport) lines.push(`[${day}] builder's final report${tag}: ${e.finalReport}`);
     if (e.gateFailure) lines.push(`[${day}] verify gate REJECTED that build (this is the ground truth, not the report above): ${e.gateFailure}`);
+    if (e.structureNote) lines.push(`[${day}] structure check note: ${e.structureNote}`);
     return lines.join("\n");
   });
   return (

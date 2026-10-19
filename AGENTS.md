@@ -44,7 +44,9 @@ pinned at `/apps/calendar/`, not `public/calendar.html`. <!-- doc-paths:ignore -
 
 ## Code rules (checked by `npm run build`)
 
-- **No source file over 400 lines** (`check:source-hygiene`; tests exempt). Split by responsibility before a file gets there.
+- **Size caps, in code lines: 350 per file, 100 per function** (`check:source-hygiene`, which runs the structure kit's `src/app-scaffold/kit/check-code-size.mjs`; tests exempt). Only lines holding code count: comments and blank lines are free. A function's count is its own (signature and body); a function nested in it counts for itself. Warnings start at 280 (file) and 60 (function), are listed in `docs/codebase-map.md` under "Nearing the size cap", and never fail. The rule exists so an agent can read a whole file or function and know where things are.
+  - Near or over a cap, find the job that grew and move it into a module (or function) named after that job. Never delete comments to fit, and never name a split, a file or a commit after the limit (a `commit-msg` hook rejects subjects like "under the 400-LOC gate").
+  - `.code-size-ratchet` lists what was over a cap when the caps were adopted, at its recorded size. An entry may only shrink; lower it with `node scripts/check-source-hygiene.mjs --tighten`. Never add a line. Re-seeding it (`--write-ratchet`, deterministic) is for an integration that moved many sizes at once, not for making a build pass.
 - **No `require()`**; the package is ESM (`check:no-require`). Import source with the `.js` suffix; never import from `dist/`.
 - **The codebase map must be current** (`check:codebase-map`).
 - **Every path named in a current doc exists** (`check:doc-paths` over `scripts/current-docs.mjs`). Add a doc to that list when agents are pointed at it; move finished plans to `docs/history/`.

@@ -25,6 +25,8 @@ export type Skill = "senior-engineer" | "vibe-code";
 export interface PriorChunkReport {
   chunkNumber: number;
   report: ChunkReport;
+  /** That chunk's passing structure check listed what is nearing a size cap. */
+  structureNote?: string;
 }
 
 /** Cap per-field carried prose so a rolling context can't bloat the prompt. */
@@ -51,6 +53,9 @@ export function distillSharpenedContext(priors: PriorChunkReport[]): string {
     if (note) bits.push(`NOTE: ${note}`);
     if (bits.length) lines.push(`- Chunk ${chunkNumber}: ${bits.join(" — ")}`);
   }
+  // Only the newest structure note: it describes the tree as it is now.
+  const latest = [...priors].reverse().find((p) => p.structureNote);
+  if (latest) lines.push(`- Structure check after chunk ${latest.chunkNumber}: ${latest.structureNote}`);
   return lines.join("\n");
 }
 

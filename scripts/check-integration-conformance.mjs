@@ -36,8 +36,8 @@
  *
  * Known-violation baseline lives in scripts/integration-conformance-baseline.json.
  * It exists so the gate can land on a repo that already has violations without
- * flipping the build red on day one (same convention as check-source-hygiene's
- * GRANDFATHERED list). It is a RATCHET, not a mute: every baselined finding is
+ * flipping the build red on day one (same convention as the code-size ratchet,
+ * .code-size-ratchet). It is a RATCHET, not a mute: every baselined finding is
  * printed on every run, and a baseline entry that no longer reproduces FAILS the
  * build so the list can only shrink.
  */

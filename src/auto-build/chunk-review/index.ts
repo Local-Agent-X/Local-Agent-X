@@ -53,6 +53,9 @@ export interface ChunkReviewOutcome {
   findings: GateFinding[];
   /** Parsed report — surfaced so the loop can route launch-readiness items / log changes. */
   report: ChunkReport;
+  /** The project's structure check passed but listed what is nearing a size
+   *  cap: carried into the next chunk's context, never a finding. */
+  structureNote?: string;
 }
 
 const ACTION_RANK: Record<ReviewAction, number> = {
@@ -132,8 +135,9 @@ export async function runChunkReviewWithJudgment(
   // Execution-grounded gate first: a build/test that actually FAILS, or an
   // artifact that loads blank, halts regardless of the LLM hook's opinion.
   let execFinding: GateFinding | null = null;
+  let structureNote: string | undefined;
   try {
-    execFinding = await buildExec({ projectDir: input.projectDir, signal });
+    execFinding = await buildExec({ projectDir: input.projectDir, signal, onStructureNote: (n) => { structureNote = n; } });
   } catch {
     execFinding = null; // fail open — a gate crash must not wedge the loop
   }
@@ -145,16 +149,17 @@ export async function runChunkReviewWithJudgment(
       report: base.report,
     };
   }
+  const passed: ChunkReviewOutcome = structureNote ? { ...base, structureNote } : base;
 
-  if (!hook) return base;
+  if (!hook) return passed;
 
   let result;
   try {
     result = await hook({ chunk: input.chunk, report: base.report, projectDir: input.projectDir, signal });
   } catch {
-    return base; // fail open
+    return passed; // fail open
   }
-  if (!result) return base;
+  if (!result) return passed;
 
   const reportWithGap: ChunkReport = { ...base.report, specGaps: result.specGap };
   const finding: GateFinding = {
@@ -167,6 +172,7 @@ export async function runChunkReviewWithJudgment(
     reasoning: result.reasoning,
     findings: [...base.findings, finding],
     report: reportWithGap,
+    ...(structureNote ? { structureNote } : {}),
   };
 }
 

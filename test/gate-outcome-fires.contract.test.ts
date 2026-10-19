@@ -28,7 +28,7 @@
  *            shared surface) still form ONE table, and the chain the loop walks
  *            contains the very objects those modules export.
  *   SEAM 4 — THE BUILD GATE (078a823c). Raw control bytes / bidi overrides and
- *            the 400-LOC ceiling are a build failure, and the merged campaign —
+ *            the code-line cap are a build failure, and the merged campaign —
  *            every file all four chunks touched, including the two the split
  *            created — still clears both.
  *
@@ -108,7 +108,8 @@ import { trackOpForSession } from "../src/ops/session-bridge.js";
 import { taskTools } from "../src/tools/task-tools.js";
 import { newOpId } from "../src/ops/op-store.js";
 import { readOp } from "../src/ops/op-store.js";
-import { exoticCodePointErrors } from "../scripts/check-source-hygiene.mjs";
+import { exoticCodePointErrors, LAX_SIZE_LIMITS } from "../scripts/check-source-hygiene.mjs";
+import { measureSource } from "../src/app-scaffold/kit/code-size.mjs";
 import type { Op } from "../src/ops/types.js";
 import type { Adapter, AdapterReport, TurnInput, TurnResult } from "../src/canonical-loop/adapter-contract.js";
 import type { ToolCall } from "../src/canonical-loop/contract-types.js";
@@ -526,20 +527,14 @@ describe("E2 — the merged whole", () => {
     "src/canonical-loop/middlewares/office-theme-guard.ts",
   ];
   const read = (rel: string): string => readFileSync(join(repoRoot, rel), "utf-8");
-  /** scripts/check-source-hygiene.mjs countLines, verbatim. */
-  const countLines = (text: string): number => {
-    const lines = text.split(/\r\n|\r|\n/);
-    if (lines.length && lines[lines.length - 1] === "") lines.pop();
-    return lines.length;
-  };
-
-  // SEAM 4. Two chunks each kept a file under the ceiling; only the merge can
-  // say whether the ceiling still holds — and the file the split created is the
-  // one a later chunk grew.
-  it("every campaign source file stays inside the 400-LOC build ceiling", () => {
+  // SEAM 4. Two chunks each kept a file under the cap; only the merge can say
+  // whether the cap still holds — and the file the split created is the one a
+  // later chunk grew. Measured as the build measures it: the structure kit's
+  // counter (code lines) and this repo's file cap.
+  it("every campaign source file stays inside the build's code-line cap", () => {
     const over = CAMPAIGN_FILES
-      .map(rel => ({ rel, loc: countLines(read(rel)) }))
-      .filter(f => f.loc > 400);
+      .map(rel => ({ rel, code: measureSource(join(repoRoot, rel), read(rel), repoRoot).code }))
+      .filter(f => f.code > LAX_SIZE_LIMITS.maxCode);
     expect(over).toEqual([]);
   });
 

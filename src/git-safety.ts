@@ -17,12 +17,15 @@
  *   composeGitArgs — argv arrays (execFileSync / spawn)
  *   gitSafeCmd     — shell command strings (execSync)
  *
- * and {@link gitExecutable}, the program the argv runners spawn.
+ * and {@link gitExecutable}, the program the argv runners spawn, with
+ * {@link execGitSync}, the one synchronous runner.
  */
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, type ExecFileSyncOptionsWithStringEncoding } from "node:child_process";
 import { statSync } from "node:fs";
 import { resolve } from "node:path";
+
+import { killOrphansOfSync } from "./process-tree-kill.js";
 
 /** Config flags prepended to EVERY git invocation the app makes. */
 export const GIT_SAFETY_ARGS: readonly string[] = ["-c", "gc.auto=0"];
@@ -78,4 +81,21 @@ export function gitExecutable(): string {
   }
   resolvedGit = realGitBeside(execPath) ?? "git";
   return resolvedGit;
+}
+
+/**
+ * The one synchronous git runner: execFileSync on {@link gitExecutable}, and
+ * when the call's timeout or maxBuffer cuts it off, nothing git started is
+ * left running. On Windows a hook's programs outlive the git that ran them
+ * ({@link killOrphansOfSync}). The args are passed as given: compose them first.
+ */
+export function execGitSync(args: string[], options: ExecFileSyncOptionsWithStringEncoding): string {
+  const startedAt = Date.now();
+  try {
+    return execFileSync(gitExecutable(), args, options);
+  } catch (e) {
+    const err = e as { code?: string; pid?: number };
+    if (err.pid && (err.code === "ETIMEDOUT" || err.code === "ENOBUFS")) killOrphansOfSync(err.pid, startedAt, Date.now());
+    throw e;
+  }
 }

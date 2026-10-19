@@ -19,8 +19,7 @@ import {
   resetWorktree,
   runCommandInWorktreeAsync,
 } from "../agency/worktree.js";
-import { execFileSync } from "node:child_process";
-import { composeGitArgs, gitExecutable } from "../git-safety.js";
+import { composeGitArgs, execGitSync } from "../git-safety.js";
 import type { AutopilotConfig, RoundOutcome } from "./types.js";
 
 import { createLogger } from "../logger.js";
@@ -55,8 +54,7 @@ function countLines(filePath: string): number {
  */
 function getPrevLoc(worktreePath: string, relPath: string): number {
   try {
-    const out = execFileSync(
-      gitExecutable(),
+    const out = execGitSync(
       composeGitArgs(["-c", "core.fsmonitor=false", "show", "--no-textconv", `HEAD:${relPath}`]),
       // A lockfile at HEAD is past execFileSync's 1 MiB default.
       { cwd: worktreePath, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 64 * 1024 * 1024, timeout: 10_000, windowsHide: true },

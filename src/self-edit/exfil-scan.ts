@@ -18,11 +18,10 @@
  * staging/output tripwire, not an egress jail.
  */
 
-import { execFileSync } from "node:child_process";
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { scanForSecrets } from "../security/secrets/index.js";
-import { gitExecutable } from "../git-safety.js";
+import { execGitSync } from "../git-safety.js";
 
 /** Per-file scan budget — skip pathological large additions (e.g. a vendored
  *  blob or generated lockfile) rather than choke the gate. */
@@ -70,7 +69,7 @@ const DIFF = ["diff", "--no-color", "--no-ext-diff", "--no-textconv"];
 
 function git(cwd: string, args: string[]): string {
   try {
-    return execFileSync(gitExecutable(), ["-c", "core.fsmonitor=false", ...args], {
+    return execGitSync(["-c", "core.fsmonitor=false", ...args], {
       cwd,
       encoding: "utf-8",
       timeout: 30_000,

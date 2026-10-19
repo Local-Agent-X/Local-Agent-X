@@ -18,8 +18,7 @@
 import { existsSync, mkdirSync, copyFileSync, statSync, lstatSync, appendFileSync, readFileSync, rmSync } from "node:fs";
 import { join, basename, dirname, isAbsolute, resolve } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
-import { execFileSync } from "node:child_process";
-import { composeGitArgs, gitExecutable } from "../git-safety.js";
+import { composeGitArgs, execGitSync } from "../git-safety.js";
 import { getRuntimeConfig } from "../config.js";
 import { evaluateFileAccess, loadFileAccessMode } from "../security/layer/index.js";
 import { createLogger } from "../logger.js";
@@ -42,7 +41,7 @@ const STASH_SHA = /^[0-9a-f]{40}$/;
  *  id, and a restore's sha and directory are read back from the index. Starts
  *  no fsmonitor hook the repository's config could name. */
 function git(args: string[], cwd: string): string {
-  return execFileSync(gitExecutable(), composeGitArgs(["-c", "core.fsmonitor=false", ...args]), {
+  return execGitSync(composeGitArgs(["-c", "core.fsmonitor=false", ...args]), {
     cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], windowsHide: true,
   });
 }

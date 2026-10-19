@@ -4,12 +4,12 @@
  * sibling worktree module so they all read/write the SAME registry.
  */
 
-import { execFileSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { createLogger } from "../logger.js";
-import { composeGitArgs, gitExecutable } from "../git-safety.js";
+import { composeGitArgs, execGitSync, gitExecutable } from "../git-safety.js";
 import { killProcessTree } from "../process-tree-kill.js";
 
 export const logger = createLogger("agency.worktree");
@@ -106,13 +106,14 @@ function toArgv(args: string[] | string): string[] {
  * genuinely wants the ambient repo passes `process.cwd()` on purpose.
  *
  * execFileSync ends a timed-out or over-limit call by killing its own child
- * and nothing under it, so the child must be the git doing the work, not Git
- * for Windows' launcher: {@link gitExecutable}.
+ * and nothing under it, so it runs through {@link execGitSync}: the child is
+ * the git doing the work, not Git for Windows' launcher, and what that git
+ * started (a hook, and what the hook runs) is killed after it.
  */
 export function git(args: string[] | string, cwd: string): string {
   const argv = toArgv(args);
   try {
-    return execFileSync(gitExecutable(), composeGitArgs(argv), {
+    return execGitSync(composeGitArgs(argv), {
       cwd,
       encoding: "utf-8",
       timeout: GIT_TIMEOUT_MS,

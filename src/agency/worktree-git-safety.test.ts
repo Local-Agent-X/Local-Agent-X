@@ -165,20 +165,23 @@ describe("gitAsync", () => {
 
 // ── git(): an over-limit or timed-out call leaves no git behind ──────────────
 describe("git() limits", () => {
-  it("throws at its timeout, and git is gone when it does", () => {
+  it("throws at its timeout, and nothing git started is left when it does", () => {
     const repo = initRepo();
-    // git waits on a hook that outlives the 30 s limit. execFileSync kills its
-    // own child and nothing under it. On Windows that child was Git for
-    // Windows' launcher, and the real git ran on in the repo, so the folder
-    // could not be removed (EPERM) — no retries here. The output limit cannot
-    // stand in for the timeout: past maxBuffer a git that is writing dies on
-    // the closed pipe anyway, and a hook that floods the pipe has processes of
-    // its own dying in the repo right then. The hook lives outside the repo, as
-    // a linked worktree's hooks do (in the common dir), so the folder is held
-    // only if git is.
+    // git waits on a hook that outlives the 30 s limit and runs a native
+    // program in the repo, as this repo's own pre-commit runs node.
+    // execFileSync kills its own child and nothing under it. On Windows that
+    // child was Git for Windows' launcher, and the real git ran on in the repo;
+    // with the real git killed, the hook's program still ran there. Either way
+    // the folder could not be removed (EPERM) — no retries here. The output
+    // limit cannot stand in for the timeout: past maxBuffer a git that is
+    // writing dies on the closed pipe anyway, and a hook that floods the pipe
+    // has processes of its own dying in the repo right then. The hook script
+    // lives outside the repo, as a linked worktree's hooks do (in the common
+    // dir), so the folder is held only by what git started.
     const hooks = mkdtempSync(join(tmpdir(), "lax-gitsafety-hooks-"));
     roots.push(hooks);
-    writeFileSync(join(hooks, "post-checkout"), "#!/bin/sh\nsleep 45\n", { mode: 0o755 });
+    const node = JSON.stringify(process.execPath.replace(/\\/g, "/"));
+    writeFileSync(join(hooks, "post-checkout"), `#!/bin/sh\n${node} -e "setTimeout(()=>{},45000)"\n`, { mode: 0o755 });
     run(repo, ["config", "core.hooksPath", hooks]);
     expect(() => git(["checkout", "-q", "-b", "slow-hook"], repo)).toThrow(/^git checkout -q -b slow-hook failed: .*ETIMEDOUT/);
     expect(() => rmSync(dirname(repo), { recursive: true, force: true })).not.toThrow();
@@ -205,10 +208,11 @@ describe("gitExecutable", () => {
     expect(execFileSync(gitExecutable(), ["--version"], { encoding: "utf-8" })).toMatch(/^git version /);
   });
 
-  it("is what every sync runner spawns: none names the launcher", () => {
-    // A sync runner's timeout or maxBuffer kills its own child only, so one
-    // that spawns `git` by name leaves the real git running on Windows. The
-    // one bare call left is gitExecutable's own --exec-path lookup.
+  it("is spawned synchronously only by execGitSync: no sync runner of its own", () => {
+    // A sync runner's timeout or maxBuffer kills its own child only. One that
+    // spawns `git` by name leaves the real git running on Windows, and one that
+    // spawns the real git itself leaves the hooks it ran; execGitSync handles
+    // both. The other call is gitExecutable's own --exec-path lookup.
     const src = join(dirname(fileURLToPath(import.meta.url)), "..");
     const sourceFiles = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
       const path = join(dir, entry.name);
@@ -216,9 +220,9 @@ describe("gitExecutable", () => {
       return entry.isFile() && path.endsWith(".ts") && !path.endsWith(".test.ts") ? [path] : [];
     });
     const bare = sourceFiles(src).flatMap((path) =>
-      [...readFileSync(path, "utf-8").matchAll(/\b(?:execFileSync|spawnSync)\(\s*["'`]git["'`]/g)]
+      [...readFileSync(path, "utf-8").matchAll(/\b(?:execFileSync|spawnSync)\(\s*(?:["'`]git["'`]|gitExecutable\(\))/g)]
         .map(() => relative(src, path).replace(/\\/g, "/")));
-    expect(bare).toEqual(["git-safety.ts"]);
+    expect(bare).toEqual(["git-safety.ts", "git-safety.ts"]);
   });
 });
 

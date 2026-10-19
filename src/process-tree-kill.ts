@@ -10,7 +10,9 @@
  * Use this anywhere a spawned subprocess might be aborted before
  * natural completion (user Stop, timeout, lease loss, abort signal).
  */
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 
@@ -37,6 +39,41 @@ export function killProcessTree(
   // covers a taskkill that couldn't run. Throws ESRCH once the tree kill
   // already reaped it — expected, and swallowed.
   try { proc.kill(signal); } catch { /* ignore */ }
+}
+
+/**
+ * Synchronous kill of what a process that is already dead left running, for a
+ * runner that could not tree-kill it while it was alive: execFileSync and
+ * spawnSync end a timed-out or over-limit call by killing their own child only.
+ * On Windows that child's children live on (a hook git was waiting on, and the
+ * native program it runs in the repo) and keep the dead pid as their parent,
+ * so they are found by it and killed with their own children, and this returns
+ * once they are gone. Only processes created inside the call
+ * (`startedAtMs`..`endedAtMs`, Date.now() values) count: a pid reused after
+ * the child died cannot have fathered them. No-op elsewhere. Never throws.
+ */
+export function killOrphansOfSync(deadPid: number, startedAtMs: number, endedAtMs: number): void {
+  if (process.platform !== "win32") return;
+  const inCall = "$_.CreationDate -ge $from -and $_.CreationDate -le $to";
+  const script = [
+    `$from = [DateTimeOffset]::FromUnixTimeMilliseconds(${Math.floor(startedAtMs)}).LocalDateTime`,
+    `$to = [DateTimeOffset]::FromUnixTimeMilliseconds(${Math.ceil(endedAtMs)}).LocalDateTime`,
+    "$all = @(Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,CreationDate)",
+    "$ids = [System.Collections.Generic.List[uint32]]::new()",
+    `$queue = [System.Collections.Generic.Queue[uint32]]::new(); $queue.Enqueue(${Math.trunc(deadPid)})`,
+    "while ($queue.Count) { $parent = $queue.Dequeue()",
+    `  foreach ($p in @($all | Where-Object { $_.ParentProcessId -eq $parent -and ${inCall} })) {`,
+    "    if (-not $ids.Contains($p.ProcessId)) { $ids.Add($p.ProcessId); $queue.Enqueue($p.ProcessId) } } }",
+    "if ($ids.Count) { Stop-Process -Id $ids -Force -ErrorAction SilentlyContinue",
+    "  Wait-Process -Id $ids -Timeout 5 -ErrorAction SilentlyContinue }",
+  ].join("\n");
+  const powershell = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+  try {
+    // Run from outside the repo, so the sweep itself holds nothing open there.
+    execFileSync(powershell, ["-NoProfile", "-NonInteractive", "-Command", script], {
+      cwd: tmpdir(), stdio: "ignore", windowsHide: true, timeout: 20_000,
+    });
+  } catch { /* best-effort: what it could not reach stays as it was */ }
 }
 
 /**

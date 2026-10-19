@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { spawn, type ChildProcess } from "node:child_process";
-import { killProcessGroup, killProcessGroupSync } from "./process-tree-kill.js";
+import { killOrphansOfSync, killProcessGroup, killProcessGroupSync } from "./process-tree-kill.js";
 
 // Regression guard for the load-bearing platform logic in killProcessGroup.
 // The detached-spawn sites (process-session killSession, the shell tool's
@@ -84,4 +84,45 @@ describe("killProcessGroupSync", () => {
   it("never throws on an already-dead pid", () => {
     expect(() => killProcessGroupSync(999_999_999)).not.toThrow();
   });
+});
+
+// A sync runner (execFileSync/spawnSync) kills its own child on timeout and
+// leaves that child's children running; on Windows they keep the dead pid as
+// their parent. A real parent here, killed the way the runner kills it, with a
+// child of its own left behind.
+describe.skipIf(process.platform !== "win32")("killOrphansOfSync", () => {
+  const isRunning = (pid: number): boolean => {
+    try { process.kill(pid, 0); return true; } catch { return false; }
+  };
+  // Detached, so the parent's own job object does not take the child with it.
+  const parentScript =
+    `const c = require("node:child_process").spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"],` +
+    ` { detached: true, stdio: "ignore", windowsHide: true }); c.unref(); console.log(c.pid); setInterval(()=>{},1000);`;
+
+  async function orphan(): Promise<{ parentPid: number; childPid: number; startedAt: number; endedAt: number }> {
+    const startedAt = Date.now();
+    const parent = spawn(process.execPath, ["-e", parentScript], { windowsHide: true, stdio: ["ignore", "pipe", "ignore"] });
+    const childPid = await new Promise<number>((resolve) => parent.stdout!.once("data", (d) => resolve(Number(String(d).trim()))));
+    const exited = new Promise((resolve) => parent.once("exit", resolve));
+    parent.kill();
+    await exited;
+    return { parentPid: parent.pid!, childPid, startedAt, endedAt: Date.now() };
+  }
+
+  it("kills what a dead process left running, and returns once it is gone", async () => {
+    const { parentPid, childPid, startedAt, endedAt } = await orphan();
+    expect(isRunning(childPid)).toBe(true);
+    killOrphansOfSync(parentPid, startedAt, endedAt);
+    expect(isRunning(childPid)).toBe(false);
+  }, 30_000);
+
+  it("leaves a process created outside the call alone (the pid may have been reused)", async () => {
+    const { parentPid, childPid, endedAt } = await orphan();
+    try {
+      killOrphansOfSync(parentPid, endedAt, endedAt + 1);
+      expect(isRunning(childPid)).toBe(true);
+    } finally {
+      try { process.kill(childPid); } catch { /* already gone */ }
+    }
+  }, 30_000);
 });

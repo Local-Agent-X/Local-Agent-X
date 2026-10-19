@@ -169,6 +169,27 @@ describe("RBAC agent role is fenced out of the cage, autonomy, undo and voice-se
   });
 });
 
+// ── RBAC: the user role keeps what it learns about the user ──
+
+describe("RBAC user role", () => {
+  const tmpDir = join(tmpdir(), `lax-rbac-user-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  mkdirSync(tmpDir, { recursive: true });
+  const rbac = new RBACManager(tmpDir, randomBytes(32).toString("hex"));
+  afterAll(() => { try { rmSync(tmpDir, { recursive: true }); } catch {} });
+
+  it("can save, correct and retract a durable fact, and set a profile field", () => {
+    for (const tool of ["remember", "update_fact", "forget", "memory_set_user_field", "memory_update_profile"]) {
+      expect(rbac.checkTool("user", tool).allowed, tool).toBe(true);
+    }
+  });
+
+  it("still has no egress or secret tools", () => {
+    for (const tool of ["http_request", "web_fetch", "secret_env", "browser"]) {
+      expect(rbac.checkTool("user", tool).allowed, tool).toBe(false);
+    }
+  });
+});
+
 // ── RBAC: rotateOperatorToken leaves the internal agent token untouched ──
 
 describe("RBAC rotateOperatorToken", () => {

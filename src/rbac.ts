@@ -68,11 +68,10 @@ const ROLE_PERMISSIONS: Record<Role, {
     // Users can read/write local files and use memory, but can't send data externally
     // bash is allowed but SecurityLayer blocks network tools within it
     allowedTools: selectTools({
-      tags: ["file-read", "file-write", "file-edit", "shell", "memory-search"],
+      tags: ["file-read", "file-write", "file-edit", "shell", "memory-search", "memory-facts"],
       plus: {
         memory_save: "appends to the daily log",
         memory_reflect: "refreshes what memory concludes from what it holds",
-        memory_update_profile: "updates the user's own profile",
       },
     }),
     deniedEndpoints: ["/api/secrets", "/api/audit", "/api/tokens"],

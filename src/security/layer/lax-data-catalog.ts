@@ -64,6 +64,7 @@ export const LAX_DATA_CATALOG: readonly LaxDataEntry[] = [
   ...at("blocked", "decides how much the agent may do without asking you", "autonomy-profile.json"),
   ...at("blocked", "records your consent to run the shell without its sandbox", "sandbox-host-acknowledgement.json"),
   ...at("blocked", "decides whether the app's server starts inside its sandbox", "server-sandbox-boot.json"),
+  ...at("blocked", "decides which local ports the shell's network proxy listens on, which the Windows cage permits", "shell-proxy-ports.json"),
   ...at("blocked", "decides which access tokens the app accepts and what each may do", "tokens.json"),
   ...at("blocked", "lists the data flows you approved, which then run without asking", "threat-trust-ledger.json"),
   // Approve on an inbox item runs the call stored with it, as the role stored

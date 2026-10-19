@@ -33,7 +33,9 @@ export interface FrameworkDetection {
 // Router (v7 on, what Remix became) is a separate kind: its own CLI.
 const DEV_COMMANDS: Partial<Record<DetectedFramework, (port: number) => string>> = {
   nextjs: (p) => `npm install && npx next dev --port ${p}`,
-  nuxt: (p) => `npm install && npx nuxt dev --port ${p}`,
+  // Nuxt listens on `localhost`, which can resolve to ::1 only (Windows), and
+  // the /apps proxy connects to 127.0.0.1.
+  nuxt: (p) => `npm install && npx nuxt dev --port ${p} --host 127.0.0.1 --strictPort`,
   sveltekit: (p) => `npm install && npx vite dev --port ${p} --host 127.0.0.1 --strictPort`,
   astro: (p) => `npm install && npx astro dev --port ${p} --host 127.0.0.1`,
   remix: (p) => `npm install && npx remix vite:dev --port ${p} --host 127.0.0.1`,

@@ -165,7 +165,7 @@ describe("detectFramework — static / unknown / robustness", () => {
 describe("detectFramework — devCommand port injection", () => {
   const expected: Array<[string, string]> = [
     ["next.config.js", "npm install && npx next dev --port 4123"],
-    ["nuxt.config.ts", "npm install && npx nuxt dev --port 4123"],
+    ["nuxt.config.ts", "npm install && npx nuxt dev --port 4123 --host 127.0.0.1 --strictPort"],
     ["astro.config.mjs", "npm install && npx astro dev --port 4123 --host 127.0.0.1"],
     ["vite.config.js", "npm install && npx vite --port 4123 --host 127.0.0.1 --strictPort"],
   ];

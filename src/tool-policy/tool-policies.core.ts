@@ -99,7 +99,7 @@ export const TOOL_POLICIES_CORE: Record<string, ToolPolicyRow> = {
   // sensitive-pattern skip), so the root gate + per-file screen together cover
   // what the argMatch rules cover for the single-file tools.
   bulk_replace: {
-    kernel: "file", ariAction: "write", risk: "workspace-write", capabilities: [], tags: [],
+    kernel: "file", ariAction: "write", risk: "workspace-write", capabilities: [], tags: ["file-edit-variant"],
     pathArgs: [{ arg: "path", action: "edit" }], category: "coding",
     rules: [
       { id: "deny-bulk-replace-system", decision: "deny", reason: "Blocked: cannot edit system files", priority: 90, argMatch: { path: "C:\\Windows*" } },
@@ -137,7 +137,7 @@ export const TOOL_POLICIES_CORE: Record<string, ToolPolicyRow> = {
     prompt: "ALWAYS use grep for content search. Never bash grep/rg. Supports regex, type filtering, 3 output modes. content mode includes surrounding context per hit by default — follow-up reads of hit files are usually unnecessary.",
     rules: [{ id: "allow-grep", decision: "allow", reason: "Content search (read-only)", priority: 50 }],
   },
-  structural_search: { kernel: "file", ariAction: "read", risk: "safe", capabilities: ["sensitive-read"], tags: [], output: "file-content", pathArgs: [{ arg: "path", action: "read", searchRoot: true }], loop: { mechanical: true }, rules: [{ id: "allow-structural-search", decision: "allow", reason: "Symbol-accurate code search (read-only)", priority: 50 }] },
+  structural_search: { kernel: "file", ariAction: "read", risk: "safe", capabilities: ["sensitive-read"], tags: ["file-search"], output: "file-content", pathArgs: [{ arg: "path", action: "read", searchRoot: true }], loop: { mechanical: true }, rules: [{ id: "allow-structural-search", decision: "allow", reason: "Symbol-accurate code search (read-only)", priority: 50 }] },
   view_image:  { kernel: "file", ariAction: "read", risk: "safe", capabilities: ["egress"], tags: ["image-view"], blurb: { say: "what's in this screenshot?", does: "Look at an image you share." }, timeoutMs: 10_000, offBoxFetch: true, pathArgs: [{ arg: "path", action: "read" }], rules: [{ id: "allow-view-image", decision: "allow", reason: "Image viewing (path-checked); base64-ships the image off-box to the vision API", priority: 50 }] },
   transcribe_media:   { kernel: "file", ariAction: "read", risk: "safe", capabilities: ["egress"], tags: ["audio"], offBoxFetch: true, pathArgs: [{ arg: "path", action: "read" }], rules: [{ id: "allow-transcribe-media", decision: "allow", reason: "Transcribes a local recording (path-checked read); ships audio off-box when a CLOUD stt provider is configured", priority: 50 }] },
   read_video_frames:  { kernel: "file", ariAction: "read", risk: "safe", capabilities: ["egress"], tags: ["video"], offBoxFetch: true, pathArgs: [{ arg: "path", action: "read" }], rules: [{ id: "allow-read-video-frames", decision: "allow", reason: "Samples frames from a local video (path-checked read); base64-ships them off-box to the vision API", priority: 50 }] },

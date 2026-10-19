@@ -153,7 +153,7 @@ describe("runPublishReview — each answer becomes what the gate acts on", () =>
       // Own worker-scoped runtime session; the reviewer's belt is read-only.
       const descriptor = op?.runtimeDescriptor as { sessionId?: string; surface?: { tools: Array<{ name: string }>; security: { workspace: string; sessionWorkRoot?: string } } };
       expect(descriptor.sessionId).toBe(publishReviewRuntimeSessionId(run.opId!));
-      expect(descriptor.surface?.tools.map((t) => t.name).sort()).toEqual(["glob", "grep", "read"]);
+      expect(descriptor.surface?.tools.map((t) => t.name).sort()).toEqual(["glob", "grep", "read", "structural_search"]);
       expect(descriptor.surface?.security.workspace).toBe(REPO);
       // Relative paths anchored at the repository while it ran; released after.
       expect(descriptor.surface?.security.sessionWorkRoot).toBe(REPO);

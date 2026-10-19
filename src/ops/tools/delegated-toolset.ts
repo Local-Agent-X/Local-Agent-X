@@ -23,6 +23,7 @@ import type { ToolDefinition } from "../../types.js";
 import { resolveToolsForRequest, unifiedRegistry } from "../../tools/tool-search.js";
 import { WORKTREE_REQUIRED_TOOLS } from "../../security/layer/types.js";
 import { toolsTagged } from "../../tool-registry.js";
+import { selectTools } from "../../tools/tool-kits.js";
 import type { OpLane } from "../types.js";
 
 /** Lanes a delegated op can be scheduled on (OpLane minus the agent_spawn lane). */
@@ -40,7 +41,10 @@ export interface DelegatedBelt {
  *  WORKTREE_REQUIRED_TOOLS, so each call still passes the delegated gate.
  *  The other worktree-required spellings (ari_file, process_start,
  *  bulk_replace) stay denied on every lane. */
-export const BUILD_MUTATION_TOOLS: readonly string[] = toolsTagged("file-write", "file-edit", "file-edit-variant", "file-delete", "shell");
+export const BUILD_MUTATION_TOOLS: readonly string[] = selectTools({
+  tags: ["file-write", "file-edit", "file-edit-variant", "file-delete", "shell"],
+  except: { bulk_replace: "D5: a find-and-replace across a whole tree stays denied on every delegated lane" },
+});
 
 /**
  * Tools a delegated worker must NEVER receive, regardless of what the

@@ -9,7 +9,7 @@ import { join } from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { ServerContext } from "../server-context.js";
 import type { Role } from "../rbac.js";
-import { EgressPolicyState } from "../security/layer/egress-policy-state.js";
+import { EgressPolicyState, SEARCH_PROVIDER_HOSTS } from "../security/layer/egress-policy-state.js";
 import { handleSecurityRoutes } from "./security.js";
 
 let dir: string;
@@ -59,9 +59,11 @@ describe("/api/security/egress", () => {
     const { res, status, body } = mkRes();
     await handleSecurityRoutes("POST", url("/api/security/egress"), mkReq({ mode: "strict", allow: "https://API.example.com/x" }), res, ctx, "user" as Role);
     expect(status()).toBe(200);
-    expect(body()).toEqual({ ok: true, mode: "strict", allowlist: ["api.example.com"], configured: true });
-    expect(broadcastAll).toHaveBeenCalledWith({ type: "settings_changed", settings: { egress: { mode: "strict", allowlist: ["api.example.com"], configured: true } } });
-    expect(JSON.parse(readFileSync(join(dir, "egress-allowlist.json"), "utf-8"))).toEqual(["api.example.com"]);
+    // Strict turned on with no list yet starts it with the search providers.
+    const allowlist = ["api.example.com", ...SEARCH_PROVIDER_HOSTS].sort();
+    expect(body()).toEqual({ ok: true, mode: "strict", allowlist, configured: true });
+    expect(broadcastAll).toHaveBeenCalledWith({ type: "settings_changed", settings: { egress: { mode: "strict", allowlist, configured: true } } });
+    expect(JSON.parse(readFileSync(join(dir, "egress-allowlist.json"), "utf-8"))).toEqual(allowlist);
     expect(JSON.parse(readFileSync(join(dir, "security.json"), "utf-8"))).toEqual({ egressMode: "strict" });
   });
 

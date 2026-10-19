@@ -20,6 +20,17 @@ import { createLogger } from "../../logger.js";
 
 const logger = createLogger("security");
 
+/**
+ * The hosts web_search and image_search reach (src/tools/web-search-tool.ts,
+ * image-search-tool.ts). Turning strict on with no list yet starts the list
+ * with them, so search keeps working the moment the user opts in. They are
+ * written only then, never on install or in permissive mode: the list is also
+ * the trusted-destinations list the outbound secret scan and the
+ * private-content card read in both modes, so a seeded list would mark these
+ * hosts as fit for secret-bearing sends on an install that never chose strict.
+ */
+export const SEARCH_PROVIDER_HOSTS: readonly string[] = ["api.search.brave.com", "commons.wikimedia.org", "duckduckgo.com", "html.duckduckgo.com"];
+
 export interface EgressPolicySnapshot {
   mode: EgressMode;
   allowlist: string[];
@@ -90,9 +101,14 @@ export class EgressPolicyState {
     return { mode: s.mode, allowlist: [...s.allowlist].sort(), configured: s.configured };
   }
 
+  /** Set the mode. Strict with no allowlist file yet starts the list with the
+   *  search providers; a list the user has, empty included, is kept as it is. */
   setMode(mode: EgressMode): EgressPolicySnapshot {
     updateSecurityJson({ egressMode: mode });
     logger.info(`[security] Web access mode changed to: ${mode}`);
+    if (mode === "strict" && !existsSync(join(getLaxDir(), "egress-allowlist.json"))) {
+      return this.setAllowlist(SEARCH_PROVIDER_HOSTS);
+    }
     return this.snapshot();
   }
 

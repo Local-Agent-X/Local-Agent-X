@@ -2,16 +2,16 @@
 //
 // The one policy every outbound path applies: web_fetch, http_request, the
 // browser tool, and the caged shell's egress proxy all read the same mode and
-// list. Strict (the default on a new install) lets the agent reach only the
-// sites on the list; permissive lets it reach any public site. Loopback and
+// list. Permissive (the default) lets the agent reach any public site; strict,
+// the user's opt-in, asks before each site not on the list. Loopback and
 // private addresses have their own rules either way. Persists through
 // /api/security/egress; a change is broadcast so every open tab redraws.
 //
 // External deps (runtime globals): apiFetch (shared-api.js), esc (shared.js).
 
 const EGRESS_HINTS = {
-  strict: 'The agent reaches only the sites listed below. A blocked call shows an "Allow & retry" notice in the chat, so the list grows as you approve sites.',
-  permissive: 'The agent may reach any public site. Private addresses, cloud metadata and loopback stay guarded; the allowed-sites list only marks sites that may receive secret-bearing requests.'
+  strict: 'The agent asks before it reaches a site that is not listed below: the call stops with an "Allow & retry" notice in the chat, so the list grows as you approve sites. Turned on with no list yet, the list starts with the search providers, so web search keeps working.',
+  permissive: 'The agent may reach any public site. Private addresses, cloud metadata and loopback stay guarded, what leaves is still checked for secrets and for private content headed somewhere you did not choose, and the allowed-sites list only marks sites that may receive secret-bearing requests. Choose "Ask before each new site" to approve every site yourself.'
 };
 
 function renderWebAccess(s) {

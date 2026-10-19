@@ -122,25 +122,32 @@ export function registerSessionOwner(sessionId: string, owner: SessionOwner): vo
   });
 }
 
-/** The profile the browser a session drives carries: the one registered on
- *  the browser session it resolves to, else the user's own. */
+/** The profile the browser a session drives carries: its own record's (a
+ *  child carries its root's, copied at registration), else the one registered
+ *  on the browser session it resolves to, else the user's own. */
 export function resolveBrowserProfile(sessionId: string): BrowserProfile {
-  return getSessionOwner(resolveBrowserSessionId(sessionId))?.browserProfile ?? SIGNED_IN_BROWSER_PROFILE;
+  return getSessionOwner(sessionId)?.browserProfile
+    ?? getSessionOwner(resolveBrowserSessionId(sessionId))?.browserProfile
+    ?? SIGNED_IN_BROWSER_PROFILE;
 }
 
 /** Register an execution session under its parent chat/agent lineage. The
  * mapping is flattened now so nested descendants remain bound to the root chat
- * after an intermediate agent run has ended. */
+ * after an intermediate agent run has ended, and so is the root's browser
+ * profile: a child that outlives a scheduled job's run (whose record the run
+ * clears) keeps browsing on the job's profile, never the user's signed-in one. */
 export function registerChildSessionOwner(
   sessionId: string,
   parentSessionId: string | undefined,
   owner: Omit<SessionOwner, "browserSessionId"> = {},
 ): void {
+  const inherited = parentSessionId ? resolveBrowserProfile(parentSessionId) : undefined;
   registerSessionOwner(sessionId, {
     ...owner,
     browserSessionId: parentSessionId
       ? resolveBrowserSessionId(parentSessionId)
       : (sessionId || DEFAULT_BROWSER_SESSION_ID),
+    browserProfile: owner.browserProfile ?? (inherited?.kind === "job" ? inherited : undefined),
   });
 }
 

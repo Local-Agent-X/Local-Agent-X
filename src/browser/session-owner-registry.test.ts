@@ -88,6 +88,18 @@ describe("session owner registry", () => {
     expect(resolveBrowserProfile("cron-j1-1")).toEqual({ kind: "signed-in" });
   });
 
+  it("an agent a job spawned keeps the job's profile after the job's run ends, never the user's sign-ins", () => {
+    registerSessionOwner("cron-j2-1", { browserProfile: jobBrowserProfile("cron_j2", undefined) });
+    registerChildSessionOwner("agent-of-j2", "cron-j2-1", { agentId: "helper" });
+    registerChildSessionOwner("grandchild-of-j2", "agent-of-j2");
+    clearSessionOwner("cron-j2-1");
+    expect(resolveBrowserProfile("agent-of-j2")).toEqual({ kind: "job", jobId: "cron_j2" });
+    expect(resolveBrowserProfile("grandchild-of-j2")).toEqual({ kind: "job", jobId: "cron_j2" });
+    // A chat's children stay on the user's profile.
+    registerChildSessionOwner("agent-of-chat", "chat-root-2");
+    expect(resolveBrowserProfile("agent-of-chat")).toEqual({ kind: "signed-in" });
+  });
+
   it("names a job's partition in the desktop's profile namespace and its Chrome profile dir under the data dir", () => {
     expect(jobBrowserPartition("cron_abc")).toBe("persist:lax-profile-job-cron_abc");
     expect(jobBrowserPartition("../x y")).toBe("persist:lax-profile-job----x-y");

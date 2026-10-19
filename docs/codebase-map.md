@@ -12,7 +12,7 @@ statically or by `import()` (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1806 non-test source files · 0 god files (>400 LOC).
+**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1807 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 

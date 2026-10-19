@@ -13,13 +13,13 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1816 non-test source files · 94 oversized · 241 nearing the size cap.
+**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1816 non-test source files · 94 oversized · 242 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | Oversized |
 |---|--:|--:|:--:|--:|
-| `src/ops/` | 164 | 29 | L | 1 |
+| `src/ops/` | 164 | 29 | XL | 1 |
 | `src/security/` | 123 | 46 | XL | 3 |
 | `src/tools/` | 114 | 215 | XL | 9 |
 | `src/tool-execution/` | 81 | 72 | XL | 2 |
@@ -355,6 +355,7 @@ job. Comments are free: never cut them to fit.
 - `src/tools/http-request.ts` — 320+ code lines (cap 350)
 - `src/auto-build/workflow-resolver.ts` — 310+ code lines (cap 350)
 - `src/cognition/cross-session-learning/service.ts` — 310+ code lines (cap 350)
+- `src/ops/op-store.ts` — 310+ code lines (cap 350)
 - `src/protocols/index.ts` — 310+ code lines (cap 350)
 - `src/security/layer/security-audit.ts` — 310+ code lines (cap 350)
 - `src/tool-execution/side-effect-journal.ts` — 310+ code lines (cap 350)

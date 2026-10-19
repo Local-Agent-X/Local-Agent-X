@@ -148,6 +148,14 @@ function injectedWriteFailure(strict: boolean): AtomicWriteOperations | undefine
 const LOCK_STALE_MS = 2_000;
 const LOCK_WAIT_MS = 500;
 const LOCK_RETRY_MS = 10;
+/** An empty lock directory holds no claim: its creator writes its token right
+ *  after mkdir, so past this grace it is a release whose rmdir failed (Windows
+ *  refuses one while a scanner or indexer has the folder open). Its mtime is
+ *  the token's removal, so under LOCK_STALE_MS alone it would read as a fresh
+ *  claim and skip every mutation for two seconds. */
+const EMPTY_LOCK_GRACE_MS = 250;
+/** How many times a release retries a removal Windows refused for a moment. */
+const RELEASE_RETRIES = 20;
 const sleepBuf = new Int32Array(new SharedArrayBuffer(4));
 /** In-process reentrancy guard: opIds whose lock this call stack already holds. */
 const heldLocks = new Map<string, string>();
@@ -179,8 +187,19 @@ export function tryWithOpLock<T>(opId: string, fn: () => T): OpLockResult<T> {
         mode: 0o600,
         flag: "wx",
       });
-      break;
+      // Another caller may have reclaimed this directory as empty before the
+      // token landed and claimed it as its own: then both tokens are here, and
+      // this one backs off rather than share the lock.
+      if (soleClaim(lockPath, token)) break;
+      cleanupOwnedLock(lockPath, token);
+      if (Date.now() >= deadline) {
+        logger.warn(`[op-store] lock timeout for ${opId}; mutation skipped`);
+        return { acquired: false };
+      }
+      sleepSync(LOCK_RETRY_MS);
     } catch (e) {
+      // The directory was reclaimed between mkdir and the token: try again.
+      if ((e as NodeJS.ErrnoException).code === "ENOENT" && Date.now() < deadline) continue;
       if ((e as NodeJS.ErrnoException).code !== "EEXIST") {
         logger.warn(`[op-store] cannot create lock for ${opId}: ${(e as Error).message}`);
         cleanupOwnedLock(lockPath, token);
@@ -212,21 +231,53 @@ export function withOpLock<T>(opId: string, fn: () => T): T {
   return fn();
 }
 
+function soleClaim(lockPath: string, token: string): boolean {
+  try {
+    const entries = readdirSync(lockPath);
+    return entries.length === 1 && entries[0] === token;
+  } catch {
+    return false;
+  }
+}
+
+/** A removal Windows refuses for a moment (a scanner or indexer has it open). */
+function transientRemoveError(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException).code;
+  return code === "EBUSY" || code === "EPERM" || code === "EACCES";
+}
+
+function retryRemoval(remove: () => void): void {
+  for (let attempt = 0; ; attempt++) {
+    try { remove(); return; } catch (e) {
+      if (attempt >= RELEASE_RETRIES || !transientRemoveError(e)) return;
+      sleepSync(LOCK_RETRY_MS);
+    }
+  }
+}
+
 function cleanupOwnedLock(lockPath: string, token: string): void {
-  try { rmSync(join(lockPath, token), { force: true }); } catch { /* no longer ours */ }
-  try { rmdirSync(lockPath); } catch { /* replacement or malformed claim remains */ }
+  // No longer ours, or a replacement / malformed claim remains (ENOTEMPTY):
+  // both leave the directory alone.
+  retryRemoval(() => rmSync(join(lockPath, token), { force: true }));
+  retryRemoval(() => rmdirSync(lockPath));
 }
 
 function reclaimStaleLock(lockPath: string): boolean {
   let stat;
   try { stat = statSync(lockPath); } catch { return true; }
-  if (Date.now() - stat.mtimeMs <= LOCK_STALE_MS) return false;
+  const age = Date.now() - stat.mtimeMs;
 
   if (!stat.isDirectory()) {
+    if (age <= LOCK_STALE_MS) return false;
     try { rmSync(lockPath, { force: true }); return true; } catch { return false; }
   }
   let observed: string[];
   try { observed = readdirSync(lockPath); } catch { return true; }
+  if (observed.length === 0) {
+    if (age <= EMPTY_LOCK_GRACE_MS) return false;
+    try { rmdirSync(lockPath); return true; } catch { return false; }
+  }
+  if (age <= LOCK_STALE_MS) return false;
   for (const entry of observed) {
     try {
       const owner = JSON.parse(readFileSync(join(lockPath, entry), "utf-8")) as { pid?: unknown };

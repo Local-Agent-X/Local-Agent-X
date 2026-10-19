@@ -8,12 +8,14 @@
  * (withOpLock) around every RMW, fail-open on a leaked lock.
  */
 import { describe, it, expect, afterAll, vi } from "vitest";
-import { mkdtempSync, mkdirSync, rmSync, existsSync, readFileSync, writeFileSync, utimesSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readdirSync, rmSync, existsSync, readFileSync, writeFileSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import type { Op } from "./types.js";
 
 const fsReads = vi.hoisted(() => ({ operations: 0 }));
+// Runs after a lock token is written: a test plants a rival claim there.
+const lockWrite = vi.hoisted(() => ({ after: null as (() => void) | null }));
 vi.mock("node:fs", async (importActual) => {
   const actual = await importActual<typeof import("node:fs")>();
   return {
@@ -22,6 +24,10 @@ vi.mock("node:fs", async (importActual) => {
       if (typeof path === "string" && path.endsWith("operation.json")) fsReads.operations++;
       return (actual.readFileSync as (...args: unknown[]) => unknown)(path, ...rest);
     }) as typeof actual.readFileSync,
+    writeFileSync: ((path: unknown, ...rest: unknown[]) => {
+      (actual.writeFileSync as (...args: unknown[]) => unknown)(path, ...rest);
+      if (typeof path === "string" && /operation\.lock[\\/]/.test(path)) lockWrite.after?.();
+    }) as typeof actual.writeFileSync,
   };
 });
 
@@ -189,6 +195,47 @@ describe("withOpLock — per-opId cross-process lockfile", () => {
     expect(tryWithOpLock(live, () => "stolen")).toEqual({ acquired: false });
     expect(existsSync(join(lockOf(live), "live-token"))).toBe(true);
     rmSync(lockOf(live), { recursive: true, force: true });
+  });
+});
+
+// On Windows a release's rmdir can fail while a scanner holds the folder: the
+// token is gone, the directory stays, and its mtime reads as a fresh claim.
+describe("withOpLock — an empty lock directory is not a claim", () => {
+  it("an empty lock left by a failed release no longer blocks for two seconds", () => {
+    const id = "op_lock_empty_left";
+    writeOp(mkOp(id));
+    mkdirSync(lockOf(id));
+    const recent = new Date(Date.now() - 1_000);
+    utimesSync(lockOf(id), recent, recent);
+    expect(tryWithOpLock(id, () => "written")).toEqual({ acquired: true, value: "written" });
+    expect(existsSync(lockOf(id))).toBe(false);
+  });
+
+  it("a just-created empty lock is left to its creator for a moment", () => {
+    const id = "op_lock_empty_fresh";
+    writeOp(mkOp(id));
+    mkdirSync(lockOf(id));
+    const t0 = Date.now();
+    expect(tryWithOpLock(id, () => "written")).toEqual({ acquired: true, value: "written" });
+    expect(Date.now() - t0).toBeGreaterThanOrEqual(200);
+  });
+
+  it("a caller that finds a rival claim beside its own token backs off and leaves the rival's", () => {
+    const id = "op_lock_rival";
+    writeOp(mkOp(id));
+    lockWrite.after = () => {
+      lockWrite.after = null;
+      writeFileSync(join(lockOf(id), "rival-token"), JSON.stringify({ token: "rival-token", pid: process.pid }));
+    };
+    let ran = false;
+    try {
+      expect(tryWithOpLock(id, () => { ran = true; })).toEqual({ acquired: false });
+      expect(ran).toBe(false);
+      expect(readdirSync(lockOf(id))).toEqual(["rival-token"]);
+    } finally {
+      lockWrite.after = null;
+      rmSync(lockOf(id), { recursive: true, force: true });
+    }
   });
 });
 

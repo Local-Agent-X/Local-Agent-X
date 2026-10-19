@@ -8,12 +8,12 @@
  * adapters only emit reports.
  */
 import type { Adapter } from "./adapter-contract.js";
-import type { ProviderStateEnvelope } from "./types.js";
 import type { CommitTurnMessage } from "./checkpoint.js";
 import type { Op } from "../ops/types.js";
 import type { DriveTurnResult, DriveTurnOptions } from "./turn-loop/types.js";
 import { resolveTurnLoopDeps, type TurnLoopDeps } from "./turn-loop/turn-deps.js";
 import { runModelCall, modelCallSignals } from "./turn-loop/model-call.js";
+import { commitTurnInput } from "./turn-loop/commit-input.js";
 import { createTurnMiddlewarePhases, directiveSkipsToolDispatch } from "./turn-loop/middleware-phases.js";
 import { applyCommittedDirective } from "./turn-loop/apply-directive.js";
 import { bankEarnedFires } from "./turn-loop/guard-fire.js";
@@ -77,7 +77,6 @@ export async function driveTurn(
   const modelCall = await runModelCall(op, adapter, input, turnIdx, { emit, publishStreamChunk, createIdleWatchdog, readIdleTimeoutMs, extractText });
   if (modelCall.kind === "ended") return modelCall.turnResult;
   const { call } = modelCall;
-  const { result, toolCalls, observedTools, assistantText, modelMs } = call;
 
   // Cancel-aware bail BEFORE tool dispatch and BEFORE commit. The adapter
   // has already returned (via abort or natural completion); the worker's
@@ -92,7 +91,7 @@ export async function driveTurn(
   const toolDispatchStart = Date.now();
   const { toolMessages, toolSummary } = directiveSkipsToolDispatch(middlewareDirective)
     ? { toolMessages: [] as CommitTurnMessage[], toolSummary: [] }
-    : await dispatchTools(op.id, turnIdx, toolCalls, opts.isCancelled);
+    : await dispatchTools(op.id, turnIdx, call.toolCalls, opts.isCancelled);
   const toolDispatchMs = Date.now() - toolDispatchStart;
   if (opts.isCancelled?.()) {
     return { terminalReason: null, toolCount: toolSummary.length, messageCount: 0, cancelled: true };
@@ -101,24 +100,10 @@ export async function driveTurn(
   // ── Phase 3: afterToolExecution middlewares ── (only when no directive yet)
   middlewareDirective ??= await phases.afterToolExecution(call, toolMessages, toolSummary);
 
-  // Stamp the compacted-view marker from buildTurnInput onto the envelope
-  // being committed — an EXPLICIT boolean on every turn, not just true on
-  // compacted ones. The stamp doubles as an era marker: rows without the
-  // boolean predate reliable recording (pre-stamp compactions, pre-2026-06-26
-  // observedTools gaps) and lastTurnUsage refuses to anchor on them. Adapters
-  // never set it; without the stamp the next turn would anchor context sizing
-  // on usage that measured the compacted view against the full replay
-  // (see ProviderStateEnvelope.viewCompacted).
-  const providerState: ProviderStateEnvelope = {
-    ...result.providerState,
-    viewCompacted: input.viewCompacted === true,
-  };
-  const middlewareAborted = middlewareDirective?.kind === "abort";
-
   // Decide terminal reason + assemble the commit-message list, running the
   // retract / failure-nudge / continuation-guard / render-verify side
   // effects. See turn-loop/decide-outcome.ts.
-  const { terminalReason, allMessages, terminalOutcome, earnedFires } = await decideTurnOutcome({
+  const outcome = await decideTurnOutcome({
     op,
     turnIdx,
     middlewareDirective,
@@ -134,41 +119,22 @@ export async function driveTurn(
     return { terminalReason: null, toolCount: toolSummary.length, messageCount: 0, cancelled: true };
   }
 
-  const learningSessionId = terminalOutcome ? resolveLearningSessionId(op) : null;
-  commitTurn({
-    op,
-    leaseClaim: opts.leaseClaim,
-    turnIdx,
-    providerState,
-    messages: allMessages,
-    toolCallSummary: toolSummary,
-    observedTools,
-    terminalReason,
-    redirectConsumed: pendingRedirect != null,
-    redirectInstructionId: pendingRedirect?.instructionId,
-    redirectText: pendingRedirect?.text,
-    modelMs,
-    toolDispatchMs,
-    trace: result.trace,
-    learnedOutcome: terminalOutcome ?? undefined,
-    learningSessionId: learningSessionId ?? undefined,
-    // A middleware abort's note is the op's failure reason (commitTurn stamps it at the failed transition).
-    failureReason: middlewareAborted ? (middlewareDirective!.message?.trim() || `Turn aborted by ${middlewareDirective!.firedBy}.`) : undefined,
-    nextTurnPivot: middlewareDirective?.kind === "nudge" && middlewareDirective.metadata?.strategyPivot
-      ? { message: middlewareDirective.message, firedBy: middlewareDirective.firedBy, metadata: { strategyPivot: middlewareDirective.metadata.strategyPivot } }
-      : undefined,
-  });
+  const learningSessionId = outcome.terminalOutcome ? resolveLearningSessionId(op) : null;
+  commitTurn(commitTurnInput({
+    op, leaseClaim: opts.leaseClaim, turnIdx, input, pendingRedirect, call,
+    toolSummary, toolDispatchMs, directive: middlewareDirective, outcome, learningSessionId,
+  }));
   if (learningSessionId) requestSkillReviewForOp(op, learningSessionId, turnIdx); // post-commit ONLY — see record-outcome.ts
 
   // Tier 1.C: per-turn snapshot of any app files this turn wrote/edited.
   // Powers the IDE topbar's ↺ Revert dropdown so the user can undo a bad
   // edit without asking the agent to fix what it just broke.
-  void snapshotTouchedApps(toolCalls, turnIdx);
+  void snapshotTouchedApps(call.toolCalls, turnIdx);
 
   // Fires earned inside decideTurnOutcome. Banked HERE because the message each
   // describes lived only in `allMessages` until commitTurn above, with the
   // cancel bail in between — same ordering contract as the records below.
-  bankEarnedFires(op.id, turnIdx, earnedFires);
+  bankEarnedFires(op.id, turnIdx, outcome.earnedFires);
 
   // Nudge materialization, the abort bubble and the abort/suspend fire records
   // all wait for the durable turn — see apply-directive.ts for that ordering
@@ -178,9 +144,9 @@ export async function driveTurn(
   }
 
   return {
-    terminalReason,
+    terminalReason: outcome.terminalReason,
     toolCount: toolSummary.length,
-    messageCount: allMessages.length,
+    messageCount: outcome.allMessages.length,
     cancelled: false,
     middlewareDirective: middlewareDirective
       ? {

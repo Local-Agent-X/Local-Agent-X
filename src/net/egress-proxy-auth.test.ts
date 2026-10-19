@@ -7,6 +7,7 @@ import { createServer as createTcpServer, connect as netConnect, type Server } f
 import { request as httpRequest } from "node:http";
 import { afterEach, describe, expect, it } from "vitest";
 import { proxyAuthorizationHeader, startEgressProxy, type EgressProxy } from "./egress-proxy-core.js";
+import { bindablePortRange } from "./bindable-ports.test-helper.js";
 
 const active: Array<{ close: () => Promise<void> }> = [];
 afterEach(async () => { await Promise.all(active.splice(0).map((p) => p.close())); });
@@ -47,27 +48,10 @@ async function occupy(port: number): Promise<Server> {
   return s;
 }
 
-/** A free contiguous range of `size` ports, found by binding ephemeral ports. */
-async function freeRange(size: number): Promise<{ from: number; to: number }> {
-  for (let attempt = 0; attempt < 20; attempt++) {
-    const probe = createTcpServer();
-    const from = await new Promise<number>((resolve) => probe.listen(0, "127.0.0.1", () => { const a = probe.address(); resolve(typeof a === "object" && a ? a.port : 0); }));
-    await new Promise<void>((r) => probe.close(() => r()));
-    const servers: Server[] = [];
-    let ok = true;
-    for (let p = from; p < from + size; p++) {
-      try { servers.push(await occupyQuiet(p)); } catch { ok = false; break; }
-    }
-    await Promise.all(servers.map((s) => new Promise<void>((r) => s.close(() => r()))));
-    if (ok) return { from, to: from + size - 1 };
-  }
-  throw new Error("no free port range found");
-}
-
-function occupyQuiet(port: number): Promise<Server> {
-  const s = createTcpServer();
-  return new Promise((resolve, reject) => { s.once("error", reject); s.listen(port, "127.0.0.1", () => resolve(s)); });
-}
+// Not from the ephemeral range: a range found by listen(0) is exactly where the
+// next listen(0) in a parallel test file lands, and that file took the port
+// this one meant to fall through to.
+const freeRange = bindablePortRange;
 
 describe("egress proxy — port range", () => {
   it("binds the first free port of the range and reports it", async () => {

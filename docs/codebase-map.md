@@ -12,7 +12,7 @@ statically or by `import()` (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1804 non-test source files · 0 god files (>400 LOC).
+**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1805 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -29,9 +29,9 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/browser/` | 46 | 86 | XL |  |
 | `src/tool-policy/` | 46 | 21 | L |  |
 | `src/data-lineage/` | 43 | 11 | L |  |
+| `src/util/` | 40 | 3 | S |  |
 | `src/local-runtimes/` | 39 | 25 | XL |  |
 | `src/threat/` | 39 | 13 | L |  |
-| `src/util/` | 39 | 3 | S |  |
 | `src/auth/` | 37 | 11 | L |  |
 | `src/session/` | 36 | 7 | L |  |
 | `src/chat-ws/` | 30 | 23 | L |  |
@@ -71,12 +71,12 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/codex-client/` | 8 | 6 | M |  |
 | `src/telegram-bridge/` | 8 | 6 | M |  |
 | `src/auto-build/` | 7 | 52 | XL |  |
+| `src/net/` | 7 | 4 | M |  |
 | `src/android/` | 6 | 7 | M |  |
 | `src/app-renderer/` | 6 | 7 | M |  |
 | `src/app-scaffold/` | 6 | 4 | M |  |
 | `src/credentials/` | 6 | 1 | S |  |
 | `src/mcp-client/` | 6 | 10 | L |  |
-| `src/net/` | 6 | 3 | M |  |
 | `src/embedding-providers/` | 4 | 8 | M |  |
 | `src/hooks/` | 4 | 3 | M |  |
 | `src/language-intel/` | 4 | 5 | M |  |

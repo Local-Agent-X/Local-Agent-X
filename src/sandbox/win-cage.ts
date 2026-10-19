@@ -41,7 +41,7 @@ import { homedir } from "node:os";
 // Windows paths whatever the host: the helper, the sandbox user and the profile
 // only exist on Windows, and the tests run on every CI runner.
 import { join, resolve, sep } from "node:path/win32";
-import { shellProxyPortRange } from "../net/shell-egress-proxy.js";
+import { shellProxyPortRange, type PortRange } from "../net/shell-proxy-ports.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("sandbox.win-cage");
@@ -56,10 +56,9 @@ export const WIN_CAGE_SANDBOX_USER = "lax-sandbox";
 
 /** The loopback ports the fence permits. The decision is "all of them"; the
  *  upstream helper caps a permit at 50 ports (see the header), so for now it
- *  is the proxy's range, and the wide permit waits for LAX's own helper build.
- *  A function, not a constant: the range is read from the environment, and
- *  this module loads inside the sandbox facade's import graph. */
-export function winCageLoopbackPermit(): { from: number; to: number } {
+ *  is the proxy's range — the decision the proxy binds by, never a copy of it
+ *  — and the wide permit waits for LAX's own helper build. */
+export function winCageLoopbackPermit(): Promise<PortRange> {
   return shellProxyPortRange();
 }
 /** The widest permit the upstream helper (0.0.1) accepts. */
@@ -240,7 +239,7 @@ export function winCageEnforcesSync(): boolean {
     enforces = { ok: false, installed: false, reason: status?.detail ?? "not Windows" };
     return false;
   }
-  const inFlight: Promise<void> = probeFence(status.helper)
+  const inFlight: Promise<void> = probeFence(status.helper, status.portRange)
     .catch((e): WinCageProof => ({ ok: false, installed: true, reason: `the fence proof failed to run: ${(e as Error).message}` }))
     .then((r) => {
       // An install or uninstall forgot the proof while this one ran: its
@@ -275,12 +274,21 @@ function currentProof(): WinCageProof | null {
   return enforces;
 }
 
-async function probeFence(helper: string): Promise<WinCageProof> {
+async function probeFence(helper: string, installedPermit: string | undefined): Promise<WinCageProof> {
   // The loopback probe needs a listener; run both probes in a child node so
   // the mode resolver (sync) can call this. The listener takes the first
   // free port of the proxy's range — the one loopback destination the cage
-  // exists to reach.
-  const range = shellProxyPortRange();
+  // exists to reach. No free range is a cage with no route out, said as such.
+  let range: PortRange;
+  try {
+    range = await winCageLoopbackPermit();
+  } catch (e) {
+    return { ok: false, installed: true, reason: (e as Error).message };
+  }
+  // The helper reports the installed permit only when it can read it.
+  if (installedPermit && installedPermit !== `${range.from}-${range.to}`) {
+    return { ok: false, installed: true, reason: `the cage permits loopback ports ${installedPermit} but the shell egress proxy binds ${range.from}-${range.to}; remove and reinstall the cage so its permit names the proxy's range` };
+  }
   const script = `
     const net = require("node:net"); const { execFileSync } = require("node:child_process");
     const helper = ${JSON.stringify(helper)};
@@ -313,7 +321,7 @@ async function probeFence(helper: string): Promise<WinCageProof> {
     return { ok: false, installed: true, reason: `the fence probe could not run: ${(e as Error).message.split("\n")[0]}` };
   }
   if (result.offBox !== "blocked") return { ok: false, installed: true, reason: `the fence is not active: a connect from the cage to an off-machine address was ${result.offBox}` };
-  if (result.loopback !== "reached") return { ok: false, installed: true, reason: `loopback is not reachable from the cage: a connect to a proxy-range port was ${result.loopback}` };
+  if (result.loopback !== "reached") return { ok: false, installed: true, reason: `loopback is not reachable from the cage: a connect to a port of the proxy's range ${range.from}-${range.to} was ${result.loopback}; if the cage was installed with another range, remove and reinstall it` };
   return { ok: true, installed: true, reason: "" };
 }
 

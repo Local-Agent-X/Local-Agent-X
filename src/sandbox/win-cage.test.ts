@@ -6,16 +6,45 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // The proof's two process calls — the helper's `status`, and the child node
 // that runs both fence probes — answered here, so no helper is needed. With
 // `hold` set, a fence probe waits in `held` until the test answers it.
+// The provisioning script is spawned, never run: `spawned` keeps its argv.
 type ProbeDone = (error: Error | null, stdout: string) => void;
-const child = vi.hoisted(() => ({ status: "", probe: "", hold: false, held: [] as Array<(error: Error | null, stdout: string) => void> }));
-vi.mock("node:child_process", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("node:child_process")>()),
-  execFileSync: () => child.status,
-  execFile: (_file: string, _args: string[], _opts: unknown, done: ProbeDone) => { if (child.hold) child.held.push(done); else done(null, child.probe); },
+const child = vi.hoisted(() => ({ status: "", probe: "", hold: false, held: [] as Array<(error: Error | null, stdout: string) => void>, scripts: [] as string[], spawned: [] as string[][] }));
+vi.mock("node:child_process", async (importOriginal) => {
+  const { EventEmitter } = await import("node:events");
+  return {
+    ...(await importOriginal<typeof import("node:child_process")>()),
+    execFileSync: () => child.status,
+    execFile: (_file: string, args: string[], _opts: unknown, done: ProbeDone) => {
+      child.scripts.push(args[1]);
+      if (child.hold) child.held.push(done); else done(null, child.probe);
+    },
+    spawn: (_cmd: string, args: string[]) => {
+      child.spawned.push(args);
+      const proc = Object.assign(new EventEmitter(), { stdout: new EventEmitter(), stderr: new EventEmitter() });
+      setTimeout(() => proc.emit("exit", 0), 0);
+      return proc;
+    },
+  };
+});
+
+// The range the port owner chose; every test sets it. The proxy's bind is
+// captured, not made, so a test can name any range.
+const ports = vi.hoisted(() => ({ range: { from: 60090, to: 60099 }, error: null as Error | null, bound: [] as Array<{ from: number; to: number } | undefined> }));
+vi.mock("../net/shell-proxy-ports.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../net/shell-proxy-ports.js")>()),
+  shellProxyPortRange: async () => { if (ports.error) throw ports.error; return { ...ports.range }; },
+}));
+vi.mock("../net/egress-proxy-core.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../net/egress-proxy-core.js")>()),
+  startEgressProxy: async (options: { ports?: { from: number; to: number } }) => {
+    ports.bound.push(options.ports);
+    const port = options.ports?.from ?? 0;
+    return { url: `http://lax:t@127.0.0.1:${port}`, port, close: async () => {} };
+  },
 }));
 
 import { _resetWinCageProbe, onWinCageProofSettled, parseHelperStatus, underUserProfile, winCageEnforces, winCageEnforcesSync, winCageEnvOverlay, winCageHelperDir, winCageLoopbackPermit, winCageProbePending, winCageProofView, wrapForWinCage, WIN_CAGE_HELPER_ENV, WIN_CAGE_HELPER_MAX_PERMIT_WIDTH, WIN_CAGE_SANDBOX_USER, WIN_CAGE_SUBLAYER_GUID, type WinCageProof } from "./win-cage.js";
-import { installExitDetail, stagedWinCageHelper } from "./win-cage-install.js";
+import { installExitDetail, installWinCage, stagedWinCageHelper } from "./win-cage-install.js";
 import { winCageReadGrants } from "./win-cage-grants.js";
 
 describe("win-cage — what the caged shell is granted to read", () => {
@@ -70,14 +99,50 @@ describe("win-cage — where the helper may live", () => {
     expect(underUserProfile("C:\\ProgramData\\Local Agent X\\bin\\srt-win.exe", "C:\\Users\\peter")).toBe(false);
   });
 });
-import { SHELL_PROXY_PORTS_DEFAULT } from "../net/shell-egress-proxy.js";
+import { closeShellEgressProxy, ensureShellEgressProxy } from "../net/shell-egress-proxy.js";
+import { SHELL_PROXY_PORT_CANDIDATES, ShellProxyPortsUnavailableError } from "../net/shell-proxy-ports.js";
 
+// The permit was once compared with the proxy's DEFAULT range, so a run with
+// LAX_SHELL_PROXY_PORTS set (needed while Windows reserved the default) read
+// a correct permit as wrong. It is held to the range the proxy binds instead.
 describe("win-cage — the loopback permit", () => {
-  it("covers the proxy's range and fits the upstream helper's 50-port cap (open loopback waits for LAX's own helper build)", () => {
-    const permit = winCageLoopbackPermit();
-    expect(permit.from).toBeLessThanOrEqual(SHELL_PROXY_PORTS_DEFAULT.from);
-    expect(permit.to).toBeGreaterThanOrEqual(SHELL_PROXY_PORTS_DEFAULT.to);
-    expect(permit.to - permit.from + 1).toBeLessThanOrEqual(WIN_CAGE_HELPER_MAX_PERMIT_WIDTH);
+  const CHOSEN = [...SHELL_PROXY_PORT_CANDIDATES, { from: 61090, to: 61099 }];
+  const prevHelper = process.env[WIN_CAGE_HELPER_ENV];
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "lax-cage-helper-"));
+    writeFileSync(join(dir, "srt-win.exe"), "");
+    process.env[WIN_CAGE_HELPER_ENV] = join(dir, "srt-win.exe");
+    ports.error = null;
+    ports.bound = [];
+    child.spawned = [];
+  });
+  afterEach(async () => {
+    await closeShellEgressProxy();
+    if (prevHelper === undefined) delete process.env[WIN_CAGE_HELPER_ENV]; else process.env[WIN_CAGE_HELPER_ENV] = prevHelper;
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("is the range the proxy binds and the install provisions, whichever range was chosen, within the helper's 50-port cap", async () => {
+    for (const range of CHOSEN) {
+      ports.range = range;
+      await closeShellEgressProxy();
+      await ensureShellEgressProxy();
+      expect(ports.bound.at(-1)).toEqual(range);
+      expect(await winCageLoopbackPermit()).toEqual(range);
+      expect((await installWinCage()).ok).toBe(true);
+      const argv = child.spawned.at(-1)!;
+      expect(argv[argv.indexOf("-PortRange") + 1]).toBe(`${range.from}-${range.to}`);
+      expect(range.to - range.from + 1).toBeLessThanOrEqual(WIN_CAGE_HELPER_MAX_PERMIT_WIDTH);
+    }
+  });
+
+  it("no free range installs nothing and says why", async () => {
+    ports.error = new ShellProxyPortsUnavailableError(["60090-60099 overlaps the range Windows reserved (60063-60162)"]);
+    const result = await installWinCage();
+    expect(result).toMatchObject({ ok: false, code: 4 });
+    expect(result.detail).toMatch(/No loopback port range is free.*60063-60162/);
+    expect(child.spawned).toEqual([]);
   });
 });
 
@@ -93,6 +158,7 @@ describe("win-cage — the helper's status, read the way the settings page needs
 
   it("names the helper's install exit codes", () => {
     expect(installExitDetail(0)).toBe("installed");
+    expect(installExitDetail(4)).toMatch(/port range/);
     expect(installExitDetail(10)).toMatch(/cancelled/);
     expect(installExitDetail(13)).toMatch(/different port range/);
     expect(installExitDetail(99)).toMatch(/code 99/);
@@ -139,6 +205,9 @@ describe("win-cage — the fence proof's lifecycle", () => {
     child.status = INSTALLED;
     child.hold = false;
     child.held = [];
+    child.scripts = [];
+    ports.range = { from: 60090, to: 60099 };
+    ports.error = null;
     _resetWinCageProbe();
   });
   afterEach(() => {
@@ -204,6 +273,7 @@ describe("win-cage — the fence proof's lifecycle", () => {
     winCageEnforcesSync();
     _resetWinCageProbe();
     winCageEnforcesSync();
+    await flush(); // the probe starts once the port range is in hand
     const [before, after] = child.held;
     expect(child.held).toHaveLength(2);
 
@@ -220,11 +290,34 @@ describe("win-cage — the fence proof's lifecycle", () => {
     expect(heard[0]).toMatchObject({ ok: false, installed: true });
   });
 
+  it("proves loopback inside the range the proxy binds", async () => {
+    ports.range = { from: 47090, to: 47099 };
+    child.probe = PROVEN;
+    expect(await winCageEnforces()).toBe(true);
+    expect(child.scripts.at(-1)).toContain("for (let p = 47090; p <= 47099 ");
+  });
+
+  it("an installed permit naming another range fails the proof with both ranges, before any probe", async () => {
+    ports.range = { from: 47090, to: 47099 };
+    child.status = JSON.stringify({ user: { cred_present: true, marker_user_sid: "S-1-5-21-9-1005", user: { exists: true } }, wfp: { port_range: "60090-60099" } });
+    expect(await winCageEnforces()).toBe(false);
+    expect(child.scripts).toEqual([]);
+    expect(winCageProofView().proofFailure).toMatch(/permits loopback ports 60090-60099 but the shell egress proxy binds 47090-47099/);
+  });
+
+  it("no free range fails the proof with the reason the settings page shows", async () => {
+    ports.error = new ShellProxyPortsUnavailableError(["47090-47099 has no port that binds"]);
+    expect(await winCageEnforces()).toBe(false);
+    expect(child.scripts).toEqual([]);
+    expect(winCageProofView().proofFailure).toMatch(/No loopback port range is free.*47090-47099 has no port that binds/);
+  });
+
   it("an awaited proof follows a reset to the proof that replaced it", async () => {
     child.hold = true;
     const answer = winCageEnforces();
     _resetWinCageProbe();
     winCageEnforcesSync();
+    await flush(); // the probe starts once the port range is in hand
     const [before, after] = child.held;
     before(null, OPEN);
     await flush();

@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { startEgressProxy, type EgressProxy } from "./egress-proxy-core.js";
+import { shellProxyPortRange } from "./shell-proxy-ports.js";
 import { bridgeSocketPath, startShellEgressBridge, sweepStaleBridgeSockets, type ShellEgressBridge } from "./shell-egress-bridge.js";
 import { loadEgressConfig } from "../security/layer/network-policy.js";
 import { getRuntimeConfig } from "../config.js";
@@ -15,29 +16,6 @@ export type ShellEgressProxy = EgressProxy;
 
 function selfPort(): string {
   return process.env.LAX_PORT ?? String(getRuntimeConfig().port);
-}
-
-/**
- * The loopback ports the shell proxy may bind. Fixed, not ephemeral: a cage
- * that permits loopback to a range (the Windows fence) is configured before
- * any shell runs, so the proxy has to live where the permit points. Ten ports
- * leave room for a second LAX instance on the machine; the range sits just
- * above the one Anthropic's sandbox runtime uses by default (60080–60089) so
- * the two products never share a permit. `LAX_SHELL_PROXY_PORTS=from-to`
- * overrides it.
- */
-export const SHELL_PROXY_PORTS_DEFAULT = { from: 60090, to: 60099 } as const;
-
-export function shellProxyPortRange(): { from: number; to: number } {
-  const raw = process.env.LAX_SHELL_PROXY_PORTS;
-  const m = raw ? /^(\d{1,5})-(\d{1,5})$/.exec(raw.trim()) : null;
-  if (!m) return { ...SHELL_PROXY_PORTS_DEFAULT };
-  const from = Number(m[1]);
-  const to = Number(m[2]);
-  if (from < 1024 || to > 65535 || to < from) {
-    throw new Error(`LAX_SHELL_PROXY_PORTS must be "from-to" with 1024 <= from <= to <= 65535, got "${raw}"`);
-  }
-  return { from, to };
 }
 
 function recordPolicyDeny(info: { target: string; reason: string }): void {
@@ -124,13 +102,14 @@ export function ensureShellEgressProxy(): Promise<ShellEgressProxy> {
   if (!sharedProxy) {
     // The token is per proxy instance: it lives only in the URL the caged
     // shell's env carries, never in a log line or an audit row.
-    const starting: Promise<ShellEgressProxy> = startEgressProxy({
-      ports: shellProxyPortRange(),
+    // The port range is the one the Windows cage permits (shell-proxy-ports.ts).
+    const starting: Promise<ShellEgressProxy> = shellProxyPortRange().then((ports) => startEgressProxy({
+      ports,
       authToken: randomBytes(16).toString("hex"),
       selfPort,
       viaTag: "1.1 lax-shell-egress",
       onPolicyDeny: recordPolicyDeny,
-    }).then(async (proxy) => {
+    })).then(async (proxy) => {
       if (!teardownRegistered) {
         teardownRegistered = true;
         registerLocalOnlyTeardown("shell-egress-proxy", closeShellEgressProxy);

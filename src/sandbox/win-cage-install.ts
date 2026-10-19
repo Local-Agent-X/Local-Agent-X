@@ -9,11 +9,13 @@ import { existsSync } from "node:fs";
 // Windows paths whatever the host, as in win-cage.ts.
 import { join } from "node:path/win32";
 import { _resetWinCageProbe, resolveWinCageHelper, winCageLoopbackPermit } from "./win-cage.js";
+import type { PortRange } from "../net/shell-proxy-ports.js";
 
 const INSTALL_EXIT: Record<number, string> = {
   0: "installed",
   2: "the cage helper is not present",
   3: "the cage helper's signature was rejected",
+  4: "no loopback port range for the shell egress proxy",
   10: "the administrator prompt was cancelled",
   12: "the network filters could not be installed",
   13: "already installed with a different port range or user; remove it first",
@@ -58,11 +60,16 @@ function runProvision(args: string[]): Promise<{ ok: boolean; code: number; deta
 /** Provision the sandbox user and the fence. One administrator prompt. The
  *  helper comes from the machine-wide folder when it is already there, else
  *  from the copy the installer staged with this install. */
-export function installWinCage(): Promise<{ ok: boolean; code: number; detail: string }> {
-  const { from, to } = winCageLoopbackPermit();
+export async function installWinCage(): Promise<{ ok: boolean; code: number; detail: string }> {
   const helper = resolveWinCageHelper() ?? stagedWinCageHelper();
-  if (!helper) return Promise.resolve({ ok: false, code: 2, detail: installExitDetail(2) });
-  return runProvision(["-Helper", helper, "-PortRange", `${from}-${to}`]);
+  if (!helper) return { ok: false, code: 2, detail: installExitDetail(2) };
+  let permit: PortRange;
+  try {
+    permit = await winCageLoopbackPermit();
+  } catch (e) {
+    return { ok: false, code: 4, detail: `${installExitDetail(4)} — ${(e as Error).message}` };
+  }
+  return runProvision(["-Helper", helper, "-PortRange", `${permit.from}-${permit.to}`]);
 }
 
 /** Remove the fence, the sandbox user and the machine-wide helper. One administrator prompt. */

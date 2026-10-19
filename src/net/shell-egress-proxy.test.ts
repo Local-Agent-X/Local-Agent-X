@@ -57,37 +57,11 @@ import {
   closeShellEgressProxy,
   currentShellEgressProxyUrl,
   ensureShellEgressProxy,
-  shellProxyPortRange,
-  SHELL_PROXY_PORTS_DEFAULT,
   type ShellEgressProxy,
 } from "./shell-egress-proxy.js";
+import { shellProxyPortRange } from "./shell-proxy-ports.js";
 
 const originalPort = process.env.LAX_PORT;
-
-describe("shellProxyPortRange", () => {
-  const original = process.env.LAX_SHELL_PROXY_PORTS;
-  afterEach(() => {
-    if (original === undefined) delete process.env.LAX_SHELL_PROXY_PORTS;
-    else process.env.LAX_SHELL_PROXY_PORTS = original;
-  });
-
-  it("defaults to the LAX range, above the one Anthropic's runtime uses", () => {
-    delete process.env.LAX_SHELL_PROXY_PORTS;
-    expect(shellProxyPortRange()).toEqual(SHELL_PROXY_PORTS_DEFAULT);
-    expect(SHELL_PROXY_PORTS_DEFAULT.from).toBeGreaterThan(60089);
-  });
-
-  it("honors LAX_SHELL_PROXY_PORTS=from-to and refuses a malformed or unprivileged-hostile value", () => {
-    process.env.LAX_SHELL_PROXY_PORTS = "61000-61003";
-    expect(shellProxyPortRange()).toEqual({ from: 61000, to: 61003 });
-    process.env.LAX_SHELL_PROXY_PORTS = "80-90";
-    expect(() => shellProxyPortRange()).toThrow(/1024/);
-    process.env.LAX_SHELL_PROXY_PORTS = "61010-61000";
-    expect(() => shellProxyPortRange()).toThrow(/from-to/);
-    process.env.LAX_SHELL_PROXY_PORTS = "nonsense";
-    expect(shellProxyPortRange()).toEqual(SHELL_PROXY_PORTS_DEFAULT);
-  });
-});
 
 function requestThroughProxy(proxy: ShellEgressProxy, target: string): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
@@ -147,9 +121,9 @@ describe("shell egress proxy", () => {
     expect(restarted.url).toMatch(/^http:\/\/lax:[0-9a-f]{32}@127\.0\.0\.1:\d+$/);
   });
 
-  it("binds inside the fixed port range with a fresh token per start", async () => {
+  it("binds inside the chosen port range with a fresh token per start", async () => {
     const proxy = await ensureShellEgressProxy();
-    const range = shellProxyPortRange();
+    const range = await shellProxyPortRange();
     expect(proxy.port).toBeGreaterThanOrEqual(range.from);
     expect(proxy.port).toBeLessThanOrEqual(range.to);
     const token = new URL(proxy.url).password;
@@ -220,12 +194,37 @@ describe("currentShellEgressProxyUrl (live mirror)", () => {
   });
 });
 
+describe("shell egress proxy — its port range", () => {
+  const prev = process.env.LAX_SHELL_PROXY_PORTS;
+  afterEach(() => {
+    if (prev === undefined) delete process.env.LAX_SHELL_PROXY_PORTS; else process.env.LAX_SHELL_PROXY_PORTS = prev;
+  });
+
+  it("a range that cannot be decided fails the start with the reason and leaves no URL behind, and the next ask retries", async () => {
+    process.env.LAX_SHELL_PROXY_PORTS = "80-90";
+    await expect(ensureShellEgressProxy()).rejects.toThrow(/LAX_SHELL_PROXY_PORTS must be/);
+    expect(currentShellEgressProxyUrl()).toBeNull();
+    delete process.env.LAX_SHELL_PROXY_PORTS;
+    const proxy = await ensureShellEgressProxy();
+    const range = await shellProxyPortRange();
+    expect(proxy.port).toBeGreaterThanOrEqual(range.from);
+    expect(proxy.port).toBeLessThanOrEqual(range.to);
+  });
+});
+
+// A start reaches startEgressProxy once the port range is in hand, a tick
+// after ensure() returns.
+async function startsReached(n: number): Promise<void> {
+  while (manualStarts.length < n) await new Promise((r) => setImmediate(r));
+}
+
 describe("singleton race guards", () => {
   it("a close() racing a pending start never leaves the dead URL in the mirror", async () => {
     manualMode.value = true;
     const startA = ensureShellEgressProxy();
     const closing = closeShellEgressProxy();
 
+    await startsReached(1);
     manualStarts[0].release(true);
     await startA;
     await closing;
@@ -246,6 +245,7 @@ describe("singleton race guards", () => {
     closing.catch(() => { /* close() surfaces A's failure; tolerated */ });
 
     const startB = ensureShellEgressProxy();
+    await startsReached(2);
     manualStarts[1].release(true);
     const proxyB = await startB;
     expect(currentShellEgressProxyUrl()).toBe(proxyB.url);
@@ -287,8 +287,8 @@ describe("cageLoopbackPorts — the admitted loopback set every cage reads", () 
   });
 
   it("admits the live proxy's port, the self port and the registered services; withholds the reserved debugging port and the rest of the range", async () => {
-    const { cageLoopbackPorts, currentShellEgressProxyUrl, ensureShellEgressProxy, shellProxyPortRange } = await import("./shell-egress-proxy.js");
-    const range = shellProxyPortRange();
+    const { cageLoopbackPorts, currentShellEgressProxyUrl, ensureShellEgressProxy } = await import("./shell-egress-proxy.js");
+    const range = await shellProxyPortRange();
     // No proxy yet: no route out is admitted (fail closed), the rest stands.
     const before = cageLoopbackPorts();
     for (let p = range.from; p <= range.to; p++) expect(before, `proxy port ${p} before start`).not.toContain(p);

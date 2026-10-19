@@ -8,7 +8,8 @@ import { join } from "node:path";
 
 import { generateSeatbeltProfile, isSeatbeltAvailable, seatbeltProfileLoads, wrapForSeatbelt, SANDBOX_EXEC, GUARDED_UNIX_SOCKET_ALLOW, GUARDED_UNIX_SOCKET_DENY } from "./seatbelt.js";
 import { HOME_RELATIVE_DENY_DIRS, HOME_RELATIVE_DENY_FILES, SERVER_SCOPE_EXEMPT_DIRS, GUARDED_SCOPE_EXEMPT_DIRS } from "./validate.js";
-import { cageLoopbackPorts, shellProxyPortRange } from "../net/shell-egress-proxy.js";
+import { cageLoopbackPorts } from "../net/shell-egress-proxy.js";
+import { shellProxyPortRange } from "../net/shell-proxy-ports.js";
 import { installRootWriteRule } from "../security/layer/install-root.js";
 import { installRootDenialHint } from "./denial-hints.js";
 
@@ -124,7 +125,7 @@ describe("seatbelt profile generation", () => {
   // the one loopback port LAX must keep out of reach — the in-app browser's
   // debugging port — is withheld from the admitted set at its source
   // (security-config.ts reservedLoopbackPorts), not denied here.
-  it("guarded scope: no wholesale loopback allow in any scope, and no outbound loopback rule at all when nothing is admitted", () => {
+  it("guarded scope: no wholesale loopback allow in any scope, and no outbound loopback rule at all when nothing is admitted", async () => {
     const none = generateSeatbeltProfile(home, "guarded", []);
     expect(none).toContain("(deny network*)");
     expect(none).not.toMatch(/\(allow network-outbound \(remote ip /);
@@ -136,7 +137,7 @@ describe("seatbelt profile generation", () => {
     // services), read per call so a service registered mid-session counts.
     const byDefault = generateSeatbeltProfile(home, "guarded");
     for (const p of cageLoopbackPorts()) expect(byDefault).toContain(`(allow network-outbound (remote ip "localhost:${p}"))`);
-    expect(byDefault).not.toContain(`"localhost:${shellProxyPortRange().to}"`);
+    expect(byDefault).not.toContain(`"localhost:${(await shellProxyPortRange()).to}"`);
   });
 
   it("the allowlist names only service and temp sockets, never a home directory or a host-control socket", () => {

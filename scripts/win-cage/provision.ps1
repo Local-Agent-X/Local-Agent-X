@@ -19,13 +19,17 @@
        the shell egress proxy's port range.
 
   Exit codes: the helper's own (0 installed, 10 UAC cancelled, 12 filters,
-  13 different range already installed, 14 user), plus 2 helper missing and
+  13 different range already installed, 14 user), plus 2 helper missing,
   3 signature rejected (-SignerLike names a signed executable, normally the
-  installer, whose publisher the helper must match).
+  installer, whose publisher the helper must match) and 4 no -PortRange.
+
+  -PortRange has no default: it is the range the app chose for its egress
+  proxy (src/net/shell-proxy-ports.ts), and a permit that names any other
+  range leaves the cage with no route out.
 #>
 param(
   [string]$Helper = "",
-  [string]$PortRange = "60090-60099",
+  [string]$PortRange = "",
   # The helper must be signed by the same publisher as this executable (the
   # installer that carried it). Nothing is checked when that executable is
   # itself unsigned: a developer build.
@@ -46,8 +50,15 @@ function Test-Admin {
   return ([Security.Principal.WindowsPrincipal]$id).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
+# Checked before the administrator prompt, so a bad call never asks for one.
+if (-not $Uninstall -and -not $PortRange) {
+  Write-Output "No -PortRange was given: pass the range the app chose for its egress proxy."
+  exit 4
+}
+
 if (-not (Test-Admin)) {
-  $argv = @("-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "`"$PSCommandPath`"", "-PortRange", $PortRange)
+  $argv = @("-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "`"$PSCommandPath`"")
+  if ($PortRange) { $argv += @("-PortRange", $PortRange) }
   if ($Helper) { $argv += @("-Helper", "`"$Helper`"") }
   if ($SignerLike) { $argv += @("-SignerLike", "`"$SignerLike`"") }
   if ($Uninstall) { $argv += "-Uninstall" }

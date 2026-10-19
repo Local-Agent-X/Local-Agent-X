@@ -17,7 +17,7 @@
 import type { AdapterReport } from "../../adapter-contract.js";
 import type { ProviderRequest } from "../../../providers/adapter/types.js";
 import { hasInjects } from "../../../agent-loop/inject-queue.js";
-import { isLoopbackOrPrivateUrl } from "../../../local-only-policy.js";
+import { isLocalModelEndpoint } from "../../../local-runtimes/model-endpoint.js";
 import { markServingChat } from "../../../local-runtimes/residency.js";
 import { createLogger } from "../../../logger.js";
 import { refusalError } from "../model-stop.js";
@@ -56,7 +56,7 @@ export async function streamOnce(
   // a false trip there would cut a healthy paid stream). Watches answer-text
   // deltas only: reasoning models legitimately produce repetitive
   // chain-of-thought, and thinking is bounded by max_tokens regardless.
-  const local = !!req.baseURL && isLoopbackOrPrivateUrl(req.baseURL);
+  const local = isLocalModelEndpoint(req.baseURL);
   const guard = local ? createDegenerateStreamGuard() : null;
   // A background call to this model now would wait behind this request, so
   // short-budget classifiers skip instead of queueing (residency.ts).

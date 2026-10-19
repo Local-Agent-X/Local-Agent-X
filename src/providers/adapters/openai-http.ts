@@ -16,7 +16,8 @@ import { toOpenAITools } from "../shared/tool-shape.js";
 import { hasNoToolSupport, markNoToolSupport, hasParamUnsupported, markParamUnsupported } from "../types.js";
 import { createLogger } from "../../logger.js";
 import { resolveReasoningParam } from "./openai-param-support.js";
-import { isLocalOnlyMode, isLoopbackUrl, isLoopbackOrPrivateUrl } from "../../local-only-policy.js";
+import { isLocalOnlyMode, isLoopbackUrl } from "../../local-only-policy.js";
+import { isLocalModelEndpoint } from "../../local-runtimes/model-endpoint.js";
 import {
   isReasoningEffortRejection,
   isTemperatureRejection,
@@ -65,13 +66,14 @@ export class OpenAIHttpAdapter extends BaseAdapter {
     const responseFormatAllowed =
       !!req.responseFormat && !hasParamUnsupported(req.baseURL, req.model, "response_format");
     // Output-token cap: explicit req.maxTokens wins on any endpoint; local
-    // endpoints (loopback or private-range — LAN runtimes) fall back to the
+    // endpoints (loopback, private-range, or a runtime the operator added by
+    // name — isLocalModelEndpoint) fall back to the
     // runaway default unless the caller measured the window and found no
     // completion budget (omitDefaultMaxTokens — see local-cap.ts); cloud
     // endpoints get NO default. See LOCAL_DEFAULT_MAX_TOKENS for why.
     const resolvedMaxTokens =
       req.maxTokens ??
-      (!req.omitDefaultMaxTokens && req.baseURL && isLoopbackOrPrivateUrl(req.baseURL)
+      (!req.omitDefaultMaxTokens && isLocalModelEndpoint(req.baseURL)
         ? LOCAL_DEFAULT_MAX_TOKENS
         : undefined);
     const maxTokensAllowed =

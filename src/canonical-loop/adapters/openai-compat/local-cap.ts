@@ -38,7 +38,7 @@
 import { LOCAL_DEFAULT_MAX_TOKENS } from "../../../providers/adapter/types.js";
 import { OUTPUT_RESERVE_TOKENS, type RequestFit } from "../../../context-manager/request-fit.js";
 import type { ContextWindowResolution } from "../../../context-manager/model-windows.js";
-import { isLoopbackOrPrivateUrl } from "../../../local-only-policy.js";
+import { isLocalModelEndpoint } from "../../../local-runtimes/model-endpoint.js";
 
 /** Below this completion budget, omit max_tokens instead of sending a stub cap. */
 export const MIN_USEFUL_COMPLETION_TOKENS = 256;
@@ -87,7 +87,7 @@ export function resolveLocalCap(args: {
   fit: RequestFit;
 }): LocalCapDecision {
   return clampLocalMaxTokens({
-    isLocalEndpoint: !!args.baseURL && isLoopbackOrPrivateUrl(args.baseURL),
+    isLocalEndpoint: isLocalModelEndpoint(args.baseURL),
     explicitMaxTokens: args.explicitMaxTokens,
     windowTokens: args.window.tokens,
     windowProvenance: args.window.provenance,

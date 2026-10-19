@@ -10,7 +10,7 @@
 import { hasParamUnsupported } from "../types.js";
 import { PROVIDERS, isHttpProvider } from "../registry.js";
 import { PROVIDER_IDS, type ProviderId } from "../provider-ids.js";
-import { isLoopbackOrPrivateUrl } from "../../local-only-policy.js";
+import { isLocalModelEndpoint } from "../../local-runtimes/model-endpoint.js";
 import { modelReplaysReasoning } from "../../local-runtimes/model-profile.js";
 import {
   clampNoneForCloud,
@@ -63,7 +63,7 @@ export function resolveReasoningParam(args: {
   effort: WireReasoningEffort | undefined;
 }): ReasoningParamDecision {
   const wantsOff = args.effort === THINKING_OFF;
-  const local = !!args.baseURL && isLoopbackOrPrivateUrl(args.baseURL);
+  const local = isLocalModelEndpoint(args.baseURL);
   const offHere = wantsOff && local;
   // A local model whose profile replays its reasoning needs the runtime's
   // think switch set: Ollama /v1 derives it from reasoning_effort, and its

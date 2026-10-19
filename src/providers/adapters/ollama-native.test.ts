@@ -10,6 +10,7 @@ import { _resetContextSizingForTests, ensureContextDecision } from "../../local-
 import { ContextSizingStore } from "../../local-runtimes/context-sizing-store.js";
 import { _resetModelProfilesForTests } from "../../local-runtimes/model-profile.js";
 import { fakeFetchJson, referenceRuntime, RTX_5090 } from "../../local-runtimes/context-sizing.test-helper.js";
+import { reloadSettings } from "../../settings.js";
 
 const ROOT = "http://127.0.0.1:11434";
 let dir: string;
@@ -100,6 +101,27 @@ describe("OllamaNativeAdapter request", () => {
     expect((sent as { params: Record<string, unknown> }).params).not.toHaveProperty("messages");
     // The completed request is observed for verification, off the turn.
     await expect.poll(() => psReads).toBe(1);
+  });
+
+  // Terminal-Bench (2026-10-18): Ollama reached by NAME from a container got
+  // no num_predict, so a thinking model generated until the context was full.
+  it("caps output for a runtime the operator added by name, as for loopback", async () => {
+    const remote = "http://host.docker.internal:11434";
+    writeFileSync(join(dir, "settings.json"), JSON.stringify({ localRuntimes: [{ kind: "ollama", baseUrl: remote }] }));
+    reloadSettings();
+    try {
+      responses.push(() => ndjson([done()]));
+      await collect(req({ baseURL: `${remote}/v1` }));
+      expect(posts[0].options).toMatchObject({ num_predict: 16_384 });
+      writeFileSync(join(dir, "settings.json"), "{}");
+      reloadSettings();
+      responses.push(() => ndjson([done()]));
+      await collect(req({ baseURL: `${remote}/v1` }));
+      expect(posts[1].options).not.toHaveProperty("num_predict");
+    } finally {
+      rmSync(join(dir, "settings.json"), { force: true });
+      reloadSettings();
+    }
   });
 
   it("sends no num_ctx for a model LAX has not sized, and does not observe it", async () => {

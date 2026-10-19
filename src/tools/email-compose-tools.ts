@@ -2,8 +2,8 @@ import { createTransport } from "nodemailer";
 import type { ServerEvent, ToolDefinition, ToolResult } from "../types.js";
 import { getSmtpFrom, vault, writeEmailJson } from "./email-config.js";
 import { getSecretsStoreSingleton } from "../secrets.js";
-import { gateSecretDestination } from "../secret-destination-gate.js";
-import { onEventOf, sessionIdOf, toolCallIdOf } from "../tool-execution/internal-args.js";
+import { gateSecretDestinations } from "../secret-destination-gate.js";
+import { sessionIdOf } from "../tool-execution/internal-args.js";
 
 export const emailDraft: ToolDefinition = {
   name: "email_draft",
@@ -84,16 +84,14 @@ export const emailSetup: ToolDefinition = {
     const store = getSecretsStoreSingleton()!;
     const bindings: Array<[string, string]> = [[smtpSecretName, `smtp://${smtpHost}:${smtpPort}`]];
     if (imapHost && imapSecretName && store.has(imapSecretName)) bindings.push([imapSecretName, `imap://${imapHost}:${imapPort}`]);
-    for (const [secretName, destination] of bindings) {
-      const gate = await gateSecretDestination({
-        store, name: secretName, destination, sessionId: sessionIdOf(args) ?? "",
+    const gate = await gateSecretDestinations(
+      bindings.map(([secretName, destination]) => ({
+        name: secretName, destination,
         purpose: `Send the ${secretName} password to ${destination} as the mail login for ${secretName === smtpSecretName ? smtpUser : imapUser}`,
-        toolName: "email_setup",
-        toolCallId: toolCallIdOf(args),
-        onEvent: onEventOf(args),
-      });
-      if (!gate.allowed) return gate.result;
-    }
+      })),
+      { store, sessionId: sessionIdOf(args) ?? "", toolName: "email_setup", call: args },
+    );
+    if (!gate.allowed) return gate.result;
 
     if (verify) {
       try {

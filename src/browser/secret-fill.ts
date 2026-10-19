@@ -32,8 +32,8 @@ import { withEmulationNotice } from "../tools/browser-tools/emulation-banner.js"
 import { registerRedactedSecretValue, vaultSecretSource } from "../security/secrets/index.js";
 import type { SecretElementDescriptor, SecretFillOutcome } from "./secret-ops.js";
 import { sameSite } from "./registrable-domain.js";
-import { requestSecretDestinationApproval } from "../secret-destination-gate.js";
-import { onEventOf, sessionIdOf, toolCallIdOf, unattendedCall, userGrantOf } from "../tool-execution/internal-args.js";
+import { requestSecretDestinationApprovals } from "../secret-destination-gate.js";
+import { sessionIdOf, userGrantOf } from "../tool-execution/internal-args.js";
 import type { ServerEvent } from "../types.js";
 
 import { createLogger } from "../logger.js";
@@ -231,14 +231,10 @@ export function createBrowserSecretFillTool(
       // the card, for this one fill: nothing is persisted for the origin.
       if (gateOutcome === "ask" && userGrantOf(args)) gateOutcome = "granted";
       if (gateOutcome === "ask") {
-        const asked = await requestSecretDestinationApproval({
-          store: secretsStore, name, destination: currentOrigin, sessionId,
-          purpose: `Fill ${name} into the form on ${currentOrigin}${sameOrigin ? "" : ` (it was saved for ${secretOrigin})`}`,
-          toolName: "browser_fill_from_secret",
-          toolCallId: toolCallIdOf(args),
-          onEvent: onEventOf(args),
-          unattended: unattendedCall(args),
-        });
+        const asked = await requestSecretDestinationApprovals(
+          [{ name, destination: currentOrigin, purpose: `Fill ${name} into the form on ${currentOrigin}${sameOrigin ? "" : ` (it was saved for ${secretOrigin})`}` }],
+          { store: secretsStore, sessionId, toolName: "browser_fill_from_secret", call: args },
+        );
         if (!asked.allowed) {
           if (asked.result.status === "declined") auditLog({ event: "fill_denied", secret: name, reason: "user_declined", origin: currentOrigin, session: sessionId });
           else auditLog({ event: "fill_denied", secret: name, reason: "first_use_approval_required", origin: currentOrigin, session: sessionId });

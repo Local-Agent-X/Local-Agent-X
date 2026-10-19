@@ -28,6 +28,10 @@ vi.mock("../ops/pre-bless.js", () => ({ getActivePreBlessedSecrets: () => new Se
 
 import { emailSetup } from "./email-compose-tools.js";
 import { SecretsStore, setSecretsStoreSingleton } from "../secrets.js";
+import { parkNeedsUser } from "../tool-execution/deferred-call.js";
+import { inboxStore } from "../inbox/index.js";
+import { declineInboxItem } from "../inbox/approvals.js";
+import type { ToolCallContext } from "../tool-execution/context.js";
 
 let dir: string;
 let store: SecretsStore;
@@ -50,7 +54,7 @@ afterEach(() => {
 });
 
 const setup = (args: Record<string, unknown>) =>
-  emailSetup.execute({ _sessionId: "chat-1", _onEvent: () => undefined, smtp_host: "smtp.fastmail.com", smtp_port: 465, smtp_user: "me@fastmail.com", smtp_from: "me@fastmail.com", smtp_secret_name: "FASTMAIL", ...args });
+  emailSetup.execute({ _sessionId: "chat-1", _onEvent: () => undefined, _callContext: "local", smtp_host: "smtp.fastmail.com", smtp_port: 465, smtp_user: "me@fastmail.com", smtp_from: "me@fastmail.com", smtp_secret_name: "FASTMAIL", ...args });
 
 describe("email_setup — the SMTP host is a destination the password must be approved for", () => {
   it("asks once for smtp://host:port before the verify connection, then connects; a later setup does not ask", async () => {
@@ -95,5 +99,55 @@ describe("email_setup — the SMTP host is a destination the password must be ap
     expect(res.isError).toBeFalsy();
     expect(approvals.asked).toHaveLength(0);
     expect(transports.created).toHaveLength(1);
+  });
+});
+
+// A background op setting up mail: nobody is watching, so the hosts the
+// password would reach raise no card. The pipeline parks the call in the
+// user's inbox (parkNeedsUser, as run-sandboxed.ts does), naming every host
+// the call needs, and the user's yes there is what connects and keeps them.
+describe("email_setup — in an unattended run", () => {
+  const SESSION = "op-mail-1700000000000";
+  const request = { smtp_host: "smtp.fastmail.com", smtp_port: 465, smtp_user: "me@fastmail.com", smtp_from: "me@fastmail.com", smtp_secret_name: "FASTMAIL", imap_host: "imap.fastmail.com", imap_secret_name: "FASTMAIL" };
+  const background = (stamps: Record<string, unknown> = {}) =>
+    emailSetup.execute({ _sessionId: SESSION, _onEvent: () => undefined, _callContext: "api", ...request, ...stamps });
+  const park = (result: Awaited<ReturnType<typeof background>>) => parkNeedsUser({
+    tc: { id: "tc-op", name: "email_setup", arguments: JSON.stringify(request) },
+    args: { ...request }, sessionId: SESSION, callContext: "api", msgs: [],
+  } as unknown as ToolCallContext, result);
+
+  it("raises no card, connects to nothing, and parks one inbox item naming both hosts", async () => {
+    const res = await background();
+    expect(approvals.asked).toHaveLength(0);
+    expect(transports.created).toEqual([]);
+    expect(existsSync(join(dir, "email.json"))).toBe(false);
+    const reason = String(res.metadata?.needsUser);
+    expect(reason).toContain(`the first use of "FASTMAIL" at smtp://smtp.fastmail.com:465 needs the user's yes`);
+    expect(reason).toContain(`the first use of "FASTMAIL" at imap://imap.fastmail.com:993 needs the user's yes`);
+    const parked = park(res);
+    const items = inboxStore().list().filter((i) => i.kind === "approval");
+    expect(items).toHaveLength(1);
+    expect(items[0].deferredCall).toMatchObject({ toolName: "email_setup", args: request, callContext: "api" });
+    expect(parked.metadata).toMatchObject({ layer: "approval", deferredTo: items[0].id });
+    expect(parked.content).not.toContain("app-password");
+  });
+
+  it("the user's yes from the inbox connects on the re-run and keeps both hosts", async () => {
+    const res = await background({ _userGrant: "grant-1" });
+    expect(res.isError).toBeFalsy();
+    expect(approvals.asked).toHaveLength(0);
+    expect(transports.created).toEqual([{ host: "smtp.fastmail.com", port: 465 }]);
+    expect(store.isDestinationApproved("FASTMAIL", "smtp://smtp.fastmail.com:465")).toBe(true);
+    expect(store.isDestinationApproved("FASTMAIL", "imap://imap.fastmail.com:993")).toBe(true);
+  });
+
+  it("a declined call stays refused: the next run connects to nothing and waits on the user again", async () => {
+    const item = park(await background()).metadata?.deferredTo as string;
+    expect(declineInboxItem(item)).toMatchObject({ ok: true, resolution: "declined" });
+    const again = await background();
+    expect(again.metadata?.needsUser).toBeTruthy();
+    expect(approvals.asked).toHaveLength(0);
+    expect(transports.created).toEqual([]);
+    expect(store.isDestinationApproved("FASTMAIL", "smtp://smtp.fastmail.com:465")).toBe(false);
   });
 });

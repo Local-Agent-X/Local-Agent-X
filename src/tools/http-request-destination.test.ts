@@ -48,6 +48,10 @@ vi.mock("../ops/pre-bless.js", () => ({ getActivePreBlessedSecrets: () => new Se
 
 const { createHttpRequestTool, isCredentialHeader } = await import("./http-request.js");
 const { SecretsStore } = await import("../secrets.js");
+const { parkNeedsUser } = await import("../tool-execution/deferred-call.js");
+const { inboxStore } = await import("../inbox/index.js");
+const { declineInboxItem } = await import("../inbox/approvals.js");
+type ToolCallContext = import("../tool-execution/context.js").ToolCallContext;
 
 const KEY = "sk_live_" + "Ab12".repeat(8);
 let dir: string;
@@ -66,7 +70,7 @@ beforeEach(() => {
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
 const call = (args: Record<string, unknown>) =>
-  createHttpRequestTool(store).execute({ _sessionId: "chat-1", _toolCallId: "tc-1", _onEvent: emit, ...args });
+  createHttpRequestTool(store).execute({ _sessionId: "chat-1", _toolCallId: "tc-1", _onEvent: emit, _callContext: "local", ...args });
 
 describe("http_request — a secret goes only where its ladder allows", () => {
   it("the first use at a new host asks once, naming the host, then sends; the next call does not ask", async () => {
@@ -121,6 +125,62 @@ describe("http_request — a secret goes only where its ladder allows", () => {
     const res = await call({ url: "https://api.example.com/public", headers: { Authorization: "Bearer short" } });
     expect(res.isError).toBeFalsy();
     expect(approvals.asked).toHaveLength(0);
+  });
+});
+
+// A scheduled job's request: nobody is watching, so the first use at a new
+// host raises no card. The pipeline parks the call in the user's inbox
+// (parkNeedsUser, as run-sandboxed.ts does), and the user's yes there is what
+// sends it: the re-run carries the grant, and the pair is kept as a card's is.
+describe("http_request — in an unattended run", () => {
+  const SESSION = "cron-billing-1700000000000";
+  const request = { url: "https://api.stripe.com/v1/charges", method: "POST", headers: { Authorization: "Bearer {{STRIPE_KEY}}" }, body: "{}" };
+  const cronRun = (stamps: Record<string, unknown> = {}) =>
+    createHttpRequestTool(store).execute({ _sessionId: SESSION, _toolCallId: "tc-cron", _onEvent: emit, _callContext: "cron", ...request, ...stamps });
+  const park = (result: Awaited<ReturnType<typeof cronRun>>) => parkNeedsUser({
+    tc: { id: "tc-cron", name: "http_request", arguments: JSON.stringify(request) },
+    args: { ...request }, sessionId: SESSION, callContext: "cron", msgs: [],
+  } as unknown as ToolCallContext, result);
+  const prevDataDir = process.env.LAX_DATA_DIR;
+  beforeEach(() => { process.env.LAX_DATA_DIR = dir; });
+  afterEach(() => { if (prevDataDir === undefined) delete process.env.LAX_DATA_DIR; else process.env.LAX_DATA_DIR = prevDataDir; });
+
+  it("raises no card and parks the call in the user's inbox; nothing is sent", async () => {
+    const res = await cronRun();
+    expect(approvals.asked).toHaveLength(0);
+    expect(sent.calls).toHaveLength(0);
+    expect(String(res.metadata?.needsUser)).toContain(`the first use of "STRIPE_KEY" at https://api.stripe.com needs the user's yes`);
+
+    const parked = park(res);
+    const items = inboxStore().list().filter((i) => i.kind === "approval");
+    expect(items).toHaveLength(1);
+    expect(items[0].deferredCall).toMatchObject({ toolName: "http_request", args: request, callContext: "cron" });
+    expect(items[0].body).toContain("Send STRIPE_KEY to api.stripe.com");
+    expect(parked.status).toBe("blocked");
+    expect(parked.metadata).toMatchObject({ layer: "approval", deferredTo: items[0].id });
+    expect(parked.content).not.toContain(KEY);
+    expect(store.isDestinationApproved("STRIPE_KEY", "https://api.stripe.com")).toBe(false);
+  });
+
+  it("the user's yes from the inbox sends it on the re-run, and the next run does not park", async () => {
+    const res = await cronRun({ _userGrant: "grant-1" });
+    expect(res.isError).toBeFalsy();
+    expect(approvals.asked).toHaveLength(0);
+    expect(sent.calls[0].headers.Authorization).toBe(`Bearer ${KEY}`);
+    expect(store.isDestinationApproved("STRIPE_KEY", "https://api.stripe.com")).toBe(true);
+
+    expect((await cronRun()).isError).toBeFalsy();
+    expect(sent.calls).toHaveLength(2);
+  });
+
+  it("a declined call stays refused: the next run sends nothing and waits on the user again", async () => {
+    const item = park(await cronRun()).metadata?.deferredTo as string;
+    expect(declineInboxItem(item)).toMatchObject({ ok: true, resolution: "declined" });
+    const again = await cronRun();
+    expect(again.metadata?.needsUser).toBeTruthy();
+    expect(approvals.asked).toHaveLength(0);
+    expect(sent.calls).toHaveLength(0);
+    expect(store.isDestinationApproved("STRIPE_KEY", "https://api.stripe.com")).toBe(false);
   });
 });
 

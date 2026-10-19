@@ -22,7 +22,7 @@ import {
   BROWSER_USER_AGENT,
   isCredentialHeader,
 } from "./web-egress.js";
-import { onEventOf, sessionIdOf, toolCallIdOf } from "../tool-execution/internal-args.js";
+import { sessionIdOf } from "../tool-execution/internal-args.js";
 import { paidMediaApisAllowed, paidMediaEndpointKind, paidMediaOffMessage } from "./image-tools/paid-media.js";
 
 export { isCredentialHeader } from "./web-egress.js";
@@ -152,12 +152,10 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
         if (missing.length > 0) {
           return err(`Missing secrets: ${missing.join(", ")}. Use request_secret to ask the user for these credentials first.`);
         }
-        const gate = await gateSecretDestinations(boundNames, {
-          store: secrets, destination: url, sessionId, toolName: "http_request",
-          toolCallId: toolCallIdOf(args),
-          onEvent: onEventOf(args),
-          purpose: (name) => `Send ${name} to ${new URL(url).host} (${method} ${url})`,
-        });
+        const gate = await gateSecretDestinations(
+          boundNames.map((name) => ({ name, destination: url, purpose: `Send ${name} to ${new URL(url).host} (${method} ${url})` })),
+          { store: secrets, sessionId, toolName: "http_request", call: args },
+        );
         if (!gate.allowed) return gate.result;
       }
       /** The bound secrets the ladder does not allow at a redirect target. */

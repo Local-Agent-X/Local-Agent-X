@@ -18,6 +18,10 @@ vi.mock("../ops/pre-bless.js", () => ({ getActivePreBlessedSecrets: () => new Se
 import { connectorCreateTool } from "./connector-tools.js";
 import { parseManifest } from "../routes/connector-proxy.js";
 import { SecretsStore, setSecretsStoreSingleton } from "../secrets.js";
+import { parkNeedsUser } from "../tool-execution/deferred-call.js";
+import { inboxStore } from "../inbox/index.js";
+import { declineInboxItem } from "../inbox/approvals.js";
+import type { ToolCallContext } from "../tool-execution/context.js";
 
 let dir: string;
 let store: SecretsStore;
@@ -37,7 +41,7 @@ afterAll(() => {
 beforeEach(() => { approvals.answer = true; approvals.asked.length = 0; });
 
 function run(args: Record<string, unknown>): Promise<{ content: string; isError?: boolean; status?: string }> {
-  return connectorCreateTool.execute!({ _sessionId: "chat-1", _onEvent: () => undefined, ...args }) as Promise<{ content: string; isError?: boolean; status?: string }>;
+  return connectorCreateTool.execute!({ _sessionId: "chat-1", _onEvent: () => undefined, _callContext: "local", ...args }) as Promise<{ content: string; isError?: boolean; status?: string }>;
 }
 
 describe("connector_create", () => {
@@ -106,5 +110,58 @@ describe("connector_create — binding a stored secret to an upstream", () => {
     const r = await run({ name: "captured", upstream: "https://api.example.com", auth: { type: "header", header: "X-Api-Key", secret: "CAPTURED_KEY" }, allow: ["GET /v1/*"] });
     expect(r.isError).toBeFalsy();
     expect(approvals.asked).toHaveLength(0);
+  });
+});
+
+// A scheduled job defining a connector: nobody is watching, so binding a
+// stored secret to a new upstream raises no card. The pipeline parks the call
+// in the user's inbox (parkNeedsUser, as run-sandboxed.ts does), and the
+// user's yes there is what writes the manifest and keeps the pair.
+describe("connector_create — in an unattended run", () => {
+  const SESSION = "cron-markets-1700000000000";
+  const manifest = { name: "coinbase", upstream: "https://api.coinbase.com", auth: { type: "bearer", secret: "COINBASE_KEY" }, allow: ["GET /v2/prices/*"] };
+  const cronRun = (stamps: Record<string, unknown> = {}) =>
+    connectorCreateTool.execute!({ _sessionId: SESSION, _onEvent: () => undefined, _callContext: "cron", ...manifest, ...stamps });
+  const park = (result: Awaited<ReturnType<typeof cronRun>>) => parkNeedsUser({
+    tc: { id: "tc-cron", name: "connector_create", arguments: JSON.stringify(manifest) },
+    args: { ...manifest }, sessionId: SESSION, callContext: "cron", msgs: [],
+  } as unknown as ToolCallContext, result);
+  const file = () => join(dir, "connectors", "coinbase.json");
+  beforeEach(() => {
+    store.set("COINBASE_KEY", "coinbase-key-value-0123456789", { service: "Coinbase" });
+    store.revokeDestinationApproval("COINBASE_KEY", "https://api.coinbase.com");
+    rmSync(file(), { force: true });
+    rmSync(join(dir, "inbox.json"), { force: true });
+  });
+
+  it("raises no card and parks the call in the user's inbox; no manifest is written", async () => {
+    const r = await cronRun();
+    expect(approvals.asked).toHaveLength(0);
+    expect(existsSync(file())).toBe(false);
+    expect(String(r.metadata?.needsUser)).toContain(`the first use of "COINBASE_KEY" at https://api.coinbase.com needs the user's yes`);
+    const parked = park(r);
+    const items = inboxStore().list().filter((i) => i.kind === "approval");
+    expect(items).toHaveLength(1);
+    expect(items[0].deferredCall).toMatchObject({ toolName: "connector_create", args: manifest, callContext: "cron" });
+    expect(parked.metadata).toMatchObject({ layer: "approval", deferredTo: items[0].id });
+    expect(parked.content).not.toContain("coinbase-key-value");
+  });
+
+  it("the user's yes from the inbox writes the manifest on the re-run and keeps the pair", async () => {
+    const r = await cronRun({ _userGrant: "grant-1" });
+    expect(r.isError).toBeFalsy();
+    expect(approvals.asked).toHaveLength(0);
+    expect(existsSync(file())).toBe(true);
+    expect(store.isDestinationApproved("COINBASE_KEY", "https://api.coinbase.com")).toBe(true);
+  });
+
+  it("a declined call stays refused: the next run writes nothing and waits on the user again", async () => {
+    const item = park(await cronRun()).metadata?.deferredTo as string;
+    expect(declineInboxItem(item)).toMatchObject({ ok: true, resolution: "declined" });
+    const again = await cronRun();
+    expect(again.metadata?.needsUser).toBeTruthy();
+    expect(approvals.asked).toHaveLength(0);
+    expect(existsSync(file())).toBe(false);
+    expect(store.isDestinationApproved("COINBASE_KEY", "https://api.coinbase.com")).toBe(false);
   });
 });

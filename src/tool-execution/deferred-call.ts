@@ -14,7 +14,9 @@
 // the unattended shell gate (run-sandboxed.ts), and every gate inside a tool
 // that marks its refusal `needsUser` (tools/result-helpers.ts): the browser's
 // sensitive-page, download-release and CAPTCHA gates (browser-tools/gates.ts)
-// and the credential fill's first-use ask (secret-destination-gate.ts). Those
+// and the first use of a vault secret at a new destination
+// (secret-destination-gate.ts: the credential fill, http_request,
+// connector_create, email_setup). Those
 // cannot reach the inbox themselves, so run-sandboxed.ts parks their result
 // (parkNeedsUser) and hands them the user's grant as `_userGrant`.
 //

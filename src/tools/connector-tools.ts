@@ -2,7 +2,7 @@ import type { ServerEvent, ToolDefinition, ToolResult } from "../types.js";
 import { saveConnectorManifest, parseManifest, referencedSecrets } from "../routes/connector-proxy.js";
 import { getSecretsStoreSingleton } from "../secrets.js";
 import { gateSecretDestinations } from "../secret-destination-gate.js";
-import { onEventOf, sessionIdOf, toolCallIdOf } from "../tool-execution/internal-args.js";
+import { sessionIdOf } from "../tool-execution/internal-args.js";
 
 const NAME_RE = /^[a-z0-9][a-z0-9_-]*$/;
 
@@ -60,13 +60,10 @@ export const connectorCreateTool: ToolDefinition = {
     const referenced = referencedSecrets(parsed.manifest.auth);
     const stored = referenced.filter(n => secrets?.has(n));
     if (secrets && stored.length > 0) {
-      const gate = await gateSecretDestinations(stored, {
-        store: secrets, destination: parsed.manifest.upstream, sessionId: sessionIdOf(args) ?? "",
-        toolName: "connector_create",
-        toolCallId: toolCallIdOf(args),
-        onEvent: onEventOf(args),
-        purpose: (n) => `Send ${n} to ${parsed.manifest.upstream} through connector "${name}"`,
-      });
+      const gate = await gateSecretDestinations(
+        stored.map((n) => ({ name: n, destination: parsed.manifest.upstream, purpose: `Send ${n} to ${parsed.manifest.upstream} through connector "${name}"` })),
+        { store: secrets, sessionId: sessionIdOf(args) ?? "", toolName: "connector_create", call: args },
+      );
       if (!gate.allowed) return gate.result;
     }
 

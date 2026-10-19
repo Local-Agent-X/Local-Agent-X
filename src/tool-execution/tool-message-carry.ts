@@ -9,7 +9,9 @@
 // reaches a model.
 
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
-import { basename } from "node:path";
+// win32's basename splits on both separators: a path written on Windows still
+// loses its folders when the message is read on Linux, or after a sync.
+import { win32 } from "node:path";
 import type { KernelQuarantine, ToolBlockRecord, ToolResult, ToolResultStatus } from "../types.js";
 import { isBlockLayer } from "../types.js";
 import { BLOCKED_WITHOUT_RECOVERY, parseStatusHeader, renderToolResultForModel, statusOf } from "../tools/result-helpers.js";
@@ -36,7 +38,7 @@ export type CarriedToolMessage = { content?: unknown } & Partial<ToolMessageCarr
 export interface ToolEndMedia { kind: NonNullable<ToolResult["_media"]>["kind"]; name: string }
 
 export function mediaRefOf(media: ToolResult["_media"]): ToolEndMedia | undefined {
-  return media ? { kind: media.kind, name: basename(media.path) } : undefined;
+  return media ? { kind: media.kind, name: win32.basename(media.path) } : undefined;
 }
 
 /**

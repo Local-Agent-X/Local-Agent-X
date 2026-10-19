@@ -205,6 +205,7 @@ async function refreshSelectedCronJob() {
   const id = selectedJob.id;
   await loadCronJobs();
   selectedJob = cronJobs.find(j => j.id === id) || null;
+  if (!selectedJob) { backToMissionsList(); return; }
   renderCronDetail();
 }
 

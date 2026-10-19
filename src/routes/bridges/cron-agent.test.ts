@@ -29,7 +29,7 @@ afterEach(() => {
   rmSync(dataDir, { recursive: true, force: true });
 });
 
-async function call(method: "POST" | "PATCH", path: string, body: Record<string, unknown>, role: Role) {
+async function call(method: "POST" | "PATCH" | "DELETE", path: string, body: Record<string, unknown>, role: Role) {
   const req = Readable.from([Buffer.from(JSON.stringify(body))]) as Readable & { headers: Record<string, string> };
   req.headers = {};
   const res = {
@@ -170,5 +170,51 @@ describe("a mission's use of the user's signed-in browser", () => {
     expect(r.body.job?.useSignedInBrowser).toBeUndefined();
     expect(cron.get(job.id)?.useSignedInBrowser).toBeUndefined();
     expect(broadcastAll).toHaveBeenCalledWith(MISSIONS_CHANGED);
+  });
+});
+
+// Every tab's Missions list redraws from the broadcast: a route that changes a
+// mission without it leaves the other tabs showing the old state.
+describe("each mutating mission route tells every tab", () => {
+  it("toggle", async () => {
+    const job = cron.create("n", "1h", "p");
+    expect((await call("POST", `/api/cron/${job.id}/toggle`, {}, "operator")).status).toBe(200);
+    expect(broadcastAll).toHaveBeenCalledWith(MISSIONS_CHANGED);
+  });
+
+  it("run now", async () => {
+    const job = cron.create("n", "1h", "p");
+    expect((await call("POST", `/api/cron/${job.id}/run`, {}, "operator")).status).toBe(200);
+    expect(broadcastAll).toHaveBeenCalledWith(MISSIONS_CHANGED);
+  });
+
+  it("cancel, when a run was in flight to cancel", async () => {
+    const job = cron.create("n", "1h", "p");
+    expect((await call("POST", `/api/cron/${job.id}/cancel`, {}, "operator")).body).toMatchObject({ cancelled: false });
+    expect(broadcastAll).not.toHaveBeenCalled();
+    cron.registerRunAbort(job.id, new AbortController());
+    expect((await call("POST", `/api/cron/${job.id}/cancel`, {}, "operator")).body).toMatchObject({ cancelled: true });
+    expect(broadcastAll).toHaveBeenCalledWith(MISSIONS_CHANGED);
+  });
+
+  it("delete, when there was a mission to delete", async () => {
+    expect((await call("DELETE", "/api/cron/nope", {}, "operator")).body).toMatchObject({ deleted: false });
+    expect(broadcastAll).not.toHaveBeenCalled();
+    const job = cron.create("n", "1h", "p");
+    expect((await call("DELETE", `/api/cron/${job.id}`, {}, "operator")).body).toMatchObject({ deleted: true });
+    expect(broadcastAll).toHaveBeenCalledWith(MISSIONS_CHANGED);
+  });
+
+  it("clear error", async () => {
+    const job = cron.create("n", "1h", "p");
+    expect((await call("POST", `/api/cron/${job.id}/clear-error`, {}, "operator")).status).toBe(200);
+    expect(broadcastAll).toHaveBeenCalledWith(MISSIONS_CHANGED);
+  });
+
+  it("not for a mission that does not exist", async () => {
+    for (const action of ["toggle", "run", "cancel", "clear-error"]) {
+      expect((await call("POST", `/api/cron/nope/${action}`, {}, "operator")).status).toBe(404);
+    }
+    expect(broadcastAll).not.toHaveBeenCalled();
   });
 });

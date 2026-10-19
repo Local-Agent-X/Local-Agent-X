@@ -95,11 +95,14 @@ export const handleCronRoutes: RouteHandler = async (method, url, req, res, ctx,
     return true;
   }
   if (method === "DELETE" && url.pathname.match(/^\/api\/cron\/[^/]+$/)) {
-    json(200, { ok: true, deleted: ctx.cronService.delete(url.pathname.split("/").pop()!) }); return true;
+    const deleted = ctx.cronService.delete(url.pathname.split("/").pop()!);
+    if (deleted) missionsChanged();
+    json(200, { ok: true, deleted }); return true;
   }
   if (method === "POST" && url.pathname.match(/^\/api\/cron\/[^/]+\/toggle$/)) {
     const job = ctx.cronService.toggle(url.pathname.split("/")[3]);
     if (!job) { json(404, { error: "Job not found" }); return true; }
+    missionsChanged();
     json(200, { ok: true, job }); return true;
   }
   if (method === "POST" && url.pathname.match(/^\/api\/cron\/[^/]+\/run$/)) {
@@ -108,12 +111,14 @@ export const handleCronRoutes: RouteHandler = async (method, url, req, res, ctx,
     if (!job) { json(404, { error: "Job not found" }); return true; }
     json(200, { ok: true, message: `Job "${job.name}" triggered` });
     ctx.cronService.executeJob(job, { manual: true }).catch(() => {});
+    missionsChanged();
     return true;
   }
   if (method === "POST" && url.pathname.match(/^\/api\/cron\/[^/]+\/cancel$/)) {
     const id = url.pathname.split("/")[3];
     if (!ctx.cronService.get(id)) { json(404, { error: "Job not found" }); return true; }
     const cancelled = ctx.cronService.cancelRun(id);
+    if (cancelled) missionsChanged();
     json(200, { ok: true, cancelled });
     return true;
   }
@@ -121,6 +126,7 @@ export const handleCronRoutes: RouteHandler = async (method, url, req, res, ctx,
     const id = url.pathname.split("/")[3];
     const cleared = ctx.cronService.clearLastError(id);
     if (!cleared) { json(404, { error: "Job not found" }); return true; }
+    missionsChanged();
     json(200, { ok: true, job: ctx.cronService.get(id) });
     return true;
   }

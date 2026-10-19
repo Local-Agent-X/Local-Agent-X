@@ -11,40 +11,12 @@ import type { Adapter } from "./adapter-contract.js";
 import type { ProviderStateEnvelope } from "./types.js";
 import type { CommitTurnMessage } from "./checkpoint.js";
 import type { Op } from "../ops/types.js";
-import type { DriveTurnResult, DriveTurnOptions, MiddlewareDirective } from "./turn-loop/types.js";
-import type { FiredMiddlewareResult } from "./middlewares/host.js";
+import type { DriveTurnResult, DriveTurnOptions } from "./turn-loop/types.js";
 import { resolveTurnLoopDeps, type TurnLoopDeps } from "./turn-loop/turn-deps.js";
 import { runModelCall, modelCallSignals } from "./turn-loop/model-call.js";
-import { idleSuspension, middlewareSuspension, suspendedTurn } from "./turn-loop/suspension.js";
+import { createTurnMiddlewarePhases, directiveSkipsToolDispatch } from "./turn-loop/middleware-phases.js";
 import { applyCommittedDirective } from "./turn-loop/apply-directive.js";
-import { bankEarnedFires, firedResultFire } from "./turn-loop/guard-fire.js";
-
-// Map a per-phase middleware verdict (afterModelCall / afterToolExecution) to
-// the sticky MiddlewareDirective. Both phases translate abort/nudge/suspend the
-// same way — the first non-continue verdict wins, later phases only refine — so
-// the mapping lives here once instead of inline per phase. A `continue` verdict
-// falls through middlewareSuspension to null (no directive).
-function directiveFromPhaseResult(res: FiredMiddlewareResult): MiddlewareDirective | null {
-  if (res.kind === "abort") {
-    return {
-      kind: "abort",
-      reason: res.reason,
-      firedBy: res.firedBy ?? "unknown",
-      message: res.message,
-    };
-  }
-  if (res.kind === "nudge") {
-    return {
-      kind: "nudge",
-      reason: res.reason,
-      firedBy: res.firedBy ?? "unknown",
-      message: res.message,
-      metadata: res.metadata,
-      skipToolDispatch: res.skipToolDispatch,
-    };
-  }
-  return middlewareSuspension(res);
-}
+import { bankEarnedFires } from "./turn-loop/guard-fire.js";
 
 export type { DriveTurnResult, DriveTurnOptions } from "./turn-loop/types.js";
 export type { TurnLoopDeps } from "./turn-loop/turn-deps.js";
@@ -92,26 +64,13 @@ export async function driveTurn(
   // inter-agent messages bridged onto it.
   if (opConsumesInjects(op.type)) drainInjectsIntoTurn(op, turnIdx);
 
-  // ── Phase 1: beforeTurn middlewares ──
-  // Snapshot a fresh CanonicalLoopContext from disk + op state. A `nudge`
-  // here appends a synthetic user message at the CURRENT turnIdx so this
-  // turn's adapter sees it (mirrors agent-loop's beforeIteration→push-then-
-  // restart-iteration). An `abort` short-circuits the whole turn — no
-  // adapter call, no tool dispatch — and the worker exits.
-  const contextComposer = createTurnContextComposer(op, turnIdx);
-  const { middlewareStack } = contextComposer;
-  const beforeCtx = contextComposer.build();
-  const beforeRes = await runMiddlewarePhase(beforeCtx, "beforeTurn", middlewareStack);
-  if (beforeRes.kind === "abort") {
-    return middlewareAbortResult(op, turnIdx, beforeRes);
-  }
-  const beforeSuspension = suspendedTurn(op.id, turnIdx, beforeRes);
-  if (beforeSuspension) return beforeSuspension;
-  if (beforeRes.kind === "nudge") {
-    appendNudgeAsUserMessage(op.id, turnIdx, beforeRes.message, firedResultFire(beforeRes), beforeRes.metadata);
-    // Fall through — next read of op_messages (buildTurnInput, below) picks
-    // the nudge up and ships it to the adapter on this turn.
-  }
+  // ── Phase 1: beforeTurn middlewares ── (abort / suspend end the turn here)
+  const phases = createTurnMiddlewarePhases(op, turnIdx, {
+    createTurnContextComposer, runMiddlewarePhase, middlewareAbortResult,
+    appendNudgeAsUserMessage, buildToolResultsView, extractToolResultText,
+  });
+  const beforeTurnEnd = await phases.beforeTurn();
+  if (beforeTurnEnd) return beforeTurnEnd;
 
   const input = await buildTurnInput(op, turnIdx, pendingRedirect);
 
@@ -119,7 +78,6 @@ export async function driveTurn(
   if (modelCall.kind === "ended") return modelCall.turnResult;
   const { call } = modelCall;
   const { result, toolCalls, observedTools, assistantText, modelMs } = call;
-  let middlewareDirective: MiddlewareDirective | null = null;
 
   // Cancel-aware bail BEFORE tool dispatch and BEFORE commit. The adapter
   // has already returned (via abort or natural completion); the worker's
@@ -129,32 +87,10 @@ export async function driveTurn(
     return { terminalReason: null, toolCount: 0, messageCount: 0, cancelled: true };
   }
 
-  // ── Phase 2: afterModelCall middlewares ──
-  // Build a fresh context view from this turn's emitted assistant text +
-  // tool calls. Middlewares may MUTATE ctx.toolCalls (auto-build-app
-  // appends a synthetic build_app call) — we use the same array reference
-  // turn-loop will dispatch from, so any synthetic call lands in the
-  // toolCalls list before dispatchTools fires.
-  const afterModelCtx = contextComposer.build({
-    toolCalls,
-    assistantContent: assistantText,
-  });
-  // Wire the live toolCalls array so auto-build-app's push mutates the
-  // dispatcher's input (buildCanonicalLoopContext already passes it).
-  afterModelCtx.toolCalls = toolCalls;
-  // Thread this turn's REAL reasoning/usage signals so the empty-turn handling
-  // can tell a reasoning-burn turn from a genuinely empty one (HE-5).
-  const usageOut = (result.providerState?.providerPayload as { usageOutputTokens?: unknown } | undefined)?.usageOutputTokens;
-  afterModelCtx.hasReasoning = call.sawReasoning;
-  afterModelCtx.modelEnded = result.modelStop === "ended";
-  afterModelCtx.completionTokens = typeof usageOut === "number" ? usageOut : undefined;
-  const afterModelRes = await runMiddlewarePhase(afterModelCtx, "afterModelCall", middlewareStack);
-  middlewareDirective = directiveFromPhaseResult(afterModelRes);
-  middlewareDirective ??= idleSuspension(op.lane, call.adapterError);
+  // ── Phase 2: afterModelCall middlewares ── (the first sticky directive)
+  let middlewareDirective = await phases.afterModelCall(call);
   const toolDispatchStart = Date.now();
-  const skipToolDispatch = middlewareDirective?.kind === "abort"
-    || (middlewareDirective?.kind === "nudge" && middlewareDirective.skipToolDispatch === true);
-  const { toolMessages, toolSummary } = skipToolDispatch
+  const { toolMessages, toolSummary } = directiveSkipsToolDispatch(middlewareDirective)
     ? { toolMessages: [] as CommitTurnMessage[], toolSummary: [] }
     : await dispatchTools(op.id, turnIdx, toolCalls, opts.isCancelled);
   const toolDispatchMs = Date.now() - toolDispatchStart;
@@ -162,20 +98,8 @@ export async function driveTurn(
     return { terminalReason: null, toolCount: toolSummary.length, messageCount: 0, cancelled: true };
   }
 
-  // ── Phase 3: afterToolExecution middlewares ──
-  // Only run when an abort hasn't already short-circuited the turn. The
-  // first non-continue verdict from afterModelCall wins; afterToolExecution
-  // only refines (not overrides) — matches agent-loop's per-phase ordering.
-  if (middlewareDirective === null) {
-    const toolResultsView = buildToolResultsView(toolMessages, toolSummary, extractToolResultText);
-    const afterToolCtx = contextComposer.build({
-      toolCalls,
-      toolResults: toolResultsView,
-      assistantContent: assistantText,
-    });
-    const afterToolRes = await runMiddlewarePhase(afterToolCtx, "afterToolExecution", middlewareStack);
-    middlewareDirective = directiveFromPhaseResult(afterToolRes);
-  }
+  // ── Phase 3: afterToolExecution middlewares ── (only when no directive yet)
+  middlewareDirective ??= await phases.afterToolExecution(call, toolMessages, toolSummary);
 
   // Stamp the compacted-view marker from buildTurnInput onto the envelope
   // being committed — an EXPLICIT boolean on every turn, not just true on

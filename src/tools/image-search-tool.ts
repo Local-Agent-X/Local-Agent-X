@@ -1,6 +1,5 @@
 import type { ToolDefinition, ToolResult } from "../types.js";
-import { canonicalFetch, EgressRedirectBlocked } from "./web-egress.js";
-import { blockedResult } from "./web-search-tool.js";
+import { canonicalFetch, EgressRedirectBlocked, egressBlockedResult } from "./web-egress.js";
 import { wrapExternalContent } from "../sanitize.js";
 
 /**
@@ -145,7 +144,7 @@ export const imageSearchTool: ToolDefinition = {
     }
     // Every provider the chain reached was refused by the strict-mode
     // allowlist (or failed): name the first refused host so the user can allow it.
-    if (blocked) return blockedResult(blocked);
+    if (blocked) return egressBlockedResult(blocked, "Use results from allowed sites");
     return { content: lastErr ? `Image search failed: ${lastErr}` : "No images found.", isError: !!lastErr };
   },
 };

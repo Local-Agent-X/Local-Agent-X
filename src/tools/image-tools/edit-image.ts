@@ -6,7 +6,7 @@ import { FormData } from "undici";
 import { canonicalFetch } from "../web-egress.js";
 import {
   ok, err, okWithImage, resolveMediaProvider, resolveLocalImagePath, mediaProviderLabel, withMediaNote,
-  findRecentLocalImage, workspaceDir, PROMPT_REFS_EARLIER_IMAGE,
+  findRecentLocalImage, workspaceDir, PROMPT_REFS_EARLIER_IMAGE, mediaCallFailed,
 } from "./shared.js";
 import { requestCodexImage } from "./codex-images.js";
 import { noFreeMediaMessage, paidMediaApisAllowed, PAID_MEDIA_SETTING_LABEL } from "./paid-media.js";
@@ -227,21 +227,26 @@ export const editImageTool: ToolDefinition = {
 
     const imageRef = typeof args.image === "string" ? args.image.trim() : "";
     const sessionId = sessionIdOf(args);
-    let image = imageRef ? await loadImage(imageRef, sessionId) : null;
-    // Fall back to the most recent local image when none was passed (or the one
-    // passed couldn't load) and the prompt clearly refers to an earlier image.
-    if (!image && (!imageRef || PROMPT_REFS_EARLIER_IMAGE.test(prompt))) {
-      const recent = findRecentLocalImage();
-      if (recent) image = await loadImage(recent, sessionId);
+    const maskRef = typeof args.mask === "string" ? args.mask.trim() : "";
+    let image: LoadedImage | null = null;
+    let mask: LoadedImage | null = null;
+    try {
+      image = imageRef ? await loadImage(imageRef, sessionId) : null;
+      // Fall back to the most recent local image when none was passed (or the one
+      // passed couldn't load) and the prompt clearly refers to an earlier image.
+      if (!image && (!imageRef || PROMPT_REFS_EARLIER_IMAGE.test(prompt))) {
+        const recent = findRecentLocalImage();
+        if (recent) image = await loadImage(recent, sessionId);
+      }
+      if (image && maskRef) mask = await loadImage(maskRef, sessionId);
+    } catch (e) {
+      return mediaCallFailed(e, "Could not load the image to edit");
     }
     if (!image) {
       return err(imageRef
         ? `Could not load the source image: ${imageRef}`
         : "No source image to edit. Attach a photo (or pass `image`) for edit_image to modify.");
     }
-
-    const maskRef = typeof args.mask === "string" ? args.mask.trim() : "";
-    const mask = maskRef ? await loadImage(maskRef, sessionId) : null;
     if (maskRef && !mask) return err(`Could not load the mask image: ${maskRef}`);
 
     const size = typeof args.size === "string" && args.size.trim() ? args.size.trim() : "auto";
@@ -272,19 +277,19 @@ export const editImageTool: ToolDefinition = {
         );
       }
       try { return await editViaOpenai(prompt, openai.apiKey, image, mask, size); }
-      catch (e) { return err(`OpenAI image edit failed: ${(e as Error).message}`); }
+      catch (e) { return mediaCallFailed(e, "OpenAI image edit failed"); }
     }
     if (refusal) return err(refusal);
 
     // No mask — prompt-driven edit on the resolved backend.
     if (provider === "xai" && apiKey) {
       try { return withMediaNote(await editViaXai(prompt, apiKey, image, quality), note); }
-      catch (e) { return err(`xAI image edit failed: ${(e as Error).message}`); }
+      catch (e) { return mediaCallFailed(e, "xAI image edit failed"); }
     }
     if (provider === "codex" && apiKey) return withMediaNote(await editViaCodex(prompt, apiKey, image), note);
     if (provider === "openai" && apiKey) {
       try { return withMediaNote(await editViaOpenai(prompt, apiKey, image, null, size), note); }
-      catch (e) { return err(`OpenAI image edit failed: ${(e as Error).message}`); }
+      catch (e) { return mediaCallFailed(e, "OpenAI image edit failed"); }
     }
     if (!forced && !paidMediaApisAllowed()) return err(noFreeMediaMessage("edit"));
     return err(

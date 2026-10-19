@@ -6,7 +6,7 @@ import type { ToolDefinition, ToolResult } from "../../types.js";
 import { canonicalFetch } from "../web-egress.js";
 import { createLogger } from "../../logger.js";
 import { getRuntimeConfig } from "../../config.js";
-import { ok, err, okWithVideo, resolveMediaProvider, resolveLocalImagePath, imageFileToDataUrl, findRecentLocalImage, workspaceDir, PROMPT_REFS_EARLIER_IMAGE } from "./shared.js";
+import { ok, err, okWithVideo, resolveMediaProvider, resolveLocalImagePath, imageFileToDataUrl, findRecentLocalImage, workspaceDir, PROMPT_REFS_EARLIER_IMAGE, mediaCallFailed } from "./shared.js";
 import { noFreeMediaMessage, paidMediaApisAllowed } from "./paid-media.js";
 
 const xaiLogger = createLogger("image-tools.xai");
@@ -233,9 +233,8 @@ export const generateVideoTool: ToolDefinition = {
       } catch (e) {
         // Fall through to local CogVideoX on xAI failure — gives the user
         // a working fallback if SuperGrok hits the 403 allowlist gate.
-        const msg = (e as Error).message;
-        if (!/timeout|aborted/i.test(msg)) {
-          return err(`xAI video generation failed: ${msg}`);
+        if (!/timeout|aborted/i.test((e as Error).message)) {
+          return mediaCallFailed(e, "xAI video generation failed");
         }
       }
     }

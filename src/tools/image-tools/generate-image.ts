@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { ToolDefinition, ToolResult } from "../../types.js";
 import { canonicalFetch } from "../web-egress.js";
 import { getRuntimeConfig } from "../../config.js";
-import { ok, err, okWithImage, resolveMediaProvider, mediaProviderLabel, withMediaNote, workspaceDir } from "./shared.js";
+import { ok, err, okWithImage, resolveMediaProvider, mediaProviderLabel, withMediaNote, workspaceDir, mediaCallFailed } from "./shared.js";
 import { requestCodexImage } from "./codex-images.js";
 import { noFreeMediaMessage, paidMediaApisAllowed } from "./paid-media.js";
 import { CODEX_IMAGE_MODEL } from "../../codex-client/images.js";
@@ -195,14 +195,14 @@ export const generateImageTool: ToolDefinition = {
 
     if (provider === "xai" && apiKey) {
       try { return withMediaNote(await generateViaXai(prompt, apiKey, args.aspect as string | undefined, Boolean(args.quality)), note); }
-      catch (e) { return err(`xAI image generation failed: ${(e as Error).message}`); }
+      catch (e) { return mediaCallFailed(e, "xAI image generation failed"); }
     }
 
     if (provider === "codex" && apiKey) return withMediaNote(await generateViaCodex(prompt, apiKey), note);
 
     if (provider === "openai" && apiKey) {
       try { return withMediaNote(await generateViaOpenai(prompt, apiKey), note); }
-      catch (e) { return err(`OpenAI image generation failed: ${(e as Error).message}`); }
+      catch (e) { return mediaCallFailed(e, "OpenAI image generation failed"); }
     }
 
     // Fall back to local Stable Diffusion

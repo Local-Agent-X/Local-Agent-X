@@ -21,7 +21,8 @@ vi.mock("../../settings.js", async (orig) => ({
   ...(await orig<typeof import("../../settings.js")>()),
   loadSettings: () => ({ allowPaidMediaApis: true }),
 }));
-vi.mock("../web-egress.js", () => ({
+vi.mock("../web-egress.js", async (orig) => ({
+  ...(await orig<typeof import("../web-egress.js")>()),
   canonicalFetch: async (url: string) => {
     if (url.includes("/images/generations")) {
       return { ok: true, json: async () => ({ data: [{ url: "https://cdn.example.com/out.png" }] }) };

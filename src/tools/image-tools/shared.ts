@@ -16,9 +16,19 @@ import { isBillableSource } from "../../cost-tracker.js";
 import { resolveAgentPath } from "../../workspace/paths.js";
 import { imageEngineSetting, sessionImageEngine, type ImageEngine } from "./image-engine.js";
 import { paidMediaApisAllowed, paidMediaOffMessage } from "./paid-media.js";
+import { EgressRedirectBlocked, egressBlockedResult } from "../web-egress.js";
 
 export function ok(content: string): ToolResult { return { content }; }
 export function err(content: string): ToolResult { return { content, isError: true }; }
+
+/** A media call that threw, as the tool's result. Strict web access refusing
+ *  a host (the provider API, or the host it hands the file back from) is the
+ *  shared allow-host block, so the chat offers "Allow <host> & retry"; any
+ *  other failure is an error saying `what` failed. */
+export function mediaCallFailed(e: unknown, what: string): ToolResult {
+  if (e instanceof EgressRedirectBlocked && e.action) return egressBlockedResult(e);
+  return err(`${what}: ${(e as Error).message}`);
+}
 
 /** Absolute path to a subdir (images/videos/…) of the CANONICAL workspace.
  *  The static file server serves /images, /videos and /files from

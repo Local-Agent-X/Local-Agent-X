@@ -1,7 +1,7 @@
 import { Agent, fetch as undiciFetch, type FormData } from "undici";
 import type { RequestInit as UndiciRequestInit, Response as UndiciResponse } from "undici";
 import { getInternalAgentToken } from "../rbac.js";
-import type { BlockAction } from "../types.js";
+import { USER_HINTS, type BlockAction, type ToolResult } from "../types.js";
 import { resolveAndPinHost, evaluateEgressForUrl } from "../security/layer/index.js";
 import { isLoopbackHost, LOOPBACK_HOSTNAMES } from "../security/layer/ip-classification.js";
 
@@ -31,6 +31,25 @@ export class EgressRedirectBlocked extends Error {
 /** The host a blocked URL named, for a tool's blocked result. */
 export function blockedHostOf(e: EgressRedirectBlocked): string {
   try { return new URL(e.blockedUrl).hostname.toLowerCase(); } catch { return e.blockedUrl; }
+}
+
+/** A tool's result for a call the web-access policy refused with a way out
+ *  (`e.action` set): the same blocked shape the dispatch gate emits for
+ *  web_fetch, so the chat renders "Allow <host> & retry" off `clearable` and
+ *  `host`. A tool whose destination is its own choice (a search provider, an
+ *  image or video API) returns this, never a plain error. `alternative` is
+ *  what the model can do instead, when the tool has something. */
+export function egressBlockedResult(e: EgressRedirectBlocked, alternative?: string): ToolResult {
+  const host = blockedHostOf(e);
+  return {
+    content: e.message,
+    isError: true,
+    status: "blocked",
+    metadata: {
+      layer: "security", clearable: e.action!.kind, host, userHint: USER_HINTS.network,
+      recovery: `Web access does not allow ${host}. ${alternative ? `${alternative}, or tell` : "Tell"} the user: they can allow ${host} from the notice in chat and retry.`,
+    },
+  };
 }
 
 /** The web-access policy on the INITIAL destination of a canonicalFetch, for

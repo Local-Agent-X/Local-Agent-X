@@ -7,9 +7,8 @@
 
 import type { ToolResult } from "../../types.js";
 import { buildCodexImageRequest, readCodexImageResponse } from "../../codex-client/images.js";
-import { canonicalFetch, EgressRedirectBlocked } from "../web-egress.js";
-import { blockedResult } from "../web-search-tool.js";
-import { err } from "./shared.js";
+import { canonicalFetch } from "../web-egress.js";
+import { err, mediaCallFailed } from "./shared.js";
 
 // Codex's own tool description gives an image a few minutes and its first
 // wait 120 s; the generate_image / edit_image policy rows allow for this.
@@ -42,8 +41,7 @@ export async function requestCodexImage(
       timeoutMs: CODEX_IMAGE_TIMEOUT_MS,
     });
   } catch (e) {
-    if (e instanceof EgressRedirectBlocked && e.action) return { result: blockedResult(e) };
-    return { result: err(`ChatGPT ${action} failed: ${(e as Error).message}`) };
+    return { result: mediaCallFailed(e, `ChatGPT ${action} failed`) };
   }
   if (!res.ok) {
     const errText = await res.text();

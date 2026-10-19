@@ -1,9 +1,9 @@
-import { USER_HINTS, type ToolDefinition, type ToolResult } from "../types.js";
+import type { ToolDefinition, ToolResult } from "../types.js";
 import { htmlToText } from "../app-renderer/sanitize.js";
 // The ONE hardened fetch every off-box read uses: DNS-pinned, private-address
 // blocked at connect, every redirect hop re-checked. Search providers are
 // public hosts, but a provider redirect is still a redirect.
-import { canonicalFetch, EgressRedirectBlocked, blockedHostOf } from "./web-egress.js";
+import { canonicalFetch, EgressRedirectBlocked, egressBlockedResult } from "./web-egress.js";
 import { wrapExternalContent } from "../sanitize.js";
 
 interface SearchResult { title: string; url: string; snippet: string }
@@ -34,19 +34,6 @@ async function searchBrave(query: string, max: number, apiKey: string, signal?: 
   });
   const json = (await res.json()) as { web?: { results?: { title: string; url: string; description: string }[] } };
   return (json.web?.results ?? []).slice(0, max).map(r => ({ title: r.title, url: r.url, snippet: r.description }));
-}
-
-export function blockedResult(e: EgressRedirectBlocked): ToolResult {
-  const host = blockedHostOf(e);
-  return {
-    content: e.message,
-    isError: true,
-    status: "blocked",
-    metadata: {
-      layer: "security", clearable: e.action!.kind, host, userHint: USER_HINTS.network,
-      recovery: `Web access does not allow ${host}. Use results from allowed sites, or tell the user: they can allow ${host} from the notice in chat and retry.`,
-    },
-  };
 }
 
 function formatResults(results: SearchResult[]): string {
@@ -141,7 +128,7 @@ export const webSearchTool: ToolDefinition = {
     }
     // The provider is off the strict-mode allowlist: the same blocked result
     // the dispatch gate emits for web_fetch, so the chat offers "Allow & retry".
-    if (!anyFulfilled && blocked) return blockedResult(blocked);
+    if (!anyFulfilled && blocked) return egressBlockedResult(blocked, "Use results from allowed sites");
     if (!anyFulfilled) return { content: `Search failed: ${firstErr || "no results"}`, isError: true };
     // Titles and snippets are text a search engine scraped off arbitrary
     // pages: external content, fenced like a fetched page so an instruction

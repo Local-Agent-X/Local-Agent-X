@@ -34,6 +34,9 @@ export interface CommandWalk {
   positions: CommandPosition[];
   /** A shell body nested past MAX_SHELL_NESTING was found and not walked. */
   tooDeep: boolean;
+  /** The scripts a shell at the top level re-parses (`bash -c '<script>'`),
+   *  verbatim, for a caller that judges each as a whole command. */
+  scripts: string[];
 }
 
 /** Shells within shells past this depth are refused rather than walked. */
@@ -44,7 +47,7 @@ export const MAX_SHELL_NESTING = 3;
 const REST_OF_LINE_SHELLS = new Set(["cmd", "powershell", "pwsh"]);
 
 export function commandPositions(command: string): CommandWalk {
-  const walk: CommandWalk = { positions: [], tooDeep: false };
+  const walk: CommandWalk = { positions: [], tooDeep: false, scripts: [] };
   visit(command, 0, walk);
   return walk;
 }
@@ -90,7 +93,9 @@ function visit(command: string, depth: number, walk: CommandWalk): void {
         walk.tooDeep = true;
         break;
       }
-      visit(REST_OF_LINE_SHELLS.has(bin) ? words.slice(i + 1).join(" ") : words[i + 1], depth + 1, walk);
+      const script = REST_OF_LINE_SHELLS.has(bin) ? words.slice(i + 1).join(" ") : words[i + 1];
+      if (depth === 0) walk.scripts.push(script);
+      visit(script, depth + 1, walk);
       break; // a shell takes one command body; the words after it are its arguments
     }
   }

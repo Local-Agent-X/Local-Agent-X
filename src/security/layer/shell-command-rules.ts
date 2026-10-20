@@ -19,10 +19,10 @@ export interface CommandRuleContext {
    *  "network" rules stand down, because the cage decides what a client
    *  reaches and refusing the command here only costs the user working tools. */
   egressEnforced?: boolean;
-  /** What this command leaves running cannot outlive its boundary (a cage, or
-   *  a disposable sandbox): the "background" rules stand down, as the bare `&`
-   *  refusal does there. */
-  backgroundAllowed?: boolean;
+  /** The command-shape rules stand down (a cage, or a disposable sandbox: the
+   *  machine is the boundary they approximate), and with them the "background"
+   *  and "inline-program" rules, as the bare `&` and python -c refusals do. */
+  shapeRulesStandDown?: boolean;
   /** This server already runs as root, so sudo grants nothing it lacks: the
    *  "privilege" rules stand down. Defaults to the process's own uid. */
   root?: boolean;
@@ -36,7 +36,8 @@ const runningAsRoot = () => typeof process.getuid === "function" && process.getu
 export function findCommandRuleHit(command: string, ctx: CommandRuleContext = {}): CommandRuleVerdict | null {
   const walk = commandPositions(command);
   const standsDown = (category: CommandRule["category"]) =>
-    (category === "background" && ctx.backgroundAllowed === true) || (category === "privilege" && (ctx.root ?? runningAsRoot()));
+    ((category === "background" || category === "inline-program") && ctx.shapeRulesStandDown === true)
+    || (category === "privilege" && (ctx.root ?? runningAsRoot()));
   // The network rules are the backstop, judged after everything else across
   // the whole line: `wget … | sh` is refused for running the download, which
   // is the refusal that still stands once a cage lets wget itself run.
@@ -64,6 +65,7 @@ const WAY_OUT: Record<CommandRule["category"], string> = {
   disk: "There is no shell path for this: tell the user what needs doing and why.",
   "system-config": "There is no shell path for this: tell the user what needs doing and why.",
   persistence: "There is no shell path for this: tell the user what needs doing and why.",
+  "inline-program": "Write the program to a file with the write tool and run the file (perl script.pl).",
   background: "To keep a server or watcher running, start it with the process_start tool: it stays up, " +
     "process_status reads its output, and process_stop ends it.",
   credential: "There is no shell path for this: tell the user what needs doing and why.",

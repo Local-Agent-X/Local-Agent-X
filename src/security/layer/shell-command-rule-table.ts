@@ -21,7 +21,7 @@ function inlineCode(p: CommandPosition): string[] {
 
 export type CommandRuleCategory =
   | "shell-escape" | "privilege" | "disk" | "system-config"
-  | "persistence" | "background" | "credential" | "obfuscation" | "local-server" | "opener" | "network";
+  | "persistence" | "background" | "inline-program" | "credential" | "obfuscation" | "local-server" | "opener" | "network";
 
 export interface CommandRule {
   id: string;
@@ -95,7 +95,10 @@ export const COMMAND_RULES: readonly CommandRule[] = [
     matches: (p) => AWK_BINS.has(p.bin) && argsOf(p).some((a) => /\|\s*"\s*(?:\S*\/)?(?:ba|z|da|k|a)?sh\b/.test(a)) },
   { id: "inline-code", category: "shell-escape", why: "runs inline code that calls a refused command",
     matches: (p) => inlineCode(p).some((code) => INLINE_CODE_PATTERNS.some((re) => re.test(code))) },
-  binWith("inline-interpreter", "shell-escape", "runs an inline program the shell checks cannot read",
+  // The form itself, like python -c's inline-eval refusal: where the shape
+  // rules stand down it runs, while the inline-code rule above and the
+  // inline-network scan still read the program for what it calls.
+  binWith("inline-interpreter", "inline-program", "runs an inline program the shell checks cannot read",
     ["perl", "ruby", "php"], (a) => (a[0] === "-e" || a[0] === "-E") || lower(a[0]) === "-r"),
   binWith("source-absolute", "shell-escape", "runs a script from an absolute path inside this shell",
     [".", "source"], (a) => (a[0] ?? "").startsWith("/")),

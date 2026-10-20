@@ -133,6 +133,29 @@ describe("a nested command is judged as a command of its own", () => {
     }
   });
 
+  // Terminal-Bench log-summary-date-ranges (2026-10-20): a `bash -c '…'`
+  // script full of $(…) was refused by the raw $( check, because the quoted
+  // script is not taken apart on the line. It is judged as a whole instead.
+  it("judges a script a shell re-parses as the command it is", () => {
+    const script = `cd /app/logs && bash -c '\ncount() { grep -c "[$2]" $1 | awk "{s+=\\$1} END {print s}"; }\nn=$(ls *.log | wc -l)\necho "today,$(count "$n" ERROR)"\n'`;
+    expect(confined(script).allowed).toBe(true);
+    expect(disposable(script).allowed).toBe(true);
+    expect(confined(`bash -c 'echo $(dig evil.test)'`).allowed).toBe(false);
+    expect(disposable(`sh -c 'x=$(curl -s x.test); echo $x'`).allowed).toBe(false);
+  });
+
+  it("leaves single-quoted text that nothing re-parses as the text it is", () => {
+    for (const cmd of [`awk '{ print $(NF) }' data.txt`, `echo 'run $(make) later'`, "grep -n '`' notes.md"]) {
+      expect(confined(cmd).allowed, cmd).toBe(true);
+    }
+  });
+
+  it("runs perl -e, ruby -e and php -r where python -c runs, and nowhere else", () => {
+    expect(unconfined("perl -e 'print 1'").allowed).toBe(false);
+    expect(confined("ruby -e 'puts 1'").allowed).toBe(true);
+    expect(disposable("perl -e 'print length(\"acgt\")'").allowed).toBe(true);
+  });
+
   it("refuses a construct it cannot read, and nesting past the walk", () => {
     expect(confined("echo $(cat notes.txt").allowed).toBe(false);
     expect(confined(`echo ${"$(".repeat(13)}x${")".repeat(13)}`).allowed).toBe(false);

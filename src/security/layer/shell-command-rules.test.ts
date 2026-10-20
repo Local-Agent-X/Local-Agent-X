@@ -272,7 +272,25 @@ describe("detached sessions", () => {
     expect(commandRuleReason(hit)).toMatch(/process_start/);
   });
 
-  it("stand down where backgrounding is allowed (a cage, a disposable sandbox)", () => {
-    expect(findCommandRuleHit("screen -dmS x sh", { backgroundAllowed: true })).toBeNull();
+  it("stand down where the shape rules do (a cage, a disposable sandbox)", () => {
+    expect(findCommandRuleHit("screen -dmS x sh", { shapeRulesStandDown: true })).toBeNull();
+  });
+});
+
+// Terminal-Bench dna-insert (2026-10-20): a `perl -e` sequence comparison was
+// refused in the disposable container where `python -c` already runs.
+describe("perl -e, ruby -e and php -r follow python -c", () => {
+  it("are refused as a form where the shape rules hold, with a file as the way out", () => {
+    const hit = findCommandRuleHit("perl -e 'print length($ARGV[0])' acgt")!;
+    expect(hit.kind === "rule" ? hit.rule.id : null).toBe("inline-interpreter");
+    expect(commandRuleReason(hit)).toMatch(/Write the program to a file/);
+  });
+
+  it("run where the shape rules stand down, still read for the commands they call", () => {
+    for (const cmd of ["perl -e 'print 1'", "ruby -e 'puts 1'", "php -r 'echo 1;'"]) {
+      expect(findCommandRuleHit(cmd, { shapeRulesStandDown: true }), cmd).toBeNull();
+    }
+    const calls = findCommandRuleHit(`perl -e 'system("sudo id")'`, { shapeRulesStandDown: true });
+    expect(calls?.kind === "rule" ? calls.rule.id : null).toBe("inline-code");
   });
 });

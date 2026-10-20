@@ -107,7 +107,13 @@ function judgeNestedCommands(command: string, judge: Judge): { line: string } | 
   if (split.unreadable) return refuse(`Blocked: ${split.unreadable}, so the commands inside it cannot be read. ${NESTED_COMMAND_WAY_OUT}`);
   const refused = firstRefusal(split.bodies, "a nested command", judge);
   if (refused) return { refusal: refused };
-  if (commandPositions(split.line).positions.some((p) => runsNestedOutput(p.words))) return refuse(COMPUTED_COMMAND_REFUSAL);
+  const walk = commandPositions(split.line);
+  if (walk.positions.some((p) => runsNestedOutput(p.words))) return refuse(COMPUTED_COMMAND_REFUSAL);
+  // A script a shell re-parses (`bash -c '…'`) is quoted, so the split above
+  // left it whole: it is judged as the command it is, its own nested commands
+  // included.
+  const onScript = firstRefusal(walk.scripts, "the script a shell runs", judge);
+  if (onScript) return { refusal: onScript };
   return { line: split.line };
 }
 
@@ -337,9 +343,10 @@ export function evaluateShellCommand(
   // Rules on the command being run — every command position, including the
   // bodies nested shells re-parse (shell-command-rules.ts). Always on, except
   // the network rules under an enforced cage (the egress switch above), the
-  // detached-session rules where backgrounding is allowed (the structural
-  // switch), and sudo on a server already running as root.
-  const ruleHit = findCommandRuleHit(command, { egressEnforced, backgroundAllowed: !structuralRulesApply });
+  // detached-session and inline-program form rules where the structural
+  // switch stands the shape rules down, and sudo on a server already running
+  // as root.
+  const ruleHit = findCommandRuleHit(command, { egressEnforced, shapeRulesStandDown: !structuralRulesApply });
   if (ruleHit) {
     return { allowed: false, reason: commandRuleReason(ruleHit), userHint: USER_HINTS.commandShell, recovery: commandRuleRecovery(ruleHit) };
   }
@@ -380,11 +387,12 @@ export function evaluateShellCommand(
   // { ; }, procsub <(…)/>(…). The argv[0] network/denylist scans can't see a
   // binary invoked inside these (`echo $(dig evil.com)`). Where the structural
   // rules stand down, each was already taken out and judged as a command of
-  // its own (judgeNestedCommands, above), so none is left here; on an
-  // unconfined host they are refused on sight. win32 is excluded: `$(…)` and
-  // `( )` are ordinary PowerShell syntax there.
+  // its own (judgeNestedCommands, above), so none is left here outside quotes,
+  // and a quoted one is literal text or a script judged there as a whole; on
+  // an unconfined host they are refused on sight. win32 is excluded: `$(…)`
+  // and `( )` are ordinary PowerShell syntax there.
   if (platform !== "win32") {
-    const nested = detectNestedCommandExecution(command);
+    const nested = detectNestedCommandExecution(structuralRulesApply ? command : stripQuotedSpans(command));
     if (nested) {
       return { allowed: false, reason: nested, userHint: USER_HINTS.commandShell };
     }

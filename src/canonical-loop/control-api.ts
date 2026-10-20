@@ -34,7 +34,7 @@ import { isTerminalState } from "./terminal-states.js";
  * a stale in-memory op. Falls back to the already-loaded op if the re-read
  * fails (op deleted mid-flight is handled by the caller's earlier checks).
  *
- * Exported for control-api-approvals.ts (the file-size split sibling) ONLY —
+ * Exported for control-api-approvals.ts (its sibling for approvals) ONLY —
  * other canonical-loop writers use persistOpKeepingSignals, and code outside
  * the module never writes signal columns directly.
  */

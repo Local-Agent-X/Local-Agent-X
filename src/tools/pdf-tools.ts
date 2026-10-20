@@ -15,8 +15,8 @@ import { resolveOfficeTheme, brandAuthor, brandFooter, type OfficeTheme, THEME_P
 import { acquireBrandLogo, logoSize } from "./shared/office-brand.js";
 import { collapseFamily } from "./shared/collapse-family.js";
 import { SOURCES_DOC_SENTENCE, SOURCES_PARAM_SCHEMA } from "./shared/provenance-sources.js";
-// pdfkit markdown/block renderers — pure layout, split out for the file-size
-// gate.
+// pdfkit markdown/block renderers — pure layout with no I/O, kept apart from
+// the tool's file handling.
 import { hx, renderMarkdown } from "./pdf-render.js";
 
 // ── Helpers ──

@@ -60,12 +60,12 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/whatsapp-bridge/` | 12 | 8 | M | 1 |
 | `src/inbox/` | 11 | 5 | M |  |
 | `src/agent-loop/` | 10 | 1 | S |  |
+| `src/app-scaffold/` | 10 | 7 | M |  |
 | `src/ari-kernel/` | 10 | 12 | M |  |
 | `src/autopilot/` | 10 | 14 | L | 1 |
 | `src/persistence/` | 10 | 2 | S |  |
 | `src/routes/` | 10 | 93 | XL | 19 |
 | `src/sync/` | 10 | 21 | L | 1 |
-| `src/app-scaffold/` | 9 | 7 | M |  |
 | `src/plugin-system/` | 9 | 10 | L | 1 |
 | `src/screen-stream/` | 9 | 11 | L |  |
 | `src/agent-guards/` | 8 | 11 | M |  |

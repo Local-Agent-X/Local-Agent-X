@@ -26,19 +26,26 @@ import { workspaceRoot } from "../config.js";
 import { createLogger } from "../logger.js";
 import { resolveWindowsShell, windowsShellInstallRoot } from "../tools/shell-env.js";
 import { parseHelperStatus, resolveWinCageHelper, underUserProfile, WIN_CAGE_SUBLAYER_GUID } from "./win-cage.js";
+import { ownTypeScriptDir } from "../app-scaffold/kit-files.js";
 
 const logger = createLogger("sandbox.win-cage");
 
 /** Directories the caged shell must read that sit under the real user's
  *  profile, deduplicated (a root covers its subpaths). Elsewhere is readable. */
-export function winCageReadGrants(shell: string, execPath = process.execPath, projectRoot = process.cwd(), home = homedir()): string[] {
+export function winCageReadGrants(
+  shell: string, execPath = process.execPath, projectRoot = process.cwd(), home = homedir(), typescriptDir = ownTypeScriptDir(),
+): string[] {
   const out: string[] = [];
   // Not the app's own code: NODE_PATH points at it for the agent's scripts,
   // but its node_modules is the largest tree on the machine and the ACE
   // propagation over it took 12 seconds on the first live run. A script that
-  // needs a package installs it in the workspace.
+  // needs a package installs it in the workspace. The one package granted is
+  // its TypeScript compiler, which the harness hands to a built project's
+  // structure check (a TypeScript 7 project has none with the compiler API):
+  // public code, one folder.
   void projectRoot;
-  for (const candidate of [windowsShellInstallRoot(shell), dirname(resolve(execPath))]) {
+  const candidates = [windowsShellInstallRoot(shell), dirname(resolve(execPath)), ...(typescriptDir ? [resolve(typescriptDir)] : [])];
+  for (const candidate of candidates) {
     if (!underUserProfile(candidate, home)) continue;
     const c = candidate.toLowerCase();
     if (out.some((o) => c === o.toLowerCase() || c.startsWith(o.toLowerCase() + sep))) continue;

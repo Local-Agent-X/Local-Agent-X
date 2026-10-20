@@ -15,17 +15,16 @@
  * runner runs.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import {
-  KIT_SCRIPTS, KIT_SEAL_TEST, KIT_SEAL_TEST_PY, STRUCTURE_CHECK_COMMAND, STRUCTURE_CHECK_SCRIPT, readKitFile,
+  KIT_SCRIPTS, KIT_SEAL_TEST, KIT_SEAL_TEST_PY, STRUCTURE_CHECK_COMMAND, STRUCTURE_CHECK_SCRIPT, ownTypeScriptDir, readKitFile,
 } from "./kit-files.js";
 import { recordCreatorDocs } from "./creator-docs.js";
 import { KIT_SIZE_CAPS } from "./kit-size.js";
 import { detectProjectKind, hasDependency, hasProjectFile } from "./project-kind.js";
 import { renderAdr0001, renderHistoryReadme, renderKitAgentsMd, renderKitArchitectureMd, type KitDocOptions } from "./render-docs.js";
 
-export { STRUCTURE_CHECK_COMMAND, STRUCTURE_CHECK_SCRIPT } from "./kit-files.js";
+export { ownTypeScriptDir, STRUCTURE_CHECK_COMMAND, STRUCTURE_CHECK_SCRIPT } from "./kit-files.js";
 export { KIT_SIZE_CAPS } from "./kit-size.js";
 export { structureKitAdoptionPromptLine, structureKitPromptLine } from "./render-docs.js";
 export { structureWarningNote } from "./structure-check-output.js";
@@ -196,13 +195,4 @@ export function structureCheckCommand(projectDir: string): string | null {
   if (!existsSync(join(projectDir, STRUCTURE_CHECK_SCRIPT))) return null;
   const typescript = ownTypeScriptDir();
   return typescript ? `${STRUCTURE_CHECK_COMMAND} --typescript "${typescript}"` : STRUCTURE_CHECK_COMMAND;
-}
-
-/** This install's `typescript` package folder, forward-slashed for any shell; null when it has none. */
-export function ownTypeScriptDir(): string | null {
-  try {
-    return dirname(createRequire(import.meta.url).resolve("typescript/package.json")).split("\\").join("/");
-  } catch {
-    return null;
-  }
 }

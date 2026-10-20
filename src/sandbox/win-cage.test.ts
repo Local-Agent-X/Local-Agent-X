@@ -55,19 +55,22 @@ describe("win-cage — what the caged shell is granted to read", () => {
       "C:\\Users\\peter\\AppData\\Local\\LocalAgentX\\node-v24.16.0-win-x64\\node.exe",
       "C:\\Users\\peter\\local-agent-x",
       home,
+      "C:/Users/peter/local-agent-x/node_modules/typescript",
     );
     // The app's own code is deliberately not granted (its node_modules is the
-    // slowest tree to stamp and the cage does not need it).
+    // slowest tree to stamp and the cage does not need it); its TypeScript
+    // package is, for a built project's structure check.
     expect(grants).toEqual([
       "C:\\Users\\peter\\AppData\\Local\\LocalAgentX\\PortableGit",
       "C:\\Users\\peter\\AppData\\Local\\LocalAgentX\\node-v24.16.0-win-x64",
+      "C:\\Users\\peter\\local-agent-x\\node_modules\\typescript",
     ]);
   });
 
   it("grants nothing for machine-wide tools, and a root covers its subpaths", () => {
     const home = "C:\\Users\\peter";
-    expect(winCageReadGrants("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", "C:\\Program Files\\nodejs\\node.exe", "C:\\ProgramData\\Local Agent X", home)).toEqual([]);
-    expect(winCageReadGrants("C:\\Users\\peter\\app\\git\\bin\\bash.exe", "C:\\Users\\peter\\app\\git\\node\\node.exe", "C:\\Users\\peter\\app", home)).toEqual([
+    expect(winCageReadGrants("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", "C:\\Program Files\\nodejs\\node.exe", "C:\\ProgramData\\Local Agent X", home, "C:/ProgramData/Local Agent X/node_modules/typescript")).toEqual([]);
+    expect(winCageReadGrants("C:\\Users\\peter\\app\\git\\bin\\bash.exe", "C:\\Users\\peter\\app\\git\\node\\node.exe", "C:\\Users\\peter\\app", home, null)).toEqual([
       "C:\\Users\\peter\\app\\git",
     ]);
   });

@@ -4,6 +4,7 @@
  * scripts/check-kit-sync.mjs; nothing here edits it.
  */
 import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -33,4 +34,16 @@ export const KIT_SEAL_TEST_PY = "test_module_seals.py.txt";
 
 export function readKitFile(name: string): string {
   return readFileSync(join(KIT_DIR, name), "utf-8");
+}
+
+/** This install's `typescript` package folder, forward-slashed for any shell; null
+ *  when it has none. The harness hands it to a built project's structure check
+ *  (project-kit.ts structureCheckCommand), and the Windows cage lets the caged
+ *  shell read it (sandbox/win-cage-grants.ts). */
+export function ownTypeScriptDir(): string | null {
+  try {
+    return dirname(createRequire(import.meta.url).resolve("typescript/package.json")).split("\\").join("/");
+  } catch {
+    return null;
+  }
 }

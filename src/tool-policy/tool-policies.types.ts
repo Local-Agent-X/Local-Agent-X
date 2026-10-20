@@ -58,6 +58,12 @@ export interface PathArgSpec {
    *  a whole-file write replaces bytes the session never saw. Creating a file
    *  needs nothing. */
   knowsContent?: true;
+  /** The call opens this path only when it passes the arg: left out, the tool
+   *  writes nowhere (http_request without save_to returns the body). Absent,
+   *  an omitted arg still opens its default (restore_file without destination
+   *  writes the file back where it was), so the call counts as writing. Read
+   *  by hasCapability's per-call workspace-write answer. */
+  whenGiven?: true;
 }
 
 /**

@@ -334,3 +334,20 @@ describe("bridge OUTPUT-byte forward scan (R4-12b: the bytes shipped off-box re-
     expect(checkAttachmentPaths("view_image", [png], undefined)).toBeNull();
   });
 });
+
+// A call writes files when it opens a writing path. http_request's save_to
+// is a download the call may leave out; without it the call writes nothing,
+// and counting it as a write emptied its approval key for an unreadable URL
+// and held every plain GET from a scheduled job to the worker write gate.
+describe("workspace-write per call: an optional download path", () => {
+  it("http_request writes only when it saves to a file; the tool can still write", () => {
+    expect(hasCapability("http_request", "workspace-write", { url: "https://example.com/" })).toBe(false);
+    expect(hasCapability("http_request", "workspace-write", { url: "https://example.com/", save_to: "out.bin" })).toBe(true);
+    expect(hasCapability("http_request", "workspace-write")).toBe(true);
+  });
+
+  it("an omitted path that has a default still writes", () => {
+    expect(TOOL_POLICIES.restore_file.pathArgs?.find((s) => s.arg === "destination")?.whenGiven).toBeUndefined();
+    expect(hasCapability("restore_file", "workspace-write", { path: "a.txt" })).toBe(true);
+  });
+});

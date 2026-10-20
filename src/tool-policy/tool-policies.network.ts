@@ -50,7 +50,7 @@ export const TOOL_POLICIES_NETWORK: Record<string, ToolPolicyRow> = {
   // is a download: the file it writes is confined like any write.
   http_request: {
     kernel: "http", ariAction: { arg: "method", writes: ["POST", "PUT", "PATCH", "DELETE"] }, risk: "network-write", capabilities: ["egress"], tags: ["http-api"], essentialRank: 5, blurb: { does: "Make a raw HTTP request to an API." }, timeoutMs: 60_000, output: "http-body", externalContent: true, offBoxFetch: true,
-    pathArgs: [{ arg: "save_to", action: "write" }],
+    pathArgs: [{ arg: "save_to", action: "write", whenGiven: true }],
     destination: [{ to: "site", arg: "url", allowlisted: true }],
     reads: ["session"], killSwitch: "enableHttp", committing: "kernel-write", category: "research",
     rateLimit: { maxCalls: 20, windowMs: 60_000, action: "block" },

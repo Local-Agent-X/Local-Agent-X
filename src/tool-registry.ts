@@ -172,7 +172,9 @@ export const CAPABILITY_CLASS_MEMBERS: Record<CapabilityClass, readonly string[]
  */
 export function hasCapability(name: string, cls: CapabilityClass, args?: Record<string, unknown>): boolean {
   if (getActivePluginToolMetadata(name)) return cls === "shell";
-  if (cls === "workspace-write") return pathSpecsForCall(name, args).some(writesAt);
+  if (cls === "workspace-write") {
+    return pathSpecsForCall(name, args).some((spec) => writesAt(spec) && !(args && spec.whenGiven && args[spec.arg] === undefined));
+  }
   return DECLARED_SETS[cls].has(name);
 }
 

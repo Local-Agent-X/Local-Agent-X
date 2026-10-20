@@ -134,9 +134,13 @@ describe("shrinkToolsForTier — medium manifest size", () => {
     // is ~15%, which buys a working deck. If it needs to come back down, the
     // lever is collapsing those families to the `{action, params}` schema for
     // medium tier, NOT trimming the descriptions again.
+    //
+    // Re-measured 2026-10-19: 10,022. http_request gained save_to, the download
+    // path the shell's network-client refusals now point a model to, so a
+    // medium model needs it on the wire. The ceiling moved 10,000 → 10,100.
     expect(before).toBeGreaterThan(12_000);
     expect(after).toBeLessThanOrEqual(before / 2);
-    expect(after).toBeLessThanOrEqual(10_000);
+    expect(after).toBeLessThanOrEqual(10_100);
   });
 
   it("shortens parameter descriptions past the cap and leaves shorter ones verbatim", () => {

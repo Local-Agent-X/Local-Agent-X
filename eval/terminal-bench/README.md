@@ -12,6 +12,23 @@ the same conditions and the task's own tests decide pass or fail.
 | `drive.mjs` | Runs inside the container: boots a headless LAX on a fresh data dir with the task's working directory as the workspace, sends the instruction as one chat turn, waits, stops the server. |
 | `seed.mjs` | The data dir each task starts from (provider and model, Autonomous profile, unrestricted file access with the disposable-sandbox switch on, inside the throwaway container). Tested by `test/terminal-bench-seed.test.ts`. |
 | `bundle.mjs` | Builds the Linux bundle from one commit, entirely inside a Debian bullseye container: compiled `dist/`, production `node_modules` for linux-x64, and a Node binary. |
+| `policy-scan.mjs` | Runs every statement of each task's reference solution (`<task>/solution/solve.sh`) through LAX's security layer, as a chat turn's shell call would reach it, and groups the refusals by rule. No model. Use it to find classes of over-blocking; justify each fix with a real-user case, never one task's solution. |
+
+### Scanning the reference solutions
+
+The rules are the Linux ones, so run the scan inside a Linux container with
+the bundle unpacked (from the repo root, on a Docker host):
+
+```
+docker run --rm -v ~/.cache/lax-terminal-bench:/cache -v "$PWD/eval/terminal-bench:/scan" ubuntu:22.04 bash -c \
+  'mkdir /lax && tar xzf /cache/lax-linux-x64.tgz -C /lax && mkdir -p /lax/eval/terminal-bench &&
+   cp /scan/policy-scan.mjs /lax/eval/terminal-bench/ && cd /lax &&
+   .node/bin/node eval/terminal-bench/policy-scan.mjs --tasks /cache/tb2/terminal-bench --out /cache/scan-benchmark.json'
+```
+
+`/cache/tb2/terminal-bench` is where `harbor datasets download` put the 2.0
+tasks for these runs. Add `--desktop` to scan as a default install with no
+sandbox instead of the benchmark's seed.
 
 Nothing here changes product defaults. Each task gets its own empty data dir,
 so nothing learned on one task reaches the next.

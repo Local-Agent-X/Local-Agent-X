@@ -105,9 +105,21 @@ describe("a shell edit redirected to the file tools", () => {
     expect(d.reason).not.toMatch(/Use the edit tool/);
   });
 
-  it("keeps the redirect when the file tools can take the path", () => {
+  // On a disposable sandbox the shell's structural rules stand down everywhere
+  // but Windows (shell-policy.ts structuralRulesApply), so off Windows the edit
+  // simply runs; on Windows they still apply, and the redirect now leads to a
+  // tool that takes the path.
+  it.runIf(WIN)("keeps the redirect when the file tools can take the path", () => {
     setSwitch(true);
     expect(evaluateShellCommandAndPaths(sedSystem, ctx()).reason).toMatch(/Use the edit tool/);
+  });
+
+  it.runIf(!WIN)("lets the shell edit a system file itself on a disposable sandbox", () => {
+    setSwitch(true);
+    expect(evaluateShellCommandAndPaths(sedSystem, ctx()).allowed).toBe(true);
+  });
+
+  it("redirects a shell edit the file tools can take, on any machine", () => {
     setSwitch(undefined);
     const inWorkspace = evaluateShellCommandAndPaths("sed -i 's/a/b/' notes.txt", ctx());
     expect(inWorkspace.reason).toMatch(/Use the edit tool/);

@@ -1,7 +1,6 @@
 // Outbound audio framing + RTP pacer for the desktop voice peer.
 //
-// Split out of voice-peer.ts to keep each file under the repo's hard 400-LOC
-// source-hygiene gate AND because the framing/pacing logic is the one piece
+// Split out of voice-peer.ts because the framing/pacing logic is the one piece
 // worth unit-testing without standing up a real RTCPeerConnection: feed it TTS
 // PCM, tick the clock, assert it emits well-formed 20ms Opus RTP packets.
 //

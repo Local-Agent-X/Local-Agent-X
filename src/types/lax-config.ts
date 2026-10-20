@@ -1,7 +1,6 @@
 // Config-domain types (LAXConfig + deployment profiles) — split out of
-// ../types.ts to keep it under the 400-LOC cap, same pattern as
-// server-events.ts. Re-exported from ../types.ts so existing
-// `from "...types.js"` imports are unchanged.
+// ../types.ts, same pattern as server-events.ts. Re-exported from ../types.ts
+// so existing `from "...types.js"` imports are unchanged.
 import type { SandboxMode } from "../sandbox/types.js";
 
 // ── Deployment Profile Types ──

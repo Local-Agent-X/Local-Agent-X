@@ -1,4 +1,4 @@
-// Grants: what the caged shell may touch. Split from win-cage.ts (400-LOC cap).
+// Grants: what the caged shell may touch. Split from win-cage.ts.
 //
 // The sandbox user sees nothing under the real user's profile, and LAX's
 // own tooling lives there: the portable Git it ships as the shell, the node

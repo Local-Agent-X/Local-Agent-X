@@ -14,7 +14,7 @@
 // audio. INBOUND (phone mic) Opus RTP -> decode -> resample to 16kHz -> onMicPcm.
 // OUTBOUND (TTS) Int16 PCM -> OutboundAudio (resample 48k, 20ms pace, Opus,
 // build RTP) -> the outbound track. Outbound framing lives in voice-rtp-audio.ts
-// to stay under the repo's hard 400-LOC-per-file gate.
+// so it can be unit-tested without a real RTCPeerConnection.
 
 import type {
   RTCPeerConnection as WeriftPeerConnection,

@@ -6,9 +6,8 @@
  * etc. pre-dispatch calls this to block a mutating shell command under such a
  * ban, while leaving read-only shell (grep/ls/cat) alone.
  *
- * Split out of shell-detectors.ts (which sits at the 400-LOC hygiene ceiling);
- * reuses that module's inline-script, eval-form-refusal, and quote/token
- * primitives.
+ * Split out of shell-detectors.ts; reuses that module's inline-script,
+ * eval-form-refusal, and quote/token primitives.
  */
 import {
   detectInlineInterpreterEval,

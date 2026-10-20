@@ -2,7 +2,7 @@
  * Self-edit sandbox gates — build, bind, smoke. (The surgeon spawner lives in
  * surgeon.ts.)
  *
- * Split from sandbox.ts to keep both files under the 400-LOC limit.
+ * Split from sandbox.ts, which runs the three gates and merges on a pass.
  * All exports here are called only from sandbox.ts.
  */
 

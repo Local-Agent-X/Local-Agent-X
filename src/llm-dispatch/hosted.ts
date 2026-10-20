@@ -2,7 +2,7 @@
  * Hosted-provider leg of llm-dispatch: how to call Anthropic, OpenAI, xAI and
  * Codex for a short, single-shot completion.
  *
- * Split out of llm-dispatch.ts (400-LOC gate), same as ollama.ts before it.
+ * Split out of llm-dispatch.ts, same as ollama.ts before it.
  * Cohesive on its own: llm-dispatch.ts decides WHICH provider and WHICH model,
  * this file knows how each provider's wire actually works — credential
  * resolution, request shape, vision content blocks, error handling. The seam is

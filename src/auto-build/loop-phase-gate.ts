@@ -1,6 +1,6 @@
 /**
  * Phase-gate auto-scoring + advisor-driven recovery — extracted from
- * loop.ts to keep that file under the 400-LOC ceiling.
+ * loop.ts.
  *
  * Called by loop.ts when a chunk-review halt fires the phase-gate gate.
  * Returns:

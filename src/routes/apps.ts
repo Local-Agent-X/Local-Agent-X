@@ -236,7 +236,7 @@ export const handleAppRoutes: RouteHandler = async (method, url, req, res, ctx, 
   // phone is held to (see broker-transport/device-paths.ts). Returns the app
   // HTML, an inlined asset manifest, and the live state snapshot so the phone can
   // run the app with the desktop unreachable (product flow 5). Built in
-  // apps-bundle.ts to keep this file under the LOC cap.
+  // apps-bundle.ts.
   if (method === "GET" && appPath.match(/^\/api\/apps\/[a-zA-Z0-9_-]+\/bundle$/)) {
     const id = appPath.split("/")[3];
     // A client-only SPA is built to a fresh static dist/ on demand (and rebuilt
@@ -289,8 +289,8 @@ export const handleAppRoutes: RouteHandler = async (method, url, req, res, ctx, 
   }
 
   // Workspace-ROOT file listing/rename/delete (operates on workspace/ root,
-  // distinct from the /api/apps/<id>/files endpoints above). Extracted to keep
-  // this file under the LOC cap; mirrors the snapshots lazy-import below.
+  // distinct from the /api/apps/<id>/files endpoints above). Lazy-imported
+  // from workspace-files.ts; mirrors the snapshots lazy-import below.
   const { handleWorkspaceFilesRoutes } = await import("./workspace-files.js");
   if (await handleWorkspaceFilesRoutes(method, url, req, res, json, ctx.config.workspace)) return true;
 

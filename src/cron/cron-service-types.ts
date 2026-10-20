@@ -1,9 +1,8 @@
 /**
  * Cron service — types, constants, pure helpers.
  *
- * Split out of cron-service.ts so the orchestrator stays under the
- * 400-LOC file limit. Execution + retry state machine lives in
- * cron-service-execute.ts.
+ * Split out of cron-service.ts, which stays the orchestrator. Execution +
+ * retry state machine lives in cron-service-execute.ts.
  */
 
 import type { CronRunStatus } from "./run-history.js";

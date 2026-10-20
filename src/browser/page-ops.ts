@@ -1,7 +1,6 @@
 /**
  * Page-level operations that don't belong in BrowserManager's core. Pure
- * functions that take a Page (and optionally a BrowserContext) — keeps
- * browser.ts under the file-size cap without hiding the operation semantics.
+ * functions that take a Page (and optionally a BrowserContext).
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";

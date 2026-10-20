@@ -1,7 +1,7 @@
 /**
  * Memory index schema migrations.
  *
- * Split out of index-schema.ts (LOC cap): that module owns version detection,
+ * Split out of index-schema.ts: that module owns version detection,
  * initSchema, and FTS bootstrap/rebuild; this one owns the ordered migration
  * steps. Fresh installs run every step from 0 (initSchema calls
  * migrateSchema(db, 0)), so ALTER-based steps cover new DBs too — the v2

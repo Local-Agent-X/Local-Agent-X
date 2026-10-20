@@ -1,8 +1,8 @@
 // Durable fallback for approval_response frames whose approvalId is not
 // live in the in-process ApprovalManager (server restarted since the ask,
 // or the client is answering a rediscovered card from
-// GET /api/approvals/pending). Split out of message-router.ts for the
-// 400-LOC gate — same sibling pattern as agent-controls.ts.
+// GET /api/approvals/pending). Split out of message-router.ts, which keeps
+// the frame dispatch — same sibling pattern as agent-controls.ts.
 //
 // The client MUST send the opId for durable resolution — rediscovered cards
 // carry it (pending-route entries include opId), so it is always available.

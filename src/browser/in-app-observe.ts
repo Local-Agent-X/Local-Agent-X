@@ -7,7 +7,7 @@
  *      ObservationRegistry, extraction in extract.ts, shaping in page-ops.ts —
  *      so both backends share one source of truth for observation semantics.
  *   2. The isolated-world page scripts (A1 click/fill/select, the A2 resolution
- *      chain), kept out of the backend for the LOC cap. The KB1 credential
+ *      chain), kept out of the backend, which owns view lifecycle. The KB1 credential
  *      probe lives with the screenshot capture in in-app-page-io.ts.
  *
  * Every script goes through browserExec, which runs ONLY in the view's isolated

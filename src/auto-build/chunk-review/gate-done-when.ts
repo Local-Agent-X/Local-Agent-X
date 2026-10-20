@@ -1,5 +1,5 @@
 /**
- * Gate 1: Done-when verifier (split from gates.ts at the 400-LOC ceiling —
+ * Gate 1: Done-when verifier (split from gates.ts —
  * this gate plus its missing-credentials coupling is the largest single gate).
  *
  * Failure modes detected mechanically:

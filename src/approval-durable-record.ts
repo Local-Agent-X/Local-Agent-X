@@ -1,6 +1,6 @@
 /**
  * Durable-record bridge for op-scoped approvals (split out of
- * approval-manager.ts for the 400-LOC gate).
+ * approval-manager.ts, which keeps the live in-process asks).
  *
  * Op-scoped asks get a durable shadow: a pendingApproval signal column on
  * the op plus approval_requested / approval_resolved canonical events,

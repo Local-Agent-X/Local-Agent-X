@@ -1,5 +1,5 @@
 /**
- * Memory schema steps v15–v19 (split from index-schema-migrations.ts, LOC cap):
+ * Memory schema steps v15–v19 (split from index-schema-migrations.ts):
  * the retrieval and provenance repairs of October 2026. Runs inside
  * migrateSchema's transaction, after the earlier steps.
  */

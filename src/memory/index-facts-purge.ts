@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type Database from "better-sqlite3";
 
 // GC + validity accounting for the bitemporal facts store. Split out of
-// index-facts.ts (LOC cap); re-exported there so consumers keep one import.
+// index-facts.ts; re-exported there so consumers keep one import.
 
 export function validityStats(
   db: InstanceType<typeof Database>

@@ -3,7 +3,7 @@
  * dedicated agent profile, and connects over CDP so we don't trip Playwright's
  * automation fingerprints.
  *
- * Extracted from browser.ts so the main manager stays under 400 LOC.
+ * Extracted from browser.ts so the manager doesn't also own launching Chrome.
  */
 import type { Browser, BrowserContext, CDPSession } from "playwright";
 import { execFile } from "node:child_process";

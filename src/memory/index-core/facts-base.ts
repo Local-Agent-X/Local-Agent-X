@@ -3,7 +3,7 @@
  *
  * Pure structural lift out of index-core.ts: the retain/recall/validity,
  * single-fact agent ops, relations, reflect, and top-important ranking move
- * onto this base class so MemoryIndex stays under the 400 LOC cap. Behavior
+ * onto this base class. Behavior
  * and method signatures are unchanged — these are the same thin delegations
  * over ./index-facts, ./index-facts-mutate, ./index-relations, ./index-reflect
  * the class held inline. MemoryIndex extends this base and supplies the shared

@@ -31,9 +31,8 @@ import type { RenderedPromptSection } from "./system-prompt-builder.js";
  * the builder produced) or the `sections` the capability allocator kept
  * (context/prompt-degradation.ts), which is the set that reached the model.
  *
- * It lives here rather than on the builder only because
- * system-prompt-builder.ts sits just under its 400-LOC cap and has no
- * room for another export; it reads the builder's own RenderedPromptSection.
+ * It lives here, beside the rules whose delivery it answers for, rather than
+ * on the builder; it reads the builder's own RenderedPromptSection.
  */
 export function includedPartIds(sections: readonly RenderedPromptSection[]): Set<string> {
   return new Set(sections.map((section) => section.id));

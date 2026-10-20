@@ -1,8 +1,7 @@
 /**
  * Ref/text interaction, scroll, and fingerprint operations extracted from
  * BrowserManager. Free functions that take an explicit Page +
- * ObservationRegistry — keeps manager.ts under the file-size cap without
- * hiding the interaction semantics. The BrowserBackend methods on
+ * ObservationRegistry. The BrowserBackend methods on
  * BrowserManager remain the public surface; they delegate here.
  */
 import type { Page } from "playwright";

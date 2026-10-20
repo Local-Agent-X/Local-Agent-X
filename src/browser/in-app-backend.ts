@@ -21,7 +21,7 @@
  *   - readConsole/readNetwork (chunk E): desktop perception rings, active tab.
  *   - screenshot: KB1 credential-focus guard blocks capture while a password
  *     field is focused in the co-driven view. The gate + the perception and
- *     dialog passthroughs live in in-app-page-io.ts (LOC cap).
+ *     dialog passthroughs live in in-app-page-io.ts (stateless bridge reads).
  *   - dialogs (chunk F): beforeunload interception via the desktop queue
  *     (browser-dialogs.ts); alert/confirm/prompt have no Electron hook.
  *   - downloads (chunk F): the desktop pushes finished quarantine entries

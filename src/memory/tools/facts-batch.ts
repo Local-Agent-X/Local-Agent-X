@@ -5,7 +5,7 @@ import { MAX_FACTS_PER_CALL } from "../fact-split.js";
 import { runMemoryGate, MemoryWriteBlocked } from "../write-safely.js";
 import type { MemoryPromotionContext } from "../promotion-gate.js";
 
-// Batched `remember` writer (split out of facts.ts for the 400-LOC cap).
+// Batched `remember` writer (split out of facts.ts).
 //
 // Every fact goes through the SAME canonical single-fact sink as a lone
 // `remember` — per-fact runMemoryGate truth, rememberFact's contradiction

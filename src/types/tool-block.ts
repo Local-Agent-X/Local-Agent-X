@@ -1,5 +1,5 @@
 // The block record and the kernel run state behind it. Split out of types.ts
-// (400-LOC cap, same as server-events.ts) and re-exported from there so every
+// (same as server-events.ts) and re-exported from there so every
 // consumer keeps its `../types.js` import.
 
 /**

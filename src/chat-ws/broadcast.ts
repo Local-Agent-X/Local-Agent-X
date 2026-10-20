@@ -1,5 +1,5 @@
 // Fan-out + termination over the shared chat-ws state. Split out of
-// ./state.ts (2026-09-01, 400-LOC gate): state.ts keeps the data
+// ./state.ts (2026-09-01): state.ts keeps the data
 // (activeChats, clients, run accumulators); this module owns everything
 // that SENDS — per-session event fan-out, the active_chats listing,
 // broadcast-to-all — plus terminateChat, which lives here because it both

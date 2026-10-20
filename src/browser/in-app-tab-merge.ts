@@ -1,6 +1,6 @@
 /**
  * Merged tab ordering + takeover + single-tab close — split from
- * in-app-tabs.ts for the 400-LOC ceiling. This module owns everything indexed
+ * in-app-tabs.ts. This module owns everything indexed
  * by the COMBINED ordering the `tabs` action prints: the merge itself
  * (own tabs first, then the user's own views), the listing format, switch/
  * adopt (the takeover seam, pinned to the last listing), close_tab's

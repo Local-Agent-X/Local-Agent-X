@@ -4,9 +4,9 @@ import { parseFactLine, rowToFact, slugify } from "./utils.js";
 import { extractRelations } from "./index-relations.js";
 import { deriveEntitySlugs, loadKnownEntitySlugs } from "./entity-derive.js";
 
-// GC + validity accounting moved to index-facts-purge.ts (LOC cap).
+// GC + validity accounting moved to index-facts-purge.ts.
 export { purgeInvalidatedFacts, validityStats } from "./index-facts-purge.js";
-// Ending a fact's validity, and who may: index-facts-invalidate.ts (LOC cap).
+// Ending a fact's validity, and who may: index-facts-invalidate.ts.
 import { alreadySaid, invalidateFact, resolverMayEnd, savedFromMessage } from "./index-facts-invalidate.js";
 export { invalidateFact, type InvalidationActor } from "./index-facts-invalidate.js";
 

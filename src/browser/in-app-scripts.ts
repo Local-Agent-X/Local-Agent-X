@@ -1,12 +1,12 @@
 /**
  * Isolated-world page scripts for the in-app backend — pure STRING BUILDERS,
- * split from in-app-observe.ts for the 400-LOC gate:
+ * split from in-app-observe.ts:
  *   - checkedScript: the wrapper that makes a script's return value safe to
  *     cross the bridge — BOTH error-surfacing AND structured-clone-safety
  *     (execChecked in in-app-observe.ts pairs it with browserExec),
  *   - A1 selector scripts (click/fill/select).
  * The A2 resolution chain (resolutionScript / textSearchScript /
- * selectFillScript) lives in in-app-resolve-scripts.ts (same 400-LOC gate).
+ * selectFillScript) lives in in-app-resolve-scripts.ts.
  *
  * Every script runs ONLY in the view's isolated world (1901, enforced in
  * desktop/src/server-bridge-browser.ts). Free identifiers are limited to

@@ -16,7 +16,7 @@
  *
  * Gate implementations live in sandbox-gates.ts; the surgeon spawner
  * lives in surgeon.ts; naming + probe-port helpers live in
- * sandbox-naming.ts. Split out to keep files under the 400-LOC limit.
+ * sandbox-naming.ts.
  */
 
 import { rmSync } from "node:fs";

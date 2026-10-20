@@ -10,8 +10,8 @@ import { readOp } from "../ops/op-store.js";
 import { createLogger } from "../logger.js";
 const logger = createLogger("server.handler-events");
 
-// Spawn/result lifecycle listeners, split out of handler-events.ts (400-LOC
-// gate). handler-events.ts still owns the driver + the shared pendingMeta
+// Spawn/result lifecycle listeners, split out of handler-events.ts.
+// handler-events.ts still owns the driver + the shared pendingMeta
 // map (its tool_start hook appends toolsUsed); this module owns what
 // happens when a run starts and when it finishes.
 

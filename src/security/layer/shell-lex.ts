@@ -4,7 +4,7 @@
 // resolution (keyword/wrapper stripping). Pure string walks — no
 // operator-precedence parsing, subshell, or backslash-escape handling — just
 // enough to isolate command positions and inspect argv[0]/flags. Split out of
-// shell-detectors.ts to keep that module under the 400-LOC ceiling;
+// shell-detectors.ts because the policy engine needs them too;
 // shell-detectors.ts re-exports the three primitives its callers import so no
 // consumer import path changes.
 

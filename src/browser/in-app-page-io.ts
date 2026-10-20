@@ -4,7 +4,7 @@
  * capture (with the KB1 credential-focus gate), the console/network
  * perception rings (chunk E), and the beforeunload dialog queue (chunk F).
  *
- * Kept out of the backend for the LOC cap; the backend stays the owner of
+ * Kept out of the backend; the backend stays the owner of
  * lifecycle (ensureView / isActive) and calls these with the ACTIVE tab's
  * viewId. Everything here is a stateless passthrough over bridge-client.ts,
  * formatted by the same modules the CDP backend uses (bridge-perception.ts,

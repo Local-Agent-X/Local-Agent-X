@@ -1,6 +1,6 @@
 // Agent redirect / control frames from the WS client — the per-id-shape
-// routing that used to live inline in message-router.ts (split out to keep
-// the router under the source-hygiene LOC ceiling; behavior unchanged).
+// routing that used to live inline in message-router.ts (split out so the
+// router keeps only the frame dispatch; behavior unchanged).
 import type { WebSocket } from "ws";
 import { sendFrame } from "./frames.js";
 

@@ -1,6 +1,6 @@
 /**
- * Scroll driver for the embedded WebContentsView, split from in-app-actions.ts
- * (400-LOC gate). Ref-targeted scroll reuses the A2 resolution script (the
+ * Scroll driver for the embedded WebContentsView, split from in-app-actions.ts.
+ * Ref-targeted scroll reuses the A2 resolution script (the
  * scrollIntoView side effect); page scrolls dispatch a REAL mouseWheel event
  * so co-drive arbitration applies exactly as it does for clicks.
  */

@@ -21,8 +21,8 @@ const logger = createLogger("sandbox");
 export type { SandboxMode } from "./types.js";
 export { validateSandboxConfig } from "./validate.js";
 // Denial→truthful-notice mapping lives in denial-hints.ts (split when the
-// network hint pushed this file past the 400-LOC bar); re-exported so callers
-// keep importing from the sandbox facade.
+// network hint landed); re-exported so callers keep importing from the sandbox
+// facade.
 export { sandboxDenialHint, networkDenialHint } from "./denial-hints.js";
 
 // Memoized: whether seatbelt is usable on THIS host (macOS + sandbox-exec

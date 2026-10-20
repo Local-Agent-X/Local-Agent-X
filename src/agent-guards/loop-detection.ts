@@ -129,8 +129,8 @@ export const NO_PROGRESS_LIMIT_WEAK = 15;
 // model being told to pivot and ignoring it. The wall-clock ceiling (up to 2h)
 // is the only other backstop, so without this a stubborn loop ran far too long.
 export const NUDGE_CEILING = 6;
-// SPIRALABLE_TOOLS + the exploration-waste detectors live in loop-discovery.ts
-// (LOC ceiling); re-exported so agent-guards/index.ts and tests keep their path.
+// SPIRALABLE_TOOLS + the exploration-waste detectors live in loop-discovery.ts;
+// re-exported so agent-guards/index.ts and tests keep their path.
 export { SPIRALABLE_TOOLS } from "./loop-discovery.js";
 
 /**

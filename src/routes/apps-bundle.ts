@@ -1,8 +1,7 @@
 /**
  * App-bundle builder — produces the offline payload a paired phone downloads to
  * run an app with the desktop unreachable (product flow 5). Split out of
- * routes/apps.ts so that file stays under the 400-LOC cap; the route handler
- * delegates here.
+ * routes/apps.ts; the route handler delegates here.
  *
  * The bundle is NOT a new app model — it reuses the canonical surfaces:
  *   - registered apps  → HTML from app-renderer's renderApp() (self-contained:

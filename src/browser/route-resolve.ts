@@ -1,8 +1,8 @@
 /**
  * THE browser routing decision — which backend a session gets, WHY, and the
- * once-per-answer report of it. Split out of instance.ts (which sat exactly on
- * the 400-LOC gate) along the seam the emulation override created: this module
- * decides the route, instance.ts owns the backend maps and their lifecycle.
+ * once-per-answer report of it. Split out of instance.ts along the seam the
+ * emulation override created: this module decides the route, instance.ts owns
+ * the backend maps and their lifecycle.
  *
  * Nothing here mints, opens or closes anything: every function is a pure read
  * of config + env + the session's emulation profile, plus one logger line.

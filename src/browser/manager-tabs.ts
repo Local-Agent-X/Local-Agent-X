@@ -1,6 +1,6 @@
 /**
  * CDP tab lifecycle — new_tab open/unwind and close_tab — split from
- * manager.ts for the 400-LOC ceiling, same accessor-host pattern as
+ * manager.ts with the same accessor-host pattern as
  * manager-popups.ts: BrowserManager stays the single owner of `owned` and
  * `page`; these functions drive the lifecycle through narrow accessors so no
  * tab state is duplicated outside the manager.

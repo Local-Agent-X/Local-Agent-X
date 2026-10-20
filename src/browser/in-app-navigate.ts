@@ -1,7 +1,7 @@
 /**
  * navigateInAppView — the in-app browser's navigate driver, split out of
- * ElectronInAppBackend so the backend stays under the file-size cap and the
- * native-vs-bridge decision lives in one testable leaf.
+ * ElectronInAppBackend so the native-vs-bridge decision lives in one testable
+ * leaf.
  *
  * Native driving when a REAL CDP-backed Page exists for the view (page.goto via
  * page-ops.gotoPage), the desktop bridge navigate otherwise. Both paths return

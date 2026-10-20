@@ -18,7 +18,7 @@
  *    when two elements collide on one, the collision is broken by their stable
  *    keys instead of by dropping an element from the snapshot.
  *
- * Split from extract.ts for the 400-LOC gate.
+ * Split from extract.ts, which keeps the Node-side runner.
  */
 import { TEST_ID_ATTRS, STABLE_ID_MAX_LEN } from "./stable-ids.js";
 

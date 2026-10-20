@@ -15,8 +15,9 @@
  *     checks visible/enabled/editable but never occlusion, so it writes
  *     through an overlay too. Used only AFTER the coordinate path has missed.
  *
- * Split from in-app-resolve-scripts.ts for the 400-LOC gate. Same isolated-
- * world discipline as its siblings (see in-app-resolve-scripts.ts header).
+ * Split from in-app-resolve-scripts.ts (which keeps the resolution chain).
+ * Same isolated-world discipline as its siblings (see in-app-resolve-scripts.ts
+ * header).
  */
 
 import type { DurableRef } from "./observation.js";

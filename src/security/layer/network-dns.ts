@@ -3,10 +3,10 @@
  * it if ANY answer is private/reserved (DNS rebinding), and hand back a PIN so
  * the address that was CHECKED is the address that gets dialed.
  *
- * Split out of network-policy.ts (which sits at the 400-LOC gate) rather than
- * duplicated: network-policy re-exports this, so every existing importer — and
- * security/layer/index.ts — is unchanged. Imports only the pure classifiers, so
- * there is no cycle back into the policy module.
+ * Split out of network-policy.ts rather than duplicated: network-policy
+ * re-exports this, so every existing importer — and security/layer/index.ts —
+ * is unchanged. Imports only the pure classifiers, so there is no cycle back
+ * into the policy module.
  */
 import { promises as dns } from "node:dns";
 import { isIP } from "node:net";

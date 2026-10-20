@@ -1,7 +1,7 @@
 // The reconnect_op frame: replay an op's missed canonical events to ONE
 // socket and re-attach it to the live tail.
 //
-// Split from ./message-router.ts (2026-09-21, 400-LOC gate). The router keeps
+// Split from ./message-router.ts (2026-09-21). The router keeps
 // the frame dispatch; everything reconnect_op needs — the per-socket
 // subscription bookkeeping and the committed-text join it replays — lives
 // here, because those two exist for this handler alone.

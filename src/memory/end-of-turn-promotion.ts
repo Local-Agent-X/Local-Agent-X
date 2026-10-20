@@ -1,6 +1,6 @@
 /**
  * Promotion capability for the end-of-turn writer — split out of
- * end-of-turn-write.ts (the 400-LOC source-hygiene ceiling).
+ * end-of-turn-write.ts, which applies the writes.
  *
  * Every memory write must carry a capability whose claims the gate (write-
  * safely.ts → assertMemoryPromotionAllowed) recomputes and verifies. Tool

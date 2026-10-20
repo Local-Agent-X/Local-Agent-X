@@ -1,6 +1,6 @@
 // The security layer's decision shape and the user-facing hints every block
-// site reads. Split from types.ts, the shared type barrel, at the source-
-// hygiene ceiling; types.ts re-exports it, so importers are unchanged.
+// site reads. Split from types.ts, the shared type barrel; types.ts
+// re-exports it, so importers are unchanged.
 
 
 /** A control the user can click to end a class of block (see SecurityDecision.action). */

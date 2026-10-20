@@ -1,8 +1,8 @@
 /**
  * Shared string fragments for the in-app isolated-world scripts
- * (in-app-scripts.ts / in-app-resolve-scripts.ts). Extracted to keep those
- * files under the 400-LOC gate and to give the <select> option-matcher, the
- * React-safe value setter, and the occlusion/frame helpers a single home.
+ * (in-app-scripts.ts / in-app-resolve-scripts.ts). Extracted to give the
+ * <select> option-matcher, the React-safe value setter, and the
+ * occlusion/frame helpers a single home.
  * These are STRING BUILDERS — the JS they emit runs in the view's isolated
  * world, so the free-identifier discipline still applies (document /
  * getComputedStyle / …, plus HTMLInputElement / HTMLTextAreaElement, which

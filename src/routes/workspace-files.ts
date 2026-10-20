@@ -9,9 +9,9 @@ const WS_FILE_EXTS = new Set(["pptx", "docx", "xlsx", "pdf", "txt", "md", "csv"]
 /**
  * Workspace-ROOT file listing/rename/delete — operates on `workspace/` itself
  * (generated docs/spreadsheets/etc.), distinct from the `/api/apps/<id>/files`
- * routes that target `workspace/apps/<id>/`. Split out of routes/apps.ts to keep
- * that file under the source-hygiene LOC cap; mirrors the lazy-import shape of
- * handleAppSnapshotsRoutes. Returns true when it claimed the request.
+ * routes that target `workspace/apps/<id>/`. Split out of routes/apps.ts, which
+ * lazy-imports it the same way as handleAppSnapshotsRoutes. Returns true when
+ * it claimed the request.
  */
 export async function handleWorkspaceFilesRoutes(
   method: string,

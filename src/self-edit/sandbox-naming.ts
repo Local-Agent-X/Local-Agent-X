@@ -1,8 +1,8 @@
 /**
  * Naming + probe-port helpers for the self_edit sandbox.
  *
- * Split from sandbox.ts to keep both files under the 400-LOC limit.
- * Pure helpers only — no confinement, spawn, or path-bounding logic lives here.
+ * Split from sandbox.ts. Pure helpers only — no confinement, spawn, or
+ * path-bounding logic lives here.
  */
 
 import { createHash } from "node:crypto";

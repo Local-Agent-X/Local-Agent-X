@@ -1,8 +1,7 @@
 // Live-turn keepalive for the per-chat channel: the interval that emits
 // `op_heartbeat` while a turn is in flight, plus the derivation of what that
-// beat REPORTS. Split out of manager.ts (which sits at the file-size limit)
-// when the beat stopped being payload-free — the manager owns turn lifecycle,
-// this owns the keepalive.
+// beat REPORTS. Split out of manager.ts when the beat stopped being
+// payload-free — the manager owns turn lifecycle, this owns the keepalive.
 //
 // Everything here reads state the ActiveChat entry ALREADY accumulates. The
 // beat is telemetry about a turn, never a reason to make a turn track more.

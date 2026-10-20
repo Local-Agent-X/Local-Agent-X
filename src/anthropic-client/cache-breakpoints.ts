@@ -1,7 +1,7 @@
 // Anthropic prompt-caching breakpoint placement — the system tier and the
 // message tier. Extracted from stream-api.ts so the request builder stays
-// readable (and under the 400-LOC gate); these two functions are the whole
-// policy for WHERE a `cache_control` marker lands.
+// readable; these two functions are the whole policy for WHERE a
+// `cache_control` marker lands.
 //
 // Prefix order on the wire is tools → system → messages, so a marker caches
 // everything above it. The rule both helpers encode: a breakpoint must sit on

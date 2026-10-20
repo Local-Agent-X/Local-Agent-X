@@ -1,6 +1,6 @@
 // In-process Tier-4 / CPU speaker: streams reply text to the TTS engine one
-// natural chunk at a time. Split out of voice-session/index.ts to keep that
-// file under the size gate; behavior is unchanged.
+// natural chunk at a time. Split out of voice-session/index.ts; behavior is
+// unchanged.
 //
 // Chunking is what makes cadence sound human, because every chunk boundary is
 // a synthesis seam (a tiny gap). So seams land on PUNCTUATION, never a raw

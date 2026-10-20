@@ -21,9 +21,8 @@ import { createLogger } from "../logger.js";
 const logger = createLogger("browser.observation");
 
 // Observation result types (DurableRef / ObservationDegradation /
-// BrowserObservation) live in observation-types.ts to keep this file under the
-// 400-LOC source ceiling; re-exported so consumers still import them from
-// "./observation.js".
+// BrowserObservation) live in observation-types.ts; re-exported so consumers
+// still import them from "./observation.js".
 export type { DurableRef, ObservationDegradation, BrowserObservation, SerializedRegistry } from "./observation-types.js";
 
 /**

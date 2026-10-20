@@ -11,8 +11,8 @@
  * agent drives them but never closes them; close() just drops them.
  *
  * The COMBINED ordering (own tabs + user views) that `tabs` prints — merge,
- * listing format, switch/adopt, close_tab — lives in in-app-tab-merge.ts
- * (split for the 400-LOC ceiling).
+ * listing format, switch/adopt, close_tab — lives in in-app-tab-merge.ts;
+ * this module keeps the tab model and per-view lifecycle.
  */
 
 import type { Page } from "playwright";

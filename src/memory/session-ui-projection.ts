@@ -1,7 +1,7 @@
 /**
  * Stored transcript → what the chat shows.
  *
- * Split out of session-message-log.ts (400-LOC source-hygiene ceiling): that
+ * Split out of session-message-log.ts: that
  * module owns reading and writing the log on disk; this owns the separate
  * question of which rows a PERSON should see and how a turn's assistant
  * fragments collapse into one bubble.

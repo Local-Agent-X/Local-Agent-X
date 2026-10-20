@@ -1,5 +1,5 @@
-// The env an MCP child subprocess is spawned with. Split from connection.ts
-// (400-LOC cap); the credential tables live in env-credential-patterns.ts.
+// The env an MCP child subprocess is spawned with. Split from connection.ts;
+// the credential tables live in env-credential-patterns.ts.
 import { createLogger } from "../logger.js";
 import { DENY_PREFIXES, DENY_SUBSTRINGS, DENY_EXACT, ENV_ALLOWLIST } from "./env-credential-patterns.js";
 

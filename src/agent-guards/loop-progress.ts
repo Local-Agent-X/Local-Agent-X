@@ -1,7 +1,7 @@
 /**
  * Loop-progress signals — the half of the loop guard that answers "did
- * anything actually change?", split out of loop-detection.ts (which sits at
- * the 400-LOC source-hygiene ceiling and cannot grow). Sibling to
+ * anything actually change?", split out of loop-detection.ts (which stays the
+ * entry point that sequences the guards). Sibling to
  * post-commit.ts: both extend the ONE LoopState the canonical guard owns
  * rather than keeping parallel per-op state.
  *

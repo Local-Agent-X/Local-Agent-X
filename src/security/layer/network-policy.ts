@@ -16,7 +16,7 @@ import {
   LOOPBACK_HOSTNAMES,
   BLOCKED_HOSTNAMES,
 } from "./ip-classification.js";
-// The DNS-pin chokepoint lives in its own module (LOC gate); re-exported here so
+// The DNS-pin chokepoint lives in its own module (network-dns.ts); re-exported here so
 // every existing `from "./network-policy.js"` import site keeps working.
 import { resolveAndPinHost } from "./network-dns.js";
 export { resolveAndPinHost } from "./network-dns.js";

@@ -365,7 +365,7 @@ export function sanitizeSemiTrusted(content: string): string {
   return result;
 }
 
-// Memory Taint Protection moved to memory-taint.ts (pure extraction, this
-// file's own 400-LOC split) — re-exported so existing
+// Memory Taint Protection moved to memory-taint.ts (pure extraction) —
+// re-exported so existing
 // `import { checkMemoryTaint } from "./sanitize.js"` call sites are unchanged.
 export { checkMemoryTaint, sanitizeForMemory, type MemoryTaintResult } from "./memory-taint.js";

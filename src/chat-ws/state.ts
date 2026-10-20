@@ -5,7 +5,7 @@
 // which sessionId. Other chat-ws modules import from here rather than
 // passing closures around. Everything that SENDS over these maps —
 // per-session fan-out, the active_chats listing, broadcast-to-all,
-// terminateChat — lives in ./broadcast.ts (split 2026-09-01, 400-LOC gate).
+// terminateChat — lives in ./broadcast.ts (split 2026-09-01).
 
 import type { WebSocket } from "ws";
 import type { ServerEvent } from "../types.js";

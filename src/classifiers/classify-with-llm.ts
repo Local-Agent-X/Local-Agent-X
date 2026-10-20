@@ -316,8 +316,8 @@ export async function classifyWithLLM<T>(opts: ClassifyOptions<T>): Promise<T | 
 }
 
 // Convenience wrappers (classifyYesNo / parseYesNoReason /
-// classifyYesNoWithReason / classifyJson) moved to classify-conveniences.ts —
-// this file sat AT the 400-LOC source-hygiene ceiling. Re-exported so existing
+// classifyYesNoWithReason / classifyJson) moved to classify-conveniences.ts,
+// thin shapes over the engine above. Re-exported so existing
 // `import { classifyYesNo } from "./classify-with-llm.js"` sites keep working.
 export {
   classifyYesNo,

@@ -1,5 +1,5 @@
-// Pure FieldAgent → FieldAgentStatus projection — split out of handler.ts
-// (source-hygiene LOC ceiling; same layout note as handler-types/handler-tools).
+// Pure FieldAgent → FieldAgentStatus projection — split out of handler.ts,
+// like handler-types/handler-tools.
 import type { FieldAgent, FieldAgentStatus } from "./handler-types.js";
 
 export function buildAgentStatus(agent: FieldAgent): FieldAgentStatus {

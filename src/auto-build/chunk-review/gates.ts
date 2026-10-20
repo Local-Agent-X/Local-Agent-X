@@ -97,7 +97,7 @@ export function gateReportShape(report: ChunkReport): GateFinding | null {
 }
 
 // Gate 1 (done-when verifier) lives in gate-done-when.ts — the largest single
-// gate, split at the 400-LOC ceiling. Re-exported so callers keep one import.
+// gate. Re-exported so callers keep one import.
 export { gateDoneWhen } from "./gate-done-when.js";
 
 /**

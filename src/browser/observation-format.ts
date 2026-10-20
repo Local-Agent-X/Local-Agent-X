@@ -1,6 +1,6 @@
 /**
  * Pure text formatters for browser observations — extracted from
- * observation.ts to keep it under the file-size ceiling. The ONLY consumer is
+ * observation.ts, which keeps the registry. The ONLY consumer is
  * ObservationRegistry.format/formatRef (observation.ts); the public snapshot
  * API is unchanged. All page-derived strings pass through sanitizeText so a
  * hostile page can't forge section markers or break the ref line grammar.

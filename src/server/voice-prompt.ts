@@ -1,5 +1,5 @@
-// Voice-turn tool belt + spoken-mode prompt tail. Split out of voice-ws.ts to
-// keep that file under the size gate; behavior is unchanged.
+// Voice-turn tool belt + spoken-mode prompt tail. Split out of voice-ws.ts;
+// behavior is unchanged.
 //
 // The belt is deliberately SMALL and curated: the "too many tools" cost is the
 // full tool inventory bloating the voice prompt with schemas + inviting deep

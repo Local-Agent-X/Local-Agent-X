@@ -1,8 +1,8 @@
 // Pre-score audit-event emission for ThreatEngine.evaluateToolResult. These
 // three emissions run BEFORE the scorer records anything and have no other side
-// effects, so they factor out cleanly — extracted from threat-engine.ts to keep
-// that per-session orchestrator under the source-hygiene LOC ceiling. Behavior
-// is byte-for-byte identical to the inlined form.
+// effects, so they factor out cleanly — extracted from threat-engine.ts, the
+// per-session orchestrator. Behavior is byte-for-byte identical to the inlined
+// form.
 
 import type { CryptoAuditTrail } from "./audit-trail.js";
 import type { ThreatScorer } from "./scoring.js";

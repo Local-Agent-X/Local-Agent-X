@@ -1,6 +1,6 @@
-// The zod schema for config.json — moved out of config.ts (config.ts is at the
-// source-hygiene LOC ceiling; same split pattern as config-profiles.ts). Owns
-// every field's shape, bounds, and default; config.ts owns load/save/migrate.
+// The zod schema for config.json — moved out of config.ts (same split pattern
+// as config-profiles.ts). Owns every field's shape, bounds, and default;
+// config.ts owns load/save/migrate.
 import { z } from "zod";
 import { loadSystemPrompt } from "./config-loader.js";
 

@@ -1,8 +1,7 @@
 // The delegated-agent worktree-isolation gate — extracted from layer-core.ts's
-// evaluate() to keep that class under the source-hygiene LOC ceiling. Pure
-// policy: given the delegated call and four predicates over the SecurityLayer's
-// state and the sandbox status, it returns a blocking SecurityDecision or null
-// (pass through to the shared command/file vetting).
+// evaluate(). Pure policy: given the delegated call and four predicates over
+// the SecurityLayer's state and the sandbox status, it returns a blocking
+// SecurityDecision or null (pass through to the shared command/file vetting).
 
 import type { SecurityDecision } from "../../types.js";
 import { USER_HINTS } from "../../types.js";

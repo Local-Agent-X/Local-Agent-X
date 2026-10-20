@@ -1,6 +1,6 @@
 /**
  * Sensitive-page classification and the browserSecrecy read ladder — split
- * from guards.ts for the 400-LOC gate (guards.ts keeps the request guard and
+ * from guards.ts (guards.ts keeps the request guard and
  * the evaluate() blocklist; guards.ts re-exports this module so consumers
  * keep their import surface).
  *

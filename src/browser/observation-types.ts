@@ -1,9 +1,8 @@
 /**
  * Shared observation result types — DurableRef, ObservationDegradation, and the
  * BrowserObservation shape both browser backends produce. Split out of
- * observation.ts to keep that file under the 400-LOC source ceiling; the
- * registry re-exports these so existing `from "./observation.js"` imports keep
- * working unchanged.
+ * observation.ts, which keeps the ObservationRegistry; the registry re-exports
+ * these so existing `from "./observation.js"` imports keep working unchanged.
  */
 import type { Obstruction } from "./modal-detector.js";
 import type { CapturedDialog } from "./dialog-handler.js";

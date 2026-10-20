@@ -111,8 +111,8 @@ export interface ToolDefinition {
  */
 export type ToolResultStatus = "ok" | "error" | "blocked" | "declined" | "timeout" | "running";
 
-// The block record + kernel quarantine shapes live in ./types/tool-block.ts
-// (400-LOC cap); re-exported so consumers keep importing from here.
+// The block record + kernel quarantine shapes live in ./types/tool-block.ts;
+// re-exported so consumers keep importing from here.
 export type { BlockLayer, KernelQuarantine, ToolBlockRecord } from "./types/tool-block.js";
 export { BLOCK_LAYERS, isBlockLayer } from "./types/tool-block.js";
 import type { BlockLayer } from "./types/tool-block.js";
@@ -265,9 +265,8 @@ export interface Session {
 
 // ── Server Types ──
 // ToolChip, ActionPreview, and the ServerEvent union live in
-// ./types/server-events.ts (split out to keep this file under the 400-LOC
-// cap). Re-exported here so existing `from "...types.js"` imports are
-// unchanged.
+// ./types/server-events.ts. Re-exported here so existing `from "...types.js"`
+// imports are unchanged.
 export type { ToolChip, ActionPreview, ServerEvent } from "./types/server-events.js";
 
 // ── Auth Types ──
@@ -285,8 +284,7 @@ export interface OAuthTokens {
 
 // ── Deployment Profile + Config Types ──
 // DeploymentProfile, ProfileDefaults, MIN_MAX_ITERATIONS, and LAXConfig live
-// in ./types/lax-config.ts (split out to keep this file under the 400-LOC
-// cap, same as server-events.ts). Re-exported so existing imports are
-// unchanged.
+// in ./types/lax-config.ts (same as server-events.ts). Re-exported so existing
+// imports are unchanged.
 export { MIN_MAX_ITERATIONS } from "./types/lax-config.js";
 export type { BrowserMode, DeploymentProfile, ProfileDefaults, LAXConfig } from "./types/lax-config.js";

@@ -1,6 +1,6 @@
 /**
- * Side-effects extracted from loop.ts so the main loop file stays under
- * the 400-LOC ceiling. All three helpers — additive spec amendment,
+ * The auto-build loop's side-effects, extracted from loop.ts. All three
+ * helpers — additive spec amendment,
  * chunk/spec commit, launch-readiness emission — are filesystem-touching
  * but otherwise pure functions of (projectDir, chunk, payload).
  */

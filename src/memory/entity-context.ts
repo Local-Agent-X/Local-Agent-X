@@ -5,8 +5,8 @@
  * message against known entity slugs, reinforce the matched entities'
  * facts, and render those facts INLINE so a bare mention ("merchhelm")
  * is answered from context instead of a memory_search tool round-trip.
- * Extracted from context.ts (which sits at the 400-LOC gate); context.ts
- * remains the only caller and the canonical injection seam.
+ * Extracted from context.ts, which remains the only caller and the canonical
+ * injection seam.
  */
 
 import type { MemoryIndex } from "./index-core.js";

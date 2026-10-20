@@ -1,6 +1,6 @@
 /**
  * Site-opened popup adoption for the CDP BrowserManager — split out of
- * manager.ts to keep it under the 400-LOC ceiling. A page a site opens
+ * manager.ts. A page a site opens
  * (window.open / target=_blank) must be adopted into the manager's owned pages
  * or it is stranded off the tab list and switch_tab can't reach it, pinning the
  * agent on the opener.

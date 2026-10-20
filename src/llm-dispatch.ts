@@ -22,7 +22,7 @@
  * streamAnthropicResponse client, which uses the official CLI proxy.
  *
  * This file owns WHICH provider and WHICH model. How each provider's wire
- * actually works lives in the two legs, split out under the 400-LOC gate:
+ * actually works lives in the two legs:
  * llm-dispatch/ollama.js (local) and llm-dispatch/hosted.js (anthropic,
  * openai, xai, codex). The dependency is one-way — the legs never import back.
  */

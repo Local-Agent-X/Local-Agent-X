@@ -1,7 +1,7 @@
 /**
  * Browser safety guards — request validation and evaluate() script pattern
- * blocking. Extracted from browser-tools.ts so the tool definition stays
- * under the file-size cap.
+ * blocking. Extracted from browser-tools.ts, which keeps the tool
+ * definition.
  */
 import type { BrowserContext } from "playwright";
 import { evaluateEgressForUrl } from "../security/layer/index.js";
@@ -378,7 +378,7 @@ export class EvaluateBlockedError extends Error {
 }
 
 // Sensitive-page classification and the browserSecrecy read ladder moved to
-// sensitive-pages.ts (400-LOC gate). Re-exported so the many existing
+// sensitive-pages.ts. Re-exported so the many existing
 // consumers keep importing from guards.js.
 export {
   browserSecrecyLevel,

@@ -19,9 +19,8 @@ import { unsafeWorkspaceReason } from "./workspace/workspace-location.js";
 import { createLogger } from "./logger.js";
 const logger = createLogger("config");
 
-// PROFILE_DEFAULTS moved to config-profiles.ts (config.ts is at the source-hygiene
-// LOC ceiling); re-exported so existing `import { PROFILE_DEFAULTS } from "./config"`
-// callers keep working.
+// PROFILE_DEFAULTS moved to config-profiles.ts; re-exported so existing
+// `import { PROFILE_DEFAULTS } from "./config"` callers keep working.
 import { PROFILE_DEFAULTS } from "./config-profiles.js";
 export { PROFILE_DEFAULTS };
 

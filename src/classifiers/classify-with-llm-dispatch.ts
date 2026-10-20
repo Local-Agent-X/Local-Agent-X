@@ -1,7 +1,6 @@
 /**
  * Per-provider dispatch for classifyWithLLM — pure extraction, split out of
- * classify-with-llm.ts when providerOverride pushed it over the hard 400-LOC
- * source-hygiene ceiling (scripts/check-source-hygiene.mjs). classify-with-llm.ts
+ * classify-with-llm.ts when providerOverride landed. classify-with-llm.ts
  * keeps ownership of the options contract, provider/model resolution, the
  * wallclock race, and the try/catch/finally shape; this module owns ONLY "given
  * a resolved {provider, apiKey, model}, how do we actually call it" — the same

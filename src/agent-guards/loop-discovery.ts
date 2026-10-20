@@ -2,8 +2,8 @@
  * Exploration-waste detectors — the two loop signals that watch READ-ONLY
  * work: re-running one search forever, and spinning on one discovery tool.
  *
- * Split out of loop-detection.ts when cycle detection landed and pushed that
- * file past the 400-LOC ceiling. Sibling to loop-progress.ts (which owns "did
+ * Split out of loop-detection.ts when cycle detection landed, so the
+ * read-only signals have one home. Sibling to loop-progress.ts (which owns "did
  * anything change?") and post-commit.ts; loop-detection.ts remains the single
  * entry point that sequences all of them against the one LoopState. Nothing
  * here holds state of its own — counters live on LoopState and are passed in,

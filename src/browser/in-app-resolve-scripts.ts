@@ -1,6 +1,6 @@
 /**
  * A2 resolution-chain scripts (isolated world) — pure STRING BUILDERS, split
- * from in-app-scripts.ts for the 400-LOC gate: resolutionScript and
+ * from in-app-scripts.ts: resolutionScript and
  * textSearchScript, over the shared exact-match / occlusion / same-origin-frame
  * helpers in in-app-script-helpers.ts. The A1 selector scripts and
  * checkedScript stay in in-app-scripts.ts, the fill scripts (select + exact

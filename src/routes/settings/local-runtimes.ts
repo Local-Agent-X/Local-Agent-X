@@ -1,8 +1,8 @@
 // Local runtime + Ollama routes: the discovered-runtime list, manual runtime
 // registration, model certification, the local Ollama tag list, the Ollama
 // Turbo connection test and the `ollama serve` launcher. Split out of
-// providers.ts (which keeps the picker's provider list and the switch) at the
-// 400-LOC gate; providers.ts delegates here for anything it does not handle.
+// providers.ts (which keeps the picker's provider list and the switch);
+// providers.ts delegates here for anything it does not handle.
 import type { RouteHandler } from "../../server-context.js";
 import { jsonResponse, readBody } from "../../server-utils.js";
 import { getRuntimeConfig } from "../../config.js";

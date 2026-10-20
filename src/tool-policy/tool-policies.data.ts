@@ -22,7 +22,7 @@
 // admit future tools.
 //
 // The entries are split across per-domain fragment files (tool-policies.<domain>.ts)
-// purely to keep each file under the 400-LOC cap; they are merged below into the
+// so each domain's rows read together; they are merged below into the
 // single exported TOOL_POLICIES record. The fragments partition the keyspace —
 // no key appears in more than one fragment, so the spread order is irrelevant
 // (no entry can silently override another). The type contract lives in

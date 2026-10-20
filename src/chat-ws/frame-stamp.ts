@@ -1,6 +1,6 @@
 // What the channel stamps onto an outgoing frame.
 //
-// Split from ./manager.ts (2026-09-21, 400-LOC gate). Both stamps answer the
+// Split from ./manager.ts (2026-09-21). Both stamps answer the
 // same question from the client's side — "which turn is this frame from, and
 // where in that turn does it sit" — and neither needs anything else the
 // manager holds, so they live together here and the manager keeps the

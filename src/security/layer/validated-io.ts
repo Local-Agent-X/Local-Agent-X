@@ -1,7 +1,7 @@
 /**
  * Atomic I/O on a VALIDATED canonical inode — the open/read/write half of the
  * file-access gate, kept in its own module so file-access.ts stays one
- * responsibility (the policy decision) under the source-hygiene LOC gate.
+ * responsibility (the policy decision).
  *
  * These helpers close the check-on-string / open-on-inode TOCTOU (R4-19): the
  * pre-dispatch gate (evaluateFileAccess) validates a realpath, then the tool

@@ -1,6 +1,6 @@
 /**
- * Snapshot routes split out of routes/apps.ts so the parent file stays
- * under the 400-LOC cap. Two endpoints:
+ * Snapshot routes, split out of routes/apps.ts (which lazy-imports them).
+ * Two endpoints:
  *   GET  /api/apps/<id>/snapshots → newest-first list (capped at 5)
  *   POST /api/apps/<id>/revert    → restore files from {turnIdx, ts}
  *

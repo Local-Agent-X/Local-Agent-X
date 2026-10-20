@@ -224,7 +224,7 @@ export class CronService {
    * Public entrypoint for executing a job (used by the timer, catch-up, and
    * the run-now API). Records a history entry for every attempt — including
    * skipped runs — and tracks consecutive failures with bounded retries.
-   * Body lives in cron-service-execute.ts so this file stays under 400 LOC.
+   * The body (execution + retry state machine) lives in cron-service-execute.ts.
    */
   executeJob(job: CronJob, opts: { manual: boolean; isCatchUp?: boolean } = { manual: false }): Promise<void> {
     return runJob(this, job, opts);

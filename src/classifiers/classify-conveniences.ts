@@ -2,9 +2,9 @@
  * Convenience wrappers over classifyWithLLM — the yes/no, yes/no+reason, and
  * JSON-shaped entry points call sites actually use.
  *
- * Moved out of classify-with-llm.ts as a pure lift (that file sat AT the
- * 400-LOC source-hygiene ceiling): the core engine — provider routing plus
- * the wallclock race — stays there; these remain thin shapes over it.
+ * Moved out of classify-with-llm.ts as a pure lift: the core engine —
+ * provider routing plus the wallclock race — stays there; these remain thin
+ * shapes over it.
  * classify-with-llm.ts re-exports everything here, so existing import sites
  * are unchanged.
  */

@@ -4,7 +4,7 @@ import { CURRENT_SCHEMA_VERSION, migrateSchema } from "./index-schema-migrations
 import { createLogger } from "../logger.js";
 const logger = createLogger("memory.index-schema");
 
-// Migration steps live in index-schema-migrations.ts (LOC cap); re-export so
+// Migration steps live in index-schema-migrations.ts; re-export so
 // existing consumers of this module keep one import site.
 export { CURRENT_SCHEMA_VERSION, migrateSchema };
 

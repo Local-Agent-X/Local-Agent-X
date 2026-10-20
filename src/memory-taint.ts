@@ -1,6 +1,5 @@
 /**
- * Memory Taint Protection — pure extraction, split out of sanitize.ts when it
- * crossed the hard 400-LOC source-hygiene ceiling (scripts/check-source-hygiene.mjs).
+ * Memory Taint Protection — pure extraction, split out of sanitize.ts.
  * sanitize.ts keeps the general content-sanitization engine (stripping,
  * detection, wrapExternalContent); this module owns the one thing specific to
  * persisting content into high-trust memory/profile files: deciding whether

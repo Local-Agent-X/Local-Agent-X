@@ -244,10 +244,10 @@ const WriteDecisionSchema = z.union([
     }),
 ]);
 
-// Promotion capability minting lives in end-of-turn-promotion.ts (split out
-// for the 400-LOC ceiling): every memory write must carry a capability whose
-// claims the gate (write-safely.ts → assertMemoryPromotionAllowed) recomputes
-// and verifies, and this out-of-band pass mints its own.
+// Promotion capability minting lives in end-of-turn-promotion.ts: every memory
+// write must carry a capability whose claims the gate (write-safely.ts →
+// assertMemoryPromotionAllowed) recomputes and verifies, and this out-of-band
+// pass mints its own.
 
 export async function applyWrite(d: WriteDecisionPayload, ctx: EndOfTurnContext): Promise<ApplyWriteResult> {
   // Promotion precondition first — ahead of the file read, the section regex

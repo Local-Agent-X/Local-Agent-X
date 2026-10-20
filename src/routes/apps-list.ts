@@ -11,7 +11,7 @@
  *
  * Extracted from apps.ts so the three-pass logic is unit-testable at the seam
  * (a workspace dir + dev-server records → the surfaced list) without standing up
- * a full server context, and to keep apps.ts under the LOC cap.
+ * a full server context.
  */
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";

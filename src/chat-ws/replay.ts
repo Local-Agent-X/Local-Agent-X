@@ -1,7 +1,6 @@
 // Late-subscriber replay for a session's in-flight (or lingering) chat.
-// Split from state.ts (2026-07-13) to keep that module under the 400-LOC
-// hygiene gate; state.ts owns the maps and terminate semantics, this module
-// owns only the read-side replay built from them.
+// Split from state.ts (2026-07-13): state.ts owns the maps and terminate
+// semantics, this module owns only the read-side replay built from them.
 
 import type { WebSocket } from "ws";
 import type { ServerEvent } from "../types.js";

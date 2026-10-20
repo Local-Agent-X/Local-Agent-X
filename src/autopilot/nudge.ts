@@ -7,6 +7,7 @@
  */
 
 import { AUTOPILOT_DONE_MARKER, type AutopilotConfig } from "./types.js";
+import { KIT_LIMITS } from "../app-scaffold/kit-size.js";
 
 export interface NudgeContext {
   config: AutopilotConfig;
@@ -51,7 +52,7 @@ Find the next highest-impact improvement related to the topic and ship it. ONE f
 The system will validate your work after this round:
 1. \`git status\` — empty diff = no-op round (don't burn rounds doing nothing)
 2. \`${config.buildCommand || "npm run build"}\` — build must pass; if it fails, your changes are reverted and you'll see the error next round
-3. File-size delta — don't push any file FROM ≤${config.fileSizeLimit} LOC TO >${config.fileSizeLimit}; existing larger files are fine to edit
+3. Size — don't push a file over ${config.fileSizeLimit} code lines, or a function over ${KIT_LIMITS.maxFn} of its own; comments and blank lines don't count, so never delete them to fit. One already over may be edited. Near a cap, move the job that grew into a module or function named after it
 ${config.withTests ? `4. \`${config.testCommand}\` — tests must pass\n` : ""}
 
 Use the read/edit/write/bash/grep/glob tools directly. self_edit is also available for harder edits but counts toward your ceiling.

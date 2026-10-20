@@ -47,7 +47,8 @@ export interface AutopilotConfig {
   testCommand: string;
   /** Test timeout in ms. */
   testTimeoutMs: number;
-  /** Per-file LOC limit for delta check. Default 400. */
+  /** The round gate's file cap in code lines (comments are free). Default: the
+   *  kit's (app-scaffold/kit-size.ts); a function is held to the kit's function cap. */
   fileSizeLimit: number;
 }
 

@@ -4,7 +4,8 @@
  * Order of gates (per plan):
  *   1. git status --porcelain → empty? → noop
  *   2. build command → fail? → revert + report error
- *   3. file-size delta check → any changed file pushed FROM ≤N TO >N? → revert
+ *   3. size delta check (the kit's rule, app-scaffold/kit-size.ts) → a changed
+ *      file, or a function in one, pushed over its cap? → revert
  *   4. (opt-in) test command → fail? → revert
  *
  * On any fail, runs `git reset --hard HEAD && git clean -fd` so the next round
@@ -21,6 +22,7 @@ import {
 } from "../agency/worktree.js";
 import { composeGitArgs, execGitSync } from "../git-safety.js";
 import type { AutopilotConfig, RoundOutcome } from "./types.js";
+import { KIT_LIMITS, overCapItems } from "../app-scaffold/kit-size.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("autopilot.validate");
@@ -30,38 +32,35 @@ export interface ValidationResult {
   filesChanged: string[];
   /** Diagnostic detail for failure (build error, oversize file, etc.). Empty on pass/noop. */
   detail: string;
-  /** Files newly pushed over the size limit, if any. */
+  /** Files, and functions in them, newly pushed over their size cap, if any. */
   oversizedFiles: string[];
 }
 
-/** Count non-empty lines in a file. Used for the LOC limit check. */
-function countLines(filePath: string): number {
+function readText(filePath: string): string {
   try {
-    return readFileSync(filePath, "utf-8").split(/\r?\n/).length;
+    return readFileSync(filePath, "utf-8");
   } catch {
-    return 0;
+    return "";
   }
 }
 
 /**
- * Get LOC for a file at HEAD (the previous good commit) — used to compute
- * delta. If the file didn't exist at HEAD (newly created), prevLoc = 0.
- * Counted as `wc -l` counts: newline characters.
+ * A file's content at HEAD (the previous good commit), to tell what this round
+ * pushed over a cap from what was over already. "" when the file is new.
  *
  * The path is a name the round's agent chose, so it is one argv entry and
  * never shell text, and the read runs no fsmonitor hook or textconv filter
  * the worktree's config could name.
  */
-function getPrevLoc(worktreePath: string, relPath: string): number {
+function headText(worktreePath: string, relPath: string): string {
   try {
-    const out = execGitSync(
+    return execGitSync(
       composeGitArgs(["-c", "core.fsmonitor=false", "show", "--no-textconv", `HEAD:${relPath}`]),
       // A lockfile at HEAD is past execFileSync's 1 MiB default.
       { cwd: worktreePath, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 64 * 1024 * 1024, timeout: 10_000, windowsHide: true },
     );
-    return out.split("\n").length - 1;
   } catch {
-    return 0;
+    return "";
   }
 }
 
@@ -98,16 +97,20 @@ export async function validateRound(
     logger.info(`[autopilot.validate] build passed in ${buildResult.durationMs}ms`);
   }
 
-  // Gate 3: file-size delta
+  // Gate 3: size delta, by the kit's rule (code lines; comments are free). A
+  // part already over its cap at HEAD may be edited; one this round pushed
+  // over may not.
+  const limits = { ...KIT_LIMITS, maxCode: config.fileSizeLimit };
   const oversizedFiles: string[] = [];
   for (const rel of filesChanged) {
     const abs = isAbsolute(rel) ? rel : join(config.worktreePath, rel);
     if (!existsSync(abs)) continue; // deleted file — skip
-    const newLoc = countLines(abs);
-    if (newLoc <= config.fileSizeLimit) continue;
-    const prevLoc = getPrevLoc(config.worktreePath, rel);
-    if (prevLoc > config.fileSizeLimit) continue; // already over — not gated
-    oversizedFiles.push(`${rel} (${prevLoc} → ${newLoc} LOC)`);
+    const now = overCapItems(abs, rel, readText(abs), config.worktreePath, limits);
+    if (now.length === 0) continue;
+    const before = new Set(overCapItems(abs, rel, headText(config.worktreePath, rel), config.worktreePath, limits).map((item) => item.key));
+    for (const item of now) {
+      if (!before.has(item.key)) oversizedFiles.push(`${item.key} (${item.size} ${item.unit}, cap ${item.cap})`);
+    }
   }
   if (oversizedFiles.length > 0) {
     logger.warn(`[autopilot.validate] size limit exceeded: ${oversizedFiles.join(", ")}`);
@@ -115,7 +118,8 @@ export async function validateRound(
     return {
       outcome: "failed-size",
       filesChanged,
-      detail: `Files pushed over ${config.fileSizeLimit}-LOC limit: ${oversizedFiles.join(", ")}. Split them into focused modules and try again.`,
+      detail: `Pushed over the size cap (code lines; comments are free): ${oversizedFiles.join(", ")}. ` +
+        "Find the job that grew and move it into a module or function named after that job, then try again. Never delete comments to fit.",
       oversizedFiles,
     };
   }

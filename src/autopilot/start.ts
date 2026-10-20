@@ -24,6 +24,7 @@ import type { LAXConfig, ToolDefinition } from "../types.js";
 import type { AgentOptions } from "../providers/types.js";
 import { loadAnthropicTokens, isAnthropicTokenExpired, isAnthropicCliAuthenticated } from "../auth/anthropic.js";
 import { getSetting } from "../settings.js";
+import { KIT_LIMITS } from "../app-scaffold/kit-size.js";
 
 import { createLogger } from "../logger.js";
 import { createRequire } from "node:module";
@@ -105,7 +106,7 @@ const DEFAULTS = {
   buildTimeoutMs: 300_000,
   testCommand: "npm test",
   testTimeoutMs: 600_000,
-  fileSizeLimit: 400,
+  fileSizeLimit: KIT_LIMITS.maxCode,
 };
 
 function loadRepoConfigOverrides(repoRoot: string): Partial<typeof DEFAULTS> {

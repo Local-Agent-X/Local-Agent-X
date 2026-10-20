@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { activeWorktrees } from "../agency/worktree-core.js";
 import { validateRound } from "./validate.js";
+import { KIT_LIMITS } from "../app-scaffold/kit-size.js";
 import type { AutopilotConfig } from "./types.js";
 
 const cleanups: Array<() => void> = [];
@@ -56,6 +57,34 @@ describe("validateRound size gate", () => {
     const result = await validateRound(name, config(repo, name, 15));
 
     expect(result.outcome).toBe("failed-size");
-    expect(result.oversizedFiles).toEqual([`${weird} (10 → 21 LOC)`]);
+    expect(result.oversizedFiles).toEqual([`${weird} (20 code lines, cap 15)`]);
+  });
+
+  // The gate applies the kit's rule (app-scaffold/kit-size.ts), not a count of
+  // its own: code lines only, and functions too.
+  async function roundOn(files: Record<string, string>, edits: Record<string, string>, fileCap: number) {
+    const repo = repoWith(files);
+    for (const [rel, text] of Object.entries(edits)) writeFileSync(join(repo, rel), text);
+    git(repo, "add", "-A");
+    const name = `validate-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    activeWorktrees.set(name, { path: repo, branch: "main", baseBranch: "main", repoRoot: repo, mergedSuccessfully: false });
+    cleanups.push(() => activeWorktrees.delete(name));
+    return validateRound(name, config(repo, name, fileCap));
+  }
+  const fn = (n: number) => `export function grow() {\n${"  call();\n".repeat(n)}}\n`;
+
+  it("holds a function to the kit's function cap, and counts no comment line", async () => {
+    const result = await roundOn(
+      { "a.ts": fn(10), "notes.ts": "export const x = 1;\n" },
+      { "a.ts": fn(KIT_LIMITS.maxFn + 5), "notes.ts": "// why it is so\n".repeat(500) + "export const x = 1;\n" },
+      400,
+    );
+    expect(result.outcome).toBe("failed-size");
+    expect(result.oversizedFiles).toEqual([`a.ts#grow (${KIT_LIMITS.maxFn + 7} own code lines, cap ${KIT_LIMITS.maxFn})`]);
+  });
+
+  it("lets a round edit a file that was already over its cap", async () => {
+    const result = await roundOn({ "big.ts": lines(30) }, { "big.ts": lines(31) }, 15);
+    expect(result.outcome).not.toBe("failed-size");
   });
 });

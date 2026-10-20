@@ -9,8 +9,11 @@ export const NODE_MAJOR_MIN = (() => {
   return 22;
 })();
 
-export const NODE_LTS_INSTALL = 24;
+/** The Node LAX installs: the portable runtime's exact version, and its major
+ *  for the package managers that take one. The scheduled scaffold-live workflow
+ *  runs on this version too, read from here. */
 export const NODE_PORTABLE_VERSION = "24.16.0";
+export const NODE_LTS_INSTALL = Number(NODE_PORTABLE_VERSION.split(".")[0]);
 export const EMBED_MODEL = "mxbai-embed-large";
 export const WINGET_SOURCE = ["--source", "winget"];
 export const INSTALL_CHECKPOINT_VERSION = 1;

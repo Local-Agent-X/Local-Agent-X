@@ -5,7 +5,8 @@
  * placeholder left in a guidance doc is a stale claim on day one, and the
  * project's own doc-path check would fail on it.
  */
-import { KIT_SIZE_CAPS, STRUCTURE_CHECK_COMMAND } from "./kit-files.js";
+import { STRUCTURE_CHECK_COMMAND } from "./kit-files.js";
+import { KIT_SIZE_CAPS } from "./kit-size.js";
 import type { ProjectLanguage, SealTestRunner } from "./project-kind.js";
 
 export interface KitDocOptions {

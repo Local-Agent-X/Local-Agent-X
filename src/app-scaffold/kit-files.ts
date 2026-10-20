@@ -15,29 +15,16 @@ const KIT_DIR = join(dirname(fileURLToPath(import.meta.url)), "kit");
 export const STRUCTURE_CHECK_SCRIPT = "scripts/check-structure.mjs";
 export const STRUCTURE_CHECK_COMMAND = `node ${STRUCTURE_CHECK_SCRIPT}`;
 
-/** The kit's size caps in code lines: the /new-project defaults
- *  (kit/code-size.mjs, DEFAULT_LIMITS), which a built project runs with.
- *  project-kit.test.ts proves the vendored check enforces the file cap. */
-export const KIT_SIZE_CAPS = { file: 400, fileWarn: 320, fn: 100, fnWarn: 60 } as const;
-
 /** The framework creator's docs the doc-path check skips until edited; the
  *  check reads it beside itself (kit/check-doc-paths.mjs header). */
 export const STOCK_DOCS_MANIFEST = "scripts/doc-paths-stock.json";
 
-/** The scripts every kit project gets, by their path in the project. */
-export const KIT_SCRIPTS = [
-  "project-languages.mjs",
-  "codebase-map.mjs",
-  "code-size.mjs",
-  "code-size-cfamily.mjs",
-  "code-size-python.mjs",
-  "check-code-size.mjs",
-  "check-doc-paths.mjs",
-  "check-module-owners.mjs",
-  "check-structure.mjs",
-  "code-refs.mjs",
-  "typescript-api.mjs",
-] as const;
+/** The scripts every kit project gets, by their name under its scripts/: every
+ *  script the sync vendors. The one list is scripts/check-kit-sync.mjs KIT_FILES;
+ *  the sync records it in kit/UPSTREAM.json, read here. */
+export const KIT_SCRIPTS: readonly string[] = Object.keys(
+  JSON.parse(readFileSync(join(KIT_DIR, "UPSTREAM.json"), "utf-8")) as Record<string, unknown>,
+).filter((name) => name.endsWith(".mjs"));
 
 /** The module-seal test templates (vitest, pytest), stored with a .txt suffix
  *  so neither is ever this repo's test. */

@@ -14,14 +14,3 @@ describe("vitest.scaffold-live.config", () => {
   });
 });
 
-// The weekly run tests the creators under the Node LAX installs: npm 10's
-// resolver crashed inside nuxi's install on a Node 22 runner (2026-10-19),
-// where a user's machine runs Node 24 and npm 11.
-describe("the scheduled scaffold-live workflow", () => {
-  it("runs on the Node major LAX installs", async () => {
-    const { readFileSync } = await import("node:fs");
-    const { NODE_LTS_INSTALL } = await import("../scripts/installer/contract.mjs");
-    const workflow = readFileSync(new URL("../.github/workflows/scaffold-live.yml", import.meta.url), "utf-8");
-    expect(workflow.match(/node-version:\s*'?(\d+)/)?.[1]).toBe(String(NODE_LTS_INSTALL));
-  });
-});

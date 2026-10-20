@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1818 non-test source files · 94 oversized · 242 nearing the size cap.
+**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1819 non-test source files · 94 oversized · 242 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -65,6 +65,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/persistence/` | 10 | 2 | S |  |
 | `src/routes/` | 10 | 93 | XL | 19 |
 | `src/sync/` | 10 | 21 | L | 1 |
+| `src/app-scaffold/` | 9 | 7 | M |  |
 | `src/plugin-system/` | 9 | 10 | L | 1 |
 | `src/screen-stream/` | 9 | 11 | L |  |
 | `src/agent-guards/` | 8 | 11 | M |  |
@@ -75,7 +76,6 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/net/` | 7 | 5 | M |  |
 | `src/android/` | 6 | 7 | M |  |
 | `src/app-renderer/` | 6 | 7 | M | 1 |
-| `src/app-scaffold/` | 6 | 6 | M |  |
 | `src/credentials/` | 6 | 1 | S |  |
 | `src/mcp-client/` | 6 | 10 | L | 1 |
 | `src/embedding-providers/` | 4 | 8 | M |  |
@@ -463,6 +463,7 @@ job. Comments are free: never cut them to fit.
 - `src/auto-build/loop/handle-push-back.ts#handlePushBack` — 70+ own code lines (cap 100)
 - `src/auto-build/loop/parallel-waves.ts#runBatch` — 70+ own code lines (cap 100)
 - `src/auto-build/loop/run-chunk-once.ts#runChunkOnce` — 70+ own code lines (cap 100)
+- `src/autopilot/validate.ts#validateRound` — 70+ own code lines (cap 100)
 - `src/browser/in-app-resolve-scripts.ts#textSearchScript` — 70+ own code lines (cap 100)
 - `src/browser/launcher.ts#launchAgentChrome` — 70+ own code lines (cap 100)
 - `src/canonical-loop/adapters/app-build-smoke-gate.ts#runAppSmokeGate` — 70+ own code lines (cap 100)
@@ -521,7 +522,6 @@ job. Comments are free: never cut them to fit.
 - `src/auto-build/orchestrator/resume.ts#tryResumeOne` — 60+ own code lines (cap 100)
 - `src/auto-build/orchestrator/tools.ts#buildPlanResumeTool.execute` — 60+ own code lines (cap 100)
 - `src/autopilot/round-agent.ts#runAutopilotRound` — 60+ own code lines (cap 100)
-- `src/autopilot/validate.ts#validateRound` — 60+ own code lines (cap 100)
 - `src/browser/iframe-detector.ts#listIframes` — 60+ own code lines (cap 100)
 - `src/browser/secret-capture.ts#createBrowserSecretCaptureTool` — 60+ own code lines (cap 100)
 - `src/browser/secret-capture.ts#withBrowserLock:callback` — 60+ own code lines (cap 100)

@@ -18,13 +18,15 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import {
-  KIT_SCRIPTS, KIT_SEAL_TEST, KIT_SIZE_CAPS, KIT_SEAL_TEST_PY, STRUCTURE_CHECK_COMMAND, STRUCTURE_CHECK_SCRIPT, readKitFile,
+  KIT_SCRIPTS, KIT_SEAL_TEST, KIT_SEAL_TEST_PY, STRUCTURE_CHECK_COMMAND, STRUCTURE_CHECK_SCRIPT, readKitFile,
 } from "./kit-files.js";
 import { recordCreatorDocs } from "./creator-docs.js";
+import { KIT_SIZE_CAPS } from "./kit-size.js";
 import { detectProjectKind, hasDependency, hasProjectFile } from "./project-kind.js";
 import { renderAdr0001, renderHistoryReadme, renderKitAgentsMd, renderKitArchitectureMd, type KitDocOptions } from "./render-docs.js";
 
-export { KIT_SIZE_CAPS, STRUCTURE_CHECK_COMMAND, STRUCTURE_CHECK_SCRIPT } from "./kit-files.js";
+export { STRUCTURE_CHECK_COMMAND, STRUCTURE_CHECK_SCRIPT } from "./kit-files.js";
+export { KIT_SIZE_CAPS } from "./kit-size.js";
 export { structureKitAdoptionPromptLine, structureKitPromptLine } from "./render-docs.js";
 export { structureWarningNote } from "./structure-check-output.js";
 

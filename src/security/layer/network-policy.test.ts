@@ -294,6 +294,45 @@ describe("evaluateWebFetch — operator-named local runtime carve-out (C7)", () 
   });
 });
 
+// Terminal-Bench nginx-request-logging (2026-10-19): the agent set up nginx on
+// :8080 and could not check it answered, because nginx forks itself away and
+// process_start never tracked it. On a disposable sandbox every loopback
+// service is the operator's; nowhere else, and never past loopback.
+describe("loopback services on a disposable sandbox", () => {
+  let dir: string;
+  let prev: string | undefined;
+  beforeEach(() => {
+    prev = process.env.LAX_DATA_DIR;
+    dir = mkdtempSync(join(tmpdir(), "lax-disposable-net-"));
+    process.env.LAX_DATA_DIR = dir;
+  });
+  afterEach(() => {
+    if (prev === undefined) delete process.env.LAX_DATA_DIR;
+    else process.env.LAX_DATA_DIR = prev;
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("reaches any loopback port, by literal or by name", () => {
+    writeFileSync(join(dir, "security.json"), JSON.stringify({ disposableSandbox: true }));
+    for (const url of ["http://localhost:8080/", "http://127.0.0.1:5432/", "http://[::1]:6379/"]) {
+      expect(evaluateEgressForUrl(url).allowed, url).toBe(true);
+    }
+  });
+
+  it("still refuses the LAN and cloud metadata there", () => {
+    writeFileSync(join(dir, "security.json"), JSON.stringify({ disposableSandbox: true }));
+    expect(evaluateEgressForUrl("http://192.168.1.20:8080/").allowed).toBe(false);
+    expect(evaluateEgressForUrl("http://169.254.169.254/latest/meta-data/").allowed).toBe(false);
+    expect(evaluateEgressForUrl("http://127.0.0.2:8080/").allowed).toBe(false);
+  });
+
+  it("keeps an unregistered loopback port refused on a normal machine", () => {
+    expect(evaluateEgressForUrl("http://localhost:8080/").allowed).toBe(false);
+    writeFileSync(join(dir, "security.json"), JSON.stringify({ disposableSandbox: false }));
+    expect(evaluateEgressForUrl("http://127.0.0.1:8080/").allowed).toBe(false);
+  });
+});
+
 // The full contract the admission-gate header promises: an operator entry in
 // settings.localRuntimes ⇒ the AGENT's HTTP tools may egress to that exact
 // host:port. Exercises the real disk seam (loadEgressConfig → evaluateWebFetch)

@@ -16,6 +16,10 @@
  * network rules, the nested-command check, decode-and-run, rm and the denylist
  * stay on.
  *
+ * And it opens every loopback port to the agent's HTTP tools (network-policy.ts):
+ * the services listening on the machine are the operator's, including daemons
+ * like nginx that process_start never tracks. The LAN and metadata stay refused.
+ *
  * Read from disk on every call, like the other security.json switches in
  * security-config.ts, so a decision never runs on a stale value. A leaf module
  * because file-access.ts needs it and security-config.ts's imports would make

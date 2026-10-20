@@ -22,6 +22,7 @@ import { resolveAndPinHost } from "./network-dns.js";
 export { resolveAndPinHost } from "./network-dns.js";
 import { manualRuntimeHostPorts, liveLocalServicePorts } from "./security-config.js";
 import { agentOriginPort } from "./agent-origin-port.js";
+import { isDisposableSandbox } from "./disposable-sandbox.js";
 import { endpointHostPort } from "../../local-runtimes/admission.js";
 import { isLocalOnlyMode, isLoopbackUrl, LOCAL_ONLY_BLOCK_MESSAGE } from "../../local-only-policy.js";
 
@@ -116,6 +117,15 @@ export function evaluateWebFetch(
     if (parsed.port && parsed.port === agentOriginPort()) {
       return { allowed: true, reason: "Self-call to own server (agent origin)" };
     }
+  }
+
+  // On a machine its operator declared disposable (disposable-sandbox.ts) the
+  // services listening on it are the operator's, so every loopback port is
+  // reachable: a daemon the agent set up (nginx forks itself away, so
+  // process_start never tracks it) can be checked like a dev server. Loopback
+  // only; LAN, metadata and DNS-rebinding protection are unchanged.
+  if (isLoopbackHost(host) && isDisposableSandbox()) {
+    return { allowed: true, reason: "Loopback service on a disposable sandbox" };
   }
 
   // Allow health-checks to operator-trusted local services (e.g. a bridge or

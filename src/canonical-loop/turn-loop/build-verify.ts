@@ -215,8 +215,9 @@ function formatTestFailuresForAgent(command: string, cwd: string, output: string
   );
 }
 
-// The ground-truth-sizes op-end note lives in build-sizes.ts (this file is at
-// the 400-LOC gate); re-exported so terminal-epilogue keeps one import site.
+// The ground-truth-sizes op-end note lives in build-sizes.ts (it is not part of
+// the build gate's control flow); re-exported so terminal-epilogue keeps one
+// import site.
 export { groundTruthSizesNote } from "./build-sizes.js";
 
 /** Green-path counterpart to formatBuildErrorsForAgent: the model edited source

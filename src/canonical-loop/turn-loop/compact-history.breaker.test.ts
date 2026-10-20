@@ -2,7 +2,7 @@
 // summarize results, skip while tripped, and the cool-down that probes every
 // PROBE_INTERVAL-th skipped call so a transient outage doesn't disable
 // summarization for a long-lived op's whole life. Split from
-// compact-history.test.ts to keep both files under the repo file-size limit.
+// compact-history.test.ts.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("../../context-manager/status.js", () => ({ getContextStatus: vi.fn() }));

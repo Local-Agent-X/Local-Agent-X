@@ -431,8 +431,7 @@ describe("compactHistory — replaced-range citation for recall", () => {
 });
 
 // The circuit-breaker suite (trip, reset, cool-down probes) lives in
-// compact-history.breaker.test.ts — split out to keep both files under the
-// repo's file-size limit.
+// compact-history.breaker.test.ts.
 
 // A compacted history begins with the summary in a USER row. Unless that row
 // says the summary is the model's own memory, a one-word reply after

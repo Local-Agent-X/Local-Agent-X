@@ -25,8 +25,7 @@ import { SOURCES_DOC_SENTENCE, SOURCES_PARAM_SCHEMA } from "./shared/provenance-
 import {
   MAX_ROWS_UNRANGED, assertWorkbookSize, cellText, clampRange, matchCapNote, parseRange, rowCapNote, rowsToTable, valueText,
 } from "./spreadsheet-format.js";
-// House styling for freshly-written sheets — pure, split out for the
-// file-size gate.
+// House styling for freshly-written sheets — pure formatting, no I/O.
 import { styleSheet } from "./spreadsheet-style.js";
 
 // ── Helpers ──

@@ -1,6 +1,6 @@
 // Magic-byte image sniffing — MIME detection + dimension parsing straight
 // from the bytes, no decoder library. Split from image-acquire.ts (its only
-// consumer besides vision-tools) when that file outgrew the 400-LOC limit.
+// consumer besides vision-tools).
 
 export type ImageMimeType =
   | "image/png"

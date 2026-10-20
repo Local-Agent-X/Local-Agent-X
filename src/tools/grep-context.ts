@@ -3,7 +3,7 @@
  *
  * Home of the pure-Node search that runs when the ripgrep binary is missing
  * entirely, plus the arg/metadata helpers both search paths share. Split out
- * of grep-tool.ts (400-LOC ceiling); grep-tool.ts re-exports the public
+ * of grep-tool.ts; grep-tool.ts re-exports the public
  * seams (searchRoot, parsePattern, fallbackSearch) so import sites keep one
  * canonical home.
  */

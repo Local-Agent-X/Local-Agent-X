@@ -3,11 +3,8 @@
  * chain runner consumes: what a gate reads about the turn, what it hands back,
  * the shared CONTINUE verdict, and the fire a gate names for its own effect.
  *
- * Pure extraction from decide-outcome-gates.ts, which had reached the hard
- * 400-LOC source-hygiene ceiling (scripts/check-source-hygiene.mjs, MAX_LOC
- * 400, GRANDFATHERED empty) — the same "split before it fails; never
- * grandfather" practice decide-outcome.ts documents and that already produced
- * decide-outcome-run-gates.ts and empty-turn-termination.ts.
+ * Pure extraction from decide-outcome-gates.ts, as decide-outcome-run-gates.ts
+ * and empty-turn-termination.ts were from decide-outcome.ts.
  *
  * This is the LEAF of the gate module graph: it imports no gate and no table,
  * so the gate-definition modules can depend on it while decide-outcome-gates.ts

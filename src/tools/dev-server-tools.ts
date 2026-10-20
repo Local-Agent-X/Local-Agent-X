@@ -1,7 +1,7 @@
 /**
  * The app_serve_* tools — the agent-facing wrappers over the dev-server
- * lifecycle (registerDevServer / stopDevServer in dev-server.ts). Split out to
- * keep dev-server.ts under the source-hygiene LOC cap; the readiness check
+ * lifecycle (registerDevServer / stopDevServer in dev-server.ts). Split out of
+ * dev-server.ts, which keeps the lifecycle; the readiness check
  * (waitForBackend) lives here too since only these tools use it.
  *
  * Both tools register a dev server, then DON'T claim success until the process

@@ -29,11 +29,11 @@ import { blocked } from "../tools/result-helpers.js";
 import { WORKER_CONTEXTS } from "../security/layer/index.js";
 
 export { egressGuardGate, dataLineageGate, canaryEgressGate } from "./egress-gates.js";
-// Tool lookup + arg validation live in arg-validation.ts (LOC ceiling);
+// Tool lookup + arg validation live in arg-validation.ts;
 // re-exported so the corrections tests keep their enforce-policy imports.
 export { formatUnknownToolCorrection, collectArgViolations } from "./arg-validation.js";
 import { lookupTool, validateArgs } from "./arg-validation.js";
-// ARI action derivation lives in its own module (source-hygiene LOC ceiling);
+// ARI action derivation lives in its own module, ari-action-map.ts;
 // re-exported here so resolve-tool.ts + the ari-action-map / td11 tests keep
 // their `from "./enforce-policy.js"` imports.
 export { ARI_ACTION_MAP, deriveAriAction } from "./ari-action-map.js";

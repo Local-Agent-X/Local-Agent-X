@@ -10,12 +10,10 @@
  * a game-loop fix that landed while the user saw a confusing red error). The
  * worker's resume-gate logic mirrors these same three conditions.
  *
- * Pure extraction from decide-outcome.ts, which had reached the hard 400-LOC
- * source-hygiene ceiling (scripts/check-source-hygiene.mjs, MAX_LOC 400,
- * GRANDFATHERED empty) that its own header commits it to splitting BEFORE, as
- * decide-outcome-gates.ts, decide-outcome-run-gates.ts and
- * empty-turn-termination.ts each already did. decide-outcome.ts still owns the
- * terminal decision: this answers one yes/no question about it.
+ * Pure extraction from decide-outcome.ts, as decide-outcome-gates.ts,
+ * decide-outcome-run-gates.ts and empty-turn-termination.ts each were.
+ * decide-outcome.ts still owns the terminal decision: this answers one yes/no
+ * question about it.
  *
  * THE GATE-CHAIN RELATIONSHIP. This runs BEFORE the completion gates, and a
  * veto here sets terminalReason=null, which stops the chain from being entered

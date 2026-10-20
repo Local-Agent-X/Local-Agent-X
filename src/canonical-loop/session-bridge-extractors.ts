@@ -5,10 +5,10 @@
  * and pull user-surfaceable bits out of them — the final assistant text a
  * delegating parent needs, plus the "Open" affordance markers (APP_READY,
  * "Created <path>", etc.) the AGENTS sidebar renders. Split out of
- * session-bridge-observer.ts to keep that module under the source-hygiene
- * LOC gate; behavior is unchanged. Depends only on the canonical op_messages
- * reader and content extractor, plus VERIFICATION_OP_TYPE for the verdict
- * headline below (a constant, not an observer/bridge dep).
+ * session-bridge-observer.ts; behavior is unchanged. Depends only on the
+ * canonical op_messages reader and content extractor, plus
+ * VERIFICATION_OP_TYPE for the verdict headline below (a constant, not an
+ * observer/bridge dep).
  */
 import { resolve } from "node:path";
 import { readOpMessages } from "./store.js";
@@ -103,8 +103,7 @@ export function redirectAppliedRow(task: string, text: string): string {
  *  length). Spoken proactively when the user is in voice; the chat UI gets the
  *  full bg_op_completed event separately. `opType` routes a verification
  *  verdict to the headline above instead of reading its table aloud. (Lives
- *  here, with the observer's other presentation helpers, to keep
- *  session-bridge-observer.ts under the LOC gate.) */
+ *  here, with the observer's other presentation helpers.) */
 export function toSpokenCompletion(task: string, summary: string, status: string, opType?: string): string {
   const clean = (summary || "").replace(/[*_`#>|]/g, "").replace(/\s+/g, " ").trim();
   const failed = status === "failed" || status === "cancelled";

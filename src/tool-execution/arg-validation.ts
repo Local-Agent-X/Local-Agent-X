@@ -1,7 +1,7 @@
-// Tool lookup + argument validation phases (split from enforce-policy.ts for
-// the source-hygiene LOC ceiling). Owns the structured correctives a weak
-// model needs to self-correct in one turn: the exact available tool names for
-// a hallucinated tool, the specific failing field for malformed args.
+// Tool lookup + argument validation phases (split from enforce-policy.ts).
+// Owns the structured correctives a weak model needs to self-correct in one
+// turn: the exact available tool names for a hallucinated tool, the specific
+// failing field for malformed args.
 
 import { logRetry } from "../retry-telemetry.js";
 import type { ToolDefinition, ToolResult } from "../types.js";

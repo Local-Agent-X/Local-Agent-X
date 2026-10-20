@@ -1,6 +1,6 @@
 // egressGuardGate / canaryEgressGate payload suites, split from
-// capability-class-gates.test.ts (400-LOC gate): outbound secret scan +
-// sensitive attachment across every egress sink, attachment TOCTOU (C3-9),
+// capability-class-gates.test.ts: outbound secret scan + sensitive attachment
+// across every egress sink, attachment TOCTOU (C3-9),
 // the registered known-secret-value registry, and the canary tripwire audit.
 // Same master defect under test: synonyms (email_send, clipboard_write,
 // process_start, browser, ari_*) must be gated identically to http_request.

@@ -45,7 +45,7 @@ import { waitsForShellCommand } from "../tool-registry.js";
 // mirrors the read tool blocking these in ALL file-access modes (incl.
 // unrestricted, where the upstream shell-path-guard is a no-op).
 import { matchesSensitivePath } from "../security/layer/file-access.js";
-// argv[0] catalogs + env-name guard tables (split out for the LOC ceiling).
+// argv[0] catalogs + env-name guard tables.
 import {
   SAFE_BINS,
   GIT_SAFE_SUBCOMMANDS,

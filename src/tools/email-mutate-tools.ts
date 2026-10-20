@@ -1,9 +1,9 @@
 /**
  * `email_delete` — the mailbox-mutating verb that removes mail.
  *
- * Its sibling `email_mark` lives in email-mark-tool.ts (the 400-LOC rule split
- * them); everything the two must agree on — the batch ceiling, the folder rule,
- * the failure wording — lives in email-mutate-shared.ts and is imported by both.
+ * Its sibling `email_mark` lives in email-mark-tool.ts; everything the two must
+ * agree on — the batch ceiling, the folder rule, the failure wording — lives
+ * in email-mutate-shared.ts and is imported by both.
  *
  * ── Deletion is a MOVE to Trash (campaign decision E1) ──────────────────────
  * There is no permanent-removal path in this file, and none in any of its

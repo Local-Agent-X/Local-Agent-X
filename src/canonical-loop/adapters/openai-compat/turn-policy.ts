@@ -1,9 +1,9 @@
 /**
- * Per-turn policy for the OpenAI-compat adapter, split out of openai-compat.ts
- * (400-LOC gate): two pure decisions about an ENDPOINT — whether an empty
- * reply with tools attached may latch the model off tools, and whether text
- * that looks like a tool call may be rescued into one. Both key on the host,
- * never on the turn, so they live beside the other openai-compat/* helpers.
+ * Per-turn policy for the OpenAI-compat adapter, split out of openai-compat.ts:
+ * two pure decisions about an ENDPOINT — whether an empty reply with tools
+ * attached may latch the model off tools, and whether text that looks like a
+ * tool call may be rescued into one. Both key on the host, never on the turn,
+ * so they live beside the other openai-compat/* helpers.
  */
 import { getToolsVerified } from "../../../providers/types.js";
 

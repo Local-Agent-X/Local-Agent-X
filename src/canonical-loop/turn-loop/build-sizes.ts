@@ -1,9 +1,9 @@
 // Ground-truth file sizes — the op-end note that contradicts a fabricated line
-// count. Split out of build-verify.ts (which sits at the 400-LOC hygiene gate):
-// it is NOT part of the build gate's control flow — it fires whether or not the
-// model self-verified, keyed on the reply quoting a size — so it belongs beside
-// it, not inside it. Re-exported from build-verify.ts so its one consumer
-// (terminal-epilogue.ts) keeps a single import site.
+// count. Split out of build-verify.ts because it is NOT part of the build gate's
+// control flow — it fires whether or not the model self-verified, keyed on the
+// reply quoting a size — so it belongs beside it, not inside it. Re-exported
+// from build-verify.ts so its one consumer (terminal-epilogue.ts) keeps a
+// single import site.
 
 import { readFileSync } from "node:fs";
 import { opEditedSourcePaths } from "../middlewares/verify-gate.js";

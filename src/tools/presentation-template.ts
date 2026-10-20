@@ -1,9 +1,9 @@
 // The presentation tool's from_template action: a new deck that keeps an
 // existing deck's masters, theme, layouts and media, with the slides the
 // caller names kept and new slides laid out on the template's own layouts.
-// Lives beside presentation-tools.ts (which is at the size cap); the family
-// collapse there registers it. Both paths are gated: template_path as a read,
-// file_path as a write (tool-policies.apps.ts pathArgs).
+// Lives beside presentation-tools.ts; the family collapse there registers it.
+// Both paths are gated: template_path as a read, file_path as a write
+// (tool-policies.apps.ts pathArgs).
 import { existsSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { mkdirSync } from "node:fs";

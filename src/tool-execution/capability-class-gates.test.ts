@@ -8,7 +8,7 @@
 
 // The egressGuardGate/canaryEgressGate payload suites (secret scan, attachment
 // TOCTOU, known-secret-value registry, canary audit) live in
-// capability-class-egress-scan.test.ts (split for the 400-LOC gate).
+// capability-class-egress-scan.test.ts.
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";

@@ -32,8 +32,7 @@
  * registered anything. Presence here is the op's schema set — `toolMap` IS
  * the schema set since the dispatcher builds it from the op's tools.
  *
- * Split out of chat-tool-dispatcher.ts, which crossed the 400-LOC gate when
- * the companion path landed.
+ * Split out of chat-tool-dispatcher.ts when the companion path landed.
  */
 import type { ToolDefinition } from "../types.js";
 import type { CallContext } from "../tool-execution/context.js";

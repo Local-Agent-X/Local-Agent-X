@@ -3,12 +3,12 @@
  * ones are guaranteed, which must travel together, and how descriptions are
  * compacted on the way out.
  *
- * Split from model-tiers.ts, which had grown to two jobs and past the 400-LOC
- * gate. That file answers "what tier is this model"; this one answers "what
- * tools does a tier get". The second question is where the caps, the reserve
- * and the companion closure live, and it is the one that kept costing
- * capability (EXP-7: a weak model with zero slots for the task, and a 27B
- * shipped delete_file without its undo).
+ * Split from model-tiers.ts, which had grown to two jobs. That file answers
+ * "what tier is this model"; this one answers "what tools does a tier get".
+ * The second question is where the caps, the reserve and the companion
+ * closure live, and it is the one that kept costing capability (EXP-7: a weak
+ * model with zero slots for the task, and a 27B shipped delete_file without
+ * its undo).
  */
 import { classifyModel, type ModelTier } from "../model-tiers.js";
 import { companionsFor } from "./tool-companions.js";

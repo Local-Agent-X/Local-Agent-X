@@ -1,8 +1,8 @@
-// Pure decision helpers for shell-class tool blocks — split out of enforce-policy
-// to keep it under the source-hygiene LOC ceiling. Both functions take a tool name
-// + taint/args and return a message or null; no side effects, no enforce-policy
-// internals (only hasCapability). Pinned by ari-taint-shell-contract.test.ts (the
-// tainted-shell pre-gate against the live kernel) and blocked-self-verify.test.ts.
+// Pure decision helpers for shell-class tool blocks — split out of enforce-policy.
+// Both functions take a tool name + taint/args and return a message or null; no
+// side effects, no enforce-policy internals (only hasCapability). Pinned by
+// ari-taint-shell-contract.test.ts (the tainted-shell pre-gate against the live
+// kernel) and blocked-self-verify.test.ts.
 
 import { USER_HINTS, type ToolResult } from "../types.js";
 import { hasCapability } from "../tool-registry.js";

@@ -2,8 +2,8 @@
  * pdfkit block renderers for the pdf tool's create action (pdf-tools.ts):
  * sanitized markdown — inline spans, headings, lists, quotes, code, tables,
  * rules — laid onto an open pdfkit doc in the house theme. Pure layout over
- * the doc it is handed, no I/O — split out of pdf-tools.ts so the tool module
- * stays under the file-size gate.
+ * the doc it is handed, no I/O — split out of pdf-tools.ts, which keeps the
+ * tool's actions and its I/O.
  */
 import type { OfficeTheme } from "./shared/office-theme.js";
 import { parseMarkdown, spansToPlain, type Block, type Span } from "./shared/office-md.js";

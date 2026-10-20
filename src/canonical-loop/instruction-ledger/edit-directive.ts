@@ -1,7 +1,7 @@
 /**
  * The edit-directive veto — a message that tells the agent to edit is never a
- * whole-workspace write ban. Split from extract.ts (file-size gate); the
- * extractor calls it on both the LLM and the deterministic tier.
+ * whole-workspace write ban. Split from extract.ts; the extractor calls it on
+ * both the LLM and the deterministic tier.
  */
 import type { CapabilityClass } from "../../tool-registry.js";
 

@@ -1,6 +1,6 @@
 /**
  * Smoke-gate runner + vision judge for the app_build verify terminal
- * (AppBuildVerifyAdapter wires these; split out for the 400-LOC cap).
+ * (AppBuildVerifyAdapter wires these).
  *
  * Two smoke targets, one evaluator:
  *   - static builds smoke a LOCAL HTTP ORIGIN serving the build at the same

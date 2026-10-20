@@ -1,8 +1,8 @@
 /**
- * Supervised-browser pre-dispatch gate — extracted from pre-dispatch.ts to keep
- * that file under the 400-LOC ceiling. One responsibility: decide whether a
- * `browser.evaluate` call must be forced to the approval path because the user
- * opted into supervision AND the current page origin is not trusted.
+ * Supervised-browser pre-dispatch gate — extracted from pre-dispatch.ts. One
+ * responsibility: decide whether a `browser.evaluate` call must be forced to
+ * the approval path because the user opted into supervision AND the current
+ * page origin is not trusted.
  *
  * The trust decision itself lives in the GENERAL mechanism
  * (src/browser/trusted-origins.ts) — this module never names a site. Returns a

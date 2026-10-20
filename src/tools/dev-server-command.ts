@@ -1,8 +1,7 @@
 /**
  * Dev-server spawn hygiene (command + child env) — shared by the lazy-restart
  * path (dev-server.ts) and the app_serve_* tools (dev-server-tools.ts). Split
- * into its own tiny module so both can share one definition without
- * dev-server.ts crossing the 400-LOC source-hygiene cap.
+ * into its own tiny module so both can share one definition.
  */
 import { existsSync } from "node:fs";
 import { join } from "node:path";

@@ -2,9 +2,9 @@
  * Outbound media delivery — send_image / send_video, the tools that hand a
  * local file to the user over their messaging bridge.
  *
- * Split from vision-tools.ts (which had reached the 400-LOC ceiling) along the
- * line that was already there: these two tools DELIVER bytes to the user,
- * while the tools left behind PERCEIVE them for the model.
+ * Split from vision-tools.ts along the line that was already there: these two
+ * tools DELIVER bytes to the user, while the tools left behind PERCEIVE them
+ * for the model.
  */
 
 import type { ToolDefinition, ToolResult } from "../types.js";

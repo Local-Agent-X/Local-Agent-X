@@ -1,8 +1,8 @@
 /**
  * The in-canonical app build's default provider adapter: which canonical
  * adapter a build sub-agent runs on for the user's selected provider. Split
- * out of app-build-adapter.ts at the 400-LOC gate; the adapter takes it as
- * the default for its `providerAdapterFactory` test seam.
+ * out of app-build-adapter.ts; the adapter takes it as the default for its
+ * `providerAdapterFactory` test seam.
  */
 import type { Adapter } from "../adapter-contract.js";
 import type { ProviderAdapterFactoryOptions } from "./app-build-adapter.js";

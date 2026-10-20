@@ -1,9 +1,9 @@
 /**
  * The completion-gate chain runner — pure extraction of the loop that walked
- * COMPLETION_GATES inside decideTurnOutcome, split out for decide-outcome.ts'
- * hard 400-LOC ceiling. decide-outcome.ts still owns the terminal decision: it
- * hands the provisional terminalReason in and takes the settled one back out,
- * plus the two gate-produced payloads it surfaces only on a real terminal.
+ * COMPLETION_GATES inside decideTurnOutcome. decide-outcome.ts still owns the
+ * terminal decision: it hands the provisional terminalReason in and takes the
+ * settled one back out, plus the two gate-produced payloads it surfaces only
+ * on a real terminal.
  *
  * Once the turn is provisionally "done", walk the single ordered gate table
  * (COMPLETION_GATES in decide-outcome-gates.ts) — render-verify → build-verify

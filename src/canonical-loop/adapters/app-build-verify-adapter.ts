@@ -46,7 +46,7 @@
  * is durable in op_messages; build-session-context reads it on the next
  * update build so the fixer gets the pixels, not just prose.
  *
- * Runner + judge + URL resolver live in app-build-smoke-gate.ts (400-LOC cap).
+ * Runner + judge + URL resolver live in app-build-smoke-gate.ts.
  */
 import { basename } from "node:path";
 import type { Adapter, AdapterReport, TurnInput, TurnResult } from "../adapter-contract.js";

@@ -287,8 +287,8 @@ export function recoverStaleOps(opIds: string[]): RecoveryOutcome[] {
   return opIds.map(recoverStaleOp);
 }
 
-// Bulk sweeps live in recovery-sweep.ts (400-LOC split); re-exported here so
-// existing importers keep their path.
+// Bulk sweeps live in recovery-sweep.ts; re-exported here so existing importers
+// keep their path.
 export {
   sweepStaleCanonicalOps,
   sweepStaleCanonicalOpsCooperatively,

@@ -3,7 +3,7 @@
  * app (or a minimal-PATH Linux service) inherits a PATH without the user's
  * toolchain or LAX's own bundled binaries — this module appends what exists so
  * shell commands resolve the same tools LAX's built-in tools do. Split from
- * shell-env.ts (LOC cap); buildSanitizedEnv is the only production caller.
+ * shell-env.ts; buildSanitizedEnv is the only production caller.
  */
 
 import { existsSync } from "node:fs";

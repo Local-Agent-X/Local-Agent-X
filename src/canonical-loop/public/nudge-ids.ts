@@ -7,7 +7,7 @@
  * cycle. The source module (turn-loop/nudge-ids.ts) is a leaf with no imports
  * at all, so this barrel adds no reachability whatsoever.
  *
- * Not re-exported from index.ts: that barrel sits at the 400-LOC source-hygiene
- * ceiling, and this sub-barrel is already a public surface under the seal.
+ * Not re-exported from index.ts: this sub-barrel is already a public surface
+ * under the seal.
  */
 export { WIRE_FORMAT_NUDGE_ID, WIRE_FORMAT_NUDGE } from "../turn-loop/nudge-ids.js";

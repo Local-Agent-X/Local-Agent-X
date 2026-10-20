@@ -1,6 +1,6 @@
 /**
  * Durable pending-approval control surface — sibling of control-api.ts,
- * split into its own file so both stay under the 400-LOC gate.
+ * which owns event replay, reconnect, and pause / resume / cancel.
  *
  * Column semantics (`op.canonical.pendingApproval` — types.ts
  * PendingApprovalRecord):

@@ -1,8 +1,8 @@
 /**
  * Terminal-turn epilogue — the last words appended once decide-outcome has
  * settled that the op truly ends this turn (every continuation gate declined
- * to extend it), plus the outcome-label record. Split out of decide-outcome.ts
- * (source-hygiene LOC ceiling); pure structural lift, ordering unchanged:
+ * to extend it), plus the outcome-label record. Split out of decide-outcome.ts;
+ * pure structural lift, ordering unchanged:
  *
  *   1. Loud-partial guarantee — open steps remain → visible warning.
  *   2. Reconcile-on-green — orchestrator build passed → green confirmation.

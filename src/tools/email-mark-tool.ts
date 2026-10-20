@@ -1,11 +1,11 @@
 /**
  * `email_mark` — the read/unread and starred/unstarred verb.
  *
- * Split out of email-mutate-tools.ts under the 400-LOC rule, along the seam the
- * file already had: two independent verbs that agree on a batch ceiling, a
- * folder rule and a failure wording, and share exactly those through
- * email-mutate-shared.ts. Nothing here is a copy of its sibling — the rules it
- * enforces are imported from that module, so the two cannot drift.
+ * Split out of email-mutate-tools.ts along the seam the file already had: two
+ * independent verbs that agree on a batch ceiling, a folder rule and a failure
+ * wording, and share exactly those through email-mutate-shared.ts. Nothing here
+ * is a copy of its sibling — the rules it enforces are imported from that
+ * module, so the two cannot drift.
  *
  * Deliberately NOT here: any way to set the deleted flag. See the E1 argument
  * in email-mutate-tools.ts's header — a general-purpose flag parameter would

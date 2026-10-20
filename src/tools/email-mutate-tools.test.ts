@@ -203,9 +203,9 @@ const state = h.state;
 
 const { emailDelete } = await import("./email-mutate-tools.js");
 const { _resetSweepsForTest } = await import("./email-delete-sweep.js");
-// email_mark moved to its own module under the 400-LOC rule; it is still the
-// same verb and still shares its rules with email_delete through
-// email-mutate-shared.ts, so the two are still driven together here.
+// email_mark lives in its own module; it is still the same verb and still
+// shares its rules with email_delete through email-mutate-shared.ts, so the two
+// are still driven together here.
 const { emailMark } = await import("./email-mark-tool.js");
 
 const IMAP_ENV = ["IMAP_HOST", "IMAP_USER", "IMAP_PASS", "IMAP_PORT"];

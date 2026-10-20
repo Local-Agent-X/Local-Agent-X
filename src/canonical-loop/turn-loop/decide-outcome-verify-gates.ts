@@ -2,8 +2,7 @@
  * The six VERIFY gates of the completion chain — render-verify, build-verify,
  * spec-probe, spec-audit, regression-audit, design-verify.
  *
- * Pure extraction from decide-outcome-gates.ts for the hard 400-LOC
- * source-hygiene ceiling it had reached, taking its piece the way
+ * Pure extraction from decide-outcome-gates.ts, taking its piece the way
  * decide-outcome-run-gates.ts and empty-turn-termination.ts took theirs:
  * decide-outcome-gates.ts still owns the gate table and the ordering.
  *

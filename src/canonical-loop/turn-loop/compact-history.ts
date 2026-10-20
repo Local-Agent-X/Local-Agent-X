@@ -141,7 +141,7 @@ export function locateAnchor(
 }
 
 // The compaction circuit breaker and the forced-compaction marker live in
-// compact-breaker.ts (file-size gate); re-exported so callers keep importing
+// compact-breaker.ts; re-exported so callers keep importing
 // them from here.
 export { forceCompactNext, compactionBreakerState } from "./compact-breaker.js";
 

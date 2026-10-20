@@ -1,8 +1,8 @@
 /**
  * House styling for freshly-written spreadsheet sheets (spreadsheet-tools.ts
  * write action). Pure formatting over an already-populated worksheet — no
- * I/O, no workbook construction — split out of spreadsheet-tools.ts so the
- * tool module stays under the file-size gate.
+ * I/O, no workbook construction — split out of spreadsheet-tools.ts, which
+ * keeps both.
  */
 import type * as ExcelJSTypes from "exceljs";
 type Worksheet = ExcelJSTypes.Worksheet;

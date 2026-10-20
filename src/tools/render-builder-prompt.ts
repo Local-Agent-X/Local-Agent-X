@@ -80,9 +80,9 @@ export function fullStackRuleLines(appName: string, appDir: string): string[] {
   ];
 }
 
-// The framework scaffold registry + recipe live in framework-scaffold.ts (to
-// keep this file under the 400-LOC source-hygiene cap). Re-exported here so
-// existing importers (tests, verify) keep their ./render-builder-prompt path.
+// The framework scaffold registry + recipe live in framework-scaffold.ts.
+// Re-exported here so existing importers (tests, verify) keep their
+// ./render-builder-prompt path.
 export { frontendScaffoldRecipeLines };
 
 export function frontendSpaRuleLines(

@@ -1,8 +1,8 @@
 /**
  * Bulk stale-op sweeps over the on-disk operations store. Split from
- * recovery.ts (400-LOC gate); recoverStaleOp remains the single takeover
- * primitive there — this module only decides WHICH ops pay for repair
- * and recovery, and how the work is paced.
+ * recovery.ts; recoverStaleOp remains the single takeover primitive there —
+ * this module only decides WHICH ops pay for repair and recovery, and how the
+ * work is paced.
  */
 import { existsSync, readdirSync } from "node:fs";
 import { readdir } from "node:fs/promises";

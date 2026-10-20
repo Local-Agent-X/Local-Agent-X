@@ -1,8 +1,8 @@
 /**
  * Interactive fully-empty-turn terminator — the half of the empty-turn honesty
- * feature that lives in the turn loop, split out of decide-outcome.ts for the
- * 400-LOC source-hygiene ceiling. Sibling to ask-user-terminal.ts, which is the
- * other terminator decide-outcome delegates a sub-decision to.
+ * feature that lives in the turn loop, split out of decide-outcome.ts. Sibling
+ * to ask-user-terminal.ts, which is the other terminator decide-outcome
+ * delegates a sub-decision to.
  *
  * decide-outcome.ts keeps ownership of the terminal decision: it calls
  * evaluateEmptyInteractiveTurn at the same point it used to run this inline,

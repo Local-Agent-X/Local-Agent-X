@@ -6,7 +6,7 @@ import { delimiter, join, sep, win32 } from "node:path";
 import type { ServerEvent } from "../types.js";
 // Host-process (Electron/CoreFoundation/IPC) contamination scrub — the
 // __CFBundleIdentifier that SIGSEGVs a child's process.title set on macOS, etc.
-// Lives in its own module (LOC cap); re-exported so existing shell-env importers
+// Lives in its own module; re-exported so existing shell-env importers
 // keep working, and used locally in buildSanitizedEnv below.
 import { isHostContaminationEnvKey, stripHostContaminationEnv, withNodeTitleGuard } from "./env-contamination.js";
 export { isHostContaminationEnvKey, stripHostContaminationEnv };

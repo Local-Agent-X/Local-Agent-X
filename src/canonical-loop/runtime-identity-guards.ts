@@ -1,12 +1,11 @@
 // Shape validators for a persisted delegated-runtime identity.
 //
 // Split out of provider-adapter-factory.ts, which owns the *decisions*
-// (resolve a runtime, build an adapter, prove the endpoint hasn't moved) and
-// was at the 400-LOC ceiling. These are the pure predicates those decisions
-// lean on: no I/O, no local state, and nothing here throws a
-// RuntimeIdentityMismatchError — callers decide what a `false` means. That
-// dependency direction is what keeps the split acyclic: the guards never
-// import the factory back.
+// (resolve a runtime, build an adapter, prove the endpoint hasn't moved).
+// These are the pure predicates those decisions lean on: no I/O, no local
+// state, and nothing here throws a RuntimeIdentityMismatchError — callers
+// decide what a `false` means. That dependency direction is what keeps the
+// split acyclic: the guards never import the factory back.
 import { isAbsolute } from "node:path";
 import type { CredentialSource } from "../auth/auth-provider.js";
 import type {

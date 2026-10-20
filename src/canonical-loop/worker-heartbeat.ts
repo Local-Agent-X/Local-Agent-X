@@ -2,8 +2,7 @@
  * Worker heartbeat — keeps the op lease fresh while a turn runs, and decides
  * when a heartbeat failure actually means the lease is gone.
  *
- * Split from worker.ts (at the file-size ceiling) so the policy is
- * independently testable:
+ * Split from worker.ts so the policy is independently testable:
  *   - `claim_lost` / `unknown_op` are fatal immediately: the lease was stolen
  *     by recovery (or the op row vanished) and the in-flight turn must abort
  *     before it commits over the replacement's work.

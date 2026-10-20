@@ -22,14 +22,11 @@
  * order — plus recording the fire an effect earns, which a gate does only where
  * that effect is already irreversible (guard-fire.ts carries the rule).
  *
- * SIZE — this file reached the hard 400-LOC gate (scripts/check-source-hygiene.mjs,
- * MAX_LOC 400, GRANDFATHERED empty) and was split, per the practice
- * decide-outcome.ts documents: "Split before it fails; never grandfather."
- * The shared surface every gate implements moved to
+ * The shared surface every gate implements lives in
  * decide-outcome-gate-contract.ts (re-exported below, so no import path
  * changed) and the five VERIFY gates — the ones that answer "does the WORK
- * hold up?" by running an external check on what the turn produced — moved to
- * decide-outcome-verify-gates.ts. What stayed is this file's own
+ * hold up?" by running an external check on what the turn produced — live in
+ * decide-outcome-verify-gates.ts. What stays here is this file's own
  * responsibility: the ORDER, plus the gates that answer "is this turn OVER?"
  * from state already in hand (unresolved-tool-intent reads the final text,
  * earned-done the open-steps list, late-inject the inject queue) and the one

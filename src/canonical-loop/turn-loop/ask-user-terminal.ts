@@ -13,8 +13,8 @@
  * on the question instead: which questions were actually PUT to the user, and
  * how to make one of them the visible answer.
  *
- * Split out of decide-outcome.ts for the 400-LOC source-hygiene ceiling; sibling
- * to silent-tool-check.ts, which is the other per-tool input to termination.
+ * Split out of decide-outcome.ts; sibling to silent-tool-check.ts, which is
+ * the other per-tool input to termination.
  */
 import { randomUUID } from "node:crypto";
 import type { ToolCall } from "../contract-types.js";

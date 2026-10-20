@@ -1,7 +1,7 @@
 // Compaction circuit breaker + the forced-compaction marker for the turn loop.
-// Split out of compact-history.ts (which stays the CanonicalMessage adapter +
-// splitter) so both files clear the 400-LOC gate; compact-history re-exports
-// the two public entry points so callers are unaffected.
+// Split out of compact-history.ts, which stays the CanonicalMessage adapter +
+// splitter; compact-history re-exports the two public entry points so callers
+// are unaffected.
 //
 // A session whose context is irrecoverably over the summarizer's own limits
 // fails the summarize call every turn, forever — each retry burns up to two

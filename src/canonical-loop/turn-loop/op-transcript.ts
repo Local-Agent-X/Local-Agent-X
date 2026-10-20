@@ -4,8 +4,7 @@
  *
  * Split out of record-outcome.ts, which owns "the op ended, should we learn
  * from this?". Turning a committed op into reviewable prose is a separate
- * responsibility with its own budget, truncation and redaction rules, and it
- * was pushing that file past the 400-LOC hygiene ceiling.
+ * responsibility with its own budget, truncation and redaction rules.
  *
  * Three rules run this file, all three learned the hard way:
  *   1. Tool NAMES are useless. A playbook is made of the exact selectors,

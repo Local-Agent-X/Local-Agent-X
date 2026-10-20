@@ -33,8 +33,8 @@ import { reclaimPort, verifyDevServerStartup } from "./dev-server-readiness.js";
 import { killProcessGroupSync } from "../process-tree-kill.js";
 import { createLogger } from "../logger.js";
 
-// Startup-failure capture moved to dev-server-readiness.ts (its natural home,
-// and this file sits at the LOC cap); re-exported for existing importers.
+// Startup-failure capture moved to dev-server-readiness.ts (its natural home);
+// re-exported for existing importers.
 export { formatStartupFailure, persistDevServerStartupFailure } from "./dev-server-readiness.js";
 
 const logger = createLogger("tools.dev-server");
@@ -120,7 +120,7 @@ function deps(d: DevServerDeps): Required<DevServerDeps> {
 const DEV_SERVER_BIND_GRACE_MS = 30_000;
 
 // The port-readiness check + the app_serve_* tools that use it live in
-// dev-server-tools.ts (kept this file under the LOC cap).
+// dev-server-tools.ts.
 
 /** Idle auto-stop: a backend untouched for this long is killed (its record is
  *  kept, so opening the app — or any connector request — wakes it again). */

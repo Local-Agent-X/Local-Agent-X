@@ -3,7 +3,8 @@
  * (tool-call-text-scanners.ts): reading a JSON payload off the text,
  * turning a parsed object or a run of `<parameter>` pairs into a
  * {name, argsJson} candidate, and the `<execute_tool>` body grammar.
- * Extracted from the scanners for the 400-LOC gate — same module, split.
+ * Extracted from the scanners: they recognize a call's shape and source
+ * range, this module reads its payload.
  *
  * The truncation invariant starts here: readJsonPayload yields no object
  * for a payload that needed STRUCTURAL repair, so a cut-off payload can

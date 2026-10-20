@@ -14,8 +14,8 @@
  * needs the folder list, then a search or an existence check, then the move —
  * takes a session and pays for one handshake instead of three.
  *
- * The socket itself lives one file over, in email-imap-session.ts: the 400-LOC
- * rule forced a split and that is the seam it was already on. This module stays
+ * The socket itself lives one file over, in email-imap-session.ts — the seam
+ * between the connection and the operations run on it. This module stays
  * the ONE import site for callers — everything a tool needs is exported or
  * re-exported here, and no tool file imports imapflow or the session module.
  *

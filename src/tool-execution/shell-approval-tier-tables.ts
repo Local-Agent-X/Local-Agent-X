@@ -1,7 +1,7 @@
 // Data tables for the shell approval-tier classifier (shell-approval-tier.ts).
-// Pure constants + one pure predicate over them — split out to keep the
-// classifier logic under the source-hygiene LOC ceiling. No behavior lives here
-// beyond the argv[0] catalogs the classifier consults.
+// Pure constants + one pure predicate over them — split out so the classifier
+// file holds only classifier logic. No behavior lives here beyond the argv[0]
+// catalogs the classifier consults.
 
 // ── SAFE_BIN: read-only + build/test tools whose bare invocation is tier-0 ──
 // Plain members: any invocation with this argv[0] is tier-0 (subject to the

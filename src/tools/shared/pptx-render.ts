@@ -1,7 +1,7 @@
 /**
  * PowerPoint slide rendering — shared by every presentation tool so layout,
  * theming, charts, and images stay consistent. Kept out of presentation-tools.ts
- * so that file stays a thin set of tool definitions under the source-size gate.
+ * so that file stays a thin set of tool definitions.
  *
  * Visual-by-default: a content slide carrying a `chart` or `image` lays text on
  * the left and the visual on the right; a visual with no text fills the body.

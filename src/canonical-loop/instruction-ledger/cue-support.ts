@@ -7,7 +7,7 @@
  * confirm (a 3B background model) returned `shell`. Every bash call in the
  * retry was refused as "the user asked you not to run shell commands", and the
  * model stopped to explain instead of fixing (muse, 2026-09-17). Nothing in the
- * cue is about running anything. Split from extract.ts (file-size gate).
+ * cue is about running anything. Split from extract.ts.
  */
 import type { CapabilityClass } from "../../tool-registry.js";
 

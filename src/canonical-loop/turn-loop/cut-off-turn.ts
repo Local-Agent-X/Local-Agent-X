@@ -1,6 +1,6 @@
 /**
- * A turn the OUTPUT LIMIT ended — split out of decide-outcome.ts for the
- * 400-LOC ceiling, beside empty-turn-termination.ts.
+ * A turn the OUTPUT LIMIT ended — split out of decide-outcome.ts, beside
+ * empty-turn-termination.ts.
  *
  * A provider stop of `length` / `max_tokens` means the reply was cut off, not
  * finished. With no tool call in it, the adapter still reports "done" from

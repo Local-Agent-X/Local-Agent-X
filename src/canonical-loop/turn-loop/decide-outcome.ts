@@ -11,10 +11,9 @@
  * Pure structural lift out of the orchestrator: control flow, ordering, and
  * termination semantics are unchanged. Lives behind the ../turn-loop.ts barrel.
  *
- * SIZE — near the hard 400-LOC gate (scripts/check-source-hygiene.mjs, MAX_LOC
- * 400, GRANDFATHERED empty) in the file owning EVERY termination decision.
- * Split before it fails (as decide-outcome-gates.ts, decide-outcome-run-gates.ts
- * and empty-turn-termination.ts already were); never grandfather.
+ * This file owns EVERY termination decision; the sub-decisions it hands off
+ * live beside it (the completion-gate chain, the continuation guard, the
+ * empty / cut-off / ask-user terminals, the terminal epilogue).
  */
 import type { CanonicalMessage, ToolCall } from "../contract-types.js";
 import type { CommitTurnMessage } from "../checkpoint.js";

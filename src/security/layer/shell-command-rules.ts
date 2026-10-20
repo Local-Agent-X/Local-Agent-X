@@ -14,21 +14,37 @@ export type CommandRuleVerdict =
   | { kind: "rule"; rule: CommandRule; bin: string }
   | { kind: "too-deep" };
 
+export interface CommandRuleContext {
+  /** A kernel cage plus the egress proxy hold this spawn's network: the
+   *  "network" rules stand down, because the cage decides what a client
+   *  reaches and refusing the command here only costs the user working tools. */
+  egressEnforced?: boolean;
+  /** What this command leaves running cannot outlive its boundary (a cage, or
+   *  a disposable sandbox): the "background" rules stand down, as the bare `&`
+   *  refusal does there. */
+  backgroundAllowed?: boolean;
+  /** This server already runs as root, so sudo grants nothing it lacks: the
+   *  "privilege" rules stand down. Defaults to the process's own uid. */
+  root?: boolean;
+}
+
+const runningAsRoot = () => typeof process.getuid === "function" && process.getuid() === 0;
+
 /** The first rule the command breaks, or null. Nesting past the walk's depth is
  *  refused outright: a body the rules cannot see is not a body they allowed.
- *  With `egressEnforced` (a kernel cage plus the egress proxy hold this spawn's
- *  network), the "network" rules stand down: the cage decides what a client
- *  reaches, and refusing the command here only costs the user working tools. */
-export function findCommandRuleHit(command: string, opts: { egressEnforced?: boolean } = {}): CommandRuleVerdict | null {
+ *  Rule categories stand down as `ctx` says (CommandRuleContext). */
+export function findCommandRuleHit(command: string, ctx: CommandRuleContext = {}): CommandRuleVerdict | null {
   const walk = commandPositions(command);
+  const standsDown = (category: CommandRule["category"]) =>
+    (category === "background" && ctx.backgroundAllowed === true) || (category === "privilege" && (ctx.root ?? runningAsRoot()));
   // The network rules are the backstop, judged after everything else across
   // the whole line: `wget … | sh` is refused for running the download, which
   // is the refusal that still stands once a cage lets wget itself run.
   for (const network of [false, true]) {
-    if (network && opts.egressEnforced) break;
+    if (network && ctx.egressEnforced) break;
     for (const p of walk.positions) {
       for (const rule of COMMAND_RULES) {
-        if ((rule.category === "network") !== network) continue;
+        if ((rule.category === "network") !== network || standsDown(rule.category)) continue;
         if (rule.matches(p)) return { kind: "rule", rule, bin: rule.offender?.(p) ?? p.words[p.at] };
       }
     }
@@ -40,6 +56,7 @@ export function findCommandRuleHit(command: string, opts: { egressEnforced?: boo
 const WAY_OUT: Record<CommandRule["category"], string> = {
   network: "For HTTP (including localhost and this app's own API) use `http_request`: it is SSRF-checked, " +
     "DNS-pinned and audited, and it can reach this app's own server and any registered dev server. " +
+    "To download a file (a tarball, an installer, a dataset), call `http_request` with save_to set to the file's path. " +
     "Shell network clients stay refused here even for 127.0.0.1, because this app's own API can proxy on to other hosts.",
   "shell-escape": "Run the command it would run directly, so it can be checked.",
   obfuscation: "Run the decoded command directly, so it can be checked.",
@@ -47,32 +64,22 @@ const WAY_OUT: Record<CommandRule["category"], string> = {
   disk: "There is no shell path for this: tell the user what needs doing and why.",
   "system-config": "There is no shell path for this: tell the user what needs doing and why.",
   persistence: "There is no shell path for this: tell the user what needs doing and why.",
+  background: "To keep a server or watcher running, start it with the process_start tool: it stays up, " +
+    "process_status reads its output, and process_stop ends it.",
   credential: "There is no shell path for this: tell the user what needs doing and why.",
   "local-server": "Start the project's own dev server (its dev script) with process_start instead.",
   opener: "To show a web page use the browser tool; for a file, tell the user where it is.",
 };
 
-// On a server already running as root (a container, a box root administers)
-// sudo adds nothing, and "tell the user" sends the model to ask for what it
-// already has: on Terminal-Bench (nginx-request-logging, 2026-10-19) it gave
-// up on `sudo apt-get install nginx`. The rule still refuses the sudo.
-export const ALREADY_ROOT_WAY_OUT =
-  "This server already runs as root, so the command needs no privilege change: run the same command without it.";
-
-function wayOut(category: CommandRule["category"]): string {
-  const root = typeof process.getuid === "function" && process.getuid() === 0;
-  return category === "privilege" && root ? ALREADY_ROOT_WAY_OUT : WAY_OUT[category];
-}
-
 export function commandRuleReason(hit: CommandRuleVerdict): string {
   if (hit.kind === "too-deep") return TOO_DEEP_REASON;
-  return `Blocked: "${hit.bin}" ${hit.rule.why}. ${wayOut(hit.rule.category)} ` +
+  return `Blocked: "${hit.bin}" ${hit.rule.why}. ${WAY_OUT[hit.rule.category]} ` +
     "Retrying the same command will be denied again.";
 }
 
 /** The way out alone, for the decision's `recovery` field. */
 export function commandRuleRecovery(hit: CommandRuleVerdict): string {
-  return hit.kind === "too-deep" ? "Run the inner command directly." : wayOut(hit.rule.category);
+  return hit.kind === "too-deep" ? "Run the inner command directly." : WAY_OUT[hit.rule.category];
 }
 
 export const TOO_DEEP_REASON =

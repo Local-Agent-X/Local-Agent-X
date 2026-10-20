@@ -127,7 +127,8 @@ export function shellSegments(command: string): ShellSegment[] {
 // refusal. Behavior-neutral for the other detectors: no python spelling appears
 // in NETWORK_CLIENT_BINS / DANGEROUS_INVOKE_BINS / INTERP_ESCAPE_BINS.
 export function execBasename(token: string): string {
-  const base = token.replace(/^.*[\\/]/, "").toLowerCase().replace(/\.exe$/, "");
+  // A `(` glued to the word (`(dig x)`) opens a subshell; the word is the command.
+  const base = token.replace(/^\(+/, "").replace(/^.*[\\/]/, "").toLowerCase().replace(/\.exe$/, "");
   if (/^python(?:w|\d+(?:\.\d+)*)?$/.test(base)) return "python";
   return base;
 }
@@ -181,6 +182,18 @@ export function resolveRealArgv0(tokens: string[]): string | null {
 export function resolveRealArgv0Index(tokens: string[]): number | null {
   let i = 0;
   while (i < tokens.length) {
+    // `NAME=value cmd` sets a variable for cmd; the command is the next word.
+    // So does a `case` pattern (`a)`, `*.log|*.txt)`): the word after it runs.
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i]) || /^[^()]*\)$/.test(tokens[i])) {
+      i++;
+      continue;
+    }
+    // `case WORD in`: the words up to `in` are the subject, not a command.
+    if (tokens[i] === "case") {
+      const inAt = tokens.indexOf("in", i);
+      i = inAt < 0 ? tokens.length : inAt + 1;
+      continue;
+    }
     const base = execBasename(tokens[i]);
     if (SHELL_KEYWORD_PREFIXES.has(base)) {
       i++; // a keyword takes no args; the next token is the command position

@@ -44,6 +44,15 @@ function catastrophicRoots(home: string, platform: NodeJS.Platform): string[] {
 	];
 }
 
+/** How much of the floor holds. With `rootsOnly` (a machine its operator
+ *  declared disposable, disposable-sandbox.ts) the roots themselves (`/`, home,
+ *  /etc, /usr) stay refused, while a file or folder under a system directory
+ *  (`/etc/nginx/sites-enabled/default`) is the operator's to remove, as the
+ *  unrestricted write floor already allows there. */
+export interface DeleteFloor {
+	rootsOnly?: boolean;
+}
+
 /**
  * True when deleting `rawTarget` would break the OS or wipe the user's home —
  * the floor that holds even in unrestricted mode. Handles `~` expansion, a
@@ -59,6 +68,7 @@ export function isCatastrophicDeleteTarget(
 	rawTarget: string,
 	home: string,
 	platform: NodeJS.Platform = process.platform,
+	floor: DeleteFloor = {},
 ): boolean {
 	const sep = platform === "win32" ? "\\" : "/";
 	let t = rawTarget.trim().replace(/^['"]+|['"]+$/g, "");
@@ -85,6 +95,8 @@ export function isCatastrophicDeleteTarget(
 		if (norm === rn) return true;
 	}
 
+	if (floor.rootsOnly) return false;
+
 	// Sits under a shared system directory (re-add a trailing sep so the
 	// subpath patterns, which require one, match the bare dir too).
 	const probe = t.endsWith(sep) ? t : t + sep;
@@ -104,6 +116,7 @@ export function detectCatastrophicRm(
 	command: string,
 	home: string,
 	platform: NodeJS.Platform = process.platform,
+	floor: DeleteFloor = {},
 ): string | null {
 	// Split on EVERY command boundary — pipes, ;, &&, ||, &, newlines — not just
 	// pipes. On POSIX the upstream separator guard blocks `;` anyway, but on
@@ -119,7 +132,7 @@ export function detectCatastrophicRm(
 		for (let i = 1; i < words.length; i++) {
 			const w = words[i];
 			if (w.startsWith("-")) continue; // a flag (incl. `--`), not a target
-			if (isCatastrophicDeleteTarget(w, home, platform)) {
+			if (isCatastrophicDeleteTarget(w, home, platform, floor)) {
 				return `Blocked: refusing to delete a protected system or root path (${w}) even in unrestricted mode — this would break the OS or wipe your home directory. Delete specific files or subfolders instead.`;
 			}
 		}

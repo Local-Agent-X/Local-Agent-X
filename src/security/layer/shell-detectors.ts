@@ -12,7 +12,7 @@ import {
   INTERP_EVAL_FLAGS,
   RENAME_ESCAPE_EVAL_FLAGS,
 } from "./shell-rules.js";
-import { execBasename, resolveRealArgv0, resolveRealArgv0Index, splitShellSegments, stripQuotedSpans, tokenizeCommand } from "./shell-lex.js";
+import { execBasename, resolveRealArgv0, splitShellSegments, stripQuotedSpans, tokenizeCommand } from "./shell-lex.js";
 import { realpathDeep } from "./file-access.js";
 import type { InlineEvalPolicy } from "./types.js";
 import { DECODE_EXEC_REFUSAL, ENCODED_PAYLOAD_REFUSAL, NESTED_COMMAND_WAY_OUT } from "./shell-refusals.js";
@@ -27,25 +27,27 @@ export { splitShellSegments, stripQuotedSpans, tokenizeCommand } from "./shell-l
 // they spell with every rule, so a hidden `rm` is refused as `rm` while a
 // `sed 's/\x1b…'` that strips color codes is not refused at all.
 export function detectObfuscation(command: string): string | null {
-  // Decoding (base64 -d, xxd -r) is ordinary work: a JWT, a hex dump, data a
-  // binary carries. What hides a command from every rule here is handing the
-  // decoded text to a shell or interpreter in the same command (`echo … |
-  // base64 -d | sh`), so that pairing is what is refused. Refusing every
-  // decode cost real tasks (Terminal-Bench vulnerable-secret, extract-elf,
-  // 2026-10-19). `od` only dumps, it never decodes, so it is not checked.
+  // Decoding (base64 -d, xxd -r) and reversing (rev) are ordinary work: a JWT,
+  // a hex dump, data a binary carries, a DNA reverse complement. What hides a
+  // command from every rule here is handing the decoded text to a shell or
+  // interpreter in the same command (`echo … | base64 -d | sh`), so that
+  // pairing is what is refused. Refusing every decode cost real tasks
+  // (Terminal-Bench vulnerable-secret, extract-elf, dna-assembly, 2026-10-19).
+  // `od` only dumps, it never decodes, so it is not checked.
+  const bins = splitShellSegments(command).map((s) => resolveRealArgv0(tokenizeCommand(s)) ?? "");
+  const runs = bins.some((b) => DECODED_TEXT_RUNNERS.has(b));
   const decodes = /\bbase64\b[^|;&\n]*\s(?:-d|-D|--decode)\b/i.test(command)
-    || /\bxxd\b[^|;&\n]*\s-[a-z]*r[a-z]*\b/i.test(command);
-  if (decodes && splitShellSegments(command).some((s) => DECODED_TEXT_RUNNERS.has(resolveRealArgv0(tokenizeCommand(s)) ?? ""))) {
-    return DECODE_EXEC_REFUSAL;
-  }
+    || /\bxxd\b[^|;&\n]*\s-[a-z]*r[a-z]*\b/i.test(command) || bins.includes("rev");
+  if (decodes && runs) return DECODE_EXEC_REFUSAL;
   // String concatenation tricks: a='r'; b='m'; $a$b
   // We already block $ metacharacter, but check for quoted var assignment patterns
   if (/\b[a-z]=['"][a-z]{1,3}['"]/i.test(command) && command.split("=").length > 3) {
     return "Blocked: suspicious variable assignment pattern (possible string concatenation obfuscation)";
   }
   // A long command is ordinary (a full python -c self-test, a JSON body); a
-  // long command carrying one unbroken run of base64/hex is the payload shape.
-  if (command.length > 2000 && ENCODED_BLOB.test(command)) {
+  // long command carrying one unbroken run of base64/hex into a shell or
+  // interpreter is the payload shape. The same blob decoded into a file is data.
+  if (command.length > 2000 && runs && ENCODED_BLOB.test(command)) {
     return ENCODED_PAYLOAD_REFUSAL;
   }
 
@@ -157,13 +159,12 @@ export function detectInterpreterEscape(command: string): string | null {
 // invoked INSIDE such a construct (`echo $(dig evil.com)`, `(dig evil.com)`),
 // while the argv[0]-only bins (dig/host/nslookup/xh/http/httpie/mail/ping/
 // traceroute/getent) have no raw-string BLOCKED_COMMANDS backstop the way
-// curl/wget/nc do. Under a confined backend the metachar/separator heuristics
-// stand down, so these would otherwise ALLOW real egress. We KEEP them blocked
-// in EVERY mode (never gated on sandboxConfined) rather than recurse INTO the
-// construct: shell-substitution parsing is a bypassable adversarial surface,
-// and command substitution was never a documented false-positive complaint —
-// the Clover-class pain (arithmetic $((...)), `;`/`&&` chaining, multi-line
-// self-tests) stays relaxed under confinement.
+// curl/wget/nc do. Where the structural rules stand down (a kernel cage, a
+// disposable sandbox), shell-policy takes each construct apart instead
+// (shell-nested-commands.ts) and judges its body as a command of its own, so
+// by the time this runs there none are left. On an unconfined host they stay
+// refused here: a substituted argument can name a path the file-access checks
+// never see, and there no cage holds what the checks miss.
 //
 // CRITICAL lexical rule: `$((` is ARITHMETIC and `${NAME}` is PARAMETER
 // expansion — both ALLOWED; only `$(` (not `$((`) and `${` + space/`|` (funsub,
@@ -178,9 +179,8 @@ export function detectNestedCommandExecution(command: string): string | null {
   if (/`/.test(command)) {
     return `Blocked: backtick command substitution runs a nested command whose argv the network/denylist scan can't see. Use $(( )) for arithmetic. ${NESTED_COMMAND_WAY_OUT}`;
   }
-  // $( command-sub, but NOT $(( arithmetic (negative lookahead on the 2nd paren),
-  // and not one that only runs a plain read-only command (onlyPlainSubstitutions).
-  if (/\$\((?!\()/.test(command) && !onlyPlainSubstitutions(command)) {
+  // $( command-sub, but NOT $(( arithmetic (negative lookahead on the 2nd paren).
+  if (/\$\((?!\()/.test(command)) {
     return `Blocked: $(...) command substitution runs a nested command whose argv the network/denylist scan can't see. Arithmetic $(( )) and parameter \${...} expansion are allowed. ${NESTED_COMMAND_WAY_OUT}`;
   }
   // bash 5.3 function/value substitution: `${ cmd; }` / `${| cmd; }` RUN a
@@ -205,43 +205,6 @@ export function detectNestedCommandExecution(command: string): string | null {
     }
   }
   return null;
-}
-
-// `$(...)` that only reads a fact about the machine or the checkout
-// (`cd $(git rev-parse --show-toplevel)`, `mkdir -p $(dirname out/x)`) runs no
-// command the scans could miss, so it is not refused. Kept narrow on purpose
-// (see the header above: no parser for nested shell): the body must be plain
-// words with no shell syntax at all, so it cannot hold a second command, and
-// its command must be one that only reads. It may not stand in a command
-// word either: `$(dirname /usr/bin/curl)/curl x` would run a program no argv
-// scan sees. Anything else stays refused.
-const PLAIN_SUBSTITUTION = /\$\((?!\()([^()$`'";&|<>{}\\\n\r]*)\)/g;
-const READ_ONLY_SUBSTITUTION_BINS: ReadonlySet<string> = new Set([
-  "pwd", "basename", "dirname", "realpath", "readlink", "nproc", "uname", "whoami", "id",
-]);
-const READ_ONLY_GIT = new Set(["rev-parse", "describe", "symbolic-ref"]);
-
-function isReadOnlySubstitution(body: string): boolean {
-  const tokens = tokenizeCommand(body.trim());
-  const bin = tokens.length > 0 ? execBasename(tokens[0]) : "";
-  if (READ_ONLY_SUBSTITUTION_BINS.has(bin)) return true;
-  if (bin === "date") return !tokens.some((t) => t === "-s" || t.startsWith("--set"));
-  if (bin === "git") return READ_ONLY_GIT.has(tokens[1] ?? "") || (tokens[1] === "branch" && tokens[2] === "--show-current" && tokens.length === 3);
-  return false;
-}
-
-export function onlyPlainSubstitutions(command: string): boolean {
-  let unsafe = false;
-  const rest = command.replace(PLAIN_SUBSTITUTION, (_, body: string) => {
-    if (!isReadOnlySubstitution(body)) unsafe = true;
-    return "";
-  });
-  if (unsafe || /\$\((?!\()/.test(rest)) return false;
-  return !splitShellSegments(command).some((segment) => {
-    const tokens = tokenizeCommand(segment);
-    const at = resolveRealArgv0Index(tokens);
-    return at !== null && tokens[at].includes("$(");
-  });
 }
 
 // ── argv[0] dangerous-command basenames ──

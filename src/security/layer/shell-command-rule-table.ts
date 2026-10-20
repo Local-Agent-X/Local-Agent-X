@@ -7,6 +7,7 @@
 import { type CommandPosition } from "./shell-command-positions.js";
 import { execBasename, isShellReparseFlag } from "./shell-lex.js";
 import { INLINE_CODE_PATTERNS, INTERP_EVAL_FLAGS, NETWORK_CLIENT_BINS } from "./shell-rules.js";
+import { ENVIRONMENT_SETUP_OUTPUT } from "./shell-nested-commands.js";
 
 // The inline program an interpreter was handed (`python -c "<code>"`, `node -e
 // "<code>"`, an awk program): the word after an eval flag, or for awk, its words.
@@ -20,7 +21,7 @@ function inlineCode(p: CommandPosition): string[] {
 
 export type CommandRuleCategory =
   | "shell-escape" | "privilege" | "disk" | "system-config"
-  | "persistence" | "credential" | "obfuscation" | "local-server" | "opener" | "network";
+  | "persistence" | "background" | "credential" | "obfuscation" | "local-server" | "opener" | "network";
 
 export interface CommandRule {
   id: string;
@@ -84,8 +85,10 @@ function isEncodedCommandFlag(a: string): boolean {
 
 export const COMMAND_RULES: readonly CommandRule[] = [
   // ── Commands hidden from the checks ──
+  // Except a version manager's environment printout, `eval "$(opam env)"`: the
+  // installed tool's own setup code (ENVIRONMENT_PRINTERS, shell-nested-commands.ts).
   { id: "eval", category: "shell-escape", why: "runs a string as a command, which hides that command from every check",
-    matches: (p) => EVAL_BINS.has(p.bin) },
+    matches: (p) => EVAL_BINS.has(p.bin) && !(argsOf(p).length === 1 && argsOf(p)[0] === ENVIRONMENT_SETUP_OUTPUT) },
   { id: "pipe-into-shell", category: "shell-escape", why: "runs whatever the previous command printed as a script",
     matches: (p) => p.piped && readsScriptFromStdin(p) },
   { id: "awk-pipe-into-shell", category: "shell-escape", why: "pipes its output into a shell from inside the awk program",
@@ -101,9 +104,9 @@ export const COMMAND_RULES: readonly CommandRule[] = [
   binWith("node-inspector", "shell-escape", "opens a debugger port that runs arbitrary code",
     ["node"], (a) => a.some((x) => x.startsWith("--inspect"))),
   bins("named-pipe", "shell-escape", "creates a named pipe, the building block of a reverse shell", ["mkfifo"]),
-  binWith("detached-session", "persistence", "starts a detached session that outlives the command",
+  binWith("detached-session", "background", "starts a detached session that outlives the command",
     ["screen"], (a) => a.some((x) => /^-[dD]/.test(x))),
-  binWith("detached-session", "persistence", "starts a detached session that outlives the command",
+  binWith("detached-session", "background", "starts a detached session that outlives the command",
     ["tmux"], (a) => (a[0] ?? "").startsWith("new")),
   binWith("terminal-exec", "shell-escape", "runs a program in a new terminal window",
     ["xterm"], (a) => a.includes("-e")),
@@ -146,9 +149,9 @@ export const COMMAND_RULES: readonly CommandRule[] = [
   // command) is refused by detectObfuscation in shell-detectors.ts.
   binWith("encoded-powershell", "obfuscation", "runs a base64-encoded PowerShell command the checks cannot read",
     ["powershell", "pwsh"], (a) => a.some(isEncodedCommandFlag)),
-  // The command word only: `git rev-parse`, `git rev-list` and a `rev` inside
-  // a commit message or grep pattern are not it.
-  bins("reverse-text", "obfuscation", "reverses its input, a common way to hide a command", ["rev"]),
+  // Reversing text (`rev`) is not here either: it is ordinary sequence work (a
+  // DNA reverse complement); reversed text handed to a shell is refused with
+  // decoding, by detectObfuscation.
 
   // ── Network egress (skipped where a kernel cage holds egress: findCommandRuleHit) ──
   { id: "network-client", category: "network", why: "reaches the network directly, outside the checked HTTP path",

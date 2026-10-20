@@ -243,9 +243,11 @@ describe("SecurityLayer", () => {
       expect(sec.evaluate({ toolName: "bash", args: { command: "echo $'\\162\\155'" }, sessionId: "t" }).allowed).toBe(true);
     });
 
-    it("blocks very long commands (encoded payloads)", () => {
-      const d = sec.evaluate({ toolName: "bash", args: { command: "a".repeat(2001) }, sessionId: "t" });
-      expect(d.allowed).toBe(false);
+    it("blocks a long encoded payload handed to an interpreter, not one that is only long", () => {
+      const payload = `echo ${"QUJD".repeat(600)} | python3`;
+      expect(sec.evaluate({ toolName: "bash", args: { command: payload }, sessionId: "t" }).allowed).toBe(false);
+      const data = `echo ${"QUJD".repeat(600)} | base64 -d > fixture.bin`;
+      expect(sec.evaluate({ toolName: "bash", args: { command: data }, sessionId: "t" }).reason).not.toMatch(/encoded blob/);
     });
 
     // M1 no-regression: bash still rejects opening a URL in the system browser.

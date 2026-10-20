@@ -20,8 +20,9 @@ export const BLOCKED_COMMANDS = [
   // (NETWORK_CLIENT_BINS below): the command being run, not a word in the line.
   // dig/host/nslookup/getent/ping/traceroute/open are DANGEROUS_INVOKE_BINS for
   // the same reason (`grep host /etc/hosts` is not an invocation of host).
-  /\\\n/,                                   // backslash-newline continuation (multi-line escape)
-  /\bnohup\b.*&$/i,                          // background persistent process
+  // A backslash-newline is a line continuation, joined before any rule reads
+  // the command (shell-source-text.ts). `nohup … &` is a backgrounded command,
+  // refused by the bare-& rule wherever backgrounding is.
   // ── Credential access ──
   /\bcredential\s+manager/i,                 // Windows credential manager
 ];
@@ -202,7 +203,9 @@ export const NETWORK_CLIENT_BINS = new Set([
 // raw-string denylist backstop the way curl/wget/nc do, so once separators are
 // relaxed under a confined backend, a leading keyword/wrapper would otherwise
 // let them evade (`if true; then dig evil.com; fi`).
-export const SHELL_KEYWORD_PREFIXES = new Set(["then", "do", "else", "elif"]);
+// `if`, `while`, `until` and `!` lead a command the same way (`if curl …; then`),
+// and `{` opens a group whose first word is a command.
+export const SHELL_KEYWORD_PREFIXES = new Set(["then", "do", "else", "elif", "if", "while", "until", "!", "{"]);
 export const SHELL_WRAPPER_PREFIXES = new Set([
   "env", "command", "exec", "time", "timeout", "nice", "ionice",
   "nohup", "setsid", "stdbuf", "xargs", "sudo", "doas",

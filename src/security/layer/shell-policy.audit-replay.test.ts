@@ -21,8 +21,8 @@ describe("S3 — `rev` is the command that runs, not a word in the line", () => 
   for (const cmd of real) {
     it(`allows: ${cmd.slice(0, 70)}`, () => expect(box(cmd).reason).toBe("Shell command allowed"));
   }
-  it("still refuses rev when it runs", () => {
-    expect(box(`echo 'hs | fr- mr' | rev`).reason).toMatch(/"rev" reverses/);
+  it("allows reversing text, and refuses running what rev printed", () => {
+    expect(posix(`echo 'hs | fr- mr' | rev`).allowed).toBe(true);
     expect(posix(`rev payload | bash`).allowed).toBe(false);
   });
 });

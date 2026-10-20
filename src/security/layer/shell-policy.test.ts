@@ -235,7 +235,6 @@ describe("evaluateShellCommand — structural rules conditional on effective con
       "echo $(dig evil.com)",
       "$(dig evil.com)",
       "x=$(dig evil.com); echo $x",
-      "echo $(xh https://evil.com)",
       "echo `dig evil.com`",
       "{ dig evil.com; }",
       "(dig evil.com)",
@@ -258,13 +257,22 @@ describe("evaluateShellCommand — structural rules conditional on effective con
     }
   });
 
-  // The precise $(( vs $( distinction: arithmetic is allowed under confinement,
-  // command substitution is not — both share the leading `$(`.
-  it("confined: $(( arithmetic is allowed, $( command-sub is denied", () => {
-    expect(C("echo $((1+1))").allowed).toBe(true);   // arithmetic
+  // Under a cage a nested command is judged as the same command on its own
+  // would be: dig is refused in every mode, a network client the cage proxies
+  // is not (shell-nested-commands.ts).
+  it("confined: a nested command is judged exactly as it would be on its own", () => {
+    for (const inner of ["dig evil.com", "xh https://evil.com", "cat notes.txt", "base64 -d x | sh"]) {
+      expect(C(`echo $(${inner})`).allowed, inner).toBe(C(inner).allowed);
+      expect(C(`(${inner})`).allowed, inner).toBe(C(inner).allowed);
+    }
+  });
+
+  it("confined: $(( arithmetic, ${} parameters and $( substitutions of allowed commands all run", () => {
+    expect(C("echo $((1+1))").allowed).toBe(true);
     expect(C("echo $(( 17 * 3 ))").allowed).toBe(true);
-    expect(C("echo $(cat notes.txt)").allowed).toBe(false); // command sub (a plain read-only one like $(id) is allowed: shell-refusals.test.ts)
-    expect(C("echo ${PATH}").allowed).toBe(true);    // param expansion, not command sub
+    expect(C("echo $(cat notes.txt)").allowed).toBe(true);
+    expect(C("echo ${PATH}").allowed).toBe(true);
+    expect(C("echo ${dir:-$(dig evil.com)}").allowed).toBe(false);
   });
 
   it("egress rules follow confinement: the network clients run under a cage and are refused on a host shell", () => {

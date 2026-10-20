@@ -19,8 +19,11 @@ import {
   detectNestedCommandExecution,
   tokenizeCommand,
 } from "./shell-detectors.js";
-import { BACKGROUND_REFUSAL, NESTED_COMMAND_WAY_OUT, NEWLINE_REFUSAL, SEMICOLON_REFUSAL } from "./shell-refusals.js";
+import { BACKGROUND_REFUSAL, COMPUTED_COMMAND_REFUSAL, NESTED_COMMAND_WAY_OUT, NEWLINE_REFUSAL, SEMICOLON_REFUSAL } from "./shell-refusals.js";
 import { isDisposableSandbox } from "./disposable-sandbox.js";
+import { readSourceText } from "./shell-source-text.js";
+import { runsNestedOutput, splitNestedCommands } from "./shell-nested-commands.js";
+import { commandPositions } from "./shell-command-positions.js";
 
 // Re-exported for the existing public surface (importers reference it from
 // "./shell-policy.js"); the implementation now lives in shell-detectors.ts.
@@ -64,7 +67,7 @@ function deniedCommandBlock(matched: string, scope: "pipe segment" | "command"):
     reason:
       `Blocked: this ${scope} uses "${bin}", which is on the shell denylist. ` +
       `If you need HTTP, use the \`http_request\` tool — it is SSRF-checked, DNS-pinned and audited, and it ` +
-      `CAN reach this app's own server and any registered dev server. Shell network clients stay refused even ` +
+      `CAN reach this app's own server and any registered dev server; to download a file, give it save_to. Shell network clients stay refused even ` +
       `for 127.0.0.1/localhost, because this app's own API can proxy on to arbitrary external hosts. ` +
       `Retrying the same command will be denied again.`,
     userHint: USER_HINTS.commandShell,
@@ -82,6 +85,87 @@ function separatorRefusal(unquoted: string): string | null {
   if (/[\r\n]/.test(unquoted)) return NEWLINE_REFUSAL;
   if (/(?<![&|<>])&(?![&|>])/.test(unquoted)) return BACKGROUND_REFUSAL;
   if (/;/.test(unquoted)) return SEMICOLON_REFUSAL;
+  return null;
+}
+
+type Judge = (command: string) => SecurityDecision;
+
+/** The first of `bodies` the policy refuses, its reason saying where it was. */
+function firstRefusal(bodies: string[], where: string, judge: Judge): SecurityDecision | null {
+  for (const body of bodies) {
+    const verdict = judge(body);
+    if (!verdict.allowed) return { ...verdict, reason: `${verdict.reason} (in ${where}: ${JSON.stringify(body.slice(0, 120))})` };
+  }
+  return null;
+}
+
+/** Take the nested commands out of `command` (shell-nested-commands.ts) and
+ *  judge each as a command of its own: the line left over, or the refusal. */
+function judgeNestedCommands(command: string, judge: Judge): { line: string } | { refusal: SecurityDecision } {
+  const split = splitNestedCommands(command);
+  const refuse = (reason: string) => ({ refusal: { allowed: false, reason, userHint: USER_HINTS.commandShell } });
+  if (split.unreadable) return refuse(`Blocked: ${split.unreadable}, so the commands inside it cannot be read. ${NESTED_COMMAND_WAY_OUT}`);
+  const refused = firstRefusal(split.bodies, "a nested command", judge);
+  if (refused) return { refusal: refused };
+  if (commandPositions(split.line).positions.some((p) => runsNestedOutput(p.words))) return refuse(COMPUTED_COMMAND_REFUSAL);
+  return { line: split.line };
+}
+
+/** On an unconfined POSIX host, the shapes the string rules are the only wall
+ *  against (see the CONFINED-SKIP notes in evaluateShellCommand). */
+function hostShapeRefusal(command: string, platform: NodeJS.Platform): string | null {
+  if (platform === "win32") {
+    // PowerShell: backtick is the escape char, ${} is variable syntax, {} is script blocks — all normal
+    // Only block actual dangerous patterns: Invoke-Expression, iex, & (call operator at start)
+    return /\r\n/.test(command) ? "Blocked: multi-line commands not allowed." : null;
+  }
+  // Bash: block arithmetic `$((…))` and parameter `${…}` expansion (host
+  // only — relaxed under confinement). Command substitution `$(…)` and
+  // backticks are already refused by detectNestedCommandExecution (the
+  // negative lookahead there would otherwise skip `$((`, but the broad
+  // `\$\(` still catches `$((` on the unconfined host, which is the intent:
+  // no kernel cage → keep the expansion FP-block as the boundary). Kept on
+  // the RAW command because `$(`/backtick inside DOUBLE quotes are still
+  // bash-expanded; a single-quoted occurrence is a rare, harmless FP.
+  if (/`/.test(command) || /\$\(/.test(command) || /\$\{/.test(command)) {
+    return `Blocked: $(...), \${...} and backticks expand at run time, where the checks cannot follow them on a machine without LAX's sandbox. ${NESTED_COMMAND_WAY_OUT}`;
+  }
+  // Separators — newline, ;, bare & — count only OUTSIDE quotes, so quote-strip
+  // first. A newline or `;` INSIDE a quoted argument (a multi-line
+  // `python3 -c 'line1\nline2'` self-test, or the `;` in `python -c "import
+  // json; ..."`) is literal string content, not command chaining. Before this
+  // was quote-aware, the newline check lived with the backtick check above and
+  // blocked EVERY multi-statement inline self-test (mislabeled as command
+  // substitution) — so a coding model couldn't run its own multi-line check
+  // and shipped unverified, false-done work. An UNQUOTED newline is still a
+  // command separator (like ;) and stays blocked.
+  // The & exclusions also spare fd-redirect forms — 2>&1, >&2, &>file all carry
+  // a literal & that is job-control NOTHING (it's a descriptor dup/merge).
+  return separatorRefusal(stripQuotedSpans(command));
+}
+
+// Destructive rm (-r/-f), MODE-AWARE. In unrestricted mode the user has
+// granted full-filesystem access, so deleting their OWN files (Downloads,
+// Documents, projects, /tmp) via the shell must work — only the catastrophic
+// floor (rm -rf /, ~, system dirs → catastrophic-paths.ts) is held, and on a
+// disposable machine only its roots. In workspace/common mode a recursive
+// delete whose every target is PROVABLY strictly inside the workspace goes on
+// to the irreversible floor, which cards it (rm-inside-workspace.ts); anything
+// else — and an unthreaded mode or workspace (undefined → fail SAFE) — is
+// refused and pointed at delete_file. This is the split-out of the old blanket
+// BLOCKED_COMMANDS rm rule that fired regardless of mode.
+function destructiveRmRefusal(command: string, fileAccessMode: FileAccessMode | undefined, workspace: string | undefined, platform: NodeJS.Platform): string | null {
+  if (!RM_DESTRUCTIVE_FLAGS.test(command)) return null;
+  if (fileAccessMode === "unrestricted") {
+    return detectCatastrophicRm(command, homedir(), platform, { rootsOnly: isDisposableSandbox() });
+  }
+  const verdict = fileAccessMode ? rmInsideWorkspaceVerdict(command, workspace) : "unprovable";
+  if (verdict === "workspace-prefix") {
+    return "Blocked: the bash tool already runs inside the workspace, so a `workspace/…` path names a folder that does not exist and this delete would remove nothing. Drop the leading `workspace/` — e.g. `rm -r client-data/build-cache`. Better still, pass the folder to delete_file: it asks the user, then moves the folder to the trash where restore_file can bring it back; a shell delete is permanent.";
+  }
+  if (verdict !== "inside") {
+    return "Blocked: in the current file-access mode `rm -r`/`rm -f` runs only on plain paths inside the workspace (the user is asked to confirm it). This command names a path outside the workspace, the workspace root itself, or a form that cannot be checked (a variable, ~, a glob outside the last path segment, a chained command). To remove a file or a whole folder, use delete_file — it asks the user, then moves it to the trash where restore_file can bring it back.";
+  }
   return null;
 }
 
@@ -161,6 +245,27 @@ export function evaluateShellCommand(
     }
   }
 
+  // From here the rules judge the command line bash parses: continuations
+  // joined and heredoc bodies taken out (shell-source-text.ts), a body a shell
+  // will run judged as a command of its own. That reading is exact, so it
+  // replaces the raw text; detectScriptWrite still reads the raw text, since it
+  // refuses the heredoc form itself. Where the structural rules stand down,
+  // each nested command is judged as a command too, and the line keeps only a
+  // placeholder for it. Each body is shorter than the command, so this ends.
+  const raw = command;
+  if (platform !== "win32") {
+    const judge: Judge = (body) => evaluateShellCommand(body, inlineEval, workspace, fileAccessMode, platform, sandboxConfined);
+    const source = readSourceText(command);
+    const onScript = firstRefusal(source.scripts, "the script a heredoc feeds to a shell", judge);
+    if (onScript) return onScript;
+    command = source.command;
+    if (!structuralRulesApply) {
+      const nested = judgeNestedCommands(command, judge);
+      if ("refusal" in nested) return nested.refusal;
+      command = nested.line;
+    }
+  }
+
   // Obfuscation detection
   try {
     const obfuscationResult = detectObfuscation(command);
@@ -198,7 +303,7 @@ export function evaluateShellCommand(
   // security value is subsumed; the residual "bash exit 0 ≠ work done"
   // quality nudge doesn't justify false-blocking legit heredoc scripting.
   if (structuralRulesApply) {
-    const scriptWriteResult = detectScriptWrite(command);
+    const scriptWriteResult = detectScriptWrite(raw);
     if (scriptWriteResult) {
       return { allowed: false, reason: scriptWriteResult, userHint: USER_HINTS.commandShell };
     }
@@ -231,8 +336,10 @@ export function evaluateShellCommand(
 
   // Rules on the command being run — every command position, including the
   // bodies nested shells re-parse (shell-command-rules.ts). Always on, except
-  // the network rules under an enforced cage (the egress switch above).
-  const ruleHit = findCommandRuleHit(command, { egressEnforced });
+  // the network rules under an enforced cage (the egress switch above), the
+  // detached-session rules where backgrounding is allowed (the structural
+  // switch), and sudo on a server already running as root.
+  const ruleHit = findCommandRuleHit(command, { egressEnforced, backgroundAllowed: !structuralRulesApply });
   if (ruleHit) {
     return { allowed: false, reason: commandRuleReason(ruleHit), userHint: USER_HINTS.commandShell, recovery: commandRuleRecovery(ruleHit) };
   }
@@ -268,17 +375,14 @@ export function evaluateShellCommand(
     }
   }
 
-  // ALWAYS-ON (NOT gated on confinement), POSIX only: nested-command execution
-  // — $(...) command sub (but not $(( )) arithmetic / ${} param expansion),
-  // backticks, subshell ( ), brace-group { ; }, procsub <(…)/>(…). The argv[0]
-  // network/denylist scans can't see a binary invoked inside these, so a
-  // confined spawn (where the metachar/separator heuristics below stand down)
-  // could otherwise `echo $(dig evil.com)` its way to real egress. Egress
-  // control IS this policy's job under confinement — the guarded cage keeps
-  // network on — and parsing inside a substitution is a bypassable adversarial
-  // surface, so we keep these execute-a-nested-command forms blocked rather
-  // than scan within them. win32 is excluded: `$(…)` and `( )` are ordinary
-  // PowerShell syntax there, and win32 has no confined backend to relax around.
+  // POSIX only: nested-command execution — $(...) command sub (but not $(( ))
+  // arithmetic / ${} param expansion), backticks, subshell ( ), brace-group
+  // { ; }, procsub <(…)/>(…). The argv[0] network/denylist scans can't see a
+  // binary invoked inside these (`echo $(dig evil.com)`). Where the structural
+  // rules stand down, each was already taken out and judged as a command of
+  // its own (judgeNestedCommands, above), so none is left here; on an
+  // unconfined host they are refused on sight. win32 is excluded: `$(…)` and
+  // `( )` are ordinary PowerShell syntax there.
   if (platform !== "win32") {
     const nested = detectNestedCommandExecution(command);
     if (nested) {
@@ -295,46 +399,17 @@ export function evaluateShellCommand(
   // outer command — they cross no boundary the cage doesn't hold, and they are
   // exactly the Clover-class false positives (`echo $((17+3))`, `${VAR}`, `a;
   // b`). NOTE: command substitution proper (`$(…)`, backtick) and the other
-  // nested-command forms are NOT relaxed here — they're handled always-on by
-  // detectNestedCommandExecution above, because their nested argv escapes the
-  // network/denylist scan. The cross-separator egress rules stay immune too:
+  // nested-command forms are judged one by one above where these rules stand
+  // down, and refused on their own shape by detectNestedCommandExecution
+  // on the host, because their nested argv escapes the network/denylist
+  // scan. The cross-separator egress rules stay immune too:
   // BLOCKED_COMMANDS + rm scan the raw string, and the argv0 scans segment on
   // ;/&&/||/&/newline (splitShellSegments), so `true; dig evil.com` is caught.
   // Unconfined, these regexes remain the wall (the FP cost is the price of the
-  // boundary when there's no kernel cage).
+  // boundary when there is no kernel cage).
   if (structuralRulesApply) {
-    if (platform === "win32") {
-      // PowerShell: backtick is the escape char, ${} is variable syntax, {} is script blocks — all normal
-      // Only block actual dangerous patterns: Invoke-Expression, iex, & (call operator at start)
-      if (/\r\n/.test(command)) {
-        return { allowed: false, reason: "Blocked: multi-line commands not allowed.", userHint: USER_HINTS.commandShell };
-      }
-    } else {
-      // Bash: block arithmetic `$((…))` and parameter `${…}` expansion (host
-      // only — relaxed under confinement). Command substitution `$(…)` and
-      // backticks are already refused always-on by detectNestedCommandExecution
-      // (the negative lookahead here would otherwise skip `$((`, but the broad
-      // `\$\(` still catches `$((` on the unconfined host, which is the intent:
-      // no kernel cage → keep the expansion FP-block as the boundary). Kept on
-      // the RAW command because `$(`/backtick inside DOUBLE quotes are still
-      // bash-expanded; a single-quoted occurrence is a rare, harmless FP.
-      if (/`/.test(command) || /\$\(/.test(command) || /\$\{/.test(command)) {
-        return { allowed: false, reason: `Blocked: $(...), \${...} and backticks expand at run time, where the checks cannot follow them on a machine without LAX's sandbox. ${NESTED_COMMAND_WAY_OUT}`, userHint: USER_HINTS.commandShell };
-      }
-      // Separators — newline, ;, bare & — count only OUTSIDE quotes, so quote-strip
-      // first. A newline or `;` INSIDE a quoted argument (a multi-line
-      // `python3 -c 'line1\nline2'` self-test, or the `;` in `python -c "import
-      // json; ..."`) is literal string content, not command chaining. Before this
-      // was quote-aware, the newline check lived with the backtick check above and
-      // blocked EVERY multi-statement inline self-test (mislabeled as command
-      // substitution) — so a coding model couldn't run its own multi-line check
-      // and shipped unverified, false-done work. An UNQUOTED newline is still a
-      // command separator (like ;) and stays blocked.
-      // The & exclusions also spare fd-redirect forms — 2>&1, >&2, &>file all carry
-      // a literal & that is job-control NOTHING (it's a descriptor dup/merge).
-      const separator = separatorRefusal(stripQuotedSpans(command));
-      if (separator) return { allowed: false, reason: separator, userHint: USER_HINTS.commandShell };
-    }
+    const shape = hostShapeRefusal(command, platform);
+    if (shape) return { allowed: false, reason: shape, userHint: USER_HINTS.commandShell };
   }
 
   // There is no cap on pipeline length. Every stage is a command position the
@@ -342,42 +417,10 @@ export function evaluateShellCommand(
   // read, whatever the count; a sixth stage adds no capability the fifth did
   // not have, and the cap refused 33 real multi-stage build/grep pipelines in
   // two weeks. The nested-command forms whose argv the scans cannot see are
-  // refused on their own shape above.
+  // judged as commands of their own above, or refused on their own shape.
 
-  // Destructive rm (-r/-f), MODE-AWARE. In unrestricted mode the user has
-  // granted full-filesystem access, so deleting their OWN files (Downloads,
-  // Documents, projects, /tmp) via the shell must work — only the catastrophic
-  // floor (rm -rf /, ~, system dirs → catastrophic-paths.ts) is held. In
-  // workspace/common mode a recursive delete whose every target is PROVABLY
-  // strictly inside the workspace goes on to the irreversible floor, which
-  // cards it (rm-inside-workspace.ts); anything else — and an unthreaded mode
-  // or workspace (undefined → fail SAFE) — is refused and pointed at
-  // delete_file. This is the split-out of the old blanket BLOCKED_COMMANDS rm
-  // rule that fired regardless of mode.
-  if (RM_DESTRUCTIVE_FLAGS.test(command)) {
-    if (fileAccessMode === "unrestricted") {
-      const catastrophic = detectCatastrophicRm(command, homedir(), platform);
-      if (catastrophic) {
-        return { allowed: false, reason: catastrophic, userHint: USER_HINTS.commandShell };
-      }
-    } else {
-      const verdict = fileAccessMode ? rmInsideWorkspaceVerdict(command, workspace) : "unprovable";
-      if (verdict === "workspace-prefix") {
-        return {
-          allowed: false,
-          reason: "Blocked: the bash tool already runs inside the workspace, so a `workspace/…` path names a folder that does not exist and this delete would remove nothing. Drop the leading `workspace/` — e.g. `rm -r client-data/build-cache`. Better still, pass the folder to delete_file: it asks the user, then moves the folder to the trash where restore_file can bring it back; a shell delete is permanent.",
-          userHint: USER_HINTS.commandShell,
-        };
-      }
-      if (verdict !== "inside") {
-        return {
-          allowed: false,
-          reason: "Blocked: in the current file-access mode `rm -r`/`rm -f` runs only on plain paths inside the workspace (the user is asked to confirm it). This command names a path outside the workspace, the workspace root itself, or a form that cannot be checked (a variable, ~, a glob outside the last path segment, a chained command). To remove a file or a whole folder, use delete_file — it asks the user, then moves it to the trash where restore_file can bring it back.",
-          userHint: USER_HINTS.commandShell,
-        };
-      }
-    }
-  }
+  const rmRefusal = destructiveRmRefusal(command, fileAccessMode, workspace, platform);
+  if (rmRefusal) return { allowed: false, reason: rmRefusal, userHint: USER_HINTS.commandShell };
 
   // Check every segment of a piped command against blocked patterns, then the
   // full command (which catches patterns that span pipes). ONE reporter for both

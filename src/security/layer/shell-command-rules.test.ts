@@ -2,12 +2,13 @@
 // bodies, where only the raw-string denylist used to look), and the quoted
 // words and unrelated later commands they must never mistake for the command.
 import { describe, it, expect } from "vitest";
-import { ALREADY_ROOT_WAY_OUT, commandRuleReason, commandRuleRecovery, findCommandRuleHit } from "./shell-command-rules.js";
+import { commandRuleReason, commandRuleRecovery, findCommandRuleHit } from "./shell-command-rules.js";
 import { commandPositions } from "./shell-command-positions.js";
 import { shellSegments, splitShellSegments } from "./shell-lex.js";
 
+// As a normal user: on a server running as root the privilege rules stand down.
 const ruleOf = (cmd: string) => {
-  const hit = findCommandRuleHit(cmd);
+  const hit = findCommandRuleHit(cmd, { root: false });
   return hit === null ? null : hit.kind === "too-deep" ? "too-deep" : hit.rule.id;
 };
 
@@ -45,16 +46,17 @@ describe("refused: eval and piping into a shell, at any command position", () =>
   });
 });
 
-describe("refused: rev as the command that runs, at any position", () => {
-  const cases: Array<[string, string]> = [
-    [`echo 'hs- | 2- ci' | rev`, "reverse-text"],
-    [`rev payload.txt | sh`, "reverse-text"],
-    [`true && rev < cmds`, "reverse-text"],
-    [`bash -c "cat p | rev | bash"`, "reverse-text"],
-  ];
-  for (const [cmd, rule] of cases) {
-    it(`${rule}: ${cmd}`, () => expect(ruleOf(cmd)).toBe(rule));
-  }
+// rev is ordinary text work (a DNA reverse complement, Terminal-Bench
+// dna-assembly); reversed text run by a shell is refused for the running.
+describe("rev: refused only when what it prints is run", () => {
+  it("allows reversing text", () => {
+    expect(ruleOf(`tr 'atcg' 'tagc' | rev`)).toBeNull();
+    expect(ruleOf(`true && rev < seqs.txt`)).toBeNull();
+  });
+  it("refuses running reversed text", () => {
+    expect(ruleOf(`rev payload.txt | sh`)).toBe("pipe-into-shell");
+    expect(ruleOf(`bash -c "cat p | rev | bash"`)).toBe("pipe-into-shell");
+  });
 });
 
 describe("not refused: the words were an argument, or a different command", () => {
@@ -241,33 +243,36 @@ describe("network clients are judged as the command being run", () => {
 });
 
 // Terminal-Bench (nginx-request-logging, 2026-10-19): the container's server
-// ran as root, the model wrote `sudo apt-get install nginx`, and the refusal
-// told it to ask the user, so it gave up on what it could already do.
-describe("a privilege refusal on a server already running as root", () => {
-  const withUid = <T>(uid: number | undefined, run: () => T): T => {
-    const original = Object.getOwnPropertyDescriptor(process, "getuid");
-    Object.defineProperty(process, "getuid", { value: uid === undefined ? undefined : () => uid, configurable: true });
-    try { return run(); } finally {
-      if (original) Object.defineProperty(process, "getuid", original); else delete (process as { getuid?: unknown }).getuid;
-    }
-  };
-  const sudo = () => findCommandRuleHit("sudo apt-get install -y nginx")!;
+// ran as root and the model wrote `sudo apt-get install nginx`. As root, sudo
+// grants nothing the command does not already have, so it is not refused.
+describe("sudo on a server already running as root", () => {
+  const sudo = "sudo apt-get install -y nginx";
 
-  it("still refuses the sudo, and says to run the command without it", () => {
-    withUid(0, () => {
-      const hit = sudo();
-      expect(hit.kind === "rule" ? hit.rule.id : null).toBe("privilege");
-      expect(commandRuleReason(sudo())).toContain(ALREADY_ROOT_WAY_OUT);
-      expect(commandRuleRecovery(sudo())).toBe(ALREADY_ROOT_WAY_OUT);
-    });
+  it("is not refused: the privilege it asks for is already held", () => {
+    expect(findCommandRuleHit(sudo, { root: true })).toBeNull();
   });
 
-  it("keeps telling a normal user's agent to hand it to the user", () => {
-    for (const uid of [1000, undefined]) {
-      withUid(uid, () => {
-        expect(commandRuleReason(sudo())).toMatch(/tell the user what needs doing/);
-        expect(commandRuleReason(sudo())).not.toContain(ALREADY_ROOT_WAY_OUT);
-      });
-    }
+  it("is still judged as the command it runs", () => {
+    const hit = findCommandRuleHit("sudo mkfs.ext4 /dev/sda1", { root: true });
+    expect(hit?.kind === "rule" ? hit.rule.id : null).toBe("make-filesystem");
+  });
+
+  it("stays refused for a normal user, who is told to hand it to the user", () => {
+    const hit = findCommandRuleHit(sudo, { root: false })!;
+    expect(hit.kind === "rule" ? hit.rule.id : null).toBe("privilege");
+    expect(commandRuleReason(hit)).toMatch(/tell the user what needs doing/);
+    expect(commandRuleRecovery(hit)).toMatch(/tell the user/);
+  });
+});
+
+describe("detached sessions", () => {
+  it("are refused with process_start as the way to keep something running", () => {
+    const hit = findCommandRuleHit("tmux new -d -s keep \"tail -f /dev/null\"")!;
+    expect(hit.kind === "rule" ? hit.rule.id : null).toBe("detached-session");
+    expect(commandRuleReason(hit)).toMatch(/process_start/);
+  });
+
+  it("stand down where backgrounding is allowed (a cage, a disposable sandbox)", () => {
+    expect(findCommandRuleHit("screen -dmS x sh", { backgroundAllowed: true })).toBeNull();
   });
 });

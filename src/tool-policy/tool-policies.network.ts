@@ -46,9 +46,11 @@ export const TOOL_POLICIES_NETWORK: Record<string, ToolPolicyRow> = {
   browser_capture_to_secret: { kernel: "secret-vault", ariAction: "capture", risk: "workspace-write", capabilities: [], tags: [], reads: ["session"], killSwitch: "enableBrowser", rules: [{ id: "allow-browser-capture-to-secret", decision: "allow", reason: "Capture page value into encrypted vault (value never enters model context)", priority: 50 }] },
   browser_fill_from_secret:  { kernel: "secret-vault", ariAction: "fill", risk: "secrets", capabilities: [], tags: [], reads: ["session"], killSwitch: "enableBrowser", rules: [{ id: "allow-browser-fill-from-secret", decision: "allow", reason: "Fill vault value into page input (origin-bound, selector-whitelisted, approval-gated)", priority: 50 }] },
   // Its own outbound check vouches for IDs the destination's site showed this
-  // session (site-provenance.ts vouchedFor), as the egress gate does.
+  // session (site-provenance.ts vouchedFor), as the egress gate does. save_to
+  // is a download: the file it writes is confined like any write.
   http_request: {
     kernel: "http", ariAction: { arg: "method", writes: ["POST", "PUT", "PATCH", "DELETE"] }, risk: "network-write", capabilities: ["egress"], tags: ["http-api"], essentialRank: 5, blurb: { does: "Make a raw HTTP request to an API." }, timeoutMs: 60_000, output: "http-body", externalContent: true, offBoxFetch: true,
+    pathArgs: [{ arg: "save_to", action: "write" }],
     destination: [{ to: "site", arg: "url", allowlisted: true }],
     reads: ["session"], killSwitch: "enableHttp", committing: "kernel-write", category: "research",
     rateLimit: { maxCalls: 20, windowMs: 60_000, action: "block" },

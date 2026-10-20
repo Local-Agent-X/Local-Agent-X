@@ -1,4 +1,3 @@
-import { fetch as undiciFetch } from "undici";
 import type { RequestInit as UndiciRequestInit } from "undici";
 import type { ToolDefinition } from "../types.js";
 import { wrapExternalContent } from "../sanitize.js";
@@ -12,28 +11,14 @@ import { checkOutboundRequest } from "./http-egress-guard.js";
 import { vouchedFor } from "../browser/site-provenance.js";
 import { formatMissingPageLeads, gatherMissingPageLeads, isMissingPageStatus } from "./missing-page-leads.js";
 import { withholdSecretValues, secretsMaskedNote, isSecretEndpointUrl } from "../data-lineage/index.js";
-import {
-  EgressRedirectBlocked,
-  assertRedirectEgressAllowed,
-  assertLiteralIpEgressAllowed,
-  selfCallAuthHeader,
-  reachesOwnServer,
-  createPinningDispatcher,
-  BROWSER_USER_AGENT,
-  isCredentialHeader,
-} from "./web-egress.js";
+import { EgressRedirectBlocked, createPinningDispatcher } from "./web-egress.js";
 import { sessionIdOf } from "../tool-execution/internal-args.js";
 import { paidMediaApisAllowed, paidMediaEndpointKind, paidMediaOffMessage } from "./image-tools/paid-media.js";
+import { SecretRedirectStopped, fetchFollowingRedirects, startingHeaders } from "./http-request-transport.js";
+import { saveResponseBody } from "./http-download.js";
+import { resolveAgentPath } from "../workspace/paths.js";
 
 export { isCredentialHeader } from "./web-egress.js";
-
-/** A redirect to an origin where a bound secret is not approved: the hop is
- *  never sent, so neither the body nor a credential header reaches it. */
-class SecretRedirectStopped extends Error {
-  constructor(readonly location: string, readonly names: string[]) {
-    super(`Redirected to ${new URL(location).origin}, where ${names.map((n) => `{{${n}}}`).join(", ")} is not approved. The request was not followed there and nothing was re-sent.`);
-  }
-}
 
 export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
   const tool: ToolDefinition = {
@@ -88,6 +73,10 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
           type: "string",
           description: "Stable operation key for safely retrying a mutation after a transient failure. Sent as Idempotency-Key.",
         },
+        save_to: {
+          type: "string",
+          description: "Download: write the response body to this file path instead of returning it (any size up to 2 GB, binary-safe: a tarball, an installer, a wheel, an image, a dataset). The result reports the path and size. An error response is returned as usual and nothing is saved.",
+        },
         find: {
           type: "string",
           description: "Return only the lines of the response body matching this text (case-insensitive) plus surrounding context, instead of the whole body. Prefer this over reading the whole body when you know what you're looking for.",
@@ -114,30 +103,7 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
       );
       if (guard) return err(guard.message, guard.meta);
 
-      const headers: Record<string, string> = {
-        "User-Agent": BROWSER_USER_AGENT,
-      };
-      // Loopback self-calls authenticate with the least-privilege internal agent
-      // token (null for any external host, so it never leaks off-box). The
-      // cross-origin redirect stripping below removes `authorization` if a self
-      // redirect ever crosses to another origin.
-      const selfAuth = await selfCallAuthHeader(url);
-      if (selfAuth) Object.assign(headers, selfAuth);
-      // A call to this server's own port runs as the agent: a credential header
-      // the model wrote is dropped, because a known operator token would open
-      // every route the agent role is denied (rbac-agent-denials.ts).
-      const ownServer = await reachesOwnServer(url);
-      const dropped: string[] = [];
-      const rawHeaders: Array<[string, string]> = [];
-      if (args.headers && typeof args.headers === "object") {
-        for (const [key, value] of Object.entries(args.headers as Record<string, unknown>)) {
-          if (ownServer && isCredentialHeader(key)) {
-            dropped.push(key);
-            continue;
-          }
-          rawHeaders.push([String(key), String(value)]);
-        }
-      }
+      const { headers, modelHeaders: rawHeaders, selfAuth, droppedNote, droppedMeta } = await startingHeaders(url, args.headers);
       let bodyStr = args.body ? String(args.body) : undefined;
       // Every secret bound into this request must be allowed at its destination
       // (ADR 0005) before a single placeholder is resolved.
@@ -163,11 +129,6 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
         boundNames.filter((name) => secrets!.destinationDecision(name, location, { sessionId }) === "ask");
       for (const [key, value] of rawHeaders) headers[key] = secrets ? secrets.resolve(value) : value;
       if (bodyStr && secrets) bodyStr = secrets.resolve(bodyStr);
-      const droppedNote = dropped.length === 0 ? "" :
-        `\n\n[Dropped the ${dropped.join(", ")} header${dropped.length === 1 ? "" : "s"} you supplied: a request to ` +
-        `Local Agent X's own server always runs as the agent, with the agent's own credential. If the server ` +
-        `refuses the agent, its answer says where the user makes that change.]`;
-      const droppedMeta = dropped.length === 0 ? {} : { dropped_headers: dropped };
       if (args.idempotency_key && !Object.keys(headers).some(key =>
         ["idempotency-key", "x-idempotency-key"].includes(key.toLowerCase()),
       )) {
@@ -198,52 +159,7 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
       }
 
       try {
-        const MAX_REDIRECTS = 5;
-        let currentUrl = url;
-
-        const doFetch = async () => {
-          // Pre-connect literal-IP SSRF check (the pinning dispatcher's
-          // connect.lookup never fires for a literal IP).
-          await assertLiteralIpEgressAllowed(currentUrl);
-          let r = await undiciFetch(currentUrl, fetchOpts);
-          let redirectCount = 0;
-
-          while (r.status >= 300 && r.status < 400 && r.headers.get("location") && redirectCount < MAX_REDIRECTS) {
-            const location = new URL(r.headers.get("location")!, currentUrl).toString();
-            // Re-check the egress policy on a cross-host redirect (strict-mode
-            // allowlist bypass via 302). Fail closed before following.
-            assertRedirectEgressAllowed(currentUrl, location);
-            // Literal-IP SSRF on every hop, same-host included (a 302 to a
-            // literal private/metadata/NAT64/6to4 IP bypasses the dispatcher).
-            await assertLiteralIpEgressAllowed(location);
-            const origOrigin = new URL(currentUrl).origin;
-            const newOrigin = new URL(location).origin;
-
-            const redirectHeaders = { ...headers };
-            if (origOrigin !== newOrigin) {
-              // A bound secret follows a redirect only where the ladder allows
-              // it; otherwise the hop is not sent (the model can re-issue the
-              // request against the new host, which then asks).
-              const unapproved = unapprovedAt(location);
-              if (unapproved.length > 0) throw new SecretRedirectStopped(location, unapproved);
-              for (const key of Object.keys(redirectHeaders)) {
-                if (isCredentialHeader(key)) delete redirectHeaders[key];
-              }
-            }
-
-            currentUrl = location;
-            r = await undiciFetch(currentUrl, {
-              ...fetchOpts,
-              headers: redirectHeaders,
-              body: r.status === 303 ? undefined : fetchOpts.body,
-              method: r.status === 303 ? "GET" : method,
-            });
-            redirectCount++;
-          }
-          return r;
-        };
-
-        const res = await doFetch();
+        const { res, url: currentUrl } = await fetchFollowingRedirects(url, fetchOpts, headers, method, unapprovedAt);
 
         const statusLine = `${res.status} ${res.statusText}`;
 
@@ -260,6 +176,17 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
             status: res.status,
             duration_ms: durationMs,
             ...droppedMeta,
+          });
+        }
+
+        const saveTo = typeof args.save_to === "string" ? args.save_to.trim() : "";
+        if (saveTo && res.ok) {
+          // Resolved as the pre-dispatch file-access gate resolved it (pathArgs).
+          const path = resolveAgentPath(saveTo, sessionIdOf(args));
+          const bytes = await saveResponseBody(res, path, fetchSignal);
+          const type = res.headers.get("content-type");
+          return ok(`HTTP ${statusLine}\n\nSaved ${bytes} bytes${type ? ` (${type})` : ""} to ${path}.${droppedNote}`, {
+            url: currentUrl, method, status: res.status, duration_ms: durationMs, bytes, saved_to: path, ...droppedMeta,
           });
         }
 

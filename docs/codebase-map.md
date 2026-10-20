@@ -13,18 +13,18 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1819 non-test source files · 94 oversized · 242 nearing the size cap.
+**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1823 non-test source files · 94 oversized · 242 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | Oversized |
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 164 | 29 | XL | 1 |
-| `src/security/` | 123 | 48 | XL | 3 |
-| `src/tools/` | 114 | 215 | XL | 9 |
+| `src/security/` | 123 | 50 | XL | 3 |
+| `src/tools/` | 114 | 217 | XL | 9 |
 | `src/tool-execution/` | 81 | 72 | XL | 2 |
 | `src/canonical-loop/` | 79 | 265 | XL | 14 |
-| `src/workspace/` | 71 | 3 | M |  |
+| `src/workspace/` | 72 | 3 | M |  |
 | `src/providers/` | 68 | 26 | L | 1 |
 | `src/memory/` | 51 | 139 | XL | 7 |
 | `src/browser/` | 48 | 87 | XL | 5 |
@@ -352,7 +352,6 @@ job. Comments are free: never cut them to fit.
 - `src/net/egress-proxy-core.ts` — 320+ code lines (cap 350)
 - `src/protocols/learned-effectiveness.ts` — 320+ code lines (cap 350)
 - `src/protocols/learned-lifecycle.ts` — 320+ code lines (cap 350)
-- `src/tools/http-request.ts` — 320+ code lines (cap 350)
 - `src/auto-build/workflow-resolver.ts` — 310+ code lines (cap 350)
 - `src/cognition/cross-session-learning/service.ts` — 310+ code lines (cap 350)
 - `src/ops/op-store.ts` — 310+ code lines (cap 350)
@@ -500,6 +499,7 @@ job. Comments are free: never cut them to fit.
 - `src/routes/issues.ts#handleIssueRoutes` — 70+ own code lines (cap 100)
 - `src/routes/mcp-servers.ts#handleMcpServerRoutes` — 70+ own code lines (cap 100)
 - `src/screen-capture.ts#captureScreen` — 70+ own code lines (cap 100)
+- `src/security/layer/shell-nested-commands.ts#splitNestedCommands` — 70+ own code lines (cap 100)
 - `src/server/background-jobs/skill-review.ts#runSingleReview` — 70+ own code lines (cap 100)
 - `src/server/request-auth.ts#authorizeRequest` — 70+ own code lines (cap 100)
 - `src/sync/facts-sync.ts#db.transaction:callback` — 70+ own code lines (cap 100)

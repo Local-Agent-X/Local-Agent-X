@@ -277,14 +277,16 @@ describe("detectObfuscation", () => {
     expect(detectObfuscation("echo abc | xxd -r")).toBeNull();
   });
 
-  it("`rev` is refused as the command that runs, not by detectObfuscation's word scan", () => {
+  it("`rev` reverses text; running what it printed is what is refused", () => {
     expect(detectObfuscation("echo mr | rev")).toBeNull();
-    expect(evaluateShellCommand("echo mr | rev").reason).toMatch(/"rev" reverses/);
+    expect(evaluateShellCommand("echo mr | rev").allowed).toBe(true);
+    expect(detectObfuscation("rev payload | bash")).toMatch(/decoded text is passed to a shell/);
     expect(evaluateShellCommand("git rev-parse HEAD").allowed).toBe(true);
   });
 
-  it("flags an overlong command (>2000 chars) that carries an encoded blob, not one that is merely long", () => {
-    expect(detectObfuscation("a" + "b".repeat(2100))).toMatch(/long encoded blob/);
+  it("flags an overlong command (>2000 chars) that hands an encoded blob to an interpreter", () => {
+    expect(detectObfuscation(`node -e "${"b".repeat(2100)}"`)).toMatch(/long encoded blob/);
+    expect(detectObfuscation("a" + "b".repeat(2100))).toBeNull();
     expect(detectObfuscation("echo " + "word ".repeat(450))).toBeNull();
   });
 

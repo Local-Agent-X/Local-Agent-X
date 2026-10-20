@@ -12,6 +12,7 @@ import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { evaluateShellCommand } from "./shell-policy.js";
+import { evaluateShellCommandAndPaths } from "./shell-path-guard.js";
 import { evaluateEgressForUrl } from "./network-policy.js";
 import {
   BACKGROUND_REFUSAL, COMPUTED_COMMAND_REFUSAL, DECODE_EXEC_REFUSAL, ENCODED_PAYLOAD_REFUSAL, NESTED_COMMAND_WAY_OUT, SEMICOLON_REFUSAL,
@@ -234,6 +235,15 @@ describe("a disposable sandbox stands down the command-shape rules", () => {
     const rm = (cmd: string) => evaluateShellCommand(cmd, undefined, undefined, "unrestricted", "linux", false);
     expect(rm("rm -f /etc/nginx/sites-enabled/default").allowed).toBe(true);
     for (const cmd of ["rm -rf /etc", "rm -rf /", "rm -rf /usr/*", "rm -rf ~"]) expect(rm(cmd).allowed, cmd).toBe(false);
+  });
+
+  it("checks dd's files like any other read and write", () => {
+    const ws = (cmd: string) => evaluateShellCommandAndPaths(cmd, {
+      workspace: dataDir, fileAccessMode: "workspace", allowedPathCheck: () => false, inlineEvalPolicy: "refuse", sessionId: "t",
+    });
+    expect(ws("dd if=/dev/zero of=test.img bs=1M count=1").allowed).toBe(true);
+    expect(ws("dd if=/dev/zero of=/etc/cron.d/x bs=1 count=1").allowed).toBe(false);
+    expect(ws("dd if=/etc/shadow of=copy.bin").allowed).toBe(false);
   });
 
   it("keeps the whole system-folder floor on a machine that is not disposable", () => {

@@ -346,7 +346,7 @@ export function evaluateShellCommand(
   // detached-session and inline-program form rules where the structural
   // switch stands the shape rules down, and sudo on a server already running
   // as root.
-  const ruleHit = findCommandRuleHit(command, { egressEnforced, shapeRulesStandDown: !structuralRulesApply });
+  const ruleHit = findCommandRuleHit(command, { egressEnforced, shapeRulesStandDown: !structuralRulesApply, loopbackOpen: isDisposableSandbox() });
   if (ruleHit) {
     return { allowed: false, reason: commandRuleReason(ruleHit), userHint: USER_HINTS.commandShell, recovery: commandRuleRecovery(ruleHit) };
   }

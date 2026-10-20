@@ -377,6 +377,13 @@ function extractPathTokens(command: string, depth = 0): PathToken[] {
         }
       }
 
+      // dd names its files as operands: `if=` is read, `of=` is written.
+      const ddOperand = shellVerb === "dd" ? /^(if|of)=(.+)$/i.exec(raw) : null;
+      if (ddOperand) {
+        raw = ddOperand[2];
+        action = ddOperand[1].toLowerCase() === "of" ? "write" : "read";
+      }
+
       // `--flag=/path` / `-o=/path` → keep the value side.
       if (raw.startsWith("-")) {
         const eq = raw.indexOf("=");

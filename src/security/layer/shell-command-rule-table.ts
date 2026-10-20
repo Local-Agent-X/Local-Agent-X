@@ -34,6 +34,13 @@ export interface CommandRule {
 }
 
 const argsOf = (p: CommandPosition) => p.words.slice(p.at + 1);
+
+// A path that names a disk or other device rather than a file: anything under
+// /dev but the stream devices, and Windows' raw drive paths.
+const STREAM_DEVICE = /^\/dev\/(?:null|zero|full|u?random|stdout|stderr|tty|fd\/\d+|shm\/.+)$/i;
+function isDiskDevice(path: string): boolean {
+  return (/^\/dev\//i.test(path) && !STREAM_DEVICE.test(path)) || /^\\\\[.?]\\/.test(path);
+}
 const lower = (s: string | undefined) => (s ?? "").toLowerCase();
 
 function bins(id: string, category: CommandRuleCategory, why: string, names: string[]): CommandRule {
@@ -122,8 +129,10 @@ export const COMMAND_RULES: readonly CommandRule[] = [
   // ── Disks ──
   { id: "make-filesystem", category: "disk", why: "formats a disk or partition",
     matches: (p) => p.bin.startsWith("mkfs") },
-  binWith("raw-disk-write", "disk", "writes raw blocks to a device or file", ["dd"],
-    (a) => a.some((x) => lower(x).startsWith("of="))),
+  // A device, not a file: `dd if=/dev/zero of=test.img` and carving bytes out
+  // of a disk image are file writes, checked by the shell path guard like any.
+  binWith("raw-disk-write", "disk", "writes raw blocks to a disk device", ["dd"],
+    (a) => a.some((x) => lower(x).startsWith("of=") && isDiskDevice(x.slice(3)))),
   binWith("format-drive", "disk", "formats a drive", ["format"], (a) => /^(?:\/|\\|[a-z]:)/i.test(a[0] ?? "")),
   bins("partition", "disk", "edits a disk's partition table", ["fdisk", "parted", "diskpart"]),
 

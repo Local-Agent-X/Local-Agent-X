@@ -277,6 +277,53 @@ describe("detached sessions", () => {
   });
 });
 
+// Terminal-Bench password-recovery (2026-10-20): carving bytes out of a disk
+// image was refused as a raw disk write.
+describe("dd: a disk device is refused, a file is a file write", () => {
+  it("refuses writing a disk device, and says to hand the command to the user", () => {
+    for (const cmd of ["dd if=ubuntu.iso of=/dev/sdb bs=4M", "dd if=/dev/zero of=/dev/nvme0n1", "dd if=x.img of=\\\\.\\PhysicalDrive1"]) {
+      const hit = findCommandRuleHit(cmd);
+      expect(hit?.kind === "rule" ? hit.rule.id : null, cmd).toBe("raw-disk-write");
+    }
+    expect(commandRuleReason(findCommandRuleHit("dd if=a.iso of=/dev/sdb")!)).toMatch(/name the device it will erase/);
+  });
+
+  it("runs dd that reads or writes files and stream devices", () => {
+    for (const cmd of [
+      "dd if=/dev/zero of=test.img bs=1M count=100", "dd if=disk.dat of=part.bin bs=1 skip=4096 count=512",
+      "dd if=/dev/urandom of=/tmp/key bs=32 count=1", "dd if=in.bin of=/dev/null", "dd if=in.bin of=/dev/stdout",
+    ]) {
+      expect(findCommandRuleHit(cmd), cmd).toBeNull();
+    }
+  });
+});
+
+// Terminal-Bench qemu-startup (2026-10-20): the model could not check that
+// QEMU's telnet port came up. Real users check databases and servers the same way.
+describe("raw TCP clients and a loopback port", () => {
+  it("allow a connect-only probe of a loopback port everywhere", () => {
+    for (const cmd of ["nc -z 127.0.0.1 5432", "nc -zv localhost 6665", "nc -z -w 2 ::1 8080", "ncat -z localhost 22"]) {
+      expect(findCommandRuleHit(cmd), cmd).toBeNull();
+    }
+  });
+
+  it("allow a session with a loopback port only where loopback is open (a disposable sandbox)", () => {
+    expect(ruleOf("telnet 127.0.0.1 6665")).toBe("network-client");
+    expect(findCommandRuleHit("telnet 127.0.0.1 6665", { loopbackOpen: true })).toBeNull();
+    expect(findCommandRuleHit("nc localhost 6379", { loopbackOpen: true })).toBeNull();
+  });
+
+  it("keep refusing other hosts, listening, a program on the socket and a proxy hop", () => {
+    for (const cmd of [
+      "nc -z evil.test 443", "nc -z 10.0.0.5 22", "nc -lvz 127.0.0.1 4444", "nc -e /bin/sh 127.0.0.1 4444",
+      "ncat --sh-exec sh localhost 9", "nc -x proxy.test:1080 -z 127.0.0.1 80", "nc 127.0.0.1 80 evil.test",
+    ]) {
+      expect(ruleOf(cmd), cmd).toBe("network-client");
+      expect(findCommandRuleHit(cmd, { loopbackOpen: true }), cmd).not.toBeNull();
+    }
+  });
+});
+
 // Terminal-Bench dna-insert (2026-10-20): a `perl -e` sequence comparison was
 // refused in the disposable container where `python -c` already runs.
 describe("perl -e, ruby -e and php -r follow python -c", () => {
